@@ -1,0 +1,34 @@
+[package]
+name        = "mcpp"
+version     = "0.0.1"
+description = "Modern C++ build & package management tool"
+license     = "Apache-2.0"
+authors     = ["mcpp-community"]
+repo        = "https://github.com/mcpp-community/mcpp"
+
+[toolchain]
+default = "gcc@16.1.0"
+
+# Per-target overrides: `mcpp build --target x86_64-linux-musl` (or the
+# four-segment form `x86_64-unknown-linux-musl`) picks musl-gcc 15.1 + full
+# static linkage. Used by .github/workflows/release.yml to produce a
+# portable static binary that drops in anywhere with no ELF interp / RUNPATH
+# baggage.
+[target.x86_64-linux-musl]
+toolchain = "gcc@15.1.0-musl"
+linkage   = "static"
+
+# Eat our own dog food: mcpp uses mcpplibs.cmdline for argument parsing.
+[dependencies]
+"mcpplibs.cmdline" = "0.0.1"
+
+# `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
+[dev-dependencies]
+gtest = "1.15.2"
+
+# Everything else uses M5.0 conventions:
+# - sources       = src/**/*.{cppm,cpp,cc,c}    (default glob picks up
+#                   the 21 .cppm modules + src/main.cpp)
+# - target        = mcpp (kind=bin inferred from src/main.cpp)
+# - standard      = c++23
+# - static_stdlib = true   (default; portable binary)

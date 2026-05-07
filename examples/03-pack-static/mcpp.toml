@@ -1,0 +1,14 @@
+[package]
+name        = "static-app"
+version     = "0.1.0"
+description = "Demo: mcpp pack --mode static produces a fully-static portable binary"
+license     = "Apache-2.0"
+
+# 用 musl-gcc 出全静态二进制，目标任意 Linux x86_64 可跑（含 Docker scratch）。
+[target.x86_64-linux-musl]
+toolchain = "gcc@15.1.0-musl"
+linkage   = "static"
+
+# bare `mcpp pack` 默认就走 static 模式。
+[pack]
+default_mode = "static"

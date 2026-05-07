@@ -1,0 +1,21 @@
+# mcpp's own build output (mcpp build / mcpp pack)
+target/
+
+# mcpp's per-workspace xlings sandbox + lockfile + diagnostic logs
+/.xlings/
+.claude
+mcpp.lock
+doctor.log
+
+# editor / OS
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# generated module artifacts
+*.gcm
+*.pcm
+*.ifc
+*.ddi

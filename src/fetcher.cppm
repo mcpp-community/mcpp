@@ -1,0 +1,780 @@
+// mcpp.fetcher — subprocess-based xlings interface client (NDJSON over stdio).
+//
+// Each Fetcher::call() invokes:
+//   XLINGS_HOME=<cfg.xlingsHome()> <cfg.xlingsBinary> interface <cap> --args '{...}'
+// then parses the NDJSON event stream emitted on stdout.
+//
+// Wire format reference: xlings/src/interface.cppm.
+
+module;
+#include <cstdio>
+#include <cstdlib>
+
+export module mcpp.fetcher;
+
+import std;
+import mcpp.config;
+import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
+
+export namespace mcpp::fetcher {
+
+// --- Events parsed from NDJSON ---
+
+enum class EventKind { Progress, Log, Data, Error, Heartbeat, Result };
+
+struct ProgressEvent {
+    std::string  phase;      // "download", "extract", "configure", ...
+    int          percent;    // 0..100
+    std::string  message;
+};
+
+struct LogEvent {
+    std::string  level;      // "debug" | "info" | "warn" | "error"
+    std::string  message;
+};
+
+struct DataEvent {
+    std::string  dataKind;   // "install_plan", "styled_list", "package_info", ...
+    std::string  payloadJson;// raw JSON (let caller parse)
+};
+
+struct ErrorEvent {
+    std::string  code;
+    std::string  message;
+    std::string  hint;
+    bool         recoverable = false;
+};
+
+struct ResultEvent {
+    int          exitCode = 0;
+    std::string  dataJson;   // additional payload, may be empty
+};
+
+using Event = std::variant<ProgressEvent, LogEvent, DataEvent,
+                           ErrorEvent, ResultEvent>;
+
+// --- Listener interface ---
+
+struct EventHandler {
+    virtual ~EventHandler() = default;
+    virtual void on_progress(const ProgressEvent&) {}
+    virtual void on_log     (const LogEvent&)     {}
+    virtual void on_data    (const DataEvent&)    {}
+    virtual void on_error   (const ErrorEvent&)   {}
+    virtual void on_result  (const ResultEvent&)  {}
+};
+
+// --- Capability invocation ---
+
+struct CallError {
+    std::string message;
+};
+
+struct CallResult {
+    int                          exitCode = 0;
+    std::vector<DataEvent>       dataEvents;     // collected for caller convenience
+    std::optional<ErrorEvent>    error;
+    std::string                  resultJson;     // raw "result" line payload
+};
+
+class Fetcher {
+public:
+    explicit Fetcher(const config::GlobalConfig& cfg) : cfg_(cfg) {}
+
+    // Generic capability call. The handler (if non-null) receives streaming
+    // events. On success returns aggregate CallResult.
+    std::expected<CallResult, CallError>
+        call(std::string_view capability,
+             std::string_view argsJson,
+             EventHandler* handler = nullptr);
+
+    // High-level helpers (parsed payload for common ops).
+
+    struct SearchHit {
+        std::string source;       // "mcpp-index"
+        std::string name;
+        std::string description;
+    };
+    std::expected<std::vector<SearchHit>, CallError>
+        search(std::string_view keyword);
+
+    struct PackageInstall {
+        std::string name;
+        std::string version;
+        std::string action;       // "download" | "skip" | ...
+        std::string url;
+        std::string sha256;
+    };
+    // Plan: report what install_packages WOULD do, no side effects.
+    std::expected<std::vector<PackageInstall>, CallError>
+        plan_install(const std::vector<std::string>& targets);
+
+    // Actually install. Streams progress events to the handler if set.
+    std::expected<CallResult, CallError>
+        install(const std::vector<std::string>& targets,
+                EventHandler* handler = nullptr);
+
+    // List + manage index repos.
+    struct RepoInfo { std::string name, url; bool isDefault; };
+    std::expected<std::vector<RepoInfo>, CallError> list_repos();
+    std::expected<void, CallError> add_repo(std::string_view name, std::string_view url);
+    std::expected<void, CallError> remove_repo(std::string_view name);
+
+    // Install path for an installed package. Returns the directory under
+    // $MCPP_HOME/registry/data/xpkgs/<name>/<version>/ if it exists.
+    std::optional<std::filesystem::path>
+        install_path(std::string_view name, std::string_view version) const;
+
+    // Read the raw xpkg .lua file content for a package from the cloned
+    // index. xlings places it at:
+    //   $XLINGS_HOME/data/<index_name>/pkgs/<letter>/<pkg_name>.lua
+    // Returns the file content if found, or std::nullopt.
+    std::optional<std::string>
+        read_xpkg_lua(std::string_view package_name) const;
+
+    // Unified xpkg payload (one xlings package's installed location and its
+    // standard subdirs). Returned by resolve_xpkg_path().
+    struct XpkgPayload {
+        std::filesystem::path        root;           // xpkg install root
+        std::filesystem::path        binDir;         // root/bin/  (or empty)
+        std::filesystem::path        libDir;         // root/lib/  (or empty)
+        std::filesystem::path        includeDir;     // root/include/ (or empty)
+        std::filesystem::path        sourceDir;      // primary source subdir (or root)
+        bool                         hasBin     = false;
+        bool                         hasLib     = false;
+        bool                         hasInclude = false;
+    };
+
+    // Resolve a target like "xim:gcc@15.1.0" or "name@1.0" to its xpkg
+    // payload location. Auto-installs via xlings if missing and
+    // autoInstall is true.
+    //
+    // Target syntax:
+    //   "<index>:<name>@<version>"   explicit index namespace
+    //   "<name>@<version>"           uses xim namespace by default
+    std::expected<XpkgPayload, CallError>
+        resolve_xpkg_path(std::string_view target,
+                          bool autoInstall,
+                          EventHandler* handler = nullptr);
+
+private:
+    const config::GlobalConfig& cfg_;
+
+    // Build the env-prefixed command for a capability call.
+    std::string build_command(std::string_view capability,
+                              std::string_view argsJson) const;
+};
+
+} // namespace mcpp::fetcher
+
+namespace mcpp::fetcher {
+
+namespace {
+
+// --- Tiny ad-hoc JSON parser specialized for NDJSON event lines. ---
+//
+// We avoid pulling nlohmann::json (mcpp doesn't otherwise depend on it
+// and integrating it cleanly with import std + GCC modules is a chore
+// for marginal value). The xlings event lines are simple enough that
+// hand-extracting fields works.
+
+// Find string value: look for "key":"VALUE" (handles \" escape).
+std::string extract_string(std::string_view text, std::string_view key) {
+    auto needle = std::string{"\""} + std::string(key) + "\":\"";
+    auto p = text.find(needle);
+    if (p == std::string_view::npos) return "";
+    p += needle.size();
+    std::string out;
+    while (p < text.size()) {
+        char c = text[p++];
+        if (c == '\\' && p < text.size()) {
+            char nc = text[p++];
+            switch (nc) {
+                case 'n': out.push_back('\n'); break;
+                case 't': out.push_back('\t'); break;
+                case 'r': out.push_back('\r'); break;
+                case '"': out.push_back('"');  break;
+                case '\\': out.push_back('\\'); break;
+                default: out.push_back(nc);
+            }
+        } else if (c == '"') {
+            return out;
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+// Find integer value: look for "key":NUM
+std::optional<long long> extract_int(std::string_view text, std::string_view key) {
+    auto needle = std::string{"\""} + std::string(key) + "\":";
+    auto p = text.find(needle);
+    if (p == std::string_view::npos) return std::nullopt;
+    p += needle.size();
+    while (p < text.size() && text[p] == ' ') ++p;
+    bool neg = false;
+    if (p < text.size() && text[p] == '-') { neg = true; ++p; }
+    long long n = 0;
+    bool any = false;
+    while (p < text.size() && std::isdigit(static_cast<unsigned char>(text[p]))) {
+        n = n * 10 + (text[p++] - '0');
+        any = true;
+    }
+    if (!any) return std::nullopt;
+    return neg ? -n : n;
+}
+
+// Find boolean "key":true / false
+std::optional<bool> extract_bool(std::string_view text, std::string_view key) {
+    auto needle = std::string{"\""} + std::string(key) + "\":";
+    auto p = text.find(needle);
+    if (p == std::string_view::npos) return std::nullopt;
+    p += needle.size();
+    while (p < text.size() && text[p] == ' ') ++p;
+    if (text.substr(p, 4) == "true")  return true;
+    if (text.substr(p, 5) == "false") return false;
+    return std::nullopt;
+}
+
+// Extract the "payload" JSON object as raw text (for downstream parsing).
+// Looks for "payload":{ ... } and returns the {...} substring with balanced braces.
+std::string extract_object(std::string_view text, std::string_view key) {
+    auto needle = std::string{"\""} + std::string(key) + "\":";
+    auto p = text.find(needle);
+    if (p == std::string_view::npos) return "";
+    p += needle.size();
+    while (p < text.size() && text[p] == ' ') ++p;
+    if (p >= text.size() || (text[p] != '{' && text[p] != '[')) return "";
+    char open  = text[p];
+    char close = (open == '{') ? '}' : ']';
+    int depth = 0;
+    std::size_t start = p;
+    bool in_string = false;
+    while (p < text.size()) {
+        char c = text[p];
+        if (in_string) {
+            if (c == '\\' && p + 1 < text.size()) { p += 2; continue; }
+            if (c == '"') in_string = false;
+            ++p; continue;
+        }
+        if (c == '"') { in_string = true; ++p; continue; }
+        if (c == open)  { ++depth; }
+        else if (c == close) { --depth; if (depth == 0) return std::string(text.substr(start, p - start + 1)); }
+        ++p;
+    }
+    return "";
+}
+
+// Parse one NDJSON line into an Event.
+std::optional<Event> parse_event_line(std::string_view line) {
+    auto kind = extract_string(line, "kind");
+    if (kind == "progress") {
+        ProgressEvent e;
+        e.phase   = extract_string(line, "phase");
+        e.percent = static_cast<int>(extract_int(line, "percent").value_or(0));
+        e.message = extract_string(line, "message");
+        return e;
+    }
+    if (kind == "log") {
+        LogEvent e;
+        e.level   = extract_string(line, "level");
+        e.message = extract_string(line, "message");
+        return e;
+    }
+    if (kind == "data") {
+        DataEvent e;
+        e.dataKind   = extract_string(line, "dataKind");
+        e.payloadJson= extract_object(line, "payload");
+        return e;
+    }
+    if (kind == "error") {
+        ErrorEvent e;
+        e.code        = extract_string(line, "code");
+        e.message     = extract_string(line, "message");
+        e.hint        = extract_string(line, "hint");
+        e.recoverable = extract_bool(line, "recoverable").value_or(false);
+        return e;
+    }
+    if (kind == "result") {
+        ResultEvent e;
+        e.exitCode = static_cast<int>(extract_int(line, "exitCode").value_or(0));
+        return e;
+    }
+    if (kind == "heartbeat") {
+        return std::nullopt;     // not surfaced
+    }
+    return std::nullopt;
+}
+
+// Shell-escape (single-quote) a string for the command line.
+std::string shq(std::string_view s) {
+    std::string out;
+    out.reserve(s.size() + 2);
+    out.push_back('\'');
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out.push_back(c);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+} // namespace
+
+std::string Fetcher::build_command(std::string_view capability,
+                                   std::string_view argsJson) const
+{
+    // Run xlings from inside the registry dir so it does NOT walk up the
+    // cwd looking for a .xlings.json and enter "project scope" (which
+    // would hide our seeded global config).  registry/ has its own
+    // seeded .xlings.json which xlings will pick up when cwd points there.
+    //
+    // Prepend the sandbox xvm bin dir to PATH so xim install hooks'
+    // `find_tool("patchelf")` (and any other tool lookups) discover the
+    // sandbox-local copies. This is what makes elfpatch.auto in xim's
+    // gcc.lua / binutils.lua actually run on a fresh machine.
+    auto xvmBin = (cfg_.xlingsHome() / "subos" / "default" / "bin").string();
+    return std::format(
+        "cd {} && env -u XLINGS_PROJECT_DIR PATH={}:\"$PATH\" XLINGS_HOME={} {} interface {} --args {} 2>/dev/null",
+        shq(cfg_.xlingsHome().string()),
+        shq(xvmBin),
+        shq(cfg_.xlingsHome().string()),
+        shq(cfg_.xlingsBinary.string()),
+        capability,
+        shq(argsJson));
+}
+
+std::expected<CallResult, CallError>
+Fetcher::call(std::string_view capability,
+              std::string_view argsJson,
+              EventHandler* handler)
+{
+    auto cmd = build_command(capability, argsJson);
+
+    std::FILE* fp = ::popen(cmd.c_str(), "r");
+    if (!fp) return std::unexpected(CallError{
+        std::format("failed to spawn xlings: {}", cmd)});
+
+    CallResult result;
+    std::array<char, 16384> buf{};
+    std::string acc;
+    while (std::fgets(buf.data(), buf.size(), fp) != nullptr) {
+        acc += buf.data();
+        // process any complete lines
+        std::size_t pos;
+        while ((pos = acc.find('\n')) != std::string::npos) {
+            auto line = acc.substr(0, pos);
+            acc.erase(0, pos + 1);
+            // strip trailing CR
+            while (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+
+            auto ev = parse_event_line(line);
+            if (!ev) continue;
+
+            std::visit([&](auto&& e) {
+                using T = std::decay_t<decltype(e)>;
+                if constexpr (std::is_same_v<T, ProgressEvent>) {
+                    if (handler) handler->on_progress(e);
+                } else if constexpr (std::is_same_v<T, LogEvent>) {
+                    if (handler) handler->on_log(e);
+                } else if constexpr (std::is_same_v<T, DataEvent>) {
+                    result.dataEvents.push_back(e);
+                    if (handler) handler->on_data(e);
+                } else if constexpr (std::is_same_v<T, ErrorEvent>) {
+                    result.error = e;
+                    if (handler) handler->on_error(e);
+                } else if constexpr (std::is_same_v<T, ResultEvent>) {
+                    result.exitCode = e.exitCode;
+                    result.resultJson = e.dataJson;
+                    if (handler) handler->on_result(e);
+                }
+            }, *ev);
+        }
+    }
+    int rc = ::pclose(fp);
+    if (rc != 0 && result.exitCode == 0) result.exitCode = rc;
+    return result;
+}
+
+// --- Helpers ---
+
+namespace {
+
+// Build args JSON for vector<string> targets.
+std::string make_targets_args(const std::vector<std::string>& targets,
+                              bool yes = false)
+{
+    std::string out = "{\"targets\":[";
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        out += "\"" + targets[i] + "\"";
+        if (i + 1 < targets.size()) out += ",";
+    }
+    out += "]";
+    if (yes) out += ",\"yes\":true";
+    out += "}";
+    return out;
+}
+
+} // namespace
+
+std::expected<std::vector<Fetcher::SearchHit>, CallError>
+Fetcher::search(std::string_view keyword) {
+    auto args = std::format("{{\"keyword\":\"{}\"}}", keyword);
+    auto r = call("search_packages", args);
+    if (!r) return std::unexpected(r.error());
+
+    std::vector<SearchHit> hits;
+    for (auto& d : r->dataEvents) {
+        if (d.dataKind != "styled_list") continue;
+        // payload: {"items":[["name","desc"], ...], "title":"..."}
+        // Crude parse: find "items": [ ... ] and extract pairs.
+        auto items = extract_object(d.payloadJson, "items");
+        // items looks like [["a","b"],["c","d"]]
+        // Walk character by character.
+        std::size_t p = 0;
+        while (p < items.size()) {
+            if (items[p] == '[') {
+                // start of a pair
+                ++p;
+                // first string
+                while (p < items.size() && items[p] != '"') ++p;
+                std::string name;
+                if (p < items.size() && items[p] == '"') {
+                    ++p;
+                    while (p < items.size() && items[p] != '"') {
+                        if (items[p] == '\\' && p + 1 < items.size()) { p += 2; continue; }
+                        name.push_back(items[p++]);
+                    }
+                    if (p < items.size()) ++p;     // skip closing "
+                }
+                // skip until next "
+                while (p < items.size() && items[p] != '"' && items[p] != ']') ++p;
+                std::string desc;
+                if (p < items.size() && items[p] == '"') {
+                    ++p;
+                    while (p < items.size() && items[p] != '"') {
+                        if (items[p] == '\\' && p + 1 < items.size()) { p += 2; continue; }
+                        desc.push_back(items[p++]);
+                    }
+                    if (p < items.size()) ++p;
+                }
+                // record
+                if (!name.empty()) {
+                    hits.push_back({"mcpp-index", std::move(name), std::move(desc)});
+                }
+                // advance past ]
+                while (p < items.size() && items[p] != ']') ++p;
+                if (p < items.size()) ++p;
+            } else {
+                ++p;
+            }
+        }
+    }
+    return hits;
+}
+
+std::expected<std::vector<Fetcher::PackageInstall>, CallError>
+Fetcher::plan_install(const std::vector<std::string>& targets) {
+    auto args = make_targets_args(targets);
+    auto r = call("plan_install", args);
+    if (!r) return std::unexpected(r.error());
+
+    std::vector<PackageInstall> plan;
+    // Look in data events for install_plan; payload has "steps":[{...}, ...]
+    for (auto& d : r->dataEvents) {
+        if (d.dataKind != "install_plan") continue;
+        auto stepsArr = extract_object(d.payloadJson, "steps");
+        // Walk objects within stepsArr (each {...}).
+        int depth = 0;
+        std::size_t start = 0;
+        for (std::size_t p = 0; p < stepsArr.size(); ++p) {
+            char c = stepsArr[p];
+            if (c == '{') {
+                if (depth == 0) start = p;
+                ++depth;
+            } else if (c == '}') {
+                --depth;
+                if (depth == 0) {
+                    auto obj = stepsArr.substr(start, p - start + 1);
+                    PackageInstall pi;
+                    pi.name    = extract_string(obj, "name");
+                    pi.version = extract_string(obj, "version");
+                    pi.action  = extract_string(obj, "action");
+                    pi.url     = extract_string(obj, "url");
+                    pi.sha256  = extract_string(obj, "sha256");
+                    if (!pi.name.empty()) plan.push_back(std::move(pi));
+                }
+            }
+        }
+    }
+    return plan;
+}
+
+std::expected<CallResult, CallError>
+Fetcher::install(const std::vector<std::string>& targets, EventHandler* handler) {
+    auto args = make_targets_args(targets, /*yes=*/true);
+    return call("install_packages", args, handler);
+}
+
+std::expected<std::vector<Fetcher::RepoInfo>, CallError>
+Fetcher::list_repos() {
+    auto r = call("list_repos", "{}");
+    if (!r) return std::unexpected(r.error());
+
+    std::vector<RepoInfo> repos;
+    for (auto& d : r->dataEvents) {
+        // payload format varies; styled_list with [name, url] pairs is common.
+        auto items = extract_object(d.payloadJson, "items");
+        // Walk pairs as in search().
+        std::size_t p = 0;
+        while (p < items.size()) {
+            if (items[p] == '[') {
+                ++p;
+                while (p < items.size() && items[p] != '"') ++p;
+                std::string name;
+                if (p < items.size() && items[p] == '"') {
+                    ++p;
+                    while (p < items.size() && items[p] != '"') {
+                        if (items[p] == '\\' && p + 1 < items.size()) { p += 2; continue; }
+                        name.push_back(items[p++]);
+                    }
+                    if (p < items.size()) ++p;
+                }
+                while (p < items.size() && items[p] != '"' && items[p] != ']') ++p;
+                std::string url;
+                if (p < items.size() && items[p] == '"') {
+                    ++p;
+                    while (p < items.size() && items[p] != '"') {
+                        if (items[p] == '\\' && p + 1 < items.size()) { p += 2; continue; }
+                        url.push_back(items[p++]);
+                    }
+                    if (p < items.size()) ++p;
+                }
+                if (!name.empty()) {
+                    repos.push_back({ std::move(name), std::move(url), false });
+                }
+                while (p < items.size() && items[p] != ']') ++p;
+                if (p < items.size()) ++p;
+            } else { ++p; }
+        }
+    }
+    return repos;
+}
+
+std::expected<void, CallError>
+Fetcher::add_repo(std::string_view name, std::string_view url) {
+    auto args = std::format("{{\"name\":\"{}\",\"url\":\"{}\"}}", name, url);
+    auto r = call("add_repo", args);
+    if (!r) return std::unexpected(r.error());
+    if (r->exitCode != 0) {
+        std::string msg = "add_repo failed";
+        if (r->error) msg += ": " + r->error->message;
+        return std::unexpected(CallError{msg});
+    }
+    return {};
+}
+
+std::expected<void, CallError>
+Fetcher::remove_repo(std::string_view name) {
+    auto args = std::format("{{\"name\":\"{}\"}}", name);
+    auto r = call("remove_repo", args);
+    if (!r) return std::unexpected(r.error());
+    if (r->exitCode != 0) {
+        std::string msg = "remove_repo failed";
+        if (r->error) msg += ": " + r->error->message;
+        return std::unexpected(CallError{msg});
+    }
+    return {};
+}
+
+std::optional<std::string>
+Fetcher::read_xpkg_lua(std::string_view package_name) const
+{
+    if (package_name.empty()) return std::nullopt;
+    char first = static_cast<char>(std::tolower(static_cast<unsigned char>(package_name.front())));
+    std::string letter(1, first);
+
+    auto data = cfg_.xlingsHome() / "data";
+    if (!std::filesystem::exists(data)) return std::nullopt;
+
+    std::error_code ec;
+    // Iterate over each cloned index dir and search for the .lua file.
+    for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
+        if (!entry.is_directory()) continue;
+        auto candidate = entry.path() / "pkgs" / letter
+                       / (std::string(package_name) + ".lua");
+        if (std::filesystem::exists(candidate)) {
+            std::ifstream is(candidate);
+            std::stringstream ss; ss << is.rdbuf();
+            return ss.str();
+        }
+    }
+    return std::nullopt;
+}
+
+// --- resolve_xpkg_path ---
+
+namespace {
+
+struct ParsedTarget {
+    std::string indexName;       // "xim", "mcpp-index", or "" (default)
+    std::string packageName;
+    std::string version;
+};
+
+ParsedTarget parse_target(std::string_view target, std::string_view defaultIndex) {
+    ParsedTarget r;
+    auto colon = target.find(':');
+    auto at    = target.find('@');
+    if (at == std::string_view::npos) {
+        // No version → caller may need to default
+        if (colon != std::string_view::npos) {
+            r.indexName = std::string(target.substr(0, colon));
+            r.packageName = std::string(target.substr(colon + 1));
+        } else {
+            r.indexName = std::string(defaultIndex);
+            r.packageName = std::string(target);
+        }
+        return r;
+    }
+    r.version = std::string(target.substr(at + 1));
+    if (colon != std::string_view::npos && colon < at) {
+        r.indexName   = std::string(target.substr(0, colon));
+        r.packageName = std::string(target.substr(colon + 1, at - colon - 1));
+    } else {
+        r.indexName   = std::string(defaultIndex);
+        r.packageName = std::string(target.substr(0, at));
+    }
+    return r;
+}
+
+} // namespace
+
+std::expected<Fetcher::XpkgPayload, CallError>
+Fetcher::resolve_xpkg_path(std::string_view target,
+                           bool autoInstall,
+                           EventHandler* handler)
+{
+    // Default to xim namespace for tools/toolchain. Modular libs use
+    // mcpp-index but consumers (cli) typically pass "<idx>:<name>@<ver>"
+    // explicitly anyway.
+    auto parsed = parse_target(target, "xim");
+    if (parsed.packageName.empty() || parsed.version.empty()) {
+        return std::unexpected(CallError{
+            std::format("invalid xpkg target '{}': expected `<name>@<version>`",
+                        target)});
+    }
+
+    auto base = cfg_.xlingsHome() / "data" / "xpkgs";
+    std::filesystem::path verdir = base
+        / std::format("{}-x-{}", parsed.indexName, parsed.packageName)
+        / parsed.version;
+
+    auto fill_payload = [&](XpkgPayload& p) {
+        p.binDir     = p.root / "bin";
+        p.libDir     = p.root / "lib";
+        p.includeDir = p.root / "include";
+        p.hasBin     = std::filesystem::exists(p.binDir);
+        p.hasLib     = std::filesystem::exists(p.libDir);
+        p.hasInclude = std::filesystem::exists(p.includeDir);
+        // sourceDir: prefer single subdir (extracted tarball), else root.
+        std::error_code ec;
+        std::vector<std::filesystem::path> subs;
+        if (std::filesystem::is_directory(p.root)) {
+            for (auto& e : std::filesystem::directory_iterator(p.root, ec)) {
+                if (e.is_directory()) subs.push_back(e.path());
+            }
+        }
+        p.sourceDir = (subs.size() == 1) ? subs.front() : p.root;
+    };
+
+    auto resolve = [&]() -> std::expected<XpkgPayload, CallError> {
+        if (!std::filesystem::exists(verdir)) {
+            return std::unexpected(CallError{
+                std::format("xpkg payload missing: {}", verdir.string())});
+        }
+        XpkgPayload payload;
+        // For xim packages (gcc, cmake, ...) the version dir IS the root.
+        // For mcpp-index packages the version dir contains an extracted
+        // tarball subdirectory; we treat the wrapper subdir as the root
+        // when its content includes bin/ or include/.
+        std::error_code ec;
+        std::vector<std::filesystem::path> subs;
+        for (auto& e : std::filesystem::directory_iterator(verdir, ec)) {
+            if (e.is_directory()) subs.push_back(e.path());
+        }
+        // If verdir directly contains bin/ or include/ → it's the root.
+        // Otherwise prefer the unique subdirectory.
+        bool verdir_is_root = std::filesystem::exists(verdir / "bin")
+                           || std::filesystem::exists(verdir / "include")
+                           || std::filesystem::exists(verdir / "lib");
+        payload.root = verdir_is_root            ? verdir
+                     : (subs.size() == 1)        ? subs.front()
+                     :                              verdir;
+        fill_payload(payload);
+        return payload;
+    };
+
+    auto p = resolve();
+    if (p) return *p;
+
+    if (!autoInstall) {
+        return std::unexpected(p.error());
+    }
+
+    // Trigger install via xlings.
+    std::vector<std::string> targets {
+        std::format("{}:{}@{}", parsed.indexName, parsed.packageName, parsed.version)
+    };
+    auto inst = install(targets, handler);
+    if (!inst) return std::unexpected(inst.error());
+    if (inst->exitCode != 0) {
+        std::string err = std::format(
+            "xlings install of '{}:{}@{}' failed (exit {})",
+            parsed.indexName, parsed.packageName, parsed.version, inst->exitCode);
+        if (inst->error) err += ": " + inst->error->message;
+        return std::unexpected(CallError{err});
+    }
+
+    return resolve();
+}
+
+std::optional<std::filesystem::path>
+Fetcher::install_path(std::string_view name, std::string_view version) const
+{
+    // M6.x: install_path now ALWAYS returns the verdir (untouched extract
+    // root). Layout discrimination is done by the caller via the xpkg.lua's
+    // `mcpp = "<glob path>"` (Form A pointer) or `mcpp = { ... }` (Form B
+    // inline) field — no more "find mcpp.toml subdir / unique subdir" magic.
+    // Caller resolves further nested paths via glob.
+    auto base = cfg_.xlingsHome() / "data" / "xpkgs";
+    if (!std::filesystem::exists(base)) return std::nullopt;
+
+    auto try_namespaced = [&](std::string_view prefix) -> std::optional<std::filesystem::path> {
+        auto verdir = base
+                    / std::format("{}-x-{}", prefix, name)
+                    / std::string(version);
+        return std::filesystem::exists(verdir)
+            ? std::optional<std::filesystem::path>{verdir}
+            : std::nullopt;
+    };
+
+    // 1. Try the configured default index first (fast path).
+    if (auto p = try_namespaced(cfg_.defaultIndex)) return *p;
+
+    // 2. Fall back: scan every xpkgs/<index>-x-<name> for a match.
+    std::error_code ec;
+    std::string suffix = std::format("-x-{}", name);
+    for (auto& entry : std::filesystem::directory_iterator(base, ec)) {
+        if (!entry.is_directory()) continue;
+        auto dirname = entry.path().filename().string();
+        if (!dirname.ends_with(suffix)) continue;
+        auto idx = dirname.substr(0, dirname.size() - suffix.size());
+        if (auto p = try_namespaced(idx)) return *p;
+    }
+    return std::nullopt;
+}
+
+} // namespace mcpp::fetcher

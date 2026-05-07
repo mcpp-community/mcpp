@@ -1,0 +1,244 @@
+name: release
+
+# Self-host release: bootstrap mcpp from xlings (xim:mcpp), build the
+# musl-static artefact via `mcpp pack --target x86_64-linux-musl -o ...`,
+# inject xlings into the produced tarball for install.sh consumers,
+# smoke-test, upload.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'tag to (re)build — leave blank to derive `v<version>` from mcpp.toml and create the tag automatically'
+        required: false
+
+jobs:
+  build-release:
+    name: build + upload (linux / x86_64)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # required to create releases + push tags
+    timeout-minutes: 60
+    env:
+      # mcpp resolves MCPP_HOME from the binary's location by default,
+      # but here we want to share toolchains with the bootstrap sandbox,
+      # so we pin to a known path.
+      MCPP_HOME: /home/runner/.mcpp
+    steps:
+      # fetch-tags so the resolve-tag step can detect existing tags
+      # without an extra round-trip; full history isn't needed.
+      - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Resolve target tag + commit
+        id: resolve
+        # Three trigger shapes converge here:
+        #   1. push: refs/tags/vX.Y.Z   → use that tag, build at its commit
+        #   2. workflow_dispatch with `tag` input set:
+        #        - tag exists on remote → check it out (rebuild scenario)
+        #        - tag doesn't exist    → use current HEAD; gh-release
+        #          creates the tag at that commit on upload
+        #   3. workflow_dispatch with no input → derive `v<version>` from
+        #      mcpp.toml's [package].version, build at current HEAD;
+        #      gh-release creates the tag.
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            VER=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
+            test -n "$VER" || { echo 'failed to read [package].version from mcpp.toml'; exit 1; }
+            TAG="v$VER"
+          fi
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"   >> "$GITHUB_OUTPUT"
+          # If the tag exists on remote AND we're on workflow_dispatch,
+          # check it out so we rebuild that exact commit. push-tag runs
+          # already start at the tag commit.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            git checkout --detach "refs/tags/$TAG"
+          fi
+          echo "Resolved tag: $TAG (commit $(git rev-parse --short HEAD))"
+
+      # Cache mcpp's sandbox: musl-gcc 15.1 + binutils + glibc + linux-headers
+      # + patchelf + ninja is ~800 MB on disk; without this every release
+      # rebuilds from cold install. Key on the workspace manifest so a
+      # toolchain change in mcpp.toml refreshes the cache.
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp
+          key: mcpp-sandbox-${{ runner.os }}-release-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          restore-keys: |
+            mcpp-sandbox-${{ runner.os }}-release-
+            mcpp-sandbox-${{ runner.os }}-
+
+      # Cache xlings + xim:mcpp install.
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-${{ runner.os }}-release-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-${{ runner.os }}-release-
+            xlings-${{ runner.os }}-
+
+      - name: Bootstrap mcpp via xlings
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          xlings install mcpp -y
+          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+
+      - name: Build + pack release artefact (musl static)
+        id: stage
+        # Build for the musl-static target, strip the produced ELF, then
+        # let `mcpp pack` assemble the tarball (binary + top-level wrapper
+        # + README + LICENSE, contents at archive root). Inject xlings
+        # afterwards so install.sh consumers get a single self-contained
+        # bundle.
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          VERSION="${{ steps.resolve.outputs.version }}"
+          TARBALL_NAME="mcpp-${VERSION}-linux-x86_64.tar.gz"
+
+          # Build first so we can strip the ELF before pack copies it.
+          "$MCPP" build --target x86_64-linux-musl
+          ARTIFACT=$(find target/x86_64-linux-musl -type f -name mcpp | head -1)
+          test -n "$ARTIFACT"
+          file "$ARTIFACT" | grep -q 'statically linked'
+          # Strip — debug info on a static ELF balloons it ~7×.
+          strip "$ARTIFACT"
+
+          # Pack with the freshly-built mcpp (not the bootstrap) so any
+          # fixes to the pack code path are exercised in the same release
+          # they ship in. MCPP_HOME is forced so the new binary uses the
+          # pinned sandbox instead of resolving relative to its own
+          # location under target/.
+          MCPP_HOME="$MCPP_HOME" "$ARTIFACT" pack \
+              --target x86_64-linux-musl \
+              --mode static \
+              -o "${TARBALL_NAME}"
+
+          # Inject xlings: extract → add bin/xlings to the wrapper dir →
+          # re-tar preserving the wrapper. The wrapper dir name matches
+          # the tarball stem (mcpp pack ties the two together).
+          TARBALL="target/dist/${TARBALL_NAME}"
+          WRAPPER="${TARBALL_NAME%.tar.gz}"
+          test -f "$TARBALL"
+          INJECT=$(mktemp -d)
+          tar -xzf "$TARBALL" -C "$INJECT"
+          cp "$XLINGS_BIN" "$INJECT/$WRAPPER/bin/xlings"
+          chmod +x "$INJECT/$WRAPPER/bin/xlings"
+          (cd "$INJECT" && tar -czf "$GITHUB_WORKSPACE/${TARBALL}" "$WRAPPER")
+          rm -rf "$INJECT"
+
+          # Stage final dist/ (tarball + sidecars) for upload.
+          mkdir -p dist
+          cp "$TARBALL" "dist/${TARBALL_NAME}"
+          (cd dist && cp "${TARBALL_NAME}" "mcpp-linux-x86_64.tar.gz")
+          (cd dist && sha256sum "${TARBALL_NAME}" "mcpp-linux-x86_64.tar.gz" > SHA256SUMS)
+          (cd dist && sha256sum "${TARBALL_NAME}" > "${TARBALL_NAME}.sha256")
+          (cd dist && sha256sum "mcpp-linux-x86_64.tar.gz" > "mcpp-linux-x86_64.tar.gz.sha256")
+
+          # Top-level install.sh — fetched by `curl | bash`.
+          cp install.sh dist/install.sh
+          chmod +x dist/install.sh
+
+          echo "tag=$TAG"           >> $GITHUB_OUTPUT
+          echo "version=$VERSION"   >> $GITHUB_OUTPUT
+          echo "tarball=${TARBALL_NAME}" >> $GITHUB_OUTPUT
+          ls -la dist/
+
+      - name: Smoke-test the bundled tarball
+        # Extract to a scratch dir and run mcpp from there with MCPP_HOME
+        # unset — proves the release artefact is genuinely self-contained.
+        run: |
+          VERSION="${{ steps.stage.outputs.version }}"
+          TARBALL_NAME="${{ steps.stage.outputs.tarball }}"
+          # Wrapper dir inside the tarball matches its stem (mcpp pack
+          # ties the two together).
+          WRAPPER="${TARBALL_NAME%.tar.gz}"
+          SMOKE=$(mktemp -d)
+          tar -xzf "dist/${TARBALL_NAME}" -C "$SMOKE"
+          ROOT="$SMOKE/$WRAPPER"
+          test -x "$ROOT/bin/mcpp"
+          test -x "$ROOT/bin/xlings"
+          test -x "$ROOT/mcpp"
+          file "$ROOT/bin/mcpp" | grep -q 'statically linked'
+          env -u MCPP_HOME "$ROOT/bin/mcpp" --version
+          env -u MCPP_HOME "$ROOT/bin/mcpp" --help | head -10
+          # Top-level wrapper reports the same version we're shipping.
+          env -u MCPP_HOME "$ROOT/mcpp" --version | grep -q "$VERSION"
+          # MCPP_HOME should auto-resolve to the extracted root.
+          out=$(env -u MCPP_HOME "$ROOT/bin/mcpp" self env)
+          echo "$out" | grep -q "MCPP_HOME *= *$ROOT"
+
+      - name: Generate source tarball + xpkg.lua via mcpp publish
+        # Use the freshly-built mcpp to produce the source tarball + xpkg
+        # descriptor for mcpp-index. The release tarball wraps its
+        # contents in a `<tarball-stem>/` directory so the extract path
+        # is $PUB/$WRAPPER/bin/mcpp.
+        run: |
+          VERSION="${{ steps.stage.outputs.version }}"
+          TARBALL_NAME="${{ steps.stage.outputs.tarball }}"
+          WRAPPER="${TARBALL_NAME%.tar.gz}"
+          PUB=$(mktemp -d)
+          tar -xzf "dist/${TARBALL_NAME}" -C "$PUB"
+          MCPP_BIN="$PUB/$WRAPPER/bin/mcpp"
+          env -u MCPP_HOME "$MCPP_BIN" publish --dry-run --allow-dirty
+          test -f "target/dist/mcpp-${VERSION}.tar.gz"
+          test -f "target/dist/mcpp.lua"
+          cp "target/dist/mcpp-${VERSION}.tar.gz" dist/
+          cp "target/dist/mcpp.lua" dist/
+          ls -la dist/
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          TAG="${{ steps.stage.outputs.tag }}"
+          VERSION="${{ steps.stage.outputs.version }}"
+          awk -v v="$VERSION" '
+            /^## \[/ {
+              if (in_section) exit
+              if ($0 ~ "\\[" v "\\]") { in_section=1; next }
+            }
+            in_section { print }
+          ' CHANGELOG.md > dist/RELEASE_NOTES.md || true
+          if [ ! -s dist/RELEASE_NOTES.md ]; then
+            echo "(no CHANGELOG entry found for $VERSION)" > dist/RELEASE_NOTES.md
+          fi
+          echo "--- RELEASE_NOTES.md ---"
+          cat dist/RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.stage.outputs.tag }}
+          name: ${{ steps.stage.outputs.tag }}
+          body_path: dist/RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/mcpp-${{ steps.stage.outputs.version }}-linux-x86_64.tar.gz
+            dist/mcpp-${{ steps.stage.outputs.version }}-linux-x86_64.tar.gz.sha256
+            dist/mcpp-linux-x86_64.tar.gz
+            dist/mcpp-linux-x86_64.tar.gz.sha256
+            dist/install.sh
+            dist/SHA256SUMS
+            dist/mcpp-${{ steps.stage.outputs.version }}.tar.gz
+            dist/mcpp.lua

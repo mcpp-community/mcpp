@@ -1,0 +1,120 @@
+name: ci
+
+# Self-host CI: mcpp builds mcpp. The bootstrap mcpp comes from
+# `xlings install mcpp` (xim:mcpp in the xlings package index), so
+# this workflow no longer depends on a previous-release tarball — the
+# chicken-and-egg now lives upstream in the xlings index.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build + test (linux x86_64, self-host)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # MCPP_HOME pinned so the cache key below restores into the
+      # same path mcpp resolves at runtime.
+      MCPP_HOME: /home/runner/.mcpp
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cache mcpp's sandbox: the toolchain (musl-gcc + binutils +
+      # glibc + linux-headers + patchelf + ninja) takes minutes to
+      # install on a cold runner. Key on the workspace manifest so a
+      # toolchain change in mcpp.toml refreshes the cache; restore-keys
+      # provide a layered fallback so near-misses still skip the slow
+      # toolchain installs.
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp
+          key: mcpp-sandbox-${{ runner.os }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          restore-keys: |
+            mcpp-sandbox-${{ runner.os }}-
+
+      # Cache xlings + its locally installed packages (xim:mcpp etc.).
+      # Saves the xlings bootstrap roundtrip + the mcpp xpkg download
+      # on hot runs.
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-${{ runner.os }}-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-${{ runner.os }}-
+
+      - name: Bootstrap mcpp via xlings
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          # xlings: install if not cached. The installer reads from
+          # /dev/tty for an interactive prompt; XLINGS_NON_INTERACTIVE=1
+          # skips that and runs `xlings self install` directly.
+          if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
+            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+          fi
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          # xim:mcpp — `xlings install` is idempotent so cache hits skip
+          # the download.
+          xlings install mcpp -y
+          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+
+      # Cache the build directory: precise key on src/ + manifest
+      # so a no-source-change run lands on a full hit. Layered
+      # restore-keys let mid-run partial hits keep BMI/dyndep state
+      # for proper incremental builds.
+      - name: Cache target/ (build artifacts + BMIs)
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: mcpp-target-${{ runner.os }}-${{ hashFiles('src/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
+          restore-keys: |
+            mcpp-target-${{ runner.os }}-
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          "$MCPP" build
+
+      - name: Unit + integration tests via `mcpp test`
+        run: |
+          "$MCPP" test
+
+      - name: E2E suite
+        run: |
+          # Point the e2e runner at the freshly-built binary, not the
+          # bootstrap one. Tests cd into mktemp -d, so $MCPP must be
+          # absolute or the relative path breaks under the temp cwd.
+          MCPP=$(realpath "$(find target -type f -name mcpp | head -1)")
+          test -x "$MCPP"
+          export MCPP
+          # Tests that set MCPP_HOME to a fresh tmpdir need an xlings
+          # to bootstrap from; surface the xlings binary installed
+          # above so they don't have to reinstall the sandbox.
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          test -x "$MCPP_VENDORED_XLINGS"
+          # Pin the global default so test 28 (which exercises the
+          # default-toolchain path) gets a deterministic GNU answer
+          # instead of whatever auto-install picks on a fresh sandbox.
+          "$MCPP" toolchain default gcc@16.1.0
+          bash tests/e2e/run_all.sh
+
+      - name: Self-host smoke (freshly-built mcpp builds itself again)
+        run: |
+          MCPP=$(realpath "$(find target -type f -name mcpp | head -1)")
+          "$MCPP" build
+          "$MCPP" test
