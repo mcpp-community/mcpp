@@ -80,6 +80,13 @@ struct BuildConfig {
     // time from --static / --target / [target.<triple>].linkage. Wired
     // through to ninja backend as the `-static` link flag.
     std::string                         linkage;
+    // M5.x C-language support. `cflags` / `cxxflags` are appended verbatim
+    // to the per-rule baseline (see `ninja_backend` cflags / cxxflags).
+    // `cStandard` controls -std= for the C compile rule (.c files).
+    // Empty cStandard → backend default ("c11" today).
+    std::vector<std::string>           cflags;
+    std::vector<std::string>           cxxflags;
+    std::string                         cStandard;
 };
 
 // `[target.<triple>]` — per-target overrides.
@@ -371,6 +378,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 
     // [build] — backend tunables
     if (auto v = doc->get_bool("build.static_stdlib")) m.buildConfig.staticStdlib = *v;
+    if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
+    if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
+    if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
 
     // [pack] — `mcpp pack` configuration. See docs/35-pack-design.md.
     if (auto v = doc->get_string("pack.default_mode")) {
@@ -1008,6 +1018,29 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');
+        }
+        else if (key == "cflags" || key == "cxxflags") {
+            // `{ "-Dfoo", "-Wall", ... }` — appended to the per-rule baseline
+            // by ninja_backend. cflags goes to the C rule (.c files), cxxflags
+            // to C++ rule (.cpp/.cc/.cxx/.cppm).
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    std::format("expected '{{' after `{} =`", key),
+                    m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            auto& target = (key == "cflags")
+                ? m.buildConfig.cflags : m.buildConfig.cxxflags;
+            while (!cur.eof() && cur.peek() != '}') {
+                auto s = cur.read_string();
+                if (!s.empty()) target.push_back(std::move(s));
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
+        else if (key == "c_standard") {
+            auto v = cur.read_string();
+            if (!v.empty()) m.buildConfig.cStandard = v;
         }
         else {
             // Unknown key — skip the value (string / bareword / table).
