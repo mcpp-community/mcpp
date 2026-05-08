@@ -144,6 +144,56 @@ TEST(ListXpkgVersions, MissingXpmReturnsEmpty) {
     EXPECT_TRUE(mcpp::manifest::list_xpkg_versions(src, "linux").empty());
 }
 
+TEST(Manifest, BuildCflagsCxxflagsAndCStandard) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+sources    = ["src/**/*.{cppm,c}"]
+cflags     = ["-Wall", "-DFOO=1"]
+cxxflags   = ["-Wextra"]
+c_standard = "c11"
+[targets.x]
+kind = "lib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.cflags.size(), 2u);
+    EXPECT_EQ(m->buildConfig.cflags[0], "-Wall");
+    EXPECT_EQ(m->buildConfig.cflags[1], "-DFOO=1");
+    ASSERT_EQ(m->buildConfig.cxxflags.size(), 1u);
+    EXPECT_EQ(m->buildConfig.cxxflags[0], "-Wextra");
+    EXPECT_EQ(m->buildConfig.cStandard, "c11");
+}
+
+TEST(SynthesizeFromXpkgLua, CflagsCxxflagsAndCStandard) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "tinyc",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources    = { "*/src/*.c" },
+        cflags     = { "-Wall", "-Dunused" },
+        cxxflags   = { "-Wextra" },
+        c_standard = "c11",
+        targets    = { ["tinyc"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.cflags.size(), 2u);
+    EXPECT_EQ(m->buildConfig.cflags[0], "-Wall");
+    EXPECT_EQ(m->buildConfig.cflags[1], "-Dunused");
+    ASSERT_EQ(m->buildConfig.cxxflags.size(), 1u);
+    EXPECT_EQ(m->buildConfig.cxxflags[0], "-Wextra");
+    EXPECT_EQ(m->buildConfig.cStandard, "c11");
+    ASSERT_EQ(m->modules.sources.size(), 1u);
+    EXPECT_EQ(m->modules.sources[0], "*/src/*.c");
+}
+
 TEST(ListXpkgVersions, IgnoresCommentedEntries) {
     constexpr auto src = R"(
 package = {

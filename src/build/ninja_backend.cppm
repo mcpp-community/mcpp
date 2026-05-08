@@ -93,6 +93,39 @@ std::filesystem::path mcpp_exe_path() {
     return "mcpp";   // fall back to PATH lookup
 }
 
+// Derive a sibling C compiler from a C++ compiler binary path. Used so .c
+// sources can be compiled by the actual C frontend (cc1), not g++ which
+// rejects implicit `void*` conversions and `restrict` etc.
+//   .../bin/g++                       → .../bin/gcc
+//   .../bin/x86_64-linux-musl-g++     → .../bin/x86_64-linux-musl-gcc
+//   .../bin/clang++                   → .../bin/clang
+//   .../bin/c++                       → .../bin/cc
+// If no sibling exists, return "gcc" so PATH lookup is the final fallback
+// (this also keeps unit tests that don't touch a real toolchain happy).
+std::filesystem::path derive_c_compiler(const std::filesystem::path& cxx) {
+    auto fname = cxx.filename().string();
+    auto try_replace = [&](std::string_view from, std::string_view to)
+        -> std::optional<std::filesystem::path>
+    {
+        auto pos = fname.rfind(from);
+        if (pos == std::string::npos) return std::nullopt;
+        std::string repl = fname;
+        repl.replace(pos, from.size(), to);
+        auto p = cxx.parent_path() / repl;
+        std::error_code ec;
+        if (std::filesystem::exists(p, ec)) return p;
+        return std::nullopt;
+    };
+    if (auto p = try_replace("clang++", "clang")) return *p;
+    if (auto p = try_replace("g++",     "gcc"))   return *p;
+    if (auto p = try_replace("c++",     "cc"))    return *p;
+    return "gcc";
+}
+
+bool is_c_source(const std::filesystem::path& src) {
+    return src.extension() == ".c";
+}
+
 } // namespace
 
 std::string emit_ninja_string(const BuildPlan& plan) {
@@ -187,9 +220,41 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // TODO(musl-gcc-upstream): remove once musl-gcc@16+ ships.
     const char* opt_flag = isMuslTc ? " -Og" : " -O2";
 
+    // M5.x: any C sources in the plan? If so we emit a `cc` variable and a
+    // separate `c_object` rule so .c files are compiled by the C frontend
+    // (gcc / clang / cc) rather than g++. .c files compiled with g++ get
+    // routed to cc1plus which rejects C-only constructs (implicit void*
+    // conversion, `restrict` keyword, etc.) — fatal for libraries like
+    // mbedtls / openssl.
+    bool need_c_rule = false;
+    for (auto& cu : plan.compileUnits) {
+        if (is_c_source(cu.source)) { need_c_rule = true; break; }
+    }
+
+    // User-supplied flag tails — appended verbatim to per-rule baselines.
+    auto join_flags = [](const std::vector<std::string>& flags) {
+        std::string out;
+        for (auto& f : flags) { out += ' '; out += f; }
+        return out;
+    };
+    std::string user_cxxflags = join_flags(plan.manifest.buildConfig.cxxflags);
+    std::string user_cflags   = join_flags(plan.manifest.buildConfig.cflags);
+    std::string c_standard = plan.manifest.buildConfig.cStandard.empty()
+        ? std::string{"c11"} : plan.manifest.buildConfig.cStandard;
+
     append(std::format("cxx       = {}\n", escape_ninja_path(plan.toolchain.binaryPath)));
-    append(std::format("cxxflags  = -std=c++23 -fmodules{}{}{}{}{}\n",
-                       opt_flag, pic_flag, sysroot_flag, b_flag, include_flags));
+    append(std::format("cxxflags  = -std=c++23 -fmodules{}{}{}{}{}{}\n",
+                       opt_flag, pic_flag, sysroot_flag, b_flag, include_flags,
+                       user_cxxflags));
+    if (need_c_rule) {
+        auto cc_path = derive_c_compiler(plan.toolchain.binaryPath);
+        append(std::format("cc        = {}\n", escape_ninja_path(cc_path)));
+        // C baseline: same opt/pic/sysroot/-B/include layout as cxxflags but
+        // no -fmodules and -std= goes to a C dialect.
+        append(std::format("cflags    = -std={}{}{}{}{}{}{}\n",
+                           c_standard, opt_flag, pic_flag, sysroot_flag,
+                           b_flag, include_flags, user_cflags));
+    }
     append(std::format("ldflags   ={}{}{}{}\n",
                        full_static, static_stdlib, sysroot_flag, b_flag));
     // `ar` for cxx_archive: prefer sandbox absolute path, fall back to PATH.
@@ -228,6 +293,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  description = OBJ $out\n");
     if (dyndep) append("  restat = 1\n");
     append("\n");
+
+    if (need_c_rule) {
+        append("rule c_object\n");
+        append("  command = $cc $cflags -c $in -o $out\n");
+        append("  description = CC $out\n");
+        if (dyndep) append("  restat = 1\n");
+        append("\n");
+    }
 
     append("rule cxx_link\n");
     append("  command = $cxx $in -o $out $ldflags\n");
@@ -275,12 +348,23 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         return s;
     };
 
+    auto pick_rule = [](const std::filesystem::path& src) -> std::string {
+        auto ext = src.extension();
+        if (ext == ".cppm") return "cxx_module";
+        if (ext == ".c")    return "c_object";
+        return "cxx_object";
+    };
+
     if (dyndep) {
         // ── Phase 1: scan edges (one .ddi per TU). ──────────────────────
-        // .ddi is placed beside the object: obj/<src>.ddi
+        // .ddi is placed beside the object: obj/<src>.ddi.
+        // Skip .c files: they have no `import`s and don't need P1689 scan;
+        // running them through cxx_scan would route them through g++ /
+        // -fmodules which is exactly what C support is here to avoid.
         std::vector<std::string> ddi_paths;
         ddi_paths.reserve(plan.compileUnits.size());
         for (auto& cu : plan.compileUnits) {
+            if (is_c_source(cu.source)) continue;
             auto ddi = (std::filesystem::path("obj")
                         / cu.source.filename()).string() + ".ddi";
             ddi_paths.push_back(ddi);
@@ -302,8 +386,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // them from the plan); the dyndep file adds implicit BMI INPUTS
         // (the requires) so ninja schedules in the right order.
         for (auto& cu : plan.compileUnits) {
-            std::string rule = (cu.source.extension() == ".cppm")
-                ? "cxx_module" : "cxx_object";
+            std::string rule = pick_rule(cu.source);
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (cu.providesModule) {
@@ -311,27 +394,33 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             }
             out_line += std::format(" : {} {}", rule,
                 escape_ninja_path(cu.source));
-            // build.ninja.dd is the dyndep file; ninja requires it as an
-            // implicit input (so it's built before the compile runs).
-            out_line += " | build.ninja.dd";
-            out_line += "\n  dyndep = build.ninja.dd\n";
+            if (rule != "c_object") {
+                // build.ninja.dd is the dyndep file; ninja requires it as an
+                // implicit input (so it's built before the compile runs).
+                out_line += " | build.ninja.dd";
+                out_line += "\n  dyndep = build.ninja.dd\n";
+            } else {
+                out_line += "\n";
+            }
             append(std::move(out_line));
         }
         append("\n");
     } else {
         // ── Static-deps mode (M3.2 and earlier). ────────────────────────
         for (auto& cu : plan.compileUnits) {
-            std::string implicit;
-            for (auto& imp : cu.imports) {
-                if (imp == "std" || imp == "std.compat") {
-                    implicit += " gcm.cache/std.gcm";
-                    continue;
-                }
-                implicit += " " + bmi_path(imp);
-            }
+            std::string rule = pick_rule(cu.source);
 
-            std::string rule = (cu.source.extension() == ".cppm")
-                ? "cxx_module" : "cxx_object";
+            std::string implicit;
+            // .c files don't `import` modules; skip BMI implicit inputs.
+            if (rule != "c_object") {
+                for (auto& imp : cu.imports) {
+                    if (imp == "std" || imp == "std.compat") {
+                        implicit += " gcm.cache/std.gcm";
+                        continue;
+                    }
+                    implicit += " " + bmi_path(imp);
+                }
+            }
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (cu.providesModule) {
