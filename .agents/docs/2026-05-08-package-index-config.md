@@ -165,16 +165,24 @@ source    = "index+mcpp@abc123def..."
 `source` 字段从 `mcpp-index+<url>` 升级为 `index+<ns>@<short-sha>`,显
 式记录是哪个索引、哪个 commit 给的版本。
 
-`mcpp build` 流程:
-1. 读 `mcpp.toml` 与 `mcpp.lock`。
-2. 对每个 `[indices.<ns>]`:
-   - `mcpp.lock` 已锁 → 直接用锁文件里的 sha,**不联网**。
-   - `mcpp.lock` 未锁 → 按 `mcpp.toml` 里的 spec 解析(rev/tag/branch),
-     拉取 / 复用本地缓存,写回 lock。
-3. 对每个 dep 按 `(namespace, name)` 路由到对应索引。
+`mcpp build` 流程(**lock 永远锁 sha**):
 
-`mcpp update` 显式忽略 lock 中的索引 sha,重新解析,然后写回新 sha——
-这是**唯一**会让索引 sha 漂移的命令。
+1. 读 `mcpp.toml` 与 `mcpp.lock`。
+2. 对每个有效索引(显式 `[indices.<ns>]` 段 **或** 内置默认 `mcpp`):
+   - `mcpp.lock` 已有 `[indices.<ns>]` 段 → 直接用锁文件里的 sha,
+     **不联网**。
+   - `mcpp.lock` 没有 → 按规格解析(`rev` / `tag` / `branch` /
+     默认分支)得到一个具体 sha,**写回 lock**;后续构建走第一条。
+3. 对每个 dep 按 `(namespace, name)` 路由到对应索引(实际打开
+     `~/.mcpp/index/<ns>/<sha>/pkgs/...`)。
+
+**`mcpp update` 与 `mcpp index update` 是唯一两条让 lock 里 sha 改变的命令**:
+- `mcpp index update [<ns>...]`:重新解析索引规格,写入新 sha。
+- `mcpp update [<pkg>]`:重新解析包版本约束(并顺带调用上一条更新所
+  涉及的索引)。
+
+其它任何命令(`build` / `run` / `test` / `pack`)**只读**索引 sha,
+绝不静默改写。
 
 ### 3.4 索引内部布局(对 mcpp-index 仓自身的要求)
 
@@ -222,19 +230,54 @@ mcpp build
 
 ## 5. 兼容性 / 迁移
 
-### 5.1 现有项目(无 `[indices]`)
+### 5.1 现有项目(无 `[indices]`)— 隐式默认 + 强制 lock pinning
 
-`mcpp.toml` 不含 `[indices]` → mcpp 自动注入内置默认:
+**核心原则:lock 文件里一定锁住具体 commit sha——即使 `mcpp.toml`
+完全没写 `[indices]`**。空 / 未指定**只表达"我没显式选源",绝不表
+达"不可复现地浮动跟随 main"**。
+
+`mcpp.toml` 没写 `[indices]` 时,mcpp 内存里注入一个内置默认:
 
 ```cpp
 m.indices["mcpp"] = IndexSpec {
     .namespace_ = "mcpp",
     .url        = "https://github.com/mcpp-community/mcpp-index.git",
-    .branch     = "",   // 等同当前行为:用仓的默认分支 + 不锁定
+    // rev / tag / branch 全空 = "我没显式选,跟着远端默认分支拿一次"
 };
 ```
 
-行为与今天**完全一致**(包括非确定性问题,但这是已知现状)。
+**首次** `mcpp build` 的行为:
+
+1. 读 `mcpp.toml`(没 `[indices]`) + `mcpp.lock`(没 `[indices.mcpp]`)。
+2. 对默认 `mcpp` namespace 的索引规格走 resolve:
+   - `rev` / `tag` / `branch` 都空 → 拉远端默认分支(`main`)的当前
+     `HEAD` sha。
+   - 立刻把这个 sha **写回 `mcpp.lock`**:
+     ```toml
+     [indices.mcpp]
+     url = "https://github.com/mcpp-community/mcpp-index.git"
+     rev = "abc123def0123456789abcdef0123456789abcd"
+     ```
+3. 之后所有 `mcpp build` 看到 `mcpp.lock` 已锁,**离线复用同一个 sha**,
+   不再联网。
+
+**升级索引的唯一入口是 `mcpp index update`**——它显式忽略 lock,重新
+解析,写入新 sha;用户必须主动触发,不会"自动漂移"。
+
+> 跟 cargo 一致:`Cargo.toml` 不写 `[source]`,但 `Cargo.lock` 必锁
+> 每个包的 registry 来源 + 精确版本 + checksum。
+
+**与今天行为的差异**:
+
+| 维度 | 今天(无 lock pinning) | 本设计(强制 lock) |
+|---|---|---|
+| 第一次 `mcpp build` | 拉 main HEAD,无记录 | 拉 main HEAD,**写入 lock** |
+| 第二次 `mcpp build` | 再次拉 main HEAD(可能已变) | **离线读 lock 的 sha**,完全复现 |
+| 切到不同机器 / CI | 可能拿到不同 commit | 锁文件保证 commit 一致 |
+| 想升级索引 | 没 API,只能 git pull 自己的索引镜像 | `mcpp index update` |
+
+**注:本节解决了今天那个"两次构建可能不一样"的非确定性问题**,
+而不是把它原样保留。
 
 ### 5.2 `mcpp.lock` schema bump
 
