@@ -27,11 +27,15 @@ jobs:
       # so we pin to a known path.
       MCPP_HOME: /home/runner/.mcpp
     steps:
-      # fetch-tags so the resolve-tag step can detect existing tags
-      # without an extra round-trip; full history isn't needed.
+      # fetch-depth: 0 instead of fetch-tags: true — actions/checkout@v4
+      # fails on push-tag triggers when both the ref'd tag and
+      # `fetch-tags: true` are set:
+      #   "Cannot fetch both <sha> and refs/tags/vX.Y.Z to refs/tags/vX.Y.Z"
+      # Full-history fetch covers the resolve-tag step's needs without
+      # that contention.
       - uses: actions/checkout@v4
         with:
-          fetch-tags: true
+          fetch-depth: 0
 
       - name: Resolve target tag + commit
         id: resolve
