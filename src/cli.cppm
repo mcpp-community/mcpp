@@ -1334,10 +1334,17 @@ prepare_build(bool print_fingerprint,
             }
         }
 
-        if (dep_manifest->package.name != name) {
+        // Name match: with namespaces in play we compare the dep's *short*
+        // name (the package's own [package].name field, which has no
+        // namespace prefix) against the expected short name from the
+        // DependencySpec. Falls back to the dep map key for old code paths
+        // that don't go through the namespaced parser.
+        const std::string& expectedShort =
+            spec.shortName.empty() ? name : spec.shortName;
+        if (dep_manifest->package.name != expectedShort) {
             return std::unexpected(std::format(
-                "dependency '{}' resolved to package '{}' (mismatch with declared name)",
-                name, dep_manifest->package.name));
+                "dependency '{}' resolved to package '{}' (mismatch with declared name '{}')",
+                name, dep_manifest->package.name, expectedShort));
         }
 
         // M5.0+M6.x: propagate dep's [build].include_dirs to the main
@@ -1762,56 +1769,77 @@ int cmd_index_update(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
 int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string spec = parsed.positional(0);
     if (spec.empty()) {
-        mcpp::ui::error("usage: mcpp add <pkg>[@<ver>]");
+        mcpp::ui::error("usage: mcpp add [<ns>:]<pkg>[@<ver>]");
         return 2;
     }
 
-    std::string name, version;
-    auto at = spec.find('@');
-    if (at == std::string::npos) {
-        name = spec;
-        version = "";
+    // Split @<version> tail.
+    std::string nameSpec, version;
+    if (auto at = spec.find('@'); at == std::string::npos) {
+        nameSpec = spec;
     } else {
-        name = spec.substr(0, at);
-        version = spec.substr(at + 1);
+        nameSpec = spec.substr(0, at);
+        version  = spec.substr(at + 1);
+    }
+
+    // Split <ns>:<name>. xpkg-style namespace separator. Bare `name` keeps
+    // the default namespace (mcpp); legacy `ns.name` is also accepted on
+    // input for ergonomics, but written out in the new subtable form.
+    std::string ns, shortName;
+    if (auto col = nameSpec.find(':'); col != std::string::npos) {
+        ns        = nameSpec.substr(0, col);
+        shortName = nameSpec.substr(col + 1);
+    } else if (auto dot = nameSpec.find('.'); dot != std::string::npos) {
+        ns        = nameSpec.substr(0, dot);
+        shortName = nameSpec.substr(dot + 1);
+    } else {
+        ns        = std::string{mcpp::manifest::kDefaultNamespace};
+        shortName = nameSpec;
+    }
+    if (shortName.empty()) {
+        mcpp::ui::error(std::format("invalid spec '{}': empty package name", spec));
+        return 2;
     }
 
     auto root = find_manifest_root(std::filesystem::current_path());
     if (!root) { mcpp::ui::error("no mcpp.toml in current dir or parents"); return 2; }
     auto manifestPath = *root / "mcpp.toml";
 
-    // If version omitted, try to fetch latest (M2: simply require explicit @version).
     if (version.empty()) {
         mcpp::ui::error(std::format(
             "package version required: `mcpp add {}@<version>` (M2 supports exact-version only)",
-            name));
+            spec));
         return 2;
     }
 
-    // Read mcpp.toml as text and append/update [dependencies]
     std::ifstream in(manifestPath);
     std::stringstream ss; ss << in.rdbuf();
     std::string text = ss.str();
 
-    // Naive insertion: find [dependencies] section, append name = "version"
-    auto pos = text.find("[dependencies]");
+    // Insertion strategy:
+    //   - Default namespace → `[dependencies] ... name = "version"` (no quotes).
+    //   - Other namespace   → `[dependencies.<ns>] ... name = "version"`,
+    //                         creating the subtable if absent.
+    const bool isDefaultNs = (ns == mcpp::manifest::kDefaultNamespace);
+    const std::string section = isDefaultNs
+        ? "[dependencies]"
+        : std::format("[dependencies.{}]", ns);
+    auto pos = text.find(section);
     if (pos == std::string::npos) {
-        // Append a new section at end
         if (!text.empty() && text.back() != '\n') text += "\n";
-        text += std::format("\n[dependencies]\n\"{}\" = \"{}\"\n", name, version);
+        text += std::format("\n{}\n{} = \"{}\"\n", section, shortName, version);
     } else {
-        // Find newline after [dependencies], insert there
         auto nl = text.find('\n', pos);
         if (nl == std::string::npos) nl = text.size();
-        std::string entry = std::format("\n\"{}\" = \"{}\"", name, version);
-        text.insert(nl, entry);
+        text.insert(nl, std::format("\n{} = \"{}\"", shortName, version));
     }
     {
         std::ofstream os(manifestPath);
         os << text;
     }
 
-    mcpp::ui::status("Adding", std::format("{} v{} to dependencies", name, version));
+    std::string display = isDefaultNs ? shortName : std::format("{}:{}", ns, shortName);
+    mcpp::ui::status("Adding", std::format("{} v{} to dependencies", display, version));
     std::println("");
     std::println("Run `mcpp build` to fetch and build with the new dependency.");
     return 0;
@@ -2266,29 +2294,112 @@ int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::stringstream ss; ss << in.rdbuf();
     std::string text = ss.str();
 
-    // Match either "name" = "..." or [dependencies.<name>] block
+    // Accept the same forms as `mcpp add`: bare `name` (default ns),
+    // `<ns>:<name>`, or legacy `<ns>.<name>`. The line we want to delete
+    // depends on which form the user wrote in mcpp.toml — try every one.
+    std::string ns, shortName;
+    if (auto col = name.find(':'); col != std::string::npos) {
+        ns = name.substr(0, col);  shortName = name.substr(col + 1);
+    } else if (auto dot = name.find('.'); dot != std::string::npos) {
+        ns = name.substr(0, dot);  shortName = name.substr(dot + 1);
+    } else {
+        ns = std::string{mcpp::manifest::kDefaultNamespace};
+        shortName = name;
+    }
+    const bool isDefaultNs = (ns == mcpp::manifest::kDefaultNamespace);
+
     bool changed = false;
-    auto needle1 = std::format("\"{}\" = \"", name);
-    if (auto p = text.find(needle1); p != std::string::npos) {
-        // delete the whole line
+    auto erase_line_at = [&](std::size_t p) {
         auto bol = text.rfind('\n', p);
         auto eol = text.find('\n', p);
         if (bol == std::string::npos) bol = 0; else ++bol;
         if (eol == std::string::npos) eol = text.size();
         text.erase(bol, (eol - bol) + (eol < text.size() ? 1 : 0));
         changed = true;
+    };
+
+    // Try bare `<short> = ` and quoted `"<short>" = ` (default-ns flat form).
+    if (isDefaultNs) {
+        for (const auto& needle : {
+            std::format("\n{} = ", shortName),
+            std::format("\n\"{}\" = ", shortName),
+        }) {
+            if (auto p = text.find(needle); p != std::string::npos) {
+                erase_line_at(p + 1);
+                break;
+            }
+        }
     }
-    auto block = std::format("[dependencies.{}]", name);
-    if (auto p = text.find(block); p != std::string::npos) {
-        // delete from this line until next [section] or EOF
-        auto bol = text.rfind('\n', p);
-        if (bol == std::string::npos) bol = 0; else ++bol;
-        auto end = text.find("\n[", p + block.size());
-        if (end == std::string::npos) end = text.size();
-        else                          end += 1;     // keep leading '\n' of next section out
-        text.erase(bol, end - bol);
-        changed = true;
+
+    // Try the namespaced subtable form `[dependencies.<ns>] <short> = `.
+    // After deleting the dep line, prune the `[dependencies.<ns>]` header
+    // if no entries remain under it.
+    if (!isDefaultNs) {
+        auto sectHeader = std::format("[dependencies.{}]", ns);
+        if (auto sp = text.find(sectHeader); sp != std::string::npos) {
+            auto bodyStart = text.find('\n', sp);
+            if (bodyStart == std::string::npos) bodyStart = text.size();
+            auto sectEnd = text.find("\n[", bodyStart);
+            if (sectEnd == std::string::npos) sectEnd = text.size();
+            std::string section = text.substr(bodyStart, sectEnd - bodyStart);
+            for (const auto& needle : {
+                std::format("\n{} = ", shortName),
+                std::format("\n\"{}\" = ", shortName),
+            }) {
+                if (auto p = section.find(needle); p != std::string::npos) {
+                    auto absStart = bodyStart + p + 1;
+                    erase_line_at(absStart);
+                    break;
+                }
+            }
+            // If the subtable now contains no `name = ...` lines, drop it.
+            auto headerPos = text.find(sectHeader);
+            if (changed && headerPos != std::string::npos) {
+                auto bodyAfter = text.find('\n', headerPos);
+                auto endAfter  = text.find("\n[", bodyAfter == std::string::npos ? headerPos : bodyAfter);
+                if (endAfter == std::string::npos) endAfter = text.size();
+                std::string body = text.substr(bodyAfter == std::string::npos ? headerPos : bodyAfter,
+                                                endAfter - (bodyAfter == std::string::npos ? headerPos : bodyAfter));
+                bool hasEntry = false;
+                std::size_t i = 0;
+                while (i < body.size()) {
+                    auto j = body.find('\n', i);
+                    auto line = body.substr(i, (j == std::string::npos ? body.size() : j) - i);
+                    auto first = line.find_first_not_of(" \t");
+                    if (first != std::string::npos
+                        && line[first] != '#' && line[first] != '\n'
+                        && line[first] != '[') {
+                        hasEntry = true; break;
+                    }
+                    if (j == std::string::npos) break;
+                    i = j + 1;
+                }
+                if (!hasEntry) {
+                    auto headerLineStart = text.rfind('\n', headerPos);
+                    if (headerLineStart == std::string::npos) headerLineStart = 0;
+                    text.erase(headerLineStart, endAfter - headerLineStart);
+                }
+            }
+        }
     }
+
+    // Legacy: `[dependencies.<name>] ...` — pre-namespace inline-spec subtable
+    // shape (e.g. when path/git deps were authored as their own subtable). We
+    // only honour this for the default-ns input form to avoid colliding with
+    // the new `[dependencies.<ns>]` namespacing semantics.
+    if (!changed && isDefaultNs) {
+        auto block = std::format("[dependencies.{}]", shortName);
+        if (auto p = text.find(block); p != std::string::npos) {
+            auto bol = text.rfind('\n', p);
+            if (bol == std::string::npos) bol = 0; else ++bol;
+            auto end = text.find("\n[", p + block.size());
+            if (end == std::string::npos) end = text.size();
+            else                          end += 1;
+            text.erase(bol, end - bol);
+            changed = true;
+        }
+    }
+
     if (!changed) {
         mcpp::ui::error(std::format("no dependency '{}' in mcpp.toml", name));
         return 1;

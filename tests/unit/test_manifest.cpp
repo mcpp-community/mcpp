@@ -194,6 +194,142 @@ package = {
     EXPECT_EQ(m->modules.sources[0], "*/src/*.c");
 }
 
+TEST(Manifest, DependenciesFlatDefaultNamespace) {
+    constexpr auto src = R"(
+[package]
+name    = "x"
+version = "0.1.0"
+[dependencies]
+gtest = "1.15.2"
+foo   = { path = "../foo" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 2u);
+    auto& g = m->dependencies.at("gtest");
+    EXPECT_EQ(g.namespace_, "mcpp");
+    EXPECT_EQ(g.shortName,  "gtest");
+    EXPECT_EQ(g.version,    "1.15.2");
+    auto& f = m->dependencies.at("foo");
+    EXPECT_EQ(f.namespace_, "mcpp");
+    EXPECT_EQ(f.shortName,  "foo");
+    EXPECT_EQ(f.path,       "../foo");
+}
+
+TEST(Manifest, DependenciesNamespacedSubtable) {
+    constexpr auto src = R"(
+[package]
+name    = "x"
+version = "0.1.0"
+
+[dependencies.mcpplibs]
+cmdline   = "0.0.2"
+templates = { version = "0.0.1" }
+
+[dependencies]
+gtest = "1.15.2"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 3u);
+
+    auto& cmdline = m->dependencies.at("mcpplibs.cmdline");
+    EXPECT_EQ(cmdline.namespace_, "mcpplibs");
+    EXPECT_EQ(cmdline.shortName,  "cmdline");
+    EXPECT_EQ(cmdline.version,    "0.0.2");
+
+    auto& tmpl = m->dependencies.at("mcpplibs.templates");
+    EXPECT_EQ(tmpl.namespace_, "mcpplibs");
+    EXPECT_EQ(tmpl.shortName,  "templates");
+    EXPECT_EQ(tmpl.version,    "0.0.1");
+
+    auto& gtest = m->dependencies.at("gtest");
+    EXPECT_EQ(gtest.namespace_, "mcpp");
+    EXPECT_EQ(gtest.shortName,  "gtest");
+    EXPECT_EQ(gtest.version,    "1.15.2");
+}
+
+TEST(Manifest, DependenciesLegacyDottedKeyStillParsed) {
+    // Pre-namespace-aware mcpp.toml: quoted dotted key.
+    constexpr auto src = R"(
+[package]
+name    = "x"
+version = "0.1.0"
+
+[dependencies]
+"mcpplibs.cmdline" = "0.0.2"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 1u);
+    auto& s = m->dependencies.at("mcpplibs.cmdline");
+    EXPECT_EQ(s.namespace_, "mcpplibs");
+    EXPECT_EQ(s.shortName,  "cmdline");
+    EXPECT_EQ(s.version,    "0.0.2");
+}
+
+TEST(Manifest, DependenciesInlineSpecCoexistsWithSubtable) {
+    // `bar = { git = "...", tag = "..." }` looks like a subtable but has
+    // only dep-spec keys → treated as inline spec under default ns.
+    // `[dependencies.acme]` is a real namespace subtable.
+    constexpr auto src = R"(
+[package]
+name    = "x"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git", tag = "v1" }
+
+[dependencies.acme]
+util = "2.0.0"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 2u);
+    auto& bar = m->dependencies.at("bar");
+    EXPECT_EQ(bar.namespace_, "mcpp");
+    EXPECT_EQ(bar.shortName,  "bar");
+    EXPECT_EQ(bar.git,        "https://example.com/bar.git");
+    EXPECT_EQ(bar.gitRev,     "v1");
+    EXPECT_EQ(bar.gitRefKind, "tag");
+
+    auto& util = m->dependencies.at("acme.util");
+    EXPECT_EQ(util.namespace_, "acme");
+    EXPECT_EQ(util.shortName,  "util");
+    EXPECT_EQ(util.version,    "2.0.0");
+}
+
+TEST(SynthesizeFromXpkgLua, DepsKeySplitNamespace) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "consumer",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/src/*.cppm" },
+        deps    = {
+            ["mbedtls"]          = "3.6.1",
+            ["mcpplibs.cmdline"] = "0.0.2",
+        },
+        targets = { ["consumer"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "consumer", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 2u);
+
+    auto& a = m->dependencies.at("mbedtls");
+    EXPECT_EQ(a.namespace_, "mcpp");
+    EXPECT_EQ(a.shortName,  "mbedtls");
+    EXPECT_EQ(a.version,    "3.6.1");
+
+    auto& b = m->dependencies.at("mcpplibs.cmdline");
+    EXPECT_EQ(b.namespace_, "mcpplibs");
+    EXPECT_EQ(b.shortName,  "cmdline");
+    EXPECT_EQ(b.version,    "0.0.2");
+}
+
 TEST(ListXpkgVersions, IgnoresCommentedEntries) {
     constexpr auto src = R"(
 package = {
