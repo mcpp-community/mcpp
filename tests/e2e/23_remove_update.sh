@@ -12,14 +12,16 @@ cd myapp
 
 "$MCPP" add foo@1.0.0 >/dev/null
 "$MCPP" add bar@2.0.0 >/dev/null
-grep -q '"foo"' mcpp.toml || { cat mcpp.toml; echo "foo not added"; exit 1; }
-grep -q '"bar"' mcpp.toml || { cat mcpp.toml; echo "bar not added"; exit 1; }
+# Default-namespace deps land as unquoted bare keys after the namespace
+# refactor; accept either form so this stays robust across versions.
+grep -qE '^("foo"|foo) = "1\.0\.0"' mcpp.toml || { cat mcpp.toml; echo "foo not added"; exit 1; }
+grep -qE '^("bar"|bar) = "2\.0\.0"' mcpp.toml || { cat mcpp.toml; echo "bar not added"; exit 1; }
 
 # remove foo
 "$MCPP" remove foo > /tmp/_r.log 2>&1
 grep -q 'Removing'        /tmp/_r.log || { cat /tmp/_r.log; exit 1; }
-if grep -q '"foo"' mcpp.toml; then echo "foo not actually removed"; cat mcpp.toml; exit 1; fi
-grep -q '"bar"' mcpp.toml || { echo "bar accidentally removed"; cat mcpp.toml; exit 1; }
+if grep -qE '^("foo"|foo) = ' mcpp.toml; then echo "foo not actually removed"; cat mcpp.toml; exit 1; fi
+grep -qE '^("bar"|bar) = "2\.0\.0"' mcpp.toml || { echo "bar accidentally removed"; cat mcpp.toml; exit 1; }
 
 # remove non-existent → exit code 1
 rc=0

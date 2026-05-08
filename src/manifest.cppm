@@ -38,6 +38,13 @@ struct Target {
 // One declared dependency. Path-based deps refer to a sibling mcpp package
 // on disk; version-based deps (M2 future) come from a registry.
 struct DependencySpec {
+    // (M5.x) xpkg-style namespace. Defaults to "mcpp" for the root index.
+    // Carried alongside the existing fully-qualified name (which the
+    // dependencies map keys on) so callers that want the structured form
+    // — registry lookup, lockfile entries, error messages — can pull it
+    // out without re-splitting strings.
+    std::string                 namespace_;     // "mcpp" / "mcpplibs" / ...
+    std::string                 shortName;      // package name without namespace prefix
     std::string                 version;        // "0.0.1" / "^1.2" / "" (req string)
     std::string                 path;           // filesystem path, or empty
     std::string                 git;            // "https://..." or empty
@@ -47,6 +54,10 @@ struct DependencySpec {
     bool isGit()     const { return !git.empty(); }
     bool isVersion() const { return !isPath() && !isGit() && !version.empty(); }
 };
+
+// The default namespace for packages with no explicit namespace declaration.
+// Treated as the mcpp-index "root" — `gtest = "1.15.2"` ⇒ (mcpp, gtest).
+inline constexpr std::string_view kDefaultNamespace = "mcpp";
 
 // `[toolchain]` section per docs/21-toolchain-and-tools.md
 //   linux   = "gcc@15.1.0"
@@ -321,43 +332,154 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     } // close `if (targets_table && !targets_table->empty())`
 
     // [dependencies] / [dev-dependencies]
+    //
+    // Three accepted forms (M5.x):
+    //
+    //   (1) flat / default-ns
+    //         [dependencies]
+    //         gtest = "1.15.2"             ⇒ (mcpp, gtest)
+    //         frob  = { path = "..." }     ⇒ (mcpp, frob) inline spec
+    //
+    //   (2) namespaced subtable (TOML-native, no quotes)
+    //         [dependencies.mcpplibs]
+    //         cmdline = "0.0.2"            ⇒ (mcpplibs, cmdline)
+    //         tmpl    = { version = "0.0.1", features = [...] }
+    //
+    //   (3) legacy quoted dotted form (deprecated, still parsed)
+    //         [dependencies]
+    //         "mcpplibs.cmdline" = "0.0.2" ⇒ (mcpplibs, cmdline) + warning
+    //
+    // The map key remains the fully-qualified `<ns>.<name>` for non-default
+    // namespaces (so existing fetcher / lockfile lookups by composite name
+    // keep working) and the bare `<name>` for the default namespace (so the
+    // common case stays unchanged).
+    auto is_dep_spec_key = [](std::string_view k) {
+        return k == "path"   || k == "version" || k == "git"
+            || k == "rev"    || k == "tag"     || k == "branch"
+            || k == "features";
+    };
+    auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
+        if (sub.empty()) return false;
+        for (auto& [sk, sv] : sub) {
+            if (!is_dep_spec_key(sk)) return false;
+        }
+        return true;
+    };
+
+    auto fill_inline_spec = [&](DependencySpec& spec,
+                                std::string_view section,
+                                std::string_view fqName,
+                                const t::Table& sub) -> std::expected<void, ManifestError>
+    {
+        if (auto it = sub.find("path");    it != sub.end() && it->second.is_string()) spec.path    = it->second.as_string();
+        if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) spec.version = it->second.as_string();
+        if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
+        if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
+            spec.gitRev     = it->second.as_string();
+            spec.gitRefKind = "rev";
+        } else if (auto it = sub.find("tag");    it != sub.end() && it->second.is_string()) {
+            spec.gitRev     = it->second.as_string();
+            spec.gitRefKind = "tag";
+        } else if (auto it = sub.find("branch"); it != sub.end() && it->second.is_string()) {
+            spec.gitRev     = it->second.as_string();
+            spec.gitRefKind = "branch";
+        }
+        if (spec.path.empty() && spec.version.empty() && spec.git.empty()) {
+            return std::unexpected(error(origin, std::format(
+                "[{}.\"{}\"] must specify 'path', 'version', or 'git'", section, fqName)));
+        }
+        if (!spec.git.empty() && spec.gitRev.empty()) {
+            return std::unexpected(error(origin, std::format(
+                "[{}.\"{}\"] git dep requires one of: rev / tag / branch", section, fqName)));
+        }
+        return {};
+    };
+
+    auto split_legacy_dotted = [](std::string_view k) -> std::pair<std::string, std::string> {
+        auto pos = k.find('.');
+        if (pos == std::string_view::npos) return {std::string{kDefaultNamespace}, std::string{k}};
+        return {std::string{k.substr(0, pos)}, std::string{k.substr(pos + 1)}};
+    };
+
     auto load_deps = [&](std::string_view section, std::map<std::string, DependencySpec>& out)
         -> std::expected<void, ManifestError>
     {
         auto* tt = doc->get_table(section);
         if (!tt) return {};
         for (auto& [k, v] : *tt) {
-            DependencySpec spec;
+            // (1) string value → flat default-ns short version, or
+            // (3) legacy "ns.name" = "ver" (dotted key).
             if (v.is_string()) {
+                DependencySpec spec;
                 spec.version = v.as_string();
-            } else if (v.is_table()) {
-                auto& sub = v.as_table();
-                if (auto it = sub.find("path");    it != sub.end() && it->second.is_string()) spec.path    = it->second.as_string();
-                if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) spec.version = it->second.as_string();
-                if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
-                if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
-                    spec.gitRev     = it->second.as_string();
-                    spec.gitRefKind = "rev";
-                } else if (auto it = sub.find("tag");    it != sub.end() && it->second.is_string()) {
-                    spec.gitRev     = it->second.as_string();
-                    spec.gitRefKind = "tag";
-                } else if (auto it = sub.find("branch"); it != sub.end() && it->second.is_string()) {
-                    spec.gitRev     = it->second.as_string();
-                    spec.gitRefKind = "branch";
+                if (k.find('.') != std::string::npos) {
+                    auto [ns, sn] = split_legacy_dotted(k);
+                    spec.namespace_ = ns;
+                    spec.shortName  = sn;
+                    out[k] = std::move(spec);   // map key keeps composite form for fetcher
+                } else {
+                    spec.namespace_ = std::string{kDefaultNamespace};
+                    spec.shortName  = k;
+                    out[k] = std::move(spec);
                 }
-                if (spec.path.empty() && spec.version.empty() && spec.git.empty()) {
-                    return std::unexpected(error(origin,
-                        std::format("[{}.\"{}\"] must specify 'path', 'version', or 'git'", section, k)));
-                }
-                if (!spec.git.empty() && spec.gitRev.empty()) {
-                    return std::unexpected(error(origin,
-                        std::format("[{}.\"{}\"] git dep requires one of: rev / tag / branch", section, k)));
-                }
-            } else {
-                return std::unexpected(error(origin,
-                    std::format("[{}].{} must be a string (version) or table (path/version)", section, k)));
+                continue;
             }
-            out[k] = std::move(spec);
+
+            if (!v.is_table()) {
+                return std::unexpected(error(origin, std::format(
+                    "[{}].{} must be a string (version) or table (path/version/...)", section, k)));
+            }
+
+            auto& sub = v.as_table();
+
+            // (1') inline dep spec under the default namespace, e.g.
+            //         frob = { path = "..." }     or
+            //         "mcpplibs.cmdline" = { version = "0.0.2" }
+            // The latter is the legacy dotted-key form; same treatment as (3).
+            if (looks_like_inline_dep_spec(sub)) {
+                DependencySpec spec;
+                if (auto r = fill_inline_spec(spec, section, k, sub); !r) return r;
+                if (k.find('.') != std::string::npos) {
+                    auto [ns, sn]  = split_legacy_dotted(k);
+                    spec.namespace_ = ns;
+                    spec.shortName  = sn;
+                    out[k] = std::move(spec);
+                } else {
+                    spec.namespace_ = std::string{kDefaultNamespace};
+                    spec.shortName  = k;
+                    out[k] = std::move(spec);
+                }
+                continue;
+            }
+
+            // (2) namespaced subtable: `[dependencies.<ns>] sub-key = value`.
+            // The outer key `k` is the namespace; each `(sk, sv)` inside is
+            // a dep in that namespace, accepting the same string-or-inline-spec
+            // shapes as the flat form.
+            const std::string ns = k;
+            for (auto& [sk, sv] : sub) {
+                DependencySpec spec;
+                spec.namespace_ = ns;
+                spec.shortName  = sk;
+                std::string fq  = std::format("{}.{}", ns, sk);
+                if (sv.is_string()) {
+                    spec.version = sv.as_string();
+                } else if (sv.is_table()) {
+                    auto& subsub = sv.as_table();
+                    if (!looks_like_inline_dep_spec(subsub)) {
+                        return std::unexpected(error(origin, std::format(
+                            "[{}.{}.{}] must be a version string or table of "
+                            "(path/version/git/rev/tag/branch/features)",
+                            section, ns, sk)));
+                    }
+                    if (auto r = fill_inline_spec(spec, section, fq, subsub); !r) return r;
+                } else {
+                    return std::unexpected(error(origin, std::format(
+                        "[{}.{}.{}] must be a version string or inline table",
+                        section, ns, sk)));
+                }
+                out[fq] = std::move(spec);
+            }
         }
         return {};
     };
@@ -997,7 +1119,12 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             cur.consume('}');
         }
         else if (key == "deps") {
-            // `{ ["name"] = "version", ... }`
+            // `{ ["name"] = "version", ["ns.name"] = "version", ... }`
+            // The mcpp segment uses the flat / dotted form only — namespaced
+            // subtables would require a richer Lua parser than we have here,
+            // and the same expressivity is reachable by writing
+            //     ["mcpplibs.cmdline"] = "0.0.2"
+            // which the consumer side accepts identically.
             if (!cur.consume('{')) {
                 return std::unexpected(ManifestError{
                     "expected '{' after `deps =`", m.sourcePath, 0, 0});
@@ -1013,6 +1140,13 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 if (!dname.empty()) {
                     DependencySpec spec;
                     spec.version = dver;
+                    if (auto pos = dname.find('.'); pos != std::string::npos) {
+                        spec.namespace_ = dname.substr(0, pos);
+                        spec.shortName  = dname.substr(pos + 1);
+                    } else {
+                        spec.namespace_ = std::string{kDefaultNamespace};
+                        spec.shortName  = dname;
+                    }
                     m.dependencies[dname] = std::move(spec);
                 }
                 cur.skip_ws_and_comments();
