@@ -61,7 +61,7 @@ namespace mcpp::cli::detail {
 // canonical printer here so the docs/CHANGELOG examples don't drift
 // every time cmdline tweaks its formatting.
 void print_usage() {
-    std::println("mcpp v0.0.1 — modern C++23 build tool");
+    std::println("mcpp v{} — modern C++23 build tool", mcpp::toolchain::MCPP_VERSION);
     std::println("");
     std::println("Usage:");
     std::println("Project commands:");
@@ -2802,7 +2802,7 @@ int cmd_explain(std::string_view code) {
 // can share `cmd_doctor` / `cmd_env` between top-level and `mcpp self`.
 
 int cmd_self_version(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
-    std::println("mcpp 0.0.1");
+    std::println("mcpp {}", mcpp::toolchain::MCPP_VERSION);
     return 0;
 }
 
@@ -2871,7 +2871,7 @@ int run(int argc, char** argv) {
         std::string_view a = argv[1];
         if (a == "--help" || a == "-h") { print_usage(); return 0; }
         if (a == "--version" || a == "-V") {
-            std::println("mcpp 0.0.1");
+            std::println("mcpp {}", mcpp::toolchain::MCPP_VERSION);
             return 0;
         }
     }
@@ -2944,7 +2944,7 @@ int run(int argc, char** argv) {
 
     // ─── Build the top-level App ────────────────────────────────────────
     auto app = cl::App("mcpp")
-        .version("0.0.1")
+        .version(std::string{mcpp::toolchain::MCPP_VERSION})
         .description("modern C++ build tool")
         .option(cl::Option("quiet").short_name('q')
             .help("Suppress status output").global())
