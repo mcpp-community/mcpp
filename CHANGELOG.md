@@ -3,6 +3,70 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.2] — 2026-05-09
+
+第二个公开版本。新增 C 语言一等公民支持、xpkg 风格依赖命名空间,以及包管理子系统骨架重构。
+
+### 新增
+
+- ✅ **C 语言源文件支持** — `mcpp.toml` 的 `[build]` 段新增 `cflags`、
+  `cxxflags`、`c_standard` 三个字段;ninja 后端探测 `.c` 源文件后自动派
+  生兄弟 C 编译器(`g++ → gcc`、`clang++ → clang`、跨编译器前缀如
+  `x86_64-linux-musl-gcc` 同样适用),发出独立的 `c_object` 规则。
+  按文件扩展名分发:`.cppm → cxx_module`、`.c → c_object`、其它 →
+  `cxx_object`;dyndep / 模块扫描自动跳过 `.c`。**实测可直接编译
+  mbedtls 3.6.1 全部 108 个 `.c` 源文件**(SHA-256 测试向量与 FIPS
+  180-4 一致)。
+
+- ✅ **xpkg 风格依赖命名空间** — `mcpp.toml` 现在原生支持三种依赖书写形式:
+  - 平铺默认命名空间:`gtest = "1.15.2"` ⇒ `(mcpp, gtest)`,无引号
+  - TOML 子表命名空间:`[dependencies.mcpplibs] cmdline = "0.0.2"` ⇒
+    `(mcpplibs, cmdline)`,无引号
+  - 老式带点字符串(向后兼容):`"mcpplibs.cmdline" = "0.0.2"` 仍能解析
+  - CLI 同步:`mcpp add mcpplibs:cmdline@0.0.2` 接受 `<ns>:<name>`
+    冒号分隔形式,写出仍是子表写法
+  - 解析层在 `DependencySpec` 增加 `namespace_` + `shortName` 结构化
+    字段,fetcher / lockfile / cache 等下层逻辑沿用现有完全限定 key。
+
+### 改进
+
+- 🛠 **`src/pm/` 包管理子系统(7 步重构,全部完成)** — 包管理相关代码
+  从 `cli.cppm`(3510→2900 行) / `manifest.cppm` / `lockfile.cppm` /
+  `fetcher.cppm` / `publish/xpkg_emit.cppm` 中抽出,集中到独立的
+  `src/pm/` 目录下,跟 `build/` / `toolchain/` / `pack/` 平级。
+  最终 8 个内部模块:
+  - `pm/pm.cppm`(子系统门面,re-export 数据类型)
+  - `pm/dep_spec.cppm` — `DependencySpec` + `kDefaultNamespace`
+  - `pm/index_spec.cppm` — 占位,等索引仓配置实现
+  - `pm/lock_io.cppm` — `mcpp.lock` IO
+  - `pm/package_fetcher.cppm` — xlings NDJSON 客户端
+  - `pm/resolver.cppm` — `resolve_semver` + `is_version_constraint`
+  - `pm/commands.cppm` — `cmd_add` / `cmd_remove` / `cmd_update`
+  - `pm/publisher.cppm` — `emit_xpkg` + tarball / sha256 / release helpers
+
+  整个重构严格保持**零行为变更**:每一步独立 PR、独立 CI 通过、独立可
+  回滚;旧模块名(`mcpp.lockfile` / `mcpp.fetcher` / `mcpp.publish.xpkg_emit`)
+  保留薄 shim 透传到新模块,所有调用点零改动。规划与依赖图见
+  `.agents/docs/2026-05-08-pm-subsystem-architecture.md` §3-§5。
+- 📄 **新增设计文档** `.agents/docs/`:
+  - `2026-05-08-package-index-config.md` — 多源包索引仓配置 +
+    `mcpp.lock` 索引 commit 锁定 + 两层不可变性
+    (L1 publish policy + L2 lock mechanism)
+  - `2026-05-08-pm-subsystem-architecture.md` — 包管理子系统目标布局
+    与 7 步落地计划
+
+### 修复
+
+- 🐛 path 依赖的 `[package].name` 比对支持 xpkg 标准 `name` + 旧式
+  `<ns>.<name>` 复合名两种形式,兼容当前 mcpp-index 描述符尚未迁移的
+  状态。
+
+### 兼容性
+
+向后兼容。老的 `mcpp.toml` / `mcpp.lock` 不需要任何改动即可在 0.0.2 下
+继续工作。带引号的 `"ns.name"` 形式继续被解析,只是新写出的 `mcpp add`
+会用无引号的子表形式。
+
 ## [0.0.1] — 2026-05-07
 
 mcpp 首个公开发版本。
