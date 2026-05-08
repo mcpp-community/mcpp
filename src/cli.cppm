@@ -1334,14 +1334,24 @@ prepare_build(bool print_fingerprint,
             }
         }
 
-        // Name match: with namespaces in play we compare the dep's *short*
-        // name (the package's own [package].name field, which has no
-        // namespace prefix) against the expected short name from the
-        // DependencySpec. Falls back to the dep map key for old code paths
-        // that don't go through the namespaced parser.
+        // Name match: prefer the dep's *short* name (the new xpkg-style
+        // `[package].name = "<short>"` + separate `namespace` field), but
+        // fall back to the legacy composite form `<ns>.<short>` so existing
+        // index descriptors that still embed the namespace in the name
+        // string (`name = "mcpplibs.cmdline"`) keep resolving until the
+        // mcpp-index repo is migrated.
         const std::string& expectedShort =
             spec.shortName.empty() ? name : spec.shortName;
-        if (dep_manifest->package.name != expectedShort) {
+        std::string expectedComposite;
+        if (!spec.namespace_.empty()
+            && spec.namespace_ != mcpp::manifest::kDefaultNamespace) {
+            expectedComposite = std::format("{}.{}", spec.namespace_, expectedShort);
+        }
+        const bool nameOk =
+            dep_manifest->package.name == expectedShort
+            || (!expectedComposite.empty()
+                && dep_manifest->package.name == expectedComposite);
+        if (!nameOk) {
             return std::unexpected(std::format(
                 "dependency '{}' resolved to package '{}' (mismatch with declared name '{}')",
                 name, dep_manifest->package.name, expectedShort));
