@@ -5,6 +5,13 @@
 // `.agents/docs/2026-05-08-pm-subsystem-architecture.md`). Strictly
 // pulled out of `cli.cppm` with no behavior change; the same
 // signatures, the same error strings, the same platform key picking.
+//
+// Implementation note: `resolve_semver` is **not** declared inline on
+// purpose. Inlining it across modules makes every importer
+// (cli.cppm, ...) instantiate `std::_Vector_base<vr::Version>`'s
+// destructor locally. With musl-gcc 15.1's libstdc++ that triggers
+// `undefined reference to std::_Vector_base<...>::_Vector_impl::~_Vector_impl()`
+// at link time. Single-definition-point sidesteps the bug.
 
 export module mcpp.pm.resolver;
 
@@ -34,7 +41,22 @@ inline constexpr std::string_view kXpkgPlatform =
 // "constraint" so callers re-resolve via the index — bare `1.2.3` is
 // treated as exact for back-compat with pre-SemVer pinning workflows;
 // users opt into resolution by writing `^1.2.3` etc.
-inline bool is_version_constraint(std::string_view v) {
+bool is_version_constraint(std::string_view v);
+
+// Resolve a SemVer constraint against the index entry's available
+// versions. Returns the chosen exact version string, or an error
+// message. The fetcher is used to read the lua descriptor for the
+// requested package name.
+std::expected<std::string, std::string>
+resolve_semver(std::string_view name,
+               std::string_view constraint,
+               mcpp::pm::Fetcher& fetcher);
+
+} // namespace mcpp::pm
+
+namespace mcpp::pm {
+
+bool is_version_constraint(std::string_view v) {
     if (v.empty()) return true;
     if (v == "*") return true;
     char c = v.front();
@@ -43,11 +65,7 @@ inline bool is_version_constraint(std::string_view v) {
     return false;
 }
 
-// Resolve a SemVer constraint against the index entry's available
-// versions. Returns the chosen exact version string, or an error
-// message. The fetcher is used to read the lua descriptor for the
-// requested package name.
-inline std::expected<std::string, std::string>
+std::expected<std::string, std::string>
 resolve_semver(std::string_view name,
                std::string_view constraint,
                mcpp::pm::Fetcher& fetcher)
