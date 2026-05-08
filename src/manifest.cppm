@@ -4,8 +4,18 @@ export module mcpp.manifest;
 
 import std;
 import mcpp.libs.toml;
+import mcpp.pm.dep_spec;     // M5.x pm/ subsystem refactor: DependencySpec lives here
 
 export namespace mcpp::manifest {
+
+// PR-R1 transitional: the dependency data model has moved into
+// `mcpp.pm.dep_spec`. The aliases below keep `mcpp::manifest::DependencySpec`
+// and `mcpp::manifest::kDefaultNamespace` available as before so existing
+// callers (`cli.cppm`, `fetcher.cppm`, ...) compile unchanged. A later
+// refactor PR will migrate call sites to reference `mcpp::pm::` directly
+// and these aliases can disappear.
+using DependencySpec = mcpp::pm::DependencySpec;
+inline constexpr auto kDefaultNamespace = mcpp::pm::kDefaultNamespace;
 
 struct Package {
     std::string                 name;
@@ -35,29 +45,9 @@ struct Target {
     std::string                 main;           // for binary / test
 };
 
-// One declared dependency. Path-based deps refer to a sibling mcpp package
-// on disk; version-based deps (M2 future) come from a registry.
-struct DependencySpec {
-    // (M5.x) xpkg-style namespace. Defaults to "mcpp" for the root index.
-    // Carried alongside the existing fully-qualified name (which the
-    // dependencies map keys on) so callers that want the structured form
-    // — registry lookup, lockfile entries, error messages — can pull it
-    // out without re-splitting strings.
-    std::string                 namespace_;     // "mcpp" / "mcpplibs" / ...
-    std::string                 shortName;      // package name without namespace prefix
-    std::string                 version;        // "0.0.1" / "^1.2" / "" (req string)
-    std::string                 path;           // filesystem path, or empty
-    std::string                 git;            // "https://..." or empty
-    std::string                 gitRev;         // commit / tag / branch (any one)
-    std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
-    bool isPath()    const { return !path.empty(); }
-    bool isGit()     const { return !git.empty(); }
-    bool isVersion() const { return !isPath() && !isGit() && !version.empty(); }
-};
-
-// The default namespace for packages with no explicit namespace declaration.
-// Treated as the mcpp-index "root" — `gtest = "1.15.2"` ⇒ (mcpp, gtest).
-inline constexpr std::string_view kDefaultNamespace = "mcpp";
+// `DependencySpec` and `kDefaultNamespace` have moved to mcpp.pm.dep_spec.
+// Aliases at the top of this file keep `mcpp::manifest::DependencySpec`
+// resolvable for unchanged call sites.
 
 // `[toolchain]` section per docs/21-toolchain-and-tools.md
 //   linux   = "gcc@15.1.0"
