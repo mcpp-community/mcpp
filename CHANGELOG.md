@@ -5,7 +5,7 @@
 
 ## [0.0.2] — 2026-05-09
 
-第二个公开版本。新增 C 语言一等公民支持、xpkg 风格依赖命名空间,以及包管理子系统骨架重构。
+第二个公开版本。新增 C 语言一等公民支持、xpkg 风格依赖命名空间、包管理子系统骨架重构,以及 lib-root 约定。
 
 ### 新增
 
@@ -17,6 +17,14 @@
   `cxx_object`;dyndep / 模块扫描自动跳过 `.c`。**实测可直接编译
   mbedtls 3.6.1 全部 108 个 `.c` 源文件**(SHA-256 测试向量与 FIPS
   180-4 一致)。
+
+- ✅ **lib-root 约定** — 库项目(`kind = "lib"` / `shared`)的 primary
+  module interface 默认在 `src/<package-tail>.cppm`,且必须
+  `export module <full-package-name>;`(无 `:partition` 后缀);可用
+  `[lib].path = "src/foo.cppm"` 显式覆盖(cargo `lib.rs` 风格)。
+  违规组合(显式 path 但文件缺失 / 文件 export partition / module 名
+  不匹配 [package].name)报 error;约定文件缺失只报 warning,给已有
+  项目软迁移时间。纯 binary 项目跳过所有检查。
 
 - ✅ **xpkg 风格依赖命名空间** — `mcpp.toml` 现在原生支持三种依赖书写形式:
   - 平铺默认命名空间:`gtest = "1.15.2"` ⇒ `(mcpp, gtest)`,无引号
@@ -60,6 +68,13 @@
 - 🐛 path 依赖的 `[package].name` 比对支持 xpkg 标准 `name` + 旧式
   `<ns>.<name>` 复合名两种形式,兼容当前 mcpp-index 描述符尚未迁移的
   状态。
+- 🐛 module 扫描器解析 partition import(`import :foo`)时,不再把当前
+  TU 自己的 partition 后缀拼进 logical name。
+  之前 `export module M:bar;` 里的 `import :foo;` 被解析成 `M:bar:foo`
+  (没人 provide,产生 7 条 stale warning);现在正确解析为兄弟分区
+  `M:foo`。GCC dyndep 实际能分辨,所以 build 不影响,但 mcpp 自己的
+  warning 噪音消失。在 `mcpplibs/tinyhttps` 上验证(7 条 warning →
+  0 条)。
 
 ### 兼容性
 
