@@ -96,18 +96,17 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.stdBmiPath     = stdBmiPath;
     plan.stdObjectPath  = stdObjectPath;
 
-    // 1a. Detect basename collisions across packages (multi-version mangling
-    //     stages a second copy of the same dep, so `parse.cppm` and friends
-    //     can show up twice). For colliding files we namespace the object
-    //     path by the unit's owning package so `obj/<file>.o` doesn't get
-    //     two `build` rules.
+    // 1a. Detect basename collisions (both cross-package AND intra-package:
+    //     ftxui ships dom/color.cpp + screen/color.cpp, for instance).
+    //     For colliding files the object path gets a per-unit prefix
+    //     derived from `<pkg>/<parent-dir>` so collisions are impossible.
     std::map<std::string, int> basenameCount;
     for (auto idx : topoOrder) {
         basenameCount[object_filename_for(graph.units[idx].path)]++;
     }
-    auto sanitize_pkg = [](const std::string& s) {
+    auto sanitize = [](const std::string& s) {
         std::string out; out.reserve(s.size());
-        for (char c : s) out += (c == '.' ? '_' : c);
+        for (char c : s) out += (c == '.' || c == '/' ? '_' : c);
         return out;
     };
 
@@ -117,9 +116,15 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         CompileUnit cu;
         cu.source = u.path;
         const auto fname = object_filename_for(u.path);
-        if (basenameCount[fname] > 1 && !u.packageName.empty()) {
-            cu.object = std::filesystem::path("obj")
-                        / sanitize_pkg(u.packageName) / fname;
+        if (basenameCount[fname] > 1) {
+            // Use <sanitized-pkg>/<parent-dir-name> as prefix to handle
+            // both cross-package (multi-version mangling) and intra-package
+            // (e.g. ftxui dom/color.cpp vs screen/color.cpp) collisions.
+            auto parentDir = u.path.parent_path().filename().string();
+            auto prefix = u.packageName.empty()
+                ? parentDir
+                : sanitize(u.packageName) + "_" + parentDir;
+            cu.object = std::filesystem::path("obj") / prefix / fname;
         } else {
             cu.object = std::filesystem::path("obj") / fname;
         }
