@@ -32,6 +32,7 @@ import mcpp.config;
 import mcpp.fetcher;
 import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
+import mcpp.pm.mangle;     // Level 1 multi-version fallback (cross-major coexistence)
 import mcpp.ui;
 import mcpp.bmi_cache;
 import mcpp.dyndep;
@@ -1062,11 +1063,15 @@ prepare_build(bool print_fingerprint,
     };
     std::map<ResolvedKey, ResolvedRecord> resolved;
 
+    // Sentinel for "the consumer is the main package" (no dep_manifests entry).
+    constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
+
     struct WorkItem {
         std::string                          name;                // dep map key as written
         mcpp::manifest::DependencySpec       spec;                // copy (we may mutate version)
         std::string                          requestedBy;         // who asked for it
         std::string                          originalConstraint;  // spec.version BEFORE pinning (for SemVer merge)
+        std::size_t                          consumerDepIndex;    // dep_manifests slot of who pushed this child; kMainConsumer for main
     };
     std::deque<WorkItem> worklist;
 
@@ -1212,15 +1217,76 @@ prepare_build(bool print_fingerprint,
         }
     };
 
+    // Stage a dep's source files into a fresh directory, rewriting their
+    // module / import declarations against `rename`. Used by the multi-
+    // version mangling fallback (Level 1) so two cross-major copies of
+    // the same package can coexist with distinct module names.
+    //
+    // Headers (referenced via `[build].include_dirs`) are NOT staged —
+    // those keep pointing at the original install dir via absolutized
+    // include paths.
+    auto stage_with_rewrite = [](const std::filesystem::path& srcRoot,
+                                  const std::filesystem::path& dstRoot,
+                                  const mcpp::manifest::Manifest& depManifest,
+                                  const std::map<std::string, std::string>& rename)
+        -> std::expected<void, std::string>
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(dstRoot, ec);
+        if (ec) return std::unexpected(std::format(
+            "stage: cannot create '{}': {}", dstRoot.string(), ec.message()));
+
+        // Resolve the source globs against the original root, falling
+        // back to the convention default if the manifest didn't set any.
+        std::vector<std::string> globs = depManifest.modules.sources;
+        if (globs.empty()) {
+            globs = { "src/**/*.cppm", "src/**/*.cpp",
+                      "src/**/*.cc",   "src/**/*.c" };
+        }
+        std::set<std::filesystem::path> sourceFiles;
+        for (auto const& g : globs) {
+            for (auto& p : mcpp::modgraph::expand_glob(srcRoot, g)) {
+                sourceFiles.insert(p);
+            }
+        }
+        if (sourceFiles.empty()) {
+            return std::unexpected(std::format(
+                "stage: no source files found under '{}' (globs={})",
+                srcRoot.string(), globs.size()));
+        }
+
+        for (auto const& f : sourceFiles) {
+            auto rel = std::filesystem::relative(f, srcRoot, ec);
+            if (ec) return std::unexpected(std::format(
+                "stage: cannot relativize '{}': {}", f.string(), ec.message()));
+            auto dst = dstRoot / rel;
+            std::filesystem::create_directories(dst.parent_path(), ec);
+
+            std::ifstream is(f);
+            if (!is) return std::unexpected(std::format(
+                "stage: cannot read '{}'", f.string()));
+            std::stringstream buf; buf << is.rdbuf();
+            std::string content = buf.str();
+
+            std::string out = mcpp::pm::rewrite_module_decls(content, rename);
+            std::ofstream os(dst);
+            if (!os) return std::unexpected(std::format(
+                "stage: cannot write '{}'", dst.string()));
+            os << out;
+        }
+        return {};
+    };
+
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.
     const std::string mainPkgLabel = m->package.name;
     for (auto& [n, s] : m->dependencies) {
-        worklist.push_back({n, s, mainPkgLabel, s.version});
+        worklist.push_back({n, s, mainPkgLabel, s.version, kMainConsumer});
     }
     if (includeDevDeps) {
         for (auto& [n, s] : m->devDependencies) {
-            worklist.push_back({n, s, mainPkgLabel + " (dev-dep)", s.version});
+            worklist.push_back({n, s, mainPkgLabel + " (dev-dep)",
+                                s.version, kMainConsumer});
         }
     }
 
@@ -1274,21 +1340,124 @@ prepare_build(bool print_fingerprint,
                     item.originalConstraint,
                     fetcher);
                 if (!merged) {
-                    return std::unexpected(std::format(
-                        "dependency '{}{}{}' has irreconcilable versions in "
-                        "the transitive graph:\n"
-                        "  '{}' (constraint '{}') requested by '{}'\n"
-                        "  '{}' (constraint '{}') requested by '{}'\n"
-                        "SemVer merge: {}\n"
-                        "C++ modules require a single global version of each "
-                        "package; pick a version compatible with both "
-                        "consumers, or ask one upstream to widen its dep "
-                        "range. (cross-major fallback via multi-version "
-                        "mangling is planned in a follow-up PR)",
-                        key.ns, key.ns.empty() ? "" : ".", key.shortName,
-                        it->second.version, it->second.constraint, it->second.requestedBy,
-                        spec.version, item.originalConstraint, item.requestedBy,
-                        merged.error()));
+                    // Level 1 fallback: multi-version mangling. Two
+                    // versions can't be reconciled by SemVer, but they
+                    // can coexist in the same build if we mangle the
+                    // secondary copy's module name and rewrite the one
+                    // consumer that asked for it. The primary keeps its
+                    // authored module name so consumers that don't care
+                    // about the secondary see no churn.
+                    //
+                    // MVP scope (these limits surface as clear errors):
+                    //   * The conflicting consumer must be a dep, not
+                    //     the main package — main-package mangling
+                    //     would mean rewriting user-authored sources,
+                    //     which is too surprising for a fallback path.
+                    //   * The secondary version must be a leaf (no own
+                    //     transitive deps) — recursive mangling is
+                    //     deferred to a follow-up.
+                    if (item.consumerDepIndex == kMainConsumer) {
+                        return std::unexpected(std::format(
+                            "dependency '{}{}{}' has irreconcilable versions:\n"
+                            "  '{}' (constraint '{}') requested by '{}'\n"
+                            "  '{}' (constraint '{}') requested by '{}'\n"
+                            "SemVer merge: {}\n"
+                            "Multi-version mangling can't help here — the conflict "
+                            "involves the main package directly. Pin one version "
+                            "explicitly in your mcpp.toml.",
+                            key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                            it->second.version, it->second.constraint, it->second.requestedBy,
+                            spec.version, item.originalConstraint, item.requestedBy,
+                            merged.error()));
+                    }
+
+                    auto loaded = loadVersionDep(name, spec.version);
+                    if (!loaded) return std::unexpected(loaded.error());
+                    auto& [secondaryRoot, secondaryManifest] = *loaded;
+
+                    if (!secondaryManifest.dependencies.empty()) {
+                        return std::unexpected(std::format(
+                            "dependency '{}{}{}' has irreconcilable versions:\n"
+                            "  '{}' requested by '{}'\n"
+                            "  '{}' requested by '{}'\n"
+                            "Multi-version mangling fallback only handles leaf "
+                            "secondaries in 0.0.3 — but the secondary v{} declares "
+                            "its own dependencies, which would need recursive "
+                            "mangling. Pin one version explicitly, or wait for "
+                            "the recursive-mangling extension.",
+                            key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                            it->second.version, it->second.requestedBy,
+                            spec.version, item.requestedBy,
+                            spec.version));
+                    }
+
+                    // Module names in the source files use the dep's full
+                    // [package].name (e.g. "mcpplibs.cmdline"), not the
+                    // namespaced-subtable shortName. Use that for the
+                    // rename key so the rewriter actually matches what the
+                    // .cppm sources declare.
+                    const std::string moduleName = secondaryManifest.package.name;
+                    std::string mangled =
+                        mcpp::pm::mangle_name(moduleName, spec.version);
+
+                    // Stage layout:
+                    //   <root>/target/.mangled/<consumerPkg>/<dep>__<version>/    ← rewritten secondary source
+                    //   <root>/target/.mangled/<consumerPkg>/__self__/             ← rewritten consumer source
+                    auto& consumerManifest = *dep_manifests[item.consumerDepIndex];
+                    auto consumerRoot      = packages[item.consumerDepIndex + 1].root;
+                    auto stageBase         = *root / "target" / ".mangled"
+                                             / consumerManifest.package.name;
+                    auto secStage          = stageBase
+                                             / std::format("{}__{}", moduleName, spec.version);
+                    auto consumerStage     = stageBase / "__self__";
+
+                    std::map<std::string, std::string> rename{ {moduleName, mangled} };
+                    if (auto r = stage_with_rewrite(secondaryRoot, secStage,
+                                                     secondaryManifest, rename); !r)
+                        return std::unexpected(r.error());
+                    if (auto r = stage_with_rewrite(consumerRoot, consumerStage,
+                                                     consumerManifest, rename); !r)
+                        return std::unexpected(r.error());
+
+                    // Re-anchor the consumer's PackageRoot at its staged copy
+                    // so the modgraph scanner picks up the rewritten imports.
+                    packages[item.consumerDepIndex + 1].root = consumerStage;
+
+                    // Record the staged secondary as a brand-new dep entry
+                    // under its mangled name, so future encounters of this
+                    // exact (ns, mangled) pair dedup cleanly. The original
+                    // primary entry (it->second) is untouched.
+                    auto stagedManifest = secondaryManifest;
+                    // Update [package].name to the mangled module name so
+                    // the modgraph validator (which checks "exported module
+                    // must be prefixed by package name") accepts the
+                    // rewritten sources.
+                    stagedManifest.package.name = mangled;
+                    // Absolutize secondary's include_dirs against its original
+                    // install root so the staged copy still finds headers.
+                    for (auto& inc : stagedManifest.buildConfig.includeDirs) {
+                        if (inc.is_relative()) inc = secondaryRoot / inc;
+                    }
+
+                    dep_manifests.push_back(
+                        std::make_unique<mcpp::manifest::Manifest>(std::move(stagedManifest)));
+                    packages.push_back({secStage, *dep_manifests.back()});
+                    auto added = propagateIncludeDirs(secStage, *dep_manifests.back());
+
+                    ResolvedKey mangledKey{key.ns, mangled};
+                    resolved[mangledKey] = ResolvedRecord{
+                        .version           = spec.version,
+                        .constraint        = item.originalConstraint,
+                        .requestedBy       = item.requestedBy,
+                        .source            = "version",
+                        .depIndex          = dep_manifests.size() - 1,
+                        .includeDirsAdded  = std::move(added),
+                    };
+
+                    mcpp::ui::info("Mangled",
+                        std::format("{} v{} ↔ v{} → {} (cross-major fallback)",
+                            moduleName, it->second.version, spec.version, mangled));
+                    continue;
                 }
 
                 // Combine the constraint strings so future merges AND with
@@ -1365,7 +1534,8 @@ prepare_build(bool print_fingerprint,
                 for (auto& [child_name, child_spec] :
                         dep_manifests[it->second.depIndex]->dependencies) {
                     worklist.push_back({child_name, child_spec, newLabel,
-                                        child_spec.version});
+                                        child_spec.version,
+                                        it->second.depIndex});
                 }
                 continue;
             }
@@ -1514,9 +1684,10 @@ prepare_build(bool print_fingerprint,
             key.ns.empty() ? "" : ".",
             key.shortName,
             sourceKind == "version" ? spec.version : sourceKind);
+        const std::size_t selfIdx = dep_manifests.size() - 1;
         for (auto& [child_name, child_spec] : dep_manifests.back()->dependencies) {
             worklist.push_back({child_name, child_spec, thisDepLabel,
-                                child_spec.version});
+                                child_spec.version, selfIdx});
         }
     }
 

@@ -96,12 +96,33 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.stdBmiPath     = stdBmiPath;
     plan.stdObjectPath  = stdObjectPath;
 
+    // 1a. Detect basename collisions across packages (multi-version mangling
+    //     stages a second copy of the same dep, so `parse.cppm` and friends
+    //     can show up twice). For colliding files we namespace the object
+    //     path by the unit's owning package so `obj/<file>.o` doesn't get
+    //     two `build` rules.
+    std::map<std::string, int> basenameCount;
+    for (auto idx : topoOrder) {
+        basenameCount[object_filename_for(graph.units[idx].path)]++;
+    }
+    auto sanitize_pkg = [](const std::string& s) {
+        std::string out; out.reserve(s.size());
+        for (char c : s) out += (c == '.' ? '_' : c);
+        return out;
+    };
+
     // 1. Compile units in topological order
     for (auto idx : topoOrder) {
         auto& u = graph.units[idx];
         CompileUnit cu;
         cu.source = u.path;
-        cu.object = std::filesystem::path("obj") / object_filename_for(u.path);
+        const auto fname = object_filename_for(u.path);
+        if (basenameCount[fname] > 1 && !u.packageName.empty()) {
+            cu.object = std::filesystem::path("obj")
+                        / sanitize_pkg(u.packageName) / fname;
+        } else {
+            cu.object = std::filesystem::path("obj") / fname;
+        }
         if (u.provides) {
             cu.providesModule = u.provides->logicalName;
         }

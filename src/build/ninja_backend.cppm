@@ -357,7 +357,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (dyndep) {
         // ── Phase 1: scan edges (one .ddi per TU). ──────────────────────
-        // .ddi is placed beside the object: obj/<src>.ddi.
+        // .ddi is placed beside the object so multi-version mangling can
+        // namespace by package without producing two `build` rules with
+        // the same `.ddi` output (plan.cppm switches `cu.object` from
+        // `obj/<file>.o` to `obj/<pkg>/<file>.o` whenever a basename
+        // collides across packages — `.ddi` follows that placement).
         // Skip .c files: they have no `import`s and don't need P1689 scan;
         // running them through cxx_scan would route them through g++ /
         // -fmodules which is exactly what C support is here to avoid.
@@ -365,7 +369,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         ddi_paths.reserve(plan.compileUnits.size());
         for (auto& cu : plan.compileUnits) {
             if (is_c_source(cu.source)) continue;
-            auto ddi = (std::filesystem::path("obj")
+            auto ddi = (cu.object.parent_path()
                         / cu.source.filename()).string() + ".ddi";
             ddi_paths.push_back(ddi);
             append(std::format("build {} : cxx_scan {}\n",

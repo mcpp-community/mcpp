@@ -5,8 +5,8 @@
 
 ## [Unreleased] — 0.0.3
 
-依赖解析体系的两步演进:0.0.2 release tag 之后合入的 transitive walker
-之上,这一版叠加 SemVer 合并;后续 PR 还会补上多版本 mangling 兜底。
+依赖解析体系的三步演进:0.0.2 release tag 之后合入 transitive walker,
+这一版补齐 SemVer 合并(Level 2)+ 多版本 mangling 兜底(Level 1)。
 
 ### 新增
 
@@ -20,10 +20,28 @@
   以不同版本约束声明时,resolver 会把两条原始约束 AND 合并(裸版本号视作
   `=X.Y.Z`),向 index 重新查询,选出同时满足两侧的具体版本。若该版本与
   此前已 pin 的不一致,旧的 manifest 与 `[build].include_dirs` 会被原地
-  替换为新版本的内容,孩子依赖也按新 manifest 重新入队。完全无重叠
-  (典型如 `=0.0.1` 对 `=0.0.2`)仍硬报错并提示后续 PR 会用多版本
-  mangling 兜底。新增 e2e `32_semver_merge.sh` 覆盖兼容合并 + 不可调和
-  两条主链路。
+  替换为新版本的内容,孩子依赖也按新 manifest 重新入队。新增 e2e
+  `32_semver_merge.sh` 覆盖兼容合并 + 不可调和两条主链路。
+
+- ✅ **多版本 mangling 兜底(Level 1)** —— SemVer 合并失败时(典型如
+  `=0.0.1` ⨯ `=0.0.2` 这种无重叠的 pin),resolver 不再硬报错,而是把次要
+  版本的源码 stage 到 `target/.mangled/<consumer>/...` 下,通过正则改写
+  `(export )?module X;` / `(export )?module X:Y;` / `(export )?import X;`
+  把模块名替换成 `<X>__v<M>_<m>_<p>__mcpp` 形式,让两个 BMI 在同一构建图
+  里以不同模块名共存(C++23 module attachment 帮我们做 ABI 隔离,无需额外
+  namespace mangle)。直接 consumer 的源码也一并 stage + 改写,让它的
+  `import` 指向 mangled 副本。MVP 范围:仅处理 dep-as-consumer + 叶子
+  secondary 两种情形,主包做 consumer 或 secondary 还有自己的 transitive
+  deps 时报清晰错误并建议显式 pin。新增 `src/pm/mangle.cppm`(纯改写
+  helper + 11 个单元测试)和 e2e `33_multi_version_mangling.sh`。
+
+### 改进
+
+- 🔧 **构建后端按需为多包做 obj 路径命名空间** —— `plan.cppm` 检测到
+  跨包同名源文件(多版本 mangling 后两个 `parse.cppm` 同时存在的常见情形)
+  时,自动把 `obj/<file>.o` 改为 `obj/<sanitized-pkg>/<file>.o`,`.ddi`
+  扫描产物随之放在 object 同目录下。无碰撞时仍是原始 `obj/<file>.o`
+  布局,不影响现有缓存命中。
 
 第二个公开版本。新增 C 语言一等公民支持、xpkg 风格依赖命名空间、包管理子系统骨架重构,以及 lib-root 约定。
 
