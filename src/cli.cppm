@@ -1041,8 +1041,10 @@ prepare_build(bool print_fingerprint,
     std::vector<mcpp::modgraph::PackageRoot> packages;
     packages.push_back({*root, *m});
 
-    // Use a deque + stable storage for dep manifests (vector of unique_ptr
-    // so PackageRoot's reference stays valid as new ones are appended).
+    // dep_manifests is kept around purely so the build plan can move it
+    // out at the end (PackageRoot stores a `Manifest` by value, so the
+    // unique_ptr is not load-bearing for liveness — it's a leftover from
+    // an earlier design and harmless).
     std::vector<std::unique_ptr<mcpp::manifest::Manifest>> dep_manifests;
 
     struct ResolvedKey {
@@ -1051,16 +1053,20 @@ prepare_build(bool print_fingerprint,
         auto operator<=>(const ResolvedKey&) const = default;
     };
     struct ResolvedRecord {
-        std::string version;          // empty for path/git deps
-        std::string requestedBy;      // human-readable for error messages
-        std::string source;            // "version" | "path" | "git" — for type-clash check
+        std::string version;            // empty for path/git deps
+        std::string constraint;         // AND-combined original constraints (version src only)
+        std::string requestedBy;        // human-readable for error messages
+        std::string source;             // "version" | "path" | "git" — for type-clash check
+        std::size_t depIndex = 0;       // index into dep_manifests/packages-1 (for in-place re-fetch)
+        std::vector<std::filesystem::path> includeDirsAdded;  // entries appended to m->buildConfig.includeDirs by this dep
     };
     std::map<ResolvedKey, ResolvedRecord> resolved;
 
     struct WorkItem {
-        std::string                          name;        // dep map key as written
-        mcpp::manifest::DependencySpec       spec;        // copy (we may mutate version)
-        std::string                          requestedBy; // who asked for it
+        std::string                          name;                // dep map key as written
+        mcpp::manifest::DependencySpec       spec;                // copy (we may mutate version)
+        std::string                          requestedBy;         // who asked for it
+        std::string                          originalConstraint;  // spec.version BEFORE pinning (for SemVer merge)
     };
     std::deque<WorkItem> worklist;
 
@@ -1084,15 +1090,137 @@ prepare_build(bool print_fingerprint,
         return {};
     };
 
+    // Acquire a version-source dep at a specific pinned version. Used both
+    // by the first-time walk and by the SemVer merger when a re-fetch at a
+    // different version is needed. Returns the dep's effective root (where
+    // mcpp.toml lives) and a fully loaded manifest.
+    using LoadedDep = std::pair<std::filesystem::path, mcpp::manifest::Manifest>;
+    auto loadVersionDep = [&](const std::string& depName,
+                              const std::string& version)
+        -> std::expected<LoadedDep, std::string>
+    {
+        auto cfg = get_cfg();
+        if (!cfg) return std::unexpected(cfg.error());
+        mcpp::fetcher::Fetcher fetcher(**cfg);
+
+        auto installed = fetcher.install_path(depName, version);
+        if (!installed) {
+            mcpp::ui::info("Downloading", std::format("{} v{}", depName, version));
+            std::vector<std::string> targets{ std::format("{}@{}", depName, version) };
+            CliInstallProgress progress;
+            auto r = fetcher.install(targets, &progress);
+            if (!r) return std::unexpected(std::format(
+                "fetch '{}@{}': {}", depName, version, r.error().message));
+            if (r->exitCode != 0) {
+                std::string err = std::format(
+                    "fetch '{}@{}' failed (exit {})", depName, version, r->exitCode);
+                if (r->error) err += ": " + r->error->message;
+                return std::unexpected(err);
+            }
+            installed = fetcher.install_path(depName, version);
+            if (!installed) return std::unexpected(std::format(
+                "package '{}@{}' install path missing after fetch", depName, version));
+        }
+        std::filesystem::path verRoot = *installed;
+
+        auto luaContent = fetcher.read_xpkg_lua(depName);
+        if (!luaContent) return std::unexpected(std::format(
+            "dependency '{}': index entry not found in local clone", depName));
+        auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
+
+        std::optional<mcpp::manifest::Manifest> manifest;
+        std::filesystem::path effRoot = verRoot;
+        auto loadFrom = [&](const std::filesystem::path& mcppToml)
+            -> std::expected<void, std::string>
+        {
+            auto dm = mcpp::manifest::load(mcppToml);
+            if (!dm) return std::unexpected(std::format(
+                "dependency '{}' (at '{}'): {}",
+                depName, mcppToml.string(), dm.error().format()));
+            manifest = std::move(*dm);
+            effRoot  = mcppToml.parent_path();
+            return {};
+        };
+        if (field.kind == mcpp::manifest::McppField::StringPath) {
+            auto matches = mcpp::modgraph::expand_glob(verRoot, field.value);
+            if (matches.empty()) return std::unexpected(std::format(
+                "dependency '{}': mcpp pointer '{}' did not match any "
+                "file under '{}'", depName, field.value, verRoot.string()));
+            if (matches.size() > 1) return std::unexpected(std::format(
+                "dependency '{}': mcpp pointer '{}' matched {} files "
+                "(expected exactly one)", depName, field.value, matches.size()));
+            if (auto r = loadFrom(matches.front()); !r) return std::unexpected(r.error());
+        } else if (field.kind == mcpp::manifest::McppField::TableBody) {
+            auto dm = mcpp::manifest::synthesize_from_xpkg_lua(*luaContent, depName, version);
+            if (!dm) return std::unexpected(std::format(
+                "dependency '{}': {}", depName, dm.error().format()));
+            manifest = std::move(*dm);
+            // effRoot stays as verRoot
+        } else {
+            std::vector<std::filesystem::path> matches;
+            for (auto pat : { "mcpp.toml", "*/mcpp.toml" }) {
+                matches = mcpp::modgraph::expand_glob(verRoot, pat);
+                if (!matches.empty()) break;
+            }
+            if (matches.empty()) return std::unexpected(std::format(
+                "dependency '{}': index entry has no `mcpp = ...` field, "
+                "and no mcpp.toml was found at <verdir>/mcpp.toml or "
+                "<verdir>/*/mcpp.toml — add an explicit `mcpp = \"<path>\"` "
+                "or `mcpp = {{ ... }}` block to the .lua descriptor.",
+                depName));
+            if (matches.size() > 1) return std::unexpected(std::format(
+                "dependency '{}': default mcpp.toml lookup matched {} "
+                "files; pin one with explicit `mcpp = \"<path>\"`.",
+                depName, matches.size()));
+            if (auto r = loadFrom(matches.front()); !r) return std::unexpected(r.error());
+        }
+        return std::pair{effRoot, std::move(*manifest)};
+    };
+
+    // Append a dep's [build].include_dirs onto the main manifest's, glob-
+    // expanded against the dep's root. Returns the absolute paths actually
+    // appended so the caller can later evict them on a SemVer-merge re-fetch.
+    auto propagateIncludeDirs = [&](const std::filesystem::path& depRoot,
+                                    const mcpp::manifest::Manifest& depManifest)
+        -> std::vector<std::filesystem::path>
+    {
+        std::vector<std::filesystem::path> added;
+        for (auto& inc : depManifest.buildConfig.includeDirs) {
+            if (inc.is_absolute()) {
+                m->buildConfig.includeDirs.push_back(inc);
+                added.push_back(inc);
+                continue;
+            }
+            auto matches = mcpp::modgraph::expand_dir_glob(depRoot, inc.generic_string());
+            if (matches.empty()) continue;
+            for (auto& d : matches) {
+                m->buildConfig.includeDirs.push_back(d);
+                added.push_back(d);
+            }
+        }
+        return added;
+    };
+
+    // Drop earlier include_dirs that came from a now-superseded dep version.
+    // Erases by value match — safe because the outer code only ever appends,
+    // and on re-fetch we re-record the new entries afterwards.
+    auto removeIncludeDirs = [&](const std::vector<std::filesystem::path>& paths) {
+        auto& dirs = m->buildConfig.includeDirs;
+        for (auto& p : paths) {
+            auto pos = std::find(dirs.begin(), dirs.end(), p);
+            if (pos != dirs.end()) dirs.erase(pos);
+        }
+    };
+
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.
     const std::string mainPkgLabel = m->package.name;
     for (auto& [n, s] : m->dependencies) {
-        worklist.push_back({n, s, mainPkgLabel});
+        worklist.push_back({n, s, mainPkgLabel, s.version});
     }
     if (includeDevDeps) {
         for (auto& [n, s] : m->devDependencies) {
-            worklist.push_back({n, s, mainPkgLabel + " (dev-dep)"});
+            worklist.push_back({n, s, mainPkgLabel + " (dev-dep)", s.version});
         }
     }
 
@@ -1130,17 +1258,116 @@ prepare_build(bool print_fingerprint,
                     sourceKind, item.requestedBy));
             }
             if (sourceKind == "version" && it->second.version != spec.version) {
-                return std::unexpected(std::format(
-                    "dependency '{}{}{}' has conflicting versions in the "
-                    "transitive graph:\n"
-                    "  '{}' requested by '{}'\n"
-                    "  '{}' requested by '{}'\n"
-                    "C++ modules require a single global version of each "
-                    "package. Pick a version compatible with both consumers, "
-                    "or ask one upstream to widen its dep range.",
-                    key.ns, key.ns.empty() ? "" : ".", key.shortName,
-                    it->second.version, it->second.requestedBy,
-                    spec.version, item.requestedBy));
+                // SemVer merge attempt: AND-combine the two original
+                // constraint strings and ask the index for a single version
+                // satisfying both. Same-major caret/tilde/exact pairs that
+                // overlap converge here; cross-major or otherwise
+                // unsatisfiable pairs fall through to a hard error (a future
+                // PR adds multi-version mangling as a Level-1 fallback).
+                auto cfg = get_cfg();
+                if (!cfg) return std::unexpected(cfg.error());
+                mcpp::fetcher::Fetcher fetcher(**cfg);
+
+                auto merged = mcpp::pm::try_merge_semver(
+                    name,
+                    it->second.constraint,
+                    item.originalConstraint,
+                    fetcher);
+                if (!merged) {
+                    return std::unexpected(std::format(
+                        "dependency '{}{}{}' has irreconcilable versions in "
+                        "the transitive graph:\n"
+                        "  '{}' (constraint '{}') requested by '{}'\n"
+                        "  '{}' (constraint '{}') requested by '{}'\n"
+                        "SemVer merge: {}\n"
+                        "C++ modules require a single global version of each "
+                        "package; pick a version compatible with both "
+                        "consumers, or ask one upstream to widen its dep "
+                        "range. (cross-major fallback via multi-version "
+                        "mangling is planned in a follow-up PR)",
+                        key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                        it->second.version, it->second.constraint, it->second.requestedBy,
+                        spec.version, item.originalConstraint, item.requestedBy,
+                        merged.error()));
+                }
+
+                // Combine the constraint strings so future merges AND with
+                // both. Empty originalConstraint means "any" — use "*".
+                const std::string& addCstr =
+                    item.originalConstraint.empty() ? std::string("*")
+                                                    : item.originalConstraint;
+                if (it->second.constraint.empty())
+                    it->second.constraint = addCstr;
+                else
+                    it->second.constraint += "," + addCstr;
+
+                if (*merged == it->second.version) {
+                    // The existing pin already satisfies the new constraint —
+                    // no re-fetch needed; just record this consumer.
+                    continue;
+                }
+
+                // Merged version differs from the previously-pinned one.
+                // Re-fetch the dep at the merged version and replace the
+                // earlier slot in dep_manifests / packages so the build plan
+                // sees only one version. Old include_dir entries are evicted
+                // and the new manifest's entries are appended.
+                mcpp::ui::info("Merged",
+                    std::format("{}{}{} {} ⨯ {} → v{}",
+                        key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                        it->second.version, spec.version, *merged));
+                auto reloaded = loadVersionDep(name, *merged);
+                if (!reloaded) return std::unexpected(reloaded.error());
+                auto& [newRoot, newManifest] = *reloaded;
+
+                // Name match against the re-loaded manifest.
+                {
+                    const std::string& expectedShort =
+                        spec.shortName.empty() ? name : spec.shortName;
+                    std::string expectedComposite;
+                    if (!spec.namespace_.empty()
+                        && spec.namespace_ != mcpp::manifest::kDefaultNamespace) {
+                        expectedComposite = std::format("{}.{}",
+                            spec.namespace_, expectedShort);
+                    }
+                    const bool nameOk =
+                        newManifest.package.name == expectedShort
+                        || (!expectedComposite.empty()
+                            && newManifest.package.name == expectedComposite);
+                    if (!nameOk) {
+                        return std::unexpected(std::format(
+                            "dependency '{}' (merged to v{}) resolved to "
+                            "package '{}' (mismatch with declared name '{}')",
+                            name, *merged, newManifest.package.name,
+                            expectedShort));
+                    }
+                }
+
+                removeIncludeDirs(it->second.includeDirsAdded);
+                auto added = propagateIncludeDirs(newRoot, newManifest);
+
+                // Replace in dep_manifests + packages. depIndex is the slot
+                // in dep_manifests; packages = [main, dep_0, dep_1, …], so
+                // packages[depIndex+1] is the same dep.
+                *dep_manifests[it->second.depIndex] = std::move(newManifest);
+                packages[it->second.depIndex + 1] =
+                    {newRoot, *dep_manifests[it->second.depIndex]};
+
+                it->second.version            = *merged;
+                it->second.includeDirsAdded   = std::move(added);
+
+                // Walk the *new* manifest's deps so their constraints feed
+                // future merges. Already-resolved children dedup via the
+                // resolved map.
+                const std::string newLabel = std::format("{}{}{}@{}",
+                    key.ns, key.ns.empty() ? "" : ".",
+                    key.shortName, *merged);
+                for (auto& [child_name, child_spec] :
+                        dep_manifests[it->second.depIndex]->dependencies) {
+                    worklist.push_back({child_name, child_spec, newLabel,
+                                        child_spec.version});
+                }
+                continue;
             }
             // Same key, same version (or compatible path/git) — already
             // processed; skip.
@@ -1202,45 +1429,15 @@ prepare_build(bool print_fingerprint,
                 }
             }
             dep_root = gitRoot;
-        } else {
-            // Version-based: ensure installed via xlings, then point at install dir.
-            auto cfg = get_cfg();
-            if (!cfg) return std::unexpected(cfg.error());
-            mcpp::fetcher::Fetcher fetcher(**cfg);
-
-            auto installed = fetcher.install_path(name, spec.version);
-            if (!installed) {
-                mcpp::ui::info("Downloading",
-                    std::format("{} v{}", name, spec.version));
-                std::vector<std::string> targets {
-                    std::format("{}@{}", name, spec.version)
-                };
-                CliInstallProgress progress;
-                auto r = fetcher.install(targets, &progress);
-                if (!r) return std::unexpected(std::format(
-                    "fetch '{}@{}': {}", name, spec.version, r.error().message));
-                if (r->exitCode != 0) {
-                    std::string err = std::format(
-                        "fetch '{}@{}' failed (exit {})", name, spec.version, r->exitCode);
-                    if (r->error) err += ": " + r->error->message;
-                    return std::unexpected(err);
-                }
-                installed = fetcher.install_path(name, spec.version);
-                if (!installed) return std::unexpected(std::format(
-                    "package '{}@{}' install path missing after fetch", name, spec.version));
-            }
-            dep_root = *installed;
         }
+        // (version-source: dep_root + manifest are loaded together via
+        // loadVersionDep below since the index entry drives both.)
 
-        // M6.x: Manifest acquisition strategy
-        //   - Path/git dep: dep_root is the source tree. mcpp.toml must be
-        //     at its root (otherwise hard error).
-        //   - Version dep: dep_root from install_path = verdir. We consult
-        //     the xpkg.lua's `mcpp` field:
-        //         * string  → glob-resolve to mcpp.toml; load that;
-        //                     dep_root = mcpp.toml.parent_path()
-        //         * table   → synthesize Form B manifest in place;
-        //                     dep_root stays as verdir (paths are globs)
+        // Manifest acquisition.
+        //   - Path/git dep: dep_root is the source tree, mcpp.toml at root.
+        //   - Version dep: delegate to loadVersionDep — the index entry's
+        //     `mcpp` field decides where mcpp.toml lives (StringPath /
+        //     TableBody / default lookup).
         std::optional<mcpp::manifest::Manifest> dep_manifest;
         if (spec.isPath() || spec.isGit()) {
             if (!std::filesystem::exists(dep_root / "mcpp.toml")) {
@@ -1256,85 +1453,10 @@ prepare_build(bool print_fingerprint,
             }
             dep_manifest = std::move(*dm);
         } else {
-            // Version dep: drive everything off the index entry's `mcpp` field.
-            auto cfg = get_cfg();
-            if (!cfg) return std::unexpected(cfg.error());
-            mcpp::fetcher::Fetcher fetcher(**cfg);
-
-            auto luaContent = fetcher.read_xpkg_lua(name);
-            if (!luaContent) {
-                return std::unexpected(std::format(
-                    "dependency '{}': index entry not found in local clone",
-                    name));
-            }
-            auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
-
-            // Lambda: load mcpp.toml at `mcppToml`, set dep_manifest + re-anchor dep_root.
-            auto loadFromMcppToml = [&](const std::filesystem::path& mcppToml)
-                -> std::expected<void, std::string>
-            {
-                auto dm = mcpp::manifest::load(mcppToml);
-                if (!dm) {
-                    return std::unexpected(std::format(
-                        "dependency '{}' (at '{}'): {}",
-                        name, mcppToml.string(), dm.error().format()));
-                }
-                dep_manifest = std::move(*dm);
-                dep_root     = mcppToml.parent_path();
-                return {};
-            };
-
-            if (field.kind == mcpp::manifest::McppField::StringPath) {
-                // Explicit pointer (glob OK).
-                auto matches = mcpp::modgraph::expand_glob(dep_root, field.value);
-                if (matches.empty()) {
-                    return std::unexpected(std::format(
-                        "dependency '{}': mcpp pointer '{}' did not match any "
-                        "file under '{}'", name, field.value, dep_root.string()));
-                }
-                if (matches.size() > 1) {
-                    return std::unexpected(std::format(
-                        "dependency '{}': mcpp pointer '{}' matched {} files "
-                        "(expected exactly one)", name, field.value, matches.size()));
-                }
-                if (auto r = loadFromMcppToml(matches.front()); !r)
-                    return std::unexpected(r.error());
-            } else if (field.kind == mcpp::manifest::McppField::TableBody) {
-                // Form B inline — paths in the table are globs relative to verdir.
-                auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
-                    *luaContent, name, spec.version);
-                if (!dm) {
-                    return std::unexpected(std::format(
-                        "dependency '{}': {}", name, dm.error().format()));
-                }
-                dep_manifest = std::move(*dm);
-                // dep_root stays as verdir
-            } else {
-                // No `mcpp` field → try default lookup: <verdir>/mcpp.toml,
-                // then <verdir>/*/mcpp.toml. Covers most real-world layouts
-                // (bare tarball + GitHub <repo>-<tag>/ wrap).
-                std::vector<std::filesystem::path> matches;
-                for (auto pat : { "mcpp.toml", "*/mcpp.toml" }) {
-                    matches = mcpp::modgraph::expand_glob(dep_root, pat);
-                    if (!matches.empty()) break;
-                }
-                if (matches.empty()) {
-                    return std::unexpected(std::format(
-                        "dependency '{}': index entry has no `mcpp = ...` field, "
-                        "and no mcpp.toml was found at <verdir>/mcpp.toml or "
-                        "<verdir>/*/mcpp.toml — add an explicit `mcpp = \"<path>\"` "
-                        "or `mcpp = {{ ... }}` block to the .lua descriptor.",
-                        name));
-                }
-                if (matches.size() > 1) {
-                    return std::unexpected(std::format(
-                        "dependency '{}': default mcpp.toml lookup matched {} "
-                        "files; pin one with explicit `mcpp = \"<path>\"`.",
-                        name, matches.size()));
-                }
-                if (auto r = loadFromMcppToml(matches.front()); !r)
-                    return std::unexpected(r.error());
-            }
+            auto loaded = loadVersionDep(name, spec.version);
+            if (!loaded) return std::unexpected(loaded.error());
+            dep_root     = std::move(loaded->first);
+            dep_manifest = std::move(loaded->second);
         }
 
         // Name match: prefer the dep's *short* name (the new xpkg-style
@@ -1360,38 +1482,28 @@ prepare_build(bool print_fingerprint,
                 name, dep_manifest->package.name, expectedShort));
         }
 
-        // M5.0+M6.x: propagate dep's [build].include_dirs to the main
-        // manifest, glob-expanded against the dep's root. Supports plain
-        // literal paths AND globs like "*/include" (used by Form B index
-        // descriptors to handle GitHub-tarball wrap layers).
-        for (auto& inc : dep_manifest->buildConfig.includeDirs) {
-            if (inc.is_absolute()) {
-                m->buildConfig.includeDirs.push_back(inc);
-                continue;
-            }
-            auto matches = mcpp::modgraph::expand_dir_glob(dep_root, inc.generic_string());
-            if (matches.empty()) {
-                // Tolerate missing — produce nothing, no error (some libs may
-                // legitimately have no headers; consumer will catch broken
-                // includes at compile time).
-                continue;
-            }
-            for (auto& d : matches) m->buildConfig.includeDirs.push_back(d);
-        }
+        // Propagate dep's [build].include_dirs to the main manifest. The
+        // returned vector is what was actually appended (after glob
+        // expansion against dep_root) — stash it so a SemVer merge can
+        // evict these entries on a re-fetch.
+        auto includeDirsAdded = propagateIncludeDirs(dep_root, *dep_manifest);
 
-        // Record this dep as resolved so future encounters of the same
-        // (ns, name) hit the fast path (skip / conflict check).
-        resolved[key] = ResolvedRecord{
-            .version     = sourceKind == "version" ? spec.version : "",
-            .requestedBy = item.requestedBy,
-            .source      = sourceKind,
-        };
-
-        // Stable storage so the PackageRoot reference below stays valid
-        // when the worklist appends more deps and the vector grows.
+        // Move the manifest into stable storage so we can later look it up
+        // by depIndex (the SemVer merger needs to overwrite the slot).
         dep_manifests.push_back(
             std::make_unique<mcpp::manifest::Manifest>(std::move(*dep_manifest)));
         packages.push_back({dep_root, *dep_manifests.back()});
+
+        // Record this dep as resolved so future encounters of the same
+        // (ns, name) hit the fast path (skip / merge / conflict).
+        resolved[key] = ResolvedRecord{
+            .version           = sourceKind == "version" ? spec.version : "",
+            .constraint        = sourceKind == "version" ? item.originalConstraint : "",
+            .requestedBy       = item.requestedBy,
+            .source            = sourceKind,
+            .depIndex          = dep_manifests.size() - 1,
+            .includeDirsAdded  = std::move(includeDirsAdded),
+        };
 
         // Recurse: the dep's own [dependencies] become new worklist items.
         // dev-dependencies are intentionally NOT walked — those are
@@ -1403,7 +1515,8 @@ prepare_build(bool print_fingerprint,
             key.shortName,
             sourceKind == "version" ? spec.version : sourceKind);
         for (auto& [child_name, child_spec] : dep_manifests.back()->dependencies) {
-            worklist.push_back({child_name, child_spec, thisDepLabel});
+            worklist.push_back({child_name, child_spec, thisDepLabel,
+                                child_spec.version});
         }
     }
 

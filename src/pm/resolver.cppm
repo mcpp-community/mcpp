@@ -52,6 +52,19 @@ resolve_semver(std::string_view name,
                std::string_view constraint,
                mcpp::pm::Fetcher& fetcher);
 
+// Try to AND-merge two version constraints (caret / tilde / range /
+// bare-exact) and resolve to a single concrete version that satisfies
+// both. Bare exacts like "1.2.3" are treated as `=1.2.3`. Returns the
+// merged version on success, or an error message describing why the
+// two constraints cannot be reconciled (no overlap in the available
+// version inventory) — the caller can use that to surface a Level-1
+// "needs multi-version mangling" hint to the user.
+std::expected<std::string, std::string>
+try_merge_semver(std::string_view name,
+                 std::string_view a,
+                 std::string_view b,
+                 mcpp::pm::Fetcher& fetcher);
+
 } // namespace mcpp::pm
 
 namespace mcpp::pm {
@@ -115,6 +128,32 @@ resolve_semver(std::string_view name,
             name, constraint, avail));
     }
     return parsed[*idx].str();
+}
+
+std::expected<std::string, std::string>
+try_merge_semver(std::string_view name,
+                 std::string_view a,
+                 std::string_view b,
+                 mcpp::pm::Fetcher& fetcher)
+{
+    // Promote a bare-exact "1.2.3" to "=1.2.3" so the AND works under
+    // the comma-joined constraint grammar. Empty / "*" means "any" and
+    // contributes nothing to the AND.
+    auto canon = [](std::string_view v) -> std::string {
+        if (v.empty() || v == "*") return std::string{};
+        if (is_version_constraint(v)) return std::string(v);
+        return "=" + std::string(v);
+    };
+
+    std::string ca = canon(a);
+    std::string cb = canon(b);
+    std::string merged;
+    if (!ca.empty() && !cb.empty()) merged = ca + "," + cb;
+    else if (!ca.empty())            merged = ca;
+    else if (!cb.empty())            merged = cb;
+    else                              merged = "*";
+
+    return resolve_semver(name, merged, fetcher);
 }
 
 } // namespace mcpp::pm
