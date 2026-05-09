@@ -1027,54 +1027,126 @@ prepare_build(bool print_fingerprint,
             tc->label()));
     }
 
-    // Resolve dependencies: path-based, then version-based (via xlings).
-    // Both end up as PackageRoot entries fed into the same scanner pipeline.
+    // Resolve dependencies: walk the **transitive** graph from the main
+    // manifest, BFS-style. Each unique `(namespace, shortName)` is fetched
+    // once, its `[build].include_dirs` are propagated to the main
+    // manifest, and its own `[dependencies]` are queued for processing
+    // (its `[dev-dependencies]` are NOT — those are private to the dep's
+    // own test runs).
+    //
+    // Conflict policy: C++ modules require globally-unique module names
+    // and ODR-respecting symbols, so the same `(ns, name)` resolved to
+    // two different exact versions is an error — mcpp prints both
+    // requesting parents and asks the user to align them.
     std::vector<mcpp::modgraph::PackageRoot> packages;
     packages.push_back({*root, *m});
 
-    std::vector<mcpp::manifest::Manifest> dep_manifests;
-    dep_manifests.reserve(m->dependencies.size() + (includeDevDeps ? m->devDependencies.size() : 0));
+    // Use a deque + stable storage for dep manifests (vector of unique_ptr
+    // so PackageRoot's reference stays valid as new ones are appended).
+    std::vector<std::unique_ptr<mcpp::manifest::Manifest>> dep_manifests;
 
-    // Build the unified dep list: regular deps always, dev-deps only when
-    // requested (e.g. by `mcpp test`).
-    std::vector<std::pair<const std::string*, const mcpp::manifest::DependencySpec*>> allDeps;
-    for (auto& [n, s] : m->dependencies)    allDeps.emplace_back(&n, &s);
-    if (includeDevDeps) {
-        for (auto& [n, s] : m->devDependencies) allDeps.emplace_back(&n, &s);
-    }
+    struct ResolvedKey {
+        std::string ns;
+        std::string shortName;
+        auto operator<=>(const ResolvedKey&) const = default;
+    };
+    struct ResolvedRecord {
+        std::string version;          // empty for path/git deps
+        std::string requestedBy;      // human-readable for error messages
+        std::string source;            // "version" | "path" | "git" — for type-clash check
+    };
+    std::map<ResolvedKey, ResolvedRecord> resolved;
 
-    // SemVer resolution pass: turn any constraint specs (`^1.2`, `~0.0.1`, etc.)
-    // into exact versions by consulting the index. Done up-front so lockfile
-    // writing + install + install_path all see the same exact version.
-    {
-        auto resolveOne = [&](mcpp::manifest::DependencySpec& s,
+    struct WorkItem {
+        std::string                          name;        // dep map key as written
+        mcpp::manifest::DependencySpec       spec;        // copy (we may mutate version)
+        std::string                          requestedBy; // who asked for it
+    };
+    std::deque<WorkItem> worklist;
+
+    // SemVer constraint resolver, shared across the worklist so transitive
+    // deps with caret/range constraints (`^1.0`) also get pinned to a
+    // concrete version before fetch.
+    auto resolveSemver = [&](mcpp::manifest::DependencySpec& s,
                               const std::string& depName)
-            -> std::expected<void, std::string>
-        {
-            if (s.isPath() || s.isGit()) return {};
-            if (!mcpp::pm::is_version_constraint(s.version)) return {};
-            auto cfg = get_cfg();
-            if (!cfg) return std::unexpected(cfg.error());
-            mcpp::fetcher::Fetcher fetcher(**cfg);
-            auto resolved = mcpp::pm::resolve_semver(depName, s.version, fetcher);
-            if (!resolved) return std::unexpected(resolved.error());
-            mcpp::ui::info("Resolved",
-                std::format("{} {} → v{}", depName, s.version, *resolved));
-            s.version = std::move(*resolved);
-            return {};
-        };
-        for (auto& [n, s] : m->dependencies)
-            if (auto r = resolveOne(s, n); !r) return std::unexpected(r.error());
-        if (includeDevDeps) {
-            for (auto& [n, s] : m->devDependencies)
-                if (auto r = resolveOne(s, n); !r) return std::unexpected(r.error());
+        -> std::expected<void, std::string>
+    {
+        if (s.isPath() || s.isGit()) return {};
+        if (!mcpp::pm::is_version_constraint(s.version)) return {};
+        auto cfg = get_cfg();
+        if (!cfg) return std::unexpected(cfg.error());
+        mcpp::fetcher::Fetcher fetcher(**cfg);
+        auto resolved = mcpp::pm::resolve_semver(depName, s.version, fetcher);
+        if (!resolved) return std::unexpected(resolved.error());
+        mcpp::ui::info("Resolved",
+            std::format("{} {} → v{}", depName, s.version, *resolved));
+        s.version = std::move(*resolved);
+        return {};
+    };
+
+    // Seed the worklist from the main manifest. Dev-deps only when the
+    // caller wants them; they're never propagated transitively.
+    const std::string mainPkgLabel = m->package.name;
+    for (auto& [n, s] : m->dependencies) {
+        worklist.push_back({n, s, mainPkgLabel});
+    }
+    if (includeDevDeps) {
+        for (auto& [n, s] : m->devDependencies) {
+            worklist.push_back({n, s, mainPkgLabel + " (dev-dep)"});
         }
     }
 
-    // Reuse get_cfg defined above for dep resolution (same lambda).
-    for (auto const& [namePtr, specPtr] : allDeps) {
-        const auto& name = *namePtr;
-        const auto& spec = *specPtr;
+    while (!worklist.empty()) {
+        auto item = std::move(worklist.front());
+        worklist.pop_front();
+
+        const auto& name = item.name;
+        auto& spec = item.spec;
+
+        // Pin SemVer constraint before dedup/fetch.
+        if (auto r = resolveSemver(spec, name); !r) {
+            return std::unexpected(r.error());
+        }
+
+        ResolvedKey key{
+            spec.namespace_.empty()
+                ? std::string{mcpp::manifest::kDefaultNamespace}
+                : spec.namespace_,
+            spec.shortName.empty() ? name : spec.shortName,
+        };
+        const std::string sourceKind =
+            spec.isPath()    ? "path"
+            : spec.isGit()    ? "git"
+            : "version";
+
+        if (auto it = resolved.find(key); it != resolved.end()) {
+            // Conflict detection.
+            if (it->second.source != sourceKind) {
+                return std::unexpected(std::format(
+                    "dependency '{}{}{}' is requested as both a {} dep "
+                    "(by '{}') and a {} dep (by '{}'). Pick one.",
+                    key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                    it->second.source, it->second.requestedBy,
+                    sourceKind, item.requestedBy));
+            }
+            if (sourceKind == "version" && it->second.version != spec.version) {
+                return std::unexpected(std::format(
+                    "dependency '{}{}{}' has conflicting versions in the "
+                    "transitive graph:\n"
+                    "  '{}' requested by '{}'\n"
+                    "  '{}' requested by '{}'\n"
+                    "C++ modules require a single global version of each "
+                    "package. Pick a version compatible with both consumers, "
+                    "or ask one upstream to widen its dep range.",
+                    key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                    it->second.version, it->second.requestedBy,
+                    spec.version, item.requestedBy));
+            }
+            // Same key, same version (or compatible path/git) — already
+            // processed; skip.
+            continue;
+        }
+
         std::filesystem::path dep_root;
 
         if (spec.isPath()) {
@@ -1307,8 +1379,32 @@ prepare_build(bool print_fingerprint,
             for (auto& d : matches) m->buildConfig.includeDirs.push_back(d);
         }
 
-        dep_manifests.push_back(std::move(*dep_manifest));
-        packages.push_back({dep_root, dep_manifests.back()});
+        // Record this dep as resolved so future encounters of the same
+        // (ns, name) hit the fast path (skip / conflict check).
+        resolved[key] = ResolvedRecord{
+            .version     = sourceKind == "version" ? spec.version : "",
+            .requestedBy = item.requestedBy,
+            .source      = sourceKind,
+        };
+
+        // Stable storage so the PackageRoot reference below stays valid
+        // when the worklist appends more deps and the vector grows.
+        dep_manifests.push_back(
+            std::make_unique<mcpp::manifest::Manifest>(std::move(*dep_manifest)));
+        packages.push_back({dep_root, *dep_manifests.back()});
+
+        // Recurse: the dep's own [dependencies] become new worklist items.
+        // dev-dependencies are intentionally NOT walked — those are
+        // private to the dep's test runs, not part of its public ABI.
+        const std::string thisDepLabel = std::format(
+            "{}{}{}@{}",
+            key.ns,
+            key.ns.empty() ? "" : ".",
+            key.shortName,
+            sourceKind == "version" ? spec.version : sourceKind);
+        for (auto& [child_name, child_spec] : dep_manifests.back()->dependencies) {
+            worklist.push_back({child_name, child_spec, thisDepLabel});
+        }
     }
 
     // Modgraph: regex scanner by default; opt-in to compiler-driven P1689
