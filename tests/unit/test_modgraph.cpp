@@ -44,6 +44,53 @@ export int answer();
     std::filesystem::remove_all(dir);
 }
 
+TEST(Scanner, PartitionImportFromPrimaryInterface) {
+    // Primary module interface: `export module foo;` → logicalName = "foo".
+    // `import :tls;` resolves to "foo:tls".
+    auto dir = make_tempdir("mcpp-scanner");
+    write(dir / "src" / "foo.cppm", R"(export module foo;
+import :tls;
+)");
+    auto u = scan_file(dir / "src" / "foo.cppm", "pkg");
+    ASSERT_TRUE(u.has_value()) << u.error().format();
+    ASSERT_EQ(u->requires_.size(), 1u);
+    EXPECT_EQ(u->requires_[0].logicalName, "foo:tls");
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Scanner, PartitionImportFromAnotherPartition) {
+    // Partition interface: `export module foo:http;` → logicalName = "foo:http".
+    // `import :tls;` must resolve to "foo:tls" (the sibling partition),
+    // NOT "foo:http:tls" (which is what a naive prepend produces).
+    auto dir = make_tempdir("mcpp-scanner");
+    write(dir / "src" / "http.cppm", R"(export module foo:http;
+import :tls;
+import :socket;
+)");
+    auto u = scan_file(dir / "src" / "http.cppm", "pkg");
+    ASSERT_TRUE(u.has_value()) << u.error().format();
+    ASSERT_TRUE(u->provides.has_value());
+    EXPECT_EQ(u->provides->logicalName, "foo:http");
+    ASSERT_EQ(u->requires_.size(), 2u);
+    EXPECT_EQ(u->requires_[0].logicalName, "foo:tls");
+    EXPECT_EQ(u->requires_[1].logicalName, "foo:socket");
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Scanner, PartitionImportWithDottedModuleName) {
+    // Dotted module names (xpkg-style, e.g. `mcpplibs.tinyhttps:http`)
+    // — only the colon-prefixed partition suffix is what we strip.
+    auto dir = make_tempdir("mcpp-scanner");
+    write(dir / "src" / "http.cppm", R"(export module mcpplibs.tinyhttps:http;
+import :tls;
+)");
+    auto u = scan_file(dir / "src" / "http.cppm", "pkg");
+    ASSERT_TRUE(u.has_value()) << u.error().format();
+    ASSERT_EQ(u->requires_.size(), 1u);
+    EXPECT_EQ(u->requires_[0].logicalName, "mcpplibs.tinyhttps:tls");
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Scanner, RejectsConditionalImport) {
     auto dir = make_tempdir("mcpp-scanner");
     write(dir / "main.cpp", R"(import std;

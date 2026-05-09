@@ -286,9 +286,18 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
                 ++i;
             }
             if (name.empty()) continue;
-            // Partition import within the same module: prepend its name.
+            // Partition import within the same module: prepend the *base*
+            // module name. If the current TU itself owns a partition (e.g.
+            // its `export module foo:http;`), `u.provides->logicalName`
+            // already includes that suffix — concatenating naively would
+            // produce `foo:http:tls` instead of the intended `foo:tls`.
+            // Strip our own `:partition` first.
             if (name.starts_with(":") && u.provides) {
-                name = u.provides->logicalName + name;
+                std::string base = u.provides->logicalName;
+                if (auto p = base.find(':'); p != std::string::npos) {
+                    base.resize(p);
+                }
+                name = base + name;
             }
             u.requires_.push_back(ModuleId{name});
             continue;
