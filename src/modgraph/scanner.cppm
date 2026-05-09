@@ -321,12 +321,26 @@ void scan_one_into(ScanResult& result,
                    const std::filesystem::path& root,
                    const mcpp::manifest::Manifest& manifest)
 {
+    // Glob exclusion: patterns starting with `!` remove files from the
+    // include set (like .gitignore).
+    //   sources = ["src/**/*.cpp", "!src/**/*_test.cpp"]
+    // All positive patterns are expanded first, then all `!`-prefixed
+    // patterns are expanded and the resulting paths are removed.
     std::set<std::filesystem::path> all_files;
+    std::set<std::filesystem::path> excluded;
     for (auto const& g : manifest.modules.sources) {
-        for (auto& p : expand_glob(root, g)) {
-            all_files.insert(p);
+        if (!g.empty() && g[0] == '!') {
+            for (auto& p : expand_glob(root, g.substr(1))) {
+                excluded.insert(p);
+            }
+        } else {
+            for (auto& p : expand_glob(root, g)) {
+                all_files.insert(p);
+            }
         }
     }
+    for (auto& p : excluded) all_files.erase(p);
+
     for (auto const& f : all_files) {
         auto r = scan_file(f, manifest.package.name);
         if (!r) {

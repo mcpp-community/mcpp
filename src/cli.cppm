@@ -1243,12 +1243,19 @@ prepare_build(bool print_fingerprint,
             globs = { "src/**/*.cppm", "src/**/*.cpp",
                       "src/**/*.cc",   "src/**/*.c" };
         }
+        // Glob exclusion (same as scan_one_into): `!` prefix removes.
         std::set<std::filesystem::path> sourceFiles;
+        std::set<std::filesystem::path> excluded;
         for (auto const& g : globs) {
-            for (auto& p : mcpp::modgraph::expand_glob(srcRoot, g)) {
-                sourceFiles.insert(p);
+            if (!g.empty() && g[0] == '!') {
+                for (auto& p : mcpp::modgraph::expand_glob(srcRoot, g.substr(1)))
+                    excluded.insert(p);
+            } else {
+                for (auto& p : mcpp::modgraph::expand_glob(srcRoot, g))
+                    sourceFiles.insert(p);
             }
         }
+        for (auto& p : excluded) sourceFiles.erase(p);
         if (sourceFiles.empty()) {
             return std::unexpected(std::format(
                 "stage: no source files found under '{}' (globs={})",
@@ -2201,7 +2208,27 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
         auto exe = ctx->outputDir / lu.output;
         mcpp::ui::status("Running", std::format("bin/{}", lu.targetName));
 
-        std::string cmd = std::format("'{}'", exe.string());
+        // Prepend the sandbox's subos/default/bin to PATH so tools
+        // bootstrapped during sandbox init (patchelf, ninja, etc.) are
+        // visible to test binaries that shell out to them. The
+        // toolchain binary's path encodes the registry root — derive it.
+        std::string pathPrefix;
+        {
+            auto tcBin = ctx->tc.binaryPath;
+            // tc binary at <registry>/data/xpkgs/xim-x-*/ver/bin/g++
+            // Climb to <registry> = .../(xpkgs)/../..
+            for (auto p = tcBin; !p.empty() && p != p.root_path(); p = p.parent_path()) {
+                if (p.filename() == "xpkgs") {
+                    auto registryDir = p.parent_path().parent_path();
+                    auto sandboxBin  = registryDir / "subos" / "default" / "bin";
+                    if (std::filesystem::exists(sandboxBin))
+                        pathPrefix = std::format("PATH='{}':\"$PATH\" ", sandboxBin.string());
+                    break;
+                }
+            }
+        }
+
+        std::string cmd = std::format("{}'{}'", pathPrefix, exe.string());
         for (auto& a : passthrough) cmd += std::format(" '{}'", a);
         int rc = std::system(cmd.c_str());
         // std::system returns wait status — extract exit code.

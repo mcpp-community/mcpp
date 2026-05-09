@@ -2,8 +2,9 @@
 //
 // Layout (per docs/14-data-layout.md):
 //   $MCPP_HOME/                 default ~/.mcpp/
-//     bin/xlings                vendored xlings binary
+//     bin/mcpp                  mcpp binary (self-contained mode)
 //     registry/                 XLINGS_HOME for mcpp's xlings
+//       bin/xlings              vendored xlings binary (= <XLINGS_HOME>/bin/xlings)
 //       .xlings.json            seeded with index_repos = [mcpp-index]
 //     bmi/<fp>/                 BMI cache (existing)
 //     cache/                    metadata caches
@@ -34,7 +35,7 @@ struct GlobalConfig {
     // Resolved paths
     std::filesystem::path           mcppHome;            // ~/.mcpp/
     std::filesystem::path           binDir;              // mcppHome/bin
-    std::filesystem::path           xlingsBinary;        // mcppHome/bin/xlings
+    std::filesystem::path           xlingsBinary;        // mcppHome/registry/bin/xlings
     std::filesystem::path           registryDir;         // mcppHome/registry
     std::filesystem::path           bmiCacheDir;         // mcppHome/bmi
     std::filesystem::path           metaCacheDir;        // mcppHome/cache
@@ -194,7 +195,7 @@ bool write_default_config_toml(const std::filesystem::path& path) {
     constexpr auto tmpl = R"(# mcpp global config — auto-generated; safe to edit.
 
 [xlings]
-# binary: "bundled" (use $MCPP_HOME/bin/xlings) | "system" | absolute path
+# binary: "bundled" (use $MCPP_HOME/registry/bin/xlings) | "system" | absolute path
 binary = "bundled"
 # home:   empty = use $MCPP_HOME/registry; can override
 home   = ""
@@ -324,47 +325,12 @@ void ensure_sandbox_init(const GlobalConfig& cfg, bool quiet) noexcept {
     }
 }
 
-// Place a copy of the xlings binary at <XLINGS_HOME>/bin/xlings so that
-// xlings 0.4.10's `process_xvm_operations_` shim creation guard
-// (installer.cppm:480 — `if (fs::exists(paths.homeDir / "bin" / "xlings"))`)
-// passes. Without this, xim install hooks register version pins in
-// <subos>/.xlings.json but never create the per-tool shims in
-// <subos>/bin/, leaving `as`/`ld`/etc. unreachable in the sandbox.
-//
-// We use a hardlink so disk cost is zero and the binary stays in lockstep
-// with whatever mcpp's bin/xlings is.
-//
-// TODO(xlings-upstream): When xlings learns to self-bootstrap on first
-// `XLINGS_HOME=<empty-dir> xlings install ...` (auto-hardlink from
-// /proc/self/exe), this function becomes unnecessary.
-void ensure_sandbox_xlings_binary(const GlobalConfig& cfg, bool quiet) noexcept {
-    auto src = cfg.xlingsBinary;
-    auto dst = cfg.xlingsHome() / "bin" / "xlings";
-    if (std::filesystem::exists(dst)) return;
-    if (!std::filesystem::exists(src)) return;   // upstream issue, surface elsewhere
-
-    std::error_code ec;
-    std::filesystem::create_directories(dst.parent_path(), ec);
-
-    // Try hardlink first (cheap); fall back to copy if cross-device.
-    std::filesystem::create_hard_link(src, dst, ec);
-    if (ec) {
-        ec.clear();
-        std::filesystem::copy_file(src, dst,
-            std::filesystem::copy_options::overwrite_existing, ec);
-    }
-    if (!ec) {
-        std::filesystem::permissions(dst,
-            std::filesystem::perms::owner_exec
-          | std::filesystem::perms::group_exec
-          | std::filesystem::perms::others_exec,
-            std::filesystem::perm_options::add, ec);
-    }
-    if (ec && !quiet) {
-        std::println(stderr,
-            "warning: failed to mirror xlings binary into sandbox bin: {}",
-            ec.message());
-    }
+// With the 0.0.4 layout change (xlings binary at <MCPP_HOME>/registry/bin/
+// = <XLINGS_HOME>/bin/), the bundled xlings IS already at the path xlings's
+// shim-creation guard checks (`paths.homeDir / "bin" / "xlings"`).
+// No mirroring / hardlinking needed — this function is now a no-op.
+void ensure_sandbox_xlings_binary(const GlobalConfig& /*cfg*/, bool /*quiet*/) noexcept {
+    // Intentional no-op: xlingsBinary == xlingsHome()/bin/xlings.
 }
 
 // ─── Bootstrap install: shared event-stream parser + driver ────────────
@@ -596,8 +562,13 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // 1. Resolve paths
     cfg.mcppHome      = home_dir();
     cfg.binDir        = cfg.mcppHome / "bin";
-    cfg.xlingsBinary  = cfg.binDir   / "xlings";
     cfg.registryDir   = cfg.mcppHome / "registry";
+    // xlings lives under registry/, not bin/ — it's a registry tool,
+    // not a user-facing binary. This also places it exactly at
+    // <XLINGS_HOME>/bin/xlings, which satisfies xlings's own shim-
+    // creation guard (`if fs::exists(homeDir/"bin"/"xlings")`),
+    // making ensure_sandbox_xlings_binary() a no-op.
+    cfg.xlingsBinary  = cfg.registryDir / "bin" / "xlings";
     cfg.bmiCacheDir   = cfg.mcppHome / "bmi";
     cfg.metaCacheDir  = cfg.mcppHome / "cache";
     cfg.logDir        = cfg.mcppHome / "log";

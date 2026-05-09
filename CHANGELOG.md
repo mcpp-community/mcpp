@@ -3,6 +3,34 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.4] — 2026-05-10
+
+构建 / 环境体验优化三件套。
+
+### 新增
+
+- ✅ **Glob 排除模式** —— `[modules].sources` (以及 Form B 的 `sources`)
+  现在支持 `!`  前缀的排除模式(类似 `.gitignore`):
+  ```toml
+  sources = ["src/**/*.cpp", "!src/**/*_test.cpp", "!src/**/*_fuzzer.cpp"]
+  ```
+  正向 glob 先展开、再减去 `!`-prefixed glob 命中的路径。解决了上游库
+  test/fuzzer 文件与源混放时不得不逐文件列举的问题(典型如 ftxui)。
+
+### 改进
+
+- 🔧 **xlings 布局调整** —— xlings 二进制从 `<MCPP_HOME>/bin/xlings`
+  (与 mcpp 同目录)移至 `<MCPP_HOME>/registry/bin/xlings`
+  (= `<XLINGS_HOME>/bin/xlings`)。由于 xlings 的 shim-creation guard
+  恰好检查 `<XLINGS_HOME>/bin/xlings` 是否存在,新布局下
+  `ensure_sandbox_xlings_binary` 自然变成 no-op,省去了之前的 hardlink
+  步骤。
+
+- 🔧 **测试自动继承 sandbox PATH** —— `mcpp test` 在调用测试二进制前,
+  自动把 sandbox 的 `subos/default/bin`(含 patchelf、ninja 等
+  一次性自举工具)追加到 `$PATH`,使 test 代码 shell-out 到这些工具时
+  不再报 "command not found"。
+
 ## [0.0.3] — 2026-05-10
 
 依赖解析体系的三步演进:0.0.2 release tag 之后合入 transitive walker,
