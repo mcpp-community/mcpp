@@ -138,16 +138,17 @@ jobs:
               --mode static \
               -o "${TARBALL_NAME}"
 
-          # Inject xlings: extract → add bin/xlings to the wrapper dir →
-          # re-tar preserving the wrapper. The wrapper dir name matches
-          # the tarball stem (mcpp pack ties the two together).
+          # Inject xlings: extract → add registry/bin/xlings to the wrapper
+          # dir → re-tar preserving the wrapper. Since 0.0.4 the bundled
+          # xlings lives at <ROOT>/registry/bin/xlings (= <XLINGS_HOME>/bin/xlings).
           TARBALL="target/dist/${TARBALL_NAME}"
           WRAPPER="${TARBALL_NAME%.tar.gz}"
           test -f "$TARBALL"
           INJECT=$(mktemp -d)
           tar -xzf "$TARBALL" -C "$INJECT"
-          cp "$XLINGS_BIN" "$INJECT/$WRAPPER/bin/xlings"
-          chmod +x "$INJECT/$WRAPPER/bin/xlings"
+          mkdir -p "$INJECT/$WRAPPER/registry/bin"
+          cp "$XLINGS_BIN" "$INJECT/$WRAPPER/registry/bin/xlings"
+          chmod +x "$INJECT/$WRAPPER/registry/bin/xlings"
           (cd "$INJECT" && tar -czf "$GITHUB_WORKSPACE/${TARBALL}" "$WRAPPER")
           rm -rf "$INJECT"
 
@@ -181,7 +182,7 @@ jobs:
           tar -xzf "dist/${TARBALL_NAME}" -C "$SMOKE"
           ROOT="$SMOKE/$WRAPPER"
           test -x "$ROOT/bin/mcpp"
-          test -x "$ROOT/bin/xlings"
+          test -x "$ROOT/registry/bin/xlings"
           test -x "$ROOT/mcpp"
           file "$ROOT/bin/mcpp" | grep -q 'statically linked'
           env -u MCPP_HOME "$ROOT/bin/mcpp" --version
