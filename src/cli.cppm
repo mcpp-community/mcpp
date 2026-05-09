@@ -1332,7 +1332,11 @@ prepare_build(bool print_fingerprint,
         std::println(stderr, "warning: {}", w.format());
     }
 
-    auto report = mcpp::modgraph::validate(scan.graph, *m);
+    auto report = mcpp::modgraph::validate(scan.graph, *m, *root);
+    for (auto& w : report.warnings) {
+        if (w.path.empty()) std::println(stderr, "warning: {}", w.message);
+        else std::println(stderr, "warning: {}: {}", w.path.string(), w.message);
+    }
     if (!report.ok()) {
         std::string msg = "validation errors:\n";
         for (auto& e : report.errors) {

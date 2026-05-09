@@ -97,6 +97,29 @@ struct TargetEntry {
     std::string                         linkage;       // "static" | "dynamic" | "" (= auto by libc)
 };
 
+// `[lib]` — library "root" interface convention.
+//
+// Convention-over-configuration: a library package's primary module
+// interface lives at `src/<package-tail>.cppm`, where `<package-tail>` is
+// the last dotted segment of `[package].name` (e.g. `mcpplibs.tinyhttps`
+// → `src/tinyhttps.cppm`). That file declares `export module
+// <full-package-name>;` and re-exports the public partitions. The lib
+// root then drives:
+//   * `[modules].exports` default (the lib root's module = the only
+//     externally-visible base module),
+//   * `mcpp publish` xpkg generation (consumer just `import <name>;`),
+//   * downstream tooling (docs / explain) entry point.
+//
+// Override the convention with `[lib].path = "src/foo.cppm"` (cargo-style)
+// — the file must still `export module <package-name>;` (no partition).
+//
+// Lib-root is only meaningful for projects that ship a `kind = "lib"`
+// target. Pure-binary projects (mcpp itself, scaffolded `mcpp new`)
+// don't trigger any lib-root checks.
+struct LibConfig {
+    std::filesystem::path               path;          // explicit override; empty = use convention
+};
+
 // `[pack]` — `mcpp pack` configuration. See docs/35-pack-design.md.
 //
 // `default_mode` picks the bundling strategy when the user runs bare
@@ -140,6 +163,9 @@ struct Manifest {
     // [pack] — `mcpp pack` config (see docs/35-pack-design.md).
     PackConfig                         packConfig;
 
+    // [lib] — library root interface convention (M5.x+).
+    LibConfig                          lib;
+
     // M5.0: post-parse computed/inferred state
     bool                        usesModules    = true;   // refined by scanner
     bool                        usesImportStd  = true;   // refined by scanner
@@ -181,6 +207,19 @@ McppField extract_mcpp_field(std::string_view luaContent);
 // Returns an empty vector if the platform table is missing or has no entries.
 std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent, std::string_view platform);
+
+// Resolve the lib-root path for a manifest:
+//   1. `[lib].path` if explicitly set (cargo-style override),
+//   2. otherwise the convention `src/<package-tail>.cppm`, where
+//      `<package-tail>` is the last `.`-segment of [package].name
+//      (e.g. `mcpplibs.tinyhttps` → `src/tinyhttps.cppm`).
+// The returned path is relative to the package root unless the user
+// passed an absolute path in `[lib].path`.
+std::filesystem::path resolve_lib_root_path(const Manifest& manifest);
+
+// True if the manifest declares at least one `kind = "lib"` target.
+// Lib-root convention only applies when this returns true.
+bool has_lib_target(const Manifest& manifest);
 
 // Synthesize a Manifest from an xpkg .lua file's `mcpp = {}` segment.
 // Used when a fetched dep has no source/mcpp.toml — the index entry's
@@ -493,6 +532,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
+
+    // [lib] — library root convention (cargo-style).
+    if (auto v = doc->get_string("lib.path")) {
+        m.lib.path = *v;
+    }
 
     // [pack] — `mcpp pack` configuration. See docs/35-pack-design.md.
     if (auto v = doc->get_string("pack.default_mode")) {
@@ -1205,6 +1249,27 @@ version     = "0.1.0"
 description = "A modular C++23 package"
 license     = "Apache-2.0"
 )", packageName);
+}
+
+bool has_lib_target(const Manifest& manifest) {
+    for (auto& t : manifest.targets) {
+        if (t.kind == Target::Library || t.kind == Target::SharedLibrary) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::filesystem::path resolve_lib_root_path(const Manifest& manifest) {
+    if (!manifest.lib.path.empty()) {
+        return manifest.lib.path;
+    }
+    // Convention: src/<package-tail>.cppm
+    std::string tail = manifest.package.name;
+    if (auto p = tail.rfind('.'); p != std::string::npos) {
+        tail = tail.substr(p + 1);
+    }
+    return std::filesystem::path("src") / (tail + ".cppm");
 }
 
 } // namespace mcpp::manifest
