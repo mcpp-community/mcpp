@@ -3,7 +3,7 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased] — 0.0.3
+## [0.0.3] — 2026-05-10
 
 依赖解析体系的三步演进:0.0.2 release tag 之后合入 transitive walker,
 这一版补齐 SemVer 合并(Level 2)+ 多版本 mangling 兜底(Level 1)。
