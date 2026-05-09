@@ -17,7 +17,7 @@ out=$("$MCPP" self env 2>&1)
 [[ -d "$MCPP_HOME/cache" ]]    || { echo "missing cache/"; exit 1; }
 [[ -f "$MCPP_HOME/config.toml" ]]            || { echo "missing config.toml"; exit 1; }
 [[ -f "$MCPP_HOME/registry/.xlings.json" ]]  || { echo "missing seeded .xlings.json"; exit 1; }
-[[ -x "$MCPP_HOME/bin/xlings" ]] || { echo "xlings binary not acquired"; exit 1; }
+[[ -x "$MCPP_HOME/registry/bin/xlings" ]] || { echo "xlings binary not acquired"; exit 1; }
 
 # Verify seeded .xlings.json contains mcpp-index and NOT awesome
 grep -q '"name": "mcpp-index"' "$MCPP_HOME/registry/.xlings.json" || {

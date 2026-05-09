@@ -26,7 +26,7 @@ echo "$out" | grep -q "MCPP_HOME *= *$ROOT" || {
 # And it must have actually populated the layout there.
 [[ -d "$ROOT/registry" ]]            || { echo "missing registry/"; exit 1; }
 [[ -f "$ROOT/config.toml" ]]         || { echo "missing config.toml"; exit 1; }
-[[ -x "$ROOT/bin/xlings" ]]          || { echo "xlings not acquired into $ROOT/bin"; exit 1; }
+[[ -x "$ROOT/registry/bin/xlings" ]]  || { echo "xlings not acquired into $ROOT/registry/bin"; exit 1; }
 
 # Explicit env var must still win when set.
 ALT="$TMP/explicit-home"
