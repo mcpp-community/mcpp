@@ -89,58 +89,9 @@ grep -qE 'Merged.*cmdline.*0\.0\.1|→ v0\.0\.1' build.log || {
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == "ok=1" ]] || { echo "unexpected output: $out"; exit 1; }
 
-# ── 2. Irreconcilable case ─────────────────────────────────────────────
-#   Two non-overlapping exact pins (=0.0.1 vs =0.0.2). The merger fails
-#   to find a satisfying version and the build hard-errors. The error
-#   message must mention the package and both constraints so the user
-#   can pick one. (Cross-major mangling fallback is a separate PR.)
-
-mkdir -p "$TMP/mylib2" && cd "$TMP/mylib2"
-"$MCPP" new mylib2 > /dev/null
-cd mylib2
-rm -f src/main.cpp
-cat > src/mylib2.cppm <<'EOF'
-export module mylib2;
-export int mylib2_answer() { return 2; }
-EOF
-cat > mcpp.toml <<'EOF'
-[package]
-name    = "mylib2"
-version = "0.1.0"
-[targets.mylib2]
-kind = "lib"
-
-[dependencies.mcpplibs]
-cmdline = "=0.0.1"
-EOF
-
-mkdir -p "$TMP/app2" && cd "$TMP/app2"
-"$MCPP" new app2 > /dev/null
-cd app2
-cat > src/main.cpp <<'EOF'
-import std;
-import mylib2;
-int main() { return mylib2_answer() == 2 ? 0 : 1; }
-EOF
-cat > mcpp.toml <<EOF
-[package]
-name    = "app2"
-version = "0.1.0"
-
-[dependencies]
-mylib2 = { path = "$TMP/mylib2/mylib2" }
-
-[dependencies.mcpplibs]
-cmdline = "=0.0.2"
-EOF
-
-if "$MCPP" build > build-bad.log 2>&1; then
-    cat build-bad.log
-    echo "non-overlapping pins should have failed"; exit 1
-fi
-grep -q 'irreconcilable versions' build-bad.log \
-    && grep -q 'cmdline' build-bad.log \
-    || { cat build-bad.log
-         echo "expected irreconcilable diagnostic missing"; exit 1; }
+# Note: the previously-irreconcilable case (=0.0.1 ⨯ =0.0.2 across two
+# consumers) used to hard-error here. Level 1 (multi-version mangling)
+# now resolves it instead — see tests/e2e/33_multi_version_mangling.sh
+# for the cross-major coexistence path.
 
 echo "OK"
