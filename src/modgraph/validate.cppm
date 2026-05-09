@@ -24,6 +24,14 @@ struct ValidateReport {
 ValidateReport validate(const Graph&                    g,
                         const mcpp::manifest::Manifest& manifest);
 
+// Same as `validate` plus a project-root path used to verify that the
+// lib-root convention file actually exists on disk. Pass an empty path
+// to disable the on-disk check (used by unit tests that build a Graph
+// in memory without writing source files).
+ValidateReport validate(const Graph&                    g,
+                        const mcpp::manifest::Manifest& manifest,
+                        const std::filesystem::path&    projectRoot);
+
 bool is_public_package_name(std::string_view name);
 bool is_forbidden_top_module(std::string_view name);
 
@@ -48,6 +56,13 @@ bool is_forbidden_top_module(std::string_view name) {
 
 ValidateReport validate(const Graph&                    g,
                         const mcpp::manifest::Manifest& manifest)
+{
+    return validate(g, manifest, /*projectRoot=*/{});
+}
+
+ValidateReport validate(const Graph&                    g,
+                        const mcpp::manifest::Manifest& manifest,
+                        const std::filesystem::path&    projectRoot)
 {
     ValidateReport r;
 
@@ -102,6 +117,83 @@ ValidateReport validate(const Graph&                    g,
                 if (!actual.contains(m)) {
                     r.errors.push_back({{},
                         std::format("module '{}' declared in [modules].exports but never exported (strict)", m)});
+                }
+            }
+        }
+    }
+
+    // 2.5 Lib-root convention (M5.x+).
+    //
+    // For projects that ship a `kind = "lib"` target, expect a primary
+    // module-interface file at either `[lib].path` (explicit override) or
+    // `src/<package-tail>.cppm` (default convention). The file must
+    // declare `export module <full-package-name>;` (no partition suffix);
+    // partitions go in sibling files and are aggregated by re-exporting
+    // from the lib root, à la `lib.rs` in cargo.
+    //
+    // Pure-binary projects (mcpp itself, scaffolded `mcpp new`) skip this
+    // check — they have no lib-root concept.
+    if (mcpp::manifest::has_lib_target(manifest)) {
+        auto lib_root_rel = mcpp::manifest::resolve_lib_root_path(manifest);
+        const bool was_explicit = !manifest.lib.path.empty();
+
+        // On-disk existence check (skipped when projectRoot is empty —
+        // unit tests can build Graphs in memory without writing files).
+        if (!projectRoot.empty()) {
+            auto lib_root_abs = lib_root_rel.is_absolute()
+                ? lib_root_rel
+                : (projectRoot / lib_root_rel);
+            std::error_code ec;
+            const bool exists = std::filesystem::exists(lib_root_abs, ec);
+            if (!exists) {
+                if (was_explicit) {
+                    // Explicit `[lib].path` pointing at a missing file is
+                    // always an error.
+                    r.errors.push_back({lib_root_rel, std::format(
+                        "[lib].path '{}' does not exist", lib_root_rel.string())});
+                } else {
+                    // Convention miss is a warning — gives existing projects
+                    // a soft on-ramp before they rename / move files.
+                    r.warnings.push_back({lib_root_rel, std::format(
+                        "lib target without conventional lib root '{}' "
+                        "(create the file or set [lib].path)",
+                        lib_root_rel.string())});
+                }
+            }
+        }
+
+        // Even without on-disk verification we can still cross-check the
+        // graph: if a unit at the lib-root path is present, it must
+        // export `<package-name>` exactly (no partition).
+        const mcpp::modgraph::SourceUnit* lib_unit = nullptr;
+        for (auto& u : g.units) {
+            // Match relative or absolute — projectRoot may be empty in
+            // tests, so we just compare path tails.
+            auto u_rel = u.path.is_absolute() && !projectRoot.empty()
+                ? std::filesystem::relative(u.path, projectRoot)
+                : u.path;
+            if (u_rel == lib_root_rel || u.path == lib_root_rel) {
+                lib_unit = &u;
+                break;
+            }
+        }
+        if (lib_unit) {
+            if (!lib_unit->provides) {
+                r.errors.push_back({lib_unit->path, std::format(
+                    "lib root '{}' must declare `export module {};`",
+                    lib_root_rel.string(), manifest.package.name)});
+            } else {
+                const auto& m = lib_unit->provides->logicalName;
+                if (m.find(':') != std::string::npos) {
+                    r.errors.push_back({lib_unit->path, std::format(
+                        "lib root '{}' exports a partition '{}' — must be the "
+                        "primary module '{}' (no `:partition` suffix)",
+                        lib_root_rel.string(), m, manifest.package.name)});
+                } else if (m != manifest.package.name) {
+                    r.errors.push_back({lib_unit->path, std::format(
+                        "lib root '{}' exports module '{}', expected '{}' "
+                        "(must match [package].name)",
+                        lib_root_rel.string(), m, manifest.package.name)});
                 }
             }
         }

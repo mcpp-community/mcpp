@@ -152,6 +152,130 @@ TEST(Validate, ForbiddenTopName) {
     EXPECT_FALSE(rep.ok());
 }
 
+TEST(Validate, LibRootHappyPath) {
+    // Project: lib target "tinyhttps", convention puts the lib root at
+    // src/tinyhttps.cppm exporting `mcpplibs.tinyhttps`. Two partition
+    // siblings sit alongside.
+    Graph g;
+    SourceUnit root;
+    root.path = "src/tinyhttps.cppm";
+    root.packageName = "mcpplibs.tinyhttps";
+    root.provides = ModuleId{"mcpplibs.tinyhttps"};
+    g.units.push_back(root);
+    g.producerOf["mcpplibs.tinyhttps"] = 0;
+    SourceUnit p1;
+    p1.path = "src/tls.cppm";
+    p1.packageName = "mcpplibs.tinyhttps";
+    p1.provides = ModuleId{"mcpplibs.tinyhttps:tls"};
+    g.units.push_back(p1);
+    g.producerOf["mcpplibs.tinyhttps:tls"] = 1;
+
+    mcpp::manifest::Manifest m;
+    m.package.name = "mcpplibs.tinyhttps";
+    mcpp::manifest::Target t;
+    t.name = "tinyhttps";
+    t.kind = mcpp::manifest::Target::Library;
+    m.targets.push_back(t);
+
+    auto rep = validate(g, m);     // empty projectRoot → on-disk check skipped
+    EXPECT_TRUE(rep.ok()) << "errors:" << [&]{
+        std::string s; for (auto& e : rep.errors) s += "\n  " + e.message; return s;
+    }();
+}
+
+TEST(Validate, LibRootExportsPartitionIsError) {
+    // Lib root file at the conventional path exports `:foo` (a partition
+    // suffix) — must be rejected: lib root must be the primary module.
+    Graph g;
+    SourceUnit u;
+    u.path = "src/tinyhttps.cppm";
+    u.packageName = "mcpplibs.tinyhttps";
+    u.provides = ModuleId{"mcpplibs.tinyhttps:something"};
+    g.units.push_back(u);
+    g.producerOf["mcpplibs.tinyhttps:something"] = 0;
+
+    mcpp::manifest::Manifest m;
+    m.package.name = "mcpplibs.tinyhttps";
+    mcpp::manifest::Target t;
+    t.name = "tinyhttps";
+    t.kind = mcpp::manifest::Target::Library;
+    m.targets.push_back(t);
+
+    auto rep = validate(g, m);
+    EXPECT_FALSE(rep.ok());
+    bool found = false;
+    for (auto& e : rep.errors) {
+        if (e.message.find("partition") != std::string::npos
+            && e.message.find("primary module") != std::string::npos) { found = true; break; }
+    }
+    EXPECT_TRUE(found) << "expected lib-root partition error";
+}
+
+TEST(Validate, LibRootWrongModuleNameIsError) {
+    // Lib root file exports a module that doesn't match [package].name.
+    Graph g;
+    SourceUnit u;
+    u.path = "src/tinyhttps.cppm";
+    u.packageName = "mcpplibs.tinyhttps";
+    u.provides = ModuleId{"some.other.module"};
+    g.units.push_back(u);
+    g.producerOf["some.other.module"] = 0;
+
+    mcpp::manifest::Manifest m;
+    m.package.name = "mcpplibs.tinyhttps";
+    mcpp::manifest::Target t;
+    t.name = "tinyhttps";
+    t.kind = mcpp::manifest::Target::Library;
+    m.targets.push_back(t);
+
+    auto rep = validate(g, m);
+    EXPECT_FALSE(rep.ok());
+    bool found = false;
+    for (auto& e : rep.errors) {
+        if (e.message.find("expected 'mcpplibs.tinyhttps'") != std::string::npos) {
+            found = true; break;
+        }
+    }
+    EXPECT_TRUE(found) << "expected expected-module-name error";
+}
+
+TEST(Validate, LibRootNotEnforcedForBinaryProject) {
+    // Pure-binary project: no lib target → no lib-root checks. Even if a
+    // file at src/<tail>.cppm exists exporting an unrelated module, no
+    // error should fire.
+    Graph g;
+    mcpp::manifest::Manifest m;
+    m.package.name = "myapp";
+    mcpp::manifest::Target t;
+    t.name = "myapp";
+    t.kind = mcpp::manifest::Target::Binary;
+    t.main = "src/main.cpp";
+    m.targets.push_back(t);
+
+    auto rep = validate(g, m);
+    EXPECT_TRUE(rep.ok());
+}
+
+TEST(Validate, LibRootMissingFileWithExplicitPathIsError) {
+    Graph g;
+    mcpp::manifest::Manifest m;
+    m.package.name = "myorg.foo";
+    m.lib.path = "src/does-not-exist.cppm";
+    mcpp::manifest::Target t;
+    t.name = "foo";
+    t.kind = mcpp::manifest::Target::Library;
+    m.targets.push_back(t);
+
+    // Pass a non-empty projectRoot so the on-disk check is enabled.
+    auto rep = validate(g, m, std::filesystem::current_path());
+    EXPECT_FALSE(rep.ok());
+    bool found = false;
+    for (auto& e : rep.errors) {
+        if (e.message.find("does not exist") != std::string::npos) { found = true; break; }
+    }
+    EXPECT_TRUE(found) << "expected explicit-path-missing error";
+}
+
 TEST(TopoSort, DetectsCycle) {
     Graph g;
     g.units.resize(2);

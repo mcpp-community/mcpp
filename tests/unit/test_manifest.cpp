@@ -330,6 +330,67 @@ package = {
     EXPECT_EQ(b.version,    "0.0.2");
 }
 
+TEST(Manifest, LibRootInferredFromPackageName) {
+    constexpr auto src = R"(
+[package]
+name    = "mcpplibs.tinyhttps"
+version = "0.2.0"
+[targets.tinyhttps]
+kind = "lib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_TRUE(m->lib.path.empty());
+    EXPECT_TRUE(mcpp::manifest::has_lib_target(*m));
+    auto root = mcpp::manifest::resolve_lib_root_path(*m);
+    EXPECT_EQ(root.string(), "src/tinyhttps.cppm");
+}
+
+TEST(Manifest, LibRootBareNameNoNamespace) {
+    constexpr auto src = R"(
+[package]
+name    = "gtest"
+version = "1.0.0"
+[targets.gtest]
+kind = "lib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto root = mcpp::manifest::resolve_lib_root_path(*m);
+    EXPECT_EQ(root.string(), "src/gtest.cppm");
+}
+
+TEST(Manifest, LibRootExplicitOverride) {
+    constexpr auto src = R"(
+[package]
+name    = "mcpplibs.tinyhttps"
+version = "0.2.0"
+[lib]
+path = "src/api.cppm"
+[targets.tinyhttps]
+kind = "lib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->lib.path.string(), "src/api.cppm");
+    auto root = mcpp::manifest::resolve_lib_root_path(*m);
+    EXPECT_EQ(root.string(), "src/api.cppm");
+}
+
+TEST(Manifest, HasLibTargetFalseForBareBinaryManifest) {
+    // No [targets.*] declared → parse_string leaves targets empty.
+    // load() would later infer a bin/lib from sources, but parse_string
+    // alone leaves it bare; either way no lib target.
+    constexpr auto src = R"(
+[package]
+name    = "mcpp"
+version = "0.0.2"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_FALSE(mcpp::manifest::has_lib_target(*m));
+}
+
 TEST(ListXpkgVersions, IgnoresCommentedEntries) {
     constexpr auto src = R"(
 package = {
