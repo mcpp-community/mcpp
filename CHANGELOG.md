@@ -3,7 +3,27 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [0.0.2] — 2026-05-09
+## [Unreleased] — 0.0.3
+
+依赖解析体系的两步演进:0.0.2 release tag 之后合入的 transitive walker
+之上,这一版叠加 SemVer 合并;后续 PR 还会补上多版本 mangling 兜底。
+
+### 新增
+
+- ✅ **依赖图传递性遍历** —— 直接依赖的子依赖(以及更深层)自动跟随入解析图,
+  消费者不必再在自己的 `mcpp.toml` 里把 grandchild 也写一遍;子依赖的
+  `[build].include_dirs` 也会沿链路传播,让中间层在编译时看得到 grandchild
+  的头文件。冲突检测同时区分 path / git / version 三类来源,跨来源不允许
+  混用。
+
+- ✅ **SemVer 合并解析(Level 2)** —— 同一个包在传递依赖图里被多个消费者
+  以不同版本约束声明时,resolver 会把两条原始约束 AND 合并(裸版本号视作
+  `=X.Y.Z`),向 index 重新查询,选出同时满足两侧的具体版本。若该版本与
+  此前已 pin 的不一致,旧的 manifest 与 `[build].include_dirs` 会被原地
+  替换为新版本的内容,孩子依赖也按新 manifest 重新入队。完全无重叠
+  (典型如 `=0.0.1` 对 `=0.0.2`)仍硬报错并提示后续 PR 会用多版本
+  mangling 兜底。新增 e2e `32_semver_merge.sh` 覆盖兼容合并 + 不可调和
+  两条主链路。
 
 第二个公开版本。新增 C 语言一等公民支持、xpkg 风格依赖命名空间、包管理子系统骨架重构,以及 lib-root 约定。
 
