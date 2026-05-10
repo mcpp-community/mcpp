@@ -126,6 +126,18 @@ bool is_c_source(const std::filesystem::path& src) {
     return src.extension() == ".c";
 }
 
+// Escape a string for JSON (handles " and \).
+std::string json_escape(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '"')       out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else                out.push_back(c);
+    }
+    return out;
+}
+
 // Compute the full C++ flags string (everything between compiler binary and -c).
 // Returns raw strings; escape_ninja_path() is applied by the caller where needed.
 std::string compute_cxxflags(const BuildPlan& plan) {
@@ -267,6 +279,56 @@ std::string compute_cflags(const BuildPlan& plan) {
     return std::format("-std={}{}{}{}{}{}{}",
                        c_standard, opt_flag, pic_flag, sysroot_flag,
                        b_flag, include_flags, user_cflags);
+}
+
+// Emit compile_commands.json content as a string.
+std::string emit_compile_commands_json(const BuildPlan& plan) {
+    std::string out;
+    out.reserve(4096);
+    out += "[\n";
+
+    std::string cxxflags = compute_cxxflags(plan);
+    std::string cflags = compute_cflags(plan);
+
+    for (size_t i = 0; i < plan.compileUnits.size(); ++i) {
+        auto& cu = plan.compileUnits[i];
+
+        // Determine compiler and flags based on source type
+        std::string compiler;
+        std::string flags;
+        if (is_c_source(cu.source)) {
+            compiler = derive_c_compiler(plan.toolchain.binaryPath).string();
+            flags = cflags;
+        } else {
+            compiler = plan.toolchain.binaryPath.string();
+            flags = cxxflags;
+        }
+
+        // Build the command: compiler + "  " + flags + " -c " + source + " -o " + output
+        auto output_path = (plan.outputDir / cu.object).string();
+        std::string command = compiler + "  " + flags + " -c " + cu.source.string() + " -o " + output_path;
+
+        // Escape all strings for JSON
+        std::string dir_escaped = json_escape(plan.projectRoot.string());
+        std::string cmd_escaped = json_escape(command);
+        std::string file_escaped = json_escape(cu.source.string());
+        std::string output_escaped = json_escape(output_path);
+
+        // Emit entry with 2-space indentation, field order: directory, command, file, output
+        out += "  {\n";
+        out += std::format("    \"directory\": \"{}\",\n", dir_escaped);
+        out += std::format("    \"command\": \"{}\",\n", cmd_escaped);
+        out += std::format("    \"file\": \"{}\",\n", file_escaped);
+        out += std::format("    \"output\": \"{}\"\n", output_escaped);
+        out += "  }";
+        if (i + 1 < plan.compileUnits.size()) {
+            out += ",";
+        }
+        out += "\n";
+    }
+
+    out += "]";
+    return out;
 }
 
 } // namespace
@@ -607,6 +669,9 @@ NinjaBackend::build(const BuildPlan& plan, const BuildOptions& opts)
 
     auto ninja_path = plan.outputDir / "build.ninja";
     write_file(ninja_path, emit_ninja_string(plan));
+
+    auto cc_path = plan.projectRoot / "target" / "compile_commands.json";
+    write_file(cc_path, emit_compile_commands_json(plan));
 
     if (opts.dryRun) {
         BuildResult r;
