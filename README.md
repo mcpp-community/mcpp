@@ -72,6 +72,7 @@ mcpp run
 - [发布打包](docs/02-pack-and-release.md)
 - [工具链管理](docs/03-toolchains.md)
 - [从源码构建 & 参与贡献](docs/04-build-from-source.md)
+- [mcpp.toml 工程文件指南](docs/05-mcpp-toml.md)
 
 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅。
 
