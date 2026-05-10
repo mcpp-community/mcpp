@@ -19,6 +19,7 @@ inline constexpr auto kDefaultNamespace = mcpp::pm::kDefaultNamespace;
 
 struct Package {
     std::string                 name;
+    std::string                 namespace_;    // xpkg V1 namespace field (0.0.6+); empty = infer from name
     std::string                 version;
     std::string                 standard   = "c++23";   // C++ standard (M5.0: moved from [language])
     std::string                 description;
@@ -208,6 +209,10 @@ McppField extract_mcpp_field(std::string_view luaContent);
 std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent, std::string_view platform);
 
+// Extract the `namespace` field from an xpkg .lua's `package = { ... }` block.
+// Returns empty string if the field is absent (legacy descriptors).
+std::string extract_xpkg_namespace(std::string_view luaContent);
+
 // Resolve the lib-root path for a manifest:
 //   1. `[lib].path` if explicitly set (cargo-style override),
 //   2. otherwise the convention `src/<package-tail>.cppm`, where
@@ -269,6 +274,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     auto name = doc->get_string("package.name");
     if (!name) return std::unexpected(error(origin, "missing required field 'package.name'"));
     m.package.name = *name;
+
+    // 0.0.6+: explicit namespace field (xpkg V1 style).
+    // If present, [package].name is the short name.
+    // If absent, compat.cppm::resolve_package_name infers from dotted name.
+    if (auto v = doc->get_string("package.namespace")) m.package.namespace_ = *v;
 
     auto version = doc->get_string("package.version");
     if (!version) return std::unexpected(error(origin, "missing required field 'package.version'"));
@@ -921,6 +931,29 @@ std::string extract_mcpp_segment_body(std::string_view raw_text) {
 
 McppField extract_mcpp_field(std::string_view luaContent) {
     return extract_mcpp_field_impl(luaContent);
+}
+
+std::string extract_xpkg_namespace(std::string_view luaContent) {
+    // Look for `namespace = "..."` inside the `package = { ... }` block.
+    // Use sanitized text (comments/strings stripped) for key search,
+    // then read the quoted value from the original text.
+    auto sanitized = strip_lua_comments_and_strings(luaContent);
+    auto pos = sanitized.find("namespace");
+    if (pos == std::string::npos) return {};
+    // Walk past "namespace" + optional whitespace + "="
+    auto p = pos + 9; // strlen("namespace")
+    while (p < sanitized.size() && (sanitized[p] == ' ' || sanitized[p] == '\t')) ++p;
+    if (p >= sanitized.size() || sanitized[p] != '=') return {};
+    ++p;
+    while (p < sanitized.size() && (sanitized[p] == ' ' || sanitized[p] == '\t')) ++p;
+    // Read the quoted string from ORIGINAL text at the same offset.
+    if (p >= luaContent.size() || luaContent[p] != '"') return {};
+    ++p;
+    std::string result;
+    while (p < luaContent.size() && luaContent[p] != '"') {
+        result.push_back(luaContent[p++]);
+    }
+    return result;
 }
 
 std::vector<std::string>
