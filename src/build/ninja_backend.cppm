@@ -126,6 +126,149 @@ bool is_c_source(const std::filesystem::path& src) {
     return src.extension() == ".c";
 }
 
+// Compute the full C++ flags string (everything between compiler binary and -c).
+// Returns raw strings; escape_ninja_path() is applied by the caller where needed.
+std::string compute_cxxflags(const BuildPlan& plan) {
+    // Detect whether any target needs PIC (shared library).
+    bool need_pic = false;
+    for (auto& lu : plan.linkUnits) {
+        if (lu.kind == LinkUnit::SharedLibrary) { need_pic = true; break; }
+    }
+    const char* pic_flag = need_pic ? " -fPIC" : "";
+
+    // M5.0: -I from [build].include_dirs (resolved to absolute paths).
+    std::string include_flags;
+    for (auto& inc : plan.manifest.buildConfig.includeDirs) {
+        auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
+        include_flags += " -I" + escape_ninja_path(abs);
+    }
+
+    // M5.5: --sysroot when probed.
+    std::string sysroot_flag;
+    if (!plan.toolchain.sysroot.empty()) {
+        sysroot_flag = " --sysroot=" + escape_ninja_path(plan.toolchain.sysroot);
+    }
+
+    // Locate binutils bin dir for -B flag (not needed for musl toolchain).
+    bool isMuslTc = plan.toolchain.targetTriple.find("-musl") != std::string::npos;
+    std::filesystem::path binutilsBin;
+    if (!isMuslTc) {
+        auto bp = plan.toolchain.binaryPath;
+        std::filesystem::path xpkgsDir;
+        for (auto p = bp.parent_path();
+             p.has_parent_path() && p != p.root_path();
+             p = p.parent_path()) {
+            if (p.filename() == "xpkgs") { xpkgsDir = p; break; }
+        }
+        if (!xpkgsDir.empty()) {
+            auto root = xpkgsDir / "xim-x-binutils";
+            std::error_code ec;
+            if (std::filesystem::exists(root, ec)) {
+                for (auto& v : std::filesystem::directory_iterator(root, ec)) {
+                    auto candidate = v.path() / "bin";
+                    if (std::filesystem::exists(candidate / "ar", ec)) {
+                        binutilsBin = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    std::string b_flag;
+    if (!binutilsBin.empty()) {
+        b_flag = " -B" + escape_ninja_path(binutilsBin);
+    }
+
+    // musl-gcc 15.1.0 ICEs at -O2; use -Og instead.
+    const char* opt_flag = isMuslTc ? " -Og" : " -O2";
+
+    // User-supplied cxxflags.
+    auto join_flags = [](const std::vector<std::string>& flags) {
+        std::string out;
+        for (auto& f : flags) { out += ' '; out += f; }
+        return out;
+    };
+    std::string user_cxxflags = join_flags(plan.manifest.buildConfig.cxxflags);
+
+    return std::format("-std=c++23 -fmodules{}{}{}{}{}{}",
+                       opt_flag, pic_flag, sysroot_flag, b_flag, include_flags,
+                       user_cxxflags);
+}
+
+// Compute the full C flags string (everything between compiler binary and -c).
+// Returns raw strings; escape_ninja_path() is applied by the caller where needed.
+std::string compute_cflags(const BuildPlan& plan) {
+    // Detect whether any target needs PIC (shared library).
+    bool need_pic = false;
+    for (auto& lu : plan.linkUnits) {
+        if (lu.kind == LinkUnit::SharedLibrary) { need_pic = true; break; }
+    }
+    const char* pic_flag = need_pic ? " -fPIC" : "";
+
+    // M5.0: -I from [build].include_dirs (resolved to absolute paths).
+    std::string include_flags;
+    for (auto& inc : plan.manifest.buildConfig.includeDirs) {
+        auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
+        include_flags += " -I" + escape_ninja_path(abs);
+    }
+
+    // M5.5: --sysroot when probed.
+    std::string sysroot_flag;
+    if (!plan.toolchain.sysroot.empty()) {
+        sysroot_flag = " --sysroot=" + escape_ninja_path(plan.toolchain.sysroot);
+    }
+
+    // Locate binutils bin dir for -B flag (not needed for musl toolchain).
+    bool isMuslTc = plan.toolchain.targetTriple.find("-musl") != std::string::npos;
+    std::filesystem::path binutilsBin;
+    if (!isMuslTc) {
+        auto bp = plan.toolchain.binaryPath;
+        std::filesystem::path xpkgsDir;
+        for (auto p = bp.parent_path();
+             p.has_parent_path() && p != p.root_path();
+             p = p.parent_path()) {
+            if (p.filename() == "xpkgs") { xpkgsDir = p; break; }
+        }
+        if (!xpkgsDir.empty()) {
+            auto root = xpkgsDir / "xim-x-binutils";
+            std::error_code ec;
+            if (std::filesystem::exists(root, ec)) {
+                for (auto& v : std::filesystem::directory_iterator(root, ec)) {
+                    auto candidate = v.path() / "bin";
+                    if (std::filesystem::exists(candidate / "ar", ec)) {
+                        binutilsBin = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    std::string b_flag;
+    if (!binutilsBin.empty()) {
+        b_flag = " -B" + escape_ninja_path(binutilsBin);
+    }
+
+    // musl-gcc 15.1.0 ICEs at -O2; use -Og instead.
+    const char* opt_flag = isMuslTc ? " -Og" : " -O2";
+
+    // User-supplied cflags.
+    auto join_flags = [](const std::vector<std::string>& flags) {
+        std::string out;
+        for (auto& f : flags) { out += ' '; out += f; }
+        return out;
+    };
+    std::string user_cflags = join_flags(plan.manifest.buildConfig.cflags);
+
+    std::string c_standard = plan.manifest.buildConfig.cStandard.empty()
+        ? std::string{"c11"} : plan.manifest.buildConfig.cStandard;
+
+    return std::format("-std={}{}{}{}{}{}{}",
+                       c_standard, opt_flag, pic_flag, sysroot_flag,
+                       b_flag, include_flags, user_cflags);
+}
+
 } // namespace
 
 std::string emit_ninja_string(const BuildPlan& plan) {
@@ -157,13 +300,6 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // the duplication and CI logs make the intent obvious.
     const char* full_static = (plan.manifest.buildConfig.linkage == "static")
         ? " -static" : "";
-
-    // M5.0: -I from [build].include_dirs (resolved to absolute paths).
-    std::string include_flags;
-    for (auto& inc : plan.manifest.buildConfig.includeDirs) {
-        auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
-        include_flags += " -I" + escape_ninja_path(abs);
-    }
 
     // M5.5: --sysroot when probed (needed since we bypass any xlings wrapper).
     std::string sysroot_flag;
@@ -214,12 +350,6 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         b_flag = " -B" + escape_ninja_path(binutilsBin);
     }
 
-    // musl-gcc 15.1.0 ICEs in tree-ssa-ccp on libstdc++'s std::format
-    // (`__write_padded` template) at -O2. Drop to -Og for the musl path
-    // until either musl-gcc 16.1 lands or upstream fixes the pass.
-    // TODO(musl-gcc-upstream): remove once musl-gcc@16+ ships.
-    const char* opt_flag = isMuslTc ? " -Og" : " -O2";
-
     // M5.x: any C sources in the plan? If so we emit a `cc` variable and a
     // separate `c_object` rule so .c files are compiled by the C frontend
     // (gcc / clang / cc) rather than g++. .c files compiled with g++ get
@@ -231,29 +361,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         if (is_c_source(cu.source)) { need_c_rule = true; break; }
     }
 
-    // User-supplied flag tails — appended verbatim to per-rule baselines.
-    auto join_flags = [](const std::vector<std::string>& flags) {
-        std::string out;
-        for (auto& f : flags) { out += ' '; out += f; }
-        return out;
-    };
-    std::string user_cxxflags = join_flags(plan.manifest.buildConfig.cxxflags);
-    std::string user_cflags   = join_flags(plan.manifest.buildConfig.cflags);
-    std::string c_standard = plan.manifest.buildConfig.cStandard.empty()
-        ? std::string{"c11"} : plan.manifest.buildConfig.cStandard;
+    // Use helper functions to compute cxxflags and cflags.
+    std::string cxxflags = compute_cxxflags(plan);
+    std::string cflags = compute_cflags(plan);
 
     append(std::format("cxx       = {}\n", escape_ninja_path(plan.toolchain.binaryPath)));
-    append(std::format("cxxflags  = -std=c++23 -fmodules{}{}{}{}{}{}\n",
-                       opt_flag, pic_flag, sysroot_flag, b_flag, include_flags,
-                       user_cxxflags));
+    append(std::format("cxxflags  = {}\n", cxxflags));
     if (need_c_rule) {
         auto cc_path = derive_c_compiler(plan.toolchain.binaryPath);
         append(std::format("cc        = {}\n", escape_ninja_path(cc_path)));
-        // C baseline: same opt/pic/sysroot/-B/include layout as cxxflags but
-        // no -fmodules and -std= goes to a C dialect.
-        append(std::format("cflags    = -std={}{}{}{}{}{}{}\n",
-                           c_standard, opt_flag, pic_flag, sysroot_flag,
-                           b_flag, include_flags, user_cflags));
+        append(std::format("cflags    = {}\n", cflags));
     }
     append(std::format("ldflags   ={}{}{}{}\n",
                        full_static, static_stdlib, sysroot_flag, b_flag));
