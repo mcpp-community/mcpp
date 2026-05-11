@@ -744,35 +744,71 @@ Fetcher::resolve_xpkg_path(std::string_view target,
 std::optional<std::filesystem::path>
 Fetcher::install_path(std::string_view name, std::string_view version) const
 {
-    // M6.x: install_path now ALWAYS returns the verdir (untouched extract
-    // root). Layout discrimination is done by the caller via the xpkg.lua's
+    // M6.x: install_path returns the verdir (untouched extract root).
+    // Layout discrimination is done by the caller via the xpkg.lua's
     // `mcpp = "<glob path>"` (Form A pointer) or `mcpp = { ... }` (Form B
     // inline) field — no more "find mcpp.toml subdir / unique subdir" magic.
-    // Caller resolves further nested paths via glob.
+    //
+    // 0.0.6+: namespace-aware lookup. xlings stores packages at
+    //     <xpkgs>/<namespace>-x-<shortName>/<version>/
+    // The `name` argument may be either a qualified name
+    // ("mcpplibs.cmdline") or a short name ("cmdline"). We try
+    // multiple candidate prefixes to handle both old and new layouts.
     auto base = cfg_.xlingsHome() / "data" / "xpkgs";
     if (!std::filesystem::exists(base)) return std::nullopt;
 
-    auto try_namespaced = [&](std::string_view prefix) -> std::optional<std::filesystem::path> {
-        auto verdir = base
-                    / std::format("{}-x-{}", prefix, name)
-                    / std::string(version);
+    auto try_dir = [&](std::string_view dirName) -> std::optional<std::filesystem::path> {
+        auto verdir = base / std::string(dirName) / std::string(version);
         return std::filesystem::exists(verdir)
             ? std::optional<std::filesystem::path>{verdir}
             : std::nullopt;
     };
 
-    // 1. Try the configured default index first (fast path).
-    if (auto p = try_namespaced(cfg_.defaultIndex)) return *p;
+    // Split qualified name into (namespace, shortName) for new-style lookup.
+    // "mcpplibs.cmdline" → ("mcpplibs", "cmdline")
+    // "gtest"            → ("", "gtest")
+    std::string ns, shortName;
+    auto dot = name.find('.');
+    if (dot != std::string_view::npos) {
+        ns        = std::string(name.substr(0, dot));
+        shortName = std::string(name.substr(dot + 1));
+    } else {
+        shortName = std::string(name);
+    }
 
-    // 2. Fall back: scan every xpkgs/<index>-x-<name> for a match.
+    // Priority order:
+    //   1. New namespace-aware: <ns>-x-<shortName> (e.g. "mcpplibs-x-cmdline")
+    //   2. Old index-prefixed: <defaultIndex>-x-<fullName> (e.g. "mcpp-index-x-mcpplibs.cmdline")
+    //   3. Old index-prefixed short: <defaultIndex>-x-<name> (e.g. "mcpp-index-x-gtest")
+    //   4. Fallback scan: any <*>-x-<name> or <*>-x-<shortName>
+
+    // 1. New namespace-aware path (0.0.6+)
+    if (!ns.empty()) {
+        if (auto p = try_dir(std::format("{}-x-{}", ns, shortName))) return *p;
+    }
+
+    // 2. Old index-prefixed path (compat with pre-0.0.6 installs)
+    if (auto p = try_dir(std::format("{}-x-{}", cfg_.defaultIndex, name))) return *p;
+
+    // 3. Short name with default index (bare "gtest" → "mcpp-index-x-gtest")
+    if (!shortName.empty() && shortName != name) {
+        if (auto p = try_dir(std::format("{}-x-{}", cfg_.defaultIndex, shortName))) return *p;
+    }
+
+    // 4. Fallback scan: walk xpkgs/ for any directory ending with -x-<name>
+    //    or -x-<shortName>.
     std::error_code ec;
-    std::string suffix = std::format("-x-{}", name);
+    std::string suffix1 = std::format("-x-{}", name);
+    std::string suffix2 = shortName.empty() ? "" : std::format("-x-{}", shortName);
     for (auto& entry : std::filesystem::directory_iterator(base, ec)) {
         if (!entry.is_directory()) continue;
         auto dirname = entry.path().filename().string();
-        if (!dirname.ends_with(suffix)) continue;
-        auto idx = dirname.substr(0, dirname.size() - suffix.size());
-        if (auto p = try_namespaced(idx)) return *p;
+        if (dirname.ends_with(suffix1)) {
+            if (auto p = try_dir(dirname)) return *p;
+        }
+        if (!suffix2.empty() && dirname.ends_with(suffix2)) {
+            if (auto p = try_dir(dirname)) return *p;
+        }
     }
     return std::nullopt;
 }
