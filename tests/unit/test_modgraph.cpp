@@ -115,25 +115,22 @@ int main(){})");
     std::filesystem::remove_all(dir);
 }
 
-TEST(Validate, NamingRequiresPackagePrefix) {
+TEST(Validate, ModuleNameNotRequiredToMatchPackageName) {
+    // 0.0.10+: module name does NOT need to be prefixed by package name.
+    // The library author decides the module naming convention.
     Graph g;
     SourceUnit u;
     u.path = "/x/foo.cppm";
-    u.packageName = "myorg.foo";        // unit's own package (post-multi-pkg refactor)
-    u.provides = ModuleId{"core"};
+    u.packageName = "myorg.foo";
+    u.provides = ModuleId{"completely.different.name"};
     g.units.push_back(u);
-    g.producerOf["core"] = 0;
+    g.producerOf["completely.different.name"] = 0;
 
     mcpp::manifest::Manifest m;
     m.package.name = "myorg.foo";
 
     auto rep = validate(g, m);
-    EXPECT_FALSE(rep.ok());
-    bool found = false;
-    for (auto& e : rep.errors) {
-        if (e.message.find("prefixed by package name") != std::string::npos) { found = true; break; }
-    }
-    EXPECT_TRUE(found) << "expected naming-violation error";
+    EXPECT_TRUE(rep.ok()) << "module name mismatch should not be an error";
 }
 
 TEST(Validate, ForbiddenTopName) {
@@ -211,8 +208,9 @@ TEST(Validate, LibRootExportsPartitionIsError) {
     EXPECT_TRUE(found) << "expected lib-root partition error";
 }
 
-TEST(Validate, LibRootWrongModuleNameIsError) {
-    // Lib root file exports a module that doesn't match [package].name.
+TEST(Validate, LibRootDifferentModuleNameIsAllowed) {
+    // 0.0.10+: lib root module name does NOT need to match [package].name.
+    // The library author decides the module name; the build tool auto-detects.
     Graph g;
     SourceUnit u;
     u.path = "src/tinyhttps.cppm";
@@ -229,14 +227,7 @@ TEST(Validate, LibRootWrongModuleNameIsError) {
     m.targets.push_back(t);
 
     auto rep = validate(g, m);
-    EXPECT_FALSE(rep.ok());
-    bool found = false;
-    for (auto& e : rep.errors) {
-        if (e.message.find("expected 'mcpplibs.tinyhttps'") != std::string::npos) {
-            found = true; break;
-        }
-    }
-    EXPECT_TRUE(found) << "expected expected-module-name error";
+    EXPECT_TRUE(rep.ok()) << "module name mismatch should not be an error";
 }
 
 TEST(Validate, LibRootNotEnforcedForBinaryProject) {

@@ -72,23 +72,18 @@ ValidateReport validate(const Graph&                    g,
     // Each SourceUnit carries its OWN package name (set by the scanner) so this
     // works transparently for multi-package builds (path deps): each unit is
     // validated against its own manifest's package name, not the primary's.
+    // 0.0.10+: module naming is the library author's choice. The build tool
+    // no longer enforces that module names must be prefixed by the package
+    // name. Only the forbidden-top-level-name check is retained to avoid
+    // collisions with well-known module names (std, core, etc.).
     for (auto& u : g.units) {
         if (!u.provides) continue;
         const auto& m = u.provides->logicalName;
         auto base = m.substr(0, m.find(':'));      // strip partition suffix
-        const auto& pkg_name = u.packageName;       // ← unit's own package
-        const bool is_public = is_public_package_name(pkg_name);
 
-        if (is_public) {
-            if (base != pkg_name && !base.starts_with(pkg_name + ".")) {
-                r.errors.push_back({u.path,
-                    std::format("public module '{}' must be prefixed by package name '{}'",
-                                m, pkg_name)});
-            }
-            if (is_forbidden_top_module(base)) {
-                r.errors.push_back({u.path,
-                    std::format("module '{}' uses a forbidden top-level name (core/util/common/...)", m)});
-            }
+        if (is_forbidden_top_module(base)) {
+            r.errors.push_back({u.path,
+                std::format("module '{}' uses a forbidden top-level name (core/util/common/...)", m)});
         }
     }
 
@@ -124,12 +119,14 @@ ValidateReport validate(const Graph&                    g,
 
     // 2.5 Lib-root convention (M5.x+).
     //
-    // For projects that ship a `kind = "lib"` target, expect a primary
-    // module-interface file at either `[lib].path` (explicit override) or
-    // `src/<package-tail>.cppm` (default convention). The file must
-    // declare `export module <full-package-name>;` (no partition suffix);
-    // partitions go in sibling files and are aggregated by re-exporting
-    // from the lib root, à la `lib.rs` in cargo.
+    // For projects that ship a `kind = "lib"` target, check that the
+    // lib-root file exists. The lib root is either `[lib].path` (explicit
+    // override) or `src/<package-tail>.cppm` (default convention).
+    //
+    // 0.0.10+: the module name exported by the lib root is NOT required
+    // to match [package].namespace + name. The library author decides
+    // the module name; the build tool auto-detects it via the scanner.
+    // Only structural correctness is enforced (file exists, no partition).
     //
     // Pure-binary projects (mcpp itself, scaffolded `mcpp new`) skip this
     // check — they have no lib-root concept.
@@ -147,13 +144,9 @@ ValidateReport validate(const Graph&                    g,
             const bool exists = std::filesystem::exists(lib_root_abs, ec);
             if (!exists) {
                 if (was_explicit) {
-                    // Explicit `[lib].path` pointing at a missing file is
-                    // always an error.
                     r.errors.push_back({lib_root_rel, std::format(
                         "[lib].path '{}' does not exist", lib_root_rel.string())});
                 } else {
-                    // Convention miss is a warning — gives existing projects
-                    // a soft on-ramp before they rename / move files.
                     r.warnings.push_back({lib_root_rel, std::format(
                         "lib target without conventional lib root '{}' "
                         "(create the file or set [lib].path)",
@@ -162,13 +155,11 @@ ValidateReport validate(const Graph&                    g,
             }
         }
 
-        // Even without on-disk verification we can still cross-check the
-        // graph: if a unit at the lib-root path is present, it must
-        // export `<package-name>` exactly (no partition).
+        // If the lib-root file is in the graph, verify it exports a
+        // primary module (not a partition). The actual module name is
+        // the library author's choice — no name-matching enforced.
         const mcpp::modgraph::SourceUnit* lib_unit = nullptr;
         for (auto& u : g.units) {
-            // Match relative or absolute — projectRoot may be empty in
-            // tests, so we just compare path tails.
             auto u_rel = u.path.is_absolute() && !projectRoot.empty()
                 ? std::filesystem::relative(u.path, projectRoot)
                 : u.path;
@@ -180,27 +171,15 @@ ValidateReport validate(const Graph&                    g,
         if (lib_unit) {
             if (!lib_unit->provides) {
                 r.errors.push_back({lib_unit->path, std::format(
-                    "lib root '{}' must declare `export module {};`",
-                    lib_root_rel.string(), manifest.package.name)});
+                    "lib root '{}' must declare `export module <name>;`",
+                    lib_root_rel.string())});
             } else {
                 const auto& m = lib_unit->provides->logicalName;
                 if (m.find(':') != std::string::npos) {
                     r.errors.push_back({lib_unit->path, std::format(
-                        "lib root '{}' exports a partition '{}' — must be the "
-                        "primary module '{}' (no `:partition` suffix)",
-                        lib_root_rel.string(), m, manifest.package.name)});
-                } else {
-                    // 0.0.6+: compare against qualified name when namespace is set.
-                    const std::string expected =
-                        manifest.package.namespace_.empty()
-                            ? manifest.package.name
-                            : manifest.package.namespace_ + "." + manifest.package.name;
-                    if (m != expected) {
-                        r.errors.push_back({lib_unit->path, std::format(
-                            "lib root '{}' exports module '{}', expected '{}' "
-                            "(must match [package].namespace + name)",
-                            lib_root_rel.string(), m, expected)});
-                    }
+                        "lib root '{}' exports a partition '{}' — "
+                        "must be a primary module (no `:partition` suffix)",
+                        lib_root_rel.string(), m)});
                 }
             }
         }
