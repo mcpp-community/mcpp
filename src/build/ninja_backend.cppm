@@ -187,8 +187,33 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  command = mkdir -p $$(dirname $out) && cp -f $in $out\n");
     append("  description = STAGE $out\n\n");
 
+    // P1: per-file dyndep rule. Converts one .ddi → .dd independently.
+    append("rule cxx_dyndep\n");
+    append("  command = $mcpp dyndep --single --output $out $in\n");
+    append("  description = DYNDEP $out\n");
+    append("  restat = 1\n\n");
+
+    // P2: cxx_module preserves BMI timestamps when interface is unchanged.
+    // GCC always updates the .gcm timestamp even if content is identical.
+    // We backup the BMI before compilation, compile, then restore the old
+    // file if content is byte-identical. Combined with restat = 1 in the
+    // dyndep file, this prevents cascading rebuilds when only the module
+    // implementation changed (not the interface).
+    //
+    // $bmi_out is set per build edge to the BMI path (gcm.cache/<module>.gcm).
+    // If $bmi_out is empty (no module provided), we just compile normally.
     append("rule cxx_module\n");
-    append("  command = $cxx $cxxflags -c $in -o $out\n");
+    append("  command = "
+           "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
+             "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
+           "fi && "
+           "$cxx $cxxflags -c $in -o $out && "
+           "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
+              "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
+             "mv \"$bmi_out.bak\" \"$bmi_out\"; "
+           "else "
+             "rm -f \"$bmi_out.bak\"; "
+           "fi\n");
     append("  description = MOD $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -287,16 +312,21 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         }
         append("\n");
 
-        // ── Phase 2: collect into dyndep file. ──────────────────────────
-        std::string ddi_inputs;
-        for (auto& d : ddi_paths)
-            ddi_inputs += " " + d;
-        append("build build.ninja.dd : cxx_collect" + ddi_inputs + "\n\n");
+        // ── Phase 2: per-file dyndep (P1 optimization). ────────────────
+        // Each .ddi → .dd independently, so modifying one source file only
+        // invalidates that file's .dd and its compile edge, not all edges.
+        // Map ddi path → dd path for Phase 3 reference.
+        std::map<std::string, std::string> ddi_to_dd;
+        for (auto& ddi : ddi_paths) {
+            auto dd = ddi + ".dd";   // e.g. obj/cli.cppm.ddi.dd
+            ddi_to_dd[ddi] = dd;
+            append(std::format("build {} : cxx_dyndep {}\n", dd, ddi));
+        }
+        append("\n");
 
-        // ── Phase 3: compile edges with dyndep. ─────────────────────────
-        // BMI implicit outputs are still declared statically (we know
-        // them from the plan); the dyndep file adds implicit BMI INPUTS
-        // (the requires) so ninja schedules in the right order.
+        // ── Phase 3: compile edges with per-file dyndep. ────────────────
+        // Each compile edge references its OWN .dd file instead of a global one.
+        // P2: module compile edges get a $bmi_out variable for BMI preservation.
         for (auto& cu : plan.compileUnits) {
             std::string rule = pick_rule(cu.source);
 
@@ -306,10 +336,19 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (rule != "c_object") {
-                // build.ninja.dd is the dyndep file; ninja requires it as an
-                // implicit input (so it's built before the compile runs).
-                out_line += " | build.ninja.dd";
-                out_line += "\n  dyndep = build.ninja.dd\n";
+                auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
+                auto it = ddi_to_dd.find(ddi);
+                if (it != ddi_to_dd.end()) {
+                    out_line += " | " + it->second;
+                    out_line += "\n  dyndep = " + it->second;
+                    // P2: set bmi_out for the copy_if_different logic in cxx_module.
+                    if (cu.providesModule) {
+                        out_line += "\n  bmi_out = " + bmi_path(*cu.providesModule);
+                    }
+                    out_line += "\n";
+                } else {
+                    out_line += "\n";
+                }
             } else {
                 out_line += "\n";
             }
@@ -446,6 +485,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     std::string ninjaProgram =
         !ninjaBin.empty() ? std::format("'{}'", ninjaBin.string()) : std::string{"ninja"};
 
+    // Record ninja binary for P0 fast-path cache.
+    BuildResult r;
+    r.ninjaProgram = ninjaProgram;
+
     std::string cmd = std::format("{} -C '{}'", ninjaProgram, plan.outputDir.string());
     if (opts.verbose)
         cmd += " -v";
@@ -459,7 +502,6 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         std::fputs(out.c_str(), stdout);
     }
 
-    BuildResult r;
     r.exitCode = ok ? 0 : 1;
     r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0);

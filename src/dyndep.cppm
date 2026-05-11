@@ -52,6 +52,11 @@ std::expected<std::string, std::string>
 emit_dyndep_from_files(const std::vector<std::filesystem::path>& ddiPaths,
                        const std::set<std::string>& stdImports);
 
+// P1: emit a single-unit dyndep file from one .ddi file.
+// Used by the per-file dyndep mode to convert each .ddi → .dd independently.
+std::expected<std::string, std::string>
+emit_dyndep_single(const std::filesystem::path& ddiPath);
+
 } // namespace mcpp::dyndep
 
 namespace mcpp::dyndep {
@@ -279,6 +284,32 @@ emit_dyndep_from_files(const std::vector<std::filesystem::path>& ddiPaths,
         units.push_back(std::move(*u));
     }
     return emit_dyndep(units, stdImports);
+}
+
+std::expected<std::string, std::string>
+emit_dyndep_single(const std::filesystem::path& ddiPath)
+{
+    std::ifstream is(ddiPath);
+    if (!is) return std::unexpected(std::format("cannot read '{}'", ddiPath.string()));
+    std::string body((std::istreambuf_iterator<char>(is)), {});
+    auto u = parse_ddi(body);
+    if (!u) return std::unexpected(std::format("{}: {}", ddiPath.string(), u.error()));
+
+    std::string out = "ninja_dyndep_version = 1\n";
+    if (!u->primaryOutput.empty()) {
+        std::string line = "build " + u->primaryOutput.string() + ": dyndep";
+        bool firstImplicit = true;
+        for (auto& r : u->requires_) {
+            bool selfProvides = false;
+            for (auto& p : u->provides) if (p == r) { selfProvides = true; break; }
+            if (selfProvides) continue;
+            if (firstImplicit) { line += " |"; firstImplicit = false; }
+            line += " gcm.cache/" + bmi_basename(r);
+        }
+        line += "\n  restat = 1\n";
+        out += line;
+    }
+    return out;
 }
 
 } // namespace mcpp::dyndep

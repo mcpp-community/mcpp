@@ -1888,6 +1888,23 @@ prepare_build(bool print_fingerprint,
     return ctx;
 }
 
+// ─── P0: build cache for fast-path rebuilds ─────────────────────────
+
+constexpr std::string_view kBuildCacheFile = "target/.build_cache";
+
+void write_build_cache(const std::filesystem::path& projectRoot,
+                       const std::filesystem::path& outputDir,
+                       const std::string& ninjaProgram) {
+    auto path = projectRoot / kBuildCacheFile;
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream f(path, std::ios::trunc);
+    if (f) {
+        f << outputDir.string() << '\n';
+        f << ninjaProgram << '\n';
+    }
+}
+
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
 // so the latter doesn't call prepare_build twice (and re-print the toolchain
 // resolution banner).
@@ -1942,7 +1959,90 @@ int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache) {
         }
     }
 
+    // P0: save build cache for fast-path on next invocation.
+    if (!no_cache && !r->ninjaProgram.empty()) {
+        write_build_cache(ctx.projectRoot, ctx.outputDir, r->ninjaProgram);
+    }
+
     mcpp::ui::finished("release", r->elapsed);
+    return 0;
+}
+
+// ─── P0 fast-path: skip prepare_build when build.ninja is fresh ──────
+//
+// On a successful build, we write `target/.build_cache` containing the
+// outputDir path. On the next invocation, if build.ninja in that dir
+// is newer than all source files and mcpp.toml, we invoke ninja directly
+// without re-running the scanner, make_plan, or emit phases.
+//
+// This reduces no-change builds from ~10s to <0.5s.
+
+// Try to fast-path: if build.ninja is newer than all inputs, just run ninja.
+// Returns exit code on fast-path, or nullopt if full rebuild needed.
+std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
+                                  bool verbose, bool no_cache) {
+    if (no_cache) return std::nullopt;
+
+    auto cachePath = projectRoot / kBuildCacheFile;
+    std::error_code ec;
+    if (!std::filesystem::exists(cachePath, ec)) return std::nullopt;
+
+    std::ifstream f(cachePath);
+    std::string outputDirStr, ninjaProgram;
+    if (!std::getline(f, outputDirStr) || outputDirStr.empty()) return std::nullopt;
+    if (!std::getline(f, ninjaProgram) || ninjaProgram.empty()) return std::nullopt;
+    std::filesystem::path outputDir(outputDirStr);
+
+    auto ninjaPath = outputDir / "build.ninja";
+    if (!std::filesystem::exists(ninjaPath, ec)) return std::nullopt;
+
+    auto ninjaTime = std::filesystem::last_write_time(ninjaPath, ec);
+    if (ec) return std::nullopt;
+
+    // Check mcpp.toml
+    auto tomlPath = projectRoot / "mcpp.toml";
+    auto tomlTime = std::filesystem::last_write_time(tomlPath, ec);
+    if (ec || tomlTime > ninjaTime) return std::nullopt;
+
+    // Check all source files under src/
+    auto srcDir = projectRoot / "src";
+    if (std::filesystem::exists(srcDir, ec)) {
+        for (auto& entry : std::filesystem::recursive_directory_iterator(srcDir, ec)) {
+            if (!entry.is_regular_file()) continue;
+            auto ext = entry.path().extension().string();
+            if (ext != ".cppm" && ext != ".cpp" && ext != ".cc" &&
+                ext != ".cxx" && ext != ".c" && ext != ".h" && ext != ".hpp")
+                continue;
+            auto ft = std::filesystem::last_write_time(entry.path(), ec);
+            if (ec || ft > ninjaTime) return std::nullopt;
+        }
+    }
+
+    // All inputs are older than build.ninja → fast-path: just run ninja.
+    std::string cmd = std::format("{} -C '{}'", ninjaProgram, outputDir.string());
+    if (verbose) cmd += " -v";
+    cmd += " 2>&1";
+
+    auto t0 = std::chrono::steady_clock::now();
+    std::string out;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return std::nullopt;
+    char buf[4096];
+    while (std::fgets(buf, sizeof(buf), pipe)) {
+        out += buf;
+        if (verbose) std::fputs(buf, stdout);
+    }
+    int status = pclose(pipe);
+    bool ok = (status == 0);
+    if (!ok) {
+        if (!verbose) std::fputs(out.c_str(), stdout);
+        // Ninja failed — fall back to full rebuild (stale build.ninja?)
+        return std::nullopt;
+    }
+
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0);
+    mcpp::ui::finished("release", elapsed);
     return 0;
 }
 
@@ -1954,6 +2054,16 @@ int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
     ov.force_static = parsed.is_flag_set("static");
+
+    // P0: try fast-path if inputs haven't changed.
+    if (!print_fp && ov.target_triple.empty() && !ov.force_static) {
+        auto root = find_manifest_root(std::filesystem::current_path());
+        if (root) {
+            if (auto rc = try_fast_build(*root, verbose, no_cache)) {
+                return *rc;
+            }
+        }
+    }
 
     auto ctx = prepare_build(print_fp, /*includeDevDeps=*/false, /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
@@ -3255,18 +3365,36 @@ int cmd_explain_action(const mcpplibs::cmdline::ParsedArgs& parsed) {
 }
 
 // Hidden subcommand: aggregate P1689 .ddi files into a Ninja dyndep file.
-// Invoked by ninja during build (cxx_collect rule) under M3.3.b dyndep mode.
+// Invoked by ninja during build (cxx_collect / cxx_dyndep rules).
+//
+// Multi-file mode (legacy cxx_collect):
 //   mcpp dyndep --output <build.ninja.dd> <ddi-1> <ddi-2> ...
+//
+// Single-file mode (P1 per-file dyndep, cxx_dyndep rule):
+//   mcpp dyndep --single --output <file.dd> <file.ddi>
 int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::filesystem::path outPath = parsed.option_or_empty("output").value();
     if (outPath.empty()) {
         std::println(stderr, "error: --output <path> required");
         return 2;
     }
-    std::vector<std::filesystem::path> ddis;
-    for (std::size_t i = 0; i < parsed.positional_count(); ++i)
-        ddis.emplace_back(parsed.positional(i));
-    auto body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{});
+
+    bool single = parsed.is_flag_set("single");
+
+    std::expected<std::string, std::string> body;
+    if (single) {
+        if (parsed.positional_count() != 1) {
+            std::println(stderr, "error: --single requires exactly one .ddi input");
+            return 2;
+        }
+        body = mcpp::dyndep::emit_dyndep_single(parsed.positional(0));
+    } else {
+        std::vector<std::filesystem::path> ddis;
+        for (std::size_t i = 0; i < parsed.positional_count(); ++i)
+            ddis.emplace_back(parsed.positional(i));
+        body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{});
+    }
+
     if (!body) {
         std::println(stderr, "error: {}", body.error());
         return 1;
@@ -3574,6 +3702,7 @@ int run(int argc, char** argv) {
             .description("(internal: invoked by ninja) Emit ninja dyndep file from .ddi inputs")
             .option(cl::Option("output").short_name('o').takes_value().value_name("PATH")
                 .help("Path to write dyndep file"))
+            .option(cl::Option("single").help("Single-file mode: one .ddi → one .dd"))
             .action(wrap_rc(cmd_dyndep)))
     ;
 
