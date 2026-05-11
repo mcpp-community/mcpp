@@ -1,0 +1,132 @@
+# -----------------------------------------------------------------------------
+# mcpp-community C++ Style Configuration
+#
+# This configuration follows the style specification defined in:
+# https://github.com/mcpp-community/mcpp-style-ref
+#
+# Maintained by: mcpp-community
+# -----------------------------------------------------------------------------
+
+Language: Cpp # Apply configuration to C++
+
+# -----------------------------------------------------------------------------
+# Language Standard
+# -----------------------------------------------------------------------------
+Standard: Latest # Always use the latest supported C++ standard
+
+# -----------------------------------------------------------------------------
+# Indentation
+# -----------------------------------------------------------------------------
+IndentWidth: 4 # Use 4 spaces for indentation
+TabWidth: 4 # Visual width of tab
+UseTab: Never # Never use tabs
+
+# -----------------------------------------------------------------------------
+# Line Width
+# -----------------------------------------------------------------------------
+ColumnLimit: 100 # Maximum line width
+
+# -----------------------------------------------------------------------------
+# Spaces
+# -----------------------------------------------------------------------------
+SpaceBeforeParens: ControlStatements # Space before parentheses for control statements (if/for/while); function calls remain tight
+SpacesInContainerLiterals: true # Enforce spaces in container literals
+SpaceBeforeAssignmentOperators: true # Add space before assignment operators
+SpacesInParentheses: false # No extra spaces inside parentheses
+PointerAlignment: Left # Pointer/reference attaches to type
+QualifierAlignment: Left # Place qualifiers like const to the left
+
+# -----------------------------------------------------------------------------
+# Braces
+# -----------------------------------------------------------------------------
+BreakBeforeBraces: Attach # Opening brace stays on same line
+AllowShortFunctionsOnASingleLine: Empty # Allow empty functions like `void f() {}`
+AllowShortIfStatementsOnASingleLine: Never # Disallow single-line if statements
+AllowShortBlocksOnASingleLine: Empty # Allow empty blocks on one line
+AllowShortLoopsOnASingleLine: false # Disallow one-line loops
+
+# -----------------------------------------------------------------------------
+# Constructor Initializer List
+# -----------------------------------------------------------------------------
+BreakConstructorInitializers: BeforeColon # Keep initializer list compact when short
+ConstructorInitializerAllOnOneLineOrOnePerLine: true # Allow compact initializer lists
+BreakConstructorInitializersBeforeComma: false # Do not break before commas
+
+# -----------------------------------------------------------------------------
+# Access Modifiers
+# -----------------------------------------------------------------------------
+AccessModifierOffset: -4 # Align access modifiers with class indentation
+EmptyLineBeforeAccessModifier: Never # Do not insert empty line before access specifiers
+EmptyLineAfterAccessModifier: Never # Do not insert empty line after access specifiers
+
+# -----------------------------------------------------------------------------
+# Namespace Formatting
+# -----------------------------------------------------------------------------
+NamespaceIndentation: None # Do not indent contents inside namespace
+FixNamespaceComments: true # Enforce closing namespace comments
+CompactNamespaces: true # Prefer namespace a::b instead of nested namespaces
+
+# -----------------------------------------------------------------------------
+# Switch / Case Formatting
+# -----------------------------------------------------------------------------
+IndentCaseLabels: true # Indent case/default labels
+IndentCaseBlocks: true # Indent statements inside case blocks
+
+# -----------------------------------------------------------------------------
+# Includes
+# -----------------------------------------------------------------------------
+SortIncludes: true # Automatically sort includes
+IncludeBlocks: Regroup # Regroup include blocks
+IncludeCategories:
+  - Regex: "^<.*>" # Standard / third-party headers
+    Priority: 1
+  - Regex: '^".*"' # Project headers
+    Priority: 2
+
+# -----------------------------------------------------------------------------
+# Comment Alignment
+# -----------------------------------------------------------------------------
+AlignTrailingComments: true # Align trailing comments
+SpacesBeforeTrailingComments: 2 # Two spaces before trailing comments
+
+# -----------------------------------------------------------------------------
+# Parameter Formatting
+# -----------------------------------------------------------------------------
+BinPackParameters: true # Allow parameters on same line
+BinPackArguments: true # Allow arguments on same line
+
+# -----------------------------------------------------------------------------
+# Template Formatting
+# -----------------------------------------------------------------------------
+AlwaysBreakTemplateDeclarations: Yes # Always place template declarations on their own line
+
+# -----------------------------------------------------------------------------
+# Operator Line Breaking
+# -----------------------------------------------------------------------------
+BreakBeforeBinaryOperators: None # Break after operators
+
+# -----------------------------------------------------------------------------
+# Method Chain Formatting
+# -----------------------------------------------------------------------------
+PenaltyBreakBeforeFirstCallParameter: 10000 # Avoid breaking chained calls unless necessary
+
+# -----------------------------------------------------------------------------
+# Lambda Formatting
+# -----------------------------------------------------------------------------
+AllowShortLambdasOnASingleLine: All # Allow short lambdas on one line
+
+# -----------------------------------------------------------------------------
+# Using Declarations
+# -----------------------------------------------------------------------------
+SortUsingDeclarations: true # Automatically sort using declarations
+
+# -----------------------------------------------------------------------------
+# Return Type Formatting
+# -----------------------------------------------------------------------------
+AlwaysBreakAfterReturnType: None # Break return type only when exceeding ColumnLimit
+
+# -----------------------------------------------------------------------------
+# Concepts / Requires
+# -----------------------------------------------------------------------------
+RequiresClausePosition: OwnLine # Force requires clause to a new line
+IndentRequiresClause: false # Do not indent requires clause
