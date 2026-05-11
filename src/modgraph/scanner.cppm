@@ -341,8 +341,16 @@ void scan_one_into(ScanResult& result,
     }
     for (auto& p : excluded) all_files.erase(p);
 
+    // 0.0.6+: use qualified name (namespace.name) so the validator's
+    // "module must be prefixed by package name" check works when the
+    // manifest uses an explicit namespace field with a short name.
+    const std::string qualifiedName =
+        manifest.package.namespace_.empty()
+            ? manifest.package.name
+            : manifest.package.namespace_ + "." + manifest.package.name;
+
     for (auto const& f : all_files) {
-        auto r = scan_file(f, manifest.package.name);
+        auto r = scan_file(f, qualifiedName);
         if (!r) {
             result.errors.push_back(r.error());
             continue;
