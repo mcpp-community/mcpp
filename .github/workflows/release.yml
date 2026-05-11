@@ -95,9 +95,17 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
+          # Pin xlings to a known-good version. The upstream install
+          # script always grabs `latest` (no version override), so we
+          # download + self-install manually to avoid broken releases.
+          XLINGS_VERSION: '0.4.25'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
-            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+            tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
+            curl -fsSL -o "/tmp/${tarball}" \
+              "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+            tar -xzf "/tmp/${tarball}" -C /tmp
+            "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
           fi
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version

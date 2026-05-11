@@ -1186,8 +1186,16 @@ prepare_build(bool print_fingerprint,
         // Propagate lua-level namespace into the loaded manifest when
         // the manifest itself doesn't carry one (Form A descriptors
         // whose upstream mcpp.toml predates the namespace field).
+        // Guard: if the manifest's name already starts with luaNs+"."
+        // (e.g. name="mcpplibs.tinyhttps" with luaNs="mcpplibs"),
+        // the namespace is already embedded in the name — don't inject
+        // it again or the scanner will produce a double-prefixed
+        // qualified name like "mcpplibs.mcpplibs.tinyhttps".
         if (manifest->package.namespace_.empty() && !luaNs.empty()) {
-            manifest->package.namespace_ = luaNs;
+            auto prefix = luaNs + ".";
+            if (!manifest->package.name.starts_with(prefix)) {
+                manifest->package.namespace_ = luaNs;
+            }
         }
 
         return std::pair{effRoot, std::move(*manifest)};
@@ -3290,7 +3298,7 @@ int run(int argc, char** argv) {
         std::string_view a = argv[1];
         if (a == "--help" || a == "-h") { print_usage(); return 0; }
         if (a == "--version" || a == "-V") {
-            std::println("mcpp {}", mcpp::toolchain::MCPP_VERSION);
+            std::println("mcpp {} - ", mcpp::toolchain::MCPP_VERSION);
             return 0;
         }
     }

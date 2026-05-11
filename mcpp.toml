@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "0.0.6"
+version     = "0.0.7"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -19,6 +19,9 @@ toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 
 # Eat our own dog food: mcpp uses mcpplibs.cmdline for argument parsing.
+# NOTE: uses legacy dotted-key syntax so older bootstrapping mcpp versions
+# (pre-0.0.6, which don't understand [dependencies.<ns>] subtables) can
+# still parse this file during the self-host release build.
 [dependencies]
 "mcpplibs.cmdline" = "0.0.1"
 

@@ -56,12 +56,14 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.25'
         run: |
-          # xlings: install if not cached. The installer reads from
-          # /dev/tty for an interactive prompt; XLINGS_NON_INTERACTIVE=1
-          # skips that and runs `xlings self install` directly.
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
-            curl -fsSL https://d2learn.org/xlings-install.sh | bash
+            tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
+            curl -fsSL -o "/tmp/${tarball}" \
+              "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+            tar -xzf "/tmp/${tarball}" -C /tmp
+            "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
           fi
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
