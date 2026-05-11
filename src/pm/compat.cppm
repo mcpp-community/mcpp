@@ -169,20 +169,29 @@ inline std::vector<std::string> install_dir_candidates(std::string_view ns,
 {
     std::vector<std::string> candidates;
     auto qname = qualified_name(ns, shortName);
+    auto fqname = ns.empty() ? std::string(shortName)
+                             : std::format("{}.{}", ns, shortName);
 
     // Canonical: <index>-x-<ns>.<shortName>  (e.g. "mcpp-index-x-compat.mbedtls")
-    // For default namespace: <index>-x-<shortName>  (e.g. "mcpp-index-x-gtest")
+    // For default namespace: <index>-x-<shortName>  (e.g. "mcpp-index-x-cmdline")
     candidates.push_back(std::format("{}-x-{}", indexName, qname));
+
+    // Fallback: xlings always installs with the full qualified name
+    // (ns.shortName), even for the default namespace. So we also try
+    // <index>-x-<ns>.<shortName> when qname != fqname.
+    if (qname != fqname) {
+        candidates.push_back(std::format("{}-x-{}", indexName, fqname));
+    }
 
     // ── Fallback candidates (COMPAT, remove in 1.0.0) ──────────────
 
-    // Fallback 1: namespace-prefixed dir without index
+    // Namespace-prefixed dir without index
     // e.g. "compat-x-mbedtls" (new-style ns-aware layout)
     if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace) {
         candidates.push_back(std::format("{}-x-{}", ns, shortName));
     }
 
-    // Fallback 2: index-prefixed with bare short name
+    // Index-prefixed with bare short name
     // e.g. "mcpp-index-x-mbedtls" (old pre-namespace layout)
     if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace) {
         candidates.push_back(std::format("{}-x-{}", indexName, shortName));
