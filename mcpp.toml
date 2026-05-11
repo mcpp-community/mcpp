@@ -6,6 +6,11 @@ license     = "Apache-2.0"
 authors     = ["mcpp-community"]
 repo        = "https://github.com/mcpp-community/mcpp"
 
+[build]
+# nlohmann/json.hpp lives in src/libs/json/; expose it to the global
+# module fragment `#include <json.hpp>` in src/libs/json.cppm.
+include_dirs = ["src/libs/json"]
+
 [toolchain]
 default = "gcc@16.1.0"
 

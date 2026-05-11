@@ -20,3 +20,4 @@ doctor.log
 *.pcm
 *.ifc
 *.ddi
+compile_commands.json

@@ -20,16 +20,20 @@ export module mcpp.build.ninja;
 import std;
 import mcpp.build.backend;
 import mcpp.build.plan;
+import mcpp.build.flags;
+import mcpp.build.compile_commands;
 import mcpp.dyndep;
 
 export namespace mcpp::build {
 
 class NinjaBackend final : public Backend {
 public:
-    std::string_view name() const override { return "ninja"; }
+    std::string_view name() const override {
+        return "ninja";
+    }
 
-    std::expected<BuildResult, BuildError>
-        build(const BuildPlan& plan, const BuildOptions& opts) override;
+    std::expected<BuildResult, BuildError> build(const BuildPlan& plan,
+                                                 const BuildOptions& opts) override;
 };
 
 // Factory for this backend implementation.
@@ -38,7 +42,7 @@ std::unique_ptr<Backend> make_ninja_backend();
 // Helper exposed for testing / debugging
 std::string emit_ninja_string(const BuildPlan& plan);
 
-} // namespace mcpp::build
+}  // namespace mcpp::build
 
 namespace mcpp::build {
 
@@ -50,10 +54,14 @@ std::string escape_ninja_path(const std::filesystem::path& p) {
     std::string s = p.string();
     std::string out;
     for (char c : s) {
-        if (c == '$') out += "$$";
-        else if (c == ':') out += "$:";
-        else if (c == ' ') out += "$ ";
-        else out.push_back(c);
+        if (c == '$')
+            out += "$$";
+        else if (c == ':')
+            out += "$:";
+        else if (c == ' ')
+            out += "$ ";
+        else
+            out.push_back(c);
     }
     return out;
 }
@@ -68,10 +76,13 @@ bool run(const std::string& cmd, std::string& output_capture, bool capture = tru
     std::array<char, 8192> buf{};
     output_capture.clear();
     std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return false;
+    if (!fp)
+        return false;
     while (std::fgets(buf.data(), buf.size(), fp) != nullptr) {
-        if (capture) output_capture += buf.data();
-        else         std::fputs(buf.data(), stdout);
+        if (capture)
+            output_capture += buf.data();
+        else
+            std::fputs(buf.data(), stdout);
     }
     int rc = ::pclose(fp);
     return rc == 0;
@@ -81,7 +92,8 @@ bool dyndep_mode_enabled() {
     // M4 #7: dyndep is now the default. Set MCPP_NINJA_DYNDEP=0 to opt
     // OUT and fall back to the static-deps emission path.
     const char* v = std::getenv("MCPP_NINJA_DYNDEP");
-    if (!v) return true;
+    if (!v)
+        return true;
     std::string_view sv(v);
     return !(sv == "0" || sv == "off" || sv == "false");
 }
@@ -89,8 +101,9 @@ bool dyndep_mode_enabled() {
 std::filesystem::path mcpp_exe_path() {
     std::error_code ec;
     auto p = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (!ec) return p;
-    return "mcpp";   // fall back to PATH lookup
+    if (!ec)
+        return p;
+    return "mcpp";  // fall back to PATH lookup
 }
 
 // Derive a sibling C compiler from a C++ compiler binary path. Used so .c
@@ -104,21 +117,25 @@ std::filesystem::path mcpp_exe_path() {
 // (this also keeps unit tests that don't touch a real toolchain happy).
 std::filesystem::path derive_c_compiler(const std::filesystem::path& cxx) {
     auto fname = cxx.filename().string();
-    auto try_replace = [&](std::string_view from, std::string_view to)
-        -> std::optional<std::filesystem::path>
-    {
+    auto try_replace = [&](std::string_view from,
+                           std::string_view to) -> std::optional<std::filesystem::path> {
         auto pos = fname.rfind(from);
-        if (pos == std::string::npos) return std::nullopt;
+        if (pos == std::string::npos)
+            return std::nullopt;
         std::string repl = fname;
         repl.replace(pos, from.size(), to);
         auto p = cxx.parent_path() / repl;
         std::error_code ec;
-        if (std::filesystem::exists(p, ec)) return p;
+        if (std::filesystem::exists(p, ec))
+            return p;
         return std::nullopt;
     };
-    if (auto p = try_replace("clang++", "clang")) return *p;
-    if (auto p = try_replace("g++",     "gcc"))   return *p;
-    if (auto p = try_replace("c++",     "cc"))    return *p;
+    if (auto p = try_replace("clang++", "clang"))
+        return *p;
+    if (auto p = try_replace("g++", "gcc"))
+        return *p;
+    if (auto p = try_replace("c++", "cc"))
+        return *p;
     return "gcc";
 }
 
@@ -126,212 +143,7 @@ bool is_c_source(const std::filesystem::path& src) {
     return src.extension() == ".c";
 }
 
-// Escape a string for JSON (handles " and \).
-std::string json_escape(std::string_view s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        if (c == '"')       out += "\\\"";
-        else if (c == '\\') out += "\\\\";
-        else                out.push_back(c);
-    }
-    return out;
-}
-
-// Compute the full C++ flags string (everything between compiler binary and -c).
-// Returns raw strings; escape_ninja_path() is applied by the caller where needed.
-std::string compute_cxxflags(const BuildPlan& plan) {
-    // Detect whether any target needs PIC (shared library).
-    bool need_pic = false;
-    for (auto& lu : plan.linkUnits) {
-        if (lu.kind == LinkUnit::SharedLibrary) { need_pic = true; break; }
-    }
-    const char* pic_flag = need_pic ? " -fPIC" : "";
-
-    // M5.0: -I from [build].include_dirs (resolved to absolute paths).
-    std::string include_flags;
-    for (auto& inc : plan.manifest.buildConfig.includeDirs) {
-        auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
-        include_flags += " -I" + escape_ninja_path(abs);
-    }
-
-    // M5.5: --sysroot when probed.
-    std::string sysroot_flag;
-    if (!plan.toolchain.sysroot.empty()) {
-        sysroot_flag = " --sysroot=" + escape_ninja_path(plan.toolchain.sysroot);
-    }
-
-    // Locate binutils bin dir for -B flag (not needed for musl toolchain).
-    bool isMuslTc = plan.toolchain.targetTriple.find("-musl") != std::string::npos;
-    std::filesystem::path binutilsBin;
-    if (!isMuslTc) {
-        auto bp = plan.toolchain.binaryPath;
-        std::filesystem::path xpkgsDir;
-        for (auto p = bp.parent_path();
-             p.has_parent_path() && p != p.root_path();
-             p = p.parent_path()) {
-            if (p.filename() == "xpkgs") { xpkgsDir = p; break; }
-        }
-        if (!xpkgsDir.empty()) {
-            auto root = xpkgsDir / "xim-x-binutils";
-            std::error_code ec;
-            if (std::filesystem::exists(root, ec)) {
-                for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-                    auto candidate = v.path() / "bin";
-                    if (std::filesystem::exists(candidate / "ar", ec)) {
-                        binutilsBin = candidate;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    std::string b_flag;
-    if (!binutilsBin.empty()) {
-        b_flag = " -B" + escape_ninja_path(binutilsBin);
-    }
-
-    // musl-gcc 15.1.0 ICEs at -O2; use -Og instead.
-    const char* opt_flag = isMuslTc ? " -Og" : " -O2";
-
-    // User-supplied cxxflags.
-    auto join_flags = [](const std::vector<std::string>& flags) {
-        std::string out;
-        for (auto& f : flags) { out += ' '; out += f; }
-        return out;
-    };
-    std::string user_cxxflags = join_flags(plan.manifest.buildConfig.cxxflags);
-
-    return std::format("-std=c++23 -fmodules{}{}{}{}{}{}",
-                       opt_flag, pic_flag, sysroot_flag, b_flag, include_flags,
-                       user_cxxflags);
-}
-
-// Compute the full C flags string (everything between compiler binary and -c).
-// Returns raw strings; escape_ninja_path() is applied by the caller where needed.
-std::string compute_cflags(const BuildPlan& plan) {
-    // Detect whether any target needs PIC (shared library).
-    bool need_pic = false;
-    for (auto& lu : plan.linkUnits) {
-        if (lu.kind == LinkUnit::SharedLibrary) { need_pic = true; break; }
-    }
-    const char* pic_flag = need_pic ? " -fPIC" : "";
-
-    // M5.0: -I from [build].include_dirs (resolved to absolute paths).
-    std::string include_flags;
-    for (auto& inc : plan.manifest.buildConfig.includeDirs) {
-        auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
-        include_flags += " -I" + escape_ninja_path(abs);
-    }
-
-    // M5.5: --sysroot when probed.
-    std::string sysroot_flag;
-    if (!plan.toolchain.sysroot.empty()) {
-        sysroot_flag = " --sysroot=" + escape_ninja_path(plan.toolchain.sysroot);
-    }
-
-    // Locate binutils bin dir for -B flag (not needed for musl toolchain).
-    bool isMuslTc = plan.toolchain.targetTriple.find("-musl") != std::string::npos;
-    std::filesystem::path binutilsBin;
-    if (!isMuslTc) {
-        auto bp = plan.toolchain.binaryPath;
-        std::filesystem::path xpkgsDir;
-        for (auto p = bp.parent_path();
-             p.has_parent_path() && p != p.root_path();
-             p = p.parent_path()) {
-            if (p.filename() == "xpkgs") { xpkgsDir = p; break; }
-        }
-        if (!xpkgsDir.empty()) {
-            auto root = xpkgsDir / "xim-x-binutils";
-            std::error_code ec;
-            if (std::filesystem::exists(root, ec)) {
-                for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-                    auto candidate = v.path() / "bin";
-                    if (std::filesystem::exists(candidate / "ar", ec)) {
-                        binutilsBin = candidate;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    std::string b_flag;
-    if (!binutilsBin.empty()) {
-        b_flag = " -B" + escape_ninja_path(binutilsBin);
-    }
-
-    // musl-gcc 15.1.0 ICEs at -O2; use -Og instead.
-    const char* opt_flag = isMuslTc ? " -Og" : " -O2";
-
-    // User-supplied cflags.
-    auto join_flags = [](const std::vector<std::string>& flags) {
-        std::string out;
-        for (auto& f : flags) { out += ' '; out += f; }
-        return out;
-    };
-    std::string user_cflags = join_flags(plan.manifest.buildConfig.cflags);
-
-    std::string c_standard = plan.manifest.buildConfig.cStandard.empty()
-        ? std::string{"c11"} : plan.manifest.buildConfig.cStandard;
-
-    return std::format("-std={}{}{}{}{}{}{}",
-                       c_standard, opt_flag, pic_flag, sysroot_flag,
-                       b_flag, include_flags, user_cflags);
-}
-
-// Emit compile_commands.json content as a string.
-std::string emit_compile_commands_json(const BuildPlan& plan) {
-    std::string out;
-    out.reserve(4096);
-    out += "[\n";
-
-    std::string cxxflags = compute_cxxflags(plan);
-    std::string cflags = compute_cflags(plan);
-
-    for (size_t i = 0; i < plan.compileUnits.size(); ++i) {
-        auto& cu = plan.compileUnits[i];
-
-        // Determine compiler and flags based on source type
-        std::string compiler;
-        std::string flags;
-        if (is_c_source(cu.source)) {
-            compiler = derive_c_compiler(plan.toolchain.binaryPath).string();
-            flags = cflags;
-        } else {
-            compiler = plan.toolchain.binaryPath.string();
-            flags = cxxflags;
-        }
-
-        // Build the command: compiler + "  " + flags + " -c " + source + " -o " + output
-        auto output_path = (plan.outputDir / cu.object).string();
-        std::string command = compiler + "  " + flags + " -c " + cu.source.string() + " -o " + output_path;
-
-        // Escape all strings for JSON
-        std::string dir_escaped = json_escape(plan.projectRoot.string());
-        std::string cmd_escaped = json_escape(command);
-        std::string file_escaped = json_escape(cu.source.string());
-        std::string output_escaped = json_escape(output_path);
-
-        // Emit entry with 2-space indentation, field order: directory, command, file, output
-        out += "  {\n";
-        out += std::format("    \"directory\": \"{}\",\n", dir_escaped);
-        out += std::format("    \"command\": \"{}\",\n", cmd_escaped);
-        out += std::format("    \"file\": \"{}\",\n", file_escaped);
-        out += std::format("    \"output\": \"{}\"\n", output_escaped);
-        out += "  }";
-        if (i + 1 < plan.compileUnits.size()) {
-            out += ",";
-        }
-        out += "\n";
-    }
-
-    out += "]";
-    return out;
-}
-
-} // namespace
+}  // namespace
 
 std::string emit_ninja_string(const BuildPlan& plan) {
     bool dyndep = dyndep_mode_enabled();
@@ -341,114 +153,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("# Auto-generated by mcpp v0.0.1. Do not edit by hand.\n");
     append("ninja_required_version = 1.11\n\n");
 
-    // Detect whether any target needs PIC (shared library). If so, all
-    // objects are compiled with -fPIC so they can be linked into either
-    // shared libs or binaries. (Slight perf cost; far simpler than two
-    // compile graphs.)
-    bool need_pic = false;
-    for (auto& lu : plan.linkUnits) {
-        if (lu.kind == LinkUnit::SharedLibrary) { need_pic = true; break; }
-    }
-    const char* pic_flag = need_pic ? " -fPIC" : "";
+    // All compile/link flags are computed once via flags.cppm.
+    auto flags = compute_flags(plan);
 
-    // -static-libstdc++ default-on per docs/21 §VIII (decision #5):
-    // makes built binaries portable across machines with the same ABI.
-    // Users can disable via mcpp.toml `[build].static_stdlib = false`.
-    const char* static_stdlib = plan.manifest.buildConfig.staticStdlib
-        ? " -static-libstdc++" : "";
-
-    // Full static linkage — set by --static or [target.<triple>].linkage = "static".
-    // `-static` subsumes -static-libstdc++ but emit both since gcc tolerates
-    // the duplication and CI logs make the intent obvious.
-    const char* full_static = (plan.manifest.buildConfig.linkage == "static")
-        ? " -static" : "";
-
-    // M5.5: --sysroot when probed (needed since we bypass any xlings wrapper).
-    std::string sysroot_flag;
-    if (!plan.toolchain.sysroot.empty()) {
-        sysroot_flag = " --sysroot=" + escape_ninja_path(plan.toolchain.sysroot);
-    }
-
-    // When the toolchain comes from mcpp's private sandbox, locate the
-    // binutils bin dir (where as/ld/ar/ranlib live). Used to:
-    //   - emit absolute `ar` path in cxx_archive rule
-    //   - add -B<binutils-bin> to cxxflags/ldflags so g++ finds as/ld
-    //     internally without depending on PATH lookup
-    //
-    // This is the last piece making mcpp's build path fully self-contained:
-    // no PATH dependency for the build, no xlings shim involvement at all.
-    // The musl-gcc xpkg ships a complete prefixed binutils set under its
-    // own bin/ (`x86_64-linux-musl-{ar,as,ld,...}`); xim:binutils isn't on
-    // its dependency path and won't be present. For musl we leave -B
-    // unset so g++ resolves as/ld via its own libexec — that's what
-    // musl-gcc.lua expects.
-    bool isMuslTc = plan.toolchain.targetTriple.find("-musl") != std::string::npos;
-    std::filesystem::path binutilsBin;
-    if (!isMuslTc) {
-        auto bp = plan.toolchain.binaryPath;
-        std::filesystem::path xpkgsDir;
-        for (auto p = bp.parent_path();
-             p.has_parent_path() && p != p.root_path();
-             p = p.parent_path()) {
-            if (p.filename() == "xpkgs") { xpkgsDir = p; break; }
-        }
-        if (!xpkgsDir.empty()) {
-            auto root = xpkgsDir / "xim-x-binutils";
-            std::error_code ec;
-            if (std::filesystem::exists(root, ec)) {
-                for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-                    auto candidate = v.path() / "bin";
-                    if (std::filesystem::exists(candidate / "ar", ec)) {
-                        binutilsBin = candidate;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    std::string b_flag;
-    if (!binutilsBin.empty()) {
-        b_flag = " -B" + escape_ninja_path(binutilsBin);
-    }
-
-    // M5.x: any C sources in the plan? If so we emit a `cc` variable and a
-    // separate `c_object` rule so .c files are compiled by the C frontend
-    // (gcc / clang / cc) rather than g++. .c files compiled with g++ get
-    // routed to cc1plus which rejects C-only constructs (implicit void*
-    // conversion, `restrict` keyword, etc.) — fatal for libraries like
-    // mbedtls / openssl.
     bool need_c_rule = false;
     for (auto& cu : plan.compileUnits) {
-        if (is_c_source(cu.source)) { need_c_rule = true; break; }
-    }
-
-    // Use helper functions to compute cxxflags and cflags.
-    std::string cxxflags = compute_cxxflags(plan);
-    std::string cflags = compute_cflags(plan);
-
-    append(std::format("cxx       = {}\n", escape_ninja_path(plan.toolchain.binaryPath)));
-    append(std::format("cxxflags  = {}\n", cxxflags));
-    if (need_c_rule) {
-        auto cc_path = derive_c_compiler(plan.toolchain.binaryPath);
-        append(std::format("cc        = {}\n", escape_ninja_path(cc_path)));
-        append(std::format("cflags    = {}\n", cflags));
-    }
-    append(std::format("ldflags   ={}{}{}{}\n",
-                       full_static, static_stdlib, sysroot_flag, b_flag));
-    // `ar` for cxx_archive: prefer sandbox absolute path, fall back to PATH.
-    // For musl-gcc the prefixed binary lives next to the compiler itself.
-    if (!binutilsBin.empty()) {
-        append(std::format("ar        = {}\n",
-                           escape_ninja_path(binutilsBin / "ar")));
-    } else if (isMuslTc) {
-        auto muslAr = plan.toolchain.binaryPath.parent_path()
-                    / "x86_64-linux-musl-ar";
-        if (std::filesystem::exists(muslAr)) {
-            append(std::format("ar        = {}\n", escape_ninja_path(muslAr)));
-        } else {
-            append("ar        = ar\n");
+        if (is_c_source(cu.source)) {
+            need_c_rule = true;
+            break;
         }
+    }
+
+    append(std::format("cxx       = {}\n", escape_ninja_path(flags.cxxBinary)));
+    append(std::format("cxxflags  = {}\n", flags.cxx));
+    if (need_c_rule) {
+        append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
+        append(std::format("cflags    = {}\n", flags.cc));
+    }
+    append(std::format("ldflags   ={}\n", flags.ld));
+
+    // `ar` for cxx_archive.
+    if (!flags.arBinary.empty()) {
+        append(std::format("ar        = {}\n", escape_ninja_path(flags.arBinary)));
     } else {
         append("ar        = ar\n");
     }
@@ -464,20 +190,23 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("rule cxx_module\n");
     append("  command = $cxx $cxxflags -c $in -o $out\n");
     append("  description = MOD $out\n");
-    if (dyndep) append("  restat = 1\n");
+    if (dyndep)
+        append("  restat = 1\n");
     append("\n");
 
     append("rule cxx_object\n");
     append("  command = $cxx $cxxflags -c $in -o $out\n");
     append("  description = OBJ $out\n");
-    if (dyndep) append("  restat = 1\n");
+    if (dyndep)
+        append("  restat = 1\n");
     append("\n");
 
     if (need_c_rule) {
         append("rule c_object\n");
         append("  command = $cc $cflags -c $in -o $out\n");
         append("  description = CC $out\n");
-        if (dyndep) append("  restat = 1\n");
+        if (dyndep)
+            append("  restat = 1\n");
         append("\n");
     }
 
@@ -510,27 +239,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     // Stage prebuilt std artifacts into our gcm.cache/
-    auto std_bmi_dst   = std::filesystem::path("gcm.cache") / "std.gcm";
-    auto std_o_dst     = std::filesystem::path("obj") / "std.o";
+    auto std_bmi_dst = std::filesystem::path("gcm.cache") / "std.gcm";
+    auto std_o_dst = std::filesystem::path("obj") / "std.o";
 
-    append(std::format("build {} : cp_bmi {}\n",
-        escape_ninja_path(std_bmi_dst),
-        escape_ninja_path(plan.stdBmiPath)));
-    append(std::format("build {} : cp_bmi {}\n\n",
-        escape_ninja_path(std_o_dst),
-        escape_ninja_path(plan.stdObjectPath)));
+    append(std::format("build {} : cp_bmi {}\n", escape_ninja_path(std_bmi_dst),
+                       escape_ninja_path(plan.stdBmiPath)));
+    append(std::format("build {} : cp_bmi {}\n\n", escape_ninja_path(std_o_dst),
+                       escape_ninja_path(plan.stdObjectPath)));
 
     auto bmi_path = [](std::string_view name) {
         std::string s = "gcm.cache/";
-        for (char c : name) s.push_back(c == ':' ? '-' : c);
+        for (char c : name)
+            s.push_back(c == ':' ? '-' : c);
         s += ".gcm";
         return s;
     };
 
     auto pick_rule = [](const std::filesystem::path& src) -> std::string {
         auto ext = src.extension();
-        if (ext == ".cppm") return "cxx_module";
-        if (ext == ".c")    return "c_object";
+        if (ext == ".cppm")
+            return "cxx_module";
+        if (ext == ".c")
+            return "c_object";
         return "cxx_object";
     };
 
@@ -547,21 +277,20 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::vector<std::string> ddi_paths;
         ddi_paths.reserve(plan.compileUnits.size());
         for (auto& cu : plan.compileUnits) {
-            if (is_c_source(cu.source)) continue;
-            auto ddi = (cu.object.parent_path()
-                        / cu.source.filename()).string() + ".ddi";
+            if (is_c_source(cu.source))
+                continue;
+            auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             ddi_paths.push_back(ddi);
-            append(std::format("build {} : cxx_scan {}\n",
-                escape_ninja_path(ddi),
-                escape_ninja_path(cu.source)));
-            append(std::format("  compile_target = {}\n",
-                escape_ninja_path(cu.object)));
+            append(std::format("build {} : cxx_scan {}\n", escape_ninja_path(ddi),
+                               escape_ninja_path(cu.source)));
+            append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
         }
         append("\n");
 
         // ── Phase 2: collect into dyndep file. ──────────────────────────
         std::string ddi_inputs;
-        for (auto& d : ddi_paths) ddi_inputs += " " + d;
+        for (auto& d : ddi_paths)
+            ddi_inputs += " " + d;
         append("build build.ninja.dd : cxx_collect" + ddi_inputs + "\n\n");
 
         // ── Phase 3: compile edges with dyndep. ─────────────────────────
@@ -575,8 +304,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (cu.providesModule) {
                 out_line += " | " + bmi_path(*cu.providesModule);
             }
-            out_line += std::format(" : {} {}", rule,
-                escape_ninja_path(cu.source));
+            out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (rule != "c_object") {
                 // build.ninja.dd is the dyndep file; ninja requires it as an
                 // implicit input (so it's built before the compile runs).
@@ -609,9 +337,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (cu.providesModule) {
                 out_line += " " + bmi_path(*cu.providesModule);
             }
-            out_line += std::format(" : {} {}", rule,
-                escape_ninja_path(cu.source));
-            if (!implicit.empty()) out_line += " |" + implicit;
+            out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
+            if (!implicit.empty())
+                out_line += " |" + implicit;
             out_line += "\n";
             append(std::move(out_line));
         }
@@ -640,8 +368,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 rule = "cxx_shared";
                 break;
         }
-        append(std::format("build {} : {}{}\n",
-            escape_ninja_path(lu.output), rule, ins));
+        append(std::format("build {} : {}{}\n", escape_ninja_path(lu.output), rule, ins));
     }
     append("\n");
 
@@ -656,27 +383,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     return out;
 }
 
-std::expected<BuildResult, BuildError>
-NinjaBackend::build(const BuildPlan& plan, const BuildOptions& opts)
-{
+std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan,
+                                                           const BuildOptions& opts) {
     auto t0 = std::chrono::steady_clock::now();
 
     std::error_code ec;
     std::filesystem::create_directories(plan.outputDir, ec);
-    if (ec) return std::unexpected(BuildError{
-        std::format("cannot create output dir '{}': {}", plan.outputDir.string(), ec.message()),
-        plan.outputDir});
+    if (ec)
+        return std::unexpected(BuildError{std::format("cannot create output dir '{}': {}",
+                                                      plan.outputDir.string(), ec.message()),
+                                          plan.outputDir});
 
     auto ninja_path = plan.outputDir / "build.ninja";
     write_file(ninja_path, emit_ninja_string(plan));
 
-    auto cc_path = plan.projectRoot / "target" / "compile_commands.json";
-    write_file(cc_path, emit_compile_commands_json(plan));
+    // compile_commands.json — via the dedicated module.
+    auto flags = compute_flags(plan);
+    write_compile_commands(plan, flags);
 
     if (opts.dryRun) {
         BuildResult r;
         r.exitCode = 0;
-        r.elapsed   = std::chrono::duration_cast<std::chrono::milliseconds>(
+        r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - t0);
         return r;
     }
@@ -692,11 +420,12 @@ NinjaBackend::build(const BuildPlan& plan, const BuildOptions& opts)
     {
         auto bp = plan.toolchain.binaryPath;
         std::filesystem::path xpkgsDir;
-        for (auto p = bp.parent_path();
-             p.has_parent_path() && p != p.root_path();
-             p = p.parent_path())
-        {
-            if (p.filename() == "xpkgs") { xpkgsDir = p; break; }
+        for (auto p = bp.parent_path(); p.has_parent_path() && p != p.root_path();
+             p = p.parent_path()) {
+            if (p.filename() == "xpkgs") {
+                xpkgsDir = p;
+                break;
+            }
         }
         if (!xpkgsDir.empty()) {
             // xim's ninja xpkg puts the binary at <v>/ninja (no bin/ subdir).
@@ -714,13 +443,14 @@ NinjaBackend::build(const BuildPlan& plan, const BuildOptions& opts)
         }
     }
 
-    std::string ninjaProgram = !ninjaBin.empty()
-        ? std::format("'{}'", ninjaBin.string()) : std::string{"ninja"};
+    std::string ninjaProgram =
+        !ninjaBin.empty() ? std::format("'{}'", ninjaBin.string()) : std::string{"ninja"};
 
-    std::string cmd = std::format("{} -C '{}'",
-                                   ninjaProgram, plan.outputDir.string());
-    if (opts.verbose)        cmd += " -v";
-    if (opts.parallelJobs)  cmd += std::format(" -j{}", opts.parallelJobs);
+    std::string cmd = std::format("{} -C '{}'", ninjaProgram, plan.outputDir.string());
+    if (opts.verbose)
+        cmd += " -v";
+    if (opts.parallelJobs)
+        cmd += std::format(" -j{}", opts.parallelJobs);
     cmd += " 2>&1";
 
     std::string out;
@@ -731,7 +461,7 @@ NinjaBackend::build(const BuildPlan& plan, const BuildOptions& opts)
 
     BuildResult r;
     r.exitCode = ok ? 0 : 1;
-    r.elapsed   = std::chrono::duration_cast<std::chrono::milliseconds>(
+    r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0);
 
     if (ok) {
@@ -739,9 +469,8 @@ NinjaBackend::build(const BuildPlan& plan, const BuildOptions& opts)
             r.producedArtifacts.push_back(plan.outputDir / lu.output);
         }
     } else {
-        return std::unexpected(BuildError{
-            std::format("ninja failed (exit non-zero):\n{}", out),
-            plan.outputDir / "build.ninja"});
+        return std::unexpected(BuildError{std::format("ninja failed (exit non-zero):\n{}", out),
+                                          plan.outputDir / "build.ninja"});
     }
     return r;
 }
@@ -750,4 +479,4 @@ std::unique_ptr<Backend> make_ninja_backend() {
     return std::make_unique<NinjaBackend>();
 }
 
-} // namespace mcpp::build
+}  // namespace mcpp::build
