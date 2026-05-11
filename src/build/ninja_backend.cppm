@@ -446,6 +446,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     std::string ninjaProgram =
         !ninjaBin.empty() ? std::format("'{}'", ninjaBin.string()) : std::string{"ninja"};
 
+    // Record ninja binary for P0 fast-path cache.
+    BuildResult r;
+    r.ninjaProgram = ninjaProgram;
+
     std::string cmd = std::format("{} -C '{}'", ninjaProgram, plan.outputDir.string());
     if (opts.verbose)
         cmd += " -v";
@@ -459,7 +463,6 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         std::fputs(out.c_str(), stdout);
     }
 
-    BuildResult r;
     r.exitCode = ok ? 0 : 1;
     r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0);

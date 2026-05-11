@@ -21,6 +21,7 @@ struct BuildResult {
     std::chrono::milliseconds               elapsed { 0 };
     std::size_t                             cacheHits   = 0;
     std::size_t                             cacheMisses = 0;
+    std::string                             ninjaProgram;     // P0: cached for fast-path rebuilds
 };
 
 struct BuildError {
