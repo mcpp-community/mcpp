@@ -193,8 +193,27 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  description = DYNDEP $out\n");
     append("  restat = 1\n\n");
 
+    // P2: cxx_module preserves BMI timestamps when interface is unchanged.
+    // GCC always updates the .gcm timestamp even if content is identical.
+    // We backup the BMI before compilation, compile, then restore the old
+    // file if content is byte-identical. Combined with restat = 1 in the
+    // dyndep file, this prevents cascading rebuilds when only the module
+    // implementation changed (not the interface).
+    //
+    // $bmi_out is set per build edge to the BMI path (gcm.cache/<module>.gcm).
+    // If $bmi_out is empty (no module provided), we just compile normally.
     append("rule cxx_module\n");
-    append("  command = $cxx $cxxflags -c $in -o $out\n");
+    append("  command = "
+           "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
+             "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
+           "fi && "
+           "$cxx $cxxflags -c $in -o $out && "
+           "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
+              "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
+             "mv \"$bmi_out.bak\" \"$bmi_out\"; "
+           "else "
+             "rm -f \"$bmi_out.bak\"; "
+           "fi\n");
     append("  description = MOD $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -307,6 +326,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
         // ── Phase 3: compile edges with per-file dyndep. ────────────────
         // Each compile edge references its OWN .dd file instead of a global one.
+        // P2: module compile edges get a $bmi_out variable for BMI preservation.
         for (auto& cu : plan.compileUnits) {
             std::string rule = pick_rule(cu.source);
 
@@ -320,7 +340,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 auto it = ddi_to_dd.find(ddi);
                 if (it != ddi_to_dd.end()) {
                     out_line += " | " + it->second;
-                    out_line += "\n  dyndep = " + it->second + "\n";
+                    out_line += "\n  dyndep = " + it->second;
+                    // P2: set bmi_out for the copy_if_different logic in cxx_module.
+                    if (cu.providesModule) {
+                        out_line += "\n  bmi_out = " + bmi_path(*cu.providesModule);
+                    }
+                    out_line += "\n";
                 } else {
                     out_line += "\n";
                 }
