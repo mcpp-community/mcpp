@@ -593,22 +593,48 @@ std::optional<std::string>
 Fetcher::read_xpkg_lua(std::string_view package_name) const
 {
     if (package_name.empty()) return std::nullopt;
-    char first = static_cast<char>(std::tolower(static_cast<unsigned char>(package_name.front())));
-    std::string letter(1, first);
 
     auto data = cfg_.xlingsHome() / "data";
     if (!std::filesystem::exists(data)) return std::nullopt;
 
+    // Build candidate file names. For "mcpplibs.cmdline" we try:
+    //   1. mcpplibs.cmdline.lua     (old: full qualified name)
+    //   2. cmdline.lua              (new: short name, namespace in file)
+    //   3. capi.lua.lua             (new: sub-ns prefix for mcpplibs.capi.lua)
+    // Each candidate is tried under pkgs/<first-letter-of-filename>/.
+    std::vector<std::string> filenames;
+    filenames.push_back(std::string(package_name) + ".lua");
+
+    // Split on first dot → (ns, short)
+    auto dot = package_name.find('.');
+    if (dot != std::string_view::npos) {
+        auto shortName = package_name.substr(dot + 1);
+        filenames.push_back(std::string(shortName) + ".lua");
+        // For "mcpplibs.capi.lua" → shortName = "capi.lua" → already covered.
+        // Also try compat.<name>.lua pattern:
+        filenames.push_back("compat." + std::string(package_name) + ".lua");
+        if (!shortName.empty()) {
+            filenames.push_back("compat." + std::string(shortName) + ".lua");
+        }
+    } else {
+        // Bare name like "gtest" → also try compat.gtest.lua
+        filenames.push_back("compat." + std::string(package_name) + ".lua");
+    }
+
     std::error_code ec;
-    // Iterate over each cloned index dir and search for the .lua file.
     for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
         if (!entry.is_directory()) continue;
-        auto candidate = entry.path() / "pkgs" / letter
-                       / (std::string(package_name) + ".lua");
-        if (std::filesystem::exists(candidate)) {
-            std::ifstream is(candidate);
-            std::stringstream ss; ss << is.rdbuf();
-            return ss.str();
+        auto pkgsDir = entry.path() / "pkgs";
+        if (!std::filesystem::exists(pkgsDir)) continue;
+        for (auto& fname : filenames) {
+            char first = static_cast<char>(std::tolower(
+                static_cast<unsigned char>(fname.front())));
+            auto candidate = pkgsDir / std::string(1, first) / fname;
+            if (std::filesystem::exists(candidate)) {
+                std::ifstream is(candidate);
+                std::stringstream ss; ss << is.rdbuf();
+                return ss.str();
+            }
         }
     }
     return std::nullopt;
