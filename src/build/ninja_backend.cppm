@@ -187,6 +187,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  command = mkdir -p $$(dirname $out) && cp -f $in $out\n");
     append("  description = STAGE $out\n\n");
 
+    // P1: per-file dyndep rule. Converts one .ddi → .dd independently.
+    append("rule cxx_dyndep\n");
+    append("  command = $mcpp dyndep --single --output $out $in\n");
+    append("  description = DYNDEP $out\n");
+    append("  restat = 1\n\n");
+
     append("rule cxx_module\n");
     append("  command = $cxx $cxxflags -c $in -o $out\n");
     append("  description = MOD $out\n");
@@ -287,16 +293,20 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         }
         append("\n");
 
-        // ── Phase 2: collect into dyndep file. ──────────────────────────
-        std::string ddi_inputs;
-        for (auto& d : ddi_paths)
-            ddi_inputs += " " + d;
-        append("build build.ninja.dd : cxx_collect" + ddi_inputs + "\n\n");
+        // ── Phase 2: per-file dyndep (P1 optimization). ────────────────
+        // Each .ddi → .dd independently, so modifying one source file only
+        // invalidates that file's .dd and its compile edge, not all edges.
+        // Map ddi path → dd path for Phase 3 reference.
+        std::map<std::string, std::string> ddi_to_dd;
+        for (auto& ddi : ddi_paths) {
+            auto dd = ddi + ".dd";   // e.g. obj/cli.cppm.ddi.dd
+            ddi_to_dd[ddi] = dd;
+            append(std::format("build {} : cxx_dyndep {}\n", dd, ddi));
+        }
+        append("\n");
 
-        // ── Phase 3: compile edges with dyndep. ─────────────────────────
-        // BMI implicit outputs are still declared statically (we know
-        // them from the plan); the dyndep file adds implicit BMI INPUTS
-        // (the requires) so ninja schedules in the right order.
+        // ── Phase 3: compile edges with per-file dyndep. ────────────────
+        // Each compile edge references its OWN .dd file instead of a global one.
         for (auto& cu : plan.compileUnits) {
             std::string rule = pick_rule(cu.source);
 
@@ -306,10 +316,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (rule != "c_object") {
-                // build.ninja.dd is the dyndep file; ninja requires it as an
-                // implicit input (so it's built before the compile runs).
-                out_line += " | build.ninja.dd";
-                out_line += "\n  dyndep = build.ninja.dd\n";
+                auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
+                auto it = ddi_to_dd.find(ddi);
+                if (it != ddi_to_dd.end()) {
+                    out_line += " | " + it->second;
+                    out_line += "\n  dyndep = " + it->second + "\n";
+                } else {
+                    out_line += "\n";
+                }
             } else {
                 out_line += "\n";
             }

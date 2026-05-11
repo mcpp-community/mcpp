@@ -3365,18 +3365,36 @@ int cmd_explain_action(const mcpplibs::cmdline::ParsedArgs& parsed) {
 }
 
 // Hidden subcommand: aggregate P1689 .ddi files into a Ninja dyndep file.
-// Invoked by ninja during build (cxx_collect rule) under M3.3.b dyndep mode.
+// Invoked by ninja during build (cxx_collect / cxx_dyndep rules).
+//
+// Multi-file mode (legacy cxx_collect):
 //   mcpp dyndep --output <build.ninja.dd> <ddi-1> <ddi-2> ...
+//
+// Single-file mode (P1 per-file dyndep, cxx_dyndep rule):
+//   mcpp dyndep --single --output <file.dd> <file.ddi>
 int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::filesystem::path outPath = parsed.option_or_empty("output").value();
     if (outPath.empty()) {
         std::println(stderr, "error: --output <path> required");
         return 2;
     }
-    std::vector<std::filesystem::path> ddis;
-    for (std::size_t i = 0; i < parsed.positional_count(); ++i)
-        ddis.emplace_back(parsed.positional(i));
-    auto body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{});
+
+    bool single = parsed.is_flag_set("single");
+
+    std::expected<std::string, std::string> body;
+    if (single) {
+        if (parsed.positional_count() != 1) {
+            std::println(stderr, "error: --single requires exactly one .ddi input");
+            return 2;
+        }
+        body = mcpp::dyndep::emit_dyndep_single(parsed.positional(0));
+    } else {
+        std::vector<std::filesystem::path> ddis;
+        for (std::size_t i = 0; i < parsed.positional_count(); ++i)
+            ddis.emplace_back(parsed.positional(i));
+        body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{});
+    }
+
     if (!body) {
         std::println(stderr, "error: {}", body.error());
         return 1;
@@ -3684,6 +3702,7 @@ int run(int argc, char** argv) {
             .description("(internal: invoked by ninja) Emit ninja dyndep file from .ddi inputs")
             .option(cl::Option("output").short_name('o').takes_value().value_name("PATH")
                 .help("Path to write dyndep file"))
+            .option(cl::Option("single").help("Single-file mode: one .ddi → one .dd"))
             .action(wrap_rc(cmd_dyndep)))
     ;
 
