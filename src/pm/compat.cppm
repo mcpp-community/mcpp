@@ -121,33 +121,43 @@ inline std::vector<std::string> xpkg_lua_candidates(std::string_view ns,
     std::vector<std::string> candidates;
     auto qname = qualified_name(ns, shortName);
 
-    // Canonical: <ns>.<shortName>.lua  (e.g. "compat.mbedtls.lua",
-    //            "mcpplibs.cmdline.lua") — namespace is part of the filename.
-    // For default namespace ("mcpp"), canonical is just "<shortName>.lua".
+    auto fqname = ns.empty() ? std::string(shortName)
+                             : std::format("{}.{}", ns, shortName);
+
+    // Canonical: for default namespace → "<shortName>.lua" (e.g. "cmdline.lua")
+    //            for non-default     → "<ns>.<shortName>.lua" (e.g. "compat.mbedtls.lua")
     if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
         candidates.push_back(std::string(shortName) + ".lua");
     } else {
-        candidates.push_back(qname + ".lua");
+        candidates.push_back(fqname + ".lua");
     }
 
     // ── Fallback candidates (COMPAT, remove in 1.0.0) ──────────────
 
-    // Fallback 1: bare short name — covers mcpplibs packages whose
+    // Fallback: full qualified name when it differs from qname
+    // (e.g. default-ns "mcpplibs": qname="cmdline", fqname="mcpplibs.cmdline")
+    auto qnameFile = qname + ".lua";
+    auto fqnameFile = fqname + ".lua";
+    if (fqnameFile != qnameFile &&
+        fqnameFile != candidates.front()) {
+        candidates.push_back(fqnameFile);
+    }
+
+    // Fallback: bare short name — covers mcpplibs packages whose
     // index files are named "<shortName>.lua" without namespace prefix.
     if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace) {
         candidates.push_back(std::string(shortName) + ".lua");
     }
 
-    // Fallback 2: compat.<shortName>.lua — covers compat packages
+    // Fallback: compat.<shortName>.lua — covers compat packages
     // when the caller didn't specify the "compat" namespace.
     if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
         candidates.push_back("compat." + std::string(shortName) + ".lua");
     }
 
-    // Fallback 3: compat.<qname>.lua — covers edge cases where the
-    // qualified name itself is used with a compat prefix.
+    // Fallback: compat variants for non-default/non-compat namespaces.
     if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace && ns != "compat") {
-        candidates.push_back("compat." + qname + ".lua");
+        candidates.push_back("compat." + fqname + ".lua");
         candidates.push_back("compat." + std::string(shortName) + ".lua");
     }
 
