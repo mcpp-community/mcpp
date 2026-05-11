@@ -39,6 +39,6 @@ struct DependencySpec {
 
 // Default namespace for packages declared without an explicit one — the
 // mcpp-index "root". Bare `gtest = "1.15.2"` becomes `(mcpp, gtest)`.
-inline constexpr std::string_view kDefaultNamespace = "mcpp";
+inline constexpr std::string_view kDefaultNamespace = "mcpplibs";
 
 } // namespace mcpp::pm

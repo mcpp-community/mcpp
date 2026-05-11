@@ -207,11 +207,11 @@ foo   = { path = "../foo" }
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->dependencies.size(), 2u);
     auto& g = m->dependencies.at("gtest");
-    EXPECT_EQ(g.namespace_, "mcpp");
+    EXPECT_EQ(g.namespace_, "mcpplibs");
     EXPECT_EQ(g.shortName,  "gtest");
     EXPECT_EQ(g.version,    "1.15.2");
     auto& f = m->dependencies.at("foo");
-    EXPECT_EQ(f.namespace_, "mcpp");
+    EXPECT_EQ(f.namespace_, "mcpplibs");
     EXPECT_EQ(f.shortName,  "foo");
     EXPECT_EQ(f.path,       "../foo");
 }
@@ -244,7 +244,7 @@ gtest = "1.15.2"
     EXPECT_EQ(tmpl.version,    "0.0.1");
 
     auto& gtest = m->dependencies.at("gtest");
-    EXPECT_EQ(gtest.namespace_, "mcpp");
+    EXPECT_EQ(gtest.namespace_, "mcpplibs");
     EXPECT_EQ(gtest.shortName,  "gtest");
     EXPECT_EQ(gtest.version,    "1.15.2");
 }
@@ -287,7 +287,7 @@ util = "2.0.0"
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->dependencies.size(), 2u);
     auto& bar = m->dependencies.at("bar");
-    EXPECT_EQ(bar.namespace_, "mcpp");
+    EXPECT_EQ(bar.namespace_, "mcpplibs");
     EXPECT_EQ(bar.shortName,  "bar");
     EXPECT_EQ(bar.git,        "https://example.com/bar.git");
     EXPECT_EQ(bar.gitRev,     "v1");
@@ -320,7 +320,7 @@ package = {
     ASSERT_EQ(m->dependencies.size(), 2u);
 
     auto& a = m->dependencies.at("mbedtls");
-    EXPECT_EQ(a.namespace_, "mcpp");
+    EXPECT_EQ(a.namespace_, "mcpplibs");
     EXPECT_EQ(a.shortName,  "mbedtls");
     EXPECT_EQ(a.version,    "3.6.1");
 
