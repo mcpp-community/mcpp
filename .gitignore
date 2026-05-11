@@ -3,6 +3,7 @@ target/
 
 # mcpp's per-workspace xlings sandbox + lockfile + diagnostic logs
 /.xlings/
+.sisyphus
 .claude
 mcpp.lock
 doctor.log
@@ -19,3 +20,4 @@ doctor.log
 *.pcm
 *.ifc
 *.ddi
+compile_commands.json

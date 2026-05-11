@@ -98,7 +98,7 @@ jobs:
           # Pin xlings to a known-good version. The upstream install
           # script always grabs `latest` (no version override), so we
           # download + self-install manually to avoid broken releases.
-          XLINGS_VERSION: '0.4.25'
+          XLINGS_VERSION: '0.4.30'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"

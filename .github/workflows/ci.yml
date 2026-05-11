@@ -56,15 +56,15 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.25'
+          XLINGS_VERSION: '0.4.30'
         run: |
-          if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
-            tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
-            curl -fsSL -o "/tmp/${tarball}" \
-              "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
-            tar -xzf "/tmp/${tarball}" -C /tmp
-            "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
-          fi
+          # Always install the pinned version — cache may hold an older
+          # xlings whose sysroot/packages are incompatible.
+          tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "/tmp/${tarball}" -C /tmp
+          "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
           # xim:mcpp — `xlings install` is idempotent so cache hits skip
