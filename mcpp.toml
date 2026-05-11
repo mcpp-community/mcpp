@@ -19,11 +19,11 @@ toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 
 # Eat our own dog food: mcpp uses mcpplibs.cmdline for argument parsing.
-[dependencies]
-"mcpplibs.cmdline" = "0.0.1"
+[dependencies.mcpplibs]
+cmdline = "0.0.1"
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
-[dev-dependencies]
+[dev-dependencies.compat]
 gtest = "1.15.2"
 
 # Everything else uses M5.0 conventions:
