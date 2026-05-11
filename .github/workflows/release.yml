@@ -95,6 +95,10 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
+          # Pin xlings version to avoid broken upstream releases (e.g.
+          # v0.4.29 shipped with empty assets). The install script
+          # honours XLINGS_VERSION when set.
+          XLINGS_VERSION: v0.4.25
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             curl -fsSL https://d2learn.org/xlings-install.sh | bash

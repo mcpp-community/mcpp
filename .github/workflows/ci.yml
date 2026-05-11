@@ -56,6 +56,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: v0.4.25
         run: |
           # xlings: install if not cached. The installer reads from
           # /dev/tty for an interactive prompt; XLINGS_NON_INTERACTIVE=1
