@@ -33,6 +33,7 @@ import mcpp.fetcher;
 import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
 import mcpp.pm.mangle;     // Level 1 multi-version fallback (cross-major coexistence)
+import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
 import mcpp.ui;
 import mcpp.bmi_cache;
 import mcpp.dyndep;
@@ -1133,6 +1134,9 @@ prepare_build(bool print_fingerprint,
             "dependency '{}': index entry not found in local clone", depName));
         auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
 
+        // 0.0.6+: read explicit namespace from xpkg lua if present.
+        auto luaNs = mcpp::manifest::extract_xpkg_namespace(*luaContent);
+
         std::optional<mcpp::manifest::Manifest> manifest;
         std::filesystem::path effRoot = verRoot;
         auto loadFrom = [&](const std::filesystem::path& mcppToml)
@@ -1179,6 +1183,13 @@ prepare_build(bool print_fingerprint,
                 depName, matches.size()));
             if (auto r = loadFrom(matches.front()); !r) return std::unexpected(r.error());
         }
+        // Propagate lua-level namespace into the loaded manifest when
+        // the manifest itself doesn't carry one (Form A descriptors
+        // whose upstream mcpp.toml predates the namespace field).
+        if (manifest->package.namespace_.empty() && !luaNs.empty()) {
+            manifest->package.namespace_ = luaNs;
+        }
+
         return std::pair{effRoot, std::move(*manifest)};
     };
 
@@ -1636,27 +1647,24 @@ prepare_build(bool print_fingerprint,
             dep_manifest = std::move(loaded->second);
         }
 
-        // Name match: prefer the dep's *short* name (the new xpkg-style
-        // `[package].name = "<short>"` + separate `namespace` field), but
-        // fall back to the legacy composite form `<ns>.<short>` so existing
-        // index descriptors that still embed the namespace in the name
-        // string (`name = "mcpplibs.cmdline"`) keep resolving until the
-        // mcpp-index repo is migrated.
-        const std::string& expectedShort =
-            spec.shortName.empty() ? name : spec.shortName;
-        std::string expectedComposite;
-        if (!spec.namespace_.empty()
-            && spec.namespace_ != mcpp::manifest::kDefaultNamespace) {
-            expectedComposite = std::format("{}.{}", spec.namespace_, expectedShort);
-        }
-        const bool nameOk =
-            dep_manifest->package.name == expectedShort
-            || (!expectedComposite.empty()
-                && dep_manifest->package.name == expectedComposite);
-        if (!nameOk) {
-            return std::unexpected(std::format(
-                "dependency '{}' resolved to package '{}' (mismatch with declared name '{}')",
-                name, dep_manifest->package.name, expectedShort));
+        // Name match via compat::resolve_package_name — handles both
+        // canonical (explicit namespace field) and legacy (dotted name)
+        // forms transparently.
+        {
+            auto resolved = mcpp::pm::compat::resolve_package_name(
+                dep_manifest->package.name, dep_manifest->package.namespace_);
+            const std::string& expectedShort =
+                spec.shortName.empty() ? name : spec.shortName;
+            const bool nameOk =
+                resolved.shortName == expectedShort
+                || dep_manifest->package.name == expectedShort
+                || dep_manifest->package.name ==
+                    mcpp::pm::compat::qualified_name(spec.namespace_, expectedShort);
+            if (!nameOk) {
+                return std::unexpected(std::format(
+                    "dependency '{}' resolved to package '{}' (mismatch with declared name '{}')",
+                    name, dep_manifest->package.name, expectedShort));
+            }
         }
 
         // Propagate dep's [build].include_dirs to the main manifest. The

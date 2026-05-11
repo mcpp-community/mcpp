@@ -189,11 +189,18 @@ ValidateReport validate(const Graph&                    g,
                         "lib root '{}' exports a partition '{}' — must be the "
                         "primary module '{}' (no `:partition` suffix)",
                         lib_root_rel.string(), m, manifest.package.name)});
-                } else if (m != manifest.package.name) {
-                    r.errors.push_back({lib_unit->path, std::format(
-                        "lib root '{}' exports module '{}', expected '{}' "
-                        "(must match [package].name)",
-                        lib_root_rel.string(), m, manifest.package.name)});
+                } else {
+                    // 0.0.6+: compare against qualified name when namespace is set.
+                    const std::string expected =
+                        manifest.package.namespace_.empty()
+                            ? manifest.package.name
+                            : manifest.package.namespace_ + "." + manifest.package.name;
+                    if (m != expected) {
+                        r.errors.push_back({lib_unit->path, std::format(
+                            "lib root '{}' exports module '{}', expected '{}' "
+                            "(must match [package].namespace + name)",
+                            lib_root_rel.string(), m, expected)});
+                    }
                 }
             }
         }
