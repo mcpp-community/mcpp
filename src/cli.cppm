@@ -1088,7 +1088,10 @@ prepare_build(bool print_fingerprint,
         auto cfg = get_cfg();
         if (!cfg) return std::unexpected(cfg.error());
         mcpp::fetcher::Fetcher fetcher(**cfg);
-        auto resolved = mcpp::pm::resolve_semver(depName, s.version, fetcher);
+        // 0.0.10+: use structured namespace from DependencySpec.
+        auto resolved = mcpp::pm::resolve_semver(
+            s.namespace_, s.shortName.empty() ? depName : s.shortName,
+            s.version, fetcher);
         if (!resolved) return std::unexpected(resolved.error());
         mcpp::ui::info("Resolved",
             std::format("{} {} → v{}", depName, s.version, *resolved));
@@ -1101,7 +1104,12 @@ prepare_build(bool print_fingerprint,
     // different version is needed. Returns the dep's effective root (where
     // mcpp.toml lives) and a fully loaded manifest.
     using LoadedDep = std::pair<std::filesystem::path, mcpp::manifest::Manifest>;
+    // 0.0.10+: loadVersionDep accepts structured (ns, shortName) for
+    // namespace-aware lookup. depName is the map key (qualified or bare),
+    // kept for install() target formatting and error messages.
     auto loadVersionDep = [&](const std::string& depName,
+                              const std::string& ns,
+                              const std::string& shortName,
                               const std::string& version)
         -> std::expected<LoadedDep, std::string>
     {
@@ -1109,9 +1117,11 @@ prepare_build(bool print_fingerprint,
         if (!cfg) return std::unexpected(cfg.error());
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
-        auto installed = fetcher.install_path(depName, version);
+        auto installed = fetcher.install_path(ns, shortName, version);
         if (!installed) {
             mcpp::ui::info("Downloading", std::format("{} v{}", depName, version));
+            // install() target uses the map key (depName) which xlings
+            // knows how to resolve via its own index lookup.
             std::vector<std::string> targets{ std::format("{}@{}", depName, version) };
             CliInstallProgress progress;
             auto r = fetcher.install(targets, &progress);
@@ -1123,13 +1133,13 @@ prepare_build(bool print_fingerprint,
                 if (r->error) err += ": " + r->error->message;
                 return std::unexpected(err);
             }
-            installed = fetcher.install_path(depName, version);
+            installed = fetcher.install_path(ns, shortName, version);
             if (!installed) return std::unexpected(std::format(
                 "package '{}@{}' install path missing after fetch", depName, version));
         }
         std::filesystem::path verRoot = *installed;
 
-        auto luaContent = fetcher.read_xpkg_lua(depName);
+        auto luaContent = fetcher.read_xpkg_lua(ns, shortName);
         if (!luaContent) return std::unexpected(std::format(
             "dependency '{}': index entry not found in local clone", depName));
         auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
@@ -1361,7 +1371,7 @@ prepare_build(bool print_fingerprint,
                 mcpp::fetcher::Fetcher fetcher(**cfg);
 
                 auto merged = mcpp::pm::try_merge_semver(
-                    name,
+                    key.ns, key.shortName,
                     it->second.constraint,
                     item.originalConstraint,
                     fetcher);
@@ -1397,7 +1407,7 @@ prepare_build(bool print_fingerprint,
                             merged.error()));
                     }
 
-                    auto loaded = loadVersionDep(name, spec.version);
+                    auto loaded = loadVersionDep(name, key.ns, key.shortName, spec.version);
                     if (!loaded) return std::unexpected(loaded.error());
                     auto& [secondaryRoot, secondaryManifest] = *loaded;
 
@@ -1511,7 +1521,7 @@ prepare_build(bool print_fingerprint,
                     std::format("{}{}{} {} ⨯ {} → v{}",
                         key.ns, key.ns.empty() ? "" : ".", key.shortName,
                         it->second.version, spec.version, *merged));
-                auto reloaded = loadVersionDep(name, *merged);
+                auto reloaded = loadVersionDep(name, key.ns, key.shortName, *merged);
                 if (!reloaded) return std::unexpected(reloaded.error());
                 auto& [newRoot, newManifest] = *reloaded;
 
@@ -1649,7 +1659,7 @@ prepare_build(bool print_fingerprint,
             }
             dep_manifest = std::move(*dm);
         } else {
-            auto loaded = loadVersionDep(name, spec.version);
+            auto loaded = loadVersionDep(name, key.ns, key.shortName, spec.version);
             if (!loaded) return std::unexpected(loaded.error());
             dep_root     = std::move(loaded->first);
             dep_manifest = std::move(loaded->second);

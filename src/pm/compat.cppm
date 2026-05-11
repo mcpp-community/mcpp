@@ -103,4 +103,92 @@ inline std::string xpkg_dir_name(std::string_view indexName,
     return std::format("{}-x-{}", indexName, qname);
 }
 
+// ─── xpkg .lua filename candidates (namespace-aware) ────────────────
+//
+// Given a structured (namespace, shortName), return the list of candidate
+// filenames to search for in the index's pkgs/<letter>/ directories.
+//
+// The FIRST candidate is the canonical form; subsequent candidates are
+// backward-compatibility fallbacks.
+//
+// DEPRECATION SCHEDULE (fallback candidates):
+//   Fallback candidates are slated for removal in mcpp 1.0.0.
+//   Package indices should use the canonical filename form by then.
+
+inline std::vector<std::string> xpkg_lua_candidates(std::string_view ns,
+                                                     std::string_view shortName)
+{
+    std::vector<std::string> candidates;
+    auto qname = qualified_name(ns, shortName);
+
+    // Canonical: <ns>.<shortName>.lua  (e.g. "compat.mbedtls.lua",
+    //            "mcpplibs.cmdline.lua") — namespace is part of the filename.
+    // For default namespace ("mcpp"), canonical is just "<shortName>.lua".
+    if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
+        candidates.push_back(std::string(shortName) + ".lua");
+    } else {
+        candidates.push_back(qname + ".lua");
+    }
+
+    // ── Fallback candidates (COMPAT, remove in 1.0.0) ──────────────
+
+    // Fallback 1: bare short name — covers mcpplibs packages whose
+    // index files are named "<shortName>.lua" without namespace prefix.
+    if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace) {
+        candidates.push_back(std::string(shortName) + ".lua");
+    }
+
+    // Fallback 2: compat.<shortName>.lua — covers compat packages
+    // when the caller didn't specify the "compat" namespace.
+    if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
+        candidates.push_back("compat." + std::string(shortName) + ".lua");
+    }
+
+    // Fallback 3: compat.<qname>.lua — covers edge cases where the
+    // qualified name itself is used with a compat prefix.
+    if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace && ns != "compat") {
+        candidates.push_back("compat." + qname + ".lua");
+        candidates.push_back("compat." + std::string(shortName) + ".lua");
+    }
+
+    return candidates;
+}
+
+// ─── install_path directory candidates (namespace-aware) ─────────────
+//
+// Given a structured (namespace, shortName) and index name, return the
+// list of candidate directory names under <xpkgs>/ to search for.
+//
+// DEPRECATION SCHEDULE (fallback candidates):
+//   Fallback candidates are slated for removal in mcpp 1.0.0.
+//   By then xlings should use a consistent directory layout.
+
+inline std::vector<std::string> install_dir_candidates(std::string_view ns,
+                                                        std::string_view shortName,
+                                                        std::string_view indexName)
+{
+    std::vector<std::string> candidates;
+    auto qname = qualified_name(ns, shortName);
+
+    // Canonical: <index>-x-<ns>.<shortName>  (e.g. "mcpp-index-x-compat.mbedtls")
+    // For default namespace: <index>-x-<shortName>  (e.g. "mcpp-index-x-gtest")
+    candidates.push_back(std::format("{}-x-{}", indexName, qname));
+
+    // ── Fallback candidates (COMPAT, remove in 1.0.0) ──────────────
+
+    // Fallback 1: namespace-prefixed dir without index
+    // e.g. "compat-x-mbedtls" (new-style ns-aware layout)
+    if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace) {
+        candidates.push_back(std::format("{}-x-{}", ns, shortName));
+    }
+
+    // Fallback 2: index-prefixed with bare short name
+    // e.g. "mcpp-index-x-mbedtls" (old pre-namespace layout)
+    if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace) {
+        candidates.push_back(std::format("{}-x-{}", indexName, shortName));
+    }
+
+    return candidates;
+}
+
 } // namespace mcpp::pm::compat

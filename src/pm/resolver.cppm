@@ -17,6 +17,7 @@ export module mcpp.pm.resolver;
 
 import std;
 import mcpp.manifest;
+import mcpp.pm.compat;
 import mcpp.pm.package_fetcher;
 import mcpp.version_req;
 
@@ -43,22 +44,31 @@ inline constexpr std::string_view kXpkgPlatform =
 // users opt into resolution by writing `^1.2.3` etc.
 bool is_version_constraint(std::string_view v);
 
+// ─── Namespace-aware overloads (canonical, 0.0.10+) ─────────────────
+
 // Resolve a SemVer constraint against the index entry's available
 // versions. Returns the chosen exact version string, or an error
-// message. The fetcher is used to read the lua descriptor for the
-// requested package name.
+// message. Uses structured (ns, shortName) for index lookup.
+std::expected<std::string, std::string>
+resolve_semver(std::string_view ns, std::string_view shortName,
+               std::string_view constraint,
+               mcpp::pm::Fetcher& fetcher);
+
+// Try to AND-merge two version constraints and resolve to a single
+// concrete version satisfying both. Uses structured (ns, shortName).
+std::expected<std::string, std::string>
+try_merge_semver(std::string_view ns, std::string_view shortName,
+                 std::string_view a,
+                 std::string_view b,
+                 mcpp::pm::Fetcher& fetcher);
+
+// ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────────────
+
 std::expected<std::string, std::string>
 resolve_semver(std::string_view name,
                std::string_view constraint,
                mcpp::pm::Fetcher& fetcher);
 
-// Try to AND-merge two version constraints (caret / tilde / range /
-// bare-exact) and resolve to a single concrete version that satisfies
-// both. Bare exacts like "1.2.3" are treated as `=1.2.3`. Returns the
-// merged version on success, or an error message describing why the
-// two constraints cannot be reconciled (no overlap in the available
-// version inventory) — the caller can use that to surface a Level-1
-// "needs multi-version mangling" hint to the user.
 std::expected<std::string, std::string>
 try_merge_semver(std::string_view name,
                  std::string_view a,
@@ -78,33 +88,36 @@ bool is_version_constraint(std::string_view v) {
     return false;
 }
 
+// ─── Namespace-aware resolve_semver (canonical, 0.0.10+) ─────────────
+
 std::expected<std::string, std::string>
-resolve_semver(std::string_view name,
+resolve_semver(std::string_view ns, std::string_view shortName,
                std::string_view constraint,
                mcpp::pm::Fetcher& fetcher)
 {
     namespace vr = mcpp::version_req;
+    auto qname = mcpp::pm::compat::qualified_name(ns, shortName);
 
-    auto luaContent = fetcher.read_xpkg_lua(name);
+    auto luaContent = fetcher.read_xpkg_lua(ns, shortName);
     if (!luaContent) {
         return std::unexpected(std::format(
             "dependency '{}' has SemVer constraint '{}' but the index entry "
             "isn't cloned locally yet — run `mcpp index update` first",
-            name, constraint));
+            qname, constraint));
     }
 
     auto req = vr::parse_req(constraint);
     if (!req) {
         return std::unexpected(std::format(
             "dependency '{}': invalid version constraint '{}': {}",
-            name, constraint, req.error()));
+            qname, constraint, req.error()));
     }
 
     auto rawVersions = mcpp::manifest::list_xpkg_versions(*luaContent, kXpkgPlatform);
     if (rawVersions.empty()) {
         return std::unexpected(std::format(
             "dependency '{}': index entry has no versions for platform '{}'",
-            name, kXpkgPlatform));
+            qname, kXpkgPlatform));
     }
 
     std::vector<vr::Version> parsed;
@@ -116,7 +129,7 @@ resolve_semver(std::string_view name,
     }
     if (parsed.empty()) {
         return std::unexpected(std::format(
-            "dependency '{}': no valid versions in index", name));
+            "dependency '{}': no valid versions in index", qname));
     }
 
     auto idx = vr::choose(*req, parsed);
@@ -125,20 +138,19 @@ resolve_semver(std::string_view name,
         for (auto& s : rawVersions) { if (!avail.empty()) avail += ", "; avail += s; }
         return std::unexpected(std::format(
             "dependency '{}': constraint '{}' matches none of: [{}]",
-            name, constraint, avail));
+            qname, constraint, avail));
     }
     return parsed[*idx].str();
 }
 
+// ─── Namespace-aware try_merge_semver (canonical, 0.0.10+) ───────────
+
 std::expected<std::string, std::string>
-try_merge_semver(std::string_view name,
+try_merge_semver(std::string_view ns, std::string_view shortName,
                  std::string_view a,
                  std::string_view b,
                  mcpp::pm::Fetcher& fetcher)
 {
-    // Promote a bare-exact "1.2.3" to "=1.2.3" so the AND works under
-    // the comma-joined constraint grammar. Empty / "*" means "any" and
-    // contributes nothing to the AND.
     auto canon = [](std::string_view v) -> std::string {
         if (v.empty() || v == "*") return std::string{};
         if (is_version_constraint(v)) return std::string(v);
@@ -153,7 +165,30 @@ try_merge_semver(std::string_view name,
     else if (!cb.empty())            merged = cb;
     else                              merged = "*";
 
-    return resolve_semver(name, merged, fetcher);
+    return resolve_semver(ns, shortName, merged, fetcher);
+}
+
+// ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────────────
+
+std::expected<std::string, std::string>
+resolve_semver(std::string_view name,
+               std::string_view constraint,
+               mcpp::pm::Fetcher& fetcher)
+{
+    auto resolved = mcpp::pm::compat::resolve_package_name(name, "");
+    return resolve_semver(resolved.namespace_, resolved.shortName,
+                          constraint, fetcher);
+}
+
+std::expected<std::string, std::string>
+try_merge_semver(std::string_view name,
+                 std::string_view a,
+                 std::string_view b,
+                 mcpp::pm::Fetcher& fetcher)
+{
+    auto resolved = mcpp::pm::compat::resolve_package_name(name, "");
+    return try_merge_semver(resolved.namespace_, resolved.shortName,
+                            a, b, fetcher);
 }
 
 } // namespace mcpp::pm
