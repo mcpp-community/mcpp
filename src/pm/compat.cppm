@@ -87,20 +87,18 @@ inline std::string qualified_name(std::string_view ns,
 // Maps (indexName, namespace, shortName) → the xpkgs subdirectory name
 // that xlings places the extracted tarball under.
 //
-// Current layout (compat):
-//     <xpkgs>/<index>-x-<ns>.<short>/<version>/
-//     e.g.  mcpp-index-x-mcpplibs.cmdline/0.0.2/
-//
-// The function encapsulates this so a future layout change (e.g.
-//     <xpkgs>/<index>-x-<short>/<version>/   with ns in metadata)
-// only touches one place.
+// xlings layout: <ns>-x-<ns>.<short>/<version>/
+//   e.g. mcpplibs-x-mcpplibs.cmdline/0.0.2/
+//        compat-x-compat.mbedtls/3.6.1/
 
 inline std::string xpkg_dir_name(std::string_view indexName,
                                   std::string_view ns,
                                   std::string_view shortName)
 {
-    auto qname = qualified_name(ns, shortName);
-    return std::format("{}-x-{}", indexName, qname);
+    auto fqname = ns.empty() ? std::string(shortName)
+                             : std::format("{}.{}", ns, shortName);
+    if (!ns.empty()) return std::format("{}-x-{}", ns, fqname);
+    return std::format("{}-x-{}", indexName, fqname);
 }
 
 // ─── xpkg .lua filename candidates (namespace-aware) ────────────────
@@ -169,44 +167,31 @@ inline std::vector<std::string> xpkg_lua_candidates(std::string_view ns,
 // Given a structured (namespace, shortName) and index name, return the
 // list of candidate directory names under <xpkgs>/ to search for.
 //
-// DEPRECATION SCHEDULE (fallback candidates):
-//   Fallback candidates are slated for removal in mcpp 1.0.0.
-//   By then xlings should use a consistent directory layout.
+// xlings directory layout: <ns>-x-<ns>.<shortName>/<version>/
+//   e.g. mcpplibs-x-mcpplibs.tinyhttps/0.2.2/
+//        compat-x-compat.mbedtls/3.6.1/
 
 inline std::vector<std::string> install_dir_candidates(std::string_view ns,
                                                         std::string_view shortName,
                                                         std::string_view indexName)
 {
     std::vector<std::string> candidates;
-    auto qname = qualified_name(ns, shortName);
     auto fqname = ns.empty() ? std::string(shortName)
                              : std::format("{}.{}", ns, shortName);
 
-    // Canonical: <index>-x-<ns>.<shortName>  (e.g. "mcpp-index-x-compat.mbedtls")
-    // For default namespace: <index>-x-<shortName>  (e.g. "mcpp-index-x-cmdline")
-    candidates.push_back(std::format("{}-x-{}", indexName, qname));
-
-    // Fallback: xlings always installs with the full qualified name
-    // (ns.shortName), even for the default namespace. So we also try
-    // <index>-x-<ns>.<shortName> when qname != fqname.
-    if (qname != fqname) {
-        candidates.push_back(std::format("{}-x-{}", indexName, fqname));
+    // Canonical: <ns>-x-<ns>.<shortName> (xlings current layout)
+    if (!ns.empty()) {
+        candidates.push_back(std::format("{}-x-{}", ns, fqname));
     }
 
     // ── Fallback candidates (COMPAT, remove in 1.0.0) ──────────────
 
-    // Namespace-prefixed dir (xlings uses namespace as prefix, not index name)
-    // e.g. "compat-x-mbedtls", "mcpplibs-x-mcpplibs.tinyhttps"
-    if (!ns.empty()) {
-        candidates.push_back(std::format("{}-x-{}", ns, fqname));
-        if (std::string(shortName) != fqname) {
-            candidates.push_back(std::format("{}-x-{}", ns, shortName));
-        }
-    }
+    // Old index-prefixed layout: <index>-x-<ns>.<shortName>
+    candidates.push_back(std::format("{}-x-{}", indexName, fqname));
 
-    // Index-prefixed with bare short name
-    // e.g. "mcpp-index-x-mbedtls" (old pre-namespace layout)
-    if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace) {
+    // Bare short name variants
+    if (!ns.empty()) {
+        candidates.push_back(std::format("{}-x-{}", ns, shortName));
         candidates.push_back(std::format("{}-x-{}", indexName, shortName));
     }
 
