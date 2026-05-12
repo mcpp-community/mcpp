@@ -30,9 +30,7 @@ struct Env {
 namespace pinned {
     inline constexpr std::string_view kPatchelfVersion = "0.18.0";
     inline constexpr std::string_view kNinjaVersion    = "1.12.1";
-    inline constexpr std::string_view kXlingsVersion   = "0.4.7";
-    inline constexpr std::string_view kXlingsBuildHostLib =
-        "/home/xlings/.xlings_data/subos/linux/lib";
+    inline constexpr std::string_view kXlingsVersion   = "0.4.31";
 }
 
 // ─── Path helpers (pure functions, no subprocess) ───────────────────

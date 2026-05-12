@@ -647,37 +647,45 @@ void patchelf_walk(const std::filesystem::path& dir,
     }
 }
 
-// xim's gcc tarball is built with an absolute hardcoded path
-// `/home/xlings/.xlings_data/subos/linux/lib/...` baked into the gcc specs
-// (both as `--dynamic-linker` and `-rpath`). xim's gcc-specs-config.lua
-// tries to override these but only matches `/lib64/ld-linux-x86-64.so.2`,
-// not the baked-in `/home/xlings/...`, so the override silently no-ops.
+// xim bakes the installing user's XLINGS_HOME into gcc specs at install
+// time (as `--dynamic-linker` and `-rpath`). When mcpp uses its own
+// isolated sandbox (MCPP_HOME/registry/), the baked-in paths point to
+// xlings' home, not mcpp's sandbox glibc — binaries would fail to exec.
 //
-// TODO(xim-pkgindex-upstream): file an issue against xim-pkgindex's
-// gcc-specs-config.lua to also match the `/home/xlings/...` baked-in
-// path. Once fixed, this whole post-install fixup can be deleted.
-//
-// Result: gcc compiles user binaries with PT_INTERP pointing at
-// `/home/xlings/.xlings_data/...` AND an rpath pointing at the same
-// non-existent directory. `elfpatch.auto` (now functional thanks to the
-// patchelf bootstrap) only fixes ELF binaries it scans; it doesn't touch
-// the gcc specs text file.
-//
-// Mcpp does the post-install spec rewrite itself:
-//   - The dynamic-linker path becomes <glibc_lib64>/ld-linux-x86-64.so.2.
-//   - The rpath becomes <glibc_lib64>:<gcc_lib64> so user binaries can find
-//     both libc.so.6 (glibc) and libstdc++.so.6 + libgcc_s.so.1 (gcc).
-// Idempotent.
+// Mcpp does a post-install spec rewrite:
+//   - Dynamically detects the baked-in lib dir from the specs file
+//   - Replaces the dynamic-linker path with <glibc_lib64>/ld-linux-x86-64.so.2
+//   - Replaces the rpath with <glibc_lib64>:<gcc_lib64>
+// Idempotent — skips if already pointing at the correct glibc.
+// Extract the baked-in lib directory from a gcc specs file by finding
+// the dynamic-linker path that ends with `/ld-linux-x86-64.so.2`.
+// xim bakes the installing user's XLINGS_HOME into specs at install
+// time, so the path varies per machine — we cannot hardcode it.
+std::string detect_baked_lib_dir(const std::string& specsContent) {
+    constexpr std::string_view kLoader = "/ld-linux-x86-64.so.2";
+    auto pos = specsContent.find(kLoader);
+    if (pos == std::string::npos) return "";
+    // Walk backwards to find start of the absolute path
+    auto start = pos;
+    while (start > 0 && specsContent[start - 1] != ' '
+                     && specsContent[start - 1] != ':'
+                     && specsContent[start - 1] != ';'
+                     && specsContent[start - 1] != '\n') {
+        --start;
+    }
+    auto dir = specsContent.substr(start, pos - start);
+    // Sanity: must be absolute
+    if (dir.empty() || dir[0] != '/') return "";
+    // Skip if it already points to the target glibc (no fixup needed)
+    return dir;
+}
+
 void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
                      const std::filesystem::path& glibcLibDir,
                      const std::filesystem::path& gccLibDir)
 {
     auto specsParent = gccPkgRoot / "lib" / "gcc" / "x86_64-linux-gnu";
     if (!std::filesystem::exists(specsParent)) return;
-
-    constexpr std::string_view kBakedDir =
-        mcpp::xlings::pinned::kXlingsBuildHostLib;
-    auto kBakedLoader = std::format("{}/ld-linux-x86-64.so.2", kBakedDir);
 
     auto loaderReplacement = (glibcLibDir / "ld-linux-x86-64.so.2").string();
     auto rpathReplacement  = std::format("{}:{}",
@@ -702,12 +710,17 @@ void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
         std::stringstream ss;  ss << is.rdbuf();
         std::string content = ss.str();
 
-        if (content.find(kBakedDir) == std::string::npos) continue;
+        auto bakedDir = detect_baked_lib_dir(content);
+        if (bakedDir.empty()) continue;
+        // Already pointing at the right place — no fixup needed.
+        if (bakedDir == glibcLibDir.string()) continue;
+
+        auto bakedLoader = bakedDir + "/ld-linux-x86-64.so.2";
 
         // Order matters: replace the full loader file path first so the
         // shorter dir pattern doesn't eat its prefix.
-        replace_all(content, kBakedLoader, loaderReplacement);
-        replace_all(content, kBakedDir,    rpathReplacement);
+        replace_all(content, bakedLoader, loaderReplacement);
+        replace_all(content, bakedDir,    rpathReplacement);
 
         std::ofstream os(specs);
         os << content;
