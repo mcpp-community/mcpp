@@ -10,6 +10,7 @@ export module mcpp.build.flags;
 
 import std;
 import mcpp.build.plan;
+import mcpp.xlings;
 
 export namespace mcpp::build {
 
@@ -101,27 +102,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     bool isMuslTc = plan.toolchain.targetTriple.find("-musl") != std::string::npos;
     std::filesystem::path binutilsBin;
     if (!isMuslTc) {
-        auto bp = plan.toolchain.binaryPath;
-        std::filesystem::path xpkgsDir;
-        for (auto p = bp.parent_path(); p.has_parent_path() && p != p.root_path();
-             p = p.parent_path()) {
-            if (p.filename() == "xpkgs") {
-                xpkgsDir = p;
-                break;
-            }
-        }
-        if (!xpkgsDir.empty()) {
-            auto root = xpkgsDir / "xim-x-binutils";
-            std::error_code ec;
-            if (std::filesystem::exists(root, ec)) {
-                for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-                    auto candidate = v.path() / "bin";
-                    if (std::filesystem::exists(candidate / "ar", ec)) {
-                        binutilsBin = candidate;
-                        break;
-                    }
-                }
-            }
+        if (auto ar = mcpp::xlings::paths::find_sibling_binary(
+                plan.toolchain.binaryPath, "binutils", "bin/ar")) {
+            binutilsBin = ar->parent_path();  // bin/ar → bin/
         }
     }
     std::string b_flag;
