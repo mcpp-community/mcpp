@@ -65,29 +65,6 @@ mcpp run
 
 注: 初次构建需要初始化环境并获取工具链, 可能需要一些时间
 
-## 工作空间 (Workspace)
-
-mcpp 支持多包工作空间，在一个仓库中管理多个相关的库和应用：
-
-```toml
-# 根 mcpp.toml
-[workspace]
-members = ["libs/core", "libs/http", "apps/server"]
-
-[workspace.dependencies.compat]
-mbedtls = "3.6.1"
-```
-
-```bash
-mcpp build              # 构建所有 member
-mcpp build -p server    # 只构建 server 及其依赖
-```
-
-- member 之间用 `path = "..."` 声明依赖
-- `.workspace = true` 继承 workspace 统一管理的依赖版本
-- 工具链配置可继承和覆盖
-- 详见 [examples/04-workspace](examples/04-workspace/)
-
 ## 文档
 
 - [快速开始](docs/00-getting-started.md)
@@ -96,6 +73,7 @@ mcpp build -p server    # 只构建 server 及其依赖
 - [工具链管理](docs/03-toolchains.md)
 - [从源码构建 & 参与贡献](docs/04-build-from-source.md)
 - [mcpp.toml 工程文件指南](docs/05-mcpp-toml.md)
+- [工作空间 (Workspace)](docs/06-workspace.md)
 
 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅。
 
