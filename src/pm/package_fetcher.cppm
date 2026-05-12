@@ -92,7 +92,7 @@ public:
     // High-level helpers (parsed payload for common ops).
 
     struct SearchHit {
-        std::string source;       // "mcpp-index"
+        std::string source;       // "mcpplibs"
         std::string name;
         std::string description;
     };
@@ -479,7 +479,7 @@ Fetcher::search(std::string_view keyword) {
                 }
                 // record
                 if (!name.empty()) {
-                    hits.push_back({"mcpp-index", std::move(name), std::move(desc)});
+                    hits.push_back({cfg_.defaultIndex, std::move(name), std::move(desc)});
                 }
                 // advance past ]
                 while (p < items.size() && items[p] != ']') ++p;
@@ -657,7 +657,7 @@ Fetcher::read_xpkg_lua(std::string_view package_name) const
 namespace {
 
 struct ParsedTarget {
-    std::string indexName;       // "xim", "mcpp-index", or "" (default)
+    std::string indexName;       // "xim", "mcpplibs", or "" (default)
     std::string packageName;
     std::string version;
 };
@@ -696,7 +696,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
                            EventHandler* handler)
 {
     // Default to xim namespace for tools/toolchain. Modular libs use
-    // mcpp-index but consumers (cli) typically pass "<idx>:<name>@<ver>"
+    // mcpplibs but consumers (cli) typically pass "<idx>:<name>@<ver>"
     // explicitly anyway.
     auto parsed = parse_target(target, "xim");
     if (parsed.packageName.empty() || parsed.version.empty()) {
@@ -735,7 +735,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         }
         XpkgPayload payload;
         // For xim packages (gcc, cmake, ...) the version dir IS the root.
-        // For mcpp-index packages the version dir contains an extracted
+        // For mcpplibs packages the version dir contains an extracted
         // tarball subdirectory; we treat the wrapper subdir as the root
         // when its content includes bin/ or include/.
         std::error_code ec;

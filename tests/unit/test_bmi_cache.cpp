@@ -28,7 +28,7 @@ CacheKey makeKey(const std::filesystem::path& home) {
     return CacheKey{
         .mcppHome    = home,
         .fingerprint = "deadbeef0123abcd",
-        .indexName   = "mcpp-index",
+        .indexName   = "mcpplibs",
         .packageName = "mcpplibs.cmdline",
         .version     = "0.0.1",
     };
@@ -44,7 +44,7 @@ void writeFile(const std::filesystem::path& p, std::string_view body) {
 TEST(BmiCache, KeyDirLayoutMatchesDocs26) {
     auto k = makeKey("/home/u/.mcpp");
     EXPECT_EQ(k.dir().string(),
-              "/home/u/.mcpp/bmi/deadbeef0123abcd/deps/mcpp-index/mcpplibs.cmdline@0.0.1");
+              "/home/u/.mcpp/bmi/deadbeef0123abcd/deps/mcpplibs/mcpplibs.cmdline@0.0.1");
     EXPECT_EQ(k.manifestFile().filename().string(), "manifest.txt");
     EXPECT_EQ(k.gcmDir().filename().string(),       "gcm.cache");
     EXPECT_EQ(k.objDir().filename().string(),       "obj");

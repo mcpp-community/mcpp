@@ -18,7 +18,7 @@ export namespace mcpp::pm {
 struct LockedPackage {
     std::string name;
     std::string version;
-    std::string source;     // e.g. "mcpp-index+https://..." (M2 placeholder)
+    std::string source;     // e.g. "mcpplibs+https://..." (M2 placeholder)
     std::string hash;       // "sha256:..." or "fnv1a:..."
 };
 

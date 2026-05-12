@@ -28,7 +28,7 @@ export namespace mcpp::bmi_cache {
 struct CacheKey {
     std::filesystem::path mcppHome;
     std::string fingerprint;
-    std::string indexName;       // "mcpp-index" / "xim" / ...
+    std::string indexName;       // "mcpplibs" / "xim" / ...
     std::string packageName;     // "mcpplibs.cmdline"
     std::string version;         // "0.0.1"
 

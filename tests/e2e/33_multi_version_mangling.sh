@@ -18,10 +18,13 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 
 # Index + xpkgs need to be visible since we exercise version-source deps.
 mkdir -p "$MCPP_HOME/registry/data"
-if [[ -d "$HOME/.mcpp/registry/data/mcpp-index" ]]; then
-    ln -sf "$HOME/.mcpp/registry/data/mcpp-index" \
-        "$MCPP_HOME/registry/data/mcpp-index"
-fi
+# Link pre-cached index data (may be under old "mcpp-index" or new "mcpplibs" name)
+for idx_name in mcpplibs mcpp-index; do
+    if [[ -d "$HOME/.mcpp/registry/data/$idx_name" ]]; then
+        ln -sf "$HOME/.mcpp/registry/data/$idx_name" \
+            "$MCPP_HOME/registry/data/$idx_name"
+    fi
+done
 if [[ -d "$HOME/.mcpp/registry/data/xpkgs" ]]; then
     [[ -e "$MCPP_HOME/registry/data/xpkgs" ]] \
         || ln -sf "$HOME/.mcpp/registry/data/xpkgs" \

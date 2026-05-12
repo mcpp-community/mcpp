@@ -5,7 +5,7 @@
 //     bin/mcpp                  mcpp binary (self-contained mode)
 //     registry/                 XLINGS_HOME for mcpp's xlings
 //       bin/xlings              vendored xlings binary (= <XLINGS_HOME>/bin/xlings)
-//       .xlings.json            seeded with index_repos = [mcpp-index]
+//       .xlings.json            seeded with index_repos = [mcpplibs]
 //     bmi/<fp>/                 BMI cache (existing)
 //     cache/                    metadata caches
 //     config.toml               this module's input
@@ -47,7 +47,7 @@ struct GlobalConfig {
     std::filesystem::path           xlingsHomeOverride;  // empty = use registryDir
 
     // From config.toml [index]
-    std::string                     defaultIndex;        // "mcpp-index"
+    std::string                     defaultIndex;        // "mcpplibs"
     std::vector<IndexRepo>          indexRepos;
 
     // From config.toml [cache]
@@ -201,9 +201,9 @@ binary = "bundled"
 home   = ""
 
 [index]
-default = "mcpp-index"
+default = "mcpplibs"
 
-[index.repos."mcpp-index"]
+[index.repos."mcpplibs"]
 url = "https://github.com/mcpp-community/mcpp-index.git"
 # xlings auto-adds xim / awesome / scode / d2x as defaults.
 
@@ -597,7 +597,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.xlingsBinaryMode = doc->get_string("xlings.binary").value_or("bundled");
     if (auto h = doc->get_string("xlings.home"); h && !h->empty())
         cfg.xlingsHomeOverride = *h;
-    cfg.defaultIndex   = doc->get_string("index.default").value_or("mcpp-index");
+    cfg.defaultIndex   = doc->get_string("index.default").value_or("mcpplibs");
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
     cfg.defaultBackend = doc->get_string("build.default_backend").value_or("ninja");
@@ -613,7 +613,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             cfg.indexRepos.push_back({ name, it->second.as_string() });
         }
     }
-    // Defaults: only mcpp-index. xlings auto-adds its own standard
+    // Defaults: only mcpplibs. xlings auto-adds its own standard
     // defaults (xim / awesome / scode / d2x) because globalIndexRepos_
     // is non-empty (per xlings/src/core/config.cppm). Explicitly listing
     // them ourselves can cause cross-index name conflicts during
@@ -623,7 +623,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         for (auto& r : cfg.indexRepos) if (r.name == name) return;
         cfg.indexRepos.push_back({ std::string(name), std::string(url) });
     };
-    add_default("mcpp-index", "https://github.com/mcpp-community/mcpp-index.git");
+    add_default("mcpplibs", "https://github.com/mcpp-community/mcpp-index.git");
 
     // 5. Seed registry/.xlings.json if missing
     auto xjson = cfg.xlingsHome() / ".xlings.json";
