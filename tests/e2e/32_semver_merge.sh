@@ -14,10 +14,13 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 
 # Index is needed since we exercise version-source deps.
 mkdir -p "$MCPP_HOME/registry/data"
-if [[ -d "$HOME/.mcpp/registry/data/mcpp-index" ]]; then
-    ln -sf "$HOME/.mcpp/registry/data/mcpp-index" \
-        "$MCPP_HOME/registry/data/mcpp-index"
-fi
+# Link pre-cached index data (may be under old "mcpp-index" or new "mcpplibs" name)
+for idx_name in mcpplibs mcpp-index; do
+    if [[ -d "$HOME/.mcpp/registry/data/$idx_name" ]]; then
+        ln -sf "$HOME/.mcpp/registry/data/$idx_name" \
+            "$MCPP_HOME/registry/data/$idx_name"
+    fi
+done
 # Pre-cached xpkg downloads so the test doesn't re-fetch the world.
 if [[ -d "$HOME/.mcpp/registry/data/xpkgs" ]]; then
     [[ -e "$MCPP_HOME/registry/data/xpkgs" ]] \

@@ -33,7 +33,7 @@ cat > mcpp.lock <<'EOF'
 version = 1
 [package.bar]
 version = "2.0.0"
-source  = "mcpp-index+https://example.com"
+source  = "mcpplibs+https://example.com"
 hash    = "sha256:placeholder"
 EOF
 

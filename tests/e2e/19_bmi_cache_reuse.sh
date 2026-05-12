@@ -91,7 +91,7 @@ fp_dir="$(ls "$MCPP_HOME/bmi" | head -1)"
 [[ -n "$fp_dir" ]] || { echo "no fingerprint dir under bmi/"; exit 1; }
 
 # Create a synthetic cache entry as if a previous build produced it.
-fake_pkg_dir="$MCPP_HOME/bmi/$fp_dir/deps/mcpp-index/fake.pkg@9.9.9"
+fake_pkg_dir="$MCPP_HOME/bmi/$fp_dir/deps/mcpplibs/fake.pkg@9.9.9"
 mkdir -p "$fake_pkg_dir/gcm.cache" "$fake_pkg_dir/obj"
 echo SYN > "$fake_pkg_dir/gcm.cache/fake.pkg.gcm"
 echo SYN > "$fake_pkg_dir/obj/fake.m.o"

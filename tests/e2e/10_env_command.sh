@@ -19,9 +19,9 @@ out=$("$MCPP" self env 2>&1)
 [[ -f "$MCPP_HOME/registry/.xlings.json" ]]  || { echo "missing seeded .xlings.json"; exit 1; }
 [[ -x "$MCPP_HOME/registry/bin/xlings" ]] || { echo "xlings binary not acquired"; exit 1; }
 
-# Verify seeded .xlings.json contains mcpp-index and NOT awesome
-grep -q '"name": "mcpp-index"' "$MCPP_HOME/registry/.xlings.json" || {
-    echo "seeded .xlings.json missing mcpp-index"; exit 1; }
+# Verify seeded .xlings.json contains mcpplibs and NOT awesome
+grep -q '"name": "mcpplibs"' "$MCPP_HOME/registry/.xlings.json" || {
+    echo "seeded .xlings.json missing mcpplibs"; exit 1; }
 if grep -q '"name": "awesome"' "$MCPP_HOME/registry/.xlings.json"; then
     echo "seeded .xlings.json should NOT contain awesome"; exit 1
 fi
@@ -29,6 +29,6 @@ fi
 # Output should mention key paths (use grep — [[ pattern match struggles with multi-line + parens)
 echo "$out" | grep -q 'MCPP_HOME'     || { echo "no MCPP_HOME in env output"; exit 1; }
 echo "$out" | grep -q 'xlings binary' || { echo "no xlings binary in env output"; exit 1; }
-echo "$out" | grep -q 'mcpp-index'    || { echo "no mcpp-index in env output"; exit 1; }
+echo "$out" | grep -q 'mcpplibs'    || { echo "no mcpplibs in env output"; exit 1; }
 
 echo "OK"

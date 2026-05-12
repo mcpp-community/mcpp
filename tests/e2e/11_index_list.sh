@@ -10,8 +10,8 @@ export MCPP_HOME="$TMP/mcpp-home"
 # init
 "$MCPP" self env > /dev/null
 
-# list should at minimum show mcpp-index (from seeded config)
+# list should at minimum show mcpplibs (from seeded config)
 out=$("$MCPP" index list 2>&1)
-[[ "$out" == *"mcpp-index"* ]] || { echo "index list missing mcpp-index: $out"; exit 1; }
+[[ "$out" == *"mcpplibs"* ]] || { echo "index list missing mcpplibs: $out"; exit 1; }
 
 echo "OK"
