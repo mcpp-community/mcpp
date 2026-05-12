@@ -55,16 +55,17 @@ EOF
 out=$("$MCPP" build 2>&1) && { echo "expected failure"; exit 1; }
 [[ "$out" == *"header units"* ]] || { echo "wrong error: $out"; exit 1; }
 
-# 5. Naming violation (public package without prefix)
+# 5. Module naming is the library author's choice (0.0.10+).
+# No prefix enforcement — this test just verifies we REMOVED the check.
 cd "$TMP"
-"$MCPP" new bad-naming > /dev/null
-cd bad-naming
-sed -i 's/name        = "bad-naming"/name        = "myorg.badname"/' mcpp.toml
+"$MCPP" new naming-ok > /dev/null
+cd naming-ok
+sed -i 's/name        = "naming-ok"/name        = "myorg.something"/' mcpp.toml
 cat > src/foo.cppm <<'EOF'
-export module wrongprefix;
+export module differentprefix;
 import std;
 EOF
-out=$("$MCPP" build 2>&1) && { echo "expected failure"; exit 1; }
-[[ "$out" == *"prefixed by package name"* ]] || { echo "wrong error: $out"; exit 1; }
+# This should succeed now (no naming violation error).
+"$MCPP" build > /dev/null 2>&1 || { echo "expected success but build failed"; exit 1; }
 
 echo "OK"

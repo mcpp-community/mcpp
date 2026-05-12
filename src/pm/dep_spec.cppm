@@ -32,6 +32,8 @@ struct DependencySpec {
     std::string                 gitRev;         // commit / tag / branch (any one)
     std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
 
+    bool                        inheritWorkspace = false;  // .workspace = true
+
     bool isPath()    const { return !path.empty(); }
     bool isGit()     const { return !git.empty(); }
     bool isVersion() const { return !isPath() && !isGit() && !version.empty(); }

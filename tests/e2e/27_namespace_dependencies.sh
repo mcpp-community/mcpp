@@ -17,7 +17,7 @@ cd "$TMP/util-pkg"
 cd util
 rm -f src/main.cpp
 cat > src/util.cppm <<'EOF'
-export module util;
+export module acme.util;
 import std;
 export int answer() { return 42; }
 EOF
@@ -38,7 +38,7 @@ cd "$TMP/app"
 cd app
 cat > src/main.cpp <<'EOF'
 import std;
-import util;
+import acme.util;
 int main() { std::println("answer = {}", answer()); return answer() == 42 ? 0 : 1; }
 EOF
 cat > mcpp.toml <<EOF

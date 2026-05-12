@@ -139,6 +139,21 @@ struct PackConfig {
     std::vector<std::string>            forceBundle;   // libs to bundle even if PEP 600 says skip
 };
 
+// `[workspace]` — multi-package workspace support (0.0.11+).
+//
+// A workspace root mcpp.toml declares member packages. Members share
+// a unified lock file, target directory, and can inherit dependency
+// versions via `.workspace = true`.
+//
+// Virtual workspace (no [package]): pure management node.
+// Rooted workspace ([package] + [workspace]): root is also a package.
+struct WorkspaceConfig {
+    std::vector<std::string>                            members;       // relative paths to member dirs
+    std::vector<std::string>                            exclude;       // paths to exclude
+    std::map<std::string, DependencySpec>               dependencies;  // [workspace.dependencies]
+    bool                                                present = false;
+};
+
 struct Manifest {
     std::filesystem::path       sourcePath;    // mcpp.toml's filesystem path
 
@@ -156,9 +171,6 @@ struct Manifest {
     BuildConfig                 buildConfig;
 
     // [target.<triple>] tables — empty if user didn't declare any.
-    // Triple keys are accepted in either GCC form (x86_64-linux-musl)
-    // or Rust form (x86_64-unknown-linux-musl); both are normalised by
-    // stripping `-unknown-` on read.
     std::map<std::string, TargetEntry> targetOverrides;
 
     // [pack] — `mcpp pack` config (see docs/35-pack-design.md).
@@ -166,6 +178,9 @@ struct Manifest {
 
     // [lib] — library root interface convention (M5.x+).
     LibConfig                          lib;
+
+    // [workspace] — multi-package workspace.
+    WorkspaceConfig                    workspace;
 
     // M5.0: post-parse computed/inferred state
     bool                        usesModules    = true;   // refined by scanner
@@ -267,13 +282,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     Manifest m;
     m.sourcePath = origin;
 
-    // [package]
+    // [package] — required unless [workspace] is present (virtual workspace).
     auto* pkg_t = doc->get_table("package");
-    if (!pkg_t) return std::unexpected(error(origin, "missing required [package] section"));
+    bool has_workspace = (doc->get_table("workspace") != nullptr);
+    if (!pkg_t && !has_workspace)
+        return std::unexpected(error(origin, "missing required [package] section"));
 
     auto name = doc->get_string("package.name");
-    if (!name) return std::unexpected(error(origin, "missing required field 'package.name'"));
-    m.package.name = *name;
+    if (!name && !has_workspace)
+        return std::unexpected(error(origin, "missing required field 'package.name'"));
+    if (name) m.package.name = *name;
 
     // 0.0.6+: explicit namespace field (xpkg V1 style).
     // If present, [package].name is the short name.
@@ -281,8 +299,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("package.namespace")) m.package.namespace_ = *v;
 
     auto version = doc->get_string("package.version");
-    if (!version) return std::unexpected(error(origin, "missing required field 'package.version'"));
-    m.package.version = *version;
+    if (!version && !has_workspace)
+        return std::unexpected(error(origin, "missing required field 'package.version'"));
+    if (version) m.package.version = *version;
 
     if (auto v = doc->get_string("package.description")) m.package.description = *v;
     if (auto v = doc->get_string("package.license"))     m.package.license     = *v;
@@ -395,7 +414,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     auto is_dep_spec_key = [](std::string_view k) {
         return k == "path"   || k == "version" || k == "git"
             || k == "rev"    || k == "tag"     || k == "branch"
-            || k == "features";
+            || k == "features" || k == "workspace";
     };
     auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
         if (sub.empty()) return false;
@@ -422,6 +441,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         } else if (auto it = sub.find("branch"); it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();
             spec.gitRefKind = "branch";
+        }
+        if (auto it = sub.find("workspace"); it != sub.end() && it->second.is_bool() && it->second.as_bool()) {
+            spec.inheritWorkspace = true;
+            return {};  // version will be filled in by workspace merge
         }
         if (spec.path.empty() && spec.version.empty() && spec.git.empty()) {
             return std::unexpected(error(origin, std::format(
@@ -594,6 +617,46 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 }
             }
             m.targetOverrides[canon_triple(triple)] = std::move(e);
+        }
+    }
+
+    // [workspace] — multi-package workspace support (0.0.11+).
+    if (doc->get_table("workspace")) {
+        m.workspace.present = true;
+        if (auto v = doc->get_string_array("workspace.members"))
+            m.workspace.members = *v;
+        if (auto v = doc->get_string_array("workspace.exclude"))
+            m.workspace.exclude = *v;
+
+        // [workspace.dependencies] — versions that members inherit via .workspace = true.
+        if (auto* wdeps = doc->get_table("workspace.dependencies")) {
+            for (auto& [k, v] : *wdeps) {
+                if (v.is_string()) {
+                    DependencySpec spec;
+                    spec.version = v.as_string();
+                    if (k.find('.') != std::string::npos) {
+                        auto pos = k.find('.');
+                        spec.namespace_ = k.substr(0, pos);
+                        spec.shortName  = k.substr(pos + 1);
+                    } else {
+                        spec.namespace_ = std::string{kDefaultNamespace};
+                        spec.shortName  = k;
+                    }
+                    m.workspace.dependencies[k] = std::move(spec);
+                    continue;
+                }
+                if (!v.is_table()) continue;
+                // Namespaced subtable: [workspace.dependencies.<ns>]
+                const std::string ns = k;
+                for (auto& [sk, sv] : v.as_table()) {
+                    if (!sv.is_string()) continue;
+                    DependencySpec spec;
+                    spec.namespace_ = ns;
+                    spec.shortName  = sk;
+                    spec.version    = sv.as_string();
+                    m.workspace.dependencies[std::format("{}.{}", ns, sk)] = std::move(spec);
+                }
+            }
         }
     }
 

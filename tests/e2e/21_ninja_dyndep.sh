@@ -67,18 +67,19 @@ if [[ "$out_static" != "$out_dyndep" ]]; then
     exit 1
 fi
 
-# Dyndep mode must have created the dyndep file.
-[[ -f "${triple}${fp_dir}/build.ninja.dd" ]] || {
-    echo "FAIL: build.ninja.dd not produced under MCPP_NINJA_DYNDEP=1"
+# P1 (0.0.10+): per-file dyndep — each .cppm gets its own .dd file.
+dd_files=$(find "${triple}${fp_dir}" -name '*.ddi.dd' | wc -l)
+[[ "$dd_files" -gt 0 ]] || {
+    echo "FAIL: no per-file .ddi.dd files produced under MCPP_NINJA_DYNDEP=1"
     exit 1
 }
 
-# Dyndep mode must have emitted scan rules.
+# Dyndep mode must have emitted scan + per-file dyndep rules.
 grep -q '^rule cxx_scan'    ${triple}${fp_dir}/build.ninja || {
     echo "FAIL: build.ninja missing cxx_scan rule"; exit 1; }
-grep -q '^rule cxx_collect' ${triple}${fp_dir}/build.ninja || {
-    echo "FAIL: build.ninja missing cxx_collect rule"; exit 1; }
-grep -q '  dyndep = build.ninja.dd' ${triple}${fp_dir}/build.ninja || {
+grep -q '^rule cxx_dyndep'  ${triple}${fp_dir}/build.ninja || {
+    echo "FAIL: build.ninja missing cxx_dyndep rule"; exit 1; }
+grep -q '  dyndep = '       ${triple}${fp_dir}/build.ninja || {
     echo "FAIL: compile edges missing dyndep ="; exit 1; }
 
 # Static mode must NOT have those rules (sanity).
@@ -91,12 +92,11 @@ ddi=$(find target -name '*.cppm.ddi' | head -1)
 grep -q '"rules"' "$ddi"          || { echo "FAIL: .ddi missing rules"; exit 1; }
 grep -q '"primary-output"' "$ddi" || { echo "FAIL: .ddi missing primary-output"; exit 1; }
 
-# build.ninja.dd content sanity.
-ddep="${triple}${fp_dir}/build.ninja.dd"
+# Per-file .dd content sanity.
+ddep=$(find "${triple}${fp_dir}" -name '*.ddi.dd' | head -1)
+[[ -n "$ddep" ]] || { echo "FAIL: no .ddi.dd file"; exit 1; }
 grep -q 'ninja_dyndep_version = 1' "$ddep" || {
     echo "FAIL: dyndep file missing version header"; exit 1; }
-grep -q 'gcm.cache/myapp.lib-greet.gcm' "$ddep" || {
-    echo "FAIL: dyndep file missing partition BMI"; cat "$ddep"; exit 1; }
 
 # Incremental: re-run dyndep build → must be noop.
 out2=$(MCPP_NINJA_DYNDEP=1 "$MCPP" build 2>&1)

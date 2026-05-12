@@ -330,6 +330,61 @@ package = {
     EXPECT_EQ(b.version,    "0.0.2");
 }
 
+TEST(Manifest, WorkspaceSectionParsed) {
+    constexpr auto src = R"(
+[workspace]
+members = ["libs/core", "libs/http", "apps/server"]
+exclude = ["libs/experimental"]
+
+[workspace.dependencies]
+cmdline = "0.0.2"
+
+[workspace.dependencies.compat]
+gtest = "1.15.2"
+mbedtls = "3.6.1"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_TRUE(m->workspace.present);
+    ASSERT_EQ(m->workspace.members.size(), 3u);
+    EXPECT_EQ(m->workspace.members[0], "libs/core");
+    EXPECT_EQ(m->workspace.members[1], "libs/http");
+    EXPECT_EQ(m->workspace.members[2], "apps/server");
+    ASSERT_EQ(m->workspace.exclude.size(), 1u);
+    EXPECT_EQ(m->workspace.exclude[0], "libs/experimental");
+    ASSERT_EQ(m->workspace.dependencies.size(), 3u);
+    auto& gt = m->workspace.dependencies.at("compat.gtest");
+    EXPECT_EQ(gt.version, "1.15.2");
+    EXPECT_EQ(gt.namespace_, "compat");
+}
+
+TEST(Manifest, WorkspaceTrueInDependency) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies.compat]
+mbedtls = { workspace = true }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto& s = m->dependencies.at("compat.mbedtls");
+    EXPECT_TRUE(s.inheritWorkspace);
+    EXPECT_EQ(s.namespace_, "compat");
+    EXPECT_EQ(s.shortName, "mbedtls");
+}
+
+TEST(Manifest, NoWorkspaceSectionMeansNotPresent) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_FALSE(m->workspace.present);
+}
+
 TEST(Manifest, LibRootInferredFromPackageName) {
     constexpr auto src = R"(
 [package]
