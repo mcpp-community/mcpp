@@ -195,10 +195,13 @@ inline std::vector<std::string> install_dir_candidates(std::string_view ns,
 
     // ── Fallback candidates (COMPAT, remove in 1.0.0) ──────────────
 
-    // Namespace-prefixed dir without index
-    // e.g. "compat-x-mbedtls" (new-style ns-aware layout)
-    if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace) {
-        candidates.push_back(std::format("{}-x-{}", ns, shortName));
+    // Namespace-prefixed dir (xlings uses namespace as prefix, not index name)
+    // e.g. "compat-x-mbedtls", "mcpplibs-x-mcpplibs.tinyhttps"
+    if (!ns.empty()) {
+        candidates.push_back(std::format("{}-x-{}", ns, fqname));
+        if (std::string(shortName) != fqname) {
+            candidates.push_back(std::format("{}-x-{}", ns, shortName));
+        }
     }
 
     // Index-prefixed with bare short name
