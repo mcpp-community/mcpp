@@ -1667,14 +1667,15 @@ prepare_build(bool print_fingerprint,
                 {
                     const std::string& expectedShort =
                         spec.shortName.empty() ? name : spec.shortName;
-                    std::string expectedComposite;
-                    if (!spec.namespace_.empty()
-                        && spec.namespace_ != mcpp::manifest::kDefaultNamespace) {
-                        expectedComposite = std::format("{}.{}",
-                            spec.namespace_, expectedShort);
-                    }
+                    // Also accept the fully-qualified form (ns.short) since
+                    // synthesize_from_xpkg_lua may set package.name to the
+                    // composite name for backward compat.
+                    auto expectedComposite = spec.namespace_.empty()
+                        ? std::string{}
+                        : std::format("{}.{}", spec.namespace_, expectedShort);
                     const bool nameOk =
                         newManifest.package.name == expectedShort
+                        || newManifest.package.name == name
                         || (!expectedComposite.empty()
                             && newManifest.package.name == expectedComposite);
                     if (!nameOk) {
