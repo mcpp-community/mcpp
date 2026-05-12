@@ -1210,6 +1210,7 @@ prepare_build(bool print_fingerprint,
         std::string                          requestedBy;         // who asked for it
         std::string                          originalConstraint;  // spec.version BEFORE pinning (for SemVer merge)
         std::size_t                          consumerDepIndex;    // dep_manifests slot of who pushed this child; kMainConsumer for main
+        std::filesystem::path                resolveRoot;         // base dir for relative path deps (empty = use project root)
     };
     std::deque<WorkItem> worklist;
 
@@ -1454,12 +1455,12 @@ prepare_build(bool print_fingerprint,
     // caller wants them; they're never propagated transitively.
     const std::string mainPkgLabel = m->package.name;
     for (auto& [n, s] : m->dependencies) {
-        worklist.push_back({n, s, mainPkgLabel, s.version, kMainConsumer});
+        worklist.push_back({n, s, mainPkgLabel, s.version, kMainConsumer, {}});
     }
     if (includeDevDeps) {
         for (auto& [n, s] : m->devDependencies) {
             worklist.push_back({n, s, mainPkgLabel + " (dev-dep)",
-                                s.version, kMainConsumer});
+                                s.version, kMainConsumer, {}});
         }
     }
 
@@ -1708,7 +1709,7 @@ prepare_build(bool print_fingerprint,
                         dep_manifests[it->second.depIndex]->dependencies) {
                     worklist.push_back({child_name, child_spec, newLabel,
                                         child_spec.version,
-                                        it->second.depIndex});
+                                        it->second.depIndex, {}});
                 }
                 continue;
             }
@@ -1720,9 +1721,12 @@ prepare_build(bool print_fingerprint,
         std::filesystem::path dep_root;
 
         if (spec.isPath()) {
-            // Path-based: resolve relative to project root.
+            // Path-based: resolve relative to the consumer's root dir.
+            // For top-level deps this is the project root; for transitive
+            // deps it's the parent dep's directory (stored in resolveRoot).
             dep_root = spec.path;
-            if (dep_root.is_relative()) dep_root = *root / dep_root;
+            auto base = item.resolveRoot.empty() ? *root : item.resolveRoot;
+            if (dep_root.is_relative()) dep_root = base / dep_root;
             dep_root = std::filesystem::weakly_canonical(dep_root);
         } else if (spec.isGit()) {
             // Git-based (M4 #5): clone into ~/.mcpp/git/<hash>/<rev>/
@@ -1857,7 +1861,7 @@ prepare_build(bool print_fingerprint,
         const std::size_t selfIdx = dep_manifests.size() - 1;
         for (auto& [child_name, child_spec] : dep_manifests.back()->dependencies) {
             worklist.push_back({child_name, child_spec, thisDepLabel,
-                                child_spec.version, selfIdx});
+                                child_spec.version, selfIdx, dep_root});
         }
     }
 
