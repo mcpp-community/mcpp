@@ -25,15 +25,14 @@ header_count=$(grep -cE '^\[dependencies\]$' mcpp.toml)
 [[ "$header_count" == "1" ]] || { cat mcpp.toml; echo "[dependencies] header duplicated"; exit 1; }
 grep -qE '^another = "0\.2\.0"$' mcpp.toml || { cat mcpp.toml; echo "another not set"; exit 1; }
 
-# (3) Namespaced dep via `<ns>:<name>@<ver>` lands in [dependencies.<ns>].
+# (3) Default-ns dep via `<ns>:<name>@<ver>` where ns is the default (mcpplibs).
+# Since 0.0.10+ default namespace is "mcpplibs", this lands as a bare key
+# under [dependencies], NOT in [dependencies.mcpplibs].
 "$MCPP" add mcpplibs:cmdline@0.0.2 > /dev/null
-grep -qE '^\[dependencies\.mcpplibs\]$' mcpp.toml || { cat mcpp.toml; echo "missing [dependencies.mcpplibs] section"; exit 1; }
-grep -qE '^cmdline = "0\.0\.2"$'        mcpp.toml || { cat mcpp.toml; echo "cmdline entry missing"; exit 1; }
+grep -qE '^cmdline = "0\.0\.2"$' mcpp.toml || { cat mcpp.toml; echo "cmdline entry missing"; exit 1; }
 
-# (4) A second package in the same namespace — appends under the existing subtable.
+# (4) A second default-ns package — also goes under [dependencies].
 "$MCPP" add mcpplibs:templates@0.0.1 > /dev/null
-ns_count=$(grep -cE '^\[dependencies\.mcpplibs\]$' mcpp.toml)
-[[ "$ns_count" == "1" ]] || { cat mcpp.toml; echo "[dependencies.mcpplibs] header duplicated"; exit 1; }
 grep -qE '^templates = "0\.0\.1"$' mcpp.toml || { cat mcpp.toml; echo "templates entry missing"; exit 1; }
 
 # (5) Legacy dotted form is still accepted on input — written out as namespaced subtable.
