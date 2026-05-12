@@ -15,55 +15,25 @@ export module mcpp.pm.package_fetcher;
 import std;
 import mcpp.config;
 import mcpp.pm.compat;
+import mcpp.xlings;
 import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
 
 export namespace mcpp::pm {
 
-// --- Events parsed from NDJSON ---
+// --- Events parsed from NDJSON (aliases to mcpp::xlings types) ---
 
 enum class EventKind { Progress, Log, Data, Error, Heartbeat, Result };
 
-struct ProgressEvent {
-    std::string  phase;      // "download", "extract", "configure", ...
-    int          percent;    // 0..100
-    std::string  message;
-};
+using ProgressEvent = mcpp::xlings::ProgressEvent;
+using LogEvent      = mcpp::xlings::LogEvent;
+using DataEvent     = mcpp::xlings::DataEvent;
+using ErrorEvent    = mcpp::xlings::ErrorEvent;
+using ResultEvent   = mcpp::xlings::ResultEvent;
+using Event         = mcpp::xlings::Event;
 
-struct LogEvent {
-    std::string  level;      // "debug" | "info" | "warn" | "error"
-    std::string  message;
-};
+// --- Listener interface (alias to mcpp::xlings::EventHandler) ---
 
-struct DataEvent {
-    std::string  dataKind;   // "install_plan", "styled_list", "package_info", ...
-    std::string  payloadJson;// raw JSON (let caller parse)
-};
-
-struct ErrorEvent {
-    std::string  code;
-    std::string  message;
-    std::string  hint;
-    bool         recoverable = false;
-};
-
-struct ResultEvent {
-    int          exitCode = 0;
-    std::string  dataJson;   // additional payload, may be empty
-};
-
-using Event = std::variant<ProgressEvent, LogEvent, DataEvent,
-                           ErrorEvent, ResultEvent>;
-
-// --- Listener interface ---
-
-struct EventHandler {
-    virtual ~EventHandler() = default;
-    virtual void on_progress(const ProgressEvent&) {}
-    virtual void on_log     (const LogEvent&)     {}
-    virtual void on_data    (const DataEvent&)    {}
-    virtual void on_error   (const ErrorEvent&)   {}
-    virtual void on_result  (const ResultEvent&)  {}
-};
+using EventHandler = mcpp::xlings::EventHandler;
 
 // --- Capability invocation ---
 
@@ -71,12 +41,7 @@ struct CallError {
     std::string message;
 };
 
-struct CallResult {
-    int                          exitCode = 0;
-    std::vector<DataEvent>       dataEvents;     // collected for caller convenience
-    std::optional<ErrorEvent>    error;
-    std::string                  resultJson;     // raw "result" line payload
-};
+using CallResult = mcpp::xlings::CallResult;
 
 class Fetcher {
 public:
@@ -188,178 +153,23 @@ namespace mcpp::pm {
 
 namespace {
 
-// --- Tiny ad-hoc JSON parser specialized for NDJSON event lines. ---
-//
-// We avoid pulling nlohmann::json (mcpp doesn't otherwise depend on it
-// and integrating it cleanly with import std + GCC modules is a chore
-// for marginal value). The xlings event lines are simple enough that
-// hand-extracting fields works.
-
-// Find string value: look for "key":"VALUE" (handles \" escape).
-std::string extract_string(std::string_view text, std::string_view key) {
-    auto needle = std::string{"\""} + std::string(key) + "\":\"";
-    auto p = text.find(needle);
-    if (p == std::string_view::npos) return "";
-    p += needle.size();
-    std::string out;
-    while (p < text.size()) {
-        char c = text[p++];
-        if (c == '\\' && p < text.size()) {
-            char nc = text[p++];
-            switch (nc) {
-                case 'n': out.push_back('\n'); break;
-                case 't': out.push_back('\t'); break;
-                case 'r': out.push_back('\r'); break;
-                case '"': out.push_back('"');  break;
-                case '\\': out.push_back('\\'); break;
-                default: out.push_back(nc);
-            }
-        } else if (c == '"') {
-            return out;
-        } else {
-            out.push_back(c);
-        }
-    }
-    return out;
-}
-
-// Find integer value: look for "key":NUM
-std::optional<long long> extract_int(std::string_view text, std::string_view key) {
-    auto needle = std::string{"\""} + std::string(key) + "\":";
-    auto p = text.find(needle);
-    if (p == std::string_view::npos) return std::nullopt;
-    p += needle.size();
-    while (p < text.size() && text[p] == ' ') ++p;
-    bool neg = false;
-    if (p < text.size() && text[p] == '-') { neg = true; ++p; }
-    long long n = 0;
-    bool any = false;
-    while (p < text.size() && std::isdigit(static_cast<unsigned char>(text[p]))) {
-        n = n * 10 + (text[p++] - '0');
-        any = true;
-    }
-    if (!any) return std::nullopt;
-    return neg ? -n : n;
-}
-
-// Find boolean "key":true / false
-std::optional<bool> extract_bool(std::string_view text, std::string_view key) {
-    auto needle = std::string{"\""} + std::string(key) + "\":";
-    auto p = text.find(needle);
-    if (p == std::string_view::npos) return std::nullopt;
-    p += needle.size();
-    while (p < text.size() && text[p] == ' ') ++p;
-    if (text.substr(p, 4) == "true")  return true;
-    if (text.substr(p, 5) == "false") return false;
-    return std::nullopt;
-}
-
-// Extract the "payload" JSON object as raw text (for downstream parsing).
-// Looks for "payload":{ ... } and returns the {...} substring with balanced braces.
-std::string extract_object(std::string_view text, std::string_view key) {
-    auto needle = std::string{"\""} + std::string(key) + "\":";
-    auto p = text.find(needle);
-    if (p == std::string_view::npos) return "";
-    p += needle.size();
-    while (p < text.size() && text[p] == ' ') ++p;
-    if (p >= text.size() || (text[p] != '{' && text[p] != '[')) return "";
-    char open  = text[p];
-    char close = (open == '{') ? '}' : ']';
-    int depth = 0;
-    std::size_t start = p;
-    bool in_string = false;
-    while (p < text.size()) {
-        char c = text[p];
-        if (in_string) {
-            if (c == '\\' && p + 1 < text.size()) { p += 2; continue; }
-            if (c == '"') in_string = false;
-            ++p; continue;
-        }
-        if (c == '"') { in_string = true; ++p; continue; }
-        if (c == open)  { ++depth; }
-        else if (c == close) { --depth; if (depth == 0) return std::string(text.substr(start, p - start + 1)); }
-        ++p;
-    }
-    return "";
-}
-
-// Parse one NDJSON line into an Event.
-std::optional<Event> parse_event_line(std::string_view line) {
-    auto kind = extract_string(line, "kind");
-    if (kind == "progress") {
-        ProgressEvent e;
-        e.phase   = extract_string(line, "phase");
-        e.percent = static_cast<int>(extract_int(line, "percent").value_or(0));
-        e.message = extract_string(line, "message");
-        return e;
-    }
-    if (kind == "log") {
-        LogEvent e;
-        e.level   = extract_string(line, "level");
-        e.message = extract_string(line, "message");
-        return e;
-    }
-    if (kind == "data") {
-        DataEvent e;
-        e.dataKind   = extract_string(line, "dataKind");
-        e.payloadJson= extract_object(line, "payload");
-        return e;
-    }
-    if (kind == "error") {
-        ErrorEvent e;
-        e.code        = extract_string(line, "code");
-        e.message     = extract_string(line, "message");
-        e.hint        = extract_string(line, "hint");
-        e.recoverable = extract_bool(line, "recoverable").value_or(false);
-        return e;
-    }
-    if (kind == "result") {
-        ResultEvent e;
-        e.exitCode = static_cast<int>(extract_int(line, "exitCode").value_or(0));
-        return e;
-    }
-    if (kind == "heartbeat") {
-        return std::nullopt;     // not surfaced
-    }
-    return std::nullopt;
-}
-
-// Shell-escape (single-quote) a string for the command line.
-std::string shq(std::string_view s) {
-    std::string out;
-    out.reserve(s.size() + 2);
-    out.push_back('\'');
-    for (char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out.push_back(c);
-    }
-    out.push_back('\'');
-    return out;
-}
+// JSON extraction and NDJSON parsing are now in mcpp::xlings.
+// Bring them into this TU's anonymous namespace for use by search/plan_install
+// helper code that still needs extract_string/extract_object.
+using mcpp::xlings::extract_string;
+using mcpp::xlings::extract_int;
+using mcpp::xlings::extract_bool;
+using mcpp::xlings::extract_object;
+using mcpp::xlings::parse_event_line;
+using mcpp::xlings::shq;
 
 } // namespace
 
 std::string Fetcher::build_command(std::string_view capability,
                                    std::string_view argsJson) const
 {
-    // Run xlings from inside the registry dir so it does NOT walk up the
-    // cwd looking for a .xlings.json and enter "project scope" (which
-    // would hide our seeded global config).  registry/ has its own
-    // seeded .xlings.json which xlings will pick up when cwd points there.
-    //
-    // Prepend the sandbox xvm bin dir to PATH so xim install hooks'
-    // `find_tool("patchelf")` (and any other tool lookups) discover the
-    // sandbox-local copies. This is what makes elfpatch.auto in xim's
-    // gcc.lua / binutils.lua actually run on a fresh machine.
-    auto xvmBin = (cfg_.xlingsHome() / "subos" / "default" / "bin").string();
-    return std::format(
-        "cd {} && env -u XLINGS_PROJECT_DIR PATH={}:\"$PATH\" XLINGS_HOME={} {} interface {} --args {} 2>/dev/null",
-        shq(cfg_.xlingsHome().string()),
-        shq(xvmBin),
-        shq(cfg_.xlingsHome().string()),
-        shq(cfg_.xlingsBinary.string()),
-        capability,
-        shq(argsJson));
+    mcpp::xlings::Env env{ cfg_.xlingsBinary, cfg_.xlingsHome() };
+    return mcpp::xlings::build_interface_command(env, capability, argsJson);
 }
 
 std::expected<CallResult, CallError>
@@ -367,52 +177,10 @@ Fetcher::call(std::string_view capability,
               std::string_view argsJson,
               EventHandler* handler)
 {
-    auto cmd = build_command(capability, argsJson);
-
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return std::unexpected(CallError{
-        std::format("failed to spawn xlings: {}", cmd)});
-
-    CallResult result;
-    std::array<char, 16384> buf{};
-    std::string acc;
-    while (std::fgets(buf.data(), buf.size(), fp) != nullptr) {
-        acc += buf.data();
-        // process any complete lines
-        std::size_t pos;
-        while ((pos = acc.find('\n')) != std::string::npos) {
-            auto line = acc.substr(0, pos);
-            acc.erase(0, pos + 1);
-            // strip trailing CR
-            while (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty()) continue;
-
-            auto ev = parse_event_line(line);
-            if (!ev) continue;
-
-            std::visit([&](auto&& e) {
-                using T = std::decay_t<decltype(e)>;
-                if constexpr (std::is_same_v<T, ProgressEvent>) {
-                    if (handler) handler->on_progress(e);
-                } else if constexpr (std::is_same_v<T, LogEvent>) {
-                    if (handler) handler->on_log(e);
-                } else if constexpr (std::is_same_v<T, DataEvent>) {
-                    result.dataEvents.push_back(e);
-                    if (handler) handler->on_data(e);
-                } else if constexpr (std::is_same_v<T, ErrorEvent>) {
-                    result.error = e;
-                    if (handler) handler->on_error(e);
-                } else if constexpr (std::is_same_v<T, ResultEvent>) {
-                    result.exitCode = e.exitCode;
-                    result.resultJson = e.dataJson;
-                    if (handler) handler->on_result(e);
-                }
-            }, *ev);
-        }
-    }
-    int rc = ::pclose(fp);
-    if (rc != 0 && result.exitCode == 0) result.exitCode = rc;
-    return result;
+    mcpp::xlings::Env env{ cfg_.xlingsBinary, cfg_.xlingsHome() };
+    auto r = mcpp::xlings::call(env, capability, argsJson, handler);
+    if (!r) return std::unexpected(CallError{r.error()});
+    return *r;
 }
 
 // --- Helpers ---

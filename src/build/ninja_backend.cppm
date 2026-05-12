@@ -23,6 +23,7 @@ import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.build.compile_commands;
 import mcpp.dyndep;
+import mcpp.xlings;
 
 export namespace mcpp::build {
 
@@ -456,30 +457,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // -B<binutils-bin> flag we emit into cxxflags/ldflags (see
     // emit_ninja_string). No PATH injection needed here.
     std::filesystem::path ninjaBin;
-    {
-        auto bp = plan.toolchain.binaryPath;
-        std::filesystem::path xpkgsDir;
-        for (auto p = bp.parent_path(); p.has_parent_path() && p != p.root_path();
-             p = p.parent_path()) {
-            if (p.filename() == "xpkgs") {
-                xpkgsDir = p;
-                break;
-            }
-        }
-        if (!xpkgsDir.empty()) {
-            // xim's ninja xpkg puts the binary at <v>/ninja (no bin/ subdir).
-            auto root = xpkgsDir / "xim-x-ninja";
-            std::error_code ec;
-            if (std::filesystem::exists(root, ec)) {
-                for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-                    auto candidate = v.path() / "ninja";
-                    if (std::filesystem::exists(candidate, ec)) {
-                        ninjaBin = candidate;
-                        break;
-                    }
-                }
-            }
-        }
+    if (auto nb = mcpp::xlings::paths::find_sibling_binary(
+            plan.toolchain.binaryPath, "ninja", "ninja")) {
+        ninjaBin = *nb;
     }
 
     std::string ninjaProgram =

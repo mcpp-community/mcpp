@@ -29,6 +29,7 @@ import mcpp.lockfile;
 import mcpp.publish.xpkg_emit;
 import mcpp.pack;
 import mcpp.config;
+import mcpp.xlings;
 import mcpp.fetcher;
 import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
@@ -646,37 +647,45 @@ void patchelf_walk(const std::filesystem::path& dir,
     }
 }
 
-// xim's gcc tarball is built with an absolute hardcoded path
-// `/home/xlings/.xlings_data/subos/linux/lib/...` baked into the gcc specs
-// (both as `--dynamic-linker` and `-rpath`). xim's gcc-specs-config.lua
-// tries to override these but only matches `/lib64/ld-linux-x86-64.so.2`,
-// not the baked-in `/home/xlings/...`, so the override silently no-ops.
+// xim bakes the installing user's XLINGS_HOME into gcc specs at install
+// time (as `--dynamic-linker` and `-rpath`). When mcpp uses its own
+// isolated sandbox (MCPP_HOME/registry/), the baked-in paths point to
+// xlings' home, not mcpp's sandbox glibc — binaries would fail to exec.
 //
-// TODO(xim-pkgindex-upstream): file an issue against xim-pkgindex's
-// gcc-specs-config.lua to also match the `/home/xlings/...` baked-in
-// path. Once fixed, this whole post-install fixup can be deleted.
-//
-// Result: gcc compiles user binaries with PT_INTERP pointing at
-// `/home/xlings/.xlings_data/...` AND an rpath pointing at the same
-// non-existent directory. `elfpatch.auto` (now functional thanks to the
-// patchelf bootstrap) only fixes ELF binaries it scans; it doesn't touch
-// the gcc specs text file.
-//
-// Mcpp does the post-install spec rewrite itself:
-//   - The dynamic-linker path becomes <glibc_lib64>/ld-linux-x86-64.so.2.
-//   - The rpath becomes <glibc_lib64>:<gcc_lib64> so user binaries can find
-//     both libc.so.6 (glibc) and libstdc++.so.6 + libgcc_s.so.1 (gcc).
-// Idempotent.
+// Mcpp does a post-install spec rewrite:
+//   - Dynamically detects the baked-in lib dir from the specs file
+//   - Replaces the dynamic-linker path with <glibc_lib64>/ld-linux-x86-64.so.2
+//   - Replaces the rpath with <glibc_lib64>:<gcc_lib64>
+// Idempotent — skips if already pointing at the correct glibc.
+// Extract the baked-in lib directory from a gcc specs file by finding
+// the dynamic-linker path that ends with `/ld-linux-x86-64.so.2`.
+// xim bakes the installing user's XLINGS_HOME into specs at install
+// time, so the path varies per machine — we cannot hardcode it.
+std::string detect_baked_lib_dir(const std::string& specsContent) {
+    constexpr std::string_view kLoader = "/ld-linux-x86-64.so.2";
+    auto pos = specsContent.find(kLoader);
+    if (pos == std::string::npos) return "";
+    // Walk backwards to find start of the absolute path
+    auto start = pos;
+    while (start > 0 && specsContent[start - 1] != ' '
+                     && specsContent[start - 1] != ':'
+                     && specsContent[start - 1] != ';'
+                     && specsContent[start - 1] != '\n') {
+        --start;
+    }
+    auto dir = specsContent.substr(start, pos - start);
+    // Sanity: must be absolute
+    if (dir.empty() || dir[0] != '/') return "";
+    // Skip if it already points to the target glibc (no fixup needed)
+    return dir;
+}
+
 void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
                      const std::filesystem::path& glibcLibDir,
                      const std::filesystem::path& gccLibDir)
 {
     auto specsParent = gccPkgRoot / "lib" / "gcc" / "x86_64-linux-gnu";
     if (!std::filesystem::exists(specsParent)) return;
-
-    constexpr std::string_view kBakedDir =
-        "/home/xlings/.xlings_data/subos/linux/lib";
-    auto kBakedLoader = std::format("{}/ld-linux-x86-64.so.2", kBakedDir);
 
     auto loaderReplacement = (glibcLibDir / "ld-linux-x86-64.so.2").string();
     auto rpathReplacement  = std::format("{}:{}",
@@ -701,12 +710,17 @@ void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
         std::stringstream ss;  ss << is.rdbuf();
         std::string content = ss.str();
 
-        if (content.find(kBakedDir) == std::string::npos) continue;
+        auto bakedDir = detect_baked_lib_dir(content);
+        if (bakedDir.empty()) continue;
+        // Already pointing at the right place — no fixup needed.
+        if (bakedDir == glibcLibDir.string()) continue;
+
+        auto bakedLoader = bakedDir + "/ld-linux-x86-64.so.2";
 
         // Order matters: replace the full loader file path first so the
         // shorter dir pattern doesn't eat its prefix.
-        replace_all(content, kBakedLoader, loaderReplacement);
-        replace_all(content, kBakedDir,    rpathReplacement);
+        replace_all(content, bakedLoader, loaderReplacement);
+        replace_all(content, bakedDir,    rpathReplacement);
 
         std::ofstream os(specs);
         os << content;
@@ -2375,10 +2389,8 @@ int cmd_index_update(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
     mcpp::ui::status("Updating", "all index repos");
-    std::string cmd = std::format(
-        "env -u XLINGS_PROJECT_DIR XLINGS_HOME='{}' '{}' update 2>&1",
-        cfg->xlingsHome().string(),
-        cfg->xlingsBinary.string());
+    auto xlEnv = mcpp::config::make_xlings_env(*cfg);
+    std::string cmd = mcpp::xlings::build_command_prefix(xlEnv) + " update 2>&1";
     std::array<char, 4096> buf{};
     std::FILE* fp = ::popen(cmd.c_str(), "r");
     if (!fp) { mcpp::ui::error("failed to spawn index updater"); return 1; }
@@ -2506,19 +2518,12 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
         // visible to test binaries that shell out to them. The
         // toolchain binary's path encodes the registry root — derive it.
         std::string pathPrefix;
-        {
-            auto tcBin = ctx->tc.binaryPath;
-            // tc binary at <registry>/data/xpkgs/xim-x-*/ver/bin/g++
-            // Climb to <registry> = .../(xpkgs)/../..
-            for (auto p = tcBin; !p.empty() && p != p.root_path(); p = p.parent_path()) {
-                if (p.filename() == "xpkgs") {
-                    auto registryDir = p.parent_path().parent_path();
-                    auto sandboxBin  = registryDir / "subos" / "default" / "bin";
-                    if (std::filesystem::exists(sandboxBin))
-                        pathPrefix = std::format("PATH='{}':\"$PATH\" ", sandboxBin.string());
-                    break;
-                }
-            }
+        if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(ctx->tc.binaryPath)) {
+            // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
+            auto registryDir = xpkgs->parent_path().parent_path();
+            auto sandboxBin  = registryDir / "subos" / "default" / "bin";
+            if (std::filesystem::exists(sandboxBin))
+                pathPrefix = std::format("PATH='{}':\"$PATH\" ", sandboxBin.string());
         }
 
         std::string cmd = std::format("{}'{}'", pathPrefix, exe.string());
@@ -2874,6 +2879,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
     auto pkgsDir = cfg->xlingsHome() / "data" / "xpkgs";
+    auto xlEnv = mcpp::config::make_xlings_env(*cfg);
 
     if (subname == "list") {
         // `gcc 15.1.0-musl` and `musl-gcc@15.1.0` describe the same xpkg
@@ -3062,7 +3068,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         // `<root>/x86_64-linux-musl/{include,lib}` and doesn't link against
         // xim:glibc, so this fixup is both unnecessary and harmful for it.
         if (compiler == "gcc" && !isMusl) {
-            auto glibcRoot = pkgsDir / "xim-x-glibc";
+            auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
             std::filesystem::path glibcLibDir;
             if (std::filesystem::exists(glibcRoot)) {
                 for (auto& v : std::filesystem::directory_iterator(glibcRoot)) {
@@ -3074,7 +3080,8 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 }
             }
             auto gccLibDir = payload->root / "lib64";
-            auto patchelfBin = pkgsDir / "xim-x-patchelf" / "0.18.0" / "bin" / "patchelf";
+            auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
+                mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
 
             if (!glibcLibDir.empty() && std::filesystem::exists(gccLibDir)
                 && std::filesystem::exists(patchelfBin))
@@ -3085,7 +3092,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
                 // (1) patchelf walk: rewrite PT_INTERP + RUNPATH for binutils
                 //     and gcc xpkgs so they're self-contained in sandbox.
-                auto binutilsRoot = pkgsDir / "xim-x-binutils";
+                auto binutilsRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "binutils");
                 if (std::filesystem::exists(binutilsRoot)) {
                     for (auto& v : std::filesystem::directory_iterator(binutilsRoot))
                         patchelf_walk(v.path(), loader, rpath, patchelfBin);
@@ -3150,7 +3157,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
                   compiler == "musl-gcc" ? "musl-gcc" : compiler, ximVersion)
             : std::format("{}@{}", compiler, ximVersion);
 
-        auto installDir = pkgsDir / std::format("xim-x-{}", ximName) / ximVersion;
+        auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, ximName, ximVersion);
         if (!std::filesystem::exists(installDir)) {
             mcpp::ui::error(std::format(
                 "{} is not installed. Run `mcpp toolchain install {} {}` first.",
@@ -3177,7 +3184,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
         std::string compiler = spec.substr(0, at);
         std::string version  = spec.substr(at + 1);
-        auto installDir = pkgsDir / std::format("xim-x-{}", compiler) / version;
+        auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, compiler, version);
         std::error_code ec;
         if (!std::filesystem::exists(installDir, ec)) {
             mcpp::ui::error(std::format("{} is not installed", spec));

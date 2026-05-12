@@ -22,6 +22,7 @@ export module mcpp.toolchain.stdmod;
 
 import std;
 import mcpp.toolchain.detect;
+import mcpp.xlings;
 
 export namespace mcpp::toolchain {
 
@@ -89,27 +90,9 @@ std::expected<StdModule, StdModError> ensure_built(
     // -B<binutils-bin> so gcc finds `as`/`ld` directly via its internal
     // exec_prefix lookup — no PATH dependency, no xlings shim involvement.
     std::string b_flag;
-    {
-        auto bp = tc.binaryPath;
-        std::filesystem::path xpkgsDir;
-        for (auto p = bp.parent_path();
-             p.has_parent_path() && p != p.root_path();
-             p = p.parent_path()) {
-            if (p.filename() == "xpkgs") { xpkgsDir = p; break; }
-        }
-        if (!xpkgsDir.empty()) {
-            auto binutilsRoot = xpkgsDir / "xim-x-binutils";
-            std::error_code ec;
-            if (std::filesystem::exists(binutilsRoot, ec)) {
-                for (auto& v : std::filesystem::directory_iterator(binutilsRoot, ec)) {
-                    auto candidate = v.path() / "bin";
-                    if (std::filesystem::exists(candidate / "as", ec)) {
-                        b_flag = std::format(" -B'{}'", candidate.string());
-                        break;
-                    }
-                }
-            }
-        }
+    if (auto as = mcpp::xlings::paths::find_sibling_binary(
+            tc.binaryPath, "binutils", "bin/as")) {
+        b_flag = std::format(" -B'{}'", as->parent_path().string());
     }
 
     auto cmd = std::format(

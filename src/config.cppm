@@ -21,10 +21,11 @@ export module mcpp.config;
 
 import std;
 import mcpp.libs.toml;
+import mcpp.xlings;
 
 export namespace mcpp::config {
 
-inline constexpr std::string_view kXlingsPinnedVersion = "0.4.7";
+inline constexpr std::string_view kXlingsPinnedVersion = mcpp::xlings::pinned::kXlingsVersion;
 
 struct IndexRepo {
     std::string name;
@@ -69,6 +70,11 @@ struct GlobalConfig {
     }
 };
 
+// Create an xlings::Env from the resolved GlobalConfig.
+mcpp::xlings::Env make_xlings_env(const GlobalConfig& cfg) {
+    return { cfg.xlingsBinary, cfg.xlingsHome() };
+}
+
 struct ConfigError { std::string message; };
 
 // Load (or create) the global config. Idempotent. Performs:
@@ -84,25 +90,9 @@ struct ConfigError { std::string message; };
 //
 // We can't use mcpp.fetcher's EventHandler here because fetcher imports
 // config — the dependency would be cyclic.
-struct BootstrapFile {
-    std::string  name;             // xim package id, e.g. "xim:patchelf@0.18.0"
-    double       downloadedBytes = 0;
-    double       totalBytes      = 0;
-    bool         started         = false;
-    bool         finished        = false;
-};
-
-// One xlings download_progress event. Carries the full `files[]` array
-// so the consumer can decide which one to display: a multi-package
-// install (xim:gcc with its glibc / binutils / linux-headers / runtime
-// deps) reshuffles which file occupies slot 0 across events, and the
-// caller that only saw the first slot would re-emit the static
-// "Downloading <pkg>" line every time the order shifted.
-struct BootstrapProgress {
-    std::vector<BootstrapFile>  files;
-    double                      elapsedSec = 0;
-};
-using BootstrapProgressCallback = std::function<void(const BootstrapProgress&)>;
+using BootstrapFile             = mcpp::xlings::BootstrapFile;
+using BootstrapProgress         = mcpp::xlings::BootstrapProgress;
+using BootstrapProgressCallback = mcpp::xlings::BootstrapProgressCallback;
 
 std::expected<GlobalConfig, ConfigError> load_or_init(
     bool quiet = false,
@@ -174,14 +164,7 @@ std::filesystem::path home_dir() {
 }
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd) {
-    std::array<char, 4096> buf{};
-    std::string out;
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return std::unexpected("popen failed: " + cmd);
-    while (std::fgets(buf.data(), buf.size(), fp) != nullptr) out += buf.data();
-    int rc = ::pclose(fp);
-    if (rc != 0 && out.empty()) return std::unexpected("command failed: " + cmd);
-    return out;
+    return mcpp::xlings::run_capture(cmd);
 }
 
 void write_file(const std::filesystem::path& p, std::string_view content) {
@@ -221,18 +204,15 @@ default_backend = "ninja"
 bool write_default_xlings_json(const std::filesystem::path& path,
                                const std::vector<IndexRepo>& repos)
 {
-    std::string json = "{\n";
-    json += "  \"index_repos\": [\n";
-    for (std::size_t i = 0; i < repos.size(); ++i) {
-        json += std::format("    {{ \"name\": \"{}\", \"url\": \"{}\" }}{}\n",
-                            repos[i].name, repos[i].url,
-                            i + 1 == repos.size() ? "" : ",");
-    }
-    json += "  ],\n";
-    json += "  \"lang\": \"en\",\n";
-    json += "  \"mirror\": \"\"\n";
-    json += "}\n";
-    write_file(path, json);
+    // Delegate to xlings module. Convert IndexRepo vec to pair span.
+    std::vector<std::pair<std::string,std::string>> pairs;
+    pairs.reserve(repos.size());
+    for (auto& r : repos) pairs.emplace_back(r.name, r.url);
+    // seed_xlings_json writes to env.home / ".xlings.json", so we
+    // construct a temporary Env with home = path.parent_path().
+    mcpp::xlings::Env env;
+    env.home = path.parent_path();
+    mcpp::xlings::seed_xlings_json(env, pairs);
     return std::filesystem::exists(path);
 }
 
@@ -305,24 +285,7 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet)
 // + patchelf in one shot, this function and ensure_sandbox_xlings_binary +
 // ensure_sandbox_patchelf below can collapse into a single call.
 void ensure_sandbox_init(const GlobalConfig& cfg, bool quiet) noexcept {
-    // Marker: the sandbox layout is "complete enough" if
-    // <home>/subos/default/.xlings.json exists. xlings self init creates it.
-    auto marker = cfg.xlingsHome() / "subos" / "default" / ".xlings.json";
-    if (std::filesystem::exists(marker)) return;
-
-    if (!quiet)
-        print_status("Initialize", "mcpp sandbox layout (one-time)");
-    auto cmd = std::format(
-        "cd '{}' && env -u XLINGS_PROJECT_DIR XLINGS_HOME='{}' '{}' self init >/dev/null 2>&1",
-        cfg.xlingsHome().string(),
-        cfg.xlingsHome().string(),
-        cfg.xlingsBinary.string());
-    int rc = std::system(cmd.c_str());
-    if (rc != 0 && !quiet) {
-        std::println(stderr,
-            "warning: `xlings self init` failed for sandbox at '{}'",
-            cfg.xlingsHome().string());
-    }
+    mcpp::xlings::ensure_init(make_xlings_env(cfg), quiet);
 }
 
 // With the 0.0.4 layout change (xlings binary at <MCPP_HOME>/registry/bin/
@@ -333,222 +296,18 @@ void ensure_sandbox_xlings_binary(const GlobalConfig& /*cfg*/, bool /*quiet*/) n
     // Intentional no-op: xlingsBinary == xlingsHome()/bin/xlings.
 }
 
-// ─── Bootstrap install: shared event-stream parser + driver ────────────
-//
-// Both ensure_sandbox_patchelf and ensure_sandbox_ninja go through xlings's
-// `interface install_packages --args '...'` JSON-event pipe and stream the
-// `download_progress` events into a caller-supplied progress callback. We
-// can't use mcpp.fetcher here (cyclic import) so it's a small custom parser.
+// Bootstrap install: delegated to mcpp.xlings module.
 
-// Pull a numeric/bool/string field out of a flat JSON region. Cheap; no
-// nested array/object handling — the keys we extract are all leaves.
-struct LineScan {
-    std::string_view s;
-    static bool starts_with(std::string_view a, std::string_view b) {
-        return a.size() >= b.size() && a.compare(0, b.size(), b) == 0;
-    }
-    std::string find_str(std::string_view key) const {
-        std::string n = std::format("\"{}\":\"", key);
-        auto p = s.find(n);
-        if (p == std::string_view::npos) return "";
-        p += n.size();
-        std::string out;
-        while (p < s.size() && s[p] != '"') {
-            if (s[p] == '\\' && p + 1 < s.size()) { out.push_back(s[p+1]); p += 2; continue; }
-            out.push_back(s[p++]);
-        }
-        return out;
-    }
-    double find_num(std::string_view key) const {
-        std::string n = std::format("\"{}\":", key);
-        auto p = s.find(n);
-        if (p == std::string_view::npos) return 0;
-        p += n.size();
-        auto e = p;
-        while (e < s.size()
-            && (std::isdigit(static_cast<unsigned char>(s[e]))
-                || s[e] == '.' || s[e] == '-' || s[e] == '+'
-                || s[e] == 'e' || s[e] == 'E')) ++e;
-        try { return std::stod(std::string(s.substr(p, e - p))); }
-        catch (...) { return 0; }
-    }
-    bool find_bool(std::string_view key) const {
-        std::string n = std::format("\"{}\":", key);
-        auto p = s.find(n);
-        if (p == std::string_view::npos) return false;
-        p += n.size();
-        return s.size() - p >= 4 && s.substr(p, 4) == "true";
-    }
-};
-
-// Run xlings with its NDJSON `interface install_packages` capability and
-// drive the progress callback off the stream. Returns the install exit
-// code (0 on success).
-int run_xim_install_with_progress(const GlobalConfig& cfg,
-                                  std::string_view ximTarget,
-                                  const BootstrapProgressCallback& cb)
-{
-    // The args JSON is fixed-shape so we hand-format rather than pulling
-    // in a JSON writer.
-    auto argsJson = std::format(
-        R"({{"targets":["{}"],"yes":true}})", ximTarget);
-
-    // Shell-escape via single quotes; the args JSON itself contains no
-    // single quotes so this is safe.
-    auto cmd = std::format(
-        "cd '{}' && env -u XLINGS_PROJECT_DIR XLINGS_HOME='{}' '{}' interface install_packages --args '{}' 2>/dev/null",
-        cfg.xlingsHome().string(),
-        cfg.xlingsHome().string(),
-        cfg.xlingsBinary.string(),
-        argsJson);
-
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return -1;
-
-    std::array<char, 16384> buf{};
-    std::string acc;
-    int          resultExitCode = -1;
-
-    auto handle_line = [&](std::string_view line) {
-        // Only two event kinds drive UX:
-        //   data + dataKind=download_progress  → progress callback
-        //   result                              → final exit code
-        LineScan ls{line};
-        auto kind = ls.find_str("kind");
-        if (kind == "result") {
-            resultExitCode = static_cast<int>(ls.find_num("exitCode"));
-            return;
-        }
-        if (kind != "data") return;
-        if (ls.find_str("dataKind") != "download_progress") return;
-        if (!cb) return;
-
-        // Walk every entry in "files":[ {...}, {...}, ... ] and pass them
-        // all up. xlings reorders the array as files start/finish during
-        // multi-package installs (gcc bundles glibc + binutils + headers
-        // + runtime); a consumer that only read slot 0 would flicker
-        // between names and re-emit the static "Downloading <pkg>" line
-        // each event.
-        auto p = line.find("\"files\":[");
-        if (p == std::string_view::npos) return;
-        p += 9;
-
-        BootstrapProgress prog;
-        prog.elapsedSec = ls.find_num("elapsedSec");
-
-        while (p < line.size()) {
-            while (p < line.size() && (line[p] == ' ' || line[p] == '\n'
-                                       || line[p] == ',')) ++p;
-            if (p >= line.size() || line[p] == ']') break;
-            if (line[p] != '{') break;
-            int depth = 0;
-            auto start = p;
-            bool in_string = false;
-            for (; p < line.size(); ++p) {
-                char c = line[p];
-                if (in_string) {
-                    if (c == '\\' && p + 1 < line.size()) { ++p; continue; }
-                    if (c == '"') in_string = false;
-                    continue;
-                }
-                if (c == '"')      in_string = true;
-                else if (c == '{') ++depth;
-                else if (c == '}') { if (--depth == 0) { ++p; break; } }
-            }
-            LineScan fl{line.substr(start, p - start)};
-            BootstrapFile f;
-            f.name            = fl.find_str("name");
-            f.downloadedBytes = fl.find_num("downloadedBytes");
-            f.totalBytes      = fl.find_num("totalBytes");
-            f.started         = fl.find_bool("started");
-            f.finished        = fl.find_bool("finished");
-            if (!f.name.empty()) prog.files.push_back(std::move(f));
-        }
-        if (!prog.files.empty()) cb(prog);
-    };
-
-    while (std::fgets(buf.data(), buf.size(), fp)) {
-        acc += buf.data();
-        std::size_t pos;
-        while ((pos = acc.find('\n')) != std::string::npos) {
-            handle_line(std::string_view{acc}.substr(0, pos));
-            acc.erase(0, pos + 1);
-        }
-    }
-    if (!acc.empty()) handle_line(acc);
-    int closeRc = ::pclose(fp);
-    return (resultExitCode != -1) ? resultExitCode : closeRc;
-}
-
-// Ensure ninja is installed in the sandbox (real binary at
-// <sandbox>/data/xpkgs/xim-x-ninja/<v>/bin/ninja). mcpp's ninja_backend
-// uses this absolute path to spawn ninja, sidestepping the system xlings
-// ninja shim (which requires per-tool version activation that isn't
-// guaranteed in CI / fresh user setups).
-//
-// TODO(xlings-upstream): once xlings 0.4.10's xvm shim creation is
-// guaranteed to work cross-sandbox without requiring the
-// ensure_sandbox_xlings_binary hardlink + xlings self init dance, the
-// `<sandbox>/subos/default/bin/ninja` shim would also work and we
-// could drop this and just rely on PATH.
 void ensure_sandbox_ninja(const GlobalConfig& cfg, bool quiet,
                           const BootstrapProgressCallback& cb) noexcept
 {
-    auto root = cfg.xlingsHome() / "data" / "xpkgs" / "xim-x-ninja";
-    if (std::filesystem::exists(root)) {
-        std::error_code ec;
-        for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-            // xim's ninja xpkg places the binary at <v>/ninja (no bin/ subdir).
-            if (std::filesystem::exists(v.path() / "ninja")) return;
-        }
-    }
-    if (!quiet)
-        print_status("Bootstrap", "ninja into mcpp sandbox (one-time)");
-    int rc = run_xim_install_with_progress(cfg, "xim:ninja@1.12.1", cb);
-    if (rc != 0 && !quiet) {
-        std::println(stderr,
-            "warning: failed to bootstrap ninja into mcpp sandbox (exit {})",
-            rc);
-    }
+    mcpp::xlings::ensure_ninja(make_xlings_env(cfg), quiet, cb);
 }
 
-// xim packages (gcc / binutils / openssl / d2x / ...) call `elfpatch.auto`
-// in their install() hooks to rewrite ELF binaries' PT_INTERP / RUNPATH to
-// sandbox-local glibc paths. Internally that goes through xmake's
-// `find_tool("patchelf")`. If patchelf is not present, the patcher logs a
-// warning and silently no-ops (xim-pkgindex/elfpatch.lua:304-308):
-//
-//     if not patch_tool then
-//         log.warn("patchelf not found, skip patching")
-//         return result
-//     end
-//
-// Without ELF patching, every xim-built binary keeps its build-host
-// hardcoded loader path (`/home/xlings/.xlings_data/.../ld-linux-x86-64.so.2`),
-// which doesn't exist on a fresh user/CI machine — produced binaries fail
-// to exec ("cannot execute: required file not found").
-//
-// Fix: when initializing mcpp's private xlings sandbox for the first time,
-// have the bundled xlings install patchelf into the same sandbox. xim's
-// elfpatch.auto then finds it via xvm + PATH (set up by Fetcher).
-//
-// patchelf's own install hook is a plain extract — it does NOT call
-// elfpatch.auto, so there's no chicken-and-egg.
 void ensure_sandbox_patchelf(const GlobalConfig& cfg, bool quiet,
                               const BootstrapProgressCallback& cb) noexcept
 {
-    auto marker = cfg.xlingsHome() / "data" / "xpkgs"
-                / "xim-x-patchelf" / "0.18.0" / "bin" / "patchelf";
-    if (std::filesystem::exists(marker)) return;
-
-    if (!quiet)
-        print_status("Bootstrap", "patchelf into mcpp sandbox (one-time)");
-    int rc = run_xim_install_with_progress(cfg, "xim:patchelf@0.18.0", cb);
-    if (rc != 0 && !quiet) {
-        std::println(stderr,
-            "warning: failed to bootstrap patchelf into mcpp sandbox; "
-            "subsequent xim installs may skip ELF rewriting");
-    }
+    mcpp::xlings::ensure_patchelf(make_xlings_env(cfg), quiet, cb);
 }
 
 } // namespace

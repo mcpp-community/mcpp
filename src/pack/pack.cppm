@@ -22,6 +22,7 @@ export module mcpp.pack;
 
 import std;
 import mcpp.config;
+import mcpp.xlings;
 import mcpp.manifest;
 
 export namespace mcpp::pack {
@@ -302,17 +303,21 @@ ldd_parse(const std::filesystem::path& binary)
     return deps;
 }
 
-// Sandbox-local patchelf path. We re-discover it rather than threading
-// the GlobalConfig through — fail soft if the bootstrap step left it
-// uninstalled.
+// Sandbox-local patchelf path via xlings module. Fail soft if the
+// bootstrap step left it uninstalled.
 std::filesystem::path
 sandbox_patchelf(const mcpp::config::GlobalConfig& cfg) {
-    auto root = cfg.xlingsHome() / "data" / "xpkgs" / "xim-x-patchelf";
+    auto env = mcpp::config::make_xlings_env(cfg);
+    auto bin = mcpp::xlings::paths::xim_tool(env, "patchelf",
+        mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+    if (std::filesystem::exists(bin)) return bin;
+    // Fallback: scan all versions (in case a different version is installed).
+    auto root = mcpp::xlings::paths::xim_tool_root(env, "patchelf");
     std::error_code ec;
     if (!std::filesystem::exists(root, ec)) return {};
     for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-        auto bin = v.path() / "bin" / "patchelf";
-        if (std::filesystem::exists(bin)) return bin;
+        auto candidate = v.path() / "bin" / "patchelf";
+        if (std::filesystem::exists(candidate)) return candidate;
     }
     return {};
 }
