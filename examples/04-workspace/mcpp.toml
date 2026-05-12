@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "libs/core",
+    "libs/greeter",
+    "apps/hello",
+]

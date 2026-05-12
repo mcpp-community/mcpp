@@ -1,0 +1,10 @@
+[package]
+namespace = "demo"
+name      = "greeter"
+version   = "0.1.0"
+
+[targets.greeter]
+kind = "lib"
+
+[dependencies]
+core = { path = "../core" }

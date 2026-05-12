@@ -1,0 +1,7 @@
+[package]
+namespace = "demo"
+name      = "core"
+version   = "0.1.0"
+
+[targets.core]
+kind = "lib"
