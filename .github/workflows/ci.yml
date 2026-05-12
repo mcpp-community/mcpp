@@ -101,7 +101,7 @@ jobs:
           # Point the e2e runner at the freshly-built binary, not the
           # bootstrap one. Tests cd into mktemp -d, so $MCPP must be
           # absolute or the relative path breaks under the temp cwd.
-          MCPP=$(realpath "$(find target -type f -name mcpp | head -1)")
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           test -x "$MCPP"
           export MCPP
           # Tests that set MCPP_HOME to a fresh tmpdir need an xlings
@@ -117,6 +117,6 @@ jobs:
 
       - name: Self-host smoke (freshly-built mcpp builds itself again)
         run: |
-          MCPP=$(realpath "$(find target -type f -name mcpp | head -1)")
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           "$MCPP" build
           "$MCPP" test
