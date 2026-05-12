@@ -22,17 +22,43 @@ fi
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
+export MCPP_HOME="$TMP/mcpp-home"
+source "$(dirname "$0")/_inherit_toolchain.sh"
+
+# Detect installed GNU gcc version for the default-build regression check
+# (step 2 below).  Without a known GNU toolchain the default build would
+# auto-install musl-gcc and produce another musl binary, making the
+# "default GNU binary" assertion meaningless.
+GNU_GCC_VER=""
+if [[ -d "$MCPP_HOME/registry/data/xpkgs/xim-x-gcc" ]]; then
+    GNU_GCC_VER=$(ls "$MCPP_HOME/registry/data/xpkgs/xim-x-gcc" 2>/dev/null | sort -V | tail -1)
+fi
+
 cd "$TMP"
 "$MCPP" new staticapp >/dev/null
 cd staticapp
 
 # Add a [target.x86_64-linux-musl] override that tells mcpp to use musl-gcc.
+# If a GNU gcc is available, also pin [toolchain].linux so the default build
+# uses it (preventing fallback to auto-install musl-gcc as default).
+if [[ -n "$GNU_GCC_VER" ]]; then
+cat >> mcpp.toml <<EOF
+
+[toolchain]
+linux = "gcc@${GNU_GCC_VER}"
+
+[target.x86_64-linux-musl]
+toolchain = "gcc@15.1.0-musl"
+linkage   = "static"
+EOF
+else
 cat >> mcpp.toml <<'EOF'
 
 [target.x86_64-linux-musl]
 toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 EOF
+fi
 
 "$MCPP" build --target x86_64-linux-musl > build.log 2>&1 || {
     cat build.log; echo "build failed"; exit 1; }
@@ -58,9 +84,15 @@ fi
 
 # Default GNU build still works (regression: --target should not have
 # clobbered the default codepath for follow-up commands).
-"$MCPP" build > build-gnu.log 2>&1 || {
-    cat build-gnu.log; echo "default GNU build broke after musl build"; exit 1; }
-gnu_binary=$(find target -type d -name x86_64-linux-musl -prune -o -type f -name staticapp -print | head -1)
-[[ -n "$gnu_binary" ]] || { echo "default GNU binary missing"; exit 1; }
+# Skip this check if no GNU gcc is available — without it the default
+# build would also use musl-gcc, making the assertion meaningless.
+if [[ -n "$GNU_GCC_VER" ]]; then
+    "$MCPP" build > build-gnu.log 2>&1 || {
+        cat build-gnu.log; echo "default GNU build broke after musl build"; exit 1; }
+    gnu_binary=$(find target -type d -name x86_64-linux-musl -prune -o -type f -name staticapp -print | head -1)
+    [[ -n "$gnu_binary" ]] || { echo "default GNU binary missing"; exit 1; }
+else
+    echo "SKIP: no GNU gcc installed — skipping default-build regression check"
+fi
 
 echo "OK"
