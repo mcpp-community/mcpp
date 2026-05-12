@@ -93,7 +93,8 @@ echo "=== Building from workspace root ==="
 echo "workspace build: ok"
 
 # ── Verify the binary runs correctly ────────────────────
-BIN=$(find target -type f -name hello | head -1)
+# target/ is created in the member dir (apps/hello/target/), not workspace root.
+BIN=$(find apps/hello/target -type f -name hello | head -1)
 test -n "$BIN" || { echo "FAIL: hello binary not found"; exit 1; }
 OUT=$("$BIN" 2>&1)
 echo "output: $OUT"
