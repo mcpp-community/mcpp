@@ -23,6 +23,7 @@ import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.build.compile_commands;
 import mcpp.dyndep;
+import mcpp.toolchain.detect;
 import mcpp.xlings;
 
 export namespace mcpp::build {
@@ -63,6 +64,16 @@ std::string escape_ninja_path(const std::filesystem::path& p) {
             out += "$ ";
         else
             out.push_back(c);
+    }
+    return out;
+}
+
+std::string escape_ninja_variable_value(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '$') out += "$$";
+        else          out.push_back(c);
     }
     return out;
 }
@@ -147,7 +158,8 @@ bool is_c_source(const std::filesystem::path& src) {
 }  // namespace
 
 std::string emit_ninja_string(const BuildPlan& plan) {
-    bool dyndep = dyndep_mode_enabled();
+    bool dyndep = dyndep_mode_enabled()
+               && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC;
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
 
@@ -167,6 +179,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     append(std::format("cxx       = {}\n", escape_ninja_path(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
+    append(std::format("toolenv   = {}\n", escape_ninja_variable_value(flags.toolEnv)));
     if (need_c_rule) {
         append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
         append(std::format("cflags    = {}\n", flags.cc));
@@ -208,7 +221,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
              "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
            "fi && "
-           "$cxx $cxxflags -c $in -o $out && "
+           "$toolenv $cxx $cxxflags -c $in -o $out && "
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
               "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
              "mv \"$bmi_out.bak\" \"$bmi_out\"; "
@@ -221,7 +234,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("\n");
 
     append("rule cxx_object\n");
-    append("  command = $cxx $cxxflags -c $in -o $out\n");
+    append("  command = $toolenv $cxx $cxxflags -c $in -o $out\n");
     append("  description = OBJ $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -229,7 +242,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (need_c_rule) {
         append("rule c_object\n");
-        append("  command = $cc $cflags -c $in -o $out\n");
+        append("  command = $toolenv $cc $cflags -c $in -o $out\n");
         append("  description = CC $out\n");
         if (dyndep)
             append("  restat = 1\n");
@@ -237,22 +250,22 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     append("rule cxx_link\n");
-    append("  command = $cxx $in -o $out $ldflags\n");
+    append("  command = $toolenv $cxx $in -o $out $ldflags\n");
     append("  description = LINK $out\n\n");
 
     append("rule cxx_archive\n");
-    append("  command = $ar rcs $out $in\n");
+    append("  command = $toolenv $ar rcs $out $in\n");
     append("  description = AR $out\n\n");
 
     append("rule cxx_shared\n");
-    append("  command = $cxx -shared $in -o $out $ldflags\n");
+    append("  command = $toolenv $cxx -shared $in -o $out $ldflags\n");
     append("  description = SHARED $out\n\n");
 
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.
         // -E -M -MM -MF gives us the dep file; -fdeps-* gives us the .ddi.
         append("rule cxx_scan\n");
-        append("  command = $cxx $cxxflags -fdeps-format=p1689r5 "
+        append("  command = $toolenv $cxx $cxxflags -fdeps-format=p1689r5 "
                "-fdeps-file=$out -fdeps-target=$compile_target "
                "-M -MM -MF $out.dep -E $in -o $compile_target\n");
         append("  description = SCAN $out\n\n");
@@ -268,10 +281,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     auto std_bmi_dst = std::filesystem::path("gcm.cache") / "std.gcm";
     auto std_o_dst = std::filesystem::path("obj") / "std.o";
 
-    append(std::format("build {} : cp_bmi {}\n", escape_ninja_path(std_bmi_dst),
-                       escape_ninja_path(plan.stdBmiPath)));
-    append(std::format("build {} : cp_bmi {}\n\n", escape_ninja_path(std_o_dst),
-                       escape_ninja_path(plan.stdObjectPath)));
+    bool has_std_artifacts = !plan.stdBmiPath.empty() && !plan.stdObjectPath.empty();
+    if (has_std_artifacts) {
+        append(std::format("build {} : cp_bmi {}\n", escape_ninja_path(std_bmi_dst),
+                           escape_ninja_path(plan.stdBmiPath)));
+        append(std::format("build {} : cp_bmi {}\n\n", escape_ninja_path(std_o_dst),
+                           escape_ninja_path(plan.stdObjectPath)));
+    }
 
     auto bmi_path = [](std::string_view name) {
         std::string s = "gcm.cache/";
@@ -366,7 +382,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (rule != "c_object") {
                 for (auto& imp : cu.imports) {
                     if (imp == "std" || imp == "std.compat") {
-                        implicit += " gcm.cache/std.gcm";
+                        if (has_std_artifacts)
+                            implicit += " gcm.cache/std.gcm";
                         continue;
                     }
                     implicit += " " + bmi_path(imp);
@@ -397,14 +414,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         switch (lu.kind) {
             case LinkUnit::Binary:
             case LinkUnit::TestBinary:
-                ins += " " + escape_ninja_path(std_o_dst);
+                if (has_std_artifacts)
+                    ins += " " + escape_ninja_path(std_o_dst);
                 rule = "cxx_link";
                 break;
             case LinkUnit::StaticLibrary:
                 rule = "cxx_archive";
                 break;
             case LinkUnit::SharedLibrary:
-                ins += " " + escape_ninja_path(std_o_dst);
+                if (has_std_artifacts)
+                    ins += " " + escape_ninja_path(std_o_dst);
                 rule = "cxx_shared";
                 break;
         }

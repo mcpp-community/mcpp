@@ -95,13 +95,15 @@ std::expected<StdModule, StdModError> ensure_built(
         b_flag = std::format(" -B'{}'", as->parent_path().string());
     }
 
+    auto envPrefix = compiler_env_prefix(tc);
     auto cmd = std::format(
-        "cd '{}' && '{}' -std=c++23 -fmodules -O2{}{} -c '{}' -o std.o 2>&1",
-        sm.cacheDir.string(),
-        tc.binaryPath.string(),
+        "cd {} && {}{} -std=c++23 -fmodules -O2{}{} -c {} -o std.o 2>&1",
+        mcpp::xlings::shq(sm.cacheDir.string()),
+        envPrefix,
+        mcpp::xlings::shq(tc.binaryPath.string()),
         sysroot_flag,
         b_flag,
-        tc.stdModuleSource.string());
+        mcpp::xlings::shq(tc.stdModuleSource.string()));
 
     std::array<char, 4096> buf{};
     std::string out;

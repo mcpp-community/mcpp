@@ -7,6 +7,7 @@ module;
 export module mcpp.toolchain.detect;
 
 import std;
+import mcpp.xlings;
 
 export namespace mcpp::toolchain {
 
@@ -21,6 +22,8 @@ struct Toolchain {
     std::string                         stdlibVersion;
     std::filesystem::path               stdModuleSource;  // bits/std.cc
     std::filesystem::path               sysroot;           // M5.5: -print-sysroot output (or empty)
+    std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
+    std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     bool                                hasImportStd = false;
 
     std::string label() const {
@@ -45,6 +48,10 @@ struct DetectError { std::string message; };
 std::expected<Toolchain, DetectError>
 detect(const std::filesystem::path& explicit_compiler = {});
 
+// Shell prefix used when invoking private toolchain executables that have
+// runtime .so dependencies outside the system loader's default search path.
+std::string compiler_env_prefix(const Toolchain& tc);
+
 // Helper: find std module source for a given GCC binary
 std::optional<std::filesystem::path> find_std_module_source(
     const std::filesystem::path& cxx_binary, std::string_view version);
@@ -54,6 +61,76 @@ std::optional<std::filesystem::path> find_std_module_source(
 namespace mcpp::toolchain {
 
 namespace {
+
+void append_existing_unique(std::vector<std::filesystem::path>& out,
+                            const std::filesystem::path& p) {
+    std::error_code ec;
+    if (p.empty() || !std::filesystem::exists(p, ec)) return;
+    auto abs = std::filesystem::absolute(p, ec);
+    if (ec) abs = p;
+    if (std::find(out.begin(), out.end(), abs) == out.end())
+        out.push_back(abs);
+}
+
+std::string join_colon_paths(const std::vector<std::filesystem::path>& dirs) {
+    std::string joined;
+    for (auto& d : dirs) {
+        if (!joined.empty()) joined += ':';
+        joined += d.string();
+    }
+    return joined;
+}
+
+std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) {
+    if (dirs.empty()) return "";
+    auto joined = join_colon_paths(dirs);
+    return std::format("env LD_LIBRARY_PATH={}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}} ",
+                       mcpp::xlings::shq(joined));
+}
+
+std::vector<std::filesystem::path>
+discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
+    std::vector<std::filesystem::path> dirs;
+    auto root = compilerBin.parent_path().parent_path();
+
+    // xlings LLVM currently ships clang++ linked to host libz, while the
+    // compiler config and libc++ live inside the package root. Keep this
+    // local to tool invocation; these host dirs are not embedded into output.
+    auto rootStr = root.string();
+    auto exe = compilerBin.filename().string();
+    bool looksLikeLlvm = rootStr.find("xim-x-llvm") != std::string::npos
+                      || exe.find("clang") != std::string::npos;
+    if (looksLikeLlvm) {
+        append_existing_unique(dirs, root / "lib");
+        append_existing_unique(dirs, root / "lib" / "x86_64-unknown-linux-gnu");
+        append_existing_unique(dirs, "/lib/x86_64-linux-gnu");
+        append_existing_unique(dirs, "/usr/lib/x86_64-linux-gnu");
+        append_existing_unique(dirs, "/usr/lib64");
+    }
+
+    if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
+        append_existing_unique(dirs, *rt / "lib64");
+        append_existing_unique(dirs, *rt / "lib");
+    }
+    return dirs;
+}
+
+std::vector<std::filesystem::path>
+discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
+                           std::string_view targetTriple) {
+    std::vector<std::filesystem::path> dirs;
+    auto root = compilerBin.parent_path().parent_path();
+    if (!targetTriple.empty())
+        append_existing_unique(dirs, root / "lib" / std::string(targetTriple));
+    append_existing_unique(dirs, root / "lib" / "x86_64-unknown-linux-gnu");
+    append_existing_unique(dirs, root / "lib");
+
+    if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
+        append_existing_unique(dirs, *rt / "lib64");
+        append_existing_unique(dirs, *rt / "lib");
+    }
+    return dirs;
+}
 
 std::expected<std::string, DetectError> run_capture(const std::string& cmd) {
     std::array<char, 4096> buf{};
@@ -89,7 +166,24 @@ std::string extract_version(std::string_view s) {
     return out;
 }
 
+std::string first_line_of(std::string_view s) {
+    auto end = s.find('\n');
+    return std::string(s.substr(0, end));
+}
+
+std::string lower_copy(std::string_view s) {
+    std::string out(s);
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return out;
+}
+
 } // namespace
+
+std::string compiler_env_prefix(const Toolchain& tc) {
+    return env_prefix_for_dirs(tc.compilerRuntimeDirs);
+}
 
 std::optional<std::filesystem::path> find_std_module_source(
     const std::filesystem::path& cxx_binary, std::string_view version) {
@@ -152,20 +246,27 @@ detect(const std::filesystem::path& explicit_compiler) {
         }
     }
     tc.binaryPath = bin;
+    tc.compilerRuntimeDirs = discover_compiler_runtime_dirs(tc.binaryPath);
+    auto envPrefix = compiler_env_prefix(tc);
 
     // Version probe
-    auto ver_r = run_capture(std::format("'{}' --version 2>&1", bin));
+    auto ver_r = run_capture(std::format("{}{} --version 2>&1",
+                                         envPrefix,
+                                         mcpp::xlings::shq(bin)));
     if (!ver_r) return std::unexpected(ver_r.error());
     const std::string& vstr = *ver_r;
 
-    if (vstr.find("g++") != std::string::npos || vstr.find("GCC") != std::string::npos
-        || vstr.find("gcc") != std::string::npos)
-    {
+    auto head = first_line_of(vstr);
+    auto headLower = lower_copy(head);
+    if (headLower.find("clang version") != std::string::npos
+        || headLower.find("apple clang version") != std::string::npos) {
+        tc.compiler = CompilerId::Clang;
+        tc.version  = extract_version(head);
+    } else if (headLower.find("g++") != std::string::npos
+            || headLower.find("gcc") != std::string::npos) {
         tc.compiler = CompilerId::GCC;
         // Extract version after the parenthesized package label, if any.
         // E.g. "g++ (XPKG: ...) 15.1.0"
-        auto first_line_end = vstr.find('\n');
-        std::string head = vstr.substr(0, first_line_end);
         // Find rightmost number sequence on first line.
         auto rpos = head.find_last_of("0123456789");
         if (rpos != std::string::npos) {
@@ -177,16 +278,18 @@ detect(const std::filesystem::path& explicit_compiler) {
             tc.version = head.substr(lpos, rpos - lpos + 1);
         }
         if (tc.version.empty()) tc.version = extract_version(head);
-    } else if (vstr.find("clang") != std::string::npos) {
+    } else if (lower_copy(vstr).find("clang") != std::string::npos) {
         tc.compiler = CompilerId::Clang;
-        tc.version  = extract_version(vstr);
+        tc.version  = extract_version(head.empty() ? std::string_view(vstr) : std::string_view(head));
     } else {
         return std::unexpected(DetectError{
             std::format("unrecognized compiler output:\n{}", vstr)});
     }
 
     // Target triple
-    auto triple_r = run_capture(std::format("'{}' -dumpmachine 2>/dev/null", bin));
+    auto triple_r = run_capture(std::format("{}{} -dumpmachine 2>/dev/null",
+                                            envPrefix,
+                                            mcpp::xlings::shq(bin)));
     if (triple_r) {
         std::string t = *triple_r;
         while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
@@ -199,7 +302,8 @@ detect(const std::filesystem::path& explicit_compiler) {
         tc.stdlibVersion = tc.version; // libstdc++ ships with GCC; same version
     } else if (tc.compiler == CompilerId::Clang) {
         tc.stdlibId      = "libc++";
-        tc.stdlibVersion = "unknown";
+        tc.stdlibVersion = tc.version.empty() ? "unknown" : tc.version;
+        tc.linkRuntimeDirs = discover_link_runtime_dirs(tc.binaryPath, tc.targetTriple);
     }
 
     // std module source
@@ -212,7 +316,9 @@ detect(const std::filesystem::path& explicit_compiler) {
 
     // M5.5: probe sysroot — needed when bypassing xlings wrapper.
     {
-        auto cmd = std::format("'{}' -print-sysroot 2>/dev/null", tc.binaryPath.string());
+        auto cmd = std::format("{}{} -print-sysroot 2>/dev/null",
+                               envPrefix,
+                               mcpp::xlings::shq(tc.binaryPath.string()));
         auto r = run_capture(cmd);
         if (r) {
             std::string s = *r;

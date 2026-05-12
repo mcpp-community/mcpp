@@ -592,6 +592,66 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     return s;
 }
 
+bool is_std_module(std::string_view name) {
+    return name == "std" || name == "std.compat";
+}
+
+std::string trim_copy(std::string s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
+        s.erase(0, 1);
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
+        s.pop_back();
+    return s;
+}
+
+bool source_file_imports_std(const std::filesystem::path& path) {
+    std::ifstream is(path);
+    if (!is) return false;
+
+    std::string line;
+    while (std::getline(is, line)) {
+        line = trim_copy(std::move(line));
+        std::size_t i = std::string::npos;
+        if (line.starts_with("import ")) {
+            i = 7;
+        } else if (line.starts_with("export import ")) {
+            i = 14;
+        }
+        if (i == std::string::npos) continue;
+        while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i])))
+            ++i;
+
+        std::string name;
+        while (i < line.size()
+            && (std::isalnum(static_cast<unsigned char>(line[i]))
+                || line[i] == '_' || line[i] == '.' || line[i] == ':')) {
+            name.push_back(line[i]);
+            ++i;
+        }
+        if (is_std_module(name)) return true;
+    }
+    return false;
+}
+
+bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
+                                 const mcpp::manifest::Manifest& manifest,
+                                 const std::filesystem::path& projectRoot) {
+    for (auto& u : graph.units) {
+        for (auto& req : u.requires_) {
+            if (is_std_module(req.logicalName))
+                return true;
+        }
+    }
+
+    // Some target entry files can be added to the plan after the package scan.
+    // Check them here so std BMI setup matches what make_plan will compile.
+    for (auto& t : manifest.targets) {
+        if (!t.main.empty() && source_file_imports_std(projectRoot / t.main))
+            return true;
+    }
+    return false;
+}
+
 // Run patchelf on every dynamic ELF in `dir` (recursively):
 //   - Set PT_INTERP to `loader` (the sandbox-local glibc loader).
 //   - Set RUNPATH to `rpath` (colon-separated list of sandbox lib dirs).
@@ -1039,15 +1099,16 @@ prepare_build(bool print_fingerprint,
         std::string indexedCompiler = compiler;
         if (auto colon = compiler.find(':'); colon != std::string::npos)
             indexedCompiler = compiler.substr(colon + 1);
+        std::string ximCompiler = (indexedCompiler == "clang") ? "llvm" : indexedCompiler;
 
         // libc suffix: `gcc@15.1.0-musl` → xim package `xim:musl-gcc@15.1.0`,
         // binary at `<root>/bin/x86_64-linux-musl-g++`.
         bool isMusl = endswith(version, "-musl");
-        std::string ximName = indexedCompiler;
+        std::string ximName = ximCompiler;
         std::string ximVersion = version;
         if (isMusl) {
             ximVersion = version.substr(0, version.size() - 5); // drop "-musl"
-            ximName    = "musl-" + indexedCompiler;             // gcc → musl-gcc
+            ximName    = "musl-" + ximCompiler;                 // gcc → musl-gcc
         }
 
         std::string target = std::format("xim:{}@{}", ximName, ximVersion);
@@ -1172,12 +1233,6 @@ prepare_build(bool print_fingerprint,
                 tc->sysroot = mcppSubos;
             }
         }
-    }
-
-    if (m->language.importStd && !tc->hasImportStd) {
-        return std::unexpected(std::format(
-            "manifest requires import_std but toolchain '{}' provides no std module source",
-            tc->label()));
     }
 
     // Resolve dependencies: walk the **transitive** graph from the main
@@ -1934,6 +1989,13 @@ prepare_build(bool print_fingerprint,
         return std::unexpected(msg);
     }
 
+    bool needsStdModule = graph_or_targets_import_std(scan.graph, *m, *root);
+    if (needsStdModule && !tc->hasImportStd) {
+        return std::unexpected(std::format(
+            "source imports std but toolchain '{}' provides no std module source",
+            tc->label()));
+    }
+
     // Compute fingerprint (no lockfile in M1 → empty hash)
     mcpp::toolchain::FingerprintInputs fpi;
     fpi.toolchain            = *tc;
@@ -1943,9 +2005,15 @@ prepare_build(bool print_fingerprint,
     fpi.stdBmiHash         = "";    // updated after stdmod build (chicken/egg ok for M1)
     auto fp = mcpp::toolchain::compute_fingerprint(fpi);
 
-    // Pre-build std module
-    auto sm = mcpp::toolchain::ensure_built(*tc, fp.hex);
-    if (!sm) return std::unexpected(sm.error().message);
+    // Pre-build std module only when the source graph actually imports it.
+    std::filesystem::path stdBmiPath;
+    std::filesystem::path stdObjectPath;
+    if (needsStdModule) {
+        auto sm = mcpp::toolchain::ensure_built(*tc, fp.hex);
+        if (!sm) return std::unexpected(sm.error().message);
+        stdBmiPath = sm->bmiPath;
+        stdObjectPath = sm->objectPath;
+    }
 
     if (print_fingerprint) {
         std::println("Toolchain: {}", tc->label());
@@ -1961,10 +2029,10 @@ prepare_build(bool print_fingerprint,
     ctx.fp          = fp;
     ctx.projectRoot= *root;
     ctx.outputDir  = target_dir(*tc, fp, *root);
-    ctx.stdBmi     = sm->bmiPath;
-    ctx.stdObject  = sm->objectPath;
+    ctx.stdBmi     = stdBmiPath;
+    ctx.stdObject  = stdObjectPath;
     ctx.plan        = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
-                                             *root, ctx.outputDir, sm->bmiPath, sm->objectPath);
+                                             *root, ctx.outputDir, stdBmiPath, stdObjectPath);
 
     // ─── M3.2: BMI cache stage / populate-task collection ─────────────
     // For each version-based dep package (i.e. fetched from a registry,
@@ -2979,6 +3047,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         };
         add_avail("gcc",      "gcc");
         add_avail("musl-gcc", "musl-gcc");
+        add_avail("llvm",     "llvm");
 
         if (!avail.empty()) {
             // Newest first. Lexicographic-on-strings is good enough for
@@ -3022,10 +3091,10 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         bool isMusl = (compiler == "musl-gcc")
                    || (version.size() > 5
                        && version.compare(version.size() - 5, 5, "-musl") == 0);
-        std::string ximName    = compiler;
+        std::string ximName    = (compiler == "clang") ? "llvm" : compiler;
         std::string ximVersion = version;
         if (isMusl) {
-            if (compiler != "musl-gcc") ximName = "musl-" + compiler;   // gcc → musl-gcc
+            if (compiler != "musl-gcc") ximName = "musl-" + ximName;   // gcc → musl-gcc
             if (ximVersion.size() > 5
                 && ximVersion.compare(ximVersion.size() - 5, 5, "-musl") == 0)
                 ximVersion.resize(ximVersion.size() - 5);
@@ -3143,13 +3212,13 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
             return 2;
         }
 
-        std::string ximName    = compiler;
+        std::string ximName    = (compiler == "clang") ? "llvm" : compiler;
         std::string ximVersion = version;
         bool isMusl = (compiler == "musl-gcc")
                    || (version.size() > 5
                        && version.compare(version.size() - 5, 5, "-musl") == 0);
         if (isMusl) {
-            if (compiler != "musl-gcc") ximName = "musl-" + compiler;
+            if (compiler != "musl-gcc") ximName = "musl-" + ximName;
             if (ximVersion.size() > 5
                 && ximVersion.compare(ximVersion.size() - 5, 5, "-musl") == 0)
                 ximVersion.resize(ximVersion.size() - 5);
