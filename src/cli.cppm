@@ -113,6 +113,54 @@ std::optional<std::filesystem::path> find_manifest_root(std::filesystem::path st
     }
 }
 
+// Find the workspace root by walking upward from a member directory.
+// Returns empty if no workspace root found.
+std::filesystem::path find_workspace_root(const std::filesystem::path& memberRoot) {
+    auto p = memberRoot.parent_path();
+    while (true) {
+        if (std::filesystem::exists(p / "mcpp.toml")) {
+            auto m = mcpp::manifest::load(p / "mcpp.toml");
+            if (m && m->workspace.present) {
+                // Verify memberRoot is in members list
+                auto rel = std::filesystem::relative(memberRoot, p);
+                for (auto& member : m->workspace.members) {
+                    if (rel == std::filesystem::path(member)) return p;
+                }
+            }
+        }
+        auto parent = p.parent_path();
+        if (parent == p) break;
+        p = parent;
+    }
+    return {};
+}
+
+// Merge workspace.dependencies versions into a member's deps.
+void merge_workspace_deps(mcpp::manifest::Manifest& member,
+                          const mcpp::manifest::Manifest& workspace) {
+    auto merge_map = [&](std::map<std::string, mcpp::manifest::DependencySpec>& deps) {
+        for (auto& [name, spec] : deps) {
+            if (!spec.inheritWorkspace) continue;
+            // Try exact key match first
+            auto it = workspace.workspace.dependencies.find(name);
+            if (it != workspace.workspace.dependencies.end()) {
+                spec.version = it->second.version;
+                spec.inheritWorkspace = false;
+                continue;
+            }
+            // Try short name for default-ns deps
+            auto shortIt = workspace.workspace.dependencies.find(spec.shortName);
+            if (shortIt != workspace.workspace.dependencies.end()) {
+                spec.version = shortIt->second.version;
+                spec.inheritWorkspace = false;
+            }
+        }
+    };
+    merge_map(member.dependencies);
+    merge_map(member.devDependencies);
+    merge_map(member.buildDependencies);
+}
+
 std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
                                  const mcpp::toolchain::Fingerprint& fp,
                                  const std::filesystem::path& root)
@@ -772,8 +820,9 @@ struct BuildContext {
 // Command-level overrides (--target / --static).
 // Empty defaults preserve pre-existing behaviour exactly.
 struct BuildOverrides {
-    std::string target_triple;   // empty = host triple, fall through to [toolchain]
-    bool        force_static = false;  // --static (or implied by musl target)
+    std::string target_triple;       // empty = host triple, fall through to [toolchain]
+    bool        force_static = false; // --static (or implied by musl target)
+    std::string package_filter;      // -p <name>: only build this workspace member
 };
 
 // `prepare_build` builds the BuildContext for any verb that compiles.
@@ -794,6 +843,94 @@ prepare_build(bool print_fingerprint,
 
     auto m = mcpp::manifest::load(*root / "mcpp.toml");
     if (!m) return std::unexpected(m.error().format());
+
+    // ─── Workspace handling ────────────────────────────────────────────
+    // If the manifest has [workspace] and is a virtual workspace (no [package]),
+    // or if -p filter is set, switch to the target member's manifest.
+    std::optional<mcpp::manifest::Manifest> wsManifest;  // keep workspace manifest alive
+    if (m->workspace.present) {
+        std::string targetMember;
+
+        if (!overrides.package_filter.empty()) {
+            // -p <name>: find matching member by directory basename or path
+            for (auto& mp : m->workspace.members) {
+                auto basename = std::filesystem::path(mp).filename().string();
+                if (basename == overrides.package_filter || mp == overrides.package_filter) {
+                    targetMember = mp;
+                    break;
+                }
+            }
+            if (targetMember.empty()) {
+                return std::unexpected(std::format(
+                    "workspace member '{}' not found in [workspace].members",
+                    overrides.package_filter));
+            }
+        } else if (m->package.name.empty()) {
+            // Virtual workspace: find a member with a binary target, or use last member.
+            for (auto& mp : m->workspace.members) {
+                auto memberDir = *root / mp;
+                auto mm = mcpp::manifest::load(memberDir / "mcpp.toml");
+                if (!mm) continue;
+                for (auto& t : mm->targets) {
+                    if (t.kind == mcpp::manifest::Target::Binary) {
+                        targetMember = mp;
+                        break;
+                    }
+                }
+                if (!targetMember.empty()) break;
+            }
+            if (targetMember.empty() && !m->workspace.members.empty()) {
+                targetMember = m->workspace.members.back();
+            }
+        }
+        // else: rooted workspace with [package] — build root normally.
+
+        if (!targetMember.empty()) {
+            auto memberDir = *root / targetMember;
+            if (!std::filesystem::exists(memberDir / "mcpp.toml")) {
+                return std::unexpected(std::format(
+                    "workspace member '{}' has no mcpp.toml", targetMember));
+            }
+            wsManifest = std::move(*m);  // preserve workspace manifest
+            m = mcpp::manifest::load(memberDir / "mcpp.toml");
+            if (!m) return std::unexpected(std::format(
+                "workspace member '{}': {}", targetMember, m.error().format()));
+
+            // Merge workspace dependency versions
+            merge_workspace_deps(*m, *wsManifest);
+
+            // Inherit workspace toolchain if member doesn't define one
+            if (m->toolchain.byPlatform.empty()) {
+                m->toolchain = wsManifest->toolchain;
+            }
+            // Inherit workspace target overrides
+            for (auto& [triple, entry] : wsManifest->targetOverrides) {
+                if (!m->targetOverrides.contains(triple)) {
+                    m->targetOverrides[triple] = entry;
+                }
+            }
+
+            mcpp::ui::status("Workspace", std::format("building member '{}'", targetMember));
+            root = memberDir;
+        }
+    } else {
+        // Not at workspace root — check if we're inside a workspace
+        auto wsRoot = find_workspace_root(*root);
+        if (!wsRoot.empty()) {
+            auto wsm = mcpp::manifest::load(wsRoot / "mcpp.toml");
+            if (wsm && wsm->workspace.present) {
+                merge_workspace_deps(*m, *wsm);
+                if (m->toolchain.byPlatform.empty()) {
+                    m->toolchain = wsm->toolchain;
+                }
+                for (auto& [triple, entry] : wsm->targetOverrides) {
+                    if (!m->targetOverrides.contains(triple)) {
+                        m->targetOverrides[triple] = entry;
+                    }
+                }
+            }
+        }
+    }
 
     // Inject synthetic targets (e.g. test binaries from `mcpp test`).
     for (auto& t : extraTargets) m->targets.push_back(t);
@@ -2053,6 +2190,7 @@ int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
+    if (auto p = parsed.value("package")) ov.package_filter = *p;
     ov.force_static = parsed.is_flag_set("static");
 
     // P0: try fast-path if inputs haven't changed.
@@ -3533,6 +3671,8 @@ int run(int argc, char** argv) {
                 "Build for <triple> (e.g. x86_64-linux-musl); looks up [target.<triple>] in mcpp.toml"))
             .option(cl::Option("static").help(
                 "Force static linking (-static). On Linux, prefer pairing with --target <arch>-linux-musl"))
+            .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
+                .help("Build only the named workspace member"))
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
