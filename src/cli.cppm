@@ -1257,10 +1257,13 @@ prepare_build(bool print_fingerprint,
 
         auto installed = fetcher.install_path(ns, shortName, version);
         if (!installed) {
-            mcpp::ui::info("Downloading", std::format("{} v{}", depName, version));
-            // install() target uses the map key (depName) which xlings
-            // knows how to resolve via its own index lookup.
-            std::vector<std::string> targets{ std::format("{}@{}", depName, version) };
+            // xlings resolves packages by the full qualified name (ns.shortName)
+            // as it appears in the index's name field. Use fqname, not the
+            // map key (which may be a bare short name for default-ns deps).
+            auto fqname = ns.empty() ? shortName
+                : std::format("{}.{}", ns, shortName);
+            mcpp::ui::info("Downloading", std::format("{} v{}", fqname, version));
+            std::vector<std::string> targets{ std::format("{}@{}", fqname, version) };
             CliInstallProgress progress;
             auto r = fetcher.install(targets, &progress);
             if (!r) return std::unexpected(std::format(
