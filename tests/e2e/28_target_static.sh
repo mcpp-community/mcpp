@@ -28,13 +28,6 @@ if [[ -d "$XPKGS/xim-x-gcc" ]]; then
     GNU_GCC_VER=$(ls "$XPKGS/xim-x-gcc" 2>/dev/null | sort -V | tail -1)
 fi
 
-# Diagnostic: show what we detected
-echo "DIAG: MCPP_HOME=${MCPP_HOME:-<unset>}"
-echo "DIAG: XPKGS=$XPKGS"
-echo "DIAG: GNU_GCC_VER=${GNU_GCC_VER:-<empty>}"
-echo "DIAG: xim-x-gcc contents: $(ls "$XPKGS/xim-x-gcc" 2>&1 || echo 'N/A')"
-echo "DIAG: config.toml toolchain line: $(grep -i toolchain "${MCPP_HOME:-$HOME/.mcpp}/config.toml" 2>/dev/null || echo 'none')"
-
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
@@ -63,9 +56,6 @@ toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 EOF
 fi
-
-echo "DIAG: mcpp.toml:"
-cat mcpp.toml
 
 "$MCPP" build --target x86_64-linux-musl > build.log 2>&1 || {
     cat build.log; echo "build failed"; exit 1; }
@@ -96,8 +86,6 @@ fi
 if [[ -n "$GNU_GCC_VER" ]]; then
     "$MCPP" build > build-gnu.log 2>&1 || {
         cat build-gnu.log; echo "default GNU build broke after musl build"; exit 1; }
-    echo "DIAG: target/ tree after GNU build:"
-    find target -type f -name staticapp 2>&1
     gnu_binary=$(find target -type d -name x86_64-linux-musl -prune -o -type f -name staticapp -print | head -1)
     [[ -n "$gnu_binary" ]] || { echo "default GNU binary missing"; exit 1; }
 else
