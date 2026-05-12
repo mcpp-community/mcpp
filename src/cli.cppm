@@ -1191,6 +1191,22 @@ prepare_build(bool print_fingerprint,
     // and ODR-respecting symbols, so the same `(ns, name)` resolved to
     // two different exact versions is an error — mcpp prints both
     // requesting parents and asks the user to align them.
+
+    // Auto-refresh the package index if the project has version-source
+    // dependencies and the local index is missing or stale.
+    if (!m->dependencies.empty()) {
+        bool hasVersionDeps = false;
+        for (auto& [_, spec] : m->dependencies) {
+            if (!spec.isPath() && !spec.isGit()) { hasVersionDeps = true; break; }
+        }
+        if (hasVersionDeps) {
+            auto cfg2 = get_cfg();
+            if (cfg2) {
+                auto xlEnv = mcpp::config::make_xlings_env(**cfg2);
+                mcpp::xlings::ensure_index_fresh(xlEnv, (*cfg2)->searchTtlSeconds);
+            }
+        }
+    }
     std::vector<mcpp::modgraph::PackageRoot> packages;
     packages.push_back({*root, *m});
 
@@ -2311,7 +2327,8 @@ int cmd_search(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
-    mcpp::ui::info("Updating", std::format("registry index `{}`", cfg->defaultIndex));
+    auto xlEnv = mcpp::config::make_xlings_env(*cfg);
+    mcpp::xlings::ensure_index_fresh(xlEnv, cfg->searchTtlSeconds);
 
     mcpp::fetcher::Fetcher f(*cfg);
     auto hits = f.search(keyword);
@@ -2390,14 +2407,7 @@ int cmd_index_update(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
     mcpp::ui::status("Updating", "all index repos");
     auto xlEnv = mcpp::config::make_xlings_env(*cfg);
-    std::string cmd = mcpp::xlings::build_command_prefix(xlEnv) + " update 2>&1";
-    std::array<char, 4096> buf{};
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) { mcpp::ui::error("failed to spawn index updater"); return 1; }
-    while (std::fgets(buf.data(), buf.size(), fp)) {
-        std::fputs(buf.data(), stdout);
-    }
-    int rc = ::pclose(fp);
+    int rc = mcpp::xlings::update_index(xlEnv);
     if (rc != 0) { mcpp::ui::error("index update failed"); return 1; }
     mcpp::ui::status("Updated", "index refresh complete");
     return 0;

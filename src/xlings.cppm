@@ -202,6 +202,21 @@ void ensure_patchelf(const Env& env, bool quiet,
 void ensure_ninja(const Env& env, bool quiet,
                   const BootstrapProgressCallback& cb);
 
+// ─── Index freshness ────────────────────────────────────────────────
+
+// Check whether local index data exists and is fresh (within ttlSeconds).
+// Returns true if index is present and fresh, false otherwise.
+bool is_index_fresh(const Env& env, std::int64_t ttlSeconds);
+
+// Run `xlings update` to refresh all index repos. Streams output to stdout.
+// Returns the xlings exit code.
+int update_index(const Env& env, bool quiet = false);
+
+// Ensure the local index is present and fresh. Runs `xlings update` if
+// the index is missing or older than ttlSeconds. Idempotent and quiet
+// when no update is needed.
+void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet = false);
+
 // ─── run_capture utility ────────────────────────────────────────────
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd);
@@ -743,6 +758,51 @@ void ensure_ninja(const Env& env, bool quiet,
             "warning: failed to bootstrap ninja into mcpp sandbox (exit {})",
             rc);
     }
+}
+
+// ─── Index freshness ────────────────────────────────────────────────
+
+bool is_index_fresh(const Env& env, std::int64_t ttlSeconds) {
+    auto data = paths::index_data(env);
+    if (!std::filesystem::exists(data)) return false;
+
+    // Look for any directory under data/ that has a pkgs/ subdirectory —
+    // that's a cloned index repo.
+    std::error_code ec;
+    bool hasIndex = false;
+    std::filesystem::file_time_type newest{};
+    for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
+        if (!entry.is_directory()) continue;
+        auto pkgsDir = entry.path() / "pkgs";
+        if (!std::filesystem::exists(pkgsDir)) continue;
+        hasIndex = true;
+        auto t = std::filesystem::last_write_time(pkgsDir, ec);
+        if (!ec && t > newest) newest = t;
+    }
+    if (!hasIndex) return false;
+
+    // Check TTL
+    auto now = std::filesystem::file_time_type::clock::now();
+    auto age = std::chrono::duration_cast<std::chrono::seconds>(now - newest);
+    return age.count() < ttlSeconds;
+}
+
+int update_index(const Env& env, bool quiet) {
+    std::string cmd = build_command_prefix(env) + " update 2>&1";
+    std::array<char, 4096> buf{};
+    std::FILE* fp = ::popen(cmd.c_str(), "r");
+    if (!fp) return -1;
+    while (std::fgets(buf.data(), buf.size(), fp)) {
+        if (!quiet) std::fputs(buf.data(), stdout);
+    }
+    return ::pclose(fp);
+}
+
+void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
+    if (is_index_fresh(env, ttlSeconds)) return;
+    if (!quiet)
+        print_status("Updating", "package index (auto-refresh)");
+    update_index(env, quiet);
 }
 
 } // namespace mcpp::xlings
