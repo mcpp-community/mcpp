@@ -2019,7 +2019,7 @@ prepare_build(bool print_fingerprint,
             mcpp::lockfile::LockedPackage lp;
             lp.name    = name;
             lp.version = spec.version;
-            lp.source  = std::format("mcpp-index+{}",
+            lp.source  = std::format("mcpplibs+{}",
                                      "https://github.com/mcpp-community/mcpp-index.git");
             lp.hash    = "sha256:<from-xlings>";   // M3 will populate from install plan
             lock.packages.push_back(std::move(lp));
