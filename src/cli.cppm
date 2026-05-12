@@ -2039,7 +2039,8 @@ constexpr std::string_view kBuildCacheFile = "target/.build_cache";
 
 void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::filesystem::path& outputDir,
-                       const std::string& ninjaProgram) {
+                       const std::string& ninjaProgram,
+                       const std::string& targetTriple) {
     auto path = projectRoot / kBuildCacheFile;
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
@@ -2047,13 +2048,15 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     if (f) {
         f << outputDir.string() << '\n';
         f << ninjaProgram << '\n';
+        f << targetTriple << '\n';
     }
 }
 
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
 // so the latter doesn't call prepare_build twice (and re-print the toolchain
 // resolution banner).
-int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache) {
+int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
+                   std::string_view targetOverride = "") {
     if (no_cache) {
         std::error_code ec;
         std::filesystem::remove_all(ctx.outputDir, ec);
@@ -2106,7 +2109,8 @@ int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache) {
 
     // P0: save build cache for fast-path on next invocation.
     if (!no_cache && !r->ninjaProgram.empty()) {
-        write_build_cache(ctx.projectRoot, ctx.outputDir, r->ninjaProgram);
+        write_build_cache(ctx.projectRoot, ctx.outputDir, r->ninjaProgram,
+                          std::string(targetOverride));
     }
 
     mcpp::ui::finished("release", r->elapsed);
@@ -2125,7 +2129,8 @@ int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache) {
 // Try to fast-path: if build.ninja is newer than all inputs, just run ninja.
 // Returns exit code on fast-path, or nullopt if full rebuild needed.
 std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
-                                  bool verbose, bool no_cache) {
+                                  bool verbose, bool no_cache,
+                                  std::string_view currentTarget = "") {
     if (no_cache) return std::nullopt;
 
     auto cachePath = projectRoot / kBuildCacheFile;
@@ -2133,9 +2138,15 @@ std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
     if (!std::filesystem::exists(cachePath, ec)) return std::nullopt;
 
     std::ifstream f(cachePath);
-    std::string outputDirStr, ninjaProgram;
+    std::string outputDirStr, ninjaProgram, cachedTarget;
     if (!std::getline(f, outputDirStr) || outputDirStr.empty()) return std::nullopt;
     if (!std::getline(f, ninjaProgram) || ninjaProgram.empty()) return std::nullopt;
+    std::getline(f, cachedTarget); // may be empty for old cache files
+
+    // Reject cache if target triple changed (e.g. previous build used
+    // --target x86_64-linux-musl but this one is a default build).
+    if (cachedTarget != currentTarget) return std::nullopt;
+
     std::filesystem::path outputDir(outputDirStr);
 
     auto ninjaPath = outputDir / "build.ninja";
@@ -2214,7 +2225,7 @@ int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto ctx = prepare_build(print_fp, /*includeDevDeps=*/false, /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
 
-    return run_build_plan(*ctx, verbose, no_cache);
+    return run_build_plan(*ctx, verbose, no_cache, ov.target_triple);
 }
 
 int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
