@@ -277,8 +277,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("  restat = 1\n\n");
     }
 
-    // Stage prebuilt std artifacts into our gcm.cache/
-    auto std_bmi_dst = std::filesystem::path("gcm.cache") / "std.gcm";
+    // Stage prebuilt std artifacts into the compiler-specific BMI cache.
+    auto std_bmi_dst = plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang
+        ? std::filesystem::path("pcm.cache") / "std.pcm"
+        : std::filesystem::path("gcm.cache") / "std.gcm";
     auto std_o_dst = std::filesystem::path("obj") / "std.o";
 
     bool has_std_artifacts = !plan.stdBmiPath.empty() && !plan.stdObjectPath.empty();
@@ -383,7 +385,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 for (auto& imp : cu.imports) {
                     if (imp == "std" || imp == "std.compat") {
                         if (has_std_artifacts)
-                            implicit += " gcm.cache/std.gcm";
+                            implicit += " " + escape_ninja_path(std_bmi_dst);
                         continue;
                     }
                     implicit += " " + bmi_path(imp);

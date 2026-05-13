@@ -35,6 +35,7 @@ import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
 import mcpp.pm.mangle;     // Level 1 multi-version fallback (cross-major coexistence)
 import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
+import mcpp.pm.dep_spec;
 import mcpp.ui;
 import mcpp.bmi_cache;
 import mcpp.dyndep;
@@ -1348,9 +1349,22 @@ prepare_build(bool print_fingerprint,
             auto fqname = ns.empty() ? shortName
                 : std::format("{}.{}", ns, shortName);
             mcpp::ui::info("Downloading", std::format("{} v{}", fqname, version));
-            std::vector<std::string> targets{ std::format("{}@{}", fqname, version) };
-            CliInstallProgress progress;
-            auto r = fetcher.install(targets, &progress);
+            auto install_one = [&](std::string target) {
+                std::vector<std::string> targets{ std::move(target) };
+                CliInstallProgress progress;
+                return fetcher.install(targets, &progress);
+            };
+            auto target = std::format("{}@{}", fqname, version);
+            auto r = install_one(target);
+            if (r && r->exitCode != 0 &&
+                (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {
+                auto compatTarget = std::format("compat.{}@{}", shortName, version);
+                if (compatTarget != target) {
+                    mcpp::ui::info("Downloading", std::format("{} v{}",
+                                     std::format("compat.{}", shortName), version));
+                    r = install_one(compatTarget);
+                }
+            }
             if (!r) return std::unexpected(std::format(
                 "fetch '{}@{}': {}", depName, version, r.error().message));
             if (r->exitCode != 0) {

@@ -57,6 +57,12 @@ std::filesystem::path derive_c_compiler(const std::filesystem::path& cxxPath) {
     return parent / (cc_stem + ext.string());
 }
 
+std::filesystem::path staged_std_bmi_path(const BuildPlan& plan) {
+    if (plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang)
+        return plan.outputDir / "pcm.cache" / "std.pcm";
+    return plan.outputDir / "gcm.cache" / "std.gcm";
+}
+
 // Escape a path for embedding in ninja rule strings.
 std::string escape_path(const std::filesystem::path& p) {
     auto s = p.string();
@@ -152,8 +158,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
     // Assemble
     std::string module_flag = isClang ? "" : " -fmodules";
-    f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}", module_flag, opt_flag, pic_flag,
-                        sysroot_flag, b_flag, include_flags, user_cxxflags);
+    std::string std_module_flag;
+    if (isClang && !plan.stdBmiPath.empty()) {
+        std_module_flag = " -fmodule-file=std=" + escape_path(staged_std_bmi_path(plan));
+    }
+    f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}{}", module_flag, std_module_flag,
+                        opt_flag, pic_flag, sysroot_flag, b_flag, include_flags, user_cxxflags);
     f.cc = std::format("-std={}{}{}{}{}{}{}", c_std, opt_flag, pic_flag, sysroot_flag, b_flag,
                        include_flags, user_cflags);
 

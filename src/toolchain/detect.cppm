@@ -179,6 +179,39 @@ std::string lower_copy(std::string_view s) {
     return out;
 }
 
+std::string trim_line(std::string s) {
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' '))
+        s.pop_back();
+    while (!s.empty() && (s.front() == '\n' || s.front() == '\r' || s.front() == ' '))
+        s.erase(s.begin());
+    return s;
+}
+
+std::optional<std::string>
+json_string_value_after(std::string_view body, std::size_t start, std::string_view key) {
+    auto keyToken = std::string{"\""} + std::string(key) + "\"";
+    auto keyPos = body.find(keyToken, start);
+    if (keyPos == std::string_view::npos) return std::nullopt;
+
+    auto colon = body.find(':', keyPos + keyToken.size());
+    if (colon == std::string_view::npos) return std::nullopt;
+
+    auto quote = body.find('"', colon + 1);
+    if (quote == std::string_view::npos) return std::nullopt;
+
+    std::string out;
+    for (std::size_t i = quote + 1; i < body.size(); ++i) {
+        char c = body[i];
+        if (c == '"') return out;
+        if (c == '\\' && i + 1 < body.size()) {
+            out.push_back(body[++i]);
+        } else {
+            out.push_back(c);
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::string compiler_env_prefix(const Toolchain& tc) {
@@ -209,6 +242,47 @@ std::optional<std::filesystem::path> find_std_module_source(
             if (std::filesystem::exists(p2)) return p2;
         }
     }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> find_libcxx_std_module_source(
+    const std::filesystem::path& cxx_binary, const std::string& envPrefix) {
+    auto manifest_r = run_capture(std::format("{}{} -print-library-module-manifest-path 2>/dev/null",
+                                              envPrefix,
+                                              mcpp::xlings::shq(cxx_binary.string())));
+    if (manifest_r) {
+        auto manifestPath = std::filesystem::path(trim_line(*manifest_r));
+        if (!manifestPath.empty() && std::filesystem::exists(manifestPath)) {
+            std::ifstream is(manifestPath);
+            std::stringstream ss;
+            ss << is.rdbuf();
+            auto body = ss.str();
+
+            std::size_t cursor = 0;
+            while (true) {
+                auto logical = body.find("\"logical-name\"", cursor);
+                if (logical == std::string::npos) break;
+                auto name = json_string_value_after(body, logical, "logical-name");
+                if (name && *name == "std") {
+                    auto src = json_string_value_after(body, logical, "source-path");
+                    if (src) {
+                        std::filesystem::path p = *src;
+                        if (p.is_relative())
+                            p = manifestPath.parent_path() / p;
+                        std::error_code ec;
+                        auto canon = std::filesystem::weakly_canonical(p, ec);
+                        if (!ec) p = canon;
+                        if (std::filesystem::exists(p)) return p;
+                    }
+                }
+                cursor = logical + 1;
+            }
+        }
+    }
+
+    auto root = cxx_binary.parent_path().parent_path();
+    auto fallback = root / "share" / "libc++" / "v1" / "std.cppm";
+    if (std::filesystem::exists(fallback)) return fallback;
     return std::nullopt;
 }
 
@@ -304,6 +378,10 @@ detect(const std::filesystem::path& explicit_compiler) {
         tc.stdlibId      = "libc++";
         tc.stdlibVersion = tc.version.empty() ? "unknown" : tc.version;
         tc.linkRuntimeDirs = discover_link_runtime_dirs(tc.binaryPath, tc.targetTriple);
+        if (auto p = find_libcxx_std_module_source(tc.binaryPath, envPrefix)) {
+            tc.stdModuleSource = *p;
+            tc.hasImportStd    = true;
+        }
     }
 
     // std module source

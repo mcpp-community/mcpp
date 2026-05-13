@@ -189,6 +189,12 @@ inline std::vector<std::string> install_dir_candidates(std::string_view ns,
     // Old index-prefixed layout: <index>-x-<ns>.<shortName>
     candidates.push_back(std::format("{}-x-{}", indexName, fqname));
 
+    // Fallback: compat.<shortName> packages serving default-namespace deps
+    // such as bare `gtest = "1.15.2"`.
+    if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
+        candidates.push_back(std::format("compat-x-compat.{}", shortName));
+    }
+
     // Bare short name variants
     if (!ns.empty()) {
         candidates.push_back(std::format("{}-x-{}", ns, shortName));

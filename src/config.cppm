@@ -46,6 +46,7 @@ struct GlobalConfig {
     // From config.toml [xlings]
     std::string                     xlingsBinaryMode;    // "bundled" | "system" | absolute path
     std::filesystem::path           xlingsHomeOverride;  // empty = use registryDir
+    std::string                     xlingsMirror = "CN"; // "CN" | "GLOBAL" | empty = xlings default
 
     // From config.toml [index]
     std::string                     defaultIndex;        // "mcpplibs"
@@ -174,6 +175,30 @@ void write_file(const std::filesystem::path& p, std::string_view content) {
     os << content;
 }
 
+std::string normalize_xlings_mirror(std::string mirror) {
+    for (char& ch : mirror) {
+        if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+    }
+    return mirror;
+}
+
+std::optional<std::string> read_xlings_json_mirror(const std::filesystem::path& path) {
+    std::ifstream is(path);
+    if (!is) return std::nullopt;
+    std::stringstream ss;
+    ss << is.rdbuf();
+    auto content = ss.str();
+    auto key = content.find("\"mirror\"");
+    if (key == std::string::npos) return std::nullopt;
+    auto colon = content.find(':', key);
+    if (colon == std::string::npos) return std::nullopt;
+    auto first = content.find('"', colon + 1);
+    if (first == std::string::npos) return std::nullopt;
+    auto second = content.find('"', first + 1);
+    if (second == std::string::npos) return std::nullopt;
+    return content.substr(first + 1, second - first - 1);
+}
+
 bool write_default_config_toml(const std::filesystem::path& path) {
     constexpr auto tmpl = R"(# mcpp global config — auto-generated; safe to edit.
 
@@ -182,6 +207,8 @@ bool write_default_config_toml(const std::filesystem::path& path) {
 binary = "bundled"
 # home:   empty = use $MCPP_HOME/registry; can override
 home   = ""
+# mirror: "CN" | "GLOBAL" | "" (defer to xlings)
+mirror = "CN"
 
 [index]
 default = "mcpplibs"
@@ -202,7 +229,8 @@ default_backend = "ninja"
 }
 
 bool write_default_xlings_json(const std::filesystem::path& path,
-                               const std::vector<IndexRepo>& repos)
+                               const std::vector<IndexRepo>& repos,
+                               std::string_view mirror)
 {
     // Delegate to xlings module. Convert IndexRepo vec to pair span.
     std::vector<std::pair<std::string,std::string>> pairs;
@@ -212,7 +240,7 @@ bool write_default_xlings_json(const std::filesystem::path& path,
     // construct a temporary Env with home = path.parent_path().
     mcpp::xlings::Env env;
     env.home = path.parent_path();
-    mcpp::xlings::seed_xlings_json(env, pairs);
+    mcpp::xlings::seed_xlings_json(env, pairs, mirror);
     return std::filesystem::exists(path);
 }
 
@@ -356,6 +384,15 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.xlingsBinaryMode = doc->get_string("xlings.binary").value_or("bundled");
     if (auto h = doc->get_string("xlings.home"); h && !h->empty())
         cfg.xlingsHomeOverride = *h;
+    cfg.xlingsMirror = normalize_xlings_mirror(
+        doc->get_string("xlings.mirror").value_or("CN"));
+    if (!cfg.xlingsMirror.empty() &&
+        cfg.xlingsMirror != "CN" &&
+        cfg.xlingsMirror != "GLOBAL") {
+        return std::unexpected(ConfigError{
+            std::format("invalid xlings.mirror '{}': expected CN, GLOBAL, or empty",
+                        cfg.xlingsMirror)});
+    }
     cfg.defaultIndex   = doc->get_string("index.default").value_or("mcpplibs");
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
@@ -387,7 +424,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // 5. Seed registry/.xlings.json if missing
     auto xjson = cfg.xlingsHome() / ".xlings.json";
     if (!std::filesystem::exists(xjson)) {
-        write_default_xlings_json(xjson, cfg.indexRepos);
+        write_default_xlings_json(xjson, cfg.indexRepos, cfg.xlingsMirror);
     }
 
     // 6. Acquire xlings binary if needed
@@ -406,6 +443,15 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         if (!std::filesystem::exists(cfg.xlingsBinary))
             return std::unexpected(ConfigError{std::format(
                 "configured xlings binary not found: {}", cfg.xlingsBinary.string())});
+    }
+
+    if (!cfg.xlingsMirror.empty() &&
+        read_xlings_json_mirror(xjson).value_or("") != cfg.xlingsMirror) {
+        auto rc = mcpp::xlings::set_mirror(make_xlings_env(cfg), cfg.xlingsMirror, true);
+        if (rc != 0 && !quiet) {
+            std::println(stderr,
+                "warning: failed to set xlings mirror to '{}'", cfg.xlingsMirror);
+        }
     }
 
     // 7. Sandbox bootstrap (mcpp self-contained xlings environment).
@@ -429,6 +475,8 @@ void print_env(const GlobalConfig& cfg) {
     std::println("MCPP_HOME           = {}", cfg.mcppHome.string());
     std::println("xlings binary       = {}", cfg.xlingsBinary.string());
     std::println("xlings home         = {}", cfg.xlingsHome().string());
+    std::println("xlings mirror       = {}",
+                 cfg.xlingsMirror.empty() ? "(xlings default)" : cfg.xlingsMirror);
     std::println("config              = {}", cfg.configFile.string());
     std::println("BMI cache           = {}", cfg.bmiCacheDir.string());
     std::println("meta cache          = {}", cfg.metaCacheDir.string());

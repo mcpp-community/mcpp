@@ -189,7 +189,11 @@ int install_with_progress(const Env& env, std::string_view target,
 
 // Write .xlings.json seed file.
 void seed_xlings_json(const Env& env,
-                      std::span<const std::pair<std::string,std::string>> repos);
+                      std::span<const std::pair<std::string,std::string>> repos,
+                      std::string_view mirror = "CN");
+
+// Persist the xlings mirror selection in .xlings.json via xlings itself.
+int set_mirror(const Env& env, std::string_view mirror, bool quiet = false);
 
 // Run xlings self init.
 void ensure_init(const Env& env, bool quiet);
@@ -685,7 +689,8 @@ int install_with_progress(const Env& env, std::string_view target,
 // ─── Sandbox lifecycle ──────────────────────────────────────────────
 
 void seed_xlings_json(const Env& env,
-                      std::span<const std::pair<std::string,std::string>> repos)
+                      std::span<const std::pair<std::string,std::string>> repos,
+                      std::string_view mirror)
 {
     auto path = env.home / ".xlings.json";
     std::string json = "{\n";
@@ -697,9 +702,21 @@ void seed_xlings_json(const Env& env,
     }
     json += "  ],\n";
     json += "  \"lang\": \"en\",\n";
-    json += "  \"mirror\": \"\"\n";
+    json += std::format("  \"mirror\": \"{}\"\n", mirror);
     json += "}\n";
     write_file(path, json);
+}
+
+int set_mirror(const Env& env, std::string_view mirror, bool quiet) {
+    if (mirror.empty()) return 0;
+    auto cmd = std::format(
+        "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} config --mirror {} {}",
+        shq(env.home.string()),
+        shq(env.home.string()),
+        shq(env.binary.string()),
+        shq(mirror),
+        quiet ? ">/dev/null 2>&1" : "");
+    return std::system(cmd.c_str());
 }
 
 void ensure_init(const Env& env, bool quiet) {
