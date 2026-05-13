@@ -24,6 +24,7 @@ import mcpp.build.flags;
 import mcpp.build.compile_commands;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.registry;
 import mcpp.xlings;
 
 export namespace mcpp::build {
@@ -118,39 +119,6 @@ std::filesystem::path mcpp_exe_path() {
     return "mcpp";  // fall back to PATH lookup
 }
 
-// Derive a sibling C compiler from a C++ compiler binary path. Used so .c
-// sources can be compiled by the actual C frontend (cc1), not g++ which
-// rejects implicit `void*` conversions and `restrict` etc.
-//   .../bin/g++                       → .../bin/gcc
-//   .../bin/x86_64-linux-musl-g++     → .../bin/x86_64-linux-musl-gcc
-//   .../bin/clang++                   → .../bin/clang
-//   .../bin/c++                       → .../bin/cc
-// If no sibling exists, return "gcc" so PATH lookup is the final fallback
-// (this also keeps unit tests that don't touch a real toolchain happy).
-std::filesystem::path derive_c_compiler(const std::filesystem::path& cxx) {
-    auto fname = cxx.filename().string();
-    auto try_replace = [&](std::string_view from,
-                           std::string_view to) -> std::optional<std::filesystem::path> {
-        auto pos = fname.rfind(from);
-        if (pos == std::string::npos)
-            return std::nullopt;
-        std::string repl = fname;
-        repl.replace(pos, from.size(), to);
-        auto p = cxx.parent_path() / repl;
-        std::error_code ec;
-        if (std::filesystem::exists(p, ec))
-            return p;
-        return std::nullopt;
-    };
-    if (auto p = try_replace("clang++", "clang"))
-        return *p;
-    if (auto p = try_replace("g++", "gcc"))
-        return *p;
-    if (auto p = try_replace("c++", "cc"))
-        return *p;
-    return "gcc";
-}
-
 bool is_c_source(const std::filesystem::path& src) {
     return src.extension() == ".c";
 }
@@ -159,7 +127,7 @@ bool is_c_source(const std::filesystem::path& src) {
 
 std::string emit_ninja_string(const BuildPlan& plan) {
     bool dyndep = dyndep_mode_enabled()
-               && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC;
+               && mcpp::toolchain::is_gcc(plan.toolchain);
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
 
@@ -278,9 +246,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     // Stage prebuilt std artifacts into the compiler-specific BMI cache.
-    auto std_bmi_dst = plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang
-        ? std::filesystem::path("pcm.cache") / "std.pcm"
-        : std::filesystem::path("gcm.cache") / "std.gcm";
+    auto std_bmi_dst = mcpp::toolchain::staged_std_bmi_path(plan.toolchain, {});
     auto std_o_dst = std::filesystem::path("obj") / "std.o";
 
     bool has_std_artifacts = !plan.stdBmiPath.empty() && !plan.stdObjectPath.empty();

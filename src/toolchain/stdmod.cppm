@@ -24,8 +24,9 @@ module;
 export module mcpp.toolchain.stdmod;
 
 import std;
+import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
-import mcpp.xlings;
+import mcpp.toolchain.gcc;
 
 export namespace mcpp::toolchain {
 
@@ -90,12 +91,11 @@ std::expected<StdModule, StdModError> ensure_built(
             "toolchain has no std module source (import std unsupported on this compiler)"});
     }
 
-    const bool isClang = tc.compiler == CompilerId::Clang;
-
     StdModule sm;
     sm.cacheDir   = cache_root / std::string(fingerprint_hex);
-    sm.bmiPath    = sm.cacheDir / (isClang ? "pcm.cache" : "gcm.cache")
-                  / (isClang ? "std.pcm" : "std.gcm");
+    sm.bmiPath    = is_clang(tc)
+                  ? mcpp::toolchain::clang::std_bmi_path(sm.cacheDir)
+                  : mcpp::toolchain::gcc::std_bmi_path(sm.cacheDir);
     sm.objectPath = sm.cacheDir / "std.o";
 
     if (std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath)) {
@@ -112,52 +112,17 @@ std::expected<StdModule, StdModError> ensure_built(
         sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
     }
 
-    // When the compiler comes from mcpp's private sandbox, pass
-    // -B<binutils-bin> so gcc finds `as`/`ld` directly via its internal
-    // exec_prefix lookup — no PATH dependency, no xlings shim involvement.
-    std::string b_flag;
-    if (!isClang) {
-        if (auto as = mcpp::xlings::paths::find_sibling_binary(
-                tc.binaryPath, "binutils", "bin/as")) {
-            b_flag = std::format(" -B'{}'", as->parent_path().string());
-        }
-    }
-
-    auto envPrefix = compiler_env_prefix(tc);
     std::string out;
 
-    if (isClang) {
-        auto precompile = std::format(
-            "cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
-            "--precompile {} -o {} 2>&1",
-            mcpp::xlings::shq(sm.cacheDir.string()),
-            envPrefix,
-            mcpp::xlings::shq(tc.binaryPath.string()),
-            sysroot_flag,
-            mcpp::xlings::shq(tc.stdModuleSource.string()),
-            mcpp::xlings::shq(std::filesystem::relative(sm.bmiPath, sm.cacheDir).string()));
-        if (auto r = run_capture_command(precompile); !r) return std::unexpected(r.error());
-        else out += *r;
-
-        auto compile_object = std::format(
-            "cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
-            "{} -c -o std.o 2>&1",
-            mcpp::xlings::shq(sm.cacheDir.string()),
-            envPrefix,
-            mcpp::xlings::shq(tc.binaryPath.string()),
-            sysroot_flag,
-            mcpp::xlings::shq(std::filesystem::relative(sm.bmiPath, sm.cacheDir).string()));
-        if (auto r = run_capture_command(compile_object); !r) return std::unexpected(r.error());
-        else out += *r;
+    if (is_clang(tc)) {
+        for (auto& cmd : mcpp::toolchain::clang::std_module_build_commands(
+                 tc, sm.cacheDir, sm.bmiPath, sysroot_flag)) {
+            if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
+            else out += *r;
+        }
     } else {
-        auto cmd = std::format(
-            "cd {} && {}{} -std=c++23 -fmodules -O2{}{} -c {} -o std.o 2>&1",
-            mcpp::xlings::shq(sm.cacheDir.string()),
-            envPrefix,
-            mcpp::xlings::shq(tc.binaryPath.string()),
-            sysroot_flag,
-            b_flag,
-            mcpp::xlings::shq(tc.stdModuleSource.string()));
+        auto cmd = mcpp::toolchain::gcc::std_module_build_command(
+            tc, sm.cacheDir, sysroot_flag);
         if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
         else out += *r;
     }
