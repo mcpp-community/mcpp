@@ -36,6 +36,10 @@ out=$("$MCPP" build 2>&1) || rc=$?
 [[ "$out" == *"no toolchain configured"* ]] || { echo "FAIL: error not helpful: $out"; exit 1; }
 
 # 3) Install gcc 16.1.0
+if [[ -n "${MCPP_E2E_TOOLCHAIN_MIRROR:-}" ]]; then
+    "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
+    "$MCPP" self config
+fi
 rc=0
 "$MCPP" toolchain install gcc 16.1.0 > /tmp/_inst.log 2>&1 || rc=$?
 if [[ $rc -ne 0 ]]; then

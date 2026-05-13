@@ -21,6 +21,7 @@ import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.build.plan;
 import mcpp.build.backend;
@@ -35,6 +36,7 @@ import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
 import mcpp.pm.mangle;     // Level 1 multi-version fallback (cross-major coexistence)
 import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
+import mcpp.pm.dep_spec;
 import mcpp.ui;
 import mcpp.bmi_cache;
 import mcpp.dyndep;
@@ -89,6 +91,7 @@ void print_usage() {
     std::println("About mcpp itself:");
     std::println("  mcpp self doctor                     Diagnose mcpp environment health");
     std::println("  mcpp self env                        Print mcpp paths and toolchain");
+    std::println("  mcpp self config [--mirror CN|GLOBAL] Show or modify mcpp's xlings config");
     std::println("  mcpp self version                    Show mcpp version");
     std::println("  mcpp self explain <CODE>             Show extended description for an error code");
     std::println("  mcpp --help / --version              Help / version");
@@ -438,34 +441,6 @@ mcpp::ui::PathContext make_path_ctx(const mcpp::config::GlobalConfig* cfg,
     return ctx;
 }
 
-// Toolchain frontend lookup. Different xim packages ship the C++ frontend
-// under different binary names — `gcc` ships `g++`, `musl-gcc` only ships
-// the triple-prefixed `x86_64-linux-musl-g++`, etc. Returns the path to
-// the frontend, or empty if none of the known candidates exist.
-std::filesystem::path
-toolchain_frontend(const std::filesystem::path& binDir,
-                   std::string_view compiler)
-{
-    std::vector<std::string> cands;
-    if (compiler == "musl-gcc") {
-        cands = {"x86_64-linux-musl-g++", "g++"};
-    } else if (compiler == "gcc") {
-        cands = {"g++"};
-    } else if (compiler == "clang" || compiler == "llvm") {
-        cands = {"clang++"};
-    } else if (compiler == "msvc") {
-        cands = {"cl.exe"};
-    } else {
-        // Unknown xpkg — try each in priority order.
-        cands = {"g++", "clang++", "x86_64-linux-musl-g++", "cl.exe"};
-    }
-    for (auto& c : cands) {
-        auto p = binDir / c;
-        if (std::filesystem::exists(p)) return p;
-    }
-    return {};
-}
-
 // Stateless adapter from `mcpp::config::BootstrapProgress` (xlings
 // download_progress event) to a sticky ProgressBar. Used by
 // load_or_init() during the one-time sandbox bootstrap (xim:patchelf,
@@ -590,6 +565,66 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     s += "-std="; s += m.language.standard;
     s += " -fmodules";
     return s;
+}
+
+bool is_std_module(std::string_view name) {
+    return name == "std" || name == "std.compat";
+}
+
+std::string trim_copy(std::string s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
+        s.erase(0, 1);
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
+        s.pop_back();
+    return s;
+}
+
+bool source_file_imports_std(const std::filesystem::path& path) {
+    std::ifstream is(path);
+    if (!is) return false;
+
+    std::string line;
+    while (std::getline(is, line)) {
+        line = trim_copy(std::move(line));
+        std::size_t i = std::string::npos;
+        if (line.starts_with("import ")) {
+            i = 7;
+        } else if (line.starts_with("export import ")) {
+            i = 14;
+        }
+        if (i == std::string::npos) continue;
+        while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i])))
+            ++i;
+
+        std::string name;
+        while (i < line.size()
+            && (std::isalnum(static_cast<unsigned char>(line[i]))
+                || line[i] == '_' || line[i] == '.' || line[i] == ':')) {
+            name.push_back(line[i]);
+            ++i;
+        }
+        if (is_std_module(name)) return true;
+    }
+    return false;
+}
+
+bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
+                                 const mcpp::manifest::Manifest& manifest,
+                                 const std::filesystem::path& projectRoot) {
+    for (auto& u : graph.units) {
+        for (auto& req : u.requires_) {
+            if (is_std_module(req.logicalName))
+                return true;
+        }
+    }
+
+    // Some target entry files can be added to the plan after the package scan.
+    // Check them here so std BMI setup matches what make_plan will compile.
+    for (auto& t : manifest.targets) {
+        if (!t.main.empty() && source_file_imports_std(projectRoot / t.main))
+            return true;
+    }
+    return false;
 }
 
 // Run patchelf on every dynamic ELF in `dir` (recursively):
@@ -1025,32 +1060,13 @@ prepare_build(bool print_fingerprint,
     if (overrides.force_static) m->buildConfig.linkage = "static";
 
     if (tcSpec.has_value() && *tcSpec != "system") {
-        // Parse "<pkg>@<version>" with an optional "-musl" libc suffix on
-        // the version: "gcc@15.1.0" or "gcc@15.1.0-musl".
-        auto at = tcSpec->find('@');
-        if (at == std::string::npos) {
+        auto spec = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+        if (!spec || spec->version.empty()) {
             return std::unexpected(std::format(
                 "[toolchain].{} = '{}' is invalid; expected '<pkg>@<version>'",
                 kCurrentPlatform, *tcSpec));
         }
-        auto compiler = tcSpec->substr(0, at);
-        auto version  = tcSpec->substr(at + 1);
-        // Strip xim: prefix if user wrote it explicitly
-        std::string indexedCompiler = compiler;
-        if (auto colon = compiler.find(':'); colon != std::string::npos)
-            indexedCompiler = compiler.substr(colon + 1);
-
-        // libc suffix: `gcc@15.1.0-musl` → xim package `xim:musl-gcc@15.1.0`,
-        // binary at `<root>/bin/x86_64-linux-musl-g++`.
-        bool isMusl = endswith(version, "-musl");
-        std::string ximName = indexedCompiler;
-        std::string ximVersion = version;
-        if (isMusl) {
-            ximVersion = version.substr(0, version.size() - 5); // drop "-musl"
-            ximName    = "musl-" + indexedCompiler;             // gcc → musl-gcc
-        }
-
-        std::string target = std::format("xim:{}@{}", ximName, ximVersion);
+        auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
         auto cfg = get_cfg();
         if (!cfg) return std::unexpected(cfg.error());
@@ -1058,24 +1074,17 @@ prepare_build(bool print_fingerprint,
 
         mcpp::ui::info("Resolving", "toolchain");
         CliInstallProgress progress;
-        auto payload = fetcher.resolve_xpkg_path(target, /*autoInstall=*/true, &progress);
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         if (!payload) {
             return std::unexpected(std::format(
                 "toolchain '{}': {}", *tcSpec, payload.error().message));
         }
 
-        std::string binary_name = "g++";
-        if      (indexedCompiler == "llvm" || indexedCompiler == "clang") binary_name = "clang++";
-        else if (indexedCompiler == "msvc")                                binary_name = "cl.exe";
-        if (isMusl) {
-            // musl-gcc xpkg ships only the triple-prefixed frontends.
-            binary_name = "x86_64-linux-musl-g++";
-        }
-        explicit_compiler = payload->binDir / binary_name;
+        explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
         if (!std::filesystem::exists(explicit_compiler)) {
             return std::unexpected(std::format(
-                "toolchain payload '{}' has no '{}' (looked at {})",
-                target, binary_name, explicit_compiler.string()));
+                "toolchain payload '{}' has no known C++ frontend in {}",
+                pkg.target(), payload->binDir.string()));
         }
         mcpp::ui::info("Resolved",
             std::format("{} → {}", *tcSpec,
@@ -1101,6 +1110,8 @@ prepare_build(bool print_fingerprint,
         // pin it as the global default so the next invocation is silent.
         // Users can switch any time via `mcpp toolchain default <spec>`.
         std::string defaultSpec = "gcc@15.1.0-musl";
+        auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
+        auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
         mcpp::ui::info("First run",
             std::format("no toolchain configured — installing {} (musl, static) as default",
@@ -1110,14 +1121,8 @@ prepare_build(bool print_fingerprint,
         if (!cfg) return std::unexpected(cfg.error());
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
-        // gcc@15.1.0-musl → xim:musl-gcc@15.1.0; binary at
-        // <root>/bin/x86_64-linux-musl-g++. (Same translation `cmd_toolchain`
-        // and the build path apply.)
-        std::string ximTarget    = "xim:musl-gcc@15.1.0";
-        std::string ximBinaryRel = "x86_64-linux-musl-g++";
-
         CliInstallProgress progress;
-        auto payload = fetcher.resolve_xpkg_path(ximTarget,
+        auto payload = fetcher.resolve_xpkg_path(defaultPkg.target(),
                             /*autoInstall=*/true, &progress);
         if (!payload) {
             return std::unexpected(std::format(
@@ -1126,11 +1131,11 @@ prepare_build(bool print_fingerprint,
                 "         mcpp toolchain install gcc 15.1.0-musl",
                 defaultSpec, payload.error().message));
         }
-        explicit_compiler = payload->binDir / ximBinaryRel;
+        explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, defaultPkg);
         if (!std::filesystem::exists(explicit_compiler)) {
             return std::unexpected(std::format(
-                "default toolchain payload {} has no {} at {}",
-                ximTarget, ximBinaryRel, explicit_compiler.string()));
+                "default toolchain payload {} has no known C++ frontend in {}",
+                defaultPkg.target(), payload->binDir.string()));
         }
 
         // Persist the default so we don't ask again next time.
@@ -1172,12 +1177,6 @@ prepare_build(bool print_fingerprint,
                 tc->sysroot = mcppSubos;
             }
         }
-    }
-
-    if (m->language.importStd && !tc->hasImportStd) {
-        return std::unexpected(std::format(
-            "manifest requires import_std but toolchain '{}' provides no std module source",
-            tc->label()));
     }
 
     // Resolve dependencies: walk the **transitive** graph from the main
@@ -1293,9 +1292,22 @@ prepare_build(bool print_fingerprint,
             auto fqname = ns.empty() ? shortName
                 : std::format("{}.{}", ns, shortName);
             mcpp::ui::info("Downloading", std::format("{} v{}", fqname, version));
-            std::vector<std::string> targets{ std::format("{}@{}", fqname, version) };
-            CliInstallProgress progress;
-            auto r = fetcher.install(targets, &progress);
+            auto install_one = [&](std::string target) {
+                std::vector<std::string> targets{ std::move(target) };
+                CliInstallProgress progress;
+                return fetcher.install(targets, &progress);
+            };
+            auto target = std::format("{}@{}", fqname, version);
+            auto r = install_one(target);
+            if (r && r->exitCode != 0 &&
+                (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {
+                auto compatTarget = std::format("compat.{}@{}", shortName, version);
+                if (compatTarget != target) {
+                    mcpp::ui::info("Downloading", std::format("{} v{}",
+                                     std::format("compat.{}", shortName), version));
+                    r = install_one(compatTarget);
+                }
+            }
             if (!r) return std::unexpected(std::format(
                 "fetch '{}@{}': {}", depName, version, r.error().message));
             if (r->exitCode != 0) {
@@ -1934,6 +1946,13 @@ prepare_build(bool print_fingerprint,
         return std::unexpected(msg);
     }
 
+    bool needsStdModule = graph_or_targets_import_std(scan.graph, *m, *root);
+    if (needsStdModule && !tc->hasImportStd) {
+        return std::unexpected(std::format(
+            "source imports std but toolchain '{}' provides no std module source",
+            tc->label()));
+    }
+
     // Compute fingerprint (no lockfile in M1 → empty hash)
     mcpp::toolchain::FingerprintInputs fpi;
     fpi.toolchain            = *tc;
@@ -1943,9 +1962,15 @@ prepare_build(bool print_fingerprint,
     fpi.stdBmiHash         = "";    // updated after stdmod build (chicken/egg ok for M1)
     auto fp = mcpp::toolchain::compute_fingerprint(fpi);
 
-    // Pre-build std module
-    auto sm = mcpp::toolchain::ensure_built(*tc, fp.hex);
-    if (!sm) return std::unexpected(sm.error().message);
+    // Pre-build std module only when the source graph actually imports it.
+    std::filesystem::path stdBmiPath;
+    std::filesystem::path stdObjectPath;
+    if (needsStdModule) {
+        auto sm = mcpp::toolchain::ensure_built(*tc, fp.hex);
+        if (!sm) return std::unexpected(sm.error().message);
+        stdBmiPath = sm->bmiPath;
+        stdObjectPath = sm->objectPath;
+    }
 
     if (print_fingerprint) {
         std::println("Toolchain: {}", tc->label());
@@ -1961,10 +1986,10 @@ prepare_build(bool print_fingerprint,
     ctx.fp          = fp;
     ctx.projectRoot= *root;
     ctx.outputDir  = target_dir(*tc, fp, *root);
-    ctx.stdBmi     = sm->bmiPath;
-    ctx.stdObject  = sm->objectPath;
+    ctx.stdBmi     = stdBmiPath;
+    ctx.stdObject  = stdObjectPath;
     ctx.plan        = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
-                                             *root, ctx.outputDir, sm->bmiPath, sm->objectPath);
+                                             *root, ctx.outputDir, stdBmiPath, stdObjectPath);
 
     // ─── M3.2: BMI cache stage / populate-task collection ─────────────
     // For each version-based dep package (i.e. fetched from a registry,
@@ -2892,28 +2917,6 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto xlEnv = mcpp::config::make_xlings_env(*cfg);
 
     if (subname == "list") {
-        // `gcc 15.1.0-musl` and `musl-gcc@15.1.0` describe the same xpkg
-        // (xim-x-musl-gcc/15.1.0) — match either user-form against the
-        // currently-configured default for the `*` marker.
-        auto matches_default = [&](std::string_view compiler,
-                                   std::string_view version) {
-            const auto& d = cfg->defaultToolchain;
-            if (d == std::format("{}@{}", compiler, version)) return true;
-            if (compiler == "musl-gcc"
-                && d == std::format("gcc@{}-musl", version)) return true;
-            return false;
-        };
-
-        // User-facing label for an xpkg row: `gcc 15.1.0-musl` reads more
-        // naturally than `musl-gcc 15.1.0` and matches the toolchain spec
-        // the rest of the CLI accepts.
-        auto display_label = [](std::string_view compiler,
-                                std::string_view version) {
-            if (compiler == "musl-gcc")
-                return std::format("gcc {}-musl", version);
-            return std::format("{} {}", compiler, version);
-        };
-
         auto pathCtx = make_path_ctx(&*cfg);
         struct Row {
             std::string compiler;
@@ -2931,13 +2934,15 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 if (auto sep = name.find("-x-"); sep != std::string::npos)
                     compiler = name.substr(sep + 3);
                 for (auto& vEntry : std::filesystem::directory_iterator(entry.path(), ec)) {
-                    auto bin = toolchain_frontend(vEntry.path() / "bin", compiler);
+                    auto bin = mcpp::toolchain::toolchain_frontend(
+                        vEntry.path() / "bin", compiler);
                     if (bin.empty()) continue;
                     Row r;
                     r.compiler  = compiler;
                     r.version   = vEntry.path().filename().string();
                     r.bin       = bin;
-                    r.isDefault = matches_default(r.compiler, r.version);
+                    r.isDefault = mcpp::toolchain::matches_default_toolchain(
+                        cfg->defaultToolchain, r.compiler, r.version);
                     installed.push_back(std::move(r));
                 }
             }
@@ -2952,7 +2957,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
             for (auto& r : installed) {
                 std::println("  {:<3}{:<22}  {}",
                     r.isDefault ? "*" : "",
-                    display_label(r.compiler, r.version),
+                    mcpp::toolchain::display_label(r.compiler, r.version),
                     mcpp::ui::shorten_path(r.bin, pathCtx));
             }
         }
@@ -2977,8 +2982,8 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 if (!already) avail.push_back({std::string(compiler), v});
             }
         };
-        add_avail("gcc",      "gcc");
-        add_avail("musl-gcc", "musl-gcc");
+        for (auto& [ximName, compiler] : mcpp::toolchain::available_toolchain_indexes())
+            add_avail(ximName, compiler);
 
         if (!avail.empty()) {
             // Newest first. Lexicographic-on-strings is good enough for
@@ -2993,7 +2998,8 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
             std::println("Available (run `mcpp toolchain install <compiler> <version>`):");
             std::println("  {:<3}{}", "", "TOOLCHAIN");
             for (auto& a : avail) {
-                std::println("  {:<3}{}", "", display_label(a.compiler, a.version));
+                std::println("  {:<3}{}", "",
+                    mcpp::toolchain::display_label(a.compiler, a.version));
             }
         }
         return 0;
@@ -3004,66 +3010,42 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         //   mcpp toolchain install gcc 16.1.0      → ("gcc", "16.1.0")
         //   mcpp toolchain install gcc@16.1.0      → ("gcc", "16.1.0")
         //   mcpp toolchain install gcc 15          → ("gcc", "15")  partial
-        std::string compiler = sub_parsed.positional(0);
-        std::string version  = sub_parsed.positional(1);
-        if (auto at = compiler.find('@'); at != std::string::npos) {
-            if (version.empty()) version = compiler.substr(at + 1);
-            compiler = compiler.substr(0, at);
-        }
-        if (compiler.empty()) {
+        auto spec = mcpp::toolchain::parse_toolchain_spec(
+            sub_parsed.positional(0), sub_parsed.positional(1));
+        if (!spec || spec->compiler.empty()) {
             mcpp::ui::error("missing compiler name; e.g. `mcpp toolchain install gcc 16.1.0`");
             return 2;
         }
-
-        // Accept both spelling forms for the musl flavor:
-        //   mcpp toolchain install musl-gcc 15.1.0
-        //   mcpp toolchain install gcc      15.1.0-musl
-        // and translate either into the underlying xim package.
-        bool isMusl = (compiler == "musl-gcc")
-                   || (version.size() > 5
-                       && version.compare(version.size() - 5, 5, "-musl") == 0);
-        std::string ximName    = compiler;
-        std::string ximVersion = version;
-        if (isMusl) {
-            if (compiler != "musl-gcc") ximName = "musl-" + compiler;   // gcc → musl-gcc
-            if (ximVersion.size() > 5
-                && ximVersion.compare(ximVersion.size() - 5, 5, "-musl") == 0)
-                ximVersion.resize(ximVersion.size() - 5);
-        }
+        auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
         // Partial-version resolution: `gcc 15` → highest available 15.x.y in
         // the synced index. Empty version → latest of any major.
         if (auto picked = resolve_version_match(
-                ximVersion, list_available_xpkg_versions(*cfg, ximName))) {
-            if (*picked != ximVersion) {
+                pkg.ximVersion, list_available_xpkg_versions(*cfg, pkg.ximName))) {
+            if (*picked != pkg.ximVersion) {
                 mcpp::ui::info("Resolved",
-                    std::format("{}@{} → {}@{}", compiler, version, compiler, *picked));
+                    std::format("{}@{} → {}@{}", spec->compiler, spec->version,
+                                spec->compiler, *picked));
             }
-            ximVersion = *picked;
-            // Reflect the concrete version back into the user-facing label
-            // so the "Installed gcc@<ver>" line shows the real version.
-            version = ximVersion + (isMusl ? "-musl" : "");
+            spec = mcpp::toolchain::with_resolved_xim_version(*spec, *picked);
+            pkg = mcpp::toolchain::to_xim_package(*spec);
         }
 
-        std::string spec = std::format("xim:{}@{}", ximName, ximVersion);
-
-        mcpp::ui::info("Installing", std::format("{} {} via mcpp's xlings", compiler, version));
+        mcpp::ui::info("Installing",
+            std::format("{} {} via mcpp's xlings", spec->compiler, spec->version));
         mcpp::fetcher::Fetcher fetcher(*cfg);
         CliInstallProgress progress;
-        auto payload = fetcher.resolve_xpkg_path(spec, /*autoInstall=*/true, &progress);
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         if (!payload) {
             mcpp::ui::error(std::format("install failed: {}", payload.error().message));
             return 1;
         }
 
-        std::string bn = "g++";
-        if      (compiler == "llvm" || compiler == "clang") bn = "clang++";
-        else if (compiler == "msvc")                         bn = "cl.exe";
-        if (isMusl) bn = "x86_64-linux-musl-g++";
-        auto bin = payload->binDir / bn;
+        auto bin = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
         if (!std::filesystem::exists(bin)) {
             mcpp::ui::error(std::format(
-                "installed package has no '{}' at '{}'", bn, bin.string()));
+                "installed package has no known C++ frontend in '{}'",
+                payload->binDir.string()));
             return 1;
         }
 
@@ -3077,7 +3059,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         // musl-gcc ships its own self-contained sysroot at
         // `<root>/x86_64-linux-musl/{include,lib}` and doesn't link against
         // xim:glibc, so this fixup is both unnecessary and harmful for it.
-        if (compiler == "gcc" && !isMusl) {
+        if (pkg.needsGccPostInstallFixup) {
             auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
             std::filesystem::path glibcLibDir;
             if (std::filesystem::exists(glibcRoot)) {
@@ -3118,11 +3100,12 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
             }
         }
 
-        mcpp::ui::status("Installed", std::format("{}@{} → {}", compiler, version, bin.string()));
+        mcpp::ui::status("Installed",
+            std::format("{} → {}", pkg.display_spec(), bin.string()));
         if (cfg->defaultToolchain.empty()) {
             std::println("");
             std::println("Tip: `mcpp toolchain default {}@{}` to make this the default.",
-                         compiler, version);
+                         spec->compiler, spec->version);
         }
         return 0;
     }
@@ -3132,69 +3115,52 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         //   mcpp toolchain default gcc@16.1.0
         //   mcpp toolchain default gcc 16.1.0
         //   mcpp toolchain default gcc 15        ← partial; picks highest 15.x.y
-        std::string compiler = sub_parsed.positional(0);
-        std::string version  = sub_parsed.positional(1);
-        if (auto at = compiler.find('@'); at != std::string::npos) {
-            if (version.empty()) version = compiler.substr(at + 1);
-            compiler = compiler.substr(0, at);
-        }
-        if (compiler.empty()) {
+        auto spec = mcpp::toolchain::parse_toolchain_spec(
+            sub_parsed.positional(0), sub_parsed.positional(1));
+        if (!spec || spec->compiler.empty()) {
             mcpp::ui::error("missing spec; e.g. `mcpp toolchain default gcc@16.1.0`");
             return 2;
         }
-
-        std::string ximName    = compiler;
-        std::string ximVersion = version;
-        bool isMusl = (compiler == "musl-gcc")
-                   || (version.size() > 5
-                       && version.compare(version.size() - 5, 5, "-musl") == 0);
-        if (isMusl) {
-            if (compiler != "musl-gcc") ximName = "musl-" + compiler;
-            if (ximVersion.size() > 5
-                && ximVersion.compare(ximVersion.size() - 5, 5, "-musl") == 0)
-                ximVersion.resize(ximVersion.size() - 5);
-        }
+        auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
         // Partial-version resolution against installed payloads.
         if (auto picked = resolve_version_match(
-                ximVersion, list_installed_versions(pkgsDir, ximName))) {
-            ximVersion = *picked;
+                pkg.ximVersion, list_installed_versions(pkgsDir, pkg.ximName))) {
+            spec = mcpp::toolchain::with_resolved_xim_version(*spec, *picked);
+            pkg = mcpp::toolchain::to_xim_package(*spec);
         }
 
         // Reconstruct the user-visible spec for messages / config.toml.
-        std::string spec = isMusl
-            ? std::format("{}@{}-musl",
-                  compiler == "musl-gcc" ? "musl-gcc" : compiler, ximVersion)
-            : std::format("{}@{}", compiler, ximVersion);
+        std::string displaySpec = pkg.display_spec();
 
-        auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, ximName, ximVersion);
+        auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, pkg.ximName, pkg.ximVersion);
         if (!std::filesystem::exists(installDir)) {
             mcpp::ui::error(std::format(
                 "{} is not installed. Run `mcpp toolchain install {} {}` first.",
-                spec, compiler, version.empty() ? ximVersion : version));
+                displaySpec, spec->compiler,
+                spec->version.empty() ? pkg.ximVersion : spec->version));
             return 1;
         }
-        auto wr = mcpp::config::write_default_toolchain(*cfg, spec);
+        auto wr = mcpp::config::write_default_toolchain(*cfg, displaySpec);
         if (!wr) {
             mcpp::ui::error(wr.error().message);
             return 1;
         }
         mcpp::ui::status("Default", std::format(
-            "set to {} (was: {})", spec,
+            "set to {} (was: {})", displaySpec,
             cfg->defaultToolchain.empty() ? "<none>" : cfg->defaultToolchain));
         return 0;
     }
 
     if (subname == "remove") {
-        std::string spec = sub_parsed.positional(0);
-        auto at = spec.find('@');
-        if (at == std::string::npos) {
-            mcpp::ui::error(std::format("invalid spec '{}'", spec));
+        auto parsedSpec = mcpp::toolchain::parse_toolchain_spec(sub_parsed.positional(0));
+        if (!parsedSpec || parsedSpec->version.empty()) {
+            mcpp::ui::error(std::format("invalid spec '{}'", sub_parsed.positional(0)));
             return 2;
         }
-        std::string compiler = spec.substr(0, at);
-        std::string version  = spec.substr(at + 1);
-        auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, compiler, version);
+        auto pkg = mcpp::toolchain::to_xim_package(*parsedSpec);
+        auto spec = pkg.display_spec();
+        auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, pkg.ximName, pkg.ximVersion);
         std::error_code ec;
         if (!std::filesystem::exists(installDir, ec)) {
             mcpp::ui::error(std::format("{} is not installed", spec));
@@ -3527,6 +3493,43 @@ int cmd_self_version(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
     return 0;
 }
 
+std::string upper_ascii(std::string s) {
+    for (char& ch : s) {
+        if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+    }
+    return s;
+}
+
+int cmd_self_config(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/false, make_bootstrap_progress_callback());
+    if (!cfg) {
+        mcpp::ui::error(cfg.error().message);
+        return 4;
+    }
+
+    auto env = mcpp::config::make_xlings_env(*cfg);
+    auto mirror = parsed.option_or_empty("mirror").value();
+    if (mirror.empty()) {
+        auto rc = mcpp::xlings::config_show(env);
+        return rc == 0 ? 0 : 1;
+    }
+
+    mirror = upper_ascii(std::move(mirror));
+    if (mirror != "CN" && mirror != "GLOBAL") {
+        mcpp::ui::error(std::format(
+            "invalid mirror '{}'; expected CN or GLOBAL", mirror));
+        return 2;
+    }
+
+    auto rc = mcpp::xlings::config_set_mirror(env, mirror, /*quiet=*/true);
+    if (rc != 0) {
+        mcpp::ui::error(std::format("failed to set xlings mirror to {}", mirror));
+        return 1;
+    }
+    mcpp::ui::status("Configured", std::format("xlings mirror = {}", mirror));
+    return 0;
+}
+
 // Used both by `mcpp explain <CODE>` (top-level) and `mcpp self explain
 // <CODE>` (legacy alias).
 int cmd_explain_action(const mcpplibs::cmdline::ParsedArgs& parsed) {
@@ -3842,6 +3845,10 @@ int run(int argc, char** argv) {
                 .description("Diagnose mcpp environment health"))
             .subcommand(cl::App("env")
                 .description("Print mcpp paths and configuration"))
+            .subcommand(cl::App("config")
+                .description("Show or modify mcpp's private xlings configuration")
+                .option(cl::Option("mirror").takes_value().value_name("CN|GLOBAL")
+                    .help("Set xlings mirror for mcpp's private registry")))
             .subcommand(cl::App("version")
                 .description("Show mcpp version"))
             .subcommand(cl::App("explain")
@@ -3851,6 +3858,7 @@ int run(int argc, char** argv) {
                 return dispatch_sub("self", p, {
                     {"doctor",  cmd_doctor},
                     {"env",     cmd_env},
+                    {"config",  cmd_self_config},
                     {"version", cmd_self_version},
                     {"explain", cmd_explain_action},
                 });

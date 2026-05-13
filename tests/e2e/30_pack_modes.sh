@@ -15,6 +15,13 @@ export MCPP_HOME=$HOME/.mcpp
 cd "$TMP"
 "$MCPP" new myapp > /dev/null
 cd myapp
+# Keep Mode C independent from whatever global default toolchain earlier
+# e2e tests wrote into ~/.mcpp/config.toml.
+cat >> mcpp.toml <<'EOF'
+
+[toolchain]
+linux = "gcc@16.1.0"
+EOF
 
 # ─── Mode C (default = bundle-project) ─────────────────────────────────
 "$MCPP" pack > "$TMP/pack-c.log" 2>&1 || {

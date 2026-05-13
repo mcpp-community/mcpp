@@ -216,6 +216,75 @@ bool write_default_xlings_json(const std::filesystem::path& path,
     return std::filesystem::exists(path);
 }
 
+bool replace_all(std::string& text, std::string_view from, std::string_view to) {
+    bool changed = false;
+    for (std::size_t pos = 0;
+         (pos = text.find(from, pos)) != std::string::npos;) {
+        text.replace(pos, from.size(), to);
+        pos += to.size();
+        changed = true;
+    }
+    return changed;
+}
+
+bool write_text_if_changed(const std::filesystem::path& path,
+                           const std::string& original,
+                           const std::string& updated) {
+    if (updated == original) return false;
+    write_file(path, updated);
+    return true;
+}
+
+bool migrate_legacy_config_toml_index_names(const std::filesystem::path& path) {
+    std::ifstream is(path);
+    if (!is) return false;
+    std::stringstream ss;
+    ss << is.rdbuf();
+    auto original = ss.str();
+    auto updated = original;
+
+    replace_all(updated, "default = \"mcpp-index\"", "default = \"mcpplibs\"");
+    replace_all(updated, "[index.repos.\"mcpp-index\"]", "[index.repos.\"mcpplibs\"]");
+
+    return write_text_if_changed(path, original, updated);
+}
+
+bool migrate_legacy_xlings_json_index_names(const std::filesystem::path& path) {
+    std::ifstream is(path);
+    if (!is) return false;
+    std::stringstream ss;
+    ss << is.rdbuf();
+    auto original = ss.str();
+    auto updated = original;
+
+    // Older mcpp sandboxes seeded the package index under the repository
+    // name. Keep the URL and all xlings state intact; only rename the index
+    // key so xlings config/list output matches mcpp's default namespace.
+    replace_all(updated, "\"name\": \"mcpp-index\"", "\"name\": \"mcpplibs\"");
+    replace_all(updated, "\"name\":\"mcpp-index\"", "\"name\":\"mcpplibs\"");
+
+    return write_text_if_changed(path, original, updated);
+}
+
+void canonicalize_legacy_index_names(GlobalConfig& cfg) {
+    if (cfg.defaultIndex == "mcpp-index")
+        cfg.defaultIndex = "mcpplibs";
+
+    std::vector<IndexRepo> normalized;
+    for (auto r : cfg.indexRepos) {
+        if (r.name == "mcpp-index"
+            && r.url == "https://github.com/mcpp-community/mcpp-index.git") {
+            r.name = "mcpplibs";
+        }
+        bool duplicate = std::any_of(normalized.begin(), normalized.end(),
+            [&](const IndexRepo& existing) {
+                return existing.name == r.name && existing.url == r.url;
+            });
+        if (!duplicate) normalized.push_back(std::move(r));
+    }
+    cfg.indexRepos = std::move(normalized);
+}
+
 // Try to acquire xlings binary. Returns the path if successful.
 std::expected<std::filesystem::path, std::string>
 acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet)
@@ -345,6 +414,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // 3. Seed config.toml if missing
     bool fresh_config = !std::filesystem::exists(cfg.configFile);
     if (fresh_config) write_default_config_toml(cfg.configFile);
+    else migrate_legacy_config_toml_index_names(cfg.configFile);
 
     // 4. Load config.toml
     auto doc = t::parse_file(cfg.configFile);
@@ -383,11 +453,16 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         cfg.indexRepos.push_back({ std::string(name), std::string(url) });
     };
     add_default("mcpplibs", "https://github.com/mcpp-community/mcpp-index.git");
+    canonicalize_legacy_index_names(cfg);
 
-    // 5. Seed registry/.xlings.json if missing
+    // 5. Seed registry/.xlings.json if missing; migrate legacy cached
+    // sandboxes in place so CI/user caches move from mcpp-index to mcpplibs
+    // without losing xlings' active subos or version bindings.
     auto xjson = cfg.xlingsHome() / ".xlings.json";
     if (!std::filesystem::exists(xjson)) {
         write_default_xlings_json(xjson, cfg.indexRepos);
+    } else {
+        migrate_legacy_xlings_json_index_names(xjson);
     }
 
     // 6. Acquire xlings binary if needed
