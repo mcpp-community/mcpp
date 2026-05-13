@@ -109,6 +109,12 @@ jobs:
           # above so they don't have to reinstall the sandbox.
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           test -x "$MCPP_VENDORED_XLINGS"
+          # GitHub-hosted runners are outside CN; keep CI toolchain downloads on
+          # the global mirror while mcpp's default remains CN for fresh local
+          # sandboxes. E2E tests with their own MCPP_HOME read this variable.
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
+          "$MCPP" self config
           # Pin the global default so test 28 (which exercises the
           # default-toolchain path) gets a deterministic GNU answer
           # instead of whatever auto-install picks on a fresh sandbox.
