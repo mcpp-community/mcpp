@@ -90,6 +90,7 @@ void print_usage() {
     std::println("About mcpp itself:");
     std::println("  mcpp self doctor                     Diagnose mcpp environment health");
     std::println("  mcpp self env                        Print mcpp paths and toolchain");
+    std::println("  mcpp self config [--mirror CN|GLOBAL] Show or modify mcpp's xlings config");
     std::println("  mcpp self version                    Show mcpp version");
     std::println("  mcpp self explain <CODE>             Show extended description for an error code");
     std::println("  mcpp --help / --version              Help / version");
@@ -3610,6 +3611,43 @@ int cmd_self_version(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
     return 0;
 }
 
+std::string upper_ascii(std::string s) {
+    for (char& ch : s) {
+        if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+    }
+    return s;
+}
+
+int cmd_self_config(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/false, make_bootstrap_progress_callback());
+    if (!cfg) {
+        mcpp::ui::error(cfg.error().message);
+        return 4;
+    }
+
+    auto env = mcpp::config::make_xlings_env(*cfg);
+    auto mirror = parsed.option_or_empty("mirror").value();
+    if (mirror.empty()) {
+        auto rc = mcpp::xlings::config_show(env);
+        return rc == 0 ? 0 : 1;
+    }
+
+    mirror = upper_ascii(std::move(mirror));
+    if (mirror != "CN" && mirror != "GLOBAL") {
+        mcpp::ui::error(std::format(
+            "invalid mirror '{}'; expected CN or GLOBAL", mirror));
+        return 2;
+    }
+
+    auto rc = mcpp::xlings::config_set_mirror(env, mirror, /*quiet=*/true);
+    if (rc != 0) {
+        mcpp::ui::error(std::format("failed to set xlings mirror to {}", mirror));
+        return 1;
+    }
+    mcpp::ui::status("Configured", std::format("xlings mirror = {}", mirror));
+    return 0;
+}
+
 // Used both by `mcpp explain <CODE>` (top-level) and `mcpp self explain
 // <CODE>` (legacy alias).
 int cmd_explain_action(const mcpplibs::cmdline::ParsedArgs& parsed) {
@@ -3925,6 +3963,10 @@ int run(int argc, char** argv) {
                 .description("Diagnose mcpp environment health"))
             .subcommand(cl::App("env")
                 .description("Print mcpp paths and configuration"))
+            .subcommand(cl::App("config")
+                .description("Show or modify mcpp's private xlings configuration")
+                .option(cl::Option("mirror").takes_value().value_name("CN|GLOBAL")
+                    .help("Set xlings mirror for mcpp's private registry")))
             .subcommand(cl::App("version")
                 .description("Show mcpp version"))
             .subcommand(cl::App("explain")
@@ -3934,6 +3976,7 @@ int run(int argc, char** argv) {
                 return dispatch_sub("self", p, {
                     {"doctor",  cmd_doctor},
                     {"env",     cmd_env},
+                    {"config",  cmd_self_config},
                     {"version", cmd_self_version},
                     {"explain", cmd_explain_action},
                 });

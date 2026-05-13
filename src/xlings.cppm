@@ -193,7 +193,8 @@ void seed_xlings_json(const Env& env,
                       std::string_view mirror = "CN");
 
 // Persist the xlings mirror selection in .xlings.json via xlings itself.
-int set_mirror(const Env& env, std::string_view mirror, bool quiet = false);
+int config_show(const Env& env);
+int config_set_mirror(const Env& env, std::string_view mirror, bool quiet = false);
 
 // Run xlings self init.
 void ensure_init(const Env& env, bool quiet);
@@ -707,13 +708,16 @@ void seed_xlings_json(const Env& env,
     write_file(path, json);
 }
 
-int set_mirror(const Env& env, std::string_view mirror, bool quiet) {
+int config_show(const Env& env) {
+    auto cmd = std::format("{} config", build_command_prefix(env));
+    return std::system(cmd.c_str());
+}
+
+int config_set_mirror(const Env& env, std::string_view mirror, bool quiet) {
     if (mirror.empty()) return 0;
     auto cmd = std::format(
-        "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} config --mirror {} {}",
-        shq(env.home.string()),
-        shq(env.home.string()),
-        shq(env.binary.string()),
+        "{} config --mirror {} {}",
+        build_command_prefix(env),
         shq(mirror),
         quiet ? ">/dev/null 2>&1" : "");
     return std::system(cmd.c_str());
