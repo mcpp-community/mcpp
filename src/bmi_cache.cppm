@@ -55,8 +55,9 @@ bool is_cached(const CacheKey& key);
 std::expected<DepArtifacts, std::string>
 read_manifest(const CacheKey& key);
 
-// Copy cached files into projectTarget/{gcm.cache,obj}, bumping mtime so
-// ninja sees them as up-to-date relative to the (untouched) source files.
+// Copy missing cached files into projectTarget/{gcm.cache,obj}. Existing
+// project outputs are left untouched: GCC BMIs may differ byte-for-byte between
+// equivalent builds, and overwriting them would dirty downstream modules.
 std::expected<DepArtifacts, std::string>
 stage_into(const CacheKey& key,
            const std::filesystem::path& projectTargetDir);
@@ -150,6 +151,11 @@ stage_into(const CacheKey& key,
     for (auto& g : arts->gcmFiles) {
         auto from = key.gcmDir() / g;
         auto to   = projectGcm   / g;
+        if (std::filesystem::exists(to, ec)) {
+            ec.clear();
+            continue;
+        }
+        ec.clear();
         if (!copy_one(from, to, ec)) {
             return std::unexpected(std::format(
                 "stage gcm '{}': {}", g, ec.message()));
@@ -159,6 +165,11 @@ stage_into(const CacheKey& key,
     for (auto& o : arts->objFiles) {
         auto from = key.objDir() / o;
         auto to   = projectObj   / o;
+        if (std::filesystem::exists(to, ec)) {
+            ec.clear();
+            continue;
+        }
+        ec.clear();
         if (!copy_one(from, to, ec)) {
             return std::unexpected(std::format(
                 "stage obj '{}': {}", o, ec.message()));
