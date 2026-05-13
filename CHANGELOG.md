@@ -3,6 +3,27 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.14] — 2026-05-13
+
+LLVM / Clang 工具链支持与 xlings 镜像配置完善。
+
+### 新增
+
+- ✅ **LLVM / Clang 工具链支持** —— 新增基于 `clang++`、`clang-scan-deps`、
+  `llvm-ar`、`lld` 的工具链探测与构建路径，支持 xlings `llvm` 包提供的
+  自包含 Linux LLVM 工具链。
+- ✅ **`import std` 支持** —— LLVM libc++ 模块标准库可用时，自动发现
+  `std.cppm` / `std.compat.cppm`，并接入标准库 BMI 预构建流程。
+- ✅ **`mcpp self config --mirror`** —— 通过 xlings 抽象层配置 sandbox
+  镜像，默认初始化为 `CN`，CI 可显式切换为 `GLOBAL`。
+
+### 改进
+
+- 🔧 **工具链 provider 拆分** —— 将通用模型、探测逻辑、GCC、Clang、LLVM
+  provider 与 registry 分离到独立模块，为后续更多工具链扩展预留入口。
+- 🔧 **xlings 索引兼容迁移** —— 自动将历史 `mcpp-index` 索引名迁移到
+  `mcpplibs`，避免旧 sandbox 状态影响新流程。
+
 ## [0.0.4] — 2026-05-10
 
 构建 / 环境体验优化三件套。
