@@ -126,7 +126,11 @@ bool is_c_source(const std::filesystem::path& src) {
 }  // namespace
 
 std::string emit_ninja_string(const BuildPlan& plan) {
-    bool dyndep = dyndep_mode_enabled();
+    // Clang uses clang-scan-deps (not -fdeps-format=p1689r5) for P1689
+    // scanning, so dyndep is GCC-only for now. Clang falls through to the
+    // static-deps path which uses BmiTraits for correct pcm.cache/ paths.
+    bool dyndep = dyndep_mode_enabled()
+               && mcpp::toolchain::is_gcc(plan.toolchain);
     auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
@@ -368,12 +372,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (cu.providesModule) {
-                out_line += " " + bmi_path(*cu.providesModule);
+                // Use implicit output (|) so $out only contains the .o file.
+                // GCC writes BMI implicitly; Clang uses -fmodule-output=$bmi_out.
+                out_line += " | " + bmi_path(*cu.providesModule);
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!implicit.empty())
                 out_line += " |" + implicit;
             out_line += "\n";
+            // Clang needs $bmi_out to emit -fmodule-output=$bmi_out
+            if (cu.providesModule) {
+                out_line += "  bmi_out = " + bmi_path(*cu.providesModule) + "\n";
+            }
             append(std::move(out_line));
         }
         append("\n");
