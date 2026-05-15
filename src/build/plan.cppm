@@ -37,6 +37,7 @@ struct BuildPlan {
     std::filesystem::path           outputDir;        // target/<triple>/<fp>/
     std::filesystem::path           stdBmiPath;      // absolute path to prebuilt std.gcm
     std::filesystem::path           stdObjectPath;   // absolute path to prebuilt std.o
+    std::filesystem::path           scanDepsPath;    // clang-scan-deps binary (Clang only)
 
     std::vector<CompileUnit>        compileUnits;     // topologically sorted
     std::vector<LinkUnit>           linkUnits;

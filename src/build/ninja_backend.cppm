@@ -126,8 +126,13 @@ bool is_c_source(const std::filesystem::path& src) {
 }  // namespace
 
 std::string emit_ninja_string(const BuildPlan& plan) {
-    bool dyndep = dyndep_mode_enabled()
-               && mcpp::toolchain::is_gcc(plan.toolchain);
+    // dyndep requires P1689 scanning capability:
+    //   GCC: built-in -fdeps-format=p1689r5
+    //   Clang: external clang-scan-deps tool (same P1689 output format)
+    bool has_scanner = mcpp::toolchain::is_gcc(plan.toolchain)
+                    || !plan.scanDepsPath.empty();
+    bool dyndep = dyndep_mode_enabled() && has_scanner;
+    auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
 
@@ -162,6 +167,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
     if (dyndep) {
         append(std::format("mcpp      = {}\n", escape_ninja_path(mcpp_exe_path())));
+        if (!plan.scanDepsPath.empty()) {
+            append(std::format("scan_deps = {}\n", escape_ninja_path(plan.scanDepsPath)));
+        }
     }
     append("\n");
 
@@ -170,10 +178,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  description = STAGE $out\n\n");
 
     // P1: per-file dyndep rule. Converts one .ddi → .dd independently.
-    append("rule cxx_dyndep\n");
-    append("  command = $mcpp dyndep --single --output $out $in\n");
-    append("  description = DYNDEP $out\n");
-    append("  restat = 1\n\n");
+    append(std::format(
+        "rule cxx_dyndep\n"
+        "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} --output $out $in\n"
+        "  description = DYNDEP $out\n"
+        "  restat = 1\n\n",
+        traits.bmiDir, traits.bmiExt));
 
     // P2: cxx_module preserves BMI timestamps when interface is unchanged.
     // GCC always updates the .gcm timestamp even if content is identical.
@@ -184,18 +194,20 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     //
     // $bmi_out is set per build edge to the BMI path (gcm.cache/<module>.gcm).
     // If $bmi_out is empty (no module provided), we just compile normally.
+    std::string module_output_flag = traits.needsExplicitModuleOutput
+        ? " -fmodule-output=$bmi_out" : "";
     append("rule cxx_module\n");
-    append("  command = "
+    append(std::format("  command = "
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
              "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
            "fi && "
-           "$toolenv $cxx $cxxflags -c $in -o $out && "
+           "$toolenv $cxx $cxxflags{} -c $in -o $out && "
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
               "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
              "mv \"$bmi_out.bak\" \"$bmi_out\"; "
            "else "
              "rm -f \"$bmi_out.bak\"; "
-           "fi\n");
+           "fi\n", module_output_flag));
     append("  description = MOD $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -231,18 +243,31 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.
-        // -E -M -MM -MF gives us the dep file; -fdeps-* gives us the .ddi.
+        // GCC: built-in -fdeps-format=p1689r5 flags during preprocessing.
+        // Clang: external clang-scan-deps tool with -format=p1689.
         append("rule cxx_scan\n");
-        append("  command = $toolenv $cxx $cxxflags -fdeps-format=p1689r5 "
-               "-fdeps-file=$out -fdeps-target=$compile_target "
-               "-M -MM -MF $out.dep -E $in -o $compile_target\n");
+        if (plan.scanDepsPath.empty()) {
+            // GCC path: compiler-integrated P1689 scanning.
+            append("  command = $toolenv $cxx $cxxflags -fmodules "
+                   "-fdeps-format=p1689r5 "
+                   "-fdeps-file=$out -fdeps-target=$compile_target "
+                   "-M -MM -MF $out.dep -E $in -o $compile_target\n");
+        } else {
+            // Clang path: clang-scan-deps produces P1689 JSON to stdout,
+            // then we redirect to $out. The -- separator passes the full
+            // compile command so clang-scan-deps knows the flags/sysroot.
+            append("  command = $toolenv $scan_deps -format=p1689 -- "
+                   "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+        }
         append("  description = SCAN $out\n\n");
 
         // Aggregate .ddi files into a Ninja dyndep file.
-        append("rule cxx_collect\n");
-        append("  command = $mcpp dyndep --output $out $in\n");
-        append("  description = COLLECT $out\n");
-        append("  restat = 1\n\n");
+        append(std::format(
+            "rule cxx_collect\n"
+            "  command = $mcpp dyndep --bmi-dir {} --bmi-ext {} --output $out $in\n"
+            "  description = COLLECT $out\n"
+            "  restat = 1\n\n",
+            traits.bmiDir, traits.bmiExt));
     }
 
     // Stage prebuilt std artifacts into the compiler-specific BMI cache.
@@ -257,11 +282,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                            escape_ninja_path(plan.stdObjectPath)));
     }
 
-    auto bmi_path = [](std::string_view name) {
-        std::string s = "gcm.cache/";
+    auto bmi_path = [&traits](std::string_view name) {
+        std::string s(traits.bmiDir);
+        s += '/';
         for (char c : name)
             s.push_back(c == ':' ? '-' : c);
-        s += ".gcm";
+        s += traits.bmiExt;
         return s;
     };
 
@@ -360,12 +386,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (cu.providesModule) {
-                out_line += " " + bmi_path(*cu.providesModule);
+                // Use implicit output (|) so $out only contains the .o file.
+                // GCC writes BMI implicitly; Clang uses -fmodule-output=$bmi_out.
+                out_line += " | " + bmi_path(*cu.providesModule);
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!implicit.empty())
                 out_line += " |" + implicit;
             out_line += "\n";
+            // Clang needs $bmi_out to emit -fmodule-output=$bmi_out
+            if (cu.providesModule) {
+                out_line += "  bmi_out = " + bmi_path(*cu.providesModule) + "\n";
+            }
             append(std::move(out_line));
         }
         append("\n");

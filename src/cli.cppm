@@ -1991,6 +1991,14 @@ prepare_build(bool print_fingerprint,
     ctx.plan        = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
                                              *root, ctx.outputDir, stdBmiPath, stdObjectPath);
 
+    // Clang: discover clang-scan-deps for P1689 dyndep scanning.
+    if (mcpp::toolchain::is_clang(*tc)) {
+        auto sd = tc->binaryPath.parent_path() / "clang-scan-deps";
+        if (std::filesystem::exists(sd)) {
+            ctx.plan.scanDepsPath = sd;
+        }
+    }
+
     // ─── M3.2: BMI cache stage / populate-task collection ─────────────
     // For each version-based dep package (i.e. fetched from a registry,
     // not a path dep), check the global BMI cache. If cached → stage into
@@ -2023,12 +2031,15 @@ prepare_build(bool print_fingerprint,
             }
             if (skipCache) continue;
 
+            auto bmiT = mcpp::toolchain::bmi_traits(*tc);
             mcpp::bmi_cache::CacheKey key {
                 .mcppHome    = (*cfg2)->mcppHome,
                 .fingerprint = fp.hex,
                 .indexName   = (*cfg2)->defaultIndex,
                 .packageName = depName,
                 .version     = depVer,
+                .bmiDirName  = std::string(bmiT.bmiDir),
+                .manifestTag = std::string(bmiT.manifestPrefix),
             };
 
             // Compute the artifacts list from the build plan: every
@@ -2042,11 +2053,11 @@ prepare_build(bool print_fingerprint,
                 if (rels.starts_with("..")) continue;       // not under depRoot
 
                 if (cu.providesModule) {
-                    std::string gcm;
+                    std::string bmi;
                     for (char c : *cu.providesModule)
-                        gcm.push_back(c == ':' ? '-' : c);
-                    gcm += ".gcm";
-                    arts.gcmFiles.push_back(std::move(gcm));
+                        bmi.push_back(c == ':' ? '-' : c);
+                    bmi += std::string(bmiT.bmiExt);
+                    arts.bmiFiles.push_back(std::move(bmi));
                 }
                 arts.objFiles.push_back(cu.object.filename().string());
             }
@@ -3558,18 +3569,26 @@ int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     bool single = parsed.is_flag_set("single");
 
+    mcpp::dyndep::DyndepOptions opts;
+    std::string bmiDirStorage = parsed.option_or_empty("bmi-dir").value();
+    std::string bmiExtStorage = parsed.option_or_empty("bmi-ext").value();
+    if (!bmiDirStorage.empty())
+        opts.bmiDir = bmiDirStorage;
+    if (!bmiExtStorage.empty())
+        opts.bmiExt = bmiExtStorage;
+
     std::expected<std::string, std::string> body;
     if (single) {
         if (parsed.positional_count() != 1) {
             std::println(stderr, "error: --single requires exactly one .ddi input");
             return 2;
         }
-        body = mcpp::dyndep::emit_dyndep_single(parsed.positional(0));
+        body = mcpp::dyndep::emit_dyndep_single(parsed.positional(0), opts);
     } else {
         std::vector<std::filesystem::path> ddis;
         for (std::size_t i = 0; i < parsed.positional_count(); ++i)
             ddis.emplace_back(parsed.positional(i));
-        body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{});
+        body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{}, opts);
     }
 
     if (!body) {
@@ -3887,6 +3906,10 @@ int run(int argc, char** argv) {
             .option(cl::Option("output").short_name('o').takes_value().value_name("PATH")
                 .help("Path to write dyndep file"))
             .option(cl::Option("single").help("Single-file mode: one .ddi → one .dd"))
+            .option(cl::Option("bmi-dir").takes_value().value_name("DIR")
+                .help("BMI cache directory name (default: gcm.cache)"))
+            .option(cl::Option("bmi-ext").takes_value().value_name("EXT")
+                .help("BMI file extension (default: .gcm)"))
             .action(wrap_rc(cmd_dyndep)))
     ;
 

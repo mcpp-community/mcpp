@@ -46,7 +46,7 @@ TEST(BmiCache, KeyDirLayoutMatchesDocs26) {
     EXPECT_EQ(k.dir().string(),
               "/home/u/.mcpp/bmi/deadbeef0123abcd/deps/mcpplibs/mcpplibs.cmdline@0.0.1");
     EXPECT_EQ(k.manifestFile().filename().string(), "manifest.txt");
-    EXPECT_EQ(k.gcmDir().filename().string(),       "gcm.cache");
+    EXPECT_EQ(k.bmiDir().filename().string(),       "gcm.cache");
     EXPECT_EQ(k.objDir().filename().string(),       "obj");
 }
 
@@ -68,7 +68,7 @@ TEST(BmiCache, PopulateThenStageRoundTrip) {
     writeFile(project / "obj"       / "cmdline.m.o",                  "OBJ-A");
 
     DepArtifacts arts {
-        .gcmFiles = { "mcpplibs.cmdline.gcm", "mcpplibs.cmdline-options.gcm" },
+        .bmiFiles = { "mcpplibs.cmdline.gcm", "mcpplibs.cmdline-options.gcm" },
         .objFiles = { "cmdline.m.o" },
     };
 
@@ -77,8 +77,8 @@ TEST(BmiCache, PopulateThenStageRoundTrip) {
     ASSERT_TRUE(pop) << pop.error();
 
     EXPECT_TRUE(std::filesystem::exists(k.manifestFile()));
-    EXPECT_TRUE(std::filesystem::exists(k.gcmDir() / "mcpplibs.cmdline.gcm"));
-    EXPECT_TRUE(std::filesystem::exists(k.gcmDir() / "mcpplibs.cmdline-options.gcm"));
+    EXPECT_TRUE(std::filesystem::exists(k.bmiDir() / "mcpplibs.cmdline.gcm"));
+    EXPECT_TRUE(std::filesystem::exists(k.bmiDir() / "mcpplibs.cmdline-options.gcm"));
     EXPECT_TRUE(std::filesystem::exists(k.objDir() / "cmdline.m.o"));
     EXPECT_TRUE(is_cached(k));
 
@@ -86,7 +86,7 @@ TEST(BmiCache, PopulateThenStageRoundTrip) {
     auto project2 = t.path / "proj2" / "target";
     auto staged = stage_into(k, project2);
     ASSERT_TRUE(staged) << staged.error();
-    EXPECT_EQ(staged->gcmFiles.size(), 2u);
+    EXPECT_EQ(staged->bmiFiles.size(), 2u);
     EXPECT_EQ(staged->objFiles.size(), 1u);
     EXPECT_TRUE(std::filesystem::exists(project2 / "gcm.cache" / "mcpplibs.cmdline.gcm"));
     EXPECT_TRUE(std::filesystem::exists(project2 / "obj"       / "cmdline.m.o"));
@@ -108,7 +108,7 @@ TEST(BmiCache, StageIntoDoesNotTouchIdenticalOutputs) {
     writeFile(project / "obj"       / "cmdline.m.o",          "OBJ-A");
 
     DepArtifacts arts {
-        .gcmFiles = { "mcpplibs.cmdline.gcm" },
+        .bmiFiles = { "mcpplibs.cmdline.gcm" },
         .objFiles = { "cmdline.m.o" },
     };
 
@@ -140,7 +140,7 @@ TEST(BmiCache, StageIntoDoesNotOverwriteExistingOutputs) {
     writeFile(cacheProject / "obj"       / "cmdline.m.o",          "CACHE-OBJ");
 
     DepArtifacts arts {
-        .gcmFiles = { "mcpplibs.cmdline.gcm" },
+        .bmiFiles = { "mcpplibs.cmdline.gcm" },
         .objFiles = { "cmdline.m.o" },
     };
 
@@ -178,7 +178,7 @@ TEST(BmiCache, IsCachedFalseWhenSentinelExistsButFileMissing) {
     writeFile(project / "gcm.cache" / "lib.gcm", "G");
     writeFile(project / "obj"       / "lib.m.o", "O");
 
-    DepArtifacts arts { .gcmFiles = {"lib.gcm"}, .objFiles = {"lib.m.o"} };
+    DepArtifacts arts { .bmiFiles = {"lib.gcm"}, .objFiles = {"lib.m.o"} };
     auto k = makeKey(home);
     ASSERT_TRUE(populate_from(k, project, arts));
     ASSERT_TRUE(is_cached(k));
@@ -193,7 +193,7 @@ TEST(BmiCache, PopulateFailsIfBuildOutputMissing) {
     auto home    = t.path / "home";
     auto project = t.path / "proj" / "target";
     std::filesystem::create_directories(project / "gcm.cache");
-    DepArtifacts arts { .gcmFiles = {"missing.gcm"}, .objFiles = {} };
+    DepArtifacts arts { .bmiFiles = {"missing.gcm"}, .objFiles = {} };
     auto k = makeKey(home);
     auto pop = populate_from(k, project, arts);
     EXPECT_FALSE(pop);
@@ -219,7 +219,7 @@ TEST(BmiCache, PopulateSkipsWhenLockHeld) {
     ASSERT_GE(fd, 0);
     ASSERT_EQ(::flock(fd, LOCK_EX | LOCK_NB), 0);
 
-    DepArtifacts arts { .gcmFiles = {"lib.gcm"}, .objFiles = {"lib.m.o"} };
+    DepArtifacts arts { .bmiFiles = {"lib.gcm"}, .objFiles = {"lib.m.o"} };
     auto pop = populate_from(k, project, arts);
     EXPECT_TRUE(pop) << "should silently skip when lock is held";
     // manifest.txt must NOT have been written by the second writer.

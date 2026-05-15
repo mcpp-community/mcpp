@@ -28,6 +28,9 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
 
 std::filesystem::path archive_tool(const Toolchain& tc);
 
+// Locate clang-scan-deps in the same bin/ directory as clang++.
+std::optional<std::filesystem::path> find_scan_deps(const Toolchain& tc);
+
 } // namespace mcpp::toolchain::clang
 
 namespace mcpp::toolchain::clang {
@@ -162,6 +165,12 @@ std::filesystem::path archive_tool(const Toolchain& tc) {
     auto llvmAr = tc.binaryPath.parent_path() / "llvm-ar";
     if (std::filesystem::exists(llvmAr)) return llvmAr;
     return {};
+}
+
+std::optional<std::filesystem::path> find_scan_deps(const Toolchain& tc) {
+    auto p = tc.binaryPath.parent_path() / "clang-scan-deps";
+    if (std::filesystem::exists(p)) return p;
+    return std::nullopt;
 }
 
 } // namespace mcpp::toolchain::clang
