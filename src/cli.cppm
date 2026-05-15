@@ -1283,6 +1283,18 @@ prepare_build(bool print_fingerprint,
     // different version is needed. Returns the dep's effective root (where
     // mcpp.toml lives) and a fully loaded manifest.
     using LoadedDep = std::pair<std::filesystem::path, mcpp::manifest::Manifest>;
+    // Helper: find the IndexSpec for a namespace from the manifest's [indices].
+    // Returns nullptr if the namespace maps to the default/builtin index.
+    auto findIndexForNs = [&](const std::string& ns)
+        -> const mcpp::pm::IndexSpec*
+    {
+        if (ns.empty() || ns == std::string(mcpp::pm::kDefaultNamespace)) return nullptr;
+        for (auto& [idxName, spec] : m->indices) {
+            if (idxName == ns) return &spec;
+        }
+        return nullptr;
+    };
+
     // 0.0.10+: loadVersionDep accepts structured (ns, shortName) for
     // namespace-aware lookup. depName is the map key (qualified or bare),
     // kept for install() target formatting and error messages.
@@ -1296,7 +1308,36 @@ prepare_build(bool print_fingerprint,
         if (!cfg) return std::unexpected(cfg.error());
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
-        auto installed = fetcher.install_path(ns, shortName, version);
+        // ─── Routing: check if this dep's namespace maps to a custom index ──
+        auto* idxSpec = findIndexForNs(ns);
+
+        // For local path indices, read xpkg.lua directly and skip install.
+        if (idxSpec && idxSpec->is_local()) {
+            auto luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
+                idxSpec->path, shortName);
+            if (!luaContent) return std::unexpected(std::format(
+                "dependency '{}': not found in local index at '{}'",
+                depName, idxSpec->path.string()));
+            auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
+            auto luaNs = mcpp::manifest::extract_xpkg_namespace(*luaContent);
+
+            // For local path indices, there's no install path — the package
+            // must be available as a path dep or embedded. Fall through to
+            // regular install path resolution for now (the xpkg lua is found,
+            // the install may still come from global or project data).
+            // In the future, local indices may support a packages/ dir layout.
+        }
+
+        // For custom git indices, try project-level .mcpp/data/ first.
+        std::optional<std::filesystem::path> installed;
+        if (idxSpec && !idxSpec->is_local() && !idxSpec->is_builtin()) {
+            installed = mcpp::fetcher::Fetcher::install_path_from_project_data(
+                *root, ns, shortName, version);
+        }
+        if (!installed) {
+            installed = fetcher.install_path(ns, shortName, version);
+        }
+
         if (!installed) {
             // xlings resolves packages by the full qualified name (ns.shortName)
             // as it appears in the index's name field. Use fqname, not the
@@ -1334,7 +1375,18 @@ prepare_build(bool print_fingerprint,
         }
         std::filesystem::path verRoot = *installed;
 
-        auto luaContent = fetcher.read_xpkg_lua(ns, shortName);
+        // Route xpkg.lua reading through the appropriate index.
+        std::optional<std::string> luaContent;
+        if (idxSpec && idxSpec->is_local()) {
+            luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
+                idxSpec->path, shortName);
+        } else if (idxSpec && !idxSpec->is_builtin()) {
+            luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
+                *root, ns, shortName);
+        }
+        if (!luaContent) {
+            luaContent = fetcher.read_xpkg_lua(ns, shortName);
+        }
         if (!luaContent) return std::unexpected(std::format(
             "dependency '{}': index entry not found in local clone", depName));
         auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
@@ -2098,17 +2150,32 @@ prepare_build(bool print_fingerprint,
     // Path deps are intentionally NOT locked — their source is local filesystem.
     {
         mcpp::lockfile::Lockfile lock;
+        lock.schemaVersion = 2;
+
+        // Lock custom index shas from manifest [indices] section.
+        for (auto const& [idxName, spec] : m->indices) {
+            if (spec.is_local() || spec.is_builtin()) continue;
+            mcpp::lockfile::LockedIndex li;
+            li.name = idxName;
+            li.url  = spec.url;
+            li.rev  = spec.rev;   // may be empty if not yet resolved
+            lock.indices.push_back(std::move(li));
+        }
+
         for (auto const& [name, spec] : m->dependencies) {
             if (spec.isPath()) continue;
             mcpp::lockfile::LockedPackage lp;
-            lp.name    = name;
-            lp.version = spec.version;
-            lp.source  = std::format("mcpplibs+{}",
-                                     "https://github.com/mcpp-community/mcpp-index.git");
-            lp.hash    = "sha256:<from-xlings>";   // M3 will populate from install plan
+            lp.name       = name;
+            lp.namespace_ = spec.namespace_.empty()
+                ? std::string(mcpp::pm::kDefaultNamespace)
+                : spec.namespace_;
+            lp.version    = spec.version;
+            lp.source     = std::format("index+{}@{}",
+                                        lp.namespace_, "sha:<from-xlings>");
+            lp.hash       = "sha256:<from-xlings>";   // M3 will populate from install plan
             lock.packages.push_back(std::move(lp));
         }
-        if (!lock.packages.empty()) {
+        if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = *root / "mcpp.lock";
             (void)mcpp::lockfile::write(lock, lockPath);
         }
@@ -2567,14 +2634,302 @@ int cmd_index_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
     return 0;
 }
 
-int cmd_index_update(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
+int cmd_index_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
+
+    // Update global index repos.
     mcpp::ui::status("Updating", "all index repos");
     auto xlEnv = mcpp::config::make_xlings_env(*cfg);
     int rc = mcpp::xlings::update_index(xlEnv);
     if (rc != 0) { mcpp::ui::error("index update failed"); return 1; }
+
+    // Also update project-level custom indices if present.
+    auto root = find_manifest_root(std::filesystem::current_path());
+    if (root) {
+        auto m = mcpp::manifest::load(*root / "mcpp.toml");
+        if (m && !m->indices.empty()) {
+            std::string filterName = parsed.positional(0);  // optional: update only this index
+            for (auto& [idxName, spec] : m->indices) {
+                if (!filterName.empty() && idxName != filterName) continue;
+                if (spec.is_local()) {
+                    mcpp::ui::status("Skipped", std::format("index `{}` is a local path", idxName));
+                    continue;
+                }
+                if (spec.is_builtin()) continue;
+                // Re-sync the project-level clone via xlings.
+                mcpp::config::ensure_project_index_dir(*cfg, *root, m->indices);
+                auto projEnv = mcpp::config::make_project_xlings_env(*cfg, *root);
+                int prc = mcpp::xlings::update_index(projEnv);
+                if (prc != 0) {
+                    mcpp::ui::error(std::format("project index `{}` update failed", idxName));
+                } else {
+                    mcpp::ui::status("Updated", std::format("project index `{}`", idxName));
+                }
+                break;  // ensure_project_index_dir handles all non-local indices at once
+            }
+        }
+    }
+
     mcpp::ui::status("Updated", "index refresh complete");
+    return 0;
+}
+
+// ─── mcpp index pin <name> [<rev>] ─────────────────────────────────────
+//
+// Pins a custom index to a specific revision in mcpp.toml. If no rev is
+// given, uses the current lock's rev for that index.
+
+int cmd_index_pin(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    std::string name = parsed.positional(0);
+    if (name.empty()) {
+        mcpp::ui::error("usage: mcpp index pin <name> [<rev>]");
+        return 2;
+    }
+    std::string rev = parsed.positional(1);
+
+    auto root = find_manifest_root(std::filesystem::current_path());
+    if (!root) {
+        mcpp::ui::error("no mcpp.toml found in current directory or any parent");
+        return 2;
+    }
+
+    // If no rev supplied, try to get it from the lockfile.
+    if (rev.empty()) {
+        auto lockPath = *root / "mcpp.lock";
+        auto lockRes = mcpp::lockfile::load(lockPath);
+        if (lockRes) {
+            for (auto& idx : lockRes->indices) {
+                if (idx.name == name) { rev = idx.rev; break; }
+            }
+        }
+    }
+    if (rev.empty()) {
+        mcpp::ui::error(std::format(
+            "no revision found for index `{}`. Run `mcpp index update` first, or supply a rev.",
+            name));
+        return 1;
+    }
+
+    // Read mcpp.toml as text and insert/update rev field in [indices.<name>].
+    auto tomlPath = *root / "mcpp.toml";
+    std::ifstream is(tomlPath);
+    if (!is) { mcpp::ui::error(std::format("cannot read '{}'", tomlPath.string())); return 1; }
+    std::stringstream ss; ss << is.rdbuf();
+    std::string text = ss.str();
+    is.close();
+
+    // Strategy: find the [indices] section, then find/create the key.
+    // For short form `name = "url"`, replace with long form.
+    // For long form `[indices.<name>]` or inline `name = { ... }`, insert/update rev.
+    // Use a simple approach: find `[indices]` section, then search for the key name.
+    auto indicesPos = text.find("[indices]");
+    if (indicesPos == std::string::npos) {
+        mcpp::ui::error(std::format("no [indices] section in mcpp.toml for `{}`", name));
+        return 1;
+    }
+
+    auto bodyStart = text.find('\n', indicesPos);
+    if (bodyStart == std::string::npos) bodyStart = text.size();
+    else bodyStart += 1;
+    auto nextSec = text.find("\n[", bodyStart);
+    // Avoid matching [indices.*] sub-tables — look for a line starting with [
+    // that is NOT [indices.
+    auto bodyEnd = std::string::npos;
+    {
+        auto pos = bodyStart;
+        while (pos < text.size()) {
+            auto nl = text.find("\n[", pos);
+            if (nl == std::string::npos) break;
+            auto secName = text.substr(nl + 2, 20);
+            if (!secName.starts_with("indices.") && !secName.starts_with("indices]")) {
+                bodyEnd = nl;
+                break;
+            }
+            pos = nl + 2;
+        }
+    }
+    if (bodyEnd == std::string::npos) bodyEnd = text.size();
+    auto body = std::string_view(text).substr(bodyStart, bodyEnd - bodyStart);
+
+    // Find the key line: `name = ...` within the indices body.
+    auto keyPos = body.find(name);
+    if (keyPos == std::string::npos) {
+        mcpp::ui::error(std::format("index `{}` not found in [indices] section", name));
+        return 1;
+    }
+    auto absKeyPos = bodyStart + keyPos;
+
+    // Find the line containing this key.
+    auto lineEnd = text.find('\n', absKeyPos);
+    if (lineEnd == std::string::npos) lineEnd = text.size();
+    auto lineContent = text.substr(absKeyPos, lineEnd - absKeyPos);
+
+    // Check if it's inline table form: `name = { ... }`
+    auto braceOpen = lineContent.find('{');
+    if (braceOpen != std::string::npos) {
+        // Inline table. Find the closing brace and insert/update rev.
+        auto braceClose = lineContent.find('}', braceOpen);
+        if (braceClose == std::string::npos) {
+            mcpp::ui::error("malformed inline table in mcpp.toml");
+            return 1;
+        }
+        auto tableContent = lineContent.substr(braceOpen + 1, braceClose - braceOpen - 1);
+        auto revPos = tableContent.find("rev");
+        if (revPos != std::string::npos) {
+            // Replace existing rev value. Find the value start and end.
+            auto eqPos = tableContent.find('=', revPos);
+            auto valStart = tableContent.find('"', eqPos);
+            auto valEnd = tableContent.find('"', valStart + 1);
+            if (valStart != std::string::npos && valEnd != std::string::npos) {
+                // Replace in the original text.
+                auto absValStart = absKeyPos + braceOpen + 1 + valStart + 1;
+                auto absValEnd = absKeyPos + braceOpen + 1 + valEnd;
+                text.replace(absValStart, absValEnd - absValStart, rev);
+            }
+        } else {
+            // Insert rev field before closing brace.
+            auto absClose = absKeyPos + braceClose;
+            std::string insert = std::format(", rev = \"{}\"", rev);
+            text.insert(absClose, insert);
+        }
+    } else if (lineContent.find('"') != std::string::npos) {
+        // Short form: `name = "url"` — convert to long form with rev.
+        auto qStart = lineContent.find('"');
+        auto qEnd = lineContent.find('"', qStart + 1);
+        if (qStart != std::string::npos && qEnd != std::string::npos) {
+            auto url = lineContent.substr(qStart + 1, qEnd - qStart - 1);
+            std::string replacement = std::format("{} = {{ url = \"{}\", rev = \"{}\" }}",
+                                                  name, url, rev);
+            text.replace(absKeyPos, lineEnd - absKeyPos, replacement);
+        }
+    } else {
+        mcpp::ui::error(std::format("cannot parse index `{}` entry in mcpp.toml", name));
+        return 1;
+    }
+
+    std::ofstream os(tomlPath);
+    if (!os) { mcpp::ui::error(std::format("cannot write '{}'", tomlPath.string())); return 1; }
+    os << text;
+
+    mcpp::ui::status("Pinned", std::format("index `{}` to rev {}", name, rev.substr(0, 12)));
+    return 0;
+}
+
+// ─── mcpp index unpin <name> ──────────────────────────────────────────
+//
+// Removes the `rev` field from a custom index entry in mcpp.toml.
+
+int cmd_index_unpin(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    std::string name = parsed.positional(0);
+    if (name.empty()) {
+        mcpp::ui::error("usage: mcpp index unpin <name>");
+        return 2;
+    }
+
+    auto root = find_manifest_root(std::filesystem::current_path());
+    if (!root) {
+        mcpp::ui::error("no mcpp.toml found in current directory or any parent");
+        return 2;
+    }
+
+    auto tomlPath = *root / "mcpp.toml";
+    std::ifstream is(tomlPath);
+    if (!is) { mcpp::ui::error(std::format("cannot read '{}'", tomlPath.string())); return 1; }
+    std::stringstream ss; ss << is.rdbuf();
+    std::string text = ss.str();
+    is.close();
+
+    auto indicesPos = text.find("[indices]");
+    if (indicesPos == std::string::npos) {
+        mcpp::ui::error(std::format("no [indices] section in mcpp.toml for `{}`", name));
+        return 1;
+    }
+
+    auto bodyStart = text.find('\n', indicesPos);
+    if (bodyStart == std::string::npos) bodyStart = text.size();
+    else bodyStart += 1;
+    auto bodyEnd = std::string::npos;
+    {
+        auto pos = bodyStart;
+        while (pos < text.size()) {
+            auto nl = text.find("\n[", pos);
+            if (nl == std::string::npos) break;
+            auto secName = text.substr(nl + 2, 20);
+            if (!secName.starts_with("indices.") && !secName.starts_with("indices]")) {
+                bodyEnd = nl;
+                break;
+            }
+            pos = nl + 2;
+        }
+    }
+    if (bodyEnd == std::string::npos) bodyEnd = text.size();
+    auto body = std::string_view(text).substr(bodyStart, bodyEnd - bodyStart);
+
+    auto keyPos = body.find(name);
+    if (keyPos == std::string::npos) {
+        mcpp::ui::error(std::format("index `{}` not found in [indices] section", name));
+        return 1;
+    }
+    auto absKeyPos = bodyStart + keyPos;
+
+    auto lineEnd = text.find('\n', absKeyPos);
+    if (lineEnd == std::string::npos) lineEnd = text.size();
+    auto lineContent = text.substr(absKeyPos, lineEnd - absKeyPos);
+
+    auto braceOpen = lineContent.find('{');
+    if (braceOpen != std::string::npos) {
+        auto braceClose = lineContent.find('}', braceOpen);
+        if (braceClose == std::string::npos) {
+            mcpp::ui::error("malformed inline table in mcpp.toml");
+            return 1;
+        }
+        auto tableContent = lineContent.substr(braceOpen + 1, braceClose - braceOpen - 1);
+        auto revPos = tableContent.find("rev");
+        if (revPos == std::string::npos) {
+            mcpp::ui::info("Info", std::format("index `{}` has no rev to unpin", name));
+            return 0;
+        }
+        // Remove `, rev = "..."` or `rev = "...", ` from the inline table.
+        // Find the full `rev = "..."` span (including surrounding comma + spaces).
+        auto absTableStart = absKeyPos + braceOpen + 1;
+        auto absRevPos = absTableStart + revPos;
+
+        // Find the extent: key = "value"
+        auto eqPos = text.find('=', absRevPos);
+        auto valStart = text.find('"', eqPos);
+        auto valEnd = text.find('"', valStart + 1);
+        if (valStart == std::string::npos || valEnd == std::string::npos) {
+            mcpp::ui::error("cannot parse rev field in mcpp.toml");
+            return 1;
+        }
+        auto fieldEnd = valEnd + 1;
+
+        // Determine removal range including comma/spaces.
+        auto removeStart = absRevPos;
+        auto removeEnd = fieldEnd;
+        // Check for leading ", " (comma before rev).
+        if (removeStart >= 2 && text.substr(removeStart - 2, 2) == ", ") {
+            removeStart -= 2;
+        } else if (removeEnd < text.size() && text[removeEnd] == ',') {
+            removeEnd += 1;
+            if (removeEnd < text.size() && text[removeEnd] == ' ') removeEnd += 1;
+        }
+        // Also eat leading whitespace before "rev".
+        while (removeStart > absTableStart && text[removeStart - 1] == ' ') removeStart--;
+
+        text.erase(removeStart, removeEnd - removeStart);
+    } else {
+        mcpp::ui::info("Info", std::format(
+            "index `{}` is in short form (no rev to unpin)", name));
+        return 0;
+    }
+
+    std::ofstream os(tomlPath);
+    if (!os) { mcpp::ui::error(std::format("cannot write '{}'", tomlPath.string())); return 1; }
+    os << text;
+
+    mcpp::ui::status("Unpinned", std::format("index `{}` (rev removed)", name));
     return 0;
 }
 
@@ -3976,13 +4331,23 @@ int run(int argc, char** argv) {
                 .description("Remove a registry")
                 .arg(cl::Arg("name").help("Registry name").required()))
             .subcommand(cl::App("update")
-                .description("Refresh local registry clones"))
+                .description("Refresh local registry clones")
+                .arg(cl::Arg("name").help("If given, update only this index")))
+            .subcommand(cl::App("pin")
+                .description("Pin a custom index to a commit rev in mcpp.toml")
+                .arg(cl::Arg("name").help("Index name").required())
+                .arg(cl::Arg("rev").help("Commit sha (defaults to current lock rev)")))
+            .subcommand(cl::App("unpin")
+                .description("Remove rev pin from a custom index in mcpp.toml")
+                .arg(cl::Arg("name").help("Index name").required()))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("index", p, {
                     {"list",   cmd_index_list},
                     {"add",    cmd_index_add},
                     {"remove", cmd_index_remove},
                     {"update", cmd_index_update},
+                    {"pin",    cmd_index_pin},
+                    {"unpin",  cmd_index_unpin},
                 });
             })))
 
