@@ -18,6 +18,7 @@ std::string extract_version(std::string_view s);
 std::string first_line_of(std::string_view s);
 std::string lower_copy(std::string_view s);
 std::string trim_line(std::string s);
+std::string normalize_driver_output(std::string_view s);
 
 std::vector<std::filesystem::path>
 discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin);
@@ -126,6 +127,42 @@ std::string trim_line(std::string s) {
     while (!s.empty() && (s.front() == '\n' || s.front() == '\r' || s.front() == ' '))
         s.erase(s.begin());
     return s;
+}
+
+std::string normalize_driver_output(std::string_view s) {
+    auto replace_local_paths = [](std::string line) {
+        static constexpr std::array<std::string_view, 3> prefixes{
+            "/home/", "/tmp/", "/var/"
+        };
+        for (auto prefix : prefixes) {
+            std::size_t pos = 0;
+            while ((pos = line.find(prefix, pos)) != std::string::npos) {
+                auto end = pos;
+                while (end < line.size()) {
+                    unsigned char c = static_cast<unsigned char>(line[end]);
+                    if (std::isspace(c) || line[end] == '\'' || line[end] == '"')
+                        break;
+                    ++end;
+                }
+                line.replace(pos, end - pos, "<PATH>");
+                pos += std::string_view("<PATH>").size();
+            }
+        }
+        return line;
+    };
+
+    std::string out;
+    std::istringstream is(std::string{s});
+    std::string line;
+    while (std::getline(is, line)) {
+        line = trim_line(std::move(line));
+        if (line.empty()) continue;
+        if (line.starts_with("PWD=")) continue;
+        line = replace_local_paths(std::move(line));
+        if (!out.empty()) out.push_back('\n');
+        out += line;
+    }
+    return out;
 }
 
 std::vector<std::filesystem::path>

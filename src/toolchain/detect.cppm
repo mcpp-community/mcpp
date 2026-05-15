@@ -47,6 +47,7 @@ detect(const std::filesystem::path& explicit_compiler) {
     if (!ver_r) return std::unexpected(ver_r.error());
 
     const auto& vstr = *ver_r;
+    tc.driverIdent = normalize_driver_output(vstr);
     auto head = first_line_of(vstr);
     auto headLower = lower_copy(head);
     auto fullLower = lower_copy(vstr);

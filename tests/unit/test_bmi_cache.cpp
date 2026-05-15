@@ -97,6 +97,78 @@ TEST(BmiCache, PopulateThenStageRoundTrip) {
     EXPECT_EQ(body, "OBJ-A");
 }
 
+TEST(BmiCache, StageIntoDoesNotTouchIdenticalOutputs) {
+    Tmp t;
+    auto home    = t.path / "home";
+    auto project = t.path / "proj" / "target";
+    std::filesystem::create_directories(project / "gcm.cache");
+    std::filesystem::create_directories(project / "obj");
+
+    writeFile(project / "gcm.cache" / "mcpplibs.cmdline.gcm", "GCM-A");
+    writeFile(project / "obj"       / "cmdline.m.o",          "OBJ-A");
+
+    DepArtifacts arts {
+        .gcmFiles = { "mcpplibs.cmdline.gcm" },
+        .objFiles = { "cmdline.m.o" },
+    };
+
+    auto k = makeKey(home);
+    ASSERT_TRUE(populate_from(k, project, arts));
+
+    auto staged = stage_into(k, project);
+    ASSERT_TRUE(staged) << staged.error();
+    auto gcmTime = std::filesystem::last_write_time(project / "gcm.cache" / "mcpplibs.cmdline.gcm");
+    auto objTime = std::filesystem::last_write_time(project / "obj" / "cmdline.m.o");
+
+    auto stagedAgain = stage_into(k, project);
+    ASSERT_TRUE(stagedAgain) << stagedAgain.error();
+    EXPECT_EQ(std::filesystem::last_write_time(project / "gcm.cache" / "mcpplibs.cmdline.gcm"), gcmTime);
+    EXPECT_EQ(std::filesystem::last_write_time(project / "obj" / "cmdline.m.o"), objTime);
+}
+
+TEST(BmiCache, StageIntoDoesNotOverwriteExistingOutputs) {
+    Tmp t;
+    auto home         = t.path / "home";
+    auto cacheProject = t.path / "cache-proj" / "target";
+    auto project      = t.path / "proj" / "target";
+    std::filesystem::create_directories(cacheProject / "gcm.cache");
+    std::filesystem::create_directories(cacheProject / "obj");
+    std::filesystem::create_directories(project / "gcm.cache");
+    std::filesystem::create_directories(project / "obj");
+
+    writeFile(cacheProject / "gcm.cache" / "mcpplibs.cmdline.gcm", "CACHE-GCM");
+    writeFile(cacheProject / "obj"       / "cmdline.m.o",          "CACHE-OBJ");
+
+    DepArtifacts arts {
+        .gcmFiles = { "mcpplibs.cmdline.gcm" },
+        .objFiles = { "cmdline.m.o" },
+    };
+
+    auto k = makeKey(home);
+    ASSERT_TRUE(populate_from(k, cacheProject, arts));
+
+    writeFile(project / "gcm.cache" / "mcpplibs.cmdline.gcm", "PROJECT-GCM");
+    writeFile(project / "obj"       / "cmdline.m.o",          "PROJECT-OBJ");
+    auto gcmTime = std::filesystem::last_write_time(project / "gcm.cache" / "mcpplibs.cmdline.gcm");
+    auto objTime = std::filesystem::last_write_time(project / "obj" / "cmdline.m.o");
+
+    auto staged = stage_into(k, project);
+    ASSERT_TRUE(staged) << staged.error();
+
+    {
+        std::ifstream is(project / "gcm.cache" / "mcpplibs.cmdline.gcm");
+        std::string body((std::istreambuf_iterator<char>(is)), {});
+        EXPECT_EQ(body, "PROJECT-GCM");
+    }
+    {
+        std::ifstream is(project / "obj" / "cmdline.m.o");
+        std::string body((std::istreambuf_iterator<char>(is)), {});
+        EXPECT_EQ(body, "PROJECT-OBJ");
+    }
+    EXPECT_EQ(std::filesystem::last_write_time(project / "gcm.cache" / "mcpplibs.cmdline.gcm"), gcmTime);
+    EXPECT_EQ(std::filesystem::last_write_time(project / "obj" / "cmdline.m.o"), objTime);
+}
+
 TEST(BmiCache, IsCachedFalseWhenSentinelExistsButFileMissing) {
     Tmp t;
     auto home    = t.path / "home";

@@ -9,6 +9,7 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
 export MCPP_HOME="$TMP/mcpp-home"
+source "$(dirname "$0")/_inherit_toolchain.sh"
 
 # ── 1. Sibling lib package (acme:util). Pure-modular C++23. ─────────────
 mkdir -p "$TMP/util-pkg"

@@ -13,6 +13,7 @@ FingerprintInputs baseline() {
     in.toolchain.compiler        = CompilerId::GCC;
     in.toolchain.version         = "16.1.0";
     in.toolchain.binaryPath     = "/usr/bin/g++";
+    in.toolchain.driverIdent    = "g++ (xim-x-gcc 16.1.0) 16.1.0";
     in.toolchain.targetTriple   = "x86_64-linux-gnu";
     in.toolchain.stdlibId       = "libstdc++";
     in.toolchain.stdlibVersion  = "16.1.0";
@@ -52,7 +53,7 @@ TEST(Fingerprint, ProducesSixteenHexChars) {
 TEST(Fingerprint, AllTenFieldsAffectHash) {
     EXPECT_DIFFERENT(in.toolchain.compiler        = CompilerId::Clang);
     EXPECT_DIFFERENT(in.toolchain.version         = "16.0.0");
-    EXPECT_DIFFERENT(in.toolchain.binaryPath     = "/elsewhere/g++");
+    EXPECT_DIFFERENT(in.toolchain.driverIdent    = "g++ (xim-x-gcc 15.1.0) 15.1.0");
     EXPECT_DIFFERENT(in.toolchain.targetTriple   = "aarch64-linux-gnu");
     EXPECT_DIFFERENT(in.toolchain.stdlibId       = "libc++");
     EXPECT_DIFFERENT(in.cppStandard              = "c++26");
@@ -60,6 +61,15 @@ TEST(Fingerprint, AllTenFieldsAffectHash) {
     // mcpp version is hardcoded inside compute_fingerprint, can't mutate from here.
     EXPECT_DIFFERENT(in.dependencyLockHash      = "");
     EXPECT_DIFFERENT(in.stdBmiHash              = "ffffffffffffffff");
+}
+
+TEST(Fingerprint, StableAcrossBinaryPathsWhenDriverIdentMatches) {
+    auto a = baseline();
+    auto b = baseline();
+    a.toolchain.binaryPath = "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++";
+    b.toolchain.binaryPath = "/home/speak/.xlings/data/xpkgs/xim-x-mcpp/0.0.14/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++";
+
+    EXPECT_EQ(compute_fingerprint(a).hex, compute_fingerprint(b).hex);
 }
 
 TEST(Fingerprint, HashStringMatchesHashFile) {

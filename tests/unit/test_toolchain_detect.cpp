@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.probe;
 
 using namespace mcpp::toolchain;
 
@@ -64,4 +65,76 @@ TEST(ToolchainDetect, ClangVersionOutputIsNotMisclassifiedByGccPaths) {
     EXPECT_EQ(tc->targetTriple, "x86_64-unknown-linux-gnu");
     EXPECT_EQ(tc->stdlibId, "libc++");
     EXPECT_FALSE(tc->hasImportStd);
+}
+
+// ─── normalize_driver_output: path-free semantic identity ─────────────
+//
+// Background: the toolchain fingerprint used to hash the compiler binary
+// content (hash_file). When the same xim-x-gcc package is installed under
+// two different prefixes (~/.mcpp/... vs ~/.xlings/.../xim-x-mcpp/...),
+// the on-disk binaries can have different MD5s (build metadata, strip,
+// etc.) yet behave identically. We now use a normalized `--version`
+// string as the path-free identity instead.
+
+TEST(NormalizeDriverOutput, TrimsWhitespaceAndCollapsesBlankLines) {
+    std::string raw =
+        "  g++ (xim-x-gcc 16.1.0) 16.1.0\n"
+        "\n"
+        "Copyright (C) 2023 Free Software Foundation, Inc.   \n"
+        "\n\n"
+        "This is free software; ...\n";
+    auto out = normalize_driver_output(raw);
+    EXPECT_EQ(out,
+        "g++ (xim-x-gcc 16.1.0) 16.1.0\n"
+        "Copyright (C) 2023 Free Software Foundation, Inc.\n"
+        "This is free software; ...");
+}
+
+TEST(NormalizeDriverOutput, IsStableAcrossInstallPrefixes) {
+    // Same gcc package, two different install locations on disk.
+    // --version output is identical regardless of where the binary lives,
+    // so normalized identity must be identical too.
+    std::string from_a =
+        "g++ (xim-x-gcc 16.1.0) 16.1.0\n"
+        "Copyright (C) 2023 Free Software Foundation, Inc.\n";
+    std::string from_b =
+        "g++ (xim-x-gcc 16.1.0) 16.1.0\n"
+        "Copyright (C) 2023 Free Software Foundation, Inc.\n";
+    EXPECT_EQ(normalize_driver_output(from_a), normalize_driver_output(from_b));
+}
+
+TEST(NormalizeDriverOutput, ReplacesLocalInstallPaths) {
+    std::string a =
+        "clang version 20.1.7\n"
+        "Configuration file: /home/speak/.mcpp/registry/data/xpkgs/llvm/bin/clang.cfg\n";
+    std::string b =
+        "clang version 20.1.7\n"
+        "Configuration file: /home/speak/.xlings/data/xpkgs/llvm/bin/clang.cfg\n";
+
+    EXPECT_EQ(normalize_driver_output(a), normalize_driver_output(b));
+    EXPECT_EQ(normalize_driver_output(a).find("/home/"), std::string::npos);
+}
+
+TEST(NormalizeDriverOutput, DistinguishesDifferentVersions) {
+    std::string a = "g++ (xim-x-gcc 16.1.0) 16.1.0\n";
+    std::string b = "g++ (xim-x-gcc 15.1.0) 15.1.0\n";
+    EXPECT_NE(normalize_driver_output(a), normalize_driver_output(b));
+}
+
+TEST(NormalizeDriverOutput, EmptyInputProducesEmpty) {
+    EXPECT_EQ(normalize_driver_output(""), "");
+    EXPECT_EQ(normalize_driver_output("\n\n\n"), "");
+}
+
+// ─── detect() populates driverIdent ─────────────────────────────────
+TEST(ToolchainDetect, PopulatesDriverIdentFromVersionOutput) {
+    auto clang = make_fake_clang();
+    TempDirGuard cleanup{clang.parent_path()};
+
+    auto tc = detect(clang);
+    ASSERT_TRUE(tc.has_value()) << tc.error().message;
+    EXPECT_FALSE(tc->driverIdent.empty())
+        << "detect() should populate Toolchain::driverIdent from --version output";
+    EXPECT_NE(tc->driverIdent.find("clang version 20.1.7"), std::string::npos)
+        << "driverIdent should contain the --version header: " << tc->driverIdent;
 }
