@@ -253,9 +253,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                    "-fdeps-file=$out -fdeps-target=$compile_target "
                    "-M -MM -MF $out.dep -E $in -o $compile_target\n");
         } else {
-            // Clang path: clang-scan-deps produces P1689 JSON to stdout,
-            // then we redirect to $out. The -- separator passes the full
-            // compile command so clang-scan-deps knows the flags/sysroot.
+            // Clang path: clang-scan-deps produces P1689 JSON to stdout.
             append("  command = $toolenv $scan_deps -format=p1689 -- "
                    "$cxx $cxxflags -c $in -o $compile_target > $out\n");
         }
