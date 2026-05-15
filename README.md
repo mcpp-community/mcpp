@@ -71,7 +71,7 @@ curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/insta
 ```
 阅读 https://github.com/mcpp-community/mcpp 的 README，
 帮我安装 mcpp 并创建一个 C++23 模块项目，构建并运行。
-项目的 .agents/skills/ 目录下有更多使用指南供参考。
+项目的 .agents/skills/mcpp-usage/SKILL.md 有详细的使用指南。
 ```
 
 ### 创建项目 & 构建运行
@@ -207,9 +207,9 @@ main = "src/main.cpp"
 **AI 辅助学习**：你可以将以下提示词发给 AI 编码助手，让它帮你快速了解 mcpp：
 
 ```
-阅读 https://github.com/mcpp-community/mcpp 的文档（docs/ 目录），
+阅读 https://github.com/mcpp-community/mcpp 仓库的
+.agents/skills/mcpp-usage/SKILL.md 和 docs/ 目录下的文档，
 告诉我如何用 mcpp 创建一个带依赖的 C++23 模块项目。
-项目的 .agents/skills/ 目录下有详细的使用指南和贡献指南。
 ```
 
 ## 参与贡献
@@ -225,10 +225,11 @@ main = "src/main.cpp"
 
 **提交信息规范**：`feat:` / `fix:` / `test:` / `docs:` / `refactor:` 前缀
 
-**AI Agent 贡献指南**：项目的 [`.agents/skills/contributing.md`](.agents/skills/contributing.md) 提供了完整的 Agent 贡献流程、工具使用和项目结构说明。将以下提示词发给 AI 助手即可：
+**AI Agent 贡献**：项目的 [`.agents/skills/mcpp-contributing/SKILL.md`](.agents/skills/mcpp-contributing/SKILL.md) 提供了完整的 Agent 贡献流程和项目结构说明。将以下提示词发给 AI 助手即可：
 
 ```
-阅读 https://github.com/mcpp-community/mcpp 仓库的 .agents/skills/contributing.md，
+阅读 https://github.com/mcpp-community/mcpp 仓库的
+.agents/skills/mcpp-contributing/SKILL.md，
 按照指南帮我给 mcpp 项目提交一个贡献。
 ```
 
