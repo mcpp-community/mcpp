@@ -126,11 +126,12 @@ bool is_c_source(const std::filesystem::path& src) {
 }  // namespace
 
 std::string emit_ninja_string(const BuildPlan& plan) {
-    // Clang uses clang-scan-deps (not -fdeps-format=p1689r5) for P1689
-    // scanning, so dyndep is GCC-only for now. Clang falls through to the
-    // static-deps path which uses BmiTraits for correct pcm.cache/ paths.
-    bool dyndep = dyndep_mode_enabled()
-               && mcpp::toolchain::is_gcc(plan.toolchain);
+    // dyndep requires P1689 scanning capability:
+    //   GCC: built-in -fdeps-format=p1689r5
+    //   Clang: external clang-scan-deps tool (same P1689 output format)
+    bool has_scanner = mcpp::toolchain::is_gcc(plan.toolchain)
+                    || !plan.scanDepsPath.empty();
+    bool dyndep = dyndep_mode_enabled() && has_scanner;
     auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
@@ -166,6 +167,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
     if (dyndep) {
         append(std::format("mcpp      = {}\n", escape_ninja_path(mcpp_exe_path())));
+        if (!plan.scanDepsPath.empty()) {
+            append(std::format("scan_deps = {}\n", escape_ninja_path(plan.scanDepsPath)));
+        }
     }
     append("\n");
 
@@ -239,12 +243,22 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.
-        // -E -M -MM -MF gives us the dep file; -fdeps-* gives us the .ddi.
-        std::string scan_modules_flag = traits.scanNeedsFModules ? "-fmodules " : "";
+        // GCC: built-in -fdeps-format=p1689r5 flags during preprocessing.
+        // Clang: external clang-scan-deps tool with -format=p1689.
         append("rule cxx_scan\n");
-        append(std::format("  command = $toolenv $cxx $cxxflags {}-fdeps-format=p1689r5 "
-               "-fdeps-file=$out -fdeps-target=$compile_target "
-               "-M -MM -MF $out.dep -E $in -o $compile_target\n", scan_modules_flag));
+        if (plan.scanDepsPath.empty()) {
+            // GCC path: compiler-integrated P1689 scanning.
+            append("  command = $toolenv $cxx $cxxflags -fmodules "
+                   "-fdeps-format=p1689r5 "
+                   "-fdeps-file=$out -fdeps-target=$compile_target "
+                   "-M -MM -MF $out.dep -E $in -o $compile_target\n");
+        } else {
+            // Clang path: clang-scan-deps produces P1689 JSON to stdout,
+            // then we redirect to $out. The -- separator passes the full
+            // compile command so clang-scan-deps knows the flags/sysroot.
+            append("  command = $toolenv $scan_deps -format=p1689 -- "
+                   "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+        }
         append("  description = SCAN $out\n\n");
 
         // Aggregate .ddi files into a Ninja dyndep file.

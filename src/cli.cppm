@@ -1991,6 +1991,14 @@ prepare_build(bool print_fingerprint,
     ctx.plan        = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
                                              *root, ctx.outputDir, stdBmiPath, stdObjectPath);
 
+    // Clang: discover clang-scan-deps for P1689 dyndep scanning.
+    if (mcpp::toolchain::is_clang(*tc)) {
+        auto sd = tc->binaryPath.parent_path() / "clang-scan-deps";
+        if (std::filesystem::exists(sd)) {
+            ctx.plan.scanDepsPath = sd;
+        }
+    }
+
     // ─── M3.2: BMI cache stage / populate-task collection ─────────────
     // For each version-based dep package (i.e. fetched from a registry,
     // not a path dep), check the global BMI cache. If cached → stage into
