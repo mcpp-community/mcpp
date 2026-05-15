@@ -2,7 +2,7 @@
 //
 // Per docs/06-toolchain-and-fingerprint.md, the fingerprint MUST cover:
 //   1.  compiler id           2.  compiler version
-//   3.  compiler binary hash  4.  target triple
+//   3.  compiler driver identity  4.  target triple
 //   5.  stdlib id+version     6.  C++ standard
 //   7.  compile flags hash    8.  mcpp version
 //   9.  dependency lock hash  10. std module BMI hash
@@ -93,7 +93,9 @@ Fingerprint compute_fingerprint(const FingerprintInputs& in) {
 
     fp.parts[0] = std::string(tc.compiler_name());
     fp.parts[1] = tc.version;
-    fp.parts[2] = tc.binaryPath.empty() ? "" : hash_file(tc.binaryPath);
+    fp.parts[2] = !tc.driverIdent.empty()
+        ? hash_string(tc.driverIdent)
+        : (tc.binaryPath.empty() ? "" : hash_file(tc.binaryPath));
     fp.parts[3] = tc.targetTriple;
     fp.parts[4] = std::format("{} {}", tc.stdlibId, tc.stdlibVersion);
     fp.parts[5] = in.cppStandard;

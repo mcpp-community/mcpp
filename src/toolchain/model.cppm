@@ -12,6 +12,7 @@ struct Toolchain {
     CompilerId                          compiler        = CompilerId::Unknown;
     std::string                         version;            // "15.1.0"
     std::filesystem::path               binaryPath;
+    std::string                         driverIdent;        // normalized --version output
     std::string                         targetTriple;       // "x86_64-linux-gnu"
     std::string                         stdlibId;           // "libstdc++"
     std::string                         stdlibVersion;
