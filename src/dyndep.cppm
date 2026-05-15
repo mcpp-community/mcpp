@@ -28,9 +28,15 @@ struct UnitInfo {
     std::vector<std::string>     requires_;       // logical names
 };
 
-// Stable convention: gcm.cache/<sanitized>.gcm, where ':' → '-'.
+// Stable convention: <bmiDir>/<sanitized><bmiExt>, where ':' → '-'.
 // Centralized here + ninja_backend so the two stay in sync.
-std::string bmi_basename(std::string_view logicalName);
+std::string bmi_basename(std::string_view logicalName,
+                          std::string_view ext = ".gcm");
+
+struct DyndepOptions {
+    std::string_view bmiDir = "gcm.cache";
+    std::string_view bmiExt = ".gcm";
+};
 
 // Parse a single .ddi JSON body to a UnitInfo. Returns unexpected on JSON error.
 std::expected<UnitInfo, std::string> parse_ddi(std::string_view body);
@@ -44,18 +50,21 @@ std::expected<UnitInfo, std::string> parse_ddi(std::string_view body);
 // resolved to gcm.cache/<name>.gcm regardless of whether any unit
 // "provides" them.
 std::string emit_dyndep(const std::vector<UnitInfo>&     units,
-                        const std::set<std::string>&     stdImports);
+                        const std::set<std::string>&     stdImports,
+                        const DyndepOptions& opts = {});
 
 // Convenience: read .ddi files from disk, parse them, and emit a dyndep
 // file string. Returns unexpected if any .ddi fails to parse.
 std::expected<std::string, std::string>
 emit_dyndep_from_files(const std::vector<std::filesystem::path>& ddiPaths,
-                       const std::set<std::string>& stdImports);
+                       const std::set<std::string>& stdImports,
+                       const DyndepOptions& opts = {});
 
 // P1: emit a single-unit dyndep file from one .ddi file.
 // Used by the per-file dyndep mode to convert each .ddi → .dd independently.
 std::expected<std::string, std::string>
-emit_dyndep_single(const std::filesystem::path& ddiPath);
+emit_dyndep_single(const std::filesystem::path& ddiPath,
+                   const DyndepOptions& opts = {});
 
 } // namespace mcpp::dyndep
 
@@ -149,11 +158,12 @@ std::size_t find_key(std::string_view s, std::size_t start, std::string_view key
 
 } // namespace
 
-std::string bmi_basename(std::string_view logicalName) {
+std::string bmi_basename(std::string_view logicalName,
+                          std::string_view ext) {
     std::string out;
-    out.reserve(logicalName.size() + 4);
+    out.reserve(logicalName.size() + ext.size());
     for (char c : logicalName) out.push_back(c == ':' ? '-' : c);
-    out += ".gcm";
+    out += ext;
     return out;
 }
 
@@ -232,7 +242,8 @@ std::expected<UnitInfo, std::string> parse_ddi(std::string_view body) {
 }
 
 std::string emit_dyndep(const std::vector<UnitInfo>&     units,
-                        const std::set<std::string>&     stdImports)
+                        const std::set<std::string>&     stdImports,
+                        const DyndepOptions& opts)
 {
     // Per ninja's dyndep contract: the dyndep file's `build <out>: dyndep`
     // line augments the main build edge with **additional implicit inputs**
@@ -255,7 +266,8 @@ std::string emit_dyndep(const std::vector<UnitInfo>&     units,
             bool selfProvides = false;
             for (auto& p : u.provides) if (p == r) { selfProvides = true; break; }
             if (selfProvides) continue;
-            add_implicit("gcm.cache/" + bmi_basename(r));
+            std::string bmiDir(opts.bmiDir);
+            add_implicit(bmiDir + "/" + bmi_basename(r, opts.bmiExt));
         }
         line += "\n  restat = 1\n";
         out += line;
@@ -267,7 +279,8 @@ std::string emit_dyndep(const std::vector<UnitInfo>&     units,
 
 std::expected<std::string, std::string>
 emit_dyndep_from_files(const std::vector<std::filesystem::path>& ddiPaths,
-                       const std::set<std::string>& stdImports)
+                       const std::set<std::string>& stdImports,
+                       const DyndepOptions& opts)
 {
     std::vector<UnitInfo> units;
     units.reserve(ddiPaths.size());
@@ -283,11 +296,12 @@ emit_dyndep_from_files(const std::vector<std::filesystem::path>& ddiPaths,
         }
         units.push_back(std::move(*u));
     }
-    return emit_dyndep(units, stdImports);
+    return emit_dyndep(units, stdImports, opts);
 }
 
 std::expected<std::string, std::string>
-emit_dyndep_single(const std::filesystem::path& ddiPath)
+emit_dyndep_single(const std::filesystem::path& ddiPath,
+                   const DyndepOptions& opts)
 {
     std::ifstream is(ddiPath);
     if (!is) return std::unexpected(std::format("cannot read '{}'", ddiPath.string()));
@@ -304,7 +318,8 @@ emit_dyndep_single(const std::filesystem::path& ddiPath)
             for (auto& p : u->provides) if (p == r) { selfProvides = true; break; }
             if (selfProvides) continue;
             if (firstImplicit) { line += " |"; firstImplicit = false; }
-            line += " gcm.cache/" + bmi_basename(r);
+            std::string bmiDir(opts.bmiDir);
+            line += " " + bmiDir + "/" + bmi_basename(r, opts.bmiExt);
         }
         line += "\n  restat = 1\n";
         out += line;

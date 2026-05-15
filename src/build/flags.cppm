@@ -129,7 +129,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if (isClang && !plan.stdBmiPath.empty()) {
         std_module_flag = " -fmodule-file=std=" + escape_path(staged_std_bmi_path(plan));
     }
-    f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}{}", module_flag, std_module_flag,
+    auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
+    std::string prebuilt_module_flag;
+    if (traits.needsPrebuiltModulePath) {
+        prebuilt_module_flag = std::format(" -fprebuilt-module-path={}", traits.bmiDir);
+    }
+    f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}{}{}", module_flag, std_module_flag,
+                        prebuilt_module_flag,
                         opt_flag, pic_flag, sysroot_flag, b_flag, include_flags, user_cxxflags);
     f.cc = std::format("-std={}{}{}{}{}{}{}", c_std, opt_flag, pic_flag, sysroot_flag, b_flag,
                        include_flags, user_cflags);

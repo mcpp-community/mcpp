@@ -126,8 +126,8 @@ bool is_c_source(const std::filesystem::path& src) {
 }  // namespace
 
 std::string emit_ninja_string(const BuildPlan& plan) {
-    bool dyndep = dyndep_mode_enabled()
-               && mcpp::toolchain::is_gcc(plan.toolchain);
+    bool dyndep = dyndep_mode_enabled();
+    auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
 
@@ -170,10 +170,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  description = STAGE $out\n\n");
 
     // P1: per-file dyndep rule. Converts one .ddi → .dd independently.
-    append("rule cxx_dyndep\n");
-    append("  command = $mcpp dyndep --single --output $out $in\n");
-    append("  description = DYNDEP $out\n");
-    append("  restat = 1\n\n");
+    append(std::format(
+        "rule cxx_dyndep\n"
+        "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} --output $out $in\n"
+        "  description = DYNDEP $out\n"
+        "  restat = 1\n\n",
+        traits.bmiDir, traits.bmiExt));
 
     // P2: cxx_module preserves BMI timestamps when interface is unchanged.
     // GCC always updates the .gcm timestamp even if content is identical.
@@ -184,18 +186,20 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     //
     // $bmi_out is set per build edge to the BMI path (gcm.cache/<module>.gcm).
     // If $bmi_out is empty (no module provided), we just compile normally.
+    std::string module_output_flag = traits.needsExplicitModuleOutput
+        ? " -fmodule-output=$bmi_out" : "";
     append("rule cxx_module\n");
-    append("  command = "
+    append(std::format("  command = "
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
              "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
            "fi && "
-           "$toolenv $cxx $cxxflags -c $in -o $out && "
+           "$toolenv $cxx $cxxflags{} -c $in -o $out && "
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
               "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
              "mv \"$bmi_out.bak\" \"$bmi_out\"; "
            "else "
              "rm -f \"$bmi_out.bak\"; "
-           "fi\n");
+           "fi\n", module_output_flag));
     append("  description = MOD $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -232,17 +236,20 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.
         // -E -M -MM -MF gives us the dep file; -fdeps-* gives us the .ddi.
+        std::string scan_modules_flag = traits.scanNeedsFModules ? "-fmodules " : "";
         append("rule cxx_scan\n");
-        append("  command = $toolenv $cxx $cxxflags -fdeps-format=p1689r5 "
+        append(std::format("  command = $toolenv $cxx $cxxflags {}-fdeps-format=p1689r5 "
                "-fdeps-file=$out -fdeps-target=$compile_target "
-               "-M -MM -MF $out.dep -E $in -o $compile_target\n");
+               "-M -MM -MF $out.dep -E $in -o $compile_target\n", scan_modules_flag));
         append("  description = SCAN $out\n\n");
 
         // Aggregate .ddi files into a Ninja dyndep file.
-        append("rule cxx_collect\n");
-        append("  command = $mcpp dyndep --output $out $in\n");
-        append("  description = COLLECT $out\n");
-        append("  restat = 1\n\n");
+        append(std::format(
+            "rule cxx_collect\n"
+            "  command = $mcpp dyndep --bmi-dir {} --bmi-ext {} --output $out $in\n"
+            "  description = COLLECT $out\n"
+            "  restat = 1\n\n",
+            traits.bmiDir, traits.bmiExt));
     }
 
     // Stage prebuilt std artifacts into the compiler-specific BMI cache.
@@ -257,11 +264,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                            escape_ninja_path(plan.stdObjectPath)));
     }
 
-    auto bmi_path = [](std::string_view name) {
-        std::string s = "gcm.cache/";
+    auto bmi_path = [&traits](std::string_view name) {
+        std::string s(traits.bmiDir);
+        s += '/';
         for (char c : name)
             s.push_back(c == ':' ? '-' : c);
-        s += ".gcm";
+        s += traits.bmiExt;
         return s;
     };
 

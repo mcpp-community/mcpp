@@ -3558,18 +3558,26 @@ int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     bool single = parsed.is_flag_set("single");
 
+    mcpp::dyndep::DyndepOptions opts;
+    std::string bmiDirStorage = parsed.option_or_empty("bmi-dir").value();
+    std::string bmiExtStorage = parsed.option_or_empty("bmi-ext").value();
+    if (!bmiDirStorage.empty())
+        opts.bmiDir = bmiDirStorage;
+    if (!bmiExtStorage.empty())
+        opts.bmiExt = bmiExtStorage;
+
     std::expected<std::string, std::string> body;
     if (single) {
         if (parsed.positional_count() != 1) {
             std::println(stderr, "error: --single requires exactly one .ddi input");
             return 2;
         }
-        body = mcpp::dyndep::emit_dyndep_single(parsed.positional(0));
+        body = mcpp::dyndep::emit_dyndep_single(parsed.positional(0), opts);
     } else {
         std::vector<std::filesystem::path> ddis;
         for (std::size_t i = 0; i < parsed.positional_count(); ++i)
             ddis.emplace_back(parsed.positional(i));
-        body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{});
+        body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{}, opts);
     }
 
     if (!body) {
@@ -3887,6 +3895,10 @@ int run(int argc, char** argv) {
             .option(cl::Option("output").short_name('o').takes_value().value_name("PATH")
                 .help("Path to write dyndep file"))
             .option(cl::Option("single").help("Single-file mode: one .ddi → one .dd"))
+            .option(cl::Option("bmi-dir").takes_value().value_name("DIR")
+                .help("BMI cache directory name (default: gcm.cache)"))
+            .option(cl::Option("bmi-ext").takes_value().value_name("EXT")
+                .help("BMI file extension (default: .gcm)"))
             .action(wrap_rc(cmd_dyndep)))
     ;
 

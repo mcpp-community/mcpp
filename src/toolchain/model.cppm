@@ -42,6 +42,17 @@ bool is_gcc(const Toolchain& tc);
 bool is_clang(const Toolchain& tc);
 bool is_musl_target(const Toolchain& tc);
 
+struct BmiTraits {
+    std::string_view bmiDir;     // "gcm.cache" | "pcm.cache"
+    std::string_view bmiExt;     // ".gcm"      | ".pcm"
+    std::string_view manifestPrefix; // "gcm"   | "pcm"
+    bool needsExplicitModuleOutput = false;
+    bool needsPrebuiltModulePath = false;
+    bool scanNeedsFModules = true;
+};
+
+BmiTraits bmi_traits(const Toolchain& tc);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -56,6 +67,27 @@ bool is_clang(const Toolchain& tc) {
 
 bool is_musl_target(const Toolchain& tc) {
     return tc.targetTriple.find("-musl") != std::string::npos;
+}
+
+BmiTraits bmi_traits(const Toolchain& tc) {
+    if (is_clang(tc)) {
+        return {
+            .bmiDir = "pcm.cache",
+            .bmiExt = ".pcm",
+            .manifestPrefix = "pcm",
+            .needsExplicitModuleOutput = true,
+            .needsPrebuiltModulePath = true,
+            .scanNeedsFModules = false,
+        };
+    }
+    return {
+        .bmiDir = "gcm.cache",
+        .bmiExt = ".gcm",
+        .manifestPrefix = "gcm",
+        .needsExplicitModuleOutput = false,
+        .needsPrebuiltModulePath = false,
+        .scanNeedsFModules = true,
+    };
 }
 
 } // namespace mcpp::toolchain
