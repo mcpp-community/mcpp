@@ -245,6 +245,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // Scan rule: produce P1689 .ddi for one TU.
         // GCC: built-in -fdeps-format=p1689r5 flags during preprocessing.
         // Clang: external clang-scan-deps tool with -format=p1689.
+        // Note: restat is intentionally NOT used here. The downstream
+        // cxx_dyndep and cxx_module rules already have restat = 1 and
+        // BMI preservation logic, which is sufficient to prevent
+        // cascading rebuilds when only implementation (not interface)
+        // changes.
         append("rule cxx_scan\n");
         if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
