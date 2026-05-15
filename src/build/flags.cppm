@@ -10,6 +10,7 @@ export module mcpp.build.flags;
 
 import std;
 import mcpp.build.plan;
+import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.registry;
 
@@ -129,13 +130,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if (isClang && !plan.stdBmiPath.empty()) {
         std_module_flag = " -fmodule-file=std=" + escape_path(staged_std_bmi_path(plan));
     }
+    std::string std_compat_module_flag;
+    if (isClang && !plan.stdCompatBmiPath.empty()) {
+        auto compatDst = mcpp::toolchain::clang::staged_std_compat_bmi_path(plan.outputDir);
+        std_compat_module_flag = " -fmodule-file=std.compat=" + escape_path(compatDst);
+    }
     auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     std::string prebuilt_module_flag;
     if (traits.needsPrebuiltModulePath) {
         prebuilt_module_flag = std::format(" -fprebuilt-module-path={}", traits.bmiDir);
     }
-    f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}{}{}", module_flag, std_module_flag,
-                        prebuilt_module_flag,
+    f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}{}{}{}", module_flag, std_module_flag,
+                        std_compat_module_flag, prebuilt_module_flag,
                         opt_flag, pic_flag, sysroot_flag, b_flag, include_flags, user_cxxflags);
     f.cc = std::format("-std={}{}{}{}{}{}{}", c_std, opt_flag, pic_flag, sysroot_flag, b_flag,
                        include_flags, user_cflags);

@@ -34,6 +34,8 @@ struct StdModule {
     std::filesystem::path           cacheDir;            // <cache_root>/<fp>/
     std::filesystem::path           bmiPath;             // <cacheDir>/gcm.cache/std.gcm
     std::filesystem::path           objectPath;          // <cacheDir>/std.o
+    std::filesystem::path           compatBmiPath;       // <cacheDir>/pcm.cache/std.compat.pcm
+    std::filesystem::path           compatObjectPath;    // <cacheDir>/std.compat.o
 };
 
 struct StdModError { std::string message; };
@@ -98,39 +100,54 @@ std::expected<StdModule, StdModError> ensure_built(
                   : mcpp::toolchain::gcc::std_bmi_path(sm.cacheDir);
     sm.objectPath = sm.cacheDir / "std.o";
 
-    if (std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath)) {
-        return sm;
-    }
-
-    std::error_code ec;
-    std::filesystem::create_directories(sm.bmiPath.parent_path(), ec);
-    if (ec) return std::unexpected(StdModError{
-        std::format("cannot create '{}': {}", sm.bmiPath.parent_path().string(), ec.message())});
-
     std::string sysroot_flag;
     if (!tc.sysroot.empty()) {
         sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
     }
 
-    std::string out;
+    bool std_cached = std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath);
 
-    if (is_clang(tc)) {
-        for (auto& cmd : mcpp::toolchain::clang::std_module_build_commands(
-                 tc, sm.cacheDir, sm.bmiPath, sysroot_flag)) {
+    if (!std_cached) {
+        std::error_code ec;
+        std::filesystem::create_directories(sm.bmiPath.parent_path(), ec);
+        if (ec) return std::unexpected(StdModError{
+            std::format("cannot create '{}': {}", sm.bmiPath.parent_path().string(), ec.message())});
+
+        std::string out;
+
+        if (is_clang(tc)) {
+            for (auto& cmd : mcpp::toolchain::clang::std_module_build_commands(
+                     tc, sm.cacheDir, sm.bmiPath, sysroot_flag)) {
+                if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
+                else out += *r;
+            }
+        } else {
+            auto cmd = mcpp::toolchain::gcc::std_module_build_command(
+                tc, sm.cacheDir, sysroot_flag);
             if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
             else out += *r;
         }
-    } else {
-        auto cmd = mcpp::toolchain::gcc::std_module_build_command(
-            tc, sm.cacheDir, sysroot_flag);
-        if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
-        else out += *r;
+
+        if (!std::filesystem::exists(sm.bmiPath)) {
+            return std::unexpected(StdModError{
+                std::format("expected BMI at '{}' but it wasn't produced; output:\n{}",
+                            sm.bmiPath.string(), out)});
+        }
     }
 
-    if (!std::filesystem::exists(sm.bmiPath)) {
-        return std::unexpected(StdModError{
-            std::format("expected BMI at '{}' but it wasn't produced; output:\n{}",
-                        sm.bmiPath.string(), out)});
+    // Build std.compat after std (std.compat depends on std, Clang only)
+    if (is_clang(tc) && !tc.stdCompatSource.empty()) {
+        auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
+        if (!std::filesystem::exists(compatBmi)) {
+            std::string out;
+            for (auto& cmd : mcpp::toolchain::clang::std_compat_build_commands(
+                     tc, sm.cacheDir, compatBmi, sm.bmiPath, sysroot_flag)) {
+                if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
+                else out += *r;
+            }
+        }
+        sm.compatBmiPath = compatBmi;
+        sm.compatObjectPath = sm.cacheDir / "std.compat.o";
     }
 
     return sm;

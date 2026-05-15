@@ -1965,11 +1965,15 @@ prepare_build(bool print_fingerprint,
     // Pre-build std module only when the source graph actually imports it.
     std::filesystem::path stdBmiPath;
     std::filesystem::path stdObjectPath;
+    std::filesystem::path stdCompatBmiPath;
+    std::filesystem::path stdCompatObjectPath;
     if (needsStdModule) {
         auto sm = mcpp::toolchain::ensure_built(*tc, fp.hex);
         if (!sm) return std::unexpected(sm.error().message);
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;
+        stdCompatBmiPath = sm->compatBmiPath;
+        stdCompatObjectPath = sm->compatObjectPath;
     }
 
     if (print_fingerprint) {
@@ -1990,6 +1994,8 @@ prepare_build(bool print_fingerprint,
     ctx.stdObject  = stdObjectPath;
     ctx.plan        = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
                                              *root, ctx.outputDir, stdBmiPath, stdObjectPath);
+    ctx.plan.stdCompatBmiPath = stdCompatBmiPath;
+    ctx.plan.stdCompatObjectPath = stdCompatObjectPath;
 
     // Clang: discover clang-scan-deps for P1689 dyndep scanning.
     if (mcpp::toolchain::is_clang(*tc)) {

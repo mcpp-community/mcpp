@@ -26,6 +26,19 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
                                                    const std::filesystem::path& bmiPath,
                                                    std::string_view sysrootFlag);
 
+std::optional<std::filesystem::path> find_libcxx_std_compat_source(
+    const std::filesystem::path& cxx_binary,
+    const std::string& envPrefix);
+
+std::filesystem::path std_compat_bmi_path(const std::filesystem::path& cacheDir);
+std::filesystem::path staged_std_compat_bmi_path(const std::filesystem::path& outputDir);
+
+std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
+                                                    const std::filesystem::path& cacheDir,
+                                                    const std::filesystem::path& bmiPath,
+                                                    const std::filesystem::path& stdBmiPath,
+                                                    std::string_view sysrootFlag);
+
 std::filesystem::path archive_tool(const Toolchain& tc);
 
 // Locate clang-scan-deps in the same bin/ directory as clang++.
@@ -125,6 +138,11 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
         tc.stdModuleSource = *p;
         tc.hasImportStd    = true;
     }
+    if (tc.hasImportStd) {
+        if (auto p = find_libcxx_std_compat_source(tc.binaryPath, envPrefix)) {
+            tc.stdCompatSource = *p;
+        }
+    }
 }
 
 std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir) {
@@ -171,6 +189,59 @@ std::optional<std::filesystem::path> find_scan_deps(const Toolchain& tc) {
     auto p = tc.binaryPath.parent_path() / "clang-scan-deps";
     if (std::filesystem::exists(p)) return p;
     return std::nullopt;
+}
+
+std::optional<std::filesystem::path> find_libcxx_std_compat_source(
+    const std::filesystem::path& cxx_binary,
+    const std::string& envPrefix)
+{
+    // Same search strategy as find_libcxx_std_module_source but for std.compat
+    auto root = cxx_binary.parent_path().parent_path();
+    auto p = root / "share" / "libc++" / "v1" / "std.compat.cppm";
+    if (std::filesystem::exists(p)) return p;
+    return std::nullopt;
+}
+
+std::filesystem::path std_compat_bmi_path(const std::filesystem::path& cacheDir) {
+    return cacheDir / "pcm.cache" / "std.compat.pcm";
+}
+
+std::filesystem::path staged_std_compat_bmi_path(const std::filesystem::path& outputDir) {
+    return outputDir / "pcm.cache" / "std.compat.pcm";
+}
+
+std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
+                                                    const std::filesystem::path& cacheDir,
+                                                    const std::filesystem::path& bmiPath,
+                                                    const std::filesystem::path& stdBmiPath,
+                                                    std::string_view sysrootFlag)
+{
+    auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
+    auto relStdBmi = std::filesystem::relative(stdBmiPath, cacheDir).string();
+    // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
+    // Note: the path after = must NOT be shell-quoted separately; the
+    // entire -fmodule-file flag is a single token to the compiler.
+    return {
+        std::format("cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
+                    "-fmodule-file=std={} "
+                    "--precompile {} -o {} 2>&1",
+                    mcpp::xlings::shq(cacheDir.string()),
+                    mcpp::toolchain::compiler_env_prefix(tc),
+                    mcpp::xlings::shq(tc.binaryPath.string()),
+                    sysrootFlag,
+                    relStdBmi,
+                    mcpp::xlings::shq(tc.stdCompatSource.string()),
+                    mcpp::xlings::shq(relBmi)),
+        std::format("cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
+                    "-fmodule-file=std={} "
+                    "{} -c -o std.compat.o 2>&1",
+                    mcpp::xlings::shq(cacheDir.string()),
+                    mcpp::toolchain::compiler_env_prefix(tc),
+                    mcpp::xlings::shq(tc.binaryPath.string()),
+                    sysrootFlag,
+                    relStdBmi,
+                    mcpp::xlings::shq(relBmi))
+    };
 }
 
 } // namespace mcpp::toolchain::clang
