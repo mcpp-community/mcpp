@@ -2023,12 +2023,15 @@ prepare_build(bool print_fingerprint,
             }
             if (skipCache) continue;
 
+            auto bmiT = mcpp::toolchain::bmi_traits(*tc);
             mcpp::bmi_cache::CacheKey key {
                 .mcppHome    = (*cfg2)->mcppHome,
                 .fingerprint = fp.hex,
                 .indexName   = (*cfg2)->defaultIndex,
                 .packageName = depName,
                 .version     = depVer,
+                .bmiDirName  = std::string(bmiT.bmiDir),
+                .manifestTag = std::string(bmiT.manifestPrefix),
             };
 
             // Compute the artifacts list from the build plan: every
@@ -2042,11 +2045,11 @@ prepare_build(bool print_fingerprint,
                 if (rels.starts_with("..")) continue;       // not under depRoot
 
                 if (cu.providesModule) {
-                    std::string gcm;
+                    std::string bmi;
                     for (char c : *cu.providesModule)
-                        gcm.push_back(c == ':' ? '-' : c);
-                    gcm += ".gcm";
-                    arts.gcmFiles.push_back(std::move(gcm));
+                        bmi.push_back(c == ':' ? '-' : c);
+                    bmi += std::string(bmiT.bmiExt);
+                    arts.bmiFiles.push_back(std::move(bmi));
                 }
                 arts.objFiles.push_back(cu.object.filename().string());
             }
