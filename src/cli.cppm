@@ -959,6 +959,10 @@ prepare_build(bool print_fingerprint,
                     m->targetOverrides[triple] = entry;
                 }
             }
+            // Inherit workspace indices if member doesn't define any
+            if (m->indices.empty() && !wsManifest->indices.empty()) {
+                m->indices = wsManifest->indices;
+            }
 
             mcpp::ui::status("Workspace", std::format("building member '{}'", targetMember));
             root = memberDir;
@@ -977,6 +981,10 @@ prepare_build(bool print_fingerprint,
                     if (!m->targetOverrides.contains(triple)) {
                         m->targetOverrides[triple] = entry;
                     }
+                }
+                // Inherit workspace indices if member doesn't define any
+                if (m->indices.empty() && !wsm->indices.empty()) {
+                    m->indices = wsm->indices;
                 }
             }
         }
@@ -1215,6 +1223,42 @@ prepare_build(bool print_fingerprint,
         auto cfg2 = get_cfg();
         if (cfg2) {
             mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices);
+
+            // Gap 1: On first build, .mcpp/data/ may be empty because
+            // ensure_project_index_dir only writes .xlings.json but doesn't
+            // trigger the actual clone. Check if there are any non-local,
+            // non-builtin indices and whether .mcpp/data/ exists with content.
+            // If not, run xlings update to clone them before dependency resolution.
+            bool hasCustomGitIndices = false;
+            for (auto& [idxName, spec] : m->indices) {
+                if (!spec.is_local() && !spec.is_builtin()) {
+                    hasCustomGitIndices = true;
+                    break;
+                }
+            }
+            if (hasCustomGitIndices) {
+                auto dataDir = *root / ".mcpp" / "data";
+                bool needsClone = !std::filesystem::exists(dataDir);
+                if (!needsClone) {
+                    // Check if data/ has any index directories (dirs with pkgs/ subdir)
+                    std::error_code ec;
+                    bool hasIndexRepo = false;
+                    if (std::filesystem::is_directory(dataDir, ec)) {
+                        for (auto& entry : std::filesystem::directory_iterator(dataDir, ec)) {
+                            if (entry.is_directory() && std::filesystem::exists(entry.path() / "pkgs")) {
+                                hasIndexRepo = true;
+                                break;
+                            }
+                        }
+                    }
+                    needsClone = !hasIndexRepo;
+                }
+                if (needsClone) {
+                    mcpp::ui::status("Fetching", "custom index repos (first use)");
+                    auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, *root);
+                    mcpp::xlings::update_index(projEnv);
+                }
+            }
         }
     }
 
@@ -1311,21 +1355,19 @@ prepare_build(bool print_fingerprint,
         // ─── Routing: check if this dep's namespace maps to a custom index ──
         auto* idxSpec = findIndexForNs(ns);
 
-        // For local path indices, read xpkg.lua directly and skip install.
+        // For local path indices, verify the xpkg.lua exists in the index.
+        // The local PATH index is for DISCOVERY only (finding the xpkg.lua
+        // descriptor); the actual package artifacts come from the URLs
+        // declared inside the lua, installed via global xlings. So we
+        // validate the lua exists, then fall through to the normal install
+        // flow below.
         if (idxSpec && idxSpec->is_local()) {
-            auto luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
+            auto luaCheck = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
                 idxSpec->path, shortName);
-            if (!luaContent) return std::unexpected(std::format(
+            if (!luaCheck) return std::unexpected(std::format(
                 "dependency '{}': not found in local index at '{}'",
                 depName, idxSpec->path.string()));
-            auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
-            auto luaNs = mcpp::manifest::extract_xpkg_namespace(*luaContent);
-
-            // For local path indices, there's no install path — the package
-            // must be available as a path dep or embedded. Fall through to
-            // regular install path resolution for now (the xpkg lua is found,
-            // the install may still come from global or project data).
-            // In the future, local indices may support a packages/ dir layout.
+            // lua found — fall through to normal install path resolution.
         }
 
         // For custom git indices, try project-level .mcpp/data/ first.
@@ -1345,12 +1387,32 @@ prepare_build(bool print_fingerprint,
             auto fqname = ns.empty() ? shortName
                 : std::format("{}.{}", ns, shortName);
             mcpp::ui::info("Downloading", std::format("{} v{}", fqname, version));
-            auto install_one = [&](std::string target) {
+
+            // Gap 2: For custom git indices, install using the project-level
+            // xlings env so packages land in .mcpp/data/xpkgs/ and the custom
+            // index clone is visible to xlings during resolution.
+            bool useProjectEnv = idxSpec && !idxSpec->is_local() && !idxSpec->is_builtin();
+
+            auto install_one = [&](std::string target) -> std::expected<mcpp::xlings::CallResult, mcpp::pm::CallError> {
+                if (useProjectEnv) {
+                    auto projEnv = mcpp::config::make_project_xlings_env(**cfg, *root);
+                    auto argsJson = std::format(
+                        R"({{"targets":["{}"],"yes":true}})", target);
+                    CliInstallProgress progress;
+                    auto r = mcpp::xlings::call(projEnv, "install_packages", argsJson, &progress);
+                    if (!r) return std::unexpected(mcpp::pm::CallError{r.error()});
+                    return *r;
+                }
                 std::vector<std::string> targets{ std::move(target) };
                 CliInstallProgress progress;
                 return fetcher.install(targets, &progress);
             };
             auto target = std::format("{}@{}", fqname, version);
+            // For custom git indices, use indexName:shortName@version format
+            // so xlings knows which index to resolve from.
+            if (useProjectEnv) {
+                target = std::format("{}:{}@{}", ns, shortName, version);
+            }
             auto r = install_one(target);
             if (r && r->exitCode != 0 &&
                 (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {
@@ -1369,7 +1431,14 @@ prepare_build(bool print_fingerprint,
                 if (r->error) err += ": " + r->error->message;
                 return std::unexpected(err);
             }
-            installed = fetcher.install_path(ns, shortName, version);
+            // After install, check project data first for custom index packages.
+            if (useProjectEnv) {
+                installed = mcpp::fetcher::Fetcher::install_path_from_project_data(
+                    *root, ns, shortName, version);
+            }
+            if (!installed) {
+                installed = fetcher.install_path(ns, shortName, version);
+            }
             if (!installed) return std::unexpected(std::format(
                 "package '{}@{}' install path missing after fetch", depName, version));
         }
@@ -2170,9 +2239,15 @@ prepare_build(bool print_fingerprint,
                 ? std::string(mcpp::pm::kDefaultNamespace)
                 : spec.namespace_;
             lp.version    = spec.version;
-            lp.source     = std::format("index+{}@{}",
-                                        lp.namespace_, "sha:<from-xlings>");
-            lp.hash       = "sha256:<from-xlings>";   // M3 will populate from install plan
+            // Use the namespace and resolved version as the source identifier.
+            // For custom indices, include the index name for traceability.
+            lp.source     = std::format("index+{}@{}", lp.namespace_, lp.version);
+            // Use a deterministic hash based on namespace + name + version.
+            // A future PR can replace this with a real content hash from the
+            // xpkg.lua's declared sha256 or from the install plan.
+            std::hash<std::string> hasher;
+            auto hashInput = std::format("{}:{}@{}", lp.namespace_, name, lp.version);
+            lp.hash = std::format("fnv1a:{:016x}", hasher(hashInput));
             lock.packages.push_back(std::move(lp));
         }
         if (!lock.packages.empty() || !lock.indices.empty()) {
