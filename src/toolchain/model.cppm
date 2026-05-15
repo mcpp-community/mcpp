@@ -17,6 +17,7 @@ struct Toolchain {
     std::string                         stdlibId;           // "libstdc++"
     std::string                         stdlibVersion;
     std::filesystem::path               stdModuleSource;    // bits/std.cc / std.cppm
+    std::filesystem::path               stdCompatSource;    // bits/std_compat.cc / std.compat.cppm
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries

@@ -245,11 +245,6 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // Scan rule: produce P1689 .ddi for one TU.
         // GCC: built-in -fdeps-format=p1689r5 flags during preprocessing.
         // Clang: external clang-scan-deps tool with -format=p1689.
-        // Note: restat is intentionally NOT used here. The downstream
-        // cxx_dyndep and cxx_module rules already have restat = 1 and
-        // BMI preservation logic, which is sufficient to prevent
-        // cascading rebuilds when only implementation (not interface)
-        // changes.
         append("rule cxx_scan\n");
         if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
@@ -283,6 +278,19 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                            escape_ninja_path(plan.stdBmiPath)));
         append(std::format("build {} : cp_bmi {}\n\n", escape_ninja_path(std_o_dst),
                            escape_ninja_path(plan.stdObjectPath)));
+    }
+
+    bool has_std_compat = !plan.stdCompatBmiPath.empty() && !plan.stdCompatObjectPath.empty();
+    auto compat_bmi_dst = std::filesystem::path("pcm.cache") / "std.compat.pcm";
+    auto compat_o_dst = std::filesystem::path("obj") / "std.compat.o";
+    if (has_std_compat) {
+        // std.compat.pcm depends on std.pcm — ensure std.pcm is staged first
+        // so clang can resolve the transitive dependency when loading std.compat.pcm.
+        append(std::format("build {} : cp_bmi {} | {}\n", escape_ninja_path(compat_bmi_dst),
+                           escape_ninja_path(plan.stdCompatBmiPath),
+                           escape_ninja_path(std_bmi_dst)));
+        append(std::format("build {} : cp_bmi {}\n\n", escape_ninja_path(compat_o_dst),
+                           escape_ninja_path(plan.stdCompatObjectPath)));
     }
 
     auto bmi_path = [&traits](std::string_view name) {
@@ -378,8 +386,15 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // .c files don't `import` modules; skip BMI implicit inputs.
             if (rule != "c_object") {
                 for (auto& imp : cu.imports) {
-                    if (imp == "std" || imp == "std.compat") {
+                    if (imp == "std") {
                         if (has_std_artifacts)
+                            implicit += " " + escape_ninja_path(std_bmi_dst);
+                        continue;
+                    }
+                    if (imp == "std.compat") {
+                        if (has_std_compat)
+                            implicit += " " + escape_ninja_path(compat_bmi_dst);
+                        else if (has_std_artifacts)
                             implicit += " " + escape_ninja_path(std_bmi_dst);
                         continue;
                     }
@@ -419,6 +434,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             case LinkUnit::TestBinary:
                 if (has_std_artifacts)
                     ins += " " + escape_ninja_path(std_o_dst);
+                if (has_std_compat)
+                    ins += " " + escape_ninja_path(compat_o_dst);
                 rule = "cxx_link";
                 break;
             case LinkUnit::StaticLibrary:
@@ -427,6 +444,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             case LinkUnit::SharedLibrary:
                 if (has_std_artifacts)
                     ins += " " + escape_ninja_path(std_o_dst);
+                if (has_std_compat)
+                    ins += " " + escape_ninja_path(compat_o_dst);
                 rule = "cxx_shared";
                 break;
         }
