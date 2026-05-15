@@ -104,6 +104,23 @@ kind = "bin"
 main = "src/main.cpp"
 ```
 
+### 使用模块化库
+
+在 `mcpp.toml` 中添加两行依赖，即可引用 [mcpplibs](https://github.com/mcpplibs) 社区模块化库：
+
+```toml
+[dependencies]
+cmdline = "0.0.2"
+```
+
+然后在代码中直接 `import`：
+
+```cpp
+import mcpplibs.cmdline;
+```
+
+> 更多依赖配置方式（版本约束、命名空间、Git 引用、本地路径等）参见 [mcpp.toml 指南 — 依赖管理](docs/05-mcpp-toml.md)。
+
 ## 功能概览
 
 <details>
