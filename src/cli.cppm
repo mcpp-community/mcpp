@@ -2106,7 +2106,8 @@ constexpr std::string_view kBuildCacheFile = "target/.build_cache";
 void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::filesystem::path& outputDir,
                        const std::string& ninjaProgram,
-                       const std::string& targetTriple) {
+                       const std::string& targetTriple,
+                       const std::string& fingerprintHex = "") {
     auto path = projectRoot / kBuildCacheFile;
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
@@ -2115,6 +2116,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
         f << outputDir.string() << '\n';
         f << ninjaProgram << '\n';
         f << targetTriple << '\n';
+        f << fingerprintHex << '\n';
     }
 }
 
@@ -2173,10 +2175,27 @@ int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         }
     }
 
+    // P1.5: warn if fingerprint changed from last build (explains full rebuild).
+    {
+        auto cachePath = ctx.projectRoot / kBuildCacheFile;
+        std::ifstream cf(cachePath);
+        std::string oldDir;
+        if (std::getline(cf, oldDir) && !oldDir.empty()) {
+            auto oldFp = std::filesystem::path(oldDir).filename().string();
+            auto newFp = ctx.outputDir.filename().string();
+            if (oldFp != newFp) {
+                mcpp::ui::warning(std::format(
+                    "fingerprint changed ({} → {}), full rebuild",
+                    oldFp, newFp));
+            }
+        }
+    }
+
     // P0: save build cache for fast-path on next invocation.
     if (!no_cache && !r->ninjaProgram.empty()) {
+        auto fpHex = ctx.outputDir.filename().string();
         write_build_cache(ctx.projectRoot, ctx.outputDir, r->ninjaProgram,
-                          std::string(targetOverride));
+                          std::string(targetOverride), fpHex);
     }
 
     mcpp::ui::finished("release", r->elapsed);
@@ -2204,14 +2223,29 @@ std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
     if (!std::filesystem::exists(cachePath, ec)) return std::nullopt;
 
     std::ifstream f(cachePath);
-    std::string outputDirStr, ninjaProgram, cachedTarget;
+    std::string outputDirStr, ninjaProgram, cachedTarget, cachedFingerprint;
     if (!std::getline(f, outputDirStr) || outputDirStr.empty()) return std::nullopt;
     if (!std::getline(f, ninjaProgram) || ninjaProgram.empty()) return std::nullopt;
-    std::getline(f, cachedTarget); // may be empty for old cache files
+    std::getline(f, cachedTarget);      // may be empty for old cache files
+    std::getline(f, cachedFingerprint); // may be empty for pre-0.0.15 caches
 
     // Reject cache if target triple changed (e.g. previous build used
     // --target x86_64-linux-musl but this one is a default build).
     if (cachedTarget != currentTarget) return std::nullopt;
+
+    // P1: verify fingerprint matches the outputDir basename. If someone
+    // switched mcpp installations (different toolchain binary), the cached
+    // outputDir points to a stale fingerprint directory. Detect and reject.
+    if (!cachedFingerprint.empty()) {
+        std::filesystem::path outputDir(outputDirStr);
+        auto dirBasename = outputDir.filename().string();
+        if (dirBasename != cachedFingerprint) {
+            // Cache is inconsistent — invalidate it.
+            std::error_code ec2;
+            std::filesystem::remove(cachePath, ec2);
+            return std::nullopt;
+        }
+    }
 
     std::filesystem::path outputDir(outputDirStr);
 

@@ -243,6 +243,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.
+        // P2: write to $out.tmp first, then compare with existing $out.
+        // If content is identical, keep old $out (preserving mtime) so
+        // downstream dyndep/compile edges are not marked dirty.
+        // restat = 1 tells Ninja to check if $out actually changed.
         // GCC: built-in -fdeps-format=p1689r5 flags during preprocessing.
         // Clang: external clang-scan-deps tool with -format=p1689.
         append("rule cxx_scan\n");
@@ -250,16 +254,25 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // GCC path: compiler-integrated P1689 scanning.
             append("  command = $toolenv $cxx $cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
-                   "-fdeps-file=$out -fdeps-target=$compile_target "
-                   "-M -MM -MF $out.dep -E $in -o $compile_target\n");
+                   "-fdeps-file=$out.tmp -fdeps-target=$compile_target "
+                   "-M -MM -MF $out.dep -E $in -o $compile_target && "
+                   "if [ -f \"$out\" ] && cmp -s \"$out.tmp\" \"$out\"; then "
+                     "rm -f \"$out.tmp\"; "
+                   "else "
+                     "mv -f \"$out.tmp\" \"$out\"; "
+                   "fi\n");
         } else {
-            // Clang path: clang-scan-deps produces P1689 JSON to stdout,
-            // then we redirect to $out. The -- separator passes the full
-            // compile command so clang-scan-deps knows the flags/sysroot.
+            // Clang path: clang-scan-deps produces P1689 JSON to stdout.
             append("  command = $toolenv $scan_deps -format=p1689 -- "
-                   "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+                   "$cxx $cxxflags -c $in -o $compile_target > $out.tmp && "
+                   "if [ -f \"$out\" ] && cmp -s \"$out.tmp\" \"$out\"; then "
+                     "rm -f \"$out.tmp\"; "
+                   "else "
+                     "mv -f \"$out.tmp\" \"$out\"; "
+                   "fi\n");
         }
-        append("  description = SCAN $out\n\n");
+        append("  description = SCAN $out\n");
+        append("  restat = 1\n\n");
 
         // Aggregate .ddi files into a Ninja dyndep file.
         append(std::format(
