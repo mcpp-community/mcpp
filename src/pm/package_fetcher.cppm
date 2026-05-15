@@ -15,6 +15,7 @@ export module mcpp.pm.package_fetcher;
 import std;
 import mcpp.config;
 import mcpp.pm.compat;
+import mcpp.pm.index_spec;
 import mcpp.xlings;
 import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
 
@@ -102,6 +103,12 @@ public:
     // index. Uses namespace-aware candidate filenames.
     std::optional<std::string>
         read_xpkg_lua(std::string_view ns, std::string_view shortName) const;
+
+    // Read the raw xpkg .lua file content from a local path index.
+    // Used for [indices] entries with `path = "/some/dir"`.
+    static std::optional<std::string>
+        read_xpkg_lua_from_path(const std::filesystem::path& indexPath,
+                                std::string_view shortName);
 
     // ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────
     //
@@ -405,6 +412,31 @@ Fetcher::read_xpkg_lua(std::string_view ns, std::string_view shortName) const
         }
     }
     return std::nullopt;
+}
+
+// ─── read_xpkg_lua from local path index ────────────────────────────
+//
+// For [indices] entries with `path = "/some/dir"`, read the xpkg .lua
+// directly from the filesystem. The index layout follows the standard
+// mcpp-index convention: <path>/pkgs/<first-letter>/<name>.lua
+
+std::optional<std::string>
+Fetcher::read_xpkg_lua_from_path(const std::filesystem::path& indexPath,
+                                  std::string_view shortName)
+{
+    if (shortName.empty()) return std::nullopt;
+
+    auto pkgsDir = indexPath / "pkgs";
+    if (!std::filesystem::exists(pkgsDir)) return std::nullopt;
+
+    char first = static_cast<char>(std::tolower(
+        static_cast<unsigned char>(shortName.front())));
+    auto candidate = pkgsDir / std::string(1, first) / (std::string(shortName) + ".lua");
+    if (!std::filesystem::exists(candidate)) return std::nullopt;
+
+    std::ifstream is(candidate);
+    std::stringstream ss; ss << is.rdbuf();
+    return ss.str();
 }
 
 // ─── Legacy read_xpkg_lua (COMPAT, remove in 1.0.0) ─────────────────

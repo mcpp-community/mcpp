@@ -34,6 +34,7 @@ import mcpp.xlings;
 import mcpp.fetcher;
 import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
+import mcpp.pm.index_spec; // IndexSpec for [indices] support
 import mcpp.pm.mangle;     // Level 1 multi-version fallback (cross-major coexistence)
 import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
 import mcpp.pm.dep_spec;
@@ -1206,6 +1207,17 @@ prepare_build(bool print_fingerprint,
             }
         }
     }
+
+    // Set up project-level .mcpp/ directory for custom indices.
+    // This creates .mcpp/.xlings.json with non-builtin, non-local index
+    // entries so xlings can clone them into the project-scoped data dir.
+    if (!m->indices.empty()) {
+        auto cfg2 = get_cfg();
+        if (cfg2) {
+            mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices);
+        }
+    }
+
     std::vector<mcpp::modgraph::PackageRoot> packages;
     packages.push_back({*root, *m});
 
@@ -2495,10 +2507,31 @@ int cmd_index_list(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
             std::println("  {:<15}  {}{}",
                          r.name, r.url, isDefault ? "  (default)" : "");
         }
-        return 0;
+    } else {
+        for (auto& r : *repos) {
+            std::println("  {:<15}  {}", r.name, r.url);
+        }
     }
-    for (auto& r : *repos) {
-        std::println("  {:<15}  {}", r.name, r.url);
+
+    // Show project-level custom indices from mcpp.toml [indices].
+    auto root = find_manifest_root(std::filesystem::current_path());
+    if (root) {
+        auto m = mcpp::manifest::load(*root / "mcpp.toml");
+        if (m && !m->indices.empty()) {
+            std::println("");
+            std::println("Project indices (mcpp.toml):");
+            for (auto& [name, spec] : m->indices) {
+                if (spec.is_local()) {
+                    std::println("  {:<15}  {}  (local path)", name, spec.path.string());
+                } else {
+                    std::string suffix;
+                    if (spec.is_builtin()) suffix = "  (pin)";
+                    else if (!spec.tag.empty()) suffix = std::format("  (tag: {})", spec.tag);
+                    else if (!spec.rev.empty()) suffix = std::format("  (rev: {})", spec.rev.substr(0, 8));
+                    std::println("  {:<15}  {}{}", name, spec.url, suffix);
+                }
+            }
+        }
     }
     return 0;
 }
