@@ -1,31 +1,39 @@
 #!/usr/bin/env bash
-# 29_toolchain_partial_versions.sh — `mcpp toolchain {install,default}` accept
-# partial versions and either positional or @-separated form, AND auto-install
-# the default toolchain on a first-run `mcpp build` with no toolchain configured.
+# 29_toolchain_partial_versions.sh — `mcpp toolchain default` accepts partial
+# versions in either positional or @-separated form, AND `mcpp build`
+# auto-installs the default toolchain on a first run with no toolchain
+# configured. The full install path is covered by 26_toolchain_management.sh.
 #
-# We isolate via MCPP_HOME so we don't touch the user's real ~/.mcpp sandbox.
+# We isolate config/default state via MCPP_HOME, while reusing already prepared
+# xlings payloads when available so CI does not redownload full toolchains.
 set -e
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
+inherit_payloads_only() {
+    MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0 source "$(dirname "$0")/_inherit_toolchain.sh"
+}
+
+configure_e2e_mirror() {
+    if [[ -n "${MCPP_E2E_TOOLCHAIN_MIRROR:-}" ]]; then
+        "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR" > "$TMP/mirror.log" 2>&1 || {
+            cat "$TMP/mirror.log"
+            echo "failed to configure e2e mirror"
+            exit 1
+        }
+    fi
+}
+
 # ─── Section 1: dual-form + partial-version toolchain commands ─────────
 export MCPP_HOME="$TMP/h1"
+inherit_payloads_only
+configure_e2e_mirror
 
-# Pre-install both 15 and 16 with different invocation forms.
-"$MCPP" toolchain install gcc 15    > "$TMP/inst1.log" 2>&1 || {
-    cat "$TMP/inst1.log"; echo "install 'gcc 15' failed"; exit 1; }
-grep -q '15.1.0' "$TMP/inst1.log" || {
-    cat "$TMP/inst1.log"; echo "partial '15' didn't resolve to 15.1.0"; exit 1; }
-
-"$MCPP" toolchain install gcc@16   > "$TMP/inst2.log" 2>&1 || {
-    cat "$TMP/inst2.log"; echo "install 'gcc@16' failed"; exit 1; }
-grep -q '16.1.0' "$TMP/inst2.log" || {
-    cat "$TMP/inst2.log"; echo "partial '@16' didn't resolve to 16.1.0"; exit 1; }
-
-# Both versions should appear in `list`.
+# Reuse the CI-prepared gcc payload. The full install path is covered by
+# 26_toolchain_management.sh; this test focuses on partial/default parsing
+# without redownloading large toolchain archives.
 out=$("$MCPP" toolchain list 2>&1)
-[[ "$out" == *"gcc"*"15.1.0"* ]] || { echo "gcc 15.1.0 missing from list:"; echo "$out"; exit 1; }
 [[ "$out" == *"gcc"*"16.1.0"* ]] || { echo "gcc 16.1.0 missing from list:"; echo "$out"; exit 1; }
 
 # `default gcc 16` (positional) should pick highest 16.x.y.
@@ -34,17 +42,18 @@ out=$("$MCPP" toolchain list 2>&1)
 grep -q 'gcc@16.1.0' "$TMP/def1.log" || {
     cat "$TMP/def1.log"; echo "default 'gcc 16' didn't resolve to 16.1.0"; exit 1; }
 
-# `default gcc@15` (@-form) should switch to 15.1.0.
-"$MCPP" toolchain default gcc@15   > "$TMP/def2.log" 2>&1 || {
-    cat "$TMP/def2.log"; echo "default 'gcc@15' failed"; exit 1; }
-grep -q 'gcc@15.1.0' "$TMP/def2.log" || {
-    cat "$TMP/def2.log"; echo "default 'gcc@15' didn't resolve to 15.1.0"; exit 1; }
+# `default gcc@16` (@-form) should also resolve to 16.1.0.
+"$MCPP" toolchain default gcc@16   > "$TMP/def2.log" 2>&1 || {
+    cat "$TMP/def2.log"; echo "default 'gcc@16' failed"; exit 1; }
+grep -q 'gcc@16.1.0' "$TMP/def2.log" || {
+    cat "$TMP/def2.log"; echo "default 'gcc@16' didn't resolve to 16.1.0"; exit 1; }
 
 # ─── Section 2: first-run auto-install ──────────────────────────────────
 # Brand-new MCPP_HOME, brand-new package with no [toolchain] declared —
 # `mcpp build` should auto-install the canonical default (musl-gcc 15.1
 # for portable static binaries) + use it. Output should be a static ELF.
 export MCPP_HOME="$TMP/h2"
+configure_e2e_mirror
 mkdir -p "$TMP/proj"
 cd "$TMP/proj"
 "$MCPP" new hello > /dev/null
