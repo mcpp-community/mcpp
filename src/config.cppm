@@ -21,6 +21,7 @@ export module mcpp.config;
 
 import std;
 import mcpp.libs.toml;
+import mcpp.pm.index_spec;
 import mcpp.xlings;
 
 export namespace mcpp::config {
@@ -51,6 +52,10 @@ struct GlobalConfig {
     std::string                     defaultIndex;        // "mcpplibs"
     std::vector<IndexRepo>          indexRepos;
 
+    // From config.toml [indices] — custom index repositories (new schema).
+    // Merged: project mcpp.toml > global config.toml > built-in default.
+    std::map<std::string, mcpp::pm::IndexSpec> indices;
+
     // From config.toml [cache]
     std::int64_t                    searchTtlSeconds = 3600;
 
@@ -74,6 +79,21 @@ struct GlobalConfig {
 mcpp::xlings::Env make_xlings_env(const GlobalConfig& cfg) {
     return { cfg.xlingsBinary, cfg.xlingsHome() };
 }
+
+// Create an xlings::Env that targets the project-level .mcpp/ directory.
+// Used when custom (non-builtin) indices are configured in mcpp.toml.
+mcpp::xlings::Env make_project_xlings_env(const GlobalConfig& cfg,
+                                           const std::filesystem::path& projectDir) {
+    return { cfg.xlingsBinary, cfg.xlingsHome(), projectDir / ".mcpp" };
+}
+
+// Ensure the project-level .mcpp/ directory exists and contains a
+// .xlings.json seeded with the custom (non-builtin, non-local) index
+// entries. Returns true if a .mcpp/ directory was created/updated.
+bool ensure_project_index_dir(
+    const GlobalConfig& cfg,
+    const std::filesystem::path& projectDir,
+    const std::map<std::string, mcpp::pm::IndexSpec>& indices);
 
 struct ConfigError { std::string message; };
 
@@ -442,6 +462,27 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             cfg.indexRepos.push_back({ name, it->second.as_string() });
         }
     }
+    // [indices] — new-schema custom index repositories.
+    // Accepts the same short/long/path forms as mcpp.toml [indices].
+    if (auto* indices_t = doc->get_table("indices")) {
+        for (auto& [k, v] : *indices_t) {
+            mcpp::pm::IndexSpec spec;
+            spec.name = k;
+            if (v.is_string()) {
+                spec.url = v.as_string();
+            } else if (v.is_table()) {
+                auto& sub = v.as_table();
+                if (auto it = sub.find("url");    it != sub.end() && it->second.is_string()) spec.url    = it->second.as_string();
+                if (auto it = sub.find("rev");    it != sub.end() && it->second.is_string()) spec.rev    = it->second.as_string();
+                if (auto it = sub.find("tag");    it != sub.end() && it->second.is_string()) spec.tag    = it->second.as_string();
+                if (auto it = sub.find("branch"); it != sub.end() && it->second.is_string()) spec.branch = it->second.as_string();
+                if (auto it = sub.find("path");   it != sub.end() && it->second.is_string()) spec.path   = it->second.as_string();
+            }
+            if (!spec.url.empty() || !spec.path.empty())
+                cfg.indices[k] = std::move(spec);
+        }
+    }
+
     // Defaults: only mcpplibs. xlings auto-adds its own standard
     // defaults (xim / awesome / scode / d2x) because globalIndexRepos_
     // is non-empty (per xlings/src/core/config.cppm). Explicitly listing
@@ -518,6 +559,32 @@ void print_env(const GlobalConfig& cfg) {
         std::println("  {} {}{}",
                      r.name, r.url, isDefault ? "  (default)" : "");
     }
+}
+
+bool ensure_project_index_dir(
+    const GlobalConfig& cfg,
+    const std::filesystem::path& projectDir,
+    const std::map<std::string, mcpp::pm::IndexSpec>& indices)
+{
+    // Collect custom (non-builtin, non-local) indices that need xlings cloning.
+    std::vector<std::pair<std::string,std::string>> customRepos;
+    for (auto& [name, spec] : indices) {
+        if (spec.is_builtin()) continue;
+        if (spec.is_local())   continue;   // local path, mcpp reads directly
+        customRepos.emplace_back(name, spec.url);
+    }
+
+    if (customRepos.empty()) return false;  // nothing to do
+
+    auto dotMcpp = projectDir / ".mcpp";
+    std::error_code ec;
+    std::filesystem::create_directories(dotMcpp, ec);
+
+    // Seed .xlings.json with the custom index entries.
+    mcpp::xlings::Env env;
+    env.home = dotMcpp;
+    mcpp::xlings::seed_xlings_json(env, customRepos);
+    return true;
 }
 
 // M5.5: persist [toolchain].default into config.toml without disturbing

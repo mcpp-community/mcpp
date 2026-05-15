@@ -5,6 +5,7 @@ export module mcpp.manifest;
 import std;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;     // M5.x pm/ subsystem refactor: DependencySpec lives here
+import mcpp.pm.index_spec;   // IndexSpec for [indices] section
 
 export namespace mcpp::manifest {
 
@@ -181,6 +182,9 @@ struct Manifest {
 
     // [workspace] — multi-package workspace.
     WorkspaceConfig                    workspace;
+
+    // [indices] — custom package index repositories (index-name → IndexSpec).
+    std::map<std::string, mcpp::pm::IndexSpec> indices;
 
     // M5.0: post-parse computed/inferred state
     bool                        usesModules    = true;   // refined by scanner
@@ -657,6 +661,41 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     m.workspace.dependencies[std::format("{}.{}", ns, sk)] = std::move(spec);
                 }
             }
+        }
+    }
+
+    // [indices] — custom package index repositories.
+    //
+    // Accepted forms:
+    //   acme = "git@gitlab.example.com:platform/mcpp-index.git"       # short: value = url
+    //   acme-stable = { url = "git@...", tag = "v2.0" }               # long: inline table
+    //   local-dev = { path = "/home/user/my-packages" }               # local path
+    //   mcpplibs = { url = "https://...", rev = "abc123" }            # pin built-in
+    if (auto* indices_t = doc->get_table("indices")) {
+        for (auto& [k, v] : *indices_t) {
+            mcpp::pm::IndexSpec spec;
+            spec.name = k;
+
+            if (v.is_string()) {
+                // Short form: key = "url"
+                spec.url = v.as_string();
+            } else if (v.is_table()) {
+                auto& sub = v.as_table();
+                if (auto it = sub.find("url");    it != sub.end() && it->second.is_string()) spec.url    = it->second.as_string();
+                if (auto it = sub.find("rev");    it != sub.end() && it->second.is_string()) spec.rev    = it->second.as_string();
+                if (auto it = sub.find("tag");    it != sub.end() && it->second.is_string()) spec.tag    = it->second.as_string();
+                if (auto it = sub.find("branch"); it != sub.end() && it->second.is_string()) spec.branch = it->second.as_string();
+                if (auto it = sub.find("path");   it != sub.end() && it->second.is_string()) spec.path   = it->second.as_string();
+                if (spec.url.empty() && spec.path.empty()) {
+                    return std::unexpected(error(origin, std::format(
+                        "[indices].{} must specify 'url' or 'path'", k)));
+                }
+            } else {
+                return std::unexpected(error(origin, std::format(
+                    "[indices].{} must be a string (url) or inline table", k)));
+            }
+
+            m.indices[k] = std::move(spec);
         }
     }
 

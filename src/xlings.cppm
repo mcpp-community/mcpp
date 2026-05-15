@@ -23,6 +23,7 @@ export namespace mcpp::xlings {
 struct Env {
     std::filesystem::path binary;      // xlings binary path
     std::filesystem::path home;        // XLINGS_HOME directory
+    std::filesystem::path projectDir;  // XLINGS_PROJECT_DIR (empty = global mode)
 };
 
 // ─── Pinned version constants ───────────────────────────────────────
@@ -408,11 +409,23 @@ std::filesystem::path sandbox_init_marker(const Env& env) {
 
 std::string build_command_prefix(const Env& env) {
     auto xvmBin = paths::sandbox_bin(env).string();
+    if (env.projectDir.empty()) {
+        // Global mode: unset XLINGS_PROJECT_DIR (existing behavior).
+        return std::format(
+            "cd {} && env -u XLINGS_PROJECT_DIR PATH={}:\"$PATH\" XLINGS_HOME={} {}",
+            shq(env.home.string()),
+            shq(xvmBin),
+            shq(env.home.string()),
+            shq(env.binary.string()));
+    }
+    // Project-level mode: set XLINGS_PROJECT_DIR so xlings uses
+    // additive project repos alongside global repos.
     return std::format(
-        "cd {} && env -u XLINGS_PROJECT_DIR PATH={}:\"$PATH\" XLINGS_HOME={} {}",
+        "cd {} && env PATH={}:\"$PATH\" XLINGS_HOME={} XLINGS_PROJECT_DIR={} {}",
         shq(env.home.string()),
         shq(xvmBin),
         shq(env.home.string()),
+        shq(env.projectDir.string()),
         shq(env.binary.string()));
 }
 

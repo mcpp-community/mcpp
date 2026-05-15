@@ -1,10 +1,9 @@
 // mcpp.pm.index_spec — package-index repository configuration.
 //
-// Reserved for the upcoming `[indices]` parsing & IndexSpec data type;
-// see `.agents/docs/2026-05-08-package-index-config.md` for the full
-// design. The module placeholder is created early so the rest of the
-// pm/ subsystem can land its imports against a stable module path
-// while the implementation arrives.
+// `[indices]` in mcpp.toml and config.toml maps index names to their
+// location (git URL or local path) with optional version pinning.
+// See `.agents/docs/2026-05-16-indices-enhancement-design.md` for the
+// full design.
 
 export module mcpp.pm.index_spec;
 
@@ -12,8 +11,17 @@ import std;
 
 export namespace mcpp::pm {
 
-// Placeholder. The full `IndexSpec` (url / rev / tag / branch / path)
-// + `[indices]` TOML parsing lands in a dedicated PR per the
-// package-index-config design doc.
+struct IndexSpec {
+    std::string              name;      // index name ([indices] key)
+    std::string              url;       // git URL (short form fills this directly)
+    std::string              rev;       // commit sha (strongest lock)
+    std::string              tag;       // git tag
+    std::string              branch;    // git branch
+    std::filesystem::path    path;      // local path (takes priority over url)
+
+    bool is_local()   const { return !path.empty(); }
+    bool is_pinned()  const { return !rev.empty(); }
+    bool is_builtin() const { return name == "mcpplibs"; }
+};
 
 } // namespace mcpp::pm
