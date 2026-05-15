@@ -18,12 +18,16 @@
 
 ## 为什么选择 mcpp
 
-mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 可能是目前 Linux 上体验最好的选择：
+mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux 上能为你提供便捷且友好的开发体验：
 
 - **默认模块化** — `mcpp new` 创建的项目模板直接使用 C++23 模块，`import std` 开箱即用
 - **文件级增量构建** — 基于 P1689 dyndep 的三层优化（前端脏检查 + 逐文件扫描 + BMI restat），只重编真正变化的模块
 - **一键创建 & 构建** — `mcpp new hello && cd hello && mcpp build`，工具链自动安装，无需手动配置编译器和构建系统
 - **模块化生态** — [mcpplibs](https://github.com/mcpplibs) 提供一系列可直接 `import` 的 C++ 模块化库，支持自定义包索引
+
+> [!NOTE]
+> **早期版本** — mcpp 仍在积极开发中，接口和行为可能在后续版本调整。
+> 问题 / 反馈 / 想法欢迎在 [issues](https://github.com/mcpp-community/mcpp/issues) 留言。
 
 ## 快速开始
 
@@ -62,9 +66,13 @@ curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/insta
 
 **方式三：让 AI 助手帮你安装**
 
-将以下内容发给你的 AI 编码助手（Claude Code / Cursor / Copilot 等）：
+将以下提示词复制给你的 AI 编码助手（Claude Code / Cursor / Copilot 等）：
 
-> 帮我安装 mcpp C++ 构建工具：`curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash`，然后用 `mcpp new hello` 创建一个 C++23 模块项目，`mcpp build` 构建，`mcpp run` 运行。
+```
+阅读 https://github.com/mcpp-community/mcpp 的 README，
+帮我安装 mcpp 并创建一个 C++23 模块项目，构建并运行。
+项目的 .agents/skills/ 目录下有更多使用指南供参考。
+```
 
 ### 创建项目 & 构建运行
 
@@ -196,47 +204,33 @@ main = "src/main.cpp"
 
 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅。
 
-**AI 辅助学习**：你可以将本仓库地址或上述文档链接发给 AI 编码助手，让它帮你快速了解 mcpp 的使用方式：
+**AI 辅助学习**：你可以将以下提示词发给 AI 编码助手，让它帮你快速了解 mcpp：
 
-> 阅读 https://github.com/mcpp-community/mcpp 的文档，告诉我如何用 mcpp 创建一个带依赖的 C++23 模块项目。
+```
+阅读 https://github.com/mcpp-community/mcpp 的文档（docs/ 目录），
+告诉我如何用 mcpp 创建一个带依赖的 C++23 模块项目。
+项目的 .agents/skills/ 目录下有详细的使用指南和贡献指南。
+```
 
 ## 参与贡献
 
-欢迎通过 issue 和 PR 参与项目开发。
+欢迎通过 Issue 和 PR 参与项目开发。项目接受开发者使用 AI Agent 参与开发与贡献。
 
-### 使用 AI Agent 参与贡献
+**基本流程**
 
-mcpp 项目支持并鼓励开发者使用 AI 编码助手（Claude Code、Cursor、Copilot 等）参与开发。推荐流程：
+1. 创建 Issue — Bug 修复、新功能、优化等，先在 [issues](https://github.com/mcpp-community/mcpp/issues) 创建讨论
+2. 实现改动 — Fork 仓库，创建分支，实现并验证（`mcpp build` + E2E 测试）
+3. 提交 PR — 使用 `gh pr create`，确保 CI 通过
+4. CI 必须通过 — CI 不通过的 PR 不会被合入
 
-**报告 Bug / 提出需求**
+**提交信息规范**：`feat:` / `fix:` / `test:` / `docs:` / `refactor:` 前缀
 
-1. 让 AI 助手阅读相关代码和文档，梳理问题上下文
-2. 使用 `gh issue create` 或在 [issues](https://github.com/mcpp-community/mcpp/issues) 页面提交
-3. 描述清楚：复现步骤、期望行为、实际行为
+**AI Agent 贡献指南**：项目的 [`.agents/skills/contributing.md`](.agents/skills/contributing.md) 提供了完整的 Agent 贡献流程、工具使用和项目结构说明。将以下提示词发给 AI 助手即可：
 
-**提交修复 / 功能 PR**
-
-1. Fork 仓库，创建功能分支
-2. 让 AI 助手阅读项目文档和相关源码，理解现有架构
-3. 实现改动并通过 `mcpp build` 验证编译
-4. 运行 E2E 测试：`bash tests/e2e/01_help_and_version.sh`
-5. 使用 `gh pr create` 提交 PR
-
-**给 AI 助手的上下文**
-
-将以下信息提供给你的 AI 助手，帮助它快速理解项目：
-
-> 这是 mcpp 项目（https://github.com/mcpp-community/mcpp），一个纯 C++23 模块化的构建工具。
-> 项目文档在 docs/ 目录，设计文档在 .agents/docs/ 目录。
-> 用 `mcpp build` 编译，E2E 测试在 tests/e2e/ 下。
-
-后续我们也会在 `.agents/` 目录下提供更多 Skill 和文档，方便 AI Agent 更高效地理解和使用 mcpp 生态。
-
-### 贡献指南
-
-- 代码风格：遵循现有代码模式
-- 提交信息：`feat:` / `fix:` / `test:` / `docs:` 前缀
-- PR 要求：编译通过 + 相关 E2E 测试通过
+```
+阅读 https://github.com/mcpp-community/mcpp 仓库的 .agents/skills/contributing.md，
+按照指南帮我给 mcpp 项目提交一个贡献。
+```
 
 ## 社区 & 生态
 
@@ -253,9 +247,3 @@ mcpp 项目支持并鼓励开发者使用 AI 编码助手（Claude Code、Cursor
 - [ninja](https://github.com/ninja-build/ninja) — 底层构建引擎
 - [xmake](https://github.com/xmake-io/xmake) — 跨平台构建工具
 - [cargo](https://github.com/rust-lang/cargo) — Rust 包管理器
-
----
-
-> [!NOTE]
-> **早期版本** — mcpp 仍在积极开发中，接口和行为可能在后续版本调整。
-> 问题 / 反馈 / 想法欢迎在 [issues](https://github.com/mcpp-community/mcpp/issues) 留言。
