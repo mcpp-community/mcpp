@@ -59,24 +59,16 @@ jobs:
         run: |
           # Download and install xlings for macOS ARM64
           # xlings release uses "macosx-arm64" naming convention
+          WORK=$(mktemp -d)
           tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
-          curl -fsSL -o "/tmp/${tarball}" \
+          curl -fsSL -o "${WORK}/${tarball}" \
             "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
-          tar -xzf "/tmp/${tarball}" -C /tmp
-          # Find the extracted directory
-          XLINGS_DIR=$(find /tmp -maxdepth 1 -name "xlings-*" -type d | head -1)
+          tar -xzf "${WORK}/${tarball}" -C "${WORK}"
+          XLINGS_DIR="${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64"
           echo "xlings dir: $XLINGS_DIR"
           ls "$XLINGS_DIR/"
           # Install xlings
-          if [ -f "$XLINGS_DIR/subos/default/bin/xlings" ]; then
-            "$XLINGS_DIR/subos/default/bin/xlings" self install
-          elif [ -f "$XLINGS_DIR/bin/xlings" ]; then
-            "$XLINGS_DIR/bin/xlings" self install
-          else
-            echo "::error::Cannot find xlings binary in extracted tarball"
-            find "$XLINGS_DIR" -name xlings -type f
-            exit 1
-          fi
+          "$XLINGS_DIR/subos/default/bin/xlings" self install
           export PATH="$HOME/.xlings/subos/default/bin:$HOME/.xlings/bin:$PATH"
           xlings --version
           # Install mcpp
