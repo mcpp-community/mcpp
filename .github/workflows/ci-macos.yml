@@ -33,9 +33,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.xlings
-          key: xlings-macos15-arm64-${{ hashFiles('.xlings.json') }}
+          key: xlings-macos15-arm64-v2-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-macos15-arm64-
+            xlings-macos15-arm64-v2-
 
       - name: Bootstrap xlings
         env:
@@ -270,6 +270,8 @@ jobs:
 
       - name: Install mcpp@0.0.16 via xlings
         run: |
+          # Update package index to pick up new macOS entries
+          xlings update -y 2>/dev/null || true
           xlings install mcpp -y
           mcpp --version
 

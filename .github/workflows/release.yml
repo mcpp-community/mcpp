@@ -318,6 +318,7 @@ jobs:
       - name: Install mcpp@0.0.16 via xlings
         run: |
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings update -y 2>/dev/null || true
           xlings install mcpp -y
           mcpp --version
 
