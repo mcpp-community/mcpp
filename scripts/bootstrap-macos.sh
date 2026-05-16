@@ -139,10 +139,9 @@ if std_compat and os.path.isfile(std_compat):
 print("\n:: Phase 2: Scanning module declarations")
 
 # Regex patterns for module declarations in the module declaration region
-# (before the first non-preprocessor, non-module statement)
-re_export = re.compile(r'^\s*export\s+module\s+([\w.]+)\s*;')
-re_import = re.compile(r'^\s*(?:export\s+)?import\s+([\w.]+)\s*;')
-re_module = re.compile(r'^\s*module\s+([\w.]+)\s*;')  # module implementation unit
+re_export = re.compile(r'^\s*export\s+module\s+([\w.:]+)\s*;')
+re_import = re.compile(r'^\s*(?:export\s+)?import\s+([\w.:]+)\s*;')
+re_module = re.compile(r'^\s*module\s+([\w.:]+)\s*;')  # module implementation unit
 
 # Include both project sources and dependency sources
 sources = sorted(projroot.glob("src/**/*.cppm")) + sorted(projroot.glob("src/**/*.cpp"))
@@ -160,25 +159,38 @@ src_requires = {}
 for src in sources:
     provides = []
     requires = []
+    current_module = None  # track which module this file belongs to (for partition resolution)
     try:
         with open(src, 'r') as f:
             for line in f:
                 line = line.strip()
-                # Stop scanning at first function/class/namespace body
-                # (module declarations must come before implementation)
                 if line.startswith('//') or line.startswith('#') or not line:
                     continue
                 m = re_export.match(line)
                 if m:
-                    provides.append(m.group(1))
+                    mod_name = m.group(1)
+                    provides.append(mod_name)
+                    # Track the base module name for partition resolution
+                    if ':' in mod_name:
+                        current_module = mod_name.split(':')[0]
+                    else:
+                        current_module = mod_name
                     continue
                 m = re_module.match(line)
                 if m and not provides:  # module implementation unit
-                    requires.append(m.group(1))
+                    mod_name = m.group(1)
+                    if ':' in mod_name:
+                        current_module = mod_name.split(':')[0]
+                    else:
+                        current_module = mod_name
+                    requires.append(mod_name)
                     continue
                 m = re_import.match(line)
                 if m:
                     mod_name = m.group(1)
+                    # Handle partition imports: `import :options;` → `<current_module>:options`
+                    if mod_name.startswith(':') and current_module:
+                        mod_name = current_module + mod_name
                     if mod_name not in ("std", "std.compat"):
                         requires.append(mod_name)
                     continue
