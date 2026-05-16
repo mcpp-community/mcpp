@@ -13,6 +13,7 @@ include_dirs = ["src/libs/json"]
 
 [toolchain]
 default = "gcc@16.1.0"
+macos   = "llvm@20.1.7"
 
 # Per-target overrides: `mcpp build --target x86_64-linux-musl` (or the
 # four-segment form `x86_64-unknown-linux-musl`) picks musl-gcc 15.1 + full

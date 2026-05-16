@@ -255,3 +255,147 @@ jobs:
             dist/SHA256SUMS
             dist/mcpp-${{ steps.stage.outputs.version }}.tar.gz
             dist/mcpp.lua
+
+  build-macos:
+    name: build (macOS / ARM64)
+    runs-on: macos-15
+    needs: build-release
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            VER=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
+            TAG="v$VER"
+          fi
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            git checkout --detach "refs/tags/$TAG"
+          fi
+
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-macos15-release-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-macos15-release-
+            xlings-macos15-arm64-
+
+      - name: Bootstrap xlings + LLVM
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        run: |
+          if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
+            WORK=$(mktemp -d)
+            tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
+            curl -fsSL -o "${WORK}/${tarball}" \
+              "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+            tar -xzf "${WORK}/${tarball}" -C "${WORK}"
+            "${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64/subos/default/bin/xlings" self install
+          fi
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          # Install LLVM
+          xlings install llvm -y || xlings install llvm@20.1.7 -y
+          LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
+          echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
+
+      - name: Bootstrap-compile mcpp
+        env:
+          PROJROOT: ${{ github.workspace }}
+        run: |
+          export LLVM_ROOT="$LLVM_ROOT"
+          export CXX="$LLVM_ROOT/bin/clang++"
+          bash scripts/bootstrap-macos.sh "$LLVM_ROOT"
+          # Verify
+          ./target/bootstrap/bin/mcpp --version
+
+      - name: Self-host rebuild (mcpp builds mcpp)
+        run: |
+          # Now use the bootstrapped mcpp to rebuild itself properly
+          MCPP="./target/bootstrap/bin/mcpp"
+          "$MCPP" build
+          # Find the self-hosted binary
+          SELFHOST=$(find target -path "*/bin/mcpp" -not -path "*/bootstrap/*" | head -1)
+          test -x "$SELFHOST"
+          "$SELFHOST" --version
+          echo "SELFHOST=$SELFHOST" >> "$GITHUB_ENV"
+
+      - name: Package macOS release
+        id: stage
+        run: |
+          VERSION="${{ steps.resolve.outputs.version }}"
+          TARBALL_NAME="mcpp-${VERSION}-darwin-arm64.tar.gz"
+          WRAPPER="mcpp-${VERSION}-darwin-arm64"
+
+          # Create release layout
+          STAGING=$(mktemp -d)
+          mkdir -p "$STAGING/$WRAPPER/bin"
+          cp "$SELFHOST" "$STAGING/$WRAPPER/bin/mcpp"
+          # Strip (Mach-O)
+          strip "$STAGING/$WRAPPER/bin/mcpp" 2>/dev/null || true
+          # Copy metadata
+          cp LICENSE "$STAGING/$WRAPPER/" 2>/dev/null || true
+          cp README.md "$STAGING/$WRAPPER/" 2>/dev/null || true
+
+          # Shell launcher (same as Linux)
+          cat > "$STAGING/$WRAPPER/mcpp" << 'LAUNCHER'
+          #!/bin/sh
+          exec "$(dirname "$0")/bin/mcpp" "$@"
+          LAUNCHER
+          chmod +x "$STAGING/$WRAPPER/mcpp"
+
+          # Bundle xlings for install.sh consumers
+          XLINGS_BIN="$HOME/.xlings/subos/default/bin/xlings"
+          if [ -x "$XLINGS_BIN" ]; then
+            mkdir -p "$STAGING/$WRAPPER/registry/bin"
+            cp "$XLINGS_BIN" "$STAGING/$WRAPPER/registry/bin/xlings"
+            chmod +x "$STAGING/$WRAPPER/registry/bin/xlings"
+          fi
+
+          # Create tarball
+          mkdir -p dist
+          (cd "$STAGING" && tar -czf "$GITHUB_WORKSPACE/dist/${TARBALL_NAME}" "$WRAPPER")
+          # Versionless alias
+          cp "dist/${TARBALL_NAME}" "dist/mcpp-darwin-arm64.tar.gz"
+          # SHA256
+          (cd dist && shasum -a 256 "${TARBALL_NAME}" > "${TARBALL_NAME}.sha256")
+          (cd dist && shasum -a 256 "mcpp-darwin-arm64.tar.gz" > "mcpp-darwin-arm64.tar.gz.sha256")
+
+          echo "tarball=${TARBALL_NAME}" >> "$GITHUB_OUTPUT"
+          ls -la dist/
+
+      - name: Smoke-test the tarball
+        run: |
+          VERSION="${{ steps.resolve.outputs.version }}"
+          TARBALL_NAME="${{ steps.stage.outputs.tarball }}"
+          WRAPPER="${TARBALL_NAME%.tar.gz}"
+          SMOKE=$(mktemp -d)
+          tar -xzf "dist/${TARBALL_NAME}" -C "$SMOKE"
+          "$SMOKE/$WRAPPER/bin/mcpp" --version
+          "$SMOKE/$WRAPPER/mcpp" --version | grep -q "$VERSION"
+
+      - name: Upload macOS artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.tag }}
+          files: |
+            dist/mcpp-${{ steps.resolve.outputs.version }}-darwin-arm64.tar.gz
+            dist/mcpp-${{ steps.resolve.outputs.version }}-darwin-arm64.tar.gz.sha256
+            dist/mcpp-darwin-arm64.tar.gz
+            dist/mcpp-darwin-arm64.tar.gz.sha256
