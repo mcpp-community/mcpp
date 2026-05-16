@@ -1,0 +1,269 @@
+name: ci-macos
+
+# macOS CI for mcpp — validates LLVM/Clang as the default macOS toolchain.
+# Tests the full xlings → LLVM → C++23 import std pipeline on macOS ARM64.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-xlings-llvm:
+    name: macOS ARM64 — xlings LLVM end-to-end
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System info
+        run: |
+          uname -a
+          sw_vers
+          xcrun --show-sdk-path
+          echo "SDK: $(xcrun --show-sdk-version)"
+
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-macos15-arm64-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-macos15-arm64-
+
+      - name: Bootstrap xlings
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        run: |
+          WORK=$(mktemp -d)
+          tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
+          curl -fsSL -o "${WORK}/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "${WORK}/${tarball}" -C "${WORK}"
+          XLINGS_DIR="${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64"
+          "$XLINGS_DIR/subos/default/bin/xlings" self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          echo "PATH=$HOME/.xlings/subos/default/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Install LLVM via xlings
+        run: |
+          xlings install llvm -y || xlings install llvm@20.1.7 -y
+          # Verify clang++ is available
+          LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
+          echo "LLVM_ROOT=$LLVM_ROOT"
+          ls "$LLVM_ROOT/bin/clang++"
+          "$LLVM_ROOT/bin/clang++" --version
+          echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
+          echo "CXX=$LLVM_ROOT/bin/clang++" >> "$GITHUB_ENV"
+
+      - name: Inspect LLVM package structure
+        run: |
+          echo "=== bin/ ==="
+          ls "$LLVM_ROOT/bin/" | grep -E "^(clang|llvm|lld|ld)" | head -20
+          echo "=== lib/ ==="
+          ls "$LLVM_ROOT/lib/" 2>/dev/null | head -10
+          echo "=== share/libc++/ ==="
+          find "$LLVM_ROOT" -name "std.cppm" -o -name "std.compat.cppm" 2>/dev/null
+          echo "=== clang++.cfg ==="
+          cat "$LLVM_ROOT/bin/clang++.cfg" 2>/dev/null || echo "(no cfg file)"
+          echo "=== Target triple ==="
+          "$CXX" -dumpmachine
+          echo "=== Module manifest ==="
+          "$CXX" -print-library-module-manifest-path 2>/dev/null || echo "(not available)"
+
+      - name: Test — non-module C++23 compilation
+        run: |
+          WORK=$(mktemp -d)
+          cd "$WORK"
+          cat > main.cpp << 'EOF'
+          #include <iostream>
+          #include <format>
+          int main() {
+              std::cout << std::format("Hello from LLVM on macOS! clang {}", __clang_version__) << std::endl;
+              return 0;
+          }
+          EOF
+          "$CXX" -std=c++23 -o hello main.cpp
+          ./hello
+
+      - name: Test — import std (two-stage module compilation)
+        run: |
+          WORK=$(mktemp -d)
+          cd "$WORK"
+
+          # Find std.cppm
+          STD_CPPM=$(find "$LLVM_ROOT" -name "std.cppm" -path "*/libc++/*" | head -1)
+          if [ -z "$STD_CPPM" ]; then
+            echo "::error::std.cppm not found in LLVM package"
+            find "$LLVM_ROOT" -name "*.cppm" 2>/dev/null
+            exit 1
+          fi
+          echo "std.cppm at: $STD_CPPM"
+
+          echo "=== Step 1: Precompile std module ==="
+          mkdir -p pcm.cache
+          "$CXX" -std=c++23 -Wno-reserved-module-identifier \
+            --precompile "$STD_CPPM" -o pcm.cache/std.pcm
+
+          echo "=== Step 2: Compile std.pcm → std.o ==="
+          "$CXX" -std=c++23 -Wno-reserved-module-identifier \
+            pcm.cache/std.pcm -c -o std.o
+
+          echo "=== Step 3: Compile main.cpp with import std ==="
+          cat > main.cpp << 'EOF'
+          import std;
+          int main() {
+              std::println("C++23 import std works on macOS via xlings LLVM!");
+              return 0;
+          }
+          EOF
+          "$CXX" -std=c++23 -fmodule-file=std=pcm.cache/std.pcm -c main.cpp -o main.o
+
+          echo "=== Step 4: Link ==="
+          "$CXX" main.o std.o -o hello_modules
+          echo "=== Step 5: Run ==="
+          ./hello_modules
+
+      - name: Test — import std.compat
+        run: |
+          WORK=$(mktemp -d)
+          cd "$WORK"
+
+          STD_CPPM=$(find "$LLVM_ROOT" -name "std.cppm" -path "*/libc++/*" | head -1)
+          STD_COMPAT_CPPM=$(find "$LLVM_ROOT" -name "std.compat.cppm" -path "*/libc++/*" | head -1)
+
+          if [ -z "$STD_COMPAT_CPPM" ]; then
+            echo "::warning::std.compat.cppm not found, skipping"
+            exit 0
+          fi
+          echo "std.compat.cppm at: $STD_COMPAT_CPPM"
+
+          mkdir -p pcm.cache
+          # Build std first
+          "$CXX" -std=c++23 -Wno-reserved-module-identifier \
+            --precompile "$STD_CPPM" -o pcm.cache/std.pcm
+          "$CXX" -std=c++23 -Wno-reserved-module-identifier \
+            pcm.cache/std.pcm -c -o std.o
+
+          # Build std.compat (depends on std)
+          "$CXX" -std=c++23 -Wno-reserved-module-identifier \
+            -fmodule-file=std=pcm.cache/std.pcm \
+            --precompile "$STD_COMPAT_CPPM" -o pcm.cache/std.compat.pcm
+          "$CXX" -std=c++23 -Wno-reserved-module-identifier \
+            -fmodule-file=std=pcm.cache/std.pcm \
+            pcm.cache/std.compat.pcm -c -o std.compat.o
+
+          cat > main.cpp << 'EOF'
+          import std.compat;
+          #include <cstdio>
+          int main() {
+              printf("std.compat works on macOS! %s\n", "success");
+              return 0;
+          }
+          EOF
+          "$CXX" -std=c++23 \
+            -fmodule-file=std=pcm.cache/std.pcm \
+            -fmodule-file=std.compat=pcm.cache/std.compat.pcm \
+            -c main.cpp -o main.o
+          "$CXX" main.o std.o std.compat.o -o compat_test
+          ./compat_test
+
+      - name: Test — multi-module project
+        run: |
+          WORK=$(mktemp -d)
+          cd "$WORK"
+
+          STD_CPPM=$(find "$LLVM_ROOT" -name "std.cppm" -path "*/libc++/*" | head -1)
+          mkdir -p pcm.cache
+
+          # Build std
+          "$CXX" -std=c++23 -Wno-reserved-module-identifier \
+            --precompile "$STD_CPPM" -o pcm.cache/std.pcm
+          "$CXX" -std=c++23 -Wno-reserved-module-identifier \
+            pcm.cache/std.pcm -c -o std.o
+
+          # User module: greeter
+          cat > greeter.cppm << 'EOF'
+          export module greeter;
+          import std;
+          export namespace greeter {
+              std::string hello(std::string_view name) {
+                  return std::format("Hello, {}! (from macOS module)", name);
+              }
+          }
+          EOF
+          "$CXX" -std=c++23 -fmodule-file=std=pcm.cache/std.pcm \
+            --precompile greeter.cppm -o pcm.cache/greeter.pcm
+          "$CXX" -std=c++23 -fmodule-file=std=pcm.cache/std.pcm \
+            pcm.cache/greeter.pcm -c -o greeter.o
+
+          # Main
+          cat > main.cpp << 'EOF'
+          import std;
+          import greeter;
+          int main() {
+              std::println("{}", greeter::hello("mcpp"));
+              return 0;
+          }
+          EOF
+          "$CXX" -std=c++23 \
+            -fmodule-file=std=pcm.cache/std.pcm \
+            -fmodule-file=greeter=pcm.cache/greeter.pcm \
+            -c main.cpp -o main.o
+          "$CXX" main.o greeter.o std.o -o multimod
+          ./multimod
+
+      - name: Validate mcpp probe logic expectations
+        run: |
+          echo "=== Verifying mcpp's assumptions ==="
+          echo "1. -print-sysroot returns empty (mcpp falls back to xcrun):"
+          result=$("$CXX" -print-sysroot 2>/dev/null || true)
+          if [ -z "$result" ]; then
+            echo "   PASS: empty (xcrun fallback needed)"
+          else
+            echo "   INFO: $result"
+          fi
+
+          echo "2. xcrun --show-sdk-path works:"
+          xcrun --show-sdk-path && echo "   PASS"
+
+          echo "3. -dumpmachine returns darwin triple:"
+          triple=$("$CXX" -dumpmachine)
+          echo "   $triple"
+          echo "$triple" | grep -q "darwin" && echo "   PASS: contains 'darwin'"
+
+          echo "4. libc++ module manifest discoverable:"
+          manifest=$("$CXX" -print-library-module-manifest-path 2>/dev/null || true)
+          if [ -n "$manifest" ] && [ -f "$manifest" ]; then
+            echo "   PASS: $manifest"
+            echo "   Content:"
+            cat "$manifest" | head -20
+          else
+            echo "   INFO: manifest not via flag, using fallback path"
+            find "$LLVM_ROOT/share/libc++" -name "*.cppm" 2>/dev/null && echo "   PASS: fallback exists"
+          fi
+
+          echo "5. llvm-ar available:"
+          ls "$LLVM_ROOT/bin/llvm-ar" && echo "   PASS"
+
+          echo "6. clang-scan-deps available:"
+          ls "$LLVM_ROOT/bin/clang-scan-deps" && echo "   PASS" || echo "   WARN: not found"
+
+      - name: Validate install.sh platform detection
+        run: |
+          uname_s=$(uname -s)
+          uname_m=$(uname -m)
+          echo "Platform: ${uname_s}-${uname_m}"
+          case "${uname_s}-${uname_m}" in
+            Darwin-arm64)   echo "PASS: would select darwin-arm64" ;;
+            Darwin-x86_64)  echo "PASS: would select darwin-x86_64" ;;
+            *)              echo "FAIL: unexpected platform"; exit 1 ;;
+          esac

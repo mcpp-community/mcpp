@@ -149,7 +149,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;
     f.linkage = plan.manifest.buildConfig.linkage;
+#if defined(__APPLE__)
+    // macOS does not support full static linking (libSystem must be dynamic)
+    std::string full_static;
+#else
     std::string full_static = (f.linkage == "static") ? " -static" : "";
+#endif
     std::string static_stdlib = (f.staticStdlib && !isClang) ? " -static-libstdc++" : "";
     std::string runtime_dirs;
     for (auto& dir : plan.toolchain.linkRuntimeDirs) {
