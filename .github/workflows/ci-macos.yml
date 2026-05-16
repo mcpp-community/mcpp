@@ -281,9 +281,10 @@ jobs:
 
       - name: Self-host (mcpp builds mcpp)
         run: |
-          MCPP="./target/bootstrap/bin/mcpp"
-          "$MCPP" build
-          SELFHOST=$(find target -path "*/bin/mcpp" -not -path "*/bootstrap/*" | head -1)
+          # Put bootstrapped mcpp on PATH so build.ninja can find it for dyndep
+          export PATH="$PWD/target/bootstrap/bin:$PATH"
+          mcpp build
+          SELFHOST=$(find target -path "*/bin/mcpp" -not -path "*/bootstrap/*" -not -path "*/build/*" | head -1)
           test -x "$SELFHOST"
           "$SELFHOST" --version
           echo ":: Self-host successful!"

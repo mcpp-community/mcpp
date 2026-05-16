@@ -326,11 +326,11 @@ jobs:
 
       - name: Self-host rebuild (mcpp builds mcpp)
         run: |
-          # Now use the bootstrapped mcpp to rebuild itself properly
-          MCPP="./target/bootstrap/bin/mcpp"
-          "$MCPP" build
+          # Put bootstrapped mcpp on PATH so build.ninja can find it for dyndep
+          export PATH="$PWD/target/bootstrap/bin:$PATH"
+          mcpp build
           # Find the self-hosted binary
-          SELFHOST=$(find target -path "*/bin/mcpp" -not -path "*/bootstrap/*" | head -1)
+          SELFHOST=$(find target -path "*/bin/mcpp" -not -path "*/bootstrap/*" -not -path "*/build/*" | head -1)
           test -x "$SELFHOST"
           "$SELFHOST" --version
           echo "SELFHOST=$SELFHOST" >> "$GITHUB_ENV"
