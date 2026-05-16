@@ -161,15 +161,21 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         runtime_dirs += " -L" + escape_path(dir);
         runtime_dirs += " -Wl,-rpath," + escape_path(dir);
     }
+
 #if defined(__APPLE__)
-    // macOS: explicitly link libc++ when using Clang with xlings LLVM.
-    // The cfg's -nostdinc++ suppresses the implicit -lc++ that clang++ normally adds.
-    std::string stdlib_link = isClang ? " -lc++" : "";
+    // macOS linking strategy:
+    // - Do NOT pass --sysroot to the linker. The macOS SDK contains .tbd
+    //   stubs that lack libc++abi exports, causing undefined symbols for
+    //   exception/RTTI infrastructure. Without --sysroot, clang++ driver
+    //   uses the system default (/usr/lib/libc++, libc++abi, libSystem)
+    //   which works correctly.
+    // - sysroot is still used for compilation (finding system headers).
+    f.ld = std::format("{}{}{}{}", full_static, static_stdlib, b_flag, runtime_dirs);
 #else
-    std::string stdlib_link;
+    // Linux: sysroot must be passed to linker (glibc/musl lives there)
+    f.ld = std::format("{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag,
+                       runtime_dirs);
 #endif
-    f.ld = std::format("{}{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag,
-                       runtime_dirs, stdlib_link);
 
     return f;
 }
