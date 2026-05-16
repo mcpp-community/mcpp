@@ -315,22 +315,17 @@ jobs:
           LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
           echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
 
-      - name: Install xmake (for bootstrap)
-        run: brew install xmake
-
-      - name: Bootstrap-compile mcpp (xmake + LLVM)
+      - name: Install mcpp@0.0.16 via xlings
         run: |
-          export LLVM_ROOT="$LLVM_ROOT"
-          bash scripts/bootstrap-macos.sh "$LLVM_ROOT"
-          ./target/bootstrap/bin/mcpp --version
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings install mcpp -y
+          mcpp --version
 
-      - name: Self-host rebuild (mcpp builds mcpp)
+      - name: Build mcpp (self-host)
         run: |
-          # Put bootstrapped mcpp on PATH so build.ninja can find it for dyndep
-          export PATH="$PWD/target/bootstrap/bin:$PATH"
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           mcpp build
-          # Find the self-hosted binary
-          SELFHOST=$(find target -path "*/bin/mcpp" -not -path "*/bootstrap/*" -not -path "*/build/*" | head -1)
+          SELFHOST=$(find target -path "*/bin/mcpp" | head -1)
           test -x "$SELFHOST"
           "$SELFHOST" --version
           echo "SELFHOST=$SELFHOST" >> "$GITHUB_ENV"
@@ -339,8 +334,8 @@ jobs:
         id: stage
         run: |
           VERSION="${{ steps.resolve.outputs.version }}"
-          TARBALL_NAME="mcpp-${VERSION}-darwin-arm64.tar.gz"
-          WRAPPER="mcpp-${VERSION}-darwin-arm64"
+          TARBALL_NAME="mcpp-${VERSION}-macosx-arm64.tar.gz"
+          WRAPPER="mcpp-${VERSION}-macosx-arm64"
 
           # Create release layout
           STAGING=$(mktemp -d)
@@ -371,10 +366,10 @@ jobs:
           mkdir -p dist
           (cd "$STAGING" && tar -czf "$GITHUB_WORKSPACE/dist/${TARBALL_NAME}" "$WRAPPER")
           # Versionless alias
-          cp "dist/${TARBALL_NAME}" "dist/mcpp-darwin-arm64.tar.gz"
+          cp "dist/${TARBALL_NAME}" "dist/mcpp-macosx-arm64.tar.gz"
           # SHA256
           (cd dist && shasum -a 256 "${TARBALL_NAME}" > "${TARBALL_NAME}.sha256")
-          (cd dist && shasum -a 256 "mcpp-darwin-arm64.tar.gz" > "mcpp-darwin-arm64.tar.gz.sha256")
+          (cd dist && shasum -a 256 "mcpp-macosx-arm64.tar.gz" > "mcpp-macosx-arm64.tar.gz.sha256")
 
           echo "tarball=${TARBALL_NAME}" >> "$GITHUB_OUTPUT"
           ls -la dist/
@@ -394,7 +389,7 @@ jobs:
         with:
           tag_name: ${{ steps.resolve.outputs.tag }}
           files: |
-            dist/mcpp-${{ steps.resolve.outputs.version }}-darwin-arm64.tar.gz
-            dist/mcpp-${{ steps.resolve.outputs.version }}-darwin-arm64.tar.gz.sha256
-            dist/mcpp-darwin-arm64.tar.gz
-            dist/mcpp-darwin-arm64.tar.gz.sha256
+            dist/mcpp-${{ steps.resolve.outputs.version }}-macosx-arm64.tar.gz
+            dist/mcpp-${{ steps.resolve.outputs.version }}-macosx-arm64.tar.gz.sha256
+            dist/mcpp-macosx-arm64.tar.gz
+            dist/mcpp-macosx-arm64.tar.gz.sha256
