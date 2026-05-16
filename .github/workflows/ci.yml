@@ -90,6 +90,7 @@ jobs:
 
       - name: Build mcpp from source (self-host)
         run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" build
 
       - name: Unit + integration tests via `mcpp test`
