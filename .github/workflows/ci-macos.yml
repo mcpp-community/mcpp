@@ -5,15 +5,9 @@ name: ci-macos
 
 on:
   push:
-    branches: [ feat/macos-support ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
-    paths:
-      - 'src/toolchain/**'
-      - 'src/build/**'
-      - 'src/cli.cppm'
-      - 'install.sh'
-      - '.github/workflows/ci-macos.yml'
   workflow_dispatch:
 
 concurrency:
