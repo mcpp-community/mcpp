@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # scripts/bootstrap-macos.sh — one-shot bootstrap of mcpp on macOS.
 #
-# This script compiles mcpp from source on macOS using upstream LLVM/Clang.
-# It is only needed ONCE to produce the first macOS binary; afterwards
-# mcpp can self-host via `mcpp build`.
+# Compiles mcpp from source using upstream LLVM/Clang with C++23 modules.
+# Only needed ONCE to produce the first macOS binary; afterwards mcpp
+# can self-host via `mcpp build`.
 #
 # Prerequisites:
 #   - Clang 20+ with libc++ module support (xlings LLVM or Homebrew LLVM)
-#   - ninja (brew install ninja / xlings install ninja)
 #   - macOS SDK (xcode-select --install)
+#   - Python 3 (ships with macOS)
 #
 # Usage:
 #   ./scripts/bootstrap-macos.sh [LLVM_ROOT]
@@ -34,9 +34,6 @@ else
 fi
 
 CXX="$LLVM_ROOT/bin/clang++"
-AR="$LLVM_ROOT/bin/llvm-ar"
-SCAN_DEPS="$LLVM_ROOT/bin/clang-scan-deps"
-
 echo ":: LLVM_ROOT = $LLVM_ROOT"
 echo ":: CXX       = $CXX"
 "$CXX" --version | head -1
@@ -52,24 +49,7 @@ echo ":: SDKROOT   = $SDKROOT"
 
 # ─── Locate std.cppm ────────────────────────────────────────────────────────
 
-STD_CPPM=$("$CXX" -print-library-module-manifest-path 2>/dev/null || true)
-if [ -n "$STD_CPPM" ] && [ -f "$STD_CPPM" ]; then
-    # Parse the manifest JSON to find std source
-    STD_CPPM=$(python3 -c "
-import json, sys, os
-m = json.load(open('$STD_CPPM'))
-for mod in m.get('modules', []):
-    if mod.get('logical-name') == 'std':
-        p = mod['source-path']
-        if not os.path.isabs(p):
-            p = os.path.join(os.path.dirname('$STD_CPPM'), p)
-        print(os.path.realpath(p))
-        break
-")
-fi
-if [ -z "$STD_CPPM" ] || [ ! -f "$STD_CPPM" ]; then
-    STD_CPPM=$(find "$LLVM_ROOT" -name "std.cppm" -path "*/libc++/*" | head -1)
-fi
+STD_CPPM=$(find "$LLVM_ROOT" -name "std.cppm" -path "*/libc++/*" | head -1)
 if [ -z "$STD_CPPM" ] || [ ! -f "$STD_CPPM" ]; then
     echo "error: std.cppm not found in LLVM installation" >&2
     exit 1
@@ -79,7 +59,7 @@ echo ":: std.cppm  = $STD_CPPM"
 STD_COMPAT_CPPM=$(find "$LLVM_ROOT" -name "std.compat.cppm" -path "*/libc++/*" | head -1)
 echo ":: std.compat= ${STD_COMPAT_CPPM:-(not found)}"
 
-# ─── Setup output directory ─────────────────────────────────────────────────
+# ─── Setup ───────────────────────────────────────────────────────────────────
 
 PROJROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUTDIR="$PROJROOT/target/bootstrap"
@@ -88,210 +68,195 @@ OBJDIR="$OUTDIR/obj"
 BINDIR="$OUTDIR/bin"
 mkdir -p "$PCMDIR" "$OBJDIR" "$BINDIR"
 
-# Common flags
-CXXFLAGS="-std=c++23 -O2 -I$PROJROOT/src/libs/json"
-# If clang++.cfg doesn't already set sysroot, add it explicitly
-if ! "$CXX" -v 2>&1 | grep -q "sysroot"; then
-    CXXFLAGS="$CXXFLAGS --sysroot=$SDKROOT"
-fi
+# Export for Python
+export PROJROOT OUTDIR PCMDIR OBJDIR BINDIR CXX LLVM_ROOT STD_CPPM STD_COMPAT_CPPM SDKROOT
 
 echo
-echo ":: Phase 1: Pre-compile std module"
-"$CXX" $CXXFLAGS -Wno-reserved-module-identifier \
-    --precompile "$STD_CPPM" -o "$PCMDIR/std.pcm"
-"$CXX" $CXXFLAGS -Wno-reserved-module-identifier \
-    "$PCMDIR/std.pcm" -c -o "$OBJDIR/std.o"
-
-if [ -n "$STD_COMPAT_CPPM" ] && [ -f "$STD_COMPAT_CPPM" ]; then
-    echo ":: Phase 1b: Pre-compile std.compat module"
-    "$CXX" $CXXFLAGS -Wno-reserved-module-identifier \
-        -fmodule-file=std="$PCMDIR/std.pcm" \
-        --precompile "$STD_COMPAT_CPPM" -o "$PCMDIR/std.compat.pcm"
-    "$CXX" $CXXFLAGS -Wno-reserved-module-identifier \
-        -fmodule-file=std="$PCMDIR/std.pcm" \
-        "$PCMDIR/std.compat.pcm" -c -o "$OBJDIR/std.compat.o"
-fi
-
+echo ":: Compiling mcpp (42 modules + main.cpp)..."
 echo
-echo ":: Phase 2: Scan module dependencies (P1689)"
-# Generate compilation database for clang-scan-deps
-SOURCES=()
-while IFS= read -r f; do
-    SOURCES+=("$f")
-done < <(find "$PROJROOT/src" -name "*.cppm" -o -name "*.cpp" | sort)
 
-# Create a compilation database
-CDB="$OUTDIR/compile_commands.json"
-echo "[" > "$CDB"
-first=true
-for src in "${SOURCES[@]}"; do
-    if [ "$first" = true ]; then first=false; else echo "," >> "$CDB"; fi
-    cat >> "$CDB" << ENTRY
-  {
-    "directory": "$OUTDIR",
-    "file": "$src",
-    "command": "$CXX $CXXFLAGS -fmodule-file=std=$PCMDIR/std.pcm -c $src -o /dev/null"
-  }
-ENTRY
-done
-echo "]" >> "$CDB"
-
-# Run clang-scan-deps to get module dependency graph in P1689 format
-P1689_FILE="$OUTDIR/p1689.json"
-"$SCAN_DEPS" -compilation-database "$CDB" -format=p1689 > "$P1689_FILE" 2>/dev/null || {
-    echo "warning: clang-scan-deps failed, trying alternative scan..."
-    # Fallback: scan one-by-one
-    echo '{"revision":0,"rules":[' > "$P1689_FILE"
-    first=true
-    for src in "${SOURCES[@]}"; do
-        result=$("$SCAN_DEPS" -compilation-database "$CDB" -format=p1689 -- "$CXX" $CXXFLAGS -fmodule-file=std="$PCMDIR/std.pcm" -c "$src" 2>/dev/null || true)
-        if [ -n "$result" ]; then
-            if [ "$first" = true ]; then first=false; else echo "," >> "$P1689_FILE"; fi
-            echo "$result" >> "$P1689_FILE"
-        fi
-    done
-    echo "]}" >> "$P1689_FILE"
-}
-
-echo
-echo ":: Phase 3: Topological sort and compile modules"
-# Use Python to parse P1689 and build in dependency order
+# ─── All-in-one Python build script ─────────────────────────────────────────
 python3 << 'PYTHON'
-import json, os, subprocess, sys
+import os, re, sys, subprocess
+from pathlib import Path
+from collections import defaultdict
 
-outdir = os.environ.get("OUTDIR", "target/bootstrap")
-pcmdir = os.path.join(outdir, "pcm.cache")
-objdir = os.path.join(outdir, "obj")
-projroot = os.environ.get("PROJROOT", ".")
-cxx = os.environ.get("CXX", "clang++")
-cxxflags = os.environ.get("CXXFLAGS", "-std=c++23 -O2")
-p1689_file = os.path.join(outdir, "p1689.json")
+projroot = Path(os.environ["PROJROOT"])
+outdir   = Path(os.environ["OUTDIR"])
+pcmdir   = Path(os.environ["PCMDIR"])
+objdir   = Path(os.environ["OBJDIR"])
+bindir   = Path(os.environ["BINDIR"])
+cxx      = os.environ["CXX"]
+sdkroot  = os.environ["SDKROOT"]
+std_cppm = os.environ["STD_CPPM"]
+std_compat = os.environ.get("STD_COMPAT_CPPM", "")
 
-# Parse P1689
-with open(p1689_file) as f:
-    data = json.load(f)
+# Base flags — check if clang++.cfg already sets sysroot
+result = subprocess.run([cxx, "-v", "-x", "c++", "/dev/null", "-c", "-o", "/dev/null"],
+                       capture_output=True, text=True, timeout=10)
+has_sysroot = "sysroot" in (result.stdout + result.stderr)
+cxxflags = f"-std=c++23 -O2 -I{projroot}/src/libs/json"
+if not has_sysroot:
+    cxxflags += f" --sysroot={sdkroot}"
 
-rules = data.get("rules", [])
+def run(cmd, desc=""):
+    rc = os.system(cmd)
+    if rc != 0:
+        print(f"\nFAILED ({desc}):\n  {cmd}", file=sys.stderr)
+        sys.exit(1)
 
-# Build module map: module_name -> source file
-mod_to_src = {}
-src_to_provides = {}
-src_to_requires = {}
+# ─── Phase 1: Pre-compile std module ────────────────────────────────────────
+print(":: Phase 1: Pre-compile std + std.compat")
+run(f'{cxx} {cxxflags} -Wno-reserved-module-identifier --precompile "{std_cppm}" -o "{pcmdir}/std.pcm"',
+    "precompile std")
+run(f'{cxx} {cxxflags} -Wno-reserved-module-identifier "{pcmdir}/std.pcm" -c -o "{objdir}/std.o"',
+    "compile std.o")
 
-for rule in rules:
-    src = rule.get("primary-output", rule.get("source", ""))
-    # clang-scan-deps may use "primary-output" or find source from provides
-    if not src:
-        continue
+all_objs = [str(objdir / "std.o")]
+std_mod_flags = f'-fmodule-file=std="{pcmdir}/std.pcm"'
 
+if std_compat and os.path.isfile(std_compat):
+    run(f'{cxx} {cxxflags} -Wno-reserved-module-identifier {std_mod_flags} --precompile "{std_compat}" -o "{pcmdir}/std.compat.pcm"',
+        "precompile std.compat")
+    run(f'{cxx} {cxxflags} -Wno-reserved-module-identifier {std_mod_flags} "{pcmdir}/std.compat.pcm" -c -o "{objdir}/std.compat.o"',
+        "compile std.compat.o")
+    all_objs.append(str(objdir / "std.compat.o"))
+    std_mod_flags += f' -fmodule-file=std.compat="{pcmdir}/std.compat.pcm"'
+
+# ─── Phase 2: Scan module declarations from source ──────────────────────────
+print("\n:: Phase 2: Scanning module declarations")
+
+# Regex patterns for module declarations in the module declaration region
+# (before the first non-preprocessor, non-module statement)
+re_export = re.compile(r'^\s*export\s+module\s+([\w.]+)\s*;')
+re_import = re.compile(r'^\s*(?:export\s+)?import\s+([\w.]+)\s*;')
+re_module = re.compile(r'^\s*module\s+([\w.]+)\s*;')  # module implementation unit
+
+sources = sorted(projroot.glob("src/**/*.cppm")) + sorted(projroot.glob("src/**/*.cpp"))
+
+# Map: module_name -> source_path
+mod_source = {}
+# Map: source_path -> [module_names_it_provides]
+src_provides = {}
+# Map: source_path -> [module_names_it_requires] (excluding std/std.compat)
+src_requires = {}
+
+for src in sources:
     provides = []
-    for p in rule.get("provides", []):
-        name = p.get("logical-name", "")
-        if name:
-            provides.append(name)
-            mod_to_src[name] = rule.get("source", src)
-
     requires = []
-    for r in rule.get("requires", []):
-        name = r.get("logical-name", "")
-        if name and name != "std" and name != "std.compat":
-            requires.append(name)
+    try:
+        with open(src, 'r') as f:
+            for line in f:
+                line = line.strip()
+                # Stop scanning at first function/class/namespace body
+                # (module declarations must come before implementation)
+                if line.startswith('//') or line.startswith('#') or not line:
+                    continue
+                m = re_export.match(line)
+                if m:
+                    provides.append(m.group(1))
+                    continue
+                m = re_module.match(line)
+                if m and not provides:  # module implementation unit
+                    requires.append(m.group(1))
+                    continue
+                m = re_import.match(line)
+                if m:
+                    mod_name = m.group(1)
+                    if mod_name not in ("std", "std.compat"):
+                        requires.append(mod_name)
+                    continue
+                # If we hit something that's not a module-related keyword, stop
+                if not line.startswith('export') and not line.startswith('import') and not line.startswith('module'):
+                    break
+    except Exception:
+        pass
 
-    actual_src = rule.get("source", src)
-    src_to_provides[actual_src] = provides
-    src_to_requires[actual_src] = requires
+    src_provides[str(src)] = provides
+    src_requires[str(src)] = requires
+    for mod in provides:
+        mod_source[mod] = str(src)
 
-# Topological sort
+print(f"   Found {len(mod_source)} modules")
+
+# ─── Phase 3: Topological sort ──────────────────────────────────────────────
+print("\n:: Phase 3: Topological sort")
+
+# Build dependency graph
 visited = set()
 order = []
+in_progress = set()
 
 def visit(mod_name):
     if mod_name in visited:
         return
-    visited.add(mod_name)
-    src = mod_to_src.get(mod_name)
+    if mod_name in in_progress:
+        # Circular dependency — shouldn't happen with well-formed modules
+        print(f"   WARNING: circular dependency involving {mod_name}")
+        return
+    in_progress.add(mod_name)
+    src = mod_source.get(mod_name)
     if src:
-        for dep in src_to_requires.get(src, []):
-            visit(dep)
+        for dep in src_requires.get(src, []):
+            if dep in mod_source:
+                visit(dep)
+    in_progress.discard(mod_name)
+    visited.add(mod_name)
     order.append(mod_name)
 
-for mod_name in mod_to_src:
+for mod_name in mod_source:
     visit(mod_name)
 
-print(f"Module build order ({len(order)} modules):")
-for m in order:
-    print(f"  {m}")
+print(f"   Build order: {len(order)} modules")
 
-# Compile modules in order
-compiled_objs = []
-mod_flags = f"-fmodule-file=std={pcmdir}/std.pcm"
-if os.path.exists(os.path.join(pcmdir, "std.compat.pcm")):
-    mod_flags += f" -fmodule-file=std.compat={pcmdir}/std.compat.pcm"
+# ─── Phase 4: Compile modules in dependency order ───────────────────────────
+print("\n:: Phase 4: Compiling modules")
 
-for mod_name in order:
-    src = mod_to_src[mod_name]
-    pcm_path = os.path.join(pcmdir, f"{mod_name.replace('.', '_')}.pcm")
-    obj_path = os.path.join(objdir, f"{mod_name.replace('.', '_')}.o")
+# Track accumulated -fmodule-file flags
+accumulated_mod_flags = std_mod_flags
 
-    # Build -fmodule-file flags for dependencies
-    dep_flags = mod_flags
-    for dep in src_to_requires.get(src, []):
-        dep_pcm = os.path.join(pcmdir, f"{dep.replace('.', '_')}.pcm")
-        dep_flags += f" -fmodule-file={dep}={dep_pcm}"
+for i, mod_name in enumerate(order):
+    src = mod_source[mod_name]
+    safe_name = mod_name.replace(".", "_")
+    pcm_path = pcmdir / f"{safe_name}.pcm"
+    obj_path = objdir / f"{safe_name}.o"
 
-    # Precompile
-    cmd = f"{cxx} {cxxflags} {dep_flags} --precompile {src} -o {pcm_path}"
-    print(f"  PRECOMPILE {mod_name}")
-    rc = os.system(cmd)
-    if rc != 0:
-        print(f"FAILED: {cmd}", file=sys.stderr)
-        sys.exit(1)
+    # Build dep flags for this module's requirements
+    dep_flags = accumulated_mod_flags
 
-    # Add this module's pcm to future compilations
-    mod_flags += f" -fmodule-file={mod_name}={pcm_path}"
+    # Precompile .cppm → .pcm
+    print(f"   [{i+1}/{len(order)}] {mod_name}")
+    run(f'{cxx} {cxxflags} {dep_flags} --precompile "{src}" -o "{pcm_path}"',
+        f"precompile {mod_name}")
 
-    # Compile to object
-    cmd = f"{cxx} {cxxflags} {dep_flags} -fmodule-file={mod_name}={pcm_path} {pcm_path} -c -o {obj_path}"
-    rc = os.system(cmd)
-    if rc != 0:
-        print(f"FAILED: {cmd}", file=sys.stderr)
-        sys.exit(1)
+    # Compile .pcm → .o
+    run(f'{cxx} {cxxflags} {dep_flags} "{pcm_path}" -c -o "{obj_path}"',
+        f"compile {mod_name}")
 
-    compiled_objs.append(obj_path)
+    # Add this module to accumulated flags for subsequent modules
+    accumulated_mod_flags += f' -fmodule-file={mod_name}="{pcm_path}"'
+    all_objs.append(str(obj_path))
 
-# Compile main.cpp
-main_src = os.path.join(projroot, "src/main.cpp")
-main_obj = os.path.join(objdir, "main.o")
-cmd = f"{cxx} {cxxflags} {mod_flags} -c {main_src} -o {main_obj}"
-print(f"  COMPILE main.cpp")
-rc = os.system(cmd)
-if rc != 0:
-    print(f"FAILED: {cmd}", file=sys.stderr)
-    sys.exit(1)
-compiled_objs.append(main_obj)
+# ─── Phase 5: Compile main.cpp ──────────────────────────────────────────────
+print("\n:: Phase 5: Compile main.cpp")
+main_src = projroot / "src" / "main.cpp"
+main_obj = objdir / "main.o"
+run(f'{cxx} {cxxflags} {accumulated_mod_flags} -c "{main_src}" -o "{main_obj}"',
+    "compile main.cpp")
+all_objs.append(str(main_obj))
 
-# Add std.o
-compiled_objs.insert(0, os.path.join(objdir, "std.o"))
-if os.path.exists(os.path.join(objdir, "std.compat.o")):
-    compiled_objs.insert(1, os.path.join(objdir, "std.compat.o"))
+# ─── Phase 6: Link ──────────────────────────────────────────────────────────
+print("\n:: Phase 6: Link")
+binary = bindir / "mcpp"
+objs_str = " ".join(f'"{o}"' for o in all_objs)
+run(f'{cxx} {objs_str} -o "{binary}"', "link")
 
-# Link
-bindir = os.path.join(outdir, "bin")
-binary = os.path.join(bindir, "mcpp")
-objs_str = " ".join(compiled_objs)
-cmd = f"{cxx} {objs_str} -o {binary}"
-print(f"  LINK {binary}")
-rc = os.system(cmd)
-if rc != 0:
-    print(f"FAILED: {cmd}", file=sys.stderr)
-    sys.exit(1)
-
-print(f"\n:: Bootstrap complete: {binary}")
+# ─── Done ────────────────────────────────────────────────────────────────────
+print(f"\n:: Bootstrap complete!")
+result = subprocess.run([str(binary), "--version"], capture_output=True, text=True)
+print(f"   {result.stdout.strip()}")
 PYTHON
 
 echo
-echo ":: Phase 4: Verify"
 "$BINDIR/mcpp" --version
-echo
-echo ":: SUCCESS: Bootstrap mcpp built at $BINDIR/mcpp"
-echo ":: You can now use it for self-hosting: $BINDIR/mcpp build"
+echo ":: SUCCESS: $BINDIR/mcpp"
