@@ -176,10 +176,15 @@ discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
                       || exe.find("clang") != std::string::npos;
     if (looksLikeLlvm) {
         append_existing_unique(dirs, root / "lib");
+#if defined(__linux__)
         append_existing_unique(dirs, root / "lib" / "x86_64-unknown-linux-gnu");
         append_existing_unique(dirs, "/lib/x86_64-linux-gnu");
         append_existing_unique(dirs, "/usr/lib/x86_64-linux-gnu");
         append_existing_unique(dirs, "/usr/lib64");
+#elif defined(__APPLE__)
+        append_existing_unique(dirs, root / "lib" / "aarch64-apple-darwin");
+        append_existing_unique(dirs, root / "lib" / "darwin");
+#endif
     }
 
     if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
@@ -196,13 +201,20 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
     auto root = compilerBin.parent_path().parent_path();
     if (!targetTriple.empty())
         append_existing_unique(dirs, root / "lib" / std::string(targetTriple));
+#if defined(__linux__)
     append_existing_unique(dirs, root / "lib" / "x86_64-unknown-linux-gnu");
+#elif defined(__APPLE__)
+    append_existing_unique(dirs, root / "lib" / "aarch64-apple-darwin");
+    append_existing_unique(dirs, root / "lib" / "darwin");
+#endif
     append_existing_unique(dirs, root / "lib");
 
+#if defined(__linux__)
     if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
         append_existing_unique(dirs, *rt / "lib64");
         append_existing_unique(dirs, *rt / "lib");
     }
+#endif
     return dirs;
 }
 
@@ -255,9 +267,18 @@ probe_sysroot(const std::filesystem::path& compilerBin,
     auto r = run_capture(std::format("{}{} -print-sysroot 2>/dev/null",
                                      envPrefix,
                                      mcpp::xlings::shq(compilerBin.string())));
-    if (!r) return {};
-    auto s = trim_line(*r);
-    if (!s.empty() && std::filesystem::exists(s)) return s;
+    if (r) {
+        auto s = trim_line(*r);
+        if (!s.empty() && std::filesystem::exists(s)) return s;
+    }
+#if defined(__APPLE__)
+    // macOS fallback: use xcrun to discover the SDK path
+    auto xcrun_r = run_capture("xcrun --show-sdk-path 2>/dev/null");
+    if (xcrun_r) {
+        auto sdk = trim_line(*xcrun_r);
+        if (!sdk.empty() && std::filesystem::exists(sdk)) return sdk;
+    }
+#endif
     return {};
 }
 

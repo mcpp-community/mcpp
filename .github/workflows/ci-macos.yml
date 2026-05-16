@@ -1,0 +1,149 @@
+name: ci-macos
+
+# Lightweight macOS validation CI.
+# Verifies that mcpp can build simple projects on macOS ARM64
+# using the xlings LLVM toolchain (upstream Clang 20 + bundled libc++).
+
+on:
+  push:
+    branches: [ feat/macos-support ]
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/toolchain/**'
+      - 'src/build/**'
+      - 'install.sh'
+      - '.github/workflows/ci-macos.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-llvm-smoke:
+    name: macOS ARM64 LLVM smoke test
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      MCPP_HOME: /Users/runner/.mcpp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp
+          key: mcpp-sandbox-macos-arm64-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-sandbox-macos-arm64-
+
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-macos-arm64-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-macos-arm64-
+
+      - name: Verify CommandLineTools SDK exists
+        run: |
+          xcrun --show-sdk-path
+          # If this fails, the runner doesn't have CLT installed.
+          # macos-14 runners come with Xcode which includes the SDK.
+
+      - name: Bootstrap mcpp via xlings
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        run: |
+          # Download and install xlings for macOS ARM64
+          tarball="xlings-${XLINGS_VERSION}-macos-arm64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" || {
+            echo "::warning::xlings macOS ARM64 tarball not available at v${XLINGS_VERSION}"
+            echo "Trying alternative naming convention..."
+            tarball="xlings-${XLINGS_VERSION}-darwin-arm64.tar.gz"
+            curl -fsSL -o "/tmp/${tarball}" \
+              "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          }
+          tar -xzf "/tmp/${tarball}" -C /tmp
+          # Find the extracted directory
+          XLINGS_DIR=$(find /tmp -maxdepth 1 -name "xlings-*" -type d | head -1)
+          echo "xlings dir: $XLINGS_DIR"
+          ls "$XLINGS_DIR/"
+          # Install xlings
+          if [ -f "$XLINGS_DIR/subos/default/bin/xlings" ]; then
+            "$XLINGS_DIR/subos/default/bin/xlings" self install
+          elif [ -f "$XLINGS_DIR/bin/xlings" ]; then
+            "$XLINGS_DIR/bin/xlings" self install
+          else
+            echo "::error::Cannot find xlings binary in extracted tarball"
+            find "$XLINGS_DIR" -name xlings -type f
+            exit 1
+          fi
+          export PATH="$HOME/.xlings/subos/default/bin:$HOME/.xlings/bin:$PATH"
+          xlings --version
+          # Install mcpp
+          xlings install mcpp -y
+          MCPP=$(find "$HOME/.xlings" -name mcpp -type f -perm +111 | head -1)
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+
+      - name: Install LLVM toolchain
+        run: |
+          "$MCPP" self config --mirror GLOBAL
+          "$MCPP" toolchain install llvm 20.1.7
+          "$MCPP" toolchain list
+
+      - name: Smoke test - hello world (no modules)
+        run: |
+          TMPDIR=$(mktemp -d)
+          cd "$TMPDIR"
+          cat > mcpp.toml << 'EOF'
+          [project]
+          name = "hello"
+          version = "0.1.0"
+          standard = "c++23"
+
+          [toolchain]
+          macos = "llvm@20.1.7"
+          default = "llvm@20.1.7"
+          EOF
+          mkdir src
+          cat > src/main.cpp << 'EOF'
+          #include <iostream>
+          int main() {
+              std::cout << "Hello from mcpp on macOS!" << std::endl;
+              return 0;
+          }
+          EOF
+          "$MCPP" build
+          # Find and run the built binary
+          find target -name hello -type f -perm +111 -exec {} \;
+
+      - name: Smoke test - import std
+        run: |
+          TMPDIR=$(mktemp -d)
+          cd "$TMPDIR"
+          cat > mcpp.toml << 'EOF'
+          [project]
+          name = "modtest"
+          version = "0.1.0"
+          standard = "c++23"
+
+          [toolchain]
+          macos = "llvm@20.1.7"
+          default = "llvm@20.1.7"
+          EOF
+          mkdir src
+          cat > src/main.cpp << 'EOF'
+          import std;
+          int main() {
+              std::println("C++23 modules work on macOS!");
+              return 0;
+          }
+          EOF
+          "$MCPP" build
+          find target -name modtest -type f -perm +111 -exec {} \;

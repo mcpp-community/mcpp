@@ -26,10 +26,13 @@ PREFIX="${MCPP_PREFIX:-$HOME/.mcpp}"
 uname_s=$(uname -s)
 uname_m=$(uname -m)
 case "${uname_s}-${uname_m}" in
-    Linux-x86_64)  PLAT="linux-x86_64" ;;
+    Linux-x86_64)   PLAT="linux-x86_64" ;;
+    Darwin-arm64)   PLAT="darwin-arm64" ;;
+    Darwin-x86_64)  PLAT="darwin-x86_64" ;;
     *)
         echo "error: unsupported platform ${uname_s}-${uname_m}." >&2
-        echo "       v0.0.3 ships only linux-x86_64. Build from source instead:" >&2
+        echo "       Currently supported: linux-x86_64, darwin-arm64, darwin-x86_64." >&2
+        echo "       Build from source instead:" >&2
         echo "       https://github.com/${REPO}#从源码构建开发者" >&2
         exit 1
         ;;
@@ -58,7 +61,11 @@ curl --fail --location --silent --show-error -o "$WORK/mcpp.sha256" "$SHA_URL" |
 # ---- verify ---------------------------------------------------------------
 if [[ -s "$WORK/mcpp.sha256" ]]; then
     expected=$(awk '{print $1}' "$WORK/mcpp.sha256")
-    actual=$(sha256sum "$WORK/mcpp.tar.gz" | awk '{print $1}')
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$WORK/mcpp.tar.gz" | awk '{print $1}')
+    else
+        actual=$(shasum -a 256 "$WORK/mcpp.tar.gz" | awk '{print $1}')
+    fi
     if [[ "$expected" != "$actual" ]]; then
         echo "error: sha256 mismatch" >&2
         echo "  expected: $expected" >&2
