@@ -1,0 +1,138 @@
+name: bootstrap-macos
+
+# One-shot workflow to produce the first macOS mcpp binary.
+# Uses xmake + xlings LLVM to compile mcpp from source.
+# Once a macOS binary exists, mcpp can self-host for future releases.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bootstrap:
+    name: Bootstrap mcpp (macOS ARM64)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      XLINGS_NON_INTERACTIVE: '1'
+      XLINGS_VERSION: '0.4.30'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System info
+        run: |
+          uname -a
+          sw_vers
+          xcrun --show-sdk-path
+
+      - name: Install xlings
+        run: |
+          WORK=$(mktemp -d)
+          tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
+          curl -fsSL -o "${WORK}/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "${WORK}/${tarball}" -C "${WORK}"
+          "${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64/subos/default/bin/xlings" self install
+          echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+
+      - name: Install LLVM + xmake
+        run: |
+          xlings install llvm -y || xlings install llvm@20.1.7 -y
+          brew install xmake
+          LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
+          echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
+          "$LLVM_ROOT/bin/clang++" --version
+          xmake --version
+
+      - name: Build mcpp with xmake
+        run: |
+          # Generate xmake.lua if not present
+          if [ ! -f xmake.lua ]; then
+            cat > xmake.lua << 'EOF'
+          add_rules("mode.release")
+          set_languages("c++23")
+
+          package("cmdline")
+              set_homepage("https://github.com/mcpplibs/cmdline")
+              set_description("Modern C++ command-line parsing library")
+              set_license("Apache-2.0")
+              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/$(version).tar.gz")
+              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
+              on_install(function (package)
+                  import("package.tools.xmake").install(package)
+              end)
+          package_end()
+
+          add_requires("cmdline 0.0.1")
+
+          target("mcpp")
+              set_kind("binary")
+              add_files("src/main.cpp")
+              add_files("src/**.cppm")
+              add_packages("cmdline")
+              add_includedirs("src/libs/json")
+              set_policy("build.c++.modules", true)
+          EOF
+          fi
+
+          # Configure with xlings LLVM
+          xmake f -y -m release --toolchain=llvm --sdk="$LLVM_ROOT"
+          # Build
+          xmake build -y mcpp
+
+      - name: Verify built binary
+        run: |
+          MCPP=$(find build -name mcpp -type f -perm +111 | head -1)
+          test -x "$MCPP"
+          file "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+
+      - name: Package
+        id: package
+        run: |
+          VERSION=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
+          TARBALL="mcpp-${VERSION}-darwin-arm64.tar.gz"
+          WRAPPER="mcpp-${VERSION}-darwin-arm64"
+
+          mkdir -p "dist/$WRAPPER/bin"
+          cp "$MCPP" "dist/$WRAPPER/bin/mcpp"
+          strip "dist/$WRAPPER/bin/mcpp" 2>/dev/null || true
+          cp LICENSE "dist/$WRAPPER/" 2>/dev/null || true
+          cp README.md "dist/$WRAPPER/" 2>/dev/null || true
+
+          cat > "dist/$WRAPPER/mcpp" << 'LAUNCHER'
+          #!/bin/sh
+          exec "$(dirname "$0")/bin/mcpp" "$@"
+          LAUNCHER
+          chmod +x "dist/$WRAPPER/mcpp"
+
+          # Bundle xlings
+          XLINGS_BIN="$HOME/.xlings/subos/default/bin/xlings"
+          if [ -x "$XLINGS_BIN" ]; then
+            mkdir -p "dist/$WRAPPER/registry/bin"
+            cp "$XLINGS_BIN" "dist/$WRAPPER/registry/bin/xlings"
+          fi
+
+          (cd dist && tar -czf "$TARBALL" "$WRAPPER")
+          (cd dist && shasum -a 256 "$TARBALL" > "$TARBALL.sha256")
+
+          echo "tarball=dist/$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          ls -la dist/
+
+      - name: Smoke test
+        run: |
+          SMOKE=$(mktemp -d)
+          tar -xzf "${{ steps.package.outputs.tarball }}" -C "$SMOKE"
+          VERSION="${{ steps.package.outputs.version }}"
+          "$SMOKE/mcpp-${VERSION}-darwin-arm64/bin/mcpp" --version
+          "$SMOKE/mcpp-${VERSION}-darwin-arm64/mcpp" --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpp-darwin-arm64
+          path: |
+            dist/mcpp-*-darwin-arm64.tar.gz
+            dist/mcpp-*-darwin-arm64.tar.gz.sha256
