@@ -1105,26 +1105,49 @@ prepare_build(bool print_fingerprint,
         // CI / offline / test opt-out: hard-error instead of silently
         // pulling ~800 MB of toolchain. Preserves the original M5.5
         // contract for environments that need it.
+#if defined(__APPLE__)
+        return std::unexpected(
+            "no toolchain configured.\n"
+            "       run one of:\n"
+            "         mcpp toolchain install llvm 20.1.7\n"
+            "         mcpp toolchain default llvm@20.1.7\n"
+            "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.");
+#else
         return std::unexpected(
             "no toolchain configured.\n"
             "       run one of:\n"
             "         mcpp toolchain install gcc 15.1.0-musl\n"
             "         mcpp toolchain default gcc@15.1.0-musl\n"
             "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.");
+#endif
     } else {
         // First-run UX: no project-level [toolchain], no global default,
         // and the user just ran `mcpp build` (or similar). Auto-install
-        // mcpp's canonical default — musl-gcc 15.1.0 — so the user gets
-        // a portable static binary out of the box without any config. We
-        // pin it as the global default so the next invocation is silent.
+        // the platform's canonical default so the user gets a working
+        // binary out of the box without any config. We pin it as the
+        // global default so the next invocation is silent.
         // Users can switch any time via `mcpp toolchain default <spec>`.
+        //
+        // macOS: LLVM/Clang — Apple doesn't ship GCC; upstream LLVM with
+        //        bundled libc++ is the self-contained choice.
+        // Linux: musl-gcc — produces portable static binaries.
+#if defined(__APPLE__)
+        std::string defaultSpec = "llvm@20.1.7";
+#else
         std::string defaultSpec = "gcc@15.1.0-musl";
+#endif
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
+#if defined(__APPLE__)
+        mcpp::ui::info("First run",
+            std::format("no toolchain configured — installing {} (LLVM/Clang) as default",
+                        defaultSpec));
+#else
         mcpp::ui::info("First run",
             std::format("no toolchain configured — installing {} (musl, static) as default",
                         defaultSpec));
+#endif
 
         auto cfg = get_cfg();
         if (!cfg) return std::unexpected(cfg.error());
@@ -1137,8 +1160,9 @@ prepare_build(bool print_fingerprint,
             return std::unexpected(std::format(
                 "auto-installing default toolchain {} failed: {}\n"
                 "       you can install it manually with:\n"
-                "         mcpp toolchain install gcc 15.1.0-musl",
-                defaultSpec, payload.error().message));
+                "         mcpp toolchain install {} {}",
+                defaultSpec, payload.error().message,
+                defaultParsed->compiler, defaultParsed->version));
         }
         explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, defaultPkg);
         if (!std::filesystem::exists(explicit_compiler)) {
