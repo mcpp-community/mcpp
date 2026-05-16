@@ -164,13 +164,15 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
 #if defined(__APPLE__)
     // macOS linking strategy:
-    // - Do NOT pass --sysroot to the linker. The macOS SDK contains .tbd
-    //   stubs that lack libc++abi exports, causing undefined symbols for
-    //   exception/RTTI infrastructure. Without --sysroot, clang++ driver
-    //   uses the system default (/usr/lib/libc++, libc++abi, libSystem)
-    //   which works correctly.
-    // - sysroot is still used for compilation (finding system headers).
-    f.ld = std::format("{}{}{}{}", full_static, static_stdlib, b_flag, runtime_dirs);
+    // 1. Do NOT pass --sysroot to the linker. The macOS SDK .tbd stubs
+    //    lack libc++abi exports → undefined symbols. Without sysroot,
+    //    clang++ links against /usr/lib system libraries correctly.
+    // 2. Explicitly pass -lc++ because xlings LLVM's clang++.cfg uses
+    //    -nostdinc++ which also suppresses the implicit stdlib linkage.
+    // sysroot is still passed for compilation (finding system headers).
+    std::string stdlib_link = isClang ? " -lc++" : "";
+    f.ld = std::format("{}{}{}{}{}", full_static, static_stdlib, b_flag,
+                       runtime_dirs, stdlib_link);
 #else
     // Linux: sysroot must be passed to linker (glibc/musl lives there)
     f.ld = std::format("{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag,
