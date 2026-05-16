@@ -315,14 +315,13 @@ jobs:
           LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
           echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
 
-      - name: Bootstrap-compile mcpp
-        env:
-          PROJROOT: ${{ github.workspace }}
+      - name: Install xmake (for bootstrap)
+        run: brew install xmake
+
+      - name: Bootstrap-compile mcpp (xmake + LLVM)
         run: |
           export LLVM_ROOT="$LLVM_ROOT"
-          export CXX="$LLVM_ROOT/bin/clang++"
           bash scripts/bootstrap-macos.sh "$LLVM_ROOT"
-          # Verify
           ./target/bootstrap/bin/mcpp --version
 
       - name: Self-host rebuild (mcpp builds mcpp)
