@@ -58,15 +58,10 @@ jobs:
           XLINGS_VERSION: '0.4.30'
         run: |
           # Download and install xlings for macOS ARM64
-          tarball="xlings-${XLINGS_VERSION}-macos-arm64.tar.gz"
+          # xlings release uses "macosx-arm64" naming convention
+          tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
-            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" || {
-            echo "::warning::xlings macOS ARM64 tarball not available at v${XLINGS_VERSION}"
-            echo "Trying alternative naming convention..."
-            tarball="xlings-${XLINGS_VERSION}-darwin-arm64.tar.gz"
-            curl -fsSL -o "/tmp/${tarball}" \
-              "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
-          }
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
           tar -xzf "/tmp/${tarball}" -C /tmp
           # Find the extracted directory
           XLINGS_DIR=$(find /tmp -maxdepth 1 -name "xlings-*" -type d | head -1)
