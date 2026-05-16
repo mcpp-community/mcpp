@@ -8,6 +8,10 @@
 [![Module](https://img.shields.io/badge/module-ok-green.svg)](https://en.cppreference.com/w/cpp/language/modules)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/6c85896e-9a37-4f62-acfb-d37a4eae2363" alt="mcpp demo" width="720">
+</p>
+
 ## 核心特性
 
 - **C++23 模块原生支持** — `import std` 自动处理，文件级增量构建，模块依赖自动分析，零手动配置
