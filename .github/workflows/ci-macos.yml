@@ -268,21 +268,33 @@ jobs:
             *)              echo "FAIL: unexpected platform"; exit 1 ;;
           esac
 
-      - name: Self-host test (v0.0.16 builds current)
+      - name: Build mcpp from source (xmake + xlings LLVM)
         run: |
-          # Download v0.0.16 macOS mcpp to bootstrap
-          WORK=$(mktemp -d)
-          curl -fsSL -o "$WORK/mcpp.tar.gz" \
-            "https://github.com/mcpp-community/mcpp/releases/download/v0.0.16/mcpp-0.0.16-macosx-arm64.tar.gz"
-          tar -xzf "$WORK/mcpp.tar.gz" -C "$WORK"
-          BOOTSTRAP="$WORK/mcpp-0.0.16-macosx-arm64/bin/mcpp"
-          test -x "$BOOTSTRAP"
-          "$BOOTSTRAP" --version
-          # Build current source with bootstrap mcpp
-          export PATH="$(dirname "$BOOTSTRAP"):$PATH"
-          mcpp build
-          # Verify the newly built binary
-          SELFHOST=$(find target -path "*/bin/mcpp" | head -1)
-          test -x "$SELFHOST"
-          "$SELFHOST" --version
-          echo ":: Self-host successful!"
+          brew install xmake
+          # Generate xmake.lua
+          cat > xmake.lua << 'EOF'
+          add_rules("mode.release")
+          set_languages("c++23")
+          package("cmdline")
+              set_homepage("https://github.com/mcpplibs/cmdline")
+              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/$(version).tar.gz")
+              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
+              on_install(function (package)
+                  import("package.tools.xmake").install(package)
+              end)
+          package_end()
+          add_requires("cmdline 0.0.1")
+          target("mcpp")
+              set_kind("binary")
+              add_files("src/main.cpp")
+              add_files("src/**.cppm")
+              add_packages("cmdline")
+              add_includedirs("src/libs/json")
+              set_policy("build.c++.modules", true)
+          EOF
+          xmake f -y -m release --toolchain=llvm --sdk="$LLVM_ROOT"
+          xmake build -y mcpp
+          MCPP=$(find build -name mcpp -type f -perm +111 | head -1)
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo ":: Build from source successful!"

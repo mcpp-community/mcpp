@@ -315,25 +315,38 @@ jobs:
           LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
           echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
 
-      - name: Bootstrap mcpp from v0.0.16 release
-        run: |
-          # Download the v0.0.16 macOS binary to bootstrap this build
-          WORK=$(mktemp -d)
-          curl -fsSL -o "$WORK/mcpp.tar.gz" \
-            "https://github.com/mcpp-community/mcpp/releases/download/v0.0.16/mcpp-0.0.16-macosx-arm64.tar.gz"
-          tar -xzf "$WORK/mcpp.tar.gz" -C "$WORK"
-          BOOTSTRAP="$WORK/mcpp-0.0.16-macosx-arm64/bin/mcpp"
-          test -x "$BOOTSTRAP"
-          "$BOOTSTRAP" --version
-          export PATH="$(dirname "$BOOTSTRAP"):$PATH"
-          echo "PATH=$(dirname "$BOOTSTRAP"):$PATH" >> "$GITHUB_ENV"
+      - name: Install xmake
+        run: brew install xmake
 
-      - name: Build mcpp (self-host via v0.0.16)
+      - name: Build mcpp (xmake + xlings LLVM)
         run: |
-          mcpp build
-          MCPP_BIN=$(find target -path "*/bin/mcpp" | head -1)
+          # Generate xmake.lua for this build
+          cat > xmake.lua << 'EOF'
+          add_rules("mode.release")
+          set_languages("c++23")
+          package("cmdline")
+              set_homepage("https://github.com/mcpplibs/cmdline")
+              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/$(version).tar.gz")
+              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
+              on_install(function (package)
+                  import("package.tools.xmake").install(package)
+              end)
+          package_end()
+          add_requires("cmdline 0.0.1")
+          target("mcpp")
+              set_kind("binary")
+              add_files("src/main.cpp")
+              add_files("src/**.cppm")
+              add_packages("cmdline")
+              add_includedirs("src/libs/json")
+              set_policy("build.c++.modules", true)
+          EOF
+          xmake f -y -m release --toolchain=llvm --sdk="$LLVM_ROOT"
+          xmake build -y mcpp
+          MCPP_BIN=$(find build -name mcpp -type f -perm +111 | head -1)
           test -x "$MCPP_BIN"
           file "$MCPP_BIN"
+          otool -L "$MCPP_BIN"
           "$MCPP_BIN" --version
           echo "MCPP_BIN=$MCPP_BIN" >> "$GITHUB_ENV"
 
