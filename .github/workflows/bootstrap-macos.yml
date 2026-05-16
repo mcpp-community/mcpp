@@ -72,6 +72,10 @@ jobs:
               add_packages("cmdline")
               add_includedirs("src/libs/json")
               set_policy("build.c++.modules", true)
+              -- Static link libc++ for minimal runtime dependencies
+              add_ldflags("-static-libstdc++", {force = true})
+              add_cxxflags("-stdlib=libc++", {force = true})
+              add_ldflags("-stdlib=libc++", {force = true})
           EOF
           fi
 
@@ -84,7 +88,11 @@ jobs:
         run: |
           MCPP=$(find build -name mcpp -type f -perm +111 | head -1)
           test -x "$MCPP"
+          echo "=== file ==="
           file "$MCPP"
+          echo "=== otool -L (dynamic deps) ==="
+          otool -L "$MCPP"
+          echo "=== version ==="
           "$MCPP" --version
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
 
@@ -92,8 +100,8 @@ jobs:
         id: package
         run: |
           VERSION=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
-          TARBALL="mcpp-${VERSION}-darwin-arm64.tar.gz"
-          WRAPPER="mcpp-${VERSION}-darwin-arm64"
+          TARBALL="mcpp-${VERSION}-macosx-arm64.tar.gz"
+          WRAPPER="mcpp-${VERSION}-macosx-arm64"
 
           mkdir -p "dist/$WRAPPER/bin"
           cp "$MCPP" "dist/$WRAPPER/bin/mcpp"
@@ -126,13 +134,13 @@ jobs:
           SMOKE=$(mktemp -d)
           tar -xzf "${{ steps.package.outputs.tarball }}" -C "$SMOKE"
           VERSION="${{ steps.package.outputs.version }}"
-          "$SMOKE/mcpp-${VERSION}-darwin-arm64/bin/mcpp" --version
-          "$SMOKE/mcpp-${VERSION}-darwin-arm64/mcpp" --version
+          "$SMOKE/mcpp-${VERSION}-macosx-arm64/bin/mcpp" --version
+          "$SMOKE/mcpp-${VERSION}-macosx-arm64/mcpp" --version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mcpp-darwin-arm64
+          name: mcpp-macosx-arm64
           path: |
-            dist/mcpp-*-darwin-arm64.tar.gz
-            dist/mcpp-*-darwin-arm64.tar.gz.sha256
+            dist/mcpp-*-macosx-arm64.tar.gz
+            dist/mcpp-*-macosx-arm64.tar.gz.sha256
