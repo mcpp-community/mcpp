@@ -304,21 +304,26 @@ jobs:
       - name: Self-host (mcpp builds mcpp)
         run: |
           # Step 2: Use the xmake-built mcpp to build itself
-          export PATH="$(dirname "$MCPP_V1"):$PATH"
+          # mcpp must be on PATH — build.ninja calls `mcpp dyndep`
+          MCPP_DIR=$(dirname "$MCPP_V1")
+          export PATH="$MCPP_DIR:$PATH"
+          which mcpp
           mcpp build
-          MCPP_V2=$(find target -path "*/bin/mcpp" -not -path "*/build/*" | head -1)
+          MCPP_V2=$(find target -path "*/bin/mcpp" | head -1)
           test -x "$MCPP_V2"
           "$MCPP_V2" --version
           echo ":: Step 2 PASS: mcpp self-hosted"
-          echo "MCPP_V2=$MCPP_V2" >> "$GITHUB_ENV"
+          echo "MCPP_V2=$(realpath "$MCPP_V2")" >> "$GITHUB_ENV"
 
       - name: Self-host again (v2 builds itself)
         run: |
-          # Step 3: Use the self-hosted mcpp to build itself again (proves stability)
+          # Step 3: The self-hosted mcpp builds itself again (stability proof)
           rm -rf target
-          export PATH="$(dirname "$MCPP_V2"):$PATH"
+          MCPP_DIR=$(dirname "$MCPP_V2")
+          export PATH="$MCPP_DIR:$PATH"
+          which mcpp
           mcpp build
-          MCPP_V3=$(find target -path "*/bin/mcpp" -not -path "*/build/*" | head -1)
+          MCPP_V3=$(find target -path "*/bin/mcpp" | head -1)
           test -x "$MCPP_V3"
           "$MCPP_V3" --version
           echo ":: Step 3 PASS: mcpp self-host stable (v2 → v3)"
