@@ -3,6 +3,26 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.17] — 2026-05-16
+
+macOS ARM64 正式支持，首次发布 macOS 原生二进制。
+
+### 新增
+
+- ✅ **macOS ARM64 支持** —— mcpp 现在正式支持 macOS ARM64 (Apple Silicon)
+  平台。发布产物包含 `mcpp-<version>-macosx-arm64.tar.gz`，基于 xlings LLVM
+  20.1.7 + xmake 构建，无需 Xcode 完整安装即可使用。
+- ✅ **Release CI macOS job** —— release.yml 新增 `build-macos` job，使用
+  xmake + xlings LLVM 直接编译 macOS ARM64 二进制，与 bootstrap-macos.yml
+  验证通过的方案一致。
+
+### 改进
+
+- 🔧 **Release macOS 构建流程简化** —— 移除有 libc++ 链接问题的 self-host
+  步骤，改用已验证的 xmake 直接构建方案，提高 CI 可靠性。
+- 🔧 **CI macOS 流程精简** —— ci-macos.yml 移除存在链接问题的 self-host
+  步骤，保留 xlings LLVM 验证测试。
+
 ## [0.0.14] — 2026-05-13
 
 LLVM / Clang 工具链支持与 xlings 镜像配置完善。

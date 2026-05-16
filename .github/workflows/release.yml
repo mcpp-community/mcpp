@@ -315,37 +315,63 @@ jobs:
           LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
           echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
 
-      - name: Install xmake (for bootstrap)
-        run: brew install xmake
-
-      - name: Bootstrap-compile mcpp (xmake + LLVM)
+      - name: Install xmake
         run: |
-          export LLVM_ROOT="$LLVM_ROOT"
-          bash scripts/bootstrap-macos.sh "$LLVM_ROOT"
-          ./target/bootstrap/bin/mcpp --version
+          brew install xmake
+          xmake --version
 
-      - name: Self-host rebuild (mcpp builds mcpp)
+      - name: Build mcpp with xmake + LLVM
         run: |
-          # Put bootstrapped mcpp on PATH so build.ninja can find it for dyndep
-          export PATH="$PWD/target/bootstrap/bin:$PATH"
-          mcpp build
-          # Find the self-hosted binary
-          SELFHOST=$(find target -path "*/bin/mcpp" -not -path "*/bootstrap/*" -not -path "*/build/*" | head -1)
-          test -x "$SELFHOST"
-          "$SELFHOST" --version
-          echo "SELFHOST=$SELFHOST" >> "$GITHUB_ENV"
+          # Generate xmake.lua if not present
+          if [ ! -f xmake.lua ]; then
+            cat > xmake.lua << 'EOF'
+          add_rules("mode.release")
+          set_languages("c++23")
+
+          package("cmdline")
+              set_homepage("https://github.com/mcpplibs/cmdline")
+              set_description("Modern C++ command-line parsing library")
+              set_license("Apache-2.0")
+              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/$(version).tar.gz")
+              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
+              on_install(function (package)
+                  import("package.tools.xmake").install(package)
+              end)
+          package_end()
+
+          add_requires("cmdline 0.0.1")
+
+          target("mcpp")
+              set_kind("binary")
+              add_files("src/main.cpp")
+              add_files("src/**.cppm")
+              add_packages("cmdline")
+              add_includedirs("src/libs/json")
+              set_policy("build.c++.modules", true)
+          EOF
+          fi
+
+          xmake f -y -m release --toolchain=llvm --sdk="$LLVM_ROOT"
+          xmake build -y mcpp
+
+          # Locate and verify built binary
+          MCPP_BIN=$(find build -name mcpp -type f -perm +111 | head -1)
+          test -x "$MCPP_BIN"
+          file "$MCPP_BIN"
+          "$MCPP_BIN" --version
+          echo "MCPP_BIN=$MCPP_BIN" >> "$GITHUB_ENV"
 
       - name: Package macOS release
         id: stage
         run: |
           VERSION="${{ steps.resolve.outputs.version }}"
-          TARBALL_NAME="mcpp-${VERSION}-darwin-arm64.tar.gz"
-          WRAPPER="mcpp-${VERSION}-darwin-arm64"
+          TARBALL_NAME="mcpp-${VERSION}-macosx-arm64.tar.gz"
+          WRAPPER="mcpp-${VERSION}-macosx-arm64"
 
           # Create release layout
           STAGING=$(mktemp -d)
           mkdir -p "$STAGING/$WRAPPER/bin"
-          cp "$SELFHOST" "$STAGING/$WRAPPER/bin/mcpp"
+          cp "$MCPP_BIN" "$STAGING/$WRAPPER/bin/mcpp"
           # Strip (Mach-O)
           strip "$STAGING/$WRAPPER/bin/mcpp" 2>/dev/null || true
           # Copy metadata
@@ -371,10 +397,10 @@ jobs:
           mkdir -p dist
           (cd "$STAGING" && tar -czf "$GITHUB_WORKSPACE/dist/${TARBALL_NAME}" "$WRAPPER")
           # Versionless alias
-          cp "dist/${TARBALL_NAME}" "dist/mcpp-darwin-arm64.tar.gz"
+          cp "dist/${TARBALL_NAME}" "dist/mcpp-macosx-arm64.tar.gz"
           # SHA256
           (cd dist && shasum -a 256 "${TARBALL_NAME}" > "${TARBALL_NAME}.sha256")
-          (cd dist && shasum -a 256 "mcpp-darwin-arm64.tar.gz" > "mcpp-darwin-arm64.tar.gz.sha256")
+          (cd dist && shasum -a 256 "mcpp-macosx-arm64.tar.gz" > "mcpp-macosx-arm64.tar.gz.sha256")
 
           echo "tarball=${TARBALL_NAME}" >> "$GITHUB_OUTPUT"
           ls -la dist/
@@ -394,7 +420,7 @@ jobs:
         with:
           tag_name: ${{ steps.resolve.outputs.tag }}
           files: |
-            dist/mcpp-${{ steps.resolve.outputs.version }}-darwin-arm64.tar.gz
-            dist/mcpp-${{ steps.resolve.outputs.version }}-darwin-arm64.tar.gz.sha256
-            dist/mcpp-darwin-arm64.tar.gz
-            dist/mcpp-darwin-arm64.tar.gz.sha256
+            dist/mcpp-${{ steps.resolve.outputs.version }}-macosx-arm64.tar.gz
+            dist/mcpp-${{ steps.resolve.outputs.version }}-macosx-arm64.tar.gz.sha256
+            dist/mcpp-macosx-arm64.tar.gz
+            dist/mcpp-macosx-arm64.tar.gz.sha256
