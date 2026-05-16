@@ -295,7 +295,7 @@ jobs:
           xmake f -y -m release --toolchain=llvm --sdk="$LLVM_ROOT"
           xmake build -y mcpp
           rm -f xmake.lua
-          MCPP_V1=$(find build -name mcpp -type f -perm +111 | head -1)
+          MCPP_V1=$(find "$PWD/build" -name mcpp -type f -perm +111 | head -1)
           test -x "$MCPP_V1"
           "$MCPP_V1" --version
           echo ":: Step 1 PASS: xmake produced mcpp"
