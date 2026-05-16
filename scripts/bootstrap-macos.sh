@@ -66,10 +66,21 @@ OUTDIR="$PROJROOT/target/bootstrap"
 PCMDIR="$OUTDIR/pcm.cache"
 OBJDIR="$OUTDIR/obj"
 BINDIR="$OUTDIR/bin"
-mkdir -p "$PCMDIR" "$OBJDIR" "$BINDIR"
+DEPSDIR="$OUTDIR/deps"
+mkdir -p "$PCMDIR" "$OBJDIR" "$BINDIR" "$DEPSDIR"
+
+# ─── Fetch dependencies ─────────────────────────────────────────────────────
+echo ":: Fetching dependencies"
+# mcpplibs.cmdline — small cmdline parsing library
+CMDLINE_URL="https://github.com/mcpplibs/cmdline/archive/refs/tags/0.0.1.tar.gz"
+if [ ! -d "$DEPSDIR/cmdline" ]; then
+    curl -fsSL "$CMDLINE_URL" | tar -xz -C "$DEPSDIR"
+    mv "$DEPSDIR/cmdline-0.0.1" "$DEPSDIR/cmdline"
+fi
+echo "   mcpplibs.cmdline at: $DEPSDIR/cmdline/src/"
 
 # Export for Python
-export PROJROOT OUTDIR PCMDIR OBJDIR BINDIR CXX LLVM_ROOT STD_CPPM STD_COMPAT_CPPM SDKROOT
+export PROJROOT OUTDIR PCMDIR OBJDIR BINDIR DEPSDIR CXX LLVM_ROOT STD_CPPM STD_COMPAT_CPPM SDKROOT
 
 echo
 echo ":: Compiling mcpp (42 modules + main.cpp)..."
@@ -86,6 +97,7 @@ outdir   = Path(os.environ["OUTDIR"])
 pcmdir   = Path(os.environ["PCMDIR"])
 objdir   = Path(os.environ["OBJDIR"])
 bindir   = Path(os.environ["BINDIR"])
+depsdir  = Path(os.environ["DEPSDIR"])
 cxx      = os.environ["CXX"]
 sdkroot  = os.environ["SDKROOT"]
 std_cppm = os.environ["STD_CPPM"]
@@ -132,7 +144,11 @@ re_export = re.compile(r'^\s*export\s+module\s+([\w.]+)\s*;')
 re_import = re.compile(r'^\s*(?:export\s+)?import\s+([\w.]+)\s*;')
 re_module = re.compile(r'^\s*module\s+([\w.]+)\s*;')  # module implementation unit
 
+# Include both project sources and dependency sources
 sources = sorted(projroot.glob("src/**/*.cppm")) + sorted(projroot.glob("src/**/*.cpp"))
+# Add dependency modules (mcpplibs.cmdline)
+dep_sources = sorted(depsdir.glob("cmdline/src/*.cppm"))
+sources = dep_sources + sources  # deps first so they're available
 
 # Map: module_name -> source_path
 mod_source = {}
