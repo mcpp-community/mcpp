@@ -318,9 +318,11 @@ jobs:
       - name: Self-host again (v2 builds itself)
         run: |
           # Step 3: The self-hosted mcpp builds itself again (stability proof)
+          # Save v2 before clearing target/
+          cp "$MCPP_V2" /tmp/mcpp_v2
           rm -rf target
-          MCPP_DIR=$(dirname "$MCPP_V2")
-          export PATH="$MCPP_DIR:$PATH"
+          export PATH="/tmp:$PATH"
+          mv /tmp/mcpp_v2 /tmp/mcpp
           which mcpp
           mcpp build
           MCPP_V3=$(find target -path "*/bin/mcpp" | head -1)
