@@ -161,8 +161,15 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         runtime_dirs += " -L" + escape_path(dir);
         runtime_dirs += " -Wl,-rpath," + escape_path(dir);
     }
-    f.ld = std::format("{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag,
-                       runtime_dirs);
+#if defined(__APPLE__)
+    // macOS: explicitly link libc++ — xlings LLVM's cfg uses -nostdinc++
+    // which may suppress the implicit -lc++ that clang++ normally adds.
+    std::string stdlib_link = isClang ? " -lc++" : "";
+#else
+    std::string stdlib_link;
+#endif
+    f.ld = std::format("{}{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag,
+                       runtime_dirs, stdlib_link);
 
     return f;
 }
