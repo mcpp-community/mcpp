@@ -268,22 +268,35 @@ jobs:
             *)              echo "FAIL: unexpected platform"; exit 1 ;;
           esac
 
-      - name: Install mcpp via xlings and self-host build
+      - name: Build mcpp from source (xmake)
         run: |
-          # Install mcpp (declared in .xlings.json) via xlings
-          xlings install mcpp -y || {
-            # Fallback: download release binary directly if pkgindex not updated yet
-            echo "::warning::xlings install mcpp failed, using direct download"
-            WORK=$(mktemp -d)
-            curl -fsSL -o "$WORK/mcpp.tar.gz" \
-              "https://github.com/mcpp-community/mcpp/releases/download/v0.0.16/mcpp-0.0.16-macosx-arm64.tar.gz"
-            tar -xzf "$WORK/mcpp.tar.gz" -C "$WORK"
-            export PATH="$WORK/mcpp-0.0.16-macosx-arm64/bin:$PATH"
-          }
-          mcpp --version
-          # Self-host: build current source
-          mcpp build
-          SELFHOST=$(find target -path "*/bin/mcpp" | head -1)
-          test -x "$SELFHOST"
-          "$SELFHOST" --version
-          echo ":: Self-host successful!"
+          brew install xmake
+          # Temporary xmake.lua — not committed to repo
+          cat > /tmp/xmake_bootstrap.lua << 'EOF'
+          add_rules("mode.release")
+          set_languages("c++23")
+          package("cmdline")
+              set_homepage("https://github.com/mcpplibs/cmdline")
+              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/$(version).tar.gz")
+              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
+              on_install(function (package)
+                  import("package.tools.xmake").install(package)
+              end)
+          package_end()
+          add_requires("cmdline 0.0.1")
+          target("mcpp")
+              set_kind("binary")
+              add_files("src/main.cpp")
+              add_files("src/**.cppm")
+              add_packages("cmdline")
+              add_includedirs("src/libs/json")
+              set_policy("build.c++.modules", true)
+          EOF
+          cp /tmp/xmake_bootstrap.lua xmake.lua
+          xmake f -y -m release --toolchain=llvm --sdk="$LLVM_ROOT"
+          xmake build -y mcpp
+          rm -f xmake.lua
+          MCPP=$(find build -name mcpp -type f -perm +111 | head -1)
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo ":: Build successful!"
