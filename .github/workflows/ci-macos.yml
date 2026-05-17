@@ -283,12 +283,34 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" build
 
+      - name: Unit + integration tests via `mcpp test`
+        run: |
+          # Use freshly-built mcpp (has --mirror support)
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          "$MCPP" self config --mirror GLOBAL
+          "$MCPP" test
+
+      - name: E2E suite
+        run: |
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          test -x "$MCPP"
+          export MCPP
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          test -x "$MCPP_VENDORED_XLINGS"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
+          "$MCPP" self config
+          # macOS default toolchain is LLVM
+          "$MCPP" toolchain default llvm@20.1.7
+          bash tests/e2e/run_all.sh
+
       - name: Self-host smoke (freshly-built mcpp builds itself again)
         run: |
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           test -x "$MCPP"
-          "$MCPP" --version
           export PATH="$(dirname "$MCPP"):$PATH"
           "$MCPP" build
           "$MCPP" --version
