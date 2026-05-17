@@ -14,6 +14,9 @@
 module;
 #include <cstdio>
 #include <cstdlib>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>  // _NSGetExecutablePath
+#endif
 
 export module mcpp.build.ninja;
 
@@ -113,9 +116,19 @@ bool dyndep_mode_enabled() {
 
 std::filesystem::path mcpp_exe_path() {
     std::error_code ec;
+#if defined(__APPLE__)
+    // macOS: use _NSGetExecutablePath
+    char buf[4096];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) {
+        auto p = std::filesystem::canonical(buf, ec);
+        if (!ec) return p;
+    }
+#else
     auto p = std::filesystem::read_symlink("/proc/self/exe", ec);
     if (!ec)
         return p;
+#endif
     return "mcpp";  // fall back to PATH lookup
 }
 

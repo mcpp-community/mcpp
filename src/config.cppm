@@ -16,6 +16,9 @@
 module;
 #include <cstdio>
 #include <cstdlib>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>  // _NSGetExecutablePath
+#endif
 
 export module mcpp.config;
 
@@ -161,7 +164,15 @@ std::filesystem::path home_dir() {
         return std::filesystem::path(e);
 
     std::error_code ec;
+#if defined(__APPLE__)
+    char _exe_buf[4096];
+    uint32_t _exe_size = sizeof(_exe_buf);
+    std::filesystem::path exe;
+    if (_NSGetExecutablePath(_exe_buf, &_exe_size) == 0)
+        exe = std::filesystem::canonical(_exe_buf, ec);
+#else
     auto exe = std::filesystem::canonical("/proc/self/exe", ec);
+#endif
     if (!ec && exe.parent_path().filename() == "bin") {
         // Dev builds emit binaries at target/<triple>/<fp>/bin/<exe>,
         // matching the bin/ shape. Any ancestor literally named
