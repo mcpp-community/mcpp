@@ -95,6 +95,8 @@ jobs:
 
       - name: Unit + integration tests via `mcpp test`
         run: |
+          # Ensure GLOBAL mirror for package downloads (runner is outside CN)
+          "$MCPP" self config --mirror GLOBAL
           "$MCPP" test
 
       - name: E2E suite
