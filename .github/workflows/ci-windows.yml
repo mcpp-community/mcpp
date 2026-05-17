@@ -183,3 +183,47 @@ jobs:
           echo "Has clang-scan-deps: $([ -f "$LLVM_ROOT/bin/clang-scan-deps.exe" ] && echo YES || echo NO)"
           echo "Has clang-cl: $([ -f "$LLVM_ROOT/bin/clang-cl.exe" ] && echo YES || echo NO)"
           echo "Has lld-link: $([ -f "$LLVM_ROOT/bin/lld-link.exe" ] && echo YES || echo NO)"
+
+      - name: Install xmake
+        shell: pwsh
+        run: |
+          Invoke-Expression (Invoke-WebRequest 'https://xmake.io/psget.text' -UseBasicParsing).Content
+          xmake --version
+
+      - name: Build mcpp with xmake (MSVC)
+        shell: pwsh
+        run: |
+          # Generate xmake.lua for bootstrap
+          @"
+          add_rules("mode.release")
+          set_languages("c++23")
+          package("cmdline")
+              set_homepage("https://github.com/mcpplibs/cmdline")
+              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/`$(version).tar.gz")
+              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
+              on_install(function (package)
+                  import("package.tools.xmake").install(package)
+              end)
+          package_end()
+          add_requires("cmdline 0.0.1")
+          target("mcpp")
+              set_kind("binary")
+              add_files("src/main.cpp")
+              add_files("src/**.cppm")
+              add_packages("cmdline")
+              add_includedirs("src/libs/json")
+              set_policy("build.c++.modules", true)
+          "@ | Out-File -Encoding utf8 xmake.lua
+
+          xmake f -p windows -m release -y
+          xmake build -y mcpp
+
+          $mcpp = Get-ChildItem -Recurse build -Filter mcpp.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($mcpp) {
+              Write-Host ":: mcpp.exe built at: $($mcpp.FullName)"
+              & $mcpp.FullName --version
+          } else {
+              Write-Host ":: Build produced files:"
+              Get-ChildItem -Recurse build -Filter *.exe | ForEach-Object { Write-Host "  $($_.FullName)" }
+              exit 1
+          }
