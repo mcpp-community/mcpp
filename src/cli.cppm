@@ -3162,8 +3162,12 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
         std::string cmd = std::format("{}'{}'", pathPrefix, exe.string());
         for (auto& a : passthrough) cmd += std::format(" '{}'", a);
         int rc = std::system(cmd.c_str());
-        // std::system returns wait status — extract exit code.
+        // std::system returns wait status on POSIX, exit code on Windows.
+#if defined(_WIN32)
+        int exitCode = rc;
+#else
         int exitCode = WIFEXITED(rc) ? WEXITSTATUS(rc) : 127;
+#endif
 
         if (exitCode == 0) {
             std::println("{} ... ok", lu.targetName);
