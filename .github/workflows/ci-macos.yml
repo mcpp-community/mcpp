@@ -33,9 +33,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.xlings
-          key: xlings-macos15-arm64-${{ hashFiles('.xlings.json') }}
+          key: xlings-macos15-arm64-v3-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-macos15-arm64-
+            xlings-macos15-arm64-v3-
 
       - name: Bootstrap xlings
         env:
