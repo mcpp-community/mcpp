@@ -1,6 +1,10 @@
 module;
 #include <cstdio>     // popen, pclose, fgets, FILE
 #include <cstdlib>    // getenv
+#if defined(_WIN32)
+#define popen  _popen
+#define pclose _pclose
+#endif
 
 // mcpp.toolchain.stdmod — pre-build the `import std` BMI and cache it.
 //

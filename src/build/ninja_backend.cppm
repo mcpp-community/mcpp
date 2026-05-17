@@ -16,6 +16,8 @@ module;
 #include <cstdlib>
 #if defined(_WIN32)
 #include <windows.h>
+#define popen  _popen
+#define pclose _pclose
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
