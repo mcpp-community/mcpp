@@ -60,7 +60,7 @@ out=$("$MCPP" build 2>&1) && { echo "expected failure"; exit 1; }
 cd "$TMP"
 "$MCPP" new naming-ok > /dev/null
 cd naming-ok
-sed -i 's/name        = "naming-ok"/name        = "myorg.something"/' mcpp.toml
+sed -i.bak 's/name        = "naming-ok"/name        = "myorg.something"/' mcpp.toml && rm -f mcpp.toml.bak
 cat > src/foo.cppm <<'EOF'
 export module differentprefix;
 import std;

@@ -72,7 +72,7 @@ rev = "$HEAD_REV"
 EOF
 
 "$MCPP" build > build.log 2>&1
-triple=$(ls -d target/x86_64-linux-*/ | head -1)
+triple=$(ls -d target/*/ | head -1)
 fp_dir=$(ls "$triple")
 out=$(${triple}${fp_dir}/bin/myapp)
 [[ "$out" == *"hello from git dep"* ]] || {
