@@ -31,7 +31,7 @@ out=$("$MCPP" cache list 2>&1)
 cd "$TMP"
 "$MCPP" new myapp >/dev/null
 cd myapp
-sed -i 's|^repo[[:space:]]*=.*|repo = "https://github.com/example/myapp"|' mcpp.toml
+sed -i.bak 's|^repo[[:space:]]*=.*|repo = "https://github.com/example/myapp"|' mcpp.toml && rm -f mcpp.toml.bak
 grep -q '^repo' mcpp.toml || cat >> mcpp.toml <<'EOF'
 
 [package]

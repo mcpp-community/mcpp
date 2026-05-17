@@ -161,8 +161,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         runtime_dirs += " -L" + escape_path(dir);
         runtime_dirs += " -Wl,-rpath," + escape_path(dir);
     }
+
+#if defined(__APPLE__)
+    // macOS linking strategy:
+    // - No --sysroot: SDK .tbd stubs miss libc++abi exports.
+    // - No -L<llvm>/lib: xlings LLVM's libc++.dylib doesn't pull in
+    //   libc++abi. System /usr/lib/libc++ does (and is ABI-compatible
+    //   with LLVM 20 headers since macOS ships a recent libc++).
+    // - No -rpath for LLVM lib: binary should use system libc++ at runtime.
+    // - Explicit -lc++: clang++.cfg's -nostdinc++ suppresses implicit linkage.
+    // Result: compile with LLVM headers, link with system libc++ + libc++abi.
+    f.ld = std::format("{}{}{} -lc++", full_static, static_stdlib, b_flag);
+#else
+    // Linux: sysroot + runtime dirs needed (glibc/libc++ live in sandbox)
     f.ld = std::format("{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag,
                        runtime_dirs);
+#endif
 
     return f;
 }

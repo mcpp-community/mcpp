@@ -27,7 +27,7 @@ grep -q 'Inferred sources \[src/\*\*'                build.log || { cat build.lo
 grep -q 'Inferred target tinyapp (bin from src/main.cpp)' build.log || { cat build.log; echo "FAIL: no Inferred target line"; exit 1; }
 grep -q 'Compiling tinyapp v0.1.0'                    build.log || { cat build.log; echo "FAIL: not compiling"; exit 1; }
 
-triple=$(ls -d target/x86_64-linux-*/ | head -1)
+triple=$(ls -d target/*/ | head -1)
 fp_dir=$(ls "$triple")
 out=$("${triple}${fp_dir}/bin/tinyapp")
 [[ "$out" == "convention-mode bin OK" ]] || { echo "FAIL: runtime out='$out'"; exit 1; }
@@ -52,7 +52,7 @@ EOF
 "$MCPP" build > build.log 2>&1
 grep -q 'Inferred include_dirs \[include\]' build.log || {
     cat build.log; echo "FAIL: include/ not auto-picked"; exit 1; }
-triple=$(ls -d target/x86_64-linux-*/ | head -1)
+triple=$(ls -d target/*/ | head -1)
 fp_dir=$(ls "$triple")
 out=$("${triple}${fp_dir}/bin/inc")
 [[ "$out" == "answer = 42" ]] || { echo "FAIL: include resolution: $out"; exit 1; }
@@ -101,7 +101,7 @@ EOF
 if grep -q 'Inferred' build.log; then
     cat build.log; echo "FAIL: legacy schema fired Inferred banner unexpectedly"; exit 1
 fi
-triple=$(ls -d target/x86_64-linux-*/ | head -1)
+triple=$(ls -d target/*/ | head -1)
 fp_dir=$(ls "$triple")
 out=$("${triple}${fp_dir}/bin/legacy")
 [[ "$out" == "legacy schema OK" ]] || { echo "FAIL: legacy runtime: $out"; exit 1; }

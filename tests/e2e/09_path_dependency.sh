@@ -81,7 +81,7 @@ grep -q 'mcpp.cache/mylibA.greet.gcm\|gcm.cache/mylibA.greet.gcm' "$ninja_file" 
 # Path-resolution error reporting: declared name mismatch
 TMP2=$(mktemp -d)
 cp -r "$TMP/mylibA" "$TMP2/wrongname"
-sed -i 's/name        = "mylibA"/name        = "differentname"/' "$TMP2/wrongname/mcpp.toml"
+sed -i.bak 's/name        = "mylibA"/name        = "differentname"/' "$TMP2/wrongname/mcpp.toml" && rm -f "$TMP2/wrongname/mcpp.toml.bak"
 cat > mcpp.toml <<EOF
 [package]
 name        = "myappB"

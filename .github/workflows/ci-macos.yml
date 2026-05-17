@@ -33,9 +33,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.xlings
-          key: xlings-macos15-arm64-${{ hashFiles('.xlings.json') }}
+          key: xlings-macos15-arm64-v3-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-macos15-arm64-
+            xlings-macos15-arm64-v3-
 
       - name: Bootstrap xlings
         env:
@@ -268,23 +268,50 @@ jobs:
             *)              echo "FAIL: unexpected platform"; exit 1 ;;
           esac
 
-      - name: Install xmake (for bootstrap)
+      - name: Bootstrap mcpp via xlings
         run: |
-          brew install xmake
-          xmake --version
+          # Same pattern as Linux CI: xlings install mcpp
+          xlings install mcpp -y
+          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 
-      - name: Bootstrap mcpp from source (xmake)
+      - name: Build mcpp from source (self-host)
         run: |
-          export LLVM_ROOT="$LLVM_ROOT"
-          bash scripts/bootstrap-macos.sh "$LLVM_ROOT"
-          ./target/bootstrap/bin/mcpp --version
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
 
-      - name: Self-host (mcpp builds mcpp)
+      - name: Unit + integration tests via `mcpp test`
         run: |
-          # Put bootstrapped mcpp on PATH so build.ninja can find it for dyndep
-          export PATH="$PWD/target/bootstrap/bin:$PATH"
-          mcpp build
-          SELFHOST=$(find target -path "*/bin/mcpp" -not -path "*/bootstrap/*" -not -path "*/build/*" | head -1)
-          test -x "$SELFHOST"
-          "$SELFHOST" --version
-          echo ":: Self-host successful!"
+          # Use freshly-built mcpp (has --mirror support)
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          "$MCPP" self config --mirror GLOBAL
+          "$MCPP" test
+
+      - name: E2E suite
+        run: |
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          test -x "$MCPP"
+          export MCPP
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          test -x "$MCPP_VENDORED_XLINGS"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
+          "$MCPP" self config
+          # macOS default toolchain is LLVM
+          "$MCPP" toolchain default llvm@20.1.7
+          bash tests/e2e/run_all.sh
+
+      - name: Self-host smoke (freshly-built mcpp builds itself again)
+        run: |
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          test -x "$MCPP"
+          export PATH="$(dirname "$MCPP"):$PATH"
+          "$MCPP" build
+          "$MCPP" --version
+          echo ":: Self-host smoke PASS"
