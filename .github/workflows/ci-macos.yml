@@ -268,64 +268,28 @@ jobs:
             *)              echo "FAIL: unexpected platform"; exit 1 ;;
           esac
 
-      - name: Build mcpp (xmake bootstrap)
+      - name: Bootstrap mcpp via xlings
         run: |
-          # Step 1: Use xmake to produce first mcpp binary from source
-          brew install xmake
-          cat > xmake.lua << 'XMAKE'
-          add_rules("mode.release")
-          set_languages("c++23")
-          package("cmdline")
-              set_homepage("https://github.com/mcpplibs/cmdline")
-              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/$(version).tar.gz")
-              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
-              on_install(function (package)
-                  import("package.tools.xmake").install(package)
-              end)
-          package_end()
-          add_requires("cmdline 0.0.1")
-          target("mcpp")
-              set_kind("binary")
-              add_files("src/main.cpp")
-              add_files("src/**.cppm")
-              add_packages("cmdline")
-              add_includedirs("src/libs/json")
-              set_policy("build.c++.modules", true)
-          XMAKE
-          xmake f -y -m release --toolchain=llvm --sdk="$LLVM_ROOT"
-          xmake build -y mcpp
-          rm -f xmake.lua
-          MCPP_V1=$(find "$PWD/build" -name mcpp -type f -perm +111 | head -1)
-          test -x "$MCPP_V1"
-          "$MCPP_V1" --version
-          echo ":: Step 1 PASS: xmake produced mcpp"
-          echo "MCPP_V1=$MCPP_V1" >> "$GITHUB_ENV"
+          # Same pattern as Linux CI: xlings install mcpp
+          xlings install mcpp -y
+          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 
-      - name: Self-host (mcpp builds mcpp)
+      - name: Build mcpp from source (self-host)
         run: |
-          # Step 2: Use the xmake-built mcpp to build itself
-          # mcpp must be on PATH — build.ninja calls `mcpp dyndep`
-          MCPP_DIR=$(dirname "$MCPP_V1")
-          export PATH="$MCPP_DIR:$PATH"
-          which mcpp
-          mcpp build
-          MCPP_V2=$(find target -path "*/bin/mcpp" | head -1)
-          test -x "$MCPP_V2"
-          "$MCPP_V2" --version
-          echo ":: Step 2 PASS: mcpp self-hosted"
-          echo "MCPP_V2=$(realpath "$MCPP_V2")" >> "$GITHUB_ENV"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
 
-      - name: Self-host again (v2 builds itself)
+      - name: Self-host smoke (freshly-built mcpp builds itself again)
         run: |
-          # Step 3: The self-hosted mcpp builds itself again (stability proof)
-          # Save v2 before clearing target/
-          cp "$MCPP_V2" /tmp/mcpp_v2
-          rm -rf target
-          export PATH="/tmp:$PATH"
-          mv /tmp/mcpp_v2 /tmp/mcpp
-          which mcpp
-          mcpp build
-          MCPP_V3=$(find target -path "*/bin/mcpp" | head -1)
-          test -x "$MCPP_V3"
-          "$MCPP_V3" --version
-          echo ":: Step 3 PASS: mcpp self-host stable (v2 → v3)"
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          test -x "$MCPP"
+          "$MCPP" --version
+          export PATH="$(dirname "$MCPP"):$PATH"
+          "$MCPP" build
+          "$MCPP" --version
+          echo ":: Self-host smoke PASS"

@@ -295,7 +295,7 @@ jobs:
             xlings-macos15-release-
             xlings-macos15-arm64-
 
-      - name: Bootstrap xlings + LLVM
+      - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
           XLINGS_VERSION: '0.4.30'
@@ -310,25 +310,25 @@ jobs:
           fi
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
-          # Install LLVM
-          xlings install llvm -y || xlings install llvm@20.1.7 -y
-          LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
-          echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
-
-      - name: Install mcpp@0.0.16 via xlings
-        run: |
-          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings install mcpp -y
-          mcpp --version
+          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 
-      - name: Build mcpp (self-host)
+      - name: Build mcpp from source (self-host)
         run: |
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
-          mcpp build
-          SELFHOST=$(find target -path "*/bin/mcpp" | head -1)
-          test -x "$SELFHOST"
-          "$SELFHOST" --version
-          echo "SELFHOST=$SELFHOST" >> "$GITHUB_ENV"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+          MCPP_BIN=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP_BIN=$(cd "$(dirname "$MCPP_BIN")" && pwd)/$(basename "$MCPP_BIN")
+          test -x "$MCPP_BIN"
+          file "$MCPP_BIN"
+          otool -L "$MCPP_BIN"
+          "$MCPP_BIN" --version
+          echo "MCPP_BIN=$MCPP_BIN" >> "$GITHUB_ENV"
 
       - name: Package macOS release
         id: stage
@@ -340,7 +340,7 @@ jobs:
           # Create release layout
           STAGING=$(mktemp -d)
           mkdir -p "$STAGING/$WRAPPER/bin"
-          cp "$SELFHOST" "$STAGING/$WRAPPER/bin/mcpp"
+          cp "$MCPP_BIN" "$STAGING/$WRAPPER/bin/mcpp"
           # Strip (Mach-O)
           strip "$STAGING/$WRAPPER/bin/mcpp" 2>/dev/null || true
           # Copy metadata
