@@ -49,9 +49,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.xlings
-          key: xlings-${{ runner.os }}-${{ hashFiles('.xlings.json') }}
+          key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-${{ runner.os }}-
+            xlings-${{ runner.os }}-v2-
 
       - name: Bootstrap mcpp via xlings
         env:
