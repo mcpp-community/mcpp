@@ -14,7 +14,9 @@
 module;
 #include <cstdio>
 #include <cstdlib>
-#if defined(__APPLE__)
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__APPLE__)
 #include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
 
@@ -116,8 +118,14 @@ bool dyndep_mode_enabled() {
 
 std::filesystem::path mcpp_exe_path() {
     std::error_code ec;
-#if defined(__APPLE__)
-    // macOS: use _NSGetExecutablePath
+#if defined(_WIN32)
+    char buf[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, buf, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        auto p = std::filesystem::canonical(buf, ec);
+        if (!ec) return p;
+    }
+#elif defined(__APPLE__)
     char buf[4096];
     uint32_t size = sizeof(buf);
     if (_NSGetExecutablePath(buf, &size) == 0) {

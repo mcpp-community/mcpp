@@ -16,7 +16,11 @@
 module;
 #include <cstdio>
 #include <cstdlib>
-#if defined(__APPLE__)
+#if defined(_WIN32)
+#include <windows.h>
+#define popen  _popen
+#define pclose _pclose
+#elif defined(__APPLE__)
 #include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
 
@@ -164,7 +168,13 @@ std::filesystem::path home_dir() {
         return std::filesystem::path(e);
 
     std::error_code ec;
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    char _exe_buf[MAX_PATH];
+    DWORD _exe_len = GetModuleFileNameA(NULL, _exe_buf, MAX_PATH);
+    std::filesystem::path exe;
+    if (_exe_len > 0 && _exe_len < MAX_PATH)
+        exe = std::filesystem::canonical(_exe_buf, ec);
+#elif defined(__APPLE__)
     char _exe_buf[4096];
     uint32_t _exe_size = sizeof(_exe_buf);
     std::filesystem::path exe;

@@ -17,6 +17,10 @@
 
 module;
 #include <cstdio>      // popen, pclose
+#if defined(_WIN32)
+#define popen  _popen
+#define pclose _pclose
+#endif
 
 export module mcpp.pack;
 
