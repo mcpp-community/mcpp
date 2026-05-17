@@ -184,11 +184,11 @@ jobs:
           echo "Has clang-cl: $([ -f "$LLVM_ROOT/bin/clang-cl.exe" ] && echo YES || echo NO)"
           echo "Has lld-link: $([ -f "$LLVM_ROOT/bin/lld-link.exe" ] && echo YES || echo NO)"
 
-      - name: Install xmake
-        shell: pwsh
+      - name: Install xmake via xlings
+        shell: bash
         run: |
-          Invoke-Expression (Invoke-WebRequest 'https://xmake.io/psget.text' -UseBasicParsing).Content
-          xmake --version
+          xlings.exe install xmake -y || xlings install xmake -y
+          xmake.exe --version || xmake --version
 
       - name: Build mcpp with xmake (MSVC)
         shell: pwsh
