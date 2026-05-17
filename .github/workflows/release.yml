@@ -129,6 +129,7 @@ jobs:
           TARBALL_NAME="mcpp-${VERSION}-linux-x86_64.tar.gz"
 
           # Build first so we can strip the ELF before pack copies it.
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" build --target x86_64-linux-musl
           ARTIFACT=$(find target/x86_64-linux-musl -type f -name mcpp | head -1)
           test -n "$ARTIFACT"
