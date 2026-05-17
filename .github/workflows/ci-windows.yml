@@ -41,48 +41,35 @@ jobs:
           XLINGS_NON_INTERACTIVE: '1'
           XLINGS_VERSION: '0.4.30'
         run: |
-          # Download xlings for Windows
-          tarball="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
-          curl -fsSL -o "/tmp/${tarball}" \
-            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" || {
-            echo "::warning::xlings Windows zip not available, trying tar.gz"
-            tarball="xlings-${XLINGS_VERSION}-windows-x86_64.tar.gz"
-            curl -fsSL -o "/tmp/${tarball}" \
-              "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
-          }
-          # Extract
-          cd /tmp
-          if [[ "$tarball" == *.zip ]]; then
-            unzip -q "$tarball" || 7z x "$tarball"
-          else
-            tar -xzf "$tarball"
-          fi
-          # Find and install xlings
-          XLINGS_DIR=$(find /tmp -maxdepth 2 -name "xlings.exe" -o -name "xlings" | head -1 | xargs dirname)
+          WORK=$(mktemp -d)
+          zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
+          curl -fsSL -o "${WORK}/${zipfile}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${zipfile}"
+          cd "${WORK}"
+          unzip -q "${zipfile}"
+          XLINGS_DIR="${WORK}/xlings-${XLINGS_VERSION}-windows-x86_64"
           echo "xlings dir: $XLINGS_DIR"
-          ls "$XLINGS_DIR/" || true
-          # Try self install
-          "$XLINGS_DIR/xlings" self install || "$XLINGS_DIR/xlings.exe" self install || true
-          echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+          ls "$XLINGS_DIR/bin/"
+          "$XLINGS_DIR/subos/default/bin/xlings.exe" self install
+          echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+          echo "$USERPROFILE/.xlings/bin" >> "$GITHUB_PATH"
 
       - name: Verify xlings
         shell: bash
         run: |
-          xlings --version || xlings.exe --version || echo "xlings not found in PATH"
-          which xlings || which xlings.exe || echo "xlings location unknown"
+          xlings.exe --version || xlings --version || echo "xlings not found in PATH"
 
       - name: Install LLVM via xlings
         shell: bash
         run: |
-          xlings install llvm -y || xlings install llvm@20.1.7 -y || {
+          xlings.exe install llvm -y || xlings.exe install llvm@20.1.7 -y || {
             echo "::warning::xlings install llvm failed"
             exit 1
           }
-          # Find LLVM
-          LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++.exe" 2>/dev/null | head -1 | xargs dirname | xargs dirname)
-          if [ -z "$LLVM_ROOT" ]; then
-            LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang.exe" 2>/dev/null | head -1 | xargs dirname | xargs dirname)
+          # Find LLVM root
+          LLVM_ROOT=$(find "$USERPROFILE/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang.exe" 2>/dev/null | head -1)
+          if [ -n "$LLVM_ROOT" ]; then
+            LLVM_ROOT=$(dirname "$(dirname "$LLVM_ROOT")")
           fi
           echo "LLVM_ROOT=$LLVM_ROOT"
           echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
