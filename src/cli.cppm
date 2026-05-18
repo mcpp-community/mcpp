@@ -1135,7 +1135,7 @@ prepare_build(bool print_fingerprint,
         // macOS: LLVM/Clang — Apple doesn't ship GCC; upstream LLVM with
         //        bundled libc++ is the self-contained choice.
         // Linux: musl-gcc — produces portable static binaries.
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         std::string defaultSpec = "llvm@20.1.7";
 #else
         std::string defaultSpec = "gcc@15.1.0-musl";
@@ -1143,7 +1143,7 @@ prepare_build(bool print_fingerprint,
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         mcpp::ui::info("First run",
             std::format("no toolchain configured — installing {} (LLVM/Clang) as default",
                         defaultSpec));

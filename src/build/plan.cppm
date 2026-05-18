@@ -172,10 +172,18 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.targetName = t.name;
         if (t.kind == mcpp::manifest::Target::Library) {
             lu.kind   = LinkUnit::StaticLibrary;
+#if defined(_WIN32)
+            lu.output = std::filesystem::path("bin") / std::format("{}.lib", t.name);
+#else
             lu.output = std::filesystem::path("bin") / std::format("lib{}.a", t.name);
+#endif
         } else if (t.kind == mcpp::manifest::Target::SharedLibrary) {
             lu.kind   = LinkUnit::SharedLibrary;
+#if defined(_WIN32)
+            lu.output = std::filesystem::path("bin") / std::format("{}.dll", t.name);
+#else
             lu.output = std::filesystem::path("bin") / std::format("lib{}.so", t.name);
+#endif
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {
             lu.kind   = LinkUnit::TestBinary;
 #if defined(_WIN32)

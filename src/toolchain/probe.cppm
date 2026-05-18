@@ -257,7 +257,8 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
     if (!bin_path_r) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found in PATH", cxx)});
     }
-    auto bin = trim_line(*bin_path_r);
+    // `where` on Windows may return multiple lines; take only the first.
+    auto bin = trim_line(first_line_of(*bin_path_r));
     if (bin.empty()) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found", cxx)});
     }
