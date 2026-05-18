@@ -194,6 +194,27 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
                                                    const std::filesystem::path& bmiPath,
                                                    std::string_view sysrootFlag) {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
+#if defined(_WIN32)
+    // Windows: use absolute paths, raw binary path as first token
+    // (cmd.exe strips leading quotes), shq for args with spaces.
+    auto absBmi = (cacheDir / relBmi).string();
+    return {
+        std::format(
+            "{} -std=c++23 -Wno-reserved-module-identifier{} "
+            "--precompile {} -o {}",
+            tc.binaryPath.string(),
+            sysrootFlag,
+            mcpp::xlings::shq(tc.stdModuleSource.string()),
+            mcpp::xlings::shq(absBmi)),
+        std::format(
+            "{} -std=c++23 -Wno-reserved-module-identifier{} "
+            "{} -c -o {}",
+            tc.binaryPath.string(),
+            sysrootFlag,
+            mcpp::xlings::shq(absBmi),
+            mcpp::xlings::shq((cacheDir / "std.o").string()))
+    };
+#else
     return {
         std::format(
             "cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
@@ -213,6 +234,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             sysrootFlag,
             mcpp::xlings::shq(relBmi))
     };
+#endif
 }
 
 std::filesystem::path archive_tool(const Toolchain& tc) {

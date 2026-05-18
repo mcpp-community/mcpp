@@ -321,15 +321,16 @@ std::string shq(std::string_view s) {
     std::string out;
     out.reserve(s.size() + 2);
 #if defined(_WIN32)
-    // Windows: popen/system go through cmd.exe /c. To avoid cmd.exe's
-    // special quote-stripping when the command starts with ", we don't
-    // wrap in outer quotes. Instead, escape inner " as \" which the
-    // MSVC C runtime's argv parser understands.
+    // Windows: wrap in double quotes, escape inner " as \".
+    // IMPORTANT: avoid placing a shq'd token as the FIRST token in a
+    // popen/system command — cmd.exe strips a leading " pair.  For
+    // binary paths, use the raw string; shq is safe for arguments.
+    out.push_back('"');
     for (char c : s) {
         if (c == '"') out += "\\\"";
         else out.push_back(c);
     }
-    return out;
+    out.push_back('"');
 #else
     out.push_back('\'');
     for (char c : s) {
