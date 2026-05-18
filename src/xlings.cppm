@@ -321,15 +321,15 @@ std::string shq(std::string_view s) {
     std::string out;
     out.reserve(s.size() + 2);
 #if defined(_WIN32)
-    // Windows quoting for popen/system (goes through cmd.exe /c):
-    // Use ^" to escape inner double quotes — cmd.exe treats ^" as a
-    // literal double-quote character without affecting quote-state.
-    out.push_back('"');
+    // Windows: popen/system go through cmd.exe /c. To avoid cmd.exe's
+    // special quote-stripping when the command starts with ", we don't
+    // wrap in outer quotes. Instead, escape inner " as \" which the
+    // MSVC C runtime's argv parser understands.
     for (char c : s) {
-        if (c == '"') out += "^\"";
+        if (c == '"') out += "\\\"";
         else out.push_back(c);
     }
-    out.push_back('"');
+    return out;
 #else
     out.push_back('\'');
     for (char c : s) {
