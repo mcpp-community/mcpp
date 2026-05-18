@@ -59,7 +59,8 @@ case "$OS" in
         ;;
     Darwin)
         CAPS+=(unix-shell)
-        command -v g++      &>/dev/null && CAPS+=(gcc)
+        # macOS g++ is Apple Clang, not real GCC — don't add gcc capability.
+        # Tests requiring gcc need actual GNU GCC (modules, gcm.cache, etc.)
         ;;
     MINGW* | MSYS* | CYGWIN*)
         # Git Bash / MSYS2 on Windows: symlinks need admin or Developer Mode
