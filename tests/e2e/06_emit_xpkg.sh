@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # emit xpkg: produce valid Lua entry from mcpp.toml
 set -e
 

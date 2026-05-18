@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: import-std-libcxx
 # 37_llvm_import_std.sh — build an import-std package with xlings LLVM/libc++.
 set -e
 

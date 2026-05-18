@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: scan-deps
 # 1 ok + 1 fail → mcpp test exits 1, summary lists failures.
 set -e
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: gcc
 # C-language compile rule: .c files routed to `c_object` with cc / cflags,
 # distinct from the .cppm/.cpp `cxx_object` rule. Verifies that a mixed
 # C + modular-C++23 project links and runs, and that build.ninja contains

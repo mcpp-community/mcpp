@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: import-std-libcxx
 # 40_llvm_bmi_cache.sh — Clang BMI cache reuse for dependency packages.
 set -e
 

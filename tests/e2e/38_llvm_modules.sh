@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: import-std-libcxx
 # 38_llvm_modules.sh — multi-module project with LLVM/Clang.
 #
 # Tests: module interface (.cppm) with `export module`, cross-module import,

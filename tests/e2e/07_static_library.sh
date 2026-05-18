@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf
 # Static library: kind = "lib"  → libNAME.a via `ar rcs`
 set -e
 

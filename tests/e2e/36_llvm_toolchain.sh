@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # 36_llvm_toolchain.sh — build a non-module C/C++ package with xlings LLVM.
 set -e
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Custom [indices] parsing: a local path index is parsed from mcpp.toml
 # and visible in `mcpp index list`. Verifies the TOML parsing path for
 # short form, long form, and local path indices without requiring any

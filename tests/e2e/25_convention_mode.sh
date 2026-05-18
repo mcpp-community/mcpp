@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # 25_convention_mode.sh — verify M5.0 convention-first schema:
 #   - 3-line mcpp.toml builds + runs successfully
 #   - Inferred banner shown for sources / target

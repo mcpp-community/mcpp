@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: unix-shell
 # 19_bmi_cache_reuse.sh — verify M3.2 BMI persistent cache wiring.
 #
 #   1. Path deps don't populate the cache (correctness invariant from docs/26).

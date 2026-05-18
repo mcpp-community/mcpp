@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: symlink
 # 32_semver_merge.sh — SemVer merge in the transitive walker:
 #   * Two consumers of the same package with overlapping constraints
 #     (one exact, one range) merge to a single satisfying version

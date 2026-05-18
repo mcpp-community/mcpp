@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: musl elf
 # 28_target_static.sh — `mcpp build --target <triple>` produces a binary
 # matching the requested target, and `--target *-linux-musl` yields a
 # fully-static ELF (no PT_INTERP, no RUNPATH).

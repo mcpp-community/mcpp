@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: import-std-libcxx
 # 41_llvm_std_compat.sh — build a project that uses import std.compat with Clang.
 set -e
 

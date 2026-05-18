@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf gcc
 # 22_doctor_cache_publish.sh — M4 #1 #2 #4 smoke tests:
 #   - mcpp doctor    runs and reports
 #   - mcpp cache list / clean

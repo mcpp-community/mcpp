@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Verify dev-deps are NOT pulled by `mcpp build` but ARE pulled by `mcpp test`.
 # We don't actually fetch a real dev-dep (would need network); we just verify
 # that the dev-deps section in mcpp.toml does not appear in the build path's

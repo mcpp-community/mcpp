@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # `mcpp add` modifies mcpp.toml [dependencies], including the namespaced form
 # `mcpp add <ns>:<name>@<ver>` which lands under [dependencies.<ns>] without
 # any TOML key quoting.

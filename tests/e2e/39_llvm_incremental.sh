@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: import-std-libcxx scan-deps
 # 39_llvm_incremental.sh — Clang per-file incremental rebuild via clang-scan-deps dyndep.
 set -e
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: musl
 # 31_transitive_deps.sh — transitive dependency walker:
 #   * a path-dep that itself declares a path-dep is fully resolved
 #     (consumer doesn't need to list the grandchild explicitly)

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Project with no tests/ → `mcpp test` says "no tests found" and exits 0.
 set -e
 

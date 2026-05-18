@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Error paths: missing manifest, missing version, conditional import, header unit, naming violation
 set -e
 

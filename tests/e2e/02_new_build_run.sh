@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Single-module hello world: mcpp new → build → run
 set -e
 

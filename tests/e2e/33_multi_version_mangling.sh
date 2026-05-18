@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf gcc
 # 33_multi_version_mangling.sh — Level 1 of dep resolution: when two
 # transitive consumers want incompatible (non-overlapping) versions of
 # the same package, the secondary copy is rewritten to use a mangled
