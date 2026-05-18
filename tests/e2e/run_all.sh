@@ -43,7 +43,7 @@ OS="$(uname -s)"
 
 case "$OS" in
     Linux)
-        CAPS+=(elf unix-shell)
+        CAPS+=(elf unix-shell fresh-sandbox)
         command -v g++      &>/dev/null && CAPS+=(gcc)
         command -v patchelf &>/dev/null && CAPS+=(patchelf)
         # musl-gcc: check both system PATH and xlings-managed locations
@@ -58,7 +58,7 @@ case "$OS" in
         fi
         ;;
     Darwin)
-        CAPS+=(unix-shell)
+        CAPS+=(unix-shell fresh-sandbox)
         # macOS g++ is Apple Clang, not real GCC — don't add gcc capability.
         # Tests requiring gcc need actual GNU GCC (modules, gcm.cache, etc.)
         ;;
