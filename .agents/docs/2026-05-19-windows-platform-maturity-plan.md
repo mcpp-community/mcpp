@@ -8,31 +8,21 @@
 |------|-------|-------|---------|------|
 | self-host | ✅ | ✅ | ✅ | — |
 | `mcpp test` (unit) | ✅ | ✅ | ❌ | 缺 clang-scan-deps |
-| E2E 覆盖 | 46/46 | 33/46 | 22/49 | 27 项 skip |
+| E2E 覆盖 | 46/46 | 33/46 | 22/48 | 26 项 skip |
 | `mcpp pack` | ✅ (musl static) | ✅ (手动) | ❌ (CI 手写 zip) | pack 不支持 PE |
-| release workflow | ✅ | ✅ | ❌ | 无 build-windows job |
+| release workflow | ✅ | ✅ | ✅ | build-windows job 已加 |
 | MSVC 工具链 | N/A | N/A | 模型预留 | detect 不支持 |
 | 默认工具链回退 | gcc@15.1.0-musl | llvm@20.1.7 | llvm@20.1.7 | ✅ 已修 |
 
 ## 优化方案（按优先级）
 
-### P0: 补齐 release workflow + 减少 E2E skip
+### P0: 补齐 release workflow + 减少 E2E skip — DONE
 
 **目标：** Windows 二进制进入正式 release 发布流程。
 
-#### 1. release.yml 加 build-windows job
+#### 1. release.yml 加 build-windows job — DONE
 
-参照 `build-macos` 结构，在 `release.yml` 中增加 `build-windows` job：
-
-```yaml
-build-windows:
-  name: build (Windows / x64)
-  runs-on: windows-latest
-  needs: build-release
-  # xlings install mcpp → mcpp build → package zip → upload
-```
-
-产出 `mcpp-<version>-windows-x86_64.zip` + sha256，上传到 GitHub Release。
+`release.yml` 中已有 `build-windows` job，产出 `mcpp-<version>-windows-x86_64.zip` + sha256，上传到 GitHub Release。
 
 #### 2. 修复高价值 E2E skip 项
 
@@ -50,63 +40,15 @@ build-windows:
 
 **预计可把 E2E 从 22 passed 提升到 ~30 passed。**
 
-### P1: PlatformTraits 抽象
+### P1: PlatformTraits 抽象 — DONE (infrastructure)
 
 **目标：** 减少散落的 `#if defined(_WIN32)` / `#if defined(__APPLE__)`。
 
-新建 `src/platform.cppm`，集中平台差异：
+`src/platform.cppm` 已创建，集中平台差异（exe_suffix、lib_prefix、null_redirect、shell_quote 等）。
 
-```cpp
-export module mcpp.platform;
-import std;
+**受益文件：** `plan.cppm`、`flags.cppm`、`ninja_backend.cppm`、`probe.cppm`、`clang.cppm`、`config.cppm`（待各文件迁移到 `mcpp::platform` 命名空间）
 
-export namespace mcpp::platform {
-
-constexpr std::string_view exe_suffix =
-#if defined(_WIN32)
-    ".exe";
-#else
-    "";
-#endif
-
-constexpr std::string_view static_lib_ext =
-#if defined(_WIN32)
-    ".lib";
-#else
-    ".a";
-#endif
-
-constexpr std::string_view shared_lib_ext =
-#if defined(_WIN32)
-    ".dll";
-#elif defined(__APPLE__)
-    ".dylib";
-#else
-    ".so";
-#endif
-
-constexpr std::string_view null_redirect =
-#if defined(_WIN32)
-    "2>nul";
-#else
-    "2>/dev/null";
-#endif
-
-constexpr std::string_view lib_prefix =
-#if defined(_WIN32)
-    "";
-#else
-    "lib";
-#endif
-
-std::string shell_quote(std::string_view s);  // 取代散落的 shq
-
-} // namespace mcpp::platform
-```
-
-**受益文件：** `plan.cppm`、`flags.cppm`、`ninja_backend.cppm`、`probe.cppm`、`clang.cppm`、`config.cppm`
-
-### P2: ToolchainProvider 重构
+### P2: ToolchainProvider 重构 — TODO (src/provider.cppm 待创建)
 
 **目标：** 把工具链行为从散落的 `if (isClang)` / `if (isGcc)` 收敛到 provider 接口。
 
@@ -139,39 +81,17 @@ ToolchainProvider (interface)
 - `link_flags()` → 平台相关链接 flags
 - `bmi_traits()` → .gcm/.pcm/.ifc
 
-### P3: 跨平台 Process Runner
+> **注：** `src/provider.cppm` 尚未创建；现有调用者（gcc.cppm、clang.cppm 等）待迁移。
+
+### P3: 跨平台 Process Runner — DONE (infrastructure, callers pending)
 
 **目标：** 消除 shell 字符串拼接，统一子进程执行。
 
-当前问题：
-- `popen` + cmd.exe 字符串拼接（路径空格、引号转义脆弱）
-- `shq()` 在 Windows 上有 cmd.exe 首 token 引号剥离问题
-- `_putenv_s` 污染全局进程环境
+`src/process.cppm` 已创建，提供 `ProcessOptions` / `ProcessResult` / `run()` 接口：
+- POSIX: `fork/exec` + `pipe`
+- Windows: `CreateProcessW` + `STARTUPINFOW`
 
-建议新建 `src/process.cppm`：
-
-```cpp
-struct ProcessOptions {
-    std::vector<std::string> argv;
-    std::map<std::string, std::string> env;  // 进程级环境变量
-    std::filesystem::path cwd;
-    bool capture_stdout = true;
-    bool capture_stderr = false;
-};
-
-struct ProcessResult {
-    int exit_code;
-    std::string stdout_output;
-    std::string stderr_output;
-};
-
-ProcessResult run(const ProcessOptions& opts);
-```
-
-POSIX: `fork/exec` + `pipe`
-Windows: `CreateProcessW` + `STARTUPINFOW`
-
-**受益范围：** `probe.cppm`、`xlings.cppm`、`stdmod.cppm`、`ninja_backend.cppm`、`config.cppm`
+> **注：** 现有调用点（`probe.cppm`、`xlings.cppm`、`stdmod.cppm`、`ninja_backend.cppm`、`config.cppm`）仍使用 `popen`，待逐步迁移到 `process::run()`。
 
 ### P4: `mcpp pack` Windows 支持
 
@@ -196,45 +116,50 @@ PackStrategy (interface)
   └── WindowsPePack  — dumpbin + zip + .bat
 ```
 
-### P5: E2E 能力标签化
+### P5: E2E 能力标签化 — DONE (infrastructure)
 
 **目标：** 从"平台 skip 列表"升级为"能力标签"。
 
-在每个 E2E 脚本头部声明需求：
+能力标签体系已全面落地：
+- 全部 48 个 E2E 脚本头部均已声明 `# requires:` 行
+- `run_all.sh` 自动检测平台能力（elf、gcc、musl、pack、symlink、scan-deps、import-std-libcxx、unix-shell、fresh-sandbox）并动态 skip
+- 不再维护平台 skip 列表
+
+支持的标签：
 
 ```bash
 # requires: elf          — 需要 ELF 工具链
 # requires: gcc          — 需要 GCC
-# requires: symlink      — 需要 ln -sf
+# requires: symlink      — 需要 ln -sf（仅 Linux/macOS 或 Windows Developer Mode）
 # requires: scan-deps    — 需要 clang-scan-deps
-# requires: import-std   — 需要 import std (std.cppm/std.ixx)
+# requires: import-std-libcxx — 需要 import std (std.cppm via libc++)
 # requires: pack         — 需要 mcpp pack
+# requires: unix-shell   — 需要 bash 风格 shell（非 cmd.exe）
+# requires: fresh-sandbox — 需要隔离 MCPP_HOME
 ```
-
-`run_all.sh` 读取标签，根据当前平台的能力集决定 skip，不再维护平台 skip 列表。
 
 ## 实施顺序
 
 ```
-P0 release + E2E 修复   ← 立即可做，产出最大
+P0 release + E2E 修复   ✅ DONE（release.yml build-windows job 已加）
   ↓
-P1 PlatformTraits       ← 减少 #if 散落，降低后续维护成本
+P1 PlatformTraits       ✅ DONE（src/platform.cppm 已创建，待调用者迁移）
   ↓
-P2 ToolchainProvider    ← 为 MSVC 支持打基础
+P2 ToolchainProvider    ← src/provider.cppm 待创建 + 调用者迁移
   ↓
-P3 Process Runner       ← 消除 shell 拼接风险
+P3 Process Runner       ✅ DONE（src/process.cppm 已创建，待调用者迁移）
   ↓
 P4 mcpp pack Windows    ← 产品化打包
   ↓
-P5 E2E 标签化           ← 测试治理
+P5 E2E 标签化           ✅ DONE（全部 48 个测试已标签化）
 ```
 
 ## 预期里程碑
 
 | 阶段 | 目标 | Windows E2E 通过率 |
 |------|------|-------------------|
-| 当前 | self-host + 基础 E2E | 22/49 (45%) |
-| P0 完成 | release + 高价值 E2E | ~30/49 (61%) |
-| P1+P2 完成 | 平台抽象 + provider | ~35/49 (71%) |
-| P3+P4 完成 | process runner + pack | ~40/49 (82%) |
+| 当前 | self-host + 基础 E2E | 22/48 (46%) |
+| P0 完成 | release + 高价值 E2E | ~30/48 (63%) |
+| P1+P2 完成 | 平台抽象 + provider | ~35/48 (73%) |
+| P3+P4 完成 | process runner + pack | ~40/48 (83%) |
 | P5 完成 | 能力标签 | 动态评估 |
