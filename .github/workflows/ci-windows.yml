@@ -311,8 +311,8 @@ jobs:
           mkdir -p "$STAGING/$WRAPPER/bin"
           mkdir -p "$STAGING/$WRAPPER/registry/bin"
 
-          # Binary: prefer self-hosted build, fall back to xmake bootstrap
-          MCPP_BIN="${MCPP_SELF:-$MCPP_BOOTSTRAP}"
+          # Binary: prefer self-hosted build, fall back to saved bootstrap copy
+          MCPP_BIN="${MCPP_SELF:-/tmp/mcpp-bootstrap/mcpp.exe}"
           echo "Packaging binary: $MCPP_BIN"
           cp "$MCPP_BIN" "$STAGING/$WRAPPER/bin/mcpp.exe"
 
