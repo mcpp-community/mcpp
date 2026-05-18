@@ -10,6 +10,7 @@ import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
+import mcpp.platform;
 
 export namespace mcpp::build {
 
@@ -172,33 +173,23 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.targetName = t.name;
         if (t.kind == mcpp::manifest::Target::Library) {
             lu.kind   = LinkUnit::StaticLibrary;
-#if defined(_WIN32)
-            lu.output = std::filesystem::path("bin") / std::format("{}.lib", t.name);
-#else
-            lu.output = std::filesystem::path("bin") / std::format("lib{}.a", t.name);
-#endif
+            lu.output = std::filesystem::path("bin") /
+                        std::format("{}{}{}", mcpp::platform::lib_prefix, t.name,
+                                    mcpp::platform::static_lib_ext);
         } else if (t.kind == mcpp::manifest::Target::SharedLibrary) {
             lu.kind   = LinkUnit::SharedLibrary;
-#if defined(_WIN32)
-            lu.output = std::filesystem::path("bin") / std::format("{}.dll", t.name);
-#else
-            lu.output = std::filesystem::path("bin") / std::format("lib{}.so", t.name);
-#endif
+            lu.output = std::filesystem::path("bin") /
+                        std::format("{}{}{}", mcpp::platform::lib_prefix, t.name,
+                                    mcpp::platform::shared_lib_ext);
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {
             lu.kind   = LinkUnit::TestBinary;
-#if defined(_WIN32)
-            lu.output = std::filesystem::path("bin") / (t.name + ".exe");
-#else
-            lu.output = std::filesystem::path("bin") / t.name;
-#endif
+            lu.output = std::filesystem::path("bin") /
+                        std::format("{}{}", t.name, mcpp::platform::exe_suffix);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         } else {
             lu.kind   = LinkUnit::Binary;
-#if defined(_WIN32)
-            lu.output = std::filesystem::path("bin") / (t.name + ".exe");
-#else
-            lu.output = std::filesystem::path("bin") / t.name;
-#endif
+            lu.output = std::filesystem::path("bin") /
+                        std::format("{}{}", t.name, mcpp::platform::exe_suffix);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         }
 

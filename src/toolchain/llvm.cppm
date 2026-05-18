@@ -3,6 +3,7 @@
 export module mcpp.toolchain.llvm;
 
 import std;
+import mcpp.platform;
 
 export namespace mcpp::toolchain::llvm {
 
@@ -24,11 +25,7 @@ std::string package_name() {
 }
 
 std::vector<std::string> frontend_candidates() {
-#if defined(_WIN32)
-    return {"clang++.exe", "clang++"};
-#else
-    return {"clang++"};
-#endif
+    return {std::format("clang++{}", mcpp::platform::exe_suffix)};
 }
 
 std::vector<std::string> list_aliases() {

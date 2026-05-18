@@ -13,6 +13,7 @@ export module mcpp.toolchain.probe;
 import std;
 import mcpp.toolchain.model;
 import mcpp.xlings;
+import mcpp.platform;
 
 export namespace mcpp::toolchain {
 
@@ -250,9 +251,11 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
     }
 
 #if defined(_WIN32)
-    auto bin_path_r = run_capture(std::format("where {} 2>nul", cxx));
+    auto bin_path_r = run_capture(std::format("where {} {}", cxx,
+                                               mcpp::platform::null_redirect));
 #else
-    auto bin_path_r = run_capture(std::format("command -v '{}' 2>/dev/null", cxx));
+    auto bin_path_r = run_capture(std::format("command -v '{}' {}", cxx,
+                                               mcpp::platform::null_redirect));
 #endif
     if (!bin_path_r) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found in PATH", cxx)});
@@ -268,15 +271,10 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
 std::expected<std::string, DetectError>
 probe_target_triple(const std::filesystem::path& compilerBin,
                     const std::string& envPrefix) {
-#if defined(_WIN32)
-    constexpr auto kNullRedirect = "2>nul";
-#else
-    constexpr auto kNullRedirect = "2>/dev/null";
-#endif
     auto triple_r = run_capture(std::format("{}{} -dumpmachine {}",
                                             envPrefix,
                                             mcpp::xlings::shq(compilerBin.string()),
-                                            kNullRedirect));
+                                            mcpp::platform::null_redirect));
     if (!triple_r) return std::unexpected(triple_r.error());
     return trim_line(*triple_r);
 }
@@ -284,22 +282,18 @@ probe_target_triple(const std::filesystem::path& compilerBin,
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
               const std::string& envPrefix) {
-#if defined(_WIN32)
-    constexpr auto kNullRedir = "2>nul";
-#else
-    constexpr auto kNullRedir = "2>/dev/null";
-#endif
     auto r = run_capture(std::format("{}{} -print-sysroot {}",
                                      envPrefix,
                                      mcpp::xlings::shq(compilerBin.string()),
-                                     kNullRedir));
+                                     mcpp::platform::null_redirect));
     if (r) {
         auto s = trim_line(*r);
         if (!s.empty() && std::filesystem::exists(s)) return s;
     }
 #if defined(__APPLE__)
     // macOS fallback: use xcrun to discover the SDK path
-    auto xcrun_r = run_capture("xcrun --show-sdk-path 2>/dev/null");
+    auto xcrun_r = run_capture(std::format("xcrun --show-sdk-path {}",
+                                            mcpp::platform::null_redirect));
     if (xcrun_r) {
         auto sdk = trim_line(*xcrun_r);
         if (!sdk.empty() && std::filesystem::exists(sdk)) return sdk;
