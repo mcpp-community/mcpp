@@ -237,10 +237,14 @@ jobs:
         shell: bash
         run: |
           echo "=== Self-host: using bootstrapped mcpp.exe to build mcpp ==="
+          # Save bootstrap binary before cleaning xmake artifacts
+          mkdir -p /tmp/mcpp-bootstrap
+          cp "$MCPP_BOOTSTRAP" /tmp/mcpp-bootstrap/mcpp.exe
+          MCPP_EXE="/tmp/mcpp-bootstrap/mcpp.exe"
+
           # Clean xmake artifacts so mcpp starts fresh
           rm -rf build xmake.lua .xmake
 
-          MCPP_EXE="$MCPP_BOOTSTRAP"
           echo "Bootstrap binary: $MCPP_EXE"
           "$MCPP_EXE" --version
 
