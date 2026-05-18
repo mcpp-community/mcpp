@@ -198,7 +198,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     append("rule cp_bmi\n");
 #if defined(_WIN32)
-    append("  command = cmd /c copy /y $in $out >nul\n");
+    // Use PowerShell Copy-Item which handles both forward and back slashes.
+    // cmd.exe `copy` breaks on forward-slash paths from ninja.
+    append("  command = powershell -NoProfile -Command \"Copy-Item -Force '$in' -Destination '$out'\"\n");
 #else
     append("  command = mkdir -p $$(dirname $out) && cp -f $in $out\n");
 #endif

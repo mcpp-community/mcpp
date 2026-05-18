@@ -13,7 +13,11 @@ if [[ -z "${MCPP_HOME:-}" ]]; then
 fi
 mkdir -p "$MCPP_HOME"
 
+# On Windows, HOME may differ from USERPROFILE; try both
 USER_MCPP="${HOME}/.mcpp"
+if [[ ! -d "$USER_MCPP" && -n "${USERPROFILE:-}" ]]; then
+    USER_MCPP="$USERPROFILE/.mcpp"
+fi
 if [[ -d "$USER_MCPP/registry/data/xpkgs" ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
     [[ -e "$MCPP_HOME/registry/data/xpkgs" ]] \
