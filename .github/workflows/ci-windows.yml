@@ -260,7 +260,16 @@ jobs:
           # Debug: test xlings directly
           "$USERPROFILE/.xlings/subos/default/bin/xlings.exe" --version || echo "xlings direct call failed"
 
-          "$MCPP_EXE" build
+          # Debug: check what's in the mcpp sandbox after xlings installs
+          "$MCPP_EXE" build || {
+            echo "=== mcpp build failed, debugging ==="
+            echo "=== mcpp sandbox contents ==="
+            find "$USERPROFILE/.mcpp/registry/data/xpkgs" -name "*.exe" 2>/dev/null | head -20
+            echo "=== LLVM bin dir ==="
+            ls "$USERPROFILE/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7/bin/" 2>/dev/null || echo "dir not found"
+            ls "$USERPROFILE/.mcpp/registry/data/xpkgs/xim-x-llvm/" 2>/dev/null || echo "llvm dir not found"
+            exit 1
+          }
 
           # Find the self-hosted binary
           SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
