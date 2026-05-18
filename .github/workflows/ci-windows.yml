@@ -3,6 +3,8 @@ name: ci-windows
 # Windows validation CI for mcpp.
 # Step 1: Verify xlings LLVM toolchain capabilities on Windows.
 # Step 2: xmake bootstrap to produce first mcpp.exe.
+# Step 3: Self-host — use the bootstrapped mcpp.exe to build itself.
+# Step 4: Package into a distributable zip (same layout as Linux/macOS).
 
 on:
   push:
@@ -24,7 +26,7 @@ jobs:
   windows-llvm-validation:
     name: Windows x64 — LLVM toolchain validation
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -190,7 +192,8 @@ jobs:
           xlings.exe install xmake -y || xlings install xmake -y
           xmake.exe --version || xmake --version
 
-      - name: Build mcpp with xmake (MSVC)
+      - name: Bootstrap mcpp with xmake (MSVC)
+        id: bootstrap
         shell: pwsh
         run: |
           # Generate xmake.lua for bootstrap
@@ -222,8 +225,117 @@ jobs:
           if ($mcpp) {
               Write-Host ":: mcpp.exe built at: $($mcpp.FullName)"
               & $mcpp.FullName --version
+              # Export for subsequent steps
+              "MCPP_BOOTSTRAP=$($mcpp.FullName)" | Out-File -Append $env:GITHUB_ENV
           } else {
               Write-Host ":: Build produced files:"
               Get-ChildItem -Recurse build -Filter *.exe | ForEach-Object { Write-Host "  $($_.FullName)" }
               exit 1
           }
+
+      - name: Self-host — mcpp builds itself
+        shell: bash
+        run: |
+          echo "=== Self-host: using bootstrapped mcpp.exe to build mcpp ==="
+          # Clean xmake artifacts so mcpp starts fresh
+          rm -rf build xmake.lua .xmake
+
+          MCPP_EXE="$MCPP_BOOTSTRAP"
+          echo "Bootstrap binary: $MCPP_EXE"
+          "$MCPP_EXE" --version
+
+          # mcpp build uses its own build system (not xmake)
+          export MCPP_VENDORED_XLINGS="$USERPROFILE/.xlings/subos/default/bin/xlings.exe"
+          "$MCPP_EXE" build
+
+          # Find the self-hosted binary
+          SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          test -n "$SELF_MCPP" || {
+            echo "FAIL: self-host build did not produce mcpp.exe"
+            find target -name "*.exe" 2>/dev/null
+            exit 1
+          }
+          SELF_MCPP=$(cd "$(dirname "$SELF_MCPP")" && pwd)/$(basename "$SELF_MCPP")
+          echo "Self-hosted binary: $SELF_MCPP"
+          "$SELF_MCPP" --version
+
+          echo "MCPP_SELF=$SELF_MCPP" >> "$GITHUB_ENV"
+
+      - name: Package Windows release zip
+        id: package
+        shell: bash
+        run: |
+          VERSION=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
+          PLAT="windows-x86_64"
+          WRAPPER="mcpp-${VERSION}-${PLAT}"
+          ZIPNAME="${WRAPPER}.zip"
+
+          echo "Packaging $ZIPNAME ..."
+
+          STAGING=$(mktemp -d)
+          mkdir -p "$STAGING/$WRAPPER/bin"
+          mkdir -p "$STAGING/$WRAPPER/registry/bin"
+
+          # Binary
+          cp "$MCPP_SELF" "$STAGING/$WRAPPER/bin/mcpp.exe"
+
+          # Launcher batch script (equivalent to the shell wrapper on Linux/macOS)
+          printf '@echo off\r\n"%%~dp0bin\\mcpp.exe" %%*\r\n' > "$STAGING/$WRAPPER/mcpp.bat"
+
+          # Metadata
+          cp README.md "$STAGING/$WRAPPER/" 2>/dev/null || true
+          cp LICENSE "$STAGING/$WRAPPER/" 2>/dev/null || true
+
+          # Bundle xlings
+          XLINGS_EXE="$USERPROFILE/.xlings/subos/default/bin/xlings.exe"
+          if [ -f "$XLINGS_EXE" ]; then
+            cp "$XLINGS_EXE" "$STAGING/$WRAPPER/registry/bin/xlings.exe"
+            echo "Bundled xlings.exe"
+          else
+            echo "::warning::xlings.exe not found at $XLINGS_EXE"
+          fi
+
+          # Create zip
+          mkdir -p dist
+          (cd "$STAGING" && powershell.exe -Command \
+            "Compress-Archive -Path '$WRAPPER' -DestinationPath '$WRAPPER.zip'")
+          cp "$STAGING/$ZIPNAME" "dist/$ZIPNAME"
+
+          # SHA256
+          (cd dist && sha256sum "$ZIPNAME" > "$ZIPNAME.sha256")
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "zipname=$ZIPNAME" >> "$GITHUB_OUTPUT"
+          ls -la dist/
+
+      - name: Smoke-test the packaged zip
+        shell: bash
+        run: |
+          VERSION="${{ steps.package.outputs.version }}"
+          ZIPNAME="${{ steps.package.outputs.zipname }}"
+          WRAPPER="${ZIPNAME%.zip}"
+
+          SMOKE=$(mktemp -d)
+          (cd "$SMOKE" && unzip -q "$GITHUB_WORKSPACE/dist/$ZIPNAME")
+
+          echo "=== Layout ==="
+          find "$SMOKE/$WRAPPER" -type f
+
+          echo "=== Version check ==="
+          "$SMOKE/$WRAPPER/bin/mcpp.exe" --version
+
+          echo "=== xlings bundled ==="
+          test -f "$SMOKE/$WRAPPER/registry/bin/xlings.exe"
+
+          echo "=== Launcher ==="
+          test -f "$SMOKE/$WRAPPER/mcpp.bat"
+
+          echo "Smoke-test passed"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpp-windows-x86_64
+          path: |
+            dist/*.zip
+            dist/*.sha256
