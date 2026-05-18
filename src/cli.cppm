@@ -23,6 +23,7 @@ import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
+import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.registry;
@@ -2160,9 +2161,8 @@ prepare_build(bool print_fingerprint,
 
     // Clang: discover clang-scan-deps for P1689 dyndep scanning.
     if (mcpp::toolchain::is_clang(*tc)) {
-        auto sd = tc->binaryPath.parent_path() / "clang-scan-deps";
-        if (std::filesystem::exists(sd)) {
-            ctx.plan.scanDepsPath = sd;
+        if (auto sd = mcpp::toolchain::clang::find_scan_deps(*tc)) {
+            ctx.plan.scanDepsPath = *sd;
         }
     }
 
@@ -2519,7 +2519,11 @@ std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
     }
 
     // All inputs are older than build.ninja → fast-path: just run ninja.
+#if defined(_WIN32)
+    std::string cmd = std::format("{} -C \"{}\"", ninjaProgram, outputDir.string());
+#else
     std::string cmd = std::format("{} -C '{}'", ninjaProgram, outputDir.string());
+#endif
     if (verbose) cmd += " -v";
     cmd += " 2>&1";
 
@@ -2608,8 +2612,13 @@ int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
         std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
     std::println("");
     std::fflush(stdout);
+#if defined(_WIN32)
+    std::string cmd = std::format("\"{}\"", exe.string());
+    for (auto& a : passthrough) cmd += std::format(" \"{}\"", a);
+#else
     std::string cmd = std::format("'{}'", exe.string());
     for (auto& a : passthrough) cmd += std::format(" '{}'", a);
+#endif
     return std::system(cmd.c_str()) == 0 ? 0 : 1;
 }
 
@@ -3151,6 +3160,7 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
         // visible to test binaries that shell out to them. The
         // toolchain binary's path encodes the registry root — derive it.
         std::string pathPrefix;
+#if !defined(_WIN32)
         if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(ctx->tc.binaryPath)) {
             // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
             auto registryDir = xpkgs->parent_path().parent_path();
@@ -3158,9 +3168,15 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
             if (std::filesystem::exists(sandboxBin))
                 pathPrefix = std::format("PATH='{}':\"$PATH\" ", sandboxBin.string());
         }
+#endif
 
+#if defined(_WIN32)
+        std::string cmd = std::format("\"{}\"", exe.string());
+        for (auto& a : passthrough) cmd += std::format(" \"{}\"", a);
+#else
         std::string cmd = std::format("{}'{}'", pathPrefix, exe.string());
         for (auto& a : passthrough) cmd += std::format(" '{}'", a);
+#endif
         int rc = std::system(cmd.c_str());
         // std::system returns wait status on POSIX, exit code on Windows.
 #if defined(_WIN32)
