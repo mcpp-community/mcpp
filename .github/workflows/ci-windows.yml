@@ -262,17 +262,15 @@ jobs:
 
           # Pre-seed the mcpp sandbox with the already-installed LLVM from
           # the global xlings. xlings won't re-download if the package dir
-          # exists, but it may create an empty stub. Symlinking avoids
-          # a redundant ~500MB download.
+          # exists, but it may create an empty stub. Copy instead of junction
+          # to avoid Windows symlink permission issues on CI runners.
           MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
           XLINGS_XPKGS="$USERPROFILE/.xlings/data/xpkgs"
           if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
             mkdir -p "$MCPP_XPKGS"
-            # Remove empty stub if mcpp's xlings created one
             rm -rf "$MCPP_XPKGS/xim-x-llvm"
-            # Use junction (Windows symlink for directories)
-            cmd.exe //c "mklink /J \"$(cygpath -w "$MCPP_XPKGS/xim-x-llvm")\" \"$(cygpath -w "$XLINGS_XPKGS/xim-x-llvm")\""
-            echo "Linked LLVM xpkg from global xlings"
+            cp -r "$XLINGS_XPKGS/xim-x-llvm" "$MCPP_XPKGS/xim-x-llvm"
+            echo "Copied LLVM xpkg from global xlings"
             ls "$MCPP_XPKGS/xim-x-llvm/20.1.7/bin/" | head -5
           fi
 
