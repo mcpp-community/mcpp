@@ -355,7 +355,11 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet)
     }
 
     // 2. Copy from system (`which xlings`)
+#if defined(_WIN32)
+    auto sys = run_capture("where xlings.exe 2>nul");
+#else
     auto sys = run_capture("command -v xlings 2>/dev/null");
+#endif
     if (sys) {
         std::string p = *sys;
         while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) p.pop_back();
@@ -532,7 +536,11 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         auto xbin = acquire_xlings_binary(cfg.xlingsBinary, quiet);
         if (!xbin) return std::unexpected(ConfigError{xbin.error()});
     } else if (cfg.xlingsBinaryMode == "system") {
+#if defined(_WIN32)
+        auto sys = run_capture("where xlings.exe 2>nul");
+#else
         auto sys = run_capture("command -v xlings 2>/dev/null");
+#endif
         if (!sys || sys->empty())
             return std::unexpected(ConfigError{"system xlings not found in PATH"});
         std::string p = *sys;

@@ -88,10 +88,16 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
     const std::filesystem::path& cxx_binary,
     const std::string& envPrefix)
 {
+#if defined(_WIN32)
+    constexpr auto kDevNull = "2>nul";
+#else
+    constexpr auto kDevNull = "2>/dev/null";
+#endif
     auto manifest_r = mcpp::toolchain::run_capture(std::format(
-        "{}{} -print-library-module-manifest-path 2>/dev/null",
+        "{}{} -print-library-module-manifest-path {}",
         envPrefix,
-        mcpp::xlings::shq(cxx_binary.string())));
+        mcpp::xlings::shq(cxx_binary.string()),
+        kDevNull));
     if (manifest_r) {
         auto manifestPath = std::filesystem::path(
             mcpp::toolchain::trim_line(*manifest_r));

@@ -70,10 +70,15 @@ std::string join_colon_paths(const std::vector<std::filesystem::path>& dirs) {
 }
 
 std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) {
+#if defined(_WIN32)
+    (void)dirs;
+    return "";
+#else
     if (dirs.empty()) return "";
     auto joined = join_colon_paths(dirs);
     return std::format("env LD_LIBRARY_PATH={}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}} ",
                        mcpp::xlings::shq(joined));
+#endif
 }
 
 } // namespace
@@ -244,7 +249,11 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
         cxx = "g++";
     }
 
+#if defined(_WIN32)
+    auto bin_path_r = run_capture(std::format("where {} 2>nul", cxx));
+#else
     auto bin_path_r = run_capture(std::format("command -v '{}' 2>/dev/null", cxx));
+#endif
     if (!bin_path_r) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found in PATH", cxx)});
     }
@@ -258,9 +267,15 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
 std::expected<std::string, DetectError>
 probe_target_triple(const std::filesystem::path& compilerBin,
                     const std::string& envPrefix) {
-    auto triple_r = run_capture(std::format("{}{} -dumpmachine 2>/dev/null",
+#if defined(_WIN32)
+    constexpr auto kNullRedirect = "2>nul";
+#else
+    constexpr auto kNullRedirect = "2>/dev/null";
+#endif
+    auto triple_r = run_capture(std::format("{}{} -dumpmachine {}",
                                             envPrefix,
-                                            mcpp::xlings::shq(compilerBin.string())));
+                                            mcpp::xlings::shq(compilerBin.string()),
+                                            kNullRedirect));
     if (!triple_r) return std::unexpected(triple_r.error());
     return trim_line(*triple_r);
 }
@@ -268,9 +283,15 @@ probe_target_triple(const std::filesystem::path& compilerBin,
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
               const std::string& envPrefix) {
-    auto r = run_capture(std::format("{}{} -print-sysroot 2>/dev/null",
+#if defined(_WIN32)
+    constexpr auto kNullRedir = "2>nul";
+#else
+    constexpr auto kNullRedir = "2>/dev/null";
+#endif
+    auto r = run_capture(std::format("{}{} -print-sysroot {}",
                                      envPrefix,
-                                     mcpp::xlings::shq(compilerBin.string())));
+                                     mcpp::xlings::shq(compilerBin.string()),
+                                     kNullRedir));
     if (r) {
         auto s = trim_line(*r);
         if (!s.empty() && std::filesystem::exists(s)) return s;

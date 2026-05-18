@@ -319,12 +319,22 @@ std::expected<std::string, std::string> run_capture(const std::string& cmd) {
 std::string shq(std::string_view s) {
     std::string out;
     out.reserve(s.size() + 2);
+#if defined(_WIN32)
+    // cmd.exe uses double quotes; escape inner double quotes with backslash
+    out.push_back('"');
+    for (char c : s) {
+        if (c == '"') out += "\\\"";
+        else out.push_back(c);
+    }
+    out.push_back('"');
+#else
     out.push_back('\'');
     for (char c : s) {
         if (c == '\'') out += "'\\''";
         else out.push_back(c);
     }
     out.push_back('\'');
+#endif
     return out;
 }
 
@@ -413,6 +423,24 @@ std::filesystem::path sandbox_init_marker(const Env& env) {
 
 std::string build_command_prefix(const Env& env) {
     auto xvmBin = paths::sandbox_bin(env).string();
+#if defined(_WIN32)
+    // Windows: use cmd.exe set + call semantics.
+    if (env.projectDir.empty()) {
+        return std::format(
+            "cd /d {} && set \"PATH={};%PATH%\" && set \"XLINGS_HOME={}\" && set \"XLINGS_PROJECT_DIR=\" && {}",
+            shq(env.home.string()),
+            xvmBin,
+            env.home.string(),
+            shq(env.binary.string()));
+    }
+    return std::format(
+        "cd /d {} && set \"PATH={};%PATH%\" && set \"XLINGS_HOME={}\" && set \"XLINGS_PROJECT_DIR={}\" && {}",
+        shq(env.home.string()),
+        xvmBin,
+        env.home.string(),
+        env.projectDir.string(),
+        shq(env.binary.string()));
+#else
     if (env.projectDir.empty()) {
         // Global mode: unset XLINGS_PROJECT_DIR (existing behavior).
         return std::format(
@@ -431,13 +459,19 @@ std::string build_command_prefix(const Env& env) {
         shq(env.home.string()),
         shq(env.projectDir.string()),
         shq(env.binary.string()));
+#endif
 }
 
 std::string build_interface_command(const Env& env,
                                     std::string_view capability,
                                     std::string_view argsJson) {
+#if defined(_WIN32)
+    return std::format("{} interface {} --args {} 2>nul",
+        build_command_prefix(env), capability, shq(argsJson));
+#else
     return std::format("{} interface {} --args {} 2>/dev/null",
         build_command_prefix(env), capability, shq(argsJson));
+#endif
 }
 
 // ─── JSON extraction helpers ────────────────────────────────────────
@@ -628,12 +662,21 @@ int install_with_progress(const Env& env, std::string_view target,
     auto argsJson = std::format(
         R"({{"targets":["{}"],"yes":true}})", target);
 
+#if defined(_WIN32)
+    auto cmd = std::format(
+        "cd /d {} && set \"XLINGS_PROJECT_DIR=\" && set \"XLINGS_HOME={}\" && {} interface install_packages --args {} 2>nul",
+        shq(env.home.string()),
+        env.home.string(),
+        shq(env.binary.string()),
+        shq(argsJson));
+#else
     auto cmd = std::format(
         "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} 2>/dev/null",
         shq(env.home.string()),
         shq(env.home.string()),
         shq(env.binary.string()),
         shq(argsJson));
+#endif
 
     std::FILE* fp = ::popen(cmd.c_str(), "r");
     if (!fp) return -1;
@@ -746,11 +789,19 @@ void ensure_init(const Env& env, bool quiet) {
 
     if (!quiet)
         print_status("Initialize", "mcpp sandbox layout (one-time)");
+#if defined(_WIN32)
+    auto cmd = std::format(
+        "cd /d {} && set \"XLINGS_PROJECT_DIR=\" && set \"XLINGS_HOME={}\" && {} self init >nul 2>&1",
+        shq(env.home.string()),
+        env.home.string(),
+        shq(env.binary.string()));
+#else
     auto cmd = std::format(
         "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init >/dev/null 2>&1",
         shq(env.home.string()),
         shq(env.home.string()),
         shq(env.binary.string()));
+#endif
     int rc = std::system(cmd.c_str());
     if (rc != 0 && !quiet) {
         std::println(stderr,
