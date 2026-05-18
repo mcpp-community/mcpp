@@ -220,6 +220,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     std::string module_output_flag = traits.needsExplicitModuleOutput
         ? " -fmodule-output=$bmi_out" : "";
     append("rule cxx_module\n");
+#if defined(_WIN32)
+    // Windows: skip BMI restat optimization (requires POSIX shell).
+    // Just compile directly — incremental rebuild still works via dyndep.
+    append(std::format("  command = "
+           "$toolenv $cxx $cxxflags{} -c $in -o $out\n", module_output_flag));
+#else
     append(std::format("  command = "
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
              "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
@@ -231,6 +237,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
            "else "
              "rm -f \"$bmi_out.bak\"; "
            "fi\n", module_output_flag));
+#endif
     append("  description = MOD $out\n");
     if (dyndep)
         append("  restat = 1\n");
