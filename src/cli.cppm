@@ -1959,15 +1959,28 @@ prepare_build(bool print_fingerprint,
                     std::format("{} ({} = {})", spec.git, spec.gitRefKind, spec.gitRev));
                 std::string cloneCmd;
                 if (spec.gitRefKind == "branch") {
+#if defined(_WIN32)
+                    cloneCmd = std::format(
+                        "git clone --depth 1 --branch \"{}\" \"{}\" \"{}\" 2>&1",
+                        spec.gitRev, spec.git, gitRoot.string());
+#else
                     cloneCmd = std::format(
                         "git clone --depth 1 --branch '{}' '{}' '{}' 2>&1",
                         spec.gitRev, spec.git, gitRoot.string());
+#endif
                 } else {
                     // For tag/rev: full clone, then checkout (depth-1 may miss the rev).
+#if defined(_WIN32)
+                    cloneCmd = std::format(
+                        "git clone \"{}\" \"{}\" && cd \"{}\" && git checkout --quiet \"{}\" 2>&1",
+                        spec.git, gitRoot.string(),
+                        gitRoot.string(), spec.gitRev);
+#else
                     cloneCmd = std::format(
                         "git clone '{}' '{}' && cd '{}' && git checkout --quiet '{}' 2>&1",
                         spec.git, gitRoot.string(),
                         gitRoot.string(), spec.gitRev);
+#endif
                 }
                 std::string out;
                 {

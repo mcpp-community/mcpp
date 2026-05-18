@@ -69,6 +69,7 @@ case "$OS" in
         fi
         # NOTE: Windows runners may have g++.exe (MinGW/Strawberry) in PATH
         # but it's not a proper mcpp-compatible GCC. Don't add gcc capability.
+        CAPS+=(fresh-sandbox)
         ;;
 esac
 
