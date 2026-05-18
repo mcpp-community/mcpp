@@ -1,10 +1,9 @@
 name: ci-windows
 
-# Windows validation CI for mcpp.
-# Step 1: Verify xlings LLVM toolchain capabilities on Windows.
-# Step 2: xmake bootstrap to produce first mcpp.exe.
-# Step 3: Self-host — use the bootstrapped mcpp.exe to build itself (LLVM + MSVC STL).
-# Step 4: Package the self-hosted binary into a distributable zip.
+# Windows CI for mcpp.
+# Step 1: Bootstrap mcpp via xlings (same as Linux/macOS).
+# Step 2: Self-host — use mcpp to build itself (LLVM + MSVC STL import std).
+# Step 3: Package the self-hosted binary into a distributable zip.
 
 on:
   push:
@@ -23,8 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows-llvm-validation:
-    name: Windows x64 — LLVM toolchain validation
+  windows-build:
+    name: Windows x64 — build + self-host
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -50,231 +49,43 @@ jobs:
           cd "${WORK}"
           unzip -q "${zipfile}"
           XLINGS_DIR="${WORK}/xlings-${XLINGS_VERSION}-windows-x86_64"
-          echo "xlings dir: $XLINGS_DIR"
-          ls "$XLINGS_DIR/bin/"
           "$XLINGS_DIR/subos/default/bin/xlings.exe" self install
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           echo "$USERPROFILE/.xlings/bin" >> "$GITHUB_PATH"
 
-      - name: Verify xlings
+      - name: Bootstrap mcpp via xlings
         shell: bash
         run: |
-          xlings.exe --version || xlings --version || echo "xlings not found in PATH"
-
-      - name: Install LLVM via xlings
-        shell: bash
-        run: |
-          xlings.exe install llvm -y || xlings.exe install llvm@20.1.7 -y || {
-            echo "::warning::xlings install llvm failed"
-            exit 1
-          }
-          # Find LLVM root
-          LLVM_ROOT=$(find "$USERPROFILE/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang.exe" 2>/dev/null | head -1)
-          if [ -n "$LLVM_ROOT" ]; then
-            LLVM_ROOT=$(dirname "$(dirname "$LLVM_ROOT")")
-          fi
-          echo "LLVM_ROOT=$LLVM_ROOT"
-          echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
-
-      - name: Inspect LLVM package structure
-        shell: bash
-        run: |
-          echo "=== bin/ ==="
-          ls "$LLVM_ROOT/bin/" | grep -iE "clang|lld|llvm-ar|scan" | head -20
-          echo "=== lib/ ==="
-          ls "$LLVM_ROOT/lib/" 2>/dev/null | head -10
-          echo "=== include/c++/ ==="
-          ls "$LLVM_ROOT/include/c++/" 2>/dev/null || echo "(no libc++ headers)"
-          echo "=== share/libc++/ ==="
-          find "$LLVM_ROOT" -name "std.cppm" 2>/dev/null || echo "(no std.cppm)"
-          echo "=== clang++.cfg ==="
-          cat "$LLVM_ROOT/bin/clang++.cfg" 2>/dev/null || echo "(no cfg)"
-          echo "=== clang version ==="
-          "$LLVM_ROOT/bin/clang++.exe" --version 2>/dev/null || "$LLVM_ROOT/bin/clang++" --version 2>/dev/null
-          echo "=== Target triple ==="
-          "$LLVM_ROOT/bin/clang++.exe" -dumpmachine 2>/dev/null || "$LLVM_ROOT/bin/clang++" -dumpmachine 2>/dev/null
-
-      - name: Test — non-module C++ compilation (clang++)
-        shell: bash
-        run: |
-          WORK=$(mktemp -d)
-          cd "$WORK"
-          CXX="$LLVM_ROOT/bin/clang++.exe"
-          test -x "$CXX" || CXX="$LLVM_ROOT/bin/clang++"
-
-          cat > main.cpp << 'EOF'
-          #include <iostream>
-          int main() {
-              std::cout << "Hello from clang++ on Windows!" << std::endl;
-              return 0;
-          }
-          EOF
-
-          echo "=== Compile ==="
-          "$CXX" -std=c++23 -o hello.exe main.cpp 2>&1 || {
-            echo "::warning::clang++ compilation failed, trying with MSVC headers"
-            # clang++ on Windows may need MSVC include paths
-            "$CXX" -std=c++23 --target=x86_64-pc-windows-msvc -o hello.exe main.cpp 2>&1 || true
-          }
-
-          if [ -f hello.exe ]; then
-            echo "=== Run ==="
-            ./hello.exe
-          else
-            echo "::warning::Compilation did not produce hello.exe"
-          fi
-
-      - name: Test — clang-cl compilation
-        shell: bash
-        run: |
-          WORK=$(mktemp -d)
-          cd "$WORK"
-          CLANGCL="$LLVM_ROOT/bin/clang-cl.exe"
-          test -x "$CLANGCL" || CLANGCL="$LLVM_ROOT/bin/clang-cl"
-
-          cat > main.cpp << 'EOF'
-          #include <iostream>
-          int main() {
-              std::cout << "Hello from clang-cl on Windows!" << std::endl;
-              return 0;
-          }
-          EOF
-
-          echo "=== Compile with clang-cl ==="
-          "$CLANGCL" /std:c++latest /EHsc main.cpp /Fe:hello.exe 2>&1 || {
-            echo "::warning::clang-cl compilation failed"
-            echo "clang-cl may need Visual Studio installation for MSVC headers/libs"
-          }
-
-          if [ -f hello.exe ]; then
-            echo "=== Run ==="
-            ./hello.exe
-          fi
-
-      - name: Check libc++ availability for import std
-        shell: bash
-        run: |
-          echo "=== Checking for libc++ in LLVM package ==="
-          find "$LLVM_ROOT" -name "*.cppm" 2>/dev/null | head -5 || echo "No .cppm files found"
-          find "$LLVM_ROOT" -path "*/c++/v1" -type d 2>/dev/null | head -3 || echo "No libc++ include dir"
-          find "$LLVM_ROOT" -name "libc++*" 2>/dev/null | head -5 || echo "No libc++ library files"
-
-          echo
-          echo "=== Checking MSVC STL for import std ==="
-          # Visual Studio on GitHub runners includes MSVC STL with module support
-          VSDIR="/c/Program Files/Microsoft Visual Studio/2022/Enterprise"
-          if [ -d "$VSDIR" ]; then
-            echo "Visual Studio found at: $VSDIR"
-            find "$VSDIR" -name "std.ixx" 2>/dev/null | head -3 || echo "No std.ixx found"
-            find "$VSDIR" -path "*/modules" -name "*.ixx" 2>/dev/null | head -5 || echo "No .ixx module files"
-          else
-            echo "Visual Studio not found at expected path"
-            ls "/c/Program Files/Microsoft Visual Studio/" 2>/dev/null || true
-          fi
-
-      - name: Summary
-        shell: bash
-        run: |
-          echo "=== Windows LLVM Validation Summary ==="
-          echo "LLVM Root: $LLVM_ROOT"
-          echo "Clang version: $("$LLVM_ROOT/bin/clang++.exe" --version 2>/dev/null | head -1 || echo 'N/A')"
-          echo "Target: $("$LLVM_ROOT/bin/clang++.exe" -dumpmachine 2>/dev/null || echo 'N/A')"
-          echo
-          echo "Has libc++: $([ -d "$LLVM_ROOT/include/c++/v1" ] && echo YES || echo NO)"
-          echo "Has std.cppm: $(find "$LLVM_ROOT" -name 'std.cppm' 2>/dev/null | head -1 | grep -q . && echo YES || echo NO)"
-          echo "Has clang-scan-deps: $([ -f "$LLVM_ROOT/bin/clang-scan-deps.exe" ] && echo YES || echo NO)"
-          echo "Has clang-cl: $([ -f "$LLVM_ROOT/bin/clang-cl.exe" ] && echo YES || echo NO)"
-          echo "Has lld-link: $([ -f "$LLVM_ROOT/bin/lld-link.exe" ] && echo YES || echo NO)"
-
-      - name: Install xmake via xlings
-        shell: bash
-        run: |
-          xlings.exe install xmake -y || xlings install xmake -y
-          xmake.exe --version || xmake --version
-
-      - name: Bootstrap mcpp with xmake (MSVC)
-        id: bootstrap
-        shell: pwsh
-        run: |
-          # Generate xmake.lua for bootstrap
-          @"
-          add_rules("mode.release")
-          set_languages("c++23")
-          package("cmdline")
-              set_homepage("https://github.com/mcpplibs/cmdline")
-              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/`$(version).tar.gz")
-              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
-              on_install(function (package)
-                  import("package.tools.xmake").install(package)
-              end)
-          package_end()
-          add_requires("cmdline 0.0.1")
-          target("mcpp")
-              set_kind("binary")
-              add_files("src/main.cpp")
-              add_files("src/**.cppm")
-              add_packages("cmdline")
-              add_includedirs("src/libs/json")
-              set_policy("build.c++.modules", true)
-          "@ | Out-File -Encoding utf8 xmake.lua
-
-          xmake f -p windows -m release -y
-          xmake build -y mcpp
-
-          $mcpp = Get-ChildItem -Recurse build -Filter mcpp.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($mcpp) {
-              Write-Host ":: mcpp.exe built at: $($mcpp.FullName)"
-              & $mcpp.FullName --version
-              # Export for subsequent steps
-              "MCPP_BOOTSTRAP=$($mcpp.FullName)" | Out-File -Append $env:GITHUB_ENV
-          } else {
-              Write-Host ":: Build produced files:"
-              Get-ChildItem -Recurse build -Filter *.exe | ForEach-Object { Write-Host "  $($_.FullName)" }
-              exit 1
-          }
+          xlings.exe --version
+          xlings.exe install mcpp -y
+          MCPP="$USERPROFILE/.xlings/subos/default/bin/mcpp.exe"
+          test -f "$MCPP" || MCPP="$USERPROFILE/.xlings/subos/default/bin/mcpp"
+          test -f "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$USERPROFILE/.xlings/subos/default/bin/xlings.exe" >> "$GITHUB_ENV"
 
       - name: Self-host — mcpp builds itself
         shell: bash
         run: |
-          echo "=== Self-host: using bootstrapped mcpp.exe to build mcpp ==="
-          # Save bootstrap binary before cleaning xmake artifacts
-          mkdir -p /tmp/mcpp-bootstrap
-          cp "$MCPP_BOOTSTRAP" /tmp/mcpp-bootstrap/mcpp.exe
-          MCPP_EXE="/tmp/mcpp-bootstrap/mcpp.exe"
+          echo "=== Self-host: mcpp builds mcpp ==="
+          "$MCPP" --version
 
-          # Clean xmake artifacts so mcpp starts fresh
-          rm -rf build xmake.lua .xmake
-
-          echo "Bootstrap binary: $MCPP_EXE"
-          "$MCPP_EXE" --version
-
-          # mcpp build uses its own build system; mcpp.toml now has
-          # windows = "llvm@20.1.7" so it will use the xlings LLVM.
-          # Use Windows-native path for MCPP_VENDORED_XLINGS
-          XLINGS_WIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
-          echo "MCPP_VENDORED_XLINGS=$XLINGS_WIN"
+          # mcpp build uses LLVM on Windows (from mcpp.toml: windows = "llvm@20.1.7")
+          XLINGS_WIN=$(cygpath -w "$XLINGS_BIN")
           export MCPP_VENDORED_XLINGS="$XLINGS_WIN"
 
-          echo "xlings exists: $(test -f "$USERPROFILE/.xlings/subos/default/bin/xlings.exe" && echo YES || echo NO)"
-
-          # Debug: test xlings directly
-          "$USERPROFILE/.xlings/subos/default/bin/xlings.exe" --version || echo "xlings direct call failed"
-
-          # Pre-seed the mcpp sandbox with the already-installed LLVM from
-          # the global xlings. xlings won't re-download if the package dir
-          # exists, but it may create an empty stub. Copy instead of junction
-          # to avoid Windows symlink permission issues on CI runners.
+          # Pre-seed mcpp sandbox with the already-installed LLVM from xlings
           MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
           XLINGS_XPKGS="$USERPROFILE/.xlings/data/xpkgs"
           if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
             mkdir -p "$MCPP_XPKGS"
             rm -rf "$MCPP_XPKGS/xim-x-llvm"
             cp -r "$XLINGS_XPKGS/xim-x-llvm" "$MCPP_XPKGS/xim-x-llvm"
-            echo "Copied LLVM xpkg from global xlings"
-            ls "$MCPP_XPKGS/xim-x-llvm/20.1.7/bin/" | head -5
+            echo "Pre-seeded LLVM from global xlings"
           fi
 
-          "$MCPP_EXE" build
+          "$MCPP" build
 
           # Find the self-hosted binary
           SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
@@ -304,11 +115,11 @@ jobs:
           mkdir -p "$STAGING/$WRAPPER/bin"
           mkdir -p "$STAGING/$WRAPPER/registry/bin"
 
-          # Binary: use the self-hosted build
+          # Binary: self-hosted build
           echo "Packaging binary: $MCPP_SELF"
           cp "$MCPP_SELF" "$STAGING/$WRAPPER/bin/mcpp.exe"
 
-          # Launcher batch script (equivalent to the shell wrapper on Linux/macOS)
+          # Launcher batch script
           printf '@echo off\r\n"%%~dp0bin\\mcpp.exe" %%*\r\n' > "$STAGING/$WRAPPER/mcpp.bat"
 
           # Metadata
@@ -324,7 +135,7 @@ jobs:
             echo "::warning::xlings.exe not found at $XLINGS_EXE"
           fi
 
-          # Create zip (use 7z to avoid backslash path issues from Compress-Archive)
+          # Create zip
           mkdir -p dist
           (cd "$STAGING" && 7z a -tzip "$ZIPNAME" "$WRAPPER")
           cp "$STAGING/$ZIPNAME" "dist/$ZIPNAME"
