@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: symlink
+# requires:
 # Namespaced dependencies: `[dependencies.<ns>] name = { path = "..." }`
 # is parsed correctly and the dep is actually picked up by the build.
 # Also verifies that the legacy `"<ns>.<name>" = "..."` quoted form still

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: symlink
+# requires:
 # 32_semver_merge.sh — SemVer merge in the transitive walker:
 #   * Two consumers of the same package with overlapping constraints
 #     (one exact, one range) merge to a single satisfying version
@@ -19,13 +19,17 @@ mkdir -p "$MCPP_HOME/registry/data"
 for idx_name in mcpplibs mcpp-index; do
     if [[ -d "$HOME/.mcpp/registry/data/$idx_name" ]]; then
         ln -sf "$HOME/.mcpp/registry/data/$idx_name" \
-            "$MCPP_HOME/registry/data/$idx_name"
+            "$MCPP_HOME/registry/data/$idx_name" 2>/dev/null \
+            || cp -r "$HOME/.mcpp/registry/data/$idx_name" \
+                "$MCPP_HOME/registry/data/$idx_name"
     fi
 done
 # Pre-cached xpkg downloads so the test doesn't re-fetch the world.
 if [[ -d "$HOME/.mcpp/registry/data/xpkgs" ]]; then
     [[ -e "$MCPP_HOME/registry/data/xpkgs" ]] \
         || ln -sf "$HOME/.mcpp/registry/data/xpkgs" \
+            "$MCPP_HOME/registry/data/xpkgs" 2>/dev/null \
+        || cp -r "$HOME/.mcpp/registry/data/xpkgs" \
             "$MCPP_HOME/registry/data/xpkgs"
 fi
 

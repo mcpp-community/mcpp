@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: symlink
+# requires:
 # 24_git_dependency.sh — M4 #5: git-based dep clones to ~/.mcpp/git/<hash>/
 # and is treated as a path dep.
 set -e

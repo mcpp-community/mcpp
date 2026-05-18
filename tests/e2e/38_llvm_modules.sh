@@ -7,6 +7,15 @@
 # -fmodule-output / -fprebuilt-module-path flags.
 set -e
 
+OS="$(uname -s)"
+# libc++ std.cppm is only available on Linux/macOS — on Windows there is no
+# libc++ module distribution. Exit gracefully; the import-std-libcxx capability
+# check in run_all.sh already gates this, but guard here too for direct runs.
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    echo "SKIP: libc++ std.cppm not available on Windows"
+    exit 0
+fi
+
 LLVM_ROOT="${HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
 if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
     echo "SKIP: xlings llvm@20.1.7 is not installed"
