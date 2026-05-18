@@ -18,7 +18,7 @@ grep -q "import std"           src/main.cpp || { echo "main.cpp missing 'import 
 grep -q "std::println"          src/main.cpp || { echo "main.cpp missing 'std::println'"; exit 1; }
 
 # Build
-"$MCPP" build > build.log 2>&1
+"$MCPP" build > build.log 2>&1 || { cat build.log; echo "build failed"; exit 1; }
 [[ -d target ]] || { cat build.log; echo "no target/ dir"; exit 1; }
 # On Windows (MINGW/MSYS) the binary has a .exe suffix
 OS="$(uname -s)"
