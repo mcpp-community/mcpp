@@ -834,7 +834,11 @@ void ensure_ninja(const Env& env, bool quiet,
     if (std::filesystem::exists(root)) {
         std::error_code ec;
         for (auto& v : std::filesystem::directory_iterator(root, ec)) {
+#if defined(_WIN32)
+            if (std::filesystem::exists(v.path() / "ninja.exe")) return;
+#else
             if (std::filesystem::exists(v.path() / "ninja")) return;
+#endif
         }
     }
     if (!quiet)

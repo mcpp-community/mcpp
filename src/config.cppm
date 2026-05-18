@@ -441,7 +441,11 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // <XLINGS_HOME>/bin/xlings, which satisfies xlings's own shim-
     // creation guard (`if fs::exists(homeDir/"bin"/"xlings")`),
     // making ensure_sandbox_xlings_binary() a no-op.
+#if defined(_WIN32)
+    cfg.xlingsBinary  = cfg.registryDir / "bin" / "xlings.exe";
+#else
     cfg.xlingsBinary  = cfg.registryDir / "bin" / "xlings";
+#endif
     cfg.bmiCacheDir   = cfg.mcppHome / "bmi";
     cfg.metaCacheDir  = cfg.mcppHome / "cache";
     cfg.logDir        = cfg.mcppHome / "log";
