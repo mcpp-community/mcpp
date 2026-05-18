@@ -1,20 +1,14 @@
 name: ci-windows
 
-# Windows CI for mcpp.
-# Step 1: Bootstrap mcpp via xlings (same as Linux/macOS).
-# Step 2: Self-host — use mcpp to build itself (LLVM + MSVC STL import std).
-# Step 3: Package the self-hosted binary into a distributable zip.
+# Windows CI for mcpp — validates LLVM/Clang as the Windows toolchain.
+# Same flow as Linux (ci.yml) and macOS (ci-macos.yml):
+#   xlings install mcpp → self-host build → unit tests → E2E → smoke
 
 on:
   push:
-    branches: [ feat/windows-support ]
+    branches: [ feat/windows-support, main ]
   pull_request:
     branches: [ main ]
-    paths:
-      - 'src/toolchain/**'
-      - 'src/build/**'
-      - 'src/cli.cppm'
-      - '.github/workflows/ci-windows.yml'
   workflow_dispatch:
 
 concurrency:
@@ -22,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows-build:
-    name: Windows x64 — build + self-host
+  build-and-test:
+    name: build + test (windows x64, self-host)
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -63,19 +57,15 @@ jobs:
           test -f "$MCPP"
           "$MCPP" --version
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
-          echo "XLINGS_BIN=$USERPROFILE/.xlings/subos/default/bin/xlings.exe" >> "$GITHUB_ENV"
+          XLINGS_BIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
+          echo "XLINGS_BIN=$XLINGS_BIN" >> "$GITHUB_ENV"
 
-      - name: Self-host — mcpp builds itself
+      - name: Build mcpp from source (self-host)
         shell: bash
         run: |
-          echo "=== Self-host: mcpp builds mcpp ==="
-          "$MCPP" --version
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          # mcpp build uses LLVM on Windows (from mcpp.toml: windows = "llvm@20.1.7")
-          XLINGS_WIN=$(cygpath -w "$XLINGS_BIN")
-          export MCPP_VENDORED_XLINGS="$XLINGS_WIN"
-
-          # Pre-seed mcpp sandbox with the already-installed LLVM from xlings
+          # Pre-seed mcpp sandbox with xlings LLVM (avoids redundant download)
           MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
           XLINGS_XPKGS="$USERPROFILE/.xlings/data/xpkgs"
           if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
@@ -87,18 +77,37 @@ jobs:
 
           "$MCPP" build
 
-          # Find the self-hosted binary
-          SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
-          test -n "$SELF_MCPP" || {
-            echo "FAIL: self-host build did not produce mcpp.exe"
-            find target -name "*.exe" 2>/dev/null
-            exit 1
-          }
-          SELF_MCPP=$(cd "$(dirname "$SELF_MCPP")" && pwd)/$(basename "$SELF_MCPP")
-          echo "Self-hosted binary: $SELF_MCPP"
-          "$SELF_MCPP" --version
+      - name: Unit + integration tests via mcpp test
+        shell: bash
+        run: |
+          MCPP_FRESH=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          MCPP_FRESH=$(cd "$(dirname "$MCPP_FRESH")" && pwd)/$(basename "$MCPP_FRESH")
+          echo "Self-hosted binary: $MCPP_FRESH"
+          "$MCPP_FRESH" --version
+          "$MCPP_FRESH" test
 
-          echo "MCPP_SELF=$SELF_MCPP" >> "$GITHUB_ENV"
+      - name: E2E suite
+        shell: bash
+        run: |
+          MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          test -f "$MCPP"
+          export MCPP
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR" 2>/dev/null || true
+          "$MCPP" toolchain default llvm@20.1.7 2>/dev/null || true
+          bash tests/e2e/run_all.sh
+
+      - name: Self-host smoke (freshly-built mcpp builds itself again)
+        shell: bash
+        run: |
+          MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+          "$MCPP" --version
+          echo ":: Self-host smoke PASS"
 
       - name: Package Windows release zip
         id: package
@@ -109,38 +118,26 @@ jobs:
           WRAPPER="mcpp-${VERSION}-${PLAT}"
           ZIPNAME="${WRAPPER}.zip"
 
-          echo "Packaging $ZIPNAME ..."
+          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
 
           STAGING=$(mktemp -d)
           mkdir -p "$STAGING/$WRAPPER/bin"
           mkdir -p "$STAGING/$WRAPPER/registry/bin"
 
-          # Binary: self-hosted build
-          echo "Packaging binary: $MCPP_SELF"
           cp "$MCPP_SELF" "$STAGING/$WRAPPER/bin/mcpp.exe"
-
-          # Launcher batch script
           printf '@echo off\r\n"%%~dp0bin\\mcpp.exe" %%*\r\n' > "$STAGING/$WRAPPER/mcpp.bat"
-
-          # Metadata
           cp README.md "$STAGING/$WRAPPER/" 2>/dev/null || true
           cp LICENSE "$STAGING/$WRAPPER/" 2>/dev/null || true
 
-          # Bundle xlings
           XLINGS_EXE="$USERPROFILE/.xlings/subos/default/bin/xlings.exe"
           if [ -f "$XLINGS_EXE" ]; then
             cp "$XLINGS_EXE" "$STAGING/$WRAPPER/registry/bin/xlings.exe"
-            echo "Bundled xlings.exe"
-          else
-            echo "::warning::xlings.exe not found at $XLINGS_EXE"
           fi
 
-          # Create zip
           mkdir -p dist
           (cd "$STAGING" && 7z a -tzip "$ZIPNAME" "$WRAPPER")
           cp "$STAGING/$ZIPNAME" "dist/$ZIPNAME"
-
-          # SHA256
           (cd dist && sha256sum "$ZIPNAME" > "$ZIPNAME.sha256")
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -150,25 +147,13 @@ jobs:
       - name: Smoke-test the packaged zip
         shell: bash
         run: |
-          VERSION="${{ steps.package.outputs.version }}"
           ZIPNAME="${{ steps.package.outputs.zipname }}"
           WRAPPER="${ZIPNAME%.zip}"
-
           SMOKE=$(mktemp -d)
           (cd "$SMOKE" && unzip -q "$GITHUB_WORKSPACE/dist/$ZIPNAME")
-
-          echo "=== Layout ==="
-          find "$SMOKE/$WRAPPER" -type f
-
-          echo "=== Version check ==="
           "$SMOKE/$WRAPPER/bin/mcpp.exe" --version
-
-          echo "=== xlings bundled ==="
           test -f "$SMOKE/$WRAPPER/registry/bin/xlings.exe"
-
-          echo "=== Launcher ==="
           test -f "$SMOKE/$WRAPPER/mcpp.bat"
-
           echo "Smoke-test passed"
 
       - name: Upload artifact

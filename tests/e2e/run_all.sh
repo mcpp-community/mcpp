@@ -60,9 +60,32 @@ MACOS_SKIP=(
     33_multi_version_mangling.sh
 )
 
+# Windows inherits all macOS skips (no GCC, no ELF, no patchelf) plus
+# additional Windows-specific exclusions.
+WINDOWS_SKIP=(
+    "${MACOS_SKIP[@]}"
+    # Symlinks (ln -sf) not available in Git Bash without elevated perms
+    10_env_command.sh
+    # LLVM tests hardcode Unix paths / binary names without .exe
+    36_llvm_toolchain_basic.sh
+    37_llvm_import_std.sh
+    38_llvm_std_compat.sh
+    39_llvm_multi_module.sh
+    40_llvm_clang_scan_deps.sh
+    41_llvm_incremental.sh
+    # Pack is Linux/macOS only (patchelf, tar, musl)
+    31_pack_publish_dry_run.sh
+    # install.sh is a Unix shell script
+    45_install_platform_mapping.sh
+)
+
 should_skip() {
     local name="$1"
-    if [[ "$OS" == "Darwin" ]]; then
+    if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+        for skip in "${WINDOWS_SKIP[@]}"; do
+            [[ "$name" == "$skip" ]] && return 0
+        done
+    elif [[ "$OS" == "Darwin" ]]; then
         for skip in "${MACOS_SKIP[@]}"; do
             [[ "$name" == "$skip" ]] && return 0
         done
