@@ -1,8 +1,7 @@
 name: ci-windows
 
-# Windows CI for mcpp — validates LLVM/Clang as the Windows toolchain.
-# Uses xmake to bootstrap mcpp from source (until xlings mcpp ships
-# Windows-native fixes), then self-hosts, tests, and packages.
+# Windows CI for mcpp — same flow as Linux (ci.yml) and macOS (ci-macos.yml):
+#   xlings install mcpp → self-host build → E2E → smoke → package
 
 on:
   push:
@@ -25,14 +24,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: System info
-        shell: bash
-        run: |
-          echo "OS: $(uname -s)"
-          echo "Arch: $(uname -m)"
-          echo "Runner: $RUNNER_OS"
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~\.mcpp
+          key: mcpp-sandbox-${{ runner.os }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          restore-keys: |
+            mcpp-sandbox-${{ runner.os }}-
 
-      - name: Install xlings
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~\.xlings
+          key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-${{ runner.os }}-v2-
+
+      - name: Bootstrap mcpp via xlings
         shell: bash
         env:
           XLINGS_NON_INTERACTIVE: '1'
@@ -45,92 +53,51 @@ jobs:
           cd "${WORK}"
           unzip -q "${zipfile}"
           "$WORK/xlings-${XLINGS_VERSION}-windows-x86_64/subos/default/bin/xlings.exe" self install
+          export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
-          echo "$USERPROFILE/.xlings/bin" >> "$GITHUB_PATH"
-
-      - name: Install LLVM + xmake via xlings
-        shell: bash
-        run: |
           xlings.exe --version
-          xlings.exe install llvm -y || xlings.exe install llvm@20.1.7 -y
-          xlings.exe install xmake -y
+          xlings.exe install mcpp -y
+          MCPP="$USERPROFILE/.xlings/subos/default/bin/mcpp.exe"
+          test -f "$MCPP" || MCPP="$USERPROFILE/.xlings/subos/default/bin/mcpp"
+          test -f "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          XLINGS_BIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
+          echo "XLINGS_BIN=$XLINGS_BIN" >> "$GITHUB_ENV"
 
-      - name: Bootstrap mcpp with xmake (MSVC)
-        shell: pwsh
-        run: |
-          @"
-          add_rules("mode.release")
-          set_languages("c++23")
-          package("cmdline")
-              set_homepage("https://github.com/mcpplibs/cmdline")
-              add_urls("https://github.com/mcpplibs/cmdline/archive/refs/tags/`$(version).tar.gz")
-              add_versions("0.0.1", "3fb2f5495c1a144485b3cbb2e43e27059151633460f702af0f3851cbff387ef0")
-              on_install(function (package)
-                  import("package.tools.xmake").install(package)
-              end)
-          package_end()
-          add_requires("cmdline 0.0.1")
-          target("mcpp")
-              set_kind("binary")
-              add_files("src/main.cpp")
-              add_files("src/**.cppm")
-              add_packages("cmdline")
-              add_includedirs("src/libs/json")
-              set_policy("build.c++.modules", true)
-          "@ | Out-File -Encoding utf8 xmake.lua
-
-          xmake f -p windows -m release -y
-          xmake build -y mcpp
-
-          $mcpp = Get-ChildItem -Recurse build -Filter mcpp.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($mcpp) {
-              Write-Host ":: mcpp.exe built at: $($mcpp.FullName)"
-              & $mcpp.FullName --version
-              "MCPP_BOOTSTRAP=$($mcpp.FullName)" | Out-File -Append $env:GITHUB_ENV
-          } else {
-              exit 1
-          }
-
-      - name: Self-host — mcpp builds itself
+      - name: Build mcpp from source (self-host)
         shell: bash
         run: |
-          # Save bootstrap binary, clean xmake artifacts
-          mkdir -p /tmp/mcpp-bootstrap
-          cp "$MCPP_BOOTSTRAP" /tmp/mcpp-bootstrap/mcpp.exe
-          MCPP_EXE="/tmp/mcpp-bootstrap/mcpp.exe"
-          rm -rf build xmake.lua .xmake
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          XLINGS_WIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
-          export MCPP_VENDORED_XLINGS="$XLINGS_WIN"
-
-          # Pre-seed LLVM from global xlings
+          # Pre-seed mcpp sandbox with xlings LLVM (avoids redundant download)
           MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
           XLINGS_XPKGS="$USERPROFILE/.xlings/data/xpkgs"
           if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
             mkdir -p "$MCPP_XPKGS"
             rm -rf "$MCPP_XPKGS/xim-x-llvm"
             cp -r "$XLINGS_XPKGS/xim-x-llvm" "$MCPP_XPKGS/xim-x-llvm"
+            echo "Pre-seeded LLVM from global xlings"
           fi
 
-          "$MCPP_EXE" build
+          "$MCPP" build
 
-          SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
-          test -n "$SELF_MCPP" || { echo "FAIL: no mcpp.exe"; exit 1; }
-          SELF_MCPP=$(cd "$(dirname "$SELF_MCPP")" && pwd)/$(basename "$SELF_MCPP")
-          echo "Self-hosted binary: $SELF_MCPP"
-          "$SELF_MCPP" --version
-          echo "MCPP_SELF=$SELF_MCPP" >> "$GITHUB_ENV"
+          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
+          MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
+          echo "Self-hosted binary: $MCPP_SELF"
+          "$MCPP_SELF" --version
+          echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
 
-      # NOTE: `mcpp test` (unit tests via gtest) requires clang-scan-deps
-      # for module dependency scanning. The xlings LLVM package does not
-      # yet ship clang-scan-deps on Windows. Skip until available.
-      # - name: Unit + integration tests via mcpp test
+      # NOTE: `mcpp test` requires clang-scan-deps for module dependency
+      # scanning. The xlings LLVM package does not yet ship it on Windows.
+      # Enable once available.
 
       - name: E2E suite
         shell: bash
         run: |
           export MCPP="$MCPP_SELF"
-          export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
           "$MCPP_SELF" self config --mirror GLOBAL 2>/dev/null || true
           "$MCPP_SELF" toolchain default llvm@20.1.7 2>/dev/null || true
@@ -139,7 +106,7 @@ jobs:
       - name: Self-host smoke (freshly-built mcpp builds itself again)
         shell: bash
         run: |
-          export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP_SELF" build
           "$MCPP_SELF" --version
           echo ":: Self-host smoke PASS"
