@@ -149,20 +149,32 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;
     f.linkage = plan.manifest.buildConfig.linkage;
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    // Windows: MSVC linker handles static/dynamic linking differently
+    std::string full_static;
+    std::string static_stdlib;
+#elif defined(__APPLE__)
     // macOS does not support full static linking (libSystem must be dynamic)
     std::string full_static;
+    std::string static_stdlib = (f.staticStdlib && !isClang) ? " -static-libstdc++" : "";
 #else
     std::string full_static = (f.linkage == "static") ? " -static" : "";
-#endif
     std::string static_stdlib = (f.staticStdlib && !isClang) ? " -static-libstdc++" : "";
+#endif
     std::string runtime_dirs;
+#if !defined(_WIN32)
+    // -L and -rpath are ELF/Mach-O linker flags; MSVC linker doesn't use them.
     for (auto& dir : plan.toolchain.linkRuntimeDirs) {
         runtime_dirs += " -L" + escape_path(dir);
         runtime_dirs += " -Wl,-rpath," + escape_path(dir);
     }
+#endif
 
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    // Windows: Clang targeting MSVC links against MSVC runtime automatically.
+    // No -L/-rpath/-static flags needed.
+    f.ld = "";
+#elif defined(__APPLE__)
     // macOS linking strategy:
     // - No --sysroot: SDK .tbd stubs miss libc++abi exports.
     // - No -L<llvm>/lib: xlings LLVM's libc++.dylib doesn't pull in
