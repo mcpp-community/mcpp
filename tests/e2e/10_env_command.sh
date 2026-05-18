@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: symlink
+# requires:
 # `mcpp env` initializes $MCPP_HOME and prints expected layout.
 set -e
 
