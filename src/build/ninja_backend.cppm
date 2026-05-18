@@ -521,19 +521,33 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // -B<binutils-bin> flag we emit into cxxflags/ldflags (see
     // emit_ninja_string). No PATH injection needed here.
     std::filesystem::path ninjaBin;
+#if defined(_WIN32)
+    if (auto nb = mcpp::xlings::paths::find_sibling_binary(
+            plan.toolchain.binaryPath, "ninja", "ninja.exe")) {
+        ninjaBin = *nb;
+    }
+#else
     if (auto nb = mcpp::xlings::paths::find_sibling_binary(
             plan.toolchain.binaryPath, "ninja", "ninja")) {
         ninjaBin = *nb;
     }
+#endif
 
+#if defined(_WIN32)
+    // Windows: no quotes on first token (cmd.exe strips leading quotes),
+    // use shq only for the -C argument which may contain spaces.
     std::string ninjaProgram =
-        !ninjaBin.empty() ? std::format("'{}'", ninjaBin.string()) : std::string{"ninja"};
+        !ninjaBin.empty() ? ninjaBin.string() : std::string{"ninja"};
+#else
+    std::string ninjaProgram =
+        !ninjaBin.empty() ? mcpp::xlings::shq(ninjaBin.string()) : std::string{"ninja"};
+#endif
 
     // Record ninja binary for P0 fast-path cache.
     BuildResult r;
     r.ninjaProgram = ninjaProgram;
 
-    std::string cmd = std::format("{} -C '{}'", ninjaProgram, plan.outputDir.string());
+    std::string cmd = std::format("{} -C {}", ninjaProgram, mcpp::xlings::shq(plan.outputDir.string()));
     if (opts.verbose)
         cmd += " -v";
     if (opts.parallelJobs)
