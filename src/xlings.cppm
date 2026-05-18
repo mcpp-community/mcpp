@@ -321,10 +321,12 @@ std::string shq(std::string_view s) {
     std::string out;
     out.reserve(s.size() + 2);
 #if defined(_WIN32)
-    // cmd.exe uses double quotes; escape inner double quotes with backslash
+    // Windows quoting for popen/system (goes through cmd.exe /c):
+    // Use ^" to escape inner double quotes — cmd.exe treats ^" as a
+    // literal double-quote character without affecting quote-state.
     out.push_back('"');
     for (char c : s) {
-        if (c == '"') out += "\\\"";
+        if (c == '"') out += "^\"";
         else out.push_back(c);
     }
     out.push_back('"');
@@ -663,8 +665,10 @@ int install_with_progress(const Env& env, std::string_view target,
 #if defined(_WIN32)
     _putenv_s("XLINGS_HOME", env.home.string().c_str());
     _putenv_s("XLINGS_PROJECT_DIR", "");
+    // Use raw path (no quoting) to avoid cmd.exe double-quote parsing issues.
+    // Wrap only the JSON arg in single-escaped quotes for the C runtime.
     auto cmd = std::format("{} interface install_packages --args {}",
-        shq(env.binary.string()),
+        env.binary.string(),
         shq(argsJson));
 #else
     auto cmd = std::format(
