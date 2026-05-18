@@ -56,14 +56,15 @@ jobs:
           export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           xlings.exe --version
-          xlings.exe install mcpp -y || {
-            echo "::error::xlings install mcpp failed"
-            echo "Retrying with explicit version..."
-            xlings.exe install mcpp@0.0.17 -y
-          }
-          MCPP="$USERPROFILE/.xlings/subos/default/bin/mcpp.exe"
-          test -f "$MCPP" || MCPP="$USERPROFILE/.xlings/subos/default/bin/mcpp"
-          test -f "$MCPP"
+          xlings.exe install mcpp -y || xlings.exe install mcpp@0.0.17 -y
+          echo "=== Searching for mcpp binary ==="
+          find "$USERPROFILE/.xlings" -name "mcpp.exe" -o -name "mcpp" 2>/dev/null | head -10
+          MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp.exe" -path "*/bin/*" 2>/dev/null | head -1)
+          if [ -z "$MCPP" ]; then
+            MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp" -path "*/bin/*" 2>/dev/null | head -1)
+          fi
+          test -n "$MCPP" || { echo "FAIL: mcpp not found after xlings install"; exit 1; }
+          echo "Found mcpp at: $MCPP"
           "$MCPP" --version
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
           XLINGS_BIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
