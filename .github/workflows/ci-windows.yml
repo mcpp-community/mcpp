@@ -84,6 +84,7 @@ jobs:
           MCPP_FRESH=$(cd "$(dirname "$MCPP_FRESH")" && pwd)/$(basename "$MCPP_FRESH")
           echo "Self-hosted binary: $MCPP_FRESH"
           "$MCPP_FRESH" --version
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP_FRESH" test
 
       - name: E2E suite
