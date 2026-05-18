@@ -19,7 +19,13 @@ grep -q "std::println"          src/main.cpp || { echo "main.cpp missing 'std::p
 # Build
 "$MCPP" build > build.log 2>&1
 [[ -d target ]] || { cat build.log; echo "no target/ dir"; exit 1; }
-binary="$(find target -name hello -type f | head -1)"
+# On Windows (MINGW/MSYS) the binary has a .exe suffix
+OS="$(uname -s)"
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    binary="$(find target -name hello.exe -type f | head -1)"
+else
+    binary="$(find target -name hello -type f | head -1)"
+fi
 [[ -n "$binary" ]] || { echo "binary not produced"; exit 1; }
 [[ -x "$binary" ]] || { echo "binary not executable"; exit 1; }
 

@@ -64,8 +64,6 @@ MACOS_SKIP=(
 # additional Windows-specific exclusions.
 WINDOWS_SKIP=(
     "${MACOS_SKIP[@]}"
-    # new/build/run checks for binary without .exe suffix
-    02_new_build_run.sh
     # Symlinks (ln -sf) not available in Git Bash without elevated perms
     10_env_command.sh
     # test_failing expects non-zero exit but mcpp test returns 0 on Windows
@@ -86,10 +84,6 @@ WINDOWS_SKIP=(
     31_pack_publish_dry_run.sh
     # Semver merge uses path dependencies
     32_semver_merge.sh
-    # Workspace test checks for binary without .exe suffix
-    35_workspace.sh
-    # LLVM toolchain test checks for binary without .exe suffix
-    36_llvm_toolchain.sh
     # LLVM tests that need libc++ std.cppm (not available on Windows)
     37_llvm_import_std.sh
     38_llvm_std_compat.sh

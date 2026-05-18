@@ -94,7 +94,13 @@ echo "workspace build: ok"
 
 # ── Verify the binary runs correctly ────────────────────
 # target/ is created in the member dir (apps/hello/target/), not workspace root.
-BIN=$(find apps/hello/target -type f -name hello | head -1)
+# On Windows (MINGW/MSYS) the binary has a .exe suffix
+OS="$(uname -s)"
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    BIN=$(find apps/hello/target -type f -name hello.exe | head -1)
+else
+    BIN=$(find apps/hello/target -type f -name hello | head -1)
+fi
 test -n "$BIN" || { echo "FAIL: hello binary not found"; exit 1; }
 OUT=$("$BIN" 2>&1)
 echo "output: $OUT"
