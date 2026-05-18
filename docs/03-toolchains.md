@@ -12,14 +12,16 @@ C++23 模块对编译器版本较为敏感,不同版本的 GCC / Clang 在模块
 
 ## 自动安装
 
-首次运行 `mcpp build` 时,若尚未配置工具链,mcpp 会自动安装一份
-musl-gcc 15.1(适用于全静态构建)并将其设为全局默认:
+首次运行 `mcpp build` 时,若尚未配置工具链,mcpp 会自动安装当前平台
+的默认工具链并将其设为全局默认:
 
 ```
 First run no toolchain configured — installing gcc@15.1.0-musl (musl, static) as default
 Downloading xim:musl-gcc@15.1.0 [====>      ] 312 MB / 808 MB  3.7 MB/s
 Default set to gcc@15.1.0-musl
 ```
+
+Linux 默认使用 `gcc@15.1.0-musl`; macOS 默认使用 `llvm@20.1.7`。
 
 后续构建不再触发该流程。
 
@@ -34,6 +36,7 @@ Default set to gcc@15.1.0-musl
 mcpp toolchain install gcc 16.1.0           # GNU libc,适用于动态链接默认场景
 mcpp toolchain install gcc 15.1.0-musl      # musl libc,适用于全静态构建
 mcpp toolchain install musl-gcc 15.1.0      # 等价于上一条
+mcpp toolchain install llvm 20.1.7          # LLVM/Clang,macOS 默认工具链
 ```
 
 版本号支持部分匹配:

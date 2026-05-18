@@ -22,7 +22,7 @@
 
 ## 为什么选择 mcpp
 
-mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux 上能为你提供便捷且友好的开发体验：
+mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux 和 macOS ARM64 上能为你提供便捷且友好的开发体验：
 
 - **默认模块化** — `mcpp new` 创建的项目模板直接使用 C++23 模块，`import std` 开箱即用
 - **文件级增量构建** — 基于 P1689 dyndep 的三层优化（前端脏检查 + 逐文件扫描 + BMI restat），只重编真正变化的模块
@@ -181,10 +181,10 @@ import mcpplibs.cmdline;
 <details>
 <summary><b>打包与发布</b></summary>
 
-- `mcpp pack`：三种模式 — static（musl全静态）/ bundle-project / bundle-all
-- musl 全静态二进制：单文件可分发，无 glibc 依赖
+- `mcpp pack`：三种 Linux 发布模式 — static（musl全静态）/ bundle-project / bundle-all
+- musl 全静态二进制：单文件可分发，无 glibc 依赖（Linux x86_64）
 - `mcpp publish`：生成 xpkg.lua + 发布到包索引
-- 自动 patchelf 修正 RPATH
+- 自动 patchelf 修正 RPATH（Linux）
 
 </details>
 
@@ -207,12 +207,14 @@ import mcpplibs.cmdline;
 |------------------|:-----------:|:----------:|:------------:|:----:|
 | Linux x86_64     | ✅ | ✅ *默认* | ✅ | — |
 | Linux aarch64    | 🔄 | 🔄 | 🔄 | — |
-| macOS            | — | — | 🔄 | — |
+| macOS arm64      | — | — | ✅ *默认* | — |
+| macOS x86_64     | — | — | 🔄 | — |
 | Windows          | — | — | 🔄 | 🔄 |
 
 ✅ 已支持 ｜ 🔄 计划中
 
-> *默认*：release 二进制走 musl 全静态，Linux x86_64 可直接运行，无 glibc 依赖。
+> *默认*：Linux 默认工具链为 musl-gcc,release 二进制走 musl 全静态；
+> macOS ARM64 默认工具链为 LLVM/Clang。
 
 ## 文档
 

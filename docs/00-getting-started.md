@@ -4,8 +4,9 @@
 
 ## 安装
 
-仅需 Linux x86_64 环境,无需预先安装 GCC、xlings 或其他依赖。
-mcpp 在首次运行时会将 musl-gcc 工具链安装至独立沙盒(`~/.mcpp/`)。
+仅需 Linux x86_64 或 macOS ARM64 环境,无需预先安装 GCC、xlings 或其他依赖。
+mcpp 在首次运行时会将默认工具链安装至独立沙盒(`~/.mcpp/`)。
+Linux 默认使用 musl-gcc,macOS 默认使用 LLVM/Clang。
 
 推荐通过 [xlings](https://xlings.d2learn.org) 进行安装,可与系统
 环境保持隔离:
@@ -74,8 +75,8 @@ mcpp run
 # Built with import std + std::println on modular C++23.
 ```
 
-首次构建需下载默认工具链(musl-gcc 15.1,约 800 MB),期间显示进度
-与速度。下载完成后,所有 mcpp 项目共用同一份沙盒。
+首次构建需下载默认工具链(Linux 为 musl-gcc 15.1,macOS 为 LLVM/Clang 20.1),
+期间显示进度与速度。下载完成后,所有 mcpp 项目共用同一份沙盒。
 
 ## 增量编译与测试
 
