@@ -197,17 +197,22 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
 #if defined(_WIN32)
     // Windows: use absolute paths, raw binary path as first token
     // (cmd.exe strips leading quotes), shq for args with spaces.
+    // -x c++-module is needed for MSVC STL's .ixx files (Clang doesn't
+    // recognize the .ixx extension as a module source by default).
     auto absBmi = (cacheDir / relBmi).string();
+    auto ext = tc.stdModuleSource.extension().string();
+    std::string langFlag = (ext == ".ixx") ? " -x c++-module" : "";
     return {
         std::format(
-            "{} -std=c++23 -Wno-reserved-module-identifier{} "
+            "{} -std=c++23{}{} "
             "--precompile {} -o {}",
             tc.binaryPath.string(),
+            langFlag,
             sysrootFlag,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(absBmi)),
         std::format(
-            "{} -std=c++23 -Wno-reserved-module-identifier{} "
+            "{} -std=c++23{} "
             "{} -c -o {}",
             tc.binaryPath.string(),
             sysrootFlag,

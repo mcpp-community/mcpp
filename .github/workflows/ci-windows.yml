@@ -3,10 +3,8 @@ name: ci-windows
 # Windows validation CI for mcpp.
 # Step 1: Verify xlings LLVM toolchain capabilities on Windows.
 # Step 2: xmake bootstrap to produce first mcpp.exe.
-# Step 3: Self-host attempt — try using mcpp.exe to build itself (via LLVM).
-#         Currently blocked by Clang on Windows lacking import std support.
-#         Falls back to xmake bootstrap binary for packaging.
-# Step 4: Package into a distributable zip (same layout as Linux/macOS).
+# Step 3: Self-host — use the bootstrapped mcpp.exe to build itself (LLVM + MSVC STL).
+# Step 4: Package the self-hosted binary into a distributable zip.
 
 on:
   push:
@@ -276,25 +274,20 @@ jobs:
             ls "$MCPP_XPKGS/xim-x-llvm/20.1.7/bin/" | head -5
           fi
 
-          "$MCPP_EXE" build && SELF_HOST_OK=1 || SELF_HOST_OK=0
+          "$MCPP_EXE" build
 
-          if [ "$SELF_HOST_OK" = "1" ]; then
-            # Find the self-hosted binary
-            SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
-            if [ -n "$SELF_MCPP" ]; then
-              SELF_MCPP=$(cd "$(dirname "$SELF_MCPP")" && pwd)/$(basename "$SELF_MCPP")
-              echo "Self-hosted binary: $SELF_MCPP"
-              "$SELF_MCPP" --version
-              echo "MCPP_SELF=$SELF_MCPP" >> "$GITHUB_ENV"
-            else
-              echo "::warning::self-host build succeeded but mcpp.exe not found in target/"
-              SELF_HOST_OK=0
-            fi
-          fi
+          # Find the self-hosted binary
+          SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          test -n "$SELF_MCPP" || {
+            echo "FAIL: self-host build did not produce mcpp.exe"
+            find target -name "*.exe" 2>/dev/null
+            exit 1
+          }
+          SELF_MCPP=$(cd "$(dirname "$SELF_MCPP")" && pwd)/$(basename "$SELF_MCPP")
+          echo "Self-hosted binary: $SELF_MCPP"
+          "$SELF_MCPP" --version
 
-          if [ "$SELF_HOST_OK" = "0" ]; then
-            echo "::warning::Self-host build not yet possible (Clang on Windows lacks import std support). Using xmake bootstrap binary."
-          fi
+          echo "MCPP_SELF=$SELF_MCPP" >> "$GITHUB_ENV"
 
       - name: Package Windows release zip
         id: package
@@ -311,10 +304,9 @@ jobs:
           mkdir -p "$STAGING/$WRAPPER/bin"
           mkdir -p "$STAGING/$WRAPPER/registry/bin"
 
-          # Binary: prefer self-hosted build, fall back to saved bootstrap copy
-          MCPP_BIN="${MCPP_SELF:-/tmp/mcpp-bootstrap/mcpp.exe}"
-          echo "Packaging binary: $MCPP_BIN"
-          cp "$MCPP_BIN" "$STAGING/$WRAPPER/bin/mcpp.exe"
+          # Binary: use the self-hosted build
+          echo "Packaging binary: $MCPP_SELF"
+          cp "$MCPP_SELF" "$STAGING/$WRAPPER/bin/mcpp.exe"
 
           # Launcher batch script (equivalent to the shell wrapper on Linux/macOS)
           printf '@echo off\r\n"%%~dp0bin\\mcpp.exe" %%*\r\n' > "$STAGING/$WRAPPER/mcpp.bat"
