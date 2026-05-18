@@ -66,15 +66,34 @@ WINDOWS_SKIP=(
     "${MACOS_SKIP[@]}"
     # Symlinks (ln -sf) not available in Git Bash without elevated perms
     10_env_command.sh
-    # LLVM tests hardcode Unix paths / binary names without .exe
-    36_llvm_toolchain_basic.sh
+    # BMI cache cp_bmi rule uses cmd /c copy — path issues with mixed slashes
+    19_bmi_cache_reuse.sh
+    # Git dependency has CRLF + path issues on Windows
+    24_git_dependency.sh
+    # C language test checks ninja rule routing — different on Windows
+    26_c_language_support.sh
+    # Namespace deps use path dependencies with symlinks
+    27_namespace_dependencies.sh
+    # Dev binary home test assumes g++ in PATH
+    30_dev_binary_home.sh
+    # Transitive deps tries to install musl-gcc (Linux-only)
+    31_transitive_deps.sh
+    # Pack/publish uses tar, patchelf (Linux-only)
+    31_pack_publish_dry_run.sh
+    # Semver merge uses path dependencies
+    32_semver_merge.sh
+    # Workspace test checks for binary without .exe suffix
+    35_workspace.sh
+    # LLVM toolchain test checks for binary without .exe suffix
+    36_llvm_toolchain.sh
+    # LLVM tests that need libc++ std.cppm (not available on Windows)
     37_llvm_import_std.sh
     38_llvm_std_compat.sh
     39_llvm_multi_module.sh
     40_llvm_clang_scan_deps.sh
     41_llvm_incremental.sh
-    # Pack is Linux/macOS only (patchelf, tar, musl)
-    31_pack_publish_dry_run.sh
+    # Self config mirror has xlings path issues on Windows
+    38_self_config_mirror.sh
     # install.sh is a Unix shell script
     45_install_platform_mapping.sh
 )
