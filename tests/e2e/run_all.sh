@@ -63,12 +63,11 @@ case "$OS" in
         ;;
     MINGW* | MSYS* | CYGWIN*)
         # Git Bash / MSYS2 on Windows: symlinks need admin or Developer Mode
-        # Only add symlink capability when mklink is available without elevation
-        # (Developer Mode sets MSYS=winsymlinks:nativestrict in Git Bash).
         if [[ "${MSYS:-}" == *winsymlinks* ]] || cmd.exe /c "mklink /?" &>/dev/null 2>&1; then
             CAPS+=(symlink)
         fi
-        command -v g++ &>/dev/null && CAPS+=(gcc)
+        # NOTE: Windows runners may have g++.exe (MinGW/Strawberry) in PATH
+        # but it's not a proper mcpp-compatible GCC. Don't add gcc capability.
         ;;
 esac
 
@@ -79,7 +78,8 @@ esac
 
 # scan-deps: clang-scan-deps available (needed for P1689 / Clang dyndep flows)
 if command -v clang-scan-deps &>/dev/null \
-   || ls "${MCPP_HOME}/registry/data/xpkgs/xim-x-llvm"/*/bin/clang-scan-deps 2>/dev/null | head -1 | grep -q .; then
+   || ls "${MCPP_HOME}/registry/data/xpkgs/xim-x-llvm"/*/bin/clang-scan-deps 2>/dev/null | head -1 | grep -q . \
+   || ls "${MCPP_HOME}/registry/data/xpkgs/xim-x-llvm"/*/bin/clang-scan-deps.exe 2>/dev/null | head -1 | grep -q .; then
     CAPS+=(scan-deps)
 fi
 
