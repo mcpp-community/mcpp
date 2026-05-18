@@ -436,7 +436,8 @@ std::string build_command_prefix(const Env& env) {
         std::string newPath = xvmBin + ";" + (std::getenv("PATH") ? std::getenv("PATH") : "");
         _putenv_s("PATH", newPath.c_str());
     }
-    return shq(env.binary.string());
+    // Return raw path — no quoting to avoid cmd.exe double-quote parsing issues
+    return env.binary.string();
 #else
     if (env.projectDir.empty()) {
         // Global mode: unset XLINGS_PROJECT_DIR (existing behavior).
@@ -463,7 +464,7 @@ std::string build_interface_command(const Env& env,
                                     std::string_view capability,
                                     std::string_view argsJson) {
 #if defined(_WIN32)
-    return std::format("{} interface {} --args {} 2>nul",
+    return std::format("{} interface {} --args {}",
         build_command_prefix(env), capability, shq(argsJson));
 #else
     return std::format("{} interface {} --args {} 2>/dev/null",
@@ -662,7 +663,7 @@ int install_with_progress(const Env& env, std::string_view target,
 #if defined(_WIN32)
     _putenv_s("XLINGS_HOME", env.home.string().c_str());
     _putenv_s("XLINGS_PROJECT_DIR", "");
-    auto cmd = std::format("{} interface install_packages --args {} 2>nul",
+    auto cmd = std::format("{} interface install_packages --args {}",
         shq(env.binary.string()),
         shq(argsJson));
 #else
@@ -792,8 +793,7 @@ void ensure_init(const Env& env, bool quiet) {
 #if defined(_WIN32)
     _putenv_s("XLINGS_HOME", env.home.string().c_str());
     _putenv_s("XLINGS_PROJECT_DIR", "");
-    auto cmd = std::format("{} self init >nul 2>&1",
-        shq(env.binary.string()));
+    auto cmd = env.binary.string() + " self init";
 #else
     auto cmd = std::format(
         "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init >/dev/null 2>&1",

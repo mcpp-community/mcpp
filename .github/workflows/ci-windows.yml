@@ -250,7 +250,16 @@ jobs:
 
           # mcpp build uses its own build system; mcpp.toml now has
           # windows = "llvm@20.1.7" so it will use the xlings LLVM.
-          export MCPP_VENDORED_XLINGS="$USERPROFILE/.xlings/subos/default/bin/xlings.exe"
+          # Use Windows-native path for MCPP_VENDORED_XLINGS
+          XLINGS_WIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
+          echo "MCPP_VENDORED_XLINGS=$XLINGS_WIN"
+          export MCPP_VENDORED_XLINGS="$XLINGS_WIN"
+
+          echo "xlings exists: $(test -f "$USERPROFILE/.xlings/subos/default/bin/xlings.exe" && echo YES || echo NO)"
+
+          # Debug: test xlings directly
+          "$USERPROFILE/.xlings/subos/default/bin/xlings.exe" --version || echo "xlings direct call failed"
+
           "$MCPP_EXE" build
 
           # Find the self-hosted binary
