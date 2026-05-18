@@ -27,11 +27,10 @@ uname_s=$(uname -s)
 uname_m=$(uname -m)
 case "${uname_s}-${uname_m}" in
     Linux-x86_64)   PLAT="linux-x86_64" ;;
-    Darwin-arm64)   PLAT="darwin-arm64" ;;
-    Darwin-x86_64)  PLAT="darwin-x86_64" ;;
+    Darwin-arm64)   PLAT="macosx-arm64" ;;
     *)
         echo "error: unsupported platform ${uname_s}-${uname_m}." >&2
-        echo "       Currently supported: linux-x86_64, darwin-arm64, darwin-x86_64." >&2
+        echo "       Currently supported: linux-x86_64, macosx-arm64." >&2
         echo "       Build from source instead:" >&2
         echo "       https://github.com/${REPO}#从源码构建开发者" >&2
         exit 1
