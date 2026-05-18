@@ -178,11 +178,19 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.output = std::filesystem::path("bin") / std::format("lib{}.so", t.name);
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {
             lu.kind   = LinkUnit::TestBinary;
+#if defined(_WIN32)
+            lu.output = std::filesystem::path("bin") / (t.name + ".exe");
+#else
             lu.output = std::filesystem::path("bin") / t.name;
+#endif
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         } else {
             lu.kind   = LinkUnit::Binary;
+#if defined(_WIN32)
+            lu.output = std::filesystem::path("bin") / (t.name + ".exe");
+#else
             lu.output = std::filesystem::path("bin") / t.name;
+#endif
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         }
 
