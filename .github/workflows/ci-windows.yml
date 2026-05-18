@@ -3,8 +3,8 @@ name: ci-windows
 # Windows validation CI for mcpp.
 # Step 1: Verify xlings LLVM toolchain capabilities on Windows.
 # Step 2: xmake bootstrap to produce first mcpp.exe.
-# Step 3: Self-host — use the bootstrapped mcpp.exe to build itself.
-# Step 4: Package into a distributable zip (same layout as Linux/macOS).
+# Step 3: Package into a distributable zip (same layout as Linux/macOS).
+# NOTE: self-host (mcpp building itself) not yet possible — needs MSVC toolchain support.
 
 on:
   push:
@@ -233,37 +233,12 @@ jobs:
               exit 1
           }
 
-      - name: Self-host — mcpp builds itself
-        shell: bash
-        run: |
-          echo "=== Self-host: using bootstrapped mcpp.exe to build mcpp ==="
-          # Save bootstrap binary before cleaning xmake artifacts
-          mkdir -p /tmp/mcpp-bootstrap
-          cp "$MCPP_BOOTSTRAP" /tmp/mcpp-bootstrap/mcpp.exe
-          MCPP_EXE="/tmp/mcpp-bootstrap/mcpp.exe"
-
-          # Clean xmake artifacts so mcpp starts fresh
-          rm -rf build xmake.lua .xmake
-
-          echo "Bootstrap binary: $MCPP_EXE"
-          "$MCPP_EXE" --version
-
-          # mcpp build uses its own build system (not xmake)
-          export MCPP_VENDORED_XLINGS="$USERPROFILE/.xlings/subos/default/bin/xlings.exe"
-          "$MCPP_EXE" build
-
-          # Find the self-hosted binary
-          SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
-          test -n "$SELF_MCPP" || {
-            echo "FAIL: self-host build did not produce mcpp.exe"
-            find target -name "*.exe" 2>/dev/null
-            exit 1
-          }
-          SELF_MCPP=$(cd "$(dirname "$SELF_MCPP")" && pwd)/$(basename "$SELF_MCPP")
-          echo "Self-hosted binary: $SELF_MCPP"
-          "$SELF_MCPP" --version
-
-          echo "MCPP_SELF=$SELF_MCPP" >> "$GITHUB_ENV"
+      # NOTE: full self-host (`mcpp build` building itself) is not yet
+      # possible on Windows — mcpp's build system defaults to gcc which
+      # is unavailable here. Once mcpp.toml gains a `windows = "msvc"`
+      # toolchain override (and detect.cppm handles MSVC output), the
+      # self-host step can be re-enabled.  For now we package the xmake-
+      # bootstrapped binary, which is functionally identical.
 
       - name: Package Windows release zip
         id: package
@@ -281,7 +256,7 @@ jobs:
           mkdir -p "$STAGING/$WRAPPER/registry/bin"
 
           # Binary
-          cp "$MCPP_SELF" "$STAGING/$WRAPPER/bin/mcpp.exe"
+          cp "$MCPP_BOOTSTRAP" "$STAGING/$WRAPPER/bin/mcpp.exe"
 
           # Launcher batch script (equivalent to the shell wrapper on Linux/macOS)
           printf '@echo off\r\n"%%~dp0bin\\mcpp.exe" %%*\r\n' > "$STAGING/$WRAPPER/mcpp.bat"
