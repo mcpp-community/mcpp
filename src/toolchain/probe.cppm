@@ -1,4 +1,11 @@
 // mcpp.toolchain.probe - common compiler probing helpers.
+//
+// NOTE: This file contains its own run_capture() helper that returns
+// std::expected<std::string, DetectError> — a different signature from
+// mcpp::process::run_capture() (which returns RunResult).  Do NOT migrate
+// existing callers here without care.  For new process invocations that do
+// not need DetectError propagation, prefer mcpp::process::run_capture from
+// the mcpp.process module.
 
 module;
 #include <cstdio>      // popen, pclose, fgets, FILE
