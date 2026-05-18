@@ -201,13 +201,18 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // recognize the .ixx extension as a module source by default).
     auto absBmi = (cacheDir / relBmi).string();
     auto ext = tc.stdModuleSource.extension().string();
-    std::string langFlag = (ext == ".ixx") ? " -x c++-module" : "";
+    // MSVC STL's std.ixx needs -x c++-module (Clang doesn't recognize .ixx)
+    // and generates harmless warnings about #include in module purview and
+    // the reserved 'std' module name — suppress both.
+    std::string ixxFlags = (ext == ".ixx")
+        ? " -x c++-module -Wno-include-angled-in-module-purview -Wno-reserved-module-identifier"
+        : "";
     return {
         std::format(
             "{} -std=c++23{}{} "
             "--precompile {} -o {}",
             tc.binaryPath.string(),
-            langFlag,
+            ixxFlags,
             sysrootFlag,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(absBmi)),
