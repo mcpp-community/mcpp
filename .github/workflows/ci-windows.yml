@@ -274,10 +274,9 @@ jobs:
             echo "::warning::xlings.exe not found at $XLINGS_EXE"
           fi
 
-          # Create zip
+          # Create zip (use 7z to avoid backslash path issues from Compress-Archive)
           mkdir -p dist
-          (cd "$STAGING" && powershell.exe -Command \
-            "Compress-Archive -Path '$WRAPPER' -DestinationPath '$WRAPPER.zip'")
+          (cd "$STAGING" && 7z a -tzip "$ZIPNAME" "$WRAPPER")
           cp "$STAGING/$ZIPNAME" "dist/$ZIPNAME"
 
           # SHA256
