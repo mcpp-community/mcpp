@@ -274,11 +274,7 @@ jobs:
             ls "$MCPP_XPKGS/xim-x-llvm/20.1.7/bin/" | head -5
           fi
 
-          "$MCPP_EXE" build || {
-            echo "=== build.ninja (first 50 lines) ==="
-            find target -name "build.ninja" -exec head -50 {} \; 2>/dev/null
-            exit 1
-          }
+          "$MCPP_EXE" build
 
           # Find the self-hosted binary
           SELF_MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)

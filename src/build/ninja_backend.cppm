@@ -197,7 +197,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("\n");
 
     append("rule cp_bmi\n");
+#if defined(_WIN32)
+    append("  command = cmd /c copy /y $in $out >nul\n");
+#else
     append("  command = mkdir -p $$(dirname $out) && cp -f $in $out\n");
+#endif
     append("  description = STAGE $out\n\n");
 
     // P1: per-file dyndep rule. Converts one .ddi → .dd independently.
@@ -222,9 +226,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("rule cxx_module\n");
 #if defined(_WIN32)
     // Windows: skip BMI restat optimization (requires POSIX shell).
-    // Just compile directly — incremental rebuild still works via dyndep.
+    // No $toolenv (empty on Windows; its leading space breaks CreateProcess).
     append(std::format("  command = "
-           "$toolenv $cxx $cxxflags{} -c $in -o $out\n", module_output_flag));
+           "$cxx $cxxflags{} -c $in -o $out\n", module_output_flag));
 #else
     append(std::format("  command = "
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
@@ -244,7 +248,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("\n");
 
     append("rule cxx_object\n");
+#if defined(_WIN32)
+    append("  command = $cxx $cxxflags -c $in -o $out\n");
+#else
     append("  command = $toolenv $cxx $cxxflags -c $in -o $out\n");
+#endif
     append("  description = OBJ $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -252,13 +260,30 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (need_c_rule) {
         append("rule c_object\n");
+#if defined(_WIN32)
+        append("  command = $cc $cflags -c $in -o $out\n");
+#else
         append("  command = $toolenv $cc $cflags -c $in -o $out\n");
+#endif
         append("  description = CC $out\n");
         if (dyndep)
             append("  restat = 1\n");
         append("\n");
     }
 
+#if defined(_WIN32)
+    append("rule cxx_link\n");
+    append("  command = $cxx $in -o $out $ldflags\n");
+    append("  description = LINK $out\n\n");
+
+    append("rule cxx_archive\n");
+    append("  command = $ar rcs $out $in\n");
+    append("  description = AR $out\n\n");
+
+    append("rule cxx_shared\n");
+    append("  command = $cxx -shared $in -o $out $ldflags\n");
+    append("  description = SHARED $out\n\n");
+#else
     append("rule cxx_link\n");
     append("  command = $toolenv $cxx $in -o $out $ldflags\n");
     append("  description = LINK $out\n\n");
@@ -270,6 +295,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("rule cxx_shared\n");
     append("  command = $toolenv $cxx -shared $in -o $out $ldflags\n");
     append("  description = SHARED $out\n\n");
+#endif
 
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.
@@ -278,14 +304,23 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("rule cxx_scan\n");
         if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
+#if defined(_WIN32)
+            append("  command = $cxx $cxxflags -fmodules "
+#else
             append("  command = $toolenv $cxx $cxxflags -fmodules "
+#endif
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$compile_target "
                    "-M -MM -MF $out.dep -E $in -o $compile_target\n");
         } else {
             // Clang path: clang-scan-deps produces P1689 JSON to stdout.
+#if defined(_WIN32)
+            append("  command = $scan_deps -format=p1689 -- "
+                   "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+#else
             append("  command = $toolenv $scan_deps -format=p1689 -- "
                    "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+#endif
         }
         append("  description = SCAN $out\n\n");
 
