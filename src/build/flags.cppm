@@ -12,6 +12,7 @@ import std;
 import mcpp.build.plan;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 
 export namespace mcpp::build {
@@ -59,6 +60,12 @@ std::string escape_path(const std::filesystem::path& p) {
 
 CompileFlags compute_flags(const BuildPlan& plan) {
     CompileFlags f;
+
+    // ProviderCapabilities: centralised query point for per-toolchain decisions.
+    // Prefer caps.* checks over ad-hoc is_clang()/is_musl_target() calls for
+    // any new branching added to this function.
+    auto caps = mcpp::toolchain::capabilities_for(plan.toolchain);
+
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);
     f.toolEnv = mcpp::toolchain::compiler_env_prefix(plan.toolchain);
@@ -125,7 +132,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         plan.manifest.buildConfig.cStandard.empty() ? "c11" : plan.manifest.buildConfig.cStandard;
 
     // Assemble
-    std::string module_flag = isClang ? "" : " -fmodules";
+    // -fmodules is a GCC-only flag; Clang uses a different module ABI and does
+    // not need it.  caps.stdlib_id distinguishes GCC (libstdc++) from Clang
+    // (libc++ / msvc-stl) without an extra is_clang() call.
+    std::string module_flag = (caps.stdlib_id == "libstdc++") ? " -fmodules" : "";
     std::string std_module_flag;
     if (isClang && !plan.stdBmiPath.empty()) {
         std_module_flag = " -fmodule-file=std=" + escape_path(staged_std_bmi_path(plan));
