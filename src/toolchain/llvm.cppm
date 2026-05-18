@@ -24,7 +24,11 @@ std::string package_name() {
 }
 
 std::vector<std::string> frontend_candidates() {
+#if defined(_WIN32)
+    return {"clang++.exe", "clang++"};
+#else
     return {"clang++"};
+#endif
 }
 
 std::vector<std::string> list_aliases() {
