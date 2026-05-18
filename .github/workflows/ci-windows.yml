@@ -64,9 +64,10 @@ jobs:
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_HOME="$USERPROFILE/.mcpp"
 
           # Pre-seed mcpp sandbox with xlings LLVM (avoids redundant download)
-          MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
+          MCPP_XPKGS="$MCPP_HOME/registry/data/xpkgs"
           XLINGS_XPKGS="$USERPROFILE/.xlings/data/xpkgs"
           if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
             mkdir -p "$MCPP_XPKGS"
@@ -85,6 +86,8 @@ jobs:
           echo "Self-hosted binary: $MCPP_FRESH"
           "$MCPP_FRESH" --version
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # Share the sandbox from self-host build (has LLVM toolchain)
+          export MCPP_HOME="$USERPROFILE/.mcpp"
           "$MCPP_FRESH" test
 
       - name: E2E suite
@@ -94,6 +97,7 @@ jobs:
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           test -f "$MCPP"
           export MCPP
+          export MCPP_HOME="$USERPROFILE/.mcpp"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
           "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR" 2>/dev/null || true
@@ -106,6 +110,7 @@ jobs:
           MCPP=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_HOME="$USERPROFILE/.mcpp"
           "$MCPP" build
           "$MCPP" --version
           echo ":: Self-host smoke PASS"
