@@ -564,8 +564,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     //    upstream (see docs/short-term-vs-long-track plan).
     ensure_sandbox_xlings_binary(cfg, quiet);
     ensure_sandbox_init(cfg, quiet);
-#if !defined(__APPLE__)
-    // patchelf is ELF-only; macOS uses Mach-O and does not need it.
+#if !defined(__APPLE__) && !defined(_WIN32)
+    // patchelf is ELF-only; macOS uses Mach-O and Windows uses PE.
     ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
 #endif
     ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);
