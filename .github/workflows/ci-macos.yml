@@ -316,10 +316,12 @@ jobs:
           "$MCPP" --version
           echo ":: Self-host smoke PASS"
 
-      - name: Fresh user experience (xlings install mcpp → new → run)
+      - name: Fresh user experience (mcpp new → run)
         run: |
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           TMP=$(mktemp -d)
           cd "$TMP"
-          mcpp new hello
+          "$MCPP" new hello
           cd hello
-          mcpp run
+          "$MCPP" run

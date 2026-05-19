@@ -134,12 +134,11 @@ jobs:
           "$MCPP" build
           "$MCPP" test
 
-      - name: Fresh user experience (xlings install mcpp → new → run)
-        env:
-          XLINGS_NON_INTERACTIVE: '1'
+      - name: Fresh user experience (mcpp new → run)
         run: |
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           TMP=$(mktemp -d)
           cd "$TMP"
-          mcpp new hello
+          "$MCPP" new hello
           cd hello
-          mcpp run
+          "$MCPP" run
