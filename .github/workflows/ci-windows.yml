@@ -76,16 +76,6 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
           "$MCPP" build || {
-            echo "=== Debug: mcpp sandbox ==="
-            find "$USERPROFILE/.mcpp" -name "*.exe" -o -name "xpkgs" -type d 2>/dev/null | head -20
-            echo "=== Debug: xlings global data ==="
-            find "$USERPROFILE/.xlings" -path "*/xim-x-llvm*" 2>/dev/null | head -10
-            echo "=== Debug: mcpp registry subos data ==="
-            find "$USERPROFILE/.mcpp/registry/subos" -path "*/xpkgs*" 2>/dev/null | head -10
-            find "$USERPROFILE/.mcpp/registry/subos" -path "*/xim-x-llvm*" 2>/dev/null | head -10
-            echo "=== Debug: mcpp registry data ==="
-            ls -la "$USERPROFILE/.mcpp/registry/data/" 2>/dev/null || echo "no data dir"
-            ls -la "$USERPROFILE/.mcpp/registry/data/xpkgs/" 2>/dev/null || echo "no xpkgs dir"
             exit 1
           }
 
