@@ -79,20 +79,20 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          # Pre-seed LLVM into mcpp sandbox from system xlings.
-          # Needed because: (1) mcpp 0.0.17 bootstrap binary lacks the
-          # package_fetcher fallback, (2) xlings sandboxed binary has
-          # an upstream bug with large package extraction on Windows.
+          # Find where xlings installed LLVM and pre-seed into mcpp sandbox
           MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
-          for src in "$USERPROFILE/.xlings/data/xpkgs/xim-x-llvm" \
-                     "$USERPROFILE/.xlings/subos/default/data/xpkgs/xim-x-llvm"; do
-            if [ -d "$src" ]; then
-              mkdir -p "$MCPP_XPKGS"
-              cp -r "$src" "$MCPP_XPKGS/xim-x-llvm"
-              echo "Pre-seeded LLVM from $src"
-              break
-            fi
-          done
+          LLVM_SRC=$(find "$USERPROFILE/.xlings" -path "*/xim-x-llvm/20.1.7/bin/clang++.exe" 2>/dev/null | head -1)
+          if [ -n "$LLVM_SRC" ]; then
+            # Go up from bin/clang++.exe -> 20.1.7 -> xim-x-llvm
+            LLVM_VER_DIR=$(dirname "$(dirname "$LLVM_SRC")")
+            LLVM_PKG_DIR=$(dirname "$LLVM_VER_DIR")
+            mkdir -p "$MCPP_XPKGS"
+            cp -r "$LLVM_PKG_DIR" "$MCPP_XPKGS/xim-x-llvm"
+            echo "Pre-seeded LLVM from $LLVM_PKG_DIR"
+          else
+            echo "WARNING: LLVM not found in xlings after install"
+            find "$USERPROFILE/.xlings" -name "clang++.exe" 2>/dev/null | head -5
+          fi
 
           "$MCPP" build
 
