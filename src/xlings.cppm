@@ -663,6 +663,14 @@ int install_with_progress(const Env& env, std::string_view target,
     _putenv_s("XLINGS_PROJECT_DIR", "");
     std::error_code ec_mkdir;
     std::filesystem::create_directories(env.home, ec_mkdir);
+    // Use direct `install` command instead of `interface install_packages`
+    // on Windows. The NDJSON interface may have issues with large packages
+    // where the extraction subprocess doesn't respect XLINGS_HOME.
+    auto directCmd = std::format("{} install {} -y",
+        env.binary.string(), target);
+    int directRc = std::system(directCmd.c_str());
+    if (directRc == 0) return 0;
+    // Fallback to interface path if direct install fails
     auto cmd = std::format("{} interface install_packages --args {}",
         env.binary.string(),
         shq(argsJson));
