@@ -605,6 +605,37 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     };
 
     auto resolve = [&]() -> std::expected<XpkgPayload, CallError> {
+#if defined(_WIN32)
+        // Workaround: xlings on Windows may extract large packages (e.g. LLVM)
+        // into its global data dir instead of the mcpp sandbox, because the
+        // extraction subprocess doesn't inherit XLINGS_HOME. Detect this and
+        // copy the payload into the sandbox so mcpp remains self-contained.
+        if (!std::filesystem::exists(verdir)) {
+            // Try xlings' own data dir (where `xlings self install` placed it)
+            auto xhome = std::getenv("USERPROFILE");
+            if (!xhome) xhome = std::getenv("HOME");
+            if (xhome) {
+                // xlings stores xpkgs at <home>/.xlings/data/xpkgs/ or
+                // <home>/.xlings/subos/default/data/xpkgs/
+                auto pkgDir = verdir.parent_path().filename().string();
+                auto verName = verdir.filename().string();
+                std::filesystem::path candidates[] = {
+                    std::filesystem::path(xhome) / ".xlings" / "data" / "xpkgs" / pkgDir / verName,
+                    std::filesystem::path(xhome) / ".xlings" / "subos" / "default" / "data" / "xpkgs" / pkgDir / verName,
+                };
+                for (auto& src : candidates) {
+                    std::error_code ec;
+                    if (std::filesystem::exists(src, ec) && std::filesystem::is_directory(src, ec)) {
+                        std::filesystem::create_directories(verdir.parent_path(), ec);
+                        std::filesystem::copy(src, verdir,
+                            std::filesystem::copy_options::recursive
+                            | std::filesystem::copy_options::overwrite_existing, ec);
+                        if (!ec) break;
+                    }
+                }
+            }
+        }
+#endif
         if (!std::filesystem::exists(verdir)) {
             return std::unexpected(CallError{
                 std::format("xpkg payload missing: {}", verdir.string())});

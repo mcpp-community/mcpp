@@ -663,8 +663,6 @@ int install_with_progress(const Env& env, std::string_view target,
     _putenv_s("XLINGS_PROJECT_DIR", "");
     std::error_code ec_mkdir;
     std::filesystem::create_directories(env.home, ec_mkdir);
-    // Use raw command — _putenv_s is inherited by popen child.
-    // No 2>nul — let xlings output be visible for debugging.
     auto cmd = std::format("{} interface install_packages --args {}",
         env.binary.string(),
         shq(argsJson));
