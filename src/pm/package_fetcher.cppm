@@ -628,6 +628,28 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             }
         }
         if (!std::filesystem::exists(verdir)) {
+            // xlings may have installed the package into its own global home
+            // rather than the mcpp sandbox. Try to copy it from the global
+            // xlings data directory.
+            auto xlings_home_env = std::getenv("HOME");
+#if defined(_WIN32)
+            if (!xlings_home_env) xlings_home_env = std::getenv("USERPROFILE");
+#endif
+            if (xlings_home_env) {
+                auto globalXpkgs = std::filesystem::path(xlings_home_env)
+                    / ".xlings" / "data" / "xpkgs"
+                    / verdir.parent_path().filename()
+                    / verdir.filename();
+                std::error_code ec;
+                if (std::filesystem::exists(globalXpkgs, ec)) {
+                    std::filesystem::create_directories(verdir.parent_path(), ec);
+                    std::filesystem::copy(globalXpkgs, verdir,
+                        std::filesystem::copy_options::recursive
+                        | std::filesystem::copy_options::overwrite_existing, ec);
+                }
+            }
+        }
+        if (!std::filesystem::exists(verdir)) {
             return std::unexpected(CallError{
                 std::format("xpkg payload missing: {}", verdir.string())});
         }
