@@ -462,7 +462,6 @@ jobs:
           export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           xlings.exe --version
-          xlings.exe install llvm -y || xlings.exe install llvm@20.1.7 -y
           xlings.exe install mcpp -y
           MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp.exe" -path "*/bin/*" 2>/dev/null | head -1)
           if [ -z "$MCPP" ]; then
@@ -481,17 +480,16 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          # Pre-seed LLVM into mcpp sandbox from system xlings
-          MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
-          for src in "$USERPROFILE/.xlings/data/xpkgs/xim-x-llvm" \
-                     "$USERPROFILE/.xlings/subos/default/data/xpkgs/xim-x-llvm"; do
-            if [ -d "$src" ]; then
-              mkdir -p "$MCPP_XPKGS"
-              cp -r "$src" "$MCPP_XPKGS/xim-x-llvm"
-              echo "Pre-seeded LLVM from $src"
-              break
-            fi
-          done
+          # Install LLVM directly (xlings 0.4.30 extraction bug on Windows)
+          LLVM_VER="20.1.7"
+          LLVM_DEST="$USERPROFILE/.mcpp/registry/data/xpkgs/xim-x-llvm/$LLVM_VER"
+          if [ ! -f "$LLVM_DEST/bin/clang++.exe" ]; then
+            curl -fsSL -o /tmp/llvm.tar.xz \
+              "https://github.com/xlings-res/llvm/releases/download/$LLVM_VER/llvm-$LLVM_VER-windows-x86_64.tar.xz"
+            mkdir -p "$LLVM_DEST"
+            tar -xf /tmp/llvm.tar.xz -C "$LLVM_DEST" --strip-components=1
+            rm -f /tmp/llvm.tar.xz
+          fi
 
           "$MCPP" build
 
