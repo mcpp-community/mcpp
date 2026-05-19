@@ -84,6 +84,18 @@ struct GlobalConfig {
 
 // Create an xlings::Env from the resolved GlobalConfig.
 mcpp::xlings::Env make_xlings_env(const GlobalConfig& cfg) {
+#if defined(_WIN32)
+    // On Windows, the copied xlings binary in the sandbox may not function
+    // correctly for large package installs (missing runtime environment).
+    // When MCPP_VENDORED_XLINGS is set, use the original xlings binary
+    // directly — it has the full xlings runtime. The XLINGS_HOME env var
+    // ensures packages are installed into the mcpp sandbox.
+    if (auto* e = std::getenv("MCPP_VENDORED_XLINGS"); e && *e) {
+        std::filesystem::path vendored{e};
+        if (std::filesystem::exists(vendored))
+            return { vendored, cfg.xlingsHome() };
+    }
+#endif
     return { cfg.xlingsBinary, cfg.xlingsHome() };
 }
 
