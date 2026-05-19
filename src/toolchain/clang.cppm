@@ -4,6 +4,7 @@ export module mcpp.toolchain.clang;
 
 import std;
 import mcpp.toolchain.model;
+import mcpp.toolchain.msvc;
 import mcpp.toolchain.probe;
 import mcpp.xlings;
 import mcpp.platform;
@@ -146,26 +147,11 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
 
 #if defined(_WIN32)
     // Fallback: if libc++ std.cppm not found, look for MSVC STL's std.ixx.
-    // This happens when Clang targets x86_64-pc-windows-msvc.
+    // Uses msvc.cppm which searches via vswhere, env vars, and known paths.
     if (!tc.hasImportStd && msvTarget) {
-        // Search Visual Studio installations for std.ixx
-        // Typical path: C:\Program Files\Microsoft Visual Studio\2022\*\VC\Tools\MSVC\*\modules\std.ixx
-        std::error_code ec;
-        std::filesystem::path vsBase = "C:\\Program Files\\Microsoft Visual Studio\\2022";
-        if (std::filesystem::exists(vsBase, ec)) {
-            for (auto& edition : std::filesystem::directory_iterator(vsBase, ec)) {
-                auto vcTools = edition.path() / "VC" / "Tools" / "MSVC";
-                if (!std::filesystem::exists(vcTools, ec)) continue;
-                for (auto& ver : std::filesystem::directory_iterator(vcTools, ec)) {
-                    auto stdIxx = ver.path() / "modules" / "std.ixx";
-                    if (std::filesystem::exists(stdIxx, ec)) {
-                        tc.stdModuleSource = stdIxx;
-                        tc.hasImportStd    = true;
-                        break;
-                    }
-                }
-                if (tc.hasImportStd) break;
-            }
+        if (auto p = mcpp::toolchain::msvc::find_std_module_source()) {
+            tc.stdModuleSource = *p;
+            tc.hasImportStd    = true;
         }
     }
 #endif
