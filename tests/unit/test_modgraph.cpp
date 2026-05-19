@@ -50,9 +50,9 @@ TEST(Scanner, PartitionImportFromPrimaryInterface) {
     // Primary module interface: `export module foo;` → logicalName = "foo".
     // `import :tls;` resolves to "foo:tls".
     auto dir = make_tempdir("mcpp-scanner");
-    write(dir / "src" / "foo.cppm", R"(export module foo;
-import :tls;
-)");
+    write(dir / "src" / "foo.cppm",
+          "export module foo;\n"
+          "import :tls;\n");
     auto u = scan_file(dir / "src" / "foo.cppm", "pkg");
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_EQ(u->requires_.size(), 1u);
@@ -65,10 +65,10 @@ TEST(Scanner, PartitionImportFromAnotherPartition) {
     // `import :tls;` must resolve to "foo:tls" (the sibling partition),
     // NOT "foo:http:tls" (which is what a naive prepend produces).
     auto dir = make_tempdir("mcpp-scanner");
-    write(dir / "src" / "http.cppm", R"(export module foo:http;
-import :tls;
-import :socket;
-)");
+    write(dir / "src" / "http.cppm",
+          "export module foo:http;\n"
+          "import :tls;\n"
+          "import :socket;\n");
     auto u = scan_file(dir / "src" / "http.cppm", "pkg");
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_TRUE(u->provides.has_value());
@@ -83,9 +83,9 @@ TEST(Scanner, PartitionImportWithDottedModuleName) {
     // Dotted module names (xpkg-style, e.g. `mcpplibs.tinyhttps:http`)
     // — only the colon-prefixed partition suffix is what we strip.
     auto dir = make_tempdir("mcpp-scanner");
-    write(dir / "src" / "http.cppm", R"(export module mcpplibs.tinyhttps:http;
-import :tls;
-)");
+    write(dir / "src" / "http.cppm",
+          "export module mcpplibs.tinyhttps:http;\n"
+          "import :tls;\n");
     auto u = scan_file(dir / "src" / "http.cppm", "pkg");
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_EQ(u->requires_.size(), 1u);
@@ -95,11 +95,12 @@ import :tls;
 
 TEST(Scanner, RejectsConditionalImport) {
     auto dir = make_tempdir("mcpp-scanner");
-    write(dir / "main.cpp", R"(import std;
-#ifdef WANT_X
-import x;
-#endif
-int main(){})");
+    write(dir / "main.cpp",
+          "import std;\n"
+          "#ifdef WANT_X\n"
+          "import x;\n"
+          "#endif\n"
+          "int main(){}");
     auto r = scan_file(dir / "main.cpp", "pkg");
     EXPECT_FALSE(r.has_value());
     EXPECT_NE(r.error().message.find("conditional"), std::string::npos);
@@ -108,9 +109,10 @@ int main(){})");
 
 TEST(Scanner, RejectsHeaderUnit) {
     auto dir = make_tempdir("mcpp-scanner");
-    write(dir / "main.cpp", R"(import std;
-import "x.h";
-int main(){})");
+    write(dir / "main.cpp",
+          "import std;\n"
+          "import \"x.h\";\n"
+          "int main(){}");
     auto r = scan_file(dir / "main.cpp", "pkg");
     EXPECT_FALSE(r.has_value());
     EXPECT_NE(r.error().message.find("header units"), std::string::npos);
