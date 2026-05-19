@@ -75,7 +75,16 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          "$MCPP" build
+          "$MCPP" build || {
+            echo "=== Debug: mcpp sandbox ==="
+            find "$USERPROFILE/.mcpp" -name "*.exe" -o -name "xpkgs" -type d 2>/dev/null | head -20
+            echo "=== Debug: xlings home ==="
+            find "$USERPROFILE/.xlings" -path "*/xim-x-llvm*" -type d 2>/dev/null | head -10
+            echo "=== Debug: mcpp registry data ==="
+            ls -la "$USERPROFILE/.mcpp/registry/data/" 2>/dev/null || echo "no data dir"
+            ls -la "$USERPROFILE/.mcpp/registry/data/xpkgs/" 2>/dev/null || echo "no xpkgs dir"
+            exit 1
+          }
 
           MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
           test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
