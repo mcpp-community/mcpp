@@ -96,6 +96,8 @@ TEST(XpkgEmit, ReleaseTarballUrl) {
     EXPECT_EQ(release_tarball_url("git@github.com:foo/bar.git", "bar", "0.1.0"), "");
 }
 
+#if !defined(_WIN32)
+// sha256_of_file uses sha256sum which is not available on Windows
 TEST(XpkgEmit, Sha256OfFile) {
     using namespace mcpp::publish;
 
@@ -116,6 +118,7 @@ TEST(XpkgEmit, Sha256OfFile) {
     // Non-existent file → empty string
     EXPECT_EQ(sha256_of_file("/no/such/path/zzz"), "");
 }
+#endif // !defined(_WIN32)
 
 TEST(XpkgEmit, LongBracketSequenceInValueIsHarmless) {
     // We emit `"..."` strings, not `[[...]]`, so a literal `]=]` in

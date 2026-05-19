@@ -54,6 +54,8 @@ esac
 
 } // namespace
 
+#if !defined(_WIN32)
+// Uses a fake shell script as a compiler — POSIX only.
 TEST(ToolchainDetect, ClangVersionOutputIsNotMisclassifiedByGccPaths) {
     auto clang = make_fake_clang();
     TempDirGuard cleanup{clang.parent_path()};
@@ -66,6 +68,7 @@ TEST(ToolchainDetect, ClangVersionOutputIsNotMisclassifiedByGccPaths) {
     EXPECT_EQ(tc->stdlibId, "libc++");
     EXPECT_FALSE(tc->hasImportStd);
 }
+#endif // !defined(_WIN32)
 
 // ─── normalize_driver_output: path-free semantic identity ─────────────
 //
@@ -126,6 +129,7 @@ TEST(NormalizeDriverOutput, EmptyInputProducesEmpty) {
     EXPECT_EQ(normalize_driver_output("\n\n\n"), "");
 }
 
+#if !defined(_WIN32)
 // ─── detect() populates driverIdent ─────────────────────────────────
 TEST(ToolchainDetect, PopulatesDriverIdentFromVersionOutput) {
     auto clang = make_fake_clang();
@@ -138,3 +142,4 @@ TEST(ToolchainDetect, PopulatesDriverIdentFromVersionOutput) {
     EXPECT_NE(tc->driverIdent.find("clang version 20.1.7"), std::string::npos)
         << "driverIdent should contain the --version header: " << tc->driverIdent;
 }
+#endif // !defined(_WIN32)

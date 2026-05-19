@@ -48,7 +48,11 @@ TEST(ToolchainRegistry, MapsLlvmAndClangAliasesToLlvmPackage) {
     EXPECT_EQ(llvmPkg.display_spec(), "llvm@20.1.7");
     EXPECT_EQ(clangPkg.display_spec(), "clang@20.1.7");
     ASSERT_FALSE(clangPkg.frontendCandidates.empty());
+#if defined(_WIN32)
+    EXPECT_EQ(clangPkg.frontendCandidates.front(), "clang++.exe");
+#else
     EXPECT_EQ(clangPkg.frontendCandidates.front(), "clang++");
+#endif
 }
 
 TEST(ToolchainRegistry, ResolvesPartialMuslVersionForDisplayAndPackage) {
