@@ -94,9 +94,11 @@ jobs:
           "$MCPP_SELF" --version
           echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
 
-      # NOTE: `mcpp test` requires clang-scan-deps for module dependency
-      # scanning. The xlings LLVM package does not yet ship it on Windows.
-      # Enable once available.
+      - name: Unit + integration tests via mcpp test
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
+          "$MCPP_SELF" test
 
       - name: E2E suite
         shell: bash
