@@ -316,12 +316,18 @@ jobs:
           "$MCPP" --version
           echo ":: Self-host smoke PASS"
 
-      - name: Fresh user experience (mcpp new → run)
+      - name: Fresh user experience (xlings install mcpp → new → run)
         run: |
-          MCPP=$(find target -path "*/bin/mcpp" | head -1)
-          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          # Replace xlings mcpp with our self-hosted build
+          MCPP_SELF=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
+          xlings remove mcpp -y 2>/dev/null || true
+          MCPP_BIN=$(which mcpp 2>/dev/null || echo "$HOME/.xlings/subos/default/bin/mcpp")
+          cp "$MCPP_SELF" "$MCPP_BIN"
+          chmod +x "$MCPP_BIN"
+
           TMP=$(mktemp -d)
           cd "$TMP"
-          "$MCPP" new hello
+          mcpp new hello
           cd hello
-          "$MCPP" run
+          mcpp run

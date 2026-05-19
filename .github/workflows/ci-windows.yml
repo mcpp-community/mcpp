@@ -108,16 +108,20 @@ jobs:
           "$MCPP_SELF" --version
           echo ":: Self-host smoke PASS"
 
-      - name: Fresh user experience (mcpp new → run)
+      - name: Fresh user experience (xlings install mcpp → new → run)
         shell: bash
         run: |
-          # Use the self-hosted binary (current code with all fixes).
-          # This simulates: user installs mcpp → mcpp new hello → mcpp run
+          # Replace xlings mcpp with our self-hosted build, then test
+          # the real user flow: mcpp new hello && cd hello && mcpp run
+          xlings.exe remove mcpp -y 2>/dev/null || true
+          MCPP_BIN=$(which mcpp.exe 2>/dev/null || echo "$USERPROFILE/.xlings/subos/default/bin/mcpp.exe")
+          cp "$MCPP_SELF" "$MCPP_BIN"
+
           TMP=$(mktemp -d)
           cd "$TMP"
-          "$MCPP_SELF" new hello
+          mcpp.exe new hello
           cd hello
-          "$MCPP_SELF" run
+          mcpp.exe run
 
       - name: Package Windows release zip
         id: package
