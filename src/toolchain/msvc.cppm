@@ -12,16 +12,12 @@
 // foundation for future native MSVC (cl.exe) toolchain support.
 
 module;
-#include <cstdio>
 #include <cstdlib>
-#if defined(_WIN32)
-#define popen  _popen
-#define pclose _pclose
-#endif
 
 export module mcpp.toolchain.msvc;
 
 import std;
+import mcpp.platform;
 
 export namespace mcpp::toolchain::msvc {
 
@@ -47,13 +43,8 @@ namespace {
 
 // Run a command and capture stdout (first line, trimmed).
 std::string run_capture_line(const std::string& cmd) {
-    std::array<char, 4096> buf{};
-    std::string out;
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return {};
-    while (std::fgets(buf.data(), buf.size(), fp) != nullptr)
-        out += buf.data();
-    ::pclose(fp);
+    auto r = mcpp::platform::process::capture(cmd);
+    auto& out = r.output;
     // Trim trailing whitespace/newlines
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' '))
         out.pop_back();

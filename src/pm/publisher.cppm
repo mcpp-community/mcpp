@@ -3,17 +3,13 @@
 // See docs/04-schema-xpkg-extension.md for the produced layout.
 
 module;
-#include <cstdio>     // popen / pclose / fgets
-#if defined(_WIN32)
-#define popen  _popen
-#define pclose _pclose
-#endif
 
 export module mcpp.pm.publisher;
 
 import std;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
+import mcpp.platform;
 
 export namespace mcpp::pm {
 
@@ -208,19 +204,14 @@ std::string release_tarball_url(std::string_view repo,
 
 std::string sha256_of_file(const std::filesystem::path& file) {
     if (!std::filesystem::exists(file)) return {};
-    auto cmd = std::format("sha256sum '{}' 2>/dev/null", file.string());
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return {};
-    std::array<char, 256> buf{};
-    std::string out;
-    while (std::fgets(buf.data(), buf.size(), fp))
-        out += buf.data();
-    int rc = ::pclose(fp);
-    if (rc != 0) return {};
+    auto cmd = std::format("sha256sum {} 2>/dev/null",
+        mcpp::platform::shell::quote(file.string()));
+    auto r = mcpp::platform::process::capture(cmd);
+    if (r.exit_code != 0) return {};
     // sha256sum format: "<64-hex>  <filename>\n"
-    auto sp = out.find(' ');
+    auto sp = r.output.find(' ');
     if (sp == std::string::npos || sp != 64) return {};
-    return out.substr(0, 64);
+    return r.output.substr(0, 64);
 }
 
 std::string make_release_tarball(const std::filesystem::path& root,
@@ -231,21 +222,17 @@ std::string make_release_tarball(const std::filesystem::path& root,
     std::error_code ec;
     std::filesystem::create_directories(output.parent_path(), ec);
 
+    auto prefix = std::format("{}-{}/", name, version);
     auto cmd = std::format(
-        "git -C '{}' archive --format=tar.gz "
-        "--prefix='{}-{}/' "
-        "-o '{}' HEAD 2>&1",
-        root.string(), name, version, output.string());
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return std::format("popen failed for git archive: {}", cmd);
-
-    std::array<char, 4096> buf{};
-    std::string err;
-    while (std::fgets(buf.data(), buf.size(), fp))
-        err += buf.data();
-    int rc = ::pclose(fp);
-    if (rc != 0) {
-        return std::format("git archive failed (rc={}): {}", rc, err);
+        "git -C {} archive --format=tar.gz "
+        "--prefix={} "
+        "-o {} HEAD 2>&1",
+        mcpp::platform::shell::quote(root.string()),
+        mcpp::platform::shell::quote(prefix),
+        mcpp::platform::shell::quote(output.string()));
+    auto r = mcpp::platform::process::capture(cmd);
+    if (r.exit_code != 0) {
+        return std::format("git archive failed (rc={}): {}", r.exit_code, r.output);
     }
     if (!std::filesystem::exists(output)) {
         return std::format("git archive exited 0 but no tarball at '{}'",

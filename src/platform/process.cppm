@@ -54,6 +54,17 @@ int run_silent(std::string_view command);
 int run_streaming(std::string_view command,
                   std::function<void(std::string_view line)> on_line);
 
+// Run `command`, passing stdout/stderr through to the terminal.
+// Optionally captures stdout into `output` if non-null.
+// Returns a platform-normalized exit code (WEXITSTATUS on POSIX).
+int run_passthrough(std::string_view command,
+                    std::string* output = nullptr);
+
+// Extract a platform-normalized exit code from a raw system()/pclose()
+// return value.  Windows returns the exit code directly; POSIX returns
+// a wait-status word requiring WIFEXITED/WEXITSTATUS unwrapping.
+int extract_exit_code(int raw_status);
+
 } // namespace mcpp::platform::process
 
 // ─── Implementation ──────────────────────────────────────────────────────
@@ -73,7 +84,7 @@ std::string seal_stdin(std::string_view cmd) {
 #endif
 }
 
-int extract_exit_code(int rc) {
+int normalize_exit_code(int rc) {
 #if defined(_WIN32)
     return rc;
 #else
@@ -84,6 +95,10 @@ int extract_exit_code(int rc) {
 }
 
 } // namespace
+
+int extract_exit_code(int raw_status) {
+    return normalize_exit_code(raw_status);
+}
 
 RunResult capture(std::string_view command) {
     auto cmd = seal_stdin(command);
@@ -99,7 +114,7 @@ RunResult capture(std::string_view command) {
     while (std::fgets(buf.data(), static_cast<int>(buf.size()), fp) != nullptr)
         result.output += buf.data();
 
-    result.exit_code = extract_exit_code(::pclose(fp));
+    result.exit_code = normalize_exit_code(::pclose(fp));
     return result;
 }
 
@@ -132,7 +147,7 @@ RunResult capture_with_env(
 
 int run_silent(std::string_view command) {
     auto cmd = seal_stdin(command);
-    return extract_exit_code(std::system(cmd.c_str()));
+    return normalize_exit_code(std::system(cmd.c_str()));
 }
 
 int run_streaming(std::string_view command,
@@ -163,7 +178,20 @@ int run_streaming(std::string_view command,
             line.remove_suffix(1);
         if (!line.empty()) on_line(line);
     }
-    return extract_exit_code(::pclose(fp));
+    return normalize_exit_code(::pclose(fp));
+}
+
+int run_passthrough(std::string_view command, std::string* output) {
+    auto cmd = seal_stdin(command);
+    std::FILE* fp = ::popen(cmd.c_str(), "r");
+    if (!fp) return -1;
+
+    std::array<char, 8192> buf{};
+    while (std::fgets(buf.data(), static_cast<int>(buf.size()), fp) != nullptr) {
+        if (output) *output += buf.data();
+        std::fputs(buf.data(), stdout);
+    }
+    return normalize_exit_code(::pclose(fp));
 }
 
 } // namespace mcpp::platform::process

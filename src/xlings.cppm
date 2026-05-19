@@ -398,32 +398,32 @@ std::filesystem::path sandbox_init_marker(const Env& env) {
 
 std::string build_command_prefix(const Env& env) {
     auto xvmBin = paths::sandbox_bin(env).string();
-#if defined(_WIN32)
-    mcpp::platform::env::set("XLINGS_HOME", env.home.string());
-    mcpp::platform::env::set("XLINGS_PROJECT_DIR",
-              env.projectDir.empty() ? "" : env.projectDir.string());
-    mcpp::platform::windows::prepend_path(xvmBin);
-    return env.binary.string();
-#else
-    if (env.projectDir.empty()) {
-        // Global mode: unset XLINGS_PROJECT_DIR (existing behavior).
+    if constexpr (mcpp::platform::is_windows) {
+        mcpp::platform::env::set("XLINGS_HOME", env.home.string());
+        mcpp::platform::env::set("XLINGS_PROJECT_DIR",
+                  env.projectDir.empty() ? "" : env.projectDir.string());
+        mcpp::platform::windows::prepend_path(xvmBin);
+        return env.binary.string();
+    } else {
+        if (env.projectDir.empty()) {
+            // Global mode: unset XLINGS_PROJECT_DIR (existing behavior).
+            return std::format(
+                "cd {} && env -u XLINGS_PROJECT_DIR PATH={}:\"$PATH\" XLINGS_HOME={} {}",
+                shq(env.home.string()),
+                shq(xvmBin),
+                shq(env.home.string()),
+                shq(env.binary.string()));
+        }
+        // Project-level mode: set XLINGS_PROJECT_DIR so xlings uses
+        // additive project repos alongside global repos.
         return std::format(
-            "cd {} && env -u XLINGS_PROJECT_DIR PATH={}:\"$PATH\" XLINGS_HOME={} {}",
+            "cd {} && env PATH={}:\"$PATH\" XLINGS_HOME={} XLINGS_PROJECT_DIR={} {}",
             shq(env.home.string()),
             shq(xvmBin),
             shq(env.home.string()),
+            shq(env.projectDir.string()),
             shq(env.binary.string()));
     }
-    // Project-level mode: set XLINGS_PROJECT_DIR so xlings uses
-    // additive project repos alongside global repos.
-    return std::format(
-        "cd {} && env PATH={}:\"$PATH\" XLINGS_HOME={} XLINGS_PROJECT_DIR={} {}",
-        shq(env.home.string()),
-        shq(xvmBin),
-        shq(env.home.string()),
-        shq(env.projectDir.string()),
-        shq(env.binary.string()));
-#endif
 }
 
 std::string build_interface_command(const Env& env,
@@ -609,31 +609,35 @@ int install_with_progress(const Env& env, std::string_view target,
     auto argsJson = std::format(
         R"({{"targets":["{}"],"yes":true}})", target);
 
-#if defined(_WIN32)
-    mcpp::platform::env::set("XLINGS_HOME", env.home.string());
-    mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
-    std::error_code ec_mkdir;
-    std::filesystem::create_directories(env.home, ec_mkdir);
-    // Use direct `install` command instead of `interface install_packages`
-    // on Windows. The NDJSON interface may have issues with large packages
-    // where the extraction subprocess doesn't respect XLINGS_HOME.
-    auto directCmd = std::format("{} install {} -y",
-        env.binary.string(), target);
-    int directRc = mcpp::platform::process::run_silent(directCmd);
-    if (directRc == 0) return 0;
-    // Fallback to interface path if direct install fails
-    auto cmd = std::format("{} interface install_packages --args {}",
-        env.binary.string(),
-        shq(argsJson));
-#else
-    auto cmd = std::format(
-        "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} {}",
-        shq(env.home.string()),
-        shq(env.home.string()),
-        shq(env.binary.string()),
-        shq(argsJson),
-        mcpp::platform::null_redirect);
-#endif
+    if constexpr (mcpp::platform::is_windows) {
+        mcpp::platform::env::set("XLINGS_HOME", env.home.string());
+        mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
+        std::error_code ec_mkdir;
+        std::filesystem::create_directories(env.home, ec_mkdir);
+        // Use direct `install` command instead of `interface install_packages`
+        // on Windows. The NDJSON interface may have issues with large packages
+        // where the extraction subprocess doesn't respect XLINGS_HOME.
+        auto directCmd = std::format("{} install {} -y",
+            env.binary.string(), target);
+        int directRc = mcpp::platform::process::run_silent(directCmd);
+        if (directRc == 0) return 0;
+    }
+    auto cmd = [&]() -> std::string {
+        if constexpr (mcpp::platform::is_windows) {
+            // Fallback to interface path if direct install fails
+            return std::format("{} interface install_packages --args {}",
+                env.binary.string(),
+                shq(argsJson));
+        } else {
+            return std::format(
+                "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} {}",
+                shq(env.home.string()),
+                shq(env.home.string()),
+                shq(env.binary.string()),
+                shq(argsJson),
+                mcpp::platform::null_redirect);
+        }
+    }();
 
     int resultExitCode = -1;
 
@@ -736,18 +740,19 @@ void ensure_init(const Env& env, bool quiet) {
 
     if (!quiet)
         print_status("Initialize", "mcpp sandbox layout (one-time)");
-#if defined(_WIN32)
-    mcpp::platform::env::set("XLINGS_HOME", env.home.string());
-    mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
-    auto cmd = env.binary.string() + " self init";
-#else
-    auto cmd = std::format(
-        "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init {}",
-        shq(env.home.string()),
-        shq(env.home.string()),
-        shq(env.binary.string()),
-        mcpp::platform::shell::silent_redirect);
-#endif
+    std::string cmd;
+    if constexpr (mcpp::platform::is_windows) {
+        mcpp::platform::env::set("XLINGS_HOME", env.home.string());
+        mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
+        cmd = env.binary.string() + " self init";
+    } else {
+        cmd = std::format(
+            "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init {}",
+            shq(env.home.string()),
+            shq(env.home.string()),
+            shq(env.binary.string()),
+            mcpp::platform::shell::silent_redirect);
+    }
     int rc = mcpp::platform::process::run_silent(cmd);
     if (rc != 0 && !quiet) {
         std::println(stderr,

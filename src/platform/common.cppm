@@ -73,4 +73,24 @@ constexpr std::string_view name =
     "unknown";
 #endif
 
+// xpkg platform key (used by resolver for xpkg.lua lookups).
+// Note: macOS uses "macosx" (not "macos") for xpkg compatibility.
+constexpr std::string_view xpkg_platform =
+#if defined(_WIN32)
+    "windows";
+#elif defined(__APPLE__)
+    "macosx";
+#elif defined(__linux__)
+    "linux";
+#else
+    "linux";
+#endif
+
+// ── Link strategy capabilities ─────────────────────────────────────────
+// Used by build/flags.cppm to avoid #ifdef blocks in linker flag logic.
+
+constexpr bool supports_full_static = is_linux;  // macOS/Windows cannot
+constexpr bool supports_rpath       = !is_windows;  // ELF + Mach-O only
+constexpr bool needs_explicit_libcxx = is_macos;  // macOS: -lc++ required
+
 } // namespace mcpp::platform

@@ -17,17 +17,12 @@
 // Spec: docs/27-p1689-dyndep.md.
 
 module;
-#include <cstdio>
-#include <cstdlib>
-#if defined(_WIN32)
-#define popen  _popen
-#define pclose _pclose
-#endif
 
 export module mcpp.modgraph.p1689;
 
 import std;
 import mcpp.modgraph.graph;
+import mcpp.platform;
 import mcpp.toolchain.detect;
 
 export namespace mcpp::modgraph::p1689 {
@@ -300,12 +295,9 @@ std::expected<DdiRule, std::string> parse_ddi(std::string_view body) {
 namespace {
 
 bool run_capturing(const std::string& cmd, std::string& out) {
-    std::array<char, 8192> buf{};
-    out.clear();
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return false;
-    while (std::fgets(buf.data(), buf.size(), fp)) out += buf.data();
-    return ::pclose(fp) == 0;
+    auto r = mcpp::platform::process::capture(cmd);
+    out = r.output;
+    return r.exit_code == 0;
 }
 
 std::string shell_escape(const std::filesystem::path& p) {

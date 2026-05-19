@@ -4,15 +4,12 @@
 // here. TTY auto-detect; MCPP_NO_COLOR / --no-color disables colors.
 
 module;
-#include <cstdio>      // isatty, fileno, stdout
-#ifdef __unix__
-#include <unistd.h>
-#include <sys/ioctl.h>
-#endif
+#include <cstdio>      // fileno, stdout
 
 export module mcpp.ui;
 
 import std;
+import mcpp.platform;
 
 export namespace mcpp::ui {
 
@@ -146,11 +143,7 @@ constexpr std::string_view kBrightRed  = "\033[91m";
 bool detect_color() {
     if (auto* e = std::getenv("MCPP_NO_COLOR"); e && *e == '1') return false;
     if (auto* e = std::getenv("NO_COLOR");      e && *e)        return false;
-#ifdef __unix__
-    return ::isatty(::fileno(stdout)) != 0;
-#else
-    return false;
-#endif
+    return mcpp::platform::terminal::is_tty();
 }
 
 std::string with_color(std::string_view code, std::string_view text) {
@@ -326,15 +319,7 @@ std::string fmt_bytes(std::size_t b) {
 // rather collapse the bar than wrap into a second row that `\r\033[2K`
 // can't clean up later.
 std::size_t terminal_cols() {
-#ifdef __unix__
-    struct winsize w{};
-    if (::ioctl(::fileno(stdout), TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
-        return w.ws_col;
-#endif
-    if (auto* e = std::getenv("COLUMNS"); e && *e) {
-        try { auto n = std::stoul(e); if (n > 0) return n; } catch (...) {}
-    }
-    return 80;
+    return mcpp::platform::terminal::cols();
 }
 
 // Truncate a "visible" string (no ANSI codes inside) to `max` chars, replacing

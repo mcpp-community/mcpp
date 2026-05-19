@@ -20,3 +20,4 @@ export import mcpp.platform.env;
 export import mcpp.platform.macos;
 export import mcpp.platform.linux;
 export import mcpp.platform.windows;
+export import mcpp.platform.terminal;

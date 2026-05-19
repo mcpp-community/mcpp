@@ -16,16 +16,12 @@
 //   ⤷ mode suffix omitted for the default (`bundle-project`).
 
 module;
-#include <cstdio>      // popen, pclose
-#if defined(_WIN32)
-#define popen  _popen
-#define pclose _pclose
-#endif
 
 export module mcpp.pack;
 
 import std;
 import mcpp.config;
+import mcpp.platform;
 import mcpp.xlings;
 import mcpp.manifest;
 
@@ -188,22 +184,16 @@ namespace detail {
 // success, or an error message on non-zero exit.
 std::expected<std::string, std::string>
 run_capture(const std::string& cmd) {
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return std::unexpected("popen failed: " + cmd);
-    std::string out;
-    std::array<char, 4096> buf{};
-    while (std::fgets(buf.data(), buf.size(), fp))
-        out += buf.data();
-    int rc = ::pclose(fp);
-    if (rc != 0) return std::unexpected(std::format(
-        "command exited with {}: {}", rc, cmd));
-    return out;
+    auto r = mcpp::platform::process::capture(cmd);
+    if (r.exit_code != 0) return std::unexpected(std::format(
+        "command exited with {}: {}", r.exit_code, cmd));
+    return r.output;
 }
 
 // Run a shell command and discard stdout/stderr; return exit code.
 int run_silent(const std::string& cmd) {
-    auto silent = cmd + " >/dev/null 2>&1";
-    return std::system(silent.c_str());
+    auto silent = cmd + " " + std::string(mcpp::platform::shell::silent_redirect);
+    return mcpp::platform::process::run_silent(silent);
 }
 
 // ─── ldd parsing + manylinux skip-list ──────────────────────────────
