@@ -14,7 +14,11 @@
 module;
 #include <cstdio>
 #include <cstdlib>
-#if defined(__APPLE__)
+#if defined(_WIN32)
+#include <windows.h>
+#define popen  _popen
+#define pclose _pclose
+#elif defined(__APPLE__)
 #include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
 
@@ -116,8 +120,14 @@ bool dyndep_mode_enabled() {
 
 std::filesystem::path mcpp_exe_path() {
     std::error_code ec;
-#if defined(__APPLE__)
-    // macOS: use _NSGetExecutablePath
+#if defined(_WIN32)
+    char buf[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, buf, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        auto p = std::filesystem::canonical(buf, ec);
+        if (!ec) return p;
+    }
+#elif defined(__APPLE__)
     char buf[4096];
     uint32_t size = sizeof(buf);
     if (_NSGetExecutablePath(buf, &size) == 0) {
@@ -187,7 +197,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("\n");
 
     append("rule cp_bmi\n");
+#if defined(_WIN32)
+    // Use PowerShell Copy-Item which handles both forward and back slashes.
+    // cmd.exe `copy` breaks on forward-slash paths from ninja.
+    append("  command = powershell -NoProfile -Command \"Copy-Item -Force '$in' -Destination '$out'\"\n");
+#else
     append("  command = mkdir -p $$(dirname $out) && cp -f $in $out\n");
+#endif
     append("  description = STAGE $out\n\n");
 
     // P1: per-file dyndep rule. Converts one .ddi → .dd independently.
@@ -210,6 +226,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     std::string module_output_flag = traits.needsExplicitModuleOutput
         ? " -fmodule-output=$bmi_out" : "";
     append("rule cxx_module\n");
+#if defined(_WIN32)
+    // Windows: skip BMI restat optimization (requires POSIX shell).
+    // No $toolenv (empty on Windows; its leading space breaks CreateProcess).
+    append(std::format("  command = "
+           "$cxx $cxxflags{} -c $in -o $out\n", module_output_flag));
+#else
     append(std::format("  command = "
            "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
              "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
@@ -221,13 +243,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
            "else "
              "rm -f \"$bmi_out.bak\"; "
            "fi\n", module_output_flag));
+#endif
     append("  description = MOD $out\n");
     if (dyndep)
         append("  restat = 1\n");
     append("\n");
 
     append("rule cxx_object\n");
+#if defined(_WIN32)
+    append("  command = $cxx $cxxflags -c $in -o $out\n");
+#else
     append("  command = $toolenv $cxx $cxxflags -c $in -o $out\n");
+#endif
     append("  description = OBJ $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -235,13 +262,30 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (need_c_rule) {
         append("rule c_object\n");
+#if defined(_WIN32)
+        append("  command = $cc $cflags -c $in -o $out\n");
+#else
         append("  command = $toolenv $cc $cflags -c $in -o $out\n");
+#endif
         append("  description = CC $out\n");
         if (dyndep)
             append("  restat = 1\n");
         append("\n");
     }
 
+#if defined(_WIN32)
+    append("rule cxx_link\n");
+    append("  command = $cxx $in -o $out $ldflags\n");
+    append("  description = LINK $out\n\n");
+
+    append("rule cxx_archive\n");
+    append("  command = $ar rcs $out $in\n");
+    append("  description = AR $out\n\n");
+
+    append("rule cxx_shared\n");
+    append("  command = $cxx -shared $in -o $out $ldflags\n");
+    append("  description = SHARED $out\n\n");
+#else
     append("rule cxx_link\n");
     append("  command = $toolenv $cxx $in -o $out $ldflags\n");
     append("  description = LINK $out\n\n");
@@ -253,6 +297,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("rule cxx_shared\n");
     append("  command = $toolenv $cxx -shared $in -o $out $ldflags\n");
     append("  description = SHARED $out\n\n");
+#endif
 
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.
@@ -261,14 +306,23 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("rule cxx_scan\n");
         if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
+#if defined(_WIN32)
+            append("  command = $cxx $cxxflags -fmodules "
+#else
             append("  command = $toolenv $cxx $cxxflags -fmodules "
+#endif
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$compile_target "
                    "-M -MM -MF $out.dep -E $in -o $compile_target\n");
         } else {
             // Clang path: clang-scan-deps produces P1689 JSON to stdout.
+#if defined(_WIN32)
+            append("  command = $scan_deps -format=p1689 -- "
+                   "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+#else
             append("  command = $toolenv $scan_deps -format=p1689 -- "
                    "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+#endif
         }
         append("  description = SCAN $out\n\n");
 
@@ -511,19 +565,33 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // -B<binutils-bin> flag we emit into cxxflags/ldflags (see
     // emit_ninja_string). No PATH injection needed here.
     std::filesystem::path ninjaBin;
+#if defined(_WIN32)
+    if (auto nb = mcpp::xlings::paths::find_sibling_binary(
+            plan.toolchain.binaryPath, "ninja", "ninja.exe")) {
+        ninjaBin = *nb;
+    }
+#else
     if (auto nb = mcpp::xlings::paths::find_sibling_binary(
             plan.toolchain.binaryPath, "ninja", "ninja")) {
         ninjaBin = *nb;
     }
+#endif
 
+#if defined(_WIN32)
+    // Windows: no quotes on first token (cmd.exe strips leading quotes),
+    // use shq only for the -C argument which may contain spaces.
     std::string ninjaProgram =
-        !ninjaBin.empty() ? std::format("'{}'", ninjaBin.string()) : std::string{"ninja"};
+        !ninjaBin.empty() ? ninjaBin.string() : std::string{"ninja"};
+#else
+    std::string ninjaProgram =
+        !ninjaBin.empty() ? mcpp::xlings::shq(ninjaBin.string()) : std::string{"ninja"};
+#endif
 
     // Record ninja binary for P0 fast-path cache.
     BuildResult r;
     r.ninjaProgram = ninjaProgram;
 
-    std::string cmd = std::format("{} -C '{}'", ninjaProgram, plan.outputDir.string());
+    std::string cmd = std::format("{} -C {}", ninjaProgram, mcpp::xlings::shq(plan.outputDir.string()));
     if (opts.verbose)
         cmd += " -v";
     if (opts.parallelJobs)

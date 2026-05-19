@@ -17,6 +17,10 @@
 
 module;
 #include <cstdio>      // popen, pclose
+#if defined(_WIN32)
+#define popen  _popen
+#define pclose _pclose
+#endif
 
 export module mcpp.pack;
 
@@ -532,6 +536,28 @@ make_tarball(const std::filesystem::path& stagingRoot,
 std::expected<void, Error>
 run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
 {
+#if defined(_WIN32)
+    // `mcpp pack` is not yet supported on Windows.
+    //
+    // The current implementation relies on POSIX-only tools:
+    //   - LD_TRACE_LOADED_OBJECTS=1  (ELF dynamic linker trick; no equivalent
+    //                                 on Windows PE/COFF)
+    //   - ldd / patchelf             (Linux ELF tools; not available on Windows)
+    //   - tar -czf                   (GNU tar; not universally present on Windows)
+    //
+    // For CI-produced Windows zip packages, use the ci-windows.yml workflow
+    // which zips the MSVC/Clang build output directly.
+    //
+    // Windows PE packaging (DLL collection + zip) is planned.
+    // See .agents/docs/2026-05-19-pack-windows-design.md for the design.
+    (void)plan;
+    (void)cfg;
+    return std::unexpected(Error{
+        "error: `mcpp pack` is not yet supported on Windows.\n"
+        "       Use the CI workflow (ci-windows.yml) to produce Windows zip packages.\n"
+        "       Windows PE packaging (DLL collection + zip) is planned."
+    });
+#else
     using namespace detail;
     std::error_code ec;
 
@@ -645,6 +671,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             return r;
     }
     return {};
+#endif // !_WIN32
 }
 
 } // namespace mcpp::pack

@@ -12,6 +12,7 @@ import std;
 import mcpp.build.plan;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 
 export namespace mcpp::build {
@@ -59,6 +60,12 @@ std::string escape_path(const std::filesystem::path& p) {
 
 CompileFlags compute_flags(const BuildPlan& plan) {
     CompileFlags f;
+
+    // ProviderCapabilities: centralised query point for per-toolchain decisions.
+    // Prefer caps.* checks over ad-hoc is_clang()/is_musl_target() calls for
+    // any new branching added to this function.
+    auto caps = mcpp::toolchain::capabilities_for(plan.toolchain);
+
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);
     f.toolEnv = mcpp::toolchain::compiler_env_prefix(plan.toolchain);
@@ -125,7 +132,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         plan.manifest.buildConfig.cStandard.empty() ? "c11" : plan.manifest.buildConfig.cStandard;
 
     // Assemble
-    std::string module_flag = isClang ? "" : " -fmodules";
+    // -fmodules is a GCC-only flag; Clang uses a different module ABI and does
+    // not need it.  caps.stdlib_id distinguishes GCC (libstdc++) from Clang
+    // (libc++ / msvc-stl) without an extra is_clang() call.
+    std::string module_flag = (caps.stdlib_id == "libstdc++") ? " -fmodules" : "";
     std::string std_module_flag;
     if (isClang && !plan.stdBmiPath.empty()) {
         std_module_flag = " -fmodule-file=std=" + escape_path(staged_std_bmi_path(plan));
@@ -149,20 +159,32 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;
     f.linkage = plan.manifest.buildConfig.linkage;
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    // Windows: MSVC linker handles static/dynamic linking differently
+    std::string full_static;
+    std::string static_stdlib;
+#elif defined(__APPLE__)
     // macOS does not support full static linking (libSystem must be dynamic)
     std::string full_static;
+    std::string static_stdlib = (f.staticStdlib && !isClang) ? " -static-libstdc++" : "";
 #else
     std::string full_static = (f.linkage == "static") ? " -static" : "";
-#endif
     std::string static_stdlib = (f.staticStdlib && !isClang) ? " -static-libstdc++" : "";
+#endif
     std::string runtime_dirs;
+#if !defined(_WIN32)
+    // -L and -rpath are ELF/Mach-O linker flags; MSVC linker doesn't use them.
     for (auto& dir : plan.toolchain.linkRuntimeDirs) {
         runtime_dirs += " -L" + escape_path(dir);
         runtime_dirs += " -Wl,-rpath," + escape_path(dir);
     }
+#endif
 
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    // Windows: Clang targeting MSVC links against MSVC runtime automatically.
+    // No -L/-rpath/-static flags needed.
+    f.ld = "";
+#elif defined(__APPLE__)
     // macOS linking strategy:
     // - No --sysroot: SDK .tbd stubs miss libc++abi exports.
     // - No -L<llvm>/lib: xlings LLVM's libc++.dylib doesn't pull in

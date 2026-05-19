@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # 38_self_config_mirror.sh — configure xlings mirror through mcpp self config.
 set -e
 

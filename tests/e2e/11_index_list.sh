@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # `mcpp index list` shows configured registries (after init).
 set -e
 

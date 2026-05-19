@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # `mcpp test` discovers tests/**/*.cpp and runs each as a separate binary.
 # All passing → exit 0 + summary "ok. N passed".
 set -e

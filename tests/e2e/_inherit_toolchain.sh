@@ -13,26 +13,34 @@ if [[ -z "${MCPP_HOME:-}" ]]; then
 fi
 mkdir -p "$MCPP_HOME"
 
+# On Windows, HOME may differ from USERPROFILE; try both
 USER_MCPP="${HOME}/.mcpp"
+if [[ ! -d "$USER_MCPP" && -n "${USERPROFILE:-}" ]]; then
+    USER_MCPP="$USERPROFILE/.mcpp"
+fi
 if [[ -d "$USER_MCPP/registry/data/xpkgs" ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
     [[ -e "$MCPP_HOME/registry/data/xpkgs" ]] \
-        || ln -sf "$USER_MCPP/registry/data/xpkgs" "$MCPP_HOME/registry/data/xpkgs"
+        || ln -sf "$USER_MCPP/registry/data/xpkgs" "$MCPP_HOME/registry/data/xpkgs" 2>/dev/null \
+        || cp -r "$USER_MCPP/registry/data/xpkgs" "$MCPP_HOME/registry/data/xpkgs"
 fi
 if [[ -d "$USER_MCPP/registry/data/xim-pkgindex" ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
     [[ -e "$MCPP_HOME/registry/data/xim-pkgindex" ]] \
-        || ln -sf "$USER_MCPP/registry/data/xim-pkgindex" "$MCPP_HOME/registry/data/xim-pkgindex"
+        || ln -sf "$USER_MCPP/registry/data/xim-pkgindex" "$MCPP_HOME/registry/data/xim-pkgindex" 2>/dev/null \
+        || cp -r "$USER_MCPP/registry/data/xim-pkgindex" "$MCPP_HOME/registry/data/xim-pkgindex"
 fi
 if [[ -d "$USER_MCPP/registry/data/xim-index-repos" ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
     [[ -e "$MCPP_HOME/registry/data/xim-index-repos" ]] \
-        || ln -sf "$USER_MCPP/registry/data/xim-index-repos" "$MCPP_HOME/registry/data/xim-index-repos"
+        || ln -sf "$USER_MCPP/registry/data/xim-index-repos" "$MCPP_HOME/registry/data/xim-index-repos" 2>/dev/null \
+        || cp -r "$USER_MCPP/registry/data/xim-index-repos" "$MCPP_HOME/registry/data/xim-index-repos"
 fi
 if [[ "${MCPP_INHERIT_SUBOS:-1}" != "0" && -d "$USER_MCPP/registry/subos" ]]; then
     mkdir -p "$MCPP_HOME/registry"
     [[ -e "$MCPP_HOME/registry/subos" ]] \
-        || ln -sf "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos"
+        || ln -sf "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos" 2>/dev/null \
+        || cp -r "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos"
 fi
 if [[ "${MCPP_INHERIT_CONFIG:-1}" != "0" && -f "$USER_MCPP/config.toml" ]]; then
     cp -f "$USER_MCPP/config.toml" "$MCPP_HOME/config.toml" 2>/dev/null || true
@@ -40,5 +48,6 @@ fi
 if [[ -d "$USER_MCPP/bin" ]]; then
     mkdir -p "$MCPP_HOME"
     [[ -e "$MCPP_HOME/bin" ]] \
-        || ln -sf "$USER_MCPP/bin" "$MCPP_HOME/bin"
+        || ln -sf "$USER_MCPP/bin" "$MCPP_HOME/bin" 2>/dev/null \
+        || cp -r "$USER_MCPP/bin" "$MCPP_HOME/bin"
 fi

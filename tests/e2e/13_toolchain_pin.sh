@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Project pins [toolchain] → mcpp resolves to xpkg absolute path.
 #
 # This test verifies the resolve_xpkg_path branch is exercised when a

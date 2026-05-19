@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Verify --help and --version
 set -e
 

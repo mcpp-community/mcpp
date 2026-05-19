@@ -11,6 +11,10 @@
 module;
 #include <cstdio>
 #include <cstdlib>
+#if defined(_WIN32)
+#define popen  _popen
+#define pclose _pclose
+#endif
 
 export module mcpp.cli;
 
@@ -19,6 +23,7 @@ import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
+import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.registry;
@@ -1131,7 +1136,7 @@ prepare_build(bool print_fingerprint,
         // macOS: LLVM/Clang — Apple doesn't ship GCC; upstream LLVM with
         //        bundled libc++ is the self-contained choice.
         // Linux: musl-gcc — produces portable static binaries.
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         std::string defaultSpec = "llvm@20.1.7";
 #else
         std::string defaultSpec = "gcc@15.1.0-musl";
@@ -1139,7 +1144,7 @@ prepare_build(bool print_fingerprint,
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         mcpp::ui::info("First run",
             std::format("no toolchain configured — installing {} (LLVM/Clang) as default",
                         defaultSpec));
@@ -1954,15 +1959,28 @@ prepare_build(bool print_fingerprint,
                     std::format("{} ({} = {})", spec.git, spec.gitRefKind, spec.gitRev));
                 std::string cloneCmd;
                 if (spec.gitRefKind == "branch") {
+#if defined(_WIN32)
+                    cloneCmd = std::format(
+                        "git clone --depth 1 --branch \"{}\" \"{}\" \"{}\" 2>&1",
+                        spec.gitRev, spec.git, gitRoot.string());
+#else
                     cloneCmd = std::format(
                         "git clone --depth 1 --branch '{}' '{}' '{}' 2>&1",
                         spec.gitRev, spec.git, gitRoot.string());
+#endif
                 } else {
                     // For tag/rev: full clone, then checkout (depth-1 may miss the rev).
+#if defined(_WIN32)
+                    cloneCmd = std::format(
+                        "git clone \"{}\" \"{}\" && cd \"{}\" && git checkout --quiet \"{}\" 2>&1",
+                        spec.git, gitRoot.string(),
+                        gitRoot.string(), spec.gitRev);
+#else
                     cloneCmd = std::format(
                         "git clone '{}' '{}' && cd '{}' && git checkout --quiet '{}' 2>&1",
                         spec.git, gitRoot.string(),
                         gitRoot.string(), spec.gitRev);
+#endif
                 }
                 std::string out;
                 {
@@ -2156,9 +2174,8 @@ prepare_build(bool print_fingerprint,
 
     // Clang: discover clang-scan-deps for P1689 dyndep scanning.
     if (mcpp::toolchain::is_clang(*tc)) {
-        auto sd = tc->binaryPath.parent_path() / "clang-scan-deps";
-        if (std::filesystem::exists(sd)) {
-            ctx.plan.scanDepsPath = sd;
+        if (auto sd = mcpp::toolchain::clang::find_scan_deps(*tc)) {
+            ctx.plan.scanDepsPath = *sd;
         }
     }
 
@@ -2515,7 +2532,11 @@ std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
     }
 
     // All inputs are older than build.ninja → fast-path: just run ninja.
+#if defined(_WIN32)
+    std::string cmd = std::format("{} -C \"{}\"", ninjaProgram, outputDir.string());
+#else
     std::string cmd = std::format("{} -C '{}'", ninjaProgram, outputDir.string());
+#endif
     if (verbose) cmd += " -v";
     cmd += " 2>&1";
 
@@ -2604,8 +2625,13 @@ int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
         std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
     std::println("");
     std::fflush(stdout);
+#if defined(_WIN32)
+    std::string cmd = std::format("\"{}\"", exe.string());
+    for (auto& a : passthrough) cmd += std::format(" \"{}\"", a);
+#else
     std::string cmd = std::format("'{}'", exe.string());
     for (auto& a : passthrough) cmd += std::format(" '{}'", a);
+#endif
     return std::system(cmd.c_str()) == 0 ? 0 : 1;
 }
 
@@ -3147,6 +3173,7 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
         // visible to test binaries that shell out to them. The
         // toolchain binary's path encodes the registry root — derive it.
         std::string pathPrefix;
+#if !defined(_WIN32)
         if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(ctx->tc.binaryPath)) {
             // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
             auto registryDir = xpkgs->parent_path().parent_path();
@@ -3154,12 +3181,22 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
             if (std::filesystem::exists(sandboxBin))
                 pathPrefix = std::format("PATH='{}':\"$PATH\" ", sandboxBin.string());
         }
+#endif
 
+#if defined(_WIN32)
+        std::string cmd = std::format("\"{}\"", exe.string());
+        for (auto& a : passthrough) cmd += std::format(" \"{}\"", a);
+#else
         std::string cmd = std::format("{}'{}'", pathPrefix, exe.string());
         for (auto& a : passthrough) cmd += std::format(" '{}'", a);
+#endif
         int rc = std::system(cmd.c_str());
-        // std::system returns wait status — extract exit code.
+        // std::system returns wait status on POSIX, exit code on Windows.
+#if defined(_WIN32)
+        int exitCode = rc;
+#else
         int exitCode = WIFEXITED(rc) ? WEXITSTATUS(rc) : 127;
+#endif
 
         if (exitCode == 0) {
             std::println("{} ... ok", lu.targetName);

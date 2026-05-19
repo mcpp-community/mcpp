@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: gcc
 # 26_toolchain_management.sh — verify M5.5 toolchain CLI + isolation:
 #   - mcpp toolchain install / list / default / remove
 #   - hard error when no toolchain configured

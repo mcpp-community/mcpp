@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf gcc
 # Multi-module: package with .cppm + main.cpp importing it
 set -e
 

@@ -16,7 +16,11 @@
 module;
 #include <cstdio>
 #include <cstdlib>
-#if defined(__APPLE__)
+#if defined(_WIN32)
+#include <windows.h>
+#define popen  _popen
+#define pclose _pclose
+#elif defined(__APPLE__)
 #include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
 
@@ -164,7 +168,13 @@ std::filesystem::path home_dir() {
         return std::filesystem::path(e);
 
     std::error_code ec;
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    char _exe_buf[MAX_PATH];
+    DWORD _exe_len = GetModuleFileNameA(NULL, _exe_buf, MAX_PATH);
+    std::filesystem::path exe;
+    if (_exe_len > 0 && _exe_len < MAX_PATH)
+        exe = std::filesystem::canonical(_exe_buf, ec);
+#elif defined(__APPLE__)
     char _exe_buf[4096];
     uint32_t _exe_size = sizeof(_exe_buf);
     std::filesystem::path exe;
@@ -345,7 +355,11 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet)
     }
 
     // 2. Copy from system (`which xlings`)
+#if defined(_WIN32)
+    auto sys = run_capture("where xlings.exe 2>nul");
+#else
     auto sys = run_capture("command -v xlings 2>/dev/null");
+#endif
     if (sys) {
         std::string p = *sys;
         while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) p.pop_back();
@@ -427,7 +441,11 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // <XLINGS_HOME>/bin/xlings, which satisfies xlings's own shim-
     // creation guard (`if fs::exists(homeDir/"bin"/"xlings")`),
     // making ensure_sandbox_xlings_binary() a no-op.
+#if defined(_WIN32)
+    cfg.xlingsBinary  = cfg.registryDir / "bin" / "xlings.exe";
+#else
     cfg.xlingsBinary  = cfg.registryDir / "bin" / "xlings";
+#endif
     cfg.bmiCacheDir   = cfg.mcppHome / "bmi";
     cfg.metaCacheDir  = cfg.mcppHome / "cache";
     cfg.logDir        = cfg.mcppHome / "log";
@@ -522,7 +540,11 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         auto xbin = acquire_xlings_binary(cfg.xlingsBinary, quiet);
         if (!xbin) return std::unexpected(ConfigError{xbin.error()});
     } else if (cfg.xlingsBinaryMode == "system") {
+#if defined(_WIN32)
+        auto sys = run_capture("where xlings.exe 2>nul");
+#else
         auto sys = run_capture("command -v xlings 2>/dev/null");
+#endif
         if (!sys || sys->empty())
             return std::unexpected(ConfigError{"system xlings not found in PATH"});
         std::string p = *sys;
@@ -546,8 +568,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     //    upstream (see docs/short-term-vs-long-track plan).
     ensure_sandbox_xlings_binary(cfg, quiet);
     ensure_sandbox_init(cfg, quiet);
-#if !defined(__APPLE__)
-    // patchelf is ELF-only; macOS uses Mach-O and does not need it.
+#if !defined(__APPLE__) && !defined(_WIN32)
+    // patchelf is ELF-only; macOS uses Mach-O and Windows uses PE.
     ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
 #endif
     ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);

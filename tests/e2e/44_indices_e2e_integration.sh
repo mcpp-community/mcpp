@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # E2E integration test for [indices] feature gaps:
 #   1. Local path index discovery via `mcpp index list`
 #   2. Workspace inherits [indices] from root

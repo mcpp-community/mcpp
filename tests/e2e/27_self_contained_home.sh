@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf
 # 27_self_contained_home.sh — verifies mcpp's self-contained home behaviour.
 #
 # Without MCPP_HOME set, mcpp resolves its home from the binary's location:

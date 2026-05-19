@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Lockfile v2 + index pin/unpin: verify lockfile format, v1 migration,
 # and `mcpp index pin` / `mcpp index unpin` CLI commands.
 # No network access required — uses local path indices and synthetic lockfiles.

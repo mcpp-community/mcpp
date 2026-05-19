@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
+# requires:
 # 36_llvm_toolchain.sh — build a non-module C/C++ package with xlings LLVM.
 set -e
 
-LLVM_ROOT="${HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
-if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
+OS="$(uname -s)"
+# On Windows the clang++ binary has a .exe suffix
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    LLVM_ROOT="${USERPROFILE}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
+    CLANGPP_BIN="$LLVM_ROOT/bin/clang++.exe"
+else
+    LLVM_ROOT="${HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
+    CLANGPP_BIN="$LLVM_ROOT/bin/clang++"
+fi
+if [[ ! -x "$CLANGPP_BIN" ]]; then
     echo "SKIP: xlings llvm@20.1.7 is not installed"
     exit 0
 fi
@@ -16,7 +25,13 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 mkdir -p "$TMP/proj/src"
 cd "$TMP/proj"
 
-cat > mcpp.toml <<'EOF'
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    TC_KEY="windows"
+else
+    TC_KEY="linux"
+fi
+
+cat > mcpp.toml <<EOF
 [package]
 name    = "hello_llvm"
 version = "0.1.0"
@@ -25,7 +40,7 @@ version = "0.1.0"
 import_std = false
 
 [toolchain]
-linux = "llvm@20.1.7"
+${TC_KEY} = "llvm@20.1.7"
 EOF
 
 cat > src/main.cpp <<'EOF'
@@ -63,7 +78,11 @@ grep -q 'Finished' "$TMP/build.log" || {
     exit 1
 }
 
-binary=$(find target -type f -path '*/bin/hello_llvm' | head -1)
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    binary=$(find target -type f -path '*/bin/hello_llvm.exe' | head -1)
+else
+    binary=$(find target -type f -path '*/bin/hello_llvm' | head -1)
+fi
 [[ -n "$binary" && -x "$binary" ]] || {
     find target -maxdepth 5 -type f
     echo "FAIL: hello_llvm binary missing"

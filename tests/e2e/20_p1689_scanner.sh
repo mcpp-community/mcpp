@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf gcc
 # 20_p1689_scanner.sh — verify M3.3.a opt-in P1689 scanner end-to-end.
 #
 # Builds the same multi-module project twice — once under the default

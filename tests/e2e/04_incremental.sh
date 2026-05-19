@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # Incremental: a no-op rebuild does no work; touching main.cpp recompiles only it
 set -e
 

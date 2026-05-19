@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <fcntl.h>
+#if !defined(_WIN32)
 #include <sys/file.h>
 #include <unistd.h>
+#endif
 
 import std;
 import mcpp.bmi_cache;
@@ -43,8 +45,8 @@ void writeFile(const std::filesystem::path& p, std::string_view body) {
 
 TEST(BmiCache, KeyDirLayoutMatchesDocs26) {
     auto k = makeKey("/home/u/.mcpp");
-    EXPECT_EQ(k.dir().string(),
-              "/home/u/.mcpp/bmi/deadbeef0123abcd/deps/mcpplibs/mcpplibs.cmdline@0.0.1");
+    auto expected = std::filesystem::path("/home/u/.mcpp/bmi/deadbeef0123abcd/deps/mcpplibs/mcpplibs.cmdline@0.0.1");
+    EXPECT_EQ(k.dir(), expected);
     EXPECT_EQ(k.manifestFile().filename().string(), "manifest.txt");
     EXPECT_EQ(k.bmiDir().filename().string(),       "gcm.cache");
     EXPECT_EQ(k.objDir().filename().string(),       "obj");
@@ -200,8 +202,10 @@ TEST(BmiCache, PopulateFailsIfBuildOutputMissing) {
     EXPECT_NE(pop.error().find("expected build output missing"), std::string::npos);
 }
 
+#if !defined(_WIN32)
 // M4 #9: when an external holder takes the .lock, populate_from must skip
 // (returns success but does NOT clobber the directory).
+// Uses flock() which is POSIX-only.
 TEST(BmiCache, PopulateSkipsWhenLockHeld) {
     Tmp t;
     auto home    = t.path / "home";
@@ -233,3 +237,4 @@ TEST(BmiCache, PopulateSkipsWhenLockHeld) {
     ASSERT_TRUE(pop2) << pop2.error();
     EXPECT_TRUE(std::filesystem::exists(k.manifestFile()));
 }
+#endif // !defined(_WIN32)

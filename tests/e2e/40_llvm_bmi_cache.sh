@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
+# requires: import-std-libcxx
 # 40_llvm_bmi_cache.sh — Clang BMI cache reuse for dependency packages.
 set -e
+
+OS="$(uname -s)"
+# libc++ std.cppm is only available on Linux/macOS — on Windows there is no
+# libc++ module distribution. Exit gracefully; the import-std-libcxx capability
+# check in run_all.sh already gates this, but guard here too for direct runs.
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    echo "SKIP: libc++ std.cppm not available on Windows"
+    exit 0
+fi
 
 LLVM_ROOT="${HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
 if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
@@ -23,7 +33,8 @@ USER_MCPP="${HOME}/.mcpp"
 if [[ -d "$USER_MCPP/registry/data/mcpplibs" ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
     [[ -e "$MCPP_HOME/registry/data/mcpplibs" ]] \
-        || ln -sf "$USER_MCPP/registry/data/mcpplibs" "$MCPP_HOME/registry/data/mcpplibs"
+        || ln -sf "$USER_MCPP/registry/data/mcpplibs" "$MCPP_HOME/registry/data/mcpplibs" 2>/dev/null \
+        || cp -r "$USER_MCPP/registry/data/mcpplibs" "$MCPP_HOME/registry/data/mcpplibs"
 fi
 
 mkdir -p "$TMP/proj/src"

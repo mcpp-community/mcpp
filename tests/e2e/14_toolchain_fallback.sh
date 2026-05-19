@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # 14_toolchain_fallback.sh — M5.5: when no toolchain is configured at all
 # (no project [toolchain], no global default), `mcpp build` hard-errors with
 # a helpful message instead of falling back to system PATH.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf gcc
 # Path-based dependency: package B imports modules from package A via
 #   [dependencies.A] path = "../A"
 # Verifies the multi-package scanner + linker pipeline.

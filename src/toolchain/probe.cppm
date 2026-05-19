@@ -1,14 +1,26 @@
 // mcpp.toolchain.probe - common compiler probing helpers.
+//
+// NOTE: This file contains its own run_capture() helper that returns
+// std::expected<std::string, DetectError> — a different signature from
+// mcpp::process::run_capture() (which returns RunResult).  Do NOT migrate
+// existing callers here without care.  For new process invocations that do
+// not need DetectError propagation, prefer mcpp::process::run_capture from
+// the mcpp.process module.
 
 module;
 #include <cstdio>      // popen, pclose, fgets, FILE
 #include <cstdlib>     // getenv
+#if defined(_WIN32)
+#define popen  _popen
+#define pclose _pclose
+#endif
 
 export module mcpp.toolchain.probe;
 
 import std;
 import mcpp.toolchain.model;
 import mcpp.xlings;
+import mcpp.platform;
 
 export namespace mcpp::toolchain {
 
@@ -66,10 +78,15 @@ std::string join_colon_paths(const std::vector<std::filesystem::path>& dirs) {
 }
 
 std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) {
+#if defined(_WIN32)
+    (void)dirs;
+    return "";
+#else
     if (dirs.empty()) return "";
     auto joined = join_colon_paths(dirs);
     return std::format("env LD_LIBRARY_PATH={}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}} ",
                        mcpp::xlings::shq(joined));
+#endif
 }
 
 } // namespace
@@ -240,11 +257,18 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
         cxx = "g++";
     }
 
-    auto bin_path_r = run_capture(std::format("command -v '{}' 2>/dev/null", cxx));
+#if defined(_WIN32)
+    auto bin_path_r = run_capture(std::format("where {} {}", cxx,
+                                               mcpp::platform::null_redirect));
+#else
+    auto bin_path_r = run_capture(std::format("command -v '{}' {}", cxx,
+                                               mcpp::platform::null_redirect));
+#endif
     if (!bin_path_r) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found in PATH", cxx)});
     }
-    auto bin = trim_line(*bin_path_r);
+    // `where` on Windows may return multiple lines; take only the first.
+    auto bin = trim_line(first_line_of(*bin_path_r));
     if (bin.empty()) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found", cxx)});
     }
@@ -254,9 +278,10 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
 std::expected<std::string, DetectError>
 probe_target_triple(const std::filesystem::path& compilerBin,
                     const std::string& envPrefix) {
-    auto triple_r = run_capture(std::format("{}{} -dumpmachine 2>/dev/null",
+    auto triple_r = run_capture(std::format("{}{} -dumpmachine {}",
                                             envPrefix,
-                                            mcpp::xlings::shq(compilerBin.string())));
+                                            mcpp::xlings::shq(compilerBin.string()),
+                                            mcpp::platform::null_redirect));
     if (!triple_r) return std::unexpected(triple_r.error());
     return trim_line(*triple_r);
 }
@@ -264,16 +289,18 @@ probe_target_triple(const std::filesystem::path& compilerBin,
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
               const std::string& envPrefix) {
-    auto r = run_capture(std::format("{}{} -print-sysroot 2>/dev/null",
+    auto r = run_capture(std::format("{}{} -print-sysroot {}",
                                      envPrefix,
-                                     mcpp::xlings::shq(compilerBin.string())));
+                                     mcpp::xlings::shq(compilerBin.string()),
+                                     mcpp::platform::null_redirect));
     if (r) {
         auto s = trim_line(*r);
         if (!s.empty() && std::filesystem::exists(s)) return s;
     }
 #if defined(__APPLE__)
     // macOS fallback: use xcrun to discover the SDK path
-    auto xcrun_r = run_capture("xcrun --show-sdk-path 2>/dev/null");
+    auto xcrun_r = run_capture(std::format("xcrun --show-sdk-path {}",
+                                            mcpp::platform::null_redirect));
     if (xcrun_r) {
         auto sdk = trim_line(*xcrun_r);
         if (!sdk.empty() && std::filesystem::exists(sdk)) return sdk;

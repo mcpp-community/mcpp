@@ -394,3 +394,164 @@ jobs:
             dist/mcpp-${{ steps.resolve.outputs.version }}-macosx-arm64.tar.gz.sha256
             dist/mcpp-macosx-arm64.tar.gz
             dist/mcpp-macosx-arm64.tar.gz.sha256
+
+  build-windows:
+    name: build (Windows / x86_64)
+    runs-on: windows-latest
+    needs: build-release
+    permissions:
+      contents: write
+    timeout-minutes: 45
+    env:
+      MCPP_HOME: C:\Users\runneradmin\.mcpp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: resolve
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            VER=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
+            TAG="v$VER"
+          fi
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            git checkout --detach "refs/tags/$TAG"
+          fi
+
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~\.mcpp
+          key: mcpp-sandbox-${{ runner.os }}-release-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          restore-keys: |
+            mcpp-sandbox-${{ runner.os }}-release-
+            mcpp-sandbox-${{ runner.os }}-
+
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~\.xlings
+          key: xlings-${{ runner.os }}-release-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-${{ runner.os }}-release-
+            xlings-${{ runner.os }}-
+
+      - name: Bootstrap mcpp via xlings
+        shell: bash
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        run: |
+          WORK=$(mktemp -d)
+          zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
+          curl -fsSL -o "${WORK}/${zipfile}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${zipfile}"
+          cd "${WORK}"
+          unzip -q "${zipfile}"
+          "$WORK/xlings-${XLINGS_VERSION}-windows-x86_64/subos/default/bin/xlings.exe" self install
+          export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
+          echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+          xlings.exe --version
+          xlings.exe install mcpp -y || xlings.exe install mcpp@0.0.17 -y
+          MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp.exe" -path "*/bin/*" 2>/dev/null | head -1)
+          if [ -z "$MCPP" ]; then
+            MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp" -path "*/bin/*" 2>/dev/null | head -1)
+          fi
+          test -n "$MCPP" || { echo "FAIL: mcpp not found after xlings install"; exit 1; }
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          XLINGS_BIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
+          echo "XLINGS_BIN=$XLINGS_BIN" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN_UNIX=$USERPROFILE/.xlings/subos/default/bin/xlings.exe" >> "$GITHUB_ENV"
+          echo "XLINGS_XPKGS=$USERPROFILE/.xlings/data/xpkgs" >> "$GITHUB_ENV"
+
+      - name: Build mcpp from source (self-host)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+
+          # Pre-seed mcpp sandbox with xlings LLVM (avoids redundant download)
+          MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
+          if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
+            mkdir -p "$MCPP_XPKGS"
+            rm -rf "$MCPP_XPKGS/xim-x-llvm"
+            cp -r "$XLINGS_XPKGS/xim-x-llvm" "$MCPP_XPKGS/xim-x-llvm"
+            echo "Pre-seeded LLVM from global xlings"
+          fi
+
+          "$MCPP" build
+
+          MCPP_BIN=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          test -n "$MCPP_BIN" || { echo "FAIL: no mcpp.exe in target/"; exit 1; }
+          MCPP_BIN=$(cd "$(dirname "$MCPP_BIN")" && pwd)/$(basename "$MCPP_BIN")
+          echo "Self-hosted binary: $MCPP_BIN"
+          "$MCPP_BIN" --version
+          echo "MCPP_BIN=$MCPP_BIN" >> "$GITHUB_ENV"
+
+      - name: Package Windows release zip
+        id: stage
+        shell: bash
+        run: |
+          VERSION="${{ steps.resolve.outputs.version }}"
+          WRAPPER="mcpp-${VERSION}-windows-x86_64"
+          ZIPNAME="${WRAPPER}.zip"
+
+          STAGING=$(mktemp -d)
+          mkdir -p "$STAGING/$WRAPPER/bin" "$STAGING/$WRAPPER/registry/bin"
+          cp "$MCPP_BIN" "$STAGING/$WRAPPER/bin/mcpp.exe"
+
+          # Windows batch launcher
+          printf '@echo off\r\n"%%~dp0bin\\mcpp.exe" %%*\r\n' > "$STAGING/$WRAPPER/mcpp.bat"
+          cp README.md "$STAGING/$WRAPPER/" 2>/dev/null || true
+          cp LICENSE   "$STAGING/$WRAPPER/" 2>/dev/null || true
+
+          # Bundle xlings.exe for install consumers
+          if [ -f "$XLINGS_BIN_UNIX" ]; then
+            cp "$XLINGS_BIN_UNIX" "$STAGING/$WRAPPER/registry/bin/xlings.exe"
+          fi
+
+          # Pack with 7z (available on windows-latest)
+          mkdir -p dist
+          (cd "$STAGING" && 7z a -tzip "$ZIPNAME" "$WRAPPER")
+          cp "$STAGING/$ZIPNAME" "dist/$ZIPNAME"
+          # Versionless alias
+          cp "dist/$ZIPNAME" "dist/mcpp-windows-x86_64.zip"
+          # SHA256
+          (cd dist && sha256sum "$ZIPNAME" > "$ZIPNAME.sha256")
+          (cd dist && sha256sum "mcpp-windows-x86_64.zip" > "mcpp-windows-x86_64.zip.sha256")
+
+          echo "zipname=$ZIPNAME" >> "$GITHUB_OUTPUT"
+          ls -la dist/
+
+      - name: Smoke-test the packaged zip
+        shell: bash
+        run: |
+          ZIPNAME="${{ steps.stage.outputs.zipname }}"
+          WRAPPER="${ZIPNAME%.zip}"
+          SMOKE=$(mktemp -d)
+          (cd "$SMOKE" && unzip -q "$GITHUB_WORKSPACE/dist/$ZIPNAME")
+          "$SMOKE/$WRAPPER/bin/mcpp.exe" --version
+          "$SMOKE/$WRAPPER/bin/mcpp.exe" --help | head -5
+          test -f "$SMOKE/$WRAPPER/registry/bin/xlings.exe"
+          test -f "$SMOKE/$WRAPPER/mcpp.bat"
+          echo "Smoke-test passed"
+
+      - name: Upload Windows artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.tag }}
+          files: |
+            dist/mcpp-${{ steps.resolve.outputs.version }}-windows-x86_64.zip
+            dist/mcpp-${{ steps.resolve.outputs.version }}-windows-x86_64.zip.sha256
+            dist/mcpp-windows-x86_64.zip
+            dist/mcpp-windows-x86_64.zip.sha256

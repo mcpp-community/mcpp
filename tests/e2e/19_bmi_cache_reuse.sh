@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # 19_bmi_cache_reuse.sh — verify M3.2 BMI persistent cache wiring.
 #
 #   1. Path deps don't populate the cache (correctness invariant from docs/26).
@@ -70,7 +71,7 @@ EOF
 
 # bmi/ should exist (env init creates it) but no deps/ entry for path deps.
 [[ -d "$MCPP_HOME/bmi" ]] || { echo "missing $MCPP_HOME/bmi"; exit 1; }
-if compgen -G "$MCPP_HOME/bmi/*/deps/*/mylibA*" > /dev/null; then
+if find "$MCPP_HOME/bmi" -path "*/deps/*/mylibA*" 2>/dev/null | grep -q .; then
     echo "FAIL: path dep mylibA was populated into BMI cache (must be skipped)"
     find "$MCPP_HOME/bmi" -maxdepth 5
     exit 1

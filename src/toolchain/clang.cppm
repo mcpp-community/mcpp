@@ -6,6 +6,7 @@ import std;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
 import mcpp.xlings;
+import mcpp.platform;
 
 export namespace mcpp::toolchain::clang {
 
@@ -89,9 +90,10 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
     const std::string& envPrefix)
 {
     auto manifest_r = mcpp::toolchain::run_capture(std::format(
-        "{}{} -print-library-module-manifest-path 2>/dev/null",
+        "{}{} -print-library-module-manifest-path {}",
         envPrefix,
-        mcpp::xlings::shq(cxx_binary.string())));
+        mcpp::xlings::shq(cxx_binary.string()),
+        mcpp::platform::null_redirect));
     if (manifest_r) {
         auto manifestPath = std::filesystem::path(
             mcpp::toolchain::trim_line(*manifest_r));
@@ -130,14 +132,44 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
 }
 
 void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
-    tc.stdlibId      = "libc++";
+    // Clang targeting MSVC uses MSVC STL, not libc++.
+    bool msvTarget = tc.targetTriple.find("msvc") != std::string::npos;
+    tc.stdlibId      = msvTarget ? "msvc-stl" : "libc++";
     tc.stdlibVersion = tc.version.empty() ? "unknown" : tc.version;
     tc.linkRuntimeDirs = mcpp::toolchain::discover_link_runtime_dirs(
         tc.binaryPath, tc.targetTriple);
+
     if (auto p = find_libcxx_std_module_source(tc.binaryPath, envPrefix)) {
         tc.stdModuleSource = *p;
         tc.hasImportStd    = true;
     }
+
+#if defined(_WIN32)
+    // Fallback: if libc++ std.cppm not found, look for MSVC STL's std.ixx.
+    // This happens when Clang targets x86_64-pc-windows-msvc.
+    if (!tc.hasImportStd && msvTarget) {
+        // Search Visual Studio installations for std.ixx
+        // Typical path: C:\Program Files\Microsoft Visual Studio\2022\*\VC\Tools\MSVC\*\modules\std.ixx
+        std::error_code ec;
+        std::filesystem::path vsBase = "C:\\Program Files\\Microsoft Visual Studio\\2022";
+        if (std::filesystem::exists(vsBase, ec)) {
+            for (auto& edition : std::filesystem::directory_iterator(vsBase, ec)) {
+                auto vcTools = edition.path() / "VC" / "Tools" / "MSVC";
+                if (!std::filesystem::exists(vcTools, ec)) continue;
+                for (auto& ver : std::filesystem::directory_iterator(vcTools, ec)) {
+                    auto stdIxx = ver.path() / "modules" / "std.ixx";
+                    if (std::filesystem::exists(stdIxx, ec)) {
+                        tc.stdModuleSource = stdIxx;
+                        tc.hasImportStd    = true;
+                        break;
+                    }
+                }
+                if (tc.hasImportStd) break;
+            }
+        }
+    }
+#endif
+
     if (tc.hasImportStd) {
         if (auto p = find_libcxx_std_compat_source(tc.binaryPath, envPrefix)) {
             tc.stdCompatSource = *p;
@@ -158,6 +190,37 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
                                                    const std::filesystem::path& bmiPath,
                                                    std::string_view sysrootFlag) {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
+#if defined(_WIN32)
+    // Windows: use absolute paths, raw binary path as first token
+    // (cmd.exe strips leading quotes), shq for args with spaces.
+    // -x c++-module is needed for MSVC STL's .ixx files (Clang doesn't
+    // recognize the .ixx extension as a module source by default).
+    auto absBmi = (cacheDir / relBmi).string();
+    auto ext = tc.stdModuleSource.extension().string();
+    // MSVC STL's std.ixx needs -x c++-module (Clang doesn't recognize .ixx)
+    // and generates harmless warnings about #include in module purview and
+    // the reserved 'std' module name — suppress both.
+    std::string ixxFlags = (ext == ".ixx")
+        ? " -x c++-module -Wno-include-angled-in-module-purview -Wno-reserved-module-identifier"
+        : "";
+    return {
+        std::format(
+            "{} -std=c++23{}{} "
+            "--precompile {} -o {}",
+            tc.binaryPath.string(),
+            ixxFlags,
+            sysrootFlag,
+            mcpp::xlings::shq(tc.stdModuleSource.string()),
+            mcpp::xlings::shq(absBmi)),
+        std::format(
+            "{} -std=c++23{} "
+            "{} -c -o {}",
+            tc.binaryPath.string(),
+            sysrootFlag,
+            mcpp::xlings::shq(absBmi),
+            mcpp::xlings::shq((cacheDir / "std.o").string()))
+    };
+#else
     return {
         std::format(
             "cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
@@ -177,16 +240,25 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             sysrootFlag,
             mcpp::xlings::shq(relBmi))
     };
+#endif
 }
 
 std::filesystem::path archive_tool(const Toolchain& tc) {
+#if defined(_WIN32)
+    auto llvmAr = tc.binaryPath.parent_path() / "llvm-ar.exe";
+#else
     auto llvmAr = tc.binaryPath.parent_path() / "llvm-ar";
+#endif
     if (std::filesystem::exists(llvmAr)) return llvmAr;
     return {};
 }
 
 std::optional<std::filesystem::path> find_scan_deps(const Toolchain& tc) {
+#if defined(_WIN32)
+    auto p = tc.binaryPath.parent_path() / "clang-scan-deps.exe";
+#else
     auto p = tc.binaryPath.parent_path() / "clang-scan-deps";
+#endif
     if (std::filesystem::exists(p)) return p;
     return std::nullopt;
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # 23_remove_update.sh — M4 #3: mcpp remove / mcpp update.
 set -e
 

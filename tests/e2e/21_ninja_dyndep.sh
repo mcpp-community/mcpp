@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf gcc
 # 21_ninja_dyndep.sh — verify M3.3.b: ninja dyndep build mode produces
 # byte-identical runtime output to the static-deps mode.
 #

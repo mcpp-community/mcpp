@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: pack patchelf elf
 # 30_pack_modes.sh — `mcpp pack` smoke tests for all three modes.
 #
 # Verifies the contract of each mode by extracting the produced tarball

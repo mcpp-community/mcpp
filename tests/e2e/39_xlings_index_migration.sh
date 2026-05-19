@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires:
 # 39_xlings_index_migration.sh - legacy mcpp-index cache migrates to mcpplibs.
 set -e
 

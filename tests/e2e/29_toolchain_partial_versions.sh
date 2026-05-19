@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: gcc
 # 29_toolchain_partial_versions.sh — `mcpp toolchain default` accepts partial
 # versions in either positional or @-separated form, AND `mcpp build`
 # auto-installs the default toolchain on a first run with no toolchain

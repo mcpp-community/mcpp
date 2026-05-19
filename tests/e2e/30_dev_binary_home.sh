@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: gcc
 # Dev binaries are built under build/.../release/mcpp, not <root>/bin/mcpp.
 # With MCPP_HOME unset they should use the conventional ~/.mcpp sandbox;
 # only release-style <root>/bin/mcpp should self-locate to <root>.

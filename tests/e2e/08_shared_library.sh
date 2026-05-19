@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: elf
 # Shared library: kind = "shared" → libNAME.so via -shared -fPIC
 set -e
 
