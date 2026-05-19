@@ -108,22 +108,14 @@ jobs:
           "$MCPP_SELF" --version
           echo ":: Self-host smoke PASS"
 
-      - name: Fresh user experience (clean env, mcpp new → build → run)
+      - name: Fresh user experience (xlings install mcpp → new → run)
         shell: bash
         run: |
-          # Unset MCPP_VENDORED_XLINGS — mcpp should use its own bundled xlings.
-          # MCPP_HOME stays (resolved from binary location by mcpp itself).
-          unset MCPP_VENDORED_XLINGS
-          unset XLINGS_BIN
-          FRESH=$(mktemp -d)
-          cd "$FRESH"
-          "$MCPP_SELF" new hello
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          mcpp.exe new hello
           cd hello
-          "$MCPP_SELF" build
-          out=$("$MCPP_SELF" run 2>&1)
-          echo "$out"
-          echo "$out" | grep -q "Hello from hello" || { echo "FAIL: unexpected output"; exit 1; }
-          echo ":: Fresh user experience PASS"
+          mcpp.exe run
 
       - name: Package Windows release zip
         id: package

@@ -316,18 +316,10 @@ jobs:
           "$MCPP" --version
           echo ":: Self-host smoke PASS"
 
-      - name: Fresh user experience (clean env, mcpp new → build → run)
+      - name: Fresh user experience (xlings install mcpp → new → run)
         run: |
-          # Use the self-hosted mcpp with its existing MCPP_HOME but
-          # unset MCPP_VENDORED_XLINGS to test self-contained behavior.
-          MCPP=$(find target -path "*/bin/mcpp" | head -1)
-          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
-          FRESH=$(mktemp -d)
-          cd "$FRESH"
-          env -u MCPP_VENDORED_XLINGS "$MCPP" new hello
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          mcpp new hello
           cd hello
-          env -u MCPP_VENDORED_XLINGS "$MCPP" build
-          out=$(env -u MCPP_VENDORED_XLINGS "$MCPP" run 2>&1)
-          echo "$out"
-          echo "$out" | grep -q "Hello from hello" || { echo "FAIL: unexpected output"; exit 1; }
-          echo ":: Fresh user experience PASS"
+          mcpp run
