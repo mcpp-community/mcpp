@@ -398,7 +398,7 @@ kind = "lib"
     EXPECT_TRUE(m->lib.path.empty());
     EXPECT_TRUE(mcpp::manifest::has_lib_target(*m));
     auto root = mcpp::manifest::resolve_lib_root_path(*m);
-    EXPECT_EQ(root.string(), "src/tinyhttps.cppm");
+    EXPECT_EQ(root, std::filesystem::path("src/tinyhttps.cppm"));
 }
 
 TEST(Manifest, LibRootBareNameNoNamespace) {
@@ -412,7 +412,7 @@ kind = "lib"
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value()) << m.error().format();
     auto root = mcpp::manifest::resolve_lib_root_path(*m);
-    EXPECT_EQ(root.string(), "src/gtest.cppm");
+    EXPECT_EQ(root, std::filesystem::path("src/gtest.cppm"));
 }
 
 TEST(Manifest, LibRootExplicitOverride) {
