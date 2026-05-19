@@ -128,6 +128,19 @@ jobs:
           "$MCPP" toolchain default gcc@16.1.0
           bash tests/e2e/run_all.sh
 
+      - name: Fresh user experience (mcpp new → build → run)
+        run: |
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          FRESH=$(mktemp -d)
+          cd "$FRESH"
+          "$MCPP" new hello
+          cd hello
+          "$MCPP" build
+          out=$("$MCPP" run 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "Hello from hello" || { echo "FAIL: unexpected output"; exit 1; }
+          echo ":: Fresh user experience PASS"
+
       - name: Self-host smoke (freshly-built mcpp builds itself again)
         run: |
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")

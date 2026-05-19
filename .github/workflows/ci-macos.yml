@@ -306,6 +306,20 @@ jobs:
           "$MCPP" toolchain default llvm@20.1.7
           bash tests/e2e/run_all.sh
 
+      - name: Fresh user experience (mcpp new → build → run)
+        run: |
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          FRESH=$(mktemp -d)
+          cd "$FRESH"
+          "$MCPP" new hello
+          cd hello
+          "$MCPP" build
+          out=$("$MCPP" run 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "Hello from hello" || { echo "FAIL: unexpected output"; exit 1; }
+          echo ":: Fresh user experience PASS"
+
       - name: Self-host smoke (freshly-built mcpp builds itself again)
         run: |
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
