@@ -8,18 +8,13 @@
 // `mcpp.pm.compat`. It must NOT import mcpp.config or any other mcpp module.
 
 module;
-#include <cstdio>
 #include <cstdlib>
-#if defined(_WIN32)
-#include <stdlib.h>    // _putenv_s
-#define popen  _popen
-#define pclose _pclose
-#endif
 
 export module mcpp.xlings;
 
 import std;
 import mcpp.pm.compat;
+import mcpp.platform;
 
 export namespace mcpp::xlings {
 
@@ -305,41 +300,16 @@ struct LineScan {
 // ─── run_capture ────────────────────────────────────────────────────
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd) {
-    std::array<char, 4096> buf{};
-    std::string out;
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return std::unexpected("popen failed: " + cmd);
-    while (std::fgets(buf.data(), buf.size(), fp) != nullptr) out += buf.data();
-    int rc = ::pclose(fp);
-    if (rc != 0 && out.empty()) return std::unexpected("command failed: " + cmd);
-    return out;
+    auto r = mcpp::platform::process::capture(cmd);
+    if (r.exit_code != 0 && r.output.empty())
+        return std::unexpected("command failed: " + cmd);
+    return r.output;
 }
 
 // ─── Shell quoting ──────────────────────────────────────────────────
 
 std::string shq(std::string_view s) {
-    std::string out;
-    out.reserve(s.size() + 2);
-#if defined(_WIN32)
-    // Windows: wrap in double quotes, escape inner " as \".
-    // IMPORTANT: avoid placing a shq'd token as the FIRST token in a
-    // popen/system command — cmd.exe strips a leading " pair.  For
-    // binary paths, use the raw string; shq is safe for arguments.
-    out.push_back('"');
-    for (char c : s) {
-        if (c == '"') out += "\\\"";
-        else out.push_back(c);
-    }
-    out.push_back('"');
-#else
-    out.push_back('\'');
-    for (char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out.push_back(c);
-    }
-    out.push_back('\'');
-#endif
-    return out;
+    return mcpp::platform::shell::quote(s);
 }
 
 // ─── Path helpers ───────────────────────────────────────────────────
@@ -428,13 +398,10 @@ std::filesystem::path sandbox_init_marker(const Env& env) {
 std::string build_command_prefix(const Env& env) {
     auto xvmBin = paths::sandbox_bin(env).string();
 #if defined(_WIN32)
-    _putenv_s("XLINGS_HOME", env.home.string().c_str());
-    _putenv_s("XLINGS_PROJECT_DIR",
-              env.projectDir.empty() ? "" : env.projectDir.string().c_str());
-    {
-        std::string newPath = xvmBin + ";" + (std::getenv("PATH") ? std::getenv("PATH") : "");
-        _putenv_s("PATH", newPath.c_str());
-    }
+    mcpp::platform::env::set("XLINGS_HOME", env.home.string());
+    mcpp::platform::env::set("XLINGS_PROJECT_DIR",
+              env.projectDir.empty() ? "" : env.projectDir.string());
+    mcpp::platform::windows::prepend_path(xvmBin);
     return env.binary.string();
 #else
     if (env.projectDir.empty()) {
@@ -461,13 +428,9 @@ std::string build_command_prefix(const Env& env) {
 std::string build_interface_command(const Env& env,
                                     std::string_view capability,
                                     std::string_view argsJson) {
-#if defined(_WIN32)
-    return std::format("{} interface {} --args {} 2>nul",
-        build_command_prefix(env), capability, shq(argsJson));
-#else
-    return std::format("{} interface {} --args {} 2>/dev/null",
-        build_command_prefix(env), capability, shq(argsJson));
-#endif
+    return std::format("{} interface {} --args {} {}",
+        build_command_prefix(env), capability, shq(argsJson),
+        mcpp::platform::null_redirect);
 }
 
 // ─── JSON extraction helpers ────────────────────────────────────────
@@ -606,24 +569,13 @@ call(const Env& env, std::string_view capability,
 {
     auto cmd = build_interface_command(env, capability, argsJson);
 
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return std::unexpected(
-        std::format("failed to spawn xlings: {}", cmd));
-
     CallResult result;
-    std::array<char, 16384> buf{};
-    std::string acc;
-    while (std::fgets(buf.data(), buf.size(), fp) != nullptr) {
-        acc += buf.data();
-        std::size_t pos;
-        while ((pos = acc.find('\n')) != std::string::npos) {
-            auto line = acc.substr(0, pos);
-            acc.erase(0, pos + 1);
-            while (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty()) continue;
+    int rc = mcpp::platform::process::run_streaming(cmd,
+        [&](std::string_view line) {
+            if (line.empty()) return;
 
             auto ev = parse_event_line(line);
-            if (!ev) continue;
+            if (!ev) return;
 
             std::visit([&](auto&& e) {
                 using T = std::decay_t<decltype(e)>;
@@ -643,9 +595,7 @@ call(const Env& env, std::string_view capability,
                     if (handler) handler->on_result(e);
                 }
             }, *ev);
-        }
-    }
-    int rc = ::pclose(fp);
+        });
     if (rc != 0 && result.exitCode == 0) result.exitCode = rc;
     return result;
 }
@@ -659,8 +609,8 @@ int install_with_progress(const Env& env, std::string_view target,
         R"({{"targets":["{}"],"yes":true}})", target);
 
 #if defined(_WIN32)
-    _putenv_s("XLINGS_HOME", env.home.string().c_str());
-    _putenv_s("XLINGS_PROJECT_DIR", "");
+    mcpp::platform::env::set("XLINGS_HOME", env.home.string());
+    mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
     std::error_code ec_mkdir;
     std::filesystem::create_directories(env.home, ec_mkdir);
     // Use direct `install` command instead of `interface install_packages`
@@ -668,7 +618,7 @@ int install_with_progress(const Env& env, std::string_view target,
     // where the extraction subprocess doesn't respect XLINGS_HOME.
     auto directCmd = std::format("{} install {} -y",
         env.binary.string(), target);
-    int directRc = std::system(directCmd.c_str());
+    int directRc = mcpp::platform::process::run_silent(directCmd);
     if (directRc == 0) return 0;
     // Fallback to interface path if direct install fails
     auto cmd = std::format("{} interface install_packages --args {}",
@@ -676,18 +626,14 @@ int install_with_progress(const Env& env, std::string_view target,
         shq(argsJson));
 #else
     auto cmd = std::format(
-        "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} 2>/dev/null",
+        "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} {}",
         shq(env.home.string()),
         shq(env.home.string()),
         shq(env.binary.string()),
-        shq(argsJson));
+        shq(argsJson),
+        mcpp::platform::null_redirect);
 #endif
 
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return -1;
-
-    std::array<char, 16384> buf{};
-    std::string acc;
     int resultExitCode = -1;
 
     auto handle_line = [&](std::string_view line) {
@@ -739,16 +685,7 @@ int install_with_progress(const Env& env, std::string_view target,
         if (!prog.files.empty()) cb(prog);
     };
 
-    while (std::fgets(buf.data(), buf.size(), fp)) {
-        acc += buf.data();
-        std::size_t pos;
-        while ((pos = acc.find('\n')) != std::string::npos) {
-            handle_line(std::string_view{acc}.substr(0, pos));
-            acc.erase(0, pos + 1);
-        }
-    }
-    if (!acc.empty()) handle_line(acc);
-    int closeRc = ::pclose(fp);
+    int closeRc = mcpp::platform::process::run_streaming(cmd, handle_line);
     return (resultExitCode != -1) ? resultExitCode : closeRc;
 }
 
@@ -775,7 +712,7 @@ void seed_xlings_json(const Env& env,
 
 int config_show(const Env& env) {
     auto cmd = std::format("{} config", build_command_prefix(env));
-    return std::system(cmd.c_str());
+    return mcpp::platform::process::run_silent(cmd);
 }
 
 int config_set_mirror(const Env& env, std::string_view mirror, bool quiet) {
@@ -784,12 +721,8 @@ int config_set_mirror(const Env& env, std::string_view mirror, bool quiet) {
         "{} config --mirror {} {}",
         build_command_prefix(env),
         shq(mirror),
-#if defined(_WIN32)
-        quiet ? ">nul 2>&1" : "");
-#else
-        quiet ? ">/dev/null 2>&1" : "");
-#endif
-    return std::system(cmd.c_str());
+        quiet ? mcpp::platform::shell::silent_redirect : "");
+    return mcpp::platform::process::run_silent(cmd);
 }
 
 void ensure_init(const Env& env, bool quiet) {
@@ -803,17 +736,18 @@ void ensure_init(const Env& env, bool quiet) {
     if (!quiet)
         print_status("Initialize", "mcpp sandbox layout (one-time)");
 #if defined(_WIN32)
-    _putenv_s("XLINGS_HOME", env.home.string().c_str());
-    _putenv_s("XLINGS_PROJECT_DIR", "");
+    mcpp::platform::env::set("XLINGS_HOME", env.home.string());
+    mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
     auto cmd = env.binary.string() + " self init";
 #else
     auto cmd = std::format(
-        "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init >/dev/null 2>&1",
+        "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init {}",
         shq(env.home.string()),
         shq(env.home.string()),
-        shq(env.binary.string()));
+        shq(env.binary.string()),
+        mcpp::platform::shell::silent_redirect);
 #endif
-    int rc = std::system(cmd.c_str());
+    int rc = mcpp::platform::process::run_silent(cmd);
     if (rc != 0 && !quiet) {
         std::println(stderr,
             "warning: `xlings self init` failed for sandbox at '{}'",
@@ -845,12 +779,9 @@ void ensure_ninja(const Env& env, bool quiet,
     auto root = paths::xim_tool_root(env, "ninja");
     if (std::filesystem::exists(root)) {
         std::error_code ec;
+        auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
         for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-#if defined(_WIN32)
-            if (std::filesystem::exists(v.path() / "ninja.exe")) return;
-#else
-            if (std::filesystem::exists(v.path() / "ninja")) return;
-#endif
+            if (std::filesystem::exists(v.path() / ninja_name)) return;
         }
     }
     if (!quiet)
@@ -893,13 +824,10 @@ bool is_index_fresh(const Env& env, std::int64_t ttlSeconds) {
 
 int update_index(const Env& env, bool quiet) {
     std::string cmd = build_command_prefix(env) + " update 2>&1";
-    std::array<char, 4096> buf{};
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return -1;
-    while (std::fgets(buf.data(), buf.size(), fp)) {
-        if (!quiet) std::fputs(buf.data(), stdout);
-    }
-    return ::pclose(fp);
+    return mcpp::platform::process::run_streaming(cmd,
+        [quiet](std::string_view line) {
+            if (!quiet) std::println("{}", line);
+        });
 }
 
 void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {

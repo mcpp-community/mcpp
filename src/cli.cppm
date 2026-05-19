@@ -36,6 +36,7 @@ import mcpp.publish.xpkg_emit;
 import mcpp.pack;
 import mcpp.config;
 import mcpp.xlings;
+import mcpp.platform;
 import mcpp.fetcher;
 import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
@@ -1016,16 +1017,7 @@ prepare_build(bool print_fingerprint,
         return &*cfg_opt;
     };
 
-    constexpr std::string_view kCurrentPlatform =
-#if defined(__linux__)
-        "linux";
-#elif defined(__APPLE__)
-        "macos";
-#elif defined(_WIN32)
-        "windows";
-#else
-        "unknown";
-#endif
+    constexpr std::string_view kCurrentPlatform = mcpp::platform::name;
 
     // M5.5: toolchain resolution priority:
     //   0. --target X / --static, looked up in [target.<triple>]

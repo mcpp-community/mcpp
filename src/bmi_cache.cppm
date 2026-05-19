@@ -15,18 +15,11 @@
 // dep cache without trashing manifest.txt (docs/26 §5.4 V2).
 
 module;
-#if defined(_WIN32)
-#include <io.h>
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <sys/file.h>
-#include <unistd.h>
-#endif
 
 export module mcpp.bmi_cache;
 
 import std;
+import mcpp.platform;
 
 export namespace mcpp::bmi_cache {
 
@@ -188,56 +181,6 @@ stage_into(const CacheKey& key,
 }
 
 namespace {
-
-// Acquire an exclusive non-blocking lock on <dir>/.lock. Returns a handle
-// on success, or -1/INVALID_HANDLE if another mcpp is already populating.
-#if defined(_WIN32)
-// Windows: use LockFileEx on a file handle
-HANDLE try_lock_dir(const std::filesystem::path& dir) {
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    auto lockPath = dir / ".lock";
-    HANDLE h = CreateFileW(lockPath.wstring().c_str(),
-        GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-        NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return h;
-    OVERLAPPED ov = {};
-    if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
-                    0, 1, 0, &ov)) {
-        CloseHandle(h);
-        return INVALID_HANDLE_VALUE;
-    }
-    return h;
-}
-
-void release_lock(HANDLE h) {
-    if (h == INVALID_HANDLE_VALUE) return;
-    OVERLAPPED ov = {};
-    UnlockFileEx(h, 0, 1, 0, &ov);
-    CloseHandle(h);
-}
-#else
-// POSIX: use flock(2)
-int try_lock_dir(const std::filesystem::path& dir) {
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    auto lockPath = dir / ".lock";
-    int fd = ::open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
-    if (fd < 0) return -1;
-    if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
-        ::close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-void release_lock(int fd) {
-    if (fd < 0) return;
-    ::flock(fd, LOCK_UN);
-    ::close(fd);
-}
-#endif
-
 } // namespace
 
 std::expected<void, std::string>
@@ -246,26 +189,11 @@ populate_from(const CacheKey& key,
               const DepArtifacts& arts)
 {
     auto cacheDir = key.dir();
-#if defined(_WIN32)
-    HANDLE lockHandle = try_lock_dir(cacheDir);
-    if (lockHandle == INVALID_HANDLE_VALUE) {
-        return {};
-    }
-    struct LockGuard {
-        HANDLE h;
-        ~LockGuard() { release_lock(h); }
-    } guard{ lockHandle };
-#else
-    int lockFd = try_lock_dir(cacheDir);
-    if (lockFd < 0) {
+    auto lock = mcpp::platform::fs::FileLock::try_acquire(cacheDir);
+    if (!lock) {
         // Another writer holds the lock; treat as success (they'll do it).
         return {};
     }
-    struct LockGuard {
-        int fd;
-        ~LockGuard() { release_lock(fd); }
-    } guard{ lockFd };
-#endif
 
     auto cacheBmi = key.bmiDir();
     auto cacheObj = key.objDir();

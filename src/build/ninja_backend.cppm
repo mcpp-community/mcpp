@@ -15,11 +15,8 @@ module;
 #include <cstdio>
 #include <cstdlib>
 #if defined(_WIN32)
-#include <windows.h>
 #define popen  _popen
 #define pclose _pclose
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
 
 export module mcpp.build.ninja;
@@ -33,6 +30,7 @@ import mcpp.dyndep;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.registry;
 import mcpp.xlings;
+import mcpp.platform;
 
 export namespace mcpp::build {
 
@@ -119,27 +117,7 @@ bool dyndep_mode_enabled() {
 }
 
 std::filesystem::path mcpp_exe_path() {
-    std::error_code ec;
-#if defined(_WIN32)
-    char buf[MAX_PATH];
-    DWORD len = GetModuleFileNameA(NULL, buf, MAX_PATH);
-    if (len > 0 && len < MAX_PATH) {
-        auto p = std::filesystem::canonical(buf, ec);
-        if (!ec) return p;
-    }
-#elif defined(__APPLE__)
-    char buf[4096];
-    uint32_t size = sizeof(buf);
-    if (_NSGetExecutablePath(buf, &size) == 0) {
-        auto p = std::filesystem::canonical(buf, ec);
-        if (!ec) return p;
-    }
-#else
-    auto p = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (!ec)
-        return p;
-#endif
-    return "mcpp";  // fall back to PATH lookup
+    return mcpp::platform::fs::self_exe_path();
 }
 
 bool is_c_source(const std::filesystem::path& src) {

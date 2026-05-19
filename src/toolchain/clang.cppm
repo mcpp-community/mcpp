@@ -230,21 +230,15 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
 }
 
 std::filesystem::path archive_tool(const Toolchain& tc) {
-#if defined(_WIN32)
-    auto llvmAr = tc.binaryPath.parent_path() / "llvm-ar.exe";
-#else
-    auto llvmAr = tc.binaryPath.parent_path() / "llvm-ar";
-#endif
+    auto llvmAr = tc.binaryPath.parent_path() /
+        (std::string("llvm-ar") + std::string(mcpp::platform::exe_suffix));
     if (std::filesystem::exists(llvmAr)) return llvmAr;
     return {};
 }
 
 std::optional<std::filesystem::path> find_scan_deps(const Toolchain& tc) {
-#if defined(_WIN32)
-    auto p = tc.binaryPath.parent_path() / "clang-scan-deps.exe";
-#else
-    auto p = tc.binaryPath.parent_path() / "clang-scan-deps";
-#endif
+    auto p = tc.binaryPath.parent_path() /
+        (std::string("clang-scan-deps") + std::string(mcpp::platform::exe_suffix));
     if (std::filesystem::exists(p)) return p;
     return std::nullopt;
 }

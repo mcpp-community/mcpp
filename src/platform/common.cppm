@@ -1,14 +1,12 @@
-// mcpp.platform — centralized platform-specific constants.
+// mcpp.platform.common — centralized platform-specific constants.
 //
-// Consumers import this module instead of scattering #if/_WIN32 / __APPLE__
-// blocks throughout the codebase.  All compile-time branching lives here.
+// Consumers import this module (via mcpp.platform) instead of scattering
+// #if/_WIN32 / __APPLE__ blocks throughout the codebase.  All compile-time
+// branching for platform constants lives here.
 
 module;
 
-// Nothing to #include for compile-time constants; the module fragment is kept
-// for future OS headers if needed.
-
-export module mcpp.platform;
+export module mcpp.platform.common;
 
 import std;
 
@@ -60,6 +58,19 @@ constexpr bool is_linux   = true;
 constexpr bool is_windows = false;
 constexpr bool is_macos   = false;
 constexpr bool is_linux   = false;
+#endif
+
+// ── Platform name string ───────────────────────────────────────────────────
+
+constexpr std::string_view name =
+#if defined(_WIN32)
+    "windows";
+#elif defined(__APPLE__)
+    "macos";
+#elif defined(__linux__)
+    "linux";
+#else
+    "unknown";
 #endif
 
 } // namespace mcpp::platform
