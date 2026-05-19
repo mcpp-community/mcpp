@@ -467,7 +467,7 @@ std::string build_interface_command(const Env& env,
                                     std::string_view capability,
                                     std::string_view argsJson) {
 #if defined(_WIN32)
-    return std::format("{} interface {} --args {}",
+    return std::format("{} interface {} --args {} 2>nul",
         build_command_prefix(env), capability, shq(argsJson));
 #else
     return std::format("{} interface {} --args {} 2>/dev/null",
@@ -668,7 +668,7 @@ int install_with_progress(const Env& env, std::string_view target,
     _putenv_s("XLINGS_PROJECT_DIR", "");
     // Use raw path (no quoting) to avoid cmd.exe double-quote parsing issues.
     // Wrap only the JSON arg in single-escaped quotes for the C runtime.
-    auto cmd = std::format("{} interface install_packages --args {}",
+    auto cmd = std::format("{} interface install_packages --args {} 2>nul",
         env.binary.string(),
         shq(argsJson));
 #else
