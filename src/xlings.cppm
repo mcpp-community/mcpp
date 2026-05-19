@@ -8,6 +8,7 @@
 // `mcpp.pm.compat`. It must NOT import mcpp.config or any other mcpp module.
 
 module;
+#include <cstdio>      // stderr
 #include <cstdlib>
 
 export module mcpp.xlings;
