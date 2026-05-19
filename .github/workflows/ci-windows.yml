@@ -56,6 +56,7 @@ jobs:
           export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           xlings.exe --version
+          xlings.exe install llvm -y
           xlings.exe install mcpp -y
           echo "=== Searching for mcpp binary ==="
           find "$USERPROFILE/.xlings" -name "mcpp.exe" -o -name "mcpp" 2>/dev/null | head -10
@@ -75,21 +76,16 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          # Install LLVM directly into mcpp sandbox via xlings.
-          # xlings sandboxed install has issues with large packages on Windows,
-          # so we use the system xlings binary with XLINGS_HOME pointed at
-          # the mcpp sandbox to ensure LLVM lands in the right place.
-          XLINGS_SYS="$USERPROFILE/.xlings/subos/default/bin/xlings.exe"
-          MCPP_REGISTRY="$USERPROFILE/.mcpp/registry"
-          export XLINGS_HOME="$MCPP_REGISTRY"
-          "$XLINGS_SYS" install llvm -y || "$XLINGS_SYS" install llvm@20.1.7 -y
-          unset XLINGS_HOME
-
-          # Verify LLVM is in the mcpp sandbox
-          LLVM_CHECK="$MCPP_REGISTRY/data/xpkgs/xim-x-llvm"
-          if [ ! -d "$LLVM_CHECK" ]; then
-            echo "LLVM not in sandbox, searching..."
-            find "$USERPROFILE" -path "*/xim-x-llvm/20.1.7/bin/clang++.exe" 2>/dev/null | head -3
+          # Pre-seed LLVM into mcpp sandbox from system xlings install
+          MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
+          LLVM_SRC=$(find "$USERPROFILE/.xlings" -path "*/xim-x-llvm/20.1.7/bin/clang++.exe" 2>/dev/null | head -1)
+          if [ -n "$LLVM_SRC" ]; then
+            LLVM_PKG_DIR=$(dirname "$(dirname "$(dirname "$LLVM_SRC")")")
+            mkdir -p "$MCPP_XPKGS"
+            [ -d "$MCPP_XPKGS/xim-x-llvm" ] || cp -r "$LLVM_PKG_DIR" "$MCPP_XPKGS/xim-x-llvm"
+            echo "Pre-seeded LLVM from $LLVM_PKG_DIR"
+          else
+            echo "WARNING: LLVM not found after xlings install"
           fi
 
           "$MCPP" build
