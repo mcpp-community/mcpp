@@ -69,7 +69,8 @@ case "$OS" in
         fi
         # NOTE: Windows runners may have g++.exe (MinGW/Strawberry) in PATH
         # but it's not a proper mcpp-compatible GCC. Don't add gcc capability.
-        CAPS+=(fresh-sandbox)
+        # fresh-sandbox: not yet reliable on Windows — xlings LLVM auto-install
+        # into temp MCPP_HOME dirs has path/copy issues. Enable once resolved.
         ;;
 esac
 
