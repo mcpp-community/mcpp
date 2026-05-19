@@ -111,8 +111,10 @@ jobs:
       - name: Fresh user experience (xlings install mcpp → new → run)
         shell: bash
         run: |
-          xlings.exe remove mcpp -y 2>/dev/null || true
+          set -ex
+          xlings.exe remove mcpp -y || true
           xlings.exe install mcpp -y
+          which mcpp.exe || echo "mcpp not in PATH"
           TMP=$(mktemp -d)
           cd "$TMP"
           mcpp.exe new hello
