@@ -428,19 +428,18 @@ std::filesystem::path sandbox_init_marker(const Env& env) {
 std::string build_command_prefix(const Env& env) {
     auto xvmBin = paths::sandbox_bin(env).string();
 #if defined(_WIN32)
-    // Windows: set environment variables via the process environment
-    // (cmd.exe `set` in compound &&-chains is unreliable) then invoke
-    // xlings directly. _putenv_s is inherited by popen/system child.
+    // Windows: set environment variables via _putenv_s (inherited by
+    // child processes) AND cd to the sandbox home (xlings may use cwd
+    // to resolve its home). Return a "cd /d <home> && <binary>" prefix.
     _putenv_s("XLINGS_HOME", env.home.string().c_str());
     _putenv_s("XLINGS_PROJECT_DIR",
               env.projectDir.empty() ? "" : env.projectDir.string().c_str());
-    // Prepend sandbox bin to PATH
     {
         std::string newPath = xvmBin + ";" + (std::getenv("PATH") ? std::getenv("PATH") : "");
         _putenv_s("PATH", newPath.c_str());
     }
-    // Return raw path — no quoting to avoid cmd.exe double-quote parsing issues
-    return env.binary.string();
+    return std::format("cd /d \"{}\" && \"{}\"",
+        env.home.string(), env.binary.string());
 #else
     if (env.projectDir.empty()) {
         // Global mode: unset XLINGS_PROJECT_DIR (existing behavior).
@@ -664,11 +663,15 @@ int install_with_progress(const Env& env, std::string_view target,
         R"({{"targets":["{}"],"yes":true}})", target);
 
 #if defined(_WIN32)
+    // Ensure xlings sees XLINGS_HOME + runs from the sandbox dir.
+    // Both _putenv_s (inherited by child) and cd /d (working dir) are
+    // needed — xlings may resolve its home from either.
     _putenv_s("XLINGS_HOME", env.home.string().c_str());
     _putenv_s("XLINGS_PROJECT_DIR", "");
-    // Use raw path (no quoting) to avoid cmd.exe double-quote parsing issues.
-    // Wrap only the JSON arg in single-escaped quotes for the C runtime.
-    auto cmd = std::format("{} interface install_packages --args {} 2>nul",
+    std::error_code ec_mkdir;
+    std::filesystem::create_directories(env.home, ec_mkdir);
+    auto cmd = std::format("cd /d \"{}\" && \"{}\" interface install_packages --args {} 2>nul",
+        env.home.string(),
         env.binary.string(),
         shq(argsJson));
 #else
@@ -802,7 +805,8 @@ void ensure_init(const Env& env, bool quiet) {
 #if defined(_WIN32)
     _putenv_s("XLINGS_HOME", env.home.string().c_str());
     _putenv_s("XLINGS_PROJECT_DIR", "");
-    auto cmd = env.binary.string() + " self init";
+    auto cmd = std::format("cd /d \"{}\" && \"{}\" self init",
+        env.home.string(), env.binary.string());
 #else
     auto cmd = std::format(
         "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init >/dev/null 2>&1",

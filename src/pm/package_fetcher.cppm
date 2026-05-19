@@ -605,28 +605,6 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     };
 
     auto resolve = [&]() -> std::expected<XpkgPayload, CallError> {
-        // xlings may install the package into its global home rather than
-        // the mcpp sandbox. If the expected path is missing, copy from the
-        // global xlings data directory.
-        if (!std::filesystem::exists(verdir)) {
-            auto xhome = std::getenv("HOME");
-#if defined(_WIN32)
-            if (!xhome) xhome = std::getenv("USERPROFILE");
-#endif
-            if (xhome) {
-                auto globalDir = std::filesystem::path(xhome)
-                    / ".xlings" / "data" / "xpkgs"
-                    / verdir.parent_path().filename()
-                    / verdir.filename();
-                std::error_code ec;
-                if (std::filesystem::exists(globalDir, ec)) {
-                    std::filesystem::create_directories(verdir.parent_path(), ec);
-                    std::filesystem::copy(globalDir, verdir,
-                        std::filesystem::copy_options::recursive
-                        | std::filesystem::copy_options::overwrite_existing, ec);
-                }
-            }
-        }
         if (!std::filesystem::exists(verdir)) {
             return std::unexpected(CallError{
                 std::format("xpkg payload missing: {}", verdir.string())});
