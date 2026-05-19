@@ -480,6 +480,16 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
+          # Pre-seed mcpp sandbox with xlings LLVM
+          MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
+          XLINGS_XPKGS="$USERPROFILE/.xlings/data/xpkgs"
+          if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
+            mkdir -p "$MCPP_XPKGS"
+            rm -rf "$MCPP_XPKGS/xim-x-llvm"
+            cp -r "$XLINGS_XPKGS/xim-x-llvm" "$MCPP_XPKGS/xim-x-llvm"
+            echo "Pre-seeded LLVM from global xlings"
+          fi
+
           "$MCPP" build
 
           MCPP_BIN=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
