@@ -17,8 +17,16 @@ cd hello
 grep -q "import std"           src/main.cpp || { echo "main.cpp missing 'import std'"; exit 1; }
 grep -q "std::println"          src/main.cpp || { echo "main.cpp missing 'std::println'"; exit 1; }
 
-# Build
-"$MCPP" build > build.log 2>&1 || { cat build.log; echo "build failed"; exit 1; }
+# Build (capture output, show on failure)
+set +e
+"$MCPP" build > build.log 2>&1
+build_rc=$?
+set -e
+if [[ $build_rc -ne 0 ]]; then
+    cat build.log
+    echo "build failed (rc=$build_rc)"
+    exit 1
+fi
 [[ -d target ]] || { cat build.log; echo "no target/ dir"; exit 1; }
 # On Windows (MINGW/MSYS) the binary has a .exe suffix
 OS="$(uname -s)"
@@ -27,7 +35,7 @@ if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
 else
     binary="$(find target -name hello -type f | head -1)"
 fi
-[[ -n "$binary" ]] || { echo "binary not produced"; exit 1; }
+[[ -n "$binary" ]] || { echo "binary not produced"; find target -type f 2>/dev/null | head -10; exit 1; }
 [[ -x "$binary" ]] || { echo "binary not executable"; exit 1; }
 
 # Run via mcpp
