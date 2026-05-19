@@ -318,23 +318,16 @@ jobs:
 
       - name: Fresh user experience (clean env, mcpp new → build → run)
         run: |
+          # Use the self-hosted mcpp with its existing MCPP_HOME but
+          # unset MCPP_VENDORED_XLINGS to test self-contained behavior.
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           FRESH=$(mktemp -d)
-          INSTALL="$FRESH/mcpp-install"
-          mkdir -p "$INSTALL/bin"
-          cp "$MCPP" "$INSTALL/bin/mcpp"
-          cp -r "$HOME/.mcpp/registry" "$INSTALL/registry" 2>/dev/null || true
-          cp "$HOME/.mcpp/config.toml" "$INSTALL/config.toml" 2>/dev/null || true
-
-          env -u MCPP_HOME -u MCPP_VENDORED_XLINGS -u XLINGS_BIN \
-            bash -c "
-              cd '$FRESH'
-              '$INSTALL/bin/mcpp' new hello
-              cd hello
-              '$INSTALL/bin/mcpp' build
-              out=\$('$INSTALL/bin/mcpp' run 2>&1)
-              echo \"\$out\"
-              echo \"\$out\" | grep -q 'Hello from hello' || { echo 'FAIL: unexpected output'; exit 1; }
-              echo ':: Fresh user experience PASS'
-            "
+          cd "$FRESH"
+          env -u MCPP_VENDORED_XLINGS "$MCPP" new hello
+          cd hello
+          env -u MCPP_VENDORED_XLINGS "$MCPP" build
+          out=$(env -u MCPP_VENDORED_XLINGS "$MCPP" run 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "Hello from hello" || { echo "FAIL: unexpected output"; exit 1; }
+          echo ":: Fresh user experience PASS"

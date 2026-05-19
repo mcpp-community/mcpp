@@ -111,32 +111,16 @@ jobs:
       - name: Fresh user experience (clean env, mcpp new → build → run)
         shell: bash
         run: |
-          # Simulate a real user: clean environment, no MCPP_HOME,
-          # no MCPP_VENDORED_XLINGS. Use the self-hosted binary which
-          # is self-contained (has bundled xlings in its registry/).
-          FRESH=$(mktemp -d)
-          # Copy the self-hosted mcpp into a release-like layout
-          INSTALL_DIR="$FRESH/mcpp-install"
-          mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/registry/bin"
-          cp "$MCPP_SELF" "$INSTALL_DIR/bin/mcpp.exe"
-          # Copy xlings + sandbox from the build so mcpp is self-contained
-          cp -r "$USERPROFILE/.mcpp/registry/bin/xlings.exe" "$INSTALL_DIR/registry/bin/" 2>/dev/null || true
-          cp -r "$USERPROFILE/.mcpp/registry/data" "$INSTALL_DIR/registry/data" 2>/dev/null || true
-          cp -r "$USERPROFILE/.mcpp/registry/subos" "$INSTALL_DIR/registry/subos" 2>/dev/null || true
-          cp "$USERPROFILE/.mcpp/config.toml" "$INSTALL_DIR/config.toml" 2>/dev/null || true
-
-          MCPP_BIN="$INSTALL_DIR/bin/mcpp.exe"
-
-          # Clear all mcpp/xlings env vars
-          unset MCPP_HOME
+          # Unset MCPP_VENDORED_XLINGS — mcpp should use its own bundled xlings.
+          # MCPP_HOME stays (resolved from binary location by mcpp itself).
           unset MCPP_VENDORED_XLINGS
           unset XLINGS_BIN
-
+          FRESH=$(mktemp -d)
           cd "$FRESH"
-          "$MCPP_BIN" new hello
+          "$MCPP_SELF" new hello
           cd hello
-          "$MCPP_BIN" build
-          out=$("$MCPP_BIN" run 2>&1)
+          "$MCPP_SELF" build
+          out=$("$MCPP_SELF" run 2>&1)
           echo "$out"
           echo "$out" | grep -q "Hello from hello" || { echo "FAIL: unexpected output"; exit 1; }
           echo ":: Fresh user experience PASS"
