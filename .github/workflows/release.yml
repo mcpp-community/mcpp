@@ -462,8 +462,7 @@ jobs:
           export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           xlings.exe --version
-          xlings.exe install llvm -y || xlings.exe install llvm@20.1.7 -y
-          xlings.exe install mcpp -y || xlings.exe install mcpp@0.0.17 -y
+          xlings.exe install mcpp -y
           MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp.exe" -path "*/bin/*" 2>/dev/null | head -1)
           if [ -z "$MCPP" ]; then
             MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp" -path "*/bin/*" 2>/dev/null | head -1)
@@ -480,15 +479,6 @@ jobs:
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-
-          # Pre-seed mcpp sandbox with xlings LLVM (avoids redundant download)
-          MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
-          if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
-            mkdir -p "$MCPP_XPKGS"
-            rm -rf "$MCPP_XPKGS/xim-x-llvm"
-            cp -r "$XLINGS_XPKGS/xim-x-llvm" "$MCPP_XPKGS/xim-x-llvm"
-            echo "Pre-seeded LLVM from global xlings"
-          fi
 
           "$MCPP" build
 
