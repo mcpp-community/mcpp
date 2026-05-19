@@ -81,13 +81,24 @@ jobs:
           LLVM_DEST="$USERPROFILE/.mcpp/registry/data/xpkgs/xim-x-llvm/$LLVM_VER"
           if [ ! -f "$LLVM_DEST/bin/clang++.exe" ]; then
             LLVM_URL="https://github.com/xlings-res/llvm/releases/download/$LLVM_VER/llvm-$LLVM_VER-windows-x86_64.tar.xz"
-            echo "Downloading LLVM $LLVM_VER..."
+            echo "Downloading LLVM $LLVM_VER from $LLVM_URL ..."
             WORK=$(mktemp -d)
-            curl -fsSL -o "$WORK/llvm.tar.xz" "$LLVM_URL"
+            curl -fSL --retry 3 -o "$WORK/llvm.tar.xz" "$LLVM_URL"
+            echo "Downloaded $(du -h "$WORK/llvm.tar.xz" | cut -f1)"
             mkdir -p "$LLVM_DEST"
-            tar -xf "$WORK/llvm.tar.xz" -C "$LLVM_DEST" --strip-components=1
+            # Use 7z (available on all Windows runners) for .tar.xz
+            cd "$WORK"
+            7z x -y llvm.tar.xz
+            7z x -y llvm.tar -o"$LLVM_DEST" -aoa
+            # The tar contains a top-level dir — move contents up if needed
+            INNER=$(ls -d "$LLVM_DEST"/llvm-* 2>/dev/null | head -1)
+            if [ -d "$INNER/bin" ]; then
+              mv "$INNER"/* "$LLVM_DEST"/
+              rmdir "$INNER" 2>/dev/null || true
+            fi
+            cd -
             rm -rf "$WORK"
-            echo "LLVM installed: $(ls "$LLVM_DEST/bin/clang++.exe" 2>/dev/null && echo OK || echo FAILED)"
+            ls "$LLVM_DEST/bin/clang++.exe" && echo "LLVM ready" || echo "LLVM extraction failed"
           fi
 
           "$MCPP" build
