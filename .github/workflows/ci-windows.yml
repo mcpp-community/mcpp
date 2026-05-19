@@ -111,12 +111,8 @@ jobs:
       - name: Fresh user experience (xlings install mcpp → new → run)
         shell: bash
         run: |
-          # Replace xlings mcpp with our self-hosted build, then test
-          # the real user flow: mcpp new hello && cd hello && mcpp run
           xlings.exe remove mcpp -y 2>/dev/null || true
-          MCPP_BIN=$(which mcpp.exe 2>/dev/null || echo "$USERPROFILE/.xlings/subos/default/bin/mcpp.exe")
-          cp "$MCPP_SELF" "$MCPP_BIN"
-
+          xlings.exe install mcpp -y
           TMP=$(mktemp -d)
           cd "$TMP"
           mcpp.exe new hello
