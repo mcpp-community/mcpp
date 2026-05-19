@@ -481,15 +481,17 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          # Pre-seed mcpp sandbox with xlings LLVM
+          # Pre-seed LLVM into mcpp sandbox from system xlings
           MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
-          XLINGS_XPKGS="$USERPROFILE/.xlings/data/xpkgs"
-          if [ -d "$XLINGS_XPKGS/xim-x-llvm" ]; then
-            mkdir -p "$MCPP_XPKGS"
-            rm -rf "$MCPP_XPKGS/xim-x-llvm"
-            cp -r "$XLINGS_XPKGS/xim-x-llvm" "$MCPP_XPKGS/xim-x-llvm"
-            echo "Pre-seeded LLVM from global xlings"
-          fi
+          for src in "$USERPROFILE/.xlings/data/xpkgs/xim-x-llvm" \
+                     "$USERPROFILE/.xlings/subos/default/data/xpkgs/xim-x-llvm"; do
+            if [ -d "$src" ]; then
+              mkdir -p "$MCPP_XPKGS"
+              cp -r "$src" "$MCPP_XPKGS/xim-x-llvm"
+              echo "Pre-seeded LLVM from $src"
+              break
+            fi
+          done
 
           "$MCPP" build
 

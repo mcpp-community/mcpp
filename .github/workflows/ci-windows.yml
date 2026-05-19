@@ -79,6 +79,21 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
+          # Pre-seed LLVM into mcpp sandbox from system xlings.
+          # Needed because: (1) mcpp 0.0.17 bootstrap binary lacks the
+          # package_fetcher fallback, (2) xlings sandboxed binary has
+          # an upstream bug with large package extraction on Windows.
+          MCPP_XPKGS="$USERPROFILE/.mcpp/registry/data/xpkgs"
+          for src in "$USERPROFILE/.xlings/data/xpkgs/xim-x-llvm" \
+                     "$USERPROFILE/.xlings/subos/default/data/xpkgs/xim-x-llvm"; do
+            if [ -d "$src" ]; then
+              mkdir -p "$MCPP_XPKGS"
+              cp -r "$src" "$MCPP_XPKGS/xim-x-llvm"
+              echo "Pre-seeded LLVM from $src"
+              break
+            fi
+          done
+
           "$MCPP" build
 
           MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
