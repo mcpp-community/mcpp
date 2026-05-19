@@ -781,7 +781,11 @@ int config_set_mirror(const Env& env, std::string_view mirror, bool quiet) {
         "{} config --mirror {} {}",
         build_command_prefix(env),
         shq(mirror),
+#if defined(_WIN32)
+        quiet ? ">nul 2>&1" : "");
+#else
         quiet ? ">/dev/null 2>&1" : "");
+#endif
     return std::system(cmd.c_str());
 }
 

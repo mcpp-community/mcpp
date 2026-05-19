@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: fresh-sandbox
+# requires:
 # Single-module hello world: mcpp new → build → run
 set -e
 
