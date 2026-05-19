@@ -480,22 +480,6 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          # Install LLVM directly (xlings 0.4.30 extraction bug on Windows)
-          LLVM_VER="20.1.7"
-          LLVM_DEST="$USERPROFILE/.mcpp/registry/data/xpkgs/xim-x-llvm/$LLVM_VER"
-          if [ ! -f "$LLVM_DEST/bin/clang++.exe" ]; then
-            WORK=$(mktemp -d)
-            curl -fSL --retry 3 -o "$WORK/llvm.tar.xz" \
-              "https://github.com/xlings-res/llvm/releases/download/$LLVM_VER/llvm-$LLVM_VER-windows-x86_64.tar.xz"
-            mkdir -p "$LLVM_DEST"
-            cd "$WORK"
-            7z x -y llvm.tar.xz && 7z x -y llvm.tar -o"$LLVM_DEST" -aoa
-            INNER=$(ls -d "$LLVM_DEST"/llvm-* 2>/dev/null | head -1)
-            [ -d "$INNER/bin" ] && mv "$INNER"/* "$LLVM_DEST"/ && rmdir "$INNER" 2>/dev/null || true
-            cd -
-            rm -rf "$WORK"
-          fi
-
           "$MCPP" build
 
           MCPP_BIN=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
