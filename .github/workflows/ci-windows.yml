@@ -56,6 +56,7 @@ jobs:
           export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           xlings.exe --version
+          xlings.exe install llvm -y || xlings.exe install llvm@20.1.7 -y
           xlings.exe install mcpp -y
           echo "=== Searching for mcpp binary ==="
           find "$USERPROFILE/.xlings" -name "mcpp.exe" -o -name "mcpp" 2>/dev/null | head -10
