@@ -317,8 +317,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         } else {
             // Clang path: clang-scan-deps produces P1689 JSON to stdout.
 #if defined(_WIN32)
-            append("  command = $scan_deps -format=p1689 -- "
-                   "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+            // Wrap in cmd /c for shell redirection (ninja on Windows uses
+            // CreateProcess which doesn't interpret > as redirect).
+            append("  command = cmd /c \"$scan_deps -format=p1689 -- "
+                   "$cxx $cxxflags -c $in -o $compile_target > $out\"\n");
 #else
             append("  command = $toolenv $scan_deps -format=p1689 -- "
                    "$cxx $cxxflags -c $in -o $compile_target > $out\n");
