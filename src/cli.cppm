@@ -1110,7 +1110,7 @@ prepare_build(bool print_fingerprint,
         // CI / offline / test opt-out: hard-error instead of silently
         // pulling ~800 MB of toolchain. Preserves the original M5.5
         // contract for environments that need it.
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         return std::unexpected(
             "no toolchain configured.\n"
             "       run one of:\n"
