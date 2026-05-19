@@ -75,7 +75,22 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
+          # Debug: check mcpp sandbox state before build
+          echo "=== mcpp self env ==="
+          "$MCPP" self env || true
+          echo "=== mcpp sandbox xlings binary ==="
+          SANDBOX_XLINGS="$USERPROFILE/.mcpp/registry/bin/xlings.exe"
+          if [ -f "$SANDBOX_XLINGS" ]; then
+            echo "exists: $SANDBOX_XLINGS"
+            XLINGS_HOME="$USERPROFILE/.mcpp/registry" "$SANDBOX_XLINGS" --version || true
+          else
+            echo "NOT FOUND: $SANDBOX_XLINGS"
+          fi
+
           "$MCPP" build || {
+            echo "=== After failed build ==="
+            find "$USERPROFILE/.mcpp" -maxdepth 5 -name "xim-x-llvm" -type d 2>/dev/null
+            find "$USERPROFILE/.xlings" -maxdepth 5 -name "xim-x-llvm" -type d 2>/dev/null
             exit 1
           }
 
