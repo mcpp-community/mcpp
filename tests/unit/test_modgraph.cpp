@@ -27,11 +27,13 @@ void write(const std::filesystem::path& p, std::string_view content) {
 
 TEST(Scanner, ProvidesAndRequires) {
     auto dir = make_tempdir("mcpp-scanner");
-    write(dir / "src" / "foo.cppm", R"(export module foo;
-import std;
-import bar;
-export int answer();
-)");
+    // NOTE: avoid raw string literal for module source — clang-scan-deps
+    // on Windows may false-positive on `import bar;` inside R"(...)".
+    write(dir / "src" / "foo.cppm",
+          "export module foo;\n"
+          "import std;\n"
+          "import bar;\n"
+          "export int answer();\n");
 
     auto u = scan_file(dir / "src" / "foo.cppm", "pkg");
     ASSERT_TRUE(u.has_value()) << u.error().format();
