@@ -93,21 +93,20 @@ std::expected<StdModule, StdModError> ensure_built(
     sm.objectPath = sm.cacheDir / "std.o";
 
     std::string sysroot_flag;
-    bool is_macos_target = tc.targetTriple.find("apple") != std::string::npos
-                        || tc.targetTriple.find("darwin") != std::string::npos;
-    if (is_macos_target) {
-        // macOS: always pass the *active* SDK path (from xcrun) to override
-        // any stale --sysroot baked into clang++.cfg by xlings at install
-        // time. The cfg path may point to CommandLineTools SDK while the
-        // runner has Xcode active, or vice versa. A mismatched SDK causes
-        // ___wctype.h → _CTYPE_A undeclared errors during std module
-        // precompilation because the SDK's internal C headers reference
-        // macros defined in a sibling header that the wrong SDK doesn't
-        // include transitively.
-        if (auto sdk = mcpp::platform::macos::sdk_path())
-            sysroot_flag = std::format(" --sysroot='{}'", sdk->string());
-    } else if (!tc.sysroot.empty()) {
-        sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
+    if (!tc.sysroot.empty()) {
+        // macOS (apple/darwin target): do NOT pass --sysroot for std module
+        // precompilation. xlings LLVM's clang++.cfg already contains a
+        // --sysroot for the macOS SDK plus -isystem for libc++ headers.
+        // Passing an explicit --sysroot on the command line (even the same
+        // value) changes Clang's internal header search order, causing the
+        // macOS SDK's ___wctype.h to not find _CTYPE_A (defined in a
+        // sibling C runtime header that's only included transitively via
+        // the cfg's default search path). The CI "import std" test proves
+        // that running clang++ WITHOUT an explicit --sysroot works correctly.
+        bool is_macos = tc.targetTriple.find("apple") != std::string::npos
+                     || tc.targetTriple.find("darwin") != std::string::npos;
+        if (!is_macos)
+            sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
     }
 
     bool std_cached = std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath);
