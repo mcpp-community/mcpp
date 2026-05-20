@@ -14,7 +14,6 @@ export module mcpp.pm.package_fetcher;
 
 import std;
 import mcpp.config;
-import mcpp.platform;
 import mcpp.pm.compat;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
@@ -614,9 +613,9 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         // reason (xlings subprocess XLINGS_HOME propagation is unreliable).
         if (!std::filesystem::exists(verdir)) {
             const char* xhome = nullptr;
-            if constexpr (mcpp::platform::is_windows) {
-                xhome = std::getenv("USERPROFILE");
-            }
+#if defined(_WIN32)
+            xhome = std::getenv("USERPROFILE");
+#endif
             if (!xhome) xhome = std::getenv("HOME");
             if (xhome) {
                 // xlings stores xpkgs at <home>/.xlings/data/xpkgs/ or
