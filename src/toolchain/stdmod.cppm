@@ -93,19 +93,21 @@ std::expected<StdModule, StdModError> ensure_built(
     sm.objectPath = sm.cacheDir / "std.o";
 
     std::string sysroot_flag;
-    if (!tc.sysroot.empty()) {
-        // On macOS, skip --sysroot for std module precompilation.
-        // xlings LLVM ships a clang++.cfg with a --sysroot that is tuned to
-        // work for normal compilation. Adding a second --sysroot (even the
-        // identical value) changes header include ordering and breaks macOS
-        // SDK internal dependencies — ___wctype.h references _CTYPE_A which
-        // is defined in _ctype.h, but the duplicate --sysroot flag causes
-        // the C runtime header to not be included transitively during module
-        // purview compilation.  Let the cfg's own --sysroot handle it.
-        bool skip_sysroot = tc.targetTriple.find("apple") != std::string::npos
-                         || tc.targetTriple.find("darwin") != std::string::npos;
-        if (!skip_sysroot)
-            sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
+    bool is_macos_target = tc.targetTriple.find("apple") != std::string::npos
+                        || tc.targetTriple.find("darwin") != std::string::npos;
+    if (is_macos_target) {
+        // macOS: always pass the *active* SDK path (from xcrun) to override
+        // any stale --sysroot baked into clang++.cfg by xlings at install
+        // time. The cfg path may point to CommandLineTools SDK while the
+        // runner has Xcode active, or vice versa. A mismatched SDK causes
+        // ___wctype.h → _CTYPE_A undeclared errors during std module
+        // precompilation because the SDK's internal C headers reference
+        // macros defined in a sibling header that the wrong SDK doesn't
+        // include transitively.
+        if (auto sdk = mcpp::platform::macos::sdk_path())
+            sysroot_flag = std::format(" --sysroot='{}'", sdk->string());
+    } else if (!tc.sysroot.empty()) {
+        sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
     }
 
     bool std_cached = std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath);
