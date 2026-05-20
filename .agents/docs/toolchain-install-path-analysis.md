@@ -1,4 +1,4 @@
-# 工具链安装路径问题分析
+# 工具链安装路径问题 — 分析报告 v2
 
 ## 问题描述
 
@@ -11,202 +11,165 @@ error: install failed: xpkg payload missing:
   /home/speak/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry/data/xpkgs/xim-x-llvm/20.1.7
 ```
 
-## 路径推导链
+## 核心问题：HOME 和 bin 位置分离是否可行？
 
-mcpp 二进制位于 xlings 包目录中：
+**回答：完全可行，且是正确的设计方向。**
 
-```
-~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/bin/mcpp
-```
+### mcpp 对 MCPP_HOME 的使用方式
 
-### 1. MCPP_HOME 自动检测 (`config.cppm:home_dir()`)
-
-用户未设置 `$MCPP_HOME` 环境变量，触发自动检测：
-- 发现 `exe.parent_path().filename() == "bin"` ✓
-- 无 `"target"` 祖先目录 ✓
-- 返回 `exe.parent_path().parent_path()`
+MCPP_HOME 是一个**纯数据目录**，mcpp 不假设自己的二进制在 `MCPP_HOME/bin/` 中：
 
 ```
-MCPP_HOME = ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/
+MCPP_HOME/                    ← 纯数据根目录
+├── bin/                      ← 仅用于 create_directories，不用于查找 mcpp 自身
+├── registry/                 ← xlings 沙箱（XLINGS_HOME）
+│   ├── bin/xlings            ← vendored xlings 二进制
+│   ├── subos/default/        ← sandbox 结构
+│   └── data/xpkgs/           ← 工具链包安装位置
+├── bmi/                      ← BMI 缓存
+├── cache/                    ← 元数据缓存
+├── log/                      ← 日志
+└── config.toml               ← 全局配置
 ```
 
-### 2. Registry 路径计算 (`config.cppm:load_or_init()`)
+代码中 `cfg.binDir` 只出现在 `create_directories()` 中，**没有任何地方用它来查找 mcpp 二进制**。mcpp 通过 `self_exe_path()` 找到自己，通过 `MCPP_HOME` 找到数据。两者完全独立。
+
+### 三种部署场景对比
+
+| 场景 | mcpp 二进制位置 | MCPP_HOME | 二进制和HOME同位？ |
+|------|----------------|-----------|-------------------|
+| Release tarball | `~/mcpp-0.0.20/bin/mcpp` | `~/mcpp-0.0.20/` | ✓ 同位（自包含） |
+| `~/.mcpp` 独立安装 | `~/.mcpp/bin/mcpp` | `~/.mcpp/` | ✓ 同位 |
+| **xlings 安装** | `~/.xlings/.../xim-x-mcpp/0.0.20/bin/mcpp` | **应该是 `~/.mcpp/`** | ✗ 分离 |
+| CI | `~/.xlings/.../bin/mcpp` | `/home/runner/.mcpp`（显式） | ✗ 分离（正常工作） |
+
+**CI 已经证明了 HOME 和 bin 分离可以正常工作**——CI 中 mcpp 二进制在 xlings 目录中，MCPP_HOME 在 `~/.mcpp/`，一切正常。
+
+## 当前问题的根因
+
+当 mcpp 在 xlings 包内运行时，`home_dir()` 的自包含检测逻辑将 **xlings 包目录** 误判为**自包含安装根**：
 
 ```
-registryDir   = MCPP_HOME / "registry"
-              = ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry/
-
-xlingsHome()  = registryDir  (无 override)
-              = ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry/
-
-xlingsBinary  = registryDir / "bin" / "xlings"
-              = ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry/bin/xlings
+二进制: ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/bin/mcpp
+                                                  ^^^^
+                                                  parent = "bin" ✓
+home_dir() 返回: ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                 这是 xlings 包目录，不是有效的 MCPP_HOME
 ```
 
-### 3. xlings 命令构建 (`xlings.cppm:build_command_prefix()`)
-
-```bash
-cd ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry \
-  && XLINGS_HOME=~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry \
-     ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry/bin/xlings \
-     interface install_packages --args '{"targets":["xim:llvm@20.1.7"]}'
-```
-
-### 4. xlings 安装位置
-
-xlings 按照 `$XLINGS_HOME` 安装包：
+导致嵌套沙箱：
 
 ```
-$XLINGS_HOME/data/xpkgs/xim-x-llvm/20.1.7/
-= ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry/data/xpkgs/xim-x-llvm/20.1.7/
+~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/          ← MCPP_HOME（错误）
+  └── registry/                                    ← XLINGS_HOME（嵌套）
+      └── data/xpkgs/xim-x-llvm/20.1.7/          ← 800MB+ 工具链装到这里
 ```
 
-### 5. mcpp 包查找位置 (`package_fetcher.cppm:resolve_xpkg_path()`)
+**问题**：
+1. xlings 可能不尊重嵌套的 XLINGS_HOME，安装到全局 `~/.xlings/` 而非 registry/
+2. 即使安装成功，800MB+ 的工具链嵌套在 xlings 包目录内，卸载/更新 mcpp 时全部丢失
+3. 多个 mcpp 版本各自维护独立工具链，浪费磁盘
 
-```cpp
-auto base = cfg_.xlingsHome() / "data" / "xpkgs";
-// = ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry/data/xpkgs/
+## 修复方案（更新）
 
-auto verdir = base / "xim-x-llvm" / "20.1.7";
-// = ~/.xlings/data/xpkgs/xim-x-mcpp/0.0.20/registry/data/xpkgs/xim-x-llvm/20.1.7/
-```
-
-路径一致——**mcpp 查找的路径和 xlings 安装的路径是同一个位置**。
-
-## 根因分析
-
-问题不是路径不一致，而是 **xlings 的 registry/bin/xlings 二进制不存在或 xlings 安装到了其他位置**。
-
-当 mcpp 通过 xlings 安装时，形成了**嵌套沙箱**结构：
-
-```
-~/.xlings/                                    ← 全局 xlings 沙箱
-  └── data/xpkgs/xim-x-mcpp/0.0.20/          ← mcpp 包目录 = MCPP_HOME
-      ├── bin/mcpp                            ← mcpp 二进制
-      └── registry/                           ← mcpp 的私有 xlings 沙箱
-          ├── bin/xlings                      ← 应该有 vendored xlings（可能缺失）
-          ├── subos/default/bin/              ← 应该有 sandbox bin（可能缺失）
-          └── data/xpkgs/                     ← 工具链包应该安装到这里
-              └── xim-x-llvm/20.1.7/         ← 目标位置
-```
-
-**可能失败的节点**：
-
-1. **`registry/bin/xlings` 不存在**：mcpp 首次运行时的 `acquire_xlings_binary()` 复制 xlings 二进制到 registry/bin/。如果全局 xlings 不在 PATH 中或复制失败，xlings 二进制缺失
-2. **`xlings self init` 未成功执行**：sandbox 目录结构未创建（`subos/default/` 等），导致后续命令失败
-3. **xlings 安装到了全局目录**而非 XLINGS_HOME 指定的路径：xlings 的某些版本可能忽略 `XLINGS_HOME` 环境变量，始终安装到 `~/.xlings/`
-
-## 为什么 CI 没有这个问题
-
-CI 显式设置了 `MCPP_HOME`：
-
-```yaml
-env:
-  MCPP_HOME: /home/runner/.mcpp
-```
-
-这绕过了 `home_dir()` 的自动检测，使用独立的 `~/.mcpp/` 作为 MCPP_HOME，不会产生嵌套沙箱问题。
-
-## 修复方案
-
-### 方案 A：检测 xlings 包内运行，使用全局 xlings（推荐）
-
-在 `home_dir()` 中增加 xlings 包路径检测：
+### 方案 A：xlings 包内运行时 fallback 到 `~/.mcpp/`（推荐）
 
 ```cpp
 std::filesystem::path home_dir() {
+    // 1. 显式环境变量优先
     if (auto* e = std::getenv("MCPP_HOME"); e && *e)
         return std::filesystem::path(e);
 
     auto exe = mcpp::platform::fs::self_exe_path();
-    if (exe.parent_path().filename() == "bin") {
+    if (exe.has_parent_path() && exe.parent_path().filename() == "bin") {
         auto candidate = exe.parent_path().parent_path();
-        
+
         // 检测是否在 xlings 包目录中运行
-        // 路径模式: ~/.xlings/data/xpkgs/xim-x-mcpp/<version>/bin/mcpp
-        // 或:       ~/.xlings/subos/default/data/xpkgs/xim-x-mcpp/<version>/bin/mcpp
+        // 路径模式: .../xpkgs/xim-x-mcpp/<version>/bin/mcpp
         bool isXlingsPackage = false;
-        for (auto p = candidate; p.has_parent_path() && p != p.root_path(); p = p.parent_path()) {
+        for (auto p = candidate;
+             p.has_parent_path() && p != p.root_path();
+             p = p.parent_path()) {
             if (p.filename() == "xpkgs" && p.parent_path().filename() == "data") {
                 isXlingsPackage = true;
                 break;
             }
         }
-        
+
+        // xlings 包内：使用 ~/.mcpp/ 独立目录
+        // 避免嵌套沙箱，工具链升级 mcpp 后不丢失
         if (isXlingsPackage) {
-            // 在 xlings 包内：使用 ~/.mcpp 作为独立 home
-            // 避免嵌套沙箱问题
-            if (auto* e = std::getenv("HOME"); e && *e)
-                return std::filesystem::path(e) / ".mcpp";
+            // Windows: USERPROFILE, POSIX: HOME
+            if constexpr (mcpp::platform::is_windows) {
+                if (auto* e = std::getenv("USERPROFILE"); e && *e)
+                    return std::filesystem::path(e) / ".mcpp";
+            } else {
+                if (auto* e = std::getenv("HOME"); e && *e)
+                    return std::filesystem::path(e) / ".mcpp";
+            }
         }
-        
-        // 非 xlings 包内：保持原逻辑（自包含模式）
+
+        // 非 xlings 包：自包含模式（release tarball）
         bool isDevPath = false;
-        for (auto p = exe.parent_path(); ...; p = p.parent_path()) {
+        for (auto p = exe.parent_path();
+             !p.empty() && p != p.parent_path();
+             p = p.parent_path()) {
             if (p.filename() == "target") { isDevPath = true; break; }
         }
         if (!isDevPath)
             return candidate;
     }
 
-    if (auto* e = std::getenv("HOME"); e && *e)
-        return std::filesystem::path(e) / ".mcpp";
+    // 兜底
+    if constexpr (mcpp::platform::is_windows) {
+        if (auto* e = std::getenv("USERPROFILE"); e && *e)
+            return std::filesystem::path(e) / ".mcpp";
+    } else {
+        if (auto* e = std::getenv("HOME"); e && *e)
+            return std::filesystem::path(e) / ".mcpp";
+    }
     return std::filesystem::current_path() / ".mcpp";
 }
 ```
 
-**优点**：
-- 自动处理，用户无需任何配置
-- xlings 安装的 mcpp 使用独立的 `~/.mcpp/` 沙箱
-- release tarball 安装的 mcpp 保持自包含模式
-- CI 不受影响（显式 MCPP_HOME 优先）
+### 修复后各场景的路径
 
-**缺点**：
-- 需要硬编码 xpkgs 路径模式检测
+| 场景 | mcpp bin | MCPP_HOME | XLINGS_HOME | 工具链位置 |
+|------|----------|-----------|-------------|-----------|
+| Release tarball | `~/mcpp/bin/mcpp` | `~/mcpp/` | `~/mcpp/registry/` | `~/mcpp/registry/data/xpkgs/` |
+| xlings 安装 | `~/.xlings/.../mcpp/bin/mcpp` | **`~/.mcpp/`** | **`~/.mcpp/registry/`** | **`~/.mcpp/registry/data/xpkgs/`** |
+| CI | `~/.xlings/.../mcpp` | `~/.mcpp`（显式） | `~/.mcpp/registry/` | `~/.mcpp/registry/data/xpkgs/` |
 
-### 方案 B：使用全局 xlings 而非嵌套沙箱
+**关键**：xlings 安装和 CI 场景现在行为完全一致。工具链安装到 `~/.mcpp/registry/` 中，升级 mcpp 版本不影响已安装的工具链。
 
-修改 `make_xlings_env()` 和 `xlingsHome()`，当检测到 xlings 包内运行时，直接使用全局 xlings 的 XLINGS_HOME（`~/.xlings/`）：
+### 全平台统一性
 
-```cpp
-mcpp::xlings::Env make_xlings_env(const GlobalConfig& cfg) {
-    // 如果 mcpp 在 xlings 包内，使用全局 xlings
-    if (is_xlings_installed(cfg.mcppHome)) {
-        auto globalXlings = find_global_xlings();  // ~/.xlings/subos/default/bin/xlings
-        auto globalHome = find_global_xlings_home();  // ~/.xlings/
-        return { globalXlings, globalHome };
-    }
-    return { cfg.xlingsBinary, cfg.xlingsHome() };
-}
-```
+| 平台 | HOME 环境变量 | 默认 MCPP_HOME |
+|------|-------------|---------------|
+| Linux | `$HOME` | `$HOME/.mcpp` |
+| macOS | `$HOME` | `$HOME/.mcpp` |
+| Windows | `%USERPROFILE%` | `%USERPROFILE%\.mcpp` |
 
-**优点**：
-- 复用全局 xlings 沙箱，避免重复下载工具链
-- 概念上更简洁
+三平台行为一致：xlings 包内运行时统一使用 `~/.mcpp/`。
 
-**缺点**：
-- mcpp 的 sandbox 与全局 xlings 耦合
-- 多版本 mcpp 可能冲突
+### 这个方案不影响什么
 
-### 方案 C：文档/提示（最小改动）
+1. **Release tarball 用户**：二进制不在 `xpkgs/` 路径下，走原有自包含逻辑，不受影响
+2. **CI**：显式设置了 `MCPP_HOME`，`home_dir()` 第一行就返回，不受影响
+3. **已有 `~/.mcpp/` 数据**：方案只是让 xlings 安装的 mcpp 也使用这个目录，数据向前兼容
+4. **mcpp 和 xlings 共存**：mcpp 的 xlings 沙箱在 `~/.mcpp/registry/`，与全局 `~/.xlings/` 独立
 
-当检测到 xlings 包内运行且 sandbox 初始化失败时，提示用户设置 `MCPP_HOME`：
+### 这个方案解决什么
 
-```
-hint: mcpp detected it's running from a xlings package.
-      Set MCPP_HOME=~/.mcpp to use an independent sandbox:
-        export MCPP_HOME=~/.mcpp
-```
-
-## 推荐
-
-**方案 A**：改动最小、用户体验最好、兼容性最强。
-
-核心逻辑：如果 mcpp 二进制位于 `.xlings/data/xpkgs/xim-x-mcpp/` 路径下，说明是 xlings 安装的分发版，应使用 `~/.mcpp/` 作为独立 HOME，而不是在 xlings 包内创建嵌套沙箱。
+1. **嵌套沙箱问题**：不再在 xlings 包目录内创建 registry/
+2. **工具链持久性**：升级 mcpp (`xlings install mcpp@0.0.21`) 不丢失已安装的 LLVM/GCC
+3. **磁盘浪费**：多版本 mcpp 共享同一个 `~/.mcpp/` 下的工具链
+4. **xlings 兼容性**：不依赖 xlings 是否正确处理嵌套 XLINGS_HOME
 
 ## 受影响文件
 
 | 文件 | 改动 |
 |------|------|
-| `src/config.cppm` | `home_dir()` 增加 xlings 包路径检测 |
+| `src/config.cppm` | `home_dir()` 增加 xlings 包路径检测（~15 行） |
 | 无其他改动 | 路径推导链后续自动生效 |
