@@ -254,15 +254,6 @@ probe_target_triple(const std::filesystem::path& compilerBin,
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
               const std::string& envPrefix) {
-    // macOS: prefer xcrun's SDK path over -print-sysroot.
-    // xlings LLVM bakes --sysroot into clang++.cfg at install time, and
-    // -print-sysroot echoes that back. If the CLT/Xcode SDK was updated
-    // after the LLVM package was cached, the cfg-baked path may be stale
-    // or point to an incompatible SDK.  xcrun always returns the currently
-    // active SDK, so mcpp passes it on the command line to override the cfg.
-    if (auto sdk = mcpp::platform::macos::sdk_path())
-        return *sdk;
-
     auto r = run_capture(std::format("{}{} -print-sysroot {}",
                                      envPrefix,
                                      mcpp::xlings::shq(compilerBin.string()),
@@ -271,6 +262,12 @@ probe_sysroot(const std::filesystem::path& compilerBin,
         auto s = trim_line(*r);
         if (!s.empty() && std::filesystem::exists(s)) return s;
     }
+    // macOS fallback: use xcrun to discover the SDK path.
+    // The sysroot is used for regular compilation flags (flags.cppm) but
+    // skipped for std module precompilation on macOS (stdmod.cppm) to
+    // avoid breaking SDK internal header dependencies.
+    if (auto sdk = mcpp::platform::macos::sdk_path())
+        return *sdk;
     return {};
 }
 

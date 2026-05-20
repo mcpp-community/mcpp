@@ -94,7 +94,18 @@ std::expected<StdModule, StdModError> ensure_built(
 
     std::string sysroot_flag;
     if (!tc.sysroot.empty()) {
-        sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
+        // On macOS, skip --sysroot for std module precompilation.
+        // xlings LLVM ships a clang++.cfg with a --sysroot that is tuned to
+        // work for normal compilation. Adding a second --sysroot (even the
+        // identical value) changes header include ordering and breaks macOS
+        // SDK internal dependencies — ___wctype.h references _CTYPE_A which
+        // is defined in _ctype.h, but the duplicate --sysroot flag causes
+        // the C runtime header to not be included transitively during module
+        // purview compilation.  Let the cfg's own --sysroot handle it.
+        bool skip_sysroot = tc.targetTriple.find("apple") != std::string::npos
+                         || tc.targetTriple.find("darwin") != std::string::npos;
+        if (!skip_sysroot)
+            sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
     }
 
     bool std_cached = std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath);
