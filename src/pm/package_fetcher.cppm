@@ -605,14 +605,17 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     };
 
     auto resolve = [&]() -> std::expected<XpkgPayload, CallError> {
-#if defined(_WIN32)
-        // Workaround: xlings on Windows may extract large packages (e.g. LLVM)
-        // into its global data dir instead of the mcpp sandbox, because the
-        // extraction subprocess doesn't inherit XLINGS_HOME. Detect this and
-        // copy the payload into the sandbox so mcpp remains self-contained.
+        // Workaround: xlings may extract large packages (e.g. LLVM) into its
+        // global data dir instead of the mcpp sandbox, because the extraction
+        // subprocess doesn't always inherit XLINGS_HOME. Detect this and copy
+        // the payload into the sandbox so mcpp remains self-contained.
+        // Originally Windows-only; extended to all platforms for the same
+        // reason (xlings subprocess XLINGS_HOME propagation is unreliable).
         if (!std::filesystem::exists(verdir)) {
-            // Try xlings' own data dir (where `xlings self install` placed it)
-            auto xhome = std::getenv("USERPROFILE");
+            const char* xhome = nullptr;
+            if constexpr (mcpp::platform::is_windows) {
+                xhome = std::getenv("USERPROFILE");
+            }
             if (!xhome) xhome = std::getenv("HOME");
             if (xhome) {
                 // xlings stores xpkgs at <home>/.xlings/data/xpkgs/ or
@@ -635,7 +638,6 @@ Fetcher::resolve_xpkg_path(std::string_view target,
                 }
             }
         }
-#endif
         if (!std::filesystem::exists(verdir)) {
             return std::unexpected(CallError{
                 std::format("xpkg payload missing: {}", verdir.string())});

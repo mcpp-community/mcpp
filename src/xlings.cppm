@@ -609,24 +609,31 @@ int install_with_progress(const Env& env, std::string_view target,
     auto argsJson = std::format(
         R"({{"targets":["{}"],"yes":true}})", target);
 
-    if constexpr (mcpp::platform::is_windows) {
-        mcpp::platform::env::set("XLINGS_HOME", env.home.string());
-        mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
-        std::error_code ec_mkdir;
-        std::filesystem::create_directories(env.home, ec_mkdir);
-        // Use direct `install` command instead of `interface install_packages`
-        // on Windows. The NDJSON interface may have issues with large packages
-        // where the extraction subprocess doesn't respect XLINGS_HOME.
-        auto directCmd = std::format("{} install {} -y",
-            env.binary.string(), target);
-        int directRc = mcpp::platform::process::run_silent(directCmd);
+    // All platforms: try direct `xlings install ... -y` first.
+    // The direct command is more reliable for large packages (e.g. LLVM
+    // ~800MB) because:
+    //   - it doesn't pipe through NDJSON interface (simpler subprocess chain)
+    //   - xlings manages its own stdin/stdout/stderr
+    //   - extraction subprocess coordination works normally
+    // The NDJSON interface path is kept as a fallback for progress reporting.
+    {
+        auto directCmd = build_command_prefix(env) +
+            std::format(" install {} -y {}", target, mcpp::platform::shell::silent_redirect);
+        // Use std::system() directly — do NOT redirect stdin via </dev/null
+        // because xlings may need stdin for subprocess coordination during
+        // large package extraction.
+        int directRc = std::system(directCmd.c_str());
+        if constexpr (!mcpp::platform::is_windows) {
+            directRc = WIFEXITED(directRc) ? WEXITSTATUS(directRc) : directRc;
+        }
         if (directRc == 0) return 0;
     }
+
+    // Fallback: NDJSON interface path (provides progress callbacks).
     auto cmd = [&]() -> std::string {
         if constexpr (mcpp::platform::is_windows) {
-            // Fallback to interface path if direct install fails
             return std::format("{} interface install_packages --args {} {}",
-                env.binary.string(),
+                build_command_prefix(env),
                 shq(argsJson),
                 mcpp::platform::null_redirect);
         } else {
