@@ -11,10 +11,6 @@
 module;
 #include <cstdio>
 #include <cstdlib>
-#if defined(_WIN32)
-#define popen  _popen
-#define pclose _pclose
-#endif
 
 export module mcpp.cli;
 
@@ -36,6 +32,7 @@ import mcpp.publish.xpkg_emit;
 import mcpp.pack;
 import mcpp.config;
 import mcpp.xlings;
+import mcpp.platform;
 import mcpp.fetcher;
 import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
@@ -665,25 +662,25 @@ void patchelf_walk(const std::filesystem::path& dir,
             continue;
         is.close();
         // Probe PT_INTERP — skip static binaries (no interp).
-        auto probe = std::format("'{}' --print-interpreter '{}' 2>/dev/null",
-                                 patchelfBin.string(), path.string());
-        std::FILE* fp = ::popen(probe.c_str(), "r");
-        bool hasInterp = false;
-        if (fp) {
-            char buf[1024]{};
-            hasInterp = (std::fread(buf, 1, sizeof(buf) - 1, fp) > 0);
-            ::pclose(fp);
-        }
+        auto probe = std::format("{} --print-interpreter {} 2>/dev/null",
+                                 mcpp::platform::shell::quote(patchelfBin.string()),
+                                 mcpp::platform::shell::quote(path.string()));
+        auto probeResult = mcpp::platform::process::capture(probe);
+        bool hasInterp = (probeResult.exit_code == 0 && !probeResult.output.empty());
         if (hasInterp) {
-            (void)std::system(std::format(
-                "'{}' --set-interpreter '{}' '{}' 2>/dev/null",
-                patchelfBin.string(), loader.string(), path.string()).c_str());
+            (void)mcpp::platform::process::run_silent(std::format(
+                "{} --set-interpreter {} {} 2>/dev/null",
+                mcpp::platform::shell::quote(patchelfBin.string()),
+                mcpp::platform::shell::quote(loader.string()),
+                mcpp::platform::shell::quote(path.string())));
         }
         // Always set RUNPATH (works on .so too — they need to find deps).
         if (!rpath.empty()) {
-            (void)std::system(std::format(
-                "'{}' --set-rpath '{}' '{}' 2>/dev/null",
-                patchelfBin.string(), rpath, path.string()).c_str());
+            (void)mcpp::platform::process::run_silent(std::format(
+                "{} --set-rpath {} {} 2>/dev/null",
+                mcpp::platform::shell::quote(patchelfBin.string()),
+                mcpp::platform::shell::quote(rpath),
+                mcpp::platform::shell::quote(path.string())));
         }
     }
 }
@@ -1016,16 +1013,7 @@ prepare_build(bool print_fingerprint,
         return &*cfg_opt;
     };
 
-    constexpr std::string_view kCurrentPlatform =
-#if defined(__linux__)
-        "linux";
-#elif defined(__APPLE__)
-        "macos";
-#elif defined(_WIN32)
-        "windows";
-#else
-        "unknown";
-#endif
+    constexpr std::string_view kCurrentPlatform = mcpp::platform::name;
 
     // M5.5: toolchain resolution priority:
     //   0. --target X / --static, looked up in [target.<triple>]
@@ -1110,21 +1098,21 @@ prepare_build(bool print_fingerprint,
         // CI / offline / test opt-out: hard-error instead of silently
         // pulling ~800 MB of toolchain. Preserves the original M5.5
         // contract for environments that need it.
-#if defined(__APPLE__) || defined(_WIN32)
-        return std::unexpected(
-            "no toolchain configured.\n"
-            "       run one of:\n"
-            "         mcpp toolchain install llvm 20.1.7\n"
-            "         mcpp toolchain default llvm@20.1.7\n"
-            "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.");
-#else
-        return std::unexpected(
-            "no toolchain configured.\n"
-            "       run one of:\n"
-            "         mcpp toolchain install gcc 15.1.0-musl\n"
-            "         mcpp toolchain default gcc@15.1.0-musl\n"
-            "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.");
-#endif
+        if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
+            return std::unexpected(
+                "no toolchain configured.\n"
+                "       run one of:\n"
+                "         mcpp toolchain install llvm 20.1.7\n"
+                "         mcpp toolchain default llvm@20.1.7\n"
+                "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.");
+        } else {
+            return std::unexpected(
+                "no toolchain configured.\n"
+                "       run one of:\n"
+                "         mcpp toolchain install gcc 15.1.0-musl\n"
+                "         mcpp toolchain default gcc@15.1.0-musl\n"
+                "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.");
+        }
     } else {
         // First-run UX: no project-level [toolchain], no global default,
         // and the user just ran `mcpp build` (or similar). Auto-install
@@ -1136,23 +1124,20 @@ prepare_build(bool print_fingerprint,
         // macOS: LLVM/Clang — Apple doesn't ship GCC; upstream LLVM with
         //        bundled libc++ is the self-contained choice.
         // Linux: musl-gcc — produces portable static binaries.
-#if defined(__APPLE__) || defined(_WIN32)
-        std::string defaultSpec = "llvm@20.1.7";
-#else
-        std::string defaultSpec = "gcc@15.1.0-musl";
-#endif
+        std::string defaultSpec = (mcpp::platform::is_macos || mcpp::platform::is_windows)
+            ? "llvm@20.1.7" : "gcc@15.1.0-musl";
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
-#if defined(__APPLE__) || defined(_WIN32)
-        mcpp::ui::info("First run",
-            std::format("no toolchain configured — installing {} (LLVM/Clang) as default",
-                        defaultSpec));
-#else
-        mcpp::ui::info("First run",
-            std::format("no toolchain configured — installing {} (musl, static) as default",
-                        defaultSpec));
-#endif
+        if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
+            mcpp::ui::info("First run",
+                std::format("no toolchain configured — installing {} (LLVM/Clang) as default",
+                            defaultSpec));
+        } else {
+            mcpp::ui::info("First run",
+                std::format("no toolchain configured — installing {} (musl, static) as default",
+                            defaultSpec));
+        }
 
         auto cfg = get_cfg();
         if (!cfg) return std::unexpected(cfg.error());
@@ -1959,36 +1944,25 @@ prepare_build(bool print_fingerprint,
                     std::format("{} ({} = {})", spec.git, spec.gitRefKind, spec.gitRev));
                 std::string cloneCmd;
                 if (spec.gitRefKind == "branch") {
-#if defined(_WIN32)
                     cloneCmd = std::format(
-                        "git clone --depth 1 --branch \"{}\" \"{}\" \"{}\" 2>&1",
-                        spec.gitRev, spec.git, gitRoot.string());
-#else
-                    cloneCmd = std::format(
-                        "git clone --depth 1 --branch '{}' '{}' '{}' 2>&1",
-                        spec.gitRev, spec.git, gitRoot.string());
-#endif
+                        "git clone --depth 1 --branch {} {} {} 2>&1",
+                        mcpp::platform::shell::quote(spec.gitRev),
+                        mcpp::platform::shell::quote(spec.git),
+                        mcpp::platform::shell::quote(gitRoot.string()));
                 } else {
                     // For tag/rev: full clone, then checkout (depth-1 may miss the rev).
-#if defined(_WIN32)
                     cloneCmd = std::format(
-                        "git clone \"{}\" \"{}\" && cd \"{}\" && git checkout --quiet \"{}\" 2>&1",
-                        spec.git, gitRoot.string(),
-                        gitRoot.string(), spec.gitRev);
-#else
-                    cloneCmd = std::format(
-                        "git clone '{}' '{}' && cd '{}' && git checkout --quiet '{}' 2>&1",
-                        spec.git, gitRoot.string(),
-                        gitRoot.string(), spec.gitRev);
-#endif
+                        "git clone {} {} && cd {} && git checkout --quiet {} 2>&1",
+                        mcpp::platform::shell::quote(spec.git),
+                        mcpp::platform::shell::quote(gitRoot.string()),
+                        mcpp::platform::shell::quote(gitRoot.string()),
+                        mcpp::platform::shell::quote(spec.gitRev));
                 }
                 std::string out;
                 {
-                    std::array<char, 8192> buf{};
-                    std::FILE* fp = ::popen(cloneCmd.c_str(), "r");
-                    if (!fp) return std::unexpected("popen failed for git clone");
-                    while (std::fgets(buf.data(), buf.size(), fp)) out += buf.data();
-                    int rc = ::pclose(fp);
+                    auto r = mcpp::platform::process::capture(cloneCmd);
+                    out = r.output;
+                    int rc = r.exit_code;
                     if (rc != 0) {
                         std::filesystem::remove_all(gitRoot, ec);
                         return std::unexpected(std::format(
@@ -2532,24 +2506,16 @@ std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
     }
 
     // All inputs are older than build.ninja → fast-path: just run ninja.
-#if defined(_WIN32)
-    std::string cmd = std::format("{} -C \"{}\"", ninjaProgram, outputDir.string());
-#else
-    std::string cmd = std::format("{} -C '{}'", ninjaProgram, outputDir.string());
-#endif
+    std::string cmd = std::format("{} -C {}", ninjaProgram, mcpp::platform::shell::quote(outputDir.string()));
     if (verbose) cmd += " -v";
     cmd += " 2>&1";
 
     auto t0 = std::chrono::steady_clock::now();
     std::string out;
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return std::nullopt;
-    char buf[4096];
-    while (std::fgets(buf, sizeof(buf), pipe)) {
-        out += buf;
-        if (verbose) std::fputs(buf, stdout);
-    }
-    int status = pclose(pipe);
+    auto r = mcpp::platform::process::capture(cmd);
+    out = r.output;
+    if (verbose && !out.empty()) std::fputs(out.c_str(), stdout);
+    int status = r.exit_code;
     bool ok = (status == 0);
     if (!ok) {
         if (!verbose) std::fputs(out.c_str(), stdout);
@@ -2625,14 +2591,10 @@ int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
         std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
     std::println("");
     std::fflush(stdout);
-#if defined(_WIN32)
-    std::string cmd = std::format("\"{}\"", exe.string());
-    for (auto& a : passthrough) cmd += std::format(" \"{}\"", a);
-#else
-    std::string cmd = std::format("'{}'", exe.string());
-    for (auto& a : passthrough) cmd += std::format(" '{}'", a);
-#endif
-    return std::system(cmd.c_str()) == 0 ? 0 : 1;
+    std::string cmd = mcpp::platform::shell::quote(exe.string());
+    for (auto& a : passthrough) cmd += " " + mcpp::platform::shell::quote(a);
+    int rc = std::system(cmd.c_str());
+    return mcpp::platform::process::extract_exit_code(rc) == 0 ? 0 : 1;
 }
 
 int cmd_env(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
@@ -3173,30 +3135,20 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
         // visible to test binaries that shell out to them. The
         // toolchain binary's path encodes the registry root — derive it.
         std::string pathPrefix;
-#if !defined(_WIN32)
-        if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(ctx->tc.binaryPath)) {
-            // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
-            auto registryDir = xpkgs->parent_path().parent_path();
-            auto sandboxBin  = registryDir / "subos" / "default" / "bin";
-            if (std::filesystem::exists(sandboxBin))
-                pathPrefix = std::format("PATH='{}':\"$PATH\" ", sandboxBin.string());
+        if constexpr (!mcpp::platform::is_windows) {
+            if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(ctx->tc.binaryPath)) {
+                // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
+                auto registryDir = xpkgs->parent_path().parent_path();
+                auto sandboxBin  = registryDir / "subos" / "default" / "bin";
+                if (std::filesystem::exists(sandboxBin))
+                    pathPrefix = std::format("PATH={}:\"$PATH\" ",
+                                             mcpp::platform::shell::quote(sandboxBin.string()));
+            }
         }
-#endif
 
-#if defined(_WIN32)
-        std::string cmd = std::format("\"{}\"", exe.string());
-        for (auto& a : passthrough) cmd += std::format(" \"{}\"", a);
-#else
-        std::string cmd = std::format("{}'{}'", pathPrefix, exe.string());
-        for (auto& a : passthrough) cmd += std::format(" '{}'", a);
-#endif
-        int rc = std::system(cmd.c_str());
-        // std::system returns wait status on POSIX, exit code on Windows.
-#if defined(_WIN32)
-        int exitCode = rc;
-#else
-        int exitCode = WIFEXITED(rc) ? WEXITSTATUS(rc) : 127;
-#endif
+        std::string cmd = pathPrefix + mcpp::platform::shell::quote(exe.string());
+        for (auto& a : passthrough) cmd += " " + mcpp::platform::shell::quote(a);
+        int exitCode = mcpp::platform::process::extract_exit_code(std::system(cmd.c_str()));
 
         if (exitCode == 0) {
             std::println("{} ... ok", lu.targetName);
@@ -3824,14 +3776,10 @@ int cmd_publish(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     // Sanity: working tree clean (best-effort via git status).
     if (!allow_dirty && std::filesystem::exists(*root / ".git")) {
-        std::string out;
-        std::FILE* fp = ::popen(
-            std::format("git -C {} status --porcelain 2>&1", root->string()).c_str(), "r");
-        if (fp) {
-            std::array<char, 4096> buf{};
-            while (std::fgets(buf.data(), buf.size(), fp)) out += buf.data();
-            ::pclose(fp);
-        }
+        auto gitStatus = mcpp::platform::process::capture(
+            std::format("git -C {} status --porcelain 2>&1",
+                        mcpp::platform::shell::quote(root->string())));
+        std::string out = gitStatus.output;
         if (!out.empty()) {
             mcpp::ui::error("working tree has uncommitted changes; pass --allow-dirty to skip this check");
             std::println(stderr, "{}", out);

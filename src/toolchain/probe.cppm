@@ -8,12 +8,7 @@
 // the mcpp.process module.
 
 module;
-#include <cstdio>      // popen, pclose, fgets, FILE
 #include <cstdlib>     // getenv
-#if defined(_WIN32)
-#define popen  _popen
-#define pclose _pclose
-#endif
 
 export module mcpp.toolchain.probe;
 
@@ -78,33 +73,21 @@ std::string join_colon_paths(const std::vector<std::filesystem::path>& dirs) {
 }
 
 std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) {
-#if defined(_WIN32)
-    (void)dirs;
-    return "";
-#else
-    if (dirs.empty()) return "";
-    auto joined = join_colon_paths(dirs);
-    return std::format("env LD_LIBRARY_PATH={}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}} ",
-                       mcpp::xlings::shq(joined));
-#endif
+    return mcpp::platform::linux_::build_ld_library_path_prefix(dirs);
 }
 
 } // namespace
 
 std::expected<std::string, DetectError> run_capture(const std::string& cmd) {
-    std::array<char, 4096> buf{};
-    std::string out;
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) {
+    auto r = mcpp::platform::process::capture(cmd);
+    if (r.exit_code != 0 && r.output.empty()) {
         return std::unexpected(DetectError{std::format("failed to execute: {}", cmd)});
     }
-    while (std::fgets(buf.data(), buf.size(), fp) != nullptr) out += buf.data();
-    int rc = ::pclose(fp);
-    if (rc != 0) {
+    if (r.exit_code != 0) {
         return std::unexpected(DetectError{
-            std::format("'{}' exited with status {}", cmd, rc)});
+            std::format("'{}' exited with status {}", cmd, r.exit_code)});
     }
-    return out;
+    return r.output;
 }
 
 std::string extract_version(std::string_view s) {
@@ -193,15 +176,10 @@ discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
                       || exe.find("clang") != std::string::npos;
     if (looksLikeLlvm) {
         append_existing_unique(dirs, root / "lib");
-#if defined(__linux__)
-        append_existing_unique(dirs, root / "lib" / "x86_64-unknown-linux-gnu");
-        append_existing_unique(dirs, "/lib/x86_64-linux-gnu");
-        append_existing_unique(dirs, "/usr/lib/x86_64-linux-gnu");
-        append_existing_unique(dirs, "/usr/lib64");
-#elif defined(__APPLE__)
-        append_existing_unique(dirs, root / "lib" / "aarch64-apple-darwin");
-        append_existing_unique(dirs, root / "lib" / "darwin");
-#endif
+        for (auto& d : mcpp::platform::linux_::runtime_lib_dirs(root))
+            append_existing_unique(dirs, d);
+        for (auto& d : mcpp::platform::macos::runtime_lib_dirs(root))
+            append_existing_unique(dirs, d);
     }
 
     if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
@@ -218,20 +196,18 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
     auto root = compilerBin.parent_path().parent_path();
     if (!targetTriple.empty())
         append_existing_unique(dirs, root / "lib" / std::string(targetTriple));
-#if defined(__linux__)
-    append_existing_unique(dirs, root / "lib" / "x86_64-unknown-linux-gnu");
-#elif defined(__APPLE__)
-    append_existing_unique(dirs, root / "lib" / "aarch64-apple-darwin");
-    append_existing_unique(dirs, root / "lib" / "darwin");
-#endif
+    for (auto& d : mcpp::platform::linux_::runtime_lib_dirs(root))
+        append_existing_unique(dirs, d);
+    for (auto& d : mcpp::platform::macos::runtime_lib_dirs(root))
+        append_existing_unique(dirs, d);
     append_existing_unique(dirs, root / "lib");
 
-#if defined(__linux__)
-    if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
-        append_existing_unique(dirs, *rt / "lib64");
-        append_existing_unique(dirs, *rt / "lib");
+    if constexpr (mcpp::platform::is_linux) {
+        if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
+            append_existing_unique(dirs, *rt / "lib64");
+            append_existing_unique(dirs, *rt / "lib");
+        }
     }
-#endif
     return dirs;
 }
 
@@ -257,22 +233,11 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
         cxx = "g++";
     }
 
-#if defined(_WIN32)
-    auto bin_path_r = run_capture(std::format("where {} {}", cxx,
-                                               mcpp::platform::null_redirect));
-#else
-    auto bin_path_r = run_capture(std::format("command -v '{}' {}", cxx,
-                                               mcpp::platform::null_redirect));
-#endif
-    if (!bin_path_r) {
+    auto found = mcpp::platform::fs::which(cxx);
+    if (!found) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found in PATH", cxx)});
     }
-    // `where` on Windows may return multiple lines; take only the first.
-    auto bin = trim_line(first_line_of(*bin_path_r));
-    if (bin.empty()) {
-        return std::unexpected(DetectError{std::format("compiler '{}' not found", cxx)});
-    }
-    return std::filesystem::path(bin);
+    return *found;
 }
 
 std::expected<std::string, DetectError>
@@ -297,15 +262,9 @@ probe_sysroot(const std::filesystem::path& compilerBin,
         auto s = trim_line(*r);
         if (!s.empty() && std::filesystem::exists(s)) return s;
     }
-#if defined(__APPLE__)
     // macOS fallback: use xcrun to discover the SDK path
-    auto xcrun_r = run_capture(std::format("xcrun --show-sdk-path {}",
-                                            mcpp::platform::null_redirect));
-    if (xcrun_r) {
-        auto sdk = trim_line(*xcrun_r);
-        if (!sdk.empty() && std::filesystem::exists(sdk)) return sdk;
-    }
-#endif
+    if (auto sdk = mcpp::platform::macos::sdk_path())
+        return *sdk;
     return {};
 }
 

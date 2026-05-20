@@ -17,6 +17,7 @@ export module mcpp.pm.resolver;
 
 import std;
 import mcpp.manifest;
+import mcpp.platform;
 import mcpp.pm.compat;
 import mcpp.pm.package_fetcher;
 import mcpp.version_req;
@@ -26,16 +27,7 @@ export namespace mcpp::pm {
 // xpkg.lua's `xpm.<key>` uses these names. (Distinct from
 // `kCurrentPlatform` in cli.cppm, which is the [toolchain] table key —
 // "macos" vs "macosx".)
-inline constexpr std::string_view kXpkgPlatform =
-#if defined(__linux__)
-    "linux";
-#elif defined(__APPLE__)
-    "macosx";
-#elif defined(_WIN32)
-    "windows";
-#else
-    "linux";
-#endif
+inline constexpr std::string_view kXpkgPlatform = mcpp::platform::xpkg_platform;
 
 // Returns true if `v` is a SemVer constraint (caret, tilde, range, glob,
 // `*`, or empty) rather than a literal exact version. Empty counts as

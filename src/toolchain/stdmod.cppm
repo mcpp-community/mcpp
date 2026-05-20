@@ -1,10 +1,5 @@
 module;
-#include <cstdio>     // popen, pclose, fgets, FILE
 #include <cstdlib>    // getenv
-#if defined(_WIN32)
-#define popen  _popen
-#define pclose _pclose
-#endif
 
 // mcpp.toolchain.stdmod — pre-build the `import std` BMI and cache it.
 //
@@ -28,6 +23,7 @@ module;
 export module mcpp.toolchain.stdmod;
 
 import std;
+import mcpp.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.gcc;
@@ -59,20 +55,12 @@ namespace mcpp::toolchain {
 namespace {
 
 std::expected<std::string, StdModError> run_capture_command(const std::string& cmd) {
-    std::array<char, 4096> buf{};
-    std::string out;
-    std::FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) {
+    auto r = mcpp::platform::process::capture(cmd);
+    if (r.exit_code != 0) {
         return std::unexpected(StdModError{
-            std::format("failed to spawn compiler: {}", cmd)});
+            std::format("std module precompile failed (rc={}):\n{}", r.exit_code, r.output)});
     }
-    while (std::fgets(buf.data(), buf.size(), fp) != nullptr) out += buf.data();
-    int rc = ::pclose(fp);
-    if (rc != 0) {
-        return std::unexpected(StdModError{
-            std::format("std module precompile failed (rc={}):\n{}", rc, out)});
-    }
-    return out;
+    return r.output;
 }
 
 } // namespace

@@ -14,15 +14,7 @@
 // the directory tree exists and seeds .xlings.json if missing.
 
 module;
-#include <cstdio>
 #include <cstdlib>
-#if defined(_WIN32)
-#include <windows.h>
-#define popen  _popen
-#define pclose _pclose
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>  // _NSGetExecutablePath
-#endif
 
 export module mcpp.config;
 
@@ -30,6 +22,7 @@ import std;
 import mcpp.libs.toml;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
+import mcpp.platform;
 
 export namespace mcpp::config {
 
@@ -180,22 +173,8 @@ std::filesystem::path home_dir() {
         return std::filesystem::path(e);
 
     std::error_code ec;
-#if defined(_WIN32)
-    char _exe_buf[MAX_PATH];
-    DWORD _exe_len = GetModuleFileNameA(NULL, _exe_buf, MAX_PATH);
-    std::filesystem::path exe;
-    if (_exe_len > 0 && _exe_len < MAX_PATH)
-        exe = std::filesystem::canonical(_exe_buf, ec);
-#elif defined(__APPLE__)
-    char _exe_buf[4096];
-    uint32_t _exe_size = sizeof(_exe_buf);
-    std::filesystem::path exe;
-    if (_NSGetExecutablePath(_exe_buf, &_exe_size) == 0)
-        exe = std::filesystem::canonical(_exe_buf, ec);
-#else
-    auto exe = std::filesystem::canonical("/proc/self/exe", ec);
-#endif
-    if (!ec && exe.parent_path().filename() == "bin") {
+    auto exe = mcpp::platform::fs::self_exe_path();
+    if (exe.has_parent_path() && exe.parent_path().filename() == "bin") {
         // Dev builds emit binaries at target/<triple>/<fp>/bin/<exe>,
         // matching the bin/ shape. Any ancestor literally named
         // "target" disqualifies self-contained mode and falls through
@@ -367,14 +346,10 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet)
     }
 
     // 2. Copy from system (`which xlings`)
-#if defined(_WIN32)
-    auto sys = run_capture("where xlings.exe 2>nul");
-#else
-    auto sys = run_capture("command -v xlings 2>/dev/null");
-#endif
-    if (sys) {
-        std::string p = *sys;
-        while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) p.pop_back();
+    auto xlings_name = std::string("xlings") + std::string(mcpp::platform::exe_suffix);
+    auto sysXlings = mcpp::platform::fs::which(xlings_name);
+    if (sysXlings) {
+        std::string p = sysXlings->string();
         if (!p.empty() && std::filesystem::exists(p)) {
             std::filesystem::copy_file(p, destBin,
                 std::filesystem::copy_options::overwrite_existing, ec);
@@ -453,11 +428,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // <XLINGS_HOME>/bin/xlings, which satisfies xlings's own shim-
     // creation guard (`if fs::exists(homeDir/"bin"/"xlings")`),
     // making ensure_sandbox_xlings_binary() a no-op.
-#if defined(_WIN32)
-    cfg.xlingsBinary  = cfg.registryDir / "bin" / "xlings.exe";
-#else
-    cfg.xlingsBinary  = cfg.registryDir / "bin" / "xlings";
-#endif
+    cfg.xlingsBinary  = cfg.registryDir / "bin" /
+        (std::string("xlings") + std::string(mcpp::platform::exe_suffix));
     cfg.bmiCacheDir   = cfg.mcppHome / "bmi";
     cfg.metaCacheDir  = cfg.mcppHome / "cache";
     cfg.logDir        = cfg.mcppHome / "log";
@@ -552,16 +524,11 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         auto xbin = acquire_xlings_binary(cfg.xlingsBinary, quiet);
         if (!xbin) return std::unexpected(ConfigError{xbin.error()});
     } else if (cfg.xlingsBinaryMode == "system") {
-#if defined(_WIN32)
-        auto sys = run_capture("where xlings.exe 2>nul");
-#else
-        auto sys = run_capture("command -v xlings 2>/dev/null");
-#endif
-        if (!sys || sys->empty())
+        auto sysPath = mcpp::platform::fs::which(
+            std::string("xlings") + std::string(mcpp::platform::exe_suffix));
+        if (!sysPath)
             return std::unexpected(ConfigError{"system xlings not found in PATH"});
-        std::string p = *sys;
-        while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) p.pop_back();
-        cfg.xlingsBinary = p;
+        cfg.xlingsBinary = *sysPath;
     } else {
         cfg.xlingsBinary = cfg.xlingsBinaryMode;
         if (!std::filesystem::exists(cfg.xlingsBinary))
