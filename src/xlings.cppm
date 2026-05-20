@@ -625,9 +625,10 @@ int install_with_progress(const Env& env, std::string_view target,
     auto cmd = [&]() -> std::string {
         if constexpr (mcpp::platform::is_windows) {
             // Fallback to interface path if direct install fails
-            return std::format("{} interface install_packages --args {}",
+            return std::format("{} interface install_packages --args {} {}",
                 env.binary.string(),
-                shq(argsJson));
+                shq(argsJson),
+                mcpp::platform::null_redirect);
         } else {
             return std::format(
                 "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} {}",
@@ -744,7 +745,8 @@ void ensure_init(const Env& env, bool quiet) {
     if constexpr (mcpp::platform::is_windows) {
         mcpp::platform::env::set("XLINGS_HOME", env.home.string());
         mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
-        cmd = env.binary.string() + " self init";
+        cmd = env.binary.string() + " self init "
+            + std::string(mcpp::platform::shell::silent_redirect);
     } else {
         cmd = std::format(
             "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init {}",
