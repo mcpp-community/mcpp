@@ -88,9 +88,24 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         include_flags += " -I" + escape_path(abs);
     }
 
-    // Sysroot
+    // Sysroot + config override for macOS.
+    // On macOS, xlings LLVM's clang++.cfg contains hardcoded --sysroot and
+    // -isystem paths from the original install location. When the package is
+    // copied to mcpp's sandbox, these paths become stale. We pass
+    // --no-default-config to ignore the cfg and provide correct paths.
     std::string sysroot_flag;
-    if (!plan.toolchain.sysroot.empty()) {
+    bool is_macos_clang = mcpp::toolchain::is_clang(plan.toolchain)
+        && (plan.toolchain.targetTriple.find("apple") != std::string::npos
+         || plan.toolchain.targetTriple.find("darwin") != std::string::npos);
+    if (is_macos_clang) {
+        auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
+        auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
+        sysroot_flag = " --no-default-config";
+        sysroot_flag += " -isystem" + escape_path(libcxxInclude);
+        if (auto sdk = mcpp::platform::macos::sdk_path())
+            sysroot_flag += " --sysroot=" + escape_path(*sdk);
+        f.sysroot = sysroot_flag;
+    } else if (!plan.toolchain.sysroot.empty()) {
         sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
         f.sysroot = sysroot_flag;
     }
