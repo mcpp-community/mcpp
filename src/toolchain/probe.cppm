@@ -254,6 +254,15 @@ probe_target_triple(const std::filesystem::path& compilerBin,
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
               const std::string& envPrefix) {
+    // macOS: prefer xcrun's SDK path over -print-sysroot.
+    // xlings LLVM bakes --sysroot into clang++.cfg at install time, and
+    // -print-sysroot echoes that back. If the CLT/Xcode SDK was updated
+    // after the LLVM package was cached, the cfg-baked path may be stale
+    // or point to an incompatible SDK.  xcrun always returns the currently
+    // active SDK, so mcpp passes it on the command line to override the cfg.
+    if (auto sdk = mcpp::platform::macos::sdk_path())
+        return *sdk;
+
     auto r = run_capture(std::format("{}{} -print-sysroot {}",
                                      envPrefix,
                                      mcpp::xlings::shq(compilerBin.string()),
@@ -262,17 +271,6 @@ probe_sysroot(const std::filesystem::path& compilerBin,
         auto s = trim_line(*r);
         if (!s.empty() && std::filesystem::exists(s)) return s;
     }
-    // macOS: do NOT fall back to xcrun SDK path for xlings-installed LLVM.
-    // xlings LLVM uses -nostdinc++ (via clang++.cfg) to provide its own
-    // libc++ headers.  Combining --sysroot=<MacOSX.sdk> with -nostdinc++
-    // breaks C runtime header resolution (_CTYPE_A, memcpy, errno etc.
-    // become undeclared) because the SDK headers assume the C runtime
-    // macros are available via default include paths, which --sysroot
-    // overrides.
-    //
-    // If the compiler itself reports a sysroot (-print-sysroot), use it —
-    // that's an explicit choice by the toolchain.  But the xcrun SDK is
-    // meant for Apple's system clang, not for standalone xlings LLVM.
     return {};
 }
 
