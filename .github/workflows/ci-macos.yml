@@ -19,6 +19,8 @@ jobs:
     name: macOS ARM64 — xlings LLVM end-to-end
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      MCPP_HOME: /Users/runner/.mcpp
     steps:
       - uses: actions/checkout@v4
 
@@ -285,9 +287,12 @@ jobs:
 
       - name: Unit + integration tests via `mcpp test`
         run: |
-          # Use freshly-built mcpp (has --mirror support)
+          # Use freshly-built mcpp with the shared sandbox (MCPP_HOME set
+          # via job-level env). MCPP_VENDORED_XLINGS ensures the sandbox
+          # uses the pre-installed xlings binary.
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" self config --mirror GLOBAL
           "$MCPP" test
 
