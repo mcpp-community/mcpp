@@ -323,6 +323,6 @@ jobs:
           # May fail if xlings mcpp version lacks recent fixes.
           TMP=$(mktemp -d)
           cd "$TMP"
-          mcpp new hello
+          "$MCPP" new hello
           cd hello
-          mcpp run
+          "$MCPP" run
