@@ -168,31 +168,47 @@ void print_status(std::string_view verb, std::string_view msg) {
     }
 }
 
-std::filesystem::path home_dir() {
-    if (auto* e = std::getenv("MCPP_HOME"); e && *e)
-        return std::filesystem::path(e);
-
-    std::error_code ec;
-    auto exe = mcpp::platform::fs::self_exe_path();
-    if (exe.has_parent_path() && exe.parent_path().filename() == "bin") {
-        // Dev builds emit binaries at target/<triple>/<fp>/bin/<exe>,
-        // matching the bin/ shape. Any ancestor literally named
-        // "target" disqualifies self-contained mode and falls through
-        // to $HOME/.mcpp — so first-run on a dev binary doesn't drop
-        // a half-populated sandbox into target/.
-        bool isDevPath = false;
-        for (auto p = exe.parent_path();
-             !p.empty() && p != p.parent_path();
-             p = p.parent_path()) {
-            if (p.filename() == "target") { isDevPath = true; break; }
-        }
-        if (!isDevPath)
-            return exe.parent_path().parent_path();
+std::filesystem::path default_mcpp_home() {
+    // Windows: %USERPROFILE%\.mcpp   POSIX: $HOME/.mcpp
+    if constexpr (mcpp::platform::is_windows) {
+        if (auto* e = std::getenv("USERPROFILE"); e && *e)
+            return std::filesystem::path(e) / ".mcpp";
     }
-
     if (auto* e = std::getenv("HOME"); e && *e)
         return std::filesystem::path(e) / ".mcpp";
     return std::filesystem::current_path() / ".mcpp";
+}
+
+std::filesystem::path home_dir() {
+    // 1. Explicit $MCPP_HOME takes priority (CI, advanced users).
+    if (auto* e = std::getenv("MCPP_HOME"); e && *e)
+        return std::filesystem::path(e);
+
+    auto exe = mcpp::platform::fs::self_exe_path();
+    if (exe.has_parent_path() && exe.parent_path().filename() == "bin") {
+        auto candidate = exe.parent_path().parent_path();
+
+        // Disqualify self-contained mode for two cases:
+        //   a) Dev builds: .../target/<triple>/<fp>/bin/<exe>
+        //   b) xlings packages: .../data/xpkgs/xim-x-mcpp/<ver>/bin/mcpp
+        //      Creating a nested xlings sandbox inside the xpkgs directory
+        //      breaks toolchain installation (nested XLINGS_HOME) and loses
+        //      installed toolchains when the mcpp package version is upgraded.
+        bool disqualified = false;
+        for (auto p = candidate;
+             p.has_parent_path() && p != p.root_path();
+             p = p.parent_path()) {
+            if (p.filename() == "target") { disqualified = true; break; }
+            if (p.filename() == "xpkgs") {
+                auto parent = p.parent_path().filename().string();
+                if (parent == "data") { disqualified = true; break; }
+            }
+        }
+        if (!disqualified)
+            return candidate;
+    }
+
+    return default_mcpp_home();
 }
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd) {
