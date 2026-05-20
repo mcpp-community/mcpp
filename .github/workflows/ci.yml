@@ -141,14 +141,14 @@ jobs:
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           # Install LLVM toolchain into mcpp's sandbox
           "$MCPP" toolchain install llvm 20.1.7
-          # Verify install succeeded
-          "$MCPP" toolchain list | grep -q llvm
+          # Set as default so the build picks it up
+          "$MCPP" toolchain default llvm@20.1.7
           # Build a hello-world project with the installed toolchain
           TMP=$(mktemp -d)
           cd "$TMP"
           "$MCPP" new hello
           cd hello
-          "$MCPP" build --toolchain llvm@20.1.7
+          "$MCPP" build
           "$MCPP" run
 
       - name: Fresh user experience (xlings install mcpp → new → run)
