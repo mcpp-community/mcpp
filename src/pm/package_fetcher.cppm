@@ -14,6 +14,7 @@ export module mcpp.pm.package_fetcher;
 
 import std;
 import mcpp.config;
+import mcpp.platform;
 import mcpp.pm.compat;
 import mcpp.pm.index_spec;
 import mcpp.xlings;

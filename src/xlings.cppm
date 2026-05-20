@@ -622,10 +622,8 @@ int install_with_progress(const Env& env, std::string_view target,
         // Use std::system() directly — do NOT redirect stdin via </dev/null
         // because xlings may need stdin for subprocess coordination during
         // large package extraction.
-        int directRc = std::system(directCmd.c_str());
-        if constexpr (!mcpp::platform::is_windows) {
-            directRc = WIFEXITED(directRc) ? WEXITSTATUS(directRc) : directRc;
-        }
+        int directRc = mcpp::platform::process::extract_exit_code(
+            std::system(directCmd.c_str()));
         if (directRc == 0) return 0;
     }
 
