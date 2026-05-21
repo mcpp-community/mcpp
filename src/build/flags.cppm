@@ -135,14 +135,25 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // Linker flags that cfg normally provides
         sysroot_flag += " -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
         f.sysroot = sysroot_flag;
+    } else if (!plan.toolchain.sysroot.empty()) {
+        // GCC (or Clang without cfg): use --sysroot from probe.
+        // GCC requires --sysroot for include-fixed headers (stdlib.h wrapper).
+        // Supplement with -isystem for linux kernel headers from payload
+        // if the probed sysroot is missing them.
+        sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
+        if (plan.toolchain.payloadPaths && !plan.toolchain.payloadPaths->linuxInclude.empty()) {
+            auto sysrootLinux = plan.toolchain.sysroot / "usr" / "include" / "linux" / "limits.h";
+            if (!std::filesystem::exists(sysrootLinux))
+                sysroot_flag += " -isystem" + escape_path(plan.toolchain.payloadPaths->linuxInclude);
+        }
+        f.sysroot = sysroot_flag;
     } else if (plan.toolchain.payloadPaths) {
-        // GCC or Clang without cfg: use payload -isystem paths.
+        // No sysroot but have payload paths: use -isystem.
         auto& pp = *plan.toolchain.payloadPaths;
         sysroot_flag += " -isystem" + escape_path(pp.glibcInclude);
         if (!pp.linuxInclude.empty())
             sysroot_flag += " -isystem" + escape_path(pp.linuxInclude);
         f.sysroot = sysroot_flag;
-    } else if (!plan.toolchain.sysroot.empty()) {
         sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
         f.sysroot = sysroot_flag;
     }

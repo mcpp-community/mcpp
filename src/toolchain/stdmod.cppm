@@ -129,13 +129,21 @@ std::expected<StdModule, StdModError> ensure_built(
         } else if (!tc.sysroot.empty()) {
             sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
         }
+    } else if (!tc.sysroot.empty()) {
+        // GCC: use --sysroot (required for include-fixed headers).
+        // Supplement with -isystem for linux kernel headers from payload
+        // if the probed sysroot is missing them.
+        sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
+        if (tc.payloadPaths && !tc.payloadPaths->linuxInclude.empty()) {
+            auto sysrootLinux = tc.sysroot / "usr" / "include" / "linux" / "limits.h";
+            if (!std::filesystem::exists(sysrootLinux))
+                sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
+        }
     } else if (tc.payloadPaths) {
-        // GCC: use payload -isystem paths instead of --sysroot.
+        // No sysroot: use payload -isystem paths.
         sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->glibcInclude.string());
         if (!tc.payloadPaths->linuxInclude.empty())
             sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
-    } else if (!tc.sysroot.empty()) {
-        sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
     }
 
     bool std_cached = std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath);
