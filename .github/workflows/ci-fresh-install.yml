@@ -1,16 +1,22 @@
 name: ci-fresh-install
 
-# Fresh install CI — simulates a real first-time user on a clean machine.
-# No caches, no env overrides, no self-host. Just:
-#   1. Install xlings
-#   2. Install mcpp via xlings
-#   3. mcpp new hello → cd hello → mcpp run
+# Fresh install CI — validates the first-time user experience on all platforms.
+# No sandbox/target caches: simulates a user who just installed mcpp.
+#
+# Flow: bootstrap mcpp via xlings → build this PR's mcpp from source →
+#       use the freshly-built mcpp to: new → run (default toolchain)
+#       then: install llvm → new → run
+#
+# This catches issues that cached CI misses:
+#   - Incomplete sysroot (missing linux kernel headers)
+#   - Stale toolchain cfg/specs paths
+#   - Missing xpkg dependencies
 
 on:
-  # Manual trigger only — this CI tests the xlings-distributed mcpp binary
-  # (not the PR's code). It validates the real user install flow and will
-  # fail until fixes are released to the xlings mcpp package.
-  # Run manually after a release to verify the end-to-end user experience.
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 concurrency:
@@ -21,65 +27,126 @@ jobs:
   linux-fresh:
     name: Linux fresh install
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - name: Install xlings
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap xlings + mcpp
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
         run: |
           curl -fsSL https://github.com/d2learn/xlings/releases/download/v0.4.30/xlings-0.4.30-linux-x86_64.tar.gz -o /tmp/xlings.tar.gz
           tar -xzf /tmp/xlings.tar.gz -C /tmp
           /tmp/xlings-0.4.30-linux-x86_64/subos/default/bin/xlings self install
           echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
 
-      - name: Install mcpp
-        run: xlings install mcpp -y
-
-      - name: "mcpp new hello → mcpp run"
+      - name: Install bootstrap mcpp
         run: |
-          mcpp new hello
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings install mcpp -y
+
+      - name: Build this PR's mcpp from source
+        run: |
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          export MCPP_VENDORED_XLINGS="$HOME/.xlings/subos/default/bin/xlings"
+          mcpp build
+          MCPP_FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          echo "MCPP=$MCPP_FRESH" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+
+      - name: "Fresh: mcpp new hello → mcpp run (GCC)"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd "$(mktemp -d)"
+          "$MCPP" new hello
           cd hello
-          mcpp run
+          "$MCPP" run
+
+      - name: "Fresh: install LLVM → mcpp new hello → mcpp run"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" toolchain install llvm 20.1.7
+          "$MCPP" toolchain default llvm@20.1.7
+          cd "$(mktemp -d)"
+          "$MCPP" new hello_llvm
+          cd hello_llvm
+          "$MCPP" run
 
   macos-fresh:
     name: macOS fresh install
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - name: Install xlings
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap xlings + mcpp
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
         run: |
           curl -fsSL https://github.com/d2learn/xlings/releases/download/v0.4.30/xlings-0.4.30-macosx-arm64.tar.gz -o /tmp/xlings.tar.gz
           tar -xzf /tmp/xlings.tar.gz -C /tmp
           /tmp/xlings-0.4.30-macosx-arm64/subos/default/bin/xlings self install
           echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
 
-      - name: Install mcpp
-        run: xlings install mcpp -y
-
-      - name: "mcpp new hello → mcpp run"
+      - name: Install bootstrap mcpp
         run: |
-          mcpp new hello
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings install mcpp -y
+
+      - name: Build this PR's mcpp from source
+        run: |
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          export MCPP_VENDORED_XLINGS="$HOME/.xlings/subos/default/bin/xlings"
+          mcpp build
+          MCPP_FRESH=$(find target -type f -name mcpp ! -name '*.o' | head -1)
+          echo "MCPP=$(cd "$(dirname "$MCPP_FRESH")" && pwd)/$(basename "$MCPP_FRESH")" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+
+      - name: "Fresh: mcpp new hello → mcpp run (LLVM)"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd "$(mktemp -d)"
+          "$MCPP" new hello
           cd hello
-          mcpp run
+          "$MCPP" run
 
   windows-fresh:
     name: Windows fresh install
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - name: Install xlings
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap xlings + mcpp
         shell: pwsh
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
         run: |
           Invoke-WebRequest -Uri "https://github.com/d2learn/xlings/releases/download/v0.4.30/xlings-0.4.30-windows-x86_64.zip" -OutFile "$env:TEMP\xlings.zip"
           Expand-Archive -Path "$env:TEMP\xlings.zip" -DestinationPath "$env:TEMP\xlings-extract" -Force
           & "$env:TEMP\xlings-extract\xlings-0.4.30-windows-x86_64\subos\default\bin\xlings.exe" self install
           "$env:USERPROFILE\.xlings\subos\default\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
 
-      - name: Install mcpp
+      - name: Install bootstrap mcpp
         shell: pwsh
         run: xlings install mcpp -y
 
-      - name: "mcpp new hello → mcpp run"
-        shell: pwsh
+      - name: Build this PR's mcpp from source
+        shell: bash
         run: |
-          mcpp new hello
-          Set-Location hello
-          mcpp run
+          export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
+          export MCPP_VENDORED_XLINGS="$USERPROFILE/.xlings/subos/default/bin/xlings.exe"
+          mcpp build
+          MCPP_FRESH=$(find target -type f -name 'mcpp.exe' | head -1)
+          echo "MCPP=$(realpath "$MCPP_FRESH")" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$USERPROFILE/.xlings/subos/default/bin/xlings.exe" >> "$GITHUB_ENV"
+
+      - name: "Fresh: mcpp new hello → mcpp run"
+        shell: bash
+        run: |
+          export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd "$(mktemp -d)"
+          "$MCPP" new hello
+          cd hello
+          "$MCPP" run
