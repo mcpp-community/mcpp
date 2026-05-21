@@ -254,6 +254,7 @@ probe_target_triple(const std::filesystem::path& compilerBin,
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
               const std::string& envPrefix) {
+    // 1. Ask the compiler directly (works for GCC; Clang often doesn't support it).
     auto r = run_capture(std::format("{}{} -print-sysroot {}",
                                      envPrefix,
                                      mcpp::xlings::shq(compilerBin.string()),
@@ -262,10 +263,28 @@ probe_sysroot(const std::filesystem::path& compilerBin,
         auto s = trim_line(*r);
         if (!s.empty() && std::filesystem::exists(s)) return s;
     }
-    // macOS fallback: use xcrun to discover the SDK path.
-    // The sysroot is used for regular compilation flags (flags.cppm) but
-    // skipped for std module precompilation on macOS (stdmod.cppm) to
-    // avoid breaking SDK internal header dependencies.
+
+    // 2. Parse the compiler driver config file (Clang .cfg).
+    //    xlings-installed Clang ships a clang++.cfg alongside the binary
+    //    with --sysroot pointing to the payload's associated sysroot.
+    {
+        auto stem = compilerBin.stem().string();
+        auto cfgPath = compilerBin.parent_path() / (stem + ".cfg");
+        if (std::filesystem::exists(cfgPath)) {
+            std::ifstream ifs(cfgPath);
+            std::string line;
+            while (std::getline(ifs, line)) {
+                constexpr std::string_view prefix = "--sysroot=";
+                if (line.starts_with(prefix)) {
+                    auto val = trim_line(std::string(line.substr(prefix.size())));
+                    if (!val.empty() && std::filesystem::exists(val))
+                        return val;
+                }
+            }
+        }
+    }
+
+    // 3. macOS fallback: use xcrun to discover the SDK path.
     if (auto sdk = mcpp::platform::macos::sdk_path())
         return *sdk;
     return {};

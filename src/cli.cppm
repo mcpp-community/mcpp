@@ -998,9 +998,8 @@ prepare_build(bool print_fingerprint,
     // ─── Toolchain resolution (docs/21) ────────────────────────────────
     // Priority chain:
     //   1. mcpp.toml [toolchain].<platform>      → resolve_xpkg_path → abs path
-    //   2. $MCPP_HOME/registry/subos/<active>/bin/g++  (xlings sandbox subos)
-    //   3. $CXX env var
-    //   4. PATH g++  (with warning)
+    //   2. $CXX env var
+    //   3. PATH g++  (with warning)
     std::filesystem::path explicit_compiler;
     std::optional<mcpp::config::GlobalConfig> cfg_opt;
     auto get_cfg = [&]() -> std::expected<mcpp::config::GlobalConfig*, std::string> {
@@ -1174,10 +1173,8 @@ prepare_build(bool print_fingerprint,
     if (!tc) return std::unexpected(tc.error().message);
 
     // For musl-gcc the toolchain is fully self-contained
-    // (`<root>/x86_64-linux-musl/{include,lib}` is its own sysroot), and
-    // pointing it at mcpp's glibc subos breaks compilation. Skip the
-    // sysroot injection in that case — musl-gcc's `-dumpmachine` reports
-    // `x86_64-linux-musl`, which is also the marker we use elsewhere.
+    // (`<root>/x86_64-linux-musl/{include,lib}` is its own sysroot).
+    // musl-gcc's `-dumpmachine` reports `x86_64-linux-musl`.
     bool isMuslTc = tc->targetTriple.find("-musl") != std::string::npos;
 
     // A musl toolchain only really makes sense with static linkage —
@@ -1189,18 +1186,9 @@ prepare_build(bool print_fingerprint,
         m->buildConfig.linkage = "static";
     }
 
-    // M5.5: prefer mcpp's xlings-managed subos as sysroot — it has glibc
-    // headers + libs in the conventional layout that GCC expects. The
-    // -print-sysroot output from a freshly-built GCC often points at
-    // some build-time path that doesn't exist on the user's machine.
-    if (!isMuslTc) {
-        if (auto cfg = get_cfg(); cfg) {
-            auto mcppSubos = (*cfg)->xlingsHome() / "subos" / "default";
-            if (std::filesystem::exists(mcppSubos / "usr" / "include")) {
-                tc->sysroot = mcppSubos;
-            }
-        }
-    }
+    // Sysroot comes from the toolchain payload itself (GCC -print-sysroot,
+    // Clang clang++.cfg). mcpp does not override it — the payload is
+    // self-describing. See docs: 2026-05-21-linux-sysroot-missing-kernel-headers.md
 
     // Resolve dependencies: walk the **transitive** graph from the main
     // manifest, BFS-style. Each unique `(namespace, shortName)` is fetched

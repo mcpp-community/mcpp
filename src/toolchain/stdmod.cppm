@@ -93,24 +93,29 @@ std::expected<StdModule, StdModError> ensure_built(
     sm.objectPath = sm.cacheDir / "std.o";
 
     // Build sysroot + include flags for std module precompilation.
-    // On macOS, xlings LLVM's clang++.cfg contains hardcoded --sysroot and
-    // -isystem paths from the original install location. When the LLVM package
-    // is copied to mcpp's sandbox, these cfg paths become stale (still point
-    // to the original xlings directory). We override both:
-    //   --sysroot   → current active SDK (from xcrun)
-    //   --no-default-config  → ignore stale cfg entirely
-    //   -isystem    → correct libc++ headers in the sandbox copy
+    //
+    // xlings LLVM ships a clang++.cfg with hardcoded --sysroot and -isystem
+    // paths from the original install location. After mcpp copies the package
+    // to its sandbox, these cfg paths may become stale. We detect a cfg file
+    // and bypass it with --no-default-config, providing correct flags derived
+    // from the payload's actual binary location and the probed sysroot.
     std::string sysroot_flag;
-    bool is_macos = tc.targetTriple.find("apple") != std::string::npos
-                 || tc.targetTriple.find("darwin") != std::string::npos;
-    if (is_macos && is_clang(tc)) {
-        // Ignore the stale clang++.cfg and provide correct flags directly.
-        auto llvmRoot = tc.binaryPath.parent_path().parent_path();
-        auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-        sysroot_flag = " --no-default-config";
-        sysroot_flag += std::format(" -isystem'{}'", libcxxInclude.string());
-        if (auto sdk = mcpp::platform::macos::sdk_path())
-            sysroot_flag += std::format(" --sysroot='{}'", sdk->string());
+    if (is_clang(tc)) {
+        auto cfgPath = tc.binaryPath.parent_path()
+                       / (tc.binaryPath.stem().string() + ".cfg");
+        if (std::filesystem::exists(cfgPath)) {
+            // Bypass potentially-stale cfg; provide correct flags directly.
+            auto llvmRoot = tc.binaryPath.parent_path().parent_path();
+            auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
+            sysroot_flag = " --no-default-config";
+            sysroot_flag += std::format(" -isystem'{}'", libcxxInclude.string());
+            if (!tc.sysroot.empty())
+                sysroot_flag += std::format(" --sysroot='{}'", tc.sysroot.string());
+            else if (auto sdk = mcpp::platform::macos::sdk_path())
+                sysroot_flag += std::format(" --sysroot='{}'", sdk->string());
+        } else if (!tc.sysroot.empty()) {
+            sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
+        }
     } else if (!tc.sysroot.empty()) {
         sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
     }
