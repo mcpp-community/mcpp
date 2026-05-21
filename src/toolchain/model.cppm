@@ -51,6 +51,7 @@ struct DetectError { std::string message; };
 bool is_gcc(const Toolchain& tc);
 bool is_clang(const Toolchain& tc);
 bool is_musl_target(const Toolchain& tc);
+bool is_msvc_target(const Toolchain& tc);
 
 struct BmiTraits {
     std::string_view bmiDir;     // "gcm.cache" | "pcm.cache"
@@ -77,6 +78,10 @@ bool is_clang(const Toolchain& tc) {
 
 bool is_musl_target(const Toolchain& tc) {
     return tc.targetTriple.find("-musl") != std::string::npos;
+}
+
+bool is_msvc_target(const Toolchain& tc) {
+    return tc.targetTriple.find("msvc") != std::string::npos;
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {

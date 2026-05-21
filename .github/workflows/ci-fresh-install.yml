@@ -1,0 +1,231 @@
+name: ci-fresh-install
+
+# Fresh install CI — validates the first-time user experience on all platforms.
+# No caches: simulates a clean machine where a user runs `xlings install mcpp`
+# for the first time, creates a project, and builds it.
+#
+# This catches issues that cached CI misses:
+#   - Incomplete sysroot (missing linux kernel headers)
+#   - Stale toolchain cfg/specs paths
+#   - Missing xpkg dependencies (glibc, linux-headers)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-fresh-install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Linux: fresh install → new project → build with GCC + LLVM
+  # ──────────────────────────────────────────────────────────────────
+  linux-fresh:
+    name: Linux fresh install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings (clean, no cache)
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        run: |
+          tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "/tmp/${tarball}" -C /tmp
+          "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          xlings install mcpp -y
+          echo "MCPP=$HOME/.xlings/subos/default/bin/mcpp" >> "$GITHUB_ENV"
+          echo "PATH=$HOME/.xlings/subos/default/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Build freshly-built mcpp from source (self-host)
+        run: |
+          # Use the xlings-installed mcpp to build from source, then
+          # switch to the freshly-built binary for remaining tests.
+          "$MCPP" self config --mirror GLOBAL
+          "$MCPP" build
+          MCPP_FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          echo "MCPP=$MCPP_FRESH" >> "$GITHUB_ENV"
+
+      - name: "Fresh user: mcpp new → build → run (default GCC)"
+        run: |
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          "$MCPP" new hello_gcc
+          cd hello_gcc
+          "$MCPP" run 2>&1 | tee /dev/stderr | grep -q "Hello"
+
+      - name: "Fresh user: install LLVM → new → build → run"
+        run: |
+          "$MCPP" toolchain install llvm 20.1.7
+          "$MCPP" toolchain default llvm@20.1.7
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          "$MCPP" new hello_llvm
+          cd hello_llvm
+          "$MCPP" run 2>&1 | tee /dev/stderr | grep -q "Hello"
+
+      - name: "Fresh user: import std (GCC)"
+        run: |
+          "$MCPP" toolchain default gcc
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          mkdir -p src
+          cat > mcpp.toml <<'EOF'
+          [package]
+          name = "std_test"
+          version = "0.1.0"
+          EOF
+          cat > src/main.cpp <<'EOF'
+          import std;
+          int main() { std::println("import std works"); }
+          EOF
+          "$MCPP" run 2>&1 | tee /dev/stderr | grep -q "import std works"
+
+      - name: "Fresh user: import std (LLVM)"
+        run: |
+          "$MCPP" toolchain default llvm@20.1.7
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          mkdir -p src
+          cat > mcpp.toml <<'EOF'
+          [package]
+          name = "std_test_llvm"
+          version = "0.1.0"
+          EOF
+          cat > src/main.cpp <<'EOF'
+          import std;
+          int main() { std::println("llvm import std works"); }
+          EOF
+          "$MCPP" run 2>&1 | tee /dev/stderr | grep -q "llvm import std works"
+
+  # ──────────────────────────────────────────────────────────────────
+  # macOS: fresh install → new project → build with LLVM
+  # ──────────────────────────────────────────────────────────────────
+  macos-fresh:
+    name: macOS fresh install
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings (clean, no cache)
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        run: |
+          tarball="xlings-${XLINGS_VERSION}-macos-aarch64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "/tmp/${tarball}" -C /tmp
+          "/tmp/xlings-${XLINGS_VERSION}-macos-aarch64/subos/default/bin/xlings" self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          xlings install mcpp -y
+          echo "MCPP=$HOME/.xlings/subos/default/bin/mcpp" >> "$GITHUB_ENV"
+          echo "PATH=$HOME/.xlings/subos/default/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Build freshly-built mcpp from source
+        run: |
+          "$MCPP" self config --mirror GLOBAL
+          "$MCPP" build
+          MCPP_FRESH=$(realpath "$(find target -type f -name mcpp | head -1)")
+          echo "MCPP=$MCPP_FRESH" >> "$GITHUB_ENV"
+
+      - name: "Fresh user: mcpp new → build → run (LLVM)"
+        run: |
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          "$MCPP" new hello_mac
+          cd hello_mac
+          "$MCPP" run 2>&1 | tee /dev/stderr | grep -q "Hello"
+
+      - name: "Fresh user: import std (LLVM)"
+        run: |
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          mkdir -p src
+          cat > mcpp.toml <<'EOF'
+          [package]
+          name = "std_test_mac"
+          version = "0.1.0"
+          EOF
+          cat > src/main.cpp <<'EOF'
+          import std;
+          int main() { std::println("macos import std works"); }
+          EOF
+          "$MCPP" run 2>&1 | tee /dev/stderr | grep -q "macos import std works"
+
+  # ──────────────────────────────────────────────────────────────────
+  # Windows: fresh install → new project → build with LLVM + MSVC STL
+  # ──────────────────────────────────────────────────────────────────
+  windows-fresh:
+    name: Windows fresh install
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings (clean, no cache)
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        shell: bash
+        run: |
+          curl -fsSL -o /tmp/xlings.zip \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/xlings-${XLINGS_VERSION}-windows-x86_64.zip"
+          unzip -o /tmp/xlings.zip -d /tmp/xlings-extract
+          XLINGS_DIR=$(find /tmp/xlings-extract -maxdepth 1 -type d -name 'xlings-*' | head -1)
+          "$XLINGS_DIR/subos/default/bin/xlings.exe" self install
+          export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          xlings install mcpp -y
+          MCPP="$USERPROFILE/.xlings/subos/default/bin/mcpp.exe"
+          test -f "$MCPP"
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+
+      - name: Build freshly-built mcpp from source
+        shell: bash
+        run: |
+          export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
+          "$MCPP" self config --mirror GLOBAL
+          "$MCPP" build
+          MCPP_FRESH=$(find target -type f -name 'mcpp.exe' | head -1)
+          echo "MCPP=$(realpath "$MCPP_FRESH")" >> "$GITHUB_ENV"
+
+      - name: "Fresh user: mcpp new → build → run"
+        shell: bash
+        run: |
+          export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          "$MCPP" new hello_win
+          cd hello_win
+          "$MCPP" run 2>&1 | tee /dev/stderr | grep -q "Hello"
+
+      - name: "Fresh user: import std"
+        shell: bash
+        run: |
+          export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          mkdir -p src
+          cat > mcpp.toml <<'EOF'
+          [package]
+          name = "std_test_win"
+          version = "0.1.0"
+          EOF
+          cat > src/main.cpp <<'EOF'
+          import std;
+          int main() { std::println("windows import std works"); }
+          EOF
+          "$MCPP" run 2>&1 | tee /dev/stderr | grep -q "windows import std works"

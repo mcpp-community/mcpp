@@ -134,7 +134,7 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
 
 void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
     // Clang targeting MSVC uses MSVC STL, not libc++.
-    bool msvTarget = tc.targetTriple.find("msvc") != std::string::npos;
+    bool msvTarget = is_msvc_target(tc);
     tc.stdlibId      = msvTarget ? "msvc-stl" : "libc++";
     tc.stdlibVersion = tc.version.empty() ? "unknown" : tc.version;
     tc.linkRuntimeDirs = mcpp::toolchain::discover_link_runtime_dirs(

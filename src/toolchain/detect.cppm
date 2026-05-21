@@ -76,7 +76,7 @@ detect(const std::filesystem::path& explicit_compiler) {
     // patches (e.g. 19.44.35226 → 35227), causing stale BMI cache hits.
     // Query the effective triple which includes the actual MSVC version.
     if (tc.compiler == CompilerId::Clang
-        && tc.targetTriple.find("msvc") != std::string::npos) {
+        && is_msvc_target(tc)) {
         auto vr = run_capture(std::format(
             "{}{} -print-effective-triple 2>NUL",
             envPrefix,
