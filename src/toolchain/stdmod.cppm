@@ -94,24 +94,18 @@ std::expected<StdModule, StdModError> ensure_built(
 
     // Build sysroot + include flags for std module precompilation.
     //
-    // On macOS, xlings LLVM's clang++.cfg contains hardcoded --sysroot and
-    // -isystem paths that become stale when the package is copied to mcpp's
-    // sandbox. We use --no-default-config to bypass the cfg and provide
-    // correct flags derived from the payload's actual location + xcrun SDK.
+    // Payload-first: use fine-grained -isystem paths from xpkgs payloads
+    // when available, falling back to --sysroot.
     //
-    // On Linux, the cfg also contains linker flags (-fuse-ld=lld,
-    // --rtlib=compiler-rt, --unwindlib=libunwind) that are essential. Using
-    // --no-default-config would strip these, causing link failures. Instead,
-    // we let the cfg apply normally and only pass --sysroot to override the
-    // sysroot if needed (command-line --sysroot takes precedence over cfg).
+    // For Clang with a cfg file: use --no-default-config to bypass
+    // potentially-stale paths, then provide all flags explicitly.
+    // Std module precompilation only needs compile flags (no linker flags),
+    // so --no-default-config is safe here on all platforms.
     std::string sysroot_flag;
-    bool is_macos = tc.targetTriple.find("apple") != std::string::npos
-                 || tc.targetTriple.find("darwin") != std::string::npos;
-    if (is_macos && is_clang(tc)) {
+    if (is_clang(tc)) {
         auto cfgPath = tc.binaryPath.parent_path()
                        / (tc.binaryPath.stem().string() + ".cfg");
         if (std::filesystem::exists(cfgPath)) {
-            // Bypass stale macOS cfg; provide correct flags directly.
             auto llvmRoot = tc.binaryPath.parent_path().parent_path();
             auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
             sysroot_flag = " --no-default-config";
@@ -122,13 +116,24 @@ std::expected<StdModule, StdModError> ensure_built(
                 if (std::filesystem::exists(targetInclude))
                     sysroot_flag += std::format(" -isystem'{}'", targetInclude.string());
             }
-            if (auto sdk = mcpp::platform::macos::sdk_path())
+            // C library + kernel headers from payload paths.
+            if (tc.payloadPaths) {
+                sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->glibcInclude.string());
+                if (!tc.payloadPaths->linuxInclude.empty())
+                    sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
+            } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
                 sysroot_flag += std::format(" --sysroot='{}'", sdk->string());
-            else if (!tc.sysroot.empty())
+            } else if (!tc.sysroot.empty()) {
                 sysroot_flag += std::format(" --sysroot='{}'", tc.sysroot.string());
+            }
         } else if (!tc.sysroot.empty()) {
             sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
         }
+    } else if (tc.payloadPaths) {
+        // GCC: use payload -isystem paths instead of --sysroot.
+        sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->glibcInclude.string());
+        if (!tc.payloadPaths->linuxInclude.empty())
+            sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
     } else if (!tc.sysroot.empty()) {
         sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
     }

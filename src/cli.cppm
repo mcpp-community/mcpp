@@ -765,6 +765,125 @@ void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
     }
 }
 
+// Rewrite clang++.cfg paths after the LLVM payload has been copied to the
+// mcpp sandbox. The cfg was authored by xlings at install time and contains
+// absolute paths pointing to ~/.xlings/. We rewrite them to point to the
+// actual payload location + sibling xpkgs (glibc, linux-headers).
+void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
+                     const std::filesystem::path& glibcLibDir) {
+    for (auto cfgName : {"clang++.cfg", "clang.cfg"}) {
+        auto cfgPath = payloadRoot / "bin" / cfgName;
+        if (!std::filesystem::exists(cfgPath)) continue;
+
+        std::ifstream is(cfgPath);
+        std::stringstream ss;  ss << is.rdbuf();
+        std::string content = ss.str();
+        is.close();
+
+        auto llvmRoot = payloadRoot;
+        auto replace_line_prefix = [&](std::string& s, std::string_view prefix,
+                                       const std::string& newValue) {
+            std::istringstream lines(s);
+            std::string result, line;
+            while (std::getline(lines, line)) {
+                if (line.starts_with(prefix)) {
+                    result += std::string(prefix) + newValue + '\n';
+                } else {
+                    result += line + '\n';
+                }
+            }
+            s = result;
+        };
+
+        // Rewrite --sysroot to remove (mcpp provides this explicitly).
+        // Rewrite -isystem to point to payload's libc++ headers.
+        // Rewrite -L and -rpath to point to payload's lib dir.
+        // Rewrite dynamic-linker to use glibc payload's ld-linux.
+        std::istringstream lines(content);
+        std::string result, line;
+        while (std::getline(lines, line)) {
+            if (line.starts_with("--sysroot=")) {
+                // Remove — mcpp provides sysroot via payload paths.
+                continue;
+            }
+            if (line.starts_with("-isystem ")) {
+                auto oldPath = line.substr(9);
+                if (oldPath.find("include/c++/v1") != std::string::npos) {
+                    auto relative = oldPath.substr(oldPath.find("include/c++/v1"));
+                    result += "-isystem " + (llvmRoot / relative).string() + '\n';
+                    continue;
+                }
+                if (oldPath.find("include/x86_64") != std::string::npos ||
+                    oldPath.find("include/aarch64") != std::string::npos) {
+                    // Target-specific libc++ include.
+                    auto includePos = oldPath.find("include/");
+                    auto relative = oldPath.substr(includePos);
+                    result += "-isystem " + (llvmRoot / relative).string() + '\n';
+                    continue;
+                }
+            }
+            if (line.starts_with("-L")) {
+                auto oldPath = line.substr(2);
+                if (oldPath.find("lib/x86_64") != std::string::npos ||
+                    oldPath.find("lib/aarch64") != std::string::npos) {
+                    auto libPos = oldPath.find("lib/");
+                    auto relative = oldPath.substr(libPos);
+                    result += "-L" + (llvmRoot / relative).string() + '\n';
+                    continue;
+                }
+            }
+            if (line.starts_with("-Wl,-rpath,")) {
+                auto oldPath = line.substr(11);
+                // Rpath for LLVM lib dir
+                if (oldPath.find("lib/x86_64") != std::string::npos ||
+                    oldPath.find("lib/aarch64") != std::string::npos) {
+                    auto libPos = oldPath.find("lib/");
+                    auto relative = oldPath.substr(libPos);
+                    result += "-Wl,-rpath," + (llvmRoot / relative).string() + '\n';
+                    continue;
+                }
+                // Rpath for subos/glibc — rewrite to glibc payload.
+                if (!glibcLibDir.empty()) {
+                    auto parentDir = std::filesystem::path(oldPath).parent_path();
+                    // subos rpath lines like -Wl,-rpath,<subos>/lib
+                    if (oldPath.find("subos") != std::string::npos) {
+                        result += "-Wl,-rpath," + glibcLibDir.string() + '\n';
+                        continue;
+                    }
+                }
+            }
+            if (line.starts_with("-Wl,--dynamic-linker=")) {
+                // Rewrite to glibc payload's ld-linux.
+                if (!glibcLibDir.empty()) {
+                    result += "-Wl,--dynamic-linker=" +
+                              (glibcLibDir / "ld-linux-x86-64.so.2").string() + '\n';
+                    continue;
+                }
+            }
+            if (line.starts_with("-Wl,--enable-new-dtags,-rpath,")) {
+                if (!glibcLibDir.empty()) {
+                    result += "-Wl,--enable-new-dtags,-rpath," + glibcLibDir.string() + '\n';
+                    continue;
+                }
+            }
+            if (line.starts_with("-Wl,-rpath-link,")) {
+                if (!glibcLibDir.empty()) {
+                    result += "-Wl,-rpath-link," + glibcLibDir.string() + '\n';
+                    continue;
+                }
+            }
+            result += line + '\n';
+        }
+
+        // Remove trailing newline
+        while (!result.empty() && result.back() == '\n') result.pop_back();
+        result += '\n';
+
+        std::ofstream os(cfgPath);
+        os << result;
+    }
+}
+
 // SemVer resolution: a version spec is a "constraint" (vs. exact literal) if
 // it starts with one of `^~><=` or contains a comma (multi-part), or is `*`
 // or empty. Bare `1.2.3` is treated as exact for back-compat with pre-SemVer
@@ -3606,6 +3725,18 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
             std::format("{} {} via mcpp's xlings", spec->compiler, spec->version));
         mcpp::fetcher::Fetcher fetcher(*cfg);
         CliInstallProgress progress;
+
+        // Ensure sysroot dependencies (glibc, linux-headers) are installed.
+        // These are required for C library + kernel headers during compilation.
+        // musl-gcc is self-contained and doesn't need these.
+        if (!spec->isMusl) {
+            for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
+                auto depPayload = fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
+                // Best-effort: linux-headers may not be in the index.
+                // glibc is usually a dependency of gcc/llvm and already installed.
+            }
+        }
+
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         if (!payload) {
             mcpp::ui::error(std::format("install failed: {}", payload.error().message));
@@ -3669,6 +3800,29 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
                     "could not locate sandbox glibc/gcc/patchelf paths; "
                     "gcc-built binaries may have unresolved PT_INTERP/RUNPATH");
             }
+        }
+
+        // For LLVM/Clang: post-install cfg fixup so the clang++.cfg paths
+        // point to the payload's actual location instead of the xlings
+        // install-time paths (which become stale after copy).
+        if (pkg.ximName == "llvm") {
+            auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
+            std::filesystem::path glibcLibDir;
+            if (std::filesystem::exists(glibcRoot)) {
+                for (auto& v : std::filesystem::directory_iterator(glibcRoot)) {
+                    auto candidate = v.path() / "lib64";
+                    if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
+                        glibcLibDir = candidate;
+                        break;
+                    }
+                    candidate = v.path() / "lib";
+                    if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
+                        glibcLibDir = candidate;
+                        break;
+                    }
+                }
+            }
+            fixup_clang_cfg(payload->root, glibcLibDir);
         }
 
         mcpp::ui::status("Installed",

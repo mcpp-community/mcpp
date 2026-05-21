@@ -47,6 +47,12 @@ std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
               const std::string& envPrefix);
 
+// Probe fine-grained sysroot paths from sibling xpkgs payloads.
+// Returns populated PayloadPaths if glibc xpkg found; linux-headers
+// may be empty if not available (host /usr/include used as fallback).
+std::optional<PayloadPaths>
+probe_payload_paths(const std::filesystem::path& compilerBin);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -303,6 +309,46 @@ probe_sysroot(const std::filesystem::path& compilerBin,
     if (auto sdk = mcpp::platform::macos::sdk_path())
         return *sdk;
     return {};
+}
+
+std::optional<PayloadPaths>
+probe_payload_paths(const std::filesystem::path& compilerBin) {
+    namespace paths = mcpp::xlings::paths;
+
+    // Find glibc xpkg (required).
+    auto glibc = paths::find_sibling_tool(compilerBin, "glibc");
+    if (!glibc) return std::nullopt;
+
+    // Glibc layout: <root>/include/ + <root>/lib64/ (or lib/).
+    auto glibcInclude = *glibc / "include";
+    if (!std::filesystem::exists(glibcInclude / "features.h"))
+        return std::nullopt;
+
+    auto glibcLib = *glibc / "lib64";
+    if (!std::filesystem::exists(glibcLib))
+        glibcLib = *glibc / "lib";
+    if (!std::filesystem::exists(glibcLib))
+        return std::nullopt;
+
+    PayloadPaths pp;
+    pp.glibcInclude = glibcInclude;
+    pp.glibcLib     = glibcLib;
+
+    // Find linux kernel headers (optional — search across index prefixes).
+    auto linuxHeaders = paths::find_sibling_package(compilerBin, "linux-headers");
+    if (linuxHeaders) {
+        auto linuxInclude = *linuxHeaders / "include";
+        if (std::filesystem::exists(linuxInclude / "linux" / "limits.h"))
+            pp.linuxInclude = linuxInclude;
+    }
+
+    // Fallback: host /usr/include has linux kernel headers on most systems.
+    if (pp.linuxInclude.empty()) {
+        if (std::filesystem::exists("/usr/include/linux/limits.h"))
+            pp.linuxInclude = "/usr/include";
+    }
+
+    return pp;
 }
 
 } // namespace mcpp::toolchain

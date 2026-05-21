@@ -88,41 +88,60 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         include_flags += " -I" + escape_path(abs);
     }
 
-    // Sysroot + config override.
+    // Sysroot / payload paths.
     //
-    // On macOS, xlings LLVM's clang++.cfg has hardcoded paths that become
-    // stale after copying. Use --no-default-config + explicit flags.
+    // Payload-first: when PayloadPaths are available (glibc + linux-headers
+    // xpkgs found), use -isystem for each payload include dir. This avoids
+    // dependency on xlings subos.
     //
-    // On Linux, the cfg contains essential linker flags (-fuse-ld=lld,
-    // --rtlib=compiler-rt). Let the cfg apply normally; pass --sysroot
-    // explicitly to override any stale sysroot value in the cfg.
+    // For Clang with a cfg file: use --no-default-config to bypass
+    // potentially-stale paths, then provide all flags explicitly.
+    //
+    // Fallback: if no PayloadPaths, use --sysroot from probe_sysroot().
     std::string sysroot_flag;
-    bool is_macos_clang = mcpp::toolchain::is_clang(plan.toolchain)
-        && (plan.toolchain.targetTriple.find("apple") != std::string::npos
-         || plan.toolchain.targetTriple.find("darwin") != std::string::npos);
-    if (is_macos_clang) {
-        auto cfgPath = plan.toolchain.binaryPath.parent_path()
-                       / (plan.toolchain.binaryPath.stem().string() + ".cfg");
-        if (std::filesystem::exists(cfgPath)) {
-            auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
-            auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-            sysroot_flag = " --no-default-config";
-            sysroot_flag += " -isystem" + escape_path(libcxxInclude);
-            if (!plan.toolchain.targetTriple.empty()) {
-                auto targetInclude = llvmRoot / "include"
-                                     / plan.toolchain.targetTriple / "c++" / "v1";
-                if (std::filesystem::exists(targetInclude))
-                    sysroot_flag += " -isystem" + escape_path(targetInclude);
-            }
-            if (auto sdk = mcpp::platform::macos::sdk_path())
-                sysroot_flag += " --sysroot=" + escape_path(*sdk);
-            else if (!plan.toolchain.sysroot.empty())
-                sysroot_flag += " --sysroot=" + escape_path(plan.toolchain.sysroot);
-            f.sysroot = sysroot_flag;
-        } else if (!plan.toolchain.sysroot.empty()) {
-            sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
-            f.sysroot = sysroot_flag;
+    bool isClangWithCfg = false;
+    std::filesystem::path cfgPath;
+    if (mcpp::toolchain::is_clang(plan.toolchain)) {
+        cfgPath = plan.toolchain.binaryPath.parent_path()
+                  / (plan.toolchain.binaryPath.stem().string() + ".cfg");
+        isClangWithCfg = std::filesystem::exists(cfgPath);
+    }
+
+    if (isClangWithCfg) {
+        // Clang with cfg: bypass cfg and provide all paths explicitly.
+        auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
+        auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
+        sysroot_flag = " --no-default-config";
+        // libc++ headers
+        sysroot_flag += " -stdlib=libc++";
+        sysroot_flag += " -isystem" + escape_path(libcxxInclude);
+        if (!plan.toolchain.targetTriple.empty()) {
+            auto targetInclude = llvmRoot / "include"
+                                 / plan.toolchain.targetTriple / "c++" / "v1";
+            if (std::filesystem::exists(targetInclude))
+                sysroot_flag += " -isystem" + escape_path(targetInclude);
         }
+        // C library + kernel headers from payload
+        if (plan.toolchain.payloadPaths) {
+            auto& pp = *plan.toolchain.payloadPaths;
+            sysroot_flag += " -isystem" + escape_path(pp.glibcInclude);
+            if (!pp.linuxInclude.empty())
+                sysroot_flag += " -isystem" + escape_path(pp.linuxInclude);
+        } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
+            sysroot_flag += " --sysroot=" + escape_path(*sdk);
+        } else if (!plan.toolchain.sysroot.empty()) {
+            sysroot_flag += " --sysroot=" + escape_path(plan.toolchain.sysroot);
+        }
+        // Linker flags that cfg normally provides
+        sysroot_flag += " -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
+        f.sysroot = sysroot_flag;
+    } else if (plan.toolchain.payloadPaths) {
+        // GCC or Clang without cfg: use payload -isystem paths.
+        auto& pp = *plan.toolchain.payloadPaths;
+        sysroot_flag += " -isystem" + escape_path(pp.glibcInclude);
+        if (!pp.linuxInclude.empty())
+            sysroot_flag += " -isystem" + escape_path(pp.linuxInclude);
+        f.sysroot = sysroot_flag;
     } else if (!plan.toolchain.sysroot.empty()) {
         sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
         f.sysroot = sysroot_flag;
@@ -203,12 +222,23 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
     }
 
+    // For Clang with payload paths: add glibc lib + dynamic linker to link flags.
+    std::string payload_ld;
+    if (isClangWithCfg && plan.toolchain.payloadPaths) {
+        auto& pp = *plan.toolchain.payloadPaths;
+        payload_ld += " -L" + escape_path(pp.glibcLib);
+        payload_ld += " -Wl,-rpath," + escape_path(pp.glibcLib);
+        auto loader = pp.glibcLib / "ld-linux-x86-64.so.2";
+        if (std::filesystem::exists(loader))
+            payload_ld += " -Wl,--dynamic-linker=" + escape_path(loader);
+    }
+
     if constexpr (mcpp::platform::is_windows) {
         f.ld = "";
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         f.ld = std::format("{}{}{} -lc++", full_static, static_stdlib, b_flag);
     } else {
-        f.ld = std::format("{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag, runtime_dirs);
+        f.ld = std::format("{}{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag, runtime_dirs, payload_ld);
     }
 
     return f;

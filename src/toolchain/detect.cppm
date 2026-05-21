@@ -77,6 +77,10 @@ detect(const std::filesystem::path& explicit_compiler) {
 
     tc.sysroot = probe_sysroot(tc.binaryPath, envPrefix);
 
+    // Probe fine-grained payload paths from sibling xpkgs (glibc, linux-headers).
+    // When available, flags are assembled from these paths instead of --sysroot.
+    tc.payloadPaths = probe_payload_paths(tc.binaryPath);
+
     return tc;
 }
 
