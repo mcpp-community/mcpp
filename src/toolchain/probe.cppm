@@ -262,6 +262,21 @@ probe_sysroot(const std::filesystem::path& compilerBin,
     if (r) {
         auto s = trim_line(*r);
         if (!s.empty() && std::filesystem::exists(s)) return s;
+
+        // GCC bakes the build-time sysroot into the binary. For xlings-built
+        // GCC this is a path like <buildhost>/.xlings/subos/default that
+        // doesn't exist on the user's machine. If the reported path ends
+        // with subos/default, look for the equivalent sysroot relative to
+        // the compiler's own xpkgs directory (payload-derived).
+        if (!s.empty() && s.ends_with("subos/default")) {
+            if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
+                // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
+                auto registrySysroot = xpkgs->parent_path().parent_path()
+                                       / "subos" / "default";
+                if (std::filesystem::exists(registrySysroot / "usr" / "include"))
+                    return registrySysroot;
+            }
+        }
     }
 
     // 2. Parse the compiler driver config file (Clang .cfg).
