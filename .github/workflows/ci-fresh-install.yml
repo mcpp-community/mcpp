@@ -21,7 +21,7 @@ on:
 
 concurrency:
   group: ci-fresh-install
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
