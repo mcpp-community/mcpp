@@ -1,0 +1,114 @@
+name: ci-fresh-install
+
+# Fresh install CI — tests the released mcpp via xlings on clean machines.
+# Validates: xlings install mcpp → mcpp build (self) → mcpp new → mcpp run
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-fresh-install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-fresh:
+    name: Linux fresh install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings + mcpp
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          curl -fsSL https://github.com/d2learn/xlings/releases/download/v0.4.30/xlings-0.4.30-linux-x86_64.tar.gz | tar -xzf - -C /tmp
+          /tmp/xlings-0.4.30-linux-x86_64/subos/default/bin/xlings self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings install mcpp -y
+          echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+
+      - name: mcpp build (self-host)
+        run: mcpp build
+
+      - name: mcpp new hello → mcpp run
+        run: |
+          cd "$(mktemp -d)"
+          mcpp new hello
+          cd hello
+          mcpp run
+
+      - name: install LLVM → mcpp new → mcpp run
+        continue-on-error: true
+        run: |
+          mcpp self config --mirror GLOBAL
+          mcpp toolchain install llvm 20.1.7
+          mcpp toolchain default llvm@20.1.7
+          cd "$(mktemp -d)"
+          mcpp new hello_llvm
+          cd hello_llvm
+          mcpp run
+
+  macos-fresh:
+    name: macOS fresh install
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings + mcpp
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          curl -fsSL https://github.com/d2learn/xlings/releases/download/v0.4.30/xlings-0.4.30-macosx-arm64.tar.gz | tar -xzf - -C /tmp
+          /tmp/xlings-0.4.30-macosx-arm64/subos/default/bin/xlings self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings install mcpp -y
+          echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+
+      - name: mcpp build (self-host)
+        run: mcpp build
+
+      - name: mcpp new hello → mcpp run
+        run: |
+          cd "$(mktemp -d)"
+          mcpp new hello
+          cd hello
+          mcpp run
+
+  windows-fresh:
+    name: Windows fresh install
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings + mcpp
+        shell: pwsh
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/d2learn/xlings/releases/download/v0.4.30/xlings-0.4.30-windows-x86_64.zip" -OutFile "$env:TEMP\xlings.zip"
+          Expand-Archive -Path "$env:TEMP\xlings.zip" -DestinationPath "$env:TEMP\xlings-extract" -Force
+          & "$env:TEMP\xlings-extract\xlings-0.4.30-windows-x86_64\subos\default\bin\xlings.exe" self install
+          $xlingsbin = "$env:USERPROFILE\.xlings\subos\default\bin"
+          $env:PATH = "$xlingsbin;$env:PATH"
+          xlings install mcpp -y
+          $xlingsbin | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      - name: mcpp build (self-host)
+        shell: pwsh
+        run: mcpp build
+
+      - name: mcpp new hello → mcpp run
+        shell: pwsh
+        run: |
+          $tmp = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          Set-Location $tmp
+          mcpp new hello
+          Set-Location hello
+          mcpp run
