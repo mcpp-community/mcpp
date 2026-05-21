@@ -80,9 +80,7 @@ ProviderCapabilities capabilities_for(const Toolchain& tc) {
 
         case CompilerId::Clang: {
             // Clang targeting MSVC uses MSVC STL, not libc++.
-            // We detect this the same way clang.cppm's enrich_toolchain does:
-            // by checking the target triple for "msvc".
-            bool msvc_target = tc.targetTriple.find("msvc") != std::string::npos;
+            bool msvc_target = is_msvc_target(tc);
 
             caps.has_scan_deps  = true;     // clang-scan-deps lives beside clang++
             caps.stdlib_id      = msvc_target ? "msvc-stl" : "libc++";

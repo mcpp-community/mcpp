@@ -88,24 +88,72 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         include_flags += " -I" + escape_path(abs);
     }
 
-    // Sysroot + config override for macOS.
-    // On macOS, xlings LLVM's clang++.cfg contains hardcoded --sysroot and
-    // -isystem paths from the original install location. When the package is
-    // copied to mcpp's sandbox, these paths become stale. We pass
-    // --no-default-config to ignore the cfg and provide correct paths.
+    // Sysroot / payload paths.
+    //
+    // Payload-first: when PayloadPaths are available (glibc + linux-headers
+    // xpkgs found), use -isystem for each payload include dir. This avoids
+    // dependency on xlings subos.
+    //
+    // For Clang with a cfg file: use --no-default-config to bypass
+    // potentially-stale paths, then provide all flags explicitly.
+    //
+    // Fallback: if no PayloadPaths, use --sysroot from probe_sysroot().
     std::string sysroot_flag;
-    bool is_macos_clang = mcpp::toolchain::is_clang(plan.toolchain)
-        && (plan.toolchain.targetTriple.find("apple") != std::string::npos
-         || plan.toolchain.targetTriple.find("darwin") != std::string::npos);
-    if (is_macos_clang) {
+    bool isClangWithCfg = false;
+    std::filesystem::path cfgPath;
+    if (mcpp::toolchain::is_clang(plan.toolchain)) {
+        cfgPath = plan.toolchain.binaryPath.parent_path()
+                  / (plan.toolchain.binaryPath.stem().string() + ".cfg");
+        isClangWithCfg = std::filesystem::exists(cfgPath);
+    }
+
+    if (isClangWithCfg) {
+        // Clang with cfg: bypass cfg and provide all paths explicitly.
         auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
         auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-        sysroot_flag = " --no-default-config";
+        sysroot_flag = " --no-default-config -nostdinc++";
+        // libc++ headers
+        sysroot_flag += " -stdlib=libc++";
         sysroot_flag += " -isystem" + escape_path(libcxxInclude);
-        if (auto sdk = mcpp::platform::macos::sdk_path())
+        if (!plan.toolchain.targetTriple.empty()) {
+            auto targetInclude = llvmRoot / "include"
+                                 / plan.toolchain.targetTriple / "c++" / "v1";
+            if (std::filesystem::exists(targetInclude))
+                sysroot_flag += " -isystem" + escape_path(targetInclude);
+        }
+        // C library + kernel headers from payload
+        if (plan.toolchain.payloadPaths) {
+            auto& pp = *plan.toolchain.payloadPaths;
+            sysroot_flag += " -isystem" + escape_path(pp.glibcInclude);
+            if (!pp.linuxInclude.empty())
+                sysroot_flag += " -isystem" + escape_path(pp.linuxInclude);
+        } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
             sysroot_flag += " --sysroot=" + escape_path(*sdk);
+        } else if (!plan.toolchain.sysroot.empty()) {
+            sysroot_flag += " --sysroot=" + escape_path(plan.toolchain.sysroot);
+        }
+        // Linker flags that cfg normally provides
+        sysroot_flag += " -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
         f.sysroot = sysroot_flag;
     } else if (!plan.toolchain.sysroot.empty()) {
+        // GCC (or Clang without cfg): use --sysroot from probe.
+        // GCC requires --sysroot for include-fixed headers (stdlib.h wrapper).
+        // Supplement with -isystem for linux kernel headers from payload
+        // if the probed sysroot is missing them.
+        sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
+        if (plan.toolchain.payloadPaths && !plan.toolchain.payloadPaths->linuxInclude.empty()) {
+            auto sysrootLinux = plan.toolchain.sysroot / "usr" / "include" / "linux" / "limits.h";
+            if (!std::filesystem::exists(sysrootLinux))
+                sysroot_flag += " -isystem" + escape_path(plan.toolchain.payloadPaths->linuxInclude);
+        }
+        f.sysroot = sysroot_flag;
+    } else if (plan.toolchain.payloadPaths) {
+        // No sysroot but have payload paths: use -isystem.
+        auto& pp = *plan.toolchain.payloadPaths;
+        sysroot_flag += " -isystem" + escape_path(pp.glibcInclude);
+        if (!pp.linuxInclude.empty())
+            sysroot_flag += " -isystem" + escape_path(pp.linuxInclude);
+        f.sysroot = sysroot_flag;
         sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
         f.sysroot = sysroot_flag;
     }
@@ -185,12 +233,23 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
     }
 
+    // For Clang with payload paths: add glibc lib + dynamic linker to link flags.
+    std::string payload_ld;
+    if (isClangWithCfg && plan.toolchain.payloadPaths) {
+        auto& pp = *plan.toolchain.payloadPaths;
+        payload_ld += " -L" + escape_path(pp.glibcLib);
+        payload_ld += " -Wl,-rpath," + escape_path(pp.glibcLib);
+        auto loader = pp.glibcLib / "ld-linux-x86-64.so.2";
+        if (std::filesystem::exists(loader))
+            payload_ld += " -Wl,--dynamic-linker=" + escape_path(loader);
+    }
+
     if constexpr (mcpp::platform::is_windows) {
         f.ld = "";
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         f.ld = std::format("{}{}{} -lc++", full_static, static_stdlib, b_flag);
     } else {
-        f.ld = std::format("{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag, runtime_dirs);
+        f.ld = std::format("{}{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag, runtime_dirs, payload_ld);
     }
 
     return f;

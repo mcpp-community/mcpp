@@ -93,26 +93,57 @@ std::expected<StdModule, StdModError> ensure_built(
     sm.objectPath = sm.cacheDir / "std.o";
 
     // Build sysroot + include flags for std module precompilation.
-    // On macOS, xlings LLVM's clang++.cfg contains hardcoded --sysroot and
-    // -isystem paths from the original install location. When the LLVM package
-    // is copied to mcpp's sandbox, these cfg paths become stale (still point
-    // to the original xlings directory). We override both:
-    //   --sysroot   → current active SDK (from xcrun)
-    //   --no-default-config  → ignore stale cfg entirely
-    //   -isystem    → correct libc++ headers in the sandbox copy
+    //
+    // Payload-first: use fine-grained -isystem paths from xpkgs payloads
+    // when available, falling back to --sysroot.
+    //
+    // For Clang with a cfg file: use --no-default-config to bypass
+    // potentially-stale paths, then provide all flags explicitly.
+    // Std module precompilation only needs compile flags (no linker flags),
+    // so --no-default-config is safe here on all platforms.
     std::string sysroot_flag;
-    bool is_macos = tc.targetTriple.find("apple") != std::string::npos
-                 || tc.targetTriple.find("darwin") != std::string::npos;
-    if (is_macos && is_clang(tc)) {
-        // Ignore the stale clang++.cfg and provide correct flags directly.
-        auto llvmRoot = tc.binaryPath.parent_path().parent_path();
-        auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-        sysroot_flag = " --no-default-config";
-        sysroot_flag += std::format(" -isystem'{}'", libcxxInclude.string());
-        if (auto sdk = mcpp::platform::macos::sdk_path())
-            sysroot_flag += std::format(" --sysroot='{}'", sdk->string());
+    if (is_clang(tc)) {
+        auto cfgPath = tc.binaryPath.parent_path()
+                       / (tc.binaryPath.stem().string() + ".cfg");
+        if (std::filesystem::exists(cfgPath)) {
+            auto llvmRoot = tc.binaryPath.parent_path().parent_path();
+            auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
+            sysroot_flag = " --no-default-config -nostdinc++ -stdlib=libc++";
+            sysroot_flag += std::format(" -isystem'{}'", libcxxInclude.string());
+            if (!tc.targetTriple.empty()) {
+                auto targetInclude = llvmRoot / "include"
+                                     / tc.targetTriple / "c++" / "v1";
+                if (std::filesystem::exists(targetInclude))
+                    sysroot_flag += std::format(" -isystem'{}'", targetInclude.string());
+            }
+            // C library + kernel headers from payload paths.
+            if (tc.payloadPaths) {
+                sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->glibcInclude.string());
+                if (!tc.payloadPaths->linuxInclude.empty())
+                    sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
+            } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
+                sysroot_flag += std::format(" --sysroot='{}'", sdk->string());
+            } else if (!tc.sysroot.empty()) {
+                sysroot_flag += std::format(" --sysroot='{}'", tc.sysroot.string());
+            }
+        } else if (!tc.sysroot.empty()) {
+            sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
+        }
     } else if (!tc.sysroot.empty()) {
+        // GCC: use --sysroot (required for include-fixed headers).
+        // Supplement with -isystem for linux kernel headers from payload
+        // if the probed sysroot is missing them.
         sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
+        if (tc.payloadPaths && !tc.payloadPaths->linuxInclude.empty()) {
+            auto sysrootLinux = tc.sysroot / "usr" / "include" / "linux" / "limits.h";
+            if (!std::filesystem::exists(sysrootLinux))
+                sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
+        }
+    } else if (tc.payloadPaths) {
+        // No sysroot: use payload -isystem paths.
+        sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->glibcInclude.string());
+        if (!tc.payloadPaths->linuxInclude.empty())
+            sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
     }
 
     bool std_cached = std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath);

@@ -75,6 +75,13 @@ namespace paths {
                         std::string_view tool,
                         std::string_view binaryRelPath);
 
+    // Find a sibling package across all index prefixes.
+    // e.g. find_sibling_package(gcc_bin, "linux-headers") searches for
+    // xim-x-linux-headers, scode-x-linux-headers, etc.
+    std::optional<std::filesystem::path>
+    find_sibling_package(const std::filesystem::path& compilerBin,
+                         std::string_view packageName);
+
     // index data root: env.home / "data"
     std::filesystem::path index_data(const Env& env);
 
@@ -381,6 +388,61 @@ find_sibling_binary(const std::filesystem::path& compilerBin,
         if (std::filesystem::exists(candidate, ec))
             return candidate;
     }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path>
+find_sibling_package(const std::filesystem::path& compilerBin,
+                     std::string_view packageName) {
+    auto xpkgs = xpkgs_from_compiler(compilerBin);
+    if (!xpkgs) return std::nullopt;
+
+    // Search across index prefixes: xim-x-, scode-x-, compat-x-, etc.
+    std::error_code ec;
+    std::string suffix = std::format("-x-{}", packageName);
+    for (auto& entry : std::filesystem::directory_iterator(*xpkgs, ec)) {
+        if (!entry.is_directory(ec)) continue;
+        auto name = entry.path().filename().string();
+        if (!name.ends_with(suffix)) continue;
+        // Return the first (highest) version dir that has actual content.
+        for (auto& v : std::filesystem::directory_iterator(entry.path(), ec)) {
+            if (!v.is_directory(ec)) continue;
+            // Skip empty packages (only .xim-installed marker)
+            bool hasContent = false;
+            for (auto& f : std::filesystem::directory_iterator(v.path(), ec)) {
+                if (f.path().filename() != ".xim-installed") {
+                    hasContent = true;
+                    break;
+                }
+            }
+            if (hasContent) return v.path();
+        }
+    }
+
+    // Also check ~/.xlings/data/xpkgs/ (xlings global home) as fallback.
+    const char* home = std::getenv("HOME");
+    if (home) {
+        auto xlingsXpkgs = std::filesystem::path(home) / ".xlings" / "data" / "xpkgs";
+        if (xlingsXpkgs != *xpkgs && std::filesystem::exists(xlingsXpkgs, ec)) {
+            for (auto& entry : std::filesystem::directory_iterator(xlingsXpkgs, ec)) {
+                if (!entry.is_directory(ec)) continue;
+                auto name = entry.path().filename().string();
+                if (!name.ends_with(suffix)) continue;
+                for (auto& v : std::filesystem::directory_iterator(entry.path(), ec)) {
+                    if (!v.is_directory(ec)) continue;
+                    bool hasContent = false;
+                    for (auto& f : std::filesystem::directory_iterator(v.path(), ec)) {
+                        if (f.path().filename() != ".xim-installed") {
+                            hasContent = true;
+                            break;
+                        }
+                    }
+                    if (hasContent) return v.path();
+                }
+            }
+        }
+    }
+
     return std::nullopt;
 }
 

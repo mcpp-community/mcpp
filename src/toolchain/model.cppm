@@ -8,6 +8,14 @@ export namespace mcpp::toolchain {
 
 enum class CompilerId { Unknown, GCC, Clang, MSVC };
 
+// Fine-grained sysroot paths derived from xpkgs payloads.
+// When populated, flags are assembled from these paths instead of --sysroot.
+struct PayloadPaths {
+    std::filesystem::path glibcInclude;     // glibc headers (features.h, bits/)
+    std::filesystem::path glibcLib;          // glibc runtime (libc.so, crt*.o, ld-linux)
+    std::filesystem::path linuxInclude;      // linux kernel headers (linux/, asm/)
+};
+
 struct Toolchain {
     CompilerId                          compiler        = CompilerId::Unknown;
     std::string                         version;            // "15.1.0"
@@ -19,6 +27,7 @@ struct Toolchain {
     std::filesystem::path               stdModuleSource;    // bits/std.cc / std.cppm
     std::filesystem::path               stdCompatSource;    // bits/std_compat.cc / std.compat.cppm
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
+    std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     bool                                hasImportStd = false;
@@ -42,6 +51,7 @@ struct DetectError { std::string message; };
 bool is_gcc(const Toolchain& tc);
 bool is_clang(const Toolchain& tc);
 bool is_musl_target(const Toolchain& tc);
+bool is_msvc_target(const Toolchain& tc);
 
 struct BmiTraits {
     std::string_view bmiDir;     // "gcm.cache" | "pcm.cache"
@@ -68,6 +78,10 @@ bool is_clang(const Toolchain& tc) {
 
 bool is_musl_target(const Toolchain& tc) {
     return tc.targetTriple.find("-musl") != std::string::npos;
+}
+
+bool is_msvc_target(const Toolchain& tc) {
+    return tc.targetTriple.find("msvc") != std::string::npos;
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {

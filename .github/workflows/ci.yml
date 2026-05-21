@@ -134,30 +134,33 @@ jobs:
           "$MCPP" build
           "$MCPP" test
 
-      - name: Toolchain install smoke test (mcpp toolchain install llvm)
+      - name: "Toolchain: GCC — mcpp new → build → run"
         run: |
-          # Test the core user flow: install a toolchain, create a project,
-          # build with it. Uses the freshly-built mcpp (not bootstrap).
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
-          # Install LLVM toolchain into mcpp's sandbox
-          "$MCPP" toolchain install llvm 20.1.7
-          # Set as default so the build picks it up
-          "$MCPP" toolchain default llvm@20.1.7
-          # Build a hello-world project with the installed toolchain
+          "$MCPP" toolchain default gcc@16.1.0
           TMP=$(mktemp -d)
           cd "$TMP"
-          "$MCPP" new hello
-          cd hello
-          "$MCPP" build
+          "$MCPP" new hello_gcc
+          cd hello_gcc
           "$MCPP" run
 
-      - name: Fresh user experience (xlings install mcpp → new → run)
-        continue-on-error: true
+      - name: "Toolchain: musl-gcc — mcpp new → build → run"
         run: |
-          # Test real user flow with xlings-distributed mcpp.
-          # May fail if xlings mcpp version lacks recent fixes.
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          "$MCPP" toolchain default gcc@15.1.0-musl
           TMP=$(mktemp -d)
           cd "$TMP"
-          "$MCPP" new hello
-          cd hello
+          "$MCPP" new hello_musl
+          cd hello_musl
+          "$MCPP" run
+
+      - name: "Toolchain: LLVM — install + mcpp new → build → run"
+        run: |
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          "$MCPP" toolchain install llvm 20.1.7
+          "$MCPP" toolchain default llvm@20.1.7
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          "$MCPP" new hello_llvm
+          cd hello_llvm
           "$MCPP" run

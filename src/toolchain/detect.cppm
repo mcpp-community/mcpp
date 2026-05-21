@@ -69,6 +69,26 @@ detect(const std::filesystem::path& explicit_compiler) {
         tc.targetTriple = *triple;
     }
 
+#if defined(_WIN32)
+    // On Windows, Clang targeting MSVC auto-detects the MSVC version at
+    // compile time and bakes it into the module AST. The -dumpmachine triple
+    // doesn't include this version, so fingerprints don't change when MSVC
+    // patches (e.g. 19.44.35226 → 35227), causing stale BMI cache hits.
+    // Query the effective triple which includes the actual MSVC version.
+    if (tc.compiler == CompilerId::Clang
+        && is_msvc_target(tc)) {
+        auto vr = run_capture(std::format(
+            "{}{} -print-effective-triple 2>NUL",
+            envPrefix,
+            mcpp::xlings::shq(tc.binaryPath.string())));
+        if (vr) {
+            auto effective = trim_line(*vr);
+            if (!effective.empty() && effective != tc.targetTriple)
+                tc.driverIdent += "\neffective-triple: " + effective;
+        }
+    }
+#endif
+
     if (tc.compiler == CompilerId::GCC) {
         mcpp::toolchain::gcc::enrich_toolchain(tc);
     } else if (tc.compiler == CompilerId::Clang) {
@@ -76,6 +96,16 @@ detect(const std::filesystem::path& explicit_compiler) {
     }
 
     tc.sysroot = probe_sysroot(tc.binaryPath, envPrefix);
+
+    // Probe fine-grained payload paths from sibling xpkgs (glibc, linux-headers).
+    // When available, flags are assembled from these paths instead of --sysroot.
+    tc.payloadPaths = probe_payload_paths(tc.binaryPath);
+
+    // For GCC: ensure the probed sysroot has complete headers by symlinking
+    // missing content (linux kernel headers, glibc) from payload xpkgs.
+    // This makes mcpp self-sufficient — not dependent on xlings subos init.
+    if (tc.payloadPaths && !tc.sysroot.empty())
+        ensure_sysroot_complete(tc.sysroot, *tc.payloadPaths);
 
     return tc;
 }
