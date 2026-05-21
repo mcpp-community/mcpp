@@ -96,9 +96,19 @@ jobs:
           export MCPP="$MCPP_SELF"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
-          "$MCPP_SELF" self config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP_SELF" toolchain default llvm@20.1.7 2>/dev/null || true
+          "$MCPP_SELF" self config --mirror GLOBAL
+          "$MCPP_SELF" toolchain default llvm@20.1.7
           bash tests/e2e/run_all.sh
+
+      - name: "Toolchain: LLVM — mcpp new → run"
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          "$MCPP_SELF" new hello_win
+          cd hello_win
+          "$MCPP_SELF" run
 
       - name: "Toolchain: LLVM — build mcpp (self-host)"
         shell: bash
@@ -108,8 +118,7 @@ jobs:
           MCPP=/tmp/mcpp-fresh.exe
           "$MCPP" toolchain default llvm@20.1.7
           "$MCPP" clean --bmi-cache
-          "$MCPP" build
-          "$MCPP" --version
+          "$MCPP" build 2>&1 | tee /dev/stderr | grep -q "Resolved llvm@20.1.7"
 
       - name: Package Windows release zip
         id: package
