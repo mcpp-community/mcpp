@@ -100,21 +100,14 @@ jobs:
           "$MCPP_SELF" toolchain default llvm@20.1.7 2>/dev/null || true
           bash tests/e2e/run_all.sh
 
-      - name: Self-host smoke (freshly-built mcpp builds itself again)
-        shell: bash
-        run: |
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP_SELF" build
-          "$MCPP_SELF" --version
-          echo ":: Self-host smoke PASS"
-
-      - name: "Toolchain: LLVM — build mcpp"
+      - name: "Toolchain: LLVM — build mcpp (self-host)"
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP_SELF" toolchain default llvm@20.1.7
           "$MCPP_SELF" clean
           "$MCPP_SELF" build
+          "$MCPP_SELF" --version
 
       - name: Package Windows release zip
         id: package

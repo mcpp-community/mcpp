@@ -128,18 +128,13 @@ jobs:
           "$MCPP" toolchain default gcc@16.1.0
           bash tests/e2e/run_all.sh
 
-      - name: Self-host smoke (freshly-built mcpp builds itself again)
-        run: |
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
-          "$MCPP" build
-          "$MCPP" test
-
-      - name: "Toolchain: GCC — build mcpp"
+      - name: "Toolchain: GCC — build mcpp + test"
         run: |
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           "$MCPP" toolchain default gcc@16.1.0
           "$MCPP" clean
           "$MCPP" build
+          "$MCPP" test
 
       - name: "Toolchain: musl-gcc — build mcpp"
         run: |
