@@ -316,13 +316,4 @@ jobs:
           "$MCPP" --version
           echo ":: Self-host smoke PASS"
 
-      - name: Fresh user experience (xlings install mcpp → new → run)
-        continue-on-error: true
-        run: |
-          # Test real user flow with xlings-distributed mcpp.
-          # May fail if xlings mcpp version lacks recent fixes.
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          "$MCPP" new hello
-          cd hello
-          "$MCPP" run
+      # Fresh user experience test moved to ci-fresh-install.yml (PR #63)
