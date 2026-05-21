@@ -94,33 +94,38 @@ std::expected<StdModule, StdModError> ensure_built(
 
     // Build sysroot + include flags for std module precompilation.
     //
-    // xlings LLVM ships a clang++.cfg with hardcoded --sysroot and -isystem
-    // paths from the original install location. After mcpp copies the package
-    // to its sandbox, these cfg paths may become stale. We detect a cfg file
-    // and bypass it with --no-default-config, providing correct flags derived
-    // from the payload's actual binary location and the probed sysroot.
+    // On macOS, xlings LLVM's clang++.cfg contains hardcoded --sysroot and
+    // -isystem paths that become stale when the package is copied to mcpp's
+    // sandbox. We use --no-default-config to bypass the cfg and provide
+    // correct flags derived from the payload's actual location + xcrun SDK.
+    //
+    // On Linux, the cfg also contains linker flags (-fuse-ld=lld,
+    // --rtlib=compiler-rt, --unwindlib=libunwind) that are essential. Using
+    // --no-default-config would strip these, causing link failures. Instead,
+    // we let the cfg apply normally and only pass --sysroot to override the
+    // sysroot if needed (command-line --sysroot takes precedence over cfg).
     std::string sysroot_flag;
-    if (is_clang(tc)) {
+    bool is_macos = tc.targetTriple.find("apple") != std::string::npos
+                 || tc.targetTriple.find("darwin") != std::string::npos;
+    if (is_macos && is_clang(tc)) {
         auto cfgPath = tc.binaryPath.parent_path()
                        / (tc.binaryPath.stem().string() + ".cfg");
         if (std::filesystem::exists(cfgPath)) {
-            // Bypass potentially-stale cfg; provide correct flags directly.
+            // Bypass stale macOS cfg; provide correct flags directly.
             auto llvmRoot = tc.binaryPath.parent_path().parent_path();
             auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
             sysroot_flag = " --no-default-config";
             sysroot_flag += std::format(" -isystem'{}'", libcxxInclude.string());
-            // Target-specific libc++ headers (e.g. __config_site) live under
-            // include/<triple>/c++/v1/. Add if present.
             if (!tc.targetTriple.empty()) {
                 auto targetInclude = llvmRoot / "include"
                                      / tc.targetTriple / "c++" / "v1";
                 if (std::filesystem::exists(targetInclude))
                     sysroot_flag += std::format(" -isystem'{}'", targetInclude.string());
             }
-            if (!tc.sysroot.empty())
-                sysroot_flag += std::format(" --sysroot='{}'", tc.sysroot.string());
-            else if (auto sdk = mcpp::platform::macos::sdk_path())
+            if (auto sdk = mcpp::platform::macos::sdk_path())
                 sysroot_flag += std::format(" --sysroot='{}'", sdk->string());
+            else if (!tc.sysroot.empty())
+                sysroot_flag += std::format(" --sysroot='{}'", tc.sysroot.string());
         } else if (!tc.sysroot.empty()) {
             sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
         }

@@ -88,13 +88,19 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         include_flags += " -I" + escape_path(abs);
     }
 
-    // Sysroot + config override for Clang with a driver config file.
-    // xlings LLVM ships a clang++.cfg with hardcoded --sysroot and -isystem
-    // paths from the original install location. After mcpp copies the package
-    // to its sandbox, these paths may become stale. Detect the cfg and bypass
-    // it with --no-default-config, providing correct flags from the payload.
+    // Sysroot + config override.
+    //
+    // On macOS, xlings LLVM's clang++.cfg has hardcoded paths that become
+    // stale after copying. Use --no-default-config + explicit flags.
+    //
+    // On Linux, the cfg contains essential linker flags (-fuse-ld=lld,
+    // --rtlib=compiler-rt). Let the cfg apply normally; pass --sysroot
+    // explicitly to override any stale sysroot value in the cfg.
     std::string sysroot_flag;
-    if (mcpp::toolchain::is_clang(plan.toolchain)) {
+    bool is_macos_clang = mcpp::toolchain::is_clang(plan.toolchain)
+        && (plan.toolchain.targetTriple.find("apple") != std::string::npos
+         || plan.toolchain.targetTriple.find("darwin") != std::string::npos);
+    if (is_macos_clang) {
         auto cfgPath = plan.toolchain.binaryPath.parent_path()
                        / (plan.toolchain.binaryPath.stem().string() + ".cfg");
         if (std::filesystem::exists(cfgPath)) {
@@ -102,18 +108,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
             sysroot_flag = " --no-default-config";
             sysroot_flag += " -isystem" + escape_path(libcxxInclude);
-            // Target-specific libc++ headers (e.g. __config_site) live under
-            // include/<triple>/c++/v1/. Add if present.
             if (!plan.toolchain.targetTriple.empty()) {
                 auto targetInclude = llvmRoot / "include"
                                      / plan.toolchain.targetTriple / "c++" / "v1";
                 if (std::filesystem::exists(targetInclude))
                     sysroot_flag += " -isystem" + escape_path(targetInclude);
             }
-            if (!plan.toolchain.sysroot.empty())
-                sysroot_flag += " --sysroot=" + escape_path(plan.toolchain.sysroot);
-            else if (auto sdk = mcpp::platform::macos::sdk_path())
+            if (auto sdk = mcpp::platform::macos::sdk_path())
                 sysroot_flag += " --sysroot=" + escape_path(*sdk);
+            else if (!plan.toolchain.sysroot.empty())
+                sysroot_flag += " --sysroot=" + escape_path(plan.toolchain.sysroot);
             f.sysroot = sysroot_flag;
         } else if (!plan.toolchain.sysroot.empty()) {
             sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
