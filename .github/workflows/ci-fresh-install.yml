@@ -66,21 +66,20 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Install xlings
-        shell: bash
+        shell: pwsh
         run: |
-          curl -fsSL https://github.com/d2learn/xlings/releases/download/v0.4.30/xlings-0.4.30-windows-x86_64.zip -o /tmp/xlings.zip
-          mkdir -p /tmp/xlings-extract
-          unzip -o /tmp/xlings.zip -d /tmp/xlings-extract
-          /tmp/xlings-extract/xlings-0.4.30-windows-x86_64/subos/default/bin/xlings.exe self install
-          echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+          Invoke-WebRequest -Uri "https://github.com/d2learn/xlings/releases/download/v0.4.30/xlings-0.4.30-windows-x86_64.zip" -OutFile "$env:TEMP\xlings.zip"
+          Expand-Archive -Path "$env:TEMP\xlings.zip" -DestinationPath "$env:TEMP\xlings-extract" -Force
+          & "$env:TEMP\xlings-extract\xlings-0.4.30-windows-x86_64\subos\default\bin\xlings.exe" self install
+          "$env:USERPROFILE\.xlings\subos\default\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
 
       - name: Install mcpp
-        shell: bash
+        shell: pwsh
         run: xlings install mcpp -y
 
       - name: "mcpp new hello → mcpp run"
-        shell: bash
+        shell: pwsh
         run: |
           mcpp new hello
-          cd hello
+          Set-Location hello
           mcpp run
