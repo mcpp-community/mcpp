@@ -11,6 +11,10 @@ name: ci-fresh-install
 # Triggered manually or on a schedule to catch regressions after releases.
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
   schedule:
     # Run daily at 06:00 UTC to catch issues from xlings/runner updates
