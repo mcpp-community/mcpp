@@ -311,6 +311,8 @@ jobs:
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           test -x "$MCPP"
+          cp "$MCPP" /tmp/mcpp-fresh
+          MCPP=/tmp/mcpp-fresh
           "$MCPP" toolchain default llvm@20.1.7
           "$MCPP" clean
           "$MCPP" build

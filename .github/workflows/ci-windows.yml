@@ -104,10 +104,12 @@ jobs:
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP_SELF" toolchain default llvm@20.1.7
-          "$MCPP_SELF" clean
-          "$MCPP_SELF" build
-          "$MCPP_SELF" --version
+          cp "$MCPP_SELF" /tmp/mcpp-fresh.exe
+          MCPP=/tmp/mcpp-fresh.exe
+          "$MCPP" toolchain default llvm@20.1.7
+          "$MCPP" clean --bmi-cache
+          "$MCPP" build
+          "$MCPP" --version
 
       - name: Package Windows release zip
         id: package

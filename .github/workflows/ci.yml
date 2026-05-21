@@ -128,9 +128,14 @@ jobs:
           "$MCPP" toolchain default gcc@16.1.0
           bash tests/e2e/run_all.sh
 
-      - name: "Toolchain: GCC — build mcpp + test"
+      - name: Save freshly-built mcpp for toolchain tests
         run: |
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          cp "$MCPP" /tmp/mcpp-fresh
+          echo "MCPP=/tmp/mcpp-fresh" >> "$GITHUB_ENV"
+
+      - name: "Toolchain: GCC — build mcpp + test"
+        run: |
           "$MCPP" toolchain default gcc@16.1.0
           "$MCPP" clean
           "$MCPP" build
@@ -138,7 +143,6 @@ jobs:
 
       - name: "Toolchain: musl-gcc — build mcpp"
         run: |
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           "$MCPP" toolchain install gcc 15.1.0-musl
           "$MCPP" toolchain default gcc@15.1.0-musl
           "$MCPP" clean
@@ -146,7 +150,6 @@ jobs:
 
       - name: "Toolchain: LLVM — build mcpp"
         run: |
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           "$MCPP" toolchain install llvm 20.1.7
           "$MCPP" toolchain default llvm@20.1.7
           "$MCPP" clean
