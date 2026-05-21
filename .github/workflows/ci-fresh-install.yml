@@ -7,10 +7,10 @@ name: ci-fresh-install
 #   3. mcpp new hello → cd hello → mcpp run
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  # Manual trigger only — this CI tests the xlings-distributed mcpp binary
+  # (not the PR's code). It validates the real user install flow and will
+  # fail until fixes are released to the xlings mcpp package.
+  # Run manually after a release to verify the end-to-end user experience.
   workflow_dispatch:
 
 concurrency:
