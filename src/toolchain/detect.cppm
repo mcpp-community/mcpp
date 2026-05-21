@@ -69,6 +69,26 @@ detect(const std::filesystem::path& explicit_compiler) {
         tc.targetTriple = *triple;
     }
 
+#if defined(_WIN32)
+    // On Windows, Clang targeting MSVC auto-detects the MSVC version at
+    // compile time and bakes it into the module AST. The -dumpmachine triple
+    // doesn't include this version, so fingerprints don't change when MSVC
+    // patches (e.g. 19.44.35226 → 35227), causing stale BMI cache hits.
+    // Query the effective triple which includes the actual MSVC version.
+    if (tc.compiler == CompilerId::Clang
+        && tc.targetTriple.find("msvc") != std::string::npos) {
+        auto vr = run_capture(std::format(
+            "{}{} -print-effective-triple 2>NUL",
+            envPrefix,
+            mcpp::xlings::shq(tc.binaryPath.string())));
+        if (vr) {
+            auto effective = trim_line(*vr);
+            if (!effective.empty() && effective != tc.targetTriple)
+                tc.driverIdent += "\neffective-triple: " + effective;
+        }
+    }
+#endif
+
     if (tc.compiler == CompilerId::GCC) {
         mcpp::toolchain::gcc::enrich_toolchain(tc);
     } else if (tc.compiler == CompilerId::Clang) {
