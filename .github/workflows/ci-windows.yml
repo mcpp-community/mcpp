@@ -96,19 +96,29 @@ jobs:
           export MCPP="$MCPP_SELF"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
-          "$MCPP_SELF" self config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP_SELF" toolchain default llvm@20.1.7 2>/dev/null || true
+          "$MCPP_SELF" self config --mirror GLOBAL
+          "$MCPP_SELF" toolchain default llvm@20.1.7
           bash tests/e2e/run_all.sh
 
-      - name: Self-host smoke (freshly-built mcpp builds itself again)
+      - name: "Toolchain: LLVM — mcpp new → run"
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP_SELF" build
-          "$MCPP_SELF" --version
-          echo ":: Self-host smoke PASS"
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          "$MCPP_SELF" new hello_win
+          cd hello_win
+          "$MCPP_SELF" run
 
-      # Fresh user experience test moved to ci-fresh-install.yml (PR #63)
+      - name: "Toolchain: LLVM — build mcpp (self-host)"
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cp "$MCPP_SELF" /tmp/mcpp-fresh.exe
+          MCPP=/tmp/mcpp-fresh.exe
+          "$MCPP" toolchain default llvm@20.1.7
+          "$MCPP" clean --bmi-cache
+          "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@20.1.7" build.log
 
       - name: Package Windows release zip
         id: package
@@ -118,9 +128,12 @@ jobs:
           WRAPPER="mcpp-${VERSION}-windows-x86_64"
           ZIPNAME="${WRAPPER}.zip"
 
+          MCPP_BIN=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          test -n "$MCPP_BIN" || { echo "FAIL: no mcpp.exe in target/"; exit 1; }
+
           STAGING=$(mktemp -d)
           mkdir -p "$STAGING/$WRAPPER/bin" "$STAGING/$WRAPPER/registry/bin"
-          cp "$MCPP_SELF" "$STAGING/$WRAPPER/bin/mcpp.exe"
+          cp "$MCPP_BIN" "$STAGING/$WRAPPER/bin/mcpp.exe"
           printf '@echo off\r\n"%%~dp0bin\\mcpp.exe" %%*\r\n' > "$STAGING/$WRAPPER/mcpp.bat"
           cp README.md "$STAGING/$WRAPPER/" 2>/dev/null || true
           cp LICENSE "$STAGING/$WRAPPER/" 2>/dev/null || true

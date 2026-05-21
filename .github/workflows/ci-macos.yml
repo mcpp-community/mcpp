@@ -306,14 +306,14 @@ jobs:
           "$MCPP" toolchain default llvm@20.1.7
           bash tests/e2e/run_all.sh
 
-      - name: Self-host smoke (freshly-built mcpp builds itself again)
+      - name: "Toolchain: LLVM — build mcpp (self-host)"
         run: |
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           test -x "$MCPP"
-          export PATH="$(dirname "$MCPP"):$PATH"
+          cp "$MCPP" /tmp/mcpp-fresh
+          MCPP=/tmp/mcpp-fresh
+          "$MCPP" toolchain default llvm@20.1.7
+          "$MCPP" clean
           "$MCPP" build
           "$MCPP" --version
-          echo ":: Self-host smoke PASS"
-
-      # Fresh user experience test moved to ci-fresh-install.yml (PR #63)

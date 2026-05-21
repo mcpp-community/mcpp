@@ -128,39 +128,29 @@ jobs:
           "$MCPP" toolchain default gcc@16.1.0
           bash tests/e2e/run_all.sh
 
-      - name: Self-host smoke (freshly-built mcpp builds itself again)
+      - name: Save freshly-built mcpp for toolchain tests
         run: |
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
-          "$MCPP" build
+          cp "$MCPP" /tmp/mcpp-fresh
+          echo "MCPP=/tmp/mcpp-fresh" >> "$GITHUB_ENV"
+
+      - name: "Toolchain: GCC — build mcpp + test"
+        run: |
+          "$MCPP" clean
+          "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved gcc@16.1.0" build.log
           "$MCPP" test
 
-      - name: "Toolchain: GCC — mcpp new → build → run"
+      - name: "Toolchain: musl-gcc — build mcpp (--target)"
         run: |
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
-          "$MCPP" toolchain default gcc@16.1.0
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          "$MCPP" new hello_gcc
-          cd hello_gcc
-          "$MCPP" run
+          "$MCPP" clean
+          "$MCPP" build --target x86_64-linux-musl 2>&1 | tee build.log; grep -q "Resolved gcc@15.1.0-musl" build.log
 
-      - name: "Toolchain: musl-gcc — mcpp new → build → run"
+      - name: "Toolchain: LLVM — build mcpp"
         run: |
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
-          "$MCPP" toolchain default gcc@15.1.0-musl
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          "$MCPP" new hello_musl
-          cd hello_musl
-          "$MCPP" run
-
-      - name: "Toolchain: LLVM — install + mcpp new → build → run"
-        run: |
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           "$MCPP" toolchain install llvm 20.1.7
-          "$MCPP" toolchain default llvm@20.1.7
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          "$MCPP" new hello_llvm
-          cd hello_llvm
-          "$MCPP" run
+          # Override project toolchain to use LLVM for this build
+          sed -i 's/^default = "gcc@16.1.0"/default = "llvm@20.1.7"/' mcpp.toml
+          "$MCPP" clean
+          "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@20.1.7" build.log
+          # Restore
+          sed -i 's/^default = "llvm@20.1.7"/default = "gcc@16.1.0"/' mcpp.toml
