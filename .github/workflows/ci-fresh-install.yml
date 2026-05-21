@@ -39,6 +39,9 @@ jobs:
         run: |
           curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.38
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Install mcpp and config mirror
+        run: |
           xlings install mcpp -y
           mcpp --version
           mcpp self config --mirror GLOBAL
@@ -95,12 +98,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install xlings + mcpp
+      - name: Install xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
           curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.38
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Install mcpp and config mirror
+        run: |
           xlings install mcpp -y
           mcpp --version
           mcpp self config --mirror GLOBAL
@@ -127,7 +133,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install xlings + mcpp
+      - name: Install xlings
         shell: pwsh
         env:
           XLINGS_NON_INTERACTIVE: '1'
@@ -138,6 +144,9 @@ jobs:
           $env:PATH = "$xlingsbin;$env:PATH"
           $xlingsbin | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
 
+      - name: Install mcpp and config mirror
+        shell: pwsh
+        run: |
           xlings install mcpp -y
           mcpp --version
           mcpp self config --mirror GLOBAL
