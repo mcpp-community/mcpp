@@ -1,24 +1,33 @@
 name: ci-fresh-install
 
-# Fresh install CI — tests the released mcpp via xlings on clean machines.
-# Validates: xlings install mcpp → mcpp build (self) → mcpp new → mcpp run
+# Fresh install CI — validates the released mcpp binary via xlings.
+# Simulates a real first-time user on a clean machine (no caches).
+#
+# For each platform, tests every supported toolchain:
+#   1. mcpp new hello → mcpp run (basic project)
+#   2. mcpp build (build mcpp itself from source)
+#
+# This workflow does NOT run on PRs — it tests released mcpp, not PR code.
+# Triggered manually or on a schedule to catch regressions after releases.
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
+  schedule:
+    # Run daily at 06:00 UTC to catch issues from xlings/runner updates
+    - cron: '0 6 * * *'
 
 concurrency:
-  group: ci-fresh-install-${{ github.ref }}
+  group: ci-fresh-install
   cancel-in-progress: true
 
 jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Linux: gcc@16.1.0, musl-gcc@15.1.0, llvm@20.1.7
+  # ──────────────────────────────────────────────────────────────────
   linux-fresh:
     name: Linux fresh install
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -31,19 +40,38 @@ jobs:
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings install mcpp -y
           echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+          mcpp --version
 
-      - name: mcpp build (self-host)
-        run: mcpp build
-
-      - name: mcpp new hello → mcpp run
+      - name: "GCC: mcpp new → run"
         run: |
+          mcpp toolchain default gcc
           cd "$(mktemp -d)"
-          mcpp new hello
-          cd hello
+          mcpp new hello_gcc
+          cd hello_gcc
           mcpp run
 
-      - name: install LLVM → mcpp new → mcpp run
-        continue-on-error: true
+      - name: "GCC: build mcpp"
+        run: |
+          mcpp toolchain default gcc
+          mcpp clean
+          mcpp build
+
+      - name: "musl-gcc: mcpp new → run"
+        run: |
+          mcpp toolchain install gcc 15.1.0-musl
+          mcpp toolchain default gcc@15.1.0-musl
+          cd "$(mktemp -d)"
+          mcpp new hello_musl
+          cd hello_musl
+          mcpp run
+
+      - name: "musl-gcc: build mcpp"
+        run: |
+          mcpp toolchain default gcc@15.1.0-musl
+          mcpp clean
+          mcpp build
+
+      - name: "LLVM: mcpp new → run"
         run: |
           mcpp self config --mirror GLOBAL
           mcpp toolchain install llvm 20.1.7
@@ -53,6 +81,15 @@ jobs:
           cd hello_llvm
           mcpp run
 
+      - name: "LLVM: build mcpp"
+        run: |
+          mcpp toolchain default llvm@20.1.7
+          mcpp clean
+          mcpp build
+
+  # ──────────────────────────────────────────────────────────────────
+  # macOS: llvm@20.1.7
+  # ──────────────────────────────────────────────────────────────────
   macos-fresh:
     name: macOS fresh install
     runs-on: macos-15
@@ -69,17 +106,23 @@ jobs:
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings install mcpp -y
           echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+          mcpp --version
 
-      - name: mcpp build (self-host)
-        run: mcpp build
-
-      - name: mcpp new hello → mcpp run
+      - name: "LLVM: mcpp new → run"
         run: |
           cd "$(mktemp -d)"
-          mcpp new hello
-          cd hello
+          mcpp new hello_mac
+          cd hello_mac
           mcpp run
 
+      - name: "LLVM: build mcpp"
+        run: |
+          mcpp clean
+          mcpp build
+
+  # ──────────────────────────────────────────────────────────────────
+  # Windows: llvm@20.1.7 + MSVC STL
+  # ──────────────────────────────────────────────────────────────────
   windows-fresh:
     name: Windows fresh install
     runs-on: windows-latest
@@ -99,16 +142,19 @@ jobs:
           $env:PATH = "$xlingsbin;$env:PATH"
           xlings install mcpp -y
           $xlingsbin | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+          mcpp --version
 
-      - name: mcpp build (self-host)
-        shell: pwsh
-        run: mcpp build
-
-      - name: mcpp new hello → mcpp run
+      - name: "LLVM: mcpp new → run"
         shell: pwsh
         run: |
           $tmp = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
           Set-Location $tmp
-          mcpp new hello
-          Set-Location hello
+          mcpp new hello_win
+          Set-Location hello_win
           mcpp run
+
+      - name: "LLVM: build mcpp"
+        shell: pwsh
+        run: |
+          mcpp clean
+          mcpp build
