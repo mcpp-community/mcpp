@@ -119,9 +119,12 @@ jobs:
           WRAPPER="mcpp-${VERSION}-windows-x86_64"
           ZIPNAME="${WRAPPER}.zip"
 
+          MCPP_BIN=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          test -n "$MCPP_BIN" || { echo "FAIL: no mcpp.exe in target/"; exit 1; }
+
           STAGING=$(mktemp -d)
           mkdir -p "$STAGING/$WRAPPER/bin" "$STAGING/$WRAPPER/registry/bin"
-          cp "$MCPP_SELF" "$STAGING/$WRAPPER/bin/mcpp.exe"
+          cp "$MCPP_BIN" "$STAGING/$WRAPPER/bin/mcpp.exe"
           printf '@echo off\r\n"%%~dp0bin\\mcpp.exe" %%*\r\n' > "$STAGING/$WRAPPER/mcpp.bat"
           cp README.md "$STAGING/$WRAPPER/" 2>/dev/null || true
           cp LICENSE "$STAGING/$WRAPPER/" 2>/dev/null || true
