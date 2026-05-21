@@ -81,6 +81,12 @@ detect(const std::filesystem::path& explicit_compiler) {
     // When available, flags are assembled from these paths instead of --sysroot.
     tc.payloadPaths = probe_payload_paths(tc.binaryPath);
 
+    // For GCC: ensure the probed sysroot has complete headers by symlinking
+    // missing content (linux kernel headers, glibc) from payload xpkgs.
+    // This makes mcpp self-sufficient — not dependent on xlings subos init.
+    if (tc.payloadPaths && !tc.sysroot.empty())
+        ensure_sysroot_complete(tc.sysroot, *tc.payloadPaths);
+
     return tc;
 }
 
