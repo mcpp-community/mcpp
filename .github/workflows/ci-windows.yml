@@ -108,16 +108,13 @@ jobs:
           "$MCPP_SELF" --version
           echo ":: Self-host smoke PASS"
 
-      - name: "Toolchain: LLVM — mcpp new → build → run"
+      - name: "Toolchain: LLVM — build mcpp"
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP_SELF" toolchain default llvm@20.1.7
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          "$MCPP_SELF" new hello_llvm
-          cd hello_llvm
-          "$MCPP_SELF" run
+          "$MCPP_SELF" clean
+          "$MCPP_SELF" build
 
       - name: Package Windows release zip
         id: package
