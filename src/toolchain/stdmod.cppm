@@ -109,6 +109,14 @@ std::expected<StdModule, StdModError> ensure_built(
             auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
             sysroot_flag = " --no-default-config";
             sysroot_flag += std::format(" -isystem'{}'", libcxxInclude.string());
+            // Target-specific libc++ headers (e.g. __config_site) live under
+            // include/<triple>/c++/v1/. Add if present.
+            if (!tc.targetTriple.empty()) {
+                auto targetInclude = llvmRoot / "include"
+                                     / tc.targetTriple / "c++" / "v1";
+                if (std::filesystem::exists(targetInclude))
+                    sysroot_flag += std::format(" -isystem'{}'", targetInclude.string());
+            }
             if (!tc.sysroot.empty())
                 sysroot_flag += std::format(" --sysroot='{}'", tc.sysroot.string());
             else if (auto sdk = mcpp::platform::macos::sdk_path())

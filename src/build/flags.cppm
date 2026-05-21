@@ -102,6 +102,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
             sysroot_flag = " --no-default-config";
             sysroot_flag += " -isystem" + escape_path(libcxxInclude);
+            // Target-specific libc++ headers (e.g. __config_site) live under
+            // include/<triple>/c++/v1/. Add if present.
+            if (!plan.toolchain.targetTriple.empty()) {
+                auto targetInclude = llvmRoot / "include"
+                                     / plan.toolchain.targetTriple / "c++" / "v1";
+                if (std::filesystem::exists(targetInclude))
+                    sysroot_flag += " -isystem" + escape_path(targetInclude);
+            }
             if (!plan.toolchain.sysroot.empty())
                 sysroot_flag += " --sysroot=" + escape_path(plan.toolchain.sysroot);
             else if (auto sdk = mcpp::platform::macos::sdk_path())
