@@ -108,7 +108,16 @@ jobs:
           "$MCPP_SELF" --version
           echo ":: Self-host smoke PASS"
 
-      # Fresh user experience test moved to ci-fresh-install.yml (PR #63)
+      - name: "Toolchain: LLVM — mcpp new → build → run"
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP_SELF" toolchain default llvm@20.1.7
+          TMP=$(mktemp -d)
+          cd "$TMP"
+          "$MCPP_SELF" new hello_llvm
+          cd hello_llvm
+          "$MCPP_SELF" run
 
       - name: Package Windows release zip
         id: package
