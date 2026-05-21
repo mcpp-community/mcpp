@@ -342,12 +342,6 @@ probe_payload_paths(const std::filesystem::path& compilerBin) {
             pp.linuxInclude = linuxInclude;
     }
 
-    // Fallback: host /usr/include has linux kernel headers on most systems.
-    if (pp.linuxInclude.empty()) {
-        if (std::filesystem::exists("/usr/include/linux/limits.h"))
-            pp.linuxInclude = "/usr/include";
-    }
-
     return pp;
 }
 

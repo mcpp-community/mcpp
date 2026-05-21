@@ -111,7 +111,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // Clang with cfg: bypass cfg and provide all paths explicitly.
         auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
         auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-        sysroot_flag = " --no-default-config";
+        sysroot_flag = " --no-default-config -nostdinc++";
         // libc++ headers
         sysroot_flag += " -stdlib=libc++";
         sysroot_flag += " -isystem" + escape_path(libcxxInclude);

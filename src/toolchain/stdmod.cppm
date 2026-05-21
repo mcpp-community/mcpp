@@ -108,7 +108,7 @@ std::expected<StdModule, StdModError> ensure_built(
         if (std::filesystem::exists(cfgPath)) {
             auto llvmRoot = tc.binaryPath.parent_path().parent_path();
             auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-            sysroot_flag = " --no-default-config";
+            sysroot_flag = " --no-default-config -nostdinc++ -stdlib=libc++";
             sysroot_flag += std::format(" -isystem'{}'", libcxxInclude.string());
             if (!tc.targetTriple.empty()) {
                 auto targetInclude = llvmRoot / "include"
