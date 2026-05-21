@@ -8,11 +8,10 @@ name: ci-fresh-install
 #   2. mcpp build (build mcpp itself from source)
 #
 # This workflow tests released mcpp, not PR code.
-# It does NOT run on PRs — only on push to main, manual trigger, and daily schedule.
-# Failures here mean the released mcpp has issues, not that the PR is broken.
+# It runs on PRs to main, manual trigger, and daily schedule.
 
 on:
-  push:
+  pull_request:
     branches: [ main ]
   workflow_dispatch:
   schedule:
@@ -21,7 +20,7 @@ on:
 
 concurrency:
   group: ci-fresh-install
-  cancel-in-progress: false
+  cancel-in-progress: false # use false to test in PRs, true to only test released mcpp
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
@@ -38,7 +37,7 @@ jobs:
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.38
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
           xlings install mcpp -y
           mcpp --version
@@ -100,7 +99,7 @@ jobs:
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.38
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
           xlings install mcpp -y
           mcpp --version
