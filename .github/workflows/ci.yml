@@ -134,34 +134,24 @@ jobs:
           "$MCPP" build
           "$MCPP" test
 
-      - name: "Toolchain: GCC — mcpp new → build → run"
+      - name: "Toolchain: GCC — build mcpp"
         run: |
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           "$MCPP" toolchain default gcc@16.1.0
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          "$MCPP" new hello_gcc
-          cd hello_gcc
-          "$MCPP" run
+          "$MCPP" clean
+          "$MCPP" build
 
-      - name: "Toolchain: musl-gcc — mcpp new → build → run"
+      - name: "Toolchain: musl-gcc — build mcpp"
         run: |
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
-          "$MCPP" toolchain install gcc 15.1.0-musl
           "$MCPP" toolchain default gcc@15.1.0-musl
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          "$MCPP" new hello_musl
-          cd hello_musl
-          "$MCPP" run
+          "$MCPP" clean
+          "$MCPP" build
 
-      - name: "Toolchain: LLVM — install + mcpp new → build → run"
+      - name: "Toolchain: LLVM — build mcpp"
         run: |
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           "$MCPP" toolchain install llvm 20.1.7
           "$MCPP" toolchain default llvm@20.1.7
-          TMP=$(mktemp -d)
-          cd "$TMP"
-          "$MCPP" new hello_llvm
-          cd hello_llvm
-          "$MCPP" run
+          "$MCPP" clean
+          "$MCPP" build
