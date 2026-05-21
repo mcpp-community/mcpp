@@ -118,7 +118,7 @@ jobs:
           MCPP=/tmp/mcpp-fresh.exe
           "$MCPP" toolchain default llvm@20.1.7
           "$MCPP" clean --bmi-cache
-          "$MCPP" build 2>&1 | tee /dev/stderr | grep -q "Resolved llvm@20.1.7"
+          "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@20.1.7" build.log
 
       - name: Package Windows release zip
         id: package

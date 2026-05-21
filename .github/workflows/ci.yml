@@ -137,13 +137,13 @@ jobs:
       - name: "Toolchain: GCC — build mcpp + test"
         run: |
           "$MCPP" clean
-          "$MCPP" build 2>&1 | tee /dev/stderr | grep -q "Resolved gcc@16.1.0"
+          "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved gcc@16.1.0" build.log
           "$MCPP" test
 
       - name: "Toolchain: musl-gcc — build mcpp (--target)"
         run: |
           "$MCPP" clean
-          "$MCPP" build --target x86_64-linux-musl 2>&1 | tee /dev/stderr | grep -q "musl"
+          "$MCPP" build --target x86_64-linux-musl 2>&1 | tee build.log; grep -q "Resolved gcc@15.1.0-musl" build.log
 
       - name: "Toolchain: LLVM — build mcpp"
         run: |
@@ -151,6 +151,6 @@ jobs:
           # Override project toolchain to use LLVM for this build
           sed -i 's/^default = "gcc@16.1.0"/default = "llvm@20.1.7"/' mcpp.toml
           "$MCPP" clean
-          "$MCPP" build 2>&1 | tee /dev/stderr | grep -q "Resolved llvm@20.1.7"
+          "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@20.1.7" build.log
           # Restore
           sed -i 's/^default = "llvm@20.1.7"/default = "gcc@16.1.0"/' mcpp.toml
