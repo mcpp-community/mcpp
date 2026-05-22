@@ -42,6 +42,7 @@ import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
 import mcpp.pm.dep_spec;
 import mcpp.ui;
 import mcpp.log;
+import mcpp.fallback.install_integrity;
 import mcpp.bmi_cache;
 import mcpp.dyndep;
 import mcpp.version_req;   // SemVer constraint resolution
@@ -4302,6 +4303,14 @@ int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (!cfg) {
         mcpp::ui::error(cfg.error().message);
         return 1;
+    }
+
+    // Clean any incomplete xpkg installations (interrupted downloads, etc.).
+    auto xpkgsBase = cfg->xlingsHome() / "data" / "xpkgs";
+    int cleaned = mcpp::fallback::clean_all_incomplete(xpkgsBase);
+    if (cleaned > 0) {
+        mcpp::ui::info("Cleaned", std::format(
+            "{} incomplete installation(s)", cleaned));
     }
 
     // Verify result.
