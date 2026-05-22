@@ -19,6 +19,8 @@ import mcpp.pm.compat;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
 import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
+import mcpp.fallback.xpkg_copy;
+import mcpp.fallback.legacy_dirs;
 
 export namespace mcpp::pm {
 
@@ -620,53 +622,8 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         p.sourceDir = (subs.size() == 1) ? subs.front() : p.root;
     };
 
-    auto resolve = [&]() -> std::expected<XpkgPayload, CallError> {
-        // Workaround: xlings may extract large packages (e.g. LLVM) into its
-        // global data dir instead of the mcpp sandbox, because the extraction
-        // subprocess doesn't always inherit XLINGS_HOME. Detect this and copy
-        // the payload into the sandbox so mcpp remains self-contained.
-        // Originally Windows-only; extended to all platforms for the same
-        // reason (xlings subprocess XLINGS_HOME propagation is unreliable).
-        if (!std::filesystem::exists(verdir)) {
-            mcpp::log::verbose("fetcher", "verdir not in sandbox, checking global xlings");
-            const char* xhome = nullptr;
-#if defined(_WIN32)
-            xhome = std::getenv("USERPROFILE");
-#endif
-            if (!xhome) xhome = std::getenv("HOME");
-            if (xhome) {
-                mcpp::log::debug("fetcher", std::format("HOME={}", xhome));
-                // xlings stores xpkgs at <home>/.xlings/data/xpkgs/ or
-                // <home>/.xlings/subos/default/data/xpkgs/
-                auto pkgDir = verdir.parent_path().filename().string();
-                auto verName = verdir.filename().string();
-                std::filesystem::path candidates[] = {
-                    std::filesystem::path(xhome) / ".xlings" / "data" / "xpkgs" / pkgDir / verName,
-                    std::filesystem::path(xhome) / ".xlings" / "subos" / "default" / "data" / "xpkgs" / pkgDir / verName,
-                };
-                for (auto& src : candidates) {
-                    std::error_code ec;
-                    bool srcExists = std::filesystem::exists(src, ec) && std::filesystem::is_directory(src, ec);
-                    mcpp::log::debug("fetcher", std::format(
-                        "candidate '{}' exists={}", src.string(), srcExists));
-                    if (srcExists) {
-                        std::filesystem::create_directories(verdir.parent_path(), ec);
-                        std::filesystem::copy(src, verdir,
-                            std::filesystem::copy_options::recursive
-                            | std::filesystem::copy_options::overwrite_existing, ec);
-                        mcpp::log::verbose("fetcher", std::format(
-                            "copied from global xlings: ec={}", ec.message()));
-                        if (!ec) break;
-                    }
-                }
-            }
-        } else {
-            mcpp::log::debug("fetcher", "verdir exists in sandbox, no copy needed");
-        }
-        if (!std::filesystem::exists(verdir)) {
-            return std::unexpected(CallError{
-                std::format("xpkg payload missing: {}", verdir.string())});
-        }
+    // Build the payload from a verdir that is known to exist.
+    auto make_payload = [&]() -> XpkgPayload {
         XpkgPayload payload;
         // For xim packages (gcc, cmake, ...) the version dir IS the root.
         // For mcpplibs packages the version dir contains an extracted
@@ -677,7 +634,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         for (auto& e : std::filesystem::directory_iterator(verdir, ec)) {
             if (e.is_directory()) subs.push_back(e.path());
         }
-        // If verdir directly contains bin/ or include/ → it's the root.
+        // If verdir directly contains bin/ or include/ -> it's the root.
         // Otherwise prefer the unique subdirectory.
         bool verdir_is_root = std::filesystem::exists(verdir / "bin")
                            || std::filesystem::exists(verdir / "include")
@@ -689,32 +646,42 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         return payload;
     };
 
-    auto p = resolve();
-    if (p) return *p;
-
-    if (!autoInstall) {
-        return std::unexpected(p.error());
+    // 1. Sandbox check: verdir already exists locally.
+    if (std::filesystem::exists(verdir)) {
+        mcpp::log::debug("fetcher", "verdir exists in sandbox, no copy needed");
+        return make_payload();
     }
 
-    // Trigger install via xlings.
-    std::vector<std::string> targets {
-        std::format("{}:{}@{}", parsed.indexName, parsed.packageName, parsed.version)
-    };
-    mcpp::log::verbose("fetcher", std::format("triggering xlings install: {}", targets[0]));
-    auto inst = install(targets, handler);
-    if (!inst) return std::unexpected(inst.error());
-    mcpp::log::verbose("fetcher", std::format(
-        "xlings install exitCode={} verdir_exists={}",
-        inst->exitCode, std::filesystem::exists(verdir)));
-    if (inst->exitCode != 0) {
-        std::string err = std::format(
-            "xlings install of '{}:{}@{}' failed (exit {})",
-            parsed.indexName, parsed.packageName, parsed.version, inst->exitCode);
-        if (inst->error) err += ": " + inst->error->message;
-        return std::unexpected(CallError{err});
+    // 2. Install via xlings (if allowed).
+    if (autoInstall) {
+        std::vector<std::string> targets {
+            std::format("{}:{}@{}", parsed.indexName, parsed.packageName, parsed.version)
+        };
+        mcpp::log::verbose("fetcher", std::format("triggering xlings install: {}", targets[0]));
+        auto inst = install(targets, handler);
+        if (!inst) return std::unexpected(inst.error());
+        mcpp::log::verbose("fetcher", std::format(
+            "xlings install exitCode={} verdir_exists={}",
+            inst->exitCode, std::filesystem::exists(verdir)));
+        if (inst->exitCode != 0) {
+            std::string err = std::format(
+                "xlings install of '{}:{}@{}' failed (exit {})",
+                parsed.indexName, parsed.packageName, parsed.version, inst->exitCode);
+            if (inst->error) err += ": " + inst->error->message;
+            return std::unexpected(CallError{err});
+        }
+        if (std::filesystem::exists(verdir))
+            return make_payload();
     }
 
-    return resolve();
+    // 3. Copy fallback: xlings may have extracted into its global data dir
+    //    instead of the mcpp sandbox (XLINGS_HOME propagation is unreliable).
+    mcpp::fallback::copy_xpkg_from_global(verdir);
+    if (std::filesystem::exists(verdir))
+        return make_payload();
+
+    return std::unexpected(CallError{
+        std::format("xpkg payload missing: {}", verdir.string())});
 }
 
 // ─── Namespace-aware install_path (canonical, 0.0.10+) ──────────────
@@ -748,18 +715,8 @@ Fetcher::install_path(std::string_view ns, std::string_view shortName,
     // Last-resort fallback scan (COMPAT, remove in 1.0.0): walk xpkgs/ for
     // any directory ending with -x-<qname> or -x-<shortName>.
     auto qname = mcpp::pm::compat::qualified_name(ns, shortName);
-    std::error_code ec;
-    std::string suffix1 = std::format("-x-{}", qname);
-    std::string suffix2 = std::format("-x-{}", shortName);
-    for (auto& entry : std::filesystem::directory_iterator(base, ec)) {
-        if (!entry.is_directory()) continue;
-        auto dirname = entry.path().filename().string();
-        if (dirname.ends_with(suffix1)) {
-            if (auto p = try_dir(dirname)) return *p;
-        }
-        if (suffix2 != suffix1 && dirname.ends_with(suffix2)) {
-            if (auto p = try_dir(dirname)) return *p;
-        }
+    if (auto legacy = mcpp::fallback::scan_legacy_install_dirs(base, qname, shortName)) {
+        if (auto p = try_dir(*legacy)) return *p;
     }
     return std::nullopt;
 }

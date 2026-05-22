@@ -17,6 +17,8 @@ import mcpp.toolchain.model;
 import mcpp.xlings;
 import mcpp.platform;
 import mcpp.log;
+import mcpp.fallback.sysroot_complete;
+import mcpp.fallback.probe_sysroot;
 
 export namespace mcpp::toolchain {
 
@@ -280,45 +282,19 @@ probe_sysroot(const std::filesystem::path& compilerBin,
 
         // GCC bakes the build-time sysroot into the binary. For xlings-built
         // GCC this is a path like <buildhost>/.xlings/subos/default that
-        // doesn't exist on the user's machine. If the reported path ends
-        // with subos/default, look for the equivalent sysroot relative to
-        // the compiler's own xpkgs directory (payload-derived).
-        if (!s.empty() && s.ends_with("subos/default")) {
-            if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
-                // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
-                auto registrySysroot = xpkgs->parent_path().parent_path()
-                                       / "subos" / "default";
-                if (std::filesystem::exists(registrySysroot / "usr" / "include"))
-                    return registrySysroot;
-            }
-        }
+        // doesn't exist on the user's machine. Remap via fallback module.
+        if (auto remapped = mcpp::fallback::remap_xlings_baked_sysroot(s, compilerBin))
+            return *remapped;
     }
 
     // 2. Parse the compiler driver config file (Clang .cfg).
-    //    xlings-installed Clang ships a clang++.cfg alongside the binary
-    //    with --sysroot pointing to the payload's associated sysroot.
-    {
-        auto stem = compilerBin.stem().string();
-        auto cfgPath = compilerBin.parent_path() / (stem + ".cfg");
-        if (std::filesystem::exists(cfgPath)) {
-            std::ifstream ifs(cfgPath);
-            std::string line;
-            while (std::getline(ifs, line)) {
-                constexpr std::string_view prefix = "--sysroot=";
-                if (line.starts_with(prefix)) {
-                    auto val = trim_line(std::string(line.substr(prefix.size())));
-                    if (!val.empty() && std::filesystem::exists(val))
-                        return val;
-                }
-            }
-        }
-    }
+    if (auto cfg = mcpp::fallback::parse_clang_cfg_sysroot(compilerBin))
+        return *cfg;
 
     // 3. macOS fallback: use xcrun to discover the SDK path.
-    if (auto sdk = mcpp::platform::macos::sdk_path()) {
-        mcpp::log::verbose("probe", std::format("sysroot (macOS SDK): {}", sdk->string()));
+    if (auto sdk = mcpp::fallback::probe_macos_sdk_sysroot())
         return *sdk;
-    }
+
     mcpp::log::debug("probe", "no sysroot found");
     return {};
 }
@@ -363,38 +339,7 @@ probe_payload_paths(const std::filesystem::path& compilerBin) {
 
 void ensure_sysroot_complete(const std::filesystem::path& sysroot,
                              const PayloadPaths& pp) {
-    if (sysroot.empty()) return;
-
-    auto sysrootInclude = sysroot / "usr" / "include";
-    if (!std::filesystem::exists(sysrootInclude)) return;
-
-    std::error_code ec;
-
-    // Ensure linux kernel headers are present in sysroot.
-    // If missing, symlink from linux-headers payload.
-    if (!pp.linuxInclude.empty()) {
-        for (auto dir : {"linux", "asm", "asm-generic"}) {
-            auto target = sysrootInclude / dir;
-            auto source = pp.linuxInclude / dir;
-            if (!std::filesystem::exists(target, ec) && std::filesystem::exists(source, ec)) {
-                std::filesystem::create_directory_symlink(source, target, ec);
-            }
-        }
-    }
-
-    // Ensure glibc headers are present if sysroot is bare.
-    if (!std::filesystem::exists(sysrootInclude / "features.h", ec)) {
-        // Symlink individual glibc dirs/files into sysroot.
-        for (auto& entry : std::filesystem::directory_iterator(pp.glibcInclude, ec)) {
-            auto target = sysrootInclude / entry.path().filename();
-            if (!std::filesystem::exists(target, ec)) {
-                if (entry.is_directory(ec))
-                    std::filesystem::create_directory_symlink(entry.path(), target, ec);
-                else
-                    std::filesystem::create_symlink(entry.path(), target, ec);
-            }
-        }
-    }
+    mcpp::fallback::ensure_sysroot_complete(sysroot, pp);
 }
 
 } // namespace mcpp::toolchain
