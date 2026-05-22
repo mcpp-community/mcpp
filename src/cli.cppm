@@ -42,6 +42,7 @@ import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
 import mcpp.pm.dep_spec;
 import mcpp.ui;
 import mcpp.log;
+import mcpp.fallback.registry;
 import mcpp.bmi_cache;
 import mcpp.dyndep;
 import mcpp.version_req;   // SemVer constraint resolution
@@ -4268,6 +4269,40 @@ int cmd_self_version(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
     return 0;
 }
 
+int cmd_self_fallbacks(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
+    namespace fb = mcpp::fallback;
+
+    // Group by lifecycle
+    std::vector<const fb::Entry*> workarounds, compats, permanents;
+    for (std::size_t i = 0; i < fb::kEntryCount; ++i) {
+        auto* e = &fb::kEntries[i];
+        switch (e->lifecycle) {
+            case fb::Lifecycle::workaround: workarounds.push_back(e); break;
+            case fb::Lifecycle::compat:     compats.push_back(e);     break;
+            case fb::Lifecycle::permanent:  permanents.push_back(e);  break;
+        }
+    }
+
+    std::println("Fallback Registry ({} entries)\n", fb::kEntryCount);
+
+    auto print_group = [](std::string_view title, const std::vector<const fb::Entry*>& entries) {
+        if (entries.empty()) return;
+        std::println("{}:", title);
+        for (auto* e : entries) {
+            std::print("  {:<40s} {}", e->id, e->description);
+            if (!e->removeBy.empty())
+                std::print("  [remove by {}]", e->removeBy);
+            std::println("");
+        }
+        std::println("");
+    };
+
+    print_group("WORKAROUNDS (need upstream fix)", workarounds);
+    print_group("COMPAT (backward compatibility)", compats);
+    print_group("PERMANENT (architecturally required)", permanents);
+    return 0;
+}
+
 std::string upper_ascii(std::string s) {
     for (char& ch : s) {
         if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
@@ -4648,13 +4683,16 @@ int run(int argc, char** argv) {
             .subcommand(cl::App("explain")
                 .description("Show extended description for an error code")
                 .arg(cl::Arg("code").help("Error code such as E0001").required()))
+            .subcommand(cl::App("fallbacks")
+                .description("List all registered fallback mechanisms"))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("self", p, {
-                    {"doctor",  cmd_doctor},
-                    {"env",     cmd_env},
-                    {"config",  cmd_self_config},
-                    {"version", cmd_self_version},
-                    {"explain", cmd_explain_action},
+                    {"doctor",    cmd_doctor},
+                    {"env",       cmd_env},
+                    {"config",    cmd_self_config},
+                    {"version",   cmd_self_version},
+                    {"explain",   cmd_explain_action},
+                    {"fallbacks", cmd_self_fallbacks},
                 });
             })))
 
