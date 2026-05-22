@@ -122,14 +122,12 @@ jobs:
       - name: "LLVM: mcpp new → run"
         run: |
           cd "$(mktemp -d)"
-          xlings use mcpp
           mcpp new hello_mac
           cd hello_mac
           mcpp run
 
       - name: "LLVM: build mcpp"
         run: |
-          xlings use mcpp
           mcpp clean
           mcpp run
 
