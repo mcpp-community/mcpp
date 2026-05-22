@@ -43,13 +43,11 @@ jobs:
       - name: Install mcpp and config mirror
         run: |
           xlings install mcpp -y -g  # install to global
-          xlings install mcpp -y     # install to local project (TODO: optimize)
           mcpp --version
           mcpp self config --mirror GLOBAL
 
           echo "mcpp debug info:"
           which mcpp
-          xlings use mcpp
           cat $HOME/.xlings/.xlings.json
 
       - name: "GCC: mcpp new → run"
@@ -114,13 +112,11 @@ jobs:
       - name: Install mcpp and config mirror
         run: |
           xlings install mcpp -y -g  # install to global
-          xlings install mcpp -y     # install to local project (TODO: optimize)
           mcpp --version
           mcpp self config --mirror GLOBAL
 
           echo "mcpp debug info:"
           which mcpp
-          xlings use mcpp
           cat $HOME/.xlings/.xlings.json
 
       - name: "LLVM: mcpp new → run"
@@ -162,12 +158,10 @@ jobs:
         shell: pwsh
         run: |
           xlings install mcpp -y -g
-          xlings install mcpp -y
 
           cat "$env:USERPROFILE\.xlings\.xlings.json"
           mcpp --version
           mcpp self config --mirror GLOBAL
-          xlings use mcpp
 
       - name: "LLVM: mcpp new → run"
         shell: pwsh
