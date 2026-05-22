@@ -24,6 +24,8 @@ import mcpp.pm.index_spec;
 import mcpp.xlings;
 import mcpp.platform;
 import mcpp.log;
+import mcpp.fallback.xlings_binary;
+import mcpp.fallback.config_migration;
 
 export namespace mcpp::config {
 
@@ -265,55 +267,7 @@ bool write_default_xlings_json(const std::filesystem::path& path,
     return std::filesystem::exists(path);
 }
 
-bool replace_all(std::string& text, std::string_view from, std::string_view to) {
-    bool changed = false;
-    for (std::size_t pos = 0;
-         (pos = text.find(from, pos)) != std::string::npos;) {
-        text.replace(pos, from.size(), to);
-        pos += to.size();
-        changed = true;
-    }
-    return changed;
-}
-
-bool write_text_if_changed(const std::filesystem::path& path,
-                           const std::string& original,
-                           const std::string& updated) {
-    if (updated == original) return false;
-    write_file(path, updated);
-    return true;
-}
-
-bool migrate_legacy_config_toml_index_names(const std::filesystem::path& path) {
-    std::ifstream is(path);
-    if (!is) return false;
-    std::stringstream ss;
-    ss << is.rdbuf();
-    auto original = ss.str();
-    auto updated = original;
-
-    replace_all(updated, "default = \"mcpp-index\"", "default = \"mcpplibs\"");
-    replace_all(updated, "[index.repos.\"mcpp-index\"]", "[index.repos.\"mcpplibs\"]");
-
-    return write_text_if_changed(path, original, updated);
-}
-
-bool migrate_legacy_xlings_json_index_names(const std::filesystem::path& path) {
-    std::ifstream is(path);
-    if (!is) return false;
-    std::stringstream ss;
-    ss << is.rdbuf();
-    auto original = ss.str();
-    auto updated = original;
-
-    // Older mcpp sandboxes seeded the package index under the repository
-    // name. Keep the URL and all xlings state intact; only rename the index
-    // key so xlings config/list output matches mcpp's default namespace.
-    replace_all(updated, "\"name\": \"mcpp-index\"", "\"name\": \"mcpplibs\"");
-    replace_all(updated, "\"name\":\"mcpp-index\"", "\"name\":\"mcpplibs\"");
-
-    return write_text_if_changed(path, original, updated);
-}
+// Migration helpers delegated to mcpp.fallback.config_migration.
 
 void canonicalize_legacy_index_names(GlobalConfig& cfg) {
     if (cfg.defaultIndex == "mcpp-index")
@@ -334,65 +288,7 @@ void canonicalize_legacy_index_names(GlobalConfig& cfg) {
     cfg.indexRepos = std::move(normalized);
 }
 
-// Try to acquire xlings binary. Returns the path if successful.
-std::expected<std::filesystem::path, std::string>
-acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet)
-{
-    if (std::filesystem::exists(destBin)) return destBin;
-
-    std::error_code ec;
-    std::filesystem::create_directories(destBin.parent_path(), ec);
-
-    // 1. Explicit override
-    if (auto* e = std::getenv("MCPP_VENDORED_XLINGS"); e && *e) {
-        std::filesystem::path src{e};
-        if (std::filesystem::exists(src)) {
-            std::filesystem::copy_file(src, destBin,
-                std::filesystem::copy_options::overwrite_existing, ec);
-            if (!ec) {
-                std::filesystem::permissions(destBin,
-                    std::filesystem::perms::owner_exec
-                  | std::filesystem::perms::group_exec
-                  | std::filesystem::perms::others_exec,
-                  std::filesystem::perm_options::add, ec);
-                if (!quiet) print_status("Bundled",
-                    std::format("xlings v{} (from MCPP_VENDORED_XLINGS)", kXlingsPinnedVersion));
-                return destBin;
-            }
-        }
-    }
-
-    // 2. Copy from system (`which xlings`)
-    auto xlings_name = std::string("xlings") + std::string(mcpp::platform::exe_suffix);
-    auto sysXlings = mcpp::platform::fs::which(xlings_name);
-    if (sysXlings) {
-        std::string p = sysXlings->string();
-        if (!p.empty() && std::filesystem::exists(p)) {
-            std::filesystem::copy_file(p, destBin,
-                std::filesystem::copy_options::overwrite_existing, ec);
-            if (!ec) {
-                std::filesystem::permissions(destBin,
-                    std::filesystem::perms::owner_exec
-                  | std::filesystem::perms::group_exec
-                  | std::filesystem::perms::others_exec,
-                  std::filesystem::perm_options::add, ec);
-                if (!quiet) print_status("Bundled",
-                    std::format("xlings (copied from system: {})", p));
-                return destBin;
-            }
-        }
-    }
-
-    // 3. Download from GitHub Release (placeholder — real impl uses curl)
-    // We delegate to curl/wget in the bash bootstrap; for in-process robustness
-    // we just instruct the user.
-    return std::unexpected(std::format(
-        "xlings binary not found. Either:\n"
-        "  - install via: curl -fsSL https://raw.githubusercontent.com/d2learn/xlings/refs/heads/main/tools/other/quick_install.sh | bash\n"
-        "  - export MCPP_VENDORED_XLINGS=/abs/path/to/xlings\n"
-        "  - set [xlings].binary = \"system\" in {}",
-        (destBin.parent_path().parent_path() / "config.toml").string()));
-}
+// Xlings binary acquisition delegated to mcpp.fallback.xlings_binary.
 
 // Run `xlings self init` against the sandbox to create the standard
 // directory layout (subos/default/{bin,lib,usr,generations}, data/, config/,
@@ -471,7 +367,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // 3. Seed config.toml if missing
     bool fresh_config = !std::filesystem::exists(cfg.configFile);
     if (fresh_config) write_default_config_toml(cfg.configFile);
-    else migrate_legacy_config_toml_index_names(cfg.configFile);
+    else mcpp::fallback::migrate_config_toml_index_names(cfg.configFile);
 
     // 4. Load config.toml
     auto doc = t::parse_file(cfg.configFile);
@@ -556,12 +452,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     if (!std::filesystem::exists(xjson)) {
         write_default_xlings_json(xjson, cfg.indexRepos);
     } else {
-        migrate_legacy_xlings_json_index_names(xjson);
+        mcpp::fallback::migrate_xlings_json_index_names(xjson);
     }
 
     // 6. Acquire xlings binary if needed
     if (cfg.xlingsBinaryMode == "bundled") {
-        auto xbin = acquire_xlings_binary(cfg.xlingsBinary, quiet);
+        auto xbin = mcpp::fallback::acquire_xlings_binary(cfg.xlingsBinary, quiet);
         if (!xbin) return std::unexpected(ConfigError{xbin.error()});
     } else if (cfg.xlingsBinaryMode == "system") {
         auto sysPath = mcpp::platform::fs::which(
