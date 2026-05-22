@@ -545,25 +545,33 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 #if !defined(__APPLE__) && !defined(_WIN32)
         // patchelf is ELF-only; macOS uses Mach-O and Windows uses PE.
         ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
-        mcpp::fallback::mark_install_complete(
-            mcpp::xlings::paths::xim_tool(bsEnv, "patchelf",
-                mcpp::xlings::pinned::kPatchelfVersion));
+        // Only mark complete if the actual binary exists (not just the dir).
+        {
+            auto pBin = mcpp::xlings::paths::xim_tool(bsEnv, "patchelf",
+                mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+            if (std::filesystem::exists(pBin))
+                mcpp::fallback::mark_install_complete(pBin.parent_path().parent_path());
+        }
 #endif
         ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);
-        auto nRoot = mcpp::xlings::paths::xim_tool_root(bsEnv, "ninja");
-        std::error_code ec;
-        if (std::filesystem::exists(nRoot)) {
-            for (auto& v : std::filesystem::directory_iterator(nRoot, ec))
-                mcpp::fallback::mark_install_complete(v.path());
+        {
+            auto nRoot = mcpp::xlings::paths::xim_tool_root(bsEnv, "ninja");
+            auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
+            std::error_code ec;
+            if (std::filesystem::exists(nRoot)) {
+                for (auto& v : std::filesystem::directory_iterator(nRoot, ec)) {
+                    if (std::filesystem::exists(v.path() / ninja_name))
+                        mcpp::fallback::mark_install_complete(v.path());
+                }
+            }
         }
     }
 
-    // 8. One-time migration: mark legacy xpkgs (installed before .mcpp_ok
-    //    was introduced) so they aren't mistaken for incomplete installs.
-    {
-        auto xpkgsBase = cfg.xlingsHome() / "data" / "xpkgs";
-        mcpp::fallback::migrate_legacy_installs(xpkgsBase);
-    }
+    // 8. Legacy migration is NOT done automatically here — it would write
+    //    .mcpp_ok markers based on heuristics, which could mark half-extracted
+    //    packages as complete. Migration only runs via explicit `mcpp self init`.
+    //    The is_install_complete() fallback still recognizes legacy packages
+    //    read-only (won't delete them), but won't stamp them as verified.
 
     // 9. Bootstrap check is NOT done here — it's deferred to commands that
     //    actually need bootstrap tools (build, run, toolchain install).
