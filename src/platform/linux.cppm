@@ -2,7 +2,7 @@
 //
 // Provides:
 //   build_ld_library_path()  — construct LD_LIBRARY_PATH prefix
-//   runtime_lib_dirs()       — Linux-specific library search paths
+//   runtime_lib_dirs()       — Linux toolchain runtime library search paths
 
 module;
 
@@ -19,7 +19,7 @@ export namespace mcpp::platform::linux_ {
 std::string build_ld_library_path_prefix(
     const std::vector<std::filesystem::path>& dirs);
 
-// Return Linux-specific runtime library directories for LLVM toolchains.
+// Return Linux toolchain runtime library directories.
 std::vector<std::filesystem::path>
 runtime_lib_dirs(const std::filesystem::path& toolchain_root);
 
@@ -56,9 +56,6 @@ runtime_lib_dirs(const std::filesystem::path& toolchain_root) {
             dirs.push_back(p);
     };
     add(toolchain_root / "lib" / "x86_64-unknown-linux-gnu");
-    add("/lib/x86_64-linux-gnu");
-    add("/usr/lib/x86_64-linux-gnu");
-    add("/usr/lib64");
 #else
     (void)toolchain_root;
 #endif
