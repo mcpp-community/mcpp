@@ -16,6 +16,7 @@ import std;
 import mcpp.toolchain.model;
 import mcpp.xlings;
 import mcpp.platform;
+import mcpp.log;
 
 export namespace mcpp::toolchain {
 
@@ -230,6 +231,7 @@ std::string compiler_env_prefix(const Toolchain& tc) {
 std::expected<std::filesystem::path, DetectError>
 probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
     if (!explicit_compiler.empty()) {
+        mcpp::log::verbose("probe", std::format("explicit compiler: {}", explicit_compiler.string()));
         if (!std::filesystem::exists(explicit_compiler)) {
             return std::unexpected(DetectError{std::format(
                 "explicit compiler path does not exist: {}",
@@ -249,6 +251,7 @@ probe_compiler_binary(const std::filesystem::path& explicit_compiler) {
     if (!found) {
         return std::unexpected(DetectError{std::format("compiler '{}' not found in PATH", cxx)});
     }
+    mcpp::log::verbose("probe", std::format("resolved compiler: {} → {}", cxx, found->string()));
     return *found;
 }
 
@@ -312,8 +315,11 @@ probe_sysroot(const std::filesystem::path& compilerBin,
     }
 
     // 3. macOS fallback: use xcrun to discover the SDK path.
-    if (auto sdk = mcpp::platform::macos::sdk_path())
+    if (auto sdk = mcpp::platform::macos::sdk_path()) {
+        mcpp::log::verbose("probe", std::format("sysroot (macOS SDK): {}", sdk->string()));
         return *sdk;
+    }
+    mcpp::log::debug("probe", "no sysroot found");
     return {};
 }
 
@@ -348,6 +354,10 @@ probe_payload_paths(const std::filesystem::path& compilerBin) {
             pp.linuxInclude = linuxInclude;
     }
 
+    mcpp::log::verbose("probe", std::format(
+        "payload paths: glibcLib='{}' linuxInclude='{}'",
+        pp.glibcLib.string(),
+        pp.linuxInclude.empty() ? "(none)" : pp.linuxInclude.string()));
     return pp;
 }
 
