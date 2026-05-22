@@ -665,25 +665,32 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         };
         mcpp::log::verbose("fetcher", std::format("xlings install: {}", targets[0]));
         auto inst = install(targets, handler);
-        if (inst && inst->exitCode == 0 && std::filesystem::exists(verdir)) {
+        if (!inst) {
+            // xlings launch/protocol failure — propagate the real error,
+            // don't mask it behind a generic "payload missing".
+            return std::unexpected(inst.error());
+        }
+        if (inst->exitCode == 0 && std::filesystem::exists(verdir)) {
             mcpp::fallback::mark_install_complete(verdir);
             return make_payload();
         }
         // Install failed → clean residue so next attempt starts fresh.
         mcpp::fallback::clean_incomplete_install(verdir);
-        if (inst && inst->exitCode != 0) {
+        if (inst->exitCode != 0) {
             mcpp::log::warn("fetcher", std::format(
                 "xlings install exit={}, trying fallback", inst->exitCode));
         }
     }
 
     // 4. Copy fallback: xlings may have installed into its global data dir.
-    mcpp::fallback::copy_xpkg_from_global(verdir);
-    if (std::filesystem::exists(verdir)) {
+    bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
+    if (copyOk && mcpp::fallback::is_install_complete(verdir)) {
         mcpp::fallback::mark_install_complete(verdir);
         mcpp::log::verbose("fetcher", "resolved via copy fallback");
         return make_payload();
     }
+    // Copy failed or incomplete — clean partial copy.
+    mcpp::fallback::clean_incomplete_install(verdir);
 
     return std::unexpected(CallError{
         std::format("xpkg payload missing: {}\n"

@@ -67,8 +67,24 @@ bool is_install_complete(const std::filesystem::path& xpkgDir) {
 
     // Backward compat: no marker but has content directories
     // (installed before this feature was added)
+    // Check top-level content dirs (xim toolchain packages).
     for (auto dir : {"bin", "lib", "lib64", "include", "share"}) {
         if (std::filesystem::exists(xpkgDir / dir))
+            return true;
+    }
+    // Check for mcpplibs layout: single subdirectory containing src/ or
+    // mcpp.toml (extracted tarball). E.g. verdir/cmdline-0.0.1/src/...
+    std::error_code ec;
+    std::vector<std::filesystem::path> subs;
+    for (auto& e : std::filesystem::directory_iterator(xpkgDir, ec)) {
+        if (e.is_directory()) subs.push_back(e.path());
+    }
+    if (subs.size() == 1) {
+        auto& sub = subs[0];
+        if (std::filesystem::exists(sub / "src")
+         || std::filesystem::exists(sub / "mcpp.toml")
+         || std::filesystem::exists(sub / "include")
+         || std::filesystem::exists(sub / "bin"))
             return true;
     }
     return false;
