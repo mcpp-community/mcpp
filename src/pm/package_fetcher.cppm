@@ -14,6 +14,7 @@ export module mcpp.pm.package_fetcher;
 
 import std;
 import mcpp.config;
+import mcpp.log;
 import mcpp.pm.compat;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
@@ -200,8 +201,17 @@ Fetcher::call(std::string_view capability,
               EventHandler* handler)
 {
     mcpp::xlings::Env env{ cfg_.xlingsBinary, cfg_.xlingsHome() };
+    mcpp::log::debug("fetcher", std::format("call: cap='{}'", capability));
+    if (mcpp::log::is_enabled(mcpp::log::Level::debug)) {
+        auto cmd = mcpp::xlings::build_interface_command(env, capability, argsJson);
+        mcpp::log::debug("fetcher", std::format("cmd = {}", cmd));
+    }
     auto r = mcpp::xlings::call(env, capability, argsJson, handler);
-    if (!r) return std::unexpected(CallError{r.error()});
+    if (!r) {
+        mcpp::log::error("fetcher", std::format("call '{}' failed: {}", capability, r.error()));
+        return std::unexpected(CallError{r.error()});
+    }
+    mcpp::log::debug("fetcher", std::format("call '{}' exitCode={}", capability, r->exitCode));
     return *r;
 }
 
@@ -586,6 +596,12 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         / std::format("{}-x-{}", parsed.indexName, parsed.packageName)
         / parsed.version;
 
+    mcpp::log::verbose("fetcher", std::format(
+        "resolve: target='{}' verdir='{}'", target, verdir.string()));
+    mcpp::log::debug("fetcher", std::format(
+        "  xlingsHome='{}' autoInstall={} verdir_exists={}",
+        cfg_.xlingsHome().string(), autoInstall, std::filesystem::exists(verdir)));
+
     auto fill_payload = [&](XpkgPayload& p) {
         p.binDir     = p.root / "bin";
         p.libDir     = p.root / "lib";
@@ -612,12 +628,14 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         // Originally Windows-only; extended to all platforms for the same
         // reason (xlings subprocess XLINGS_HOME propagation is unreliable).
         if (!std::filesystem::exists(verdir)) {
+            mcpp::log::verbose("fetcher", "verdir not in sandbox, checking global xlings");
             const char* xhome = nullptr;
 #if defined(_WIN32)
             xhome = std::getenv("USERPROFILE");
 #endif
             if (!xhome) xhome = std::getenv("HOME");
             if (xhome) {
+                mcpp::log::debug("fetcher", std::format("HOME={}", xhome));
                 // xlings stores xpkgs at <home>/.xlings/data/xpkgs/ or
                 // <home>/.xlings/subos/default/data/xpkgs/
                 auto pkgDir = verdir.parent_path().filename().string();
@@ -628,15 +646,22 @@ Fetcher::resolve_xpkg_path(std::string_view target,
                 };
                 for (auto& src : candidates) {
                     std::error_code ec;
-                    if (std::filesystem::exists(src, ec) && std::filesystem::is_directory(src, ec)) {
+                    bool srcExists = std::filesystem::exists(src, ec) && std::filesystem::is_directory(src, ec);
+                    mcpp::log::debug("fetcher", std::format(
+                        "candidate '{}' exists={}", src.string(), srcExists));
+                    if (srcExists) {
                         std::filesystem::create_directories(verdir.parent_path(), ec);
                         std::filesystem::copy(src, verdir,
                             std::filesystem::copy_options::recursive
                             | std::filesystem::copy_options::overwrite_existing, ec);
+                        mcpp::log::verbose("fetcher", std::format(
+                            "copied from global xlings: ec={}", ec.message()));
                         if (!ec) break;
                     }
                 }
             }
+        } else {
+            mcpp::log::debug("fetcher", "verdir exists in sandbox, no copy needed");
         }
         if (!std::filesystem::exists(verdir)) {
             return std::unexpected(CallError{
@@ -675,8 +700,12 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     std::vector<std::string> targets {
         std::format("{}:{}@{}", parsed.indexName, parsed.packageName, parsed.version)
     };
+    mcpp::log::verbose("fetcher", std::format("triggering xlings install: {}", targets[0]));
     auto inst = install(targets, handler);
     if (!inst) return std::unexpected(inst.error());
+    mcpp::log::verbose("fetcher", std::format(
+        "xlings install exitCode={} verdir_exists={}",
+        inst->exitCode, std::filesystem::exists(verdir)));
     if (inst->exitCode != 0) {
         std::string err = std::format(
             "xlings install of '{}:{}@{}' failed (exit {})",

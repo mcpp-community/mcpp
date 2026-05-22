@@ -23,6 +23,7 @@ import mcpp.libs.toml;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
 import mcpp.platform;
+import mcpp.log;
 
 export namespace mcpp::config {
 
@@ -460,6 +461,13 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             std::format("cannot create '{}': {}", d.string(), ec.message())});
     }
 
+    // 2b. Initialize logger (early init with defaults; re-init after config load)
+    {
+        mcpp::log::Config logCfg;
+        logCfg.logDir = cfg.logDir;
+        mcpp::log::init(logCfg);
+    }
+
     // 3. Seed config.toml if missing
     bool fresh_config = !std::filesystem::exists(cfg.configFile);
     if (fresh_config) write_default_config_toml(cfg.configFile);
@@ -480,6 +488,22 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
     cfg.defaultBackend = doc->get_string("build.default_backend").value_or("ninja");
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");
+
+    // [log] section — re-initialize logger with config values
+    {
+        mcpp::log::Config logCfg;
+        logCfg.logDir = cfg.logDir;
+        auto levelStr = doc->get_string("log.level").value_or("off");
+        if      (levelStr == "debug") logCfg.level = mcpp::log::Level::debug;
+        else if (levelStr == "info")  logCfg.level = mcpp::log::Level::info;
+        else if (levelStr == "warn")  logCfg.level = mcpp::log::Level::warn;
+        else if (levelStr == "error") logCfg.level = mcpp::log::Level::error;
+        logCfg.maxFileSize = static_cast<std::size_t>(
+            doc->get_int("log.max_file_size").value_or(10 * 1024 * 1024));
+        logCfg.maxFiles = static_cast<int>(
+            doc->get_int("log.max_files").value_or(3));
+        mcpp::log::init(logCfg);
+    }
 
     // [index.repos.NAME] tables
     if (auto* repos = doc->get_table("index.repos")) {

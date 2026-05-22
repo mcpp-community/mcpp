@@ -41,6 +41,7 @@ import mcpp.pm.mangle;     // Level 1 multi-version fallback (cross-major coexis
 import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
 import mcpp.pm.dep_spec;
 import mcpp.ui;
+import mcpp.log;
 import mcpp.bmi_cache;
 import mcpp.dyndep;
 import mcpp.version_req;   // SemVer constraint resolution
@@ -557,6 +558,22 @@ struct CliInstallProgress : mcpp::fetcher::EventHandler {
                                static_cast<std::size_t>(current->total),
                                elapsed);
         }
+    }
+
+    void on_log(const mcpp::fetcher::LogEvent& e) override {
+        if (e.level == "error")
+            mcpp::log::error("xlings", e.message);
+        else if (e.level == "warn")
+            mcpp::log::warn("xlings", e.message);
+        else
+            mcpp::log::info("xlings", e.message);
+        mcpp::log::verbose("xlings", std::format("[{}] {}", e.level, e.message));
+    }
+
+    void on_error(const mcpp::fetcher::ErrorEvent& e) override {
+        mcpp::log::error("xlings", std::format("{}: {}", e.code, e.message));
+        if (!e.hint.empty())
+            mcpp::log::info("xlings", std::format("hint: {}", e.hint));
     }
 
     ~CliInstallProgress() override { if (bar_) bar_->finish(); }
@@ -2637,7 +2654,7 @@ std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
 }
 
 int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    bool verbose  = parsed.is_flag_set("verbose");
+    bool verbose  = parsed.is_flag_set("verbose") || mcpp::log::is_verbose();
     bool print_fp = parsed.is_flag_set("print-fingerprint");
     bool no_cache = parsed.is_flag_set("no-cache");
 
@@ -3723,6 +3740,11 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
         mcpp::ui::info("Installing",
             std::format("{} {} via mcpp's xlings", spec->compiler, spec->version));
+        mcpp::log::verbose("toolchain", std::format(
+            "install: target='{}' xlingsHome='{}'", pkg.target(), cfg->xlingsHome().string()));
+        mcpp::log::debug("toolchain", std::format(
+            "  ximName='{}' needsGccFixup={} xlingsBinary='{}'",
+            pkg.ximName, pkg.needsGccPostInstallFixup, cfg->xlingsBinary.string()));
         mcpp::fetcher::Fetcher fetcher(*cfg);
         CliInstallProgress progress;
 
@@ -3731,13 +3753,17 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         // musl-gcc is self-contained and doesn't need these.
         if (!spec->isMusl) {
             for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
+                mcpp::log::verbose("toolchain", std::format("installing dep: {}", dep));
                 auto depPayload = fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
-                // Best-effort: linux-headers may not be in the index.
-                // glibc is usually a dependency of gcc/llvm and already installed.
+                mcpp::log::debug("toolchain", std::format("dep {} result: {}",
+                    dep, depPayload ? "ok" : depPayload.error().message));
             }
         }
 
+        mcpp::log::verbose("toolchain", std::format("installing main: {}", pkg.target()));
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
+        mcpp::log::verbose("toolchain", std::format("main install result: {}",
+            payload ? ("ok → " + payload->root.string()) : payload.error().message));
         if (!payload) {
             mcpp::ui::error(std::format("install failed: {}", payload.error().message));
             return 1;
@@ -3786,6 +3812,8 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
                 // (1) patchelf walk: rewrite PT_INTERP + RUNPATH for binutils
                 //     and gcc xpkgs so they're self-contained in sandbox.
+                mcpp::log::verbose("toolchain", std::format(
+                    "gcc fixup: patchelf_walk rpath='{}'", rpath));
                 auto binutilsRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "binutils");
                 if (std::filesystem::exists(binutilsRoot)) {
                     for (auto& v : std::filesystem::directory_iterator(binutilsRoot))
@@ -3794,6 +3822,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 patchelf_walk(payload->root, loader, rpath, patchelfBin);
 
                 // (2) specs fixup.
+                mcpp::log::verbose("toolchain", "gcc fixup: fixup_gcc_specs");
                 fixup_gcc_specs(payload->root, glibcLibDir, gccLibDir);
             } else {
                 mcpp::ui::warning(
@@ -3841,9 +3870,12 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 std::string rpath = llvmTargetLib.string()
                     + ":" + llvmLib.string()
                     + ":" + glibcLibDir.string();
+                mcpp::log::verbose("toolchain", std::format(
+                    "llvm fixup: patchelf_walk lib/ rpath='{}'", rpath));
                 patchelf_walk(llvmLib, loader, rpath, patchelfBin);
             }
 
+            mcpp::log::verbose("toolchain", "llvm fixup: fixup_clang_cfg");
             fixup_clang_cfg(payload->root, glibcLibDir);
         }
 
@@ -4353,6 +4385,7 @@ int run(int argc, char** argv) {
         std::string_view a = argv[i];
         if      (a == "--quiet" || a == "-q") mcpp::ui::set_quiet(true);
         else if (a == "--no-color")           mcpp::ui::disable_color();
+        else if (a == "--verbose" || a == "-v") mcpp::log::set_verbose(true);
     }
 
     // ─── top-level --help / -h / --version intercept ────────────────────
@@ -4441,6 +4474,8 @@ int run(int argc, char** argv) {
         .description("modern C++ build tool")
         .option(cl::Option("quiet").short_name('q')
             .help("Suppress status output").global())
+        .option(cl::Option("verbose").short_name('v')
+            .help("Show detailed progress on stderr").global())
         .option(cl::Option("no-color")
             .help("Disable colored output").global())
 
@@ -4451,8 +4486,6 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_new)))
         .subcommand(cl::App("build")
             .description("Build the current package")
-            .option(cl::Option("verbose").short_name('v')
-                .help("Verbose compiler output"))
             .option(cl::Option("print-fingerprint")
                 .help("Show toolchain fingerprint and 10 inputs"))
             .option(cl::Option("no-cache")
