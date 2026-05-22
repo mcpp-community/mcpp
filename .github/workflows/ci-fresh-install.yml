@@ -50,14 +50,14 @@ jobs:
           which mcpp
           cat $HOME/.xlings/.xlings.json
 
-      - name: "GCC: mcpp new → run"
+      - name: "Default: mcpp new → run"
         run: |
           cd "$(mktemp -d)"
           mcpp new hello_gcc
           cd hello_gcc
           mcpp run
 
-      - name: "GCC: build mcpp"
+      - name: "Default: build mcpp"
         run: |
           mcpp clean
           mcpp run
@@ -74,6 +74,21 @@ jobs:
       - name: "musl-gcc: build mcpp"
         run: |
           mcpp toolchain default gcc@15.1.0-musl
+          mcpp clean
+          mcpp run
+
+      - name: "gcc 16: mcpp new → run"
+        run: |
+          mcpp toolchain install gcc 16.1.0
+          mcpp toolchain default gcc@16.1.0
+          cd "$(mktemp -d)"
+          mcpp new hello_gcc16
+          cd hello_gcc16
+          mcpp run
+
+      - name: "gcc 16: build mcpp"
+        run: |
+          mcpp toolchain default gcc@16.1.0
           mcpp clean
           mcpp run
 
