@@ -42,19 +42,19 @@ jobs:
 
       - name: Install mcpp and config mirror
         run: |
-          xlings install mcpp -y -g
-          xlings install mcpp -y
-          which mcpp
+          xlings install mcpp -y -g  # install to global
+          xlings install mcpp -y     # install to local project (TODO: optimize)
           mcpp --version
           mcpp self config --mirror GLOBAL
+
+          echo "mcpp debug info:"
+          which mcpp
           xlings use mcpp
           cat $HOME/.xlings/.xlings.json
 
       - name: "GCC: mcpp new → run"
         run: |
           cd "$(mktemp -d)"
-          cat $HOME/.xlings/.xlings.json
-          xlings use mcpp
           mcpp new hello_gcc
           cd hello_gcc
           mcpp run
@@ -62,7 +62,7 @@ jobs:
       - name: "GCC: build mcpp"
         run: |
           mcpp clean
-          mcpp build
+          mcpp run
 
       - name: "musl-gcc: mcpp new → run"
         run: |
@@ -77,7 +77,7 @@ jobs:
         run: |
           mcpp toolchain default gcc@15.1.0-musl
           mcpp clean
-          mcpp build
+          mcpp run
 
       - name: "LLVM: mcpp new → run"
         run: |
@@ -92,7 +92,7 @@ jobs:
         run: |
           mcpp toolchain default llvm@20.1.7
           mcpp clean
-          mcpp build
+          mcpp run
 
   # ──────────────────────────────────────────────────────────────────
   # macOS: llvm@20.1.7
@@ -113,12 +113,15 @@ jobs:
 
       - name: Install mcpp and config mirror
         run: |
-          xlings install mcpp -y -g
-          xlings install mcpp -y
-          which mcpp
+          xlings install mcpp -y -g  # install to global
+          xlings install mcpp -y     # install to local project (TODO: optimize)
           mcpp --version
           mcpp self config --mirror GLOBAL
+
+          echo "mcpp debug info:"
+          which mcpp
           xlings use mcpp
+          cat $HOME/.xlings/.xlings.json
 
       - name: "LLVM: mcpp new → run"
         run: |
@@ -132,7 +135,7 @@ jobs:
         run: |
           xlings use mcpp
           mcpp clean
-          mcpp build
+          mcpp run
 
   # ──────────────────────────────────────────────────────────────────
   # Windows: llvm@20.1.7 + MSVC STL
@@ -160,6 +163,8 @@ jobs:
         run: |
           xlings install mcpp -y -g
           xlings install mcpp -y
+
+          cat "$env:USERPROFILE\.xlings\.xlings.json"
           mcpp --version
           mcpp self config --mirror GLOBAL
           xlings use mcpp
@@ -177,4 +182,4 @@ jobs:
         shell: pwsh
         run: |
           mcpp clean
-          mcpp build
+          mcpp run
