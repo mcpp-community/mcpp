@@ -47,10 +47,12 @@ jobs:
           mcpp --version
           mcpp self config --mirror GLOBAL
           xlings use mcpp
+          cat $HOME/.xlings/.xlings.json
 
       - name: "GCC: mcpp new → run"
         run: |
           cd "$(mktemp -d)"
+          cat $HOME/.xlings/.xlings.json
           xlings use mcpp
           mcpp new hello_gcc
           cd hello_gcc
