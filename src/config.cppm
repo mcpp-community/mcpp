@@ -102,6 +102,61 @@ mcpp::xlings::Env make_project_xlings_env(const GlobalConfig& cfg,
     return { cfg.xlingsBinary, cfg.xlingsHome(), projectDir / ".mcpp" };
 }
 
+// Check that the sandbox bootstrap completed successfully.
+// Returns empty string if ok, or a description of what's missing.
+std::string check_base_init(const GlobalConfig& cfg) {
+    auto xlEnv = make_xlings_env(cfg);
+    struct Check { std::string_view name; std::filesystem::path path; };
+
+    auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
+        mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+    auto ninjaRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "ninja");
+    auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
+
+    // Check xlings binary
+    if (!std::filesystem::exists(cfg.xlingsBinary))
+        return std::format("xlings binary missing: {}", cfg.xlingsBinary.string());
+
+    // Check sandbox init marker
+    auto marker = xlEnv.home / "subos" / "default" / ".xlings.json";
+    if (!std::filesystem::exists(marker))
+        return "sandbox not initialized (missing subos/default/.xlings.json)";
+
+    // Check patchelf (Linux only)
+#if !defined(__APPLE__) && !defined(_WIN32)
+    if (!std::filesystem::exists(patchelfBin))
+        return std::format("patchelf missing: {}", patchelfBin.string());
+#endif
+
+    // Check ninja
+    bool ninjaOk = false;
+    if (std::filesystem::exists(ninjaRoot)) {
+        std::error_code ec;
+        for (auto& v : std::filesystem::directory_iterator(ninjaRoot, ec)) {
+            if (std::filesystem::exists(v.path() / ninja_name)) { ninjaOk = true; break; }
+        }
+    }
+    if (!ninjaOk)
+        return "ninja missing from sandbox";
+
+    return {};  // all ok
+}
+
+// Delete the registry directory (sandbox) for a clean re-init.
+// Preserves: bin/mcpp (self-contained mode), config.toml, log/.
+void reset_registry(const GlobalConfig& cfg) {
+    std::error_code ec;
+    auto registry = cfg.xlingsHome();
+    if (std::filesystem::exists(registry))
+        std::filesystem::remove_all(registry, ec);
+
+    // Also clear BMI and metadata caches (stale after registry reset).
+    if (std::filesystem::exists(cfg.bmiCacheDir))
+        std::filesystem::remove_all(cfg.bmiCacheDir, ec);
+    if (std::filesystem::exists(cfg.metaCacheDir))
+        std::filesystem::remove_all(cfg.metaCacheDir, ec);
+}
+
 // Ensure the project-level .mcpp/ directory exists and contains a
 // .xlings.json seeded with the custom (non-builtin, non-local) index
 // entries. Returns true if a .mcpp/ directory was created/updated.
@@ -488,6 +543,16 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
 #endif
     ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);
+
+    // 8. Verify bootstrap completed. If something is missing (e.g. Ctrl+C
+    //    interrupted a previous bootstrap), report the problem up-front
+    //    rather than letting a cryptic error surface later.
+    auto initProblem = check_base_init(cfg);
+    if (!initProblem.empty()) {
+        return std::unexpected(ConfigError{std::format(
+            "{}\n  hint: run `mcpp self init --force` to reset and re-initialize",
+            initProblem)});
+    }
 
     return cfg;
 }

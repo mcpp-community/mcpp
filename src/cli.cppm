@@ -4268,6 +4268,53 @@ int cmd_self_version(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
     return 0;
 }
 
+int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    bool force = parsed.is_flag_set("force");
+
+    if (force) {
+        // --force: delete registry (sandbox) + caches and re-bootstrap.
+        // Preserves: bin/mcpp (self-contained mode), config.toml, log/.
+        mcpp::ui::info("Resetting", "mcpp sandbox (registry, caches)");
+
+        // Resolve MCPP_HOME without running bootstrap (which may fail).
+        std::filesystem::path home;
+        if (auto* e = std::getenv("MCPP_HOME"); e && *e)
+            home = e;
+        else {
+            const char* userHome = nullptr;
+#if defined(_WIN32)
+            userHome = std::getenv("USERPROFILE");
+#endif
+            if (!userHome) userHome = std::getenv("HOME");
+            if (userHome) home = std::filesystem::path(userHome) / ".mcpp";
+        }
+        if (!home.empty()) {
+            std::error_code ec;
+            std::filesystem::remove_all(home / "registry", ec);
+            std::filesystem::remove_all(home / "bmi", ec);
+            std::filesystem::remove_all(home / "cache", ec);
+        }
+    }
+
+    // (Re-)run the full load_or_init, which does bootstrap.
+    mcpp::ui::info("Initializing", "mcpp sandbox");
+    auto cfg = mcpp::config::load_or_init();
+    if (!cfg) {
+        mcpp::ui::error(cfg.error().message);
+        return 1;
+    }
+
+    // Verify result.
+    auto problem = mcpp::config::check_base_init(*cfg);
+    if (!problem.empty()) {
+        mcpp::ui::error(std::format("init incomplete: {}", problem));
+        return 1;
+    }
+
+    mcpp::ui::status("Ready", "sandbox initialized");
+    return 0;
+}
+
 std::string upper_ascii(std::string s) {
     for (char& ch : s) {
         if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
@@ -4635,6 +4682,10 @@ int run(int argc, char** argv) {
         // ─── about mcpp itself ─────────────────────────────────────────
         .subcommand(cl::App("self")
             .description("Inspect and manage mcpp itself")
+            .subcommand(cl::App("init")
+                .description("Initialize or repair mcpp sandbox")
+                .option(cl::Option("force")
+                    .help("Delete registry and re-initialize from scratch")))
             .subcommand(cl::App("doctor")
                 .description("Diagnose mcpp environment health"))
             .subcommand(cl::App("env")
@@ -4650,11 +4701,12 @@ int run(int argc, char** argv) {
                 .arg(cl::Arg("code").help("Error code such as E0001").required()))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("self", p, {
-                    {"doctor",  cmd_doctor},
-                    {"env",     cmd_env},
-                    {"config",  cmd_self_config},
-                    {"version", cmd_self_version},
-                    {"explain", cmd_explain_action},
+                    {"init",      cmd_self_init},
+                    {"doctor",    cmd_doctor},
+                    {"env",       cmd_env},
+                    {"config",    cmd_self_config},
+                    {"version",   cmd_self_version},
+                    {"explain",   cmd_explain_action},
                 });
             })))
 
