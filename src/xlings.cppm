@@ -833,9 +833,17 @@ void ensure_init(const Env& env, bool quiet) {
 void ensure_patchelf(const Env& env, bool quiet,
                      const BootstrapProgressCallback& cb)
 {
-    auto marker = paths::xim_tool(env, "patchelf", pinned::kPatchelfVersion)
-                / "bin" / "patchelf";
-    if (std::filesystem::exists(marker)) return;
+    auto toolDir = paths::xim_tool(env, "patchelf", pinned::kPatchelfVersion);
+    auto binary  = toolDir / "bin" / "patchelf";
+    if (std::filesystem::exists(binary)) return;
+
+    // Clean up incomplete installation residue (e.g. from Ctrl+C interrupt).
+    if (std::filesystem::exists(toolDir)) {
+        if (!quiet)
+            print_status("Repairing", "patchelf (incomplete installation, cleaning up)");
+        std::error_code ec;
+        std::filesystem::remove_all(toolDir, ec);
+    }
 
     if (!quiet)
         print_status("Bootstrap", "patchelf into mcpp sandbox (one-time)");
@@ -852,12 +860,16 @@ void ensure_ninja(const Env& env, bool quiet,
                   const BootstrapProgressCallback& cb)
 {
     auto root = paths::xim_tool_root(env, "ninja");
+    auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
     if (std::filesystem::exists(root)) {
         std::error_code ec;
-        auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
         for (auto& v : std::filesystem::directory_iterator(root, ec)) {
             if (std::filesystem::exists(v.path() / ninja_name)) return;
         }
+        // Directory exists but no version has a working binary — residue.
+        if (!quiet)
+            print_status("Repairing", "ninja (incomplete installation, cleaning up)");
+        std::filesystem::remove_all(root, ec);
     }
     if (!quiet)
         print_status("Bootstrap", "ninja into mcpp sandbox (one-time)");
