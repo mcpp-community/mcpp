@@ -46,10 +46,12 @@ jobs:
           which mcpp
           mcpp --version
           mcpp self config --mirror GLOBAL
+          xlings use mcpp
 
       - name: "GCC: mcpp new → run"
         run: |
           cd "$(mktemp -d)"
+          xlings use mcpp
           mcpp new hello_gcc
           cd hello_gcc
           mcpp run
@@ -112,16 +114,19 @@ jobs:
           which mcpp
           mcpp --version
           mcpp self config --mirror GLOBAL
+          xlings use mcpp
 
       - name: "LLVM: mcpp new → run"
         run: |
           cd "$(mktemp -d)"
+          xlings use mcpp
           mcpp new hello_mac
           cd hello_mac
           mcpp run
 
       - name: "LLVM: build mcpp"
         run: |
+          xlings use mcpp
           mcpp clean
           mcpp build
 
@@ -152,6 +157,7 @@ jobs:
           xlings install mcpp -y
           mcpp --version
           mcpp self config --mirror GLOBAL
+          xlings use mcpp
 
       - name: "LLVM: mcpp new → run"
         shell: pwsh
