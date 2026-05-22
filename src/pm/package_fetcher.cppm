@@ -721,18 +721,13 @@ Fetcher::resolve_xpkg_path(std::string_view target,
                 "{}\n  hint: check network and retry, or `mcpp self init --force`",
                 installError)});
         }
-    } else {
-        // autoInstall=false: still allow XLINGS_HOME-propagation copy
-        // recovery (verdir is missing but a previous xlings install may
-        // have populated the global location).
-        bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
-        if (copyOk && mcpp::fallback::looks_complete_legacy(verdir)) {
-            mcpp::fallback::mark_install_complete(verdir);
-            mcpp::log::verbose("fetcher", "resolved via copy fallback");
-            return make_payload();
-        }
-        mcpp::fallback::clean_incomplete_install(verdir);
     }
+    // No autoInstall fallback: when the caller explicitly disables
+    // auto-install, do NOT perform any implicit recovery from the global
+    // ~/.xlings/ location. Without "this session's xlings install
+    // reported success" as a witness, we can't tell a complete legacy
+    // package apart from interrupted residue, and silently marking the
+    // latter as complete would mask the underlying problem.
 
     // 4. All paths exhausted.
     return std::unexpected(CallError{
