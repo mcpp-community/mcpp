@@ -157,6 +157,7 @@ jobs:
         run: |
           xlings install mcpp -y -g
 
+          cat .xlings/.xlings.json
           cat "$env:USERPROFILE\.xlings\.xlings.json"
           mcpp --version
           mcpp self config --mirror GLOBAL
