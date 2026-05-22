@@ -647,15 +647,28 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         return payload;
     };
 
-    // ─── Resolution chain: check → clean residue → install → fallback ─
+    // ─── Resolution chain: marker check → clean residue → install → fallback ─
 
-    // 1. Already installed and complete?
+    // 1. Already installed and complete (has .mcpp_ok marker)?
+    //
+    // Strict marker-only. We do NOT do legacy heuristic adoption here
+    // because we cannot distinguish a legacy-complete install (has bin/)
+    // from a half-extracted residue (also has bin/). Adopting the latter
+    // would silently corrupt the user's toolchain.
+    //
+    // Cost for users upgrading mcpp: a one-time reinstall per toolchain.
+    // The install path normally hits copy_xpkg_from_global() as a fast
+    // fallback (reuses ~/.xlings/ copy), so this is rarely a real download.
     if (mcpp::fallback::is_install_complete(verdir)) {
         mcpp::log::debug("fetcher", "install complete in sandbox");
         return make_payload();
     }
 
-    // 2. Directory exists but incomplete (Ctrl+C / interrupted) → clean up.
+    // 2. Directory exists without marker → either interrupted install
+    //    or legacy package. Either way, the safe action is to clean and
+    //    re-resolve (install or copy fallback will produce a marked
+    //    installation). For legacy packages this is wasteful but correct;
+    //    for half-extracted residue it's required.
     mcpp::fallback::clean_incomplete_install(verdir);
 
     // 3. Install via xlings (primary path).

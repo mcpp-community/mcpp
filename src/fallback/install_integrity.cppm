@@ -33,11 +33,18 @@ export namespace mcpp::fallback {
 // Marker file name written into xpkg directories after successful install.
 inline constexpr std::string_view kInstallMarker = ".mcpp_ok";
 
-// Check whether an xpkg directory looks like a complete installation.
-// Returns true if:
-//   - .mcpp_ok marker exists, OR
-//   - (backward compat) bin/, lib/, or include/ exists
+// Check whether an xpkg directory has the .mcpp_ok marker.
+// STRICT marker-only — does not fall back to legacy heuristics.
 bool is_install_complete(const std::filesystem::path& xpkgDir);
+
+// Heuristic check for pre-.mcpp_ok packages (upgrade compat).
+// Returns true if the directory looks like a complete legacy install
+// based on layout (top-level bin/lib/lib64/include/share, or a single
+// subdirectory containing src/ or mcpp.toml).
+// Use ONLY for one-time legacy adoption or to avoid deleting old packages;
+// do NOT use this to decide "skip install" on the active install path —
+// that's what is_install_complete()'s strict semantics protect against.
+bool looks_complete_legacy(const std::filesystem::path& xpkgDir);
 
 // Write the .mcpp_ok marker into a directory, marking it as complete.
 void mark_install_complete(const std::filesystem::path& xpkgDir);
@@ -60,11 +67,8 @@ int clean_all_incomplete(const std::filesystem::path& xpkgsBase);
 
 namespace mcpp::fallback {
 
-namespace {
-
-// Heuristic: does this directory look like a complete xpkg?
-// Used ONLY for legacy migration (pre-.mcpp_ok packages).
 bool looks_complete_legacy(const std::filesystem::path& xpkgDir) {
+    if (!std::filesystem::exists(xpkgDir)) return false;
     // xim toolchain/tool packages: top-level bin/lib/lib64/include/share
     for (auto dir : {"bin", "lib", "lib64", "include", "share"}) {
         if (std::filesystem::exists(xpkgDir / dir))
@@ -87,8 +91,6 @@ bool looks_complete_legacy(const std::filesystem::path& xpkgDir) {
     return false;
 }
 
-} // namespace
-
 // Strict: has .mcpp_ok marker (written only on verified success).
 bool has_marker(const std::filesystem::path& xpkgDir) {
     return std::filesystem::exists(xpkgDir / std::string(kInstallMarker));
@@ -97,14 +99,17 @@ bool has_marker(const std::filesystem::path& xpkgDir) {
 bool is_install_complete(const std::filesystem::path& xpkgDir) {
     if (!std::filesystem::exists(xpkgDir)) return false;
 
-    // Primary: .mcpp_ok marker — the only fully trusted signal.
-    if (has_marker(xpkgDir)) return true;
-
-    // Read-only legacy fallback: recognize pre-upgrade packages so they
-    // aren't treated as missing by resolve_xpkg_path(). Does NOT write
-    // any marker. Does NOT prevent clean_incomplete_install() from
-    // cleaning — that function uses marker-only semantics.
-    return looks_complete_legacy(xpkgDir);
+    // STRICT marker-only.
+    // Used on the install/resolve path — half-extracted dirs with bin/
+    // would otherwise be mistaken for complete packages.
+    //
+    // Legacy packages (installed before .mcpp_ok existed) will trigger
+    // a one-time reinstall after upgrade. This is the cost of strict
+    // semantics; the alternative (legacy heuristic) shields half-extracted
+    // packages from cleanup and re-introduces the very bug we're fixing.
+    // The reinstall is cheap because copy_xpkg_from_global() is the
+    // typical fallback path — it reuses the existing ~/.xlings/ copy.
+    return has_marker(xpkgDir);
 }
 
 void mark_install_complete(const std::filesystem::path& xpkgDir) {
