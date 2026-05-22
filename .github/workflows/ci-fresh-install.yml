@@ -170,9 +170,8 @@ jobs:
       - name: Install mcpp and config mirror
         shell: pwsh
         run: |
-          xlings install mcpp -y -g
+          xlings install mcpp -y -g --verbose
 
-          cat .xlings/.xlings.json
           cat "$env:USERPROFILE\.xlings\.xlings.json"
           mcpp --version
           mcpp self config --mirror GLOBAL
