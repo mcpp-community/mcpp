@@ -8,11 +8,11 @@ name: ci-fresh-install
 #   2. mcpp build (build mcpp itself from source)
 #
 # This workflow tests released mcpp, not PR code.
-# It runs on PRs to main, manual trigger, and daily schedule.
+# It runs on release publish, manual trigger, and daily schedule.
 
 on:
-  pull_request:
-    branches: [ main ]
+  release:
+    types: [ published ]
   workflow_dispatch:
   schedule:
     # Run daily at 06:00 UTC to catch issues from xlings/runner updates
