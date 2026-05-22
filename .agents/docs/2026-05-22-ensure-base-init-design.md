@@ -95,12 +95,12 @@ config::load_or_init()
 std::expected<void, ConfigError>
 ensure_base_init_ok(const GlobalConfig& cfg) {
     auto xlEnv = make_xlings_env(cfg);
-    
+
     struct Check {
         std::string_view name;
         std::filesystem::path path;
     };
-    
+
     Check checks[] = {
         {"xlings binary",  cfg.xlingsBinary},
         {"sandbox marker", xlEnv.home / "subos" / "default" / ".xlings.json"},
@@ -109,7 +109,7 @@ ensure_base_init_ok(const GlobalConfig& cfg) {
         {"ninja",          mcpp::xlings::paths::xim_tool(xlEnv, "ninja",
                                mcpp::xlings::pinned::kNinjaVersion) / "bin" / "ninja"},
     };
-    
+
     for (auto& c : checks) {
         if (!std::filesystem::exists(c.path)) {
             return std::unexpected(ConfigError{std::format(
@@ -127,7 +127,7 @@ ensure_base_init_ok(const GlobalConfig& cfg) {
 ```cpp
 int cmd_self_init(const ParsedArgs& parsed) {
     bool force = parsed.is_flag_set("force");
-    
+
     if (force) {
         // 删除 bootstrap 状态（不删整个 ~/.mcpp/，保留 config.toml 和 toolchain）
         auto xlHome = cfg->xlingsHome();
@@ -140,12 +140,12 @@ int cmd_self_init(const ParsedArgs& parsed) {
             std::filesystem::remove_all(xpkgs / prefix, ec);
         }
     }
-    
+
     // 重新 bootstrap（复用 load_or_init 的 bootstrap 逻辑）
     ensure_init(xlEnv, false);
     ensure_patchelf(xlEnv, false, nullptr);
     ensure_ninja(xlEnv, false, nullptr);
-    
+
     // 验证
     auto check = ensure_base_init_ok(*cfg);
     if (!check) {

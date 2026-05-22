@@ -558,7 +558,14 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         }
     }
 
-    // 8. Bootstrap check is NOT done here — it's deferred to commands that
+    // 8. One-time migration: mark legacy xpkgs (installed before .mcpp_ok
+    //    was introduced) so they aren't mistaken for incomplete installs.
+    {
+        auto xpkgsBase = cfg.xlingsHome() / "data" / "xpkgs";
+        mcpp::fallback::migrate_legacy_installs(xpkgsBase);
+    }
+
+    // 9. Bootstrap check is NOT done here — it's deferred to commands that
     //    actually need bootstrap tools (build, run, toolchain install).
     //    Light commands (self env, toolchain list) should work even if
     //    bootstrap is incomplete. Commands call check_base_init() themselves.

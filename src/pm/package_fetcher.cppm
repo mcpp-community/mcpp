@@ -659,6 +659,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     mcpp::fallback::clean_incomplete_install(verdir);
 
     // 3. Install via xlings (primary path).
+    std::string installError;  // preserved for final error message
     if (autoInstall) {
         std::vector<std::string> targets {
             std::format("{}:{}@{}", parsed.indexName, parsed.packageName, parsed.version)
@@ -677,8 +678,14 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         // Install failed → clean residue so next attempt starts fresh.
         mcpp::fallback::clean_incomplete_install(verdir);
         if (inst->exitCode != 0) {
+            installError = std::format(
+                "xlings install of '{}:{}@{}' failed (exit {})",
+                parsed.indexName, parsed.packageName, parsed.version,
+                inst->exitCode);
+            if (inst->error)
+                installError += ": " + inst->error->message;
             mcpp::log::warn("fetcher", std::format(
-                "xlings install exit={}, trying fallback", inst->exitCode));
+                "{}, trying fallback", installError));
         }
     }
 
@@ -692,6 +699,12 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     // Copy failed or incomplete — clean partial copy.
     mcpp::fallback::clean_incomplete_install(verdir);
 
+    // 5. All paths exhausted — return the most informative error.
+    if (!installError.empty()) {
+        return std::unexpected(CallError{std::format(
+            "{}\n  hint: check network and retry, or `mcpp self init --force`",
+            installError)});
+    }
     return std::unexpected(CallError{
         std::format("xpkg payload missing: {}\n"
                     "  hint: check network and retry, or `mcpp self init --force`",

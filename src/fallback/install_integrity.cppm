@@ -52,28 +52,29 @@ bool clean_incomplete_install(const std::filesystem::path& xpkgDir);
 // Returns number of directories cleaned.
 int clean_all_incomplete(const std::filesystem::path& xpkgsBase);
 
+// One-time migration: scan xpkgs and write .mcpp_ok markers for all
+// old packages that look complete but lack a marker. After migration,
+// is_install_complete() uses strict marker-only semantics. Returns
+// number of packages migrated.
+int migrate_legacy_installs(const std::filesystem::path& xpkgsBase);
+
 } // namespace mcpp::fallback
 
 // ─── Implementation ─────────────────────────────────────────────────
 
 namespace mcpp::fallback {
 
-bool is_install_complete(const std::filesystem::path& xpkgDir) {
-    if (!std::filesystem::exists(xpkgDir)) return false;
+namespace {
 
-    // Primary: .mcpp_ok marker
-    if (std::filesystem::exists(xpkgDir / std::string(kInstallMarker)))
-        return true;
-
-    // Backward compat: no marker but has content directories
-    // (installed before this feature was added)
-    // Check top-level content dirs (xim toolchain packages).
+// Heuristic: does this directory look like a complete xpkg?
+// Used ONLY for legacy migration (pre-.mcpp_ok packages).
+bool looks_complete_legacy(const std::filesystem::path& xpkgDir) {
+    // xim toolchain/tool packages: top-level bin/lib/lib64/include/share
     for (auto dir : {"bin", "lib", "lib64", "include", "share"}) {
         if (std::filesystem::exists(xpkgDir / dir))
             return true;
     }
-    // Check for mcpplibs layout: single subdirectory containing src/ or
-    // mcpp.toml (extracted tarball). E.g. verdir/cmdline-0.0.1/src/...
+    // mcpplibs layout: single subdirectory containing src/ or mcpp.toml
     std::error_code ec;
     std::vector<std::filesystem::path> subs;
     for (auto& e : std::filesystem::directory_iterator(xpkgDir, ec)) {
@@ -88,6 +89,22 @@ bool is_install_complete(const std::filesystem::path& xpkgDir) {
             return true;
     }
     return false;
+}
+
+} // namespace
+
+bool is_install_complete(const std::filesystem::path& xpkgDir) {
+    if (!std::filesystem::exists(xpkgDir)) return false;
+
+    // Strict: .mcpp_ok marker is the sole authority.
+    // Legacy packages should have been migrated (marker added) during
+    // the first load_or_init() after upgrading to this version.
+    if (std::filesystem::exists(xpkgDir / std::string(kInstallMarker)))
+        return true;
+
+    // Fallback for un-migrated packages (e.g. first run after upgrade
+    // before migration has a chance to run).
+    return looks_complete_legacy(xpkgDir);
 }
 
 void mark_install_complete(const std::filesystem::path& xpkgDir) {
@@ -122,6 +139,26 @@ int clean_all_incomplete(const std::filesystem::path& xpkgsBase) {
         }
     }
     return cleaned;
+}
+
+int migrate_legacy_installs(const std::filesystem::path& xpkgsBase) {
+    if (!std::filesystem::exists(xpkgsBase)) return 0;
+
+    int migrated = 0;
+    std::error_code ec;
+    for (auto& pkgDir : std::filesystem::directory_iterator(xpkgsBase, ec)) {
+        if (!pkgDir.is_directory()) continue;
+        for (auto& verDir : std::filesystem::directory_iterator(pkgDir.path(), ec)) {
+            if (!verDir.is_directory()) continue;
+            auto marker = verDir.path() / std::string(kInstallMarker);
+            if (std::filesystem::exists(marker)) continue;
+            if (looks_complete_legacy(verDir.path())) {
+                mark_install_complete(verDir.path());
+                ++migrated;
+            }
+        }
+    }
+    return migrated;
 }
 
 } // namespace mcpp::fallback

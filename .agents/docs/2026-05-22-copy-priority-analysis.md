@@ -148,7 +148,7 @@ resolve_xpkg_path(target, autoInstall):
 
 ### 方案 C：install 优先 + install 直接调用（非 NDJSON）
 
-之前排查发现 NDJSON interface 路径安装大包不可靠。`install_with_progress()` 
+之前排查发现 NDJSON interface 路径安装大包不可靠。`install_with_progress()`
 已有"直接调用" fallback（`std::system("xlings install ... -y")`）。
 
 将工具链安装改为使用 `install_with_progress()`（直接调用模式）而非

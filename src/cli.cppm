@@ -3726,6 +3726,17 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     if (subname == "install") {
+        // Toolchain install needs patchelf (ELF fixup) and ninja (build).
+        // Fail early if bootstrap is incomplete rather than producing a
+        // broken toolchain with missing fixups.
+        auto bsProblem = mcpp::config::check_base_init(*cfg);
+        if (!bsProblem.empty()) {
+            mcpp::ui::error(std::format(
+                "{}\n  hint: run `mcpp self init --force` to reset and re-initialize",
+                bsProblem));
+            return 1;
+        }
+
         // Accept three input shapes — they all collapse to (compiler, version):
         //   mcpp toolchain install gcc 16.1.0      → ("gcc", "16.1.0")
         //   mcpp toolchain install gcc@16.1.0      → ("gcc", "16.1.0")

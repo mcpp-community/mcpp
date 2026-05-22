@@ -331,7 +331,7 @@ resolve()
 └── 返回 error
 
 install()（只有 resolve 失败才走到）
-  
+
 resolve()（第二次，install 后）
 ├── sandbox 有？→ 返回
 ├── ~/.xlings/ 有？→ copy → 返回
@@ -366,11 +366,11 @@ auto resolve_quick = [&]() -> std::optional<XpkgPayload> {
 
 auto resolve_with_copy_fallback = [&]() -> std::expected<XpkgPayload, CallError> {
     if (auto p = resolve_quick()) return *p;
-    
+
     // FALLBACK: copy from global xlings
     mcpp::log::verbose("fetcher", "[fallback:xpkg.copy_from_global]");
     // ... copy logic (existing code)
-    
+
     if (auto p = resolve_quick()) return *p;
     return std::unexpected(CallError{"xpkg payload missing: " + verdir.string()});
 };
