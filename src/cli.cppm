@@ -3802,9 +3802,9 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
             }
         }
 
-        // For LLVM/Clang: post-install cfg fixup so the clang++.cfg paths
-        // point to the payload's actual location instead of the xlings
-        // install-time paths (which become stale after copy).
+        // For LLVM/Clang: post-install fixup so the shared libraries and
+        // clang++.cfg paths point to the payload's actual location instead
+        // of the xlings install-time paths (which become stale after copy).
         if (pkg.ximName == "llvm") {
             auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
             std::filesystem::path glibcLibDir;
@@ -3822,6 +3822,28 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
                     }
                 }
             }
+
+            // patchelf: rewrite RUNPATH for LLVM runtime shared libraries
+            // (libc++.so, libunwind.so, etc.) so transitive deps like
+            // libatomic.so.1 are found at runtime.  Without this,
+            // libc++.so.1 keeps stale xlings-era RUNPATH and cannot locate
+            // libatomic.so.1 which lives in the same xpkg.
+            //
+            // Only walk lib/ dirs — NOT bin/. The clang++ binary has its
+            // own RUNPATH set by xlings (pointing to zlib, libxml2, etc.)
+            // that must be preserved.
+            auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
+                mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+            if (!glibcLibDir.empty() && std::filesystem::exists(patchelfBin)) {
+                auto loader = glibcLibDir / "ld-linux-x86-64.so.2";
+                auto llvmTargetLib = payload->root / "lib" / "x86_64-unknown-linux-gnu";
+                auto llvmLib = payload->root / "lib";
+                std::string rpath = llvmTargetLib.string()
+                    + ":" + llvmLib.string()
+                    + ":" + glibcLibDir.string();
+                patchelf_walk(llvmLib, loader, rpath, patchelfBin);
+            }
+
             fixup_clang_cfg(payload->root, glibcLibDir);
         }
 
