@@ -117,21 +117,15 @@ void mark_install_complete(const std::filesystem::path& xpkgDir) {
 bool clean_incomplete_install(const std::filesystem::path& xpkgDir) {
     if (!std::filesystem::exists(xpkgDir)) return false;
 
-    // Marker-only: if .mcpp_ok exists, this is a verified install — keep it.
-    // Legacy packages (no marker but has content) are NOT cleaned here;
-    // they're recognized by is_install_complete() for read-only compat.
+    // STRICT marker-only semantics.
+    // Used on the resolve/install path for the CURRENT target: we know
+    // mcpp just attempted to install this package, so absence of .mcpp_ok
+    // unambiguously means the attempt was incomplete (interrupted, failed
+    // mid-extract, etc.). Legacy heuristic compat does NOT apply here —
+    // a half-extracted dir that happens to have a `bin/` would otherwise
+    // escape cleanup and corrupt subsequent installs.
     if (has_marker(xpkgDir)) return false;
 
-    // No marker. If it looks like a legacy complete package, don't clean
-    // it either — it predates the marker system.
-    if (looks_complete_legacy(xpkgDir)) {
-        mcpp::log::debug("integrity", std::format(
-            "legacy package without marker, skipping cleanup: {}",
-            xpkgDir.string()));
-        return false;
-    }
-
-    // No marker, no legacy content — this is genuinely incomplete.
     mcpp::log::verbose("integrity",
         std::format("cleaning incomplete install: {}", xpkgDir.string()));
     std::error_code ec;
@@ -142,14 +136,24 @@ bool clean_incomplete_install(const std::filesystem::path& xpkgDir) {
 int clean_all_incomplete(const std::filesystem::path& xpkgsBase) {
     if (!std::filesystem::exists(xpkgsBase)) return 0;
 
+    // Global scan (used by `mcpp self init`). Keeps legacy packages
+    // (no marker but has content) for backward compatibility — those
+    // were installed before the marker system existed.
     int cleaned = 0;
     std::error_code ec;
     for (auto& pkgDir : std::filesystem::directory_iterator(xpkgsBase, ec)) {
         if (!pkgDir.is_directory()) continue;
         for (auto& verDir : std::filesystem::directory_iterator(pkgDir.path(), ec)) {
             if (!verDir.is_directory()) continue;
-            if (clean_incomplete_install(verDir.path()))
-                ++cleaned;
+            if (has_marker(verDir.path())) continue;
+            if (looks_complete_legacy(verDir.path())) {
+                mcpp::log::debug("integrity", std::format(
+                    "legacy package without marker, kept: {}",
+                    verDir.path().string()));
+                continue;
+            }
+            std::filesystem::remove_all(verDir.path(), ec);
+            if (!ec) ++cleaned;
         }
     }
     return cleaned;
