@@ -42,7 +42,8 @@ jobs:
 
       - name: Install mcpp and config mirror
         run: |
-          xlings install mcpp -y --all
+          xlings install mcpp -y -g
+          xlings install mcpp -y
           which mcpp
           mcpp --version
           mcpp self config --mirror GLOBAL
@@ -112,7 +113,8 @@ jobs:
 
       - name: Install mcpp and config mirror
         run: |
-          xlings install mcpp -y --all
+          xlings install mcpp -y -g
+          xlings install mcpp -y
           which mcpp
           mcpp --version
           mcpp self config --mirror GLOBAL
@@ -156,7 +158,8 @@ jobs:
       - name: Install mcpp and config mirror
         shell: pwsh
         run: |
-          xlings install mcpp -y --all
+          xlings install mcpp -y -g
+          xlings install mcpp -y
           mcpp --version
           mcpp self config --mirror GLOBAL
           xlings use mcpp
