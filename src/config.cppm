@@ -567,13 +567,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         }
     }
 
-    // 8. Legacy migration is NOT done automatically here — it would write
-    //    .mcpp_ok markers based on heuristics, which could mark half-extracted
-    //    packages as complete. Migration only runs via explicit `mcpp self init`.
-    //    The is_install_complete() fallback still recognizes legacy packages
-    //    read-only (won't delete them), but won't stamp them as verified.
-
-    // 9. Bootstrap check is NOT done here — it's deferred to commands that
+    // 8. Bootstrap check is NOT done here — it's deferred to commands that
     //    actually need bootstrap tools (build, run, toolchain install).
     //    Light commands (self env, toolchain list) should work even if
     //    bootstrap is incomplete. Commands call check_base_init() themselves.

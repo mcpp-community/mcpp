@@ -48,15 +48,11 @@ void mark_install_complete(const std::filesystem::path& xpkgDir);
 bool clean_incomplete_install(const std::filesystem::path& xpkgDir);
 
 // Scan an xpkgs base directory and clean ALL incomplete installations.
+// Only cleans directories without .mcpp_ok marker AND without legacy
+// content (won't delete pre-upgrade packages).
 // Used by `mcpp self init`.
 // Returns number of directories cleaned.
 int clean_all_incomplete(const std::filesystem::path& xpkgsBase);
-
-// One-time migration: scan xpkgs and write .mcpp_ok markers for all
-// old packages that look complete but lack a marker. After migration,
-// is_install_complete() uses strict marker-only semantics. Returns
-// number of packages migrated.
-int migrate_legacy_installs(const std::filesystem::path& xpkgsBase);
 
 } // namespace mcpp::fallback
 
@@ -93,17 +89,21 @@ bool looks_complete_legacy(const std::filesystem::path& xpkgDir) {
 
 } // namespace
 
+// Strict: has .mcpp_ok marker (written only on verified success).
+bool has_marker(const std::filesystem::path& xpkgDir) {
+    return std::filesystem::exists(xpkgDir / std::string(kInstallMarker));
+}
+
 bool is_install_complete(const std::filesystem::path& xpkgDir) {
     if (!std::filesystem::exists(xpkgDir)) return false;
 
-    // Strict: .mcpp_ok marker is the sole authority.
-    // Legacy packages should have been migrated (marker added) during
-    // the first load_or_init() after upgrading to this version.
-    if (std::filesystem::exists(xpkgDir / std::string(kInstallMarker)))
-        return true;
+    // Primary: .mcpp_ok marker — the only fully trusted signal.
+    if (has_marker(xpkgDir)) return true;
 
-    // Fallback for un-migrated packages (e.g. first run after upgrade
-    // before migration has a chance to run).
+    // Read-only legacy fallback: recognize pre-upgrade packages so they
+    // aren't treated as missing by resolve_xpkg_path(). Does NOT write
+    // any marker. Does NOT prevent clean_incomplete_install() from
+    // cleaning — that function uses marker-only semantics.
     return looks_complete_legacy(xpkgDir);
 }
 
@@ -116,8 +116,22 @@ void mark_install_complete(const std::filesystem::path& xpkgDir) {
 
 bool clean_incomplete_install(const std::filesystem::path& xpkgDir) {
     if (!std::filesystem::exists(xpkgDir)) return false;
-    if (is_install_complete(xpkgDir)) return false;
 
+    // Marker-only: if .mcpp_ok exists, this is a verified install — keep it.
+    // Legacy packages (no marker but has content) are NOT cleaned here;
+    // they're recognized by is_install_complete() for read-only compat.
+    if (has_marker(xpkgDir)) return false;
+
+    // No marker. If it looks like a legacy complete package, don't clean
+    // it either — it predates the marker system.
+    if (looks_complete_legacy(xpkgDir)) {
+        mcpp::log::debug("integrity", std::format(
+            "legacy package without marker, skipping cleanup: {}",
+            xpkgDir.string()));
+        return false;
+    }
+
+    // No marker, no legacy content — this is genuinely incomplete.
     mcpp::log::verbose("integrity",
         std::format("cleaning incomplete install: {}", xpkgDir.string()));
     std::error_code ec;
@@ -141,24 +155,5 @@ int clean_all_incomplete(const std::filesystem::path& xpkgsBase) {
     return cleaned;
 }
 
-int migrate_legacy_installs(const std::filesystem::path& xpkgsBase) {
-    if (!std::filesystem::exists(xpkgsBase)) return 0;
-
-    int migrated = 0;
-    std::error_code ec;
-    for (auto& pkgDir : std::filesystem::directory_iterator(xpkgsBase, ec)) {
-        if (!pkgDir.is_directory()) continue;
-        for (auto& verDir : std::filesystem::directory_iterator(pkgDir.path(), ec)) {
-            if (!verDir.is_directory()) continue;
-            auto marker = verDir.path() / std::string(kInstallMarker);
-            if (std::filesystem::exists(marker)) continue;
-            if (looks_complete_legacy(verDir.path())) {
-                mark_install_complete(verDir.path());
-                ++migrated;
-            }
-        }
-    }
-    return migrated;
-}
 
 } // namespace mcpp::fallback
