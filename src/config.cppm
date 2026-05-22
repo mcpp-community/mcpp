@@ -15,6 +15,7 @@
 
 module;
 #include <cstdlib>
+#include <cstdio>
 
 export module mcpp.config;
 
@@ -557,14 +558,13 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         }
     }
 
-    // 8. Verify bootstrap completed. If something is missing (e.g. Ctrl+C
-    //    interrupted a previous bootstrap), report the problem up-front
-    //    rather than letting a cryptic error surface later.
+    // 8. Verify bootstrap completed. Warn (don't block) if something is
+    //    missing — commands like `mcpp self env` should still work even
+    //    if bootstrap tools (patchelf/ninja) failed to download.
     auto initProblem = check_base_init(cfg);
-    if (!initProblem.empty()) {
-        return std::unexpected(ConfigError{std::format(
-            "{}\n  hint: run `mcpp self init --force` to reset and re-initialize",
-            initProblem)});
+    if (!initProblem.empty() && !quiet) {
+        std::println(stderr, "warning: {}", initProblem);
+        std::println(stderr, "  hint: run `mcpp self init --force` to reset and re-initialize");
     }
 
     return cfg;
