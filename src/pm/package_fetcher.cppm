@@ -703,13 +703,20 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     }
 
     // 4. Copy fallback: xlings may have installed into its global data dir.
+    //    copy_xpkg_from_global() only returns true on a clean recursive
+    //    copy, but it doesn't write .mcpp_ok (the source predates this
+    //    feature). Validate content via the legacy layout heuristic, then
+    //    write the marker ourselves. We use looks_complete_legacy() here
+    //    rather than is_install_complete() (marker-only) because we just
+    //    copied this directory in: any "interrupted install" residue would
+    //    have been removed at step 2.
     bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
-    if (copyOk && mcpp::fallback::is_install_complete(verdir)) {
+    if (copyOk && mcpp::fallback::looks_complete_legacy(verdir)) {
         mcpp::fallback::mark_install_complete(verdir);
         mcpp::log::verbose("fetcher", "resolved via copy fallback");
         return make_payload();
     }
-    // Copy failed or incomplete — clean partial copy.
+    // Copy failed or produced an unrecognizable layout — clean partial copy.
     mcpp::fallback::clean_incomplete_install(verdir);
 
     // 5. All paths exhausted — return the most informative error.
