@@ -15,6 +15,7 @@
 
 module;
 #include <cstdlib>
+#include <cstdio>
 
 export module mcpp.config;
 
@@ -26,6 +27,7 @@ import mcpp.platform;
 import mcpp.log;
 import mcpp.fallback.xlings_binary;
 import mcpp.fallback.config_migration;
+import mcpp.fallback.install_integrity;
 
 export namespace mcpp::config {
 
@@ -538,21 +540,37 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     //    upstream (see docs/short-term-vs-long-track plan).
     ensure_sandbox_xlings_binary(cfg, quiet);
     ensure_sandbox_init(cfg, quiet);
+    {
+        auto bsEnv = make_xlings_env(cfg);
 #if !defined(__APPLE__) && !defined(_WIN32)
-    // patchelf is ELF-only; macOS uses Mach-O and Windows uses PE.
-    ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
+        // patchelf is ELF-only; macOS uses Mach-O and Windows uses PE.
+        ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
+        // Only mark complete if the actual binary exists (not just the dir).
+        {
+            auto pBin = mcpp::xlings::paths::xim_tool(bsEnv, "patchelf",
+                mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+            if (std::filesystem::exists(pBin))
+                mcpp::fallback::mark_install_complete(pBin.parent_path().parent_path());
+        }
 #endif
-    ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);
-
-    // 8. Verify bootstrap completed. If something is missing (e.g. Ctrl+C
-    //    interrupted a previous bootstrap), report the problem up-front
-    //    rather than letting a cryptic error surface later.
-    auto initProblem = check_base_init(cfg);
-    if (!initProblem.empty()) {
-        return std::unexpected(ConfigError{std::format(
-            "{}\n  hint: run `mcpp self init --force` to reset and re-initialize",
-            initProblem)});
+        ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);
+        {
+            auto nRoot = mcpp::xlings::paths::xim_tool_root(bsEnv, "ninja");
+            auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);
+            std::error_code ec;
+            if (std::filesystem::exists(nRoot)) {
+                for (auto& v : std::filesystem::directory_iterator(nRoot, ec)) {
+                    if (std::filesystem::exists(v.path() / ninja_name))
+                        mcpp::fallback::mark_install_complete(v.path());
+                }
+            }
+        }
     }
+
+    // 8. Bootstrap check is NOT done here — it's deferred to commands that
+    //    actually need bootstrap tools (build, run, toolchain install).
+    //    Light commands (self env, toolchain list) should work even if
+    //    bootstrap is incomplete. Commands call check_base_init() themselves.
 
     return cfg;
 }

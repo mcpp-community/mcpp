@@ -20,6 +20,7 @@ import mcpp.pm.index_spec;
 import mcpp.xlings;
 import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
 import mcpp.fallback.xpkg_copy;
+import mcpp.fallback.install_integrity;
 import mcpp.fallback.legacy_dirs;
 
 export namespace mcpp::pm {
@@ -646,42 +647,93 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         return payload;
     };
 
-    // 1. Sandbox check: verdir already exists locally.
-    if (std::filesystem::exists(verdir)) {
-        mcpp::log::debug("fetcher", "verdir exists in sandbox, no copy needed");
+    // ─── Resolution chain: marker check → clean residue → install → fallback ─
+
+    // 1. Already installed and complete (has .mcpp_ok marker)?
+    //
+    // Strict marker-only. We do NOT do legacy heuristic adoption here
+    // because we cannot distinguish a legacy-complete install (has bin/)
+    // from a half-extracted residue (also has bin/). Adopting the latter
+    // would silently corrupt the user's toolchain.
+    //
+    // Cost for users upgrading mcpp: a one-time reinstall per toolchain.
+    // The install path normally hits copy_xpkg_from_global() as a fast
+    // fallback (reuses ~/.xlings/ copy), so this is rarely a real download.
+    if (mcpp::fallback::is_install_complete(verdir)) {
+        mcpp::log::debug("fetcher", "install complete in sandbox");
         return make_payload();
     }
 
-    // 2. Install via xlings (if allowed).
+    // 2. Directory exists without marker → either interrupted install
+    //    or legacy package. Either way, the safe action is to clean and
+    //    re-resolve (install or copy fallback will produce a marked
+    //    installation). For legacy packages this is wasteful but correct;
+    //    for half-extracted residue it's required.
+    mcpp::fallback::clean_incomplete_install(verdir);
+
+    // 3. Install via xlings (primary path).
     if (autoInstall) {
         std::vector<std::string> targets {
             std::format("{}:{}@{}", parsed.indexName, parsed.packageName, parsed.version)
         };
-        mcpp::log::verbose("fetcher", std::format("triggering xlings install: {}", targets[0]));
+        mcpp::log::verbose("fetcher", std::format("xlings install: {}", targets[0]));
         auto inst = install(targets, handler);
-        if (!inst) return std::unexpected(inst.error());
-        mcpp::log::verbose("fetcher", std::format(
-            "xlings install exitCode={} verdir_exists={}",
-            inst->exitCode, std::filesystem::exists(verdir)));
-        if (inst->exitCode != 0) {
-            std::string err = std::format(
-                "xlings install of '{}:{}@{}' failed (exit {})",
-                parsed.indexName, parsed.packageName, parsed.version, inst->exitCode);
-            if (inst->error) err += ": " + inst->error->message;
-            return std::unexpected(CallError{err});
+        if (!inst) {
+            // xlings launch/protocol failure — propagate the real error.
+            return std::unexpected(inst.error());
         }
-        if (std::filesystem::exists(verdir))
+        if (inst->exitCode == 0 && std::filesystem::exists(verdir)) {
+            // Normal success path.
+            mcpp::fallback::mark_install_complete(verdir);
             return make_payload();
+        }
+        if (inst->exitCode == 0 && !std::filesystem::exists(verdir)) {
+            // xlings reported success but the package didn't land in the
+            // sandbox. This is the documented XLINGS_HOME-propagation bug:
+            // a successful xlings install can extract to ~/.xlings/ instead
+            // of the sandbox. ONLY in this narrow case do we trust the
+            // global location enough to fall through to copy_xpkg_from_global.
+            mcpp::log::verbose("fetcher",
+                "xlings reported success but verdir is missing — "
+                "checking global xlings (XLINGS_HOME propagation fallback)");
+            bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
+            if (copyOk && mcpp::fallback::looks_complete_legacy(verdir)) {
+                mcpp::fallback::mark_install_complete(verdir);
+                mcpp::log::verbose("fetcher", "resolved via copy fallback");
+                return make_payload();
+            }
+            // Copy didn't yield a usable package — clean any partial state.
+            mcpp::fallback::clean_incomplete_install(verdir);
+        }
+        if (inst->exitCode != 0) {
+            // xlings install actually failed (network, missing package,
+            // half-extracted, etc.). Do NOT try copy fallback: the global
+            // ~/.xlings/ state may itself be residue from the same failure,
+            // and looks_complete_legacy() can't tell residue from complete.
+            mcpp::fallback::clean_incomplete_install(verdir);
+            std::string installError = std::format(
+                "xlings install of '{}:{}@{}' failed (exit {})",
+                parsed.indexName, parsed.packageName, parsed.version,
+                inst->exitCode);
+            if (inst->error)
+                installError += ": " + inst->error->message;
+            return std::unexpected(CallError{std::format(
+                "{}\n  hint: check network and retry, or `mcpp self init --force`",
+                installError)});
+        }
     }
+    // No autoInstall fallback: when the caller explicitly disables
+    // auto-install, do NOT perform any implicit recovery from the global
+    // ~/.xlings/ location. Without "this session's xlings install
+    // reported success" as a witness, we can't tell a complete legacy
+    // package apart from interrupted residue, and silently marking the
+    // latter as complete would mask the underlying problem.
 
-    // 3. Copy fallback: xlings may have extracted into its global data dir
-    //    instead of the mcpp sandbox (XLINGS_HOME propagation is unreliable).
-    mcpp::fallback::copy_xpkg_from_global(verdir);
-    if (std::filesystem::exists(verdir))
-        return make_payload();
-
+    // 4. All paths exhausted.
     return std::unexpected(CallError{
-        std::format("xpkg payload missing: {}", verdir.string())});
+        std::format("xpkg payload missing: {}\n"
+                    "  hint: check network and retry, or `mcpp self init --force`",
+                    verdir.string())});
 }
 
 // ─── Namespace-aware install_path (canonical, 0.0.10+) ──────────────

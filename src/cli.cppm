@@ -42,6 +42,7 @@ import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
 import mcpp.pm.dep_spec;
 import mcpp.ui;
 import mcpp.log;
+import mcpp.fallback.install_integrity;
 import mcpp.bmi_cache;
 import mcpp.dyndep;
 import mcpp.version_req;   // SemVer constraint resolution
@@ -1138,12 +1139,24 @@ prepare_build(bool print_fingerprint,
     //   3. PATH g++  (with warning)
     std::filesystem::path explicit_compiler;
     std::optional<mcpp::config::GlobalConfig> cfg_opt;
-    auto get_cfg = [&]() -> std::expected<mcpp::config::GlobalConfig*, std::string> {
+    bool bootstrap_checked = false;
+    auto get_cfg = [&](bool requireBootstrap = true) -> std::expected<mcpp::config::GlobalConfig*, std::string> {
         if (!cfg_opt) {
             auto c = mcpp::config::load_or_init(/*quiet=*/false,
                 make_bootstrap_progress_callback());
             if (!c) return std::unexpected(c.error().message);
             cfg_opt = std::move(*c);
+        }
+        // Commands that need bootstrap tools (build, run, toolchain install)
+        // pass requireBootstrap=true to get an early, clear error.
+        if (requireBootstrap && !bootstrap_checked) {
+            bootstrap_checked = true;
+            auto problem = mcpp::config::check_base_init(*cfg_opt);
+            if (!problem.empty()) {
+                return std::unexpected(std::format(
+                    "{}\n  hint: run `mcpp self init --force` to reset and re-initialize",
+                    problem));
+            }
         }
         return &*cfg_opt;
     };
@@ -3713,6 +3726,17 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     if (subname == "install") {
+        // Toolchain install needs patchelf (ELF fixup) and ninja (build).
+        // Fail early if bootstrap is incomplete rather than producing a
+        // broken toolchain with missing fixups.
+        auto bsProblem = mcpp::config::check_base_init(*cfg);
+        if (!bsProblem.empty()) {
+            mcpp::ui::error(std::format(
+                "{}\n  hint: run `mcpp self init --force` to reset and re-initialize",
+                bsProblem));
+            return 1;
+        }
+
         // Accept three input shapes — they all collapse to (compiler, version):
         //   mcpp toolchain install gcc 16.1.0      → ("gcc", "16.1.0")
         //   mcpp toolchain install gcc@16.1.0      → ("gcc", "16.1.0")
@@ -4302,6 +4326,14 @@ int cmd_self_init(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (!cfg) {
         mcpp::ui::error(cfg.error().message);
         return 1;
+    }
+
+    // Clean any incomplete xpkg installations (interrupted downloads, etc.).
+    auto xpkgsBase = cfg->xlingsHome() / "data" / "xpkgs";
+    int cleaned = mcpp::fallback::clean_all_incomplete(xpkgsBase);
+    if (cleaned > 0) {
+        mcpp::ui::info("Cleaned", std::format(
+            "{} incomplete installation(s)", cleaned));
     }
 
     // Verify result.
