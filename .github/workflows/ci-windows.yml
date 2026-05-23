@@ -103,18 +103,28 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
+          # MCPP_SELF was set in a bash step as an MSYS-style path
+          # (e.g. /d/a/mcpp/...). PowerShell can't exec that — convert it
+          # to a native Windows path via the git-bash cygpath that ships
+          # on the runner.
+          $mcppExe = (& 'C:\Program Files\Git\usr\bin\cygpath.exe' -w $env:MCPP_SELF).Trim()
+          Write-Host "Resolved MCPP_SELF (Windows form): $mcppExe"
+          if (-not (Test-Path $mcppExe)) {
+              throw "MCPP_SELF after cygpath not found: $mcppExe"
+          }
+
           $tmp = Join-Path $env:RUNNER_TEMP ("stdin-hang-test-" + [guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory -Path $tmp | Out-Null
           Set-Location $tmp
-          & $env:MCPP_SELF new hello_stdin
+          & $mcppExe new hello_stdin
           Set-Location hello_stdin
 
           function Invoke-McppWithOpenStdin {
-              param([string]$Args, [int]$TimeoutSeconds = 300)
+              param([string]$McppPath, [string]$McppArgs, [int]$TimeoutSeconds = 300)
 
               $psi = [System.Diagnostics.ProcessStartInfo]::new()
-              $psi.FileName               = $env:MCPP_SELF
-              $psi.Arguments              = $Args
+              $psi.FileName               = $McppPath
+              $psi.Arguments              = $McppArgs
               $psi.WorkingDirectory       = (Get-Location).Path
               $psi.UseShellExecute        = $false
               $psi.RedirectStandardInput  = $true   # parent holds child's stdin
@@ -142,7 +152,7 @@ jobs:
                   Write-Host $stdoutTask.Result
                   Write-Host "----- captured stderr -----"
                   Write-Host $stderrTask.Result
-                  throw "REGRESSION: 'mcpp $Args' HUNG with open-empty stdin after ${TimeoutSeconds}s. The Windows seal_stdin fix is not effective."
+                  throw "REGRESSION: 'mcpp $McppArgs' HUNG with open-empty stdin after ${TimeoutSeconds}s. The Windows seal_stdin fix is not effective."
               }
 
               Write-Host "----- stdout -----"
@@ -151,18 +161,18 @@ jobs:
               Write-Host $stderrTask.Result
 
               if ($p.ExitCode -ne 0) {
-                  throw "'mcpp $Args' exited with code $($p.ExitCode) (no hang, but failed)."
+                  throw "'mcpp $McppArgs' exited with code $($p.ExitCode) (no hang, but failed)."
               }
           }
 
           Write-Host '=== T1: mcpp --version (sanity, fast path) ==='
-          Invoke-McppWithOpenStdin -Args '--version' -TimeoutSeconds 30
+          Invoke-McppWithOpenStdin -McppPath $mcppExe -McppArgs '--version' -TimeoutSeconds 30
 
           Write-Host '=== T2: mcpp build (full bootstrap + toolchain + dep resolve + compile) ==='
-          Invoke-McppWithOpenStdin -Args 'build' -TimeoutSeconds 600
+          Invoke-McppWithOpenStdin -McppPath $mcppExe -McppArgs 'build' -TimeoutSeconds 600
 
           Write-Host '=== T3: mcpp run (post-build run path) ==='
-          Invoke-McppWithOpenStdin -Args 'run' -TimeoutSeconds 120
+          Invoke-McppWithOpenStdin -McppPath $mcppExe -McppArgs 'run' -TimeoutSeconds 120
 
           Write-Host 'SUCCESS: mcpp completes with open-empty stdin → Windows seal_stdin fix verified.'
 
