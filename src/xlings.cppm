@@ -681,9 +681,16 @@ int install_with_progress(const Env& env, std::string_view target,
     {
         auto directCmd = build_command_prefix(env) +
             std::format(" install {} -y {}", target, mcpp::platform::shell::silent_redirect);
-        // Use std::system() directly — do NOT redirect stdin via </dev/null
-        // because xlings may need stdin for subprocess coordination during
-        // large package extraction.
+        // Windows: explicitly seal stdin (<NUL) so xlings and any grandchildren
+        // (curl, git, 7z, etc.) cannot block on a terminal read. The earlier
+        // comment claimed POSIX must keep stdin open for "subprocess
+        // coordination" — that's never been observed in practice on Linux/macOS,
+        // and on Windows it caused users to press Enter repeatedly during first-
+        // run toolchain install. POSIX keeps the original behavior to stay
+        // conservative.
+        if constexpr (mcpp::platform::is_windows) {
+            directCmd += " <NUL";
+        }
         int directRc = mcpp::platform::process::extract_exit_code(
             std::system(directCmd.c_str()));
         if (directRc == 0) return 0;

@@ -1,10 +1,14 @@
 // mcpp.platform.process — platform-aware process runner.
 //
 // Centralises all popen/system usage so callers do not scatter #if _WIN32
-// guards or duplicate the popen-read loop.  On POSIX, all functions
-// automatically redirect stdin from /dev/null to prevent interactive
-// prompts from child processes (fixes macOS first-run hangs where xcrun
-// or xcode-select would block waiting for user input).
+// guards or duplicate the popen-read loop.  All functions automatically
+// seal stdin (redirect from /dev/null on POSIX, from NUL on Windows) to
+// prevent interactive prompts from child processes:
+//   - POSIX: fixes macOS first-run hangs where xcrun / xcode-select would
+//     block waiting for user input.
+//   - Windows: fixes first-run hangs where xlings / xim / curl / git child
+//     processes would block on terminal stdin, forcing the user to press
+//     Enter repeatedly to advance bootstrap / toolchain install.
 //
 // Entry points:
 //   capture        — run a command, capture stdout
@@ -73,12 +77,16 @@ namespace mcpp::platform::process {
 
 namespace {
 
-// On POSIX, append "< /dev/null" to prevent child processes from reading
-// stdin.  This fixes macOS first-run hangs where tools like xcrun or
-// xcode-select block waiting for user input.
+// Append a non-interactive stdin redirect to prevent child processes from
+// blocking on terminal input.
+//   - POSIX:  "< /dev/null"  — fixes macOS xcrun / xcode-select hangs.
+//   - Windows: "<NUL"        — fixes xlings / xim / curl / git hangs on
+//                              first-run toolchain install (user otherwise
+//                              had to press Enter repeatedly to advance).
+// `cmd.exe` accepts `<NUL` as a redirect for an immediately-EOF stdin.
 std::string seal_stdin(std::string_view cmd) {
 #if defined(_WIN32)
-    return std::string(cmd);
+    return std::string(cmd) + " <NUL";
 #else
     return std::string(cmd) + " </dev/null";
 #endif
