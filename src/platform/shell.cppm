@@ -20,7 +20,10 @@ export namespace mcpp::platform::shell {
 // Platform-aware shell argument quoting.
 std::string quote(std::string_view s);
 
-// Full silent redirect (stdin + stdout + stderr → /dev/null).
+// Silent redirect — stdout + stderr → /dev/null (or NUL on Windows).
+// stdin is NOT touched here; that's the responsibility of
+// mcpp::platform::process::seal_stdin, which is auto-applied by capture /
+// run_silent / run_streaming on all platforms.
 #if defined(_WIN32)
 constexpr std::string_view silent_redirect = ">nul 2>&1";
 #else

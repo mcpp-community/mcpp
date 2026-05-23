@@ -90,6 +90,92 @@ jobs:
           export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
           "$MCPP_SELF" test
 
+      # Regression test for the Windows first-run "press Enter to advance" hang.
+      # Launches mcpp with an OPEN, EMPTY, never-closing stdin pipe. Without
+      # seal_stdin's Windows fix, any grandchild that reads stdin would inherit
+      # our pipe and block forever — caught by the timeout below. With the fix,
+      # every subprocess stdin is redirected from NUL → no possibility of hang.
+      - name: "Regression: mcpp survives open-empty-stdin (Windows hang fix)"
+        shell: pwsh
+        timeout-minutes: 15
+        env:
+          MCPP_VENDORED_XLINGS: ${{ env.XLINGS_BIN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # MCPP_SELF was set in a bash step as an MSYS-style path
+          # (e.g. /d/a/mcpp/...). PowerShell can't exec that — convert it
+          # to a native Windows path via the git-bash cygpath that ships
+          # on the runner.
+          $mcppExe = (& 'C:\Program Files\Git\usr\bin\cygpath.exe' -w $env:MCPP_SELF).Trim()
+          Write-Host "Resolved MCPP_SELF (Windows form): $mcppExe"
+          if (-not (Test-Path $mcppExe)) {
+              throw "MCPP_SELF after cygpath not found: $mcppExe"
+          }
+
+          $tmp = Join-Path $env:RUNNER_TEMP ("stdin-hang-test-" + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          Set-Location $tmp
+          & $mcppExe new hello_stdin
+          Set-Location hello_stdin
+
+          function Invoke-McppWithOpenStdin {
+              param([string]$McppPath, [string]$McppArgs, [int]$TimeoutSeconds = 300)
+
+              $psi = [System.Diagnostics.ProcessStartInfo]::new()
+              $psi.FileName               = $McppPath
+              $psi.Arguments              = $McppArgs
+              $psi.WorkingDirectory       = (Get-Location).Path
+              $psi.UseShellExecute        = $false
+              $psi.RedirectStandardInput  = $true   # parent holds child's stdin
+              $psi.RedirectStandardOutput = $true
+              $psi.RedirectStandardError  = $true
+              # By default the child inherits the parent's env (we did not
+              # touch $psi.Environment) so MCPP_VENDORED_XLINGS / PATH / etc.
+              # propagate.
+
+              $p = [System.Diagnostics.Process]::Start($psi)
+
+              # Async-drain stdout/stderr so a full output buffer doesn't
+              # itself deadlock the child (separate failure mode from the
+              # stdin hang we're testing).
+              $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+              $stderrTask = $p.StandardError.ReadToEndAsync()
+
+              # NEVER write or close $p.StandardInput — the pipe stays open
+              # and empty for the lifetime of the child. Any grandchild that
+              # reads stdin will block on this pipe → caught by WaitForExit.
+
+              if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
+                  try { $p.Kill($true) } catch {}
+                  Write-Host "----- captured stdout -----"
+                  Write-Host $stdoutTask.Result
+                  Write-Host "----- captured stderr -----"
+                  Write-Host $stderrTask.Result
+                  throw "REGRESSION: 'mcpp $McppArgs' HUNG with open-empty stdin after ${TimeoutSeconds}s. The Windows seal_stdin fix is not effective."
+              }
+
+              Write-Host "----- stdout -----"
+              Write-Host $stdoutTask.Result
+              Write-Host "----- stderr -----"
+              Write-Host $stderrTask.Result
+
+              if ($p.ExitCode -ne 0) {
+                  throw "'mcpp $McppArgs' exited with code $($p.ExitCode) (no hang, but failed)."
+              }
+          }
+
+          Write-Host '=== T1: mcpp --version (sanity, fast path) ==='
+          Invoke-McppWithOpenStdin -McppPath $mcppExe -McppArgs '--version' -TimeoutSeconds 30
+
+          Write-Host '=== T2: mcpp build (full bootstrap + toolchain + dep resolve + compile) ==='
+          Invoke-McppWithOpenStdin -McppPath $mcppExe -McppArgs 'build' -TimeoutSeconds 600
+
+          Write-Host '=== T3: mcpp run (post-build run path) ==='
+          Invoke-McppWithOpenStdin -McppPath $mcppExe -McppArgs 'run' -TimeoutSeconds 120
+
+          Write-Host 'SUCCESS: mcpp completes with open-empty stdin → Windows seal_stdin fix verified.'
+
       - name: E2E suite
         shell: bash
         run: |
