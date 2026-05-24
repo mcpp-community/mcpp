@@ -27,16 +27,18 @@ command -v jq >/dev/null 2>&1 || {
     exit 0
 }
 
-# jq returns each value JSON-unescaped (\\ → \, etc.).
-mapfile -t vals < <(
-    jq -r '
-        .[] | .arguments[]?
-            | select(type == "string" and startswith("-fprebuilt-module-path="))
-            | sub("^-fprebuilt-module-path="; "")
-    ' "$cdb"
-)
+# jq returns each value JSON-unescaped (\\ → \, etc.). Stage to a temp
+# file then read with a redirected while loop — bash 3.2 on macOS lacks
+# `mapfile`/`readarray`, and a `| while` pipeline puts the loop in a
+# subshell so `fail=1` would not propagate. Input redirection runs the
+# loop in the current shell, preserving the flag.
+jq -r '
+    .[] | .arguments[]?
+        | select(type == "string" and startswith("-fprebuilt-module-path="))
+        | sub("^-fprebuilt-module-path="; "")
+' "$cdb" > "$TMP/vals.txt"
 
-if [[ ${#vals[@]} -eq 0 ]]; then
+if [[ ! -s "$TMP/vals.txt" ]]; then
     # GCC's libstdc++ flow uses -fmodules / gcm.cache without the explicit
     # -fprebuilt-module-path flag (see bmi_traits.needsPrebuiltModulePath).
     # Nothing to assert in that mode.
@@ -45,11 +47,11 @@ if [[ ${#vals[@]} -eq 0 ]]; then
 fi
 
 fail=0
-for v in "${vals[@]}"; do
-    # `jq` on git-bash/Windows emits CRLF line endings; mapfile strips the LF
-    # but leaves a trailing CR which then poisons every downstream string
-    # comparison (basename ends with `\r`, regex matches go sideways).
+while IFS= read -r v; do
+    # `jq` on git-bash/Windows emits CRLF; strip the trailing CR so basename
+    # / regex comparisons don't trip over an invisible `\r`.
     v="${v%$'\r'}"
+    [[ -z "$v" ]] && continue
     echo "  checking: $v"
 
     # Must NOT carry ninja-escape artefacts. The key signal is `$:` (drive
@@ -80,7 +82,7 @@ for v in "${vals[@]}"; do
         *)  echo "FAIL: basename is not pcm.cache/gcm.cache: '${normalised##*/}'"
             fail=1 ;;
     esac
-done
+done < "$TMP/vals.txt"
 
 [[ $fail -eq 0 ]] || exit 1
 echo "OK"
