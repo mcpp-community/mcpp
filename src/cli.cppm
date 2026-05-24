@@ -4355,24 +4355,38 @@ std::string upper_ascii(std::string s) {
 }
 
 int cmd_self_config(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    auto cfg = mcpp::config::load_or_init(/*quiet=*/false, make_bootstrap_progress_callback());
+    auto mirror = parsed.option_or_empty("mirror").value();
+    if (!mirror.empty()) {
+        mirror = upper_ascii(std::move(mirror));
+        if (mirror != "CN" && mirror != "GLOBAL") {
+            mcpp::ui::error(std::format(
+                "invalid mirror '{}'; expected CN or GLOBAL", mirror));
+            return 2;
+        }
+    }
+
+    // When --mirror is given AND this is a fresh MCPP_HOME, seed .xlings.json
+    // with the user's choice on the very first write so the immediately-
+    // following xlings sandbox bootstrap (patchelf / ninja download) uses
+    // their mirror — not the historical CN default that an overseas user
+    // is trying to redirect away from. For an already-initialized MCPP_HOME
+    // the seed is skipped and config_set_mirror below updates the existing
+    // file via xlings.
+    //
+    // TODO(mirror-default): the default "CN" lives in
+    // mcpp::xlings::seed_xlings_json — see the matching note there for the
+    // long-term plan (flip default to GLOBAL, or auto-detect on first init).
+    auto cfg = mcpp::config::load_or_init(
+        /*quiet=*/false, make_bootstrap_progress_callback(), mirror);
     if (!cfg) {
         mcpp::ui::error(cfg.error().message);
         return 4;
     }
 
     auto env = mcpp::config::make_xlings_env(*cfg);
-    auto mirror = parsed.option_or_empty("mirror").value();
     if (mirror.empty()) {
         auto rc = mcpp::xlings::config_show(env);
         return rc == 0 ? 0 : 1;
-    }
-
-    mirror = upper_ascii(std::move(mirror));
-    if (mirror != "CN" && mirror != "GLOBAL") {
-        mcpp::ui::error(std::format(
-            "invalid mirror '{}'; expected CN or GLOBAL", mirror));
-        return 2;
     }
 
     auto rc = mcpp::xlings::config_set_mirror(env, mirror, /*quiet=*/true);

@@ -186,9 +186,17 @@ using BootstrapFile             = mcpp::xlings::BootstrapFile;
 using BootstrapProgress         = mcpp::xlings::BootstrapProgress;
 using BootstrapProgressCallback = mcpp::xlings::BootstrapProgressCallback;
 
+// `initial_mirror`: when seeding a *fresh* .xlings.json (file did not
+// already exist), use this as the mirror value instead of the default.
+// Empty means "use the default". Used by `mcpp self config --mirror X`
+// so that the very first network roundtrip (during the immediately-
+// following xlings sandbox bootstrap) goes through the user's chosen
+// mirror, not the historical CN default. No effect when .xlings.json
+// already exists — that case is handled by xlings::config_set_mirror.
 std::expected<GlobalConfig, ConfigError> load_or_init(
     bool quiet = false,
-    BootstrapProgressCallback onBootstrapProgress = {});
+    BootstrapProgressCallback onBootstrapProgress = {},
+    std::string_view initial_mirror = {});
 
 // Pretty-print resolved config for `mcpp env` command.
 void print_env(const GlobalConfig& cfg);
@@ -310,7 +318,8 @@ default_backend = "ninja"
 }
 
 bool write_default_xlings_json(const std::filesystem::path& path,
-                               const std::vector<IndexRepo>& repos)
+                               const std::vector<IndexRepo>& repos,
+                               std::string_view mirror_override = {})
 {
     // Delegate to xlings module. Convert IndexRepo vec to pair span.
     std::vector<std::pair<std::string,std::string>> pairs;
@@ -320,7 +329,10 @@ bool write_default_xlings_json(const std::filesystem::path& path,
     // construct a temporary Env with home = path.parent_path().
     mcpp::xlings::Env env;
     env.home = path.parent_path();
-    mcpp::xlings::seed_xlings_json(env, pairs);
+    if (mirror_override.empty())
+        mcpp::xlings::seed_xlings_json(env, pairs);
+    else
+        mcpp::xlings::seed_xlings_json(env, pairs, mirror_override);
     return std::filesystem::exists(path);
 }
 
@@ -385,7 +397,8 @@ void ensure_sandbox_patchelf(const GlobalConfig& cfg, bool quiet,
 
 std::expected<GlobalConfig, ConfigError> load_or_init(
     bool quiet,
-    BootstrapProgressCallback onBootstrapProgress)
+    BootstrapProgressCallback onBootstrapProgress,
+    std::string_view initial_mirror)
 {
     GlobalConfig cfg;
 
@@ -507,7 +520,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // without losing xlings' active subos or version bindings.
     auto xjson = cfg.xlingsHome() / ".xlings.json";
     if (!std::filesystem::exists(xjson)) {
-        write_default_xlings_json(xjson, cfg.indexRepos);
+        write_default_xlings_json(xjson, cfg.indexRepos, initial_mirror);
     } else {
         mcpp::fallback::migrate_xlings_json_index_names(xjson);
     }

@@ -197,6 +197,20 @@ int install_with_progress(const Env& env, std::string_view target,
 // ─── Sandbox lifecycle ──────────────────────────────────────────────
 
 // Write .xlings.json seed file.
+//
+// TODO(mirror-default): the default `"CN"` is the historical setting for
+// the project's initial Chinese-mainland user base, but it bites overseas
+// users (and CI on GitHub-hosted runners) — the first network roundtrip
+// goes through a CN mirror that is slow/unreachable for them. The
+// `mcpp self config --mirror X` flow now passes the user's choice as an
+// override through to here, so they can pick the right mirror BEFORE the
+// first download. Longer term, consider:
+//   (a) flip the default to "GLOBAL" and have CN users opt in via
+//       `mcpp self config --mirror CN` (smaller blast radius once docs
+//       cover the switch); or
+//   (b) auto-detect on first init (env hint like LANG, a quick HEAD probe
+//       to github.com vs. ghproxy with a tight timeout, and pin the
+//       winning value into .xlings.json).
 void seed_xlings_json(const Env& env,
                       std::span<const std::pair<std::string,std::string>> repos,
                       std::string_view mirror = "CN");
