@@ -3,9 +3,6 @@
 > 一个 现代C++ 模块化构建工具 — 纯 C++23 模块编写，已实现自举
 
 [![Release](https://img.shields.io/github/v/release/mcpp-community/mcpp)](https://github.com/mcpp-community/mcpp/releases)
-[![ci](https://github.com/mcpp-community/mcpp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci.yml)
-[![ci-macos](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml)
-[![ci-windows](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![Module](https://img.shields.io/badge/module-ok-green.svg)](https://en.cppreference.com/w/cpp/language/modules)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
@@ -13,6 +10,7 @@
 | [文档](docs/) · [快速开始](docs/00-getting-started.md) · [mcpp.toml 指南](docs/05-mcpp-toml.md) · [示例项目](docs/01-examples.md) · [工具链管理](docs/03-toolchains.md) |
 |:---:|
 | [包索引 mcpp-index](https://github.com/mcpp-community/mcpp-index) · [模块化库 mcpplibs](https://github.com/mcpplibs) · [社区论坛](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
+| [![ci-linux](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml) [![ci-macos](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml) [![ci-windows](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml) |
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/6c85896e-9a37-4f62-acfb-d37a4eae2363" alt="mcpp demo" width="720">

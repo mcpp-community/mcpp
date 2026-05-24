@@ -1,9 +1,11 @@
-name: ci
+name: ci-linux
 
-# Self-host CI: mcpp builds mcpp. The bootstrap mcpp comes from
-# `xlings install mcpp` (xim:mcpp in the xlings package index), so
-# this workflow no longer depends on a previous-release tarball — the
+# Self-host CI on Linux: mcpp builds mcpp. The bootstrap mcpp comes from
+# `xlings install mcpp` (xim:mcpp in the xlings package index), so this
+# workflow no longer depends on a previous-release tarball — the
 # chicken-and-egg now lives upstream in the xlings index.
+#
+# Paired workflows: ci-macos.yml, ci-windows.yml.
 
 on:
   push:

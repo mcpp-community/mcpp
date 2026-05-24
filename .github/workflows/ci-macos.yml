@@ -292,7 +292,7 @@ jobs:
           "$MCPP" test
 
       - name: E2E suite
-        # See ci.yml — fail-fast on hung tests instead of burning the
+        # See ci-linux.yml — fail-fast on hung tests instead of burning the
         # whole job budget. Per-test 600s timeout lives in run_all.sh.
         timeout-minutes: 25
         run: |

@@ -1,6 +1,6 @@
 name: ci-windows
 
-# Windows CI for mcpp — same flow as Linux (ci.yml) and macOS (ci-macos.yml):
+# Windows CI for mcpp — same flow as Linux (ci-linux.yml) and macOS (ci-macos.yml):
 #   xlings install mcpp → self-host build → E2E → smoke → package
 
 on:
@@ -178,7 +178,7 @@ jobs:
 
       - name: E2E suite
         shell: bash
-        # See ci.yml — fail-fast on hung tests instead of burning the
+        # See ci-linux.yml — fail-fast on hung tests instead of burning the
         # whole job budget. Per-test 600s timeout lives in run_all.sh.
         timeout-minutes: 25
         run: |
