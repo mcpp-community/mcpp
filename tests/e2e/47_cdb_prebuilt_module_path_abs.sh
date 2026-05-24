@@ -46,6 +46,10 @@ fi
 
 fail=0
 for v in "${vals[@]}"; do
+    # `jq` on git-bash/Windows emits CRLF line endings; mapfile strips the LF
+    # but leaves a trailing CR which then poisons every downstream string
+    # comparison (basename ends with `\r`, regex matches go sideways).
+    v="${v%$'\r'}"
     echo "  checking: $v"
 
     # Must NOT carry ninja-escape artefacts. The key signal is `$:` (drive
