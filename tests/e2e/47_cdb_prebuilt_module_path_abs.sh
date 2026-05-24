@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # requires:
 # 47_cdb_prebuilt_module_path_abs.sh — `-fprebuilt-module-path` in
-# compile_commands.json must be an ABSOLUTE path, not a bare `pcm.cache` /
-# `gcm.cache`. Reason: CDB `directory` is the project root, but ninja runs
-# from the outputDir; a bare relative path works at build time only and
-# silently breaks clangd's module resolution ("module 'X' not found").
+# compile_commands.json must be an ABSOLUTE path, NOT a bare `pcm.cache`,
+# AND must not carry ninja-escape artefacts like `C$:` on Windows.
+# Reason: CDB `directory` is the project root and clangd does `cd
+# directory` before running the args, so a bare relative path points at
+# `<projectRoot>/pcm.cache` (missing) and a `C$:` prefix is treated as a
+# literal string, not a Windows drive letter. Both modes silently break
+# clangd's module resolution while `mcpp build` itself keeps working
+# (ninja runs from outputDir AND unescapes its own escape sequences).
 set -e
 
 TMP=$(mktemp -d)
@@ -18,51 +22,61 @@ cd app
 cdb=compile_commands.json
 [[ -f "$cdb" ]] || { echo "FAIL: no $cdb generated"; exit 1; }
 
-# Extract every -fprebuilt-module-path=<value> token.
-# (No jq dependency — grep is enough and portable on macOS / git-bash.)
-vals=$(grep -oE '\-fprebuilt-module-path=[^"]+' "$cdb" | sed 's/^-fprebuilt-module-path=//')
-if [[ -z "$vals" ]]; then
-    # No -fprebuilt-module-path emitted = GCC toolchain that uses -fmodules
-    # only (gcm.cache). bmi_traits sets needsPrebuiltModulePath=false for
-    # the GCC path. Nothing to assert — pass.
+command -v jq >/dev/null 2>&1 || {
+    echo "SKIP: jq not on PATH (preinstalled on GitHub-hosted runners)"
+    exit 0
+}
+
+# jq returns each value JSON-unescaped (\\ → \, etc.).
+mapfile -t vals < <(
+    jq -r '
+        .[] | .arguments[]?
+            | select(type == "string" and startswith("-fprebuilt-module-path="))
+            | sub("^-fprebuilt-module-path="; "")
+    ' "$cdb"
+)
+
+if [[ ${#vals[@]} -eq 0 ]]; then
+    # GCC's libstdc++ flow uses -fmodules / gcm.cache without the explicit
+    # -fprebuilt-module-path flag (see bmi_traits.needsPrebuiltModulePath).
+    # Nothing to assert in that mode.
     echo "OK (no prebuilt-module-path flag — GCC toolchain)"
     exit 0
 fi
 
-# Every value must be absolute AND point at the actual build cache dir.
 fail=0
-while read -r v; do
-    [[ -z "$v" ]] && continue
+for v in "${vals[@]}"; do
     echo "  checking: $v"
 
-    # Absolute path test: leading '/' on POSIX or '<letter>:' on Windows.
-    if [[ "$v" =~ ^/ || "$v" =~ ^[A-Za-z]: ]]; then
-        :
-    else
-        echo "FAIL: -fprebuilt-module-path value is relative: '$v'"
-        echo "  this breaks clangd because CDB 'directory' = project root,"
-        echo "  but the BMI cache lives under target/<triple>/<fp>/."
+    # Must NOT carry ninja-escape artefacts. The key signal is `$:` (drive
+    # letter) or `$ ` / `$$` (path with space / dollar). If any of these
+    # survives into CDB the JSON-args runtime treats them as literal text
+    # → clangd fails to find the BMI.
+    if [[ "$v" == *'$:'* || "$v" == *'$ '* || "$v" == *'$$'* ]]; then
+        echo "FAIL: value retains ninja escape sequence ('\$:' / '\$ ' / '\$\$') — must be plain path in CDB"
         fail=1
     fi
 
-    # Must end with pcm.cache or gcm.cache (sanity).
-    case "$v" in
-        */pcm.cache|*/gcm.cache) ;;
-        *)  echo "FAIL: -fprebuilt-module-path value does not end in pcm.cache/gcm.cache: '$v'"
+    # Absolute: POSIX (starts with '/') or Windows drive (e.g. 'C:').
+    if [[ "$v" =~ ^/ || "$v" =~ ^[A-Za-z]: ]]; then
+        :
+    else
+        echo "FAIL: value is relative: '$v'"
+        echo "      CDB 'directory' is the project root, but the BMI cache"
+        echo "      lives under target/<triple>/<fp>/ — clangd resolves to"
+        echo "      the wrong location and module imports fail."
+        fail=1
+    fi
+
+    # Basename must be pcm.cache or gcm.cache (cross-platform: normalise
+    # backslashes first so Windows paths like 'C:\foo\pcm.cache' work).
+    normalised="${v//\\//}"
+    case "${normalised##*/}" in
+        pcm.cache|gcm.cache) ;;
+        *)  echo "FAIL: basename is not pcm.cache/gcm.cache: '${normalised##*/}'"
             fail=1 ;;
     esac
-done <<< "$vals"
+done
 
 [[ $fail -eq 0 ]] || exit 1
-
-# Stronger: clangd would `cd` into CDB's directory then resolve. Verify the
-# value, taken at face value (already absolute), points at a real dir.
-first=$(echo "$vals" | head -1)
-if [[ ! -d "$first" ]]; then
-    echo "FAIL: -fprebuilt-module-path resolves to a non-existent dir: $first"
-    echo "  (build succeeded, so the BMI dir must exist somewhere — this"
-    echo "   means the flag points to the wrong place even with abs path.)"
-    exit 1
-fi
-
 echo "OK"

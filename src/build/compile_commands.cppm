@@ -37,20 +37,47 @@ bool is_c_source(const std::filesystem::path& src) {
     return src.extension() == ".c";
 }
 
-// Split a flag string into individual tokens.
+// Split a flag string into individual tokens AND un-escape ninja-style
+// path escapes (`$ ` → space, `$:` → `:`, `$$` → `$`).
+//
+// `flags.cppm::escape_path` ninja-escapes path arguments so they survive
+// embedding in ninja rule strings. Those escaped strings are then captured
+// into `f.cxx` / `f.cc` which is what we receive here. CDB consumers like
+// clangd exec the `arguments` array literally — no ninja involved — so
+// escaped chars must be undone or paths like `C:\Users\...` come through
+// as `C$:\Users\...` and break clangd's path resolution on Windows. (The
+// same issue would silently affect any POSIX path containing a space or
+// `$` — those just happen to be rare.)
+//
+// Splitting and un-escaping in one pass is correct: a literal space inside
+// a path appears as `$ ` in the input, which we must NOT treat as a token
+// separator.
 std::vector<std::string> split_flags(std::string_view s) {
     std::vector<std::string> out;
-    std::size_t i = 0;
-    while (i < s.size()) {
-        while (i < s.size() && s[i] == ' ')
-            ++i;
-        if (i >= s.size())
-            break;
-        std::size_t start = i;
-        while (i < s.size() && s[i] != ' ')
-            ++i;
-        out.emplace_back(s.substr(start, i - start));
+    std::string token;
+    auto flush = [&] {
+        if (!token.empty()) {
+            out.push_back(std::move(token));
+            token.clear();
+        }
+    };
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        char c = s[i];
+        if (c == '$' && i + 1 < s.size()) {
+            char nc = s[i + 1];
+            if (nc == ' ' || nc == ':' || nc == '$') {
+                token.push_back(nc);
+                ++i;
+                continue;
+            }
+        }
+        if (c == ' ') {
+            flush();
+        } else {
+            token.push_back(c);
+        }
     }
+    flush();
     return out;
 }
 
