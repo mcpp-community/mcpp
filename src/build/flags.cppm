@@ -212,7 +212,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     std::string prebuilt_module_flag;
     if (traits.needsPrebuiltModulePath) {
-        prebuilt_module_flag = std::format(" -fprebuilt-module-path={}", traits.bmiDir);
+        // Absolute path: a bare `pcm.cache` / `gcm.cache` works at ninja
+        // time because ninja runs commands with cwd = outputDir, but the
+        // same flag ends up verbatim in `compile_commands.json` whose
+        // `directory` field is the project root. clangd does `cd directory`
+        // before resolving the flag, so a bare relative path points at
+        // `<projectRoot>/pcm.cache` (which doesn't exist) and `import`
+        // resolution fails with `module 'X' not found`. The other
+        // `-fmodule-file=` flags in this block are already escape_path'd
+        // (absolute) for the same reason — this one was a leftover.
+        prebuilt_module_flag = std::format(" -fprebuilt-module-path={}",
+            escape_path(plan.outputDir / traits.bmiDir));
     }
     f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}{}{}{}", module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
