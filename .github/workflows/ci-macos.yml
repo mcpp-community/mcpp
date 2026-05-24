@@ -292,6 +292,9 @@ jobs:
           "$MCPP" test
 
       - name: E2E suite
+        # See ci.yml — fail-fast on hung tests instead of burning the
+        # whole job budget. Per-test 600s timeout lives in run_all.sh.
+        timeout-minutes: 25
         run: |
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")

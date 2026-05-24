@@ -178,6 +178,9 @@ jobs:
 
       - name: E2E suite
         shell: bash
+        # See ci.yml — fail-fast on hung tests instead of burning the
+        # whole job budget. Per-test 600s timeout lives in run_all.sh.
+        timeout-minutes: 25
         run: |
           export MCPP="$MCPP_SELF"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"

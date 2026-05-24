@@ -123,10 +123,28 @@ check_requires() {
     return 1  # all satisfied → don't skip
 }
 
+# Per-test timeout: bail out of an individual test that gets stuck (e.g.
+# 10_env_command.sh has been observed hanging for the full job budget on
+# slow xlings/network combinations). 600s default; override via env.
+# Linux + git-bash on Windows have GNU `timeout`; macOS may need `gtimeout`
+# (coreutils). If neither is present, we run without a wrapper and rely on
+# the step-level GitHub Actions timeout-minutes as the backstop.
+E2E_TEST_TIMEOUT="${E2E_TEST_TIMEOUT:-600}"
+TIMEOUT_CMD=""
+if   command -v timeout  &>/dev/null; then TIMEOUT_CMD=timeout
+elif command -v gtimeout &>/dev/null; then TIMEOUT_CMD=gtimeout
+fi
+if [[ -n "$TIMEOUT_CMD" ]]; then
+    echo "Per-test timeout: ${E2E_TEST_TIMEOUT}s (via $TIMEOUT_CMD)"
+else
+    echo "Per-test timeout: <unavailable> (no timeout/gtimeout on PATH)"
+fi
+
 PASS=0
 FAIL=0
 SKIP=0
 FAILED_TESTS=()
+TIMED_OUT_TESTS=()
 
 for test in "$HERE"/[0-9]*.sh; do
     name="$(basename "$test")"
@@ -138,21 +156,36 @@ for test in "$HERE"/[0-9]*.sh; do
         continue
     fi
     echo "=== $name ==="
-    if MCPP="$MCPP" bash "$test"; then
+    if [[ -n "$TIMEOUT_CMD" ]]; then
+        MCPP="$MCPP" "$TIMEOUT_CMD" "$E2E_TEST_TIMEOUT" bash "$test"
+    else
+        MCPP="$MCPP" bash "$test"
+    fi
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
         echo "PASS: $name"
         ((PASS++))
-    else
-        echo "FAIL: $name"
+    elif [[ $rc -eq 124 ]]; then
+        # GNU timeout: 124 = killed after deadline (TERM); 137 = SIGKILL after grace.
+        echo "TIMEOUT: $name (exceeded ${E2E_TEST_TIMEOUT}s — likely network / xlings stall)"
         ((FAIL++))
-        FAILED_TESTS+=("$name")
+        FAILED_TESTS+=("$name (TIMEOUT)")
+        TIMED_OUT_TESTS+=("$name")
+    else
+        echo "FAIL: $name (exit $rc)"
+        ((FAIL++))
+        FAILED_TESTS+=("$name (exit $rc)")
     fi
 done
 
 echo
 echo "==============================================="
 echo "E2E Summary: $PASS passed, $FAIL failed, $SKIP skipped"
+if [[ ${#TIMED_OUT_TESTS[@]} -gt 0 ]]; then
+    echo "Timed out: ${TIMED_OUT_TESTS[*]}"
+fi
 if [[ $FAIL -gt 0 ]]; then
-    echo "Failed: ${FAILED_TESTS[@]}"
+    echo "Failed: ${FAILED_TESTS[*]}"
     exit 1
 fi
 exit 0

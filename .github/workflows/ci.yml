@@ -104,6 +104,12 @@ jobs:
           "$MCPP_FRESH" test
 
       - name: E2E suite
+        # Step-level guard: a single hung test (historically 10_env_command.sh
+        # on slow xlings/network) used to eat the full 60-min job budget.
+        # Cap the suite at 25 min so a hang fails fast and we still have room
+        # for the downstream toolchain steps. Per-test 600s timeout lives in
+        # tests/e2e/run_all.sh and identifies WHICH test hung.
+        timeout-minutes: 25
         run: |
           # Point the e2e runner at the freshly-built binary, not the
           # bootstrap one. Tests cd into mktemp -d, so $MCPP must be
