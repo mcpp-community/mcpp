@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "0.0.29"
+version     = "0.0.30"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
