@@ -45,6 +45,8 @@ std::unique_ptr<Backend> make_ninja_backend();
 
 // Helper exposed for testing / debugging
 std::string emit_ninja_string(const BuildPlan& plan);
+std::string filter_ninja_output(std::string_view output,
+                                std::span<const std::string> commandPrefixes);
 
 }  // namespace mcpp::build
 
@@ -66,16 +68,6 @@ std::string escape_ninja_path(const std::filesystem::path& p) {
             out += "$ ";
         else
             out.push_back(c);
-    }
-    return out;
-}
-
-std::string escape_ninja_variable_value(std::string_view s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        if (c == '$') out += "$$";
-        else          out.push_back(c);
     }
     return out;
 }
@@ -114,7 +106,128 @@ bool is_c_source(const std::filesystem::path& src) {
     return src.extension() == ".c";
 }
 
+std::string ltrim_copy(std::string_view s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
+        s.remove_prefix(1);
+    return std::string(s);
+}
+
+bool is_ninja_progress_line(std::string_view line) {
+    if (line.size() < 5 || line.front() != '[') return false;
+    std::size_t i = 1;
+    if (i >= line.size() || !std::isdigit(static_cast<unsigned char>(line[i])))
+        return false;
+    while (i < line.size() && std::isdigit(static_cast<unsigned char>(line[i]))) ++i;
+    if (i >= line.size() || line[i] != '/') return false;
+    ++i;
+    if (i >= line.size() || !std::isdigit(static_cast<unsigned char>(line[i])))
+        return false;
+    while (i < line.size() && std::isdigit(static_cast<unsigned char>(line[i]))) ++i;
+    return i < line.size() && line[i] == ']';
+}
+
+bool starts_with_any(std::string_view line,
+                     std::span<const std::string> prefixes) {
+    for (auto& prefix : prefixes) {
+        if (!prefix.empty() && line.starts_with(prefix))
+            return true;
+    }
+    return false;
+}
+
+bool contains_any(std::string_view line,
+                  std::span<const std::string> needles) {
+    for (auto& needle : needles) {
+        if (!needle.empty() && line.find(needle) != std::string_view::npos)
+            return true;
+    }
+    return false;
+}
+
+std::vector<std::string> command_prefixes(const CompileFlags& flags,
+                                          const BuildPlan& plan) {
+    std::vector<std::string> prefixes;
+    auto add = [&](const std::filesystem::path& p) {
+        if (p.empty()) return;
+        auto s = p.string();
+        if (std::find(prefixes.begin(), prefixes.end(), s) == prefixes.end())
+            prefixes.push_back(std::move(s));
+    };
+    add(flags.cxxBinary);
+    add(flags.ccBinary);
+    add(flags.arBinary);
+    add(plan.scanDepsPath);
+    return prefixes;
+}
+
+bool is_command_line(std::string_view trimmed,
+                     std::span<const std::string> commandPrefixes) {
+    if (starts_with_any(trimmed, commandPrefixes)) return true;
+
+    if (trimmed.starts_with("env ")
+        && (trimmed.find("LD_LIBRARY_PATH=") != std::string_view::npos
+            || trimmed.find("DYLD_LIBRARY_PATH=") != std::string_view::npos
+            || contains_any(trimmed, commandPrefixes))) {
+        return true;
+    }
+
+    if ((trimmed.starts_with("cmd /c ") || trimmed.starts_with("if [ "))
+        && contains_any(trimmed, commandPrefixes)) {
+        return true;
+    }
+
+    return false;
+}
+
+bool is_toolchain_unused_argument_warning(std::string_view line) {
+    if (line.find("argument unused during compilation") == std::string_view::npos)
+        return false;
+
+    constexpr std::array<std::string_view, 4> toolchainFlags = {
+        "'-stdlib=libc++'",
+        "'-fuse-ld=lld'",
+        "'--rtlib=compiler-rt'",
+        "'--unwindlib=libunwind'",
+    };
+    for (auto flag : toolchainFlags) {
+        if (line.find(flag) != std::string_view::npos)
+            return true;
+    }
+    return false;
+}
+
+std::optional<std::pair<std::string, std::string>>
+runtime_env_for_dirs(const std::vector<std::filesystem::path>& dirs) {
+    auto key = mcpp::platform::env::runtime_library_path_key();
+    auto value = mcpp::platform::env::prepend_path_list(key, dirs);
+    if (key.empty() || value.empty()) return std::nullopt;
+    return std::pair{std::move(key), std::move(value)};
+}
+
 }  // namespace
+
+std::string filter_ninja_output(std::string_view output,
+                                std::span<const std::string> commandPrefixes) {
+    std::string filtered;
+    std::string line;
+    std::istringstream in{std::string(output)};
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        auto trimmed = ltrim_copy(line);
+        if (trimmed.starts_with("ninja: Entering directory")
+            || trimmed.starts_with("ninja: build stopped")
+            || trimmed.starts_with("FAILED:")
+            || is_ninja_progress_line(trimmed)
+            || is_toolchain_unused_argument_warning(trimmed)
+            || is_command_line(trimmed, commandPrefixes)) {
+            continue;
+        }
+        filtered += line;
+        filtered.push_back('\n');
+    }
+    return filtered;
+}
 
 std::string emit_ninja_string(const BuildPlan& plan) {
     // dyndep requires P1689 scanning capability:
@@ -143,7 +256,6 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     append(std::format("cxx       = {}\n", escape_ninja_path(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
-    append(std::format("toolenv   = {}\n", escape_ninja_variable_value(flags.toolEnv)));
     if (need_c_rule) {
         append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
         append(std::format("cflags    = {}\n", flags.cc));
@@ -191,10 +303,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     //
     // $bmi_out is set per build edge to the BMI path (gcm.cache/<module>.gcm).
     // If $bmi_out is empty (no module provided), we just compile normally.
-    // On POSIX, $toolenv prefixes commands with LD_LIBRARY_PATH etc.
-    // On Windows, $toolenv is empty and its leading space breaks CreateProcess,
-    // so we omit it entirely.
-    constexpr std::string_view te = mcpp::platform::is_windows ? "" : "$toolenv ";
+    // Runtime library paths for private toolchain executables are scoped onto
+    // the ninja subprocess instead of being emitted into each visible rule.
 
     std::string module_output_flag = traits.needsExplicitModuleOutput
         ? " -fmodule-output=$bmi_out" : "";
@@ -208,13 +318,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
                  "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
                "fi && "
-               "{}$cxx $cxxflags{} -c $in -o $out && "
+               "$cxx $cxxflags{} -c $in -o $out && "
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
                   "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
                  "mv \"$bmi_out.bak\" \"$bmi_out\"; "
                "else "
                  "rm -f \"$bmi_out.bak\"; "
-               "fi\n", te, module_output_flag));
+               "fi\n", module_output_flag));
     }
     append("  description = MOD $out\n");
     if (dyndep)
@@ -222,7 +332,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("\n");
 
     append("rule cxx_object\n");
-    append(std::format("  command = {}$cxx $cxxflags -c $in -o $out\n", te));
+    append("  command = $cxx $cxxflags -c $in -o $out\n");
     append("  description = OBJ $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -230,7 +340,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (need_c_rule) {
         append("rule c_object\n");
-        append(std::format("  command = {}$cc $cflags -c $in -o $out\n", te));
+        append("  command = $cc $cflags -c $in -o $out\n");
         append("  description = CC $out\n");
         if (dyndep)
             append("  restat = 1\n");
@@ -238,15 +348,15 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     append("rule cxx_link\n");
-    append(std::format("  command = {}$cxx $in -o $out $ldflags\n", te));
+    append("  command = $cxx $in -o $out $ldflags\n");
     append("  description = LINK $out\n\n");
 
     append("rule cxx_archive\n");
-    append(std::format("  command = {}$ar rcs $out $in\n", te));
+    append("  command = $ar rcs $out $in\n");
     append("  description = AR $out\n\n");
 
     append("rule cxx_shared\n");
-    append(std::format("  command = {}$cxx -shared $in -o $out $ldflags\n", te));
+    append("  command = $cxx -shared $in -o $out $ldflags\n");
     append("  description = SHARED $out\n\n");
 
     if (dyndep) {
@@ -256,10 +366,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("rule cxx_scan\n");
         if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
-            append(std::format("  command = {}$cxx $cxxflags -fmodules "
+            append("  command = $cxx $cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$compile_target "
-                   "-M -MM -MF $out.dep -E $in -o $compile_target\n", te));
+                   "-M -MM -MF $out.dep -E $in -o $compile_target\n");
         } else {
             // Clang path: clang-scan-deps produces P1689 JSON to stdout.
             if constexpr (mcpp::platform::is_windows) {
@@ -268,8 +378,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 append("  command = cmd /c \"$scan_deps -format=p1689 -- "
                        "$cxx $cxxflags -c $in -o $compile_target > $out\"\n");
             } else {
-                append(std::format("  command = {}$scan_deps -format=p1689 -- "
-                       "$cxx $cxxflags -c $in -o $compile_target > $out\n", te));
+                append("  command = $scan_deps -format=p1689 -- "
+                       "$cxx $cxxflags -c $in -o $compile_target > $out\n");
             }
         }
         append("  description = SCAN $out\n\n");
@@ -532,8 +642,17 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // Record ninja binary for P0 fast-path cache.
     BuildResult r;
     r.ninjaProgram = ninjaProgram;
+    if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs)) {
+        r.runtimeEnvKey = runtimeEnv->first;
+        r.runtimeEnvValue = runtimeEnv->second;
+    } else {
+        r.runtimeEnvKey = "-";
+    }
 
-    std::string cmd = std::format("{} -C {}", ninjaProgram, mcpp::xlings::shq(plan.outputDir.string()));
+    std::string cmd = ninjaProgram;
+    if (!opts.verbose)
+        cmd += " --quiet";
+    cmd += std::format(" -C {}", mcpp::xlings::shq(plan.outputDir.string()));
     if (opts.verbose)
         cmd += " -v";
     if (opts.parallelJobs)
@@ -541,22 +660,26 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     cmd += " 2>&1";
 
     std::string out;
+    std::optional<mcpp::platform::env::ScopedEnv> scopedEnv;
+    if (r.runtimeEnvKey != "-" && !r.runtimeEnvValue.empty())
+        scopedEnv.emplace(r.runtimeEnvKey, r.runtimeEnvValue);
     bool ok = run(cmd, out, /*capture=*/true);
-    if (opts.verbose || !ok) {
-        std::fputs(out.c_str(), stdout);
-    }
 
     r.exitCode = ok ? 0 : 1;
     r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0);
 
     if (ok) {
+        if (opts.verbose && !out.empty())
+            std::fputs(out.c_str(), stdout);
         for (auto& lu : plan.linkUnits) {
             r.producedArtifacts.push_back(plan.outputDir / lu.output);
         }
     } else {
-        return std::unexpected(BuildError{std::format("ninja failed (exit non-zero):\n{}", out),
-                                          plan.outputDir / "build.ninja"});
+        auto prefixes = command_prefixes(flags, plan);
+        auto diagnostics = opts.verbose ? out : filter_ninja_output(out, prefixes);
+        return std::unexpected(BuildError{"build failed", plan.outputDir / "build.ninja",
+                                          std::move(diagnostics)});
     }
     return r;
 }

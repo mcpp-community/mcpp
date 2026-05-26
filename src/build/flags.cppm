@@ -27,7 +27,6 @@ struct CompileFlags {
     std::filesystem::path arBinary;   // ar path (may be empty → use PATH)
     std::string sysroot;              // --sysroot=... (for ninja ldflags)
     std::string bFlag;                // -B<binutils> (for ninja ldflags)
-    std::string toolEnv;              // env prefix for private toolchain executables
     bool staticStdlib = true;
     std::string linkage;  // "static" or ""
 };
@@ -69,7 +68,6 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);
-    f.toolEnv = mcpp::toolchain::compiler_env_prefix(plan.toolchain);
 
     // PIC?
     bool need_pic = false;

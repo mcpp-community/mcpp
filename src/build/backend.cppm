@@ -22,11 +22,14 @@ struct BuildResult {
     std::size_t                             cacheHits   = 0;
     std::size_t                             cacheMisses = 0;
     std::string                             ninjaProgram;     // P0: cached for fast-path rebuilds
+    std::string                             runtimeEnvKey;    // cached for fast-path rebuilds
+    std::string                             runtimeEnvValue;  // cached for fast-path rebuilds
 };
 
 struct BuildError {
     std::string                             message;
     std::optional<std::filesystem::path>    where;
+    std::string                             diagnosticOutput;
 };
 
 struct Backend {

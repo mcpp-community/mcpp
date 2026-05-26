@@ -2422,6 +2422,8 @@ struct BuildCacheEntry {
     std::string outputDir;
     std::string ninjaProgram;
     std::string fingerprint;     // outputDir basename
+    std::string runtimeEnvKey;   // "-" means intentionally empty; "" means old cache
+    std::string runtimeEnvValue;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -2444,7 +2446,9 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
         return {e};
     }
 
-    // P3 multi-entry format: sections of [target=<triple>] + 3 lines.
+    // P3 multi-entry format: sections of [target=<triple>] + 3 mandatory
+    // lines, plus optional runtime-env lines added after toolenv moved out of
+    // build.ninja. Old cache entries omit them and are treated as stale.
     std::vector<BuildCacheEntry> entries;
     std::string line = firstLine;
     while (true) {
@@ -2456,8 +2460,14 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
         if (!std::getline(f, e.outputDir) || e.outputDir.empty()) break;
         if (!std::getline(f, e.ninjaProgram) || e.ninjaProgram.empty()) break;
         std::getline(f, e.fingerprint);
+        bool haveNextLine = static_cast<bool>(std::getline(f, line));
+        if (haveNextLine && !line.starts_with("[target=")) {
+            e.runtimeEnvKey = line;
+            std::getline(f, e.runtimeEnvValue);
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
-        if (!std::getline(f, line)) break;
+        if (!haveNextLine || line.empty()) break;
     }
     return entries;
 }
@@ -2466,7 +2476,9 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::filesystem::path& outputDir,
                        const std::string& ninjaProgram,
                        const std::string& targetTriple,
-                       const std::string& fingerprintHex = "") {
+                       const std::string& fingerprintHex = "",
+                       const std::string& runtimeEnvKey = "-",
+                       const std::string& runtimeEnvValue = "") {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -2476,7 +2488,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     });
 
     // Insert at front (MRU).
-    BuildCacheEntry newEntry{targetTriple, outputDir.string(), ninjaProgram, fingerprintHex};
+    BuildCacheEntry newEntry{targetTriple, outputDir.string(), ninjaProgram, fingerprintHex,
+                             runtimeEnvKey, runtimeEnvValue};
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -2493,7 +2506,42 @@ void write_build_cache(const std::filesystem::path& projectRoot,
         f << e.outputDir << '\n';
         f << e.ninjaProgram << '\n';
         f << e.fingerprint << '\n';
+        f << (e.runtimeEnvKey.empty() ? "-" : e.runtimeEnvKey) << '\n';
+        f << e.runtimeEnvValue << '\n';
     }
+}
+
+std::vector<std::string> read_ninja_command_prefixes(const std::filesystem::path& ninjaPath) {
+    std::ifstream f(ninjaPath);
+    if (!f) return {};
+
+    std::vector<std::string> prefixes;
+    std::string line;
+    while (std::getline(f, line)) {
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        auto key = line.substr(0, eq);
+        while (!key.empty() && std::isspace(static_cast<unsigned char>(key.back())))
+            key.pop_back();
+        if (key != "cxx" && key != "cc" && key != "ar" && key != "scan_deps")
+            continue;
+
+        std::string value = line.substr(eq + 1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.erase(value.begin());
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.pop_back();
+        if (!value.empty())
+            prefixes.push_back(std::move(value));
+    }
+    return prefixes;
+}
+
+bool is_stale_ninja_failure(std::string_view output) {
+    return output.find("loading 'build.ninja'") != std::string_view::npos
+        || output.find("loading build.ninja") != std::string_view::npos
+        || output.find("unknown target") != std::string_view::npos
+        || output.find("manifest 'build.ninja' still dirty") != std::string_view::npos;
 }
 
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
@@ -2537,7 +2585,13 @@ int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     opts.verbose = verbose;
     auto r = be->build(ctx.plan, opts);
     if (!r) {
+        std::fflush(stdout);
         mcpp::ui::error(r.error().message);
+        if (!r.error().diagnosticOutput.empty()) {
+            std::fputs(r.error().diagnosticOutput.c_str(), stderr);
+            if (r.error().diagnosticOutput.back() != '\n')
+                std::fputc('\n', stderr);
+        }
         return 1;
     }
 
@@ -2571,7 +2625,9 @@ int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     if (!no_cache && !r->ninjaProgram.empty()) {
         auto fpHex = ctx.outputDir.filename().string();
         write_build_cache(ctx.projectRoot, ctx.outputDir, r->ninjaProgram,
-                          std::string(targetOverride), fpHex);
+                          std::string(targetOverride), fpHex,
+                          r->runtimeEnvKey.empty() ? "-" : r->runtimeEnvKey,
+                          r->runtimeEnvValue);
     }
 
     mcpp::ui::finished("release", r->elapsed);
@@ -2605,6 +2661,10 @@ std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
     auto outputDirStr = match->outputDir;
     auto ninjaProgram = match->ninjaProgram;
     auto cachedFingerprint = match->fingerprint;
+    auto runtimeEnvKey = match->runtimeEnvKey;
+    auto runtimeEnvValue = match->runtimeEnvValue;
+    if (runtimeEnvKey.empty())
+        return std::nullopt; // old cache entry; regenerate build.ninja once
 
     // P1: verify fingerprint matches the outputDir basename.
     if (!cachedFingerprint.empty()) {
@@ -2643,22 +2703,37 @@ std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
     }
 
     // All inputs are older than build.ninja → fast-path: just run ninja.
-    std::string cmd = std::format("{} -C {}", ninjaProgram, mcpp::platform::shell::quote(outputDir.string()));
+    std::string cmd = ninjaProgram;
+    if (!verbose) cmd += " --quiet";
+    cmd += std::format(" -C {}", mcpp::platform::shell::quote(outputDir.string()));
     if (verbose) cmd += " -v";
     cmd += " 2>&1";
 
     auto t0 = std::chrono::steady_clock::now();
     std::string out;
+    std::optional<mcpp::platform::env::ScopedEnv> scopedEnv;
+    if (runtimeEnvKey != "-" && !runtimeEnvValue.empty())
+        scopedEnv.emplace(runtimeEnvKey, runtimeEnvValue);
     auto r = mcpp::platform::process::capture(cmd);
     out = r.output;
-    if (verbose && !out.empty()) std::fputs(out.c_str(), stdout);
     int status = r.exit_code;
     bool ok = (status == 0);
     if (!ok) {
-        if (!verbose) std::fputs(out.c_str(), stdout);
-        // Ninja failed — fall back to full rebuild (stale build.ninja?)
-        return std::nullopt;
+        if (is_stale_ninja_failure(out))
+            return std::nullopt;
+        std::fflush(stdout);
+        mcpp::ui::error("build failed");
+        auto prefixes = read_ninja_command_prefixes(ninjaPath);
+        auto diagnostics = verbose ? out : mcpp::build::filter_ninja_output(out, prefixes);
+        if (!diagnostics.empty()) {
+            std::fputs(diagnostics.c_str(), stderr);
+            if (diagnostics.back() != '\n')
+                std::fputc('\n', stderr);
+        }
+        return 1;
     }
+    if (verbose && !out.empty())
+        std::fputs(out.c_str(), stdout);
 
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0);
