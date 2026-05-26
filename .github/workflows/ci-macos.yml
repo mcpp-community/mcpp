@@ -278,6 +278,42 @@ jobs:
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
           echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 
+      - name: Configure dev mcpp sandbox to reuse xlings LLVM
+        run: |
+          LLVM_PKG="$HOME/.xlings/data/xpkgs/xim-x-llvm/20.1.7"
+          MCPP_LLVM_LINK="$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
+          test -d "$LLVM_PKG"
+          printf '1\n' > "$LLVM_PKG/.mcpp_ok"
+
+          mkdir -p "$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm"
+          rm -rf "$MCPP_LLVM_LINK"
+          ln -s "$LLVM_PKG" "$MCPP_LLVM_LINK"
+
+          mkdir -p "$HOME/.mcpp"
+          cat > "$HOME/.mcpp/config.toml" <<EOF
+          # mcpp global config for CI. Dev binaries under target/.../bin/mcpp
+          # fall back to ~/.mcpp; keep its registry isolated while reusing
+          # the LLVM package already installed by `xlings install llvm`.
+          [xlings]
+          binary = "$HOME/.xlings/subos/default/bin/xlings"
+
+          [index]
+          default = "mcpplibs"
+
+          [index.repos."mcpplibs"]
+          url = "https://github.com/mcpp-community/mcpp-index.git"
+
+          [cache]
+          search_ttl_seconds = 3600
+
+          [build]
+          default_jobs    = 0
+          default_backend = "ninja"
+          EOF
+
+          cat "$HOME/.mcpp/config.toml"
+          ls "$MCPP_LLVM_LINK/bin/clang++"
+
       - name: Build mcpp from source (self-host)
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
