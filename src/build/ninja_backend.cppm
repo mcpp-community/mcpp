@@ -179,23 +179,6 @@ bool is_command_line(std::string_view trimmed,
     return false;
 }
 
-bool is_toolchain_unused_argument_warning(std::string_view line) {
-    if (line.find("argument unused during compilation") == std::string_view::npos)
-        return false;
-
-    constexpr std::array<std::string_view, 4> toolchainFlags = {
-        "'-stdlib=libc++'",
-        "'-fuse-ld=lld'",
-        "'--rtlib=compiler-rt'",
-        "'--unwindlib=libunwind'",
-    };
-    for (auto flag : toolchainFlags) {
-        if (line.find(flag) != std::string_view::npos)
-            return true;
-    }
-    return false;
-}
-
 std::optional<std::pair<std::string, std::string>>
 runtime_env_for_dirs(const std::vector<std::filesystem::path>& dirs) {
     auto key = mcpp::platform::env::runtime_library_path_key();
@@ -219,7 +202,6 @@ std::string filter_ninja_output(std::string_view output,
             || trimmed.starts_with("ninja: build stopped")
             || trimmed.starts_with("FAILED:")
             || is_ninja_progress_line(trimmed)
-            || is_toolchain_unused_argument_warning(trimmed)
             || is_command_line(trimmed, commandPrefixes)) {
             continue;
         }

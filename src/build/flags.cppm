@@ -96,7 +96,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // potentially-stale paths, then provide all flags explicitly.
     //
     // Fallback: if no PayloadPaths, use --sysroot from probe_sysroot().
-    std::string sysroot_flag;
+    std::string compile_toolchain_flags;
+    std::string link_toolchain_flags;
     bool isClangWithCfg = false;
     std::filesystem::path cfgPath;
     if (mcpp::toolchain::is_clang(plan.toolchain)) {
@@ -109,51 +110,54 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // Clang with cfg: bypass cfg and provide all paths explicitly.
         auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
         auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-        sysroot_flag = " --no-default-config -nostdinc++";
+        compile_toolchain_flags = " --no-default-config -nostdinc++";
         // libc++ headers
-        sysroot_flag += " -stdlib=libc++";
-        sysroot_flag += " -isystem" + escape_path(libcxxInclude);
+        compile_toolchain_flags += " -isystem" + escape_path(libcxxInclude);
         if (!plan.toolchain.targetTriple.empty()) {
             auto targetInclude = llvmRoot / "include"
                                  / plan.toolchain.targetTriple / "c++" / "v1";
             if (std::filesystem::exists(targetInclude))
-                sysroot_flag += " -isystem" + escape_path(targetInclude);
+                compile_toolchain_flags += " -isystem" + escape_path(targetInclude);
         }
         // C library + kernel headers from payload
         if (plan.toolchain.payloadPaths) {
             auto& pp = *plan.toolchain.payloadPaths;
-            sysroot_flag += " -isystem" + escape_path(pp.glibcInclude);
+            compile_toolchain_flags += " -isystem" + escape_path(pp.glibcInclude);
             if (!pp.linuxInclude.empty())
-                sysroot_flag += " -isystem" + escape_path(pp.linuxInclude);
+                compile_toolchain_flags += " -isystem" + escape_path(pp.linuxInclude);
         } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
-            sysroot_flag += " --sysroot=" + escape_path(*sdk);
+            auto sysroot_flag = " --sysroot=" + escape_path(*sdk);
+            compile_toolchain_flags += sysroot_flag;
+            link_toolchain_flags += sysroot_flag;
         } else if (!plan.toolchain.sysroot.empty()) {
-            sysroot_flag += " --sysroot=" + escape_path(plan.toolchain.sysroot);
+            auto sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
+            compile_toolchain_flags += sysroot_flag;
+            link_toolchain_flags += sysroot_flag;
         }
         // Linker flags that cfg normally provides
-        sysroot_flag += " -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
-        f.sysroot = sysroot_flag;
+        link_toolchain_flags = " --no-default-config" + link_toolchain_flags
+            + " -stdlib=libc++ -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
+        f.sysroot = link_toolchain_flags;
     } else if (!plan.toolchain.sysroot.empty()) {
         // GCC (or Clang without cfg): use --sysroot from probe.
         // GCC requires --sysroot for include-fixed headers (stdlib.h wrapper).
         // Supplement with -isystem for linux kernel headers from payload
         // if the probed sysroot is missing them.
-        sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
+        auto sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
+        compile_toolchain_flags = sysroot_flag;
+        link_toolchain_flags = sysroot_flag;
         if (plan.toolchain.payloadPaths && !plan.toolchain.payloadPaths->linuxInclude.empty()) {
             auto sysrootLinux = plan.toolchain.sysroot / "usr" / "include" / "linux" / "limits.h";
             if (!std::filesystem::exists(sysrootLinux))
-                sysroot_flag += " -isystem" + escape_path(plan.toolchain.payloadPaths->linuxInclude);
+                compile_toolchain_flags += " -isystem" + escape_path(plan.toolchain.payloadPaths->linuxInclude);
         }
-        f.sysroot = sysroot_flag;
+        f.sysroot = link_toolchain_flags;
     } else if (plan.toolchain.payloadPaths) {
         // No sysroot but have payload paths: use -isystem.
         auto& pp = *plan.toolchain.payloadPaths;
-        sysroot_flag += " -isystem" + escape_path(pp.glibcInclude);
+        compile_toolchain_flags += " -isystem" + escape_path(pp.glibcInclude);
         if (!pp.linuxInclude.empty())
-            sysroot_flag += " -isystem" + escape_path(pp.linuxInclude);
-        f.sysroot = sysroot_flag;
-        sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
-        f.sysroot = sysroot_flag;
+            compile_toolchain_flags += " -isystem" + escape_path(pp.linuxInclude);
     }
 
     // Binutils -B flag
@@ -224,9 +228,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     }
     f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}{}{}{}", module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
-                        opt_flag, pic_flag, sysroot_flag, b_flag, include_flags, user_cxxflags);
-    f.cc = std::format("-std={}{}{}{}{}{}{}", c_std, opt_flag, pic_flag, sysroot_flag, b_flag,
-                       include_flags, user_cflags);
+                        opt_flag, pic_flag, compile_toolchain_flags, b_flag, include_flags, user_cxxflags);
+    f.cc = std::format("-std={}{}{}{}{}{}{}", c_std, opt_flag, pic_flag, compile_toolchain_flags,
+                       b_flag, include_flags, user_cflags);
 
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;
@@ -257,7 +261,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         f.ld = std::format("{}{}{} -lc++", full_static, static_stdlib, b_flag);
     } else {
-        f.ld = std::format("{}{}{}{}{}{}", full_static, static_stdlib, sysroot_flag, b_flag, runtime_dirs, payload_ld);
+        f.ld = std::format("{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
+                           runtime_dirs, payload_ld);
     }
 
     return f;

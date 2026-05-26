@@ -92,6 +92,11 @@ if grep -q 'LD_LIBRARY_PATH\|toolenv' "$build_ninja"; then
     sed -n '1,80p' "$build_ninja"
     exit 1
 fi
+if grep '^cxxflags\|^cflags' "$build_ninja" | grep -Eq -- '-stdlib=libc\+\+|-fuse-ld=lld|--rtlib=compiler-rt|--unwindlib=libunwind'; then
+    echo "compile flags should not contain clang link/runtime-only flags"
+    grep '^cxxflags\|^cflags' "$build_ninja"
+    exit 1
+fi
 
 rc=0
 verbose_out=$("$MCPP" build --verbose 2>&1) || rc=$?
