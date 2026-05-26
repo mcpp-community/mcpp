@@ -188,7 +188,7 @@ std::string prepend_path_list(std::string_view key,
 | 平台 | 变量 | 说明 |
 |------|------|------|
 | Linux | `LD_LIBRARY_PATH` | 当前实际需要，替代 `toolenv` |
-| macOS | `DYLD_LIBRARY_PATH` | 仅给 mcpp 启动的 ninja/clang 子进程使用；如后续不需要可返回空 |
+| macOS | 空 | 不设置 `DYLD_LIBRARY_PATH`；它会影响 ninja 自身和系统 framework 的 dyld 解析，依赖 toolchain/rpath |
 | Windows | `PATH` | 如果私有工具链 DLL 需要搜索路径，按 `;` prepend；当前可先空实现 |
 
 `NinjaBackend::build()` 中：

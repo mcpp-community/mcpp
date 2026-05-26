@@ -112,7 +112,10 @@ std::string runtime_library_path_key() {
 #if defined(_WIN32)
     return "PATH";
 #elif defined(__APPLE__)
-    return "DYLD_LIBRARY_PATH";
+    // DYLD_LIBRARY_PATH affects every executable launched by ninja, including
+    // ninja itself, and can make macOS system frameworks load an incompatible
+    // private libc++/libc++abi. Keep macOS on toolchain-provided rpaths.
+    return "";
 #elif defined(__linux__)
     return "LD_LIBRARY_PATH";
 #else
