@@ -81,6 +81,15 @@ std::vector<std::string> split_flags(std::string_view s) {
     return out;
 }
 
+std::vector<std::string> local_include_args(const CompileUnit& cu) {
+    std::vector<std::string> args;
+    args.reserve(cu.localIncludeDirs.size());
+    for (auto const& inc : cu.localIncludeDirs) {
+        args.push_back("-I" + inc.string());
+    }
+    return args;
+}
+
 }  // namespace
 
 std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
@@ -96,6 +105,8 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
         // Build arguments array.
         nlohmann::json args = nlohmann::json::array();
         args.push_back(compiler.string());
+        for (auto& f : local_include_args(cu))
+            args.push_back(std::move(f));
         for (auto& f : split_flags(flagStr))
             args.push_back(std::move(f));
         args.push_back("-c");

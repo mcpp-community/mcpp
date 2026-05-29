@@ -224,7 +224,12 @@ inline std::expected<Value, ParseError> read_array(Lexer& L) {
         if (!v) return std::unexpected(v.error());
         out.push_back(std::move(*v));
         L.skip_whitespace_and_comments();
-        if (L.peek() == ',') { L.advance(); continue; }
+        if (L.peek() == ',') {
+            L.advance();
+            L.skip_whitespace_and_comments();
+            if (L.peek() == ']') { L.advance(); break; }
+            continue;
+        }
         if (L.peek() == ']') { L.advance(); break; }
         return std::unexpected(ParseError{"expected ',' or ']' in array", L.position()});
     }

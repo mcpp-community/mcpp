@@ -16,6 +16,7 @@ import std;
 import mcpp.config;
 import mcpp.log;
 import mcpp.pm.compat;
+import mcpp.pm.dep_spec;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
 import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
@@ -235,6 +236,16 @@ std::string make_targets_args(const std::vector<std::string>& targets,
     if (yes) out += ",\"yes\":true";
     out += "}";
     return out;
+}
+
+std::vector<std::filesystem::path>
+project_data_roots(const std::filesystem::path& projectDir)
+{
+    auto dotMcpp = projectDir / ".mcpp";
+    return {
+        dotMcpp / "data",
+        dotMcpp / ".xlings" / "data",
+    };
 }
 
 } // namespace
@@ -479,24 +490,24 @@ Fetcher::read_xpkg_lua_from_project_data(const std::filesystem::path& projectDir
 {
     if (shortName.empty()) return std::nullopt;
 
-    auto data = projectDir / ".mcpp" / "data";
-    if (!std::filesystem::exists(data)) return std::nullopt;
-
     auto filenames = mcpp::pm::compat::xpkg_lua_candidates(ns, shortName);
 
     std::error_code ec;
-    for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
-        if (!entry.is_directory()) continue;
-        auto pkgsDir = entry.path() / "pkgs";
-        if (!std::filesystem::exists(pkgsDir)) continue;
-        for (auto& fname : filenames) {
-            char first = static_cast<char>(std::tolower(
-                static_cast<unsigned char>(fname.front())));
-            auto candidate = pkgsDir / std::string(1, first) / fname;
-            if (std::filesystem::exists(candidate)) {
-                std::ifstream is(candidate);
-                std::stringstream ss; ss << is.rdbuf();
-                return ss.str();
+    for (auto& data : project_data_roots(projectDir)) {
+        if (!std::filesystem::exists(data)) continue;
+        for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
+            if (!entry.is_directory()) continue;
+            auto pkgsDir = entry.path() / "pkgs";
+            if (!std::filesystem::exists(pkgsDir)) continue;
+            for (auto& fname : filenames) {
+                char first = static_cast<char>(std::tolower(
+                    static_cast<unsigned char>(fname.front())));
+                auto candidate = pkgsDir / std::string(1, first) / fname;
+                if (std::filesystem::exists(candidate)) {
+                    std::ifstream is(candidate);
+                    std::stringstream ss; ss << is.rdbuf();
+                    return ss.str();
+                }
             }
         }
     }
@@ -513,17 +524,28 @@ Fetcher::install_path_from_project_data(const std::filesystem::path& projectDir,
                                          std::string_view shortName,
                                          std::string_view version)
 {
-    auto base = projectDir / ".mcpp" / "data" / "xpkgs";
-    if (!std::filesystem::exists(base)) return std::nullopt;
+    for (auto& data : project_data_roots(projectDir)) {
+        auto base = data / "xpkgs";
+        if (!std::filesystem::exists(base)) continue;
 
-    // Try canonical directory name: ns.shortName
-    auto qname = std::string(ns) + "." + std::string(shortName);
-    auto verdir = base / qname / std::string(version);
-    if (std::filesystem::exists(verdir)) return verdir;
+        // Try canonical directory name: ns.shortName
+        auto qname = std::string(ns) + "." + std::string(shortName);
+        auto verdir = base / qname / std::string(version);
+        if (std::filesystem::exists(verdir)) return verdir;
 
-    // Try shortName alone.
-    verdir = base / std::string(shortName) / std::string(version);
-    if (std::filesystem::exists(verdir)) return verdir;
+        // Try shortName alone.
+        verdir = base / std::string(shortName) / std::string(version);
+        if (std::filesystem::exists(verdir)) return verdir;
+
+        auto indexName = ns.empty()
+            ? std::string{mcpp::pm::kDefaultNamespace}
+            : std::string{ns};
+        for (auto& dirName : mcpp::pm::compat::install_dir_candidates(
+                 ns, shortName, indexName)) {
+            verdir = base / dirName / std::string(version);
+            if (std::filesystem::exists(verdir)) return verdir;
+        }
+    }
 
     return std::nullopt;
 }

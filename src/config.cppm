@@ -613,11 +613,18 @@ bool ensure_project_index_dir(
     const std::filesystem::path& projectDir,
     const std::map<std::string, mcpp::pm::IndexSpec>& indices)
 {
-    // Collect custom (non-builtin, non-local) indices that need xlings cloning.
+    // Collect custom non-builtin indices that need xlings project-scope data.
+    // Local path indices are also seeded so xlings can create its own
+    // project-local repo link and install packages from that index.
     std::vector<std::pair<std::string,std::string>> customRepos;
     for (auto& [name, spec] : indices) {
         if (spec.is_builtin()) continue;
-        if (spec.is_local())   continue;   // local path, mcpp reads directly
+        if (spec.is_local()) {
+            auto source = spec.path;
+            if (source.is_relative()) source = projectDir / source;
+            customRepos.emplace_back(name, source.lexically_normal().string());
+            continue;
+        }
         customRepos.emplace_back(name, spec.url);
     }
 

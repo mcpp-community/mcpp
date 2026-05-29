@@ -15,6 +15,7 @@ struct ModuleId {
 struct SourceUnit {
     std::filesystem::path           path;
     std::string                     packageName;
+    std::vector<std::filesystem::path> localIncludeDirs;
     std::optional<ModuleId>         provides;
     std::vector<ModuleId>           requires_;
     bool                            isModuleInterface = false;   // .cppm with export module

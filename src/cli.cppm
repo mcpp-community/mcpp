@@ -1375,19 +1375,19 @@ prepare_build(bool print_fingerprint,
         if (cfg2) {
             mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices);
 
-            // Gap 1: On first build, .mcpp/data/ may be empty because
+            // On first build, .mcpp/data/ may be empty because
             // ensure_project_index_dir only writes .xlings.json but doesn't
-            // trigger the actual clone. Check if there are any non-local,
-            // non-builtin indices and whether .mcpp/data/ exists with content.
-            // If not, run xlings update to clone them before dependency resolution.
-            bool hasCustomGitIndices = false;
+            // trigger clone/link creation. Check whether there are any custom
+            // non-builtin indices and whether .mcpp/data/ has index content.
+            // If not, run xlings update before dependency resolution.
+            bool hasCustomIndices = false;
             for (auto& [idxName, spec] : m->indices) {
-                if (!spec.is_local() && !spec.is_builtin()) {
-                    hasCustomGitIndices = true;
+                if (!spec.is_builtin()) {
+                    hasCustomIndices = true;
                     break;
                 }
             }
-            if (hasCustomGitIndices) {
+            if (hasCustomIndices) {
                 auto dataDir = *root / ".mcpp" / "data";
                 bool needsClone = !std::filesystem::exists(dataDir);
                 if (!needsClone) {
@@ -1521,9 +1521,11 @@ prepare_build(bool print_fingerprint,
             // lua found — fall through to normal install path resolution.
         }
 
-        // For custom git indices, try project-level .mcpp/data/ first.
+        const bool useProjectEnv = idxSpec && !idxSpec->is_builtin();
+
+        // For custom indices, try project-level .mcpp/data/ first.
         std::optional<std::filesystem::path> installed;
-        if (idxSpec && !idxSpec->is_local() && !idxSpec->is_builtin()) {
+        if (useProjectEnv) {
             installed = mcpp::fetcher::Fetcher::install_path_from_project_data(
                 *root, ns, shortName, version);
         }
@@ -1538,11 +1540,6 @@ prepare_build(bool print_fingerprint,
             auto fqname = ns.empty() ? shortName
                 : std::format("{}.{}", ns, shortName);
             mcpp::ui::info("Downloading", std::format("{} v{}", fqname, version));
-
-            // Gap 2: For custom git indices, install using the project-level
-            // xlings env so packages land in .mcpp/data/xpkgs/ and the custom
-            // index clone is visible to xlings during resolution.
-            bool useProjectEnv = idxSpec && !idxSpec->is_local() && !idxSpec->is_builtin();
 
             auto install_one = [&](std::string target) -> std::expected<mcpp::xlings::CallResult, mcpp::pm::CallError> {
                 if (useProjectEnv) {
@@ -1559,7 +1556,7 @@ prepare_build(bool print_fingerprint,
                 return fetcher.install(targets, &progress);
             };
             auto target = std::format("{}@{}", fqname, version);
-            // For custom git indices, use indexName:shortName@version format
+            // For custom indices, use indexName:shortName@version format
             // so xlings knows which index to resolve from.
             if (useProjectEnv) {
                 target = std::format("{}:{}@{}", ns, shortName, version);
@@ -1799,6 +1796,9 @@ prepare_build(bool print_fingerprint,
 
         const auto& name = item.name;
         auto& spec = item.spec;
+
+        mcpp::pm::compat::normalize_nested_namespace(
+            spec.namespace_, spec.shortName);
 
         // Pin SemVer constraint before dedup/fetch.
         if (auto r = resolveSemver(spec, name); !r) {

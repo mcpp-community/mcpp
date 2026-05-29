@@ -82,6 +82,22 @@ inline std::string qualified_name(std::string_view ns,
     return std::format("{}.{}", ns, shortName);
 }
 
+// Normalize legacy nested names after the first-dot split:
+//   ns="mcpplibs", shortName="capi.lua" → ns="mcpplibs.capi", shortName="lua".
+//
+// This preserves the fully qualified name while making dependency de-dup use
+// the same structured key as TOML-native [dependencies."mcpplibs.capi"].
+inline void normalize_nested_namespace(std::string& ns, std::string& shortName)
+{
+    if (ns.empty()) return;
+    auto dot = shortName.rfind('.');
+    if (dot == std::string::npos || dot + 1 >= shortName.size()) return;
+
+    ns += ".";
+    ns += shortName.substr(0, dot);
+    shortName = shortName.substr(dot + 1);
+}
+
 // ─── Index directory naming ──────────────────────────────────────────
 //
 // Maps (indexName, namespace, shortName) → the xpkgs subdirectory name
@@ -199,6 +215,17 @@ inline std::vector<std::string> install_dir_candidates(std::string_view ns,
     if (!ns.empty()) {
         candidates.push_back(std::format("{}-x-{}", ns, shortName));
         candidates.push_back(std::format("{}-x-{}", indexName, shortName));
+    }
+
+    // Legacy dotted dependency keys such as "mcpplibs.capi.lua" are parsed as
+    // ns="mcpplibs", shortName="capi.lua". Some xlings indices store these as
+    // nested namespaces: mcpplibs.capi-x-mcpplibs.capi.lua.
+    if (!ns.empty()) {
+        auto dot = shortName.rfind('.');
+        if (dot != std::string_view::npos) {
+            auto nestedNs = std::format("{}.{}", ns, shortName.substr(0, dot));
+            candidates.push_back(std::format("{}-x-{}", nestedNs, fqname));
+        }
     }
 
     return candidates;

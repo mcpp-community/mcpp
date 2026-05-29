@@ -41,6 +41,19 @@ TEST(Toml, ArrayOfStrings) {
     EXPECT_EQ((*arr)[2], "c");
 }
 
+TEST(Toml, ArrayAllowsTrailingComma) {
+    auto d = t::parse(R"(
+items = [
+  "a",
+  "b",
+]
+)");
+    ASSERT_TRUE(d.has_value()) << d.error().message;
+    auto arr = d->get_string_array("items");
+    ASSERT_TRUE(arr.has_value());
+    EXPECT_EQ(*arr, std::vector<std::string>({"a", "b"}));
+}
+
 TEST(Toml, EscapedString) {
     auto d = t::parse(R"(s = "a\tb\nc")");
     ASSERT_TRUE(d.has_value());
