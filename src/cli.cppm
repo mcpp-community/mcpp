@@ -1368,17 +1368,17 @@ prepare_build(bool print_fingerprint,
     }
 
     // Set up project-level .mcpp/ directory for custom indices.
-    // This creates .mcpp/.xlings.json with non-builtin, non-local index
+    // This creates .mcpp/.xlings.json with custom non-builtin index
     // entries so xlings can clone them into the project-scoped data dir.
     if (!m->indices.empty()) {
         auto cfg2 = get_cfg();
         if (cfg2) {
             mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices);
 
-            // On first build, .mcpp/data/ may be empty because
+            // On first build, the project xlings data root may be empty because
             // ensure_project_index_dir only writes .xlings.json but doesn't
             // trigger clone/link creation. Check whether there are any custom
-            // non-builtin indices and whether .mcpp/data/ has index content.
+            // non-builtin indices and whether the project data roots have index content.
             // If not, run xlings update before dependency resolution.
             bool hasCustomIndices = false;
             for (auto& [idxName, spec] : m->indices) {
@@ -1388,22 +1388,7 @@ prepare_build(bool print_fingerprint,
                 }
             }
             if (hasCustomIndices) {
-                auto dataDir = *root / ".mcpp" / "data";
-                bool needsClone = !std::filesystem::exists(dataDir);
-                if (!needsClone) {
-                    // Check if data/ has any index directories (dirs with pkgs/ subdir)
-                    std::error_code ec;
-                    bool hasIndexRepo = false;
-                    if (std::filesystem::is_directory(dataDir, ec)) {
-                        for (auto& entry : std::filesystem::directory_iterator(dataDir, ec)) {
-                            if (entry.is_directory() && std::filesystem::exists(entry.path() / "pkgs")) {
-                                hasIndexRepo = true;
-                                break;
-                            }
-                        }
-                    }
-                    needsClone = !hasIndexRepo;
-                }
+                bool needsClone = !mcpp::config::project_index_data_initialized(*root);
                 if (needsClone) {
                     mcpp::ui::status("Fetching", "custom index repos (first use)");
                     auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, *root);
@@ -1513,17 +1498,18 @@ prepare_build(bool print_fingerprint,
         // validate the lua exists, then fall through to the normal install
         // flow below.
         if (idxSpec && idxSpec->is_local()) {
+            auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
             auto luaCheck = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                idxSpec->path, shortName);
+                indexPath, shortName);
             if (!luaCheck) return std::unexpected(std::format(
                 "dependency '{}': not found in local index at '{}'",
-                depName, idxSpec->path.string()));
+                depName, indexPath.string()));
             // lua found — fall through to normal install path resolution.
         }
 
         const bool useProjectEnv = idxSpec && !idxSpec->is_builtin();
 
-        // For custom indices, try project-level .mcpp/data/ first.
+        // For custom indices, try project-level xlings data roots first.
         std::optional<std::filesystem::path> installed;
         if (useProjectEnv) {
             installed = mcpp::fetcher::Fetcher::install_path_from_project_data(
@@ -1798,7 +1784,7 @@ prepare_build(bool print_fingerprint,
         auto& spec = item.spec;
 
         mcpp::pm::compat::normalize_nested_namespace(
-            spec.namespace_, spec.shortName);
+            spec.namespace_, spec.shortName, spec.legacyDottedKey);
 
         // Pin SemVer constraint before dedup/fetch.
         if (auto r = resolveSemver(spec, name); !r) {
@@ -2965,7 +2951,7 @@ int cmd_index_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 } else {
                     mcpp::ui::status("Updated", std::format("project index `{}`", idxName));
                 }
-                break;  // ensure_project_index_dir handles all non-local indices at once
+                break;  // ensure_project_index_dir handles all custom indices at once
             }
         }
     }

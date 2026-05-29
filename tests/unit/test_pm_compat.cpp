@@ -17,10 +17,31 @@ TEST(PmCompat, NormalizeNestedNamespacePreservesQualifiedName) {
     std::string ns = "mcpplibs";
     std::string shortName = "capi.lua";
 
-    mcpp::pm::compat::normalize_nested_namespace(ns, shortName);
+    mcpp::pm::compat::normalize_nested_namespace(ns, shortName,
+                                                  /*legacyDottedKey=*/true);
 
     EXPECT_EQ(ns, "mcpplibs.capi");
     EXPECT_EQ(shortName, "lua");
     EXPECT_EQ(mcpp::pm::compat::qualified_name(ns, shortName),
               "mcpplibs.capi.lua");
+}
+
+TEST(PmCompat, SplitLegacyDependencyKeyMarksDottedKeyAsCompat) {
+    auto key = mcpp::pm::compat::split_legacy_dependency_key(
+        "mcpplibs.capi.lua");
+
+    EXPECT_EQ(key.namespace_, "mcpplibs");
+    EXPECT_EQ(key.shortName, "capi.lua");
+    EXPECT_TRUE(key.legacyDottedKey);
+}
+
+TEST(PmCompat, NormalizeNestedNamespaceSkipsCanonicalNamespacedDeps) {
+    std::string ns = "mcpplibs.capi";
+    std::string shortName = "lua.extra";
+
+    mcpp::pm::compat::normalize_nested_namespace(ns, shortName,
+                                                  /*legacyDottedKey=*/false);
+
+    EXPECT_EQ(ns, "mcpplibs.capi");
+    EXPECT_EQ(shortName, "lua.extra");
 }

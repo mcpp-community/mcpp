@@ -33,6 +33,7 @@ struct DependencySpec {
     std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
 
     bool                        inheritWorkspace = false;  // .workspace = true
+    bool                        legacyDottedKey = false;   // parsed from legacy "ns.name" flat key
 
     bool isPath()    const { return !path.empty(); }
     bool isGit()     const { return !git.empty(); }

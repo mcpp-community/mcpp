@@ -115,7 +115,7 @@ public:
         read_xpkg_lua_from_path(const std::filesystem::path& indexPath,
                                 std::string_view shortName);
 
-    // Read xpkg .lua from a project-level data directory (.mcpp/data/).
+    // Read xpkg .lua from a project-level xlings data directory.
     // Used for custom git indices whose clone lives under the project's
     // .mcpp/ directory rather than the global xlings home.
     static std::optional<std::string>
@@ -123,7 +123,7 @@ public:
                                         std::string_view ns,
                                         std::string_view shortName);
 
-    // Install path under a project-level data directory (.mcpp/data/xpkgs/).
+    // Install path under a project-level xlings data directory.
     static std::optional<std::filesystem::path>
         install_path_from_project_data(const std::filesystem::path& projectDir,
                                        std::string_view ns,
@@ -236,16 +236,6 @@ std::string make_targets_args(const std::vector<std::string>& targets,
     if (yes) out += ",\"yes\":true";
     out += "}";
     return out;
-}
-
-std::vector<std::filesystem::path>
-project_data_roots(const std::filesystem::path& projectDir)
-{
-    auto dotMcpp = projectDir / ".mcpp";
-    return {
-        dotMcpp / "data",
-        dotMcpp / ".xlings" / "data",
-    };
 }
 
 } // namespace
@@ -480,8 +470,8 @@ Fetcher::read_xpkg_lua_from_path(const std::filesystem::path& indexPath,
 
 // ─── read_xpkg_lua from project-level data dir ─────────────────────
 //
-// For custom git indices cloned into .mcpp/data/, scan the data
-// directory the same way the global read_xpkg_lua does.
+// For custom git indices cloned into the project xlings data roots,
+// scan the data directory the same way the global read_xpkg_lua does.
 
 std::optional<std::string>
 Fetcher::read_xpkg_lua_from_project_data(const std::filesystem::path& projectDir,
@@ -493,7 +483,7 @@ Fetcher::read_xpkg_lua_from_project_data(const std::filesystem::path& projectDir
     auto filenames = mcpp::pm::compat::xpkg_lua_candidates(ns, shortName);
 
     std::error_code ec;
-    for (auto& data : project_data_roots(projectDir)) {
+    for (auto& data : mcpp::config::project_xlings_data_roots(projectDir)) {
         if (!std::filesystem::exists(data)) continue;
         for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
             if (!entry.is_directory()) continue;
@@ -516,7 +506,7 @@ Fetcher::read_xpkg_lua_from_project_data(const std::filesystem::path& projectDir
 
 // ─── install_path from project-level data dir ──────────────────────
 //
-// For packages installed under .mcpp/data/xpkgs/ by custom git indices.
+// For packages installed under project xlings data roots by custom git indices.
 
 std::optional<std::filesystem::path>
 Fetcher::install_path_from_project_data(const std::filesystem::path& projectDir,
@@ -524,7 +514,7 @@ Fetcher::install_path_from_project_data(const std::filesystem::path& projectDir,
                                          std::string_view shortName,
                                          std::string_view version)
 {
-    for (auto& data : project_data_roots(projectDir)) {
+    for (auto& data : mcpp::config::project_xlings_data_roots(projectDir)) {
         auto base = data / "xpkgs";
         if (!std::filesystem::exists(base)) continue;
 

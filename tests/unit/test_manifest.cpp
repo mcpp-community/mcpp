@@ -237,6 +237,7 @@ gtest = "1.15.2"
     EXPECT_EQ(cmdline.namespace_, "mcpplibs");
     EXPECT_EQ(cmdline.shortName,  "cmdline");
     EXPECT_EQ(cmdline.version,    "0.0.2");
+    EXPECT_FALSE(cmdline.legacyDottedKey);
 
     auto& tmpl = m->dependencies.at("mcpplibs.templates");
     EXPECT_EQ(tmpl.namespace_, "mcpplibs");
@@ -266,6 +267,47 @@ version = "0.1.0"
     EXPECT_EQ(s.namespace_, "mcpplibs");
     EXPECT_EQ(s.shortName,  "cmdline");
     EXPECT_EQ(s.version,    "0.0.2");
+    EXPECT_TRUE(s.legacyDottedKey);
+}
+
+TEST(Manifest, DependenciesDefaultNamespaceNestedDottedKeyIsCanonical) {
+    constexpr auto src = R"(
+[package]
+name    = "x"
+version = "0.1.0"
+
+[dependencies]
+capi.lua = "0.0.3"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 1u);
+
+    auto& s = m->dependencies.at("mcpplibs.capi.lua");
+    EXPECT_EQ(s.namespace_, "mcpplibs.capi");
+    EXPECT_EQ(s.shortName,  "lua");
+    EXPECT_EQ(s.version,    "0.0.3");
+    EXPECT_FALSE(s.legacyDottedKey);
+}
+
+TEST(Manifest, DependenciesNamespacedSubtableNestedDottedKeyIsCanonical) {
+    constexpr auto src = R"(
+[package]
+name    = "x"
+version = "0.1.0"
+
+[dependencies.mcpplibs]
+capi.lua = "0.0.3"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 1u);
+
+    auto& s = m->dependencies.at("mcpplibs.capi.lua");
+    EXPECT_EQ(s.namespace_, "mcpplibs.capi");
+    EXPECT_EQ(s.shortName,  "lua");
+    EXPECT_EQ(s.version,    "0.0.3");
+    EXPECT_FALSE(s.legacyDottedKey);
 }
 
 TEST(Manifest, DependenciesInlineSpecCoexistsWithSubtable) {
