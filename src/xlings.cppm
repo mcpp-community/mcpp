@@ -232,7 +232,8 @@ void ensure_ninja(const Env& env, bool quiet,
 
 // ─── Index freshness ────────────────────────────────────────────────
 
-// Check whether local index data exists and is fresh (within ttlSeconds).
+// Check whether the default mcpplibs index data exists and is fresh
+// (within ttlSeconds).
 // Returns true if index is present and fresh, false otherwise.
 bool is_index_fresh(const Env& env, std::int64_t ttlSeconds);
 
@@ -930,23 +931,12 @@ void ensure_ninja(const Env& env, bool quiet,
 // ─── Index freshness ────────────────────────────────────────────────
 
 bool is_index_fresh(const Env& env, std::int64_t ttlSeconds) {
-    auto data = paths::index_data(env);
-    if (!std::filesystem::exists(data)) return false;
-
-    // Look for any directory under data/ that has a pkgs/ subdirectory —
-    // that's a cloned index repo.
     std::error_code ec;
-    bool hasIndex = false;
-    std::filesystem::file_time_type newest{};
-    for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
-        if (!entry.is_directory()) continue;
-        auto pkgsDir = entry.path() / "pkgs";
-        if (!std::filesystem::exists(pkgsDir)) continue;
-        hasIndex = true;
-        auto t = std::filesystem::last_write_time(pkgsDir, ec);
-        if (!ec && t > newest) newest = t;
-    }
-    if (!hasIndex) return false;
+    auto pkgsDir = paths::index_data(env) / "mcpplibs" / "pkgs";
+    if (!std::filesystem::exists(pkgsDir)) return false;
+
+    auto newest = std::filesystem::last_write_time(pkgsDir, ec);
+    if (ec) return false;
 
     // Check TTL
     auto now = std::filesystem::file_time_type::clock::now();

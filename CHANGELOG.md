@@ -3,6 +3,14 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.36] — 2026-05-31
+
+### 修复
+
+- 修复默认 `mcpplibs` 索引缺失时被其他 xlings 索引误判为 fresh 的问题。
+  `mcpp build/search` 现在会要求默认索引自身存在并处于 TTL 内,避免
+  `compat.*` 依赖在混合缓存状态下找不到。
+
 ## [0.0.35] — 2026-05-30
 
 ### 新增
