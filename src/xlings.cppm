@@ -276,6 +276,29 @@ void write_file(const std::filesystem::path& p, std::string_view content) {
     os << content;
 }
 
+std::string json_escape(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (unsigned char ch : value) {
+        switch (ch) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (ch < 0x20) {
+                    out += std::format("\\u{:04x}", static_cast<unsigned>(ch));
+                } else {
+                    out.push_back(static_cast<char>(ch));
+                }
+        }
+    }
+    return out;
+}
+
 // LineScan: cheap field extraction for bootstrap install progress lines.
 // Handles flat JSON; no nested array/object — the keys we extract are
 // all leaves.
@@ -794,12 +817,13 @@ void seed_xlings_json(const Env& env,
     json += "  \"index_repos\": [\n";
     for (std::size_t i = 0; i < repos.size(); ++i) {
         json += std::format("    {{ \"name\": \"{}\", \"url\": \"{}\" }}{}\n",
-                            repos[i].first, repos[i].second,
+                            json_escape(repos[i].first),
+                            json_escape(repos[i].second),
                             i + 1 == repos.size() ? "" : ",");
     }
     json += "  ],\n";
     json += "  \"lang\": \"en\",\n";
-    json += std::format("  \"mirror\": \"{}\"\n", mirror);
+    json += std::format("  \"mirror\": \"{}\"\n", json_escape(mirror));
     json += "}\n";
     write_file(path, json);
 }

@@ -47,3 +47,40 @@ TEST(Config, ResolveProjectIndexPathUsesProjectRootForRelativeLocalIndex) {
     EXPECT_EQ(mcpp::config::resolve_project_index_path(project, spec),
               (project / "mcpp").lexically_normal());
 }
+
+TEST(Config, ProjectIndexJsonEscapesLocalIndexPath) {
+    auto project = make_tempdir("mcpp-config-json-escape");
+    auto index = project / "local" / "index";
+    std::filesystem::create_directories(index / "pkgs");
+
+    mcpp::pm::IndexSpec local;
+    local.name = "local\"dev";
+    local.path = index;
+
+    mcpp::pm::IndexSpec remote;
+    remote.name = "remote";
+    remote.url = R"(https://example.com/a\b"c)";
+
+    std::map<std::string, mcpp::pm::IndexSpec> indices;
+    indices.emplace(local.name, local);
+    indices.emplace(remote.name, remote);
+
+    mcpp::config::GlobalConfig cfg;
+    ASSERT_TRUE(mcpp::config::ensure_project_index_dir(cfg, project, indices));
+
+    std::ifstream is(project / ".mcpp" / ".xlings.json");
+    ASSERT_TRUE(is);
+    std::stringstream ss;
+    ss << is.rdbuf();
+    auto content = ss.str();
+
+    EXPECT_NE(content.find(R"("name": "local\"dev")"), std::string::npos)
+        << content;
+    EXPECT_NE(content.find(index.generic_string()), std::string::npos)
+        << content;
+    EXPECT_NE(content.find(R"(https://example.com/a\\b\"c)"), std::string::npos)
+        << content;
+
+    is.close();
+    std::filesystem::remove_all(project);
+}
