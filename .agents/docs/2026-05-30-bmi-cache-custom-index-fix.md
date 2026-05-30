@@ -81,3 +81,29 @@ There is also a cache-key correctness gap: all dependency cache entries currentl
 - Local verification: `mcpp build` succeeded, then `MCPP=target/x86_64-linux-gnu/4d24c8b57fdbbbb4/bin/mcpp bash tests/e2e/49_bmi_cache_nested_custom_index.sh` returned `OK`.
 - `mcpp test -- --gtest_filter=BmiCache.*` initially exposed an unrelated local environment issue: `~/.mcpp/registry/data/xpkgs/xim-x-binutils/2.42` only had `.xpkg.lua` and no `bin/as`. Re-running with a temporary `MCPP_HOME` pointed at the complete installed mcpp registry passed: 15 test binaries ok, 0 failed.
 - Remote custom-index first-use sync keeps the mcpp-level `Fetching custom index repos (first use)` status, but calls `update_index(..., quiet=true)` so `mcpp build` does not expose xlings update output. A non-zero update exits with a concise mcpp-level error.
+
+## Final Outcome
+
+- Landed with PR #88: https://github.com/mcpp-community/mcpp/pull/88
+- Released in `mcpp 0.0.35`: https://github.com/mcpp-community/mcpp/releases/tag/v0.0.35
+- The mcpp status line remains visible, but internal `xlings update` output is quiet.
+- The xlings migration PR #314 completed without `warning: bmi cache populate failed` in the Linux `E2E-00: mcpp builds xlings from source` log.
+
+## Follow-up: Default Index Freshness
+
+The final local xlings verification exposed a separate default-index freshness bug:
+when `~/.mcpp/registry/data` contained other xlings-managed index clones but no
+`mcpplibs` clone, `mcpp` treated the registry as fresh and skipped the default
+index update. `mcpp build` then failed before dependency resolution with:
+
+```text
+error: dependency 'compat.libarchive': index entry not found in local clone
+```
+
+Fix for `0.0.36`:
+
+- `is_index_fresh()` now requires `registry/data/mcpplibs/pkgs` specifically.
+- Regression coverage verifies that an unrelated `xim-pkgindex/pkgs` tree no
+  longer satisfies default `mcpplibs` freshness.
+- A fresh/mixed user cache will trigger the normal default-index update path
+  before searching or building `compat.*` dependencies.

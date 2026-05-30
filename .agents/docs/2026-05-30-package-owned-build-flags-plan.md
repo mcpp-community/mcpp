@@ -1,6 +1,6 @@
 # mcpp 0.0.35: Package-Owned Build Metadata Plan
 
-> 状态: in progress
+> 状态: complete
 > 分支: `codex/package-owned-build-flags`
 > 目标: 让依赖包在官方 mcpp-index 中携带自己的 C/C++ 编译 flags、include 优先级和配置头，从而让 xlings 不再把第三方 C 库的 configure 结果写在项目根 `mcpp.toml`。
 
@@ -73,5 +73,19 @@ cd /home/speak/workspace/github/openxlings/xlings
   - `mcpp build --target x86_64-linux-musl` -> `target/x86_64-linux-musl/7e48a312cd4dbb49/bin/xlings` static ELF.
 - [x] PR draft 创建: https://github.com/mcpp-community/mcpp/pull/88
 - [x] 版本 bump 到 `0.0.35`,并补充 `CHANGELOG.md` 发布说明。
-- [ ] CI 每 120s 检查一次直到完成。
-- [ ] CI 通过后发布 `0.0.35`。
+- [x] CI 每 120s 检查一次直到完成。
+- [x] CI 通过后发布 `0.0.35`。
+
+## Final Outcome
+
+- PR: https://github.com/mcpp-community/mcpp/pull/88
+- Merge commit: `40c51b93c0ce7f821533dc05ac0e2cbf535737bf`
+- Release: https://github.com/mcpp-community/mcpp/releases/tag/v0.0.35
+- CI evidence:
+  - Linux `build + test`: success.
+  - macOS ARM64 `xlings LLVM end-to-end`: success.
+  - Windows x64 `build + test`: success.
+- Downstream evidence:
+  - openxlings/xlings PR #314 used `mcpp 0.0.35` with official `compat.libarchive`.
+  - Linux E2E `mcpp builds xlings from source` passed.
+  - xlings `v0.4.46` release was published after the migration.
