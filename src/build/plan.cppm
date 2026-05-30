@@ -18,6 +18,8 @@ struct CompileUnit {
     std::filesystem::path           source;
     std::filesystem::path           object;            // relative to plan.outputDir
     std::vector<std::filesystem::path> localIncludeDirs;
+    std::vector<std::string>        packageCflags;
+    std::vector<std::string>        packageCxxflags;
     std::optional<std::string>      providesModule;   // logical name, if .cppm export
     std::vector<std::string>        imports;           // logical names imported
 };
@@ -121,6 +123,8 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         CompileUnit cu;
         cu.source = u.path;
         cu.localIncludeDirs = u.localIncludeDirs;
+        cu.packageCflags = u.packageCflags;
+        cu.packageCxxflags = u.packageCxxflags;
         const auto fname = object_filename_for(u.path);
         if (basenameCount[fname] > 1) {
             // Use <sanitized-pkg>/<parent-dir-name> as prefix to handle

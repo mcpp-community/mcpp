@@ -585,6 +585,45 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     std::string s;
     s += "-std="; s += m.language.standard;
     s += " -fmodules";
+    if (!m.buildConfig.cStandard.empty()) {
+        s += " c_standard=";
+        s += m.buildConfig.cStandard;
+    }
+    for (auto const& flag : m.buildConfig.cflags) {
+        s += " cflag:";
+        s += flag;
+    }
+    for (auto const& flag : m.buildConfig.cxxflags) {
+        s += " cxxflag:";
+        s += flag;
+    }
+    return s;
+}
+
+std::string canonical_package_build_metadata(
+    const std::vector<mcpp::modgraph::PackageRoot>& packages)
+{
+    std::string s;
+    for (auto const& pkg : packages) {
+        s += "\npackage:";
+        s += pkg.manifest.package.namespace_;
+        s += "/";
+        s += pkg.manifest.package.name;
+        s += "@";
+        s += pkg.manifest.package.version;
+        if (!pkg.manifest.buildConfig.cStandard.empty()) {
+            s += " c_standard=";
+            s += pkg.manifest.buildConfig.cStandard;
+        }
+        for (auto const& flag : pkg.manifest.buildConfig.cflags) {
+            s += " cflag:";
+            s += flag;
+        }
+        for (auto const& flag : pkg.manifest.buildConfig.cxxflags) {
+            s += " cxxflag:";
+            s += flag;
+        }
+    }
     return s;
 }
 
@@ -2248,7 +2287,8 @@ prepare_build(bool print_fingerprint,
     mcpp::toolchain::FingerprintInputs fpi;
     fpi.toolchain            = *tc;
     fpi.cppStandard         = m->language.standard;
-    fpi.compileFlags        = canonical_compile_flags(*m);
+    fpi.compileFlags        = canonical_compile_flags(*m)
+                              + canonical_package_build_metadata(packages);
     fpi.dependencyLockHash = "";    // M2
     fpi.stdBmiHash         = "";    // updated after stdmod build (chicken/egg ok for M1)
     auto fp = mcpp::toolchain::compute_fingerprint(fpi);

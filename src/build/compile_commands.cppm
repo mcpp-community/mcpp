@@ -90,6 +90,16 @@ std::vector<std::string> local_include_args(const CompileUnit& cu) {
     return args;
 }
 
+std::vector<std::string> package_flag_args(const CompileUnit& cu, bool isCSource) {
+    std::string joined;
+    auto const& flags = isCSource ? cu.packageCflags : cu.packageCxxflags;
+    for (auto const& flag : flags) {
+        joined += ' ';
+        joined += flag;
+    }
+    return split_flags(joined);
+}
+
 }  // namespace
 
 std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
@@ -97,8 +107,9 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
 
     for (auto& cu : plan.compileUnits) {
         // Pick compiler + flags based on source type.
-        const auto& compiler = is_c_source(cu.source) ? flags.ccBinary : flags.cxxBinary;
-        const auto& flagStr = is_c_source(cu.source) ? flags.cc : flags.cxx;
+        const bool isCSource = is_c_source(cu.source);
+        const auto& compiler = isCSource ? flags.ccBinary : flags.cxxBinary;
+        const auto& flagStr = isCSource ? flags.cc : flags.cxx;
 
         auto output_path = (plan.outputDir / cu.object).string();
 
@@ -108,6 +119,8 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
         for (auto& f : local_include_args(cu))
             args.push_back(std::move(f));
         for (auto& f : split_flags(flagStr))
+            args.push_back(std::move(f));
+        for (auto& f : package_flag_args(cu, isCSource))
             args.push_back(std::move(f));
         args.push_back("-c");
         args.push_back(cu.source.string());
