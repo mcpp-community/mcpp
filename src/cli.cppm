@@ -1375,11 +1375,10 @@ prepare_build(bool print_fingerprint,
         if (cfg2) {
             mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices);
 
-            // On first build, the project xlings data root may be empty because
-            // ensure_project_index_dir only writes .xlings.json but doesn't
-            // trigger clone/link creation. Check whether there are any custom
-            // non-builtin indices and whether the project data roots have index content.
-            // If not, run xlings update before dependency resolution.
+            // On first build, the project index data root may be empty because
+            // ensure_project_index_dir only writes .xlings.json but does not
+            // trigger clone/link creation. Local path indices are read directly;
+            // remote custom indices are synced quietly before dependency resolution.
             bool hasCustomIndices = false;
             for (auto& [idxName, spec] : m->indices) {
                 if (!spec.is_builtin()) {
@@ -1390,9 +1389,21 @@ prepare_build(bool print_fingerprint,
             if (hasCustomIndices) {
                 bool needsClone = !mcpp::config::project_index_data_initialized(*root);
                 if (needsClone) {
-                    mcpp::ui::status("Fetching", "custom index repos (first use)");
-                    auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, *root);
-                    mcpp::xlings::update_index(projEnv);
+                    bool needsRemoteUpdate = false;
+                    for (auto& [idxName, spec] : m->indices) {
+                        if (spec.is_builtin() || spec.is_local()) continue;
+                        needsRemoteUpdate = true;
+                        break;
+                    }
+                    if (needsRemoteUpdate) {
+                        mcpp::ui::status("Fetching", "custom index repos (first use)");
+                        auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, *root);
+                        int rc = mcpp::xlings::update_index(projEnv, /*quiet=*/true);
+                        if (rc != 0) {
+                            return std::unexpected(
+                                "project custom index update failed; run `mcpp index update` for details");
+                        }
+                    }
                 }
             }
         }
@@ -1406,6 +1417,11 @@ prepare_build(bool print_fingerprint,
     // unique_ptr is not load-bearing for liveness — it's a leftover from
     // an earlier design and harmless).
     std::vector<std::unique_ptr<mcpp::manifest::Manifest>> dep_manifests;
+    std::vector<std::string> dep_cache_indices;
+    auto cache_index_name = [](std::string_view ns) {
+        if (ns.empty()) return std::string(mcpp::pm::kDefaultNamespace);
+        return std::string(ns);
+    };
 
     struct ResolvedKey {
         std::string ns;
@@ -1581,8 +1597,9 @@ prepare_build(bool print_fingerprint,
         // Route xpkg.lua reading through the appropriate index.
         std::optional<std::string> luaContent;
         if (idxSpec && idxSpec->is_local()) {
+            auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
             luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                idxSpec->path, shortName);
+                indexPath, shortName);
         } else if (idxSpec && !idxSpec->is_builtin()) {
             luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
                 *root, ns, shortName);
@@ -1930,6 +1947,7 @@ prepare_build(bool print_fingerprint,
 
                     dep_manifests.push_back(
                         std::make_unique<mcpp::manifest::Manifest>(std::move(stagedManifest)));
+                    dep_cache_indices.push_back(cache_index_name(key.ns));
                     packages.push_back({secStage, *dep_manifests.back()});
                     auto added = propagateIncludeDirs(secStage, *dep_manifests.back());
 
@@ -2154,6 +2172,7 @@ prepare_build(bool print_fingerprint,
         // by depIndex (the SemVer merger needs to overwrite the slot).
         dep_manifests.push_back(
             std::make_unique<mcpp::manifest::Manifest>(std::move(*dep_manifest)));
+        dep_cache_indices.push_back(cache_index_name(key.ns));
         packages.push_back({dep_root, *dep_manifests.back()});
 
         // Record this dep as resolved so future encounters of the same
@@ -2288,6 +2307,27 @@ prepare_build(bool print_fingerprint,
     if (cfg2) {
         std::error_code mkEc;
         std::filesystem::create_directories(ctx.outputDir, mkEc);
+        auto usable_object_rel = [](const std::filesystem::path& rel)
+            -> std::optional<std::string>
+        {
+            auto s = rel.generic_string();
+            if (s.empty() || s == "." || s == ".." || s.starts_with("../")) {
+                return std::nullopt;
+            }
+            return s;
+        };
+        auto object_cache_path = [&](const std::filesystem::path& objectPath) {
+            if (objectPath.is_absolute()) {
+                if (auto s = usable_object_rel(
+                        objectPath.lexically_relative(ctx.outputDir / "obj"))) {
+                    return *s;
+                }
+            }
+            if (auto s = usable_object_rel(objectPath.lexically_relative("obj"))) {
+                return *s;
+            }
+            return objectPath.filename().generic_string();
+        };
         for (std::size_t i = 1; i < packages.size(); ++i) {  // skip [0] = main
             const auto& pkgRoot   = packages[i];
             const auto& depName   = pkgRoot.manifest.package.name;
@@ -2312,7 +2352,9 @@ prepare_build(bool print_fingerprint,
             mcpp::bmi_cache::CacheKey key {
                 .mcppHome    = (*cfg2)->mcppHome,
                 .fingerprint = fp.hex,
-                .indexName   = (*cfg2)->defaultIndex,
+                .indexName   = i - 1 < dep_cache_indices.size()
+                    ? dep_cache_indices[i - 1]
+                    : (*cfg2)->defaultIndex,
                 .packageName = depName,
                 .version     = depVer,
                 .bmiDirName  = std::string(bmiT.bmiDir),
@@ -2336,7 +2378,7 @@ prepare_build(bool print_fingerprint,
                     bmi += std::string(bmiT.bmiExt);
                     arts.bmiFiles.push_back(std::move(bmi));
                 }
-                arts.objFiles.push_back(cu.object.filename().string());
+                arts.objFiles.push_back(object_cache_path(cu.object));
             }
 
             if (mcpp::bmi_cache::is_cached(key)) {
