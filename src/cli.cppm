@@ -1375,11 +1375,10 @@ prepare_build(bool print_fingerprint,
         if (cfg2) {
             mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices);
 
-            // On first build, the project xlings data root may be empty because
-            // ensure_project_index_dir only writes .xlings.json but doesn't
-            // trigger clone/link creation. Check whether there are any custom
-            // non-builtin indices and whether the project data roots have index content.
-            // If not, run xlings update before dependency resolution.
+            // On first build, the project index data root may be empty because
+            // ensure_project_index_dir only writes .xlings.json but does not
+            // trigger clone/link creation. Local path indices are read directly;
+            // remote custom indices are synced quietly before dependency resolution.
             bool hasCustomIndices = false;
             for (auto& [idxName, spec] : m->indices) {
                 if (!spec.is_builtin()) {
@@ -1397,9 +1396,12 @@ prepare_build(bool print_fingerprint,
                         break;
                     }
                     if (needsRemoteUpdate) {
-                        mcpp::ui::status("Fetching", "custom index repos (first use)");
                         auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, *root);
-                        mcpp::xlings::update_index(projEnv);
+                        int rc = mcpp::xlings::update_index(projEnv, /*quiet=*/true);
+                        if (rc != 0) {
+                            return std::unexpected(
+                                "project custom index update failed; run `mcpp index update` for details");
+                        }
                     }
                 }
             }
