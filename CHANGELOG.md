@@ -3,6 +3,22 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.35] — 2026-05-30
+
+### 新增
+
+- 支持包描述拥有自己的 `cflags` / `cxxflags`,依赖包源码编译时会继承所属包
+  的构建宏,消费方项目不再需要集中声明第三方 C 库的私有宏。
+- 支持 Form B `mcpp.generated_files`,官方索引包可以在包目录下生成少量配置头,
+  用于承载平台兼容宏或库私有配置。
+
+### 修复
+
+- 修复本地 `path` 索引读取命名空间包时没有匹配
+  `pkgs/<prefix>/<namespace>.<name>.lua` 的问题。
+- 自定义索引首次同步时保留 mcpp 的 `Fetching custom index repos`
+  状态提示,但静默 xlings update 的内部逐项输出。
+
 ## [0.0.33] — 2026-05-30
 
 ### 改进

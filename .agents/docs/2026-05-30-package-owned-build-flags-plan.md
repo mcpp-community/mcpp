@@ -72,5 +72,6 @@ cd /home/speak/workspace/github/openxlings/xlings
   - `mcpp build` -> `target/x86_64-linux-gnu/ff952c89919589bb/bin/xlings --version` = `xlings 0.4.45`.
   - `mcpp build --target x86_64-linux-musl` -> `target/x86_64-linux-musl/7e48a312cd4dbb49/bin/xlings` static ELF.
 - [x] PR draft 创建: https://github.com/mcpp-community/mcpp/pull/88
+- [x] 版本 bump 到 `0.0.35`,并补充 `CHANGELOG.md` 发布说明。
 - [ ] CI 每 120s 检查一次直到完成。
-- [ ] 设计确认后 bump `0.0.35` 并发布。
+- [ ] CI 通过后发布 `0.0.35`。
