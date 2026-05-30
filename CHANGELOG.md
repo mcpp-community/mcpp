@@ -3,6 +3,13 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.32] — 2026-05-30
+
+### 修复
+
+- 修复 project-local `.xlings.json` 生成时未转义 JSON 字符串的问题,
+  避免 Windows 本地 index 路径中的反斜杠导致 xlings 跳过项目索引。
+
 ## [0.0.31] — 2026-05-30
 
 ### 修复

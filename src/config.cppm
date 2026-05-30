@@ -666,7 +666,7 @@ bool ensure_project_index_dir(
         if (spec.is_builtin()) continue;
         if (spec.is_local()) {
             auto source = resolve_project_index_path(projectDir, spec);
-            customRepos.emplace_back(name, source.string());
+            customRepos.emplace_back(name, source.generic_string());
             continue;
         }
         customRepos.emplace_back(name, spec.url);
