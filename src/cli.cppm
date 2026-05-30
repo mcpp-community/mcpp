@@ -1396,6 +1396,7 @@ prepare_build(bool print_fingerprint,
                         break;
                     }
                     if (needsRemoteUpdate) {
+                        mcpp::ui::status("Fetching", "custom index repos (first use)");
                         auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, *root);
                         int rc = mcpp::xlings::update_index(projEnv, /*quiet=*/true);
                         if (rc != 0) {
