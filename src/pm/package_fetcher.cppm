@@ -113,6 +113,7 @@ public:
     // Used for [indices] entries with `path = "/some/dir"`.
     static std::optional<std::string>
         read_xpkg_lua_from_path(const std::filesystem::path& indexPath,
+                                std::string_view ns,
                                 std::string_view shortName);
 
     // Read xpkg .lua from a project-level xlings data directory.
@@ -451,6 +452,7 @@ Fetcher::read_xpkg_lua(std::string_view ns, std::string_view shortName) const
 
 std::optional<std::string>
 Fetcher::read_xpkg_lua_from_path(const std::filesystem::path& indexPath,
+                                  std::string_view ns,
                                   std::string_view shortName)
 {
     if (shortName.empty()) return std::nullopt;
@@ -458,14 +460,19 @@ Fetcher::read_xpkg_lua_from_path(const std::filesystem::path& indexPath,
     auto pkgsDir = indexPath / "pkgs";
     if (!std::filesystem::exists(pkgsDir)) return std::nullopt;
 
-    char first = static_cast<char>(std::tolower(
-        static_cast<unsigned char>(shortName.front())));
-    auto candidate = pkgsDir / std::string(1, first) / (std::string(shortName) + ".lua");
-    if (!std::filesystem::exists(candidate)) return std::nullopt;
+    auto filenames = mcpp::pm::compat::xpkg_lua_candidates(ns, shortName);
+    for (auto& fname : filenames) {
+        if (fname.empty()) continue;
+        char first = static_cast<char>(std::tolower(
+            static_cast<unsigned char>(fname.front())));
+        auto candidate = pkgsDir / std::string(1, first) / fname;
+        if (!std::filesystem::exists(candidate)) continue;
 
-    std::ifstream is(candidate);
-    std::stringstream ss; ss << is.rdbuf();
-    return ss.str();
+        std::ifstream is(candidate);
+        std::stringstream ss; ss << is.rdbuf();
+        return ss.str();
+    }
+    return std::nullopt;
 }
 
 // ─── read_xpkg_lua from project-level data dir ─────────────────────

@@ -1604,7 +1604,7 @@ prepare_build(bool print_fingerprint,
         if (idxSpec && idxSpec->is_local()) {
             auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
             auto luaCheck = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                indexPath, shortName);
+                indexPath, ns, shortName);
             if (!luaCheck) return std::unexpected(std::format(
                 "dependency '{}': not found in local index at '{}'",
                 depName, indexPath.string()));
@@ -1687,7 +1687,7 @@ prepare_build(bool print_fingerprint,
         if (idxSpec && idxSpec->is_local()) {
             auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
             luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                indexPath, shortName);
+                indexPath, ns, shortName);
         } else if (idxSpec && !idxSpec->is_builtin()) {
             luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
                 *root, ns, shortName);
