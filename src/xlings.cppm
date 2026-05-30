@@ -270,6 +270,34 @@ void print_status(std::string_view verb, std::string_view msg) {
     }
 }
 
+std::filesystem::path default_index_dir(const Env& env) {
+    return paths::index_data(env) / "mcpplibs";
+}
+
+std::filesystem::path default_index_pkgs_dir(const Env& env) {
+    return default_index_dir(env) / "pkgs";
+}
+
+std::filesystem::path default_index_refresh_marker(const Env& env) {
+    return default_index_dir(env) / ".mcpp-index-updated";
+}
+
+void mark_default_index_refreshed(const Env& env) {
+    if (!env.projectDir.empty()) return;
+    if (!std::filesystem::exists(default_index_pkgs_dir(env))) return;
+
+    std::error_code ec;
+    std::filesystem::create_directories(default_index_dir(env), ec);
+    auto marker = default_index_refresh_marker(env);
+    {
+        std::ofstream os(marker, std::ios::trunc);
+        if (!os) return;
+        os << "ok\n";
+    }
+    std::filesystem::last_write_time(
+        marker, std::filesystem::file_time_type::clock::now(), ec);
+}
+
 void write_file(const std::filesystem::path& p, std::string_view content) {
     std::error_code ec;
     std::filesystem::create_directories(p.parent_path(), ec);
@@ -932,10 +960,13 @@ void ensure_ninja(const Env& env, bool quiet,
 
 bool is_index_fresh(const Env& env, std::int64_t ttlSeconds) {
     std::error_code ec;
-    auto pkgsDir = paths::index_data(env) / "mcpplibs" / "pkgs";
+    auto pkgsDir = default_index_pkgs_dir(env);
     if (!std::filesystem::exists(pkgsDir)) return false;
 
-    auto newest = std::filesystem::last_write_time(pkgsDir, ec);
+    auto marker = default_index_refresh_marker(env);
+    if (!std::filesystem::exists(marker)) return false;
+
+    auto newest = std::filesystem::last_write_time(marker, ec);
     if (ec) return false;
 
     // Check TTL
@@ -946,17 +977,19 @@ bool is_index_fresh(const Env& env, std::int64_t ttlSeconds) {
 
 int update_index(const Env& env, bool quiet) {
     std::string cmd = build_command_prefix(env) + " update 2>&1";
-    return mcpp::platform::process::run_streaming(cmd,
+    int rc = mcpp::platform::process::run_streaming(cmd,
         [quiet](std::string_view line) {
             if (!quiet) std::println("{}", line);
         });
+    if (rc == 0) mark_default_index_refreshed(env);
+    return rc;
 }
 
 void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
     if (is_index_fresh(env, ttlSeconds)) return;
     if (!quiet)
         print_status("Updating", "package index (auto-refresh)");
-    update_index(env, quiet);
+    update_index(env, /*quiet=*/true);
 }
 
 } // namespace mcpp::xlings

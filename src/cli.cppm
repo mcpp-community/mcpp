@@ -1514,11 +1514,16 @@ prepare_build(bool print_fingerprint,
     // unique_ptr is not load-bearing for liveness — it's a leftover from
     // an earlier design and harmless).
     std::vector<std::unique_ptr<mcpp::manifest::Manifest>> dep_manifests;
-    std::vector<std::string> dep_cache_indices;
     auto cache_index_name = [](std::string_view ns) {
         if (ns.empty()) return std::string(mcpp::pm::kDefaultNamespace);
         return std::string(ns);
     };
+    struct DepCacheIdentity {
+        std::string indexName;
+        std::string packageName;
+        std::string version;
+    };
+    std::vector<DepCacheIdentity> dep_cache_identities;
 
     struct ResolvedKey {
         std::string ns;
@@ -2049,7 +2054,11 @@ prepare_build(bool print_fingerprint,
 
                     dep_manifests.push_back(
                         std::make_unique<mcpp::manifest::Manifest>(std::move(stagedManifest)));
-                    dep_cache_indices.push_back(cache_index_name(key.ns));
+                    dep_cache_identities.push_back({
+                        .indexName   = cache_index_name(key.ns),
+                        .packageName = mangled,
+                        .version     = spec.version,
+                    });
                     packages.push_back({secStage, *dep_manifests.back()});
                     auto added = propagateIncludeDirs(secStage, *dep_manifests.back());
 
@@ -2134,6 +2143,8 @@ prepare_build(bool print_fingerprint,
 
                 it->second.version            = *merged;
                 it->second.includeDirsAdded   = std::move(added);
+                if (it->second.depIndex < dep_cache_identities.size())
+                    dep_cache_identities[it->second.depIndex].version = *merged;
 
                 // Walk the *new* manifest's deps so their constraints feed
                 // future merges. Already-resolved children dedup via the
@@ -2274,7 +2285,13 @@ prepare_build(bool print_fingerprint,
         // by depIndex (the SemVer merger needs to overwrite the slot).
         dep_manifests.push_back(
             std::make_unique<mcpp::manifest::Manifest>(std::move(*dep_manifest)));
-        dep_cache_indices.push_back(cache_index_name(key.ns));
+        dep_cache_identities.push_back({
+            .indexName   = cache_index_name(key.ns),
+            .packageName = name,
+            .version     = sourceKind == "version"
+                ? spec.version
+                : dep_manifests.back()->package.version,
+        });
         packages.push_back({dep_root, *dep_manifests.back()});
 
         // Record this dep as resolved so future encounters of the same
@@ -2433,8 +2450,17 @@ prepare_build(bool print_fingerprint,
         };
         for (std::size_t i = 1; i < packages.size(); ++i) {  // skip [0] = main
             const auto& pkgRoot   = packages[i];
-            const auto& depName   = pkgRoot.manifest.package.name;
-            const auto& depVer    = pkgRoot.manifest.package.version;
+            const auto* depIdent  = i - 1 < dep_cache_identities.size()
+                ? &dep_cache_identities[i - 1]
+                : nullptr;
+            const auto fallbackName = pkgRoot.manifest.package.namespace_.empty()
+                ? pkgRoot.manifest.package.name
+                : std::format("{}.{}", pkgRoot.manifest.package.namespace_,
+                              pkgRoot.manifest.package.name);
+            const auto& depName   = depIdent ? depIdent->packageName : fallbackName;
+            const auto& depVer    = depIdent && !depIdent->version.empty()
+                ? depIdent->version
+                : pkgRoot.manifest.package.version;
 
             // Find this dep's spec from the consumer manifest to know
             // if it's path-based or version-based.
@@ -2455,8 +2481,8 @@ prepare_build(bool print_fingerprint,
             mcpp::bmi_cache::CacheKey key {
                 .mcppHome    = (*cfg2)->mcppHome,
                 .fingerprint = fp.hex,
-                .indexName   = i - 1 < dep_cache_indices.size()
-                    ? dep_cache_indices[i - 1]
+                .indexName   = depIdent
+                    ? depIdent->indexName
                     : (*cfg2)->defaultIndex,
                 .packageName = depName,
                 .version     = depVer,
