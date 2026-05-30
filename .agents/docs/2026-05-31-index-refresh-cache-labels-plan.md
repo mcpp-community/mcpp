@@ -132,6 +132,22 @@ uses only the xlings NDJSON interface path for regular xpkg installs, while
 `mcpp.xlings::install_with_progress()` already documents the direct CLI path
 as more reliable for large package installs.
 
+### 6. Fresh mcpplibs marker does not imply fresh official xim index
+
+The direct-install fallback exposed the next failing layer in Linux CI:
+
+```text
+[error] package 'xim:musl-gcc@15.1.0' not found
+error: toolchain 'gcc@15.1.0-musl': xlings install of 'xim:musl-gcc@15.1.0' failed (interface exit 1, direct exit 1)
+```
+
+The same workflow's earlier e2e suite could install/build with musl-gcc in an
+isolated fresh home, so the package resource was available. The failing later
+step used the main mcpp sandbox, where `mcpplibs/.mcpp-index-updated` can be
+fresh while `xim-pkgindex/pkgs` is missing or stale. Toolchains are resolved
+from xlings' official `xim-pkgindex`, so mcpp must track that index separately
+from the default modular-library `mcpplibs` index.
+
 ## Implementation Plan
 
 - [x] Add focused regression coverage for default-index refresh quietness.
@@ -145,6 +161,8 @@ as more reliable for large package installs.
 - [x] Add a direct `xlings install <target> -y` fallback after interface
       install failure, preserving visible direct-install output for CI
       diagnostics.
+- [x] Track official `xim-pkgindex` freshness independently and refresh it
+      before auto-installing `xim:` toolchain packages.
 - [x] Validate with the local xlings checkout using the new mcpp binary.
 - [x] Push a draft PR and use it as the multi-commit checkpoint.
 
@@ -198,3 +216,20 @@ as more reliable for large package installs.
     `src/pm/package_fetcher.cppm`.
   - Re-ran local `mcpp build --no-cache`, `mcpp test --
     --gtest_filter=XlingsIndexFreshness.*`, and the three related e2e tests.
+  - The fallback made the hidden root cause visible on the second run:
+    the main sandbox could not find `xim:musl-gcc@15.1.0` because the official
+    `xim-pkgindex` data was missing/stale even though mcpp's default
+    `mcpplibs` marker was fresh.
+  - Added `is_official_index_fresh()` / `ensure_official_index_fresh()` and
+    call it before `xim:` auto-installs.
+  - Added unit coverage for a fresh default index with a missing official
+    `xim-pkgindex`.
+  - Local verification after this fix:
+    - `mcpp build --no-cache` passed.
+    - `mcpp test -- --gtest_filter=XlingsIndexFreshness.*` passed with 6
+      matching `test_xlings` cases.
+    - e2e `49_bmi_cache_nested_custom_index.sh`,
+      `52_local_path_namespaced_index.sh`, and `53_namespaced_cache_label.sh`
+      passed.
+    - `/tmp/mcpp-fresh-codex clean && /tmp/mcpp-fresh-codex build --target
+      x86_64-linux-musl` passed and resolved `gcc@15.1.0-musl`.

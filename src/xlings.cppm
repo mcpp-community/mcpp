@@ -241,6 +241,11 @@ void ensure_ninja(const Env& env, bool quiet,
 // Returns true if index is present and fresh, false otherwise.
 bool is_index_fresh(const Env& env, std::int64_t ttlSeconds);
 
+// Check whether xlings' official xim index data exists and is fresh.
+// This is separate from mcpp's default mcpplibs index because xlings
+// toolchains live in xim-pkgindex, while modular libraries live in mcpplibs.
+bool is_official_index_fresh(const Env& env, std::int64_t ttlSeconds);
+
 // Run `xlings update` to refresh all index repos. Streams output to stdout.
 // Returns the xlings exit code.
 int update_index(const Env& env, bool quiet = false);
@@ -249,6 +254,9 @@ int update_index(const Env& env, bool quiet = false);
 // the index is missing or older than ttlSeconds. Idempotent and quiet
 // when no update is needed.
 void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet = false);
+
+// Ensure xlings' official xim index is present and fresh.
+void ensure_official_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet = false);
 
 // ─── run_capture utility ────────────────────────────────────────────
 
@@ -278,21 +286,23 @@ std::filesystem::path default_index_dir(const Env& env) {
     return paths::index_data(env) / "mcpplibs";
 }
 
-std::filesystem::path default_index_pkgs_dir(const Env& env) {
-    return default_index_dir(env) / "pkgs";
+std::filesystem::path official_index_dir(const Env& env) {
+    return paths::index_data(env) / "xim-pkgindex";
 }
 
-std::filesystem::path default_index_refresh_marker(const Env& env) {
-    return default_index_dir(env) / ".mcpp-index-updated";
+std::filesystem::path index_pkgs_dir(const std::filesystem::path& indexDir) {
+    return indexDir / "pkgs";
 }
 
-void mark_default_index_refreshed(const Env& env) {
-    if (!env.projectDir.empty()) return;
-    if (!std::filesystem::exists(default_index_pkgs_dir(env))) return;
+std::filesystem::path index_refresh_marker(const std::filesystem::path& indexDir) {
+    return indexDir / ".mcpp-index-updated";
+}
 
+void mark_index_refreshed(const std::filesystem::path& indexDir) {
+    if (!std::filesystem::exists(index_pkgs_dir(indexDir))) return;
     std::error_code ec;
-    std::filesystem::create_directories(default_index_dir(env), ec);
-    auto marker = default_index_refresh_marker(env);
+    std::filesystem::create_directories(indexDir, ec);
+    auto marker = index_refresh_marker(indexDir);
     {
         std::ofstream os(marker, std::ios::trunc);
         if (!os) return;
@@ -300,6 +310,27 @@ void mark_default_index_refreshed(const Env& env) {
     }
     std::filesystem::last_write_time(
         marker, std::filesystem::file_time_type::clock::now(), ec);
+}
+
+void mark_known_indexes_refreshed(const Env& env) {
+    if (!env.projectDir.empty()) return;
+    mark_index_refreshed(default_index_dir(env));
+    mark_index_refreshed(official_index_dir(env));
+}
+
+bool is_index_dir_fresh(const std::filesystem::path& indexDir, std::int64_t ttlSeconds) {
+    std::error_code ec;
+    if (!std::filesystem::exists(index_pkgs_dir(indexDir))) return false;
+
+    auto marker = index_refresh_marker(indexDir);
+    if (!std::filesystem::exists(marker)) return false;
+
+    auto newest = std::filesystem::last_write_time(marker, ec);
+    if (ec) return false;
+
+    auto now = std::filesystem::file_time_type::clock::now();
+    auto age = std::chrono::duration_cast<std::chrono::seconds>(now - newest);
+    return age.count() < ttlSeconds;
 }
 
 void write_file(const std::filesystem::path& p, std::string_view content) {
@@ -978,20 +1009,11 @@ void ensure_ninja(const Env& env, bool quiet,
 // ─── Index freshness ────────────────────────────────────────────────
 
 bool is_index_fresh(const Env& env, std::int64_t ttlSeconds) {
-    std::error_code ec;
-    auto pkgsDir = default_index_pkgs_dir(env);
-    if (!std::filesystem::exists(pkgsDir)) return false;
+    return is_index_dir_fresh(default_index_dir(env), ttlSeconds);
+}
 
-    auto marker = default_index_refresh_marker(env);
-    if (!std::filesystem::exists(marker)) return false;
-
-    auto newest = std::filesystem::last_write_time(marker, ec);
-    if (ec) return false;
-
-    // Check TTL
-    auto now = std::filesystem::file_time_type::clock::now();
-    auto age = std::chrono::duration_cast<std::chrono::seconds>(now - newest);
-    return age.count() < ttlSeconds;
+bool is_official_index_fresh(const Env& env, std::int64_t ttlSeconds) {
+    return is_index_dir_fresh(official_index_dir(env), ttlSeconds);
 }
 
 int update_index(const Env& env, bool quiet) {
@@ -1000,12 +1022,19 @@ int update_index(const Env& env, bool quiet) {
         [quiet](std::string_view line) {
             if (!quiet) std::println("{}", line);
         });
-    if (rc == 0) mark_default_index_refreshed(env);
+    if (rc == 0) mark_known_indexes_refreshed(env);
     return rc;
 }
 
 void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
     if (is_index_fresh(env, ttlSeconds)) return;
+    if (!quiet)
+        print_status("Updating", "package index (auto-refresh)");
+    update_index(env, /*quiet=*/true);
+}
+
+void ensure_official_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
+    if (is_official_index_fresh(env, ttlSeconds)) return;
     if (!quiet)
         print_status("Updating", "package index (auto-refresh)");
     update_index(env, /*quiet=*/true);

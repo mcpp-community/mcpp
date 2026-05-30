@@ -62,3 +62,27 @@ TEST(XlingsIndexFreshness, RejectsStaleRefreshMarker) {
 
     std::filesystem::remove_all(home);
 }
+
+TEST(XlingsIndexFreshness, RequiresOfficialXimIndexEvenWhenDefaultIndexIsFresh) {
+    auto home = make_tempdir("mcpp-xlings-index-freshness");
+    std::filesystem::create_directories(home / "data" / "mcpplibs" / "pkgs");
+    std::ofstream(home / "data" / "mcpplibs" / ".mcpp-index-updated") << "ok\n";
+
+    mcpp::xlings::Env env{.home = home};
+
+    EXPECT_FALSE(mcpp::xlings::is_official_index_fresh(env, 3600));
+
+    std::filesystem::remove_all(home);
+}
+
+TEST(XlingsIndexFreshness, AcceptsFreshOfficialXimIndex) {
+    auto home = make_tempdir("mcpp-xlings-index-freshness");
+    std::filesystem::create_directories(home / "data" / "xim-pkgindex" / "pkgs");
+    std::ofstream(home / "data" / "xim-pkgindex" / ".mcpp-index-updated") << "ok\n";
+
+    mcpp::xlings::Env env{.home = home};
+
+    EXPECT_TRUE(mcpp::xlings::is_official_index_fresh(env, 3600));
+
+    std::filesystem::remove_all(home);
+}
