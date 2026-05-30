@@ -3,6 +3,14 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.33] — 2026-05-30
+
+### 改进
+
+- 将 legacy dotted dependency key 兼容解析移入 `mcpp.pm.compat.legacy`
+  模块,保留 `mcpp.pm.compat` 作为 facade,并明确标注该兼容路径将在
+  mcpp 1.0.0 移除。
+
 ## [0.0.32] — 2026-05-30
 
 ### 修复
