@@ -585,7 +585,104 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     std::string s;
     s += "-std="; s += m.language.standard;
     s += " -fmodules";
+    if (!m.buildConfig.cStandard.empty()) {
+        s += " c_standard=";
+        s += m.buildConfig.cStandard;
+    }
+    for (auto const& flag : m.buildConfig.cflags) {
+        s += " cflag:";
+        s += flag;
+    }
+    for (auto const& flag : m.buildConfig.cxxflags) {
+        s += " cxxflag:";
+        s += flag;
+    }
     return s;
+}
+
+std::string canonical_package_build_metadata(
+    const std::vector<mcpp::modgraph::PackageRoot>& packages)
+{
+    std::string s;
+    for (auto const& pkg : packages) {
+        s += "\npackage:";
+        s += pkg.manifest.package.namespace_;
+        s += "/";
+        s += pkg.manifest.package.name;
+        s += "@";
+        s += pkg.manifest.package.version;
+        if (!pkg.manifest.buildConfig.cStandard.empty()) {
+            s += " c_standard=";
+            s += pkg.manifest.buildConfig.cStandard;
+        }
+        for (auto const& flag : pkg.manifest.buildConfig.cflags) {
+            s += " cflag:";
+            s += flag;
+        }
+        for (auto const& flag : pkg.manifest.buildConfig.cxxflags) {
+            s += " cxxflag:";
+            s += flag;
+        }
+        for (auto const& [path, content] : pkg.manifest.buildConfig.generatedFiles) {
+            s += " genfile:";
+            s += path.generic_string();
+            s += "=";
+            s += content;
+        }
+    }
+    return s;
+}
+
+std::expected<void, std::string>
+materialize_generated_files(const std::filesystem::path& root,
+                            const mcpp::manifest::Manifest& manifest)
+{
+    for (auto const& [relPath, content] : manifest.buildConfig.generatedFiles) {
+        if (relPath.empty()) {
+            return std::unexpected("generated_files contains an empty path");
+        }
+        if (relPath.is_absolute()) {
+            return std::unexpected(std::format(
+                "generated_files path '{}' must be relative", relPath.generic_string()));
+        }
+        auto const genericPath = relPath.generic_string();
+        for (std::size_t begin = 0; begin <= genericPath.size();) {
+            auto const end = genericPath.find('/', begin);
+            auto const part = genericPath.substr(begin, end == std::string::npos
+                                                           ? std::string::npos
+                                                           : end - begin);
+            if (part == "..") {
+                return std::unexpected(std::format(
+                    "generated_files path '{}' must not escape the package root",
+                    relPath.generic_string()));
+            }
+            if (end == std::string::npos) {
+                break;
+            }
+            begin = end + 1;
+        }
+
+        auto out = root / relPath.lexically_normal();
+        std::error_code ec;
+        std::filesystem::create_directories(out.parent_path(), ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "cannot create directory for generated file '{}': {}",
+                out.string(), ec.message()));
+        }
+
+        std::ofstream os(out, std::ios::binary);
+        if (!os) {
+            return std::unexpected(std::format(
+                "cannot write generated file '{}'", out.string()));
+        }
+        os << content;
+        if (!os) {
+            return std::unexpected(std::format(
+                "failed while writing generated file '{}'", out.string()));
+        }
+    }
+    return {};
 }
 
 bool is_std_module(std::string_view name) {
@@ -1516,7 +1613,7 @@ prepare_build(bool print_fingerprint,
         if (idxSpec && idxSpec->is_local()) {
             auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
             auto luaCheck = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                indexPath, shortName);
+                indexPath, ns, shortName);
             if (!luaCheck) return std::unexpected(std::format(
                 "dependency '{}': not found in local index at '{}'",
                 depName, indexPath.string()));
@@ -1599,7 +1696,7 @@ prepare_build(bool print_fingerprint,
         if (idxSpec && idxSpec->is_local()) {
             auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
             luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                indexPath, shortName);
+                indexPath, ns, shortName);
         } else if (idxSpec && !idxSpec->is_builtin()) {
             luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
                 *root, ns, shortName);
@@ -1673,6 +1770,11 @@ prepare_build(bool print_fingerprint,
             if (!manifest->package.name.starts_with(prefix)) {
                 manifest->package.namespace_ = luaNs;
             }
+        }
+
+        if (auto r = materialize_generated_files(effRoot, *manifest); !r) {
+            return std::unexpected(std::format(
+                "dependency '{}': {}", depName, r.error()));
         }
 
         return std::pair{effRoot, std::move(*manifest)};
@@ -2248,7 +2350,8 @@ prepare_build(bool print_fingerprint,
     mcpp::toolchain::FingerprintInputs fpi;
     fpi.toolchain            = *tc;
     fpi.cppStandard         = m->language.standard;
-    fpi.compileFlags        = canonical_compile_flags(*m);
+    fpi.compileFlags        = canonical_compile_flags(*m)
+                              + canonical_package_build_metadata(packages);
     fpi.dependencyLockHash = "";    // M2
     fpi.stdBmiHash         = "";    // updated after stdmod build (chicken/egg ok for M1)
     auto fp = mcpp::toolchain::compute_fingerprint(fpi);

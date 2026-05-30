@@ -79,6 +79,7 @@ struct Toolchain {
 struct BuildConfig {
     std::vector<std::string>           sources;        // glob patterns
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
+    std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
     bool                                staticStdlib = true;
     // "" (default = dynamic), "static", "dynamic" — chosen at resolve
     // time from --static / --target / [target.<triple>].linkage. Wired
@@ -1292,6 +1293,27 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             while (!cur.eof() && cur.peek() != '}') {
                 auto s = cur.read_string();
                 if (!s.empty()) m.buildConfig.includeDirs.emplace_back(s);
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
+        else if (key == "generated_files") {
+            // `{ ["relative/path"] = "contents", ... }`
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `generated_files =`", m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto path = cur.read_key();
+                if (path.empty()) break;
+                cur.skip_ws_and_comments();
+                if (!cur.consume('=')) {
+                    return std::unexpected(ManifestError{
+                        "expected '=' in `generated_files` entry", m.sourcePath, 0, 0});
+                }
+                auto content = cur.read_string();
+                m.buildConfig.generatedFiles.emplace(path, std::move(content));
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');

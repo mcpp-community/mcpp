@@ -374,6 +374,8 @@ void scan_one_into(ScanResult& result,
             continue;
         }
         r->localIncludeDirs = localIncludeDirs;
+        r->packageCflags = manifest.buildConfig.cflags;
+        r->packageCxxflags = manifest.buildConfig.cxxflags;
         result.graph.units.push_back(std::move(*r));
     }
 }
@@ -450,6 +452,8 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
                 continue;
             }
             r->localIncludeDirs = localIncludeDirs;
+            r->packageCflags = p.manifest.buildConfig.cflags;
+            r->packageCxxflags = p.manifest.buildConfig.cxxflags;
             result.graph.units.push_back(std::move(*r));
         }
     }
