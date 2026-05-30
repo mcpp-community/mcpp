@@ -194,6 +194,30 @@ package = {
     EXPECT_EQ(m->modules.sources[0], "*/src/*.c");
 }
 
+TEST(SynthesizeFromXpkgLua, GeneratedFiles) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "tinyc",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/src/*.c" },
+        generated_files = {
+            ["mcpp_generated/include/config.h"] = "#pragma once\n#define TINYC_OK 1\n",
+        },
+        include_dirs = { "mcpp_generated/include" },
+        targets = { ["tinyc"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.generatedFiles.size(), 1u);
+    auto it = m->buildConfig.generatedFiles.find("mcpp_generated/include/config.h");
+    ASSERT_NE(it, m->buildConfig.generatedFiles.end());
+    EXPECT_EQ(it->second, "#pragma once\n#define TINYC_OK 1\n");
+}
+
 TEST(Manifest, DependenciesFlatDefaultNamespace) {
     constexpr auto src = R"(
 [package]

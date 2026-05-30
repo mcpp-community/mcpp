@@ -623,8 +623,57 @@ std::string canonical_package_build_metadata(
             s += " cxxflag:";
             s += flag;
         }
+        for (auto const& [path, content] : pkg.manifest.buildConfig.generatedFiles) {
+            s += " genfile:";
+            s += path.generic_string();
+            s += "=";
+            s += content;
+        }
     }
     return s;
+}
+
+std::expected<void, std::string>
+materialize_generated_files(const std::filesystem::path& root,
+                            const mcpp::manifest::Manifest& manifest)
+{
+    for (auto const& [relPath, content] : manifest.buildConfig.generatedFiles) {
+        if (relPath.empty()) {
+            return std::unexpected("generated_files contains an empty path");
+        }
+        if (relPath.is_absolute()) {
+            return std::unexpected(std::format(
+                "generated_files path '{}' must be relative", relPath.generic_string()));
+        }
+        for (auto const& part : relPath) {
+            if (part == "..") {
+                return std::unexpected(std::format(
+                    "generated_files path '{}' must not escape the package root",
+                    relPath.generic_string()));
+            }
+        }
+
+        auto out = root / relPath.lexically_normal();
+        std::error_code ec;
+        std::filesystem::create_directories(out.parent_path(), ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "cannot create directory for generated file '{}': {}",
+                out.string(), ec.message()));
+        }
+
+        std::ofstream os(out, std::ios::binary);
+        if (!os) {
+            return std::unexpected(std::format(
+                "cannot write generated file '{}'", out.string()));
+        }
+        os << content;
+        if (!os) {
+            return std::unexpected(std::format(
+                "failed while writing generated file '{}'", out.string()));
+        }
+    }
+    return {};
 }
 
 bool is_std_module(std::string_view name) {
@@ -1712,6 +1761,11 @@ prepare_build(bool print_fingerprint,
             if (!manifest->package.name.starts_with(prefix)) {
                 manifest->package.namespace_ = luaNs;
             }
+        }
+
+        if (auto r = materialize_generated_files(effRoot, *manifest); !r) {
+            return std::unexpected(std::format(
+                "dependency '{}': {}", depName, r.error()));
         }
 
         return std::pair{effRoot, std::move(*manifest)};
