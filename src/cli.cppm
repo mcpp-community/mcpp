@@ -645,12 +645,21 @@ materialize_generated_files(const std::filesystem::path& root,
             return std::unexpected(std::format(
                 "generated_files path '{}' must be relative", relPath.generic_string()));
         }
-        for (auto const& part : relPath) {
+        auto const genericPath = relPath.generic_string();
+        for (std::size_t begin = 0; begin <= genericPath.size();) {
+            auto const end = genericPath.find('/', begin);
+            auto const part = genericPath.substr(begin, end == std::string::npos
+                                                           ? std::string::npos
+                                                           : end - begin);
             if (part == "..") {
                 return std::unexpected(std::format(
                     "generated_files path '{}' must not escape the package root",
                     relPath.generic_string()));
             }
+            if (end == std::string::npos) {
+                break;
+            }
+            begin = end + 1;
         }
 
         auto out = root / relPath.lexically_normal();
