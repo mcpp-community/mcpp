@@ -1,6 +1,6 @@
 # Index Refresh And Dependency Cache Label Fix
 
-> Date: 2026-05-31 | Status: active | Branch:
+> Date: 2026-05-31 | Status: awaiting required review | Branch:
 > `codex/quiet-index-refresh-cache-labels`
 
 Tracking issue: https://github.com/mcpp-community/mcpp/issues/90
@@ -232,7 +232,7 @@ does not point at the current sandbox's package file.
       while the marker is inside TTL.
 - [x] Confirm cached dependencies display as `Cached` when their artifacts are
       staged.
-- [ ] Record CI status on the PR after the second checkpoint commit.
+- [x] Record CI status on the PR after the final checkpoint commit.
 
 ## Dynamic Notes
 
@@ -321,3 +321,13 @@ does not point at the current sandbox's package file.
       passed.
     - `/tmp/mcpp-fresh-codex clean && /tmp/mcpp-fresh-codex build --target
       x86_64-linux-musl` passed and resolved `gcc@15.1.0-musl`.
+  - Final CI on PR #91 at commit
+    `f93f3179331ad87434d6643a88ed526677b1e4e5` passed on all required
+    platforms:
+    - Linux `ci-linux`, run `26697058042`, job `78683273931`.
+    - macOS `ci-macos`, run `26697058049`, job `78683273992`.
+    - Windows `ci-windows`, run `26697058053`, job `78683274017`.
+  - PR #91 is ready for review and mergeable, but branch protection currently
+    reports `reviewDecision=REVIEW_REQUIRED`. A normal squash merge was
+    rejected by base-branch policy, and repository auto-merge is disabled. Do
+    not use `--admin`; wait for maintainer approval before squash merging.
