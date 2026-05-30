@@ -148,6 +148,28 @@ fresh while `xim-pkgindex/pkgs` is missing or stale. Toolchains are resolved
 from xlings' official `xim-pkgindex`, so mcpp must track that index separately
 from the default modular-library `mcpplibs` index.
 
+### 7. Fresh official index marker does not imply the target package exists
+
+The third PR checkpoint still failed in the same Linux musl step. The package
+lookup error remained:
+
+```text
+[error] package 'xim:musl-gcc@15.1.0' not found
+```
+
+That means a restored CI cache can still satisfy the coarse check
+`xim-pkgindex/pkgs + .mcpp-index-updated` while missing the package file added
+later:
+
+```text
+xim-pkgindex/pkgs/m/musl-gcc.lua
+```
+
+For `xim:` auto-installs, the freshness guard must therefore check the target
+package's index file, not just the official index directory. If the package
+file is absent, mcpp should silently run `xlings update` before calling either
+the NDJSON interface install path or the direct CLI fallback.
+
 ## Implementation Plan
 
 - [x] Add focused regression coverage for default-index refresh quietness.
@@ -163,6 +185,8 @@ from the default modular-library `mcpplibs` index.
       diagnostics.
 - [x] Track official `xim-pkgindex` freshness independently and refresh it
       before auto-installing `xim:` toolchain packages.
+- [x] Require the target package file to exist before treating an official
+      `xim:` index as fresh.
 - [x] Validate with the local xlings checkout using the new mcpp binary.
 - [x] Push a draft PR and use it as the multi-commit checkpoint.
 
@@ -228,6 +252,22 @@ from the default modular-library `mcpplibs` index.
     - `mcpp build --no-cache` passed.
     - `mcpp test -- --gtest_filter=XlingsIndexFreshness.*` passed with 6
       matching `test_xlings` cases.
+    - e2e `49_bmi_cache_nested_custom_index.sh`,
+      `52_local_path_namespaced_index.sh`, and `53_namespaced_cache_label.sh`
+      passed.
+    - `/tmp/mcpp-fresh-codex clean && /tmp/mcpp-fresh-codex build --target
+      x86_64-linux-musl` passed and resolved `gcc@15.1.0-musl`.
+  - The next CI run still failed at the same musl step, proving the remaining
+    stale-cache shape is target-package-level, not just official-index-level.
+  - Added `is_official_package_index_fresh()` /
+    `ensure_official_package_index_fresh()` and wired `xim:` auto-installs to
+    check the concrete package file (for example `pkgs/m/musl-gcc.lua`).
+  - Added two more unit tests for a fresh official index marker with a missing
+    target package file.
+  - Local verification after this package-file fix:
+    - `mcpp test -- --gtest_filter=XlingsIndexFreshness.*` passed with 8
+      matching `test_xlings` cases.
+    - `mcpp build --no-cache` passed.
     - e2e `49_bmi_cache_nested_custom_index.sh`,
       `52_local_path_namespaced_index.sh`, and `53_namespaced_cache_label.sh`
       passed.

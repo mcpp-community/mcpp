@@ -86,3 +86,28 @@ TEST(XlingsIndexFreshness, AcceptsFreshOfficialXimIndex) {
 
     std::filesystem::remove_all(home);
 }
+
+TEST(XlingsIndexFreshness, RequiresOfficialPackageFileEvenWhenOfficialIndexIsFresh) {
+    auto home = make_tempdir("mcpp-xlings-index-freshness");
+    std::filesystem::create_directories(home / "data" / "xim-pkgindex" / "pkgs");
+    std::ofstream(home / "data" / "xim-pkgindex" / ".mcpp-index-updated") << "ok\n";
+
+    mcpp::xlings::Env env{.home = home};
+
+    EXPECT_FALSE(mcpp::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
+
+    std::filesystem::remove_all(home);
+}
+
+TEST(XlingsIndexFreshness, AcceptsFreshOfficialPackageFile) {
+    auto home = make_tempdir("mcpp-xlings-index-freshness");
+    std::filesystem::create_directories(home / "data" / "xim-pkgindex" / "pkgs" / "m");
+    std::ofstream(home / "data" / "xim-pkgindex" / ".mcpp-index-updated") << "ok\n";
+    std::ofstream(home / "data" / "xim-pkgindex" / "pkgs" / "m" / "musl-gcc.lua") << "package = {}\n";
+
+    mcpp::xlings::Env env{.home = home};
+
+    EXPECT_TRUE(mcpp::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
+
+    std::filesystem::remove_all(home);
+}

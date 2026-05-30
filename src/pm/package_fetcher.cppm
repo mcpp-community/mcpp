@@ -694,8 +694,8 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     if (autoInstall) {
         if (parsed.indexName == "xim") {
             mcpp::xlings::Env xlEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
-            mcpp::xlings::ensure_official_index_fresh(
-                xlEnv, cfg_.searchTtlSeconds, /*quiet=*/true);
+            mcpp::xlings::ensure_official_package_index_fresh(
+                xlEnv, parsed.packageName, cfg_.searchTtlSeconds, /*quiet=*/true);
         }
 
         std::vector<std::string> targets {

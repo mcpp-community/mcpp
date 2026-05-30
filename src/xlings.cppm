@@ -246,6 +246,13 @@ bool is_index_fresh(const Env& env, std::int64_t ttlSeconds);
 // toolchains live in xim-pkgindex, while modular libraries live in mcpplibs.
 bool is_official_index_fresh(const Env& env, std::int64_t ttlSeconds);
 
+// Check whether a specific package file exists in xlings' official xim index
+// and the index is fresh. This catches restored CI caches that have an index
+// directory and marker but predate a package added later.
+bool is_official_package_index_fresh(const Env& env,
+                                     std::string_view packageName,
+                                     std::int64_t ttlSeconds);
+
 // Run `xlings update` to refresh all index repos. Streams output to stdout.
 // Returns the xlings exit code.
 int update_index(const Env& env, bool quiet = false);
@@ -257,6 +264,12 @@ void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet = fa
 
 // Ensure xlings' official xim index is present and fresh.
 void ensure_official_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet = false);
+
+// Ensure a specific package file exists in xlings' official xim index.
+void ensure_official_package_index_fresh(const Env& env,
+                                         std::string_view packageName,
+                                         std::int64_t ttlSeconds,
+                                         bool quiet = false);
 
 // ─── run_capture utility ────────────────────────────────────────────
 
@@ -296,6 +309,12 @@ std::filesystem::path index_pkgs_dir(const std::filesystem::path& indexDir) {
 
 std::filesystem::path index_refresh_marker(const std::filesystem::path& indexDir) {
     return indexDir / ".mcpp-index-updated";
+}
+
+std::filesystem::path official_package_file(const Env& env, std::string_view packageName) {
+    if (packageName.empty()) return {};
+    std::string name(packageName);
+    return official_index_dir(env) / "pkgs" / std::string(1, name[0]) / (name + ".lua");
 }
 
 void mark_index_refreshed(const std::filesystem::path& indexDir) {
@@ -1016,6 +1035,14 @@ bool is_official_index_fresh(const Env& env, std::int64_t ttlSeconds) {
     return is_index_dir_fresh(official_index_dir(env), ttlSeconds);
 }
 
+bool is_official_package_index_fresh(const Env& env,
+                                     std::string_view packageName,
+                                     std::int64_t ttlSeconds) {
+    if (!is_official_index_fresh(env, ttlSeconds)) return false;
+    auto pkg = official_package_file(env, packageName);
+    return !pkg.empty() && std::filesystem::exists(pkg);
+}
+
 int update_index(const Env& env, bool quiet) {
     std::string cmd = build_command_prefix(env) + " update 2>&1";
     int rc = mcpp::platform::process::run_streaming(cmd,
@@ -1035,6 +1062,16 @@ void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
 
 void ensure_official_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
     if (is_official_index_fresh(env, ttlSeconds)) return;
+    if (!quiet)
+        print_status("Updating", "package index (auto-refresh)");
+    update_index(env, /*quiet=*/true);
+}
+
+void ensure_official_package_index_fresh(const Env& env,
+                                         std::string_view packageName,
+                                         std::int64_t ttlSeconds,
+                                         bool quiet) {
+    if (is_official_package_index_fresh(env, packageName, ttlSeconds)) return;
     if (!quiet)
         print_status("Updating", "package index (auto-refresh)");
     update_index(env, /*quiet=*/true);
