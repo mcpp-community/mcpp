@@ -725,15 +725,39 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             mcpp::fallback::clean_incomplete_install(verdir);
         }
         if (inst->exitCode != 0) {
-            // xlings install actually failed (network, missing package,
-            // half-extracted, etc.). Do NOT try copy fallback: the global
-            // ~/.xlings/ state may itself be residue from the same failure,
-            // and looks_complete_legacy() can't tell residue from complete.
+            // xlings interface install actually failed (network, missing
+            // package, extraction subprocess issue, etc.). Retry once through
+            // direct `xlings install`: xlings' own CLI path is more reliable
+            // for large toolchain packages and keeps the real failure output
+            // visible to CI/users when it still fails.
             mcpp::fallback::clean_incomplete_install(verdir);
+            mcpp::log::verbose("fetcher",
+                std::format("interface install failed for {}; retrying direct xlings install",
+                            targets[0]));
+            mcpp::xlings::Env directEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
+            int directRc = mcpp::xlings::install_direct(directEnv, targets[0]);
+            if (directRc == 0 && std::filesystem::exists(verdir)) {
+                mcpp::fallback::mark_install_complete(verdir);
+                return make_payload();
+            }
+            if (directRc == 0 && !std::filesystem::exists(verdir)) {
+                bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
+                if (copyOk && mcpp::fallback::looks_complete_legacy(verdir)) {
+                    mcpp::fallback::mark_install_complete(verdir);
+                    mcpp::log::verbose("fetcher", "resolved via copy fallback after direct install");
+                    return make_payload();
+                }
+                mcpp::fallback::clean_incomplete_install(verdir);
+            }
+
+            // If both interface and direct install failed, do NOT try copy
+            // fallback: the global ~/.xlings/ state may itself be residue from
+            // the same failure, and looks_complete_legacy() can't tell residue
+            // from complete.
             std::string installError = std::format(
-                "xlings install of '{}:{}@{}' failed (exit {})",
+                "xlings install of '{}:{}@{}' failed (interface exit {}, direct exit {})",
                 parsed.indexName, parsed.packageName, parsed.version,
-                inst->exitCode);
+                inst->exitCode, directRc);
             if (inst->error)
                 installError += ": " + inst->error->message;
             return std::unexpected(CallError{std::format(

@@ -194,6 +194,10 @@ using BootstrapProgressCallback = std::function<void(const BootstrapProgress&)>;
 int install_with_progress(const Env& env, std::string_view target,
                           const BootstrapProgressCallback& cb);
 
+// Run direct `xlings install <target> -y`.
+// Used as a fallback when the NDJSON interface install path fails.
+int install_direct(const Env& env, std::string_view target, bool quiet = false);
+
 // ─── Sandbox lifecycle ──────────────────────────────────────────────
 
 // Write .xlings.json seed file.
@@ -833,6 +837,21 @@ int install_with_progress(const Env& env, std::string_view target,
 
     int closeRc = mcpp::platform::process::run_streaming(cmd, handle_line);
     return (resultExitCode != -1) ? resultExitCode : closeRc;
+}
+
+int install_direct(const Env& env, std::string_view target, bool quiet) {
+    auto cmd = build_command_prefix(env)
+        + std::format(" install {} -y", shq(target));
+    if (quiet) {
+        cmd += " ";
+        cmd += std::string(mcpp::platform::shell::silent_redirect);
+    }
+    if constexpr (mcpp::platform::is_windows) {
+        cmd += " <NUL";
+    } else {
+        cmd += " </dev/null";
+    }
+    return mcpp::platform::process::extract_exit_code(std::system(cmd.c_str()));
 }
 
 // ─── Sandbox lifecycle ──────────────────────────────────────────────

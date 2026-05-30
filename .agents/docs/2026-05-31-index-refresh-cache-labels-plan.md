@@ -15,6 +15,8 @@ The current work is intentionally limited to build-tool behavior:
 - make automatic package-index refresh quiet from the mcpp user's perspective;
 - make index freshness use a reliable mcpp-owned timestamp marker;
 - make dependency cache status use canonical dependency identities;
+- make large xpkg/toolchain installs retry through direct `xlings install`
+  when the NDJSON interface path fails;
 - keep local xlings validation as the integration proof.
 
 ## Findings
@@ -103,6 +105,33 @@ deps/mcpplibs/xpkg@0.0.39
 
 while the consumer dependency remains `mcpplibs.xpkg v0.0.41`.
 
+### 5. Cold Linux CI can fail musl-gcc via xlings interface install
+
+PR #91 inherited a main-branch Linux CI failure in:
+
+```text
+Toolchain: musl-gcc - build mcpp (--target)
+```
+
+The failing command was:
+
+```text
+mcpp build --target x86_64-linux-musl
+```
+
+The visible error was only:
+
+```text
+xlings install of 'xim:musl-gcc@15.1.0' failed (exit 1)
+```
+
+The same workflow's e2e suite had already proven that fresh-home musl-gcc
+installation can work, and recent CI history showed this as a cold-cache
+failure on main too. The weak point is that `Fetcher::resolve_xpkg_path()`
+uses only the xlings NDJSON interface path for regular xpkg installs, while
+`mcpp.xlings::install_with_progress()` already documents the direct CLI path
+as more reliable for large package installs.
+
 ## Implementation Plan
 
 - [x] Add focused regression coverage for default-index refresh quietness.
@@ -113,8 +142,11 @@ while the consumer dependency remains `mcpplibs.xpkg v0.0.41`.
 - [x] Avoid using stale embedded package version as the user-facing resolved
       dependency version when the index resolution already knows the requested
       version.
+- [x] Add a direct `xlings install <target> -y` fallback after interface
+      install failure, preserving visible direct-install output for CI
+      diagnostics.
 - [x] Validate with the local xlings checkout using the new mcpp binary.
-- [ ] Push a draft PR and use it as the multi-commit checkpoint.
+- [x] Push a draft PR and use it as the multi-commit checkpoint.
 
 ## Verification Plan
 
@@ -126,7 +158,7 @@ while the consumer dependency remains `mcpplibs.xpkg v0.0.41`.
       while the marker is inside TTL.
 - [x] Confirm cached dependencies display as `Cached` when their artifacts are
       staged.
-- [ ] Record CI status on the PR.
+- [ ] Record CI status on the PR after the second checkpoint commit.
 
 ## Dynamic Notes
 
@@ -157,3 +189,12 @@ while the consumer dependency remains `mcpplibs.xpkg v0.0.41`.
     `mcpplibs.tinyhttps` / `mcpplibs.xpkg` displayed as `Cached`.
   - Marker was written at
     `~/.mcpp/registry/data/mcpplibs/.mcpp-index-updated`.
+- CI follow-up:
+  - Linux CI on PR #91 failed in `Toolchain: musl-gcc - build mcpp
+    (--target)`.
+  - The same step had already failed on `origin/main` run `26691717542`, so
+    this is not introduced solely by PR #91.
+  - Added direct-install fallback in `src/xlings.cppm` and
+    `src/pm/package_fetcher.cppm`.
+  - Re-ran local `mcpp build --no-cache`, `mcpp test --
+    --gtest_filter=XlingsIndexFreshness.*`, and the three related e2e tests.
