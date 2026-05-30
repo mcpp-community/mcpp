@@ -317,6 +317,33 @@ std::filesystem::path official_package_file(const Env& env, std::string_view pac
     return official_index_dir(env) / "pkgs" / std::string(1, name[0]) / (name + ".lua");
 }
 
+std::string json_escaped_path_probe(std::filesystem::path path) {
+    auto value = path.string();
+    std::string escaped;
+    escaped.reserve(value.size() * 2);
+    for (char c : value) {
+        if (c == '\\') escaped += "\\\\";
+        else escaped.push_back(c);
+    }
+    return escaped;
+}
+
+bool official_index_cache_matches_package_file(const Env& env,
+                                               std::string_view packageName) {
+    auto cache = official_index_dir(env) / ".xlings-index-cache.json";
+    if (!std::filesystem::exists(cache)) return true;
+
+    auto pkg = official_package_file(env, packageName);
+    if (pkg.empty()) return false;
+
+    std::ifstream is(cache);
+    if (!is) return false;
+    std::string body((std::istreambuf_iterator<char>(is)), {});
+    auto rawPath = pkg.string();
+    return body.find(rawPath) != std::string::npos
+        || body.find(json_escaped_path_probe(pkg)) != std::string::npos;
+}
+
 void mark_index_refreshed(const std::filesystem::path& indexDir) {
     if (!std::filesystem::exists(index_pkgs_dir(indexDir))) return;
     std::error_code ec;
@@ -1040,7 +1067,9 @@ bool is_official_package_index_fresh(const Env& env,
                                      std::int64_t ttlSeconds) {
     if (!is_official_index_fresh(env, ttlSeconds)) return false;
     auto pkg = official_package_file(env, packageName);
-    return !pkg.empty() && std::filesystem::exists(pkg);
+    return !pkg.empty()
+        && std::filesystem::exists(pkg)
+        && official_index_cache_matches_package_file(env, packageName);
 }
 
 int update_index(const Env& env, bool quiet) {

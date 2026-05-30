@@ -111,3 +111,35 @@ TEST(XlingsIndexFreshness, AcceptsFreshOfficialPackageFile) {
 
     std::filesystem::remove_all(home);
 }
+
+TEST(XlingsIndexFreshness, RejectsOfficialPackageCacheWithForeignPath) {
+    auto home = make_tempdir("mcpp-xlings-index-freshness");
+    auto pkg = home / "data" / "xim-pkgindex" / "pkgs" / "m" / "musl-gcc.lua";
+    std::filesystem::create_directories(pkg.parent_path());
+    std::ofstream(home / "data" / "xim-pkgindex" / ".mcpp-index-updated") << "ok\n";
+    std::ofstream(pkg) << "package = {}\n";
+    std::ofstream(home / "data" / "xim-pkgindex" / ".xlings-index-cache.json")
+        << R"({"entries":{"musl-gcc":{"path":"/tmp/foreign/xim-pkgindex/pkgs/m/musl-gcc.lua"}}})";
+
+    mcpp::xlings::Env env{.home = home};
+
+    EXPECT_FALSE(mcpp::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
+
+    std::filesystem::remove_all(home);
+}
+
+TEST(XlingsIndexFreshness, AcceptsOfficialPackageCacheWithCurrentPath) {
+    auto home = make_tempdir("mcpp-xlings-index-freshness");
+    auto pkg = home / "data" / "xim-pkgindex" / "pkgs" / "m" / "musl-gcc.lua";
+    std::filesystem::create_directories(pkg.parent_path());
+    std::ofstream(home / "data" / "xim-pkgindex" / ".mcpp-index-updated") << "ok\n";
+    std::ofstream(pkg) << "package = {}\n";
+    std::ofstream(home / "data" / "xim-pkgindex" / ".xlings-index-cache.json")
+        << std::format(R"({{"entries":{{"musl-gcc":{{"path":"{}"}}}}}})", pkg.string());
+
+    mcpp::xlings::Env env{.home = home};
+
+    EXPECT_TRUE(mcpp::xlings::is_official_package_index_fresh(env, "musl-gcc", 3600));
+
+    std::filesystem::remove_all(home);
+}

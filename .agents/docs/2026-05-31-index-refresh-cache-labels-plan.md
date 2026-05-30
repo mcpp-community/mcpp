@@ -170,6 +170,36 @@ package's index file, not just the official index directory. If the package
 file is absent, mcpp should silently run `xlings update` before calling either
 the NDJSON interface install path or the direct CLI fallback.
 
+### 8. xlings index cache can be poisoned by temp-home symlinked indexes
+
+The fourth PR checkpoint still failed in the same Linux musl step. Local
+inspection revealed an additional xlings cache layer:
+
+```text
+xim-pkgindex/.xlings-index-cache.json
+```
+
+That cache stores absolute `path` values for each xpkg file. mcpp e2e tests
+inherit the global `xim-pkgindex` into temp `MCPP_HOME` directories, often via
+symlink. When xlings rebuilds the cache from that temp home, it can write paths
+like:
+
+```text
+/tmp/tmp.X.../mcpp-home/registry/data/xim-pkgindex/pkgs/m/musl-gcc.lua
+```
+
+into the shared global index directory. Later, the main sandbox loads that
+cache and `PackageCatalog::build_match_()` calls `load_package()` on the stale
+temp path. The load fails, the match is discarded, and the user-facing error is
+still:
+
+```text
+package 'xim:musl-gcc@15.1.0' not found
+```
+
+So the mcpp guard must also reject a package cache whose target package entry
+does not point at the current sandbox's package file.
+
 ## Implementation Plan
 
 - [x] Add focused regression coverage for default-index refresh quietness.
@@ -187,6 +217,8 @@ the NDJSON interface install path or the direct CLI fallback.
       before auto-installing `xim:` toolchain packages.
 - [x] Require the target package file to exist before treating an official
       `xim:` index as fresh.
+- [x] Reject xlings index caches whose target package path points at a foreign
+      temp/home directory.
 - [x] Validate with the local xlings checkout using the new mcpp binary.
 - [x] Push a draft PR and use it as the multi-commit checkpoint.
 
@@ -266,6 +298,22 @@ the NDJSON interface install path or the direct CLI fallback.
     target package file.
   - Local verification after this package-file fix:
     - `mcpp test -- --gtest_filter=XlingsIndexFreshness.*` passed with 8
+      matching `test_xlings` cases.
+    - `mcpp build --no-cache` passed.
+    - e2e `49_bmi_cache_nested_custom_index.sh`,
+      `52_local_path_namespaced_index.sh`, and `53_namespaced_cache_label.sh`
+      passed.
+    - `/tmp/mcpp-fresh-codex clean && /tmp/mcpp-fresh-codex build --target
+      x86_64-linux-musl` passed and resolved `gcc@15.1.0-musl`.
+  - The next CI run still failed at the same musl step. The remaining issue is
+    xlings' `.xlings-index-cache.json` using absolute package-file paths that
+    can be written from e2e temp homes into the shared index directory.
+  - Added cache-path validation for the target package file in
+    `is_official_package_index_fresh()`.
+  - Added two unit tests for foreign/current package paths inside
+    `.xlings-index-cache.json`.
+  - Local verification after this cache-path fix:
+    - `mcpp test -- --gtest_filter=XlingsIndexFreshness.*` passed with 10
       matching `test_xlings` cases.
     - `mcpp build --no-cache` passed.
     - e2e `49_bmi_cache_nested_custom_index.sh`,
