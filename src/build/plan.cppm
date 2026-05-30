@@ -17,6 +17,7 @@ export namespace mcpp::build {
 struct CompileUnit {
     std::filesystem::path           source;
     std::filesystem::path           object;            // relative to plan.outputDir
+    std::vector<std::filesystem::path> localIncludeDirs;
     std::optional<std::string>      providesModule;   // logical name, if .cppm export
     std::vector<std::string>        imports;           // logical names imported
 };
@@ -119,6 +120,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         auto& u = graph.units[idx];
         CompileUnit cu;
         cu.source = u.path;
+        cu.localIncludeDirs = u.localIncludeDirs;
         const auto fname = object_filename_for(u.path);
         if (basenameCount[fname] > 1) {
             // Use <sanitized-pkg>/<parent-dir-name> as prefix to handle

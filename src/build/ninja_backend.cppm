@@ -72,6 +72,27 @@ std::string escape_ninja_path(const std::filesystem::path& p) {
     return out;
 }
 
+std::string escape_flag_path(const std::filesystem::path& p) {
+    auto s = p.string();
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == ' ' || c == '$' || c == ':')
+            out.push_back('$');
+        out.push_back(c);
+    }
+    return out;
+}
+
+std::string local_include_flags(const CompileUnit& cu) {
+    std::string flags;
+    for (auto const& inc : cu.localIncludeDirs) {
+        flags += " -I";
+        flags += escape_flag_path(inc);
+    }
+    return flags;
+}
+
 void write_file(const std::filesystem::path& p, std::string_view content) {
     std::filesystem::create_directories(p.parent_path());
     std::ofstream os(p);
@@ -294,13 +315,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     if constexpr (mcpp::platform::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
         append(std::format("  command = "
-               "$cxx $cxxflags{} -c $in -o $out\n", module_output_flag));
+               "$cxx $local_includes $cxxflags{} -c $in -o $out\n", module_output_flag));
     } else {
         append(std::format("  command = "
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
                  "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
                "fi && "
-               "$cxx $cxxflags{} -c $in -o $out && "
+               "$cxx $local_includes $cxxflags{} -c $in -o $out && "
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
                   "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
                  "mv \"$bmi_out.bak\" \"$bmi_out\"; "
@@ -314,7 +335,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("\n");
 
     append("rule cxx_object\n");
-    append("  command = $cxx $cxxflags -c $in -o $out\n");
+    append("  command = $cxx $local_includes $cxxflags -c $in -o $out\n");
     append("  description = OBJ $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -322,7 +343,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (need_c_rule) {
         append("rule c_object\n");
-        append("  command = $cc $cflags -c $in -o $out\n");
+        append("  command = $cc $local_includes $cflags -c $in -o $out\n");
         append("  description = CC $out\n");
         if (dyndep)
             append("  restat = 1\n");
@@ -348,7 +369,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("rule cxx_scan\n");
         if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
-            append("  command = $cxx $cxxflags -fmodules "
+            append("  command = $cxx $local_includes $cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$compile_target "
                    "-M -MM -MF $out.dep -E $in -o $compile_target\n");
@@ -358,10 +379,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 // Wrap in cmd /c for shell redirection (ninja on Windows uses
                 // CreateProcess which doesn't interpret > as redirect).
                 append("  command = cmd /c \"$scan_deps -format=p1689 -- "
-                       "$cxx $cxxflags -c $in -o $compile_target > $out\"\n");
+                       "$cxx $local_includes $cxxflags -c $in -o $compile_target > $out\"\n");
             } else {
                 append("  command = $scan_deps -format=p1689 -- "
-                       "$cxx $cxxflags -c $in -o $compile_target > $out\n");
+                       "$cxx $local_includes $cxxflags -c $in -o $compile_target > $out\n");
             }
         }
         append("  description = SCAN $out\n\n");
@@ -438,6 +459,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             append(std::format("build {} : cxx_scan {}\n", escape_ninja_path(ddi),
                                escape_ninja_path(cu.source)));
             append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
+            if (auto includes = local_include_flags(cu); !includes.empty())
+                append(std::format("  local_includes ={}\n", includes));
         }
         append("\n");
 
@@ -481,6 +504,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             } else {
                 out_line += "\n";
             }
+            if (auto includes = local_include_flags(cu); !includes.empty())
+                out_line += "  local_includes =" + includes + "\n";
             append(std::move(out_line));
         }
         append("\n");
@@ -519,6 +544,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (!implicit.empty())
                 out_line += " |" + implicit;
             out_line += "\n";
+            if (auto includes = local_include_flags(cu); !includes.empty())
+                out_line += "  local_includes =" + includes + "\n";
             // Clang needs $bmi_out to emit -fmodule-output=$bmi_out
             if (cu.providesModule) {
                 out_line += "  bmi_out = " + bmi_path(*cu.providesModule) + "\n";

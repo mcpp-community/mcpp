@@ -314,6 +314,23 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
 
 namespace {
 
+std::vector<std::filesystem::path>
+local_include_dirs_for(const std::filesystem::path& root,
+                       const mcpp::manifest::Manifest& manifest)
+{
+    std::vector<std::filesystem::path> dirs;
+    for (auto const& inc : manifest.buildConfig.includeDirs) {
+        if (inc.is_absolute()) {
+            dirs.push_back(inc);
+            continue;
+        }
+        for (auto& d : expand_dir_glob(root, inc.generic_string())) {
+            dirs.push_back(std::move(d));
+        }
+    }
+    return dirs;
+}
+
 // Phase 1: scan a single package, append units to result.graph.units;
 // errors go straight into result.errors. producerOf/edges are NOT built
 // here — the caller does that after all packages are scanned.
@@ -348,6 +365,7 @@ void scan_one_into(ScanResult& result,
         manifest.package.namespace_.empty()
             ? manifest.package.name
             : manifest.package.namespace_ + "." + manifest.package.name;
+    const auto localIncludeDirs = local_include_dirs_for(root, manifest);
 
     for (auto const& f : all_files) {
         auto r = scan_file(f, qualifiedName);
@@ -355,6 +373,7 @@ void scan_one_into(ScanResult& result,
             result.errors.push_back(r.error());
             continue;
         }
+        r->localIncludeDirs = localIncludeDirs;
         result.graph.units.push_back(std::move(*r));
     }
 }
@@ -422,6 +441,7 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
         for (auto const& g : p.manifest.modules.sources) {
             for (auto& f : expand_glob(p.root, g)) all_files.insert(f);
         }
+        const auto localIncludeDirs = local_include_dirs_for(p.root, p.manifest);
         for (auto const& f : all_files) {
             auto r = mcpp::modgraph::p1689::scan_file(
                 f, p.manifest.package.name, tc, tmpDir);
@@ -429,6 +449,7 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
                 result.errors.push_back(ScanError{ f, 0, r.error() });
                 continue;
             }
+            r->localIncludeDirs = localIncludeDirs;
             result.graph.units.push_back(std::move(*r));
         }
     }

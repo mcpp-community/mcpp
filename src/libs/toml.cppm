@@ -69,7 +69,8 @@ private:
 
 class Document {
 public:
-    explicit Document(Table root) : root_(std::move(root)) {}
+    explicit Document(Table root, std::set<std::string, std::less<>> explicitTables = {})
+        : root_(std::move(root)), explicitTables_(std::move(explicitTables)) {}
 
     const Table& root() const { return root_; }
     Table&       root()       { return root_; }
@@ -83,9 +84,13 @@ public:
     std::optional<bool>                   get_bool(std::string_view path) const;
     std::optional<std::vector<std::string>> get_string_array(std::string_view path) const;
     const Table*                          get_table(std::string_view path) const;
+    bool                                  has_explicit_table(std::string_view path) const {
+        return explicitTables_.contains(path);
+    }
 
 private:
     Table root_;
+    std::set<std::string, std::less<>> explicitTables_;
 };
 
 std::expected<Document, ParseError> parse(std::string_view src);
@@ -224,7 +229,12 @@ inline std::expected<Value, ParseError> read_array(Lexer& L) {
         if (!v) return std::unexpected(v.error());
         out.push_back(std::move(*v));
         L.skip_whitespace_and_comments();
-        if (L.peek() == ',') { L.advance(); continue; }
+        if (L.peek() == ',') {
+            L.advance();
+            L.skip_whitespace_and_comments();
+            if (L.peek() == ']') { L.advance(); break; }
+            continue;
+        }
         if (L.peek() == ']') { L.advance(); break; }
         return std::unexpected(ParseError{"expected ',' or ']' in array", L.position()});
     }
@@ -323,6 +333,13 @@ inline Table* dive(Table& root, const std::vector<std::string>& path, bool creat
     return cur;
 }
 
+inline std::string join_path(const std::vector<std::string>& path) {
+    return std::accumulate(path.begin(), path.end(), std::string{},
+        [](std::string a, const std::string& b){
+            return a.empty() ? b : a + "." + b;
+        });
+}
+
 } // namespace detail
 
 const Value* Document::get(std::string_view dotted_path) const {
@@ -385,6 +402,7 @@ std::expected<Document, ParseError> parse(std::string_view src) {
     using namespace detail;
     Lexer L { src };
     Table root;
+    std::set<std::string, std::less<>> explicitTables;
     Table* current_table = &root;
 
     while (true) {
@@ -407,11 +425,9 @@ std::expected<Document, ParseError> parse(std::string_view src) {
             auto* t = dive(root, *path);
             if (!t) return std::unexpected(ParseError{
                 std::format("table path '{}' conflicts with non-table value",
-                            std::accumulate(path->begin(), path->end(), std::string{},
-                                [](std::string a, const std::string& b){
-                                    return a.empty() ? b : a + "." + b;
-                                })),
+                            join_path(*path)),
                 L.position()});
+            explicitTables.insert(join_path(*path));
             current_table = t;
         } else {
             // key = value
@@ -436,7 +452,7 @@ std::expected<Document, ParseError> parse(std::string_view src) {
         }
     }
 
-    return Document{std::move(root)};
+    return Document{std::move(root), std::move(explicitTables)};
 }
 
 std::expected<Document, ParseError> parse_file(const std::filesystem::path& p) {

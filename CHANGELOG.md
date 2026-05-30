@@ -3,6 +3,18 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.31] — 2026-05-30
+
+### 修复
+
+- 修复 xlings 项目使用 mcpp 构建时 custom index 首次同步、project data
+  root 查找和 local index 相对路径解析的问题。
+- 支持 canonical nested dependency 写法:
+  `[dependencies] capi.lua = "0.0.3"` 和
+  `[dependencies.mcpplibs] capi.lua = "0.0.3"`。
+- 将 legacy flat dotted dependency key 兼容解析集中到 `mcpp.pm.compat`,
+  并标注该兼容路径将在 mcpp 1.0.0 移除。
+
 ## [0.0.14] — 2026-05-13
 
 LLVM / Clang 工具链支持与 xlings 镜像配置完善。

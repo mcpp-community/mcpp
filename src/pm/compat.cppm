@@ -82,6 +82,69 @@ inline std::string qualified_name(std::string_view ns,
     return std::format("{}.{}", ns, shortName);
 }
 
+// ─── Legacy dependency key parsing ─────────────────────────────────
+//
+// COMPAT: legacy flat dependency keys used quoted dotted names under a
+// dependency table:
+//
+//     [dependencies]
+//     "mcpplibs.cmdline" = "0.0.2"
+//
+// Canonical projects should use namespaced TOML tables instead:
+//
+//     [dependencies.mcpplibs]
+//     cmdline = "0.0.2"
+//
+// Nested default-namespace packages can also be written without quotes:
+//
+//     [dependencies]
+//     capi.lua = "0.0.3"
+//
+// This compatibility parser is slated for removal in mcpp 1.0.0.
+
+struct LegacyDependencyKey {
+    std::string namespace_;
+    std::string shortName;
+    bool        legacyDottedKey = false;
+};
+
+inline LegacyDependencyKey split_legacy_dependency_key(std::string_view key)
+{
+    auto dot = key.find('.');
+    if (dot == std::string_view::npos) {
+        return LegacyDependencyKey {
+            .namespace_ = std::string(mcpp::pm::kDefaultNamespace),
+            .shortName = std::string(key),
+            .legacyDottedKey = false,
+        };
+    }
+
+    return LegacyDependencyKey {
+        .namespace_ = std::string(key.substr(0, dot)),
+        .shortName = std::string(key.substr(dot + 1)),
+        .legacyDottedKey = true,
+    };
+}
+
+// Normalize legacy nested names after the first-dot split:
+//   ns="mcpplibs", shortName="capi.lua" → ns="mcpplibs.capi", shortName="lua".
+//
+// This preserves the fully qualified name while making dependency de-dup use
+// the same structured key as canonical [dependencies.mcpplibs] capi.lua.
+inline void normalize_nested_namespace(std::string& ns,
+                                       std::string& shortName,
+                                       bool legacyDottedKey)
+{
+    if (!legacyDottedKey) return;
+    if (ns.empty()) return;
+    auto dot = shortName.rfind('.');
+    if (dot == std::string::npos || dot + 1 >= shortName.size()) return;
+
+    ns += ".";
+    ns += shortName.substr(0, dot);
+    shortName = shortName.substr(dot + 1);
+}
+
 // ─── Index directory naming ──────────────────────────────────────────
 //
 // Maps (indexName, namespace, shortName) → the xpkgs subdirectory name
@@ -199,6 +262,17 @@ inline std::vector<std::string> install_dir_candidates(std::string_view ns,
     if (!ns.empty()) {
         candidates.push_back(std::format("{}-x-{}", ns, shortName));
         candidates.push_back(std::format("{}-x-{}", indexName, shortName));
+    }
+
+    // Legacy dotted dependency keys such as "mcpplibs.capi.lua" are parsed as
+    // ns="mcpplibs", shortName="capi.lua". Some xlings indices store these as
+    // nested namespaces: mcpplibs.capi-x-mcpplibs.capi.lua.
+    if (!ns.empty()) {
+        auto dot = shortName.rfind('.');
+        if (dot != std::string_view::npos) {
+            auto nestedNs = std::format("{}.{}", ns, shortName.substr(0, dot));
+            candidates.push_back(std::format("{}-x-{}", nestedNs, fqname));
+        }
     }
 
     return candidates;

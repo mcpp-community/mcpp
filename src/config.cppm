@@ -104,6 +104,51 @@ mcpp::xlings::Env make_project_xlings_env(const GlobalConfig& cfg,
     return { cfg.xlingsBinary, cfg.xlingsHome(), projectDir / ".mcpp" };
 }
 
+std::vector<std::filesystem::path>
+project_xlings_data_roots(const std::filesystem::path& projectDir)
+{
+    auto dotMcpp = projectDir / ".mcpp";
+    return {
+        dotMcpp / "data",
+        dotMcpp / ".xlings" / "data",
+    };
+}
+
+std::filesystem::path
+resolve_project_index_path(const std::filesystem::path& projectDir,
+                           const mcpp::pm::IndexSpec& spec)
+{
+    auto source = spec.path;
+    if (source.is_relative()) source = projectDir / source;
+    return source.lexically_normal();
+}
+
+bool project_index_data_initialized(const std::filesystem::path& projectDir)
+{
+    std::error_code ec;
+    for (auto const& data : project_xlings_data_roots(projectDir)) {
+        auto reposDir = data / "xim-index-repos";
+        if (std::filesystem::exists(reposDir / "xim-indexrepos.json", ec)) {
+            return true;
+        }
+        if (std::filesystem::is_directory(reposDir, ec)) {
+            for (auto const& entry : std::filesystem::directory_iterator(reposDir, ec)) {
+                if (entry.is_directory(ec) && std::filesystem::exists(entry.path() / "pkgs", ec)) {
+                    return true;
+                }
+            }
+        }
+        if (std::filesystem::is_directory(data, ec)) {
+            for (auto const& entry : std::filesystem::directory_iterator(data, ec)) {
+                if (entry.is_directory(ec) && std::filesystem::exists(entry.path() / "pkgs", ec)) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 // Check that the sandbox bootstrap completed successfully.
 // Returns empty string if ok, or a description of what's missing.
 std::string check_base_init(const GlobalConfig& cfg) {
@@ -160,7 +205,7 @@ void reset_registry(const GlobalConfig& cfg) {
 }
 
 // Ensure the project-level .mcpp/ directory exists and contains a
-// .xlings.json seeded with the custom (non-builtin, non-local) index
+// .xlings.json seeded with custom non-builtin index entries
 // entries. Returns true if a .mcpp/ directory was created/updated.
 bool ensure_project_index_dir(
     const GlobalConfig& cfg,
@@ -613,11 +658,17 @@ bool ensure_project_index_dir(
     const std::filesystem::path& projectDir,
     const std::map<std::string, mcpp::pm::IndexSpec>& indices)
 {
-    // Collect custom (non-builtin, non-local) indices that need xlings cloning.
+    // Collect custom non-builtin indices that need xlings project-scope data.
+    // Local path indices are also seeded so xlings can create its own
+    // project-local repo link and install packages from that index.
     std::vector<std::pair<std::string,std::string>> customRepos;
     for (auto& [name, spec] : indices) {
         if (spec.is_builtin()) continue;
-        if (spec.is_local())   continue;   // local path, mcpp reads directly
+        if (spec.is_local()) {
+            auto source = resolve_project_index_path(projectDir, spec);
+            customRepos.emplace_back(name, source.string());
+            continue;
+        }
         customRepos.emplace_back(name, spec.url);
     }
 
