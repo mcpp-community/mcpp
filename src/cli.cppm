@@ -1628,10 +1628,19 @@ prepare_build(bool print_fingerprint,
     // 0.0.10+: loadVersionDep accepts structured (ns, shortName) for
     // namespace-aware lookup. depName is the map key (qualified or bare),
     // kept for install() target formatting and error messages.
-    auto loadVersionDep = [&](const std::string& depName,
-                              const std::string& ns,
-                              const std::string& shortName,
-                              const std::string& version)
+    std::set<std::string> preinstallStack;
+    std::set<std::string> preinstallDone;
+
+    std::function<std::expected<LoadedDep, std::string>(
+        const std::string&,
+        const std::string&,
+        const std::string&,
+        const std::string&)> loadVersionDep;
+
+    loadVersionDep = [&](const std::string& depName,
+                         const std::string& ns,
+                         const std::string& shortName,
+                         const std::string& version)
         -> std::expected<LoadedDep, std::string>
     {
         auto cfg = get_cfg();
@@ -1641,23 +1650,28 @@ prepare_build(bool print_fingerprint,
         // ─── Routing: check if this dep's namespace maps to a custom index ──
         auto* idxSpec = findIndexForNs(ns);
 
-        // For local path indices, verify the xpkg.lua exists in the index.
-        // The local PATH index is for DISCOVERY only (finding the xpkg.lua
-        // descriptor); the actual package artifacts come from the URLs
-        // declared inside the lua, installed via global xlings. So we
-        // validate the lua exists, then fall through to the normal install
-        // flow below.
-        if (idxSpec && idxSpec->is_local()) {
+        const bool useProjectEnv = idxSpec && !idxSpec->is_builtin();
+
+        auto readLuaContent = [&]() -> std::optional<std::string> {
+            if (idxSpec && idxSpec->is_local()) {
+                auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
+                return mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
+                    indexPath, ns, shortName);
+            }
+            if (idxSpec && !idxSpec->is_builtin()) {
+                return mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
+                    *root, ns, shortName);
+            }
+            return fetcher.read_xpkg_lua(ns, shortName);
+        };
+
+        auto luaContent = readLuaContent();
+        if (idxSpec && idxSpec->is_local() && !luaContent) {
             auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
-            auto luaCheck = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                indexPath, ns, shortName);
-            if (!luaCheck) return std::unexpected(std::format(
+            return std::unexpected(std::format(
                 "dependency '{}': not found in local index at '{}'",
                 depName, indexPath.string()));
-            // lua found — fall through to normal install path resolution.
         }
-
-        const bool useProjectEnv = idxSpec && !idxSpec->is_builtin();
 
         // For custom indices, try project-level xlings data roots first.
         std::optional<std::filesystem::path> installed;
@@ -1670,6 +1684,59 @@ prepare_build(bool print_fingerprint,
         }
 
         if (!installed) {
+            if (luaContent) {
+                auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
+                if (field.kind == mcpp::manifest::McppField::TableBody) {
+                    auto depManifest = mcpp::manifest::synthesize_from_xpkg_lua(
+                        *luaContent, depName, version);
+                    if (!depManifest) {
+                        return std::unexpected(std::format(
+                            "dependency '{}': {}", depName, depManifest.error().format()));
+                    }
+
+                    auto preinstallKey = std::format("{}:{}@{}", ns, shortName, version);
+                    if (preinstallStack.contains(preinstallKey)) {
+                        return std::unexpected(std::format(
+                            "dependency '{}': cyclic mcpp.deps while preparing install hooks",
+                            depName));
+                    }
+
+                    if (!preinstallDone.contains(preinstallKey)) {
+                        preinstallStack.insert(preinstallKey);
+                        for (auto [childName, childSpec] : depManifest->dependencies) {
+                            mcpp::pm::compat::normalize_nested_namespace(
+                                childSpec.namespace_,
+                                childSpec.shortName,
+                                childSpec.legacyDottedKey);
+
+                            if (auto r = resolveSemver(childSpec, childName); !r) {
+                                preinstallStack.erase(preinstallKey);
+                                return std::unexpected(r.error());
+                            }
+
+                            if (!childSpec.isVersion()) continue;
+
+                            ResolvedKey childKey{
+                                childSpec.namespace_.empty()
+                                    ? std::string{mcpp::manifest::kDefaultNamespace}
+                                    : childSpec.namespace_,
+                                childSpec.shortName.empty() ? childName : childSpec.shortName,
+                            };
+                            if (auto child = loadVersionDep(
+                                    childName,
+                                    childKey.ns,
+                                    childKey.shortName,
+                                    childSpec.version); !child) {
+                                preinstallStack.erase(preinstallKey);
+                                return std::unexpected(child.error());
+                            }
+                        }
+                        preinstallStack.erase(preinstallKey);
+                        preinstallDone.insert(preinstallKey);
+                    }
+                }
+            }
+
             // xlings resolves packages by the full qualified name (ns.shortName)
             // as it appears in the index's name field. Use fqname, not the
             // map key (which may be a bare short name for default-ns deps).
@@ -1680,12 +1747,10 @@ prepare_build(bool print_fingerprint,
             auto install_one = [&](std::string target) -> std::expected<mcpp::xlings::CallResult, mcpp::pm::CallError> {
                 if (useProjectEnv) {
                     auto projEnv = mcpp::config::make_project_xlings_env(**cfg, *root);
-                    auto argsJson = std::format(
-                        R"({{"targets":["{}"],"yes":true}})", target);
-                    CliInstallProgress progress;
-                    auto r = mcpp::xlings::call(projEnv, "install_packages", argsJson, &progress);
-                    if (!r) return std::unexpected(mcpp::pm::CallError{r.error()});
-                    return *r;
+                    int directRc = mcpp::xlings::install_direct(projEnv, target, /*quiet=*/true);
+                    mcpp::xlings::CallResult result;
+                    result.exitCode = directRc;
+                    return result;
                 }
                 std::vector<std::string> targets{ std::move(target) };
                 CliInstallProgress progress;
@@ -1730,17 +1795,8 @@ prepare_build(bool print_fingerprint,
         std::filesystem::path verRoot = *installed;
 
         // Route xpkg.lua reading through the appropriate index.
-        std::optional<std::string> luaContent;
-        if (idxSpec && idxSpec->is_local()) {
-            auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
-            luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                indexPath, ns, shortName);
-        } else if (idxSpec && !idxSpec->is_builtin()) {
-            luaContent = mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
-                *root, ns, shortName);
-        }
         if (!luaContent) {
-            luaContent = fetcher.read_xpkg_lua(ns, shortName);
+            luaContent = readLuaContent();
         }
         if (!luaContent) return std::unexpected(std::format(
             "dependency '{}': index entry not found in local clone", depName));

@@ -685,6 +685,42 @@ bool ensure_project_index_dir(
     env.home = dotMcpp;
     mcpp::xlings::seed_xlings_json(env, customRepos);
 
+    auto exposeLocalIndex = [&](const std::string& name,
+                                const std::filesystem::path& source,
+                                const std::filesystem::path& dataRoot)
+    {
+        std::error_code ec2;
+        auto target = dataRoot / name;
+        std::filesystem::create_directories(dataRoot, ec2);
+        if (std::filesystem::exists(target / "pkgs", ec2)) {
+            return;
+        }
+        ec2.clear();
+        if (std::filesystem::exists(target, ec2) || std::filesystem::is_symlink(target, ec2)) {
+            std::filesystem::remove_all(target, ec2);
+        }
+        ec2.clear();
+        std::filesystem::create_directory_symlink(source, target, ec2);
+        if (!ec2 && std::filesystem::exists(target / "pkgs", ec2)) {
+            return;
+        }
+        ec2.clear();
+        std::filesystem::copy(
+            source,
+            target,
+            std::filesystem::copy_options::recursive
+                | std::filesystem::copy_options::skip_existing,
+            ec2);
+    };
+
+    for (auto& [name, spec] : indices) {
+        if (spec.is_builtin() || !spec.is_local()) continue;
+        auto source = resolve_project_index_path(projectDir, spec);
+        if (!std::filesystem::exists(source / "pkgs", ec)) continue;
+        exposeLocalIndex(name, source, dotMcpp / ".xlings" / "data");
+        exposeLocalIndex(name, source, dotMcpp / "data");
+    }
+
     // Project-scoped xlings installs custom-index packages in an additive
     // project data dir. Expose the global official xim index there too, so
     // package deps like `xim:python@latest` can resolve without falling back
