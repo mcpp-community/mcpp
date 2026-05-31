@@ -3,6 +3,15 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.39] — 2026-06-01
+
+### 修复
+
+- 修复 project-local index 包安装时没有走项目 xlings 数据根的问题,本地 path
+  索引现在通过 xlings CLI 直接安装到项目数据目录,避免 hook 查找不到同索引包。
+- 修复包 install hook 运行前 `mcpp.deps` 尚未安装的问题,库/头文件依赖可以继续
+  留在 `mcpp.deps`,只有 hook 执行工具需要放入 xpm deps。
+
 ## [0.0.38] — 2026-05-31
 
 ### 新增
