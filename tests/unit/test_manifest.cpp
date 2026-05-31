@@ -201,6 +201,47 @@ package = {
     EXPECT_EQ(m->modules.sources[0], "*/src/*.c");
 }
 
+TEST(SynthesizeFromXpkgLua, AppliesCurrentPlatformMcppOverlay) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "tinyc",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources      = { "*/src/common.c" },
+        include_dirs = { "*/include" },
+        cflags       = { "-DCOMMON=1" },
+        deps         = { ["compat.base"] = "1.0.0" },
+        targets      = { ["tinyc"] = { kind = "lib" } },
+        linux = {
+            sources      = { "*/src/linux.c" },
+            include_dirs = { "*/src/linux" },
+            cflags       = { "-DLINUX=1" },
+            deps         = { ["compat.x11"] = "1.8.13" },
+        },
+        windows = {
+            sources = { "*/src/win32.c" },
+            cflags  = { "-DWINDOWS=1" },
+        },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    ASSERT_EQ(m->modules.sources.size(), 2u);
+    EXPECT_EQ(m->modules.sources[0], "*/src/common.c");
+    EXPECT_EQ(m->modules.sources[1], "*/src/linux.c");
+    ASSERT_EQ(m->buildConfig.includeDirs.size(), 2u);
+    EXPECT_EQ(m->buildConfig.includeDirs[0], "*/include");
+    EXPECT_EQ(m->buildConfig.includeDirs[1], "*/src/linux");
+    ASSERT_EQ(m->buildConfig.cflags.size(), 2u);
+    EXPECT_EQ(m->buildConfig.cflags[0], "-DCOMMON=1");
+    EXPECT_EQ(m->buildConfig.cflags[1], "-DLINUX=1");
+    EXPECT_EQ(m->dependencies.count("compat.base"), 1u);
+    EXPECT_EQ(m->dependencies.count("compat.x11"), 1u);
+}
+
 TEST(SynthesizeFromXpkgLua, GeneratedFiles) {
     constexpr auto src = R"(
 package = {

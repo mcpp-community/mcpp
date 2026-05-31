@@ -84,3 +84,58 @@ TEST(Config, ProjectIndexJsonEscapesLocalIndexPath) {
     is.close();
     std::filesystem::remove_all(project);
 }
+
+TEST(Config, ProjectIndexDirExposesOfficialXimIndex) {
+    auto project = make_tempdir("mcpp-config-project-xim-index");
+    auto registry = make_tempdir("mcpp-config-registry");
+    auto official = registry / "data" / "xim-pkgindex";
+    std::filesystem::create_directories(official / "pkgs" / "p");
+    {
+        std::ofstream os(official / "pkgs" / "p" / "python.lua");
+        os << "package = { name = \"python\" }\n";
+    }
+
+    auto localIndex = project / "compat";
+    std::filesystem::create_directories(localIndex / "pkgs" / "c");
+
+    mcpp::pm::IndexSpec local;
+    local.name = "compat";
+    local.path = localIndex;
+
+    std::map<std::string, mcpp::pm::IndexSpec> indices;
+    indices.emplace(local.name, local);
+
+    mcpp::config::GlobalConfig cfg;
+    cfg.registryDir = registry;
+    ASSERT_TRUE(mcpp::config::ensure_project_index_dir(cfg, project, indices));
+
+    auto projectOfficial =
+        project / ".mcpp" / ".xlings" / "data" / "xim-pkgindex";
+    EXPECT_TRUE(std::filesystem::exists(projectOfficial / "pkgs" / "p" / "python.lua"));
+
+    std::filesystem::remove_all(project);
+    std::filesystem::remove_all(registry);
+}
+
+TEST(Config, ProjectLocalIndexStaleCacheIsRemoved) {
+    auto project = make_tempdir("mcpp-config-local-index-cache");
+    auto localIndex = project / "compat";
+    std::filesystem::create_directories(localIndex / "pkgs" / "c");
+    {
+        std::ofstream os(localIndex / ".xlings-index-cache.json");
+        os << R"({"entries":{"compat.lz4":{"path":"/tmp/deleted/pkgs/c/compat.lz4.lua"}}})";
+    }
+
+    mcpp::pm::IndexSpec local;
+    local.name = "compat";
+    local.path = localIndex;
+
+    std::map<std::string, mcpp::pm::IndexSpec> indices;
+    indices.emplace(local.name, local);
+
+    mcpp::config::GlobalConfig cfg;
+    ASSERT_TRUE(mcpp::config::ensure_project_index_dir(cfg, project, indices));
+    EXPECT_FALSE(std::filesystem::exists(localIndex / ".xlings-index-cache.json"));
+
+    std::filesystem::remove_all(project);
+}

@@ -34,7 +34,8 @@ namespace mcpp::build {
 namespace {
 
 bool is_c_source(const std::filesystem::path& src) {
-    return src.extension() == ".c";
+    auto ext = src.extension();
+    return ext == ".c" || ext == ".m";
 }
 
 // Split a flag string into individual tokens AND un-escape ninja-style

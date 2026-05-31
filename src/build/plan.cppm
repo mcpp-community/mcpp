@@ -8,6 +8,7 @@ export module mcpp.build.plan;
 import std;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
+import mcpp.modgraph.scanner;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
 import mcpp.platform;
@@ -17,6 +18,7 @@ export namespace mcpp::build {
 struct CompileUnit {
     std::filesystem::path           source;
     std::filesystem::path           object;            // relative to plan.outputDir
+    std::string                     packageName;
     std::vector<std::filesystem::path> localIncludeDirs;
     std::vector<std::string>        packageCflags;
     std::vector<std::string>        packageCxxflags;
@@ -28,6 +30,8 @@ struct LinkUnit {
     std::string                     targetName;
     enum Kind { Binary, StaticLibrary, SharedLibrary, TestBinary } kind = Binary;
     std::vector<std::filesystem::path> objects;        // relative to plan.outputDir
+    std::vector<std::filesystem::path> implicitInputs; // relative to plan.outputDir
+    std::vector<std::string>        linkFlags;          // per-link edge flags
     std::filesystem::path           output;            // relative to plan.outputDir
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
 };
@@ -55,6 +59,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                     const mcpp::toolchain::Fingerprint&     fp,
                     const mcpp::modgraph::Graph&            graph,
                     const std::vector<std::size_t>&         topoOrder,
+                    const std::vector<mcpp::modgraph::PackageRoot>& packages,
                     const std::filesystem::path&            projectRoot,
                     const std::filesystem::path&            outputDir,
                     const std::filesystem::path&            stdBmiPath,
@@ -82,6 +87,72 @@ std::string object_filename_for(const std::filesystem::path& src) {
     return stem + (src.extension() == ".cppm" ? ".m.o" : ".o");
 }
 
+std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
+    if (!manifest.package.namespace_.empty()
+        && manifest.package.name.starts_with(manifest.package.namespace_ + ".")) {
+        return manifest.package.name;
+    }
+    if (manifest.package.namespace_.empty()) return manifest.package.name;
+    return manifest.package.namespace_ + "." + manifest.package.name;
+}
+
+std::vector<std::string> dependency_name_candidates(
+    const std::string& depName,
+    const mcpp::manifest::DependencySpec& spec)
+{
+    std::vector<std::string> out;
+    auto push = [&](std::string value) {
+        if (value.empty()) return;
+        if (std::find(out.begin(), out.end(), value) == out.end())
+            out.push_back(std::move(value));
+    };
+
+    push(depName);
+    if (!spec.shortName.empty()) push(spec.shortName);
+    if (!spec.namespace_.empty() && !spec.shortName.empty()) {
+        push(spec.namespace_ + "." + spec.shortName);
+    }
+    return out;
+}
+
+std::filesystem::path target_output(const mcpp::manifest::Target& t) {
+    if (t.kind == mcpp::manifest::Target::Library) {
+        return std::filesystem::path("bin") /
+               std::format("{}{}{}", mcpp::platform::lib_prefix, t.name,
+                           mcpp::platform::static_lib_ext);
+    }
+    if (t.kind == mcpp::manifest::Target::SharedLibrary) {
+        return std::filesystem::path("bin") /
+               std::format("{}{}{}", mcpp::platform::lib_prefix, t.name,
+                           mcpp::platform::shared_lib_ext);
+    }
+    return std::filesystem::path("bin") /
+           std::format("{}{}", t.name, mcpp::platform::exe_suffix);
+}
+
+bool is_implementation_source(const std::filesystem::path& source) {
+    auto ext = source.extension();
+    return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".c" || ext == ".m";
+}
+
+std::vector<std::string> shared_library_link_flags(const mcpp::manifest::Target& t) {
+    std::vector<std::string> flags;
+    if constexpr (mcpp::platform::is_windows) {
+        flags.push_back(target_output(t).generic_string());
+    } else {
+        flags.push_back("-L" + target_output(t).parent_path().generic_string());
+        if constexpr (mcpp::platform::supports_rpath) {
+            if constexpr (mcpp::platform::is_macos) {
+                flags.push_back("-Wl,-rpath,@loader_path");
+            } else {
+                flags.push_back("-Wl,-rpath,'$$ORIGIN'");
+            }
+        }
+        flags.push_back("-l" + t.name);
+    }
+    return flags;
+}
+
 } // namespace
 
 BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
@@ -89,6 +160,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                     const mcpp::toolchain::Fingerprint&     fp,
                     const mcpp::modgraph::Graph&            graph,
                     const std::vector<std::size_t>&         topoOrder,
+                    const std::vector<mcpp::modgraph::PackageRoot>& packages,
                     const std::filesystem::path&            projectRoot,
                     const std::filesystem::path&            outputDir,
                     const std::filesystem::path&            stdBmiPath,
@@ -122,6 +194,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         auto& u = graph.units[idx];
         CompileUnit cu;
         cu.source = u.path;
+        cu.packageName = u.packageName;
         cu.localIncludeDirs = u.localIncludeDirs;
         cu.packageCflags = u.packageCflags;
         cu.packageCxxflags = u.packageCxxflags;
@@ -163,6 +236,116 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             entryFilesAcrossTargets.insert(projectRoot / t.main);
         }
     }
+    for (auto const& p : packages) {
+        for (auto const& t : p.manifest.targets) {
+            if (!t.main.empty()) {
+                entryFilesAcrossTargets.insert(p.root / t.main);
+            }
+        }
+    }
+
+    struct SharedDepTarget {
+        std::size_t                   packageIndex = 0;
+        std::string                   packageName;
+        mcpp::manifest::Target        target;
+        std::filesystem::path         output;
+    };
+    std::vector<SharedDepTarget> sharedDepTargets;
+    std::set<std::string> sharedDepPackages;
+    std::map<std::size_t, std::vector<std::size_t>> sharedTargetsByPackage;
+    std::map<std::string, std::size_t, std::less<>> packageIndexByName;
+    for (std::size_t i = 0; i < packages.size(); ++i) {
+        auto const& p = packages[i];
+        packageIndexByName[qualified_package_name(p.manifest)] = i;
+        packageIndexByName[p.manifest.package.name] = i;
+    }
+
+    for (std::size_t i = 1; i < packages.size(); ++i) {
+        auto const& p = packages[i];
+        auto qname = qualified_package_name(p.manifest);
+        for (auto const& t : p.manifest.targets) {
+            if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
+            sharedDepPackages.insert(qname);
+            const auto targetIndex = sharedDepTargets.size();
+            sharedDepTargets.push_back(SharedDepTarget{
+                .packageIndex = i,
+                .packageName = qname,
+                .target      = t,
+                .output      = target_output(t),
+            });
+            sharedTargetsByPackage[i].push_back(targetIndex);
+        }
+    }
+
+    std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
+    for (std::size_t i = 0; i < packages.size(); ++i) {
+        for (auto const& [depName, spec] : packages[i].manifest.dependencies) {
+            for (auto const& candidate : dependency_name_candidates(depName, spec)) {
+                auto it = packageIndexByName.find(candidate);
+                if (it == packageIndexByName.end() || it->second == i) continue;
+                auto& deps = directPackageDeps[i];
+                if (std::find(deps.begin(), deps.end(), it->second) == deps.end())
+                    deps.push_back(it->second);
+                break;
+            }
+        }
+    }
+
+    auto append_direct_shared_deps = [&](LinkUnit& lu, std::size_t packageIndex) {
+        auto depsIt = directPackageDeps.find(packageIndex);
+        if (depsIt == directPackageDeps.end()) return;
+        for (auto depIndex : depsIt->second) {
+            auto targetsIt = sharedTargetsByPackage.find(depIndex);
+            if (targetsIt == sharedTargetsByPackage.end()) continue;
+            for (auto targetIndex : targetsIt->second) {
+                auto const& dep = sharedDepTargets[targetIndex];
+                lu.implicitInputs.push_back(dep.output);
+                auto flags = shared_library_link_flags(dep.target);
+                lu.linkFlags.insert(lu.linkFlags.end(), flags.begin(), flags.end());
+            }
+        }
+    };
+
+    auto append_shared_deps_for_linked_objects = [&](LinkUnit& lu) {
+        std::set<std::size_t> linkedPackages;
+        linkedPackages.insert(0);
+        for (auto& cu : plan.compileUnits) {
+            if (sharedDepPackages.contains(cu.packageName)) continue;
+            auto it = packageIndexByName.find(cu.packageName);
+            if (it == packageIndexByName.end()) continue;
+            linkedPackages.insert(it->second);
+        }
+
+        for (auto packageIndex : linkedPackages) {
+            append_direct_shared_deps(lu, packageIndex);
+        }
+    };
+
+    auto append_package_objects = [&](LinkUnit& lu, const std::string& packageName) {
+        for (auto& cu : plan.compileUnits) {
+            if (cu.packageName != packageName) continue;
+            if (cu.source.extension() == ".cppm") {
+                lu.objects.push_back(cu.object);
+            }
+        }
+        for (auto& cu : plan.compileUnits) {
+            if (cu.packageName != packageName) continue;
+            if (!is_implementation_source(cu.source)) continue;
+            if (lu.entryMain && cu.source == *lu.entryMain) continue;
+            if (entryFilesAcrossTargets.contains(cu.source)) continue;
+            lu.objects.push_back(cu.object);
+        }
+    };
+
+    for (auto const& dep : sharedDepTargets) {
+        LinkUnit lu;
+        lu.targetName = dep.target.name;
+        lu.kind       = LinkUnit::SharedLibrary;
+        lu.output     = dep.output;
+        append_package_objects(lu, dep.packageName);
+        append_direct_shared_deps(lu, dep.packageIndex);
+        plan.linkUnits.push_back(std::move(lu));
+    }
 
     // 4. Link units (one per [targets.X])
     // When any TestBinary target exists, skip Binary/Library/SharedLibrary
@@ -179,29 +362,24 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.targetName = t.name;
         if (t.kind == mcpp::manifest::Target::Library) {
             lu.kind   = LinkUnit::StaticLibrary;
-            lu.output = std::filesystem::path("bin") /
-                        std::format("{}{}{}", mcpp::platform::lib_prefix, t.name,
-                                    mcpp::platform::static_lib_ext);
+            lu.output = target_output(t);
         } else if (t.kind == mcpp::manifest::Target::SharedLibrary) {
             lu.kind   = LinkUnit::SharedLibrary;
-            lu.output = std::filesystem::path("bin") /
-                        std::format("{}{}{}", mcpp::platform::lib_prefix, t.name,
-                                    mcpp::platform::shared_lib_ext);
+            lu.output = target_output(t);
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {
             lu.kind   = LinkUnit::TestBinary;
-            lu.output = std::filesystem::path("bin") /
-                        std::format("{}{}", t.name, mcpp::platform::exe_suffix);
+            lu.output = target_output(t);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         } else {
             lu.kind   = LinkUnit::Binary;
-            lu.output = std::filesystem::path("bin") /
-                        std::format("{}{}", t.name, mcpp::platform::exe_suffix);
+            lu.output = target_output(t);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         }
 
         // Include all module units' objects (they may be needed at runtime via global init).
         // For binary target, also include main.cpp's object if main is present.
         for (auto& cu : plan.compileUnits) {
+            if (sharedDepPackages.contains(cu.packageName)) continue;
             if (cu.source.extension() == ".cppm") {
                 lu.objects.push_back(cu.object);
             }
@@ -212,6 +390,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             CompileUnit main_cu;
             main_cu.source = *lu.entryMain;
             main_cu.object = std::filesystem::path("obj") / object_filename_for(*lu.entryMain);
+            main_cu.packageName = qualified_package_name(manifest);
 
             // We didn't scan main.cpp earlier (it's not in scanner output unless globbed in).
             // Best-effort: scan its imports here.
@@ -251,11 +430,16 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         // file registered as another target's entryMain (each binary's main()
         // is exclusive to that binary).
         for (auto& cu : plan.compileUnits) {
-            auto ext = cu.source.extension();
-            if (ext != ".cpp" && ext != ".cc" && ext != ".cxx" && ext != ".c") continue;
+            if (sharedDepPackages.contains(cu.packageName)) continue;
+            if (!is_implementation_source(cu.source)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;     // own entry: already added above
             if (entryFilesAcrossTargets.contains(cu.source)) continue;     // foreign entry: skip
             lu.objects.push_back(cu.object);
+        }
+
+        if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary
+            || lu.kind == LinkUnit::SharedLibrary) {
+            append_shared_deps_for_linked_objects(lu);
         }
 
         plan.linkUnits.push_back(std::move(lu));

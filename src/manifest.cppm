@@ -7,6 +7,7 @@ import mcpp.libs.toml;
 import mcpp.pm.dep_spec;     // M5.x pm/ subsystem refactor: DependencySpec lives here
 import mcpp.pm.compat;       // Legacy dependency-key compatibility helpers
 import mcpp.pm.index_spec;   // IndexSpec for [indices] section
+import mcpp.platform;
 
 export namespace mcpp::manifest {
 
@@ -957,7 +958,70 @@ struct LuaCursor {
             else { ++pos; }
         }
     }
+
+    // Read and consume a balanced { ... } block, returning the inner text.
+    std::string read_table_body() {
+        if (!consume('{')) return {};
+        auto start = pos;
+        int depth = 1;
+        while (!eof() && depth > 0) {
+            char c = peek();
+            if (c == '"' || c == '\'') {
+                read_string();
+                continue;
+            }
+            if (c == '-' && pos + 1 < text.size() && text[pos + 1] == '-') {
+                while (!eof() && peek() != '\n') ++pos;
+                continue;
+            }
+            if (c == '{') {
+                ++depth;
+                ++pos;
+                continue;
+            }
+            if (c == '}') {
+                --depth;
+                if (depth == 0) {
+                    auto end = pos;
+                    ++pos;
+                    return std::string(text.substr(start, end - start));
+                }
+                ++pos;
+                continue;
+            }
+            ++pos;
+        }
+        return {};
+    }
 };
+
+std::string top_level_table_body_for_key(std::string_view body, std::string_view wantedKey) {
+    LuaCursor cur { body };
+    cur.skip_ws_and_comments();
+    while (!cur.eof()) {
+        auto key = cur.read_key();
+        if (key.empty()) {
+            cur.skip_ws_and_comments();
+            if (cur.eof()) break;
+            ++cur.pos;
+            continue;
+        }
+        cur.skip_ws_and_comments();
+        if (!cur.consume('=')) {
+            cur.skip_ws_and_comments();
+            continue;
+        }
+        cur.skip_ws_and_comments();
+        if (key == wantedKey) {
+            return cur.read_table_body();
+        }
+        if (cur.peek() == '{') cur.skip_table();
+        else if (cur.peek() == '"' || cur.peek() == '\'') (void)cur.read_string();
+        else (void)cur.read_bareword();
+        cur.skip_ws_and_comments();
+    }
+    return {};
+}
 
 // Strip Lua line comments (`-- ...\n`) and string contents from text,
 // replacing them with spaces of the same length so positions are
@@ -1215,6 +1279,11 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 packageName),
             std::format("xpkg-lua of {}@{}", packageName, packageVersion),
             0, 0});
+    }
+    if (auto platformBody = top_level_table_body_for_key(body, mcpp::platform::xpkg_platform);
+        !platformBody.empty()) {
+        body += "\n";
+        body += platformBody;
     }
 
     Manifest m;

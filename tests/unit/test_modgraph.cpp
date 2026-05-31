@@ -143,6 +143,20 @@ TEST(Scanner, RejectsHeaderUnit) {
     std::filesystem::remove_all(dir);
 }
 
+TEST(Scanner, ObjectiveCSourceIsCLike) {
+    auto dir = make_tempdir("mcpp-scanner-objc");
+    write(dir / "src" / "window.m",
+          "import Cocoa;\n"
+          "int answer(void) { return 42; }\n");
+
+    auto u = scan_file(dir / "src" / "window.m", "pkg");
+    ASSERT_TRUE(u.has_value()) << u.error().format();
+    EXPECT_FALSE(u->provides.has_value());
+    EXPECT_TRUE(u->requires_.empty());
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Validate, ModuleNameNotRequiredToMatchPackageName) {
     // 0.0.10+: module name does NOT need to be prefixed by package name.
     // The library author decides the module naming convention.
