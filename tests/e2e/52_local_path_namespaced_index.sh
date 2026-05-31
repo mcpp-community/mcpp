@@ -87,6 +87,7 @@ EOF
 mkdir -p "$TMP/fake-bin"
 FAKE_REGISTRY="$TMP/fake-registry"
 FAKE_LOG="$TMP/fake-xlings.log"
+FAKE_DIRECT_LOG="$TMP/fake-xlings-direct.log"
 mkdir -p "$FAKE_REGISTRY/data"
 if [[ -d "$USER_MCPP/registry/data/xpkgs" ]]; then
     ln -s "$USER_MCPP/registry/data/xpkgs" "$FAKE_REGISTRY/data/xpkgs"
@@ -114,7 +115,25 @@ if [[ "${1:-}" == "interface" && "${2:-}" == "install_packages" ]]; then
         fi
         shift
     done
-    printf '{"kind":"result","exitCode":1}\n'
+    printf '{"kind":"result","exitCode":0}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "install" ]]; then
+    printf '%s\n' "$*" > "${FAKE_XLINGS_DIRECT_LOG:?}"
+    if [[ ! -d "${XLINGS_PROJECT_DIR:?}/.xlings/data/compat/pkgs" \
+       && ! -d "${XLINGS_PROJECT_DIR:?}/data/compat/pkgs" ]]; then
+        echo "missing project local path index link" >&2
+        find "${XLINGS_PROJECT_DIR:?}" -maxdepth 4 -type d -print >&2 2>/dev/null || true
+        exit 23
+    fi
+    install_root="${XLINGS_PROJECT_DIR:?}/.xlings/data/xpkgs/compat-x-compat.cfg/1.0.0"
+    mkdir -p "$install_root/src"
+    cat > "$install_root/src/cfg.c" <<'SRC'
+int cfg_value(void) {
+    return 42;
+}
+SRC
     exit 0
 fi
 
@@ -171,8 +190,11 @@ main = "src/main.cpp"
 EOF
 
 UPDATE_LOG="$TMP/fake-xlings-update.log"
-if FAKE_XLINGS_LOG="$FAKE_LOG" FAKE_XLINGS_UPDATE_LOG="$UPDATE_LOG" "$MCPP" build > fetch.log 2>&1; then
-    echo "FAIL: clean local path dependency unexpectedly built without package install"
+if ! FAKE_XLINGS_LOG="$FAKE_LOG" \
+     FAKE_XLINGS_DIRECT_LOG="$FAKE_DIRECT_LOG" \
+     FAKE_XLINGS_UPDATE_LOG="$UPDATE_LOG" \
+     "$MCPP" build > fetch.log 2>&1; then
+    echo "FAIL: clean local path dependency should use direct xlings install"
     cat fetch.log
     exit 1
 fi
@@ -183,10 +205,17 @@ if [[ -f "$UPDATE_LOG" ]]; then
     exit 1
 fi
 
-grep -Fq '"compat:compat.cfg@1.0.0"' "$FAKE_LOG" || {
-    echo "FAIL: clean local path install target should use full package name"
+if [[ -f "$FAKE_LOG" ]]; then
+    echo "FAIL: project local path install should use direct xlings install, not interface"
+    cat "$FAKE_LOG"
+    cat fetch.log
+    exit 1
+fi
+
+grep -Fq 'install compat:compat.cfg@1.0.0 -y' "$FAKE_DIRECT_LOG" || {
+    echo "FAIL: clean local path install target should use direct xlings with full package name"
     echo "recorded:"
-    cat "$FAKE_LOG" 2>/dev/null || true
+    cat "$FAKE_DIRECT_LOG" 2>/dev/null || true
     echo "build log:"
     cat fetch.log
     exit 1
