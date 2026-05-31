@@ -91,6 +91,7 @@ struct BuildConfig {
     // Empty cStandard → backend default ("c11" today).
     std::vector<std::string>           cflags;
     std::vector<std::string>           cxxflags;
+    std::vector<std::string>           ldflags;
     std::string                         cStandard;
 };
 
@@ -628,6 +629,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_bool("build.static_stdlib")) m.buildConfig.staticStdlib = *v;
     if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
+    if (auto v = doc->get_string_array("build.ldflags"))  m.buildConfig.ldflags  = *v;
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
 
     // [lib] — library root convention (cargo-style).
@@ -1396,10 +1398,10 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.consume('}');
         }
-        else if (key == "cflags" || key == "cxxflags") {
+        else if (key == "cflags" || key == "cxxflags" || key == "ldflags") {
             // `{ "-Dfoo", "-Wall", ... }` — appended to the per-rule baseline
             // by ninja_backend. cflags goes to the C rule (.c files), cxxflags
-            // to C++ rule (.cpp/.cc/.cxx/.cppm).
+            // to C++ rule (.cpp/.cc/.cxx/.cppm), ldflags to link commands.
             if (!cur.consume('{')) {
                 return std::unexpected(ManifestError{
                     std::format("expected '{{' after `{} =`", key),
@@ -1407,7 +1409,8 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.skip_ws_and_comments();
             auto& target = (key == "cflags")
-                ? m.buildConfig.cflags : m.buildConfig.cxxflags;
+                ? m.buildConfig.cflags
+                : (key == "cxxflags" ? m.buildConfig.cxxflags : m.buildConfig.ldflags);
             while (!cur.eof() && cur.peek() != '}') {
                 auto s = cur.read_string();
                 if (!s.empty()) target.push_back(std::move(s));

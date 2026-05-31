@@ -597,6 +597,10 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
         s += " cxxflag:";
         s += flag;
     }
+    for (auto const& flag : m.buildConfig.ldflags) {
+        s += " ldflag:";
+        s += flag;
+    }
     return s;
 }
 
@@ -621,6 +625,10 @@ std::string canonical_package_build_metadata(
         }
         for (auto const& flag : pkg.manifest.buildConfig.cxxflags) {
             s += " cxxflag:";
+            s += flag;
+        }
+        for (auto const& flag : pkg.manifest.buildConfig.ldflags) {
+            s += " ldflag:";
             s += flag;
         }
         for (auto const& [path, content] : pkg.manifest.buildConfig.generatedFiles) {
@@ -1541,6 +1549,7 @@ prepare_build(bool print_fingerprint,
         std::string source;             // "version" | "path" | "git" — for type-clash check
         std::size_t depIndex = 0;       // index into dep_manifests/packages-1 (for in-place re-fetch)
         std::vector<std::filesystem::path> includeDirsAdded;  // entries appended to m->buildConfig.includeDirs by this dep
+        std::vector<std::string> linkFlagsAdded;  // entries appended to m->buildConfig.ldflags by this dep
     };
     std::map<ResolvedKey, ResolvedRecord> resolved;
 
@@ -1824,6 +1833,48 @@ prepare_build(bool print_fingerprint,
         }
     };
 
+    auto normalizeDepLdflag = [](const std::filesystem::path& depRoot,
+                                 const std::string& flag) {
+        auto absolute_path = [&](std::string_view raw) {
+            std::filesystem::path p{std::string(raw)};
+            if (p.is_absolute() || raw.starts_with("$")) return p;
+            return depRoot / p;
+        };
+
+        if (flag.starts_with("-L") && flag.size() > 2) {
+            return "-L" + absolute_path(std::string_view(flag).substr(2)).string();
+        }
+
+        constexpr std::string_view rpathPrefix = "-Wl,-rpath,";
+        if (flag.starts_with(rpathPrefix) && flag.size() > rpathPrefix.size()) {
+            return std::string(rpathPrefix)
+                 + absolute_path(std::string_view(flag).substr(rpathPrefix.size())).string();
+        }
+
+        return flag;
+    };
+
+    auto propagateLinkFlags = [&](const std::filesystem::path& depRoot,
+                                  const mcpp::manifest::Manifest& depManifest)
+        -> std::vector<std::string>
+    {
+        std::vector<std::string> added;
+        for (auto const& flag : depManifest.buildConfig.ldflags) {
+            auto normalized = normalizeDepLdflag(depRoot, flag);
+            m->buildConfig.ldflags.push_back(normalized);
+            added.push_back(std::move(normalized));
+        }
+        return added;
+    };
+
+    auto removeLinkFlags = [&](const std::vector<std::string>& flags) {
+        auto& ldflags = m->buildConfig.ldflags;
+        for (auto const& flag : flags) {
+            auto pos = std::find(ldflags.begin(), ldflags.end(), flag);
+            if (pos != ldflags.end()) ldflags.erase(pos);
+        }
+    };
+
     // Stage a dep's source files into a fresh directory, rewriting their
     // module / import declarations against `rename`. Used by the multi-
     // version mangling fallback (Level 1) so two cross-major copies of
@@ -2065,6 +2116,7 @@ prepare_build(bool print_fingerprint,
                     });
                     packages.push_back({secStage, *dep_manifests.back()});
                     auto added = propagateIncludeDirs(secStage, *dep_manifests.back());
+                    auto linkFlagsAdded = propagateLinkFlags(secStage, *dep_manifests.back());
 
                     ResolvedKey mangledKey{key.ns, mangled};
                     resolved[mangledKey] = ResolvedRecord{
@@ -2074,6 +2126,7 @@ prepare_build(bool print_fingerprint,
                         .source            = "version",
                         .depIndex          = dep_manifests.size() - 1,
                         .includeDirsAdded  = std::move(added),
+                        .linkFlagsAdded    = std::move(linkFlagsAdded),
                     };
 
                     mcpp::ui::info("Mangled",
@@ -2136,7 +2189,9 @@ prepare_build(bool print_fingerprint,
                 }
 
                 removeIncludeDirs(it->second.includeDirsAdded);
+                removeLinkFlags(it->second.linkFlagsAdded);
                 auto added = propagateIncludeDirs(newRoot, newManifest);
+                auto linkFlagsAdded = propagateLinkFlags(newRoot, newManifest);
 
                 // Replace in dep_manifests + packages. depIndex is the slot
                 // in dep_manifests; packages = [main, dep_0, dep_1, …], so
@@ -2147,6 +2202,7 @@ prepare_build(bool print_fingerprint,
 
                 it->second.version            = *merged;
                 it->second.includeDirsAdded   = std::move(added);
+                it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
                 if (it->second.depIndex < dep_cache_identities.size())
                     dep_cache_identities[it->second.depIndex].version = *merged;
 
@@ -2284,6 +2340,7 @@ prepare_build(bool print_fingerprint,
         // expansion against dep_root) — stash it so a SemVer merge can
         // evict these entries on a re-fetch.
         auto includeDirsAdded = propagateIncludeDirs(dep_root, *dep_manifest);
+        auto linkFlagsAdded = propagateLinkFlags(dep_root, *dep_manifest);
 
         // Move the manifest into stable storage so we can later look it up
         // by depIndex (the SemVer merger needs to overwrite the slot).
@@ -2307,6 +2364,7 @@ prepare_build(bool print_fingerprint,
             .source            = sourceKind,
             .depIndex          = dep_manifests.size() - 1,
             .includeDirsAdded  = std::move(includeDirsAdded),
+            .linkFlagsAdded    = std::move(linkFlagsAdded),
         };
 
         // Recurse: the dep's own [dependencies] become new worklist items.

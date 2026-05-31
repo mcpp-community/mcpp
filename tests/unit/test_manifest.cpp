@@ -153,6 +153,7 @@ version = "0.1.0"
 sources    = ["src/**/*.{cppm,c}"]
 cflags     = ["-Wall", "-DFOO=1"]
 cxxflags   = ["-Wextra"]
+ldflags    = ["-lfoo", "-Wl,--as-needed"]
 c_standard = "c11"
 [targets.x]
 kind = "lib"
@@ -164,10 +165,13 @@ kind = "lib"
     EXPECT_EQ(m->buildConfig.cflags[1], "-DFOO=1");
     ASSERT_EQ(m->buildConfig.cxxflags.size(), 1u);
     EXPECT_EQ(m->buildConfig.cxxflags[0], "-Wextra");
+    ASSERT_EQ(m->buildConfig.ldflags.size(), 2u);
+    EXPECT_EQ(m->buildConfig.ldflags[0], "-lfoo");
+    EXPECT_EQ(m->buildConfig.ldflags[1], "-Wl,--as-needed");
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
 }
 
-TEST(SynthesizeFromXpkgLua, CflagsCxxflagsAndCStandard) {
+TEST(SynthesizeFromXpkgLua, CflagsCxxflagsLdflagsAndCStandard) {
     constexpr auto src = R"(
 package = {
     spec = "1",
@@ -177,6 +181,7 @@ package = {
         sources    = { "*/src/*.c" },
         cflags     = { "-Wall", "-Dunused" },
         cxxflags   = { "-Wextra" },
+        ldflags    = { "-ltinyc" },
         c_standard = "c11",
         targets    = { ["tinyc"] = { kind = "lib" } },
     },
@@ -189,6 +194,8 @@ package = {
     EXPECT_EQ(m->buildConfig.cflags[1], "-Dunused");
     ASSERT_EQ(m->buildConfig.cxxflags.size(), 1u);
     EXPECT_EQ(m->buildConfig.cxxflags[0], "-Wextra");
+    ASSERT_EQ(m->buildConfig.ldflags.size(), 1u);
+    EXPECT_EQ(m->buildConfig.ldflags[0], "-ltinyc");
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
     ASSERT_EQ(m->modules.sources.size(), 1u);
     EXPECT_EQ(m->modules.sources[0], "*/src/*.c");

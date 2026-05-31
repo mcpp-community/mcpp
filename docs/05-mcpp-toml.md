@@ -73,6 +73,7 @@ include_dirs = ["include", "third_party/include"]  # 头文件搜索路径
 c_standard   = "c11"              # C 源文件的标准(默认 c11)
 cflags       = ["-DFOO=1"]        # 额外 C 编译参数
 cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数
+ldflags      = ["-lfoo"]          # 额外链接参数
 static_stdlib = true               # 静态链接 libstdc++(默认 true)
 ```
 
