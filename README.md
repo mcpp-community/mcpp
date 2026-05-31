@@ -142,7 +142,7 @@ import mcpplibs.cmdline;
 - Ninja 后端：自动生成 build.ninja，并行编译
 - compile_commands.json 自动生成（clangd / ccls 即用）
 - C 语言一等支持：`.c` 文件自动检测，混合 C/C++ 项目
-- 用户自定义 cflags / cxxflags / c_standard
+- 用户自定义 cflags / cxxflags / ldflags / c_standard
 
 </details>
 

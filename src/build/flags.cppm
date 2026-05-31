@@ -56,6 +56,26 @@ std::string escape_path(const std::filesystem::path& p) {
     return out;
 }
 
+std::string normalize_ldflag(const std::filesystem::path& root, const std::string& flag) {
+    auto absolute_path = [&](std::string_view raw) {
+        std::filesystem::path p{std::string(raw)};
+        if (p.is_absolute() || raw.starts_with("$")) return p;
+        return root / p;
+    };
+
+    if (flag.starts_with("-L") && flag.size() > 2) {
+        return "-L" + escape_path(absolute_path(std::string_view(flag).substr(2)));
+    }
+
+    constexpr std::string_view rpathPrefix = "-Wl,-rpath,";
+    if (flag.starts_with(rpathPrefix) && flag.size() > rpathPrefix.size()) {
+        return std::string(rpathPrefix)
+             + escape_path(absolute_path(std::string_view(flag).substr(rpathPrefix.size())));
+    }
+
+    return flag;
+}
+
 }  // namespace
 
 CompileFlags compute_flags(const BuildPlan& plan) {
@@ -192,6 +212,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     };
     std::string user_cxxflags = join(plan.manifest.buildConfig.cxxflags);
     std::string user_cflags = join(plan.manifest.buildConfig.cflags);
+    std::string user_ldflags;
+    for (auto const& flag : plan.manifest.buildConfig.ldflags) {
+        user_ldflags += ' ';
+        user_ldflags += normalize_ldflag(plan.projectRoot, flag);
+    }
 
     // C standard
     std::string c_std =
@@ -257,12 +282,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     }
 
     if constexpr (mcpp::platform::is_windows) {
-        f.ld = "";
+        f.ld = user_ldflags;
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
-        f.ld = std::format("{}{}{} -lc++", full_static, static_stdlib, b_flag);
+        f.ld = std::format("{}{}{} -lc++{}", full_static, static_stdlib, b_flag, user_ldflags);
     } else {
-        f.ld = std::format("{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
-                           runtime_dirs, payload_ld);
+        f.ld = std::format("{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
+                           runtime_dirs, payload_ld, user_ldflags);
     }
 
     return f;
