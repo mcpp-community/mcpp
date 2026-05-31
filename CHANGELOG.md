@@ -3,6 +3,14 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.40] — 2026-06-01
+
+### 修复
+
+- 修复 project-local index 包的 xpm hook 工具依赖无法解析官方 `xim`
+  索引的问题。项目级 xlings 配置现在会在 custom/local index 旁边显式暴露
+  官方 `xim` 索引,让 `xim:python` 等 hook 工具依赖可用。
+
 ## [0.0.39] — 2026-06-01
 
 ### 修复

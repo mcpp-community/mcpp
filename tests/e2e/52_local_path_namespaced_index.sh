@@ -89,6 +89,21 @@ FAKE_REGISTRY="$TMP/fake-registry"
 FAKE_LOG="$TMP/fake-xlings.log"
 FAKE_DIRECT_LOG="$TMP/fake-xlings-direct.log"
 mkdir -p "$FAKE_REGISTRY/data"
+mkdir -p "$FAKE_REGISTRY/data/xim-pkgindex/pkgs/p"
+cat > "$FAKE_REGISTRY/data/xim-pkgindex/pkgs/p/python.lua" <<'EOF'
+package = {
+    spec = "1",
+    name = "python",
+    xpm = {
+        linux = {
+            ["3"] = {
+                url = "https://example.invalid/python.tar.gz",
+                sha256 = "0000000000000000000000000000000000000000000000000000000000000000",
+            },
+        },
+    },
+}
+EOF
 if [[ -d "$USER_MCPP/registry/data/xpkgs" ]]; then
     ln -s "$USER_MCPP/registry/data/xpkgs" "$FAKE_REGISTRY/data/xpkgs"
 fi
@@ -121,6 +136,11 @@ fi
 
 if [[ "${1:-}" == "install" ]]; then
     printf '%s\n' "$*" > "${FAKE_XLINGS_DIRECT_LOG:?}"
+    if ! grep -q '"name": "xim"' "${XLINGS_PROJECT_DIR:?}/.xlings.json"; then
+        echo "missing official xim index in project .xlings.json" >&2
+        cat "${XLINGS_PROJECT_DIR:?}/.xlings.json" >&2 2>/dev/null || true
+        exit 24
+    fi
     if [[ ! -d "${XLINGS_PROJECT_DIR:?}/.xlings/data/compat/pkgs" \
        && ! -d "${XLINGS_PROJECT_DIR:?}/data/compat/pkgs" ]]; then
         echo "missing project local path index link" >&2

@@ -674,10 +674,24 @@ bool ensure_project_index_dir(
         customRepos.emplace_back(name, spec.url);
     }
 
+    auto officialIndex = cfg.xlingsHome() / "data" / "xim-pkgindex";
+    std::error_code ec;
+    if (!customRepos.empty() && std::filesystem::exists(officialIndex / "pkgs", ec)) {
+        bool hasXim = false;
+        for (auto const& [name, _] : customRepos) {
+            if (name == "xim") {
+                hasXim = true;
+                break;
+            }
+        }
+        if (!hasXim) {
+            customRepos.emplace_back("xim", officialIndex.generic_string());
+        }
+    }
+
     if (customRepos.empty()) return false;  // nothing to do
 
     auto dotMcpp = projectDir / ".mcpp";
-    std::error_code ec;
     std::filesystem::create_directories(dotMcpp, ec);
 
     // Seed .xlings.json with the custom index entries.
@@ -725,7 +739,6 @@ bool ensure_project_index_dir(
     // project data dir. Expose the global official xim index there too, so
     // package deps like `xim:python@latest` can resolve without falling back
     // to unrelated remote index updates or system tools.
-    auto officialIndex = cfg.xlingsHome() / "data" / "xim-pkgindex";
     if (std::filesystem::exists(officialIndex / "pkgs", ec)) {
         auto projectData = dotMcpp / ".xlings" / "data";
         auto projectOfficial = projectData / "xim-pkgindex";
