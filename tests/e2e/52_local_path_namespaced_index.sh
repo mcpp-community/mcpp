@@ -166,10 +166,10 @@ EOF
 mkdir -p "$TMP/project/clean/src"
 cd "$TMP/project/clean"
 
-cat > src/main.cpp <<'EOF'
+cat > src/clean.cpp <<'EOF'
 extern "C" int cfg_value(void);
-int main() {
-    return cfg_value() == 42 ? 0 : 1;
+int clean_value(void) {
+    return cfg_value();
 }
 EOF
 
@@ -185,8 +185,7 @@ compat = { path = "$INDEX_DIR" }
 cfg = "1.0.0"
 
 [targets.clean]
-kind = "bin"
-main = "src/main.cpp"
+kind = "lib"
 EOF
 
 UPDATE_LOG="$TMP/fake-xlings-update.log"

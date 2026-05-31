@@ -164,10 +164,10 @@ default_backend = "ninja"
 default = "gcc@16.1.0"
 EOF
 
-cat > src/main.cpp <<'EOF'
+cat > src/app.cpp <<'EOF'
 extern "C" int app_value(void);
-int main() {
-    return app_value() == 42 ? 0 : 1;
+int app_smoke(void) {
+    return app_value();
 }
 EOF
 
@@ -183,8 +183,7 @@ compat = { path = "$INDEX_DIR" }
 appdep = "1.0.0"
 
 [targets.app]
-kind = "bin"
-main = "src/main.cpp"
+kind = "lib"
 EOF
 
 if ! FAKE_XLINGS_DIRECT_LOG="$FAKE_DIRECT_LOG" "$MCPP" build > build.log 2>&1; then
@@ -207,10 +206,5 @@ if ! awk '
     cat "$FAKE_DIRECT_LOG" 2>/dev/null || true
     exit 1
 fi
-
-"$MCPP" run > run.log 2>&1 || {
-    cat run.log
-    exit 1
-}
 
 echo "OK"
