@@ -1456,14 +1456,33 @@ prepare_build(bool print_fingerprint,
     // two different exact versions is an error — mcpp prints both
     // requesting parents and asks the user to align them.
 
-    // Auto-refresh the package index if the project has version-source
-    // dependencies and the local index is missing or stale.
+    // Auto-refresh the builtin package index only when a version dependency
+    // is actually routed there. Local/remote project indices are handled by
+    // the project-scoped setup below; refreshing the global index for those
+    // packages is both unnecessary and can make offline/local-index builds
+    // block on unrelated remote repositories.
     if (!m->dependencies.empty()) {
-        bool hasVersionDeps = false;
+        auto usesBuiltinIndex = [&](const mcpp::manifest::DependencySpec& spec) {
+            if (spec.isPath() || spec.isGit()) return false;
+
+            auto ns = spec.namespace_.empty()
+                ? std::string(mcpp::pm::kDefaultNamespace)
+                : spec.namespace_;
+            if (ns == mcpp::pm::kDefaultNamespace) return true;
+
+            auto it = m->indices.find(ns);
+            if (it == m->indices.end()) return true;
+            return it->second.is_builtin();
+        };
+
+        bool needsBuiltinIndexRefresh = false;
         for (auto& [_, spec] : m->dependencies) {
-            if (!spec.isPath() && !spec.isGit()) { hasVersionDeps = true; break; }
+            if (usesBuiltinIndex(spec)) {
+                needsBuiltinIndexRefresh = true;
+                break;
+            }
         }
-        if (hasVersionDeps) {
+        if (needsBuiltinIndexRefresh) {
             auto cfg2 = get_cfg();
             if (cfg2) {
                 auto xlEnv = mcpp::config::make_xlings_env(**cfg2);
@@ -1673,10 +1692,11 @@ prepare_build(bool print_fingerprint,
                 return fetcher.install(targets, &progress);
             };
             auto target = std::format("{}@{}", fqname, version);
-            // For custom indices, use indexName:shortName@version format
-            // so xlings knows which index to resolve from.
+            // For custom indices, use indexName:fullPackageName@version so
+            // xlings resolves the package by the descriptor's name field while
+            // still selecting the project-added index.
             if (useProjectEnv) {
-                target = std::format("{}:{}@{}", ns, shortName, version);
+                target = std::format("{}:{}@{}", ns, fqname, version);
             }
             auto r = install_one(target);
             if (r && r->exitCode != 0 &&
@@ -2466,7 +2486,8 @@ prepare_build(bool print_fingerprint,
     ctx.stdBmi     = stdBmiPath;
     ctx.stdObject  = stdObjectPath;
     ctx.plan        = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
-                                             *root, ctx.outputDir, stdBmiPath, stdObjectPath);
+                                             packages, *root, ctx.outputDir,
+                                             stdBmiPath, stdObjectPath);
     ctx.plan.stdCompatBmiPath = stdCompatBmiPath;
     ctx.plan.stdCompatObjectPath = stdCompatObjectPath;
 

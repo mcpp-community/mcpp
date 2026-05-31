@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.manifest;
+import mcpp.platform;
 
 TEST(Manifest, MinimalValid) {
     constexpr auto src = R"(
@@ -199,6 +200,71 @@ package = {
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
     ASSERT_EQ(m->modules.sources.size(), 1u);
     EXPECT_EQ(m->modules.sources[0], "*/src/*.c");
+}
+
+TEST(SynthesizeFromXpkgLua, AppliesCurrentPlatformMcppOverlay) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "tinyc",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources      = { "*/src/common.c" },
+        include_dirs = { "*/include" },
+        cflags       = { "-DCOMMON=1" },
+        deps         = { ["compat.base"] = "1.0.0" },
+        targets      = { ["tinyc"] = { kind = "lib" } },
+        linux = {
+            sources      = { "*/src/linux.c" },
+            include_dirs = { "*/src/linux" },
+            cflags       = { "-DLINUX=1" },
+            deps         = { ["compat.x11"] = "1.8.13" },
+        },
+        macosx = {
+            sources      = { "*/src/cocoa.m" },
+            include_dirs = { "*/src/macos" },
+            cflags       = { "-DMACOS=1" },
+            deps         = { ["compat.cocoa"] = "1.0.0" },
+        },
+        windows = {
+            sources      = { "*/src/win32.c" },
+            include_dirs = { "*/src/win32" },
+            cflags       = { "-DWINDOWS=1" },
+            deps         = { ["compat.win32"] = "1.0.0" },
+        },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    std::string expectedSource = "*/src/linux.c";
+    std::string expectedInclude = "*/src/linux";
+    std::string expectedCflag = "-DLINUX=1";
+    std::string expectedDep = "compat.x11";
+    if constexpr (mcpp::platform::is_macos) {
+        expectedSource = "*/src/cocoa.m";
+        expectedInclude = "*/src/macos";
+        expectedCflag = "-DMACOS=1";
+        expectedDep = "compat.cocoa";
+    } else if constexpr (mcpp::platform::is_windows) {
+        expectedSource = "*/src/win32.c";
+        expectedInclude = "*/src/win32";
+        expectedCflag = "-DWINDOWS=1";
+        expectedDep = "compat.win32";
+    }
+
+    ASSERT_EQ(m->modules.sources.size(), 2u);
+    EXPECT_EQ(m->modules.sources[0], "*/src/common.c");
+    EXPECT_EQ(m->modules.sources[1], expectedSource);
+    ASSERT_EQ(m->buildConfig.includeDirs.size(), 2u);
+    EXPECT_EQ(m->buildConfig.includeDirs[0], "*/include");
+    EXPECT_EQ(m->buildConfig.includeDirs[1], expectedInclude);
+    ASSERT_EQ(m->buildConfig.cflags.size(), 2u);
+    EXPECT_EQ(m->buildConfig.cflags[0], "-DCOMMON=1");
+    EXPECT_EQ(m->buildConfig.cflags[1], expectedCflag);
+    EXPECT_EQ(m->dependencies.count("compat.base"), 1u);
+    EXPECT_EQ(m->dependencies.count(expectedDep), 1u);
 }
 
 TEST(SynthesizeFromXpkgLua, GeneratedFiles) {

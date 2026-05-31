@@ -666,6 +666,8 @@ bool ensure_project_index_dir(
         if (spec.is_builtin()) continue;
         if (spec.is_local()) {
             auto source = resolve_project_index_path(projectDir, spec);
+            std::error_code ec;
+            std::filesystem::remove(source / ".xlings-index-cache.json", ec);
             customRepos.emplace_back(name, source.generic_string());
             continue;
         }
@@ -682,6 +684,29 @@ bool ensure_project_index_dir(
     mcpp::xlings::Env env;
     env.home = dotMcpp;
     mcpp::xlings::seed_xlings_json(env, customRepos);
+
+    // Project-scoped xlings installs custom-index packages in an additive
+    // project data dir. Expose the global official xim index there too, so
+    // package deps like `xim:python@latest` can resolve without falling back
+    // to unrelated remote index updates or system tools.
+    auto officialIndex = cfg.xlingsHome() / "data" / "xim-pkgindex";
+    if (std::filesystem::exists(officialIndex / "pkgs", ec)) {
+        auto projectData = dotMcpp / ".xlings" / "data";
+        auto projectOfficial = projectData / "xim-pkgindex";
+        std::filesystem::create_directories(projectData, ec);
+        if (!std::filesystem::exists(projectOfficial, ec)) {
+            std::filesystem::create_directory_symlink(officialIndex, projectOfficial, ec);
+            if (ec) {
+                ec.clear();
+                std::filesystem::copy(
+                    officialIndex,
+                    projectOfficial,
+                    std::filesystem::copy_options::recursive
+                        | std::filesystem::copy_options::skip_existing,
+                    ec);
+            }
+        }
+    }
     return true;
 }
 

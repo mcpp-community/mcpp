@@ -190,12 +190,12 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     u.path         = file;
     u.packageName = packageName;
 
-    // .c files are pure C: they cannot legally contain `module` / `import`
+    // C-like files are not C++ modules: they cannot legally contain `module` / `import`
     // declarations, and we route them to the C-language compile rule (no
     // P1689 scan, no BMI lookups). Skip the line-by-line module scan to
-    // avoid any chance of a benign C identifier (`import_foo`, `module_t`,
-    // ...) being misparsed.
-    if (file.extension() == ".c") {
+    // avoid any chance of a benign identifier (`import_foo`, `module_t`, ...)
+    // being misparsed. Objective-C .m files use the same C-like path.
+    if (file.extension() == ".c" || file.extension() == ".m") {
         return u;
     }
 

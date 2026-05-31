@@ -133,7 +133,8 @@ std::filesystem::path mcpp_exe_path() {
 }
 
 bool is_c_source(const std::filesystem::path& src) {
-    return src.extension() == ".c";
+    auto ext = src.extension();
+    return ext == ".c" || ext == ".m";
 }
 
 std::string ltrim_copy(std::string_view s) {
@@ -360,7 +361,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     append("rule cxx_link\n");
-    append("  command = $cxx $in -o $out $ldflags\n");
+    append("  command = $cxx $in -o $out $ldflags $unit_ldflags\n");
     append("  description = LINK $out\n\n");
 
     append("rule cxx_archive\n");
@@ -368,7 +369,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  description = AR $out\n\n");
 
     append("rule cxx_shared\n");
-    append("  command = $cxx -shared $in -o $out $ldflags\n");
+    append("  command = $cxx -shared $in -o $out $ldflags $unit_ldflags\n");
     append("  description = SHARED $out\n\n");
 
     if (dyndep) {
@@ -609,7 +610,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 rule = "cxx_shared";
                 break;
         }
-        append(std::format("build {} : {}{}\n", escape_ninja_path(lu.output), rule, ins));
+        std::string implicit;
+        for (auto& input : lu.implicitInputs) {
+            implicit += " " + escape_ninja_path(input);
+        }
+
+        std::string out_line = std::format("build {} : {}{}{}\n",
+            escape_ninja_path(lu.output), rule, ins,
+            implicit.empty() ? std::string{} : " |" + implicit);
+        if (auto flags = join_flags(lu.linkFlags); !flags.empty())
+            out_line += "  unit_ldflags =" + flags + "\n";
+        append(std::move(out_line));
     }
     append("\n");
 
