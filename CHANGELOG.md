@@ -3,6 +3,21 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.37] — 2026-05-31
+
+### 修复
+
+- 修复 xlings 项目构建时自动索引刷新泄漏 xlings 内部 `[N/M] index::path`
+  输出的问题。mcpp 仍保留 `Updating package index (auto-refresh)` 状态行,
+  且该状态行走统一彩色 UI 输出；内部 `xlings update` 现在在自动刷新路径中
+  静默执行。
+- 修复自动索引 freshness 依赖不稳定目录 mtime 的问题,改用 mcpp-owned
+  `.mcpp-index-updated` marker,避免 full prepare 时重复刷新索引。
+- 修复命名空间依赖命中 BMI cache 后仍显示 `Compiling mcpplibs.*` 的问题,
+  cache key 与 UI 状态现在使用解析得到的 canonical dependency identity。
+- 修复 `xim:` 工具链自动安装时官方索引/目标包文件/`.xlings-index-cache.json`
+  可能陈旧或指向临时 sandbox 路径导致 `package not found` 的问题。
+
 ## [0.0.36] — 2026-05-31
 
 ### 修复

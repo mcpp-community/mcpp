@@ -1459,7 +1459,11 @@ prepare_build(bool print_fingerprint,
             auto cfg2 = get_cfg();
             if (cfg2) {
                 auto xlEnv = mcpp::config::make_xlings_env(**cfg2);
-                mcpp::xlings::ensure_index_fresh(xlEnv, (*cfg2)->searchTtlSeconds);
+                if (!mcpp::xlings::is_index_fresh(xlEnv, (*cfg2)->searchTtlSeconds)) {
+                    mcpp::ui::status("Updating", "package index (auto-refresh)");
+                    mcpp::xlings::ensure_index_fresh(
+                        xlEnv, (*cfg2)->searchTtlSeconds, /*quiet=*/true);
+                }
             }
         }
     }
@@ -2995,7 +2999,10 @@ int cmd_search(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
     auto xlEnv = mcpp::config::make_xlings_env(*cfg);
-    mcpp::xlings::ensure_index_fresh(xlEnv, cfg->searchTtlSeconds);
+    if (!mcpp::xlings::is_index_fresh(xlEnv, cfg->searchTtlSeconds)) {
+        mcpp::ui::status("Updating", "package index (auto-refresh)");
+        mcpp::xlings::ensure_index_fresh(xlEnv, cfg->searchTtlSeconds, /*quiet=*/true);
+    }
 
     mcpp::fetcher::Fetcher f(*cfg);
     auto hits = f.search(keyword);
