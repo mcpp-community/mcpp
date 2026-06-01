@@ -158,6 +158,40 @@ main = "src/main.cpp"
     EXPECT_EQ(m->devDependencies.at("gtest").version, "1.15.2");
 }
 
+TEST(Manifest, ParsesDependencyVisibility) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "x"
+version = "0.1.0"
+[modules]
+sources = ["src/**/*.cppm"]
+[targets.x]
+kind = "bin"
+main = "src/main.cpp"
+[dependencies.compat]
+imgui = { version = "1.92.8", visibility = "private" }
+glfw = { version = "3.4", visibility = "interface" }
+opengl = "2026.05.31"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 3u);
+    EXPECT_EQ(m->dependencies.at("compat.imgui").visibility, "private");
+    EXPECT_EQ(m->dependencies.at("compat.glfw").visibility, "interface");
+    EXPECT_EQ(m->dependencies.at("compat.opengl").visibility, "public");
+}
+
+TEST(Manifest, RejectsInvalidDependencyVisibility) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies.compat]
+imgui = { version = "1.92.8", visibility = "implementation" }
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("visibility"), std::string::npos);
+}
+
 TEST(Manifest, DefaultTemplateRoundTrip) {
     auto src = mcpp::manifest::default_template("hello");
     auto m = mcpp::manifest::parse_string(src);

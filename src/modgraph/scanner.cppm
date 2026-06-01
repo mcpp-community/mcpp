@@ -51,12 +51,30 @@ struct ScanResult {
 ScanResult scan_package(const std::filesystem::path& root,
                         const mcpp::manifest::Manifest& manifest);
 
+enum class DependencyVisibility {
+    Private,
+    Public,
+    Interface,
+};
+
+struct UsageRequirements {
+    std::vector<std::filesystem::path> includeDirs;
+    std::vector<std::string>           cflags;
+    std::vector<std::string>           cxxflags;
+    std::vector<std::string>           ldflags;
+    std::vector<std::string>           modules;
+};
+
 // Scan multiple packages (primary + path-based deps) into one combined Graph.
 // Each SourceUnit retains its own packageName, so validate() applies the
 // correct naming rules per-package.
 struct PackageRoot {
     std::filesystem::path           root;
     mcpp::manifest::Manifest        manifest;
+    UsageRequirements               privateBuild;
+    UsageRequirements               publicUsage;
+    UsageRequirements               linkUsage;
+    bool                            usageResolved = false;
 };
 ScanResult scan_packages(const std::vector<PackageRoot>& packages);
 
@@ -337,7 +355,10 @@ local_include_dirs_for(const std::filesystem::path& root,
 // here — the caller does that after all packages are scanned.
 void scan_one_into(ScanResult& result,
                    const std::filesystem::path& root,
-                   const mcpp::manifest::Manifest& manifest)
+                   const mcpp::manifest::Manifest& manifest,
+                   const std::vector<std::filesystem::path>& localIncludeDirs,
+                   const std::vector<std::string>& packageCflags,
+                   const std::vector<std::string>& packageCxxflags)
 {
     // Glob exclusion: patterns starting with `!` remove files from the
     // include set (like .gitignore).
@@ -366,8 +387,6 @@ void scan_one_into(ScanResult& result,
         manifest.package.namespace_.empty()
             ? manifest.package.name
             : manifest.package.namespace_ + "." + manifest.package.name;
-    const auto localIncludeDirs = local_include_dirs_for(root, manifest);
-
     for (auto const& f : all_files) {
         auto r = scan_file(f, qualifiedName);
         if (!r) {
@@ -375,8 +394,8 @@ void scan_one_into(ScanResult& result,
             continue;
         }
         r->localIncludeDirs = localIncludeDirs;
-        r->packageCflags = manifest.buildConfig.cflags;
-        r->packageCxxflags = manifest.buildConfig.cxxflags;
+        r->packageCflags = packageCflags;
+        r->packageCxxflags = packageCxxflags;
         result.graph.units.push_back(std::move(*r));
     }
 }
@@ -420,7 +439,9 @@ ScanResult scan_package(const std::filesystem::path& root,
                         const mcpp::manifest::Manifest& manifest)
 {
     ScanResult result;
-    scan_one_into(result, root, manifest);
+    auto localIncludeDirs = local_include_dirs_for(root, manifest);
+    scan_one_into(result, root, manifest, localIncludeDirs,
+                  manifest.buildConfig.cflags, manifest.buildConfig.cxxflags);
     resolve_graph(result);
     return result;
 }
@@ -428,7 +449,17 @@ ScanResult scan_package(const std::filesystem::path& root,
 ScanResult scan_packages(const std::vector<PackageRoot>& packages) {
     ScanResult result;
     for (auto const& p : packages) {
-        scan_one_into(result, p.root, p.manifest);
+        auto localIncludeDirs = p.usageResolved
+            ? p.privateBuild.includeDirs
+            : local_include_dirs_for(p.root, p.manifest);
+        auto const& packageCflags = p.usageResolved
+            ? p.privateBuild.cflags
+            : p.manifest.buildConfig.cflags;
+        auto const& packageCxxflags = p.usageResolved
+            ? p.privateBuild.cxxflags
+            : p.manifest.buildConfig.cxxflags;
+        scan_one_into(result, p.root, p.manifest, localIncludeDirs,
+                      packageCflags, packageCxxflags);
     }
     resolve_graph(result);
     return result;
@@ -445,17 +476,24 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
         for (auto const& g : p.manifest.modules.sources) {
             for (auto& f : expand_glob(p.root, g)) all_files.insert(f);
         }
-        const auto localIncludeDirs = local_include_dirs_for(p.root, p.manifest);
+        const auto localIncludeDirs = p.usageResolved
+            ? p.privateBuild.includeDirs
+            : local_include_dirs_for(p.root, p.manifest);
         for (auto const& f : all_files) {
             auto r = mcpp::modgraph::p1689::scan_file(
-                f, p.manifest.package.name, tc, tmpDir, cppStandardFlag);
+                f, p.manifest.package.name, tc, tmpDir,
+                localIncludeDirs, cppStandardFlag);
             if (!r) {
                 result.errors.push_back(ScanError{ f, 0, r.error() });
                 continue;
             }
             r->localIncludeDirs = localIncludeDirs;
-            r->packageCflags = p.manifest.buildConfig.cflags;
-            r->packageCxxflags = p.manifest.buildConfig.cxxflags;
+            r->packageCflags = p.usageResolved
+                ? p.privateBuild.cflags
+                : p.manifest.buildConfig.cflags;
+            r->packageCxxflags = p.usageResolved
+                ? p.privateBuild.cxxflags
+                : p.manifest.buildConfig.cxxflags;
             result.graph.units.push_back(std::move(*r));
         }
     }

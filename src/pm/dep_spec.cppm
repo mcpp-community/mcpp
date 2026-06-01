@@ -31,6 +31,7 @@ struct DependencySpec {
     std::string                 git;            // "https://..." or empty
     std::string                 gitRev;         // commit / tag / branch (any one)
     std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
+    std::string                 visibility = "public"; // public / private / interface
 
     bool                        inheritWorkspace = false;  // .workspace = true
     bool                        legacyDottedKey = false;   // parsed from legacy "ns.name" flat key

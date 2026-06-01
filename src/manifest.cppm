@@ -497,7 +497,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     auto is_dep_spec_key = [](std::string_view k) {
         return k == "path"   || k == "version" || k == "git"
             || k == "rev"    || k == "tag"     || k == "branch"
-            || k == "features" || k == "workspace";
+            || k == "features" || k == "workspace" || k == "visibility";
     };
     auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
         if (sub.empty()) return false;
@@ -515,6 +515,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto it = sub.find("path");    it != sub.end() && it->second.is_string()) spec.path    = it->second.as_string();
         if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) spec.version = it->second.as_string();
         if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
+        if (auto it = sub.find("visibility"); it != sub.end() && it->second.is_string()) {
+            spec.visibility = it->second.as_string();
+            if (spec.visibility != "public"
+                && spec.visibility != "private"
+                && spec.visibility != "interface") {
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] visibility must be 'public', 'private', or 'interface'",
+                    section, fqName)));
+            }
+        }
         if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();
             spec.gitRefKind = "rev";
@@ -569,7 +579,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (!looks_like_inline_dep_spec(sub)) {
                 return std::unexpected(error(origin, std::format(
                     "[{}.{}] must be a version string or table of "
-                    "(path/version/git/rev/tag/branch/features)",
+                    "(path/version/git/rev/tag/branch/features/visibility)",
                     section, key)));
             }
             if (auto r = fill_inline_spec(spec, section, key, sub); !r) return r;

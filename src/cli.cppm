@@ -631,6 +631,16 @@ std::string canonical_package_build_metadata(
             s += " ldflag:";
             s += flag;
         }
+        if (pkg.usageResolved) {
+            for (auto const& dir : pkg.privateBuild.includeDirs) {
+                s += " private_include:";
+                s += dir.generic_string();
+            }
+            for (auto const& dir : pkg.publicUsage.includeDirs) {
+                s += " public_include:";
+                s += dir.generic_string();
+            }
+        }
         for (auto const& [path, content] : pkg.manifest.buildConfig.generatedFiles) {
             s += " genfile:";
             s += path.generic_string();
@@ -1567,7 +1577,6 @@ prepare_build(bool print_fingerprint,
         std::string requestedBy;        // human-readable for error messages
         std::string source;             // "version" | "path" | "git" — for type-clash check
         std::size_t depIndex = 0;       // index into dep_manifests/packages-1 (for in-place re-fetch)
-        std::vector<std::filesystem::path> includeDirsAdded;  // entries appended to m->buildConfig.includeDirs by this dep
         std::vector<std::string> linkFlagsAdded;  // entries appended to m->buildConfig.ldflags by this dep
     };
     std::map<ResolvedKey, ResolvedRecord> resolved;
@@ -1673,15 +1682,67 @@ prepare_build(bool print_fingerprint,
                 depName, indexPath.string()));
         }
 
+        auto findRawInstalled = [&]() -> std::optional<std::filesystem::path> {
+            if (useProjectEnv) {
+                if (auto p = mcpp::fetcher::Fetcher::install_path_from_project_data(
+                        *root, ns, shortName, version)) {
+                    return p;
+                }
+            }
+            return fetcher.install_path(ns, shortName, version);
+        };
+
+        auto installedLayoutMatchesIndex = [&](const std::filesystem::path& verRoot) -> bool {
+            if (!luaContent) return false;
+
+            auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
+            if (field.kind == mcpp::manifest::McppField::StringPath) {
+                return !mcpp::modgraph::expand_glob(verRoot, field.value).empty();
+            }
+            if (field.kind == mcpp::manifest::McppField::TableBody) {
+                auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
+                    *luaContent, depName, version);
+                if (!dm) return false;
+                for (auto const& [generatedPath, _] : dm->buildConfig.generatedFiles) {
+                    if (!generatedPath.empty()) return true;
+                }
+                for (auto const& glob : dm->modules.sources) {
+                    if (!glob.empty() && glob.front() == '!') continue;
+                    if (!mcpp::modgraph::expand_glob(verRoot, glob).empty()) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            for (auto pat : { "mcpp.toml", "*/mcpp.toml" }) {
+                if (!mcpp::modgraph::expand_glob(verRoot, pat).empty()) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        auto findCompleteInstalled = [&]() -> std::optional<std::filesystem::path> {
+            auto p = findRawInstalled();
+            if (!p) return std::nullopt;
+            if (mcpp::fallback::is_install_complete(*p)) return p;
+            if (installedLayoutMatchesIndex(*p)) {
+                mcpp::fallback::mark_install_complete(*p);
+                return p;
+            }
+            mcpp::fallback::clean_incomplete_install(*p);
+            return std::nullopt;
+        };
+
+        auto markInstalled = [&](const std::filesystem::path& p) {
+            mcpp::fallback::mark_install_complete(p);
+        };
+
         // For custom indices, try project-level xlings data roots first.
-        std::optional<std::filesystem::path> installed;
-        if (useProjectEnv) {
-            installed = mcpp::fetcher::Fetcher::install_path_from_project_data(
-                *root, ns, shortName, version);
-        }
-        if (!installed) {
-            installed = fetcher.install_path(ns, shortName, version);
-        }
+        // Existing directories without the mcpp completion marker are treated
+        // as stale/incomplete on this active resolve path and reinstalled.
+        std::optional<std::filesystem::path> installed = findCompleteInstalled();
 
         if (!installed) {
             if (luaContent) {
@@ -1782,15 +1843,10 @@ prepare_build(bool print_fingerprint,
                 return std::unexpected(err);
             }
             // After install, check project data first for custom index packages.
-            if (useProjectEnv) {
-                installed = mcpp::fetcher::Fetcher::install_path_from_project_data(
-                    *root, ns, shortName, version);
-            }
-            if (!installed) {
-                installed = fetcher.install_path(ns, shortName, version);
-            }
+            installed = findRawInstalled();
             if (!installed) return std::unexpected(std::format(
                 "package '{}@{}' install path missing after fetch", depName, version));
+            markInstalled(*installed);
         }
         std::filesystem::path verRoot = *installed;
 
@@ -1874,84 +1930,137 @@ prepare_build(bool print_fingerprint,
         return std::pair{effRoot, std::move(*manifest)};
     };
 
-    auto appendIncludeDirsTo = [&](mcpp::manifest::Manifest& target,
-                                   const std::filesystem::path& depRoot,
-                                   const mcpp::manifest::Manifest& depManifest)
-        -> std::vector<std::filesystem::path>
+    struct DependencyEdge {
+        std::size_t consumerPackageIndex = 0;
+        std::size_t dependencyPackageIndex = 0;
+        mcpp::modgraph::DependencyVisibility visibility =
+            mcpp::modgraph::DependencyVisibility::Public;
+    };
+    std::vector<DependencyEdge> dependencyEdges;
+
+    auto parseVisibility = [](std::string_view visibility) {
+        if (visibility == "private")
+            return mcpp::modgraph::DependencyVisibility::Private;
+        if (visibility == "interface")
+            return mcpp::modgraph::DependencyVisibility::Interface;
+        return mcpp::modgraph::DependencyVisibility::Public;
+    };
+
+    auto packageIndexForConsumer = [&](std::size_t consumerDepIndex) {
+        if (consumerDepIndex == kMainConsumer) return std::size_t{0};
+        return consumerDepIndex + 1;
+    };
+
+    auto appendUniquePath =
+        [](std::vector<std::filesystem::path>& dirs,
+           const std::filesystem::path& dir) -> bool
     {
-        std::vector<std::filesystem::path> added;
-        auto append_unique = [&](const std::filesystem::path& dir) {
-            auto& dirs = target.buildConfig.includeDirs;
-            if (std::find(dirs.begin(), dirs.end(), dir) != dirs.end()) return;
-            dirs.push_back(dir);
-            added.push_back(dir);
-        };
-        for (auto& inc : depManifest.buildConfig.includeDirs) {
+        if (std::find(dirs.begin(), dirs.end(), dir) != dirs.end()) return false;
+        dirs.push_back(dir);
+        return true;
+    };
+
+    auto appendUniquePaths =
+        [&](std::vector<std::filesystem::path>& dirs,
+            const std::vector<std::filesystem::path>& additions) -> bool
+    {
+        bool changed = false;
+        for (auto const& dir : additions) {
+            changed = appendUniquePath(dirs, dir) || changed;
+        }
+        return changed;
+    };
+
+    auto expandIncludeDirs =
+        [&](const std::filesystem::path& packageRoot,
+            const mcpp::manifest::Manifest& manifest)
+    {
+        std::vector<std::filesystem::path> dirs;
+        for (auto const& inc : manifest.buildConfig.includeDirs) {
             if (inc.is_absolute()) {
-                append_unique(inc);
+                appendUniquePath(dirs, inc);
                 continue;
             }
-            auto matches = mcpp::modgraph::expand_dir_glob(depRoot, inc.generic_string());
-            if (matches.empty()) continue;
-            for (auto& d : matches) {
-                append_unique(d);
+            for (auto& dir : mcpp::modgraph::expand_dir_glob(
+                     packageRoot, inc.generic_string())) {
+                appendUniquePath(dirs, dir);
             }
         }
-        return added;
+        return dirs;
     };
 
-    auto syncMainPackageIncludes = [&] {
-        if (!packages.empty()) {
-            packages[0].manifest.buildConfig.includeDirs = m->buildConfig.includeDirs;
-        }
-    };
-
-    // Append a dep's [build].include_dirs onto the main manifest's, glob-
-    // expanded against the dep's root. Returns the absolute paths actually
-    // appended so the caller can later evict them on a SemVer-merge re-fetch.
-    auto propagateIncludeDirs = [&](const std::filesystem::path& depRoot,
-                                    const mcpp::manifest::Manifest& depManifest)
-        -> std::vector<std::filesystem::path>
+    auto makePackageRoot =
+        [&](const std::filesystem::path& packageRoot,
+            const mcpp::manifest::Manifest& manifest)
     {
-        auto added = appendIncludeDirsTo(*m, depRoot, depManifest);
-        syncMainPackageIncludes();
-        return added;
+        mcpp::modgraph::PackageRoot pkg;
+        pkg.root = packageRoot;
+        pkg.manifest = manifest;
+        pkg.usageResolved = true;
+
+        pkg.privateBuild.includeDirs = expandIncludeDirs(packageRoot, manifest);
+        pkg.privateBuild.cflags = manifest.buildConfig.cflags;
+        pkg.privateBuild.cxxflags = manifest.buildConfig.cxxflags;
+        pkg.publicUsage.includeDirs = pkg.privateBuild.includeDirs;
+        pkg.linkUsage.ldflags = manifest.buildConfig.ldflags;
+        return pkg;
     };
 
-    auto propagateIncludeDirsToConsumer =
+    packages[0] = makePackageRoot(*root, *m);
+
+    auto recordDependencyEdge =
         [&](std::size_t consumerDepIndex,
-            const std::filesystem::path& depRoot,
-            const mcpp::manifest::Manifest& depManifest)
+            std::size_t dependencyPackageIndex,
+            const mcpp::manifest::DependencySpec& spec)
     {
-        if (consumerDepIndex == kMainConsumer) {
-            (void)propagateIncludeDirs(depRoot, depManifest);
+        const auto consumerPackageIndex = packageIndexForConsumer(consumerDepIndex);
+        if (consumerPackageIndex >= packages.size()
+            || dependencyPackageIndex >= packages.size()) {
             return;
         }
-        if (consumerDepIndex >= dep_manifests.size()
-            || consumerDepIndex + 1 >= packages.size()) {
+        const auto visibility = parseVisibility(spec.visibility);
+        auto same = [&](const DependencyEdge& edge) {
+            return edge.consumerPackageIndex == consumerPackageIndex
+                && edge.dependencyPackageIndex == dependencyPackageIndex
+                && edge.visibility == visibility;
+        };
+        if (std::find_if(dependencyEdges.begin(), dependencyEdges.end(), same)
+            != dependencyEdges.end()) {
             return;
         }
-        auto added = appendIncludeDirsTo(*dep_manifests[consumerDepIndex],
-                                         depRoot, depManifest);
-        auto& packageManifest = packages[consumerDepIndex + 1].manifest;
-        for (auto const& dir : added) {
-            auto& dirs = packageManifest.buildConfig.includeDirs;
-            if (std::find(dirs.begin(), dirs.end(), dir) == dirs.end()) {
-                dirs.push_back(dir);
-            }
-        }
+        dependencyEdges.push_back(DependencyEdge{
+            .consumerPackageIndex = consumerPackageIndex,
+            .dependencyPackageIndex = dependencyPackageIndex,
+            .visibility = visibility,
+        });
     };
 
-    // Drop earlier include_dirs that came from a now-superseded dep version.
-    // Erases by value match — safe because the outer code only ever appends,
-    // and on re-fetch we re-record the new entries afterwards.
-    auto removeIncludeDirs = [&](const std::vector<std::filesystem::path>& paths) {
-        auto& dirs = m->buildConfig.includeDirs;
-        for (auto& p : paths) {
-            auto pos = std::find(dirs.begin(), dirs.end(), p);
-            if (pos != dirs.end()) dirs.erase(pos);
+    auto computeUsageRequirements = [&] {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (auto const& edge : dependencyEdges) {
+                if (edge.consumerPackageIndex >= packages.size()
+                    || edge.dependencyPackageIndex >= packages.size()) {
+                    continue;
+                }
+                auto& consumer = packages[edge.consumerPackageIndex];
+                auto const& dependency = packages[edge.dependencyPackageIndex];
+
+                if (edge.visibility == mcpp::modgraph::DependencyVisibility::Private
+                    || edge.visibility == mcpp::modgraph::DependencyVisibility::Public) {
+                    changed = appendUniquePaths(consumer.privateBuild.includeDirs,
+                                                dependency.publicUsage.includeDirs)
+                              || changed;
+                }
+                if (edge.visibility == mcpp::modgraph::DependencyVisibility::Public
+                    || edge.visibility == mcpp::modgraph::DependencyVisibility::Interface) {
+                    changed = appendUniquePaths(consumer.publicUsage.includeDirs,
+                                                dependency.publicUsage.includeDirs)
+                              || changed;
+                }
+            }
         }
-        syncMainPackageIncludes();
     };
 
     auto normalizeDepLdflag = [](const std::filesystem::path& depRoot,
@@ -2235,8 +2344,9 @@ prepare_build(bool print_fingerprint,
                         .packageName = mangled,
                         .version     = spec.version,
                     });
-                    packages.push_back({secStage, *dep_manifests.back()});
-                    auto added = propagateIncludeDirs(secStage, *dep_manifests.back());
+                    const auto depPackageIndex = packages.size();
+                    packages.push_back(makePackageRoot(secStage, *dep_manifests.back()));
+                    recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec);
                     auto linkFlagsAdded = propagateLinkFlags(secStage, *dep_manifests.back());
 
                     ResolvedKey mangledKey{key.ns, mangled};
@@ -2246,7 +2356,6 @@ prepare_build(bool print_fingerprint,
                         .requestedBy       = item.requestedBy,
                         .source            = "version",
                         .depIndex          = dep_manifests.size() - 1,
-                        .includeDirsAdded  = std::move(added),
                         .linkFlagsAdded    = std::move(linkFlagsAdded),
                     };
 
@@ -2268,7 +2377,10 @@ prepare_build(bool print_fingerprint,
 
                 if (*merged == it->second.version) {
                     // The existing pin already satisfies the new constraint —
-                    // no re-fetch needed; just record this consumer.
+                    // no re-fetch needed; just record this consumer edge.
+                    recordDependencyEdge(item.consumerDepIndex,
+                                         it->second.depIndex + 1,
+                                         spec);
                     continue;
                 }
 
@@ -2309,9 +2421,7 @@ prepare_build(bool print_fingerprint,
                     }
                 }
 
-                removeIncludeDirs(it->second.includeDirsAdded);
                 removeLinkFlags(it->second.linkFlagsAdded);
-                auto added = propagateIncludeDirs(newRoot, newManifest);
                 auto linkFlagsAdded = propagateLinkFlags(newRoot, newManifest);
 
                 // Replace in dep_manifests + packages. depIndex is the slot
@@ -2319,10 +2429,12 @@ prepare_build(bool print_fingerprint,
                 // packages[depIndex+1] is the same dep.
                 *dep_manifests[it->second.depIndex] = std::move(newManifest);
                 packages[it->second.depIndex + 1] =
-                    {newRoot, *dep_manifests[it->second.depIndex]};
+                    makePackageRoot(newRoot, *dep_manifests[it->second.depIndex]);
+                recordDependencyEdge(item.consumerDepIndex,
+                                     it->second.depIndex + 1,
+                                     spec);
 
                 it->second.version            = *merged;
-                it->second.includeDirsAdded   = std::move(added);
                 it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
                 if (it->second.depIndex < dep_cache_identities.size())
                     dep_cache_identities[it->second.depIndex].version = *merged;
@@ -2342,15 +2454,14 @@ prepare_build(bool print_fingerprint,
                 continue;
             }
             // Same key, same version (or compatible path/git) — already
-            // processed; still attach its public include dirs to this
-            // consumer before skipping. Include propagation is per edge, not
-            // per unique package: two consumers can need the same dep's
-            // headers even though the dep itself is fetched/scanned once.
+            // processed; still record the dependency edge before skipping.
+            // Usage propagation is per edge, not per unique package: two
+            // consumers can need the same dep's public surface even though
+            // the dep itself is fetched/scanned once.
             if (it->second.depIndex + 1 < packages.size()) {
-                auto const& existing = packages[it->second.depIndex + 1];
-                propagateIncludeDirsToConsumer(item.consumerDepIndex,
-                                               existing.root,
-                                               existing.manifest);
+                recordDependencyEdge(item.consumerDepIndex,
+                                     it->second.depIndex + 1,
+                                     spec);
             }
             continue;
         }
@@ -2465,22 +2576,12 @@ prepare_build(bool print_fingerprint,
             }
         }
 
-        // Propagate dep's [build].include_dirs to the main manifest. The
-        // returned vector is what was actually appended (after glob
-        // expansion against dep_root) — stash it so a SemVer merge can
-        // evict these entries on a re-fetch.
-        auto includeDirsAdded = propagateIncludeDirs(dep_root, *dep_manifest);
         auto linkFlagsAdded = propagateLinkFlags(dep_root, *dep_manifest);
 
         // Move the manifest into stable storage so we can later look it up
         // by depIndex (the SemVer merger needs to overwrite the slot).
         dep_manifests.push_back(
             std::make_unique<mcpp::manifest::Manifest>(std::move(*dep_manifest)));
-        if (item.consumerDepIndex != kMainConsumer) {
-            propagateIncludeDirsToConsumer(item.consumerDepIndex,
-                                           dep_root,
-                                           *dep_manifests.back());
-        }
         dep_cache_identities.push_back({
             .indexName   = cache_index_name(key.ns),
             .packageName = name,
@@ -2488,7 +2589,9 @@ prepare_build(bool print_fingerprint,
                 ? spec.version
                 : dep_manifests.back()->package.version,
         });
-        packages.push_back({dep_root, *dep_manifests.back()});
+        const auto depPackageIndex = packages.size();
+        packages.push_back(makePackageRoot(dep_root, *dep_manifests.back()));
+        recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec);
 
         // Record this dep as resolved so future encounters of the same
         // (ns, name) hit the fast path (skip / merge / conflict).
@@ -2498,7 +2601,6 @@ prepare_build(bool print_fingerprint,
             .requestedBy       = item.requestedBy,
             .source            = sourceKind,
             .depIndex          = dep_manifests.size() - 1,
-            .includeDirsAdded  = std::move(includeDirsAdded),
             .linkFlagsAdded    = std::move(linkFlagsAdded),
         };
 
@@ -2517,6 +2619,8 @@ prepare_build(bool print_fingerprint,
                                 child_spec.version, selfIdx, dep_root});
         }
     }
+
+    computeUsageRequirements();
 
     // Modgraph: regex scanner by default; opt-in to compiler-driven P1689
     // scanner via env var MCPP_SCANNER=p1689 (see docs/27).

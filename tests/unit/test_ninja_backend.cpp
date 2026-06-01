@@ -22,9 +22,21 @@ std::size_t count_occurrences(std::string_view haystack, std::string_view needle
     return count;
 }
 
+std::string escaped_include_flag(const std::filesystem::path& path) {
+    auto s = path.string();
+    std::string escaped;
+    escaped.reserve(s.size());
+    for (char c : s) {
+        if (c == ' ' || c == '$' || c == ':')
+            escaped.push_back('$');
+        escaped.push_back(c);
+    }
+    return "-I" + escaped;
+}
+
 BuildPlan minimal_plan() {
     BuildPlan plan;
-    plan.projectRoot = "/tmp/mcpp-ninja-test";
+    plan.projectRoot = std::filesystem::temp_directory_path() / "mcpp-ninja-test";
     plan.outputDir = plan.projectRoot / "target" / "test";
     plan.manifest.package.name = "objc_rule_test";
     plan.manifest.buildConfig.cStandard = "c11";
@@ -98,6 +110,21 @@ TEST(NinjaBackend, CompileCommandsUsesSameCppStandard) {
         << cdb;
     EXPECT_EQ(cdb.find("\"-std=c++23\""), std::string::npos)
         << cdb;
+}
+
+TEST(NinjaBackend, CxxFlagsIncludeBuildIncludeDirs) {
+    auto plan = minimal_plan();
+    plan.manifest.buildConfig.includeDirs = {"include", "third_party/imgui"};
+
+    auto flags = compute_flags(plan);
+
+    EXPECT_NE(flags.cxx.find(escaped_include_flag(plan.projectRoot / "include")),
+              std::string::npos)
+        << flags.cxx;
+    EXPECT_NE(flags.cxx.find(escaped_include_flag(
+                  plan.projectRoot / "third_party" / "imgui")),
+              std::string::npos)
+        << flags.cxx;
 }
 
 TEST(NinjaBackend, RootPackageCxxflagsAreEmittedOncePerUnit) {

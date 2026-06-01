@@ -243,7 +243,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     }
     std::string cxx_std_flag =
         plan.cppStandardFlag.empty() ? std::string("-std=c++23") : plan.cppStandardFlag;
-    f.cxx = std::format("{}{}{}{}{}{}{}{}{}", cxx_std_flag, module_flag, std_module_flag,
+    f.cxx = std::format("{}{}{}{}{}{}{}{}{}{}", cxx_std_flag, module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
                         opt_flag, pic_flag, compile_toolchain_flags, b_flag, include_flags);
     f.cc = std::format("-std={}{}{}{}{}{}", c_std, opt_flag, pic_flag, compile_toolchain_flags,

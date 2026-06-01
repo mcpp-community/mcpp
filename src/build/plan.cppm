@@ -408,9 +408,15 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             main_cu.source = *lu.entryMain;
             main_cu.object = std::filesystem::path("obj") / object_filename_for(*lu.entryMain);
             main_cu.packageName = qualified_package_name(manifest);
-            main_cu.localIncludeDirs = local_include_dirs_for_manifest(projectRoot, manifest);
-            main_cu.packageCflags = manifest.buildConfig.cflags;
-            main_cu.packageCxxflags = manifest.buildConfig.cxxflags;
+            if (!packages.empty() && packages[0].usageResolved) {
+                main_cu.localIncludeDirs = packages[0].privateBuild.includeDirs;
+                main_cu.packageCflags = packages[0].privateBuild.cflags;
+                main_cu.packageCxxflags = packages[0].privateBuild.cxxflags;
+            } else {
+                main_cu.localIncludeDirs = local_include_dirs_for_manifest(projectRoot, manifest);
+                main_cu.packageCflags = manifest.buildConfig.cflags;
+                main_cu.packageCxxflags = manifest.buildConfig.cxxflags;
+            }
 
             // We didn't scan main.cpp earlier (it's not in scanner output unless globbed in).
             // Best-effort: scan its imports here.

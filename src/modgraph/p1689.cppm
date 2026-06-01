@@ -49,6 +49,7 @@ scan_file(const std::filesystem::path&        source,
           const std::string&                  packageName,
           const mcpp::toolchain::Toolchain&   tc,
           const std::filesystem::path&        tmpDir,
+          const std::vector<std::filesystem::path>& includeDirs,
           std::string_view                    cppStandardFlag);
 
 } // namespace mcpp::modgraph::p1689
@@ -319,6 +320,7 @@ scan_file(const std::filesystem::path&        source,
           const std::string&                  packageName,
           const mcpp::toolchain::Toolchain&   tc,
           const std::filesystem::path&        tmpDir,
+          const std::vector<std::filesystem::path>& includeDirs,
           std::string_view                    cppStandardFlag)
 {
     std::error_code ec;
@@ -340,8 +342,13 @@ scan_file(const std::filesystem::path&        source,
     std::string std_flag = cppStandardFlag.empty()
         ? std::string("-std=c++23")
         : std::string(cppStandardFlag);
+    std::string include_flags;
+    for (auto const& dir : includeDirs) {
+        include_flags += " -I";
+        include_flags += shell_escape(dir);
+    }
     std::string cmd = std::format(
-        "{} {} -fmodules{}"
+        "{} {} -fmodules{}{}"
         " -fdeps-format=p1689r5"
         " -fdeps-file={}"
         " -fdeps-target={}"
@@ -350,6 +357,7 @@ scan_file(const std::filesystem::path&        source,
         shell_escape(tc.binaryPath),
         std_flag,
         sysroot_flag,
+        include_flags,
         shell_escape(ddi),
         shell_escape(obj),
         shell_escape(dep),

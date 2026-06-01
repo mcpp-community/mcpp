@@ -70,6 +70,33 @@ TEST(Scanner, RecordsPackageLocalIncludeDirs) {
     std::filesystem::remove_all(dir);
 }
 
+TEST(Scanner, UsesResolvedPackagePrivateBuildIncludeDirs) {
+    auto dir = make_tempdir("mcpp-scanner-resolved-includes");
+    write(dir / "src" / "foo.cpp",
+          "int answer() { return 42; }\n");
+    std::filesystem::create_directories(dir / "legacy");
+    std::filesystem::create_directories(dir / "resolved");
+
+    mcpp::manifest::Manifest m;
+    m.package.name = "pkg";
+    m.modules.sources = {"src/*.cpp"};
+    m.buildConfig.includeDirs = {"legacy"};
+
+    PackageRoot p{dir, m};
+    p.usageResolved = true;
+    p.privateBuild.includeDirs = {dir / "resolved"};
+
+    auto r = scan_packages({p});
+    ASSERT_TRUE(r.errors.empty());
+    ASSERT_EQ(r.graph.units.size(), 1u);
+
+    auto const& dirs = r.graph.units[0].localIncludeDirs;
+    ASSERT_EQ(dirs.size(), 1u);
+    EXPECT_EQ(dirs[0], dir / "resolved");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Scanner, PartitionImportFromPrimaryInterface) {
     // Primary module interface: `export module foo;` → logicalName = "foo".
     // `import :tls;` resolves to "foo:tls".
