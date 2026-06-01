@@ -23,9 +23,11 @@ module;
 export module mcpp.toolchain.stdmod;
 
 import std;
+import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.gcc;
 
 export namespace mcpp::toolchain {
@@ -46,6 +48,8 @@ std::filesystem::path default_cache_root();
 std::expected<StdModule, StdModError> ensure_built(
     const Toolchain&                  tc,
     std::string_view                  fingerprint_hex,
+    std::string_view                  cpp_standard,
+    std::string_view                  cpp_standard_flag,
     const std::filesystem::path&      cache_root = default_cache_root());
 
 } // namespace mcpp::toolchain
@@ -63,6 +67,93 @@ std::expected<std::string, StdModError> run_capture_command(const std::string& c
     return r.output;
 }
 
+std::filesystem::path metadata_path(const std::filesystem::path& cacheDir) {
+    return cacheDir / "std-module.json";
+}
+
+nlohmann::json metadata_for(const Toolchain& tc,
+                            std::string_view cppStandard,
+                            std::string_view cppStandardFlag,
+                            const std::vector<std::string>& stdCommands,
+                            const std::vector<std::string>& compatCommands) {
+    nlohmann::json j;
+    j["schema"] = 1;
+    j["compiler"] = std::string(tc.compiler_name());
+    j["compiler_version"] = tc.version;
+    j["driver_identity"] = tc.driverIdent.empty()
+        ? (tc.binaryPath.empty() ? "" : hash_file(tc.binaryPath))
+        : hash_string(tc.driverIdent);
+    j["target_triple"] = tc.targetTriple;
+    j["stdlib"] = tc.stdlibId;
+    j["stdlib_version"] = tc.stdlibVersion;
+    j["cpp_standard"] = std::string(cppStandard);
+    j["std_flag"] = std::string(cppStandardFlag);
+    j["std_module_source"] = tc.stdModuleSource.generic_string();
+    j["std_module_source_hash"] = hash_file(tc.stdModuleSource);
+    j["std_compat_source"] = tc.stdCompatSource.generic_string();
+    j["std_compat_source_hash"] = tc.stdCompatSource.empty() ? "" : hash_file(tc.stdCompatSource);
+    j["std_build_commands"] = stdCommands;
+    j["std_compat_build_commands"] = compatCommands;
+    return j;
+}
+
+bool metadata_matches(const std::filesystem::path& path, const nlohmann::json& expected) {
+    std::ifstream is(path);
+    if (!is) return false;
+    nlohmann::json actual;
+    try {
+        is >> actual;
+    } catch (...) {
+        return false;
+    }
+    static constexpr std::array<std::string_view, 14> keys = {
+        "schema",
+        "compiler",
+        "compiler_version",
+        "driver_identity",
+        "target_triple",
+        "stdlib",
+        "stdlib_version",
+        "cpp_standard",
+        "std_flag",
+        "std_module_source",
+        "std_module_source_hash",
+        "std_compat_source",
+        "std_compat_source_hash",
+        "std_build_commands",
+    };
+    for (auto key : keys) {
+        auto k = std::string(key);
+        if (!actual.contains(k) || actual[k] != expected[k]) return false;
+    }
+    return actual.value("std_compat_build_commands", nlohmann::json::array())
+        == expected["std_compat_build_commands"];
+}
+
+std::expected<void, StdModError> write_metadata(const std::filesystem::path& path,
+                                                const nlohmann::json& metadata) {
+    std::ofstream os(path, std::ios::binary);
+    if (!os) {
+        return std::unexpected(StdModError{
+            std::format("cannot write std module metadata '{}'", path.string())});
+    }
+    os << metadata.dump(2) << "\n";
+    if (!os) {
+        return std::unexpected(StdModError{
+            std::format("failed while writing std module metadata '{}'", path.string())});
+    }
+    return {};
+}
+
+std::expected<std::string, StdModError> run_commands(const std::vector<std::string>& commands) {
+    std::string out;
+    for (auto const& cmd : commands) {
+        if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
+        else out += *r;
+    }
+    return out;
+}
+
 } // namespace
 
 std::filesystem::path default_cache_root() {
@@ -78,6 +169,8 @@ std::filesystem::path default_cache_root() {
 std::expected<StdModule, StdModError> ensure_built(
     const Toolchain&                  tc,
     std::string_view                  fingerprint_hex,
+    std::string_view                  cpp_standard,
+    std::string_view                  cpp_standard_flag,
     const std::filesystem::path&      cache_root)
 {
     if (tc.stdModuleSource.empty()) {
@@ -146,7 +239,26 @@ std::expected<StdModule, StdModError> ensure_built(
             sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
     }
 
-    bool std_cached = std::filesystem::exists(sm.bmiPath) && std::filesystem::exists(sm.objectPath);
+    std::vector<std::string> stdCommands;
+    if (is_clang(tc)) {
+        stdCommands = mcpp::toolchain::clang::std_module_build_commands(
+            tc, sm.cacheDir, sm.bmiPath, sysroot_flag, cpp_standard_flag);
+    } else {
+        stdCommands.push_back(mcpp::toolchain::gcc::std_module_build_command(
+            tc, sm.cacheDir, sysroot_flag, cpp_standard_flag));
+    }
+    std::vector<std::string> compatCommands;
+    if (is_clang(tc) && !tc.stdCompatSource.empty()) {
+        auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
+        compatCommands = mcpp::toolchain::clang::std_compat_build_commands(
+            tc, sm.cacheDir, compatBmi, sm.bmiPath, sysroot_flag, cpp_standard_flag);
+    }
+    auto metadata = metadata_for(tc, cpp_standard, cpp_standard_flag, stdCommands, compatCommands);
+    auto metaPath = metadata_path(sm.cacheDir);
+    bool std_cached = std::filesystem::exists(sm.bmiPath)
+                   && std::filesystem::exists(sm.objectPath)
+                   && metadata_matches(metaPath, metadata);
+    bool rebuiltStd = false;
 
     if (!std_cached) {
         std::error_code ec;
@@ -154,41 +266,32 @@ std::expected<StdModule, StdModError> ensure_built(
         if (ec) return std::unexpected(StdModError{
             std::format("cannot create '{}': {}", sm.bmiPath.parent_path().string(), ec.message())});
 
-        std::string out;
-
-        if (is_clang(tc)) {
-            for (auto& cmd : mcpp::toolchain::clang::std_module_build_commands(
-                     tc, sm.cacheDir, sm.bmiPath, sysroot_flag)) {
-                if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
-                else out += *r;
-            }
-        } else {
-            auto cmd = mcpp::toolchain::gcc::std_module_build_command(
-                tc, sm.cacheDir, sysroot_flag);
-            if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
-            else out += *r;
-        }
+        auto out = run_commands(stdCommands);
+        if (!out) return std::unexpected(out.error());
 
         if (!std::filesystem::exists(sm.bmiPath)) {
             return std::unexpected(StdModError{
                 std::format("expected BMI at '{}' but it wasn't produced; output:\n{}",
-                            sm.bmiPath.string(), out)});
+                            sm.bmiPath.string(), *out)});
         }
+        rebuiltStd = true;
     }
 
-    // Build std.compat after std (std.compat depends on std, Clang only)
+    // Build std.compat after std (std.compat depends on std, Clang only).
     if (is_clang(tc) && !tc.stdCompatSource.empty()) {
         auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
-        if (!std::filesystem::exists(compatBmi)) {
-            std::string out;
-            for (auto& cmd : mcpp::toolchain::clang::std_compat_build_commands(
-                     tc, sm.cacheDir, compatBmi, sm.bmiPath, sysroot_flag)) {
-                if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
-                else out += *r;
+        if (rebuiltStd || !std::filesystem::exists(compatBmi)
+            || !metadata_matches(metaPath, metadata)) {
+            if (auto out = run_commands(compatCommands); !out) {
+                return std::unexpected(out.error());
             }
         }
         sm.compatBmiPath = compatBmi;
         sm.compatObjectPath = sm.cacheDir / "std.compat.o";
+    }
+
+    if (auto r = write_metadata(metaPath, metadata); !r) {
+        return std::unexpected(r.error());
     }
 
     return sm;

@@ -134,6 +134,10 @@ jobs:
           # default-toolchain path) gets a deterministic GNU answer
           # instead of whatever auto-install picks on a fresh sandbox.
           "$MCPP" toolchain default gcc@16.1.0
+          # Warm musl once in the persistent sandbox. Fresh-home e2e tests
+          # inherit this payload, and the later --target musl job reuses it
+          # instead of downloading a second copy into another home.
+          "$MCPP" toolchain install gcc 15.1.0-musl
           bash tests/e2e/run_all.sh
 
       - name: Save freshly-built mcpp for toolchain tests

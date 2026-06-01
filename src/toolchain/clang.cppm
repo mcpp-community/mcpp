@@ -26,7 +26,8 @@ std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir
 std::vector<std::string> std_module_build_commands(const Toolchain& tc,
                                                    const std::filesystem::path& cacheDir,
                                                    const std::filesystem::path& bmiPath,
-                                                   std::string_view sysrootFlag);
+                                                   std::string_view sysrootFlag,
+                                                   std::string_view cppStandardFlag);
 
 std::optional<std::filesystem::path> find_libcxx_std_compat_source(
     const std::filesystem::path& cxx_binary,
@@ -39,7 +40,8 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
                                                     const std::filesystem::path& cacheDir,
                                                     const std::filesystem::path& bmiPath,
                                                     const std::filesystem::path& stdBmiPath,
-                                                    std::string_view sysrootFlag);
+                                                    std::string_view sysrootFlag,
+                                                    std::string_view cppStandardFlag);
 
 std::filesystem::path archive_tool(const Toolchain& tc);
 
@@ -174,7 +176,8 @@ std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir
 std::vector<std::string> std_module_build_commands(const Toolchain& tc,
                                                    const std::filesystem::path& cacheDir,
                                                    const std::filesystem::path& bmiPath,
-                                                   std::string_view sysrootFlag) {
+                                                   std::string_view sysrootFlag,
+                                                   std::string_view cppStandardFlag) {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
 #if defined(_WIN32)
     // Windows: use absolute paths, raw binary path as first token
@@ -191,17 +194,19 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
         : "";
     return {
         std::format(
-            "{} -std=c++23{}{} "
+            "{} {}{}{} "
             "--precompile {} -o {}",
             tc.binaryPath.string(),
+            cppStandardFlag,
             ixxFlags,
             sysrootFlag,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(absBmi)),
         std::format(
-            "{} -std=c++23{} "
+            "{} {}{} "
             "{} -c -o {}",
             tc.binaryPath.string(),
+            cppStandardFlag,
             sysrootFlag,
             mcpp::xlings::shq(absBmi),
             mcpp::xlings::shq((cacheDir / "std.o").string()))
@@ -209,20 +214,22 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
 #else
     return {
         std::format(
-            "cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
+            "cd {} && {}{} {} -Wno-reserved-module-identifier{} "
             "--precompile {} -o {} 2>&1",
             mcpp::xlings::shq(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
             mcpp::xlings::shq(tc.binaryPath.string()),
+            cppStandardFlag,
             sysrootFlag,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(relBmi)),
         std::format(
-            "cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
+            "cd {} && {}{} {} -Wno-reserved-module-identifier{} "
             "{} -c -o std.o 2>&1",
             mcpp::xlings::shq(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
             mcpp::xlings::shq(tc.binaryPath.string()),
+            cppStandardFlag,
             sysrootFlag,
             mcpp::xlings::shq(relBmi))
     };
@@ -266,7 +273,8 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
                                                     const std::filesystem::path& cacheDir,
                                                     const std::filesystem::path& bmiPath,
                                                     const std::filesystem::path& stdBmiPath,
-                                                    std::string_view sysrootFlag)
+                                                    std::string_view sysrootFlag,
+                                                    std::string_view cppStandardFlag)
 {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
     auto relStdBmi = std::filesystem::relative(stdBmiPath, cacheDir).string();
@@ -274,22 +282,24 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.
     return {
-        std::format("cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
+        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{} "
                     "-fmodule-file=std={} "
                     "--precompile {} -o {} 2>&1",
                     mcpp::xlings::shq(cacheDir.string()),
                     mcpp::toolchain::compiler_env_prefix(tc),
                     mcpp::xlings::shq(tc.binaryPath.string()),
+                    cppStandardFlag,
                     sysrootFlag,
                     relStdBmi,
                     mcpp::xlings::shq(tc.stdCompatSource.string()),
                     mcpp::xlings::shq(relBmi)),
-        std::format("cd {} && {}{} -std=c++23 -Wno-reserved-module-identifier{} "
+        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{} "
                     "-fmodule-file=std={} "
                     "{} -c -o std.compat.o 2>&1",
                     mcpp::xlings::shq(cacheDir.string()),
                     mcpp::toolchain::compiler_env_prefix(tc),
                     mcpp::xlings::shq(tc.binaryPath.string()),
+                    cppStandardFlag,
                     sysrootFlag,
                     relStdBmi,
                     mcpp::xlings::shq(relBmi))

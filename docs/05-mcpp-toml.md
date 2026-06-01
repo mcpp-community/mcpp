@@ -41,11 +41,20 @@ lib-root 约定:主模块接口默认在 `src/mylib.cppm`(包名的最后一段)
 [package]
 name        = "myapp"              # 包名(必填)
 version     = "0.1.0"              # 语义化版本(必填)
+standard    = "c++23"              # C++ 标准(默认 c++23; 可设 c++26)
 description = "My awesome app"     # 简介(可选)
 license     = "MIT"                # 许可证(可选)
 authors     = ["Alice", "Bob"]     # 作者列表(可选)
 repo        = "https://github.com/user/myapp"  # 仓库地址(可选)
 ```
+
+`standard` 是 C++ 语言标准的一等配置。推荐值:
+
+- `c++23`：默认值，适合当前模块化默认模板。
+- `c++26`：需要 C++26 语言特性时使用。
+- `c++2c`：兼容别名，解析后归一为 `c++26`。
+- `gnu++23` / `gnu++26`：需要 GNU dialect 时使用，会进入 fingerprint 和 std BMI cache key。
+- `c++latest`：跟随当前 mcpp 支持的最新标准，适合本地试验，不推荐要求可复现的发布包使用。
 
 ### 2.2 `[targets.<name>]` — 构建目标
 
@@ -72,10 +81,19 @@ sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # 源文件 glob(默认: src/*
 include_dirs = ["include", "third_party/include"]  # 头文件搜索路径
 c_standard   = "c11"              # C 源文件的标准(默认 c11)
 cflags       = ["-DFOO=1"]        # 额外 C 编译参数
-cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数
+cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数(不要放 -std=...)
 ldflags      = ["-lfoo"]          # 额外链接参数
 static_stdlib = true               # 静态链接 libstdc++(默认 true)
 ```
+
+C++ 标准不要通过 `build.cxxflags = ["-std=..."]` 配置。请使用:
+
+```toml
+[package]
+standard = "c++26"
+```
+
+mcpp 会把同一个标准用于普通 C++ 编译、模块扫描、`compile_commands.json` 和 `import std` 的标准库 BMI 构建。
 
 **glob 排除**(`!` 前缀,mcpp 0.0.4+):
 
@@ -285,9 +303,20 @@ mcpp build --target x86_64-linux-musl
 | 源文件 | `src/**/*.{cppm,cpp,cc,c}` | 自动递归扫描 |
 | 入口 | `src/main.cpp` | 有这个文件就推断为 `bin` 目标 |
 | 库根 | `src/<pkg-tail>.cppm` | 可用 `[lib].path` 覆盖 |
-| 标准 | `c++23` | C++23 模块是一等公民 |
+| C++ 标准 | `c++23` | 用 `[package].standard` 配置; 支持 `c++26` / `c++2c` |
 | C 标准 | `c11` | `.c` 文件自动走 C 编译器 |
 | 静态 stdlib | `true` | 便携二进制 |
 | 头文件 | `include/`(如果存在） | 自动加到 `-I` |
 | 测试 | `tests/**/*.cpp` | `mcpp test` 自动发现 |
 | 依赖命名空间 | `mcpp`（默认) | 平铺写法走默认 ns |
+
+### 4.1 旧 `[language]` 兼容层
+
+旧配置仍可读取:
+
+```toml
+[language]
+standard = "c++26"
+```
+
+新项目请使用 `[package].standard`。如果两个位置都出现，`[package].standard` 是权威配置。

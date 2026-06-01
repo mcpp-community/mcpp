@@ -45,8 +45,8 @@ int main() {
 }
 EOF
 
-# Add user-supplied cflags/cxxflags so we also exercise the flag-forwarding
-# path through the manifest into the per-rule baselines.
+# Add user-supplied cflags/cxxflags so we also exercise the package-owned
+# per-unit flag-forwarding path through the manifest.
 cat > mcpp.toml <<'EOF'
 [package]
 name        = "cmix"
@@ -67,10 +67,14 @@ grep -q '^rule c_object' "$ninja_file" || { cat "$ninja_file"; echo "missing c_o
 # cc / cflags must be defined and pick a C compiler (gcc / cc / clang).
 grep -qE '^cc        = .*(gcc|cc|clang)' "$ninja_file" || {
     echo "cc variable not pointing at a C compiler"; exit 1; }
-grep -qE '^cflags    = -std=c11.*-DCMIX_C_BUILD=1' "$ninja_file" || {
-    echo "cflags missing -std=c11 or user cflags tail"; exit 1; }
-grep -qE '^cxxflags  = -std=c\+\+23.*-DCMIX_CXX_BUILD=1' "$ninja_file" || {
-    echo "cxxflags missing -std=c++23 or user cxxflags tail"; exit 1; }
+grep -qE '^cflags    = -std=c11' "$ninja_file" || {
+    echo "cflags missing -std=c11 baseline"; exit 1; }
+grep -qE '^cxxflags  = -std=c\+\+23' "$ninja_file" || {
+    echo "cxxflags missing -std=c++23 baseline"; exit 1; }
+grep -q -- 'unit_cflags = -DCMIX_C_BUILD=1' "$ninja_file" || {
+    echo "unit cflags missing user C flag"; exit 1; }
+grep -q -- 'unit_cxxflags = -DCMIX_CXX_BUILD=1' "$ninja_file" || {
+    echo "unit cxxflags missing user C++ flag"; exit 1; }
 # The .c source must be routed through c_object (not cxx_object).
 grep -qE 'build obj/cmix_core\.o : c_object .*cmix_core\.c' "$ninja_file" || {
     echo "cmix_core.c not routed to c_object rule"; exit 1; }

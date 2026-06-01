@@ -28,6 +28,61 @@ main = "src/main.cpp"
     EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::Binary);
 }
 
+TEST(Manifest, PackageStandardCpp26AcceptedAndMirrored) {
+    constexpr auto src = R"(
+[package]
+name = "hello26"
+version = "0.1.0"
+standard = "c++26"
+[modules]
+sources = ["src/**/*.cppm"]
+[targets.hello26]
+kind = "bin"
+main = "src/main.cpp"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->package.standard, "c++26");
+    EXPECT_EQ(m->language.standard, "c++26");
+}
+
+TEST(Manifest, LegacyLanguageCpp2cNormalizesToCpp26) {
+    constexpr auto src = R"(
+[package]
+name = "hello26"
+version = "0.1.0"
+[language]
+standard = "c++2c"
+[modules]
+sources = ["src/**/*.cppm"]
+[targets.hello26]
+kind = "bin"
+main = "src/main.cpp"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->package.standard, "c++26");
+    EXPECT_EQ(m->language.standard, "c++26");
+}
+
+TEST(Manifest, RejectsStdFlagInCxxflags) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+cxxflags = ["-std=c++26"]
+[modules]
+sources = ["src/**/*.cppm"]
+[targets.x]
+kind = "bin"
+main = "src/main.cpp"
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("[package].standard"), std::string::npos)
+        << m.error().message;
+}
+
 TEST(Manifest, RejectMissingVersion) {
     auto m = mcpp::manifest::parse_string(R"(
 [package]

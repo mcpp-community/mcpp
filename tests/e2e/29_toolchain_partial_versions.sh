@@ -50,10 +50,13 @@ grep -q 'gcc@16.1.0' "$TMP/def2.log" || {
     cat "$TMP/def2.log"; echo "default 'gcc@16' didn't resolve to 16.1.0"; exit 1; }
 
 # ─── Section 2: first-run auto-install ──────────────────────────────────
-# Brand-new MCPP_HOME, brand-new package with no [toolchain] declared —
-# `mcpp build` should auto-install the canonical default (musl-gcc 15.1
-# for portable static binaries) + use it. Output should be a static ELF.
+# Brand-new MCPP_HOME with no config/default state, brand-new package with no
+# [toolchain] declared — `mcpp build` should auto-install the canonical
+# default (musl-gcc 15.1 for portable static binaries) + use it. We still
+# inherit payloads so CI does not download the same large archives into a
+# throw-away home.
 export MCPP_HOME="$TMP/h2"
+inherit_payloads_only
 configure_e2e_mirror
 mkdir -p "$TMP/proj"
 cd "$TMP/proj"

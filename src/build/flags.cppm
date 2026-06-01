@@ -201,17 +201,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Opt level (musl ICE workaround)
     std::string opt_flag = isMuslTc ? " -Og" : " -O2";
 
-    // User flags
-    auto join = [](const std::vector<std::string>& v) {
-        std::string s;
-        for (auto& f : v) {
-            s += ' ';
-            s += f;
-        }
-        return s;
-    };
-    std::string user_cxxflags = join(plan.manifest.buildConfig.cxxflags);
-    std::string user_cflags = join(plan.manifest.buildConfig.cflags);
+    // User link flags
     std::string user_ldflags;
     for (auto const& flag : plan.manifest.buildConfig.ldflags) {
         user_ldflags += ' ';
@@ -251,11 +241,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         prebuilt_module_flag = std::format(" -fprebuilt-module-path={}",
             escape_path(plan.outputDir / traits.bmiDir));
     }
-    f.cxx = std::format("-std=c++23{}{}{}{}{}{}{}{}{}{}", module_flag, std_module_flag,
+    std::string cxx_std_flag =
+        plan.cppStandardFlag.empty() ? std::string("-std=c++23") : plan.cppStandardFlag;
+    f.cxx = std::format("{}{}{}{}{}{}{}{}{}", cxx_std_flag, module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
-                        opt_flag, pic_flag, compile_toolchain_flags, b_flag, include_flags, user_cxxflags);
-    f.cc = std::format("-std={}{}{}{}{}{}{}", c_std, opt_flag, pic_flag, compile_toolchain_flags,
-                       b_flag, include_flags, user_cflags);
+                        opt_flag, pic_flag, compile_toolchain_flags, b_flag, include_flags);
+    f.cc = std::format("-std={}{}{}{}{}{}", c_std, opt_flag, pic_flag, compile_toolchain_flags,
+                       b_flag, include_flags);
 
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;

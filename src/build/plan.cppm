@@ -40,6 +40,8 @@ struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      toolchain;
     mcpp::toolchain::Fingerprint    fingerprint;
+    std::string                     cppStandard = "c++23";
+    std::string                     cppStandardFlag = "-std=c++23";
 
     std::filesystem::path           projectRoot;      // where mcpp.toml lives
     std::filesystem::path           outputDir;        // target/<triple>/<fp>/
@@ -153,6 +155,17 @@ std::vector<std::string> shared_library_link_flags(const mcpp::manifest::Target&
     return flags;
 }
 
+std::vector<std::filesystem::path>
+local_include_dirs_for_manifest(const std::filesystem::path& root,
+                                const mcpp::manifest::Manifest& manifest)
+{
+    std::vector<std::filesystem::path> dirs;
+    for (auto const& inc : manifest.buildConfig.includeDirs) {
+        dirs.push_back(inc.is_absolute() ? inc : root / inc);
+    }
+    return dirs;
+}
+
 } // namespace
 
 BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
@@ -170,6 +183,10 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.manifest         = manifest;
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
+    if (auto stdCfg = mcpp::manifest::normalize_cpp_standard(manifest.package.standard)) {
+        plan.cppStandard = stdCfg->canonical;
+        plan.cppStandardFlag = stdCfg->flag;
+    }
     plan.projectRoot     = projectRoot;
     plan.outputDir       = outputDir;
     plan.stdBmiPath     = stdBmiPath;
@@ -391,6 +408,9 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             main_cu.source = *lu.entryMain;
             main_cu.object = std::filesystem::path("obj") / object_filename_for(*lu.entryMain);
             main_cu.packageName = qualified_package_name(manifest);
+            main_cu.localIncludeDirs = local_include_dirs_for_manifest(projectRoot, manifest);
+            main_cu.packageCflags = manifest.buildConfig.cflags;
+            main_cu.packageCxxflags = manifest.buildConfig.cxxflags;
 
             // We didn't scan main.cpp earlier (it's not in scanner output unless globbed in).
             // Best-effort: scan its imports here.

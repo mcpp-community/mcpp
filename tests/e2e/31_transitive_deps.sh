@@ -10,6 +10,14 @@ set -e
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
+MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0 source "$(dirname "$0")/_inherit_toolchain.sh"
+
+MUSL_PAYLOAD="$MCPP_HOME/registry/data/xpkgs/xim-x-musl-gcc/15.1.0/bin/x86_64-linux-musl-g++"
+if [[ ! -x "$MUSL_PAYLOAD" ]]; then
+    echo "SKIP: no reusable musl-gcc xpkg payload"
+    echo "OK"
+    exit 0
+fi
 
 # ── 1. Grandchild: a header-providing C lib whose `[build].include_dirs`
 #       is what consumers care about. Plays the role of mbedtls in the

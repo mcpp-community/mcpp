@@ -65,7 +65,8 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages);
 // cli when MCPP_SCANNER=p1689 (see docs/27).
 ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
                                const mcpp::toolchain::Toolchain&   tc,
-                               const std::filesystem::path&        tmpDir);
+                               const std::filesystem::path&        tmpDir,
+                               std::string_view                    cppStandardFlag);
 
 } // namespace mcpp::modgraph
 
@@ -435,7 +436,8 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages) {
 
 ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
                                const mcpp::toolchain::Toolchain&   tc,
-                               const std::filesystem::path&        tmpDir)
+                               const std::filesystem::path&        tmpDir,
+                               std::string_view                    cppStandardFlag)
 {
     ScanResult result;
     for (auto const& p : packages) {
@@ -446,7 +448,7 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
         const auto localIncludeDirs = local_include_dirs_for(p.root, p.manifest);
         for (auto const& f : all_files) {
             auto r = mcpp::modgraph::p1689::scan_file(
-                f, p.manifest.package.name, tc, tmpDir);
+                f, p.manifest.package.name, tc, tmpDir, cppStandardFlag);
             if (!r) {
                 result.errors.push_back(ScanError{ f, 0, r.error() });
                 continue;
