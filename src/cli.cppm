@@ -1874,6 +1874,38 @@ prepare_build(bool print_fingerprint,
         return std::pair{effRoot, std::move(*manifest)};
     };
 
+    auto appendIncludeDirsTo = [&](mcpp::manifest::Manifest& target,
+                                   const std::filesystem::path& depRoot,
+                                   const mcpp::manifest::Manifest& depManifest)
+        -> std::vector<std::filesystem::path>
+    {
+        std::vector<std::filesystem::path> added;
+        auto append_unique = [&](const std::filesystem::path& dir) {
+            auto& dirs = target.buildConfig.includeDirs;
+            if (std::find(dirs.begin(), dirs.end(), dir) != dirs.end()) return;
+            dirs.push_back(dir);
+            added.push_back(dir);
+        };
+        for (auto& inc : depManifest.buildConfig.includeDirs) {
+            if (inc.is_absolute()) {
+                append_unique(inc);
+                continue;
+            }
+            auto matches = mcpp::modgraph::expand_dir_glob(depRoot, inc.generic_string());
+            if (matches.empty()) continue;
+            for (auto& d : matches) {
+                append_unique(d);
+            }
+        }
+        return added;
+    };
+
+    auto syncMainPackageIncludes = [&] {
+        if (!packages.empty()) {
+            packages[0].manifest.buildConfig.includeDirs = m->buildConfig.includeDirs;
+        }
+    };
+
     // Append a dep's [build].include_dirs onto the main manifest's, glob-
     // expanded against the dep's root. Returns the absolute paths actually
     // appended so the caller can later evict them on a SemVer-merge re-fetch.
@@ -1881,21 +1913,33 @@ prepare_build(bool print_fingerprint,
                                     const mcpp::manifest::Manifest& depManifest)
         -> std::vector<std::filesystem::path>
     {
-        std::vector<std::filesystem::path> added;
-        for (auto& inc : depManifest.buildConfig.includeDirs) {
-            if (inc.is_absolute()) {
-                m->buildConfig.includeDirs.push_back(inc);
-                added.push_back(inc);
-                continue;
-            }
-            auto matches = mcpp::modgraph::expand_dir_glob(depRoot, inc.generic_string());
-            if (matches.empty()) continue;
-            for (auto& d : matches) {
-                m->buildConfig.includeDirs.push_back(d);
-                added.push_back(d);
+        auto added = appendIncludeDirsTo(*m, depRoot, depManifest);
+        syncMainPackageIncludes();
+        return added;
+    };
+
+    auto propagateIncludeDirsToConsumer =
+        [&](std::size_t consumerDepIndex,
+            const std::filesystem::path& depRoot,
+            const mcpp::manifest::Manifest& depManifest)
+    {
+        if (consumerDepIndex == kMainConsumer) {
+            (void)propagateIncludeDirs(depRoot, depManifest);
+            return;
+        }
+        if (consumerDepIndex >= dep_manifests.size()
+            || consumerDepIndex + 1 >= packages.size()) {
+            return;
+        }
+        auto added = appendIncludeDirsTo(*dep_manifests[consumerDepIndex],
+                                         depRoot, depManifest);
+        auto& packageManifest = packages[consumerDepIndex + 1].manifest;
+        for (auto const& dir : added) {
+            auto& dirs = packageManifest.buildConfig.includeDirs;
+            if (std::find(dirs.begin(), dirs.end(), dir) == dirs.end()) {
+                dirs.push_back(dir);
             }
         }
-        return added;
     };
 
     // Drop earlier include_dirs that came from a now-superseded dep version.
@@ -1907,6 +1951,7 @@ prepare_build(bool print_fingerprint,
             auto pos = std::find(dirs.begin(), dirs.end(), p);
             if (pos != dirs.end()) dirs.erase(pos);
         }
+        syncMainPackageIncludes();
     };
 
     auto normalizeDepLdflag = [](const std::filesystem::path& depRoot,
@@ -2297,7 +2342,16 @@ prepare_build(bool print_fingerprint,
                 continue;
             }
             // Same key, same version (or compatible path/git) — already
-            // processed; skip.
+            // processed; still attach its public include dirs to this
+            // consumer before skipping. Include propagation is per edge, not
+            // per unique package: two consumers can need the same dep's
+            // headers even though the dep itself is fetched/scanned once.
+            if (it->second.depIndex + 1 < packages.size()) {
+                auto const& existing = packages[it->second.depIndex + 1];
+                propagateIncludeDirsToConsumer(item.consumerDepIndex,
+                                               existing.root,
+                                               existing.manifest);
+            }
             continue;
         }
 
@@ -2422,6 +2476,11 @@ prepare_build(bool print_fingerprint,
         // by depIndex (the SemVer merger needs to overwrite the slot).
         dep_manifests.push_back(
             std::make_unique<mcpp::manifest::Manifest>(std::move(*dep_manifest)));
+        if (item.consumerDepIndex != kMainConsumer) {
+            propagateIncludeDirsToConsumer(item.consumerDepIndex,
+                                           dep_root,
+                                           *dep_manifests.back());
+        }
         dep_cache_identities.push_back({
             .indexName   = cache_index_name(key.ns),
             .packageName = name,

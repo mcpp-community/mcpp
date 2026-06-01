@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests that override $MCPP_HOME for isolation (fresh BMI cache / git cache /
-# etc.) but still need a working toolchain should source this. It symlinks
-# the user's installed toolchains and copies the config so the default
+# etc.) but still need a working toolchain should source this. It links the
+# user's installed toolchain payloads and copies the config so the default
 # toolchain pin resolves.
 #
 # Usage:    source "$(dirname "$0")/_inherit_toolchain.sh"
@@ -13,16 +13,36 @@ if [[ -z "${MCPP_HOME:-}" ]]; then
 fi
 mkdir -p "$MCPP_HOME"
 
-# On Windows, HOME may differ from USERPROFILE; try both
+# On Windows, HOME may differ from USERPROFILE; try both.
 USER_MCPP="${HOME}/.mcpp"
 if [[ ! -d "$USER_MCPP" && -n "${USERPROFILE:-}" ]]; then
     USER_MCPP="$USERPROFILE/.mcpp"
 fi
-if [[ -d "$USER_MCPP/registry/data/xpkgs" ]]; then
+
+link_xpkg_payloads() {
+    local source_dir="$1"
+    local target_dir="$MCPP_HOME/registry/data/xpkgs"
+    [[ -d "$source_dir" ]] || return 0
+    mkdir -p "$target_dir"
+
+    local entry base
+    shopt -s nullglob
+    for entry in "$source_dir"/*; do
+        base="$(basename "$entry")"
+        [[ -e "$target_dir/$base" ]] && continue
+        ln -sf "$entry" "$target_dir/$base" 2>/dev/null \
+            || cp -r "$entry" "$target_dir/$base"
+    done
+    shopt -u nullglob
+}
+
+if [[ -d "$USER_MCPP/registry/data/xpkgs" || -d "$HOME/.xlings/data/xpkgs" || ( -n "${USERPROFILE:-}" && -d "$USERPROFILE/.xlings/data/xpkgs" ) ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
-    [[ -e "$MCPP_HOME/registry/data/xpkgs" ]] \
-        || ln -sf "$USER_MCPP/registry/data/xpkgs" "$MCPP_HOME/registry/data/xpkgs" 2>/dev/null \
-        || cp -r "$USER_MCPP/registry/data/xpkgs" "$MCPP_HOME/registry/data/xpkgs"
+    link_xpkg_payloads "$USER_MCPP/registry/data/xpkgs"
+    link_xpkg_payloads "$HOME/.xlings/data/xpkgs"
+    if [[ -n "${USERPROFILE:-}" ]]; then
+        link_xpkg_payloads "$USERPROFILE/.xlings/data/xpkgs"
+    fi
 fi
 if [[ -d "$USER_MCPP/registry/data/xim-pkgindex" ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
