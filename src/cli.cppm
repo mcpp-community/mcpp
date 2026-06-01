@@ -1565,6 +1565,11 @@ prepare_build(bool print_fingerprint,
         std::string version;
     };
     std::vector<DepCacheIdentity> dep_cache_identities;
+    struct GitLockIdentity {
+        std::string source;
+        std::string hash;
+    };
+    std::map<std::string, GitLockIdentity> root_git_lock_identities;
 
     struct ResolvedKey {
         std::string ns;
@@ -2615,8 +2620,11 @@ prepare_build(bool print_fingerprint,
             if (dep_root.is_relative()) dep_root = base / dep_root;
             dep_root = std::filesystem::weakly_canonical(dep_root);
         } else if (spec.isGit()) {
-            // Git-based (M4 #5): clone into ~/.mcpp/git/<hash>/<rev>/
-            // and treat as a path dep from there.
+            // Git-based (M4 #5): clone into ~/.mcpp/git/<hash>/ and treat
+            // as a path dep from there. Branch refs are floating, so resolve
+            // them to a commit before forming the cache key; this lets
+            // `mcpp update <dep>` pick up a moved branch without deleting
+            // unrelated git caches.
             auto mcppHome = [] {
                 if (auto* e = std::getenv("MCPP_HOME"); e && *e)
                     return std::filesystem::path(e);
@@ -2624,11 +2632,32 @@ prepare_build(bool print_fingerprint,
                     return std::filesystem::path(e) / ".mcpp";
                 return std::filesystem::current_path() / ".mcpp";
             }();
-            // Cache key: hash(url + refkind + ref). Avoids collisions across
-            // different revs of the same repo.
+            std::string resolvedGitRev = spec.gitRev;
+            if (spec.gitRefKind == "branch") {
+                auto ref = std::format("refs/heads/{}", spec.gitRev);
+                auto cmd = std::format(
+                    "git ls-remote {} {} 2>&1",
+                    mcpp::platform::shell::quote(spec.git),
+                    mcpp::platform::shell::quote(ref));
+                auto r = mcpp::platform::process::capture(cmd);
+                if (r.exit_code != 0) {
+                    return std::unexpected(std::format(
+                        "git ls-remote of '{}' failed:\n{}", spec.git, r.output));
+                }
+                std::istringstream is(r.output);
+                is >> resolvedGitRev;
+                if (resolvedGitRev.empty()) {
+                    return std::unexpected(std::format(
+                        "git branch '{}' not found in '{}'", spec.gitRev, spec.git));
+                }
+            }
+
+            // Cache key: hash(url + refkind + declared ref + resolved commit).
+            // For fixed rev/tag deps the declared ref is also the resolved ref.
             std::hash<std::string> H;
             auto urlHash = std::format("{:016x}",
-                H(spec.git + "|" + spec.gitRefKind + "|" + spec.gitRev));
+                H(spec.git + "|" + spec.gitRefKind + "|" + spec.gitRev
+                  + "|" + resolvedGitRev));
             auto gitRoot = mcppHome / "git" / urlHash;
             std::error_code ec;
             std::filesystem::create_directories(gitRoot.parent_path(), ec);
@@ -2638,10 +2667,12 @@ prepare_build(bool print_fingerprint,
                 std::string cloneCmd;
                 if (spec.gitRefKind == "branch") {
                     cloneCmd = std::format(
-                        "git clone --depth 1 --branch {} {} {} 2>&1",
+                        "git clone --depth 1 --branch {} {} {} && cd {} && git checkout --quiet {} 2>&1",
                         mcpp::platform::shell::quote(spec.gitRev),
                         mcpp::platform::shell::quote(spec.git),
-                        mcpp::platform::shell::quote(gitRoot.string()));
+                        mcpp::platform::shell::quote(gitRoot.string()),
+                        mcpp::platform::shell::quote(gitRoot.string()),
+                        mcpp::platform::shell::quote(resolvedGitRev));
                 } else {
                     // For tag/rev: full clone, then checkout (depth-1 may miss the rev).
                     cloneCmd = std::format(
@@ -2662,6 +2693,17 @@ prepare_build(bool print_fingerprint,
                             "git clone of '{}' failed:\n{}", spec.git, out));
                     }
                 }
+            }
+            if (item.consumerDepIndex == kMainConsumer) {
+                auto source = std::format("git+{}#{}={}",
+                    spec.git, spec.gitRefKind, spec.gitRev);
+                if (spec.gitRefKind == "branch") source += "@" + resolvedGitRev;
+                root_git_lock_identities[name] = GitLockIdentity{
+                    .source = std::move(source),
+                    .hash = std::format("fnv1a:{:016x}", H(spec.git + "|"
+                        + spec.gitRefKind + "|" + spec.gitRev + "|"
+                        + resolvedGitRev)),
+                };
             }
             dep_root = gitRoot;
         }
@@ -2985,19 +3027,33 @@ prepare_build(bool print_fingerprint,
             if (spec.isPath()) continue;
             mcpp::lockfile::LockedPackage lp;
             lp.name       = name;
-            lp.namespace_ = spec.namespace_.empty()
-                ? std::string(mcpp::pm::kDefaultNamespace)
-                : spec.namespace_;
-            lp.version    = spec.version;
-            // Use the namespace and resolved version as the source identifier.
-            // For custom indices, include the index name for traceability.
-            lp.source     = std::format("index+{}@{}", lp.namespace_, lp.version);
-            // Use a deterministic hash based on namespace + name + version.
-            // A future PR can replace this with a real content hash from the
-            // xpkg.lua's declared sha256 or from the install plan.
-            std::hash<std::string> hasher;
-            auto hashInput = std::format("{}:{}@{}", lp.namespace_, name, lp.version);
-            lp.hash = std::format("fnv1a:{:016x}", hasher(hashInput));
+            if (spec.isGit()) {
+                auto gitIt = root_git_lock_identities.find(name);
+                lp.version = spec.gitRev;
+                if (gitIt == root_git_lock_identities.end()) {
+                    lp.source = std::format("git+{}#{}={}",
+                        spec.git, spec.gitRefKind, spec.gitRev);
+                    std::hash<std::string> hasher;
+                    lp.hash = std::format("fnv1a:{:016x}", hasher(lp.source));
+                } else {
+                    lp.source = gitIt->second.source;
+                    lp.hash = gitIt->second.hash;
+                }
+            } else {
+                lp.namespace_ = spec.namespace_.empty()
+                    ? std::string(mcpp::pm::kDefaultNamespace)
+                    : spec.namespace_;
+                lp.version    = spec.version;
+                // Use the namespace and resolved version as the source identifier.
+                // For custom indices, include the index name for traceability.
+                lp.source     = std::format("index+{}@{}", lp.namespace_, lp.version);
+                // Use a deterministic hash based on namespace + name + version.
+                // A future PR can replace this with a real content hash from the
+                // xpkg.lua's declared sha256 or from the install plan.
+                std::hash<std::string> hasher;
+                auto hashInput = std::format("{}:{}@{}", lp.namespace_, name, lp.version);
+                lp.hash = std::format("fnv1a:{:016x}", hasher(hashInput));
+            }
             lock.packages.push_back(std::move(lp));
         }
         if (!lock.packages.empty() || !lock.indices.empty()) {

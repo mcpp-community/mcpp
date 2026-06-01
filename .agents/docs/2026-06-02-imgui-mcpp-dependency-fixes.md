@@ -2,7 +2,9 @@
 
 ## Scope
 
-Branch: `codex/imgui-mcpp-dependency-fixes`
+Initial branch: `codex/imgui-mcpp-dependency-fixes`
+
+Follow-up branch: `codex/fix-git-dependency-cache-lock`
 
 This document tracks the mcpp-side changes discovered while validating the
 `imgui-private` package and its `compat.imgui` / `compat.glfw` /
@@ -41,6 +43,22 @@ The imgui validation exposed two separate mcpp-side problems.
    imgui and GLFW consumers, and failed with undefined `glfwInit`,
    `glfwCreateWindow`, etc.
 
+3. Git branch dependencies reused stale source clones and wrote misleading
+   lock entries.
+
+   `prepare_build()` cached git dependencies by `url + ref-kind + ref`. For
+   `branch = "main"`, that cache key stays stable even after the remote branch
+   advances, so `mcpp update <dep>` removed the lock entry but the next build
+   still reused the old clone. The lock writer also treated every non-path
+   dependency as a registry dependency and emitted `source = "index+mcpplibs@"`
+   for git dependencies.
+
+   Impact: a consumer using `imgui = { git = ".../imgui-private.git", branch =
+   "main" }` could keep compiling an old cached checkout that only provided the
+   obsolete `imgui` module instead of the current `imgui.core` and
+   `imgui.backend.*` modules. The lock file also obscured the real dependency
+   source.
+
 ## Changes In This Branch
 
 - `src/build/flags.cppm`
@@ -63,6 +81,18 @@ The imgui validation exposed two separate mcpp-side problems.
 - `tests/e2e/60_stale_xpkg_cache_reinstall.sh`
   - Added a stale-cache regression that creates an old unmarked xpkg layout and
     verifies mcpp reinstalls it instead of linking against the stale contents.
+
+- `src/cli.cppm`
+  - For `branch` git dependencies, resolve the branch to a concrete commit with
+    `git ls-remote` before creating the cache key.
+  - Include the resolved commit in the git cache key so an advanced branch maps
+    to a fresh cache directory while unchanged branches still reuse the cache.
+  - Record git dependencies in `mcpp.lock` as `git+<url>#branch=<name>@<sha>`
+    instead of `index+...`.
+
+- `tests/e2e/24_git_dependency.sh`
+  - Added a branch dependency regression that verifies `mcpp update <dep>`
+    refreshes a moved branch and that lock source metadata is marked as git.
 
 ## Evidence So Far
 
@@ -105,10 +135,42 @@ The imgui validation exposed two separate mcpp-side problems.
   - `tests/e2e/57_static_dep_shared_artifact.sh`: `OK`
   - `tests/e2e/60_stale_xpkg_cache_reinstall.sh`: `OK`
 
+- Red e2e for git dependency lock/cache behavior before the fix:
+  - Command:
+    `MCPP=$(command -v mcpp) bash tests/e2e/24_git_dependency.sh`
+  - Result: failed with `FAIL: git dep lock source is not marked as git` and a
+    lock entry containing `source = "index+mcpplibs@"`.
+
+- Green e2e after rebuilding the mcpp CLI with the git dependency fix:
+  - Command:
+    `MCPP=target/x86_64-linux-gnu/ea28c45f9dcd4fed/bin/mcpp bash tests/e2e/24_git_dependency.sh`
+  - Result: `OK`
+
+- Focused regression after the final git dependency change:
+  - `mcpp test`: `18 passed; 0 failed`
+  - `tests/e2e/23_remove_update.sh`: `OK`
+  - `tests/e2e/24_git_dependency.sh`: `OK`
+  - `tests/e2e/62_dotted_dependency_selector_priority.sh`: `OK`
+
+- Fresh external `imgui-private` git consumer with rebuilt mcpp CLI:
+  - Command:
+    `MCPP_HOME=/tmp/imgui-private-fixed-mcpp-home target/x86_64-linux-gnu/ea28c45f9dcd4fed/bin/mcpp run`
+  - Result:
+    `external git consumer imported Dear ImGui 1.92.8`
+  - Lock source:
+    `git+git@github.com:mcpplibs/imgui-private.git#branch=main@07ea0c3c088331517e1eda898c267d966173206d`
+
+- `imgui-private` package validation with rebuilt mcpp CLI and existing
+  dependency caches:
+  - `mcpp clean && mcpp build && mcpp test`: `backend_test ... ok`,
+    `imgui_test ... ok`
+  - `examples/basic`: `Dear ImGui 1.92.8 module frame ok`
+  - `examples/glfw_opengl3`: build completed successfully
+
 ## Pending Verification
 
-- Re-run imgui-private with the rebuilt mcpp binary without manually deleting
-  package directories.
+- Before opening a PR, decide whether to run the full e2e suite or rely on the
+  focused unit/e2e/imgui-private validation plus CI.
 - Before opening a PR, decide whether to also run the full e2e suite or leave
   that to CI after the focused dependency set above.
 

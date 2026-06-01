@@ -88,5 +88,105 @@ test -n "$(ls -A "$MCPP_HOME/git" 2>/dev/null)" || { echo "FAIL: git cache empty
 build2=$("$MCPP" build 2>&1)
 echo "$build2" | grep -q 'Cloning' && { echo "FAIL: re-cloned on rebuild"; exit 1; } || true
 
+# 3. Branch refs should update when the user asks for mcpp update.
+mkdir "$TMP/branch-origin" && cd "$TMP/branch-origin"
+git init --quiet
+git checkout -B main --quiet
+git config user.email "test@local"
+git config user.name  "test"
+"$MCPP" new branchlib >/dev/null
+mv branchlib/* branchlib/.??* . 2>/dev/null || true
+rmdir branchlib 2>/dev/null || true
+cat > src/greet.cppm <<'EOF'
+export module branchlib.greet;
+import std;
+export auto greet() -> void { std::println("branch dep v1"); }
+EOF
+rm src/main.cpp
+cat > mcpp.toml <<'EOF'
+[package]
+name        = "branchlib"
+version     = "0.1.0"
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+[modules]
+sources = ["src/**/*.cppm"]
+[targets.branchlib]
+kind = "lib"
+EOF
+git add -A >/dev/null
+git commit --quiet -m "v1"
+
+cd "$TMP"
+"$MCPP" new branchapp >/dev/null
+cd branchapp
+cat > src/main.cpp <<'EOF'
+import std;
+import branchlib.greet;
+int main() { greet(); return 0; }
+EOF
+cat > mcpp.toml <<EOF
+[package]
+name        = "branchapp"
+version     = "0.1.0"
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+[modules]
+sources = ["src/**/*.cppm", "src/**/*.cpp"]
+[targets.branchapp]
+kind = "bin"
+main = "src/main.cpp"
+[dependencies.branchlib]
+git = "$TMP/branch-origin"
+branch = "main"
+EOF
+
+"$MCPP" build > branch-v1.log 2>&1
+triple=$(ls -d target/*/ | head -1)
+fp_dir=$(ls "$triple")
+out=$(${triple}${fp_dir}/bin/branchapp)
+[[ "$out" == *"branch dep v1"* ]] || {
+    echo "FAIL: branch dep v1 not invoked: $out"
+    cat branch-v1.log; exit 1; }
+
+grep -q 'source  = "git+' mcpp.lock || {
+    echo "FAIL: git dep lock source is not marked as git"
+    cat mcpp.lock; exit 1; }
+grep -q 'branch=main' mcpp.lock || {
+    echo "FAIL: git dep lock source does not record branch ref"
+    cat mcpp.lock; exit 1; }
+! grep -q 'source  = "index+' mcpp.lock || {
+    echo "FAIL: git dep lock source incorrectly uses index source"
+    cat mcpp.lock; exit 1; }
+
+cd "$TMP/branch-origin"
+cat > src/greet.cppm <<'EOF'
+export module branchlib.greet;
+import std;
+export auto greet() -> void { std::println("branch dep v2"); }
+EOF
+git add -A >/dev/null
+git commit --quiet -m "v2"
+
+cd "$TMP/branchapp"
+"$MCPP" update branchlib >/dev/null
+"$MCPP" clean >/dev/null
+"$MCPP" build > branch-v2.log 2>&1
+triple=$(ls -d target/*/ | head -1)
+fp_dir=$(ls "$triple")
+out=$(${triple}${fp_dir}/bin/branchapp)
+[[ "$out" == *"branch dep v2"* ]] || {
+    echo "FAIL: branch dep did not refresh after mcpp update: $out"
+    echo "--- branch-v2.log ---"
+    cat branch-v2.log
+    echo "--- mcpp.lock ---"
+    cat mcpp.lock
+    exit 1
+}
+
 # Cleanup so trap doesn't blow up if any subprocess holds files.
 echo "OK"
