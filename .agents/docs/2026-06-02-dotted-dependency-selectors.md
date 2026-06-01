@@ -275,6 +275,9 @@ mcpp test
   pass locally.
 - 2026-06-02: Bumped the pending release version to `0.0.43` and added the
   changelog entry for dotted dependency selectors.
+- 2026-06-02: CI exposed that `--version` also uses the hardcoded
+  `MCPP_VERSION` in `src/toolchain/fingerprint.cppm`; synchronized it to
+  `0.0.43`.
 
 Current local checks:
 
