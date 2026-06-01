@@ -3,6 +3,14 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.41] — 2026-06-01
+
+### 修复
+
+- 修复 Objective-C `.m` 源文件在 Ninja 后端被路由到 C++ 编译规则的问题。
+  `.m` 现在与 `.c` 一样使用 C/Objective-C 编译器与 `cflags`,避免 macOS
+  GLFW 等上游 Objective-C 源被错误附加 `-std=c++23`。
+
 ## [0.0.40] — 2026-06-01
 
 ### 修复

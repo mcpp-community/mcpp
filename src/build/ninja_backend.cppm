@@ -445,7 +445,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         auto ext = src.extension();
         if (ext == ".cppm")
             return "cxx_module";
-        if (ext == ".c")
+        if (ext == ".c" || ext == ".m")
             return "c_object";
         return "cxx_object";
     };
