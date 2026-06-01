@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # requires:
-# `mcpp add` modifies mcpp.toml [dependencies], including the namespaced form
-# `mcpp add <ns>:<name>@<ver>` which lands under [dependencies.<ns>] without
-# any TOML key quoting.
+# `mcpp add` modifies mcpp.toml [dependencies]. Dotted package selectors are
+# preserved in the single table; `ns:name` remains the explicit namespace form.
 set -e
 
 TMP=$(mktemp -d)
@@ -36,16 +35,29 @@ grep -qE '^cmdline = "0\.0\.2"$' mcpp.toml || { cat mcpp.toml; echo "cmdline ent
 "$MCPP" add mcpplibs:templates@0.0.1 > /dev/null
 grep -qE '^templates = "0\.0\.1"$' mcpp.toml || { cat mcpp.toml; echo "templates entry missing"; exit 1; }
 
-# (5) Legacy dotted form is still accepted on input — written out as namespaced subtable.
+# (5) Dotted selector input is preserved under the single [dependencies] table.
 "$MCPP" add acme.util@2.0.0 > /dev/null
-grep -qE '^\[dependencies\.acme\]$' mcpp.toml || { cat mcpp.toml; echo "missing [dependencies.acme] section"; exit 1; }
-grep -qE '^util = "2\.0\.0"$'      mcpp.toml || { cat mcpp.toml; echo "util entry missing"; exit 1; }
+grep -qE '^acme\.util = "2\.0\.0"$' mcpp.toml || { cat mcpp.toml; echo "acme.util selector entry missing"; exit 1; }
 
-# (6) Reject missing version.
+# (6) Colon form remains explicit namespace syntax and uses a subtable.
+"$MCPP" add compat:gtest@1.15.2 > /dev/null
+grep -qE '^\[dependencies\.compat\]$' mcpp.toml || { cat mcpp.toml; echo "missing [dependencies.compat] section"; exit 1; }
+grep -qE '^gtest = "1\.15\.2"$'        mcpp.toml || { cat mcpp.toml; echo "gtest entry missing"; exit 1; }
+
+# (7) Dotted remove can still clean the old subtable shape for compatibility.
+cat >> mcpp.toml <<'EOF'
+
+[dependencies.legacy]
+old = "0.1.0"
+EOF
+"$MCPP" remove legacy.old > /dev/null
+! grep -qE '^old = "0\.1\.0"$' mcpp.toml || { cat mcpp.toml; echo "legacy.old was not removed"; exit 1; }
+
+# (8) Reject missing version.
 err=$("$MCPP" add bareword 2>&1) && { echo "expected error for missing version"; exit 1; }
 [[ "$err" == *"version required"* ]] || { echo "wrong error: $err"; exit 1; }
 
-# (7) Reject empty package name (e.g. `mcpp add :foo@1.0`).
+# (9) Reject empty package name (e.g. `mcpp add :foo@1.0`).
 err=$("$MCPP" add ":@1.0" 2>&1) && { echo "expected error for empty package name"; exit 1; }
 
 echo "OK"

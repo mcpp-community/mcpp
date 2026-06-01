@@ -456,7 +456,7 @@ version = "0.1.0"
     EXPECT_TRUE(s.legacyDottedKey);
 }
 
-TEST(Manifest, DependenciesDefaultNamespaceNestedDottedKeyIsCanonical) {
+TEST(Manifest, DependenciesDottedSelectorPreservesUserKeyAndCandidates) {
     constexpr auto src = R"(
 [package]
 name    = "x"
@@ -469,11 +469,16 @@ capi.lua = "0.0.3"
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->dependencies.size(), 1u);
 
-    auto& s = m->dependencies.at("mcpplibs.capi.lua");
+    auto& s = m->dependencies.at("capi.lua");
     EXPECT_EQ(s.namespace_, "mcpplibs.capi");
     EXPECT_EQ(s.shortName,  "lua");
     EXPECT_EQ(s.version,    "0.0.3");
     EXPECT_FALSE(s.legacyDottedKey);
+    ASSERT_EQ(s.candidates.size(), 2u);
+    EXPECT_EQ(s.candidates[0].namespace_, "mcpplibs.capi");
+    EXPECT_EQ(s.candidates[0].shortName, "lua");
+    EXPECT_EQ(s.candidates[1].namespace_, "capi");
+    EXPECT_EQ(s.candidates[1].shortName, "lua");
 }
 
 TEST(Manifest, DependenciesNamespacedSubtableNestedDottedKeyIsCanonical) {
@@ -494,6 +499,9 @@ capi.lua = "0.0.3"
     EXPECT_EQ(s.shortName,  "lua");
     EXPECT_EQ(s.version,    "0.0.3");
     EXPECT_FALSE(s.legacyDottedKey);
+    ASSERT_EQ(s.candidates.size(), 1u);
+    EXPECT_EQ(s.candidates[0].namespace_, "mcpplibs.capi");
+    EXPECT_EQ(s.candidates[0].shortName, "lua");
 }
 
 TEST(Manifest, DependenciesInlineSpecCoexistsWithSubtable) {
@@ -558,6 +566,52 @@ package = {
     EXPECT_EQ(b.version,    "0.0.2");
 }
 
+TEST(SynthesizeFromXpkgLua, DepsDottedSelectorsUseManifestRules) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "consumer",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/src/*.cppm" },
+        deps    = {
+            ["capi.lua"]     = "0.0.3",
+            ["imgui.core"]   = "0.0.1",
+            ["compat.gtest"] = "1.15.2",
+        },
+        targets = { ["consumer"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "consumer", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 3u);
+
+    auto& lua = m->dependencies.at("capi.lua");
+    EXPECT_EQ(lua.namespace_, "mcpplibs.capi");
+    EXPECT_EQ(lua.shortName, "lua");
+    EXPECT_EQ(lua.version, "0.0.3");
+    ASSERT_EQ(lua.candidates.size(), 2u);
+    EXPECT_EQ(lua.candidates[1].namespace_, "capi");
+    EXPECT_EQ(lua.candidates[1].shortName, "lua");
+
+    auto& imgui = m->dependencies.at("imgui.core");
+    EXPECT_EQ(imgui.namespace_, "mcpplibs.imgui");
+    EXPECT_EQ(imgui.shortName, "core");
+    EXPECT_EQ(imgui.version, "0.0.1");
+    ASSERT_EQ(imgui.candidates.size(), 2u);
+    EXPECT_EQ(imgui.candidates[1].namespace_, "imgui");
+    EXPECT_EQ(imgui.candidates[1].shortName, "core");
+
+    auto& gtest = m->dependencies.at("compat.gtest");
+    EXPECT_EQ(gtest.namespace_, "mcpplibs.compat");
+    EXPECT_EQ(gtest.shortName, "gtest");
+    EXPECT_EQ(gtest.version, "1.15.2");
+    ASSERT_EQ(gtest.candidates.size(), 2u);
+    EXPECT_EQ(gtest.candidates[1].namespace_, "compat");
+    EXPECT_EQ(gtest.candidates[1].shortName, "gtest");
+}
+
 TEST(Manifest, WorkspaceSectionParsed) {
     constexpr auto src = R"(
 [workspace]
@@ -584,6 +638,54 @@ mbedtls = "3.6.1"
     auto& gt = m->workspace.dependencies.at("compat.gtest");
     EXPECT_EQ(gt.version, "1.15.2");
     EXPECT_EQ(gt.namespace_, "compat");
+}
+
+TEST(Manifest, WorkspaceDependenciesUseDottedSelectorRules) {
+    constexpr auto src = R"(
+[workspace]
+members = ["libs/core"]
+
+[workspace.dependencies]
+capi.lua = "0.0.3"
+imgui.core = "0.0.1"
+compat.gtest = "1.15.2"
+mcpplibs.templates = "0.0.1"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->workspace.dependencies.size(), 4u);
+
+    auto& lua = m->workspace.dependencies.at("capi.lua");
+    EXPECT_EQ(lua.namespace_, "mcpplibs.capi");
+    EXPECT_EQ(lua.shortName, "lua");
+    EXPECT_EQ(lua.version, "0.0.3");
+    ASSERT_EQ(lua.candidates.size(), 2u);
+    EXPECT_EQ(lua.candidates[1].namespace_, "capi");
+    EXPECT_EQ(lua.candidates[1].shortName, "lua");
+
+    auto& imgui = m->workspace.dependencies.at("imgui.core");
+    EXPECT_EQ(imgui.namespace_, "mcpplibs.imgui");
+    EXPECT_EQ(imgui.shortName, "core");
+    EXPECT_EQ(imgui.version, "0.0.1");
+    ASSERT_EQ(imgui.candidates.size(), 2u);
+    EXPECT_EQ(imgui.candidates[1].namespace_, "imgui");
+    EXPECT_EQ(imgui.candidates[1].shortName, "core");
+
+    auto& gt = m->workspace.dependencies.at("compat.gtest");
+    EXPECT_EQ(gt.namespace_, "mcpplibs.compat");
+    EXPECT_EQ(gt.shortName, "gtest");
+    EXPECT_EQ(gt.version, "1.15.2");
+    ASSERT_EQ(gt.candidates.size(), 2u);
+    EXPECT_EQ(gt.candidates[1].namespace_, "compat");
+    EXPECT_EQ(gt.candidates[1].shortName, "gtest");
+
+    auto& tmpl = m->workspace.dependencies.at("mcpplibs.templates");
+    EXPECT_EQ(tmpl.namespace_, "mcpplibs");
+    EXPECT_EQ(tmpl.shortName, "templates");
+    EXPECT_EQ(tmpl.version, "0.0.1");
+    ASSERT_EQ(tmpl.candidates.size(), 1u);
+    EXPECT_EQ(tmpl.candidates[0].namespace_, "mcpplibs");
+    EXPECT_EQ(tmpl.candidates[0].shortName, "templates");
 }
 
 TEST(Manifest, WorkspaceTrueInDependency) {

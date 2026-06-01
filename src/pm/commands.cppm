@@ -56,16 +56,16 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
         version  = spec.substr(at + 1);
     }
 
-    // Split <ns>:<name>. xpkg-style namespace separator. Bare `name` keeps
-    // the default namespace (mcpp); legacy `ns.name` is also accepted on
-    // input for ergonomics, but written out in the new subtable form.
+    // Split <ns>:<name>. The colon form is explicit namespace syntax and is
+    // written as [dependencies.<ns>]. Without a colon, keep the user's
+    // selector spelling in the single [dependencies] table; dotted selectors
+    // are resolved later by the manifest parser's candidate rules.
     std::string ns, shortName;
+    bool explicitNamespace = false;
     if (auto col = nameSpec.find(':'); col != std::string::npos) {
+        explicitNamespace = true;
         ns        = nameSpec.substr(0, col);
         shortName = nameSpec.substr(col + 1);
-    } else if (auto dot = nameSpec.find('.'); dot != std::string::npos) {
-        ns        = nameSpec.substr(0, dot);
-        shortName = nameSpec.substr(dot + 1);
     } else {
         ns        = std::string{mcpp::manifest::kDefaultNamespace};
         shortName = nameSpec;
@@ -94,25 +94,29 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     //   - Default namespace → `[dependencies] ... name = "version"` (no quotes).
     //   - Other namespace   → `[dependencies.<ns>] ... name = "version"`,
     //                         creating the subtable if absent.
-    const bool isDefaultNs = (ns == mcpp::manifest::kDefaultNamespace);
+    const bool isDefaultNs = !explicitNamespace
+        || ns == mcpp::manifest::kDefaultNamespace;
     const std::string section = isDefaultNs
         ? "[dependencies]"
         : std::format("[dependencies.{}]", ns);
+    const std::string key = explicitNamespace ? shortName : nameSpec;
     auto pos = text.find(section);
     if (pos == std::string::npos) {
         if (!text.empty() && text.back() != '\n') text += "\n";
-        text += std::format("\n{}\n{} = \"{}\"\n", section, shortName, version);
+        text += std::format("\n{}\n{} = \"{}\"\n", section, key, version);
     } else {
         auto nl = text.find('\n', pos);
         if (nl == std::string::npos) nl = text.size();
-        text.insert(nl, std::format("\n{} = \"{}\"", shortName, version));
+        text.insert(nl, std::format("\n{} = \"{}\"", key, version));
     }
     {
         std::ofstream os(manifestPath);
         os << text;
     }
 
-    std::string display = isDefaultNs ? shortName : std::format("{}:{}", ns, shortName);
+    std::string display = explicitNamespace
+        ? (isDefaultNs ? shortName : std::format("{}:{}", ns, shortName))
+        : nameSpec;
     mcpp::ui::status("Adding", std::format("{} v{} to dependencies", display, version));
     std::println("");
     std::println("Run `mcpp build` to fetch and build with the new dependency.");
@@ -134,19 +138,20 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::stringstream ss; ss << in.rdbuf();
     std::string text = ss.str();
 
-    // Accept the same forms as `mcpp add`: bare `name` (default ns),
-    // `<ns>:<name>`, or legacy `<ns>.<name>`. The line we want to delete
-    // depends on which form the user wrote in mcpp.toml — try every one.
+    // Accept the same forms as `mcpp add`: bare/dotted selector in the single
+    // [dependencies] table, or explicit `<ns>:<name>` subtable syntax.
     std::string ns, shortName;
+    bool explicitNamespace = false;
     if (auto col = name.find(':'); col != std::string::npos) {
+        explicitNamespace = true;
         ns = name.substr(0, col);  shortName = name.substr(col + 1);
-    } else if (auto dot = name.find('.'); dot != std::string::npos) {
-        ns = name.substr(0, dot);  shortName = name.substr(dot + 1);
     } else {
         ns = std::string{mcpp::manifest::kDefaultNamespace};
         shortName = name;
     }
-    const bool isDefaultNs = (ns == mcpp::manifest::kDefaultNamespace);
+    const bool isDefaultNs = !explicitNamespace
+        || ns == mcpp::manifest::kDefaultNamespace;
+    const std::string singleTableKey = explicitNamespace ? shortName : name;
 
     bool changed = false;
     auto erase_line_at = [&](std::size_t p) {
@@ -161,8 +166,8 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // Try bare `<short> = ` and quoted `"<short>" = ` (default-ns flat form).
     if (isDefaultNs) {
         for (const auto& needle : {
-            std::format("\n{} = ", shortName),
-            std::format("\n\"{}\" = ", shortName),
+            std::format("\n{} = ", singleTableKey),
+            std::format("\n\"{}\" = ", singleTableKey),
         }) {
             if (auto p = text.find(needle); p != std::string::npos) {
                 erase_line_at(p + 1);
@@ -171,11 +176,9 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
     }
 
-    // Try the namespaced subtable form `[dependencies.<ns>] <short> = `.
-    // After deleting the dep line, prune the `[dependencies.<ns>]` header
-    // if no entries remain under it.
-    if (!isDefaultNs) {
-        auto sectHeader = std::format("[dependencies.{}]", ns);
+    auto erase_from_subtable = [&](const std::string& tableNs,
+                                   const std::string& tableShort) {
+        auto sectHeader = std::format("[dependencies.{}]", tableNs);
         if (auto sp = text.find(sectHeader); sp != std::string::npos) {
             auto bodyStart = text.find('\n', sp);
             if (bodyStart == std::string::npos) bodyStart = text.size();
@@ -183,8 +186,8 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (sectEnd == std::string::npos) sectEnd = text.size();
             std::string section = text.substr(bodyStart, sectEnd - bodyStart);
             for (const auto& needle : {
-                std::format("\n{} = ", shortName),
-                std::format("\n\"{}\" = ", shortName),
+                std::format("\n{} = ", tableShort),
+                std::format("\n\"{}\" = ", tableShort),
             }) {
                 if (auto p = section.find(needle); p != std::string::npos) {
                     auto absStart = bodyStart + p + 1;
@@ -220,6 +223,22 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
                     text.erase(headerLineStart, endAfter - headerLineStart);
                 }
             }
+        }
+    };
+
+    // Try the namespaced subtable form `[dependencies.<ns>] <short> = `.
+    // After deleting the dep line, prune the `[dependencies.<ns>]` header
+    // if no entries remain under it.
+    if (!isDefaultNs) {
+        erase_from_subtable(ns, shortName);
+    }
+
+    // Backward-compatible removal: before dotted selectors were preserved in
+    // the single table, `mcpp add acme.util` wrote `[dependencies.acme] util`.
+    // Keep `mcpp remove acme.util` able to clean that old shape.
+    if (!changed && !explicitNamespace) {
+        if (auto dot = name.find('.'); dot != std::string::npos) {
+            erase_from_subtable(name.substr(0, dot), name.substr(dot + 1));
         }
     }
 

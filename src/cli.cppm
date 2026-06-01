@@ -1628,10 +1628,125 @@ prepare_build(bool print_fingerprint,
         -> const mcpp::pm::IndexSpec*
     {
         if (ns.empty() || ns == std::string(mcpp::pm::kDefaultNamespace)) return nullptr;
+        if (auto it = m->indices.find(ns); it != m->indices.end()) {
+            return &it->second;
+        }
+        auto root = ns.substr(0, ns.find('.'));
         for (auto& [idxName, spec] : m->indices) {
             if (idxName == ns) return &spec;
+            if (idxName == root) return &spec;
         }
         return nullptr;
+    };
+
+    auto canonicalXpkgLuaFilename =
+        [](std::string_view ns, std::string_view shortName) {
+            if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
+                return std::string(shortName) + ".lua";
+            }
+            return std::format("{}.{}.lua", ns, shortName);
+        };
+
+    auto readStrictLuaFromPkgsDir =
+        [&](const std::filesystem::path& pkgsDir,
+            std::string_view ns,
+            std::string_view shortName) -> std::optional<std::string>
+    {
+        auto fname = canonicalXpkgLuaFilename(ns, shortName);
+        if (fname.empty()) return std::nullopt;
+        char first = static_cast<char>(std::tolower(
+            static_cast<unsigned char>(fname.front())));
+        auto candidate = pkgsDir / std::string(1, first) / fname;
+        if (!std::filesystem::exists(candidate)) return std::nullopt;
+
+        std::ifstream is(candidate);
+        std::stringstream ss;
+        ss << is.rdbuf();
+        return ss.str();
+    };
+
+    auto readStrictLuaForCandidate =
+        [&](const mcpp::pm::DependencyCoordinate& coord)
+            -> std::optional<std::string>
+    {
+        auto cfg = get_cfg();
+        if (!cfg) return std::nullopt;
+
+        auto* idxSpec = findIndexForNs(coord.namespace_);
+        if (idxSpec && idxSpec->is_local()) {
+            auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
+            return readStrictLuaFromPkgsDir(indexPath / "pkgs",
+                                            coord.namespace_,
+                                            coord.shortName);
+        }
+        if (idxSpec && !idxSpec->is_builtin()) {
+            std::error_code ec;
+            for (auto& data : mcpp::config::project_xlings_data_roots(*root)) {
+                if (!std::filesystem::exists(data)) continue;
+                for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
+                    if (!entry.is_directory()) continue;
+                    auto pkgsDir = entry.path() / "pkgs";
+                    if (auto lua = readStrictLuaFromPkgsDir(
+                            pkgsDir, coord.namespace_, coord.shortName)) {
+                        return lua;
+                    }
+                }
+            }
+            return std::nullopt;
+        }
+
+        auto data = (*cfg)->xlingsHome() / "data";
+        if (!std::filesystem::exists(data)) return std::nullopt;
+        std::error_code ec;
+        for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
+            if (!entry.is_directory()) continue;
+            auto pkgsDir = entry.path() / "pkgs";
+            if (auto lua = readStrictLuaFromPkgsDir(
+                    pkgsDir, coord.namespace_, coord.shortName)) {
+                return lua;
+            }
+        }
+        return std::nullopt;
+    };
+
+    auto dependencyCoordinates =
+        [](const mcpp::manifest::DependencySpec& spec,
+           const std::string& depName) {
+            if (!spec.candidates.empty()) return spec.candidates;
+            std::vector<mcpp::pm::DependencyCoordinate> out;
+            out.push_back({
+                .namespace_ = spec.namespace_.empty()
+                    ? std::string(mcpp::pm::kDefaultNamespace)
+                    : spec.namespace_,
+                .shortName = spec.shortName.empty() ? depName : spec.shortName,
+            });
+            return out;
+        };
+
+    auto selectDependencyCandidate =
+        [&](mcpp::manifest::DependencySpec& spec,
+            const std::string& depName) -> std::expected<void, std::string>
+    {
+        auto candidates = dependencyCoordinates(spec, depName);
+        if (candidates.empty()) {
+            return std::unexpected(
+                std::format("dependency '{}' has no lookup candidates", depName));
+        }
+
+        auto selected = candidates.front();
+        if (spec.isVersion() && candidates.size() > 1) {
+            for (auto& candidate : candidates) {
+                if (readStrictLuaForCandidate(candidate)) {
+                    selected = candidate;
+                    break;
+                }
+            }
+        }
+
+        spec.namespace_ = std::move(selected.namespace_);
+        spec.shortName = std::move(selected.shortName);
+        spec.candidates = std::move(candidates);
+        return {};
     };
 
     // 0.0.10+: loadVersionDep accepts structured (ns, shortName) for
@@ -1770,6 +1885,12 @@ prepare_build(bool print_fingerprint,
                                 childSpec.shortName,
                                 childSpec.legacyDottedKey);
 
+                            if (auto r = selectDependencyCandidate(
+                                    childSpec, childName); !r) {
+                                preinstallStack.erase(preinstallKey);
+                                return std::unexpected(r.error());
+                            }
+
                             if (auto r = resolveSemver(childSpec, childName); !r) {
                                 preinstallStack.erase(preinstallKey);
                                 return std::unexpected(r.error());
@@ -1822,7 +1943,7 @@ prepare_build(bool print_fingerprint,
             // xlings resolves the package by the descriptor's name field while
             // still selecting the project-added index.
             if (useProjectEnv) {
-                target = std::format("{}:{}@{}", ns, fqname, version);
+                target = std::format("{}:{}@{}", idxSpec->name, fqname, version);
             }
             auto r = install_one(target);
             if (r && r->exitCode != 0 &&
@@ -2194,6 +2315,23 @@ prepare_build(bool print_fingerprint,
 
         mcpp::pm::compat::normalize_nested_namespace(
             spec.namespace_, spec.shortName, spec.legacyDottedKey);
+        if (spec.legacyDottedKey) {
+            spec.candidates = {{
+                .namespace_ = spec.namespace_,
+                .shortName = spec.shortName,
+            }};
+        }
+
+        if (auto r = selectDependencyCandidate(spec, name); !r) {
+            return std::unexpected(r.error());
+        }
+        if (item.consumerDepIndex == kMainConsumer) {
+            if (auto it = m->dependencies.find(name); it != m->dependencies.end()) {
+                it->second.namespace_ = spec.namespace_;
+                it->second.shortName = spec.shortName;
+                it->second.candidates = spec.candidates;
+            }
+        }
 
         // Pin SemVer constraint before dedup/fetch.
         if (auto r = resolveSemver(spec, name); !r) {

@@ -3,6 +3,22 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.43] — 2026-06-02
+
+### 新增
+
+- 支持在单个 `[dependencies]` / `[dev-dependencies]` /
+  `[build-dependencies]` / `[workspace.dependencies]` 表中使用多段 dotted
+  dependency selector,例如 `imgui.core = "..."` 会先尝试
+  `mcpplibs.imgui/core`,未命中时再尝试同级根 `imgui/core`。
+- `xpkg.lua` 的 `mcpp.deps` 支持同样的 dotted selector 规则,方便 compat、
+  imgui 等生态根和 `mcpplibs` 并列演进。
+
+### 改进
+
+- `mcpp add` 默认保留用户写入的 dotted selector,显式 namespace 仍可使用
+  `ns:name` 写入 `[dependencies.<ns>]`。
+
 ## [0.0.42] — 2026-06-01
 
 ### 新增

@@ -118,17 +118,28 @@ path = "src/capi/lua.cppm"    # 覆盖默认的 lib-root 位置
 ### 2.5 `[dependencies]` — 运行时依赖
 
 ```toml
-# 默认命名空间(mcpp)下的包
+# 默认包空间(mcpplibs)下的包
 [dependencies]
 gtest   = "1.15.2"              # 精确版本
 mbedtls = "3.6.1"
 ftxui   = "6.1.9"
+
+# dotted selector: 先匹配 mcpplibs.<path>, 找不到再匹配同级 peer root。
+# 例如 imgui.core 会按顺序尝试 mcpplibs.imgui/core, imgui/core。
+[dependencies]
+capi.lua = "0.0.3"
+compat.gtest = "1.15.2"
+imgui.core = "0.0.1"
+imgui.backend.glfw_opengl3 = "0.0.1"
 
 # 命名空间子表写法
 [dependencies.mcpplibs]
 cmdline   = "0.0.2"
 tinyhttps = "0.2.2"
 llmapi    = "0.2.5"
+
+[dependencies.compat]
+glfw = "3.4"                    # 显式 namespace, 不走 mcpplibs 优先候选
 
 # 路径依赖(本地开发)
 [dependencies]

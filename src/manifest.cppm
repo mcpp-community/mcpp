@@ -6,6 +6,7 @@ import std;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;     // M5.x pm/ subsystem refactor: DependencySpec lives here
 import mcpp.pm.compat;       // Legacy dependency-key compatibility helpers
+import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;   // IndexSpec for [indices] section
 import mcpp.platform;
 
@@ -550,28 +551,26 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         return {};
     };
 
-    auto dependency_key = [](std::string_view ns,
-                             std::string_view shortName,
-                             bool bareDefaultKey) {
-        if (bareDefaultKey) return std::string{shortName};
-        return std::format("{}.{}", ns, shortName);
-    };
-
     auto assign_dep = [&](std::string_view section,
                           std::map<std::string, DependencySpec>& out,
-                          std::string_view ns,
-                          std::string_view shortName,
+                          const mcpp::pm::DependencySelector& selector,
                           const t::Value& value,
-                          bool legacyDottedKey,
-                          bool bareDefaultKey)
+                          bool legacyDottedKey)
         -> std::expected<void, ManifestError>
     {
+        if (selector.candidates.empty()) {
+            return std::unexpected(error(origin, std::format(
+                "[{}] dependency selector '{}' has no candidates",
+                section, selector.stableMapKey)));
+        }
+
         DependencySpec spec;
-        spec.namespace_ = std::string{ns};
-        spec.shortName = std::string{shortName};
+        spec.namespace_ = selector.candidates.front().namespace_;
+        spec.shortName = selector.candidates.front().shortName;
+        spec.candidates = selector.candidates;
         spec.legacyDottedKey = legacyDottedKey;
 
-        auto key = dependency_key(ns, shortName, bareDefaultKey);
+        auto key = selector.stableMapKey;
         if (value.is_string()) {
             spec.version = value.as_string();
         } else if (value.is_table()) {
@@ -597,15 +596,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                   std::string_view key) {
         auto path = std::format("{}.{}", section, key);
         return doc->has_explicit_table(path)
-            || key == kDefaultNamespace
-            || key == "compat"
-            || key.find('.') != std::string_view::npos
-            || m.indices.find(std::string{key}) != m.indices.end();
+            || key == kDefaultNamespace;
     };
 
     std::function<std::expected<void, ManifestError>(
         std::string_view,
         std::map<std::string, DependencySpec>&,
+        std::string,
         std::string,
         const t::Table&)> load_nested_dep_table;
 
@@ -613,12 +610,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         [&](std::string_view section,
             std::map<std::string, DependencySpec>& out,
             std::string ns,
+            std::string mapPrefix,
             const t::Table& table) -> std::expected<void, ManifestError>
     {
         for (auto& [k, v] : table) {
             if (v.is_string() ||
                 (v.is_table() && looks_like_inline_dep_spec(v.as_table()))) {
-                if (auto r = assign_dep(section, out, ns, k, v, false, false); !r)
+                auto mapKey = mapPrefix.empty()
+                    ? k
+                    : std::format("{}.{}", mapPrefix, k);
+                auto selector = mcpp::pm::make_direct_dependency_selector(
+                    ns, k, mapKey);
+                if (auto r = assign_dep(section, out, selector, v, false); !r)
                     return r;
                 continue;
             }
@@ -628,7 +631,48 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     section, ns, k)));
             }
             auto childNs = std::format("{}.{}", ns, k);
-            if (auto r = load_nested_dep_table(section, out, childNs, v.as_table()); !r)
+            auto childMapPrefix = mapPrefix.empty()
+                ? k
+                : std::format("{}.{}", mapPrefix, k);
+            if (auto r = load_nested_dep_table(
+                    section, out, childNs, childMapPrefix, v.as_table()); !r)
+                return r;
+        }
+        return {};
+    };
+
+    std::function<std::expected<void, ManifestError>(
+        std::string_view,
+        std::map<std::string, DependencySpec>&,
+        std::string,
+        const t::Table&)> load_selector_dep_table;
+
+    load_selector_dep_table =
+        [&](std::string_view section,
+            std::map<std::string, DependencySpec>& out,
+            std::string selectorPrefix,
+            const t::Table& table) -> std::expected<void, ManifestError>
+    {
+        for (auto& [k, v] : table) {
+            auto selectorText = selectorPrefix.empty()
+                ? k
+                : std::format("{}.{}", selectorPrefix, k);
+            if (v.is_string() ||
+                (v.is_table() && looks_like_inline_dep_spec(v.as_table()))) {
+                auto selector = mcpp::pm::resolve_dependency_selector(
+                    selectorText,
+                    mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                    return r;
+                continue;
+            }
+            if (!v.is_table()) {
+                return std::unexpected(error(origin, std::format(
+                    "[{}].{} must be a string, inline dep table, or nested table",
+                    section, selectorText)));
+            }
+            if (auto r = load_selector_dep_table(
+                    section, out, selectorText, v.as_table()); !r)
                 return r;
         }
         return {};
@@ -645,13 +689,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (v.is_string()) {
                 if (k.find('.') != std::string::npos) {
                     auto legacyKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                    if (auto r = assign_dep(section, out,
-                                            legacyKey.namespace_, legacyKey.shortName,
-                                            v, legacyKey.legacyDottedKey, false); !r)
+                    auto selector = mcpp::pm::make_direct_dependency_selector(
+                        legacyKey.namespace_, legacyKey.shortName, k);
+                    if (auto r = assign_dep(section, out, selector, v,
+                                            legacyKey.legacyDottedKey); !r)
                         return r;
                     continue;
                 }
-                if (auto r = assign_dep(section, out, kDefaultNamespace, k, v, false, true); !r)
+                auto selector = mcpp::pm::resolve_dependency_selector(
+                    k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                if (auto r = assign_dep(section, out, selector, v, false); !r)
                     return r;
                 continue;
             }
@@ -670,13 +717,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (looks_like_inline_dep_spec(sub)) {
                 if (k.find('.') != std::string::npos) {
                     auto legacyKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                    if (auto r = assign_dep(section, out,
-                                            legacyKey.namespace_, legacyKey.shortName,
-                                            v, legacyKey.legacyDottedKey, false); !r)
+                    auto selector = mcpp::pm::make_direct_dependency_selector(
+                        legacyKey.namespace_, legacyKey.shortName, k);
+                    if (auto r = assign_dep(section, out, selector, v,
+                                            legacyKey.legacyDottedKey); !r)
                         return r;
                     continue;
                 }
-                if (auto r = assign_dep(section, out, kDefaultNamespace, k, v, false, true); !r)
+                auto selector = mcpp::pm::resolve_dependency_selector(
+                    k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                if (auto r = assign_dep(section, out, selector, v, false); !r)
                     return r;
                 continue;
             }
@@ -684,13 +734,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // (2) namespaced or nested subtable.
             //
             // Explicit tables such as `[dependencies.acme]` are namespace
-            // roots. Dotted keys written inside a dependency table, such as
-            // `[dependencies] capi.lua = "0.0.3"`, are canonical nested
-            // packages under the default namespace: mcpplibs.capi:lua.
-            std::string ns = is_namespace_table(section, k)
-                ? k
-                : std::format("{}.{}", kDefaultNamespace, k);
-            if (auto r = load_nested_dep_table(section, out, std::move(ns), sub); !r) {
+            // roots. Dotted keys written inside the single dependency table,
+            // such as `[dependencies] capi.lua = "0.0.3"`, are ordered
+            // selectors: mcpplibs.capi/lua first, then capi/lua.
+            if (is_namespace_table(section, k)) {
+                if (auto r = load_nested_dep_table(section, out, k, k, sub); !r)
+                    return r;
+            } else if (auto r = load_selector_dep_table(section, out, k, sub); !r) {
                 return r;
             }
         }
@@ -791,25 +841,40 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto* wdeps = doc->get_table("workspace.dependencies")) {
             for (auto& [k, v] : *wdeps) {
                 if (v.is_string()) {
-                    DependencySpec spec;
-                    spec.version = v.as_string();
-                    auto depKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                    spec.namespace_ = std::move(depKey.namespace_);
-                    spec.shortName = std::move(depKey.shortName);
-                    spec.legacyDottedKey = depKey.legacyDottedKey;
-                    m.workspace.dependencies[k] = std::move(spec);
+                    if (k.find('.') != std::string::npos) {
+                        auto depKey = mcpp::pm::compat::split_legacy_dependency_key(k);
+                        auto selector = mcpp::pm::make_direct_dependency_selector(
+                            depKey.namespace_, depKey.shortName, k);
+                        if (auto r = assign_dep("workspace.dependencies",
+                                                m.workspace.dependencies,
+                                                selector, v,
+                                                depKey.legacyDottedKey); !r) {
+                            return std::unexpected(r.error());
+                        }
+                        continue;
+                    }
+                    auto selector = mcpp::pm::resolve_dependency_selector(
+                        k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                    if (auto r = assign_dep("workspace.dependencies",
+                                            m.workspace.dependencies,
+                                            selector, v, false); !r) {
+                        return std::unexpected(r.error());
+                    }
                     continue;
                 }
                 if (!v.is_table()) continue;
-                // Namespaced subtable: [workspace.dependencies.<ns>]
-                const std::string ns = k;
-                for (auto& [sk, sv] : v.as_table()) {
-                    if (!sv.is_string()) continue;
-                    DependencySpec spec;
-                    spec.namespace_ = ns;
-                    spec.shortName  = sk;
-                    spec.version    = sv.as_string();
-                    m.workspace.dependencies[std::format("{}.{}", ns, sk)] = std::move(spec);
+                if (is_namespace_table("workspace.dependencies", k)) {
+                    if (auto r = load_nested_dep_table("workspace.dependencies",
+                                                       m.workspace.dependencies,
+                                                       k, k, v.as_table()); !r) {
+                        return std::unexpected(r.error());
+                    }
+                } else {
+                    if (auto r = load_selector_dep_table("workspace.dependencies",
+                                                         m.workspace.dependencies,
+                                                         k, v.as_table()); !r) {
+                        return std::unexpected(r.error());
+                    }
                 }
             }
         }
@@ -1553,11 +1618,15 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 if (!dname.empty()) {
                     DependencySpec spec;
                     spec.version = dver;
-                    auto depKey = mcpp::pm::compat::split_legacy_dependency_key(dname);
-                    spec.namespace_ = std::move(depKey.namespace_);
-                    spec.shortName = std::move(depKey.shortName);
-                    spec.legacyDottedKey = depKey.legacyDottedKey;
-                    m.dependencies[dname] = std::move(spec);
+                    auto selector = mcpp::pm::resolve_dependency_selector(
+                        dname,
+                        mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                    if (!selector.candidates.empty()) {
+                        spec.namespace_ = selector.candidates.front().namespace_;
+                        spec.shortName = selector.candidates.front().shortName;
+                        spec.candidates = std::move(selector.candidates);
+                        m.dependencies[selector.stableMapKey] = std::move(spec);
+                    }
                 }
                 cur.skip_ws_and_comments();
             }

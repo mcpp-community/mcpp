@@ -15,6 +15,13 @@ import std;
 
 export namespace mcpp::pm {
 
+struct DependencyCoordinate {
+    std::string namespace_;
+    std::string shortName;
+
+    auto operator<=>(const DependencyCoordinate&) const = default;
+};
+
 // One declared dependency. Path-based deps refer to a sibling mcpp package
 // on disk; version-based deps come from a registry; git-based deps clone
 // a remote at a fixed ref.
@@ -32,6 +39,7 @@ struct DependencySpec {
     std::string                 gitRev;         // commit / tag / branch (any one)
     std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
     std::string                 visibility = "public"; // public / private / interface
+    std::vector<DependencyCoordinate> candidates; // ordered lookup candidates
 
     bool                        inheritWorkspace = false;  // .workspace = true
     bool                        legacyDottedKey = false;   // parsed from legacy "ns.name" flat key

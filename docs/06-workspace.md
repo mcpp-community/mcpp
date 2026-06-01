@@ -100,6 +100,7 @@ mbedtls.workspace = true
 # 根 mcpp.toml
 [workspace.dependencies]
 cmdline = "0.0.2"
+capi.lua = "0.0.3"       # dotted selector: mcpplibs.capi/lua, then capi/lua
 
 [workspace.dependencies.compat]
 mbedtls = "3.6.1"
