@@ -20,6 +20,13 @@ export namespace mcpp::manifest {
 using DependencySpec = mcpp::pm::DependencySpec;
 inline constexpr auto kDefaultNamespace = mcpp::pm::kDefaultNamespace;
 
+struct CppStandardConfig {
+    std::string                 canonical = "c++23";
+    std::string                 flag = "-std=c++23";
+    int                         level = 23;
+    bool                        gnuDialect = false;
+};
+
 struct Package {
     std::string                 name;
     std::string                 namespace_;    // xpkg V1 namespace field (0.0.6+); empty = infer from name
@@ -191,6 +198,7 @@ struct Manifest {
     std::map<std::string, mcpp::pm::IndexSpec> indices;
 
     // M5.0: post-parse computed/inferred state
+    CppStandardConfig           cppStandard;
     bool                        usesModules    = true;   // refined by scanner
     bool                        usesImportStd  = true;   // refined by scanner
     std::vector<std::string>    inferredNotes;           // for `Inferred ...` banner
@@ -212,6 +220,7 @@ struct ManifestError {
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                                     const std::filesystem::path& origin = "mcpp.toml");
 std::expected<Manifest, ManifestError> load(const std::filesystem::path& path);
+std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string_view raw);
 
 // For `mcpp new` scaffolding.
 std::string default_template(std::string_view packageName);
@@ -272,6 +281,10 @@ namespace t = mcpp::libs::toml;
 
 namespace {
 
+bool starts_with_std_flag(std::string_view flag) {
+    return flag == "-std" || flag.starts_with("-std=");
+}
+
 ManifestError error(const std::filesystem::path& origin,
                     const std::string& msg,
                     t::Position pos = {0, 0}) {
@@ -279,6 +292,66 @@ ManifestError error(const std::filesystem::path& origin,
 }
 
 } // namespace
+
+std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string_view raw) {
+    auto trim_copy = [](std::string_view input) {
+        std::size_t begin = 0;
+        while (begin < input.size()
+               && std::isspace(static_cast<unsigned char>(input[begin]))) {
+            ++begin;
+        }
+        std::size_t end = input.size();
+        while (end > begin
+               && std::isspace(static_cast<unsigned char>(input[end - 1]))) {
+            --end;
+        }
+        return std::string(input.substr(begin, end - begin));
+    };
+
+    std::string s = trim_copy(raw);
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    CppStandardConfig out;
+    if (s.empty() || s == "c++23" || s == "c++2b") {
+        out.canonical = "c++23";
+        out.flag = "-std=c++23";
+        out.level = 23;
+        out.gnuDialect = false;
+        return out;
+    }
+    if (s == "gnu++23" || s == "gnu++2b") {
+        out.canonical = "gnu++23";
+        out.flag = "-std=gnu++23";
+        out.level = 23;
+        out.gnuDialect = true;
+        return out;
+    }
+    if (s == "c++26" || s == "c++2c") {
+        out.canonical = "c++26";
+        out.flag = "-std=c++26";
+        out.level = 26;
+        out.gnuDialect = false;
+        return out;
+    }
+    if (s == "gnu++26" || s == "gnu++2c") {
+        out.canonical = "gnu++26";
+        out.flag = "-std=gnu++26";
+        out.level = 26;
+        out.gnuDialect = true;
+        return out;
+    }
+    if (s == "c++latest") {
+        out.canonical = "c++latest";
+        out.flag = "-std=c++26";
+        out.level = 999;
+        out.gnuDialect = false;
+        return out;
+    }
+
+    return std::unexpected(std::format(
+        "unsupported C++ standard '{}'; expected c++23, c++26, c++2c, gnu++23, gnu++26, or c++latest",
+        raw));
+}
 
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                                     const std::filesystem::path& origin) {
@@ -332,11 +405,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_bool("language.modules"))      m.language.modules    = *v;
     if (auto v = doc->get_bool("language.import_std"))   m.language.importStd = *v;
 
-    // Validation on the unified standard
-    if (m.package.standard != "c++23" && m.package.standard != "c++latest") {
-        return std::unexpected(error(origin,
-            std::format("MVP only supports c++23; got '{}'", m.package.standard)));
-    }
+    // Validation on the unified standard. Store the canonical spelling so all
+    // downstream build surfaces consume one active value.
+    auto stdCfg = normalize_cpp_standard(m.package.standard);
+    if (!stdCfg) return std::unexpected(error(origin, stdCfg.error()));
+    m.cppStandard = *stdCfg;
+    m.package.standard = m.cppStandard.canonical;
+    m.language.standard = m.cppStandard.canonical;
     if (had_language_section && !m.language.modules) {
         return std::unexpected(error(origin,
             "language.modules must be true (mcpp is modules-only)"));
@@ -632,6 +707,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
     if (auto v = doc->get_string_array("build.ldflags"))  m.buildConfig.ldflags  = *v;
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
+    for (auto const& flag : m.buildConfig.cxxflags) {
+        if (starts_with_std_flag(flag)) {
+            return std::unexpected(error(origin,
+                std::format("build.cxxflags contains '{}'; use [package].standard to configure the C++ language standard",
+                            flag)));
+        }
+    }
 
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {
@@ -1290,6 +1372,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
     m.sourcePath  = std::format("xpkg-lua://{}@{}", packageName, packageVersion);
     m.package.name    = std::string(packageName);
     m.package.version = std::string(packageVersion);
+    m.package.standard = "c++23";
     m.language.standard   = "c++23";
     m.language.modules    = true;
     m.language.importStd  = true;
@@ -1317,7 +1400,10 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
 
         if      (key == "language") {
             auto v = cur.read_string();
-            if (!v.empty()) m.language.standard = v;
+            if (!v.empty()) {
+                m.language.standard = v;
+                m.package.standard = v;
+            }
         }
         else if (key == "import_std") {
             auto v = cur.read_bareword();
@@ -1482,6 +1568,12 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 : (key == "cxxflags" ? m.buildConfig.cxxflags : m.buildConfig.ldflags);
             while (!cur.eof() && cur.peek() != '}') {
                 auto s = cur.read_string();
+                if (key == "cxxflags" && starts_with_std_flag(s)) {
+                    return std::unexpected(ManifestError{
+                        std::format("cxxflags contains '{}'; use language/package standard to configure the C++ language standard",
+                                    s),
+                        m.sourcePath, 0, 0});
+                }
                 if (!s.empty()) target.push_back(std::move(s));
                 cur.skip_ws_and_comments();
             }
@@ -1516,6 +1608,14 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
         t.kind = Target::Library;
         m.targets.push_back(std::move(t));
     }
+
+    auto stdCfg = normalize_cpp_standard(m.package.standard);
+    if (!stdCfg) {
+        return std::unexpected(ManifestError{stdCfg.error(), m.sourcePath, 0, 0});
+    }
+    m.cppStandard = *stdCfg;
+    m.package.standard = m.cppStandard.canonical;
+    m.language.standard = m.cppStandard.canonical;
 
     return m;
 }

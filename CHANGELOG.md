@@ -3,6 +3,22 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.42] — 2026-06-01
+
+### 新增
+
+- 将 `[package].standard` 打通为一等 C++ 标准配置,默认仍为 `c++23`,
+  并支持 `c++26` / `c++2c` 等写法。
+
+### 修复
+
+- 编译 flags、`compile_commands.json`、fingerprint 与 `import std` 标准库
+  BMI 预构建命令现在使用同一个 active C++ 标准。
+- `std.gcm` / `std.pcm` cache 增加元数据校验,只有 compiler、stdlib、target、
+  standard、source 与 build command 匹配时才复用。
+- `build.cxxflags` 回归附加 C++ flags 语义,若写入 `-std=` 会提示迁移到
+  `[package].standard`。
+
 ## [0.0.41] — 2026-06-01
 
 ### 修复

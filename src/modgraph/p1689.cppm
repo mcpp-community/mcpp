@@ -3,7 +3,7 @@
 // Replaces (under MCPP_SCANNER=p1689) the regex-based scanner. Each source
 // file gets fed to:
 //
-//   g++ -std=c++23 -fmodules -fdeps-format=p1689r5 \
+//   g++ <std-flag> -fmodules -fdeps-format=p1689r5 \
 //       -fdeps-file=<tmp>/x.ddi -fdeps-target=<tmp>/x.o \
 //       -M -MM -MF <tmp>/x.dep -E <source> -o <tmp>/x.o
 //
@@ -48,7 +48,8 @@ std::expected<SourceUnit, std::string>
 scan_file(const std::filesystem::path&        source,
           const std::string&                  packageName,
           const mcpp::toolchain::Toolchain&   tc,
-          const std::filesystem::path&        tmpDir);
+          const std::filesystem::path&        tmpDir,
+          std::string_view                    cppStandardFlag);
 
 } // namespace mcpp::modgraph::p1689
 
@@ -317,7 +318,8 @@ std::expected<SourceUnit, std::string>
 scan_file(const std::filesystem::path&        source,
           const std::string&                  packageName,
           const mcpp::toolchain::Toolchain&   tc,
-          const std::filesystem::path&        tmpDir)
+          const std::filesystem::path&        tmpDir,
+          std::string_view                    cppStandardFlag)
 {
     std::error_code ec;
     std::filesystem::create_directories(tmpDir, ec);
@@ -335,14 +337,18 @@ scan_file(const std::filesystem::path&        source,
     if (!tc.sysroot.empty()) {
         sysroot_flag = std::format(" --sysroot={}", shell_escape(tc.sysroot));
     }
+    std::string std_flag = cppStandardFlag.empty()
+        ? std::string("-std=c++23")
+        : std::string(cppStandardFlag);
     std::string cmd = std::format(
-        "{} -std=c++23 -fmodules{}"
+        "{} {} -fmodules{}"
         " -fdeps-format=p1689r5"
         " -fdeps-file={}"
         " -fdeps-target={}"
         " -M -MM -MF {}"
         " -E {} -o {} 2>&1",
         shell_escape(tc.binaryPath),
+        std_flag,
         sysroot_flag,
         shell_escape(ddi),
         shell_escape(obj),

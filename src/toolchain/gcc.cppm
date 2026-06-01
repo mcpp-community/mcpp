@@ -26,7 +26,8 @@ std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir
 
 std::string std_module_build_command(const Toolchain& tc,
                                      const std::filesystem::path& cacheDir,
-                                     std::string_view sysrootFlag);
+                                     std::string_view sysrootFlag,
+                                     std::string_view cppStandardFlag);
 
 } // namespace mcpp::toolchain::gcc
 
@@ -104,17 +105,19 @@ std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir
 
 std::string std_module_build_command(const Toolchain& tc,
                                      const std::filesystem::path& cacheDir,
-                                     std::string_view sysrootFlag) {
+                                     std::string_view sysrootFlag,
+                                     std::string_view cppStandardFlag) {
     std::string bFlag;
     if (auto binutilsBin = find_binutils_bin(tc.binaryPath)) {
         bFlag = std::format(" -B'{}'", binutilsBin->string());
     }
 
     return std::format(
-        "cd {} && {}{} -std=c++23 -fmodules -O2{}{} -c {} -o std.o 2>&1",
+        "cd {} && {}{} {} -fmodules -O2{}{} -c {} -o std.o 2>&1",
         mcpp::xlings::shq(cacheDir.string()),
         mcpp::toolchain::compiler_env_prefix(tc),
         mcpp::xlings::shq(tc.binaryPath.string()),
+        cppStandardFlag,
         sysrootFlag,
         bFlag,
         mcpp::xlings::shq(tc.stdModuleSource.string()));

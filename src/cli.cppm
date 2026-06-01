@@ -583,7 +583,7 @@ struct CliInstallProgress : mcpp::fetcher::EventHandler {
 // Compose a stable canonical compile-flags string for fingerprinting.
 std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     std::string s;
-    s += "-std="; s += m.language.standard;
+    s += "-std="; s += m.package.standard;
     s += " -fmodules";
     if (!m.buildConfig.cStandard.empty()) {
         s += " c_standard=";
@@ -2467,7 +2467,7 @@ prepare_build(bool print_fingerprint,
             auto tmp = std::filesystem::temp_directory_path()
                      / std::format("mcpp_p1689_{}", std::random_device{}());
             std::filesystem::create_directories(tmp);
-            return mcpp::modgraph::scan_packages_p1689(packages, *tc, tmp);
+            return mcpp::modgraph::scan_packages_p1689(packages, *tc, tmp, m->cppStandard.flag);
         }
         return mcpp::modgraph::scan_packages(packages);
     }();
@@ -2504,7 +2504,7 @@ prepare_build(bool print_fingerprint,
     // Compute fingerprint (no lockfile in M1 → empty hash)
     mcpp::toolchain::FingerprintInputs fpi;
     fpi.toolchain            = *tc;
-    fpi.cppStandard         = m->language.standard;
+    fpi.cppStandard         = m->package.standard;
     fpi.compileFlags        = canonical_compile_flags(*m)
                               + canonical_package_build_metadata(packages);
     fpi.dependencyLockHash = "";    // M2
@@ -2517,7 +2517,8 @@ prepare_build(bool print_fingerprint,
     std::filesystem::path stdCompatBmiPath;
     std::filesystem::path stdCompatObjectPath;
     if (needsStdModule) {
-        auto sm = mcpp::toolchain::ensure_built(*tc, fp.hex);
+        auto sm = mcpp::toolchain::ensure_built(
+            *tc, fp.hex, m->package.standard, m->cppStandard.flag);
         if (!sm) return std::unexpected(sm.error().message);
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;
