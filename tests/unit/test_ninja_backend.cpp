@@ -122,7 +122,7 @@ TEST(NinjaBackend, CxxFlagsIncludeBuildIncludeDirs) {
               std::string::npos)
         << flags.cxx;
     EXPECT_NE(flags.cxx.find(escaped_include_flag(
-                  plan.projectRoot / "third_party" / "imgui")),
+                  plan.projectRoot / std::filesystem::path{"third_party/imgui"})),
               std::string::npos)
         << flags.cxx;
 }
