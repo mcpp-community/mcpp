@@ -28,6 +28,40 @@ main = "src/main.cpp"
     EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::Binary);
 }
 
+TEST(Manifest, SharedTargetSoname) {
+    constexpr auto src = R"(
+[package]
+name = "dep"
+version = "0.1.0"
+[build]
+sources = ["src/*.c"]
+[targets.dep]
+kind = "shared"
+soname = "libdep.so.1"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::SharedLibrary);
+    EXPECT_EQ(m->targets[0].soname, "libdep.so.1");
+}
+
+TEST(Manifest, RejectsSonameOnNonSharedTarget) {
+    constexpr auto src = R"(
+[package]
+name = "app"
+version = "0.1.0"
+[targets.app]
+kind = "bin"
+main = "src/main.cpp"
+soname = "libapp.so.1"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("soname is only valid for shared targets"),
+              std::string::npos);
+}
+
 TEST(Manifest, PackageStandardCpp26AcceptedAndMirrored) {
     constexpr auto src = R"(
 [package]
@@ -312,6 +346,25 @@ package = {
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
     ASSERT_EQ(m->modules.sources.size(), 1u);
     EXPECT_EQ(m->modules.sources[0], "*/src/*.c");
+}
+
+TEST(SynthesizeFromXpkgLua, SharedTargetSoname) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "tinyshared",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/src/*.c" },
+        targets = { ["tinyshared"] = { kind = "shared", soname = "libtinyshared.so.1" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyshared", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::SharedLibrary);
+    EXPECT_EQ(m->targets[0].soname, "libtinyshared.so.1");
 }
 
 TEST(SynthesizeFromXpkgLua, RuntimeConfig) {

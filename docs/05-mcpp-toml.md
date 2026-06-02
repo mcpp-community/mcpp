@@ -71,7 +71,14 @@ kind = "lib"
 # 共享库
 [targets.mylib]
 kind = "shared"
+soname = "libmylib.so.1"  # 可选: ELF/Mach-O ABI 名称,运行时会生成同名 alias
 ```
+
+`soname` 用于共享库的 ABI 名称,类似 Autotools/CMake 中的
+`SOVERSION`/`SONAME`。在 Linux 上,mcpp 会向链接器传递
+`-Wl,-soname,<name>`,并在输出目录生成 `<name> -> lib<target>.so` alias,
+让下游程序可通过标准 ABI 名称 `DT_NEEDED` 或 `dlopen()` 加载该库。
+该字段只对 `kind = "shared"` 有效,值必须是文件名 basename。
 
 ### 2.3 `[build]` — 构建配置
 

@@ -3,6 +3,20 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.46] — 2026-06-03
+
+### 新增
+
+- 共享库 target 支持声明 `soname`,Linux 构建会传递 `-Wl,-soname,...`,
+  并在运行产物目录生成 ABI 名称 alias,供下游 `DT_NEEDED` / `dlopen()`
+  以标准 SONAME 加载。
+
+### 修复
+
+- `mcpp run` / `mcpp test` 会把工具链 runtime 目录加入进程库搜索环境。
+  这修复了 GLX/OpenGL driver 这类经由 `dlopen()` 加载的库无法找到自身
+  `DT_NEEDED` 闭包的问题。
+
 ## [0.0.45] — 2026-06-02
 
 ### 修复
