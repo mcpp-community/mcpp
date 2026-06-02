@@ -246,6 +246,10 @@ list_xpkg_versions(std::string_view luaContent, std::string_view platform);
 // Returns empty string if the field is absent (legacy descriptors).
 std::string extract_xpkg_namespace(std::string_view luaContent);
 
+// Extract the `name` field from an xpkg .lua's `package = { ... }` block.
+// Returns empty string if the field is absent.
+std::string extract_xpkg_name(std::string_view luaContent);
+
 // Resolve the lib-root path for a manifest:
 //   1. `[lib].path` if explicitly set (cargo-style override),
 //   2. otherwise the convention `src/<package-tail>.cppm`, where
@@ -885,7 +889,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // Accepted forms:
     //   acme = "git@gitlab.example.com:platform/mcpp-index.git"       # short: value = url
     //   acme-stable = { url = "git@...", tag = "v2.0" }               # long: inline table
-    //   local-dev = { path = "/home/user/my-packages" }               # local path
+    //   local-dev = { path = "<path>/my-packages" }                  # local path
     //   mcpplibs = { url = "https://...", rev = "abc123" }            # pin built-in
     if (auto* indices_t = doc->get_table("indices")) {
         for (auto& [k, v] : *indices_t) {
@@ -1180,6 +1184,34 @@ std::string top_level_table_body_for_key(std::string_view body, std::string_view
     return {};
 }
 
+std::string top_level_string_value_for_key(std::string_view body, std::string_view wantedKey) {
+    LuaCursor cur { body };
+    cur.skip_ws_and_comments();
+    while (!cur.eof()) {
+        auto key = cur.read_key();
+        if (key.empty()) {
+            cur.skip_ws_and_comments();
+            if (cur.eof()) break;
+            ++cur.pos;
+            continue;
+        }
+        cur.skip_ws_and_comments();
+        if (!cur.consume('=')) {
+            cur.skip_ws_and_comments();
+            continue;
+        }
+        cur.skip_ws_and_comments();
+        if (key == wantedKey && (cur.peek() == '"' || cur.peek() == '\'')) {
+            return cur.read_string();
+        }
+        if (cur.peek() == '{') cur.skip_table();
+        else if (cur.peek() == '"' || cur.peek() == '\'') (void)cur.read_string();
+        else (void)cur.read_bareword();
+        cur.skip_ws_and_comments();
+    }
+    return {};
+}
+
 // Strip Lua line comments (`-- ...\n`) and string contents from text,
 // replacing them with spaces of the same length so positions are
 // preserved. This is a simple-but-correct way to make the scanner
@@ -1315,26 +1347,15 @@ McppField extract_mcpp_field(std::string_view luaContent) {
 }
 
 std::string extract_xpkg_namespace(std::string_view luaContent) {
-    // Look for `namespace = "..."` inside the `package = { ... }` block.
-    // Use sanitized text (comments/strings stripped) for key search,
-    // then read the quoted value from the original text.
-    auto sanitized = strip_lua_comments_and_strings(luaContent);
-    auto pos = sanitized.find("namespace");
-    if (pos == std::string::npos) return {};
-    // Walk past "namespace" + optional whitespace + "="
-    auto p = pos + 9; // strlen("namespace")
-    while (p < sanitized.size() && (sanitized[p] == ' ' || sanitized[p] == '\t')) ++p;
-    if (p >= sanitized.size() || sanitized[p] != '=') return {};
-    ++p;
-    while (p < sanitized.size() && (sanitized[p] == ' ' || sanitized[p] == '\t')) ++p;
-    // Read the quoted string from ORIGINAL text at the same offset.
-    if (p >= luaContent.size() || luaContent[p] != '"') return {};
-    ++p;
-    std::string result;
-    while (p < luaContent.size() && luaContent[p] != '"') {
-        result.push_back(luaContent[p++]);
-    }
-    return result;
+    auto packageBody = top_level_table_body_for_key(luaContent, "package");
+    if (packageBody.empty()) return {};
+    return top_level_string_value_for_key(packageBody, "namespace");
+}
+
+std::string extract_xpkg_name(std::string_view luaContent) {
+    auto packageBody = top_level_table_body_for_key(luaContent, "package");
+    if (packageBody.empty()) return {};
+    return top_level_string_value_for_key(packageBody, "name");
 }
 
 std::vector<std::string>

@@ -1714,6 +1714,42 @@ prepare_build(bool print_fingerprint,
         return std::nullopt;
     };
 
+    auto candidateQualifiedName =
+        [](std::string_view ns, std::string_view shortName) {
+            if (ns.empty()) return std::string(shortName);
+            return std::format("{}.{}", ns, shortName);
+        };
+
+    auto xpkgLuaMatchesCandidate =
+        [&](const mcpp::pm::DependencyCoordinate& coord,
+            std::string_view luaContent,
+            bool allowLegacyBareDefault) {
+            auto luaName = mcpp::manifest::extract_xpkg_name(luaContent);
+            if (luaName.empty()) return true;
+
+            auto luaNs = mcpp::manifest::extract_xpkg_namespace(luaContent);
+            auto qname = candidateQualifiedName(coord.namespace_, coord.shortName);
+
+            if (coord.namespace_.empty()) {
+                return luaNs.empty() && luaName == coord.shortName;
+            }
+
+            if (coord.namespace_ == mcpp::pm::kDefaultNamespace) {
+                if (luaNs == coord.namespace_) {
+                    return luaName == coord.shortName || luaName == qname;
+                }
+                if (luaNs.empty() && luaName == qname) return true;
+                return allowLegacyBareDefault
+                    && luaNs.empty()
+                    && luaName == coord.shortName;
+            }
+
+            if (luaNs == coord.namespace_) {
+                return luaName == coord.shortName || luaName == qname;
+            }
+            return luaNs.empty() && luaName == qname;
+        };
+
     auto dependencyCoordinates =
         [](const mcpp::manifest::DependencySpec& spec,
            const std::string& depName) {
@@ -1741,7 +1777,9 @@ prepare_build(bool print_fingerprint,
         auto selected = candidates.front();
         if (spec.isVersion() && candidates.size() > 1) {
             for (auto& candidate : candidates) {
-                if (readStrictLuaForCandidate(candidate)) {
+                auto lua = readStrictLuaForCandidate(candidate);
+                if (lua && xpkgLuaMatchesCandidate(
+                        candidate, *lua, /*allowLegacyBareDefault=*/false)) {
                     selected = candidate;
                     break;
                 }
@@ -1904,9 +1942,7 @@ prepare_build(bool print_fingerprint,
                             if (!childSpec.isVersion()) continue;
 
                             ResolvedKey childKey{
-                                childSpec.namespace_.empty()
-                                    ? std::string{mcpp::manifest::kDefaultNamespace}
-                                    : childSpec.namespace_,
+                                childSpec.namespace_,
                                 childSpec.shortName.empty() ? childName : childSpec.shortName,
                             };
                             if (auto child = loadVersionDep(
@@ -2344,9 +2380,7 @@ prepare_build(bool print_fingerprint,
         }
 
         ResolvedKey key{
-            spec.namespace_.empty()
-                ? std::string{mcpp::manifest::kDefaultNamespace}
-                : spec.namespace_,
+            spec.namespace_,
             spec.shortName.empty() ? name : spec.shortName,
         };
         const std::string sourceKind =
@@ -3041,17 +3075,20 @@ prepare_build(bool print_fingerprint,
                 }
             } else {
                 lp.namespace_ = spec.namespace_.empty()
-                    ? std::string(mcpp::pm::kDefaultNamespace)
+                    ? std::string{}
                     : spec.namespace_;
                 lp.version    = spec.version;
                 // Use the namespace and resolved version as the source identifier.
                 // For custom indices, include the index name for traceability.
-                lp.source     = std::format("index+{}@{}", lp.namespace_, lp.version);
+                auto sourceIndex = lp.namespace_.empty()
+                    ? std::string(mcpp::pm::kDefaultNamespace)
+                    : lp.namespace_;
+                lp.source     = std::format("index+{}@{}", sourceIndex, lp.version);
                 // Use a deterministic hash based on namespace + name + version.
                 // A future PR can replace this with a real content hash from the
                 // xpkg.lua's declared sha256 or from the install plan.
                 std::hash<std::string> hasher;
-                auto hashInput = std::format("{}:{}@{}", lp.namespace_, name, lp.version);
+                auto hashInput = std::format("{}:{}@{}", sourceIndex, name, lp.version);
                 lp.hash = std::format("fnv1a:{:016x}", hasher(hashInput));
             }
             lock.packages.push_back(std::move(lp));

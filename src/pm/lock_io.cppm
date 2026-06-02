@@ -27,7 +27,7 @@ struct LockedIndex {
 
 struct LockedPackage {
     std::string name;
-    std::string namespace_;   // index namespace (v2+); empty = "mcpplibs"
+    std::string namespace_;   // package namespace (v2+); empty = independent root
     std::string version;
     std::string source;     // e.g. "index+mcpplibs@abc123def..."
     std::string hash;       // "sha256:..." or "fnv1a:..."
