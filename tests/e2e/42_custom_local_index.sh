@@ -10,6 +10,7 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
 export MCPP_HOME="$TMP/mcpp-home"
+"$MCPP" self config --mirror "${MCPP_E2E_TOOLCHAIN_MIRROR:-GLOBAL}" >/dev/null
 
 # ── 1. Create a fake local index directory ──────────────────────────────
 INDEX_DIR="$TMP/my-local-index"

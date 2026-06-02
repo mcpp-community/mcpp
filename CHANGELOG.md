@@ -3,6 +3,14 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.44] — 2026-06-02
+
+### 修复
+
+- 修复 git branch 依赖的缓存身份和 lockfile source 元数据。branch 依赖现在会先
+  解析到具体 commit,缓存 key 会随远端 branch 更新而变化,lockfile 也会记录
+  `git+<url>#branch=<name>@<sha>` 而不是错误落到 `index+mcpplibs@`。
+
 ## [0.0.43] — 2026-06-02
 
 ### 新增
