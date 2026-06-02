@@ -3,6 +3,7 @@
 import std;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
+import mcpp.platform.env;
 import mcpp.publish.xpkg_emit;
 
 using namespace mcpp::publish;
@@ -119,6 +120,31 @@ TEST(XpkgEmit, Sha256OfFile) {
     EXPECT_EQ(sha256_of_file("/no/such/path/zzz"), "");
 }
 #endif // !defined(_WIN32)
+
+#if defined(__linux__)
+TEST(XpkgEmit, Sha256OfFileIgnoresTargetRuntimeLibraryPath) {
+    using namespace mcpp::publish;
+
+    auto hostile = std::filesystem::temp_directory_path()
+                 / std::format("mcpp_hostile_ld_{}", std::random_device{}());
+    std::filesystem::create_directories(hostile);
+    { std::ofstream(hostile / "libc.so.6").close(); }
+
+    auto p = std::filesystem::temp_directory_path()
+           / std::format("mcpp_unit_sha_hostile_{}", std::random_device{}());
+    { std::ofstream(p).close(); }
+
+    {
+        mcpp::platform::env::ScopedEnv ld("LD_LIBRARY_PATH", hostile.string());
+        EXPECT_EQ(sha256_of_file(p),
+                  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    }
+
+    std::error_code ec;
+    std::filesystem::remove(p, ec);
+    std::filesystem::remove_all(hostile, ec);
+}
+#endif // defined(__linux__)
 
 TEST(XpkgEmit, LongBracketSequenceInValueIsHarmless) {
     // We emit `"..."` strings, not `[[...]]`, so a literal `]=]` in

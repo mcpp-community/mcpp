@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.platform.env;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.probe;
 
@@ -52,6 +53,14 @@ esac
     return clang;
 }
 
+std::filesystem::path make_hostile_ld_dir() {
+    auto dir = std::filesystem::temp_directory_path()
+             / std::format("mcpp_hostile_ld_{}", std::random_device{}());
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "libc.so.6").close();
+    return dir;
+}
+
 } // namespace
 
 #if !defined(_WIN32)
@@ -69,6 +78,22 @@ TEST(ToolchainDetect, ClangVersionOutputIsNotMisclassifiedByGccPaths) {
     EXPECT_FALSE(tc->hasImportStd);
 }
 #endif // !defined(_WIN32)
+
+#if defined(__linux__)
+TEST(ToolchainDetect, IgnoresTargetRuntimeLibraryPathDuringProbe) {
+    auto clang = make_fake_clang();
+    TempDirGuard cleanup_clang{clang.parent_path()};
+    auto hostile = make_hostile_ld_dir();
+    TempDirGuard cleanup_ld{hostile};
+
+    mcpp::platform::env::ScopedEnv ld("LD_LIBRARY_PATH", hostile.string());
+
+    auto tc = detect(clang);
+    ASSERT_TRUE(tc.has_value()) << tc.error().message;
+    EXPECT_EQ(tc->compiler, CompilerId::Clang);
+    EXPECT_EQ(tc->targetTriple, "x86_64-unknown-linux-gnu");
+}
+#endif // defined(__linux__)
 
 // ─── normalize_driver_output: path-free semantic identity ─────────────
 //

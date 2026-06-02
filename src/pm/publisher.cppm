@@ -206,7 +206,7 @@ std::string sha256_of_file(const std::filesystem::path& file) {
     if (!std::filesystem::exists(file)) return {};
     auto cmd = std::format("sha256sum {} 2>/dev/null",
         mcpp::platform::shell::quote(file.string()));
-    auto r = mcpp::platform::process::capture(cmd);
+    auto r = mcpp::platform::process::capture_host_tool(cmd);
     if (r.exit_code != 0) return {};
     // sha256sum format: "<64-hex>  <filename>\n"
     auto sp = r.output.find(' ');

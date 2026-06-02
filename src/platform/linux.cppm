@@ -19,6 +19,12 @@ export namespace mcpp::platform::linux_ {
 std::string build_ld_library_path_prefix(
     const std::vector<std::filesystem::path>& dirs);
 
+// Build an LD_LIBRARY_PATH shell prefix for toolchain host processes.
+// Unlike build_ld_library_path_prefix(), this does not append inherited
+// LD_LIBRARY_PATH, which may contain target-program runtime directories.
+std::string build_clean_ld_library_path_prefix(
+    const std::vector<std::filesystem::path>& dirs);
+
 // Return Linux toolchain runtime library directories.
 std::vector<std::filesystem::path>
 runtime_lib_dirs(const std::filesystem::path& toolchain_root);
@@ -29,17 +35,38 @@ runtime_lib_dirs(const std::filesystem::path& toolchain_root);
 
 namespace mcpp::platform::linux_ {
 
-std::string build_ld_library_path_prefix(
-    const std::vector<std::filesystem::path>& dirs)
-{
-#if defined(__linux__)
-    if (dirs.empty()) return "";
+namespace {
+
+std::string join_dirs(const std::vector<std::filesystem::path>& dirs) {
     std::string joined;
     for (auto& d : dirs) {
         if (!joined.empty()) joined += ':';
         joined += d.string();
     }
+    return joined;
+}
+
+} // namespace
+
+std::string build_ld_library_path_prefix(
+    const std::vector<std::filesystem::path>& dirs) {
+#if defined(__linux__)
+    if (dirs.empty()) return "";
+    auto joined = join_dirs(dirs);
     return std::format("env LD_LIBRARY_PATH={}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}} ",
+                       mcpp::platform::shell::quote(joined));
+#else
+    (void)dirs;
+    return "";
+#endif
+}
+
+std::string build_clean_ld_library_path_prefix(
+    const std::vector<std::filesystem::path>& dirs) {
+#if defined(__linux__)
+    if (dirs.empty()) return "";
+    auto joined = join_dirs(dirs);
+    return std::format("env LD_LIBRARY_PATH={} ",
                        mcpp::platform::shell::quote(joined));
 #else
     (void)dirs;
