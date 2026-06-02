@@ -12,6 +12,7 @@ trap "rm -rf $TMP" EXIT
 
 export MCPP_HOME="$TMP/mcpp-home"
 export MCPP_NO_AUTO_INSTALL=1
+"$MCPP" self config --mirror "${MCPP_E2E_TOOLCHAIN_MIRROR:-GLOBAL}" >/dev/null
 
 # ── 1. Local path index with real xpkg.lua ────────────────────────────
 INDEX_DIR="$TMP/my-local-index"
