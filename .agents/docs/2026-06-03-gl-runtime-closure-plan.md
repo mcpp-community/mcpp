@@ -1,8 +1,8 @@
 # mcpp: GL Runtime Closure Plan
 
-> 状态: active
-> 分支: `codex/gl-runtime-closure-mcpp`
-> PR: pending
+> 状态: merged checkpoint; runtime diagnostics, pack integration, and full docs remain follow-up work
+> 分支: `codex/gl-runtime-closure-mcpp` (merged via PR #106)
+> PR: https://github.com/mcpp-community/mcpp/pull/106
 > Last updated: 2026-06-03
 > 目标: 让 mcpp 以标准工具链方式表达、解析、诊断并注入运行时闭包,使 GLFW/OpenGL 这类通过 `dlopen` 加载的运行库不再依赖用户手写环境变量。
 
@@ -104,14 +104,16 @@ behavior.
 - [ ] `MCPP=<built-mcpp> bash tests/e2e/run_all.sh`
 - [x] Focused runtime metadata e2e for `dlopen` resolution
 - [ ] Focused pack e2e for runtime metadata inclusion
+- [x] GitHub CI for PR #106: Linux, macOS, and Windows all passed
 
 ## PR / CI / Merge Notes
 
 - [x] Commit this plan as the first checkpoint.
-- [ ] Open a PR with sanitized paths and no local machine details.
-- [ ] Include a test plan in the PR body.
-- [ ] Wait for Linux/macOS/Windows CI.
-- [ ] Squash merge after required checks pass.
+- [x] Open a PR with sanitized paths and no local machine details.
+- [x] Include a test plan in the PR body.
+- [x] Wait for Linux/macOS/Windows CI.
+- [x] Squash merge after required checks pass.
+  - PR #106 merged at commit `0cd8b597089210ee9f1990f84e1dcdf5e291f794`.
 
 ## Cross-Repository Dependencies
 
