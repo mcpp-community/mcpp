@@ -61,15 +61,17 @@ behavior.
 ## Implementation Plan
 
 - [x] Create this repository-level plan checkpoint.
-- [ ] Add manifest/runtime metadata parsing and validation.
+- [x] Add manifest/runtime metadata parsing and validation.
   - Candidate files: `src/manifest.cppm`, manifest tests.
   - Invalid entries should fail early: empty library name, absolute path in
     package metadata unless explicitly allowed, duplicate capability strings.
-- [ ] Carry runtime requirements through the resolved package graph.
+- [x] Carry runtime requirements through the resolved package graph.
   - Candidate files: dependency resolution and `PackageRoot`/graph structures.
   - Runtime requirements must not be mixed into public include usage.
-- [ ] Teach `mcpp run` and `mcpp test` to build a run environment.
+- [x] Teach `mcpp run` and `mcpp test` to build a run environment.
   - Candidate file: `src/cli.cppm`.
+  - Done: `mcpp run` consumes resolved runtime library directories.
+  - Done: `mcpp test` uses the same runtime environment for test binaries.
   - Linux: prepend resolved runtime directories to `LD_LIBRARY_PATH`.
   - macOS: use `DYLD_LIBRARY_PATH` only for local tool execution where allowed,
     otherwise prefer rpath/install-name behavior.
@@ -85,7 +87,7 @@ behavior.
     requests a runnable bundle.
   - Keep system capabilities explicit; do not silently bundle host GPU drivers
     unless a package declares a redistributable runtime.
-- [ ] Add regression coverage with a small `dlopen` fixture.
+- [x] Add regression coverage with a small `dlopen` fixture.
   - Test should prove that a library loaded only via `dlopen` is found through
     mcpp runtime metadata during `mcpp run`.
   - A second pack-oriented test should prove runtime metadata is represented in
@@ -96,16 +98,16 @@ behavior.
 
 ## Verification
 
-- [ ] `mcpp build`
-- [ ] `mcpp run -- --version`
-- [ ] `mcpp test`
+- [x] `mcpp build`
+- [x] `mcpp run -- --version`
+- [x] `mcpp test`
 - [ ] `MCPP=<built-mcpp> bash tests/e2e/run_all.sh`
-- [ ] Focused runtime metadata e2e for `dlopen` resolution
+- [x] Focused runtime metadata e2e for `dlopen` resolution
 - [ ] Focused pack e2e for runtime metadata inclusion
 
 ## PR / CI / Merge Notes
 
-- [ ] Commit this plan as the first checkpoint.
+- [x] Commit this plan as the first checkpoint.
 - [ ] Open a PR with sanitized paths and no local machine details.
 - [ ] Include a test plan in the PR body.
 - [ ] Wait for Linux/macOS/Windows CI.

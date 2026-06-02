@@ -53,6 +53,7 @@ struct BuildPlan {
 
     std::vector<CompileUnit>        compileUnits;     // topologically sorted
     std::vector<LinkUnit>           linkUnits;
+    std::vector<std::filesystem::path> runtimeLibraryDirs;
 };
 
 // Build a BuildPlan from already-validated inputs.
@@ -166,6 +167,14 @@ local_include_dirs_for_manifest(const std::filesystem::path& root,
     return dirs;
 }
 
+void append_unique_path(std::vector<std::filesystem::path>& out,
+                        std::filesystem::path path)
+{
+    if (path.empty()) return;
+    if (std::find(out.begin(), out.end(), path) == out.end())
+        out.push_back(std::move(path));
+}
+
 } // namespace
 
 BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
@@ -191,6 +200,13 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.outputDir       = outputDir;
     plan.stdBmiPath     = stdBmiPath;
     plan.stdObjectPath  = stdObjectPath;
+
+    for (auto const& package : packages) {
+        for (auto const& dir : package.manifest.runtimeConfig.libraryDirs) {
+            append_unique_path(plan.runtimeLibraryDirs,
+                dir.is_absolute() ? dir : package.root / dir);
+        }
+    }
 
     // 1a. Detect basename collisions (both cross-package AND intra-package:
     //     ftxui ships dom/color.cpp + screen/color.cpp, for instance).

@@ -104,6 +104,13 @@ struct BuildConfig {
     std::string                         cStandard;
 };
 
+// `[runtime]` — requirements needed when launching built binaries.
+struct RuntimeConfig {
+    std::vector<std::filesystem::path> libraryDirs;   // relative to package root
+    std::vector<std::string>           dlopenLibs;    // runtime-loaded sonames
+    std::vector<std::string>           capabilities;  // host/system capabilities
+};
+
 // `[target.<triple>]` — per-target overrides.
 // Picked up when caller passes --target <triple> to build/run/test.
 struct TargetEntry {
@@ -182,6 +189,7 @@ struct Manifest {
 
     Toolchain                   toolchain;     // optional; empty == fallback
     BuildConfig                 buildConfig;
+    RuntimeConfig               runtimeConfig;
 
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;
@@ -778,6 +786,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                             flag)));
         }
     }
+
+    // [runtime] — launch-time requirements.
+    if (auto v = doc->get_string_array("runtime.library_dirs")) {
+        for (auto& s : *v) m.runtimeConfig.libraryDirs.emplace_back(s);
+    }
+    if (auto v = doc->get_string_array("runtime.dlopen_libs"))
+        m.runtimeConfig.dlopenLibs = *v;
+    if (auto v = doc->get_string_array("runtime.capabilities"))
+        m.runtimeConfig.capabilities = *v;
 
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {
@@ -1682,6 +1699,61 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
         else if (key == "c_standard") {
             auto v = cur.read_string();
             if (!v.empty()) m.buildConfig.cStandard = v;
+        }
+        else if (key == "runtime") {
+            auto runtimeBody = cur.read_table_body();
+            LuaCursor rc { runtimeBody };
+            rc.skip_ws_and_comments();
+            while (!rc.eof()) {
+                auto sub = rc.read_key();
+                if (sub.empty()) {
+                    rc.skip_ws_and_comments();
+                    if (rc.eof()) break;
+                    ++rc.pos;
+                    continue;
+                }
+                rc.skip_ws_and_comments();
+                if (!rc.consume('=')) {
+                    return std::unexpected(ManifestError{
+                        std::format("malformed runtime segment near key '{}'", sub),
+                        m.sourcePath, 0, 0});
+                }
+                rc.skip_ws_and_comments();
+                auto read_string_list = [&](std::vector<std::string>& out)
+                    -> std::expected<void, ManifestError>
+                {
+                    if (!rc.consume('{')) {
+                        return std::unexpected(ManifestError{
+                            std::format("expected '{{' after `runtime.{} =`", sub),
+                            m.sourcePath, 0, 0});
+                    }
+                    rc.skip_ws_and_comments();
+                    while (!rc.eof() && rc.peek() != '}') {
+                        auto s = rc.read_string();
+                        if (!s.empty()) out.push_back(std::move(s));
+                        rc.skip_ws_and_comments();
+                    }
+                    rc.consume('}');
+                    return {};
+                };
+                if (sub == "library_dirs") {
+                    std::vector<std::string> dirs;
+                    if (auto r = read_string_list(dirs); !r) return std::unexpected(r.error());
+                    for (auto& d : dirs) m.runtimeConfig.libraryDirs.emplace_back(std::move(d));
+                } else if (sub == "dlopen_libs") {
+                    if (auto r = read_string_list(m.runtimeConfig.dlopenLibs); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "capabilities") {
+                    if (auto r = read_string_list(m.runtimeConfig.capabilities); !r)
+                        return std::unexpected(r.error());
+                } else {
+                    rc.skip_ws_and_comments();
+                    if      (rc.peek() == '"' || rc.peek() == '\'') (void)rc.read_string();
+                    else if (rc.peek() == '{') rc.skip_table();
+                    else                        (void)rc.read_bareword();
+                }
+                rc.skip_ws_and_comments();
+            }
         }
         else {
             // Unknown key — skip the value (string / bareword / table).

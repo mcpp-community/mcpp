@@ -3496,6 +3496,15 @@ int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     std::fflush(stdout);
     std::string cmd = mcpp::platform::shell::quote(exe.string());
     for (auto& a : passthrough) cmd += " " + mcpp::platform::shell::quote(a);
+
+    std::optional<mcpp::platform::env::ScopedEnv> runtimeEnv;
+    auto runtimeEnvKey = mcpp::platform::env::runtime_library_path_key();
+    auto runtimeEnvValue = mcpp::platform::env::prepend_path_list(
+        runtimeEnvKey, ctx->plan.runtimeLibraryDirs);
+    if (!runtimeEnvKey.empty() && !runtimeEnvValue.empty()) {
+        runtimeEnv.emplace(runtimeEnvKey, runtimeEnvValue);
+    }
+
     int rc = std::system(cmd.c_str());
     return mcpp::platform::process::extract_exit_code(rc) == 0 ? 0 : 1;
 }
@@ -4031,6 +4040,15 @@ int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
     int passed = 0;
     int failed = 0;
     std::vector<std::string> failures;
+
+    std::optional<mcpp::platform::env::ScopedEnv> runtimeEnv;
+    auto runtimeEnvKey = mcpp::platform::env::runtime_library_path_key();
+    auto runtimeEnvValue = mcpp::platform::env::prepend_path_list(
+        runtimeEnvKey, ctx->plan.runtimeLibraryDirs);
+    if (!runtimeEnvKey.empty() && !runtimeEnvValue.empty()) {
+        runtimeEnv.emplace(runtimeEnvKey, runtimeEnvValue);
+    }
+
     for (auto& lu : ctx->plan.linkUnits) {
         if (lu.kind != mcpp::build::LinkUnit::TestBinary) continue;
         auto exe = ctx->outputDir / lu.output;

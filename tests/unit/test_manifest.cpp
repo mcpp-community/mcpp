@@ -261,6 +261,29 @@ kind = "lib"
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
 }
 
+TEST(Manifest, RuntimeConfig) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[runtime]
+library_dirs = ["runtime/lib", "plugins"]
+dlopen_libs = ["libGLX.so.0", "libGL.so.1"]
+capabilities = ["x11.display", "opengl.glx.driver"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->runtimeConfig.libraryDirs.size(), 2u);
+    EXPECT_EQ(m->runtimeConfig.libraryDirs[0], "runtime/lib");
+    EXPECT_EQ(m->runtimeConfig.libraryDirs[1], "plugins");
+    ASSERT_EQ(m->runtimeConfig.dlopenLibs.size(), 2u);
+    EXPECT_EQ(m->runtimeConfig.dlopenLibs[0], "libGLX.so.0");
+    EXPECT_EQ(m->runtimeConfig.dlopenLibs[1], "libGL.so.1");
+    ASSERT_EQ(m->runtimeConfig.capabilities.size(), 2u);
+    EXPECT_EQ(m->runtimeConfig.capabilities[0], "x11.display");
+    EXPECT_EQ(m->runtimeConfig.capabilities[1], "opengl.glx.driver");
+}
+
 TEST(SynthesizeFromXpkgLua, CflagsCxxflagsLdflagsAndCStandard) {
     constexpr auto src = R"(
 package = {
@@ -289,6 +312,35 @@ package = {
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
     ASSERT_EQ(m->modules.sources.size(), 1u);
     EXPECT_EQ(m->modules.sources[0], "*/src/*.c");
+}
+
+TEST(SynthesizeFromXpkgLua, RuntimeConfig) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "glfw",
+    xpm  = { linux = { ["3.4"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/src/context.c" },
+        runtime = {
+            library_dirs = { "mcpp_generated/runtime/lib" },
+            dlopen_libs = { "libGLX.so.0", "libGL.so.1" },
+            capabilities = { "x11.display", "opengl.glx.driver" },
+        },
+        targets = { ["glfw"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "glfw", "3.4");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->runtimeConfig.libraryDirs.size(), 1u);
+    EXPECT_EQ(m->runtimeConfig.libraryDirs[0], "mcpp_generated/runtime/lib");
+    ASSERT_EQ(m->runtimeConfig.dlopenLibs.size(), 2u);
+    EXPECT_EQ(m->runtimeConfig.dlopenLibs[0], "libGLX.so.0");
+    EXPECT_EQ(m->runtimeConfig.dlopenLibs[1], "libGL.so.1");
+    ASSERT_EQ(m->runtimeConfig.capabilities.size(), 2u);
+    EXPECT_EQ(m->runtimeConfig.capabilities[0], "x11.display");
+    EXPECT_EQ(m->runtimeConfig.capabilities[1], "opengl.glx.driver");
 }
 
 TEST(SynthesizeFromXpkgLua, AppliesCurrentPlatformMcppOverlay) {
