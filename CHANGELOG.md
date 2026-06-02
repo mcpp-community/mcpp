@@ -3,6 +3,17 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.45] — 2026-06-02
+
+### 修复
+
+- 修复裸依赖选择器无法 fallback 到独立 root 包的问题。现在
+  `imgui = "0.0.1"` 会先尝试省略前缀的 `mcpplibs/imgui`,若候选包身份不匹配,
+  会继续匹配独立 root `imgui`,避免把非 `mcpplibs` 体系的包误解析为
+  `mcpplibs.imgui`。
+- 选择候选 xpkg 描述时校验 `package.name` / `package.namespace`,并在 lockfile
+  中保留独立 root 包的空 namespace 身份。
+
 ## [0.0.44] — 2026-06-02
 
 ### 修复

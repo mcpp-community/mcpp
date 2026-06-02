@@ -59,6 +59,18 @@ The imgui validation exposed two separate mcpp-side problems.
    `imgui.backend.*` modules. The lock file also obscured the real dependency
    source.
 
+4. Bare dependency selectors could not fall back to independent root packages.
+
+   `resolve_dependency_selector("imgui")` produced only `mcpplibs/imgui`.
+   That missed the intended rule that bare names first try the omitted
+   `mcpplibs` root and then fall back to an independent root package.
+
+   The failure had a second layer: the default-namespace strict lookup uses
+   `imgui.lua` as its canonical filename, which is the same descriptor filename
+   used by an independent root `imgui` package. Without checking the xpkg
+   descriptor's declared `package.name` / `package.namespace`, the first
+   candidate could consume the independent package as `mcpplibs.imgui`.
+
 ## Changes In This Branch
 
 - `src/build/flags.cppm`
@@ -94,6 +106,28 @@ The imgui validation exposed two separate mcpp-side problems.
   - Added a branch dependency regression that verifies `mcpp update <dep>`
     refreshes a moved branch and that lock source metadata is marked as git.
 
+- `src/pm/dependency_selector.cppm`
+  - Bare selectors now produce ordered candidates:
+    `mcpplibs/<name>`, then independent root `<name>`.
+
+- `src/manifest.cppm`
+  - Added `extract_xpkg_name()` alongside `extract_xpkg_namespace()` so resolver
+    code can validate package identity from the xpkg descriptor.
+
+- `src/cli.cppm`
+  - Candidate selection now validates that a matched xpkg descriptor belongs to
+    the candidate coordinate before selecting it.
+  - Independent root packages keep an empty package namespace in `mcpp.lock`
+    instead of being rewritten as `mcpplibs`.
+
+- `tests/unit/test_pm_compat.cpp`
+  - Added a bare selector regression for `imgui -> mcpplibs/imgui, then imgui`.
+
+- `tests/e2e/63_bare_dependency_peer_root_priority.sh`
+  - Added a no-network regression that provides only an independent root
+    `imgui` package in a temporary default index and verifies `imgui = "1.0.0"`
+    builds/runs without locking the package as `mcpplibs`.
+
 ## Evidence So Far
 
 - Red test for the include bug:
@@ -116,7 +150,7 @@ The imgui validation exposed two separate mcpp-side problems.
 
 - Green e2e after rebuilding the mcpp CLI with the resolver fix:
   - Command:
-    `MCPP=target/x86_64-linux-gnu/85da010ca4e7d6e2/bin/mcpp bash tests/e2e/60_stale_xpkg_cache_reinstall.sh`
+    `MCPP=<mcpp-bin> bash tests/e2e/60_stale_xpkg_cache_reinstall.sh`
   - Result: `OK`
 
 - Boundary regression caught and fixed:
@@ -143,7 +177,7 @@ The imgui validation exposed two separate mcpp-side problems.
 
 - Green e2e after rebuilding the mcpp CLI with the git dependency fix:
   - Command:
-    `MCPP=target/x86_64-linux-gnu/ea28c45f9dcd4fed/bin/mcpp bash tests/e2e/24_git_dependency.sh`
+    `MCPP=<mcpp-bin> bash tests/e2e/24_git_dependency.sh`
   - Result: `OK`
 
 - Focused regression after the final git dependency change:
@@ -152,9 +186,31 @@ The imgui validation exposed two separate mcpp-side problems.
   - `tests/e2e/24_git_dependency.sh`: `OK`
   - `tests/e2e/62_dotted_dependency_selector_priority.sh`: `OK`
 
+- Red unit test for bare selector fallback before the fix:
+  - `DependencySelector.BareSelectorBuildsOmittedMcpplibsThenPeerRootCandidates`
+    failed because `selector.candidates.size()` was `1`, expected `2`.
+
+- Green focused verification after the bare selector and candidate identity fix:
+  - `mcpp test -- --gtest_filter=DependencySelector.BareSelectorBuildsOmittedMcpplibsThenPeerRootCandidates`:
+    `18 passed; 0 failed`
+  - `tests/e2e/62_dotted_dependency_selector_priority.sh`: `OK`
+  - `tests/e2e/63_bare_dependency_peer_root_priority.sh`: `OK`
+
+- Full local verification after the final edits:
+  - `mcpp test`: `18 passed; 0 failed`
+  - `tests/e2e/run_all.sh`: `67 passed, 0 failed, 0 skipped`
+  - `tests/e2e/62_dotted_dependency_selector_priority.sh`: `OK`
+  - `tests/e2e/63_bare_dependency_peer_root_priority.sh`: `OK`
+
+- External mcpp-index imgui smoke with the rebuilt mcpp CLI:
+  - Command shape: `MCPP=<mcpp-bin> bash tests/smoke_imgui_module.sh`
+  - Result: `Dear ImGui 1.92.8 module package ok`
+  - Observed install target: `mcpplibs:imgui@0.0.1`, meaning default index
+    package `imgui`; not `mcpplibs.imgui`.
+
 - Fresh external `imgui-private` git consumer with rebuilt mcpp CLI:
   - Command:
-    `MCPP_HOME=/tmp/imgui-private-fixed-mcpp-home target/x86_64-linux-gnu/ea28c45f9dcd4fed/bin/mcpp run`
+    `MCPP_HOME=<tmp-home> <mcpp-bin> run`
   - Result:
     `external git consumer imported Dear ImGui 1.92.8`
   - Lock source:
@@ -181,3 +237,6 @@ The imgui validation exposed two separate mcpp-side problems.
   corrected.
 - The mcpp fixes should be submitted as a separate PR from imgui package/index
   updates.
+- Public `imgui` package identity is independent root `imgui`, not
+  `mcpplibs.imgui`; mcpp's omitted-`mcpplibs` priority must not rewrite that
+  identity after the fallback candidate is selected.

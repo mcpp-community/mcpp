@@ -60,6 +60,19 @@ TEST(DependencySelector, DottedSelectorBuildsOmittedMcpplibsPriorityCandidates) 
     EXPECT_EQ(selector.candidates[1].shortName, "glfw_opengl3");
 }
 
+TEST(DependencySelector, BareSelectorBuildsOmittedMcpplibsThenPeerRootCandidates) {
+    auto selector = mcpp::pm::resolve_dependency_selector(
+        "imgui",
+        mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+
+    EXPECT_EQ(selector.stableMapKey, "imgui");
+    ASSERT_EQ(selector.candidates.size(), 2u);
+    EXPECT_EQ(selector.candidates[0].namespace_, "mcpplibs");
+    EXPECT_EQ(selector.candidates[0].shortName, "imgui");
+    EXPECT_EQ(selector.candidates[1].namespace_, "");
+    EXPECT_EQ(selector.candidates[1].shortName, "imgui");
+}
+
 TEST(DependencySelector, ExplicitMcpplibsPrefixDoesNotAddPeerFallback) {
     auto selector = mcpp::pm::resolve_dependency_selector(
         "mcpplibs.capi.lua",

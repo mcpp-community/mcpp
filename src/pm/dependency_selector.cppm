@@ -71,6 +71,10 @@ inline DependencySelector resolve_dependency_selector(
             .namespace_ = std::string(kDefaultNamespace),
             .shortName = segments.front(),
         });
+        out.candidates.push_back(DependencyCoordinate{
+            .namespace_ = {},
+            .shortName = segments.front(),
+        });
         return out;
     }
 
