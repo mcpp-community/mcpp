@@ -88,13 +88,13 @@ std::string join_colon_paths(const std::vector<std::filesystem::path>& dirs) {
 }
 
 std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) {
-    return mcpp::platform::linux_::build_ld_library_path_prefix(dirs);
+    return mcpp::platform::linux_::build_clean_ld_library_path_prefix(dirs);
 }
 
 } // namespace
 
 std::expected<std::string, DetectError> run_capture(const std::string& cmd) {
-    auto r = mcpp::platform::process::capture(cmd);
+    auto r = mcpp::platform::process::capture_host_tool(cmd);
     if (r.exit_code != 0 && r.output.empty()) {
         return std::unexpected(DetectError{std::format("failed to execute: {}", cmd)});
     }

@@ -55,6 +55,7 @@ struct Target {
     std::string                 name;
     enum Kind { Library, Binary, SharedLibrary, TestBinary } kind;
     std::string                 main;           // for binary / test
+    std::string                 soname;         // ABI name for shared libraries, e.g. libfoo.so.1
 };
 
 // `DependencySpec` and `kDefaultNamespace` have moved to mcpp.pm.dep_spec.
@@ -304,6 +305,25 @@ ManifestError error(const std::filesystem::path& origin,
     return ManifestError{msg, origin, pos.line, pos.column};
 }
 
+bool is_basename(std::string_view value) {
+    return !value.empty()
+        && value.find('/') == std::string_view::npos
+        && value.find('\\') == std::string_view::npos;
+}
+
+std::optional<std::string> validate_target_soname(const Target& t,
+                                                  std::string_view targetPath) {
+    if (t.soname.empty()) return std::nullopt;
+    if (t.kind != Target::SharedLibrary) {
+        return std::format("{}soname is only valid for shared targets", targetPath);
+    }
+    if (!is_basename(t.soname)) {
+        return std::format("{}soname must be a library basename, got '{}'",
+                           targetPath, t.soname);
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string_view raw) {
@@ -480,6 +500,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     std::format("targets.{} (kind=bin) requires 'main' field", tname)));
             }
             t.main = mit->second.as_string();
+        }
+        if (auto sit = tt.find("soname"); sit != tt.end()) {
+            if (!sit->second.is_string()) {
+                return std::unexpected(error(origin,
+                    std::format("targets.{}.soname must be a string", tname)));
+            }
+            t.soname = sit->second.as_string();
+        }
+        if (auto msg = validate_target_soname(t, std::format("targets.{}.", tname))) {
+            return std::unexpected(error(origin, *msg));
         }
         m.targets.push_back(std::move(t));
     }
@@ -1620,6 +1650,8 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                               || k == "so" || k == "shlib")        t.kind = Target::SharedLibrary;
                     } else if (sub == "main") {
                         t.main = cur.read_string();
+                    } else if (sub == "soname") {
+                        t.soname = cur.read_string();
                     } else {
                         // unknown subfield — skip its value
                         cur.skip_ws_and_comments();
@@ -1629,6 +1661,9 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     cur.skip_ws_and_comments();
                 }
                 cur.consume('}');
+                if (auto msg = validate_target_soname(t, std::format("targets.{}.", tname))) {
+                    return std::unexpected(ManifestError{*msg, m.sourcePath, 0, 0});
+                }
                 m.targets.push_back(std::move(t));
                 cur.skip_ws_and_comments();
             }

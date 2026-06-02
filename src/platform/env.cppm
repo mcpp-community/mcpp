@@ -40,6 +40,7 @@ private:
 
 std::string path_list_separator();
 std::string runtime_library_path_key();
+std::string host_tool_runtime_library_path_key();
 std::string prepend_path_list(std::string_view key,
                               std::span<const std::filesystem::path> dirs);
 
@@ -116,6 +117,16 @@ std::string runtime_library_path_key() {
     // ninja itself, and can make macOS system frameworks load an incompatible
     // private libc++/libc++abi. Keep macOS on toolchain-provided rpaths.
     return "";
+#elif defined(__linux__)
+    return "LD_LIBRARY_PATH";
+#else
+    return "";
+#endif
+}
+
+std::string host_tool_runtime_library_path_key() {
+#if defined(__APPLE__)
+    return "DYLD_LIBRARY_PATH";
 #elif defined(__linux__)
     return "LD_LIBRARY_PATH";
 #else

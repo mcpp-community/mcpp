@@ -30,6 +30,7 @@ module;
 export module mcpp.platform.process;
 
 import std;
+import mcpp.platform.env;
 
 export namespace mcpp::platform::process {
 
@@ -41,6 +42,11 @@ struct RunResult {
 // Run `command` via the platform shell, capture stdout.
 // On POSIX, stdin is automatically redirected from /dev/null.
 RunResult capture(std::string_view command);
+
+// Run a host tool while clearing target runtime library search variables.
+// This prevents target/program LD_LIBRARY_PATH from poisoning system tools
+// such as sha256sum, compiler probes, env, or the shell itself.
+RunResult capture_host_tool(std::string_view command);
 
 // Run `command` with extra environment variables (additive).
 // Windows: _putenv_s (mutates calling process env).
@@ -124,6 +130,14 @@ RunResult capture(std::string_view command) {
 
     result.exit_code = normalize_exit_code(::pclose(fp));
     return result;
+}
+
+RunResult capture_host_tool(std::string_view command) {
+    auto key = mcpp::platform::env::host_tool_runtime_library_path_key();
+    std::optional<mcpp::platform::env::ScopedEnv> runtime_env;
+    if (!key.empty())
+        runtime_env.emplace(key, std::nullopt);
+    return capture(command);
 }
 
 RunResult capture_with_env(

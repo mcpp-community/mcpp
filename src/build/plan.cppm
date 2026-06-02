@@ -33,6 +33,8 @@ struct LinkUnit {
     std::vector<std::filesystem::path> implicitInputs; // relative to plan.outputDir
     std::vector<std::string>        linkFlags;          // per-link edge flags
     std::filesystem::path           output;            // relative to plan.outputDir
+    std::string                     soname;            // ABI name for shared libraries
+    std::vector<std::filesystem::path> runtimeAliases; // relative aliases, e.g. bin/libfoo.so.1
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
 };
 
@@ -133,6 +135,20 @@ std::filesystem::path target_output(const mcpp::manifest::Target& t) {
            std::format("{}{}", t.name, mcpp::platform::exe_suffix);
 }
 
+std::vector<std::filesystem::path> runtime_aliases_for_target(
+    const mcpp::manifest::Target& t) {
+    std::vector<std::filesystem::path> aliases;
+    if (t.kind != mcpp::manifest::Target::SharedLibrary || t.soname.empty()) {
+        return aliases;
+    }
+
+    auto output = target_output(t);
+    if (t.soname != output.filename().string()) {
+        aliases.push_back(output.parent_path() / t.soname);
+    }
+    return aliases;
+}
+
 bool is_implementation_source(const std::filesystem::path& source) {
     auto ext = source.extension();
     return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".c" || ext == ".m";
@@ -206,6 +222,16 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             append_unique_path(plan.runtimeLibraryDirs,
                 dir.is_absolute() ? dir : package.root / dir);
         }
+    }
+    // The same private runtime directories embedded as executable RUNPATH are
+    // also needed in the process environment for libraries reached only via
+    // dlopen(), because their own DT_NEEDED closure does not consult the main
+    // executable's RUNPATH.
+    for (auto const& dir : tc.linkRuntimeDirs) {
+        append_unique_path(plan.runtimeLibraryDirs, dir);
+    }
+    if (tc.payloadPaths) {
+        append_unique_path(plan.runtimeLibraryDirs, tc.payloadPaths->glibcLib);
     }
 
     // 1a. Detect basename collisions (both cross-package AND intra-package:
@@ -375,6 +401,8 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.targetName = dep.target.name;
         lu.kind       = LinkUnit::SharedLibrary;
         lu.output     = dep.output;
+        lu.soname     = dep.target.soname;
+        lu.runtimeAliases = runtime_aliases_for_target(dep.target);
         append_package_objects(lu, dep.packageName);
         append_direct_shared_deps(lu, dep.packageIndex);
         plan.linkUnits.push_back(std::move(lu));
@@ -399,6 +427,8 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         } else if (t.kind == mcpp::manifest::Target::SharedLibrary) {
             lu.kind   = LinkUnit::SharedLibrary;
             lu.output = target_output(t);
+            lu.soname = t.soname;
+            lu.runtimeAliases = runtime_aliases_for_target(t);
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {
             lu.kind   = LinkUnit::TestBinary;
             lu.output = target_output(t);

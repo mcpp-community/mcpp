@@ -102,6 +102,17 @@ std::string join_flags(const std::vector<std::string>& flags) {
     return out;
 }
 
+std::string shared_soname_flag(const LinkUnit& lu) {
+    if (lu.kind != LinkUnit::SharedLibrary || lu.soname.empty()) return "";
+#if defined(__APPLE__)
+    return "-Wl,-install_name,@rpath/" + lu.soname;
+#elif defined(__linux__)
+    return "-Wl,-soname," + lu.soname;
+#else
+    return "";
+#endif
+}
+
 void write_file(const std::filesystem::path& p, std::string_view content) {
     std::filesystem::create_directories(p.parent_path());
     std::ofstream os(p);
@@ -369,8 +380,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  description = AR $out\n\n");
 
     append("rule cxx_shared\n");
-    append("  command = $cxx -shared $in -o $out $ldflags $unit_ldflags\n");
+    append("  command = $cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags\n");
     append("  description = SHARED $out\n\n");
+
+    append("rule runtime_alias\n");
+    if constexpr (mcpp::platform::is_windows) {
+        append("  command = powershell -NoProfile -Command \"Copy-Item -Force '$in' -Destination '$out'\"\n");
+    } else {
+        append("  command = mkdir -p $$(dirname $out) && rm -f $out && ln -s $$(basename $in) $out\n");
+    }
+    append("  description = ALIAS $out\n\n");
 
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.
@@ -618,9 +637,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::string out_line = std::format("build {} : {}{}{}\n",
             escape_ninja_path(lu.output), rule, ins,
             implicit.empty() ? std::string{} : " |" + implicit);
+        if (auto flag = shared_soname_flag(lu); !flag.empty())
+            out_line += "  soname_flag = " + flag + "\n";
         if (auto flags = join_flags(lu.linkFlags); !flags.empty())
             out_line += "  unit_ldflags =" + flags + "\n";
         append(std::move(out_line));
+
+        for (auto const& alias : lu.runtimeAliases) {
+            append(std::format("build {} : runtime_alias {}\n",
+                escape_ninja_path(alias),
+                escape_ninja_path(lu.output)));
+        }
     }
     append("\n");
 
@@ -628,6 +655,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::string defaults;
         for (auto& lu : plan.linkUnits) {
             defaults += " " + escape_ninja_path(lu.output);
+            for (auto const& alias : lu.runtimeAliases) {
+                defaults += " " + escape_ninja_path(alias);
+            }
         }
         append("default" + defaults + "\n");
     }
@@ -720,6 +750,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             std::fputs(out.c_str(), stdout);
         for (auto& lu : plan.linkUnits) {
             r.producedArtifacts.push_back(plan.outputDir / lu.output);
+            for (auto const& alias : lu.runtimeAliases) {
+                r.producedArtifacts.push_back(plan.outputDir / alias);
+            }
         }
     } else {
         auto prefixes = command_prefixes(flags, plan);
