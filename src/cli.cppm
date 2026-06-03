@@ -3157,6 +3157,49 @@ prepare_build(bool print_fingerprint,
         }
     }
 
+    // Per-build resolution manifest artifact: a machine-readable record of the
+    // resolved plan (toolchain/abi, runtime closure, capabilities+providers,
+    // deps) written next to the build outputs. Same data as `mcpp why`; usable
+    // by CI/tooling. (capability -> plan, serialized.)
+    {
+        const std::string tcAbi =
+            ctx.tc.targetTriple.find("musl") != std::string::npos ? "musl"
+            : ctx.tc.stdlibId == "libc++"                          ? "libc++"
+            : ctx.tc.compiler == mcpp::toolchain::CompilerId::MSVC ? "msvc"
+            :                                                         "glibc";
+        auto jstr = [](std::string_view s) {
+            std::string o = "\"";
+            for (char c : s) { if (c == '\\' || c == '"') o += '\\'; o += c; }
+            return o + "\"";
+        };
+        std::error_code ec;
+        std::filesystem::create_directories(ctx.plan.outputDir, ec);
+        std::ofstream js(ctx.plan.outputDir / "resolution.json");
+        if (js) {
+            js << "{\n";
+            js << "  \"toolchain\": {\"spec\": " << jstr(ctx.tc.label())
+               << ", \"abi\": " << jstr(tcAbi)
+               << ", \"triple\": " << jstr(ctx.tc.targetTriple)
+               << ", \"stdlib\": " << jstr(ctx.tc.stdlibId) << "},\n";
+            js << "  \"runtime\": {\n";
+            js << "    \"library_dirs\": [";
+            for (std::size_t i = 0; i < ctx.plan.runtimeLibraryDirs.size(); ++i)
+                js << (i ? ", " : "") << jstr(ctx.plan.runtimeLibraryDirs[i].string());
+            js << "],\n";
+            js << "    \"dlopen_libs\": [";
+            for (std::size_t i = 0; i < ctx.plan.runtimeDlopenLibs.size(); ++i)
+                js << (i ? ", " : "") << jstr(ctx.plan.runtimeDlopenLibs[i]);
+            js << "],\n";
+            js << "    \"capabilities\": [";
+            for (std::size_t i = 0; i < ctx.plan.runtimeProviders.size(); ++i) {
+                auto& [cap, prov] = ctx.plan.runtimeProviders[i];
+                js << (i ? ", " : "") << "{\"capability\": " << jstr(cap)
+                   << ", \"provider\": " << jstr(prov) << "}";
+            }
+            js << "]\n  }\n}\n";
+        }
+    }
+
     return ctx;
 }
 
