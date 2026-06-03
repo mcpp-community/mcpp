@@ -103,6 +103,11 @@ struct BuildConfig {
     std::vector<std::string>           cxxflags;
     std::vector<std::string>           ldflags;
     std::string                         cStandard;
+    // Resolved build-profile knobs (from [profile.<name>] + built-in defaults).
+    std::string                         optLevel = "2";  // -O level
+    bool                                debug    = false; // -g
+    bool                                lto      = false; // -flto
+    bool                                strip    = false; // link -s
 };
 
 // `[runtime]` — requirements needed when launching built binaries.
@@ -175,6 +180,14 @@ struct WorkspaceConfig {
     bool                                                present = false;
 };
 
+// [profile.<name>] — bundled build settings (opt level, debug, lto, strip).
+struct Profile {
+    std::string optLevel = "2";
+    bool        debug    = false;
+    bool        lto      = false;
+    bool        strip    = false;
+};
+
 struct Manifest {
     std::filesystem::path       sourcePath;    // mcpp.toml's filesystem path
 
@@ -191,6 +204,7 @@ struct Manifest {
     Toolchain                   toolchain;     // optional; empty == fallback
     BuildConfig                 buildConfig;
     RuntimeConfig               runtimeConfig;
+    std::map<std::string, Profile> profiles;   // [profile.<name>]
 
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;
@@ -469,6 +483,24 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
 
     // [targets.*] — M5.0: now optional. If absent, defer to auto-inference (in load()).
+    // [profile.<name>] — bundled build settings.
+    if (auto* profile_table = doc->get_table("profile");
+        profile_table && !profile_table->empty()) {
+        for (auto& [pname, pval] : *profile_table) {
+            if (!pval.is_table()) continue;
+            auto& tt = pval.as_table();
+            Profile pr;
+            if (auto it = tt.find("opt"); it != tt.end()) {
+                if      (it->second.is_string()) pr.optLevel = it->second.as_string();
+                else if (it->second.is_int())    pr.optLevel = std::to_string(it->second.as_int());
+            }
+            if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) pr.debug = it->second.as_bool();
+            if (auto it = tt.find("lto");   it != tt.end() && it->second.is_bool()) pr.lto   = it->second.as_bool();
+            if (auto it = tt.find("strip"); it != tt.end() && it->second.is_bool()) pr.strip = it->second.as_bool();
+            m.profiles[pname] = pr;
+        }
+    }
+
     auto* targets_table = doc->get_table("targets");
     if (targets_table && !targets_table->empty()) {
     for (auto& [tname, tval] : *targets_table) {

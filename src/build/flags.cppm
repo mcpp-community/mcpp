@@ -198,8 +198,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // AR binary
     f.arBinary = mcpp::toolchain::archive_tool(plan.toolchain);
 
-    // Opt level (musl ICE workaround)
-    std::string opt_flag = isMuslTc ? " -Og" : " -O2";
+    // Opt level + debug come from the resolved build profile
+    // ([profile.<name>] → buildConfig). musl keeps -Og as an ICE workaround
+    // unless the profile pins -O0.
+    auto& prof = plan.manifest.buildConfig;
+    std::string opt_flag = isMuslTc && prof.optLevel != "0"
+        ? " -Og" : (" -O" + prof.optLevel);
+    if (prof.debug) opt_flag += " -g";
+    if (prof.lto)   opt_flag += " -flto";
 
     // User link flags
     std::string user_ldflags;
@@ -279,13 +285,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             payload_ld += " -Wl,--dynamic-linker=" + escape_path(loader);
     }
 
+    std::string link_extra;
+    if (prof.lto)   link_extra += " -flto";
+    if (prof.strip) link_extra += " -s";
+
     if constexpr (mcpp::platform::is_windows) {
-        f.ld = user_ldflags;
+        f.ld = user_ldflags + link_extra;
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
-        f.ld = std::format("{}{}{} -lc++{}", full_static, static_stdlib, b_flag, user_ldflags);
+        f.ld = std::format("{}{}{} -lc++{}{}", full_static, static_stdlib, b_flag, user_ldflags, link_extra);
     } else {
-        f.ld = std::format("{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
-                           runtime_dirs, payload_ld, user_ldflags);
+        f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
+                           runtime_dirs, payload_ld, user_ldflags, link_extra);
     }
 
     return f;

@@ -1156,6 +1156,7 @@ struct BuildOverrides {
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
+    std::string profile;             // --profile <name> (default "release")
 };
 
 // `prepare_build` builds the BuildContext for any verb that compiles.
@@ -1312,6 +1313,21 @@ prepare_build(bool print_fingerprint,
     //   1. project mcpp.toml [toolchain].<platform> or .default
     //   2. global ~/.mcpp/config.toml [toolchain].default
     //   3. hard error (no system fallback)
+    // Resolve the build profile: --profile (default "release") → built-in
+    // defaults, overlaid by any [profile.<name>] from the manifest → buildConfig.
+    {
+        std::string pname = overrides.profile.empty() ? "release" : overrides.profile;
+        mcpp::manifest::Profile pr;
+        if (pname == "dev" || pname == "debug") { pr.optLevel = "0"; pr.debug = true; }
+        else if (pname == "dist")               { pr.optLevel = "3"; pr.lto = true; pr.strip = true; }
+        else                                    { pr.optLevel = "2"; } // release
+        if (auto it = m->profiles.find(pname); it != m->profiles.end()) pr = it->second;
+        m->buildConfig.optLevel = pr.optLevel;
+        m->buildConfig.debug    = pr.debug;
+        m->buildConfig.lto      = pr.lto;
+        m->buildConfig.strip    = pr.strip;
+    }
+
     auto tcSpec = m->toolchain.for_platform(kCurrentPlatform);
     if (!tcSpec.has_value()) {
         auto cfg = get_cfg();
@@ -3530,6 +3546,7 @@ int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
     if (auto p = parsed.value("package")) ov.package_filter = *p;
+    if (auto pr = parsed.value("profile")) ov.profile = *pr;
     ov.force_static = parsed.is_flag_set("static");
 
     // P0: try fast-path if inputs haven't changed.
@@ -5576,6 +5593,8 @@ int run(int argc, char** argv) {
                 "Force static linking (-static). On Linux, prefer pairing with --target <arch>-linux-musl"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Build only the named workspace member"))
+            .option(cl::Option("profile").takes_value().value_name("NAME")
+                .help("Build profile: release (default) | dev | dist | <[profile.*] name>"))
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
