@@ -52,9 +52,9 @@ grep -q 'gcc@16.1.0' "$TMP/def2.log" || {
 # ─── Section 2: first-run auto-install ──────────────────────────────────
 # Brand-new MCPP_HOME with no config/default state, brand-new package with no
 # [toolchain] declared — `mcpp build` should auto-install the canonical
-# default (musl-gcc 15.1 for portable static binaries) + use it. We still
-# inherit payloads so CI does not download the same large archives into a
-# throw-away home.
+# default (platform-native glibc gcc — musl-static is opt-in via --target) +
+# use it. We still inherit payloads so CI does not download the same large
+# archives into a throw-away home.
 export MCPP_HOME="$TMP/h2"
 inherit_payloads_only
 configure_e2e_mirror
@@ -75,20 +75,21 @@ fi
 # Must show the friendly first-run banner AND the build must succeed.
 grep -q 'First run' "$TMP/firstrun.log" || {
     cat "$TMP/firstrun.log"; echo "missing First-run banner"; exit 1; }
-grep -q 'gcc@15.1.0-musl' "$TMP/firstrun.log" || {
-    cat "$TMP/firstrun.log"; echo "first run didn't pick gcc@15.1.0-musl as default"; exit 1; }
+grep -q 'gcc@16.1.0' "$TMP/firstrun.log" || {
+    cat "$TMP/firstrun.log"; echo "first run didn't pick glibc gcc@16.1.0 as default"; exit 1; }
 grep -q 'Finished' "$TMP/firstrun.log" || {
     cat "$TMP/firstrun.log"; echo "build did not finish"; exit 1; }
 
-# Built binary must exist, run, AND be statically linked (because the
-# default toolchain is musl, mcpp infers `linkage = static` automatically).
+# Built binary must exist and run. The default toolchain is now platform-native
+# glibc gcc (musl-static is opt-in via --target), so it is dynamically linked.
 binary=$(find target -name hello -type f | head -1)
 [[ -n "$binary" && -x "$binary" ]] || { echo "no hello binary produced"; exit 1; }
-file "$binary" | grep -q 'statically linked' || {
+file "$binary" | grep -q 'statically linked' && {
     file "$binary"
-    echo "first-run build is not statically linked; musl default not propagated"
+    echo "first-run default unexpectedly produced a static binary (glibc default expected)"
     exit 1
 }
+"$binary" >/dev/null 2>&1 || { echo "first-run binary did not run"; exit 1; }
 
 # Second build should be silent on toolchain — no re-install banner.
 "$MCPP" build > "$TMP/secondrun.log" 2>&1 || {

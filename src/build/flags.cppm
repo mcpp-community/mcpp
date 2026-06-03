@@ -262,13 +262,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string static_stdlib = (f.staticStdlib && !isClang && !mcpp::platform::is_windows) ? " -static-libstdc++" : "";
     std::string runtime_dirs;
     if constexpr (mcpp::platform::supports_rpath) {
-        // Bake ALL resolved runtime library dirs into the binary's RUNPATH —
-        // not just the toolchain's. plan.runtimeLibraryDirs is the union of
-        // dependency packages' [runtime] library_dirs (e.g. compat.glx-runtime's
-        // host-GL passthrough dir) plus the toolchain/payload dirs. Using only
-        // toolchain.linkRuntimeDirs here dropped dependency runtime dirs, so
-        // dlopen()'d host libs (libGL/libGLX) were unreachable at run time.
-        for (auto& dir : plan.runtimeLibraryDirs) {
+        // Toolchain runtime dirs (glibc/gcc) as before...
+        for (auto& dir : plan.toolchain.linkRuntimeDirs) {
+            runtime_dirs += " -L" + escape_path(dir);
+            runtime_dirs += " -Wl,-rpath," + escape_path(dir);
+        }
+        // ...plus dependency packages' [runtime] library_dirs (e.g.
+        // compat.glx-runtime's host-GL passthrough), so dlopen()'d host libs
+        // (libGL/libGLX) are reachable at run time. Only the dep dirs — NOT the
+        // glibc payload dir — so static/musl links stay clean.
+        for (auto& dir : plan.depRuntimeLibraryDirs) {
             runtime_dirs += " -L" + escape_path(dir);
             runtime_dirs += " -Wl,-rpath," + escape_path(dir);
         }
