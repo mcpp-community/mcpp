@@ -3131,6 +3131,32 @@ prepare_build(bool print_fingerprint,
         }
     }
 
+    // Capability-driven ABI enforcement: if any dependency declares an
+    // `abi:<x>` capability, the resolved toolchain must satisfy it. (Toolchain
+    // is resolved before the dep graph, so this enforces/diagnoses rather than
+    // reselects — abi-driven reselection is a resolution-ordering follow-up.)
+    {
+        const std::string tcAbi =
+            ctx.tc.targetTriple.find("musl") != std::string::npos ? "musl"
+            : ctx.tc.stdlibId == "libc++"                          ? "libc++"
+            : ctx.tc.compiler == mcpp::toolchain::CompilerId::MSVC ? "msvc"
+            :                                                         "glibc";
+        for (auto& cap : ctx.plan.runtimeCapabilities) {
+            if (cap.rfind("abi:", 0) != 0) continue;
+            std::string need = cap.substr(4);
+            if (need == tcAbi) continue;
+            std::string provider;
+            for (auto& [c, p] : ctx.plan.runtimeProviders)
+                if (c == cap) { provider = p; break; }
+            return std::unexpected(std::format(
+                "ABI mismatch: dependency '{}' requires abi={} but the resolved "
+                "toolchain '{}' is abi={}.\n"
+                "       fix: `mcpp toolchain default <{}-compatible>` "
+                "(e.g. gcc@16.1.0 for glibc), or set [toolchain] in mcpp.toml.",
+                provider.empty() ? "?" : provider, need, ctx.tc.label(), tcAbi, need));
+        }
+    }
+
     return ctx;
 }
 
