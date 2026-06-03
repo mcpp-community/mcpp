@@ -1385,7 +1385,9 @@ prepare_build(bool print_fingerprint,
         std::string pname = overrides.profile.empty() ? "release" : overrides.profile;
         mcpp::manifest::Profile pr;
         if (pname == "dev" || pname == "debug") { pr.optLevel = "0"; pr.debug = true; }
-        else if (pname == "dist")               { pr.optLevel = "3"; pr.lto = true; pr.strip = true; }
+        else if (pname == "dist")               { pr.optLevel = "3"; pr.strip = true; }
+        // (built-in dist intentionally leaves lto off: several packaged gcc
+        //  payloads ship without the LTO plugin; enable via [profile.dist].)
         else                                    { pr.optLevel = "2"; } // release
         if (auto it = m->profiles.find(pname); it != m->profiles.end()) pr = it->second;
         m->buildConfig.optLevel = pr.optLevel;
@@ -3760,8 +3762,13 @@ int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     ov.strict = parsed.is_flag_set("strict");
     ov.force_static = parsed.is_flag_set("static");
 
-    // P0: try fast-path if inputs haven't changed.
-    if (!print_fp && ov.target_triple.empty() && !ov.force_static) {
+    // P0: try fast-path if inputs haven't changed. Any resolution-affecting
+    // override (--profile/--features/--strict, like --target/--static) must
+    // bypass it: the cached build.ninja was generated without them, so taking
+    // the fast path would silently ignore the flags.
+    if (!print_fp && ov.target_triple.empty() && !ov.force_static
+        && ov.profile.empty() && ov.features.empty() && !ov.strict
+        && ov.package_filter.empty()) {
         auto root = find_manifest_root(std::filesystem::current_path());
         if (root) {
             if (auto rc = try_fast_build(*root, verbose, no_cache)) {
