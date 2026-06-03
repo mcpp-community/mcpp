@@ -1025,6 +1025,22 @@ void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
 // fresh-sandbox glibc gcc unable to find the C library: stdlib.h not found).
 void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
                             const std::filesystem::path& payloadRoot) {
+    // Ownership guard: payloads inherited via symlink from another MCPP_HOME
+    // are not ours to patch — their owner already ran the fixup, and patching
+    // through the symlink would rewrite the canonical files against OUR
+    // (possibly ephemeral) paths, bricking the owner's toolchain.
+    {
+        std::error_code ec;
+        auto canonicalRoot = std::filesystem::weakly_canonical(payloadRoot, ec);
+        auto homeRegistry  = std::filesystem::weakly_canonical(cfg.registryDir, ec);
+        if (!ec && !canonicalRoot.string().starts_with(homeRegistry.string())) {
+            mcpp::log::verbose("toolchain", std::format(
+                "skip gcc fixup: payload '{}' resolves outside this home ('{}') — "
+                "inherited payload, owner is responsible for its fixup",
+                payloadRoot.string(), canonicalRoot.string()));
+            return;
+        }
+    }
     auto xlEnv = mcpp::config::make_xlings_env(cfg);
     auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
     std::filesystem::path glibcLibDir;
