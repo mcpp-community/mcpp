@@ -205,6 +205,8 @@ struct Manifest {
     BuildConfig                 buildConfig;
     RuntimeConfig               runtimeConfig;
     std::map<std::string, Profile> profiles;   // [profile.<name>]
+    // [features] — feature name → implied features ("default" = default set).
+    std::map<std::string, std::vector<std::string>> featuresMap;
 
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;
@@ -501,6 +503,20 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
     }
 
+    // [features] — feature name → implied features. "default" lists the
+    // default-active set.
+    if (auto* features_table = doc->get_table("features");
+        features_table && !features_table->empty()) {
+        for (auto& [fname, fval] : *features_table) {
+            std::vector<std::string> implied;
+            if (fval.is_array()) {
+                for (auto& v : fval.as_array())
+                    if (v.is_string()) implied.push_back(v.as_string());
+            }
+            m.featuresMap[fname] = std::move(implied);
+        }
+    }
+
     auto* targets_table = doc->get_table("targets");
     if (targets_table && !targets_table->empty()) {
     for (auto& [tname, tval] : *targets_table) {
@@ -599,6 +615,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     "[{}.\"{}\"] visibility must be 'public', 'private', or 'interface'",
                     section, fqName)));
             }
+        }
+        if (auto it = sub.find("features"); it != sub.end() && it->second.is_array()) {
+            for (auto& fv : it->second.as_array())
+                if (fv.is_string()) spec.features.push_back(fv.as_string());
         }
         if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();

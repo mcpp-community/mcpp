@@ -39,6 +39,7 @@ struct DependencySpec {
     std::string                 gitRev;         // commit / tag / branch (any one)
     std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
     std::string                 visibility = "public"; // public / private / interface
+    std::vector<std::string>    features;       // requested feature set (long-form dep spec)
     std::vector<DependencyCoordinate> candidates; // ordered lookup candidates
 
     bool                        inheritWorkspace = false;  // .workspace = true

@@ -1157,6 +1157,7 @@ struct BuildOverrides {
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
     std::string profile;             // --profile <name> (default "release")
+    std::string features;            // --features a,b,c (root package activation)
 };
 
 // `prepare_build` builds the BuildContext for any verb that compiles.
@@ -2885,6 +2886,68 @@ prepare_build(bool print_fingerprint,
 
     computeUsageRequirements();
 
+    // ─── Feature activation (Cargo-style, additive) ────────────────────
+    // activated(pkg) = pkg.[features].default ∪ features requested for it
+    // (root: --features; deps: the root dep spec's `features = [...]`).
+    // Implied features expand transitively. Each active feature becomes
+    // -DMCPP_FEATURE_<NAME> on that package's compile flags.
+    // (Transitive dep→dep feature requests are not yet propagated.)
+    {
+        auto sanitize = [](std::string f) {
+            for (auto& c : f)
+                c = std::isalnum(static_cast<unsigned char>(c))
+                  ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : '_';
+            return f;
+        };
+        auto activate = [](const mcpp::manifest::Manifest& pm,
+                           const std::vector<std::string>& requested) {
+            std::vector<std::string> act, q;
+            if (auto it = pm.featuresMap.find("default"); it != pm.featuresMap.end())
+                q.insert(q.end(), it->second.begin(), it->second.end());
+            q.insert(q.end(), requested.begin(), requested.end());
+            std::set<std::string> seen;
+            while (!q.empty()) {
+                auto f = q.back(); q.pop_back();
+                if (f == "default" || !seen.insert(f).second) continue;
+                act.push_back(f);
+                if (auto it = pm.featuresMap.find(f); it != pm.featuresMap.end())
+                    q.insert(q.end(), it->second.begin(), it->second.end());
+            }
+            return act;
+        };
+        auto apply = [&](mcpp::modgraph::PackageRoot& pkg,
+                         const std::vector<std::string>& requested) {
+            for (auto& f : activate(pkg.manifest, requested)) {
+                auto def = "-DMCPP_FEATURE_" + sanitize(f);
+                pkg.manifest.buildConfig.cflags.push_back(def);
+                pkg.manifest.buildConfig.cxxflags.push_back(def);
+                pkg.privateBuild.cflags.push_back(def);
+                pkg.privateBuild.cxxflags.push_back(def);
+            }
+        };
+        if (!packages.empty()) {
+            std::vector<std::string> rootReq;
+            for (std::size_t p = 0; p < overrides.features.size();) {
+                auto c = overrides.features.find_first_of(", ", p);
+                auto tok = overrides.features.substr(
+                    p, c == std::string::npos ? std::string::npos : c - p);
+                if (!tok.empty()) rootReq.push_back(tok);
+                if (c == std::string::npos) break;
+                p = c + 1;
+            }
+            apply(packages[0], rootReq);
+        }
+        for (std::size_t i = 1; i < packages.size(); ++i) {
+            auto& pname = packages[i].manifest.package.name;
+            std::vector<std::string> req;
+            for (auto& [dname, dspec] : m->dependencies) {
+                if (dname == pname || dspec.shortName == pname) { req = dspec.features; break; }
+            }
+            if (!req.empty() || packages[i].manifest.featuresMap.contains("default"))
+                apply(packages[i], req);
+        }
+    }
+
     // Modgraph: regex scanner by default; opt-in to compiler-driven P1689
     // scanner via env var MCPP_SCANNER=p1689 (see docs/27).
     auto scan = [&] {
@@ -3547,6 +3610,7 @@ int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto t = parsed.value("target")) ov.target_triple = *t;
     if (auto p = parsed.value("package")) ov.package_filter = *p;
     if (auto pr = parsed.value("profile")) ov.profile = *pr;
+    if (auto fs = parsed.value("features")) ov.features = *fs;
     ov.force_static = parsed.is_flag_set("static");
 
     // P0: try fast-path if inputs haven't changed.
@@ -5595,6 +5659,8 @@ int run(int argc, char** argv) {
                 .help("Build only the named workspace member"))
             .option(cl::Option("profile").takes_value().value_name("NAME")
                 .help("Build profile: release (default) | dev | dist | <[profile.*] name>"))
+            .option(cl::Option("features").takes_value().value_name("LIST")
+                .help("Activate root-package features (comma-separated)"))
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
