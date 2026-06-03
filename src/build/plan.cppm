@@ -66,7 +66,14 @@ struct BuildPlan {
     // in mcpp: providers (e.g. compat.glx-runtime) declare these per platform.
     std::vector<std::string>           runtimeDlopenLibs;   // union of deps' dlopen sonames
     std::vector<std::string>           runtimeCapabilities; // union of host capabilities
-    std::vector<std::pair<std::string, std::string>> runtimeProviders; // (capability, provider pkg)
+    // (capability, provider package). A named aggregate instead of std::pair:
+    // musl-gcc 15.1 modules failed to emit vector<pair<string,string>>'s
+    // move-ctor instantiation across the module boundary (release link error).
+    struct CapabilityProvider {
+        std::string capability;
+        std::string provider;
+    };
+    std::vector<CapabilityProvider>    runtimeProviders;
 };
 
 // Build a BuildPlan from already-validated inputs.
@@ -241,7 +248,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         for (auto const& cap : package.manifest.runtimeConfig.capabilities) {
             if (std::ranges::find(plan.runtimeCapabilities, cap) == plan.runtimeCapabilities.end())
                 plan.runtimeCapabilities.push_back(cap);
-            plan.runtimeProviders.emplace_back(cap, package.manifest.package.name);
+            plan.runtimeProviders.push_back({cap, package.manifest.package.name});
         }
     }
     // The same private runtime directories embedded as executable RUNPATH are

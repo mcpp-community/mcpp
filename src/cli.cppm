@@ -3298,8 +3298,8 @@ prepare_build(bool print_fingerprint,
         bool found = false;
         std::stable_partition(ctx.plan.runtimeProviders.begin(),
                               ctx.plan.runtimeProviders.end(),
-                              [&](const std::pair<std::string, std::string>& pr) {
-            bool match = pr.first.rfind(capKey, 0) == 0 && pr.second == prov;
+                              [&](const auto& pr) {
+            bool match = pr.capability.rfind(capKey, 0) == 0 && pr.provider == prov;
             found = found || match;
             return match;
         });
