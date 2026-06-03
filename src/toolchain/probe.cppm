@@ -303,8 +303,12 @@ std::optional<PayloadPaths>
 probe_payload_paths(const std::filesystem::path& compilerBin) {
     namespace paths = mcpp::xlings::paths;
 
-    // Find glibc xpkg (required).
+    // Find glibc xpkg (required). Compiler siblings first; fall back to the
+    // ACTIVE home registry — an inherited/symlinked compiler resolves into
+    // its owner home, while the active home may own (or have just installed)
+    // the sysroot payloads.
     auto glibc = paths::find_sibling_tool(compilerBin, "glibc");
+    if (!glibc) glibc = paths::find_home_tool("glibc");
     if (!glibc) return std::nullopt;
 
     // Glibc layout: <root>/include/ + <root>/lib64/ (or lib/).
@@ -322,8 +326,10 @@ probe_payload_paths(const std::filesystem::path& compilerBin) {
     pp.glibcInclude = glibcInclude;
     pp.glibcLib     = glibcLib;
 
-    // Find linux kernel headers (optional — search across index prefixes).
+    // Find linux kernel headers (optional — search across index prefixes,
+    // then the active home registry).
     auto linuxHeaders = paths::find_sibling_package(compilerBin, "linux-headers");
+    if (!linuxHeaders) linuxHeaders = paths::find_home_tool("linux-headers");
     if (linuxHeaders) {
         auto linuxInclude = *linuxHeaders / "include";
         if (std::filesystem::exists(linuxInclude / "linux" / "limits.h"))

@@ -82,6 +82,15 @@ namespace paths {
     find_sibling_package(const std::filesystem::path& compilerBin,
                          std::string_view packageName);
 
+    // xpkgs root of the ACTIVE mcpp home ($MCPP_HOME or ~/.mcpp). Payload
+    // discovery consults this in addition to compiler siblings: an
+    // inherited/symlinked compiler resolves into its owner home, while the
+    // active home may own (or have just installed) the sysroot payloads.
+    std::optional<std::filesystem::path> active_home_xpkgs();
+
+    // Like find_sibling_tool, but anchored at the active home's xpkgs.
+    std::optional<std::filesystem::path> find_home_tool(std::string_view tool);
+
     // index data root: env.home / "data"
     std::filesystem::path index_data(const Env& env);
 
@@ -513,6 +522,35 @@ find_sibling_tool(const std::filesystem::path& compilerBin,
     if (!std::filesystem::exists(root, ec)) return std::nullopt;
 
     // Return the first (highest) version dir that exists.
+    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
+        if (v.is_directory(ec)) return v.path();
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> active_home_xpkgs() {
+    std::filesystem::path home;
+    if (const char* h = std::getenv("MCPP_HOME"); h && *h) {
+        home = h;
+    } else if (const char* u = std::getenv("HOME"); u && *u) {
+        home = std::filesystem::path(u) / ".mcpp";
+    } else {
+        return std::nullopt;
+    }
+    auto xpkgs = home / "registry" / "data" / "xpkgs";
+    std::error_code ec;
+    if (!std::filesystem::exists(xpkgs, ec)) return std::nullopt;
+    return xpkgs;
+}
+
+std::optional<std::filesystem::path> find_home_tool(std::string_view tool) {
+    auto xpkgs = active_home_xpkgs();
+    if (!xpkgs) return std::nullopt;
+
+    auto root = *xpkgs / std::format("xim-x-{}", tool);
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec)) return std::nullopt;
+
     for (auto& v : std::filesystem::directory_iterator(root, ec)) {
         if (v.is_directory(ec)) return v.path();
     }
