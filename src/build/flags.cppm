@@ -173,11 +173,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
         f.sysroot = link_toolchain_flags;
     } else if (plan.toolchain.payloadPaths) {
-        // No sysroot but have payload paths: use -isystem.
+        // No usable sysroot: wire the C library headers from the payload.
+        // For GCC use -idirafter (appended after the built-in dirs) so that
+        // libstdc++'s #include_next wrappers can reach them; -isystem would
+        // place them BEFORE the built-ins, invisible to #include_next.
         auto& pp = *plan.toolchain.payloadPaths;
-        compile_toolchain_flags += " -isystem" + escape_path(pp.glibcInclude);
+        const bool clangTc = mcpp::toolchain::is_clang(plan.toolchain);
+        auto inc_flag = [&](const std::filesystem::path& p) {
+            return (clangTc ? " -isystem" : " -idirafter") + escape_path(p);
+        };
+        compile_toolchain_flags += inc_flag(pp.glibcInclude);
         if (!pp.linuxInclude.empty())
-            compile_toolchain_flags += " -isystem" + escape_path(pp.linuxInclude);
+            compile_toolchain_flags += inc_flag(pp.linuxInclude);
     }
 
     // Binutils -B flag

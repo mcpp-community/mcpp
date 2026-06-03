@@ -236,10 +236,21 @@ std::expected<StdModule, StdModError> ensure_built(
                 sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
         }
     } else if (tc.payloadPaths) {
-        // No sysroot: use payload -isystem paths.
-        sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->glibcInclude.string());
+        // No usable sysroot: wire the C library headers from the payload.
+        // GCC's libstdc++ wraps libc headers via #include_next, which only
+        // searches directories AFTER the one the current header came from —
+        // and gcc's built-in dirs are LAST in the search order, so an
+        // -isystem payload dir (inserted before the built-ins) is unreachable
+        // from #include_next. -idirafter appends the payload to the very end,
+        // exactly where #include_next looks.
+        const bool clang = is_clang(tc);
+        auto add_inc = [&](const std::filesystem::path& p) {
+            if (clang) sysroot_flag += std::format(" -isystem'{}'", p.string());
+            else       sysroot_flag += std::format(" -idirafter'{}'", p.string());
+        };
+        add_inc(tc.payloadPaths->glibcInclude);
         if (!tc.payloadPaths->linuxInclude.empty())
-            sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
+            add_inc(tc.payloadPaths->linuxInclude);
     }
 
     std::vector<std::string> stdCommands;
