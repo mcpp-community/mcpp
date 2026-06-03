@@ -155,7 +155,17 @@ mylib = { path = "../mylib" }
 # Git 依赖
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
+
+# 长式 dep spec:features 与 backend 旋钮
+[dependencies]
+imgui = { version = "0.0.3", features = ["docking"] }   # 请求该依赖的 feature
+widget = { version = "1.0", backend = "glfw_opengl3" }  # 糖:= features=["backend-glfw_opengl3"]
 ```
+
+`backend = "<impl>"` 是**通用约定糖**:1:1 脱糖为请求该依赖的 `backend-<impl>`
+feature(库若支持该旋钮,应在自己的 `[features]` 中声明 `backend-*` 系列)。
+若目标包声明了 `[features]` 但不含所请求的 feature(含 backend 脱糖结果),
+默认给出 warning,`mcpp build --strict` 下报错。
 
 **SemVer 约束**:
 
@@ -187,6 +197,88 @@ default = "gcc@16.1.0"
 toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 ```
+
+### 2.8 `[features]` — 特性(Cargo 式,加性)
+
+```toml
+[features]
+default = ["base"]        # 默认激活集
+base    = []
+docking = ["extra"]       # 激活 docking 时隐含激活 extra(传递闭包)
+extra   = []
+```
+
+- 激活来源:包自身 `default` 集 ∪ 显式请求(根包 `mcpp build --features a,b`;
+  依赖经长式 dep spec `features = [...]` / `backend = "..."` 糖)。
+- 每个激活的 feature 在该包的编译中得到宏 `-DMCPP_FEATURE_<NAME>`
+  (名字转大写,非字母数字转 `_`,如 `backend-a` → `MCPP_FEATURE_BACKEND_A`)。
+- **strict 校验**:目标包声明了 `[features]` 表时,请求未声明的 feature 给出
+  warning;`--strict` 下报错。未声明 `[features]` 的包接受任意请求(纯宏用法)。
+
+### 2.9 `[profile.<name>]` — 构建档案
+
+```toml
+[profile.dist]
+opt      = 3              # -O 级别(数字或 "s"/"z" 字符串)
+debug    = false          # -g
+lto      = true           # -flto(注意:部分打包 gcc 未启用 LTO 插件)
+strip    = true           # 链接期 -s
+# passthrough 逃生口(固定键、开放值):
+cflags   = ["-fno-plt"]
+cxxflags = ["-fno-plt"]
+ldflags  = []
+```
+
+- 选择:`mcpp build --profile <name>`,默认 `release`。
+- 内置档案:`release`(-O2)/ `dev`、`debug`(-O0 -g)/ `dist`(-O3 + strip;
+  **不默认开 lto**)。`[profile.<内置名>]` 可整体覆盖内置定义。
+
+### 2.10 `[runtime]` — 主机运行时能力
+
+```toml
+[runtime]
+library_dirs = ["vendor/lib"]            # 烤进产物 RUNPATH 的目录(相对包根)
+dlopen_libs  = ["libGL.so.1"]            # 运行期 dlopen 的 soname(doctor 校验)
+capabilities = ["opengl.glx.driver"]     # 需要的主机能力(开放命名空间)
+provides     = ["opengl.glx.driver"]     # 显式声明本包兑现的能力(强 provider)
+
+# 显式 provider 覆盖(三档旋钮的"显式"档)
+[runtime."opengl.glx.driver"]
+provider = "compat.glx-runtime"
+```
+
+- **provider 选择**:声明 `provides` 的包(强)优先于仅在 `capabilities` 列出
+  能力的包(弱,向后兼容);`[runtime.<cap>] provider=` 显式覆盖最优先,
+  指向依赖图中不存在的 provider 时给出 warning。
+- 解析结果可经 `mcpp why runtime`、`mcpp self doctor` 与构建产物
+  `target/<triple>/<fp>/resolution.json` 查看(默认不是魔法)。
+- 能力命名约定:分层小写 `domain.sub.role`(如 `opengl.glx.driver`、
+  `x11.display`)与前缀类 `abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
+
+### 2.11 `[package] platforms` — 平台声明
+
+```toml
+[package]
+platforms = ["linux", "macos", "windows"]
+```
+
+声明包支持的平台(CI 矩阵提示,经 `mcpp why` 展示)。词表由 mcpp 固定
+(它拥有 target/triple 体系):`linux | macos | windows`;未知值 warning,
+`--strict` 下报错。
+
+## 附录 A. Schema 所有权原则(新字段准入标准)
+
+> **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。
+
+- mcpp 只定义**机制**(features 并集/闭包、capability require/provide/override、
+  profile→编译器旗标、platform→triple),键与形状固定;feature 名、能力名、
+  后端名等**领域词汇只出现在值里**,不进 mcpp 代码。
+- **不支持包自定义 toml 键**:键合法性不得依赖"先解析目标包",否则 manifest
+  失去静态可解析性(lockfile/LSP/审计的前提)。包的扩展点 = 固定机制内的开放值域。
+- 包级旋钮统一收敛进 features;糖键(如 `backend=`)进入核心语法须满足:
+  ① 领域中立(跨生态通用模式)② 1:1 脱糖、零新增解析语义。
+- 字段归属总表与定型决策见
+  `.agents/docs/2026-06-04-manifest-schema-ownership.md`。
 
 ## 3. 实战示例
 

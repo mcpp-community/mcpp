@@ -131,3 +131,11 @@ mcpp 的运行行为可通过以下环境变量调整:
 未显式设置 `MCPP_HOME` 时,mcpp 将基于二进制所在目录的上一级路径
 自动定位沙盒位置(release tarball 解压至 `~/.mcpp/` 后,`~/.mcpp/`
 即为 home),因此 release 版本无需任何环境变量配置即可运行。
+
+
+## ABI 能力强制
+
+依赖可声明 `abi:<name>` 能力(如 `compat.glfw` 声明 `abi:glibc`)。解析出的
+工具链 ABI 不满足任一依赖的 abi 要求时,构建会**尽早失败**并给出修复建议
+(例如 musl-static 工具链遇到 abi:glibc 依赖),取代深层的链接/头文件报错。
+查看:`mcpp why toolchain`。

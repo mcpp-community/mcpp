@@ -118,3 +118,10 @@ mcpp pack --mode bundle-all        # 全自包含,含 libc 与 ld-linux
 - [02 — 发布打包](02-pack-and-release.md) — 构建可分发产物
 - [03 — 工具链管理](03-toolchains.md) — 切换编译器与多版本管理
 - 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅
+
+
+## 更多入口
+
+- GUI 起步:`mcpp new myapp --template gui`(imgui.app 窗口骨架,构建后 `mcpp run` 直接出窗口)。
+- 解释默认决策:`mcpp why [toolchain|runtime|deps]`;主机能力体检:`mcpp self doctor`;
+  机器可读解析清单:构建产物 `target/<triple>/<fp>/resolution.json`。
