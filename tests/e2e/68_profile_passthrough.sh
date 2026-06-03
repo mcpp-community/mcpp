@@ -33,7 +33,7 @@ rm -rf target
 grep -q -- "-O3"      dist.log || { echo "dist missing -O3"; exit 1; }
 grep -q -- "-fno-plt" dist.log || { echo "dist missing passthrough -fno-plt"; exit 1; }
 
-binary=$(find target -name profapp -type f | head -1)
+binary=$(find target \( -name profapp -o -name profapp.exe \) -type f | head -1)
 [[ -n "$binary" ]] || { echo "no binary"; exit 1; }
 "$binary" > /dev/null || { echo "dist binary does not run"; exit 1; }
 

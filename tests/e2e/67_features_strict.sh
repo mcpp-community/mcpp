@@ -69,7 +69,8 @@ cd app
 
 # 1. backend= sugar selects widget's backend-a feature.
 "$MCPP" build > b1.log 2>&1 || { cat b1.log; echo "build failed"; exit 1; }
-bin=$(find target -name app -type f | head -1)
+bin=$(find target \( -name app -o -name app.exe \) -type f | head -1)
+[[ -n "$bin" ]] || { echo "no app binary"; exit 1; }
 out=$("$bin" | tail -2)
 grep -q "backend=1" <<< "$out" || { echo "backend=a not activated: $out"; exit 1; }
 grep -q "base" <<< "$out" || true   # default features active
@@ -77,7 +78,8 @@ grep -q "base" <<< "$out" || true   # default features active
 # 2. --features extra activates a declared feature.
 rm -rf target
 "$MCPP" build --features extra > b2.log 2>&1 || { cat b2.log; echo "features build failed"; exit 1; }
-bin=$(find target -name app -type f | head -1)
+bin=$(find target \( -name app -o -name app.exe \) -type f | head -1)
+[[ -n "$bin" ]] || { echo "no app binary"; exit 1; }
 "$bin" | grep -q "extra" || { echo "--features extra not active"; exit 1; }
 
 # 3. Unknown feature → warning by default, error under --strict.
