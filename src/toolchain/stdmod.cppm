@@ -61,8 +61,11 @@ namespace {
 std::expected<std::string, StdModError> run_capture_command(const std::string& cmd) {
     auto r = mcpp::platform::process::capture(cmd);
     if (r.exit_code != 0) {
+        // Include the command: its --sysroot/-isystem flags are the first
+        // thing needed to diagnose header-resolution failures.
         return std::unexpected(StdModError{
-            std::format("std module precompile failed (rc={}):\n{}", r.exit_code, r.output)});
+            std::format("std module precompile failed (rc={}):\n{}\ncommand: {}",
+                        r.exit_code, r.output, cmd)});
     }
     return r.output;
 }

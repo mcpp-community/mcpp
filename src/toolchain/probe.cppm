@@ -271,6 +271,15 @@ probe_target_triple(const std::filesystem::path& compilerBin,
 std::filesystem::path
 probe_sysroot(const std::filesystem::path& compilerBin,
               const std::string& envPrefix) {
+    // A sysroot is only usable if it actually carries the C library headers.
+    // A merely-existing directory (e.g. a partially-bootstrapped sandbox
+    // subos) would silently shadow the payload -isystem fallback and produce
+    // "stdlib.h: No such file or directory" deep inside the std module build.
+    auto usable = [](const std::filesystem::path& root) {
+        return std::filesystem::exists(root / "usr" / "include" / "stdlib.h")   // glibc layout
+            || std::filesystem::exists(root / "include" / "stdlib.h");          // musl layout
+    };
+
     // 1. Ask the compiler directly (works for GCC; Clang often doesn't support it).
     auto r = run_capture(std::format("{}{} -print-sysroot {}",
                                      envPrefix,
@@ -278,13 +287,21 @@ probe_sysroot(const std::filesystem::path& compilerBin,
                                      mcpp::platform::null_redirect));
     if (r) {
         auto s = trim_line(*r);
-        if (!s.empty() && std::filesystem::exists(s)) return s;
+        if (!s.empty() && std::filesystem::exists(s)) {
+            if (usable(s)) return s;
+            mcpp::log::debug("probe", std::format(
+                "sysroot '{}' exists but lacks usr/include/stdlib.h — ignoring", s));
+        }
 
         // GCC bakes the build-time sysroot into the binary. For xlings-built
         // GCC this is a path like <buildhost>/.xlings/subos/default that
         // doesn't exist on the user's machine. Remap via fallback module.
-        if (auto remapped = mcpp::fallback::remap_xlings_baked_sysroot(s, compilerBin))
-            return *remapped;
+        if (auto remapped = mcpp::fallback::remap_xlings_baked_sysroot(s, compilerBin)) {
+            if (usable(*remapped)) return *remapped;
+            mcpp::log::debug("probe", std::format(
+                "remapped sysroot '{}' lacks usr/include/stdlib.h — ignoring",
+                remapped->string()));
+        }
     }
 
     // 2. Parse the compiler driver config file (Clang .cfg).
