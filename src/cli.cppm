@@ -1386,9 +1386,13 @@ prepare_build(bool print_fingerprint,
         //
         // macOS: LLVM/Clang — Apple doesn't ship GCC; upstream LLVM with
         //        bundled libc++ is the self-contained choice.
-        // Linux: musl-gcc — produces portable static binaries.
+        // Linux: glibc gcc — the platform-native ABI. A musl-static default
+        //        cannot link the glibc world (X11/GL/system libs), so it
+        //        breaks GUI/native packages out of the box. musl-static stays
+        //        opt-in via `mcpp build --target x86_64-linux-musl` for users
+        //        who explicitly want portable static binaries.
         std::string defaultSpec = (mcpp::platform::is_macos || mcpp::platform::is_windows)
-            ? "llvm@20.1.7" : "gcc@15.1.0-musl";
+            ? "llvm@20.1.7" : "gcc@16.1.0";
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
@@ -1398,7 +1402,7 @@ prepare_build(bool print_fingerprint,
                             defaultSpec));
         } else {
             mcpp::ui::info("First run",
-                std::format("no toolchain configured — installing {} (musl, static) as default",
+                std::format("no toolchain configured — installing {} (glibc, native ABI) as default",
                             defaultSpec));
         }
 

@@ -256,7 +256,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string static_stdlib = (f.staticStdlib && !isClang && !mcpp::platform::is_windows) ? " -static-libstdc++" : "";
     std::string runtime_dirs;
     if constexpr (mcpp::platform::supports_rpath) {
-        for (auto& dir : plan.toolchain.linkRuntimeDirs) {
+        // Bake ALL resolved runtime library dirs into the binary's RUNPATH —
+        // not just the toolchain's. plan.runtimeLibraryDirs is the union of
+        // dependency packages' [runtime] library_dirs (e.g. compat.glx-runtime's
+        // host-GL passthrough dir) plus the toolchain/payload dirs. Using only
+        // toolchain.linkRuntimeDirs here dropped dependency runtime dirs, so
+        // dlopen()'d host libs (libGL/libGLX) were unreachable at run time.
+        for (auto& dir : plan.runtimeLibraryDirs) {
             runtime_dirs += " -L" + escape_path(dir);
             runtime_dirs += " -Wl,-rpath," + escape_path(dir);
         }
