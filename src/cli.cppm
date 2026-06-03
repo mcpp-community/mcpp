@@ -4277,11 +4277,111 @@ int cmd_doctor(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
         ok(std::format("BMI cache size = {}", human_bytes(sz)));
     }
 
+    mcpp::ui::status("Checking", "runtime capabilities");
+    {
+#if defined(__APPLE__) || defined(_WIN32)
+        ok("host GL/windowing provided by platform framework");
+#else
+        if (const char* d = std::getenv("DISPLAY"); d && *d)
+            ok(std::format("x11.display: ok ($DISPLAY={})", d));
+        else if (const char* w = std::getenv("WAYLAND_DISPLAY"); w && *w)
+            ok(std::format("wayland.display: ok ($WAYLAND_DISPLAY={})", w));
+        else
+            warn("display: none — windowed apps need $DISPLAY or $WAYLAND_DISPLAY");
+
+        const char* gldirs[] = {"/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu",
+                                "/usr/lib64", "/usr/lib"};
+        auto find_lib = [&](std::string_view prefix) -> std::string {
+            for (auto* dir : gldirs) {
+                std::error_code ec;
+                if (!std::filesystem::exists(dir, ec)) continue;
+                for (auto& e : std::filesystem::directory_iterator(dir, ec)) {
+                    auto fn = e.path().filename().string();
+                    if (fn.rfind(prefix, 0) == 0) return e.path().string();
+                }
+            }
+            return {};
+        };
+        auto glx = find_lib("libGLX.so");
+        auto gl  = find_lib("libGL.so");
+        auto vnd = find_lib("libGLX_nvidia.so");
+        if (vnd.empty()) vnd = find_lib("libGLX_mesa.so");
+        if (!glx.empty() && !gl.empty()) {
+            ok(std::format("opengl.glx.driver: ok (provider compat.glx-runtime; {}, {})",
+                std::filesystem::path(glx).filename().string(),
+                vnd.empty() ? "no GLVND vendor" : std::filesystem::path(vnd).filename().string()));
+        } else {
+            warn("opengl.glx.driver: host libGL/libGLX not found — `mcpp run` of GL apps may fail");
+        }
+#endif
+    }
+
     std::println("");
     if (errors)        std::println("Doctor result: {} errors, {} warnings", errors, warns);
     else if (warns)    std::println("Doctor result: {} warnings", warns);
     else               std::println("Doctor result: all checks passed");
     return errors ? 2 : (warns ? 1 : 0);
+}
+
+// `mcpp why [topic]` / `mcpp resolve --explain` — explain how the toolchain,
+// runtime closure, and dependencies were resolved (I4: defaults are not magic).
+int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    std::string topic = parsed.positional(0);
+    const bool all = topic.empty() || topic == "all";
+
+    auto ctx = prepare_build(/*print_fingerprint=*/false);
+    if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
+    auto& tc   = ctx->tc;
+    auto& plan = ctx->plan;
+
+    auto abi_of = [](const mcpp::toolchain::Toolchain& t) -> std::string {
+        if (t.targetTriple.find("musl") != std::string::npos) return "musl";
+        if (t.stdlibId == "libc++") return "libc++";
+        if (t.compiler == mcpp::toolchain::CompilerId::MSVC) return "msvc";
+        return "glibc";
+    };
+
+    if (all || topic == "toolchain") {
+        std::println("toolchain: {}", tc.label());
+        std::println("  abi={}  stdlib={}  triple={}", abi_of(tc), tc.stdlibId, tc.targetTriple);
+        std::println("  reason: [toolchain] in mcpp.toml if set, else platform-native default");
+    }
+    if (all || topic == "runtime") {
+        std::println("runtime library dirs (baked into binary RUNPATH):");
+        if (plan.runtimeLibraryDirs.empty()) std::println("  (none)");
+        for (auto& d : plan.runtimeLibraryDirs) {
+            auto s = d.string();
+            std::string note;
+            if (s.find("glx_runtime") != std::string::npos)
+                note = "   <- host GL/GLX runtime (compat.glx-runtime)";
+            else if (s.find("glibc") != std::string::npos) note = "   <- glibc";
+            else if (s.find("xim-x-gcc") != std::string::npos
+                  || s.find("xim-x-llvm") != std::string::npos) note = "   <- toolchain";
+            std::println("  - {}{}", s, note);
+        }
+    }
+    if (all || topic == "deps") {
+        std::println("dependencies (mcpp.lock):");
+        std::ifstream in(ctx->projectRoot / "mcpp.lock");
+        if (!in) {
+            std::println("  (no mcpp.lock — run `mcpp build` or `mcpp update`)");
+        } else {
+            std::string line, cur;
+            auto quoted = [](const std::string& l) -> std::string {
+                auto a = l.find('"'); if (a == std::string::npos) return {};
+                auto b = l.find('"', a + 1); if (b == std::string::npos) return {};
+                return l.substr(a + 1, b - a - 1);
+            };
+            while (std::getline(in, line)) {
+                if (line.find("[package.\"") != std::string::npos) cur = quoted(line);
+                else if (!cur.empty() && line.find("version") != std::string::npos) {
+                    std::println("  - {} {}", cur, quoted(line));
+                    cur.clear();
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 // ─── M4 #4: mcpp cache list / prune / clean / info ──────────────────────
@@ -5426,6 +5526,14 @@ int run(int argc, char** argv) {
             .description("Remove target/ (and optionally the global BMI cache)")
             .option(cl::Option("bmi-cache").help("Also wipe the global BMI cache"))
             .action(wrap_rc(cmd_clean)))
+        .subcommand(cl::App("why")
+            .description("Explain how the toolchain / runtime / deps were resolved")
+            .arg(cl::Arg("topic").help("toolchain | runtime | deps (default: all)"))
+            .action(wrap_rc(cmd_why)))
+        .subcommand(cl::App("resolve")
+            .description("Re-resolve the build plan and explain it")
+            .option(cl::Option("explain").help("Print resolved toolchain / runtime / deps"))
+            .action(wrap_rc(cmd_why)))
         .subcommand(cl::App("add")
             .description("Add a dependency to mcpp.toml")
             .arg(cl::Arg("pkg").help("Package spec, e.g. foo@1.0.0").required())
@@ -5640,11 +5748,11 @@ int run(int argc, char** argv) {
     {
         std::string_view first = argv[1];
         if (!first.starts_with('-')) {
-            static constexpr std::array<std::string_view, 19> known = {
+            static constexpr std::array<std::string_view, 21> known = {
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep",
+                "version", "dyndep", "why", "resolve",
             };
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }
