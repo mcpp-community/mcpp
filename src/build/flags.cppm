@@ -185,6 +185,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         compile_toolchain_flags += inc_flag(pp.glibcInclude);
         if (!pp.linuxInclude.empty())
             compile_toolchain_flags += inc_flag(pp.linuxInclude);
+        // Link-time C runtime: a usable --sysroot would have provided the
+        // startup objects and core libs implicitly. Without one, point the
+        // driver at the glibc payload lib dir: -B for crt1.o/crti.o discovery,
+        // -L for -lm/-lc resolution.
+        link_toolchain_flags += " -B" + escape_path(pp.glibcLib);
+        link_toolchain_flags += " -L" + escape_path(pp.glibcLib);
+        f.sysroot = link_toolchain_flags;
     }
 
     // Binutils -B flag
