@@ -37,6 +37,7 @@ struct Package {
     std::string                 license;
     std::vector<std::string>    authors;
     std::string                 repo;
+    std::vector<std::string>    platforms;     // declared supported platforms (CI matrix hint)
 };
 
 struct Language {
@@ -115,6 +116,9 @@ struct RuntimeConfig {
     std::vector<std::filesystem::path> libraryDirs;   // relative to package root
     std::vector<std::string>           dlopenLibs;    // runtime-loaded sonames
     std::vector<std::string>           capabilities;  // host/system capabilities
+    // [runtime.<capability>] provider = "<pkg>" — explicit provider selection
+    // (the three-tier knob: default/auto → explicit override).
+    std::map<std::string, std::string> providerOverrides;
 };
 
 // `[target.<triple>]` — per-target overrides.
@@ -437,6 +441,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("package.license"))     m.package.license     = *v;
     if (auto v = doc->get_string("package.repo"))        m.package.repo        = *v;
     if (auto v = doc->get_string_array("package.authors")) m.package.authors  = *v;
+    if (auto v = doc->get_string_array("package.platforms")) m.package.platforms = *v;
 
     // [package].standard (M5.0 new home)
     if (auto v = doc->get_string("package.standard"))    m.package.standard    = *v;
@@ -588,7 +593,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     auto is_dep_spec_key = [](std::string_view k) {
         return k == "path"   || k == "version" || k == "git"
             || k == "rev"    || k == "tag"     || k == "branch"
-            || k == "features" || k == "workspace" || k == "visibility";
+            || k == "features" || k == "workspace" || k == "visibility"
+            || k == "backend";
     };
     auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
         if (sub.empty()) return false;
@@ -619,6 +625,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto it = sub.find("features"); it != sub.end() && it->second.is_array()) {
             for (auto& fv : it->second.as_array())
                 if (fv.is_string()) spec.features.push_back(fv.as_string());
+        }
+        // `backend = "<impl>"` — sugar for requesting the dependency's
+        // `backend-<impl>` feature (library-level backend selection knob).
+        if (auto it = sub.find("backend"); it != sub.end() && it->second.is_string()) {
+            spec.features.push_back("backend-" + it->second.as_string());
         }
         if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();
@@ -877,6 +888,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.runtimeConfig.dlopenLibs = *v;
     if (auto v = doc->get_string_array("runtime.capabilities"))
         m.runtimeConfig.capabilities = *v;
+    // [runtime.<capability>] provider = "<pkg>" — explicit provider override.
+    if (auto* rt = doc->get_table("runtime"); rt && !rt->empty()) {
+        for (auto& [rk, rv] : *rt) {
+            if (!rv.is_table()) continue;  // flat keys handled above
+            auto& tt = rv.as_table();
+            if (auto it = tt.find("provider"); it != tt.end() && it->second.is_string())
+                m.runtimeConfig.providerOverrides[rk] = it->second.as_string();
+        }
+    }
 
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {

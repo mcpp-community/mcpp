@@ -3211,6 +3211,25 @@ prepare_build(bool print_fingerprint,
         }
     }
 
+    // Apply [runtime.<capability>] provider = "<pkg>" overrides: prefer the
+    // named provider for matching capabilities (capability name prefix match).
+    // Warn if the named provider isn't in the dependency graph.
+    for (auto& [capKey, prov] : ctx.manifest.runtimeConfig.providerOverrides) {
+        bool found = false;
+        std::stable_partition(ctx.plan.runtimeProviders.begin(),
+                              ctx.plan.runtimeProviders.end(),
+                              [&](const std::pair<std::string, std::string>& pr) {
+            bool match = pr.first.rfind(capKey, 0) == 0 && pr.second == prov;
+            found = found || match;
+            return match;
+        });
+        if (!found) {
+            std::println(stderr,
+                "warning: [runtime.{}] provider = \"{}\" — no such provider in the "
+                "dependency graph for that capability", capKey, prov);
+        }
+    }
+
     // Capability-driven ABI enforcement: if any dependency declares an
     // `abi:<x>` capability, the resolved toolchain must satisfy it. (Toolchain
     // is resolved before the dep graph, so this enforces/diagnoses rather than
@@ -4484,6 +4503,14 @@ int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println("toolchain: {}", tc.label());
         std::println("  abi={}  stdlib={}  triple={}", abi_of(tc), tc.stdlibId, tc.targetTriple);
         std::println("  reason: [toolchain] in mcpp.toml if set, else platform-native default");
+        if (!ctx->manifest.package.platforms.empty()) {
+            std::string ps;
+            for (auto& p : ctx->manifest.package.platforms) {
+                if (!ps.empty()) ps += ", ";
+                ps += p;
+            }
+            std::println("  declared platforms: {}  (CI matrix hint)", ps);
+        }
     }
     if (all || topic == "runtime") {
         std::println("runtime library dirs (baked into binary RUNPATH):");
