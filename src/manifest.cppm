@@ -115,7 +115,11 @@ struct BuildConfig {
 struct RuntimeConfig {
     std::vector<std::filesystem::path> libraryDirs;   // relative to package root
     std::vector<std::string>           dlopenLibs;    // runtime-loaded sonames
-    std::vector<std::string>           capabilities;  // host/system capabilities
+    std::vector<std::string>           capabilities;  // host/system capabilities REQUIRED
+    // Capabilities this package explicitly FULFILS (strong provider claim).
+    // Packages that merely list a capability in `capabilities` are weak
+    // providers (back-compat); provides-declarers win provider selection.
+    std::vector<std::string>           provides;
     // [runtime.<capability>] provider = "<pkg>" — explicit provider selection
     // (the three-tier knob: default/auto → explicit override).
     std::map<std::string, std::string> providerOverrides;
@@ -190,6 +194,10 @@ struct Profile {
     bool        debug    = false;
     bool        lto      = false;
     bool        strip    = false;
+    // Passthrough escape hatch (fixed keys, open values — I6 completeness):
+    std::vector<std::string> cflags;
+    std::vector<std::string> cxxflags;
+    std::vector<std::string> ldflags;
 };
 
 struct Manifest {
@@ -504,6 +512,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) pr.debug = it->second.as_bool();
             if (auto it = tt.find("lto");   it != tt.end() && it->second.is_bool()) pr.lto   = it->second.as_bool();
             if (auto it = tt.find("strip"); it != tt.end() && it->second.is_bool()) pr.strip = it->second.as_bool();
+            auto read_list = [&](const char* key, std::vector<std::string>& out) {
+                if (auto it = tt.find(key); it != tt.end() && it->second.is_array())
+                    for (auto& v : it->second.as_array())
+                        if (v.is_string()) out.push_back(v.as_string());
+            };
+            read_list("cflags",   pr.cflags);
+            read_list("cxxflags", pr.cxxflags);
+            read_list("ldflags",  pr.ldflags);
             m.profiles[pname] = pr;
         }
     }
@@ -888,6 +904,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.runtimeConfig.dlopenLibs = *v;
     if (auto v = doc->get_string_array("runtime.capabilities"))
         m.runtimeConfig.capabilities = *v;
+    if (auto v = doc->get_string_array("runtime.provides"))
+        m.runtimeConfig.provides = *v;
     // [runtime.<capability>] provider = "<pkg>" — explicit provider override.
     if (auto* rt = doc->get_table("runtime"); rt && !rt->empty()) {
         for (auto& [rk, rv] : *rt) {
@@ -1852,6 +1870,9 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         return std::unexpected(r.error());
                 } else if (sub == "capabilities") {
                     if (auto r = read_string_list(m.runtimeConfig.capabilities); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "provides") {
+                    if (auto r = read_string_list(m.runtimeConfig.provides); !r)
                         return std::unexpected(r.error());
                 } else {
                     rc.skip_ws_and_comments();

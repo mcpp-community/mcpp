@@ -248,7 +248,23 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         for (auto const& cap : package.manifest.runtimeConfig.capabilities) {
             if (std::ranges::find(plan.runtimeCapabilities, cap) == plan.runtimeCapabilities.end())
                 plan.runtimeCapabilities.push_back(cap);
+        }
+    }
+    // Provider mapping (capability -> package), strongest first: packages
+    // that explicitly `provides` a capability win over packages that merely
+    // list it in `capabilities` (weak/back-compat providers). Downstream
+    // lookups take the first match.
+    for (auto const& package : packages) {
+        for (auto const& cap : package.manifest.runtimeConfig.provides)
             plan.runtimeProviders.push_back({cap, package.manifest.package.name});
+    }
+    for (auto const& package : packages) {
+        for (auto const& cap : package.manifest.runtimeConfig.capabilities) {
+            bool dup = false;
+            for (auto& pr : plan.runtimeProviders)
+                if (pr.capability == cap
+                    && pr.provider == package.manifest.package.name) { dup = true; break; }
+            if (!dup) plan.runtimeProviders.push_back({cap, package.manifest.package.name});
         }
     }
     // The same private runtime directories embedded as executable RUNPATH are
