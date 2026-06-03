@@ -61,8 +61,11 @@ namespace {
 std::expected<std::string, StdModError> run_capture_command(const std::string& cmd) {
     auto r = mcpp::platform::process::capture(cmd);
     if (r.exit_code != 0) {
+        // Include the command: its --sysroot/-isystem flags are the first
+        // thing needed to diagnose header-resolution failures.
         return std::unexpected(StdModError{
-            std::format("std module precompile failed (rc={}):\n{}", r.exit_code, r.output)});
+            std::format("std module precompile failed (rc={}):\n{}\ncommand: {}",
+                        r.exit_code, r.output, cmd)});
     }
     return r.output;
 }
@@ -233,10 +236,21 @@ std::expected<StdModule, StdModError> ensure_built(
                 sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
         }
     } else if (tc.payloadPaths) {
-        // No sysroot: use payload -isystem paths.
-        sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->glibcInclude.string());
+        // No usable sysroot: wire the C library headers from the payload.
+        // GCC's libstdc++ wraps libc headers via #include_next, which only
+        // searches directories AFTER the one the current header came from —
+        // and gcc's built-in dirs are LAST in the search order, so an
+        // -isystem payload dir (inserted before the built-ins) is unreachable
+        // from #include_next. -idirafter appends the payload to the very end,
+        // exactly where #include_next looks.
+        const bool clang = is_clang(tc);
+        auto add_inc = [&](const std::filesystem::path& p) {
+            if (clang) sysroot_flag += std::format(" -isystem'{}'", p.string());
+            else       sysroot_flag += std::format(" -idirafter'{}'", p.string());
+        };
+        add_inc(tc.payloadPaths->glibcInclude);
         if (!tc.payloadPaths->linuxInclude.empty())
-            sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
+            add_inc(tc.payloadPaths->linuxInclude);
     }
 
     std::vector<std::string> stdCommands;

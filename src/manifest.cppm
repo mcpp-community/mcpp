@@ -37,6 +37,7 @@ struct Package {
     std::string                 license;
     std::vector<std::string>    authors;
     std::string                 repo;
+    std::vector<std::string>    platforms;     // declared supported platforms (CI matrix hint)
 };
 
 struct Language {
@@ -103,6 +104,11 @@ struct BuildConfig {
     std::vector<std::string>           cxxflags;
     std::vector<std::string>           ldflags;
     std::string                         cStandard;
+    // Resolved build-profile knobs (from [profile.<name>] + built-in defaults).
+    std::string                         optLevel = "2";  // -O level
+    bool                                debug    = false; // -g
+    bool                                lto      = false; // -flto
+    bool                                strip    = false; // link -s
 };
 
 // `[runtime]` — requirements needed when launching built binaries.
@@ -110,6 +116,9 @@ struct RuntimeConfig {
     std::vector<std::filesystem::path> libraryDirs;   // relative to package root
     std::vector<std::string>           dlopenLibs;    // runtime-loaded sonames
     std::vector<std::string>           capabilities;  // host/system capabilities
+    // [runtime.<capability>] provider = "<pkg>" — explicit provider selection
+    // (the three-tier knob: default/auto → explicit override).
+    std::map<std::string, std::string> providerOverrides;
 };
 
 // `[target.<triple>]` — per-target overrides.
@@ -175,6 +184,14 @@ struct WorkspaceConfig {
     bool                                                present = false;
 };
 
+// [profile.<name>] — bundled build settings (opt level, debug, lto, strip).
+struct Profile {
+    std::string optLevel = "2";
+    bool        debug    = false;
+    bool        lto      = false;
+    bool        strip    = false;
+};
+
 struct Manifest {
     std::filesystem::path       sourcePath;    // mcpp.toml's filesystem path
 
@@ -191,6 +208,9 @@ struct Manifest {
     Toolchain                   toolchain;     // optional; empty == fallback
     BuildConfig                 buildConfig;
     RuntimeConfig               runtimeConfig;
+    std::map<std::string, Profile> profiles;   // [profile.<name>]
+    // [features] — feature name → implied features ("default" = default set).
+    std::map<std::string, std::vector<std::string>> featuresMap;
 
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;
@@ -421,6 +441,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("package.license"))     m.package.license     = *v;
     if (auto v = doc->get_string("package.repo"))        m.package.repo        = *v;
     if (auto v = doc->get_string_array("package.authors")) m.package.authors  = *v;
+    if (auto v = doc->get_string_array("package.platforms")) m.package.platforms = *v;
 
     // [package].standard (M5.0 new home)
     if (auto v = doc->get_string("package.standard"))    m.package.standard    = *v;
@@ -469,6 +490,38 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
 
     // [targets.*] — M5.0: now optional. If absent, defer to auto-inference (in load()).
+    // [profile.<name>] — bundled build settings.
+    if (auto* profile_table = doc->get_table("profile");
+        profile_table && !profile_table->empty()) {
+        for (auto& [pname, pval] : *profile_table) {
+            if (!pval.is_table()) continue;
+            auto& tt = pval.as_table();
+            Profile pr;
+            if (auto it = tt.find("opt"); it != tt.end()) {
+                if      (it->second.is_string()) pr.optLevel = it->second.as_string();
+                else if (it->second.is_int())    pr.optLevel = std::to_string(it->second.as_int());
+            }
+            if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) pr.debug = it->second.as_bool();
+            if (auto it = tt.find("lto");   it != tt.end() && it->second.is_bool()) pr.lto   = it->second.as_bool();
+            if (auto it = tt.find("strip"); it != tt.end() && it->second.is_bool()) pr.strip = it->second.as_bool();
+            m.profiles[pname] = pr;
+        }
+    }
+
+    // [features] — feature name → implied features. "default" lists the
+    // default-active set.
+    if (auto* features_table = doc->get_table("features");
+        features_table && !features_table->empty()) {
+        for (auto& [fname, fval] : *features_table) {
+            std::vector<std::string> implied;
+            if (fval.is_array()) {
+                for (auto& v : fval.as_array())
+                    if (v.is_string()) implied.push_back(v.as_string());
+            }
+            m.featuresMap[fname] = std::move(implied);
+        }
+    }
+
     auto* targets_table = doc->get_table("targets");
     if (targets_table && !targets_table->empty()) {
     for (auto& [tname, tval] : *targets_table) {
@@ -540,7 +593,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     auto is_dep_spec_key = [](std::string_view k) {
         return k == "path"   || k == "version" || k == "git"
             || k == "rev"    || k == "tag"     || k == "branch"
-            || k == "features" || k == "workspace" || k == "visibility";
+            || k == "features" || k == "workspace" || k == "visibility"
+            || k == "backend";
     };
     auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
         if (sub.empty()) return false;
@@ -567,6 +621,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     "[{}.\"{}\"] visibility must be 'public', 'private', or 'interface'",
                     section, fqName)));
             }
+        }
+        if (auto it = sub.find("features"); it != sub.end() && it->second.is_array()) {
+            for (auto& fv : it->second.as_array())
+                if (fv.is_string()) spec.features.push_back(fv.as_string());
+        }
+        // `backend = "<impl>"` — sugar for requesting the dependency's
+        // `backend-<impl>` feature (library-level backend selection knob).
+        if (auto it = sub.find("backend"); it != sub.end() && it->second.is_string()) {
+            spec.features.push_back("backend-" + it->second.as_string());
         }
         if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();
@@ -825,6 +888,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.runtimeConfig.dlopenLibs = *v;
     if (auto v = doc->get_string_array("runtime.capabilities"))
         m.runtimeConfig.capabilities = *v;
+    // [runtime.<capability>] provider = "<pkg>" — explicit provider override.
+    if (auto* rt = doc->get_table("runtime"); rt && !rt->empty()) {
+        for (auto& [rk, rv] : *rt) {
+            if (!rv.is_table()) continue;  // flat keys handled above
+            auto& tt = rv.as_table();
+            if (auto it = tt.find("provider"); it != tt.end() && it->second.is_string())
+                m.runtimeConfig.providerOverrides[rk] = it->second.as_string();
+        }
+    }
 
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {

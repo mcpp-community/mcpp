@@ -56,6 +56,17 @@ struct BuildPlan {
     std::vector<CompileUnit>        compileUnits;     // topologically sorted
     std::vector<LinkUnit>           linkUnits;
     std::vector<std::filesystem::path> runtimeLibraryDirs;
+    // ONLY the dependency packages' [runtime] library_dirs (not toolchain/
+    // payload dirs). These are the dirs that must be baked into the produced
+    // binary's RUNPATH (e.g. compat.glx-runtime). Kept separate so static/musl
+    // links don't pull the glibc payload dir.
+    std::vector<std::filesystem::path> depRuntimeLibraryDirs;
+    // Aggregated host-runtime requirements from dependency packages'
+    // [runtime] metadata. Capability/provider-driven — no platform special-casing
+    // in mcpp: providers (e.g. compat.glx-runtime) declare these per platform.
+    std::vector<std::string>           runtimeDlopenLibs;   // union of deps' dlopen sonames
+    std::vector<std::string>           runtimeCapabilities; // union of host capabilities
+    std::vector<std::pair<std::string, std::string>> runtimeProviders; // (capability, provider pkg)
 };
 
 // Build a BuildPlan from already-validated inputs.
@@ -219,8 +230,18 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
 
     for (auto const& package : packages) {
         for (auto const& dir : package.manifest.runtimeConfig.libraryDirs) {
-            append_unique_path(plan.runtimeLibraryDirs,
-                dir.is_absolute() ? dir : package.root / dir);
+            auto abs = dir.is_absolute() ? dir : package.root / dir;
+            append_unique_path(plan.runtimeLibraryDirs, abs);
+            append_unique_path(plan.depRuntimeLibraryDirs, abs);
+        }
+        for (auto const& lib : package.manifest.runtimeConfig.dlopenLibs) {
+            if (std::ranges::find(plan.runtimeDlopenLibs, lib) == plan.runtimeDlopenLibs.end())
+                plan.runtimeDlopenLibs.push_back(lib);
+        }
+        for (auto const& cap : package.manifest.runtimeConfig.capabilities) {
+            if (std::ranges::find(plan.runtimeCapabilities, cap) == plan.runtimeCapabilities.end())
+                plan.runtimeCapabilities.push_back(cap);
+            plan.runtimeProviders.emplace_back(cap, package.manifest.package.name);
         }
     }
     // The same private runtime directories embedded as executable RUNPATH are

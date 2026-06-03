@@ -173,11 +173,25 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
         f.sysroot = link_toolchain_flags;
     } else if (plan.toolchain.payloadPaths) {
-        // No sysroot but have payload paths: use -isystem.
+        // No usable sysroot: wire the C library headers from the payload.
+        // For GCC use -idirafter (appended after the built-in dirs) so that
+        // libstdc++'s #include_next wrappers can reach them; -isystem would
+        // place them BEFORE the built-ins, invisible to #include_next.
         auto& pp = *plan.toolchain.payloadPaths;
-        compile_toolchain_flags += " -isystem" + escape_path(pp.glibcInclude);
+        const bool clangTc = mcpp::toolchain::is_clang(plan.toolchain);
+        auto inc_flag = [&](const std::filesystem::path& p) {
+            return (clangTc ? " -isystem" : " -idirafter") + escape_path(p);
+        };
+        compile_toolchain_flags += inc_flag(pp.glibcInclude);
         if (!pp.linuxInclude.empty())
-            compile_toolchain_flags += " -isystem" + escape_path(pp.linuxInclude);
+            compile_toolchain_flags += inc_flag(pp.linuxInclude);
+        // Link-time C runtime: a usable --sysroot would have provided the
+        // startup objects and core libs implicitly. Without one, point the
+        // driver at the glibc payload lib dir: -B for crt1.o/crti.o discovery,
+        // -L for -lm/-lc resolution.
+        link_toolchain_flags += " -B" + escape_path(pp.glibcLib);
+        link_toolchain_flags += " -L" + escape_path(pp.glibcLib);
+        f.sysroot = link_toolchain_flags;
     }
 
     // Binutils -B flag
@@ -198,8 +212,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // AR binary
     f.arBinary = mcpp::toolchain::archive_tool(plan.toolchain);
 
-    // Opt level (musl ICE workaround)
-    std::string opt_flag = isMuslTc ? " -Og" : " -O2";
+    // Opt level + debug come from the resolved build profile
+    // ([profile.<name>] → buildConfig). musl keeps -Og as an ICE workaround
+    // unless the profile pins -O0.
+    auto& prof = plan.manifest.buildConfig;
+    std::string opt_flag = isMuslTc && prof.optLevel != "0"
+        ? " -Og" : (" -O" + prof.optLevel);
+    if (prof.debug) opt_flag += " -g";
+    if (prof.lto)   opt_flag += " -flto";
 
     // User link flags
     std::string user_ldflags;
@@ -256,7 +276,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string static_stdlib = (f.staticStdlib && !isClang && !mcpp::platform::is_windows) ? " -static-libstdc++" : "";
     std::string runtime_dirs;
     if constexpr (mcpp::platform::supports_rpath) {
+        // Toolchain runtime dirs (glibc/gcc) as before...
         for (auto& dir : plan.toolchain.linkRuntimeDirs) {
+            runtime_dirs += " -L" + escape_path(dir);
+            runtime_dirs += " -Wl,-rpath," + escape_path(dir);
+        }
+        // ...plus dependency packages' [runtime] library_dirs (e.g.
+        // compat.glx-runtime's host-GL passthrough), so dlopen()'d host libs
+        // (libGL/libGLX) are reachable at run time. Only the dep dirs — NOT the
+        // glibc payload dir — so static/musl links stay clean.
+        for (auto& dir : plan.depRuntimeLibraryDirs) {
             runtime_dirs += " -L" + escape_path(dir);
             runtime_dirs += " -Wl,-rpath," + escape_path(dir);
         }
@@ -273,13 +302,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             payload_ld += " -Wl,--dynamic-linker=" + escape_path(loader);
     }
 
+    std::string link_extra;
+    if (prof.lto)   link_extra += " -flto";
+    if (prof.strip) link_extra += " -s";
+
     if constexpr (mcpp::platform::is_windows) {
-        f.ld = user_ldflags;
+        f.ld = user_ldflags + link_extra;
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
-        f.ld = std::format("{}{}{} -lc++{}", full_static, static_stdlib, b_flag, user_ldflags);
+        f.ld = std::format("{}{}{} -lc++{}{}", full_static, static_stdlib, b_flag, user_ldflags, link_extra);
     } else {
-        f.ld = std::format("{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
-                           runtime_dirs, payload_ld, user_ldflags);
+        f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
+                           runtime_dirs, payload_ld, user_ldflags, link_extra);
     }
 
     return f;

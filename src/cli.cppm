@@ -15,6 +15,7 @@ module;
 export module mcpp.cli;
 
 import std;
+import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
@@ -1017,6 +1018,70 @@ void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
     }
 }
 
+// Post-install fixup for a freshly-installed GNU gcc payload: patchelf
+// PT_INTERP/RUNPATH for gcc/binutils binaries + linker-specs wiring against
+// the sandbox glibc. ONE pipeline shared by `mcpp toolchain install` and the
+// first-run auto-install (the latter previously skipped this, leaving a
+// fresh-sandbox glibc gcc unable to find the C library: stdlib.h not found).
+void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
+                            const std::filesystem::path& payloadRoot) {
+    // Ownership guard: payloads inherited via symlink from another MCPP_HOME
+    // are not ours to patch — their owner already ran the fixup, and patching
+    // through the symlink would rewrite the canonical files against OUR
+    // (possibly ephemeral) paths, bricking the owner's toolchain.
+    {
+        std::error_code ec;
+        auto canonicalRoot = std::filesystem::weakly_canonical(payloadRoot, ec);
+        auto homeRegistry  = std::filesystem::weakly_canonical(cfg.registryDir, ec);
+        if (!ec && !canonicalRoot.string().starts_with(homeRegistry.string())) {
+            mcpp::log::verbose("toolchain", std::format(
+                "skip gcc fixup: payload '{}' resolves outside this home ('{}') — "
+                "inherited payload, owner is responsible for its fixup",
+                payloadRoot.string(), canonicalRoot.string()));
+            return;
+        }
+    }
+    auto xlEnv = mcpp::config::make_xlings_env(cfg);
+    auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
+    std::filesystem::path glibcLibDir;
+    if (std::filesystem::exists(glibcRoot)) {
+        for (auto& v : std::filesystem::directory_iterator(glibcRoot)) {
+            auto candidate = v.path() / "lib64";
+            if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
+                glibcLibDir = candidate;
+                break;
+            }
+        }
+    }
+    auto gccLibDir = payloadRoot / "lib64";
+    auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
+        mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+
+    if (!glibcLibDir.empty() && std::filesystem::exists(gccLibDir)
+        && std::filesystem::exists(patchelfBin))
+    {
+        auto loader = glibcLibDir / "ld-linux-x86-64.so.2";
+        auto rpath = std::format("{}:{}",
+            glibcLibDir.string(), gccLibDir.string());
+
+        mcpp::log::verbose("toolchain", std::format(
+            "gcc fixup: patchelf_walk rpath='{}'", rpath));
+        auto binutilsRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "binutils");
+        if (std::filesystem::exists(binutilsRoot)) {
+            for (auto& v : std::filesystem::directory_iterator(binutilsRoot))
+                patchelf_walk(v.path(), loader, rpath, patchelfBin);
+        }
+        patchelf_walk(payloadRoot, loader, rpath, patchelfBin);
+
+        mcpp::log::verbose("toolchain", "gcc fixup: fixup_gcc_specs");
+        fixup_gcc_specs(payloadRoot, glibcLibDir, gccLibDir);
+    } else {
+        mcpp::ui::warning(
+            "could not locate sandbox glibc/gcc/patchelf paths; "
+            "gcc-built binaries may have unresolved PT_INTERP/RUNPATH");
+    }
+}
+
 // SemVer resolution: a version spec is a "constraint" (vs. exact literal) if
 // it starts with one of `^~><=` or contains a comma (multi-part), or is `*`
 // or empty. Bare `1.2.3` is treated as exact for back-compat with pre-SemVer
@@ -1035,6 +1100,16 @@ int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
 
+    // `--template` selects the project skeleton: "bin" (default) or "gui"
+    // (an imgui.app starter — Tier-0 zero-boilerplate window).
+    std::string tmpl = "bin";
+    if (auto t = parsed.value("template")) tmpl = *t;
+    if (tmpl != "bin" && tmpl != "gui") {
+        std::println(stderr, "error: unknown --template '{}' (expected: bin | gui)", tmpl);
+        return 2;
+    }
+    const bool gui = (tmpl == "gui");
+
     std::filesystem::path root = std::filesystem::current_path() / name;
     if (std::filesystem::exists(root)) {
         std::println(stderr, "error: '{}' already exists", root.string());
@@ -1051,10 +1126,28 @@ int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
     {
         std::ofstream os(root / "mcpp.toml");
         os << mcpp::manifest::default_template(name);
+        if (gui) {
+            // The GUI template depends on the imgui module package. It does not
+            // pin a toolchain — mcpp resolves the environment/default toolchain
+            // and the GL runtime is closed by the ecosystem (compat.glx-runtime).
+            os << "\n[dependencies]\nimgui = \"0.0.2\"\n";
+        }
     }
     // src/main.cpp — template with PROJECT placeholder, replaced with `name`.
     {
-        std::string body = R"(// PROJECT — generated by `mcpp new`
+        std::string body = gui ? R"GUI(// PROJECT — generated by `mcpp new --template gui`
+// Tier-0 zero-boilerplate window via the imgui.app facade. No #include.
+import imgui.core;
+import imgui.app;
+
+int main() {
+    return ImGui::App::run([] {
+        ImGui::Begin("PROJECT");
+        ImGui::TextUnformatted("Hello from mcpp + imgui (imgui.app facade)");
+        ImGui::End();
+    });
+}
+)GUI" : R"(// PROJECT — generated by `mcpp new`
 import std;
 
 int main(int argc, char* argv[]) {
@@ -1094,7 +1187,7 @@ int main() {
         os << "target/\n";
     }
 
-    std::println("Created package '{}' at {}", name, root.string());
+    std::println("Created {} package '{}' at {}", gui ? "gui" : "bin", name, root.string());
     std::println("Next: cd {} && mcpp build && mcpp run  (or `mcpp test`)", name);
     return 0;
 }
@@ -1127,6 +1220,8 @@ struct BuildOverrides {
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
+    std::string profile;             // --profile <name> (default "release")
+    std::string features;            // --features a,b,c (root package activation)
 };
 
 // `prepare_build` builds the BuildContext for any verb that compiles.
@@ -1283,6 +1378,21 @@ prepare_build(bool print_fingerprint,
     //   1. project mcpp.toml [toolchain].<platform> or .default
     //   2. global ~/.mcpp/config.toml [toolchain].default
     //   3. hard error (no system fallback)
+    // Resolve the build profile: --profile (default "release") → built-in
+    // defaults, overlaid by any [profile.<name>] from the manifest → buildConfig.
+    {
+        std::string pname = overrides.profile.empty() ? "release" : overrides.profile;
+        mcpp::manifest::Profile pr;
+        if (pname == "dev" || pname == "debug") { pr.optLevel = "0"; pr.debug = true; }
+        else if (pname == "dist")               { pr.optLevel = "3"; pr.lto = true; pr.strip = true; }
+        else                                    { pr.optLevel = "2"; } // release
+        if (auto it = m->profiles.find(pname); it != m->profiles.end()) pr = it->second;
+        m->buildConfig.optLevel = pr.optLevel;
+        m->buildConfig.debug    = pr.debug;
+        m->buildConfig.lto      = pr.lto;
+        m->buildConfig.strip    = pr.strip;
+    }
+
     auto tcSpec = m->toolchain.for_platform(kCurrentPlatform);
     if (!tcSpec.has_value()) {
         auto cfg = get_cfg();
@@ -1386,9 +1496,13 @@ prepare_build(bool print_fingerprint,
         //
         // macOS: LLVM/Clang — Apple doesn't ship GCC; upstream LLVM with
         //        bundled libc++ is the self-contained choice.
-        // Linux: musl-gcc — produces portable static binaries.
+        // Linux: glibc gcc — the platform-native ABI. A musl-static default
+        //        cannot link the glibc world (X11/GL/system libs), so it
+        //        breaks GUI/native packages out of the box. musl-static stays
+        //        opt-in via `mcpp build --target x86_64-linux-musl` for users
+        //        who explicitly want portable static binaries.
         std::string defaultSpec = (mcpp::platform::is_macos || mcpp::platform::is_windows)
-            ? "llvm@20.1.7" : "gcc@15.1.0-musl";
+            ? "llvm@20.1.7" : "gcc@16.1.0";
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
@@ -1398,7 +1512,7 @@ prepare_build(bool print_fingerprint,
                             defaultSpec));
         } else {
             mcpp::ui::info("First run",
-                std::format("no toolchain configured — installing {} (musl, static) as default",
+                std::format("no toolchain configured — installing {} (glibc, native ABI) as default",
                             defaultSpec));
         }
 
@@ -1407,6 +1521,14 @@ prepare_build(bool print_fingerprint,
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
         CliInstallProgress progress;
+        // The glibc default toolchain needs the sysroot payloads (C library +
+        // kernel headers), exactly like `mcpp toolchain install` provides.
+        // The old musl-static default was self-contained, which masked this.
+        if constexpr (!mcpp::platform::is_macos && !mcpp::platform::is_windows) {
+            for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
+                (void)fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
+            }
+        }
         auto payload = fetcher.resolve_xpkg_path(defaultPkg.target(),
                             /*autoInstall=*/true, &progress);
         if (!payload) {
@@ -1422,6 +1544,14 @@ prepare_build(bool print_fingerprint,
             return std::unexpected(std::format(
                 "default toolchain payload {} has no known C++ frontend in {}",
                 defaultPkg.target(), payload->binDir.string()));
+        }
+
+        // The freshly-installed glibc gcc needs the SAME post-install fixup
+        // (patchelf + specs wiring against the sandbox glibc) that
+        // `mcpp toolchain install` performs — without it a fresh sandbox
+        // cannot find the C library (stdlib.h: No such file or directory).
+        if (defaultPkg.needsGccPostInstallFixup) {
+            gcc_post_install_fixup(**cfg, payload->root);
         }
 
         // Persist the default so we don't ask again next time.
@@ -2836,6 +2966,68 @@ prepare_build(bool print_fingerprint,
 
     computeUsageRequirements();
 
+    // ─── Feature activation (Cargo-style, additive) ────────────────────
+    // activated(pkg) = pkg.[features].default ∪ features requested for it
+    // (root: --features; deps: the root dep spec's `features = [...]`).
+    // Implied features expand transitively. Each active feature becomes
+    // -DMCPP_FEATURE_<NAME> on that package's compile flags.
+    // (Transitive dep→dep feature requests are not yet propagated.)
+    {
+        auto sanitize = [](std::string f) {
+            for (auto& c : f)
+                c = std::isalnum(static_cast<unsigned char>(c))
+                  ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : '_';
+            return f;
+        };
+        auto activate = [](const mcpp::manifest::Manifest& pm,
+                           const std::vector<std::string>& requested) {
+            std::vector<std::string> act, q;
+            if (auto it = pm.featuresMap.find("default"); it != pm.featuresMap.end())
+                q.insert(q.end(), it->second.begin(), it->second.end());
+            q.insert(q.end(), requested.begin(), requested.end());
+            std::set<std::string> seen;
+            while (!q.empty()) {
+                auto f = q.back(); q.pop_back();
+                if (f == "default" || !seen.insert(f).second) continue;
+                act.push_back(f);
+                if (auto it = pm.featuresMap.find(f); it != pm.featuresMap.end())
+                    q.insert(q.end(), it->second.begin(), it->second.end());
+            }
+            return act;
+        };
+        auto apply = [&](mcpp::modgraph::PackageRoot& pkg,
+                         const std::vector<std::string>& requested) {
+            for (auto& f : activate(pkg.manifest, requested)) {
+                auto def = "-DMCPP_FEATURE_" + sanitize(f);
+                pkg.manifest.buildConfig.cflags.push_back(def);
+                pkg.manifest.buildConfig.cxxflags.push_back(def);
+                pkg.privateBuild.cflags.push_back(def);
+                pkg.privateBuild.cxxflags.push_back(def);
+            }
+        };
+        if (!packages.empty()) {
+            std::vector<std::string> rootReq;
+            for (std::size_t p = 0; p < overrides.features.size();) {
+                auto c = overrides.features.find_first_of(", ", p);
+                auto tok = overrides.features.substr(
+                    p, c == std::string::npos ? std::string::npos : c - p);
+                if (!tok.empty()) rootReq.push_back(tok);
+                if (c == std::string::npos) break;
+                p = c + 1;
+            }
+            apply(packages[0], rootReq);
+        }
+        for (std::size_t i = 1; i < packages.size(); ++i) {
+            auto& pname = packages[i].manifest.package.name;
+            std::vector<std::string> req;
+            for (auto& [dname, dspec] : m->dependencies) {
+                if (dname == pname || dspec.shortName == pname) { req = dspec.features; break; }
+            }
+            if (!req.empty() || packages[i].manifest.featuresMap.contains("default"))
+                apply(packages[i], req);
+        }
+    }
+
     // Modgraph: regex scanner by default; opt-in to compiler-driven P1689
     // scanner via env var MCPP_SCANNER=p1689 (see docs/27).
     auto scan = [&] {
@@ -3097,6 +3289,82 @@ prepare_build(bool print_fingerprint,
             auto lockPath = *root / "mcpp.lock";
             (void)mcpp::lockfile::write(lock, lockPath);
         }
+    }
+
+    // Apply [runtime.<capability>] provider = "<pkg>" overrides: prefer the
+    // named provider for matching capabilities (capability name prefix match).
+    // Warn if the named provider isn't in the dependency graph.
+    for (auto& [capKey, prov] : ctx.manifest.runtimeConfig.providerOverrides) {
+        bool found = false;
+        std::stable_partition(ctx.plan.runtimeProviders.begin(),
+                              ctx.plan.runtimeProviders.end(),
+                              [&](const std::pair<std::string, std::string>& pr) {
+            bool match = pr.first.rfind(capKey, 0) == 0 && pr.second == prov;
+            found = found || match;
+            return match;
+        });
+        if (!found) {
+            std::println(stderr,
+                "warning: [runtime.{}] provider = \"{}\" — no such provider in the "
+                "dependency graph for that capability", capKey, prov);
+        }
+    }
+
+    // Capability-driven ABI enforcement: if any dependency declares an
+    // `abi:<x>` capability, the resolved toolchain must satisfy it. (Toolchain
+    // is resolved before the dep graph, so this enforces/diagnoses rather than
+    // reselects — abi-driven reselection is a resolution-ordering follow-up.)
+    {
+        const std::string tcAbi =
+            ctx.tc.targetTriple.find("musl") != std::string::npos ? "musl"
+            : ctx.tc.stdlibId == "libc++"                          ? "libc++"
+            : ctx.tc.compiler == mcpp::toolchain::CompilerId::MSVC ? "msvc"
+            :                                                         "glibc";
+        for (auto& cap : ctx.plan.runtimeCapabilities) {
+            if (cap.rfind("abi:", 0) != 0) continue;
+            std::string need = cap.substr(4);
+            if (need == tcAbi) continue;
+            std::string provider;
+            for (auto& [c, p] : ctx.plan.runtimeProviders)
+                if (c == cap) { provider = p; break; }
+            return std::unexpected(std::format(
+                "ABI mismatch: dependency '{}' requires abi={} but the resolved "
+                "toolchain '{}' is abi={}.\n"
+                "       fix: `mcpp toolchain default <{}-compatible>` "
+                "(e.g. gcc@16.1.0 for glibc), or set [toolchain] in mcpp.toml.",
+                provider.empty() ? "?" : provider, need, ctx.tc.label(), tcAbi, need));
+        }
+    }
+
+    // Per-build resolution manifest artifact: a machine-readable record of the
+    // resolved plan (toolchain/abi, runtime closure, capabilities+providers,
+    // deps) written next to the build outputs. Same data as `mcpp why`; usable
+    // by CI/tooling. (capability -> plan, serialized.)
+    {
+        const std::string tcAbi =
+            ctx.tc.targetTriple.find("musl") != std::string::npos ? "musl"
+            : ctx.tc.stdlibId == "libc++"                          ? "libc++"
+            : ctx.tc.compiler == mcpp::toolchain::CompilerId::MSVC ? "msvc"
+            :                                                         "glibc";
+        nlohmann::json j;
+        j["toolchain"] = {
+            {"spec", ctx.tc.label()}, {"abi", tcAbi},
+            {"triple", ctx.tc.targetTriple}, {"stdlib", ctx.tc.stdlibId},
+        };
+        nlohmann::json dirs = nlohmann::json::array();
+        for (auto& d : ctx.plan.runtimeLibraryDirs) dirs.push_back(d.string());
+        nlohmann::json caps = nlohmann::json::array();
+        for (auto& [cap, prov] : ctx.plan.runtimeProviders)
+            caps.push_back({{"capability", cap}, {"provider", prov}});
+        j["runtime"] = {
+            {"library_dirs", dirs},
+            {"dlopen_libs", ctx.plan.runtimeDlopenLibs},
+            {"capabilities", caps},
+        };
+        std::error_code ec;
+        std::filesystem::create_directories(ctx.plan.outputDir, ec);
+        if (std::ofstream js(ctx.plan.outputDir / "resolution.json"); js)
+            js << j.dump(2) << "\n";
     }
 
     return ctx;
@@ -3440,6 +3708,8 @@ int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
     if (auto p = parsed.value("package")) ov.package_filter = *p;
+    if (auto pr = parsed.value("profile")) ov.profile = *pr;
+    if (auto fs = parsed.value("features")) ov.features = *fs;
     ov.force_static = parsed.is_flag_set("static");
 
     // P0: try fast-path if inputs haven't changed.
@@ -4245,11 +4515,127 @@ int cmd_doctor(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
         ok(std::format("BMI cache size = {}", human_bytes(sz)));
     }
 
+    mcpp::ui::status("Checking", "runtime capabilities");
+    {
+        // Capability/provider-driven — no platform special-casing in mcpp.
+        // Required capabilities and the sonames to probe come entirely from the
+        // dependency graph's provider packages (e.g. compat.glx-runtime); the
+        // search dirs are the resolved runtime library_dirs. The same code path
+        // works on every platform — providers carry the platform knowledge.
+        auto pctx = prepare_build(/*print_fingerprint=*/false);
+        if (!pctx) {
+            ok("(run inside a package to check its runtime capabilities)");
+        } else if (pctx->plan.runtimeCapabilities.empty()) {
+            ok("no host runtime capabilities required");
+        } else {
+            auto& plan = pctx->plan;
+            for (auto& cap : plan.runtimeCapabilities) {
+                std::string provider;
+                for (auto& [c, p] : plan.runtimeProviders)
+                    if (c == cap) { provider = p; break; }
+                ok(std::format("{}: required (provider {})",
+                               cap, provider.empty() ? "?" : provider));
+            }
+            auto resolves = [&](std::string_view soname) {
+                for (auto& dir : plan.runtimeLibraryDirs) {
+                    std::error_code ec;
+                    if (!std::filesystem::exists(dir, ec)) continue;
+                    for (auto& e : std::filesystem::directory_iterator(dir, ec)) {
+                        auto fn = e.path().filename().string();
+                        if (fn == soname || fn.rfind(soname, 0) == 0) return true;
+                    }
+                }
+                return false;
+            };
+            for (auto& lib : plan.runtimeDlopenLibs) {
+                if (resolves(lib)) ok(std::format("dlopen {}: resolvable on RUNPATH", lib));
+                else warn(std::format("dlopen {}: not found on resolved runtime dirs", lib));
+            }
+        }
+    }
+
     std::println("");
     if (errors)        std::println("Doctor result: {} errors, {} warnings", errors, warns);
     else if (warns)    std::println("Doctor result: {} warnings", warns);
     else               std::println("Doctor result: all checks passed");
     return errors ? 2 : (warns ? 1 : 0);
+}
+
+// `mcpp why [topic]` / `mcpp resolve --explain` — explain how the toolchain,
+// runtime closure, and dependencies were resolved (I4: defaults are not magic).
+int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    std::string topic = parsed.positional(0);
+    const bool all = topic.empty() || topic == "all";
+
+    auto ctx = prepare_build(/*print_fingerprint=*/false);
+    if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
+    auto& tc   = ctx->tc;
+    auto& plan = ctx->plan;
+
+    auto abi_of = [](const mcpp::toolchain::Toolchain& t) -> std::string {
+        if (t.targetTriple.find("musl") != std::string::npos) return "musl";
+        if (t.stdlibId == "libc++") return "libc++";
+        if (t.compiler == mcpp::toolchain::CompilerId::MSVC) return "msvc";
+        return "glibc";
+    };
+
+    if (all || topic == "toolchain") {
+        std::println("toolchain: {}", tc.label());
+        std::println("  abi={}  stdlib={}  triple={}", abi_of(tc), tc.stdlibId, tc.targetTriple);
+        std::println("  reason: [toolchain] in mcpp.toml if set, else platform-native default");
+        if (!ctx->manifest.package.platforms.empty()) {
+            std::string ps;
+            for (auto& p : ctx->manifest.package.platforms) {
+                if (!ps.empty()) ps += ", ";
+                ps += p;
+            }
+            std::println("  declared platforms: {}  (CI matrix hint)", ps);
+        }
+    }
+    if (all || topic == "runtime") {
+        std::println("runtime library dirs (baked into binary RUNPATH):");
+        if (plan.runtimeLibraryDirs.empty()) std::println("  (none)");
+        for (auto& d : plan.runtimeLibraryDirs) {
+            auto s = d.string();
+            std::string note;
+            if (s.find("glx_runtime") != std::string::npos)
+                note = "   <- host GL/GLX runtime (compat.glx-runtime)";
+            else if (s.find("glibc") != std::string::npos) note = "   <- glibc";
+            else if (s.find("xim-x-gcc") != std::string::npos
+                  || s.find("xim-x-llvm") != std::string::npos) note = "   <- toolchain";
+            std::println("  - {}{}", s, note);
+        }
+        if (!plan.runtimeCapabilities.empty()) {
+            std::println("runtime capabilities (provider):");
+            for (auto& cap : plan.runtimeCapabilities) {
+                std::string prov;
+                for (auto& [c, p] : plan.runtimeProviders) if (c == cap) { prov = p; break; }
+                std::println("  - {}  -> {}", cap, prov.empty() ? "?" : prov);
+            }
+        }
+    }
+    if (all || topic == "deps") {
+        std::println("dependencies (mcpp.lock):");
+        std::ifstream in(ctx->projectRoot / "mcpp.lock");
+        if (!in) {
+            std::println("  (no mcpp.lock — run `mcpp build` or `mcpp update`)");
+        } else {
+            std::string line, cur;
+            auto quoted = [](const std::string& l) -> std::string {
+                auto a = l.find('"'); if (a == std::string::npos) return {};
+                auto b = l.find('"', a + 1); if (b == std::string::npos) return {};
+                return l.substr(a + 1, b - a - 1);
+            };
+            while (std::getline(in, line)) {
+                if (line.find("[package.\"") != std::string::npos) cur = quoted(line);
+                else if (!cur.empty() && line.find("version") != std::string::npos) {
+                    std::println("  - {} {}", cur, quoted(line));
+                    cur.clear();
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 // ─── M4 #4: mcpp cache list / prune / clean / info ──────────────────────
@@ -4599,47 +4985,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         // `<root>/x86_64-linux-musl/{include,lib}` and doesn't link against
         // xim:glibc, so this fixup is both unnecessary and harmful for it.
         if (pkg.needsGccPostInstallFixup) {
-            auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
-            std::filesystem::path glibcLibDir;
-            if (std::filesystem::exists(glibcRoot)) {
-                for (auto& v : std::filesystem::directory_iterator(glibcRoot)) {
-                    auto candidate = v.path() / "lib64";
-                    if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
-                        glibcLibDir = candidate;
-                        break;
-                    }
-                }
-            }
-            auto gccLibDir = payload->root / "lib64";
-            auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
-                mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
-
-            if (!glibcLibDir.empty() && std::filesystem::exists(gccLibDir)
-                && std::filesystem::exists(patchelfBin))
-            {
-                auto loader = glibcLibDir / "ld-linux-x86-64.so.2";
-                auto rpath = std::format("{}:{}",
-                    glibcLibDir.string(), gccLibDir.string());
-
-                // (1) patchelf walk: rewrite PT_INTERP + RUNPATH for binutils
-                //     and gcc xpkgs so they're self-contained in sandbox.
-                mcpp::log::verbose("toolchain", std::format(
-                    "gcc fixup: patchelf_walk rpath='{}'", rpath));
-                auto binutilsRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "binutils");
-                if (std::filesystem::exists(binutilsRoot)) {
-                    for (auto& v : std::filesystem::directory_iterator(binutilsRoot))
-                        patchelf_walk(v.path(), loader, rpath, patchelfBin);
-                }
-                patchelf_walk(payload->root, loader, rpath, patchelfBin);
-
-                // (2) specs fixup.
-                mcpp::log::verbose("toolchain", "gcc fixup: fixup_gcc_specs");
-                fixup_gcc_specs(payload->root, glibcLibDir, gccLibDir);
-            } else {
-                mcpp::ui::warning(
-                    "could not locate sandbox glibc/gcc/patchelf paths; "
-                    "gcc-built binaries may have unresolved PT_INTERP/RUNPATH");
-            }
+            gcc_post_install_fixup(*cfg, payload->root);
         }
 
         // For LLVM/Clang: post-install fixup so the shared libraries and
@@ -5363,6 +5709,8 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("new")
             .description("Create a new mcpp package skeleton")
             .arg(cl::Arg("name").help("Package directory name").required())
+            .option(cl::Option("template").short_name('t').takes_value().value_name("KIND")
+                .help("Project template: bin (default) | gui (imgui.app window starter)"))
             .action(wrap_rc(cmd_new)))
         .subcommand(cl::App("build")
             .description("Build the current package")
@@ -5376,6 +5724,10 @@ int run(int argc, char** argv) {
                 "Force static linking (-static). On Linux, prefer pairing with --target <arch>-linux-musl"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Build only the named workspace member"))
+            .option(cl::Option("profile").takes_value().value_name("NAME")
+                .help("Build profile: release (default) | dev | dist | <[profile.*] name>"))
+            .option(cl::Option("features").takes_value().value_name("LIST")
+                .help("Activate root-package features (comma-separated)"))
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
@@ -5392,6 +5744,14 @@ int run(int argc, char** argv) {
             .description("Remove target/ (and optionally the global BMI cache)")
             .option(cl::Option("bmi-cache").help("Also wipe the global BMI cache"))
             .action(wrap_rc(cmd_clean)))
+        .subcommand(cl::App("why")
+            .description("Explain how the toolchain / runtime / deps were resolved")
+            .arg(cl::Arg("topic").help("toolchain | runtime | deps (default: all)"))
+            .action(wrap_rc(cmd_why)))
+        .subcommand(cl::App("resolve")
+            .description("Re-resolve the build plan and explain it")
+            .option(cl::Option("explain").help("Print resolved toolchain / runtime / deps"))
+            .action(wrap_rc(cmd_why)))
         .subcommand(cl::App("add")
             .description("Add a dependency to mcpp.toml")
             .arg(cl::Arg("pkg").help("Package spec, e.g. foo@1.0.0").required())
@@ -5606,11 +5966,11 @@ int run(int argc, char** argv) {
     {
         std::string_view first = argv[1];
         if (!first.starts_with('-')) {
-            static constexpr std::array<std::string_view, 19> known = {
+            static constexpr std::array<std::string_view, 21> known = {
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep",
+                "version", "dyndep", "why", "resolve",
             };
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }
