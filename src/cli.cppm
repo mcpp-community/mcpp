@@ -1457,6 +1457,14 @@ prepare_build(bool print_fingerprint,
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
         CliInstallProgress progress;
+        // The glibc default toolchain needs the sysroot payloads (C library +
+        // kernel headers), exactly like `mcpp toolchain install` provides.
+        // The old musl-static default was self-contained, which masked this.
+        if constexpr (!mcpp::platform::is_macos && !mcpp::platform::is_windows) {
+            for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
+                (void)fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
+            }
+        }
         auto payload = fetcher.resolve_xpkg_path(defaultPkg.target(),
                             /*autoInstall=*/true, &progress);
         if (!payload) {
