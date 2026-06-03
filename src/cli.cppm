@@ -4279,41 +4279,41 @@ int cmd_doctor(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
 
     mcpp::ui::status("Checking", "runtime capabilities");
     {
-#if defined(__APPLE__) || defined(_WIN32)
-        ok("host GL/windowing provided by platform framework");
-#else
-        if (const char* d = std::getenv("DISPLAY"); d && *d)
-            ok(std::format("x11.display: ok ($DISPLAY={})", d));
-        else if (const char* w = std::getenv("WAYLAND_DISPLAY"); w && *w)
-            ok(std::format("wayland.display: ok ($WAYLAND_DISPLAY={})", w));
-        else
-            warn("display: none — windowed apps need $DISPLAY or $WAYLAND_DISPLAY");
-
-        const char* gldirs[] = {"/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu",
-                                "/usr/lib64", "/usr/lib"};
-        auto find_lib = [&](std::string_view prefix) -> std::string {
-            for (auto* dir : gldirs) {
-                std::error_code ec;
-                if (!std::filesystem::exists(dir, ec)) continue;
-                for (auto& e : std::filesystem::directory_iterator(dir, ec)) {
-                    auto fn = e.path().filename().string();
-                    if (fn.rfind(prefix, 0) == 0) return e.path().string();
-                }
-            }
-            return {};
-        };
-        auto glx = find_lib("libGLX.so");
-        auto gl  = find_lib("libGL.so");
-        auto vnd = find_lib("libGLX_nvidia.so");
-        if (vnd.empty()) vnd = find_lib("libGLX_mesa.so");
-        if (!glx.empty() && !gl.empty()) {
-            ok(std::format("opengl.glx.driver: ok (provider compat.glx-runtime; {}, {})",
-                std::filesystem::path(glx).filename().string(),
-                vnd.empty() ? "no GLVND vendor" : std::filesystem::path(vnd).filename().string()));
+        // Capability/provider-driven — no platform special-casing in mcpp.
+        // Required capabilities and the sonames to probe come entirely from the
+        // dependency graph's provider packages (e.g. compat.glx-runtime); the
+        // search dirs are the resolved runtime library_dirs. The same code path
+        // works on every platform — providers carry the platform knowledge.
+        auto pctx = prepare_build(/*print_fingerprint=*/false);
+        if (!pctx) {
+            ok("(run inside a package to check its runtime capabilities)");
+        } else if (pctx->plan.runtimeCapabilities.empty()) {
+            ok("no host runtime capabilities required");
         } else {
-            warn("opengl.glx.driver: host libGL/libGLX not found — `mcpp run` of GL apps may fail");
+            auto& plan = pctx->plan;
+            for (auto& cap : plan.runtimeCapabilities) {
+                std::string provider;
+                for (auto& [c, p] : plan.runtimeProviders)
+                    if (c == cap) { provider = p; break; }
+                ok(std::format("{}: required (provider {})",
+                               cap, provider.empty() ? "?" : provider));
+            }
+            auto resolves = [&](std::string_view soname) {
+                for (auto& dir : plan.runtimeLibraryDirs) {
+                    std::error_code ec;
+                    if (!std::filesystem::exists(dir, ec)) continue;
+                    for (auto& e : std::filesystem::directory_iterator(dir, ec)) {
+                        auto fn = e.path().filename().string();
+                        if (fn == soname || fn.rfind(soname, 0) == 0) return true;
+                    }
+                }
+                return false;
+            };
+            for (auto& lib : plan.runtimeDlopenLibs) {
+                if (resolves(lib)) ok(std::format("dlopen {}: resolvable on RUNPATH", lib));
+                else warn(std::format("dlopen {}: not found on resolved runtime dirs", lib));
+            }
         }
-#endif
     }
 
     std::println("");
@@ -4358,6 +4358,14 @@ int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
             else if (s.find("xim-x-gcc") != std::string::npos
                   || s.find("xim-x-llvm") != std::string::npos) note = "   <- toolchain";
             std::println("  - {}{}", s, note);
+        }
+        if (!plan.runtimeCapabilities.empty()) {
+            std::println("runtime capabilities (provider):");
+            for (auto& cap : plan.runtimeCapabilities) {
+                std::string prov;
+                for (auto& [c, p] : plan.runtimeProviders) if (c == cap) { prov = p; break; }
+                std::println("  - {}  -> {}", cap, prov.empty() ? "?" : prov);
+            }
         }
     }
     if (all || topic == "deps") {
