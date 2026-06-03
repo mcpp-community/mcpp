@@ -92,15 +92,15 @@ fi
 grep -q "does not declare" b4.log || { cat b4.log; echo "missing strict error text"; exit 1; }
 
 # 4. Unknown backend on a dep that declares backend-* features → warning.
-sed -i 's/backend = "a"/backend = "zzz"/' mcpp.toml
+sed 's/backend = "a"/backend = "zzz"/' mcpp.toml > mcpp.toml.tmp && mv mcpp.toml.tmp mcpp.toml
 rm -rf target
 "$MCPP" build > b5.log 2>&1 || { cat b5.log; echo "unknown-backend warn path must not fail"; exit 1; }
 grep -q "does not declare requested feature 'backend-zzz'" b5.log \
     || { cat b5.log; echo "missing unknown-backend warning"; exit 1; }
-sed -i 's/backend = "zzz"/backend = "a"/' mcpp.toml
+sed 's/backend = "zzz"/backend = "a"/' mcpp.toml > mcpp.toml.tmp && mv mcpp.toml.tmp mcpp.toml
 
 # 5. Unknown platform → warning by default, error under --strict.
-sed -i 's/platforms = \["linux", "macos", "windows"\]/platforms = ["linux", "amiga"]/' mcpp.toml
+sed 's/platforms = \["linux", "macos", "windows"\]/platforms = ["linux", "amiga"]/' mcpp.toml > mcpp.toml.tmp && mv mcpp.toml.tmp mcpp.toml
 rm -rf target
 "$MCPP" build > b6.log 2>&1 || { cat b6.log; echo "platform warn path must not fail"; exit 1; }
 grep -q "unknown platform 'amiga'" b6.log || { cat b6.log; echo "missing platform warning"; exit 1; }
