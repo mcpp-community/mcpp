@@ -1018,6 +1018,54 @@ void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
     }
 }
 
+// Post-install fixup for a freshly-installed GNU gcc payload: patchelf
+// PT_INTERP/RUNPATH for gcc/binutils binaries + linker-specs wiring against
+// the sandbox glibc. ONE pipeline shared by `mcpp toolchain install` and the
+// first-run auto-install (the latter previously skipped this, leaving a
+// fresh-sandbox glibc gcc unable to find the C library: stdlib.h not found).
+void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
+                            const std::filesystem::path& payloadRoot) {
+    auto xlEnv = mcpp::config::make_xlings_env(cfg);
+    auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
+    std::filesystem::path glibcLibDir;
+    if (std::filesystem::exists(glibcRoot)) {
+        for (auto& v : std::filesystem::directory_iterator(glibcRoot)) {
+            auto candidate = v.path() / "lib64";
+            if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
+                glibcLibDir = candidate;
+                break;
+            }
+        }
+    }
+    auto gccLibDir = payloadRoot / "lib64";
+    auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
+        mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+
+    if (!glibcLibDir.empty() && std::filesystem::exists(gccLibDir)
+        && std::filesystem::exists(patchelfBin))
+    {
+        auto loader = glibcLibDir / "ld-linux-x86-64.so.2";
+        auto rpath = std::format("{}:{}",
+            glibcLibDir.string(), gccLibDir.string());
+
+        mcpp::log::verbose("toolchain", std::format(
+            "gcc fixup: patchelf_walk rpath='{}'", rpath));
+        auto binutilsRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "binutils");
+        if (std::filesystem::exists(binutilsRoot)) {
+            for (auto& v : std::filesystem::directory_iterator(binutilsRoot))
+                patchelf_walk(v.path(), loader, rpath, patchelfBin);
+        }
+        patchelf_walk(payloadRoot, loader, rpath, patchelfBin);
+
+        mcpp::log::verbose("toolchain", "gcc fixup: fixup_gcc_specs");
+        fixup_gcc_specs(payloadRoot, glibcLibDir, gccLibDir);
+    } else {
+        mcpp::ui::warning(
+            "could not locate sandbox glibc/gcc/patchelf paths; "
+            "gcc-built binaries may have unresolved PT_INTERP/RUNPATH");
+    }
+}
+
 // SemVer resolution: a version spec is a "constraint" (vs. exact literal) if
 // it starts with one of `^~><=` or contains a comma (multi-part), or is `*`
 // or empty. Bare `1.2.3` is treated as exact for back-compat with pre-SemVer
@@ -1480,6 +1528,14 @@ prepare_build(bool print_fingerprint,
             return std::unexpected(std::format(
                 "default toolchain payload {} has no known C++ frontend in {}",
                 defaultPkg.target(), payload->binDir.string()));
+        }
+
+        // The freshly-installed glibc gcc needs the SAME post-install fixup
+        // (patchelf + specs wiring against the sandbox glibc) that
+        // `mcpp toolchain install` performs — without it a fresh sandbox
+        // cannot find the C library (stdlib.h: No such file or directory).
+        if (defaultPkg.needsGccPostInstallFixup) {
+            gcc_post_install_fixup(**cfg, payload->root);
         }
 
         // Persist the default so we don't ask again next time.
@@ -4913,47 +4969,7 @@ int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         // `<root>/x86_64-linux-musl/{include,lib}` and doesn't link against
         // xim:glibc, so this fixup is both unnecessary and harmful for it.
         if (pkg.needsGccPostInstallFixup) {
-            auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
-            std::filesystem::path glibcLibDir;
-            if (std::filesystem::exists(glibcRoot)) {
-                for (auto& v : std::filesystem::directory_iterator(glibcRoot)) {
-                    auto candidate = v.path() / "lib64";
-                    if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
-                        glibcLibDir = candidate;
-                        break;
-                    }
-                }
-            }
-            auto gccLibDir = payload->root / "lib64";
-            auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
-                mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
-
-            if (!glibcLibDir.empty() && std::filesystem::exists(gccLibDir)
-                && std::filesystem::exists(patchelfBin))
-            {
-                auto loader = glibcLibDir / "ld-linux-x86-64.so.2";
-                auto rpath = std::format("{}:{}",
-                    glibcLibDir.string(), gccLibDir.string());
-
-                // (1) patchelf walk: rewrite PT_INTERP + RUNPATH for binutils
-                //     and gcc xpkgs so they're self-contained in sandbox.
-                mcpp::log::verbose("toolchain", std::format(
-                    "gcc fixup: patchelf_walk rpath='{}'", rpath));
-                auto binutilsRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "binutils");
-                if (std::filesystem::exists(binutilsRoot)) {
-                    for (auto& v : std::filesystem::directory_iterator(binutilsRoot))
-                        patchelf_walk(v.path(), loader, rpath, patchelfBin);
-                }
-                patchelf_walk(payload->root, loader, rpath, patchelfBin);
-
-                // (2) specs fixup.
-                mcpp::log::verbose("toolchain", "gcc fixup: fixup_gcc_specs");
-                fixup_gcc_specs(payload->root, glibcLibDir, gccLibDir);
-            } else {
-                mcpp::ui::warning(
-                    "could not locate sandbox glibc/gcc/patchelf paths; "
-                    "gcc-built binaries may have unresolved PT_INTERP/RUNPATH");
-            }
+            gcc_post_install_fixup(*cfg, payload->root);
         }
 
         // For LLVM/Clang: post-install fixup so the shared libraries and
