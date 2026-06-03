@@ -15,6 +15,7 @@ module;
 export module mcpp.cli;
 
 import std;
+import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
@@ -3167,37 +3168,25 @@ prepare_build(bool print_fingerprint,
             : ctx.tc.stdlibId == "libc++"                          ? "libc++"
             : ctx.tc.compiler == mcpp::toolchain::CompilerId::MSVC ? "msvc"
             :                                                         "glibc";
-        auto jstr = [](std::string_view s) {
-            std::string o = "\"";
-            for (char c : s) { if (c == '\\' || c == '"') o += '\\'; o += c; }
-            return o + "\"";
+        nlohmann::json j;
+        j["toolchain"] = {
+            {"spec", ctx.tc.label()}, {"abi", tcAbi},
+            {"triple", ctx.tc.targetTriple}, {"stdlib", ctx.tc.stdlibId},
+        };
+        nlohmann::json dirs = nlohmann::json::array();
+        for (auto& d : ctx.plan.runtimeLibraryDirs) dirs.push_back(d.string());
+        nlohmann::json caps = nlohmann::json::array();
+        for (auto& [cap, prov] : ctx.plan.runtimeProviders)
+            caps.push_back({{"capability", cap}, {"provider", prov}});
+        j["runtime"] = {
+            {"library_dirs", dirs},
+            {"dlopen_libs", ctx.plan.runtimeDlopenLibs},
+            {"capabilities", caps},
         };
         std::error_code ec;
         std::filesystem::create_directories(ctx.plan.outputDir, ec);
-        std::ofstream js(ctx.plan.outputDir / "resolution.json");
-        if (js) {
-            js << "{\n";
-            js << "  \"toolchain\": {\"spec\": " << jstr(ctx.tc.label())
-               << ", \"abi\": " << jstr(tcAbi)
-               << ", \"triple\": " << jstr(ctx.tc.targetTriple)
-               << ", \"stdlib\": " << jstr(ctx.tc.stdlibId) << "},\n";
-            js << "  \"runtime\": {\n";
-            js << "    \"library_dirs\": [";
-            for (std::size_t i = 0; i < ctx.plan.runtimeLibraryDirs.size(); ++i)
-                js << (i ? ", " : "") << jstr(ctx.plan.runtimeLibraryDirs[i].string());
-            js << "],\n";
-            js << "    \"dlopen_libs\": [";
-            for (std::size_t i = 0; i < ctx.plan.runtimeDlopenLibs.size(); ++i)
-                js << (i ? ", " : "") << jstr(ctx.plan.runtimeDlopenLibs[i]);
-            js << "],\n";
-            js << "    \"capabilities\": [";
-            for (std::size_t i = 0; i < ctx.plan.runtimeProviders.size(); ++i) {
-                auto& [cap, prov] = ctx.plan.runtimeProviders[i];
-                js << (i ? ", " : "") << "{\"capability\": " << jstr(cap)
-                   << ", \"provider\": " << jstr(prov) << "}";
-            }
-            js << "]\n  }\n}\n";
-        }
+        if (std::ofstream js(ctx.plan.outputDir / "resolution.json"); js)
+            js << j.dump(2) << "\n";
     }
 
     return ctx;
