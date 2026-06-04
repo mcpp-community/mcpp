@@ -325,7 +325,11 @@ jobs:
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           "$MCPP" self config --mirror GLOBAL
-          "$MCPP" test
+          "$MCPP" test || {
+            echo "=== TEMP forensics: retry verbose (remove before merge) ==="
+            "$MCPP" test -v 2>&1 | grep -B3 -A12 -iE "error|undefined|ld64" | head -120
+            exit 1
+          }
 
       - name: "TEMP forensics: static libc++ exit-abort matrix (remove before merge)"
         if: always()
