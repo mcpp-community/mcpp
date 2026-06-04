@@ -316,40 +316,31 @@ jobs:
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
           echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 
-      - name: Build mcpp from source (self-host)
+      - name: Build mcpp from source (two-stage self-host)
         env:
           # macOS min-version support: target the first arm64 macOS so the
-          # release runs on 11.0+ instead of only the runner's OS (15).
-          # Requires static LLVM libc++ (injected below) — the system
-          # libc++ on older macOS lacks LLVM-20-era C++23 symbols
-          # (std::print's __is_posix_terminal etc.; verified on macos-14
-          # CI). See xlings .agents/docs/2026-06-05-macos-min-version-support.md.
+          # release runs on 11.0+ instead of only the runner's OS. Needs
+          # static LLVM libc++ — the system libc++ on older macOS lacks
+          # LLVM-20-era C++23 symbols (std::print's __is_posix_terminal
+          # etc.; minos-14 + dynamic libc++ dies at launch on macos-14 CI).
+          # See xlings .agents/docs/2026-06-05-macos-min-version-support.md.
           MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: |
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          # Warm the toolchain so the llvm payload exists, then stage the
-          # static libc++ archives in a dylib-free directory and inject
-          # `-L<staged> -lc++abi` via [build] ldflags: the bootstrap
-          # mcpp's macOS link line hardcodes ` -lc++` BEFORE user ldflags,
-          # and the staged -L path makes it resolve to libc++.a (no dylib
-          # competes there). The bootstrap predates the flags.cppm
-          # staticStdlib implementation shipped in this very release —
-          # from the next release on, the injection is redundant.
+          # Stage 1: the bootstrap mcpp builds this release's source. The
+          # bootstrap's macOS link path predates the staticStdlib
+          # implementation (hardcoded -lc++), so stage 1 links the system
+          # libc++ — fine, it only needs to RUN on this runner.
           "$MCPP" build
-          LLVM_ROOT=$(find "$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm" -maxdepth 1 -mindepth 1 -type d | head -1)
-          test -f "$LLVM_ROOT/lib/libc++.a"
-          test -f "$LLVM_ROOT/lib/libc++abi.a"
-          STATICDIR="$RUNNER_TEMP/static-libcxx"
-          mkdir -p "$STATICDIR"
-          cp "$LLVM_ROOT/lib/libc++.a" "$LLVM_ROOT/lib/libc++abi.a" "$STATICDIR/"
-          if ! grep -q '^ldflags' mcpp.toml; then
-            sed -i '' "s|^\[build\]|[build]\nldflags = [\"-L$STATICDIR\", \"-lc++abi\"]|" mcpp.toml
-          fi
-          grep -n 'ldflags' mcpp.toml
+          STAGE1=$(find target -path "*/bin/mcpp" | head -1)
+          STAGE1=$(cd "$(dirname "$STAGE1")" && pwd)/$(basename "$STAGE1")
+          "$STAGE1" --version
 
-          "$MCPP" build --no-cache
+          # Stage 2: this release's mcpp rebuilds itself — flags.cppm's
+          # native staticStdlib link produces the static minos-11 binary.
+          "$STAGE1" build --no-cache
           MCPP_BIN=$(find target -path "*/bin/mcpp" | head -1)
           MCPP_BIN=$(cd "$(dirname "$MCPP_BIN")" && pwd)/$(basename "$MCPP_BIN")
           test -x "$MCPP_BIN"
@@ -363,8 +354,6 @@ jobs:
             echo "FAIL: still linked against system libc++"; exit 1
           fi
           "$MCPP_BIN" --version
-          # Restore the manifest so packaging sees a clean tree.
-          git checkout -- mcpp.toml
           echo "MCPP_BIN=$MCPP_BIN" >> "$GITHUB_ENV"
 
       - name: Package macOS release
