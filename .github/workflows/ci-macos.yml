@@ -326,8 +326,13 @@ jobs:
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           "$MCPP" self config --mirror GLOBAL
           "$MCPP" test || {
-            echo "=== TEMP forensics: retry verbose (remove before merge) ==="
-            "$MCPP" test -v 2>&1 | grep -B3 -A12 -iE "error|undefined|ld64" | head -120
+            echo "=== TEMP forensics: retry verbose unfiltered (remove before merge) ==="
+            vm_stat | head -5
+            "$MCPP" test -v > /tmp/mtv.log 2>&1
+            echo "--- verbose tail ---"
+            tail -200 /tmp/mtv.log
+            echo "--- ninja FAILED lines ---"
+            grep -B2 -A20 "FAILED" /tmp/mtv.log | head -80
             exit 1
           }
 
