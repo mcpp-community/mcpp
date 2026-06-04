@@ -1,0 +1,183 @@
+# TEMPORARY workflow — reproduces the Windows "no package index / no git"
+# failure chain for a DEFAULT user machine (no system git installed):
+#
+#   1. uninstall/disable the runner's preinstalled Git for Windows
+#   2. install xlings via the official one-liner (like a normal user)
+#   3. xlings install mcpp
+#   4. mcpp new hello && cd hello && mcpp build      (expected to fail)
+#   5. mcpp self init --force                        (expected to fail)
+#   6. root-cause probes:
+#      - `git --version` in the user env (xvm shim → expected OK)
+#      - `git --version` with XLINGS_HOME redirected to ~/.mcpp/registry
+#        (expected: "xlings: 'git' is not installed" — the smoking gun)
+#
+# DO NOT MERGE. Delete this branch after the investigation.
+name: temp-windows-no-git-user-flow
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  user-flow:
+    name: "user flow: no system git -> xlings -> mcpp build"
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: "Stage 0: disable preinstalled git (simulate default user machine)"
+        run: |
+          Write-Host "=== git visible before disabling ==="
+          where.exe git 2>$null | ForEach-Object { Write-Host $_ }
+
+          $candidates = @()
+          $candidates += @(where.exe git 2>$null)
+          $candidates += @(
+            "C:\Program Files\Git\cmd\git.exe",
+            "C:\Program Files\Git\bin\git.exe",
+            "C:\Program Files\Git\mingw64\bin\git.exe",
+            "C:\Program Files\Git\usr\bin\git.exe"
+          )
+          foreach ($p in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
+            if (Test-Path -LiteralPath $p) {
+              try {
+                Rename-Item -LiteralPath $p -NewName ((Split-Path $p -Leaf) + ".disabled")
+                Write-Host "disabled: $p"
+              } catch {
+                Write-Host "FAILED to disable: $p -- $_"
+              }
+            }
+          }
+
+          Write-Host "=== git visible after disabling ==="
+          $still = @(where.exe git 2>$null)
+          if ($still.Count -gt 0) {
+            $still | ForEach-Object { Write-Host "STILL VISIBLE: $_" }
+            exit 1
+          }
+          Write-Host "OK: git is no longer resolvable on this machine"
+          exit 0
+
+      - name: "Stage 1: install xlings (official user one-liner)"
+        run: |
+          powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.ps1 | iex"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Simulate "open a new terminal after install": pick up the
+          # User-level PATH / XLINGS_HOME that `xlings self install` registered.
+          $userHome = [Environment]::GetEnvironmentVariable('XLINGS_HOME', 'User')
+          Write-Host "User XLINGS_HOME = $userHome"
+          if ($userHome) { "XLINGS_HOME=$userHome" | Add-Content $env:GITHUB_ENV }
+
+          foreach ($d in @(
+            "$env:USERPROFILE\.xlings\subos\current\bin",
+            "$env:USERPROFILE\.xlings\bin"
+          )) {
+            if (Test-Path $d) {
+              Add-Content $env:GITHUB_PATH $d
+              Write-Host "added to PATH for later steps: $d"
+            }
+          }
+          exit 0
+
+      - name: "Stage 1b: xlings sanity check"
+        run: |
+          Write-Host "PATH = $env:Path"
+          Write-Host "XLINGS_HOME = $env:XLINGS_HOME"
+          xlings --version
+          exit $LASTEXITCODE
+
+      - name: "Stage 2: xlings install mcpp"
+        id: install_mcpp
+        continue-on-error: true
+        run: |
+          xlings install mcpp -y
+          exit $LASTEXITCODE
+
+      - name: "Stage 2b: post-install git/shim state"
+        if: always()
+        run: |
+          Write-Host "=== where git ==="
+          where.exe git 2>$null | ForEach-Object { Write-Host $_ }
+          Write-Host "=== git --version (user env; expected to work via xvm shim) ==="
+          git --version
+          Write-Host "git exit code: $LASTEXITCODE"
+          Write-Host "=== where mcpp ==="
+          where.exe mcpp 2>$null | ForEach-Object { Write-Host $_ }
+          Write-Host "=== ~/.xlings layout (top level) ==="
+          Get-ChildItem "$env:USERPROFILE\.xlings" -ErrorAction SilentlyContinue | Select-Object Name
+          Get-ChildItem "$env:USERPROFILE\.xlings\subos\current\bin" -ErrorAction SilentlyContinue | Select-Object Name
+          exit 0
+
+      - name: "Stage 3: mcpp new hello && mcpp build"
+        id: build
+        continue-on-error: true
+        run: |
+          mcpp new hello
+          if ($LASTEXITCODE -ne 0) { Write-Host "mcpp new failed: $LASTEXITCODE"; exit $LASTEXITCODE }
+          cd hello
+          mcpp build
+          exit $LASTEXITCODE
+
+      - name: "Stage 4: mcpp self init --force"
+        id: selfinit
+        continue-on-error: true
+        run: |
+          mcpp self init --force
+          exit $LASTEXITCODE
+
+      - name: "Stage 5: root-cause probe — git shim vs redirected XLINGS_HOME"
+        if: always()
+        run: |
+          Write-Host "=== probe A: git --version with user XLINGS_HOME ($env:XLINGS_HOME) ==="
+          git --version
+          Write-Host "exit code: $LASTEXITCODE"
+
+          Write-Host ""
+          Write-Host "=== probe B: git --version with XLINGS_HOME=~/.mcpp/registry (what mcpp's subprocesses see) ==="
+          $env:XLINGS_HOME = "$env:USERPROFILE\.mcpp\registry"
+          git --version
+          Write-Host "exit code: $LASTEXITCODE"
+          exit 0
+
+      - name: "Stage 6: dump mcpp sandbox state"
+        if: always()
+        run: |
+          Write-Host "=== ~/.mcpp layout ==="
+          Get-ChildItem "$env:USERPROFILE\.mcpp" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+            Select-Object FullName | ForEach-Object { Write-Host $_.FullName }
+
+          Write-Host "=== package index presence ==="
+          foreach ($d in @(
+            "$env:USERPROFILE\.mcpp\registry\data\xim-pkgindex\pkgs",
+            "$env:USERPROFILE\.mcpp\registry\data\mcpplibs\pkgs",
+            "$env:USERPROFILE\.xlings\data\xim-pkgindex\pkgs"
+          )) {
+            Write-Host ("{0} -> exists: {1}" -f $d, (Test-Path $d))
+          }
+
+          Write-Host "=== mcpp logs ==="
+          Get-ChildItem "$env:USERPROFILE\.mcpp\log" -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "---- $($_.FullName) ----"
+            Get-Content $_.FullName -Tail 100 -ErrorAction SilentlyContinue
+          }
+          exit 0
+
+      - name: "Summary"
+        if: always()
+        run: |
+          $lines = @(
+            "## temp-windows-no-git-user-flow result",
+            "",
+            "| step | outcome |",
+            "|------|---------|",
+            "| xlings install mcpp | ${{ steps.install_mcpp.outcome }} |",
+            "| mcpp new + build | ${{ steps.build.outcome }} |",
+            "| mcpp self init --force | ${{ steps.selfinit.outcome }} |"
+          )
+          $lines | Add-Content $env:GITHUB_STEP_SUMMARY
+          $lines | ForEach-Object { Write-Host $_ }
+          exit 0
