@@ -325,39 +325,7 @@ jobs:
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           "$MCPP" self config --mirror GLOBAL
-          "$MCPP" test || {
-            echo "=== TEMP forensics: manual ninja rerun (remove before merge) ==="
-            for N in $(find target -name build.ninja); do
-              D=$(dirname "$N")
-              echo "--- dir: $D ---"
-              NINJA=$(find "$HOME/.mcpp/registry/data/xpkgs/xim-x-ninja" -name ninja -type f | head -1)
-              "$NINJA" -C "$D" -v 2>&1 | tail -40
-              echo "--- ninja exit: $? ---"
-            done
-            exit 1
-          }
-
-      - name: "TEMP forensics: static libc++ exit-abort matrix (remove before merge)"
-        if: always()
-        run: |
-          set +e
-          LLVM="$LLVM_ROOT"
-          SDK=$(xcrun --show-sdk-path)
-          cat > /tmp/probe.cpp <<'PEOF'
-          #include <iostream>
-          int main() { std::cout << "hi" << std::endl; return 0; }
-          PEOF
-          run_mode() {
-            echo "=== mode: $1 ==="
-            shift
-            "$LLVM/bin/clang++" --no-default-config -std=c++17 -nostdinc++               -isystem "$LLVM/include/c++/v1" --sysroot="$SDK"               -mmacosx-version-min=14.0 -fuse-ld=lld /tmp/probe.cpp -o /tmp/probe "$@" 2>&1 | head -40
-            otool -L /tmp/probe | grep -E "libc|probe" | head -4
-            /tmp/probe
-            echo "exit=$?"
-          }
-          run_mode dylib    -stdlib=libc++
-          run_mode direct   -nostdlib++ "$LLVM/lib/libc++.a" "$LLVM/lib/libc++abi.a"
-          exit 0
+          "$MCPP" test
 
       - name: E2E suite
         # See ci-linux.yml — fail-fast on hung tests instead of burning the
