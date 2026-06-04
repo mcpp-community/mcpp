@@ -340,14 +340,13 @@ jobs:
           run_mode() {
             echo "=== mode: $1 ==="
             shift
-            "$LLVM/bin/clang++" --no-default-config -std=c++17 -nostdinc++               -isystem "$LLVM/include/c++/v1" --sysroot="$SDK"               -mmacosx-version-min=11.0 -fuse-ld=lld /tmp/probe.cpp -o /tmp/probe "$@" 2>&1 | head -5
+            "$LLVM/bin/clang++" --no-default-config -std=c++17 -nostdinc++               -isystem "$LLVM/include/c++/v1" --sysroot="$SDK"               -mmacosx-version-min=14.0 -fuse-ld=lld /tmp/probe.cpp -o /tmp/probe "$@" 2>&1 | head -40
             otool -L /tmp/probe | grep -E "libc|probe" | head -4
             /tmp/probe
             echo "exit=$?"
           }
           run_mode dylib    -stdlib=libc++
           run_mode direct   -nostdlib++ "$LLVM/lib/libc++.a" "$LLVM/lib/libc++abi.a"
-          run_mode hidden   -nostdlib++ -L"$LLVM/lib" -Wl,-hidden-lc++ -Wl,-hidden-lc++abi
           exit 0
 
       - name: E2E suite

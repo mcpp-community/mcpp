@@ -378,13 +378,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             auto libcxxAbiA = libDir / "libc++abi.a";
             if (std::filesystem::exists(libcxxA)
                 && std::filesystem::exists(libcxxAbiA)) {
-                // -hidden-l links the ARCHIVE (never the sibling dylib)
-                // and gives its symbols hidden visibility so the static
-                // copy can coexist with the system libc++ that libSystem
-                // pulls in indirectly. Distributable targets only — see
-                // the field comments in CompileFlags.
-                f.ldStdlibDefault = " -nostdlib++ -L" + escape_path(libDir)
-                                  + " -Wl,-hidden-lc++ -Wl,-hidden-lc++abi";
+                // Link the archives BY PATH. (-Wl,-hidden-l looked like
+                // the canonical choice, but lld resolves it like a plain
+                // -l and picks the sibling dylib in the same directory —
+                // the binary then carries @rpath/libc++.1.dylib with no
+                // rpath and dies at load. Observed on macos CI; path
+                // form verified end-to-end incl. macos-14.)
+                f.ldStdlibDefault = " -nostdlib++ " + escape_path(libcxxA)
+                                  + " " + escape_path(libcxxAbiA);
             }
         }
         std::string version_min;

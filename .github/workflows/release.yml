@@ -318,13 +318,15 @@ jobs:
 
       - name: Build mcpp from source (two-stage self-host)
         env:
-          # macOS min-version support: target the first arm64 macOS so the
-          # release runs on 11.0+ instead of only the runner's OS. Needs
+          # macOS min-version support: target macOS 14 so the release runs
+          # on 14.0+ instead of only the runner's OS (the official LLVM
+          # static libc++ archives are built for macOS 14 — going lower
+          # needs a custom libc++ build, tracked as follow-up). Needs
           # static LLVM libc++ — the system libc++ on older macOS lacks
           # LLVM-20-era C++23 symbols (std::print's __is_posix_terminal
           # etc.; minos-14 + dynamic libc++ dies at launch on macos-14 CI).
           # See xlings .agents/docs/2026-06-05-macos-min-version-support.md.
-          MACOSX_DEPLOYMENT_TARGET: '11.0'
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
         run: |
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
@@ -346,10 +348,10 @@ jobs:
           test -x "$MCPP_BIN"
           file "$MCPP_BIN"
           otool -L "$MCPP_BIN"
-          echo "=== LC_BUILD_VERSION (must be minos 11.0) ==="
+          echo "=== LC_BUILD_VERSION (must be minos 14.0) ==="
           otool -l "$MCPP_BIN" | grep -A4 LC_BUILD_VERSION | head -6
-          otool -l "$MCPP_BIN" | grep -A4 LC_BUILD_VERSION | grep -q "minos 11.0" \
-            || { echo "FAIL: expected minos 11.0"; exit 1; }
+          otool -l "$MCPP_BIN" | grep -A4 LC_BUILD_VERSION | grep -q "minos 14.0" \
+            || { echo "FAIL: expected minos 14.0"; exit 1; }
           if otool -L "$MCPP_BIN" | grep -q "libc++"; then
             echo "FAIL: still linked against system libc++"; exit 1
           fi

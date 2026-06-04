@@ -91,7 +91,7 @@ cflags       = ["-DFOO=1"]        # 额外 C 编译参数
 cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数(不要放 -std=...)
 ldflags      = ["-lfoo"]          # 额外链接参数
 static_stdlib = true               # 静态链接 libstdc++(默认 true)
-macos_deployment_target = "11.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
+macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
 ```
 
 `macos_deployment_target` 设定产物 Mach-O 头里的最低系统版本
