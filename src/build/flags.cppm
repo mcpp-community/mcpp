@@ -373,7 +373,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //    lld ships with the exact toolchain doing the compile.
         f.ldStdlibDefault = " -lc++";
         f.ldStdlibTest    = " -lc++";
-        if (f.staticStdlib && !llvmRootForStdlib.empty()) {
+        // Static libc++ is tied to an EXPLICIT deployment floor: when the
+        // user (or the release pipeline) declares a minimum macOS via the
+        // env var or [build] macos_deployment_target, the static LLVM
+        // libc++ is what makes that floor real (the system libc++ caps it
+        // at the build host's OS). With no declared floor, keep the
+        // 0.0.49 behavior — dynamic system libc++, host-coupled — which
+        // also sidesteps a still-open SIGSEGV in mixed C/C++ static
+        // binaries (e2e 36; tracked in the design doc).
+        if (f.staticStdlib && !macosDeploymentTarget.empty()
+            && !llvmRootForStdlib.empty()) {
             auto libDir     = llvmRootForStdlib / "lib";
             auto libcxxA    = libDir / "libc++.a";
             auto libcxxAbiA = libDir / "libc++abi.a";
