@@ -109,18 +109,6 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     } else {
         macosDeploymentTarget = plan.manifest.buildConfig.macosDeploymentTarget;
     }
-    // Built-in default floor (rustc-style: every Apple target carries a
-    // default deployment target instead of floating with the host SDK).
-    // When neither the env var nor the manifest pins one, default to the
-    // floor of the toolchain's static libc++ archives (the official LLVM
-    // darwin archives are built for macOS 14) — artifacts are portable by
-    // default and don't silently change floor when the build host's SDK
-    // moves. Resolved here so the value also reaches the fingerprint via
-    // the same canonical-flags rule (see cli.cppm).
-    if (macosDeploymentTarget.empty() && mcpp::platform::is_macos
-        && plan.manifest.buildConfig.staticStdlib) {
-        macosDeploymentTarget = "14.0";
-    }
 
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);
