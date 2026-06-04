@@ -89,6 +89,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // any new branching added to this function.
     auto caps = mcpp::toolchain::capabilities_for(plan.toolchain);
 
+    // macOS minimum supported OS version for produced binaries.
+    // Precedence: MACOSX_DEPLOYMENT_TARGET env (explicit per-invocation
+    // override, the convention cargo/rustc/cc honor) > the manifest's
+    // [build] macos_deployment_target (project default, SwiftPM-style) >
+    // empty (toolchain/SDK default).
+    std::string macosDeploymentTarget;
+    if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt) {
+        macosDeploymentTarget = dt;
+    } else {
+        macosDeploymentTarget = plan.manifest.buildConfig.macosDeploymentTarget;
+    }
+
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);
 
@@ -137,20 +149,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
         auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
         compile_toolchain_flags = " --no-default-config -nostdinc++";
-        // macOS deployment target: make MACOSX_DEPLOYMENT_TARGET explicit
-        // on the command line so (a) the ninja commands don't depend on
-        // env propagation and (b) the value participates in the BMI
+        // macOS deployment target: make the resolved value explicit on
+        // the command line so (a) the ninja commands don't depend on env
+        // propagation and (b) the value participates in the BMI
         // fingerprint via canonical flags — mixing targets in one sandbox
         // otherwise reuses a std.pcm built for a different
         // arm64-apple-macosxNN triple and dies with a config mismatch
         // (observed on macos CI). The link side is added to f.ld below
         // (the macOS link path doesn't consume link_toolchain_flags).
-        if (mcpp::platform::is_macos) {
-            if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET");
-                dt && *dt) {
-                compile_toolchain_flags +=
-                    std::string(" -mmacosx-version-min=") + dt;
-            }
+        if (mcpp::platform::is_macos && !macosDeploymentTarget.empty()) {
+            compile_toolchain_flags +=
+                " -mmacosx-version-min=" + macosDeploymentTarget;
         }
         llvmRootForStdlib = llvmRoot;
         // libc++ headers
@@ -363,8 +372,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             }
         }
         std::string version_min;
-        if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt) {
-            version_min = std::string(" -mmacosx-version-min=") + dt;
+        if (!macosDeploymentTarget.empty()) {
+            version_min = " -mmacosx-version-min=" + macosDeploymentTarget;
         }
         f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}{}", full_static, static_stdlib,
                            b_flag, version_min, stdlib_link, user_ldflags, link_extra);

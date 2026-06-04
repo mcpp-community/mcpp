@@ -295,6 +295,34 @@ kind = "lib"
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
 }
 
+TEST(Manifest, BuildMacosDeploymentTarget) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+macos_deployment_target = "11.0"
+[targets.x]
+kind = "lib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->buildConfig.macosDeploymentTarget, "11.0");
+}
+
+TEST(Manifest, BuildMacosDeploymentTargetDefaultsEmpty) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[targets.x]
+kind = "lib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_TRUE(m->buildConfig.macosDeploymentTarget.empty());
+}
+
 TEST(Manifest, RuntimeConfig) {
     constexpr auto src = R"(
 [package]

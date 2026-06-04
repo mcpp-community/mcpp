@@ -104,6 +104,14 @@ struct BuildConfig {
     std::vector<std::string>           cxxflags;
     std::vector<std::string>           ldflags;
     std::string                         cStandard;
+    // macOS minimum supported OS version for produced binaries
+    // (LC_BUILD_VERSION minos), e.g. "11.0". Mirrors the ecosystem
+    // conventions around deployment targets (the MACOSX_DEPLOYMENT_TARGET
+    // env var that cargo/rustc/cc honor; SwiftPM's `platforms:` manifest
+    // field; CMAKE_OSX_DEPLOYMENT_TARGET). Precedence: the env var (an
+    // explicit per-invocation override) wins over this manifest default;
+    // empty + no env = toolchain/SDK default. No effect off macOS.
+    std::string                         macosDeploymentTarget;
     // Resolved build-profile knobs (from [profile.<name>] + built-in defaults).
     std::string                         optLevel = "2";  // -O level
     bool                                debug    = false; // -g
@@ -888,6 +896,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
     if (auto v = doc->get_string_array("build.ldflags"))  m.buildConfig.ldflags  = *v;
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
+    if (auto v = doc->get_string("build.macos_deployment_target"))
+        m.buildConfig.macosDeploymentTarget = *v;
     for (auto const& flag : m.buildConfig.cxxflags) {
         if (starts_with_std_flag(flag)) {
             return std::unexpected(error(origin,

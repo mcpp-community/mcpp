@@ -589,13 +589,20 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     s += " -fmodules";
     // macOS deployment target changes the effective compile triple
     // (arm64-apple-macosxNN) — a std.pcm built for one target cannot be
-    // loaded by a TU compiled for another. Fold it into the fingerprint
-    // so switching MACOSX_DEPLOYMENT_TARGET rebuilds the BMI cache
+    // loaded by a TU compiled for another. Fold the resolved value
+    // (env override > [build] macos_deployment_target manifest default)
+    // into the fingerprint so switching targets rebuilds the BMI cache
     // instead of dying with a module config mismatch.
     if constexpr (mcpp::platform::is_macos) {
+        std::string dtv;
         if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt) {
+            dtv = dt;
+        } else {
+            dtv = m.buildConfig.macosDeploymentTarget;
+        }
+        if (!dtv.empty()) {
             s += " macos_deployment_target=";
-            s += dt;
+            s += dtv;
         }
     }
     if (!m.buildConfig.cStandard.empty()) {
