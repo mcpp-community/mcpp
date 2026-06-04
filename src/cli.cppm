@@ -600,6 +600,12 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
         } else {
             dtv = m.buildConfig.macosDeploymentTarget;
         }
+        // Mirror flags.cppm's built-in default floor (14.0 with
+        // staticStdlib) so the fingerprint matches the flags actually
+        // emitted.
+        if (dtv.empty() && m.buildConfig.staticStdlib) {
+            dtv = "14.0";
+        }
         if (!dtv.empty()) {
             s += " macos_deployment_target=";
             s += dtv;

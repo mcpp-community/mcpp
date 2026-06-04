@@ -98,8 +98,10 @@ macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅
 (`LC_BUILD_VERSION minos`),即二进制能运行的最老 macOS。优先级与各生态
 惯例一致:环境变量 `MACOSX_DEPLOYMENT_TARGET`(单次调用的显式覆盖,
 cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftPM 的
-`platforms:`)> 工具链/SDK 默认。该值会进入 BMI 指纹——切换 target 会
-自动重建模块缓存。
+`platforms:`)> **内建默认 14.0**(rustc 式:target 自带默认 floor 而非
+跟随构建机 SDK;14.0 是工具链静态 libc++ 的下限,`static_stdlib = false`
+时回退工具链/SDK 默认)。该值会进入 BMI 指纹——切换 target 会自动重建
+模块缓存。
 
 C++ 标准不要通过 `build.cxxflags = ["-std=..."]` 配置。请使用:
 
