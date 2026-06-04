@@ -639,8 +639,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             implicit.empty() ? std::string{} : " |" + implicit);
         if (auto flag = shared_soname_flag(lu); !flag.empty())
             out_line += "  soname_flag = " + flag + "\n";
-        if (auto flags = join_flags(lu.linkFlags); !flags.empty())
-            out_line += "  unit_ldflags =" + flags + "\n";
+        {
+            // Per-unit C++ stdlib link (macOS; empty elsewhere): test
+            // binaries run on the build host and use the system -lc++,
+            // distributable targets get the static LLVM libc++. See
+            // CompileFlags::ldStdlibDefault/ldStdlibTest.
+            std::string unit = join_flags(lu.linkFlags);
+            unit += (lu.kind == mcpp::build::LinkUnit::TestBinary)
+                ? flags.ldStdlibTest : flags.ldStdlibDefault;
+            if (!unit.empty())
+                out_line += "  unit_ldflags =" + unit + "\n";
+        }
         append(std::move(out_line));
 
         for (auto const& alias : lu.runtimeAliases) {

@@ -32,6 +32,15 @@ struct CompileFlags {
     std::string bFlag;                // -B<binutils> (for ninja ldflags)
     bool staticStdlib = true;
     std::string linkage;  // "static" or ""
+    // macOS per-unit C++ stdlib link (appended via unit_ldflags):
+    // distributable targets get the static LLVM libc++ (portable across
+    // macOS versions), TestBinary targets get the system -lc++ — they
+    // only ever run on the build host, and statically linked libc++
+    // SIGABRTs during static destruction unless the entry point guards
+    // with _Exit (mcpp/xlings do; gtest main does not). Empty on other
+    // platforms (stdlib handled by their existing paths).
+    std::string ldStdlibDefault;
+    std::string ldStdlibTest;
 };
 
 CompileFlags compute_flags(const BuildPlan& plan);
@@ -361,30 +370,29 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //    the host Xcode (observed: Xcode 15.4's ld aborting at launch
         //    on macos-14 CI when its libc++ resolution was diverted), and
         //    lld ships with the exact toolchain doing the compile.
-        std::string stdlib_link = " -lc++";
+        f.ldStdlibDefault = " -lc++";
+        f.ldStdlibTest    = " -lc++";
         if (f.staticStdlib && !llvmRootForStdlib.empty()) {
             auto libDir     = llvmRootForStdlib / "lib";
             auto libcxxA    = libDir / "libc++.a";
             auto libcxxAbiA = libDir / "libc++abi.a";
             if (std::filesystem::exists(libcxxA)
                 && std::filesystem::exists(libcxxAbiA)) {
-                // -hidden-l: ld64/lld feature made for exactly this —
-                // links the ARCHIVE (never the sibling dylib) and gives
-                // its symbols hidden visibility. Without it the static
-                // libc++/libc++abi symbols clash with the system copies
-                // that libSystem pulls in indirectly, and processes
-                // SIGABRT during static destruction (observed: every
-                // gtest binary exiting 6 on macos CI).
-                stdlib_link = " -nostdlib++ -L" + escape_path(libDir)
-                            + " -Wl,-hidden-lc++ -Wl,-hidden-lc++abi";
+                // -hidden-l links the ARCHIVE (never the sibling dylib)
+                // and gives its symbols hidden visibility so the static
+                // copy can coexist with the system libc++ that libSystem
+                // pulls in indirectly. Distributable targets only — see
+                // the field comments in CompileFlags.
+                f.ldStdlibDefault = " -nostdlib++ -L" + escape_path(libDir)
+                                  + " -Wl,-hidden-lc++ -Wl,-hidden-lc++abi";
             }
         }
         std::string version_min;
         if (!macosDeploymentTarget.empty()) {
             version_min = " -mmacosx-version-min=" + macosDeploymentTarget;
         }
-        f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}{}", full_static, static_stdlib,
-                           b_flag, version_min, stdlib_link, user_ldflags, link_extra);
+        f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}", full_static, static_stdlib,
+                           b_flag, version_min, user_ldflags, link_extra);
     } else {
         f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
                            runtime_dirs, payload_ld, user_ldflags, link_extra);
