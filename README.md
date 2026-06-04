@@ -195,7 +195,7 @@ import mcpplibs.cmdline;
 <details>
 <summary><b>开发体验</b></summary>
 
-- `mcpp new` — 创建模块化项目模板
+- `mcpp new` — 创建模块化项目;`--template <pkg>[@ver][:<tmpl>]` 使用**库自带模板**(如 `--template imgui`),`--list-templates <pkg>` 列举
 - `mcpp run [-- args]` — 构建并运行
 - `mcpp test [-- args]` — 自动发现并运行测试
 - `mcpp search` — 搜索包索引
