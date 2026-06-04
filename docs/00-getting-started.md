@@ -122,6 +122,7 @@ mcpp pack --mode bundle-all        # 全自包含,含 libc 与 ld-linux
 
 ## 更多入口
 
-- GUI 起步:`mcpp new myapp --template gui`(imgui.app 窗口骨架,构建后 `mcpp run` 直接出窗口)。
+- GUI 起步:`mcpp new myapp --template imgui`(模板随 imgui 库分发、版本自动对齐;
+  `mcpp new --list-templates imgui` 查看库提供的全部模板,`--template imgui:docking` 选指定模板)。
 - 解释默认决策:`mcpp why [toolchain|runtime|deps]`;主机能力体检:`mcpp self doctor`;
   机器可读解析清单:构建产物 `target/<triple>/<fp>/resolution.json`。

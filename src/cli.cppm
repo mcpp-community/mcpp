@@ -38,6 +38,7 @@ import mcpp.fetcher;
 import mcpp.pm.resolver;   // PR-R4: extracted from cli.cppm
 import mcpp.pm.commands;   // PR-R5: cmd_add / cmd_remove / cmd_update live here now
 import mcpp.pm.index_spec; // IndexSpec for [indices] support
+import mcpp.scaffold;       // package-based project templates
 import mcpp.pm.mangle;     // Level 1 multi-version fallback (cross-major coexistence)
 import mcpp.pm.compat;     // 0.0.6: namespace field + dotted-name compat shims
 import mcpp.pm.dep_spec;
@@ -1093,20 +1094,191 @@ void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 
 // --- Commands ---
 
+// ─── Package-based templates (design v2: multi-level --template) ──────
+//
+// Resolve SPEC's package@version through the index, ensure the package
+// sources are installed (same cache as dependencies), and return the
+// package root (the directory containing mcpp.toml).
+struct FetchedTemplatePackage {
+    std::filesystem::path root;
+    std::string           name;     // short package name (e.g. "imgui")
+    std::string           version;  // resolved exact version
+};
+
+std::expected<FetchedTemplatePackage, std::string>
+fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/false,
+        make_bootstrap_progress_callback());
+    if (!cfg) return std::unexpected(cfg.error().message);
+    mcpp::pm::Fetcher fetcher(*cfg);
+
+    // Namespace candidates mirror dependency lookup: index root first,
+    // then the compat namespace.
+    std::string ns;
+    std::optional<std::string> lua;
+    for (std::string cand : {std::string{}, std::string{"compat"}}) {
+        if (auto l = fetcher.read_xpkg_lua(cand, spec.pkg)) {
+            ns = cand;
+            lua = std::move(*l);
+            break;
+        }
+    }
+    if (!lua) {
+        return std::unexpected(std::format(
+            "template package '{}' not found in the index "
+            "(check the name, or run `mcpp index update`)", spec.pkg));
+    }
+
+    std::string version = spec.version;
+    if (version.empty()) {
+        auto v = mcpp::pm::resolve_semver(ns, spec.pkg, "*", fetcher);
+        if (!v) return std::unexpected(v.error());
+        version = *v;
+    }
+
+    auto installed = fetcher.install_path(ns, spec.pkg, version);
+    if (!installed) {
+        auto fq = ns.empty() ? spec.pkg : std::format("{}.{}", ns, spec.pkg);
+        mcpp::ui::info("Downloading", std::format("{} v{}", fq, version));
+        CliInstallProgress progress;
+        std::vector<std::string> targets{ std::format("{}@{}", fq, version) };
+        auto r = fetcher.install(targets, &progress);
+        if (!r) return std::unexpected(std::format(
+            "fetch '{}@{}': {}", fq, version, r.error().message));
+        if (r->exitCode != 0) return std::unexpected(std::format(
+            "fetch '{}@{}' failed (exit {})", fq, version, r->exitCode));
+        installed = fetcher.install_path(ns, spec.pkg, version);
+        if (!installed) return std::unexpected(std::format(
+            "package '{}@{}' install path missing after fetch", fq, version));
+    }
+
+    // Package root = the directory holding mcpp.toml (tarballs usually wrap
+    // everything in a single top-level directory).
+    std::filesystem::path root = *installed;
+    if (!std::filesystem::exists(root / "mcpp.toml")) {
+        std::error_code ec;
+        for (auto& e : std::filesystem::directory_iterator(root, ec)) {
+            if (e.is_directory()
+                && std::filesystem::exists(e.path() / "mcpp.toml")) {
+                root = e.path();
+                break;
+            }
+        }
+    }
+    if (!std::filesystem::exists(root / "mcpp.toml")) {
+        return std::unexpected(std::format(
+            "package '{}@{}' has no mcpp.toml", spec.pkg, version));
+    }
+    return FetchedTemplatePackage{root, spec.pkg, version};
+}
+
+void print_template_listing(const FetchedTemplatePackage& pkg,
+                            const std::vector<mcpp::scaffold::TemplateEntry>& entries) {
+    std::println("Templates in {}@{}:", pkg.name, pkg.version);
+    for (auto& t : entries) {
+        std::println("  {:<14}{}{}", t.name,
+                     t.meta.isDefault ? "(default)  " : "           ",
+                     t.meta.description);
+    }
+    std::println("");
+    std::println("usage: mcpp new <name> --template {}[@ver][:<template>]", pkg.name);
+}
+
+int list_package_templates(const mcpp::scaffold::TemplateSpec& spec) {
+    auto pkg = fetch_template_package(spec);
+    if (!pkg) { mcpp::ui::error(pkg.error()); return 1; }
+    auto entries = mcpp::scaffold::list_templates(pkg->root);
+    if (!entries) { mcpp::ui::error(entries.error()); return 1; }
+    print_template_listing(*pkg, *entries);
+    return 0;
+}
+
+int new_from_package_template(const std::string& name, const std::string& specStr) {
+    auto spec = mcpp::scaffold::parse_spec(specStr);
+    if (spec.listOnly) return list_package_templates(spec);
+
+    auto pkg = fetch_template_package(spec);
+    if (!pkg) { mcpp::ui::error(pkg.error()); return 1; }
+    auto entries = mcpp::scaffold::list_templates(pkg->root);
+    if (!entries) { mcpp::ui::error(entries.error()); return 1; }
+
+    const mcpp::scaffold::TemplateEntry* chosen = nullptr;
+    if (spec.tmpl.empty()) {
+        for (auto& t : *entries) if (t.meta.isDefault) { chosen = &t; break; }
+        if (!chosen) {
+            mcpp::ui::error(std::format(
+                "package '{}' declares no default template — pick one explicitly:",
+                pkg->name));
+            print_template_listing(*pkg, *entries);
+            return 1;
+        }
+    } else {
+        for (auto& t : *entries) if (t.name == spec.tmpl) { chosen = &t; break; }
+        if (!chosen) {
+            mcpp::ui::error(std::format(
+                "package '{}@{}' has no template '{}'",
+                pkg->name, pkg->version, spec.tmpl));
+            print_template_listing(*pkg, *entries);
+            return 1;
+        }
+    }
+
+    std::filesystem::path root = std::filesystem::current_path() / name;
+    if (std::filesystem::exists(root)) {
+        mcpp::ui::error(std::format("'{}' already exists", root.string()));
+        return 1;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(root, ec);
+    if (ec) {
+        mcpp::ui::error(std::format("cannot create '{}': {}",
+                                    root.string(), ec.message()));
+        return 1;
+    }
+
+    mcpp::scaffold::RenderVars vars{name, pkg->name, pkg->version};
+    if (auto err = mcpp::scaffold::instantiate(
+            pkg->root / "templates" / chosen->name, root, vars)) {
+        mcpp::ui::error(*err);
+        return 1;
+    }
+    if (auto err = mcpp::scaffold::inject_self_dependency(
+            root / "mcpp.toml", vars, chosen->meta.injectSelfFeatures)) {
+        mcpp::ui::error(*err);
+        return 1;
+    }
+
+    mcpp::ui::status("Created", std::format(
+        "{} (template {}@{}:{})", name, pkg->name, pkg->version, chosen->name));
+    if (!chosen->meta.postMessage.empty())
+        std::println("{}", chosen->meta.postMessage);
+    return 0;
+}
+
 int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    // Discovery mode: `mcpp new --list-templates <pkg>[@ver]` — no project.
+    if (auto lt = parsed.value("list-templates")) {
+        return list_package_templates(mcpp::scaffold::parse_spec(*lt));
+    }
+
     std::string name = parsed.positional(0);
     if (name.empty()) {
         std::println(stderr, "error: `mcpp new` requires a package name (e.g. `mcpp new hello`)");
         return 2;
     }
 
-    // `--template` selects the project skeleton: "bin" (default) or "gui"
-    // (an imgui.app starter — Tier-0 zero-boilerplate window).
+    // `--template` multi-level SPEC (design v2):
+    //   builtin registry (frozen: bin; gui = transitional alias), else a
+    //   package template: pkg | pkg:tmpl | pkg@ver | pkg@ver:tmpl.
     std::string tmpl = "bin";
     if (auto t = parsed.value("template")) tmpl = *t;
+    if (tmpl == "gui") {
+        mcpp::ui::warning(
+            "--template gui is deprecated; use `--template imgui` "
+            "(the template then ships with — and version-tracks — the library)");
+    }
     if (tmpl != "bin" && tmpl != "gui") {
-        std::println(stderr, "error: unknown --template '{}' (expected: bin | gui)", tmpl);
-        return 2;
+        return new_from_package_template(name, tmpl);
     }
     const bool gui = (tmpl == "gui");
 
@@ -1130,7 +1302,7 @@ int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
             // The GUI template depends on the imgui module package. It does not
             // pin a toolchain — mcpp resolves the environment/default toolchain
             // and the GL runtime is closed by the ecosystem (compat.glx-runtime).
-            os << "\n[dependencies]\nimgui = \"0.0.2\"\n";
+            os << "\n[dependencies]\nimgui = \"0.0.5\"\n";
         }
     }
     // src/main.cpp — template with PROJECT placeholder, replaced with `name`.
@@ -5763,9 +5935,13 @@ int run(int argc, char** argv) {
         // ─── project commands ──────────────────────────────────────────
         .subcommand(cl::App("new")
             .description("Create a new mcpp package skeleton")
-            .arg(cl::Arg("name").help("Package directory name").required())
-            .option(cl::Option("template").short_name('t').takes_value().value_name("KIND")
-                .help("Project template: bin (default) | gui (imgui.app window starter)"))
+            // not .required(): `--list-templates` runs without a name
+            // (cmd_new validates presence for project creation itself).
+            .arg(cl::Arg("name").help("Package directory name"))
+            .option(cl::Option("template").short_name('t').takes_value().value_name("SPEC")
+                .help("bin (default) | <pkg>[@ver][:<template>] — package-shipped template"))
+            .option(cl::Option("list-templates").takes_value().value_name("PKG")
+                .help("List the templates a package ships (PKG[@ver])"))
             .action(wrap_rc(cmd_new)))
         .subcommand(cl::App("build")
             .description("Build the current package")
