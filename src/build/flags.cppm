@@ -6,6 +6,9 @@
 //
 // See .agents/docs/2026-05-12-compile-commands-design.md.
 
+module;
+#include <cstdlib>
+
 export module mcpp.build.flags;
 
 import std;
@@ -120,6 +123,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string link_toolchain_flags;
     bool isClangWithCfg = false;
     std::filesystem::path cfgPath;
+    // LLVM root of a clang-with-cfg toolchain — used by the macOS link
+    // path below to locate libc++.a/libc++abi.a for staticStdlib.
+    std::filesystem::path llvmRootForStdlib;
     if (mcpp::toolchain::is_clang(plan.toolchain)) {
         cfgPath = plan.toolchain.binaryPath.parent_path()
                   / (plan.toolchain.binaryPath.stem().string() + ".cfg");
@@ -131,6 +137,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
         auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
         compile_toolchain_flags = " --no-default-config -nostdinc++";
+        // macOS deployment target: make MACOSX_DEPLOYMENT_TARGET explicit
+        // on the command line so (a) the ninja commands don't depend on
+        // env propagation and (b) the value participates in the BMI
+        // fingerprint via canonical flags — mixing targets in one sandbox
+        // otherwise reuses a std.pcm built for a different
+        // arm64-apple-macosxNN triple and dies with a config mismatch
+        // (observed on macos CI). The link side is added to f.ld below
+        // (the macOS link path doesn't consume link_toolchain_flags).
+        if (mcpp::platform::is_macos) {
+            if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET");
+                dt && *dt) {
+                compile_toolchain_flags +=
+                    std::string(" -mmacosx-version-min=") + dt;
+            }
+        }
+        llvmRootForStdlib = llvmRoot;
         // libc++ headers
         compile_toolchain_flags += " -isystem" + escape_path(libcxxInclude);
         if (!plan.toolchain.targetTriple.empty()) {
@@ -309,7 +331,38 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if constexpr (mcpp::platform::is_windows) {
         f.ld = user_ldflags + link_extra;
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
-        f.ld = std::format("{}{}{} -lc++{}{}", full_static, static_stdlib, b_flag, user_ldflags, link_extra);
+        // macOS. Two min-version concerns (see xlings
+        // .agents/docs/2026-06-05-macos-min-version-support.md):
+        //
+        // 1. stdlib linkage — `-lc++` resolves to the SYSTEM
+        //    /usr/lib/libc++.1.dylib, which caps the deployment floor at
+        //    the build host's OS: e.g. std::print's __is_posix_terminal
+        //    support symbol only exists in macOS 15's libc++, so a
+        //    minos-14 binary dies at launch on 14 (dyld missing-symbol
+        //    abort; verified on macos-14 CI). With staticStdlib (the
+        //    manifest default — previously silently ignored on the clang
+        //    route), link LLVM's own libc++.a/libc++abi.a instead:
+        //    runtime deps shrink to libSystem and the floor drops to
+        //    11.0 (first arm64 macOS). Falls back to -lc++ when the
+        //    archives are absent.
+        // 2. deployment target — mirror MACOSX_DEPLOYMENT_TARGET onto the
+        //    link command line so it doesn't depend on env propagation.
+        std::string stdlib_link = " -lc++";
+        if (f.staticStdlib && !llvmRootForStdlib.empty()) {
+            auto libcxxA    = llvmRootForStdlib / "lib" / "libc++.a";
+            auto libcxxAbiA = llvmRootForStdlib / "lib" / "libc++abi.a";
+            if (std::filesystem::exists(libcxxA)
+                && std::filesystem::exists(libcxxAbiA)) {
+                stdlib_link = " -nostdlib++ " + escape_path(libcxxA)
+                            + " " + escape_path(libcxxAbiA);
+            }
+        }
+        std::string version_min;
+        if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt) {
+            version_min = std::string(" -mmacosx-version-min=") + dt;
+        }
+        f.ld = std::format("{}{}{}{}{}{}{}", full_static, static_stdlib, b_flag,
+                           version_min, stdlib_link, user_ldflags, link_extra);
     } else {
         f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
                            runtime_dirs, payload_ld, user_ldflags, link_extra);
