@@ -329,17 +329,23 @@ jobs:
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
-          # Warm the toolchain so the llvm payload exists, then inject the
-          # static libc++ archives via [build] ldflags. The bootstrap mcpp
-          # predates the flags.cppm staticStdlib/clang implementation
-          # shipped in this very release — from the next release on, the
-          # injection is redundant (but harmless).
+          # Warm the toolchain so the llvm payload exists, then stage the
+          # static libc++ archives in a dylib-free directory and inject
+          # `-L<staged> -lc++abi` via [build] ldflags: the bootstrap
+          # mcpp's macOS link line hardcodes ` -lc++` BEFORE user ldflags,
+          # and the staged -L path makes it resolve to libc++.a (no dylib
+          # competes there). The bootstrap predates the flags.cppm
+          # staticStdlib implementation shipped in this very release —
+          # from the next release on, the injection is redundant.
           "$MCPP" build
           LLVM_ROOT=$(find "$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm" -maxdepth 1 -mindepth 1 -type d | head -1)
           test -f "$LLVM_ROOT/lib/libc++.a"
           test -f "$LLVM_ROOT/lib/libc++abi.a"
+          STATICDIR="$RUNNER_TEMP/static-libcxx"
+          mkdir -p "$STATICDIR"
+          cp "$LLVM_ROOT/lib/libc++.a" "$LLVM_ROOT/lib/libc++abi.a" "$STATICDIR/"
           if ! grep -q '^ldflags' mcpp.toml; then
-            sed -i '' "s|^\[build\]|[build]\nldflags = [\"-nostdlib++\", \"$LLVM_ROOT/lib/libc++.a\", \"$LLVM_ROOT/lib/libc++abi.a\"]|" mcpp.toml
+            sed -i '' "s|^\[build\]|[build]\nldflags = [\"-L$STATICDIR\", \"-lc++abi\"]|" mcpp.toml
           fi
           grep -n 'ldflags' mcpp.toml
 
