@@ -363,12 +363,20 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //    lld ships with the exact toolchain doing the compile.
         std::string stdlib_link = " -lc++";
         if (f.staticStdlib && !llvmRootForStdlib.empty()) {
-            auto libcxxA    = llvmRootForStdlib / "lib" / "libc++.a";
-            auto libcxxAbiA = llvmRootForStdlib / "lib" / "libc++abi.a";
+            auto libDir     = llvmRootForStdlib / "lib";
+            auto libcxxA    = libDir / "libc++.a";
+            auto libcxxAbiA = libDir / "libc++abi.a";
             if (std::filesystem::exists(libcxxA)
                 && std::filesystem::exists(libcxxAbiA)) {
-                stdlib_link = " -nostdlib++ " + escape_path(libcxxA)
-                            + " " + escape_path(libcxxAbiA);
+                // -hidden-l: ld64/lld feature made for exactly this —
+                // links the ARCHIVE (never the sibling dylib) and gives
+                // its symbols hidden visibility. Without it the static
+                // libc++/libc++abi symbols clash with the system copies
+                // that libSystem pulls in indirectly, and processes
+                // SIGABRT during static destruction (observed: every
+                // gtest binary exiting 6 on macos CI).
+                stdlib_link = " -nostdlib++ -L" + escape_path(libDir)
+                            + " -Wl,-hidden-lc++ -Wl,-hidden-lc++abi";
             }
         }
         std::string version_min;
