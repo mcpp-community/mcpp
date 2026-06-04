@@ -378,9 +378,19 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // env var or [build] macos_deployment_target, the static LLVM
         // libc++ is what makes that floor real (the system libc++ caps it
         // at the build host's OS). With no declared floor, keep the
-        // 0.0.49 behavior — dynamic system libc++, host-coupled — which
-        // also sidesteps a still-open SIGSEGV in mixed C/C++ static
-        // binaries (e2e 36; tracked in the design doc).
+        // 0.0.49 behavior — dynamic system libc++, host-coupled.
+        //
+        // TODO(macos-static-default): flip static to the unconditional
+        // default (rust-style "portable by default") once two tracked
+        // issues are fixed — (1) mixed C/C++ static binaries SIGSEGV at
+        // runtime (e2e 36_llvm_toolchain: answer.c + std::cout main.cpp,
+        // exit 139; root cause not yet isolated), (2) the std-module
+        // staging/fingerprint boundary (see canonical_compile_flags).
+        // TODO(macos-floor-11): the official LLVM archives are built for
+        // macOS 14; supporting 11-13 needs a custom libc++ build shipped
+        // via xlings-res (data-only change — swap the archive source).
+        // Both tracked in xlings
+        // .agents/docs/2026-06-05-macos-min-version-support.md §5.
         if (f.staticStdlib && !macosDeploymentTarget.empty()
             && !llvmRootForStdlib.empty()) {
             auto libDir     = llvmRootForStdlib / "lib";
