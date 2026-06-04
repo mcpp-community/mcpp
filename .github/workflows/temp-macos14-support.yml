@@ -95,29 +95,21 @@ jobs:
           test -f "$LLVM_ROOT/lib/libc++.a"    || { echo "FAIL: libc++.a missing"; exit 1; }
           test -f "$LLVM_ROOT/lib/libc++abi.a" || { echo "FAIL: libc++abi.a missing"; exit 1; }
 
-      - name: "Inject static-libc++ ldflags into both manifests"
-        run: |
-          cat > /tmp/inject.py <<'PYEOF'
-          import sys
-          llvm = sys.argv[1]
-          flags = 'ldflags = ["-nostdlib++", "%s/lib/libc++.a", "%s/lib/libc++abi.a"]' % (llvm, llvm)
-          for path in sys.argv[2:]:
-              text = open(path).read()
-              assert "[build]" in text, path
-              assert "ldflags" not in text, path
-              text = text.replace("[build]", "[build]\n" + flags, 1)
-              open(path, "w").write(text)
-              print("injected into " + path)
-          PYEOF
-          python3 /tmp/inject.py "$LLVM_ROOT" mcpp.toml xlings-src/mcpp.toml
-          grep -n "ldflags" mcpp.toml xlings-src/mcpp.toml
-
-      - name: Build mcpp@HEAD (target 11.0, static libc++)
+      - name: "Build mcpp@HEAD (two-stage self-host: target 11.0, static libc++)"
         env:
           MACOSX_DEPLOYMENT_TARGET: '11.0'
           MCPP_HOME: /Users/runner/.mcpp
         run: |
-          "$MCPP" build --no-cache
+          # Stage 1: bootstrap (0.0.49) builds mcpp@HEAD. Its macOS link
+          # path hardcodes -lc++, so stage 1 is dynamically linked — fine,
+          # it only needs to RUN on this runner.
+          "$MCPP" build
+          STAGE1=$(find target -type f -path '*/bin/mcpp' | head -1)
+          STAGE1="$PWD/$STAGE1"
+          "$STAGE1" --version
+          # Stage 2: mcpp@HEAD rebuilds itself — its flags.cppm implements
+          # staticStdlib for the macOS link path natively.
+          "$STAGE1" build --no-cache
           ART=$(find target -type f -path '*/bin/mcpp' | head -1)
           test -n "$ART"
           echo "ART=$ART" >> "$GITHUB_ENV"
@@ -130,6 +122,8 @@ jobs:
           if otool -L "$ART" | grep -q "libc++"; then
             echo "FAIL: still linked against system libc++"; exit 1
           fi
+          echo "=== build.ninja ldflags (evidence) ==="
+          grep -h "^ldflags" target/*/*/build.ninja | head -2 || true
           echo "=== smoke on macos-15 (checks static-dtor abort too) ==="
           "$ART" --version
           echo "exit: $?"
