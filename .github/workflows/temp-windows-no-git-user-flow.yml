@@ -6,7 +6,9 @@
 #   3. xlings install mcpp
 #   4. mcpp new hello && cd hello && mcpp build      (expected to fail)
 #   5. mcpp self init --force                        (expected to fail)
-#   6. root-cause probes:
+#   6. install xim:git (creates the xvm git shim -> `git --version` works
+#      in the user env, matching the reported machine state), re-run mcpp
+#   7. root-cause probes:
 #      - `git --version` in the user env (xvm shim → expected OK)
 #      - `git --version` with XLINGS_HOME redirected to ~/.mcpp/registry
 #        (expected: "xlings: 'git' is not installed" — the smoking gun)
@@ -85,7 +87,6 @@ jobs:
 
       - name: "Stage 1b: xlings sanity check"
         run: |
-          Write-Host "PATH = $env:Path"
           Write-Host "XLINGS_HOME = $env:XLINGS_HOME"
           xlings --version
           exit $LASTEXITCODE
@@ -97,58 +98,93 @@ jobs:
           xlings install mcpp -y
           exit $LASTEXITCODE
 
-      - name: "Stage 2b: post-install git/shim state"
+      - name: "Stage 2b: post-install git/shim/mcpp state"
         if: always()
         run: |
           Write-Host "=== where git ==="
-          where.exe git 2>$null | ForEach-Object { Write-Host $_ }
-          Write-Host "=== git --version (user env; expected to work via xvm shim) ==="
-          git --version
-          Write-Host "git exit code: $LASTEXITCODE"
+          $git = @(where.exe git 2>$null)
+          if ($git.Count -gt 0) {
+            $git | ForEach-Object { Write-Host $_ }
+            cmd /c "git --version 2>&1"
+            Write-Host "git --version exit code: $LASTEXITCODE"
+          } else {
+            Write-Host "(git not resolvable)"
+          }
           Write-Host "=== where mcpp ==="
           where.exe mcpp 2>$null | ForEach-Object { Write-Host $_ }
-          Write-Host "=== ~/.xlings layout (top level) ==="
-          Get-ChildItem "$env:USERPROFILE\.xlings" -ErrorAction SilentlyContinue | Select-Object Name
-          Get-ChildItem "$env:USERPROFILE\.xlings\subos\current\bin" -ErrorAction SilentlyContinue | Select-Object Name
+          cmd /c "mcpp --version 2>&1"
+          Write-Host "mcpp --version exit code: $LASTEXITCODE"
+          Write-Host "=== xvm shim dir ==="
+          Get-ChildItem "$env:USERPROFILE\.xlings\subos\current\bin" -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host $_.Name }
           exit 0
 
-      - name: "Stage 3: mcpp new hello && mcpp build"
+      - name: "Stage 3: mcpp new hello && mcpp build (fresh machine, no git anywhere)"
         id: build
         continue-on-error: true
         run: |
-          mcpp new hello
-          if ($LASTEXITCODE -ne 0) { Write-Host "mcpp new failed: $LASTEXITCODE"; exit $LASTEXITCODE }
+          mcpp new hello 2>&1 | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) { Write-Host "mcpp new exit code: $LASTEXITCODE"; exit 1 }
           cd hello
-          mcpp build
+          cmd /c "mcpp build 2>&1"
+          Write-Host "mcpp build exit code: $LASTEXITCODE"
           exit $LASTEXITCODE
 
-      - name: "Stage 4: mcpp self init --force"
+      - name: "Stage 4: mcpp self init --force (fresh machine, no git anywhere)"
         id: selfinit
         continue-on-error: true
         run: |
-          mcpp self init --force
+          cmd /c "mcpp self init --force 2>&1"
+          Write-Host "exit code: $LASTEXITCODE"
           exit $LASTEXITCODE
 
-      - name: "Stage 5: root-cause probe — git shim vs redirected XLINGS_HOME"
+      - name: "Stage 5: install xim:git -> user now has working `git --version` (reported machine state)"
+        id: ximgit
+        continue-on-error: true
+        run: |
+          xlings install xim:git -y
+          Write-Host "xlings install xim:git exit code: $LASTEXITCODE"
+          Write-Host "=== where git (after xim:git) ==="
+          where.exe git 2>$null | ForEach-Object { Write-Host $_ }
+          cmd /c "git --version 2>&1"
+          Write-Host "git --version exit code: $LASTEXITCODE"
+          exit $LASTEXITCODE
+
+      - name: "Stage 5b: re-run mcpp build + self init (git --version now OK in user env)"
+        id: rebuild
+        continue-on-error: true
+        run: |
+          cd hello
+          cmd /c "mcpp build 2>&1"
+          $buildRc = $LASTEXITCODE
+          Write-Host "mcpp build exit code: $buildRc"
+          cd ..
+          cmd /c "mcpp self init --force 2>&1"
+          $initRc = $LASTEXITCODE
+          Write-Host "mcpp self init --force exit code: $initRc"
+          if ($buildRc -ne 0 -or $initRc -ne 0) { exit 1 }
+          exit 0
+
+      - name: "Stage 6: root-cause probe — git shim vs redirected XLINGS_HOME"
         if: always()
         run: |
           Write-Host "=== probe A: git --version with user XLINGS_HOME ($env:XLINGS_HOME) ==="
-          git --version
+          cmd /c "git --version 2>&1"
           Write-Host "exit code: $LASTEXITCODE"
 
           Write-Host ""
           Write-Host "=== probe B: git --version with XLINGS_HOME=~/.mcpp/registry (what mcpp's subprocesses see) ==="
           $env:XLINGS_HOME = "$env:USERPROFILE\.mcpp\registry"
-          git --version
+          cmd /c "git --version 2>&1"
           Write-Host "exit code: $LASTEXITCODE"
           exit 0
 
-      - name: "Stage 6: dump mcpp sandbox state"
+      - name: "Stage 7: dump mcpp sandbox state"
         if: always()
         run: |
-          Write-Host "=== ~/.mcpp layout ==="
-          Get-ChildItem "$env:USERPROFILE\.mcpp" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-            Select-Object FullName | ForEach-Object { Write-Host $_.FullName }
+          Write-Host "=== ~/.mcpp layout (depth 3) ==="
+          Get-ChildItem "$env:USERPROFILE\.mcpp" -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host $_.FullName }
 
           Write-Host "=== package index presence ==="
           foreach ($d in @(
@@ -174,9 +210,11 @@ jobs:
             "",
             "| step | outcome |",
             "|------|---------|",
-            "| xlings install mcpp | ${{ steps.install_mcpp.outcome }} |",
-            "| mcpp new + build | ${{ steps.build.outcome }} |",
-            "| mcpp self init --force | ${{ steps.selfinit.outcome }} |"
+            "| xlings install mcpp (no git) | ${{ steps.install_mcpp.outcome }} |",
+            "| mcpp new + build (no git) | ${{ steps.build.outcome }} |",
+            "| mcpp self init --force (no git) | ${{ steps.selfinit.outcome }} |",
+            "| xlings install xim:git (user env) | ${{ steps.ximgit.outcome }} |",
+            "| re-run build + self init (git shim OK) | ${{ steps.rebuild.outcome }} |"
           )
           $lines | Add-Content $env:GITHUB_STEP_SUMMARY
           $lines | ForEach-Object { Write-Host $_ }
