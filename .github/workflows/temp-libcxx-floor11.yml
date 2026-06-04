@@ -1,0 +1,78 @@
+# TEMPORARY — feasibility probe for a custom libc++ build with a macOS
+# 11.0 floor (deferred TODO #3, see PR #116 registry). Builds LLVM 20.1.7
+# runtimes (libc++/libc++abi, static-only) with CMAKE_OSX_DEPLOYMENT_TARGET
+# =11.0, asserts the archive objects' minos, links a std::cout probe
+# against them at -mmacosx-version-min=11.0 and runs it.
+# DO NOT MERGE.
+name: temp-libcxx-floor11
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build-runtimes:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Fetch LLVM 20.1.7 sources
+        run: |
+          curl -fsSL -o /tmp/src.tar.xz \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.7/llvm-project-20.1.7.src.tar.xz"
+          mkdir -p "$HOME/llvm-src"
+          tar -xJf /tmp/src.tar.xz -C "$HOME/llvm-src" --strip-components=1
+          ls "$HOME/llvm-src/runtimes" | head -3
+
+      - name: Configure + build (static libc++/libc++abi, floor 11.0)
+        run: |
+          cmake -S "$HOME/llvm-src/runtimes" -B /tmp/rb -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
+            -DLIBCXX_ENABLE_SHARED=OFF \
+            -DLIBCXXABI_ENABLE_SHARED=OFF \
+            -DLIBCXX_INCLUDE_BENCHMARKS=OFF \
+            -DLIBCXX_INCLUDE_TESTS=OFF
+          ninja -C /tmp/rb cxx cxxabi
+          ls -la /tmp/rb/lib/
+
+      - name: Assert archive object minos
+        run: |
+          mkdir -p /tmp/ar && cd /tmp/ar
+          ar x /tmp/rb/lib/libc++.a $(ar t /tmp/rb/lib/libc++.a | head -1)
+          OBJ=$(ls *.o | head -1)
+          otool -l "$OBJ" | grep -A4 "LC_BUILD_VERSION\|LC_VERSION_MIN" | head -8
+          otool -l "$OBJ" | grep -E "minos 11.0|version 11.0" \
+            || { echo "FAIL: objects not built for 11.0"; exit 1; }
+          echo "OK: archives built for macOS 11.0"
+
+      - name: Link + run probe at floor 11.0
+        run: |
+          SDK=$(xcrun --show-sdk-path)
+          cat > /tmp/probe.cpp <<'PEOF'
+          #include <iostream>
+          int main() { std::cout << "floor11" << std::endl; return 0; }
+          PEOF
+          INC=$(find /tmp/rb -type d -path "*include/c++/v1" | head -1)
+          test -n "$INC"
+          clang++ -std=c++23 -nostdinc++ -isystem "$INC" --sysroot="$SDK" \
+            -mmacosx-version-min=11.0 /tmp/probe.cpp -o /tmp/probe \
+            -nostdlib++ /tmp/rb/lib/libc++.a /tmp/rb/lib/libc++abi.a
+          otool -l /tmp/probe | grep -A4 LC_BUILD_VERSION | head -6
+          otool -L /tmp/probe
+          /tmp/probe
+          echo "exit=$?"
+          otool -l /tmp/probe | grep -A4 LC_BUILD_VERSION | grep -q "minos 11.0" \
+            || { echo "FAIL: probe minos != 11.0"; exit 1; }
+          if otool -L /tmp/probe | grep -q libc++; then
+            echo "FAIL: probe still links libc++ dylib"; exit 1
+          fi
+          echo "FEASIBILITY: OK"
+
+      - name: Upload archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcxx-floor11-arm64
+          path: |
+            /tmp/rb/lib/libc++.a
+            /tmp/rb/lib/libc++abi.a
