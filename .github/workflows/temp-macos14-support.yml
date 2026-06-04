@@ -39,17 +39,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.xlings
-          key: xlings-macos15-m14test-${{ hashFiles('.xlings.json') }}
+          key: xlings-macos15-m14test-v2-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-macos15-m14test-
+            xlings-macos15-m14test-v2-
 
       - name: Cache mcpp sandbox
         uses: actions/cache@v4
         with:
           path: ~/.mcpp
-          key: mcpp-macos15-m14test-${{ hashFiles('mcpp.toml') }}
+          key: mcpp-macos15-m14test-v2-${{ hashFiles('mcpp.toml') }}
           restore-keys: |
-            mcpp-macos15-m14test-
+            mcpp-macos15-m14test-v2-
 
       - name: Bootstrap mcpp via xlings
         env:
@@ -76,6 +76,12 @@ jobs:
       - name: Warm toolchain (installs llvm/ninja into the sandbox)
         env:
           MCPP_HOME: /Users/runner/.mcpp
+          # Same target as the real build below: mcpp's BMI fingerprint
+          # does not (yet) include the deployment target, so mixing
+          # targets within one sandbox produces std.pcm config-mismatch
+          # errors (observed in run B attempt 1; product fix tracked for
+          # mcpp 0.0.50's toolchain fingerprint).
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: |
           "$MCPP" build
           echo "warm build done (linkage/minos not asserted here)"
