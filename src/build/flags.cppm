@@ -347,6 +347,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //    archives are absent.
         // 2. deployment target — mirror MACOSX_DEPLOYMENT_TARGET onto the
         //    link command line so it doesn't depend on env propagation.
+        // 3. linker — use LLVM's own lld (same as the Linux clang path)
+        //    instead of Xcode's ld: the system ld's version floats with
+        //    the host Xcode (observed: Xcode 15.4's ld aborting at launch
+        //    on macos-14 CI when its libc++ resolution was diverted), and
+        //    lld ships with the exact toolchain doing the compile.
         std::string stdlib_link = " -lc++";
         if (f.staticStdlib && !llvmRootForStdlib.empty()) {
             auto libcxxA    = llvmRootForStdlib / "lib" / "libc++.a";
@@ -361,8 +366,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt) {
             version_min = std::string(" -mmacosx-version-min=") + dt;
         }
-        f.ld = std::format("{}{}{}{}{}{}{}", full_static, static_stdlib, b_flag,
-                           version_min, stdlib_link, user_ldflags, link_extra);
+        f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}{}", full_static, static_stdlib,
+                           b_flag, version_min, stdlib_link, user_ldflags, link_extra);
     } else {
         f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
                            runtime_dirs, payload_ld, user_ldflags, link_extra);
