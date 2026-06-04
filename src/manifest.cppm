@@ -105,7 +105,7 @@ struct BuildConfig {
     std::vector<std::string>           ldflags;
     std::string                         cStandard;
     // macOS minimum supported OS version for produced binaries
-    // (LC_BUILD_VERSION minos), e.g. "11.0". Mirrors the ecosystem
+    // (LC_BUILD_VERSION minos), e.g. "14.0". Mirrors the ecosystem
     // conventions around deployment targets (the MACOSX_DEPLOYMENT_TARGET
     // env var that cargo/rustc/cc honor; SwiftPM's `platforms:` manifest
     // field; CMAKE_OSX_DEPLOYMENT_TARGET). Precedence: the env var (an

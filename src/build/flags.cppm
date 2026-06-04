@@ -361,7 +361,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //    manifest default — previously silently ignored on the clang
         //    route), link LLVM's own libc++.a/libc++abi.a instead:
         //    runtime deps shrink to libSystem and the floor drops to
-        //    11.0 (first arm64 macOS). Falls back to -lc++ when the
+        //    14.0 — the floor of the official LLVM static archives;
+        //    lower needs a custom libc++ build. Falls back to -lc++ when the
         //    archives are absent.
         // 2. deployment target — mirror MACOSX_DEPLOYMENT_TARGET onto the
         //    link command line so it doesn't depend on env propagation.
