@@ -213,6 +213,8 @@ jobs:
         env:
           MCPP_HOME: /Users/runner/.mcpp
         run: |
+          echo "=== DYLD/forensics: env ==="
+          env | grep -i -E "dyld|library_path" || echo "(no dyld vars in env)"
           "$MCPP" new hello
           cd hello
           "$MCPP" build
