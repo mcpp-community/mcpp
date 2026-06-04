@@ -1,0 +1,85 @@
+# TEMPORARY — minimal repro matrix for the mixed-C/C++ static-libc++
+# runtime SIGSEGV (e2e 36_llvm_toolchain, exit 139). Pure clang, no mcpp
+# involved, to isolate which ingredient kills the process:
+#   m1: pure C++ + static libc++            (control — expected OK)
+#   m2: mixed .c/.cpp + dynamic libc++      (control — expected OK)
+#   m3: mixed .c/.cpp + static libc++       (the e2e 36 shape)
+#   m4: m3 but answer.c compiled as C++     (isolate the C-object factor)
+#   m5: m3 + crash report collection
+# DO NOT MERGE.
+name: temp-mixed-c-forensics
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  matrix:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Fetch official LLVM 20.1.7
+        run: |
+          curl -fsSL -o /tmp/llvm.tar.xz \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.7/LLVM-20.1.7-macOS-ARM64.tar.xz"
+          mkdir -p "$HOME/llvm" && tar -xJf /tmp/llvm.tar.xz -C "$HOME/llvm" --strip-components=1
+          "$HOME/llvm/bin/clang++" --version | head -1
+
+      - name: Repro matrix
+        run: |
+          set +e
+          LLVM="$HOME/llvm"
+          SDK=$(xcrun --show-sdk-path)
+          mkdir -p /tmp/w && cd /tmp/w
+          cat > main.cpp <<'CEOF'
+          #include <iostream>
+          extern "C" int answer(void);
+          int main() { std::cout << "llvm " << answer() << "\n"; return 0; }
+          CEOF
+          cat > answer.c <<'CEOF'
+          int answer(void) { return 42; }
+          CEOF
+          CXXFLAGS="--no-default-config -std=c++23 -nostdinc++ -isystem $LLVM/include/c++/v1 --sysroot=$SDK -mmacosx-version-min=14.0"
+          CFLAGS="--no-default-config --sysroot=$SDK -mmacosx-version-min=14.0"
+          LDSTATIC="-nostdlib++ $LLVM/lib/libc++.a $LLVM/lib/libc++abi.a"
+          run_case() {
+            name="$1"; shift
+            echo "=== $name ==="
+            "$@" 2>&1 | head -20
+            if [ -x ./prog ]; then
+              ./prog; echo "exit=$?"
+              otool -L ./prog | tail -n +2
+            else
+              echo "LINK FAILED"
+            fi
+            rm -f ./prog
+          }
+          # m1: pure C++ static
+          cat > pure.cpp <<'CEOF'
+          #include <iostream>
+          int answer2(void) { return 42; }
+          int main() { std::cout << "llvm " << answer2() << "\n"; return 0; }
+          CEOF
+          run_case "m1 pure-c++ static" \
+            "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld pure.cpp -o prog $LDSTATIC
+          # m2: mixed dynamic
+          "$LLVM/bin/clang" $CFLAGS -c answer.c -o answer.o
+          run_case "m2 mixed dynamic" \
+            "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld main.cpp answer.o -o prog -stdlib=libc++
+          # m3: mixed static (e2e 36 shape)
+          run_case "m3 mixed static" \
+            "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld main.cpp answer.o -o prog $LDSTATIC
+          # m4: answer compiled as C++ then static
+          "$LLVM/bin/clang++" $CXXFLAGS -x c++ -c answer.c -o answercc.o
+          run_case "m4 mixed(as-c++) static" \
+            "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld main.cpp answercc.o -o prog $LDSTATIC
+          # m5: rebuild m3 and harvest crash report if it dies
+          "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld main.cpp answer.o -o prog $LDSTATIC
+          ./prog; rc=$?
+          echo "m5 exit=$rc"
+          if [ "$rc" -ge 128 ]; then
+            sleep 8
+            ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | tail -3
+            R=$(ls -t ~/Library/Logs/DiagnosticReports/prog-* 2>/dev/null | head -1)
+            [ -n "$R" ] && head -120 "$R"
+          fi
+          exit 0
