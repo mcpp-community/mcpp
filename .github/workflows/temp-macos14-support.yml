@@ -1,0 +1,199 @@
+# TEMPORARY workflow — macOS 14 support experiment for mcpp + xlings.
+#
+# Current state: released macosx-arm64 binaries carry LC_BUILD_VERSION
+# minos=15.0 (built on macos-15 runners with no deployment target), so
+# dyld on macOS 14 refuses to load them. Both binaries dynamically link
+# the SYSTEM /usr/lib/libc++.1.dylib, so lowering the target also has to
+# survive libc++ availability gating at compile time and missing-symbol
+# risk at runtime — which is exactly what this experiment verifies.
+#
+#   job 1 (macos-15): bootstrap mcpp, build mcpp@HEAD and xlings@main
+#                     with MACOSX_DEPLOYMENT_TARGET=14.0, assert
+#                     minos=14.0 via otool, smoke on 15.
+#   job 2 (macos-14): control-check the released 0.0.49 binary is refused,
+#                     then run the minos14 artifacts end-to-end:
+#                     xlings self install + mcpp new/build/run (installs
+#                     the llvm/ninja toolchain packages on macOS 14 too).
+#
+# DO NOT MERGE. Delete branch after the investigation.
+name: temp-macos14-support
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-minos14:
+    name: "build mcpp+xlings with MACOSX_DEPLOYMENT_TARGET=14.0 (macos-15)"
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: openxlings/xlings
+          path: xlings-src
+
+      - name: Cache xlings (bootstrap)
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-macos15-m14test-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-macos15-m14test-
+
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp
+          key: mcpp-macos15-m14test-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-macos15-m14test-
+
+      - name: Bootstrap mcpp via xlings
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.49'
+        run: |
+          if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
+            WORK=$(mktemp -d)
+            tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
+            curl -fsSL -o "${WORK}/${tarball}" \
+              "https://github.com/openxlings/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+            tar -xzf "${WORK}/${tarball}" -C "${WORK}"
+            "${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64/subos/default/bin/xlings" self install
+          fi
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          xlings install mcpp -y
+          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+
+      - name: "Control: bootstrap mcpp binary is minos 15"
+        run: |
+          BIN=$(readlink -f "$(find "$HOME/.xlings/data/xpkgs" -path '*-x-mcpp/*/bin/mcpp' | head -1)")
+          otool -l "$BIN" | grep -A4 LC_BUILD_VERSION | head -6
+
+      - name: Build mcpp@HEAD with deployment target 14.0
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
+          MCPP_HOME: /Users/runner/.mcpp
+        run: |
+          "$MCPP" build
+          ART=$(find target -type f -path '*/bin/mcpp' | head -1)
+          test -n "$ART"
+          echo "ART=$ART" >> "$GITHUB_ENV"
+          echo "=== LC_BUILD_VERSION of freshly built mcpp ==="
+          otool -l "$ART" | grep -A4 LC_BUILD_VERSION | head -6
+          otool -l "$ART" | grep -A4 LC_BUILD_VERSION | grep -q "minos 14.0" \
+            || { echo "FAIL: expected minos 14.0"; exit 1; }
+          echo "=== smoke on macos-15 ==="
+          "$ART" --version
+
+      - name: Build xlings@main with deployment target 14.0 (using minos14 mcpp)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
+          MCPP_HOME: /Users/runner/.mcpp
+        run: |
+          cd xlings-src
+          "$GITHUB_WORKSPACE/$ART" build
+          XART=$(find target -type f -path '*/bin/xlings' | head -1)
+          test -n "$XART"
+          echo "XART=xlings-src/$XART" >> "$GITHUB_ENV"
+          echo "=== LC_BUILD_VERSION of freshly built xlings ==="
+          otool -l "$XART" | grep -A4 LC_BUILD_VERSION | head -6
+          otool -l "$XART" | grep -A4 LC_BUILD_VERSION | grep -q "minos 14.0" \
+            || { echo "FAIL: expected minos 14.0"; exit 1; }
+          echo "=== smoke on macos-15 ==="
+          "$XART" --version
+
+      - name: Upload minos14 binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: minos14-binaries
+          path: |
+            ${{ env.ART }}
+            ${{ env.XART }}
+
+  smoke-macos14:
+    name: "run minos14 mcpp+xlings end-to-end on macos-14"
+    needs: build-minos14
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: "Runner info"
+        run: sw_vers; uname -m; xcodebuild -version | head -2 || true
+
+      - name: "Control: released 0.0.49 (minos 15) must be refused by dyld"
+        run: |
+          WORK=$(mktemp -d)
+          curl -fsSL -o "$WORK/m.tar.gz" \
+            "https://github.com/mcpp-community/mcpp/releases/download/v0.0.49/mcpp-0.0.49-macosx-arm64.tar.gz"
+          tar -xzf "$WORK/m.tar.gz" -C "$WORK"
+          if "$WORK/mcpp-0.0.49-macosx-arm64/bin/mcpp" --version 2>err.txt; then
+            echo "UNEXPECTED: minos15 binary ran on macOS 14"
+          else
+            echo "confirmed refusal:"; cat err.txt | head -3
+          fi
+
+      - name: Download minos14 binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: minos14-binaries
+          path: art
+
+      - name: "minos14 binaries start on macOS 14"
+        run: |
+          find art -type f | head; chmod +x $(find art -type f)
+          MCPP=$(find art -path '*bin/mcpp' -type f | head -1)
+          XLINGS=$(find art -path '*bin/xlings' -type f | head -1)
+          echo "MCPP=$PWD/$MCPP"     >> "$GITHUB_ENV"
+          echo "XLINGS=$PWD/$XLINGS" >> "$GITHUB_ENV"
+          "$MCPP" --version
+          "$XLINGS" --version
+
+      - name: "Assemble xlings home on macOS 14 (release layout + minos14 binary)"
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          WORK=$(mktemp -d)
+          tarball="xlings-0.4.49-macosx-arm64.tar.gz"
+          curl -fsSL -o "$WORK/$tarball" \
+            "https://github.com/openxlings/xlings/releases/download/v0.4.49/$tarball"
+          tar -xzf "$WORK/$tarball" -C "$WORK"
+          ROOT="$WORK/xlings-0.4.49-macosx-arm64"
+          # Swap in the minos14 binary everywhere the layout carries one.
+          for p in "$ROOT/bin/xlings" "$ROOT/subos/default/bin/xlings"; do
+            if [ -e "$p" ]; then cp "$XLINGS" "$p"; chmod +x "$p"; fi
+          done
+          "$ROOT/subos/default/bin/xlings" self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+          xlings --version
+
+      - name: "mcpp end-to-end on macOS 14: new + build + run (installs llvm/ninja)"
+        env:
+          MCPP_HOME: /Users/runner/.mcpp
+        run: |
+          "$MCPP" new hello
+          cd hello
+          "$MCPP" build
+          "$MCPP" run | head -3
+          echo "=== built hello LC_BUILD_VERSION (built natively on 14) ==="
+          BIN=$(find target -type f -path '*/bin/hello' | head -1)
+          otool -l "$BIN" | grep -A4 LC_BUILD_VERSION | head -6
+
+      - name: "Summary"
+        if: always()
+        run: |
+          {
+            echo "## macOS 14 support experiment"
+            echo ""
+            echo "- minos14 mcpp/xlings binaries built on macos-15 with MACOSX_DEPLOYMENT_TARGET=14.0"
+            echo "- end-to-end on macos-14: see step outcomes above"
+          } >> "$GITHUB_STEP_SUMMARY"
