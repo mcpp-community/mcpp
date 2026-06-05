@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
-#include <cstdlib>
 
 import std;
 import mcpp.xlings;
+import mcpp.platform.env;
 
 namespace {
 
@@ -174,9 +174,9 @@ TEST(XlingsSiblingPackage, MetadataOnlyHuskIsNotContent) {
 
     // Isolate from the host's ~/.xlings fallback.
     const char* oldHome = std::getenv("HOME");
-    ::setenv("HOME", tmp.c_str(), 1);
+    mcpp::platform::env::set("HOME", tmp.string());
     auto found = mcpp::xlings::paths::find_sibling_package(gccBin, "linux-headers");
-    if (oldHome) ::setenv("HOME", oldHome, 1); else ::unsetenv("HOME");
+    mcpp::platform::env::set("HOME", oldHome ? oldHome : "");
 
     EXPECT_FALSE(found.has_value());
 
@@ -235,10 +235,11 @@ TEST(XlingsHomeTool, FindsPayloadUnderNonXimPrefix) {
     auto real = xpkgs / "scode-x-linux-headers" / "5.11.1";
     touch(real / "include" / "linux" / "limits.h");
 
-    ::setenv("MCPP_HOME", tmp.c_str(), 1);
+    const char* oldMcppHome = std::getenv("MCPP_HOME");
+    mcpp::platform::env::set("MCPP_HOME", tmp.string());
     auto found = mcpp::xlings::paths::find_home_tool(
         "linux-headers", "include/linux/limits.h");
-    ::unsetenv("MCPP_HOME");
+    mcpp::platform::env::set("MCPP_HOME", oldMcppHome ? oldMcppHome : "");
 
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(*found, real);
