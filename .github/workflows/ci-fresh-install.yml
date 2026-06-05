@@ -61,6 +61,15 @@ jobs:
           cd hello_gcc
           mcpp run
 
+      # Template packages exercise the sha256-pinned mcpp-index fetch
+      # path (user report: `mcpp new ... --template imgui` failed with
+      # fetch 'imgui@0.0.6' exit 1 on hosts without a sha256sum binary).
+      - name: "Template: mcpp new --template imgui (fetch path)"
+        run: |
+          cd "$(mktemp -d)"
+          mcpp new abc1 --template imgui
+          test -f abc1/mcpp.toml
+
       - name: "Default: build mcpp"
         run: |
           mcpp clean
@@ -118,14 +127,9 @@ jobs:
     name: macOS fresh install
     # macos-14: the support floor (mcpp ≥0.0.50 / xlings ≥0.4.50 ship
     # minos=14.0 static-libc++ binaries). A fresh install passing here
-    # is the continuous proof of the macOS 14 floor.
-    # TEMP: macos-15 added to isolate whether the cmdline fetch failure
-    # is macos-14-specific or affects the new stack on any macOS.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, macos-15]
-    runs-on: ${{ matrix.os }}
+    # is the continuous proof of the macOS 14 floor — and of host-tool
+    # independence (this image has no sha256sum; macos-15 does).
+    runs-on: macos-14
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -136,7 +140,9 @@ jobs:
         run: |
           # v0.4.50+: first xlings release whose macosx binary runs on
           # macOS 14 (older ones carry minos=15 and refuse to start).
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.50
+          # v0.4.51: in-process sha256 — required on this image, which
+          # has no sha256sum binary (pinned fetches failed before).
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.51
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror
@@ -159,26 +165,15 @@ jobs:
           cd hello_mac
           mcpp run
 
-      # TEMPORARY forensics — mcpplibs.cmdline fetch dies at 0 B on
-      # macos-14 (R5/R6) while linux passes the same step. Hypothesis:
-      # the xlings 0.4.50 adaptive mirror (sha256-pinned URLs may try a
-      # third-party mirror BEFORE the author URL) picks a dead mirror
-      # host on this runner. Probe A = raw connectivity control,
-      # B = exact failing flow (control), C = adaptive mirror off.
-      - name: "Debug: cmdline fetch forensics (temporary)"
+      # Template packages exercise the sha256-pinned mcpp-index fetch
+      # path — this is what broke on hosts without a sha256sum binary
+      # (stock macOS / bare Windows) before xlings 0.4.51 hashed
+      # in-process.
+      - name: "Template: mcpp new --template imgui (fetch path)"
         run: |
-          echo "=== probe D: failing flow, mcpp --verbose ==="
-          mcpp clean
-          mcpp run --verbose 2>&1 | tail -60 || true
-          echo "=== probe E: xlings direct install from the mcpp sandbox ==="
-          SANDBOX_XLINGS=$(find "$HOME/.mcpp" -name xlings -type f 2>/dev/null | head -1)
-          echo "sandbox xlings: $SANDBOX_XLINGS"
-          env XLINGS_HOME="$HOME/.mcpp/registry" "$SANDBOX_XLINGS" \
-            install mcpplibs.cmdline@0.0.1 -y --verbose 2>&1 | tail -40 || true
-          echo "=== probe F: any xlings/mcpp logs ==="
-          find "$HOME/.mcpp" -name '*.log' -newer /tmp -mmin -10 2>/dev/null | head -5
-          for f in $(find "$HOME/.mcpp" "$HOME/.xlings" -name '*.log' -mmin -10 2>/dev/null | head -3); do
-            echo "--- $f"; tail -30 "$f"; done
+          cd "$(mktemp -d)"
+          mcpp new abc1 --template imgui
+          test -f abc1/mcpp.toml
 
       - name: "LLVM: build mcpp"
         run: |
@@ -226,6 +221,18 @@ jobs:
           mcpp new hello_win
           Set-Location hello_win
           mcpp run
+
+      # Template packages exercise the sha256-pinned mcpp-index fetch
+      # path (user report: `mcpp new abc1 --template imgui` failed with
+      # fetch 'imgui@0.0.6' exit 1 on bare Windows — no sha256sum binary
+      # outside git-bash; fixed by xlings 0.4.51 in-process hashing).
+      - name: "Template: mcpp new --template imgui (fetch path)"
+        shell: pwsh
+        run: |
+          $tmp = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          Set-Location $tmp
+          mcpp new abc1 --template imgui
+          if (!(Test-Path abc1/mcpp.toml)) { exit 1 }
 
       - name: "LLVM: build mcpp"
         shell: pwsh
