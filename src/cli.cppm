@@ -594,13 +594,11 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     // into the fingerprint so switching targets rebuilds the BMI cache
     // instead of dying with a module config mismatch.
     //
-    // TODO(macos-default-floor): a built-in default floor (rustc-style,
-    // see the 0.0.50 revert) cannot land until the std-module prebuild /
-    // staging pipeline consumes the SAME resolved value as this rule and
-    // flags.cppm — injecting a default here alone left the test build's
+    // The built-in default floor (rustc-style) lives in the single
+    // resolver (platform::macos::deployment_target), so this rule, the
+    // flags and the std-module prebuild always agree — the 0.0.50-era
+    // attempt to inject a default here alone left the test build's
     // std.pcm unstaged (import std failed wholesale on macos CI).
-    // Centralize the resolution in one helper, then re-land.
-    // See xlings .agents/docs/2026-06-05-macos-min-version-support.md §5.
     if constexpr (mcpp::platform::is_macos) {
         auto dtv = mcpp::platform::macos::deployment_target(
             m.buildConfig.macosDeploymentTarget);
