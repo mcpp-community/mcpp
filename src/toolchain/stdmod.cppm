@@ -45,11 +45,16 @@ struct StdModError { std::string message; };
 std::filesystem::path default_cache_root();
 
 // Build std module if not already cached. Returns paths to BMI + object.
+// `macos_deployment_target` is the RESOLVED value from
+// platform::macos::deployment_target() — it must match what flags.cppm
+// emits for normal TUs, or the produced std.pcm targets a different
+// arm64-apple-macosxNN triple than the code importing it.
 std::expected<StdModule, StdModError> ensure_built(
     const Toolchain&                  tc,
     std::string_view                  fingerprint_hex,
     std::string_view                  cpp_standard,
     std::string_view                  cpp_standard_flag,
+    std::string_view                  macos_deployment_target = {},
     const std::filesystem::path&      cache_root = default_cache_root());
 
 } // namespace mcpp::toolchain
@@ -174,6 +179,7 @@ std::expected<StdModule, StdModError> ensure_built(
     std::string_view                  fingerprint_hex,
     std::string_view                  cpp_standard,
     std::string_view                  cpp_standard_flag,
+    std::string_view                  macos_deployment_target,
     const std::filesystem::path&      cache_root)
 {
     if (tc.stdModuleSource.empty()) {
@@ -251,6 +257,13 @@ std::expected<StdModule, StdModError> ensure_built(
         add_inc(tc.payloadPaths->glibcInclude);
         if (!tc.payloadPaths->linuxInclude.empty())
             add_inc(tc.payloadPaths->linuxInclude);
+    }
+
+    // Deployment target must mirror what flags.cppm emits for normal TUs
+    // (single resolver: platform::macos::deployment_target).
+    if (!macos_deployment_target.empty()) {
+        sysroot_flag += std::format(" -mmacosx-version-min={}",
+                                    macos_deployment_target);
     }
 
     std::vector<std::string> stdCommands;

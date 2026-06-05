@@ -32,7 +32,28 @@ bool has_xcode_clt();
 // Returns the SDK path if found, or nullopt.
 std::optional<std::filesystem::path> sdk_path();
 
+// Resolve the effective macOS deployment target: the
+// MACOSX_DEPLOYMENT_TARGET env var (explicit per-invocation override,
+// the convention cargo/rustc/cc honor) wins over `manifestValue` (the
+// [build] macos_deployment_target project default); empty means
+// toolchain/SDK default. THE single source of truth — flags.cppm, the
+// BMI fingerprint rule and the std-module prebuild must all consume
+// this same resolution, or cached std.pcm modules drift from the TUs
+// (config-mismatch / unstaged-module failures observed on macos CI).
+std::string deployment_target(std::string_view manifestValue);
+
 // Return macOS-specific runtime library directories for LLVM toolchains.
+std::string deployment_target(std::string_view manifestValue) {
+#if defined(__APPLE__)
+    if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt)
+        return dt;
+    return std::string(manifestValue);
+#else
+    (void)manifestValue;
+    return {};
+#endif
+}
+
 std::vector<std::filesystem::path>
 runtime_lib_dirs(const std::filesystem::path& toolchain_root);
 

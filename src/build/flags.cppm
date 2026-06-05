@@ -103,12 +103,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // override, the convention cargo/rustc/cc honor) > the manifest's
     // [build] macos_deployment_target (project default, SwiftPM-style) >
     // empty (toolchain/SDK default).
-    std::string macosDeploymentTarget;
-    if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt) {
-        macosDeploymentTarget = dt;
-    } else {
-        macosDeploymentTarget = plan.manifest.buildConfig.macosDeploymentTarget;
-    }
+    std::string macosDeploymentTarget = mcpp::platform::macos::deployment_target(
+        plan.manifest.buildConfig.macosDeploymentTarget);
 
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);

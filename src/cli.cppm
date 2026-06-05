@@ -602,12 +602,8 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     // Centralize the resolution in one helper, then re-land.
     // See xlings .agents/docs/2026-06-05-macos-min-version-support.md §5.
     if constexpr (mcpp::platform::is_macos) {
-        std::string dtv;
-        if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt) {
-            dtv = dt;
-        } else {
-            dtv = m.buildConfig.macosDeploymentTarget;
-        }
+        auto dtv = mcpp::platform::macos::deployment_target(
+            m.buildConfig.macosDeploymentTarget);
         if (!dtv.empty()) {
             s += " macos_deployment_target=";
             s += dtv;
@@ -3334,7 +3330,9 @@ prepare_build(bool print_fingerprint,
     std::filesystem::path stdCompatObjectPath;
     if (needsStdModule) {
         auto sm = mcpp::toolchain::ensure_built(
-            *tc, fp.hex, m->package.standard, m->cppStandard.flag);
+            *tc, fp.hex, m->package.standard, m->cppStandard.flag,
+            mcpp::platform::macos::deployment_target(
+                m->buildConfig.macosDeploymentTarget));
         if (!sm) return std::unexpected(sm.error().message);
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;
