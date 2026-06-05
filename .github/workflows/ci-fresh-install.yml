@@ -153,6 +153,26 @@ jobs:
           cd hello_mac
           mcpp run
 
+      # TEMPORARY forensics — mcpplibs.cmdline fetch dies at 0 B on
+      # macos-14 (R5/R6) while linux passes the same step. Hypothesis:
+      # the xlings 0.4.50 adaptive mirror (sha256-pinned URLs may try a
+      # third-party mirror BEFORE the author URL) picks a dead mirror
+      # host on this runner. Probe A = raw connectivity control,
+      # B = exact failing flow (control), C = adaptive mirror off.
+      - name: "Debug: cmdline fetch forensics (temporary)"
+        run: |
+          echo "=== probe A: direct curl of the author URL ==="
+          curl -fsSL -o /tmp/c.tgz https://github.com/mcpplibs/cmdline/archive/refs/tags/0.0.1.tar.gz \
+            && shasum -a 256 /tmp/c.tgz || echo "A: curl FAILED"
+          echo "=== probe B: control — exact failing flow ==="
+          mcpp clean
+          mcpp run && echo "B: PASSED (flake?)" || echo "B: failed (expected)"
+          echo "=== probe C: XLINGS_ADAPTIVE_MIRROR=off ==="
+          mcpp clean
+          XLINGS_ADAPTIVE_MIRROR=off mcpp run \
+            && echo "C: PASSED — adaptive mirror is the culprit" \
+            || echo "C: failed — culprit elsewhere"
+
       - name: "LLVM: build mcpp"
         run: |
           mcpp clean
