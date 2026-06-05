@@ -72,6 +72,22 @@ jobs:
           "$LLVM/bin/clang++" $CXXFLAGS -x c++ -c answer.c -o answercc.o
           run_case "m4 mixed(as-c++) static" \
             "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld main.cpp answercc.o -o prog $LDSTATIC
+          # m6: load_hidden form — forces the ARCHIVE by path with
+          # hidden visibility (the lld-correct equivalent of ld64
+          # -hidden-l). Hypothesis: fixes the split-brain libc++
+          # (static copy + system dylib coexisting) seen in m1/m3.
+          run_case "m6 mixed static load_hidden" \
+            "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld main.cpp answer.o -o prog \
+            -nostdlib++ -Wl,-load_hidden,"$LLVM/lib/libc++.a" -Wl,-load_hidden,"$LLVM/lib/libc++abi.a"
+          # m7: pure-C++ int-output + load_hidden (control for m6)
+          cat > pureint.cpp <<'CEOF'
+          #include <iostream>
+          int answer3(void) { return 42; }
+          int main() { std::cout << "llvm " << answer3() << "\n"; return 0; }
+          CEOF
+          run_case "m7 pure-c++ int load_hidden" \
+            "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld pureint.cpp -o prog \
+            -nostdlib++ -Wl,-load_hidden,"$LLVM/lib/libc++.a" -Wl,-load_hidden,"$LLVM/lib/libc++abi.a"
           # m5: rebuild m3 and harvest crash report if it dies
           "$LLVM/bin/clang++" $CXXFLAGS -fuse-ld=lld main.cpp answer.o -o prog $LDSTATIC
           ./prog; rc=$?
