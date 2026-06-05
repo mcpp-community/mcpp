@@ -398,14 +398,20 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             auto libcxxAbiA = libDir / "libc++abi.a";
             if (std::filesystem::exists(libcxxA)
                 && std::filesystem::exists(libcxxAbiA)) {
-                // Link the archives BY PATH. (-Wl,-hidden-l looked like
-                // the canonical choice, but lld resolves it like a plain
-                // -l and picks the sibling dylib in the same directory —
-                // the binary then carries @rpath/libc++.1.dylib with no
-                // rpath and dies at load. Observed on macos CI; path
-                // form verified end-to-end incl. macos-14.)
-                f.ldStdlibDefault = " -nostdlib++ " + escape_path(libcxxA)
-                                  + " " + escape_path(libcxxAbiA);
+                // Link the archives via -Wl,-load_hidden,<path>: forces
+                // the ARCHIVE (never a sibling dylib) and gives its
+                // symbols hidden visibility. Both properties matter:
+                //  - plain BY-PATH linking leaves default-visibility
+                //    symbols that dyld then unifies with the system
+                //    libc++ pulled in via the shared cache — a
+                //    split-brain libc++ where ostream<<int crosses into
+                //    the system copy's locale machinery and SIGSEGVs
+                //    (CI forensics m1/m3 vs m6/m7).
+                //  - -Wl,-hidden-l resolves like a plain -l under lld
+                //    and picks the sibling DYLIB (load failure).
+                f.ldStdlibDefault = " -nostdlib++"
+                    " -Wl,-load_hidden," + escape_path(libcxxA)
+                  + " -Wl,-load_hidden," + escape_path(libcxxAbiA);
             }
         }
         std::string version_min;
