@@ -119,7 +119,13 @@ jobs:
     # macos-14: the support floor (mcpp ≥0.0.50 / xlings ≥0.4.50 ship
     # minos=14.0 static-libc++ binaries). A fresh install passing here
     # is the continuous proof of the macOS 14 floor.
-    runs-on: macos-14
+    # TEMP: macos-15 added to isolate whether the cmdline fetch failure
+    # is macos-14-specific or affects the new stack on any macOS.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -161,17 +167,18 @@ jobs:
       # B = exact failing flow (control), C = adaptive mirror off.
       - name: "Debug: cmdline fetch forensics (temporary)"
         run: |
-          echo "=== probe A: direct curl of the author URL ==="
-          curl -fsSL -o /tmp/c.tgz https://github.com/mcpplibs/cmdline/archive/refs/tags/0.0.1.tar.gz \
-            && shasum -a 256 /tmp/c.tgz || echo "A: curl FAILED"
-          echo "=== probe B: control — exact failing flow ==="
+          echo "=== probe D: failing flow, mcpp --verbose ==="
           mcpp clean
-          mcpp run && echo "B: PASSED (flake?)" || echo "B: failed (expected)"
-          echo "=== probe C: XLINGS_ADAPTIVE_MIRROR=off ==="
-          mcpp clean
-          XLINGS_ADAPTIVE_MIRROR=off mcpp run \
-            && echo "C: PASSED — adaptive mirror is the culprit" \
-            || echo "C: failed — culprit elsewhere"
+          mcpp run --verbose 2>&1 | tail -60 || true
+          echo "=== probe E: xlings direct install from the mcpp sandbox ==="
+          SANDBOX_XLINGS=$(find "$HOME/.mcpp" -name xlings -type f 2>/dev/null | head -1)
+          echo "sandbox xlings: $SANDBOX_XLINGS"
+          env XLINGS_HOME="$HOME/.mcpp/registry" "$SANDBOX_XLINGS" \
+            install mcpplibs.cmdline@0.0.1 -y --verbose 2>&1 | tail -40 || true
+          echo "=== probe F: any xlings/mcpp logs ==="
+          find "$HOME/.mcpp" -name '*.log' -newer /tmp -mmin -10 2>/dev/null | head -5
+          for f in $(find "$HOME/.mcpp" "$HOME/.xlings" -name '*.log' -mmin -10 2>/dev/null | head -3); do
+            echo "--- $f"; tail -30 "$f"; done
 
       - name: "LLVM: build mcpp"
         run: |
