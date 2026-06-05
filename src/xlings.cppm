@@ -78,9 +78,14 @@ namespace paths {
     // Find a sibling package across all index prefixes.
     // e.g. find_sibling_package(gcc_bin, "linux-headers") searches for
     // xim-x-linux-headers, scode-x-linux-headers, etc.
+    // Metadata-only dirs (.xim-installed/.xpkg.lua husks left by delegating
+    // index packages) never qualify; when requiredRelPath is given, only a
+    // version dir containing it qualifies (the payload may live under a
+    // different prefix than the husk — issue #120).
     std::optional<std::filesystem::path>
     find_sibling_package(const std::filesystem::path& compilerBin,
-                         std::string_view packageName);
+                         std::string_view packageName,
+                         std::string_view requiredRelPath = {});
 
     // xpkgs root of the ACTIVE mcpp home ($MCPP_HOME or ~/.mcpp). Payload
     // discovery consults this in addition to compiler siblings: an
@@ -89,7 +94,11 @@ namespace paths {
     std::optional<std::filesystem::path> active_home_xpkgs();
 
     // Like find_sibling_tool, but anchored at the active home's xpkgs.
-    std::optional<std::filesystem::path> find_home_tool(std::string_view tool);
+    // Searches across index prefixes (xim-x-, scode-x-, …) with the same
+    // husk/requiredRelPath rules as find_sibling_package.
+    std::optional<std::filesystem::path>
+    find_home_tool(std::string_view tool,
+                   std::string_view requiredRelPath = {});
 
     // index data root: env.home / "data"
     std::filesystem::path index_data(const Env& env);
@@ -543,18 +552,58 @@ std::optional<std::filesystem::path> active_home_xpkgs() {
     return xpkgs;
 }
 
-std::optional<std::filesystem::path> find_home_tool(std::string_view tool) {
-    auto xpkgs = active_home_xpkgs();
-    if (!xpkgs) return std::nullopt;
+namespace {
 
-    auto root = *xpkgs / std::format("xim-x-{}", tool);
+// A version dir qualifies as a payload only if it has real content —
+// dot-prefixed entries (.xim-installed, .xpkg.lua) are install metadata,
+// and a dir holding nothing else is the husk a delegating index package
+// leaves behind (the payload lives under another prefix; issue #120).
+// When requiredRelPath is given, the dir must also contain that path.
+bool payload_dir_qualifies(const std::filesystem::path& versionDir,
+                           std::string_view requiredRelPath) {
     std::error_code ec;
-    if (!std::filesystem::exists(root, ec)) return std::nullopt;
+    bool hasContent = false;
+    for (auto& f : std::filesystem::directory_iterator(versionDir, ec)) {
+        if (!f.path().filename().string().starts_with(".")) {
+            hasContent = true;
+            break;
+        }
+    }
+    if (!hasContent) return false;
+    if (!requiredRelPath.empty()
+        && !std::filesystem::exists(versionDir / requiredRelPath, ec))
+        return false;
+    return true;
+}
 
-    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-        if (v.is_directory(ec)) return v.path();
+// Scan an xpkgs root across index prefixes (xim-x-, scode-x-, compat-x-, …)
+// for the first qualifying version dir of `packageName`.
+std::optional<std::filesystem::path>
+find_package_in_xpkgs(const std::filesystem::path& xpkgs,
+                      std::string_view packageName,
+                      std::string_view requiredRelPath) {
+    std::error_code ec;
+    std::string suffix = std::format("-x-{}", packageName);
+    for (auto& entry : std::filesystem::directory_iterator(xpkgs, ec)) {
+        if (!entry.is_directory(ec)) continue;
+        auto name = entry.path().filename().string();
+        if (!name.ends_with(suffix)) continue;
+        for (auto& v : std::filesystem::directory_iterator(entry.path(), ec)) {
+            if (!v.is_directory(ec)) continue;
+            if (payload_dir_qualifies(v.path(), requiredRelPath))
+                return v.path();
+        }
     }
     return std::nullopt;
+}
+
+} // namespace
+
+std::optional<std::filesystem::path>
+find_home_tool(std::string_view tool, std::string_view requiredRelPath) {
+    auto xpkgs = active_home_xpkgs();
+    if (!xpkgs) return std::nullopt;
+    return find_package_in_xpkgs(*xpkgs, tool, requiredRelPath);
 }
 
 std::optional<std::filesystem::path>
@@ -578,54 +627,22 @@ find_sibling_binary(const std::filesystem::path& compilerBin,
 
 std::optional<std::filesystem::path>
 find_sibling_package(const std::filesystem::path& compilerBin,
-                     std::string_view packageName) {
+                     std::string_view packageName,
+                     std::string_view requiredRelPath) {
     auto xpkgs = xpkgs_from_compiler(compilerBin);
     if (!xpkgs) return std::nullopt;
 
     // Search across index prefixes: xim-x-, scode-x-, compat-x-, etc.
-    std::error_code ec;
-    std::string suffix = std::format("-x-{}", packageName);
-    for (auto& entry : std::filesystem::directory_iterator(*xpkgs, ec)) {
-        if (!entry.is_directory(ec)) continue;
-        auto name = entry.path().filename().string();
-        if (!name.ends_with(suffix)) continue;
-        // Return the first (highest) version dir that has actual content.
-        for (auto& v : std::filesystem::directory_iterator(entry.path(), ec)) {
-            if (!v.is_directory(ec)) continue;
-            // Skip empty packages (only .xim-installed marker)
-            bool hasContent = false;
-            for (auto& f : std::filesystem::directory_iterator(v.path(), ec)) {
-                if (f.path().filename() != ".xim-installed") {
-                    hasContent = true;
-                    break;
-                }
-            }
-            if (hasContent) return v.path();
-        }
-    }
+    if (auto found = find_package_in_xpkgs(*xpkgs, packageName, requiredRelPath))
+        return found;
 
     // Also check ~/.xlings/data/xpkgs/ (xlings global home) as fallback.
+    std::error_code ec;
     const char* home = std::getenv("HOME");
     if (home) {
         auto xlingsXpkgs = std::filesystem::path(home) / ".xlings" / "data" / "xpkgs";
-        if (xlingsXpkgs != *xpkgs && std::filesystem::exists(xlingsXpkgs, ec)) {
-            for (auto& entry : std::filesystem::directory_iterator(xlingsXpkgs, ec)) {
-                if (!entry.is_directory(ec)) continue;
-                auto name = entry.path().filename().string();
-                if (!name.ends_with(suffix)) continue;
-                for (auto& v : std::filesystem::directory_iterator(entry.path(), ec)) {
-                    if (!v.is_directory(ec)) continue;
-                    bool hasContent = false;
-                    for (auto& f : std::filesystem::directory_iterator(v.path(), ec)) {
-                        if (f.path().filename() != ".xim-installed") {
-                            hasContent = true;
-                            break;
-                        }
-                    }
-                    if (hasContent) return v.path();
-                }
-            }
-        }
+        if (xlingsXpkgs != *xpkgs && std::filesystem::exists(xlingsXpkgs, ec))
+            return find_package_in_xpkgs(xlingsXpkgs, packageName, requiredRelPath);
     }
 
     return std::nullopt;

@@ -40,9 +40,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.mcpp
-          key: mcpp-sandbox-${{ runner.os }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          # NOTE: the "-ci-" segment keeps this lineage disjoint from
+          # release.yml's "-release-" caches. A bare "mcpp-sandbox-<os>-"
+          # restore prefix used to match the release sandbox too, silently
+          # swapping in a differently-populated registry (issue #120).
+          key: mcpp-sandbox-${{ runner.os }}-ci-${{ hashFiles('mcpp.toml', '.xlings.json') }}
           restore-keys: |
-            mcpp-sandbox-${{ runner.os }}-
+            mcpp-sandbox-${{ runner.os }}-ci-
 
       # Cache xlings + its locally installed packages (xim:mcpp etc.).
       # Saves the xlings bootstrap roundtrip + the mcpp xpkg download

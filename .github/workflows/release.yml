@@ -80,7 +80,6 @@ jobs:
           key: mcpp-sandbox-${{ runner.os }}-release-${{ hashFiles('mcpp.toml', '.xlings.json') }}
           restore-keys: |
             mcpp-sandbox-${{ runner.os }}-release-
-            mcpp-sandbox-${{ runner.os }}-
 
       # Cache xlings + xim:mcpp install.
       - name: Cache xlings
@@ -466,7 +465,6 @@ jobs:
           key: mcpp-sandbox-${{ runner.os }}-release-${{ hashFiles('mcpp.toml', '.xlings.json') }}
           restore-keys: |
             mcpp-sandbox-${{ runner.os }}-release-
-            mcpp-sandbox-${{ runner.os }}-
 
       - name: Cache xlings
         uses: actions/cache@v4

@@ -325,7 +325,7 @@ probe_payload_paths(const std::filesystem::path& compilerBin) {
     // its owner home, while the active home may own (or have just installed)
     // the sysroot payloads.
     auto glibc = paths::find_sibling_tool(compilerBin, "glibc");
-    if (!glibc) glibc = paths::find_home_tool("glibc");
+    if (!glibc) glibc = paths::find_home_tool("glibc", "include/features.h");
     if (!glibc) return std::nullopt;
 
     // Glibc layout: <root>/include/ + <root>/lib64/ (or lib/).
@@ -344,13 +344,22 @@ probe_payload_paths(const std::filesystem::path& compilerBin) {
     pp.glibcLib     = glibcLib;
 
     // Find linux kernel headers (optional — search across index prefixes,
-    // then the active home registry).
-    auto linuxHeaders = paths::find_sibling_package(compilerBin, "linux-headers");
-    if (!linuxHeaders) linuxHeaders = paths::find_home_tool("linux-headers");
+    // then the active home registry). Require the actual payload: a
+    // delegating index package (xim:linux-headers → scode:linux-headers)
+    // leaves a metadata-only husk under its own prefix, and the discovery
+    // must skip it instead of giving up (issue #120: glibc's local_lim.h
+    // needs <linux/limits.h>, so a silent miss breaks every glibc build).
+    constexpr std::string_view kLinuxLimits = "include/linux/limits.h";
+    auto linuxHeaders =
+        paths::find_sibling_package(compilerBin, "linux-headers", kLinuxLimits);
+    if (!linuxHeaders)
+        linuxHeaders = paths::find_home_tool("linux-headers", kLinuxLimits);
     if (linuxHeaders) {
-        auto linuxInclude = *linuxHeaders / "include";
-        if (std::filesystem::exists(linuxInclude / "linux" / "limits.h"))
-            pp.linuxInclude = linuxInclude;
+        pp.linuxInclude = *linuxHeaders / "include";
+    } else {
+        mcpp::log::verbose("probe",
+            "linux-headers payload not found under any index prefix — "
+            "glibc builds will fail at <linux/limits.h>");
     }
 
     mcpp::log::verbose("probe", std::format(

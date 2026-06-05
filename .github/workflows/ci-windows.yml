@@ -28,9 +28,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\.mcpp
-          key: mcpp-sandbox-${{ runner.os }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          # Disjoint from release.yml's "-release-" cache lineage (issue #120).
+          key: mcpp-sandbox-${{ runner.os }}-ci-${{ hashFiles('mcpp.toml', '.xlings.json') }}
           restore-keys: |
-            mcpp-sandbox-${{ runner.os }}-
+            mcpp-sandbox-${{ runner.os }}-ci-
 
       - name: Cache xlings
         uses: actions/cache@v4
