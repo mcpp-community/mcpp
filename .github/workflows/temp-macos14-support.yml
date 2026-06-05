@@ -1,20 +1,11 @@
-# TEMPORARY workflow — macOS min-version support experiment (run B).
-#
-# Run A (previous commit) tested MACOSX_DEPLOYMENT_TARGET=14.0 with the
-# status-quo dynamic system-libc++ linkage. Run B tests the proposed end
-# state: deployment target 11.0 + statically linked LLVM libc++/libc++abi
-# (injected via `[build] ldflags`, which the released bootstrap mcpp
-# already honors — no mcpp code change needed for the experiment).
-#
-#   job 1 (macos-15): bootstrap → warm toolchain → assert llvm payload
-#                     ships libc++.a/libc++abi.a → inject static ldflags
-#                     into both manifests → rebuild with target 11.0 →
-#                     assert minos=11.0 + no libc++ dylib dep → smoke.
-#   job 2 (macos-14): control-check released minos15 binary is refused,
-#                     then run the minos11 artifacts end-to-end
-#                     (xlings self install + mcpp new/build/run).
-#
-# DO NOT MERGE. Delete branch after the investigation.
+# TEMPORARY — final verification of the shipped macOS min-version support
+# against the REAL release artifacts (mcpp v0.0.50 + xlings v0.4.50):
+#   - control: released 0.0.49 (minos 15, dynamic libc++) refused on macOS 14
+#   - new artifacts start on both macos-15 and macos-14
+#   - full user flow on macOS 14: xlings self install -> mcpp new/build/run
+#   - split-brain libc++ coverage: a `cout << int` program built with a
+#     declared floor (static libc++ via -Wl,-load_hidden) runs clean
+# DO NOT MERGE. Close PR + delete branch after verification.
 name: temp-macos14-support
 
 on:
@@ -23,210 +14,103 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-minos11:
-    name: "build mcpp+xlings: target 11.0 + static LLVM libc++ (macos-15)"
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/checkout@v4
-        with:
-          repository: openxlings/xlings
-          path: xlings-src
-
-      - name: Cache xlings (bootstrap)
-        uses: actions/cache@v4
-        with:
-          path: ~/.xlings
-          key: xlings-macos15-m14test-v2-${{ hashFiles('.xlings.json') }}
-          restore-keys: |
-            xlings-macos15-m14test-v2-
-
-      - name: Cache mcpp sandbox
-        uses: actions/cache@v4
-        with:
-          path: ~/.mcpp
-          key: mcpp-macos15-m14test-v2-${{ hashFiles('mcpp.toml') }}
-          restore-keys: |
-            mcpp-macos15-m14test-v2-
-
-      - name: Bootstrap mcpp via xlings
-        env:
-          XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.49'
-        run: |
-          if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
-            WORK=$(mktemp -d)
-            tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
-            curl -fsSL -o "${WORK}/${tarball}" \
-              "https://github.com/openxlings/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
-            tar -xzf "${WORK}/${tarball}" -C "${WORK}"
-            "${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64/subos/default/bin/xlings" self install
-          fi
-          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
-          xlings --version
-          xlings install mcpp -y
-          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
-          test -x "$MCPP"
-          "$MCPP" --version
-          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
-          echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
-
-      - name: Warm toolchain (installs llvm/ninja into the sandbox)
-        env:
-          MCPP_HOME: /Users/runner/.mcpp
-          # Same target as the real build below: mcpp's BMI fingerprint
-          # does not (yet) include the deployment target, so mixing
-          # targets within one sandbox produces std.pcm config-mismatch
-          # errors (observed in run B attempt 1; product fix tracked for
-          # mcpp 0.0.50's toolchain fingerprint).
-          MACOSX_DEPLOYMENT_TARGET: '11.0'
-        run: |
-          "$MCPP" build
-          echo "warm build done (linkage/minos not asserted here)"
-
-      - name: "Assert llvm payload ships static libc++ archives"
-        run: |
-          LLVM_ROOT=$(find "$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm" -maxdepth 1 -mindepth 1 -type d | head -1)
-          test -n "$LLVM_ROOT"
-          echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
-          ls "$LLVM_ROOT/lib" | grep -E '^libc\+\+' || true
-          test -f "$LLVM_ROOT/lib/libc++.a"    || { echo "FAIL: libc++.a missing"; exit 1; }
-          test -f "$LLVM_ROOT/lib/libc++abi.a" || { echo "FAIL: libc++abi.a missing"; exit 1; }
-
-      - name: "Build mcpp@HEAD (two-stage self-host: target 11.0, static libc++)"
-        env:
-          MACOSX_DEPLOYMENT_TARGET: '11.0'
-          MCPP_HOME: /Users/runner/.mcpp
-        run: |
-          # Stage 1: bootstrap (0.0.49) builds mcpp@HEAD. Its macOS link
-          # path hardcodes -lc++, so stage 1 is dynamically linked — fine,
-          # it only needs to RUN on this runner.
-          "$MCPP" build
-          STAGE1=$(find target -type f -path '*/bin/mcpp' | head -1)
-          STAGE1="$PWD/$STAGE1"
-          "$STAGE1" --version
-          # Stage 2: mcpp@HEAD rebuilds itself — its flags.cppm implements
-          # staticStdlib for the macOS link path natively.
-          "$STAGE1" build --no-cache
-          ART=$(find target -type f -path '*/bin/mcpp' | head -1)
-          test -n "$ART"
-          echo "ART=$ART" >> "$GITHUB_ENV"
-          echo "=== LC_BUILD_VERSION ==="
-          otool -l "$ART" | grep -A4 LC_BUILD_VERSION | head -6
-          otool -l "$ART" | grep -A4 LC_BUILD_VERSION | grep -q "minos 11.0" \
-            || { echo "FAIL: expected minos 11.0"; exit 1; }
-          echo "=== dylib deps (must NOT contain libc++) ==="
-          otool -L "$ART"
-          if otool -L "$ART" | grep -q "libc++"; then
-            echo "FAIL: still linked against system libc++"; exit 1
-          fi
-          echo "=== build.ninja ldflags (evidence) ==="
-          grep -h "^ldflags" target/*/*/build.ninja | head -2 || true
-          echo "=== smoke on macos-15 (checks static-dtor abort too) ==="
-          "$ART" --version
-          echo "exit: $?"
-
-      - name: Build xlings@main (target 11.0, static libc++, via minos11 mcpp)
-        env:
-          MACOSX_DEPLOYMENT_TARGET: '11.0'
-          MCPP_HOME: /Users/runner/.mcpp
-        run: |
-          cd xlings-src
-          "$GITHUB_WORKSPACE/$ART" build --no-cache
-          XART=$(find target -type f -path '*/bin/xlings' | head -1)
-          test -n "$XART"
-          echo "XART=xlings-src/$XART" >> "$GITHUB_ENV"
-          otool -l "$XART" | grep -A4 LC_BUILD_VERSION | head -6
-          otool -l "$XART" | grep -A4 LC_BUILD_VERSION | grep -q "minos 11.0" \
-            || { echo "FAIL: expected minos 11.0"; exit 1; }
-          if otool -L "$XART" | grep -q "libc++"; then
-            echo "FAIL: still linked against system libc++"; exit 1
-          fi
-          "$XART" --version
-
-      - name: Upload minos11 binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: minos11-binaries
-          path: |
-            ${{ env.ART }}
-            ${{ env.XART }}
-
-  smoke-macos14:
-    name: "run minos11 mcpp+xlings end-to-end on macos-14"
-    needs: build-minos11
-    runs-on: macos-14
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-14]
+    name: "release verification (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - name: "Runner info"
-        run: sw_vers; uname -m
+      - name: Runner info
+        run: sw_vers
 
-      - name: "Control: released 0.0.49 (minos 15) must be refused by dyld"
+      - name: "Control: released 0.0.49 (minos 15) behavior"
         run: |
           WORK=$(mktemp -d)
           curl -fsSL -o "$WORK/m.tar.gz" \
             "https://github.com/mcpp-community/mcpp/releases/download/v0.0.49/mcpp-0.0.49-macosx-arm64.tar.gz"
           tar -xzf "$WORK/m.tar.gz" -C "$WORK"
           if "$WORK/mcpp-0.0.49-macosx-arm64/bin/mcpp" --version 2>err.txt; then
-            echo "UNEXPECTED: minos15 binary ran on macOS 14"
+            echo "0.0.49 runs here (expected on macos-15)"
           else
-            echo "confirmed refusal:"; head -3 err.txt
+            echo "0.0.49 refused (expected on macos-14):"; head -3 err.txt
           fi
 
-      - name: Download minos11 binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: minos11-binaries
-          path: art
-
-      - name: "minos11 binaries start on macOS 14"
-        run: |
-          chmod +x $(find art -type f)
-          MCPP=$(find art -path '*bin/mcpp' -type f | head -1)
-          XLINGS=$(find art -path '*bin/xlings' -type f | head -1)
-          echo "MCPP=$PWD/$MCPP"     >> "$GITHUB_ENV"
-          echo "XLINGS=$PWD/$XLINGS" >> "$GITHUB_ENV"
-          "$MCPP" --version
-          "$XLINGS" --version
-
-      - name: "Assemble xlings home on macOS 14 (release layout + minos11 binary)"
+      - name: "Install xlings v0.4.50 (release tarball self install)"
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
           WORK=$(mktemp -d)
-          tarball="xlings-0.4.49-macosx-arm64.tar.gz"
+          tarball="xlings-0.4.50-macosx-arm64.tar.gz"
           curl -fsSL -o "$WORK/$tarball" \
-            "https://github.com/openxlings/xlings/releases/download/v0.4.49/$tarball"
+            "https://github.com/openxlings/xlings/releases/download/v0.4.50/$tarball"
           tar -xzf "$WORK/$tarball" -C "$WORK"
-          ROOT="$WORK/xlings-0.4.49-macosx-arm64"
-          for p in "$ROOT/bin/xlings" "$ROOT/subos/default/bin/xlings"; do
-            if [ -e "$p" ]; then cp "$XLINGS" "$p"; chmod +x "$p"; fi
-          done
-          "$ROOT/subos/default/bin/xlings" self install
+          BIN="$WORK/xlings-0.4.50-macosx-arm64/bin/xlings"
+          [ -x "$BIN" ] || BIN="$WORK/xlings-0.4.50-macosx-arm64/subos/default/bin/xlings"
+          echo "=== shipped xlings LC_BUILD_VERSION ==="
+          otool -l "$BIN" | grep -A4 LC_BUILD_VERSION | head -6
+          otool -L "$BIN"
+          "$BIN" self install
           echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
 
-      - name: "mcpp end-to-end on macOS 14: new + build + run (installs llvm/ninja)"
+      - name: "Install mcpp v0.0.50 (release tarball)"
+        run: |
+          WORK=$(mktemp -d)
+          curl -fsSL -o "$WORK/m.tar.gz" \
+            "https://github.com/mcpp-community/mcpp/releases/download/v0.0.50/mcpp-0.0.50-macosx-arm64.tar.gz"
+          tar -xzf "$WORK/m.tar.gz" -C "$WORK"
+          MCPP_ROOT="$WORK/mcpp-0.0.50-macosx-arm64"
+          echo "=== shipped mcpp LC_BUILD_VERSION ==="
+          otool -l "$MCPP_ROOT/bin/mcpp" | grep -A4 LC_BUILD_VERSION | head -6
+          otool -L "$MCPP_ROOT/bin/mcpp"
+          "$MCPP_ROOT/bin/mcpp" --version
+          echo "MCPP=$MCPP_ROOT/bin/mcpp" >> "$GITHUB_ENV"
+
+      - name: "User flow: mcpp new hello + build + run"
         env:
           MCPP_HOME: /Users/runner/.mcpp
         run: |
-          echo "=== DYLD/forensics: env ==="
-          env | grep -i -E "dyld|library_path" || echo "(no dyld vars in env)"
           "$MCPP" new hello
           cd hello
           "$MCPP" build
           "$MCPP" run | head -3
           BIN=$(find target -type f -path '*/bin/hello' | head -1)
-          echo "=== hello built natively on macOS 14 ==="
+          echo "=== hello (host default floor) ==="
           otool -l "$BIN" | grep -A4 LC_BUILD_VERSION | head -6
 
-      - name: "Summary"
+      - name: "Split-brain coverage: cout<<int with a declared floor"
+        env:
+          MCPP_HOME: /Users/runner/.mcpp
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
+        run: |
+          "$MCPP" new intprog
+          cd intprog
+          cat > src/main.cpp <<'CEOF'
+          #include <iostream>
+          int answer() { return 42; }
+          int main() { std::cout << "int says " << answer() << std::endl; return 0; }
+          CEOF
+          "$MCPP" build
+          BIN=$(ls -t $(find target -type f -path '*/bin/intprog') | head -1)
+          echo "=== intprog (declared floor 14.0 -> static libc++) ==="
+          otool -l "$BIN" | grep -A4 LC_BUILD_VERSION | head -6
+          otool -L "$BIN"
+          if otool -L "$BIN" | grep -q "libc++"; then
+            echo "FAIL: declared-floor build still links system libc++"; exit 1
+          fi
+          OUT=$("$BIN")
+          echo "output: $OUT  exit=$?"
+          [ "$OUT" = "int says 42" ] || { echo "FAIL: wrong output"; exit 1; }
+          echo "SPLIT-BRAIN COVERAGE: OK"
+
+      - name: Summary
         if: always()
         run: |
           {
-            echo "## macOS min-version experiment (run B: 11.0 + static libc++)"
-            echo "- artifacts built on macos-15, executed end-to-end on macos-14"
+            echo "## macOS min-version release verification (${{ matrix.os }})"
+            echo "- mcpp v0.0.50 + xlings v0.4.50 release artifacts"
           } >> "$GITHUB_STEP_SUMMARY"
