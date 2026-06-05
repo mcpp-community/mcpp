@@ -39,11 +39,9 @@ jobs:
 
       - name: Assert archive object minos
         run: |
-          mkdir -p /tmp/ar && cd /tmp/ar
-          ar x /tmp/rb/lib/libc++.a $(ar t /tmp/rb/lib/libc++.a | head -1)
-          OBJ=$(ls *.o | head -1)
-          otool -l "$OBJ" | grep -A4 "LC_BUILD_VERSION\|LC_VERSION_MIN" | head -8
-          otool -l "$OBJ" | grep -E "minos 11.0|version 11.0" \
+          # otool reads archives directly (per-member load commands).
+          otool -l /tmp/rb/lib/libc++.a 2>/dev/null | grep -A4 "LC_BUILD_VERSION" | head -10
+          otool -l /tmp/rb/lib/libc++.a 2>/dev/null | grep -m1 -E "minos 11.0" \
             || { echo "FAIL: objects not built for 11.0"; exit 1; }
           echo "OK: archives built for macOS 11.0"
 
