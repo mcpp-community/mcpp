@@ -1,10 +1,11 @@
-# 01 — 示例项目
+# 01 — Examples
 
-> 仓库的 [`examples/`](../examples) 目录下提供了一组循序渐进的最小工程,
-> 覆盖从单文件 `import std` 到全静态发布包的常见场景。每个示例都可以
-> 独立进入并通过 `mcpp build` 完成构建。
+> The repository's [`examples/`](../examples) directory provides a set of
+> progressively more advanced minimal projects, covering common scenarios from
+> a single-file `import std` to a fully static release package. Each example can
+> be entered on its own and built with `mcpp build`.
 
-## 运行方式
+## How to Run
 
 ```bash
 git clone https://github.com/mcpp-community/mcpp
@@ -12,32 +13,37 @@ cd mcpp/examples/01-hello
 mcpp build && mcpp run
 ```
 
-每个示例附带独立的 README,仅说明该示例相对前一个引入的新概念。
-安装步骤、工具链初始化等通用内容统一放在
-[00 — 快速开始](00-getting-started.md) 中,不再在示例内重复。
+Each example ships with its own README that only explains the new concepts it
+introduces relative to the previous one. Common material such as installation
+steps and toolchain initialization lives in
+[00 — Getting Started](00-getting-started.md) and is not repeated within the
+examples.
 
-## 示例列表
+## Example List
 
-| # | 路径 | 说明 | 涉及的关键概念 |
+| # | Path | Description | Key Concepts |
 |---|---|---|---|
-| 01 | [`examples/01-hello`](../examples/01-hello/) | 单文件 + `import std` 的最小工程 | `mcpp new` 的默认产物结构 |
-| 02 | [`examples/02-with-deps`](../examples/02-with-deps/) | 引入依赖 `mcpplibs.cmdline` 解析命令行参数 | `[dependencies]`、SemVer、`mcpp.lock` |
-| 03 | [`examples/03-pack-static`](../examples/03-pack-static/) | 通过 `mcpp pack --mode static` 生成全静态发布包 | `[target.<triple>]` 与 `[pack]` 配置 |
+| 01 | [`examples/01-hello`](../examples/01-hello/) | Minimal single-file project with `import std` | The default output structure of `mcpp new` |
+| 02 | [`examples/02-with-deps`](../examples/02-with-deps/) | Adds the `mcpplibs.cmdline` dependency to parse command-line arguments | `[dependencies]`, SemVer, `mcpp.lock` |
+| 03 | [`examples/03-pack-static`](../examples/03-pack-static/) | Produces a fully static release package via `mcpp pack --mode static` | `[target.<triple>]` and `[pack]` configuration |
 
-## 推荐阅读顺序
+## Suggested Reading Order
 
-建议按编号依次阅读:
+We recommend reading them in numerical order:
 
-1. **`01-hello`** 展示 mcpp 工程的最小骨架(`mcpp.toml` 与 `src/main.cpp`),
-   并演示 `import std` 的基本用法。
-2. **`02-with-deps`** 在前一示例基础上引入外部依赖,涵盖锁文件机制
-   与模块化包索引的工作方式。
-3. **`03-pack-static`** 演示如何将构建产物打包为可独立分发的单文件
-   二进制;打包细节可参考 [02 — 发布打包](02-pack-and-release.md)。
+1. **`01-hello`** shows the minimal skeleton of an mcpp project (`mcpp.toml` and
+   `src/main.cpp`) and demonstrates the basic usage of `import std`.
+2. **`02-with-deps`** builds on the previous example by introducing an external
+   dependency, covering the lock-file mechanism and how the modular package
+   index works.
+3. **`03-pack-static`** demonstrates how to package build artifacts into a
+   standalone, independently distributable single-file binary; for packaging
+   details, see [02 — Packaging and Release](02-pack-and-release.md).
 
-## 新增示例
+## Adding a New Example
 
-示例工程遵循统一的目录结构:`mcpp.toml` + `src/` + `README.md`。
-新增示例时,在 `examples/` 下创建编号目录(如 `04-xxx/`),并在
-README 中简要说明该示例演示的概念,然后提交 PR。提交规范见
-[04 — 从源码构建 & 参与贡献](04-build-from-source.md)。
+Example projects follow a consistent directory structure: `mcpp.toml` + `src/` +
+`README.md`. To add a new example, create a numbered directory under
+`examples/` (e.g. `04-xxx/`), briefly describe the concept it demonstrates in
+its README, and then open a PR. For contribution guidelines, see
+[04 — Build from Source & Contributing](04-build-from-source.md).

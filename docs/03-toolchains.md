@@ -1,19 +1,14 @@
-# 03 — 工具链管理
+# 03 — Toolchain Management
 
-> mcpp 维护一个独立的工具链沙盒,与系统 PATH 完全隔离。
+> mcpp maintains an independent toolchain sandbox, fully isolated from the system PATH.
 
-## 设计动机
+## Motivation
 
-C++23 模块对编译器版本较为敏感,不同版本的 GCC / Clang 在模块语义
-处理上存在明显差异。系统包管理器提供的版本通常滞后,且多版本共存
-存在维护成本。mcpp 将工具链统一安装在沙盒目录
-(`~/.mcpp/registry/data/xpkgs/`)中,允许项目按需选择版本,且不会
-影响系统环境。
+C++23 modules are fairly sensitive to compiler versions, and different releases of GCC / Clang differ noticeably in how they handle module semantics. The versions shipped by system package managers tend to lag behind, and keeping multiple versions side by side carries a maintenance burden. mcpp installs all toolchains into a single sandbox directory (`~/.mcpp/registry/data/xpkgs/`), letting each project pick the version it needs without touching the system environment.
 
-## 自动安装
+## Automatic Installation
 
-首次运行 `mcpp build` 时,若尚未配置工具链,mcpp 会自动安装当前平台
-的默认工具链并将其设为全局默认:
+The first time you run `mcpp build`, if no toolchain is configured yet, mcpp automatically installs the default toolchain for your platform and sets it as the global default:
 
 ```
 First run no toolchain configured — installing gcc@15.1.0-musl (musl, static) as default
@@ -21,45 +16,43 @@ Downloading xim:musl-gcc@15.1.0 [====>      ] 312 MB / 808 MB  3.7 MB/s
 Default set to gcc@15.1.0-musl
 ```
 
-Linux 默认使用 `gcc@15.1.0-musl`; macOS 默认使用 `llvm@20.1.7`。
+Linux defaults to `gcc@15.1.0-musl`; macOS defaults to `llvm@20.1.7`.
 
-后续构建不再触发该流程。
+Subsequent builds do not trigger this process again.
 
 > [!TIP]
-> 在 CI 或离线环境中,可通过设置 `MCPP_NO_AUTO_INSTALL=1` 关闭自动
-> 安装行为。此时若未安装工具链,`mcpp build` 将直接报错而不会发起
-> 网络请求。
+> In CI or offline environments, you can disable automatic installation by setting `MCPP_NO_AUTO_INSTALL=1`. With this set, if no toolchain is installed, `mcpp build` fails immediately instead of making any network requests.
 
-## 手动安装
+## Manual Installation
 
 ```bash
-mcpp toolchain install gcc 16.1.0           # GNU libc,适用于动态链接默认场景
-mcpp toolchain install gcc 15.1.0-musl      # musl libc,适用于全静态构建
-mcpp toolchain install musl-gcc 15.1.0      # 等价于上一条
-mcpp toolchain install llvm 20.1.7          # LLVM/Clang,macOS 默认工具链
+mcpp toolchain install gcc 16.1.0           # GNU libc, for the default dynamic-linking case
+mcpp toolchain install gcc 15.1.0-musl      # musl libc, for fully static builds
+mcpp toolchain install musl-gcc 15.1.0      # equivalent to the line above
+mcpp toolchain install llvm 20.1.7          # LLVM/Clang, the default toolchain on macOS
 ```
 
-版本号支持部分匹配:
+Version numbers support partial matching:
 
 ```bash
-mcpp toolchain install gcc 15               # 安装 15.x.y 中的最高版本(15.1.0)
-mcpp toolchain install gcc@16               # 同样支持 @ 形式
+mcpp toolchain install gcc 15               # installs the highest 15.x.y version (15.1.0)
+mcpp toolchain install gcc@16               # the @ form works too
 ```
 
-## 切换默认工具链
+## Switching the Default Toolchain
 
 ```bash
 mcpp toolchain default gcc@16.1.0
-mcpp toolchain default gcc 15               # 部分版本时,从已安装的版本中选择最高
+mcpp toolchain default gcc 15               # with a partial version, picks the highest installed match
 ```
 
-## 查看工具链状态
+## Inspecting Toolchain Status
 
 ```bash
 mcpp toolchain list
 ```
 
-输出形式如下:
+The output looks like this:
 
 ```
 Installed:
@@ -74,68 +67,59 @@ Available (run `mcpp toolchain install <compiler> <version>`):
      ...
 ```
 
-带有 `*` 标记的条目为当前默认工具链。`@mcpp/...` 是 `~/.mcpp/...`
-的简写形式,用于减少输出宽度。
+The entry marked with `*` is the current default toolchain. `@mcpp/...` is shorthand for `~/.mcpp/...`, used to keep the output narrower.
 
-## 项目级版本锁定
+## Project-Level Version Pinning
 
-若项目需固定特定版本而不依赖全局默认,可在项目的 `mcpp.toml` 中声明:
+If a project needs to pin a specific version rather than rely on the global default, declare it in the project's `mcpp.toml`:
 
 ```toml
 [toolchain]
 default = "gcc@16.1.0"
 
-# 也可按平台分发
+# you can also dispatch by platform
 [toolchain]
 linux = "gcc@15.1.0-musl"
 macos = "llvm@20"
 ```
 
-项目级声明优先于全局默认配置。
+A project-level declaration takes precedence over the global default configuration.
 
-## 跨工具链构建
+## Cross-Toolchain Builds
 
 ```bash
 mcpp build --target x86_64-linux-musl
 ```
 
-mcpp 将读取 `mcpp.toml` 中 `[target.x86_64-linux-musl]` 节,覆盖默认的
-工具链与 linkage 设置。该机制配合 `mcpp pack --mode static` 可生成
-全静态发布包,完整示例参见
-[`examples/03-pack-static`](../examples/03-pack-static/)。
+mcpp reads the `[target.x86_64-linux-musl]` section in `mcpp.toml`, overriding the default toolchain and linkage settings. Combined with `mcpp pack --mode static`, this lets you produce a fully static release package; for a complete example, see [`examples/03-pack-static`](../examples/03-pack-static/).
 
-## 卸载
+## Uninstalling
 
 ```bash
 mcpp toolchain remove gcc@16.1.0
 ```
 
-## 重置沙盒
+## Resetting the Sandbox
 
 ```bash
-rm -rf ~/.mcpp                              # 删除整个沙盒
-mcpp build                                  # 后续构建将再次触发首次安装
+rm -rf ~/.mcpp                              # remove the entire sandbox
+mcpp build                                  # the next build triggers first-run installation again
 ```
 
-## 环境变量
+## Environment Variables
 
-mcpp 的运行行为可通过以下环境变量调整:
+mcpp's runtime behavior can be adjusted with the following environment variables:
 
-| 变量 | 用途 |
+| Variable | Purpose |
 |---|---|
-| `MCPP_HOME` | 覆盖沙盒位置(默认 `~/.mcpp/`),绝对路径优先级最高 |
-| `MCPP_NO_AUTO_INSTALL=1` | 禁用工具链自动安装,适用于 CI 与离线环境 |
-| `MCPP_NO_COLOR=1` / `NO_COLOR=1` | 禁用彩色输出 |
-| `MCPP_LOG=trace\|debug\|info\|warn\|error` | 日志级别 |
+| `MCPP_HOME` | Override the sandbox location (default `~/.mcpp/`); an absolute path takes top priority |
+| `MCPP_NO_AUTO_INSTALL=1` | Disable automatic toolchain installation; useful for CI and offline environments |
+| `MCPP_NO_COLOR=1` / `NO_COLOR=1` | Disable colored output |
+| `MCPP_LOG=trace\|debug\|info\|warn\|error` | Log level |
 
-未显式设置 `MCPP_HOME` 时,mcpp 将基于二进制所在目录的上一级路径
-自动定位沙盒位置(release tarball 解压至 `~/.mcpp/` 后,`~/.mcpp/`
-即为 home),因此 release 版本无需任何环境变量配置即可运行。
+When `MCPP_HOME` is not set explicitly, mcpp locates the sandbox automatically based on the parent directory of the binary (after a release tarball is extracted to `~/.mcpp/`, `~/.mcpp/` is the home), so the release build runs without any environment variable configuration.
 
 
-## ABI 能力强制
+## ABI Capability Enforcement
 
-依赖可声明 `abi:<name>` 能力(如 `compat.glfw` 声明 `abi:glibc`)。解析出的
-工具链 ABI 不满足任一依赖的 abi 要求时,构建会**尽早失败**并给出修复建议
-(例如 musl-static 工具链遇到 abi:glibc 依赖),取代深层的链接/头文件报错。
-查看:`mcpp why toolchain`。
+A dependency can declare an `abi:<name>` capability (for example, `compat.glfw` declares `abi:glibc`). When the resolved toolchain's ABI does not satisfy any dependency's abi requirement, the build **fails early** with a suggested fix (for example, a musl-static toolchain encountering an abi:glibc dependency), replacing deeper link/header errors. Inspect with: `mcpp why toolchain`.

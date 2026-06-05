@@ -1,55 +1,57 @@
 # mcpp
 
-> 一个 现代C++ 模块化构建工具 — 纯 C++23 模块编写，已实现自举
+> A modern C++ module-first build tool — written in pure C++23 modules, fully self-hosted
+
+**English** | [简体中文](README.zh-CN.md)
 
 [![Release](https://img.shields.io/github/v/release/mcpp-community/mcpp)](https://github.com/mcpp-community/mcpp/releases)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![Module](https://img.shields.io/badge/module-ok-green.svg)](https://en.cppreference.com/w/cpp/language/modules)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 
-| [文档](docs/) · [快速开始](docs/00-getting-started.md) · [mcpp.toml 指南](docs/05-mcpp-toml.md) · [示例项目](docs/01-examples.md) · [工具链管理](docs/03-toolchains.md) |
+| [Documentation](docs/) · [Getting Started](docs/00-getting-started.md) · [mcpp.toml Guide](docs/05-mcpp-toml.md) · [Examples](docs/01-examples.md) · [Toolchains](docs/03-toolchains.md) |
 |:---:|
-| [包索引 mcpp-index](https://github.com/mcpp-community/mcpp-index) · [模块化库 mcpplibs](https://github.com/mcpplibs) · [社区论坛](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
+| [Package index mcpp-index](https://github.com/mcpp-community/mcpp-index) · [Module libraries mcpplibs](https://github.com/mcpplibs) · [Community Forum](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
 | [![ci-linux](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml) [![ci-macos](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml) [![ci-windows](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml) |
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/6c85896e-9a37-4f62-acfb-d37a4eae2363" alt="mcpp demo" width="720">
 </p>
 
-## 核心特性
+## Highlights
 
-- **C++23 模块原生支持** — `import std` 自动处理，文件级增量构建，模块依赖自动分析，零手动配置
-- **纯模块化自举** — mcpp 自身由 43+ 个 C++23 模块组成，用自己构建自己，模块系统经实战验证
-- **开箱即用** — 一条命令安装，内置 GCC 16 / LLVM 20 工具链，自动下载到隔离沙盒，不污染系统
-- **集成依赖管理** — SemVer 约束解析、锁文件、跨项目 BMI 缓存、自定义包索引
-- **多包工作空间** — Workspace 统一锁文件与版本管理，适合大型项目
+- **Native C++23 module support** — `import std` handled automatically, file-level incremental builds, automatic module dependency analysis, zero manual configuration
+- **Pure modular self-hosting** — mcpp itself consists of 43+ C++23 modules and builds itself; the module pipeline is battle-tested
+- **Works out of the box** — one-command install, bundled GCC 16 / LLVM 20 toolchains downloaded into an isolated sandbox, never polluting your system
+- **Integrated dependency management** — SemVer constraint resolution, lockfile, cross-project BMI cache, custom package indices
+- **Multi-package workspaces** — unified lockfile and version management for larger projects
 
-## 为什么选择 mcpp
+## Why mcpp
 
-mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux 和 macOS ARM64 上能为你提供便捷且友好的开发体验：
+mcpp is built specifically for **C++23 module-first development**. If you want to use `import std`, module interface units (`.cppm`), module partitions, and other modern C++ features in your project, mcpp gives you a smooth, friendly experience on Linux and macOS ARM64:
 
-- **默认模块化** — `mcpp new` 创建的项目模板直接使用 C++23 模块，`import std` 开箱即用
-- **文件级增量构建** — 基于 P1689 dyndep 的三层优化（前端脏检查 + 逐文件扫描 + BMI restat），只重编真正变化的模块
-- **一键创建 & 构建** — `mcpp new hello && cd hello && mcpp build`，工具链自动安装，无需手动配置编译器和构建系统
-- **模块化生态** — [mcpplibs](https://github.com/mcpplibs) 提供一系列可直接 `import` 的 C++ 模块化库，支持自定义包索引
+- **Modular by default** — projects created by `mcpp new` use C++23 modules directly; `import std` just works
+- **File-level incremental builds** — three-layer optimization based on P1689 dyndep (front-end dirty check + per-file scanning + BMI restat); only the modules that actually changed get recompiled
+- **Create & build in one go** — `mcpp new hello && cd hello && mcpp build`; toolchains install automatically, no compiler or build-system setup required
+- **A modular ecosystem** — [mcpplibs](https://github.com/mcpplibs) offers a growing set of directly `import`-able C++ module libraries, plus support for custom package indices
 
 > [!NOTE]
-> **早期版本** — mcpp 仍在积极开发中，接口和行为可能在后续版本调整。
-> 欢迎对现代 C++ 模块化构建工具感兴趣的开发者[参与贡献](#参与贡献)。
-> 问题 / 反馈 / 想法欢迎在 [issues](https://github.com/mcpp-community/mcpp/issues) 留言。
+> **Early-stage project** — mcpp is under active development; interfaces and behavior may change in future releases.
+> Developers interested in modern C++ module-first build tooling are welcome to [contribute](#contributing).
+> Questions / feedback / ideas — drop a note in [issues](https://github.com/mcpp-community/mcpp/issues).
 
-## 快速开始
+## Getting Started
 
-### 安装
+### Install
 
-**方式一：使用 xlings 安装（推荐）**
+**Option 1: install via xlings (recommended)**
 
 ```bash
 xlings install mcpp -y
 ```
 
 <details>
-<summary>还没有 xlings？点击查看安装命令</summary>
+<summary>Don't have xlings yet? Click for the install command</summary>
 
 **Linux / macOS**
 ```bash
@@ -61,29 +63,29 @@ curl -fsSL https://d2learn.org/xlings-install.sh | bash
 irm https://d2learn.org/xlings-install.ps1.txt | iex
 ```
 
-> xlings 详情 → [xlings.d2learn.org](https://xlings.d2learn.org)
+> More about xlings → [xlings.d2learn.org](https://xlings.d2learn.org)
 
 </details>
 
-**方式二：一键安装脚本**
+**Option 2: one-line install script**
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
 ```
 
-安装到 `~/.mcpp/`，自动加进 shell PATH。删除 `~/.mcpp` 即可干净卸载。
+Installs into `~/.mcpp/` and adds it to your shell PATH. Deleting `~/.mcpp` uninstalls cleanly.
 
-**方式三：让 AI 助手帮你安装**
+**Option 3: let an AI assistant install it for you**
 
-将以下提示词复制给你的 AI 编码助手（Claude Code / Cursor / Copilot 等）：
+Copy the following prompt to your AI coding assistant (Claude Code / Cursor / Copilot, etc.):
 
 ```
-阅读 https://github.com/mcpp-community/mcpp 的 README，
-帮我安装 mcpp 并创建一个 C++23 模块项目，构建并运行。
-项目的 .agents/skills/mcpp-usage/SKILL.md 有详细的使用指南。
+Read the README of https://github.com/mcpp-community/mcpp,
+then install mcpp for me and create a C++23 module project, build and run it.
+The repo's .agents/skills/mcpp-usage/SKILL.md has a detailed usage guide.
 ```
 
-### 创建项目 & 构建运行
+### Create, build & run a project
 
 ```bash
 mcpp new hello
@@ -92,15 +94,15 @@ mcpp build
 mcpp run
 ```
 
-> 注：首次构建会初始化环境并获取工具链，可能需要一些时间。
+> Note: the first build initializes the environment and fetches the toolchain, which may take a while.
 
-### 项目结构
+### Project layout
 
 ```
 hello/
-├── mcpp.toml             ← 工程描述
+├── mcpp.toml             ← project manifest
 └── src/
-    └── main.cpp          ← import std; 直接可用
+    └── main.cpp          ← import std; works directly
 ```
 
 ```toml
@@ -113,170 +115,170 @@ kind = "bin"
 main = "src/main.cpp"
 ```
 
-### 使用模块化库
+### Using module libraries
 
-在 `mcpp.toml` 中添加两行依赖，即可引用 [mcpplibs](https://github.com/mcpplibs) 社区模块化库：
+Add a two-line dependency to `mcpp.toml` to pull in a community module library from [mcpplibs](https://github.com/mcpplibs):
 
 ```toml
 [dependencies]
 cmdline = "0.0.2"
 ```
 
-然后在代码中直接 `import`：
+Then `import` it directly in your code:
 
 ```cpp
 import mcpplibs.cmdline;
 ```
 
-> 更多依赖配置方式（版本约束、命名空间、Git 引用、本地路径等）参见 [mcpp.toml 指南 — 依赖管理](docs/05-mcpp-toml.md)。
+> For more dependency options (version constraints, namespaces, Git references, local paths, etc.), see the [mcpp.toml guide — dependency management](docs/05-mcpp-toml.md).
 
-## 功能概览
+## Feature Overview
 
 <details>
-<summary><b>构建系统</b></summary>
+<summary><b>Build system</b></summary>
 
-- C++20/23 模块原生支持（接口单元、实现单元、模块分区）
-- `import std` / `import std.compat` 全自动预编译与缓存
-- 三层增量优化：前端脏检查 + 逐文件 P1689 dyndep + BMI copy-if-different restat
-- 指纹化 BMI 缓存：按编译器/标志/标准库哈希，跨项目共享
-- Ninja 后端：自动生成 build.ninja，并行编译
-- compile_commands.json 自动生成（clangd / ccls 即用）
-- C 语言一等支持：`.c` 文件自动检测，混合 C/C++ 项目
-- 用户自定义 cflags / cxxflags / ldflags / c_standard
+- Native C++20/23 module support (interface units, implementation units, module partitions)
+- Fully automatic precompilation and caching of `import std` / `import std.compat`
+- Three-layer incremental optimization: front-end dirty check + per-file P1689 dyndep + BMI copy-if-different restat
+- Fingerprinted BMI cache: hashed by compiler/flags/standard library, shared across projects
+- Ninja backend: auto-generated build.ninja, parallel compilation
+- compile_commands.json generated automatically (ready for clangd / ccls)
+- First-class C support: `.c` files auto-detected, mixed C/C++ projects
+- User-defined cflags / cxxflags / ldflags / c_standard
 
 </details>
 
 <details>
-<summary><b>工具链管理</b></summary>
+<summary><b>Toolchain management</b></summary>
 
-- 内置 GCC 16.1.0 + LLVM/Clang 20.1.7，一键安装
-- musl-gcc 全静态工具链（默认）
-- 多版本共存：`mcpp toolchain install gcc 16` / `mcpp toolchain install llvm 20`
-- 隔离沙盒：所有工具链在 `~/.mcpp/registry/`，不影响系统
-- 按平台指定：`linux = "gcc@16"`, `macos = "llvm@20"`
-- GCC + Clang 编译管线平权（`BmiTraits` 抽象层驱动）
-
-</details>
-
-<details>
-<summary><b>包管理与依赖</b></summary>
-
-- SemVer 约束解析：`^`、`~`、范围、精确版本
-- 三级解析：约束合并 → 多版本 mangling 回退 → 精确匹配
-- 锁文件 mcpp.lock（v2 格式：索引快照 + 命名空间）
-- 命名空间系统：`[dependencies.myteam] foo = "1.0"`
-- 自定义包索引：`[indices] acme = "git@..."` / `{ path = "..." }`
-- 项目级索引隔离（`.mcpp/` 目录，不污染全局）
-- 依赖来源：索引 / Git / 本地路径
+- Bundled GCC 16.1.0 + LLVM/Clang 20.1.7, one-command install
+- Fully static musl-gcc toolchain (default)
+- Multiple versions side by side: `mcpp toolchain install gcc 16` / `mcpp toolchain install llvm 20`
+- Isolated sandbox: all toolchains live in `~/.mcpp/registry/`, leaving the system untouched
+- Per-platform selection: `linux = "gcc@16"`, `macos = "llvm@20"`
+- GCC and Clang compile pipelines at parity (driven by the `BmiTraits` abstraction layer)
 
 </details>
 
 <details>
-<summary><b>工作空间</b></summary>
+<summary><b>Package & dependency management</b></summary>
+
+- SemVer constraint resolution: `^`, `~`, ranges, exact versions
+- Three-stage resolution: constraint merging → multi-version mangling fallback → exact match
+- Lockfile mcpp.lock (v2 format: index snapshot + namespaces)
+- Namespace system: `[dependencies.myteam] foo = "1.0"`
+- Custom package indices: `[indices] acme = "git@..."` / `{ path = "..." }`
+- Project-level index isolation (`.mcpp/` directory, no global pollution)
+- Dependency sources: index / Git / local path
+
+</details>
+
+<details>
+<summary><b>Workspaces</b></summary>
 
 - `[workspace] members = ["libs/*", "apps/*"]`
-- 统一锁文件 + 统一 target 目录
-- 版本集中管理：`[workspace.dependencies]` + `.workspace = true`
-- 选择性构建：`mcpp build -p member-name`
-- 配置继承：工具链、构建标志、索引从根级联到成员
+- Unified lockfile + unified target directory
+- Centralized version management: `[workspace.dependencies]` + `.workspace = true`
+- Selective builds: `mcpp build -p member-name`
+- Config inheritance: toolchains, build flags, and indices cascade from root to members
 
 </details>
 
 <details>
-<summary><b>打包与发布</b></summary>
+<summary><b>Packaging & publishing</b></summary>
 
-- `mcpp pack`：三种 Linux 发布模式 — static（musl全静态）/ bundle-project / bundle-all
-- musl 全静态二进制：单文件可分发，无 glibc 依赖（Linux x86_64）
-- `mcpp publish`：生成 xpkg.lua + 发布到包索引
-- 自动 patchelf 修正 RPATH（Linux）
+- `mcpp pack`: three Linux release modes — static (fully static musl) / bundle-project / bundle-all
+- Fully static musl binaries: single-file distribution, no glibc dependency (Linux x86_64)
+- `mcpp publish`: generates xpkg.lua + publishes to a package index
+- Automatic RPATH fix-up via patchelf (Linux)
 
 </details>
 
 <details>
-<summary><b>开发体验</b></summary>
+<summary><b>Developer experience</b></summary>
 
-- `mcpp new` — 创建模块化项目;`--template <pkg>[@ver][:<tmpl>]` 使用**库自带模板**(如 `--template imgui`),`--list-templates <pkg>` 列举
-- `mcpp run [-- args]` — 构建并运行
-- `mcpp test [-- args]` — 自动发现并运行测试
-- `mcpp search` — 搜索包索引
-- `mcpp add / remove / update` — 依赖管理
-- `mcpp explain E0001` — 错误码详细解释
-- `mcpp self doctor` — 环境自诊断
+- `mcpp new` — create a modular project; `--template <pkg>[@ver][:<tmpl>]` uses a **library-provided template** (e.g. `--template imgui`); `--list-templates <pkg>` lists them
+- `mcpp run [-- args]` — build and run
+- `mcpp test [-- args]` — auto-discover and run tests
+- `mcpp search` — search package indices
+- `mcpp add / remove / update` — dependency management
+- `mcpp explain E0001` — detailed error-code explanations
+- `mcpp self doctor` — environment self-diagnosis
 
 </details>
 
-## 平台支持
+## Platform Support
 
 | OS / arch        | GCC (glibc) | GCC (musl) | Clang / LLVM | MSVC |
 |------------------|:-----------:|:----------:|:------------:|:----:|
-| Linux x86_64     | ✅ | ✅ *默认* | ✅ | — |
+| Linux x86_64     | ✅ | ✅ *default* | ✅ | — |
 | Linux aarch64    | 🔄 | 🔄 | 🔄 | — |
-| macOS arm64      | — | — | ✅ *默认* | — |
+| macOS arm64      | — | — | ✅ *default* | — |
 | macOS x86_64     | — | — | 🔄 | — |
-| Windows x86_64   | — | — | ✅ ¹ *默认* | 🔄 |
+| Windows x86_64   | — | — | ✅ ¹ *default* | 🔄 |
 
-✅ 已支持 ｜ 🔄 计划中
+✅ supported ｜ 🔄 planned
 
-> *默认*：Linux 默认工具链为 musl-gcc,release 二进制走 musl 全静态；
-> macOS ARM64 / Windows x86_64 默认工具链均为 LLVM/Clang。
+> *default*: the default toolchain on Linux is musl-gcc; release binaries are fully static musl builds.
+> The default toolchain on macOS ARM64 / Windows x86_64 is LLVM/Clang.
 >
-> ¹ Windows 上 Clang/LLVM 当前依赖系统已安装 **MSVC BuildTools 或 Visual Studio**
-> （提供 UCRT、Windows SDK、MSVC STL）。零-MSVC 依赖的 `llvm-mingw` 路线在规划中
-> ([讨论](https://github.com/mcpp-community/mcpp/issues))。
+> ¹ On Windows, Clang/LLVM currently requires an existing **MSVC BuildTools or Visual Studio** installation
+> (providing the UCRT, Windows SDK, and MSVC STL). A zero-MSVC `llvm-mingw` route is planned
+> ([discussion](https://github.com/mcpp-community/mcpp/issues)).
 
-## 文档
+## Documentation
 
-- [快速开始](docs/00-getting-started.md) — 5 分钟完成 install → new → build → run
-- [示例项目](docs/01-examples.md)
-- [发布打包](docs/02-pack-and-release.md)
-- [工具链管理](docs/03-toolchains.md)
-- [从源码构建](docs/04-build-from-source.md)
-- [mcpp.toml 指南](docs/05-mcpp-toml.md)
-- [工作空间](docs/06-workspace.md)
+- [Getting Started](docs/00-getting-started.md) — install → new → build → run in 5 minutes
+- [Examples](docs/01-examples.md)
+- [Packaging & Release](docs/02-pack-and-release.md)
+- [Toolchain Management](docs/03-toolchains.md)
+- [Building from Source](docs/04-build-from-source.md)
+- [mcpp.toml Guide](docs/05-mcpp-toml.md)
+- [Workspaces](docs/06-workspace.md)
 
-任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅。
+Full options for any command are available via `mcpp <cmd> --help`.
 
-**AI 辅助学习**：你可以将以下提示词发给 AI 编码助手，让它帮你快速了解 mcpp：
-
-```
-阅读 https://github.com/mcpp-community/mcpp 仓库的
-.agents/skills/mcpp-usage/SKILL.md 和 docs/ 目录下的文档，
-告诉我如何用 mcpp 创建一个带依赖的 C++23 模块项目。
-```
-
-## 参与贡献
-
-欢迎通过 Issue 和 PR 参与项目开发。项目接受开发者使用 AI Agent 参与开发与贡献。
-
-**基本流程**
-
-1. 创建 Issue — Bug 修复、新功能、优化等，先在 [issues](https://github.com/mcpp-community/mcpp/issues) 创建讨论
-2. 实现改动 — Fork 仓库，创建分支，实现并验证（`mcpp build` + E2E 测试）
-3. 提交 PR — 使用 `gh pr create`，确保 CI 通过
-4. CI 必须通过 — CI 不通过的 PR 不会被合入
-
-**提交信息规范**：`feat:` / `fix:` / `test:` / `docs:` / `refactor:` 前缀
-
-**AI Agent 贡献**：项目的 [`.agents/skills/mcpp-contributing/SKILL.md`](.agents/skills/mcpp-contributing/SKILL.md) 提供了完整的 Agent 贡献流程和项目结构说明。将以下提示词发给 AI 助手即可：
+**AI-assisted learning**: send the following prompt to an AI coding assistant to get up to speed with mcpp quickly:
 
 ```
-阅读 https://github.com/mcpp-community/mcpp 仓库的
-.agents/skills/mcpp-contributing/SKILL.md，
-按照指南帮我给 mcpp 项目提交一个贡献。
+Read .agents/skills/mcpp-usage/SKILL.md and the docs/ directory of the
+https://github.com/mcpp-community/mcpp repository,
+then tell me how to create a C++23 module project with dependencies using mcpp.
 ```
 
-## 社区 & 生态
+## Contributing
 
-- [社区论坛](https://forum.d2learn.org/category/20) — 交流群 (Q: 1067245099)
-- [mcpp-index](https://github.com/mcpp-community/mcpp-index) — 默认包索引
-- [mcpplibs](https://github.com/mcpplibs) — 模块化 C++ 库集合
+Contributions via issues and PRs are welcome. The project accepts contributions developed with AI agents.
 
-### 致谢
+**Basic workflow**
 
-项目依赖和灵感来源：
+1. Open an issue — for bug fixes, new features, or improvements, start a discussion in [issues](https://github.com/mcpp-community/mcpp/issues) first
+2. Implement the change — fork the repo, create a branch, implement and verify (`mcpp build` + E2E tests)
+3. Submit a PR — use `gh pr create` and make sure CI passes
+4. CI must pass — PRs with failing CI will not be merged
 
-- [xlings](https://github.com/d2learn/xlings) — 工具链 / 包管理底座
-- [mcpplibs.cmdline](https://github.com/mcpplibs/cmdline) — CLI 框架
-- [ninja](https://github.com/ninja-build/ninja) — 底层构建引擎
-- [xmake](https://github.com/xmake-io/xmake) — 跨平台构建工具
-- [cargo](https://github.com/rust-lang/cargo) — Rust 包管理器
+**Commit message convention**: `feat:` / `fix:` / `test:` / `docs:` / `refactor:` prefixes
+
+**AI agent contributions**: the repo's [`.agents/skills/mcpp-contributing/SKILL.md`](.agents/skills/mcpp-contributing/SKILL.md) provides a complete agent contribution workflow and project structure guide. Just send this prompt to your AI assistant:
+
+```
+Read .agents/skills/mcpp-contributing/SKILL.md of the
+https://github.com/mcpp-community/mcpp repository,
+then follow the guide to help me submit a contribution to mcpp.
+```
+
+## Community & Ecosystem
+
+- [Community Forum](https://forum.d2learn.org/category/20) — chat group (QQ: 1067245099)
+- [mcpp-index](https://github.com/mcpp-community/mcpp-index) — default package index
+- [mcpplibs](https://github.com/mcpplibs) — collection of modular C++ libraries
+
+### Acknowledgements
+
+Dependencies and sources of inspiration:
+
+- [xlings](https://github.com/d2learn/xlings) — toolchain / package-management foundation
+- [mcpplibs.cmdline](https://github.com/mcpplibs/cmdline) — CLI framework
+- [ninja](https://github.com/ninja-build/ninja) — underlying build engine
+- [xmake](https://github.com/xmake-io/xmake) — cross-platform build tool
+- [cargo](https://github.com/rust-lang/cargo) — Rust package manager

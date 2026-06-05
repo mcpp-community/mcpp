@@ -1,22 +1,22 @@
-# 工作空间 (Workspace)
+# Workspace
 
-工作空间允许在同一个仓库中组织和管理多个相关的 mcpp 包（库或应用程序）。各成员包共享统一的依赖版本配置和工具链设置，同时保持独立的 `mcpp.toml` 工程文件。
+A workspace lets you organize and manage multiple related mcpp packages (libraries or applications) within a single repository. Member packages share a unified set of dependency versions and toolchain settings while each keeping its own `mcpp.toml` project file.
 
-## 1. 概述
+## 1. Overview
 
-工作空间解决以下问题：
+Workspaces address the following problems:
 
-- **依赖版本统一管理** — 多个子包使用相同版本的第三方依赖，避免重复声明和版本不一致
-- **工具链配置共享** — 在工作空间根目录统一声明工具链，各成员继承或覆盖
-- **多包协同开发** — 库与应用在同一仓库中开发，通过 `path` 依赖相互引用
+- **Unified dependency-version management** — multiple sub-packages use the same versions of third-party dependencies, avoiding duplicate declarations and version drift.
+- **Shared toolchain configuration** — declare the toolchain once at the workspace root; members inherit it or override it as needed.
+- **Multi-package co-development** — libraries and applications are developed in the same repository and reference one another through `path` dependencies.
 
-工作空间不改变依赖声明方式。成员之间通过已有的 `path = "..."` 机制声明依赖关系，与非工作空间项目的用法完全一致。
+A workspace does not change how dependencies are declared. Members reference one another through the existing `path = "..."` mechanism, exactly as in a non-workspace project.
 
-## 2. 工程文件结构
+## 2. Project File Structure
 
-### 2.1 工作空间根
+### 2.1 The Workspace Root
 
-在仓库根目录的 `mcpp.toml` 中声明 `[workspace]`：
+Declare `[workspace]` in the `mcpp.toml` at the repository root:
 
 ```toml
 [workspace]
@@ -27,9 +27,9 @@ members = [
 ]
 ```
 
-`members` 列出各成员包的相对路径，每个路径下须包含独立的 `mcpp.toml`。
+`members` lists the relative path of each member package; every such path must contain its own `mcpp.toml`.
 
-可选 `exclude` 字段排除特定路径：
+The optional `exclude` field excludes specific paths:
 
 ```toml
 [workspace]
@@ -37,17 +37,17 @@ members = ["libs/*"]
 exclude = ["libs/experimental"]
 ```
 
-### 2.2 虚拟工作空间与根包工作空间
+### 2.2 Virtual Workspaces vs. Root-Package Workspaces
 
-**虚拟工作空间**：根 `mcpp.toml` 仅包含 `[workspace]`，不包含 `[package]`。根目录不产出构建产物，仅作为管理节点。
+**Virtual workspace**: the root `mcpp.toml` contains only `[workspace]` and no `[package]`. The root produces no build artifacts and serves purely as a management node.
 
 ```toml
-# 虚拟工作空间 — 只有 [workspace]
+# Virtual workspace — [workspace] only
 [workspace]
 members = ["libs/core", "apps/server"]
 ```
 
-**根包工作空间**：根 `mcpp.toml` 同时包含 `[package]` 和 `[workspace]`。根目录本身也是一个可构建的包。
+**Root-package workspace**: the root `mcpp.toml` contains both `[package]` and `[workspace]`. The root itself is also a buildable package.
 
 ```toml
 [workspace]
@@ -61,9 +61,9 @@ version = "0.1.0"
 core = { path = "libs/core" }
 ```
 
-### 2.3 成员工程文件
+### 2.3 Member Project Files
 
-各成员维护独立的 `mcpp.toml`，结构与普通项目一致：
+Each member maintains its own `mcpp.toml`, structured just like a regular project:
 
 ```toml
 # libs/core/mcpp.toml
@@ -76,7 +76,7 @@ version   = "0.1.0"
 kind = "lib"
 ```
 
-成员之间通过 `path` 依赖引用：
+Members reference one another through `path` dependencies:
 
 ```toml
 # libs/http/mcpp.toml
@@ -92,12 +92,12 @@ core = { path = "../core" }
 mbedtls.workspace = true
 ```
 
-## 3. 依赖版本继承
+## 3. Inheriting Dependency Versions
 
-在 `[workspace.dependencies]` 中集中声明依赖版本，成员通过 `.workspace = true` 继承：
+Declare dependency versions centrally under `[workspace.dependencies]`; members inherit them with `.workspace = true`:
 
 ```toml
-# 根 mcpp.toml
+# root mcpp.toml
 [workspace.dependencies]
 cmdline = "0.0.2"
 capi.lua = "0.0.3"       # dotted selector: mcpplibs.capi/lua, then capi/lua
@@ -108,35 +108,35 @@ gtest   = "1.15.2"
 ```
 
 ```toml
-# 成员 mcpp.toml
+# member mcpp.toml
 [dependencies.compat]
-mbedtls.workspace = true    # 继承版本 → "3.6.1"
+mbedtls.workspace = true    # inherits version → "3.6.1"
 
 [dev-dependencies.compat]
-gtest.workspace = true      # 继承版本 → "1.15.2"
+gtest.workspace = true      # inherits version → "1.15.2"
 ```
 
-成员可以覆盖继承的版本：
+A member can override an inherited version:
 
 ```toml
 [dependencies.compat]
-mbedtls = "4.0.0"          # 覆盖，不使用 workspace 版本
+mbedtls = "4.0.0"          # override; does not use the workspace version
 ```
 
-## 4. 工具链与构建配置继承
+## 4. Inheriting Toolchain and Build Configuration
 
-工作空间根的 `[toolchain]` 和 `[target.<triple>]` 配置自动继承到所有成员。成员可在自身的工程文件中覆盖。
+The workspace root's `[toolchain]` and `[target.<triple>]` settings are automatically inherited by all members. A member can override them in its own project file.
 
-配置优先级（从高到低）：
+Configuration precedence (highest to lowest):
 
-1. 命令行参数（`--target`、`--static`）
-2. 成员 `mcpp.toml` 中的声明
-3. 工作空间根 `mcpp.toml` 中的声明
-4. 全局配置（`~/.mcpp/config.toml`）
-5. 内置默认值
+1. Command-line arguments (`--target`, `--static`)
+2. Declarations in the member `mcpp.toml`
+3. Declarations in the workspace-root `mcpp.toml`
+4. Global configuration (`~/.mcpp/config.toml`)
+5. Built-in defaults
 
 ```toml
-# 工作空间根
+# workspace root
 [toolchain]
 default = "gcc@16.1.0"
 
@@ -146,47 +146,47 @@ linkage   = "static"
 ```
 
 ```toml
-# 某成员覆盖工具链
+# a member overrides the toolchain
 [toolchain]
 default = "clang@19.0"
 ```
 
-## 5. 构建命令
+## 5. Build Commands
 
-### 5.1 从工作空间根目录构建
+### 5.1 Building from the Workspace Root
 
 ```bash
-mcpp build                  # 构建默认目标（自动选择含二进制目标的成员）
-mcpp build -p server        # 构建指定成员及其依赖
-mcpp build -p core          # 构建指定库成员
+mcpp build                  # build the default target (auto-selects the member with a binary target)
+mcpp build -p server        # build a specific member and its dependencies
+mcpp build -p core          # build a specific library member
 ```
 
-### 5.2 从成员子目录构建
+### 5.2 Building from a Member Subdirectory
 
 ```bash
 cd libs/http
-mcpp build                  # 自动检测工作空间，构建当前成员
+mcpp build                  # auto-detects the workspace and builds the current member
 ```
 
-mcpp 从当前目录向上搜索，若发现包含 `[workspace]` 的 `mcpp.toml` 且当前目录在 `members` 列表中，则自动进入工作空间模式，继承工作空间配置。
+mcpp searches upward from the current directory; if it finds an `mcpp.toml` containing `[workspace]` and the current directory is listed in `members`, it automatically enters workspace mode and inherits the workspace configuration.
 
-### 5.3 `-p, --package` 选项
+### 5.3 The `-p, --package` Option
 
-`-p` 可用于 `build`、`test`、`run` 等命令，指定构建的目标成员。参数值为成员路径的最后一段目录名或完整相对路径：
+`-p` works with `build`, `test`, `run`, and other commands to select the target member. Its value is either the last path segment of a member's directory name or the full relative path:
 
 ```bash
-mcpp build -p server        # 匹配 apps/server
-mcpp test -p core           # 匹配 libs/core
+mcpp build -p server        # matches apps/server
+mcpp test -p core           # matches libs/core
 mcpp run -p server -- --port 8080
 ```
 
-## 6. 目录布局
+## 6. Directory Layout
 
-工作空间推荐的目录布局：
+The recommended directory layout for a workspace:
 
 ```
 myproject/
-├── mcpp.toml               # [workspace] 声明
+├── mcpp.toml               # [workspace] declaration
 ├── libs/
 │   ├── core/
 │   │   ├── mcpp.toml       # [package] namespace="myproject" name="core"
@@ -203,16 +203,16 @@ myproject/
             └── main.cpp    # import myproject.http;
 ```
 
-各成员的构建产物位于各自的 `target/` 子目录下。
+Each member's build artifacts live under its own `target/` subdirectory.
 
-## 7. 与 C++ 模块的关系
+## 7. Relationship to C++ Modules
 
-工作空间与 C++23 模块机制协同工作：
+Workspaces work in concert with the C++23 module mechanism:
 
-- **接口可见性由语言控制** — `export module` 和 `import` 语句决定模块的公开接口，工作空间不做额外的可见性限制
-- **模块名由库作者决定** — 工作空间不强制模块名与包名或命名空间一致
-- **partition 用于内部组织** — `import :internal;`（不带 `export`）的 partition 对消费者不可见，无需构建工具介入
+- **Interface visibility is controlled by the language** — `export module` and `import` statements determine a module's public interface; the workspace imposes no additional visibility restrictions.
+- **Module names are chosen by the library author** — the workspace does not require module names to match the package name or namespace.
+- **Partitions are for internal organization** — a partition imported via `import :internal;` (without `export`) is invisible to consumers, with no build-tool involvement required.
 
-## 8. 完整示例
+## 8. Complete Example
 
-参见 [`examples/04-workspace/`](../examples/04-workspace/)，包含一个三成员工作空间的完整可运行示例。
+See [`examples/04-workspace/`](../examples/04-workspace/) for a complete, runnable example of a three-member workspace.

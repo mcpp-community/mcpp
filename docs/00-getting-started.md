@@ -1,30 +1,28 @@
-# 00 — 快速开始
+# 00 — Getting Started
 
-> 5 分钟完成 install → new → build → run → pack 全流程。
+> Go from install → new → build → run → pack in 5 minutes.
 
-## 安装
+## Installation
 
-仅需 Linux x86_64 或 macOS ARM64 环境,无需预先安装 GCC、xlings 或其他依赖。
-mcpp 在首次运行时会将默认工具链安装至独立沙盒(`~/.mcpp/`)。
-Linux 默认使用 musl-gcc,macOS 默认使用 LLVM/Clang。
+You only need a Linux x86_64 or macOS ARM64 environment — no need to install GCC, xlings, or any other dependencies beforehand.
+On its first run, mcpp installs the default toolchain into an isolated sandbox (`~/.mcpp/`).
+Linux defaults to musl-gcc, while macOS defaults to LLVM/Clang.
 
-推荐通过 [xlings](https://xlings.d2learn.org) 进行安装,可与系统
-环境保持隔离:
+We recommend installing via [xlings](https://xlings.d2learn.org), which keeps mcpp isolated from your system environment:
 
 ```bash
 xlings install mcpp -y
 ```
 
-或使用一键安装脚本(内置 xlings,统一安装至 `~/.mcpp/`):
+Alternatively, use the one-line installer script (xlings is bundled, and everything is installed under `~/.mcpp/`):
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
 ```
 
-完整安装说明(包括 xlings 安装命令、Windows 支持等)参见
-[README 的"安装"小节](../README.md#安装)。
+For full installation instructions (including xlings install commands, Windows support, and more), see the ["Installation" section of the README](../README.md#install).
 
-安装完成后,启动新的 shell 会话或执行 `source ~/.bashrc`,然后验证:
+Once installation is complete, start a new shell session or run `source ~/.bashrc`, then verify:
 
 ```bash
 mcpp --version
@@ -32,27 +30,28 @@ mcpp --version
 ```
 
 > [!TIP]
-> 若提示 `command not found`,通常是 `~/.mcpp/bin` 尚未加入当前 shell
-> 的 PATH。重启终端,或执行 `source ~/.bashrc`(zsh 对应 `~/.zshrc`,
-> fish 使用 `exec fish`)即可生效。也可直接通过绝对路径
-> `~/.mcpp/bin/mcpp` 调用。
+> If you get `command not found`, it usually means `~/.mcpp/bin` has not yet
+> been added to the current shell's PATH. Restart your terminal, or run
+> `source ~/.bashrc` (use `~/.zshrc` for zsh, or `exec fish` for fish) to
+> apply the change. You can also invoke mcpp directly via its absolute path
+> `~/.mcpp/bin/mcpp`.
 
-## 创建项目
+## Creating a Project
 
 ```bash
 mcpp new hello && cd hello
 ```
 
-生成的目录结构如下:
+This generates the following directory structure:
 
 ```
 hello/
-├── mcpp.toml         ← 工程描述
+├── mcpp.toml         ← project manifest
 └── src/
     └── main.cpp
 ```
 
-`src/main.cpp` 默认为 C++23 模块化的 hello world:
+By default, `src/main.cpp` is a C++23 modular hello world:
 
 ```cpp
 import std;
@@ -63,7 +62,7 @@ int main() {
 }
 ```
 
-## 构建与运行
+## Building and Running
 
 ```bash
 mcpp build
@@ -75,54 +74,54 @@ mcpp run
 # Built with import std + std::println on modular C++23.
 ```
 
-首次构建需下载默认工具链(Linux 为 musl-gcc 15.1,macOS 为 LLVM/Clang 20.1),
-期间显示进度与速度。下载完成后,所有 mcpp 项目共用同一份沙盒。
+The first build downloads the default toolchain (musl-gcc 15.1 on Linux, LLVM/Clang 20.1 on macOS),
+showing progress and speed along the way. Once downloaded, all mcpp projects share the same sandbox.
 
-## 增量编译与测试
+## Incremental Compilation and Testing
 
 ```bash
-mcpp build              # 增量构建
-mcpp clean              # 清理 target/
-mcpp test               # 编译并运行 tests/**/*.cpp(gtest 风格)
+mcpp build              # incremental build
+mcpp clean              # clean target/
+mcpp test               # compile and run tests/**/*.cpp (gtest style)
 ```
 
-## 添加依赖
+## Adding Dependencies
 
-在 `mcpp.toml` 中声明依赖:
+Declare dependencies in `mcpp.toml`:
 
 ```toml
 [dependencies]
 "mcpplibs.cmdline" = "^0.0.1"
 ```
 
-`mcpp build` 将自动从
-[mcpp-index](https://github.com/mcpp-community/mcpp-index) 解析 SemVer
-约束、拉取源码并加入编译图。完整示例参见
-[01 — 示例项目](01-examples.md) 中的 `02-with-deps`。
+`mcpp build` automatically resolves SemVer constraints against the
+[mcpp-index](https://github.com/mcpp-community/mcpp-index), fetches the source,
+and adds it to the build graph. For a complete example, see `02-with-deps` in
+[01 — Examples](01-examples.md).
 
-## 生成发布包
+## Producing a Release Package
 
-`mcpp pack` 将构建产物与运行期依赖打包为可独立分发的 tarball:
+`mcpp pack` bundles your build artifacts and runtime dependencies into a self-contained tarball that can be distributed independently:
 
 ```bash
-mcpp pack                          # 默认 bundle-project,包含项目第三方 .so
-mcpp pack --mode static            # 全静态(musl)
-mcpp pack --mode bundle-all        # 全自包含,含 libc 与 ld-linux
+mcpp pack                          # default bundle-project, includes the project's third-party .so files
+mcpp pack --mode static            # fully static (musl)
+mcpp pack --mode bundle-all        # fully self-contained, including libc and ld-linux
 ```
 
-三种模式的差异及产物布局参见 [02 — 发布打包](02-pack-and-release.md)。
+For the differences between the three modes and their artifact layouts, see [02 — Packaging and Release](02-pack-and-release.md).
 
-## 后续阅读
+## Further Reading
 
-- [01 — 示例项目](01-examples.md) — 可直接运行的最小工程集合
-- [02 — 发布打包](02-pack-and-release.md) — 构建可分发产物
-- [03 — 工具链管理](03-toolchains.md) — 切换编译器与多版本管理
-- 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅
+- [01 — Examples](01-examples.md) — a collection of ready-to-run minimal projects
+- [02 — Packaging and Release](02-pack-and-release.md) — building distributable artifacts
+- [03 — Toolchain Management](03-toolchains.md) — switching compilers and managing multiple versions
+- The full set of options for any command is available via `mcpp <cmd> --help`
 
 
-## 更多入口
+## More Entry Points
 
-- GUI 起步:`mcpp new myapp --template imgui`(模板随 imgui 库分发、版本自动对齐;
-  `mcpp new --list-templates imgui` 查看库提供的全部模板,`--template imgui:docking` 选指定模板)。
-- 解释默认决策:`mcpp why [toolchain|runtime|deps]`;主机能力体检:`mcpp self doctor`;
-  机器可读解析清单:构建产物 `target/<triple>/<fp>/resolution.json`。
+- GUI quickstart: `mcpp new myapp --template imgui` (templates are distributed with the imgui library and their versions are aligned automatically;
+  run `mcpp new --list-templates imgui` to see all templates the library provides, or use `--template imgui:docking` to select a specific one).
+- Explaining default decisions: `mcpp why [toolchain|runtime|deps]`; host capability checkup: `mcpp self doctor`;
+  machine-readable resolution manifest: the build artifact `target/<triple>/<fp>/resolution.json`.

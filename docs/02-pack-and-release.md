@@ -1,77 +1,81 @@
-# 02 — 发布打包
+# 02 — Packaging for Release
 
-> `mcpp build` 产生的二进制仅可在本机运行 —— loader 与 RUNPATH 均指向
-> `~/.mcpp/`。如需分发至其他机器或部署至服务器,应使用 `mcpp pack`
-> 生成自包含 tarball。
+> The binary produced by `mcpp build` only runs on the local machine —— both
+> the loader and the RUNPATH point into `~/.mcpp/`. To distribute it to other
+> machines or deploy it to a server, use `mcpp pack` to produce a
+> self-contained tarball.
 
-## 三种模式
+## Three Modes
 
-| 模式 | 说明 | 体积增量 | 兼容性 |
+| Mode | Description | Size Increase | Compatibility |
 |---|---|---|---|
-| `static` | musl 全静态,无运行期依赖 | +5–10 MB | 任意 Linux x86_64 |
-| `bundle-project`(默认) | 仅打包项目第三方 .so | +几 MB | 主流发行版(Ubuntu 22+, Debian 12+, RHEL 9+ 等) |
-| `bundle-all` | 包含 ld-linux、libc、libstdc++ 与项目 .so | +30–50 MB | 包含老旧版本在内的任意 Linux |
+| `static` | Fully static via musl, no runtime dependencies | +5–10 MB | Any Linux x86_64 |
+| `bundle-project` (default) | Bundles only the project's third-party `.so` files | +a few MB | Mainstream distros (Ubuntu 22+, Debian 12+, RHEL 9+, etc.) |
+| `bundle-all` | Includes ld-linux, libc, libstdc++ and the project's `.so` files | +30–50 MB | Any Linux, including older versions |
 
-选择建议:
+How to choose:
 
-- 命令行工具,或目标为 Docker scratch、Alpine 等最小镜像 → `static`
-- 桌面或服务端发布,目标为主流 Linux 发行版 → `bundle-project`(默认)
-- 需兼容老旧 CentOS、麒麟等 glibc 版本较低的环境 → `bundle-all`
+- Command-line tools, or targets like Docker scratch or Alpine minimal images → `static`
+- Desktop or server releases targeting mainstream Linux distros → `bundle-project` (default)
+- Environments that need compatibility with older glibc versions such as legacy CentOS or Kylin → `bundle-all`
 
-## 命令
+## Commands
 
 ```bash
-mcpp pack                          # 默认 bundle-project
+mcpp pack                          # bundle-project by default
 mcpp pack --mode static
 mcpp pack --mode bundle-all
-mcpp pack --target x86_64-linux-musl   # 等价 --mode static
-mcpp pack --format dir                 # 输出为目录,不打包 tarball
-mcpp pack -o myapp.tar.gz              # 仅文件名:落到 target/dist/myapp.tar.gz
-mcpp pack -o /abs/path/myapp.tar.gz    # 含目录:按字面路径输出
+mcpp pack --target x86_64-linux-musl   # equivalent to --mode static
+mcpp pack --format dir                 # output as a directory, no tarball
+mcpp pack -o myapp.tar.gz              # filename only: lands at target/dist/myapp.tar.gz
+mcpp pack -o /abs/path/myapp.tar.gz    # includes a directory: output to the literal path
 ```
 
-`-o` 接受裸文件名时自动归到 `target/dist/`;含目录(相对或绝对)
-时按字面路径输出。
+When `-o` is given a bare filename, the output is placed under `target/dist/`;
+when it includes a directory (relative or absolute), the literal path is used.
 
-完整选项参见 `mcpp pack --help`。
+For the full set of options, see `mcpp pack --help`.
 
-## 产物布局
+## Output Layout
 
-tarball 内容包在一个顶层目录里,该目录的名字与 tarball 文件名(去掉
-`.tar.gz`)保持一致 —— 这样图形界面"右键解压"和命令行 `tar -xzf` 都
-得到同一个自包含的目录,不会把内容散到当前路径。
+The tarball contents are wrapped in a single top-level directory whose name
+matches the tarball filename (minus the `.tar.gz`) —— this way both a GUI
+"right-click extract" and a command-line `tar -xzf` yield the same
+self-contained directory, instead of scattering the contents across the current
+path.
 
 ### Mode `static`
 
 ```
 target/dist/myapp-0.1.0-x86_64-linux-musl-static.tar.gz
 └── myapp-0.1.0-x86_64-linux-musl-static/
-    ├── bin/myapp                ← 全静态 ELF(无 PT_INTERP / RUNPATH)
-    ├── myapp                    ← 顶层入口(thin shell wrapper,可直接执行 ./myapp)
-    ├── README.md                ← 自动从项目根目录拷贝
+    ├── bin/myapp                ← fully static ELF (no PT_INTERP / RUNPATH)
+    ├── myapp                    ← top-level entry point (thin shell wrapper, run ./myapp directly)
+    ├── README.md                ← copied automatically from the project root
     └── LICENSE
 ```
 
-### Mode `bundle-project`(默认)
+### Mode `bundle-project` (default)
 
 ```
 target/dist/myapp-0.1.0-x86_64-linux-gnu.tar.gz
 └── myapp-0.1.0-x86_64-linux-gnu/
-    ├── bin/myapp                ← 动态链接,RUNPATH=$ORIGIN/../lib
+    ├── bin/myapp                ← dynamically linked, RUNPATH=$ORIGIN/../lib
     │                                PT_INTERP=/lib64/ld-linux-x86-64.so.2
     ├── lib/
-    │   ├── libcurl.so.4         ← 项目第三方依赖
+    │   ├── libcurl.so.4         ← project third-party dependency
     │   ├── libssl.so.3
     │   └── ...
-    ├── myapp                    ← 顶层入口
+    ├── myapp                    ← top-level entry point
     ├── README.md
     └── LICENSE
 ```
 
-跳过列表参考
+The skip list follows
 [PEP 600 / manylinux2014](https://peps.python.org/pep-0600/) ——
-`libc`、`libm`、`libstdc++`、`libgcc_s`、`ld-linux-*` 等基础库默认
-假设目标系统已具备,不打包进 tarball。
+base libraries such as `libc`, `libm`, `libstdc++`, `libgcc_s`, and
+`ld-linux-*` are assumed to already exist on the target system and are not
+bundled into the tarball.
 
 ### Mode `bundle-all`
 
@@ -80,47 +84,52 @@ target/dist/myapp-0.1.0-x86_64-linux-gnu-bundle-all.tar.gz
 └── myapp-0.1.0-x86_64-linux-gnu-bundle-all/
     ├── bin/myapp
     ├── lib/
-    │   ├── ld-linux-x86-64.so.2  ← 完整 loader 与 libc
+    │   ├── ld-linux-x86-64.so.2  ← complete loader and libc
     │   ├── libc.so.6
     │   ├── libstdc++.so.6
     │   ├── libgcc_s.so.1
-    │   └── ...项目依赖
-    ├── myapp                     ← 双入口之一
-    ├── run.sh                    ← 双入口之二(内容相同)
+    │   └── ...project dependencies
+    ├── myapp                     ← one of two entry points
+    ├── run.sh                    ← the other entry point (identical contents)
     ├── README.md
     └── LICENSE
 ```
 
-`-o foo.tar.gz` 时顶层目录名也会变成 `foo`(包名 - 目录名 始终一致)。
+With `-o foo.tar.gz`, the top-level directory name also becomes `foo` (the
+package name and directory name always stay in sync).
 
-ELF 规范限制 `PT_INTERP` 不能使用 `$ORIGIN`,因此 bundle-all 模式
-通过 `run.sh`(及顶层同名 wrapper)以绝对路径方式调用 loader:
+The ELF specification forbids `PT_INTERP` from using `$ORIGIN`, so in
+bundle-all mode the loader is invoked by absolute path through `run.sh` (and
+the top-level wrapper of the same name):
 
 ```sh
 exec "$here/lib/ld-linux-x86-64.so.2" --library-path "$here/lib" "$here/bin/myapp" "$@"
 ```
 
-## 配置项
+## Configuration
 
-打包行为通过 `mcpp.toml` 中的 `[pack]` 节配置,常用字段如下:
+Packaging behavior is configured via the `[pack]` section in `mcpp.toml`. The
+common fields are:
 
 ```toml
 [pack]
-default_mode = "static"             # 不带 --mode 时的默认模式
-include      = ["share/**", "config/*.toml"]   # 额外打包的文件
+default_mode = "static"             # default mode when --mode is omitted
+include      = ["share/**", "config/*.toml"]   # extra files to bundle
 exclude      = ["debug/**"]
 
-# 微调 bundle-project 的过滤策略
+# Fine-tune the bundle-project filtering policy
 [pack.bundle-project]
-also_skip    = ["libcustom.so"]     # 假定目标系统已具备的库
-force_bundle = ["libfoo.so"]        # 即使命中 PEP 600 名单也强制打包
+also_skip    = ["libcustom.so"]     # libraries assumed to exist on the target system
+force_bundle = ["libfoo.so"]        # bundle even if matched by the PEP 600 list
 ```
 
-`static` 模式还需在 `[target.<triple>]` 中配置 musl 工具链,完整写法
-参见 [`examples/03-pack-static`](../examples/03-pack-static/) 的 `mcpp.toml`。
+The `static` mode additionally requires a musl toolchain configured under
+`[target.<triple>]`; for the full setup, see the `mcpp.toml` in
+[`examples/03-pack-static`](../examples/03-pack-static/).
 
-## 待支持
+## Planned Support
 
-macOS dylib、Windows DLL,以及 `.deb` / `.rpm` / AppImage 等分发格式
-尚在规划中。本文档随 `mcpp pack` 实现演进,最新选项以
-`mcpp pack --help` 为准。
+macOS dylib, Windows DLL, and distribution formats such as `.deb` / `.rpm` /
+AppImage are still on the roadmap. This document evolves alongside the
+`mcpp pack` implementation; for the latest options, refer to
+`mcpp pack --help`.

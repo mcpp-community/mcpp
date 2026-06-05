@@ -1,12 +1,12 @@
-# mcpp.toml 工程文件指南
+# The mcpp.toml Manifest Guide
 
-`mcpp.toml` 是 mcpp 构建工具的项目配置文件,类似 Cargo 的 `Cargo.toml` 或 Node 的 `package.json`。放在项目根目录下,`mcpp build` 会自动发现并读取它。
+`mcpp.toml` is the project configuration file for the mcpp build tool, analogous to Cargo's `Cargo.toml` or Node's `package.json`. Place it in your project root and `mcpp build` will discover and read it automatically.
 
-## 1. 最小化示例
+## 1. Minimal Examples
 
-mcpp 的设计原则是 **约定优于配置** —— 大多数字段都有合理默认值,最简单的 `mcpp.toml` 只需几行:
+mcpp is designed around **convention over configuration** — most fields have sensible defaults, so the simplest `mcpp.toml` is just a few lines:
 
-### 1.1 可执行程序（最简）
+### 1.1 Executable (minimal)
 
 ```toml
 [package]
@@ -14,13 +14,13 @@ name    = "hello"
 version = "0.1.0"
 ```
 
-mcpp 自动推断:
-- 源文件: `src/**/*.{cppm,cpp,cc,c}`
-- 入口: `src/main.cpp` → 生成 `hello` 二进制
-- 标准: C++23
-- 模块: 扫描 `export module ...` 声明自动建立依赖图
+mcpp infers automatically:
+- Source files: `src/**/*.{cppm,cpp,cc,c}`
+- Entry point: `src/main.cpp` → produces the `hello` binary
+- Standard: C++23
+- Modules: scans `export module ...` declarations and builds the dependency graph automatically
 
-### 1.2 库项目（最简）
+### 1.2 Library project (minimal)
 
 ```toml
 [package]
@@ -31,275 +31,297 @@ version = "0.1.0"
 kind = "lib"
 ```
 
-lib-root 约定:主模块接口默认在 `src/mylib.cppm`(包名的最后一段)。
+lib-root convention: the primary module interface defaults to `src/mylib.cppm` (the last segment of the package name).
 
-## 2. 完整字段参考
+## 2. Full Field Reference
 
-### 2.1 `[package]` — 包元数据
+### 2.1 `[package]` — Package Metadata
 
 ```toml
 [package]
-name        = "myapp"              # 包名(必填)
-version     = "0.1.0"              # 语义化版本(必填)
-standard    = "c++23"              # C++ 标准(默认 c++23; 可设 c++26)
-description = "My awesome app"     # 简介(可选)
-license     = "MIT"                # 许可证(可选)
-authors     = ["Alice", "Bob"]     # 作者列表(可选)
-repo        = "https://github.com/user/myapp"  # 仓库地址(可选)
+name        = "myapp"              # Package name (required)
+version     = "0.1.0"              # Semantic version (required)
+standard    = "c++23"              # C++ standard (default c++23; can be set to c++26)
+description = "My awesome app"     # Description (optional)
+license     = "MIT"                # License (optional)
+authors     = ["Alice", "Bob"]     # Author list (optional)
+repo        = "https://github.com/user/myapp"  # Repository URL (optional)
 ```
 
-`standard` 是 C++ 语言标准的一等配置。推荐值:
+`standard` is the first-class setting for the C++ language standard. Recommended values:
 
-- `c++23`：默认值，适合当前模块化默认模板。
-- `c++26`：需要 C++26 语言特性时使用。
-- `c++2c`：兼容别名，解析后归一为 `c++26`。
-- `gnu++23` / `gnu++26`：需要 GNU dialect 时使用，会进入 fingerprint 和 std BMI cache key。
-- `c++latest`：跟随当前 mcpp 支持的最新标准，适合本地试验，不推荐要求可复现的发布包使用。
+- `c++23`: the default, suited to the current module-based default templates.
+- `c++26`: use when you need C++26 language features.
+- `c++2c`: a compatibility alias, normalized to `c++26` after parsing.
+- `gnu++23` / `gnu++26`: use when you need a GNU dialect; this enters the fingerprint and the std BMI cache key.
+- `c++latest`: follows the newest standard mcpp currently supports. Good for local experimentation, but not recommended for release packages that require reproducibility.
 
-### 2.2 `[targets.<name>]` — 构建目标
+### 2.2 `[targets.<name>]` — Build Targets
 
 ```toml
-# 可执行程序(默认,有 src/main.cpp 时自动推断)
+# Executable (default; inferred automatically when src/main.cpp exists)
 [targets.myapp]
 kind = "bin"
-main = "src/main.cpp"       # 可选,默认 src/main.cpp
+main = "src/main.cpp"       # Optional, defaults to src/main.cpp
 
-# 静态库
+# Static library
 [targets.mylib]
 kind = "lib"
 
-# 共享库
+# Shared library
 [targets.mylib]
 kind = "shared"
-soname = "libmylib.so.1"  # 可选: ELF/Mach-O ABI 名称,运行时会生成同名 alias
+soname = "libmylib.so.1"  # Optional: ELF/Mach-O ABI name; an alias of the same name is generated at runtime
 ```
 
-`soname` 用于共享库的 ABI 名称,类似 Autotools/CMake 中的
-`SOVERSION`/`SONAME`。在 Linux 上,mcpp 会向链接器传递
-`-Wl,-soname,<name>`,并在输出目录生成 `<name> -> lib<target>.so` alias,
-让下游程序可通过标准 ABI 名称 `DT_NEEDED` 或 `dlopen()` 加载该库。
-该字段只对 `kind = "shared"` 有效,值必须是文件名 basename。
+`soname` is the ABI name for a shared library, analogous to `SOVERSION`/`SONAME` in
+Autotools/CMake. On Linux, mcpp passes `-Wl,-soname,<name>` to the linker and
+generates a `<name> -> lib<target>.so` alias in the output directory, so that
+downstream programs can load the library via its standard ABI name through
+`DT_NEEDED` or `dlopen()`. This field only applies to `kind = "shared"`, and the
+value must be a filename basename.
 
-### 2.3 `[build]` — 构建配置
+### 2.3 `[build]` — Build Configuration
 
 ```toml
 [build]
-sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # 源文件 glob(默认: src/**/*.{cppm,cpp,cc,c})
-include_dirs = ["include", "third_party/include"]  # 头文件搜索路径
-c_standard   = "c11"              # C 源文件的标准(默认 c11)
-cflags       = ["-DFOO=1"]        # 额外 C 编译参数
-cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数(不要放 -std=...)
-ldflags      = ["-lfoo"]          # 额外链接参数
-static_stdlib = true               # 静态链接 libstdc++(默认 true)
-macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
+sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c})
+include_dirs = ["include", "third_party/include"]  # Header search paths
+c_standard   = "c11"              # Standard for C source files (default c11)
+cflags       = ["-DFOO=1"]        # Extra C compile flags
+cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
+ldflags      = ["-lfoo"]          # Extra link flags
+static_stdlib = true               # Statically link libstdc++ (default true)
+macos_deployment_target = "14.0"   # Minimum supported OS version for macOS artifacts (macOS only)
 ```
 
-`macos_deployment_target` 设定产物 Mach-O 头里的最低系统版本
-(`LC_BUILD_VERSION minos`),即二进制能运行的最老 macOS。优先级与各生态
-惯例一致:环境变量 `MACOSX_DEPLOYMENT_TARGET`(单次调用的显式覆盖,
-cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftPM 的
-`platforms:`)> **内建默认 `14.0`**(rustc 风格——每个 target 都有基线,
-14.0 即 LLVM 官方静态库自身的下限)。该值会进入 BMI 指纹——切换 target
-会自动重建模块缓存。
+`macos_deployment_target` sets the minimum system version in the artifact's
+Mach-O header (`LC_BUILD_VERSION minos`), i.e. the oldest macOS the binary can
+run on. The precedence follows ecosystem convention: the `MACOSX_DEPLOYMENT_TARGET`
+environment variable (an explicit per-invocation override, honored the same way by
+cargo/rustc, cc, etc.) > this field (the project default, similar to SwiftPM's
+`platforms:`) > the **built-in default `14.0`** (rustc-style — every target has a
+baseline, and 14.0 is the floor of LLVM's official static libraries themselves).
+This value enters the BMI fingerprint, so switching targets automatically rebuilds
+the module cache.
 
-**默认即静态运行时(portable by default)**:`static_stdlib = true`
-(默认)时,macOS 链接会静态链入 LLVM 自带的 libc++/libc++abi ——
-系统 libc++ 会把实际可运行版本钉死在构建机的 OS(老系统缺新符号,
-如 `std::print` 的支撑符号),静态化才能真正兑现 floor。因此默认构建的
-产物在任何 macOS ≥ 14 上开箱即用。设 `static_stdlib = false` 退回动态
-系统 libc++(产物只保证在构建机同版本及以上运行)。更低 floor(11–13)
-需自建 libc++ 归档(已验证可行,数据级切换,按需提供)。
+**Static runtime by default (portable by default)**: when `static_stdlib = true`
+(the default), macOS linking statically links in LLVM's bundled libc++/libc++abi —
+the system libc++ would otherwise pin the actual runnable version to the build
+machine's OS (older systems lack newer symbols, e.g. the support symbols behind
+`std::print`), and only static linking can truly deliver the floor. As a result,
+the default build's artifacts work out of the box on any macOS ≥ 14. Set
+`static_stdlib = false` to fall back to the dynamic system libc++ (the artifact is
+then only guaranteed to run on the build machine's version and above). A lower
+floor (11–13) requires a self-built libc++ archive (already verified to work, a
+data-level switch, available on request).
 
-C++ 标准不要通过 `build.cxxflags = ["-std=..."]` 配置。请使用:
+Do not configure the C++ standard via `build.cxxflags = ["-std=..."]`. Instead use:
 
 ```toml
 [package]
 standard = "c++26"
 ```
 
-mcpp 会把同一个标准用于普通 C++ 编译、模块扫描、`compile_commands.json` 和 `import std` 的标准库 BMI 构建。
+mcpp applies the same standard to ordinary C++ compilation, module scanning,
+`compile_commands.json`, and the standard library BMI build for `import std`.
 
-**glob 排除**(`!` 前缀,mcpp 0.0.4+):
+**glob exclusion** (`!` prefix, mcpp 0.0.4+):
 
 ```toml
 [build]
 sources = [
     "src/**/*.cpp",
-    "!src/**/*_test.cpp",       # 排除测试文件
-    "!src/**/*_fuzzer.cpp",     # 排除 fuzzer
+    "!src/**/*_test.cpp",       # Exclude test files
+    "!src/**/*_fuzzer.cpp",     # Exclude fuzzers
 ]
 ```
 
-### 2.4 `[lib]` — 库根模块约定
+### 2.4 `[lib]` — Library Root Module Convention
 
 ```toml
 [lib]
-path = "src/capi/lua.cppm"    # 覆盖默认的 lib-root 位置
+path = "src/capi/lua.cppm"    # Override the default lib-root location
 ```
 
-默认约定:`src/<包名最后一段>.cppm`(如包名 `mcpplibs.cmdline` → `src/cmdline.cppm`）。
+Default convention: `src/<last segment of package name>.cppm` (e.g. package name `mcpplibs.cmdline` → `src/cmdline.cppm`).
 
-### 2.5 `[dependencies]` — 运行时依赖
+### 2.5 `[dependencies]` — Runtime Dependencies
 
 ```toml
-# 默认包空间(mcpplibs)下的包
+# Packages under the default package namespace (mcpplibs)
 [dependencies]
-gtest   = "1.15.2"              # 精确版本
+gtest   = "1.15.2"              # Exact version
 mbedtls = "3.6.1"
 ftxui   = "6.1.9"
 
-# dotted selector: 先匹配 mcpplibs.<path>, 找不到再匹配同级 peer root。
-# 例如 imgui.core 会按顺序尝试 mcpplibs.imgui/core, imgui/core。
+# Dotted selector: try mcpplibs.<path> first, then fall back to the sibling peer root.
+# For example, imgui.core is tried in order as mcpplibs.imgui/core, then imgui/core.
 [dependencies]
 capi.lua = "0.0.3"
 compat.gtest = "1.15.2"
 imgui.core = "0.0.1"
 imgui.backend.glfw_opengl3 = "0.0.1"
 
-# 命名空间子表写法
+# Namespace sub-table form
 [dependencies.mcpplibs]
 cmdline   = "0.0.2"
 tinyhttps = "0.2.2"
 llmapi    = "0.2.5"
 
 [dependencies.compat]
-glfw = "3.4"                    # 显式 namespace, 不走 mcpplibs 优先候选
+glfw = "3.4"                    # Explicit namespace, skips the mcpplibs-first candidate
 
-# 路径依赖(本地开发)
+# Path dependency (local development)
 [dependencies]
 mylib = { path = "../mylib" }
 
-# Git 依赖
+# Git dependency
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 
-# 长式 dep spec:features 与 backend 旋钮
+# Long-form dep spec: features and backend knobs
 [dependencies]
-imgui = { version = "0.0.3", features = ["docking"] }   # 请求该依赖的 feature
-widget = { version = "1.0", backend = "glfw_opengl3" }  # 糖:= features=["backend-glfw_opengl3"]
+imgui = { version = "0.0.3", features = ["docking"] }   # Request a feature of this dependency
+widget = { version = "1.0", backend = "glfw_opengl3" }  # Sugar for: features=["backend-glfw_opengl3"]
 ```
 
-`backend = "<impl>"` 是**通用约定糖**:1:1 脱糖为请求该依赖的 `backend-<impl>`
-feature(库若支持该旋钮,应在自己的 `[features]` 中声明 `backend-*` 系列)。
-若目标包声明了 `[features]` 但不含所请求的 feature(含 backend 脱糖结果),
-默认给出 warning,`mcpp build --strict` 下报错。
+`backend = "<impl>"` is **general-purpose convention sugar**: it desugars 1:1 into
+requesting the dependency's `backend-<impl>` feature (a library that supports this
+knob should declare a `backend-*` family in its own `[features]`). If the target
+package declares `[features]` but does not include the requested feature (including
+the result of backend desugaring), a warning is issued by default, and an error
+under `mcpp build --strict`.
 
-**SemVer 约束**:
+**SemVer constraints**:
 
 ```toml
 [dependencies]
-foo = "^1.2.3"      # >= 1.2.3, < 2.0.0 (caret,默认)
+foo = "^1.2.3"      # >= 1.2.3, < 2.0.0 (caret, default)
 bar = "~1.2.3"      # >= 1.2.3, < 1.3.0 (tilde)
-baz = "=1.2.3"      # 精确匹配
-qux = ">=1.0, <2.0" # 范围组合
+baz = "=1.2.3"      # Exact match
+qux = ">=1.0, <2.0" # Range combination
 ```
 
-### 2.6 `[dev-dependencies]` — 测试依赖
+### 2.6 `[dev-dependencies]` — Test Dependencies
 
 ```toml
 [dev-dependencies]
 gtest = "1.15.2"
 ```
 
-`mcpp build` 忽略这些;`mcpp test` 解析并使用。`mcpp test` 会自动发现 `tests/**/*.cpp` 并编译为测试二进制。
+`mcpp build` ignores these; `mcpp test` resolves and uses them. `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries.
 
-### 2.7 `[toolchain]` — 工具链配置
+### 2.7 `[toolchain]` — Toolchain Configuration
 
 ```toml
 [toolchain]
 default = "gcc@16.1.0"
 
-# 跨编译目标覆盖
+# Cross-compilation target override
 [target.x86_64-linux-musl]
 toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 ```
 
-### 2.8 `[features]` — 特性(Cargo 式,加性)
+### 2.8 `[features]` — Features (Cargo-style, additive)
 
 ```toml
 [features]
-default = ["base"]        # 默认激活集
+default = ["base"]        # Default activation set
 base    = []
-docking = ["extra"]       # 激活 docking 时隐含激活 extra(传递闭包)
+docking = ["extra"]       # Activating docking implies activating extra (transitive closure)
 extra   = []
 ```
 
-- 激活来源:包自身 `default` 集 ∪ 显式请求(根包 `mcpp build --features a,b`;
-  依赖经长式 dep spec `features = [...]` / `backend = "..."` 糖)。
-- 每个激活的 feature 在该包的编译中得到宏 `-DMCPP_FEATURE_<NAME>`
-  (名字转大写,非字母数字转 `_`,如 `backend-a` → `MCPP_FEATURE_BACKEND_A`)。
-- **strict 校验**:目标包声明了 `[features]` 表时,请求未声明的 feature 给出
-  warning;`--strict` 下报错。未声明 `[features]` 的包接受任意请求(纯宏用法)。
+- Activation sources: the package's own `default` set ∪ explicit requests (the root
+  package via `mcpp build --features a,b`; dependencies via the long-form dep spec's
+  `features = [...]` / `backend = "..."` sugar).
+- Each activated feature gets the macro `-DMCPP_FEATURE_<NAME>` during that package's
+  compilation (the name is uppercased and non-alphanumerics become `_`, e.g.
+  `backend-a` → `MCPP_FEATURE_BACKEND_A`).
+- **strict validation**: when the target package declares a `[features]` table,
+  requesting an undeclared feature produces a warning; an error under `--strict`. A
+  package that does not declare `[features]` accepts any request (pure macro usage).
 
-### 2.9 `[profile.<name>]` — 构建档案
+### 2.9 `[profile.<name>]` — Build Profiles
 
 ```toml
 [profile.dist]
-opt      = 3              # -O 级别(数字或 "s"/"z" 字符串)
+opt      = 3              # -O level (a number, or the string "s"/"z")
 debug    = false          # -g
-lto      = true           # -flto(注意:部分打包 gcc 未启用 LTO 插件)
-strip    = true           # 链接期 -s
-# passthrough 逃生口(固定键、开放值):
+lto      = true           # -flto (note: some packaged gcc builds ship without the LTO plugin)
+strip    = true           # -s at link time
+# passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
 
-- 选择:`mcpp build --profile <name>`,默认 `release`。
-- 内置档案:`release`(-O2)/ `dev`、`debug`(-O0 -g)/ `dist`(-O3 + strip;
-  **不默认开 lto**)。`[profile.<内置名>]` 可整体覆盖内置定义。
+- Selection: `mcpp build --profile <name>`, defaulting to `release`.
+- Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
+  **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
+  built-in definition wholesale.
 
-### 2.10 `[runtime]` — 主机运行时能力
+### 2.10 `[runtime]` — Host Runtime Capabilities
 
 ```toml
 [runtime]
-library_dirs = ["vendor/lib"]            # 烤进产物 RUNPATH 的目录(相对包根)
-dlopen_libs  = ["libGL.so.1"]            # 运行期 dlopen 的 soname(doctor 校验)
-capabilities = ["opengl.glx.driver"]     # 需要的主机能力(开放命名空间)
-provides     = ["opengl.glx.driver"]     # 显式声明本包兑现的能力(强 provider)
+library_dirs = ["vendor/lib"]            # Directories baked into the artifact's RUNPATH (relative to the package root)
+dlopen_libs  = ["libGL.so.1"]            # sonames dlopen'd at runtime (validated by doctor)
+capabilities = ["opengl.glx.driver"]     # Host capabilities required (open namespace)
+provides     = ["opengl.glx.driver"]     # Explicitly declares capabilities this package fulfills (strong provider)
 
-# 显式 provider 覆盖(三档旋钮的"显式"档)
+# Explicit provider override (the "explicit" notch of the three-way knob)
 [runtime."opengl.glx.driver"]
 provider = "compat.glx-runtime"
 ```
 
-- **provider 选择**:声明 `provides` 的包(强)优先于仅在 `capabilities` 列出
-  能力的包(弱,向后兼容);`[runtime.<cap>] provider=` 显式覆盖最优先,
-  指向依赖图中不存在的 provider 时给出 warning。
-- 解析结果可经 `mcpp why runtime`、`mcpp self doctor` 与构建产物
-  `target/<triple>/<fp>/resolution.json` 查看(默认不是魔法)。
-- 能力命名约定:分层小写 `domain.sub.role`(如 `opengl.glx.driver`、
-  `x11.display`)与前缀类 `abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
+- **Provider selection**: a package that declares `provides` (strong) takes precedence
+  over one that merely lists a capability under `capabilities` (weak, backward
+  compatible); `[runtime.<cap>] provider=` is an explicit override with the highest
+  precedence, and pointing at a provider not present in the dependency graph produces
+  a warning.
+- The resolved result can be inspected via `mcpp why runtime`, `mcpp self doctor`, and
+  the build artifact `target/<triple>/<fp>/resolution.json` (it is not magic by
+  default).
+- Capability naming convention: layered lowercase `domain.sub.role` (e.g.
+  `opengl.glx.driver`, `x11.display`) and prefix-style `abi:<name>` (e.g. `abi:glibc`,
+  which participates in toolchain ABI enforcement).
 
-### 2.11 `[package] platforms` — 平台声明
+### 2.11 `[package] platforms` — Platform Declaration
 
 ```toml
 [package]
 platforms = ["linux", "macos", "windows"]
 ```
 
-声明包支持的平台(CI 矩阵提示,经 `mcpp why` 展示)。词表由 mcpp 固定
-(它拥有 target/triple 体系):`linux | macos | windows`;未知值 warning,
-`--strict` 下报错。
+Declares the platforms the package supports (a CI matrix hint, shown via `mcpp why`).
+The vocabulary is fixed by mcpp (which owns the target/triple system):
+`linux | macos | windows`; unknown values produce a warning, and an error under
+`--strict`.
 
-## 附录 A. Schema 所有权原则(新字段准入标准)
+## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 
-> **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。
+> **Closed syntax, open vocabulary**: whoever owns the parsing semantics defines the keys; whoever owns the domain knowledge defines the values.
 
-- mcpp 只定义**机制**(features 并集/闭包、capability require/provide/override、
-  profile→编译器旗标、platform→triple),键与形状固定;feature 名、能力名、
-  后端名等**领域词汇只出现在值里**,不进 mcpp 代码。
-- **不支持包自定义 toml 键**:键合法性不得依赖"先解析目标包",否则 manifest
-  失去静态可解析性(lockfile/LSP/审计的前提)。包的扩展点 = 固定机制内的开放值域。
-- 包级旋钮统一收敛进 features;糖键(如 `backend=`)进入核心语法须满足:
-  ① 领域中立(跨生态通用模式)② 1:1 脱糖、零新增解析语义。
-- 字段归属总表与定型决策见
-  `.agents/docs/2026-06-04-manifest-schema-ownership.md`。
+- mcpp only defines **mechanisms** (feature union/closure, capability
+  require/provide/override, profile→compiler flags, platform→triple); the keys and
+  shapes are fixed. Domain vocabulary such as feature names, capability names, and
+  backend names **appears only in values**, never in mcpp's code.
+- **Package-custom toml keys are not supported**: key legitimacy must not depend on
+  "first parsing the target package," otherwise the manifest loses static
+  parseability (a prerequisite for lockfiles/LSP/auditing). A package's extension
+  point = open value domains within fixed mechanisms.
+- Package-level knobs all converge into features; for sugar keys (such as `backend=`)
+  to enter the core syntax, they must satisfy: ① domain-neutral (a cross-ecosystem
+  general pattern) ② 1:1 desugaring with zero new parsing semantics.
+- See `.agents/docs/2026-06-04-manifest-schema-ownership.md` for the full field-ownership
+  table and the finalized decisions.
 
-## 3. 实战示例
+## 3. Worked Examples
 
-### 3.1 简单 Hello World
+### 3.1 Simple Hello World
 
 ```toml
 [package]
@@ -317,7 +339,7 @@ int main() { std::println("Hello, mcpp!"); }
 mcpp build && mcpp run
 ```
 
-### 3.2 模块化库 + 测试
+### 3.2 Module-based Library + Tests
 
 ```toml
 [package]
@@ -345,11 +367,11 @@ TEST(Math, Add) { EXPECT_EQ(add(1, 2), 3); }
 ```
 
 ```bash
-mcpp build   # 编译库
-mcpp test    # 编译 + 跑测试
+mcpp build   # Compile the library
+mcpp test    # Compile + run tests
 ```
 
-### 3.3 依赖其他包的应用
+### 3.3 An Application Depending on Other Packages
 
 ```toml
 [package]
@@ -364,12 +386,12 @@ cmdline = "0.0.2"
 llmapi  = "0.2.5"
 ```
 
-mcpp 自动:
-1. 从 mcpp-index 下载源码 tarball
-2. 按 `[build].include_dirs` 传播头文件路径
-3. 传递依赖自动入图(llmapi → tinyhttps → mbedtls 全自动)
+mcpp automatically:
+1. Downloads source tarballs from mcpp-index
+2. Propagates header search paths per `[build].include_dirs`
+3. Pulls transitive dependencies into the graph (llmapi → tinyhttps → mbedtls, fully automatic)
 
-### 3.4 纯 C 库
+### 3.4 Pure C Library
 
 ```toml
 [package]
@@ -385,7 +407,7 @@ sources      = ["src/**/*.c"]
 kind = "lib"
 ```
 
-### 3.5 混合 C / C++23 模块项目
+### 3.5 Mixed C / C++23 Module Project
 
 ```toml
 [package]
@@ -397,13 +419,13 @@ include_dirs = ["include"]
 c_standard   = "c11"
 
 [dependencies]
-lua = "5.4.7"     # 纯 C 库,mcpp 自动用 C 编译器编译 .c 文件
+lua = "5.4.7"     # Pure C library; mcpp compiles .c files with the C compiler automatically
 
 [targets.hybrid]
 kind = "bin"
 ```
 
-### 3.6 跨编译静态发布
+### 3.6 Cross-Compiled Static Release
 
 ```toml
 [package]
@@ -420,30 +442,30 @@ linkage   = "static"
 
 ```bash
 mcpp build --target x86_64-linux-musl
-# → 产出完全静态链接的二进制,可直接 scp 到任意 Linux x86_64 机器运行
+# → Produces a fully statically linked binary that can be scp'd directly to any Linux x86_64 machine and run
 ```
 
-## 4. 约定与默认值速查
+## 4. Conventions and Defaults Cheat Sheet
 
-| 项目 | 默认值 | 说明 |
+| Item | Default | Notes |
 |---|---|---|
-| 源文件 | `src/**/*.{cppm,cpp,cc,c}` | 自动递归扫描 |
-| 入口 | `src/main.cpp` | 有这个文件就推断为 `bin` 目标 |
-| 库根 | `src/<pkg-tail>.cppm` | 可用 `[lib].path` 覆盖 |
-| C++ 标准 | `c++23` | 用 `[package].standard` 配置; 支持 `c++26` / `c++2c` |
-| C 标准 | `c11` | `.c` 文件自动走 C 编译器 |
-| 静态 stdlib | `true` | 便携二进制 |
-| 头文件 | `include/`(如果存在） | 自动加到 `-I` |
-| 测试 | `tests/**/*.cpp` | `mcpp test` 自动发现 |
-| 依赖命名空间 | `mcpp`（默认) | 平铺写法走默认 ns |
+| Source files | `src/**/*.{cppm,cpp,cc,c}` | Scanned recursively and automatically |
+| Entry point | `src/main.cpp` | If this file exists, a `bin` target is inferred |
+| Library root | `src/<pkg-tail>.cppm` | Override with `[lib].path` |
+| C++ standard | `c++23` | Configure with `[package].standard`; supports `c++26` / `c++2c` |
+| C standard | `c11` | `.c` files go through the C compiler automatically |
+| Static stdlib | `true` | Portable binary |
+| Headers | `include/` (if present) | Added to `-I` automatically |
+| Tests | `tests/**/*.cpp` | Discovered automatically by `mcpp test` |
+| Dependency namespace | `mcpp` (default) | The flat form uses the default ns |
 
-### 4.1 旧 `[language]` 兼容层
+### 4.1 Legacy `[language]` Compatibility Layer
 
-旧配置仍可读取:
+The old configuration is still readable:
 
 ```toml
 [language]
 standard = "c++26"
 ```
 
-新项目请使用 `[package].standard`。如果两个位置都出现，`[package].standard` 是权威配置。
+New projects should use `[package].standard`. If both locations are present, `[package].standard` is authoritative.
