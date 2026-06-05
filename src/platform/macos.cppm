@@ -32,14 +32,24 @@ bool has_xcode_clt();
 // Returns the SDK path if found, or nullopt.
 std::optional<std::filesystem::path> sdk_path();
 
+// Built-in default deployment floor (rustc-style: every target has a
+// baseline). 14.0 = the floor of the official LLVM static libc++
+// archives; with the default-static stdlib this makes `mcpp run`
+// binaries portable to any macOS ≥ 14 out of the box (no declaration
+// needed — a fresh user's std::println hello on macOS 14 used to die
+// at dyld against the system libc++). Lower floors need a custom
+// libc++ build (tracked; data-only swap via xlings-res).
+inline constexpr std::string_view default_deployment_target = "14.0";
+
 // Resolve the effective macOS deployment target: the
 // MACOSX_DEPLOYMENT_TARGET env var (explicit per-invocation override,
 // the convention cargo/rustc/cc honor) wins over `manifestValue` (the
-// [build] macos_deployment_target project default); empty means
-// toolchain/SDK default. THE single source of truth — flags.cppm, the
-// BMI fingerprint rule and the std-module prebuild must all consume
-// this same resolution, or cached std.pcm modules drift from the TUs
-// (config-mismatch / unstaged-module failures observed on macos CI).
+// [build] macos_deployment_target project default), which wins over
+// the built-in default floor — the result is never empty on macOS.
+// THE single source of truth — flags.cppm, the BMI fingerprint rule
+// and the std-module prebuild must all consume this same resolution,
+// or cached std.pcm modules drift from the TUs (config-mismatch /
+// unstaged-module failures observed on macos CI).
 std::string deployment_target(std::string_view manifestValue);
 
 // Return macOS-specific runtime library directories for LLVM toolchains.
@@ -47,7 +57,9 @@ std::string deployment_target(std::string_view manifestValue) {
 #if defined(__APPLE__)
     if (const char* dt = std::getenv("MACOSX_DEPLOYMENT_TARGET"); dt && *dt)
         return dt;
-    return std::string(manifestValue);
+    if (!manifestValue.empty())
+        return std::string(manifestValue);
+    return std::string(default_deployment_target);
 #else
     (void)manifestValue;
     return {};

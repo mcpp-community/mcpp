@@ -369,23 +369,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //    lld ships with the exact toolchain doing the compile.
         f.ldStdlibDefault = " -lc++";
         f.ldStdlibTest    = " -lc++";
-        // Static libc++ is tied to an EXPLICIT deployment floor: when the
-        // user (or the release pipeline) declares a minimum macOS via the
-        // env var or [build] macos_deployment_target, the static LLVM
-        // libc++ is what makes that floor real (the system libc++ caps it
-        // at the build host's OS). With no declared floor, keep the
-        // 0.0.49 behavior — dynamic system libc++, host-coupled.
-        //
-        // TODO(macos-static-default): flip static to the unconditional
-        // default (rust-style "portable by default") once two tracked
-        // issues are fixed — (1) mixed C/C++ static binaries SIGSEGV at
-        // runtime (e2e 36_llvm_toolchain: answer.c + std::cout main.cpp,
-        // exit 139; root cause not yet isolated), (2) the std-module
-        // staging/fingerprint boundary (see canonical_compile_flags).
+        // Static libc++ + the deployment floor are the DEFAULT (rust-style
+        // "portable by default"): the resolver always yields a floor on
+        // macOS (built-in 14.0 unless env/manifest override), and the
+        // static LLVM libc++ is what makes that floor real — the system
+        // libc++ caps binaries at the build host's OS (a fresh user's
+        // std::println hello on macOS 14 died at dyld against the system
+        // libc++ before this). Opt-out: [build] static_stdlib = false
+        // (host-coupled dynamic libc++, the pre-0.0.52 no-declaration
+        // behavior). The two blockers that deferred this default are
+        // resolved: (1) mixed C/C++ split-brain SIGSEGV — fixed by
+        // -load_hidden (PR #117 forensics), (2) std-module staging /
+        // fingerprint drift — fixed by the single resolver (PR #119).
         // TODO(macos-floor-11): the official LLVM archives are built for
         // macOS 14; supporting 11-13 needs a custom libc++ build shipped
         // via xlings-res (data-only change — swap the archive source).
-        // Both tracked in xlings
+        // Tracked in xlings
         // .agents/docs/2026-06-05-macos-min-version-support.md §5.
         if (f.staticStdlib && !macosDeploymentTarget.empty()
             && !llvmRootForStdlib.empty()) {

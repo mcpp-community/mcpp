@@ -98,15 +98,17 @@ macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅
 (`LC_BUILD_VERSION minos`),即二进制能运行的最老 macOS。优先级与各生态
 惯例一致:环境变量 `MACOSX_DEPLOYMENT_TARGET`(单次调用的显式覆盖,
 cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftPM 的
-`platforms:`)> 工具链/SDK 默认。该值会进入 BMI 指纹——切换 target 会
-自动重建模块缓存。
+`platforms:`)> **内建默认 `14.0`**(rustc 风格——每个 target 都有基线,
+14.0 即 LLVM 官方静态库自身的下限)。该值会进入 BMI 指纹——切换 target
+会自动重建模块缓存。
 
-**声明 floor 即静态运行时**:显式设置了 deployment target(env 或本
-字段)且 `static_stdlib = true`(默认)时,macOS 链接会静态链入 LLVM
-自带的 libc++/libc++abi —— 系统 libc++ 会把实际可运行版本钉死在构建机
-的 OS(老系统缺新符号,如 `std::print` 的支撑符号),静态化才能真正
-兑现声明的 floor。注意 LLVM 官方静态库自身的下限是 **14.0**。未声明
-floor 时保持动态系统 libc++(产物只保证在构建机同版本及以上运行)。
+**默认即静态运行时(portable by default)**:`static_stdlib = true`
+(默认)时,macOS 链接会静态链入 LLVM 自带的 libc++/libc++abi ——
+系统 libc++ 会把实际可运行版本钉死在构建机的 OS(老系统缺新符号,
+如 `std::print` 的支撑符号),静态化才能真正兑现 floor。因此默认构建的
+产物在任何 macOS ≥ 14 上开箱即用。设 `static_stdlib = false` 退回动态
+系统 libc++(产物只保证在构建机同版本及以上运行)。更低 floor(11–13)
+需自建 libc++ 归档(已验证可行,数据级切换,按需提供)。
 
 C++ 标准不要通过 `build.cxxflags = ["-std=..."]` 配置。请使用:
 
