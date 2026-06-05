@@ -42,6 +42,10 @@ jobs:
 
       - name: Install mcpp and config mirror
         run: |
+          # The release tarball bundles a pkgindex snapshot frozen at
+          # build time; refresh it so the workspace pin in .xlings.json
+          # (latest mcpp) resolves.
+          xlings update
           xlings install mcpp -y -g  # install to global
           mcpp --version
           mcpp self config --mirror GLOBAL
@@ -131,6 +135,9 @@ jobs:
 
       - name: Install mcpp and config mirror
         run: |
+          # Refresh the bundled pkgindex snapshot so the workspace pin
+          # in .xlings.json (latest mcpp) resolves.
+          xlings update
           xlings install mcpp -y -g  # install to global
           mcpp --version
           mcpp self config --mirror GLOBAL
@@ -175,6 +182,9 @@ jobs:
       - name: Install mcpp and config mirror
         shell: pwsh
         run: |
+          # Refresh the bundled pkgindex snapshot so the workspace pin
+          # in .xlings.json (latest mcpp) resolves.
+          xlings update
           xlings install mcpp -y -g --verbose
 
           cat "$env:USERPROFILE\.xlings\.xlings.json"
