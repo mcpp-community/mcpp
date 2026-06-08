@@ -448,119 +448,52 @@ mcpp::ui::PathContext make_path_ctx(const mcpp::config::GlobalConfig* cfg,
     return ctx;
 }
 
-// Stateless adapter from `mcpp::config::BootstrapProgress` (xlings
-// download_progress event) to a sticky ProgressBar. Used by
-// load_or_init() during the one-time sandbox bootstrap (xim:patchelf,
-// xim:ninja, plus their transitive deps).
-//
-// Two xlings quirks the callback has to absorb:
-//   1. Each file's `finished=true` event arrives twice in a row.
-//   2. During multi-package installs the `files[]` array reshuffles
-//      between events (the active download isn't always at slot 0).
-// The fix mirrors CliInstallProgress: dedupe via a `finished_` set and
-// always pick "active first if still in event, else first
-// started+unfinished" rather than reading slot 0 blindly.
+// Map a decoded NDJSON `download_progress` files[] snapshot onto the neutral
+// `mcpp::ui::DownloadFile` the centralized renderer consumes.
+template <class File>
+std::vector<mcpp::ui::DownloadFile> to_ui_download_files(const std::vector<File>& files) {
+    std::vector<mcpp::ui::DownloadFile> out;
+    out.reserve(files.size());
+    for (auto& f : files) {
+        if constexpr (requires { f.downloadedBytes; }) {
+            out.push_back({ f.name,
+                            static_cast<std::size_t>(f.downloadedBytes),
+                            static_cast<std::size_t>(f.totalBytes),
+                            f.started, f.finished });
+        } else {
+            out.push_back({ f.name,
+                            static_cast<std::size_t>(f.downloaded),
+                            static_cast<std::size_t>(f.total),
+                            f.started, f.finished });
+        }
+    }
+    return out;
+}
+
+// Adapter from `mcpp::config::BootstrapProgress` (xlings download_progress
+// event) to the centralized download renderer. Used by load_or_init() during
+// the one-time sandbox bootstrap (xim:patchelf, xim:ninja + transitive deps).
 mcpp::config::BootstrapProgressCallback make_bootstrap_progress_callback() {
-    auto bar      = std::make_shared<std::optional<mcpp::ui::ProgressBar>>();
-    auto active   = std::make_shared<std::string>();
-    auto finished = std::make_shared<std::unordered_set<std::string>>();
-    return [bar, active, finished](const mcpp::config::BootstrapProgress& ev) {
-        // Process newly-finished entries.
-        for (auto& f : ev.files) {
-            if (finished->contains(f.name)) continue;
-            if (!f.finished) continue;
-            if (*active == f.name) {
-                if (*bar) (*bar)->finish();
-                bar->reset();
-                active->clear();
-            }
-            finished->insert(f.name);
-        }
-
-        // Pick what to display: prefer continuing with `*active` if it's
-        // still in the array and not finished, otherwise the first
-        // started+unfinished entry.
-        const mcpp::config::BootstrapFile* current = nullptr;
-        for (auto& f : ev.files) {
-            if (f.name == *active && !f.finished
-                && !finished->contains(f.name)) { current = &f; break; }
-        }
-        if (!current) {
-            for (auto& f : ev.files) {
-                if (finished->contains(f.name)) continue;
-                if (f.started && !f.finished) { current = &f; break; }
-            }
-        }
-        if (!current) return;
-
-        if (current->name != *active) {
-            if (*bar) (*bar)->finish();
-            *active = current->name;
-            bar->emplace("Downloading", current->name);
-        }
-        if (current->totalBytes > 0) {
-            (*bar)->update_bytes(static_cast<std::size_t>(current->downloadedBytes),
-                                 static_cast<std::size_t>(current->totalBytes),
-                                 ev.elapsedSec);
-        }
+    auto progress = std::make_shared<mcpp::ui::DownloadProgress>();
+    return [progress](const mcpp::config::BootstrapProgress& ev) {
+        auto files = to_ui_download_files(ev.files);
+        progress->update(files, ev.elapsedSec);
     };
 }
 
+// EventHandler that forwards xlings `download_progress` events to the same
+// centralized renderer. Used for toolchain, builtin-index and custom-index
+// installs alike, so all three show identical UI.
 struct CliInstallProgress : mcpp::fetcher::EventHandler {
-    std::optional<mcpp::ui::ProgressBar> bar_;
-    std::string                          active_;
-    std::unordered_set<std::string>      finished_;
+    mcpp::ui::DownloadProgress progress_;
 
     void on_data(const mcpp::fetcher::DataEvent& d) override {
         if (d.dataKind != "download_progress") return;
         auto files = parse_all_install_files(d.payloadJson);
         if (files.empty()) return;
-
-        // 1. Process any newly-finished entries. Each file is reported
-        //    twice with finished=true (xlings quirk); the `finished_`
-        //    set dedupes both that AND the rotation case where the
-        //    same file shows up at a different array slot in a later
-        //    event.
-        for (auto& f : files) {
-            if (finished_.contains(f.name)) continue;
-            if (!f.finished) continue;
-            if (active_ == f.name) {
-                if (bar_) bar_->finish();
-                bar_.reset();
-                active_.clear();
-            }
-            finished_.insert(f.name);
-        }
-
-        // 2. Pick what to display. Prefer continuing with the current
-        //    `active_` if it's still in the array and not finished —
-        //    otherwise the first started+unfinished entry. This stops
-        //    the bar from flickering between names when xlings reshuffles
-        //    files[] across events during a multi-package install.
-        const InstallProgressFile* current = nullptr;
-        for (auto& f : files) {
-            if (f.name == active_ && !f.finished
-                && !finished_.contains(f.name)) { current = &f; break; }
-        }
-        if (!current) {
-            for (auto& f : files) {
-                if (finished_.contains(f.name)) continue;
-                if (f.started && !f.finished) { current = &f; break; }
-            }
-        }
-        if (!current) return;
-
-        if (current->name != active_) {
-            if (bar_) bar_->finish();
-            active_ = current->name;
-            bar_.emplace("Downloading", current->name);
-        }
-        if (current->total > 0) {
-            double elapsed = extract_payload_number(d.payloadJson, "elapsedSec");
-            bar_->update_bytes(static_cast<std::size_t>(current->downloaded),
-                               static_cast<std::size_t>(current->total),
-                               elapsed);
-        }
+        double elapsed = extract_payload_number(d.payloadJson, "elapsedSec");
+        auto ui_files = to_ui_download_files(files);
+        progress_.update(ui_files, elapsed);
     }
 
     void on_log(const mcpp::fetcher::LogEvent& e) override {
@@ -579,7 +512,8 @@ struct CliInstallProgress : mcpp::fetcher::EventHandler {
             mcpp::log::info("xlings", std::format("hint: {}", e.hint));
     }
 
-    ~CliInstallProgress() override { if (bar_) bar_->finish(); }
+    // progress_'s own destructor finishes the active bar.
+    ~CliInstallProgress() override = default;
 };
 
 // Compose a stable canonical compile-flags string for fingerprinting.
@@ -2312,11 +2246,24 @@ prepare_build(bool print_fingerprint,
 
             auto install_one = [&](std::string target) -> std::expected<mcpp::xlings::CallResult, mcpp::pm::CallError> {
                 if (useProjectEnv) {
+                    // Project/custom-index deps install into the project-local
+                    // xlings data root (so a package's install hook can find
+                    // sibling packages from the same index). The NDJSON
+                    // interface honors this: in the pinned xlings the
+                    // `install_packages` capability and the `install` CLI share
+                    // `xim::cmd_install`, and the install destination is chosen
+                    // by package *scope* (project vs global), not by transport.
+                    // Using the interface (rather than the silenced direct CLI)
+                    // restores the live `Downloading … [bar] X/Y Z/s` UI here,
+                    // matching the toolchain and builtin-index paths.
                     auto projEnv = mcpp::config::make_project_xlings_env(**cfg, *root);
-                    int directRc = mcpp::xlings::install_direct(projEnv, target, /*quiet=*/true);
-                    mcpp::xlings::CallResult result;
-                    result.exitCode = directRc;
-                    return result;
+                    auto argsJson = std::format(
+                        R"({{"targets":["{}"],"yes":true}})", target);
+                    CliInstallProgress progress;
+                    auto r = mcpp::xlings::call(
+                        projEnv, "install_packages", argsJson, &progress);
+                    if (!r) return std::unexpected(mcpp::pm::CallError{r.error()});
+                    return *r;
                 }
                 std::vector<std::string> targets{ std::move(target) };
                 CliInstallProgress progress;

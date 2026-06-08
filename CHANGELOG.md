@@ -3,6 +3,26 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.53] — 2026-06-09
+
+### 新增
+
+- 库 / 组件下载现在与工具链下载一样显示实时进度条、字节进度与速度。自定义 /
+  项目索引依赖改经 xlings NDJSON `interface install_packages` 安装(仍落在项目
+  本地数据根,不改变安装位置与 install hook 顺序),不再静默卡住。
+
+### 修复
+
+- 下载连接 / 预取大小阶段(`totalBytes` 尚未知)进度行不再"冻结"无反馈:
+  新增不确定态渲染,显示 `connecting…` + 已用时,流式无 `Content-Length`
+  时显示已下载字节,直到拿到总大小再切换为百分比进度条。
+
+### 其他
+
+- 内置 xlings 版本上调至 `0.4.51`。
+- 下载进度的状态机与渲染集中到 `mcpp.ui`(`DownloadProgress`),工具链 /
+  内置索引 / 自定义索引三条路径共用同一套 UI。
+
 ## [0.0.46] — 2026-06-03
 
 ### 新增

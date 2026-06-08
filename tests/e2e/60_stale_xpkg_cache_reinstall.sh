@@ -55,8 +55,13 @@ if [[ "${1:-}" == "update" ]]; then
     exit 0
 fi
 
-if [[ "${1:-}" == "install" ]]; then
-    printf '%s\n' "$*" > "${FAKE_INSTALL_LOG:?}"
+# Project/custom-index deps install through the NDJSON interface (so the live
+# download-progress UI renders); it installs into the project-local data root.
+if [[ "${1:-}" == "interface" && "${2:-}" == "install_packages" ]]; then
+    while [[ $# -gt 0 ]]; do
+        if [[ "$1" == "--args" ]]; then printf '%s\n' "$2" > "${FAKE_INSTALL_LOG:?}"; break; fi
+        shift
+    done
     install_root="${XLINGS_PROJECT_DIR:?}/.xlings/data/xpkgs/compat-x-compat.stale/1.0.0"
     mkdir -p "$install_root/src"
     cat > "$install_root/src/stale.c" <<'SRC'
@@ -64,12 +69,14 @@ int stale_value(void) {
     return 42;
 }
 SRC
+    printf '{"kind":"data","dataKind":"download_progress","payload":{"elapsedSec":0.2,"files":[{"name":"compat:compat.stale@1.0.0","downloadedBytes":2048,"totalBytes":2048,"started":true,"finished":true}]}}\n'
+    printf '{"kind":"result","exitCode":0}\n'
     exit 0
 fi
 
-if [[ "${1:-}" == "interface" && "${2:-}" == "install_packages" ]]; then
-    printf '{"kind":"result","exitCode":0}\n'
-    exit 0
+if [[ "${1:-}" == "install" ]]; then
+    echo "direct install should not be used for project path indices" >&2
+    exit 31
 fi
 
 exit 0
@@ -140,7 +147,7 @@ if ! FAKE_INSTALL_LOG="$FAKE_INSTALL_LOG" "$MCPP" build > build.log 2>&1; then
     exit 1
 fi
 
-grep -Fq 'install compat:compat.stale@1.0.0 -y' "$FAKE_INSTALL_LOG" || {
+grep -Fq 'compat:compat.stale@1.0.0' "$FAKE_INSTALL_LOG" || {
     echo "FAIL: stale unmarked xpkg directory should trigger reinstall"
     cat build.log
     exit 1
