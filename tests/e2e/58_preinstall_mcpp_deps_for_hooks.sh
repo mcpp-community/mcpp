@@ -71,6 +71,7 @@ EOF
 mkdir -p "$TMP/fake-bin"
 FAKE_REGISTRY="$TMP/fake-registry"
 FAKE_DIRECT_LOG="$TMP/fake-xlings-direct.log"
+FAKE_LOG="$TMP/fake-xlings.log"
 mkdir -p "$FAKE_REGISTRY/data"
 USER_MCPP="${HOME}/.mcpp"
 if [[ -d "$USER_MCPP/registry/data/xpkgs" ]]; then
@@ -91,13 +92,17 @@ if [[ "${1:-}" == "update" ]]; then
     exit 0
 fi
 
+# Project/custom-index deps install through the NDJSON interface (so the live
+# download-progress UI renders). The capability honors XLINGS_PROJECT_DIR and
+# installs into the project-local data root; mcpp preinstalls mcpp.deps before
+# the dependent package, so compat.proto must land before compat.appdep's hook.
 if [[ "${1:-}" == "interface" && "${2:-}" == "install_packages" ]]; then
-    echo "interface install should not be used for project path indices" >&2
-    exit 31
-fi
-
-if [[ "${1:-}" == "install" ]]; then
-    printf '%s\n' "$*" >> "${FAKE_XLINGS_DIRECT_LOG:?}"
+    args=""
+    while [[ $# -gt 0 ]]; do
+        if [[ "$1" == "--args" ]]; then args="$2"; break; fi
+        shift
+    done
+    printf '%s\n' "$args" >> "${FAKE_XLINGS_LOG:?}"
     if [[ ! -d "${XLINGS_PROJECT_DIR:?}/.xlings/data/compat/pkgs" \
        && ! -d "${XLINGS_PROJECT_DIR:?}/data/compat/pkgs" ]]; then
         echo "missing project local path index link" >&2
@@ -105,8 +110,8 @@ if [[ "${1:-}" == "install" ]]; then
         exit 23
     fi
 
-    case " $* " in
-        *" compat:compat.proto@1.0.0 "*)
+    case "$args" in
+        *compat:compat.proto@1.0.0*)
             install_root="${XLINGS_PROJECT_DIR:?}/.xlings/data/xpkgs/compat-x-compat.proto/1.0.0"
             mkdir -p "$install_root/src"
             cat > "$install_root/src/proto.c" <<'SRC'
@@ -114,9 +119,8 @@ int proto_value(void) {
     return 42;
 }
 SRC
-            exit 0
             ;;
-        *" compat:compat.appdep@1.0.0 "*)
+        *compat:compat.appdep@1.0.0*)
             proto_root="${XLINGS_PROJECT_DIR:?}/.xlings/data/xpkgs/compat-x-compat.proto/1.0.0"
             if [[ ! -d "$proto_root" ]]; then
                 echo "mcpp.deps were not installed before appdep install hook" >&2
@@ -130,9 +134,15 @@ int app_value(void) {
     return proto_value();
 }
 SRC
-            exit 0
             ;;
     esac
+    printf '{"kind":"result","exitCode":0}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "install" ]]; then
+    echo "direct install should not be used for project path indices" >&2
+    exit 31
 fi
 
 exit 0
@@ -186,24 +196,26 @@ appdep = "1.0.0"
 kind = "lib"
 EOF
 
-if ! FAKE_XLINGS_DIRECT_LOG="$FAKE_DIRECT_LOG" "$MCPP" build > build.log 2>&1; then
+if ! FAKE_XLINGS_LOG="$FAKE_LOG" \
+     FAKE_XLINGS_DIRECT_LOG="$FAKE_DIRECT_LOG" \
+     "$MCPP" build > build.log 2>&1; then
     cat build.log
     exit 1
 fi
 
-if ! grep -Fq 'install compat:compat.proto@1.0.0 -y' "$FAKE_DIRECT_LOG"; then
+if ! grep -Fq 'compat:compat.proto@1.0.0' "$FAKE_LOG"; then
     echo "FAIL: compat.proto was not installed from mcpp.deps"
-    cat "$FAKE_DIRECT_LOG" 2>/dev/null || true
+    cat "$FAKE_LOG" 2>/dev/null || true
     exit 1
 fi
 
 if ! awk '
-    /install compat:compat.proto@1\.0\.0 -y/ { proto = NR }
-    /install compat:compat.appdep@1\.0\.0 -y/ { appdep = NR }
+    /compat:compat.proto@1\.0\.0/ { proto = NR }
+    /compat:compat.appdep@1\.0\.0/ { appdep = NR }
     END { exit !(proto > 0 && appdep > 0 && proto < appdep) }
-' "$FAKE_DIRECT_LOG"; then
+' "$FAKE_LOG"; then
     echo "FAIL: mcpp.deps should be installed before dependent package hook"
-    cat "$FAKE_DIRECT_LOG" 2>/dev/null || true
+    cat "$FAKE_LOG" 2>/dev/null || true
     exit 1
 fi
 

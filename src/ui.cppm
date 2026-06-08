@@ -82,17 +82,62 @@ public:
     void update_bytes(std::size_t current_bytes, std::size_t total_bytes,
                       double elapsed_sec = 0.0);
 
+    // Connecting / pre-sizing phase: the total size isn't known yet (the
+    // downloader reports totalBytes==0 during DNS/TLS/redirect before the
+    // transfer's Content-Length is available, and some servers stream with no
+    // length at all). Renders a swept (indeterminate) bar plus a ticking
+    // `connecting… Ns` / `X.Y MB Ns` suffix so the line never freezes.
+    void update_indeterminate(std::size_t current_bytes,
+                              double elapsed_sec = 0.0);
+
     // Finish: replaces progress with final-state line.
     void finish();
     void finish_with(std::string_view final_message);
 
 private:
     void render_line(std::size_t percent, const std::string& info_text);
+    void render_line_swept(std::size_t frame, const std::string& info_text);
 
     std::string verb_;
     std::string label_;
     std::chrono::steady_clock::time_point lastDraw_;
     bool finished_ = false;
+};
+
+// --- download progress (centralized) ---
+//
+// One file's download state, decoded from xlings' NDJSON `download_progress`
+// `files[]` entries. A neutral struct so this UI module stays free of any
+// fetcher / config dependency (those import each other and would cycle).
+struct DownloadFile {
+    std::string name;
+    std::size_t downloaded = 0;
+    std::size_t total      = 0;   // 0 = size not known yet (connecting)
+    bool        started    = false;
+    bool        finished   = false;
+};
+
+// Centralized renderer for a streaming multi-file download. Owns the
+// ProgressBar plus the "which file is active / which are done" bookkeeping,
+// and decides per frame whether to draw a percentage bar (size known) or a
+// swept/indeterminate bar (still connecting). Absorbs two xlings quirks:
+// each file's `finished=true` is reported twice, and `files[]` reshuffles
+// between events. Feed it each event's `files[]` snapshot + cumulative
+// `elapsedSec`; it is the single place mcpp turns download events into UI.
+class DownloadProgress {
+public:
+    DownloadProgress() = default;
+    ~DownloadProgress();
+    DownloadProgress(const DownloadProgress&)            = delete;
+    DownloadProgress& operator=(const DownloadProgress&) = delete;
+
+    void update(std::span<const DownloadFile> files, double elapsed_sec);
+    void finish();   // finish the active bar if any (idempotent)
+
+private:
+    std::optional<ProgressBar>      bar_;
+    std::string                     active_;
+    std::unordered_set<std::string> finished_;
 };
 
 // --- quiet flag (suppresses status / info / finished) ---
@@ -334,6 +379,82 @@ std::string trunc_visible(std::string s, std::size_t max) {
     return s;
 }
 
+// Indeterminate ("swept") bar: a fixed-width block bounces back and forth so
+// the bar animates while the total size is still unknown. `frame` advances with
+// elapsed time; the result includes the `[`/`]` brackets so it drops into the
+// same layout budget as render_bar().
+std::string render_bar_swept(std::size_t frame, std::size_t width = 20) {
+    if (width == 0) return "[]";
+    std::size_t block = std::min<std::size_t>(3, width);
+    std::size_t span  = width - block;            // cells the block can travel
+    std::size_t pos   = 0;
+    if (span > 0) {
+        std::size_t period = span * 2;
+        std::size_t p      = frame % period;
+        pos = (p <= span) ? p : (period - p);     // ping-pong
+    }
+    std::string inner(width, ' ');
+    for (std::size_t i = 0; i < block && pos + i < width; ++i) inner[pos + i] = '=';
+    return "[" + inner + "]";
+}
+
+// Shared terminal-width budgeting for a one-line status: draws
+//   <verb-padded-12> <label> <bar> <info>
+// shrinking the bar first, then truncating the label, so the result is always
+// ≤ cols-1 visible chars. `makeBar(innerWidth)` produces the bar string
+// (including its `[`/`]` brackets) for the negotiated inner width.
+template <class MakeBar>
+void draw_status_line(std::string_view verb, const std::string& label,
+                      MakeBar&& makeBar, const std::string& info_text)
+{
+    constexpr std::size_t kVerbWidth = 12;
+    constexpr std::size_t kBarMax    = 20;
+    constexpr std::size_t kBarMin    = 6;
+
+    auto cols = terminal_cols();
+    if (cols < 30) cols = 30;             // pathological — give us a chance
+    auto budget = cols - 1;               // leave one cell for cursor
+
+    auto fixed = kVerbWidth + 3 + 2 + info_text.size();
+    if (fixed >= budget) {
+        // Truly tiny terminal — drop the bar entirely.
+        auto labelBudget = budget > kVerbWidth + 1 + info_text.size() + 1
+                         ? budget - kVerbWidth - 1 - info_text.size() - 1
+                         : 0;
+        auto lbl = trunc_visible(label, labelBudget);
+        if (g_color) {
+            std::print("\r\033[2K{}{}{}{} {} {}",
+                       kBold, kBrightCyan, verb_padded(verb), kReset,
+                       lbl, info_text);
+        } else {
+            std::print("\r\033[2K{} {} {}", verb_padded(verb), lbl, info_text);
+        }
+        std::fflush(stdout);
+        return;
+    }
+    auto contentBudget = budget - fixed;   // barInner + visible-label-cols
+
+    std::size_t barW = std::min(kBarMax, contentBudget);
+    std::size_t labelMax = contentBudget - barW;
+    if (barW < kBarMin && labelMax > 0) {
+        auto steal = std::min(kBarMin - barW, labelMax);
+        barW += steal;
+        labelMax -= steal;
+    }
+    auto bar = makeBar(barW);
+    auto lbl = trunc_visible(label, labelMax);
+
+    if (g_color) {
+        std::print("\r\033[2K{}{}{}{} {} {} {}",
+                   kBold, kBrightCyan, verb_padded(verb), kReset,
+                   lbl, bar, info_text);
+    } else {
+        std::print("\r\033[2K{} {} {} {}",
+                   verb_padded(verb), lbl, bar, info_text);
+    }
+    std::fflush(stdout);
+}
+
 } // namespace
 
 ProgressBar::ProgressBar(std::string_view verb, std::string_view label)
@@ -356,61 +477,25 @@ ProgressBar::~ProgressBar() {
 // The bar shrinks first when we run out of room, then `label` is truncated
 // with an ellipsis. Result is always ≤ cols-1 chars so a `\r\033[2K{...}`
 // write never wraps into a second row.
+// Layout (visible chars only): <verb-padded-12> <label> <bar> <info>.
+// The width budgeting lives in draw_status_line(); this just supplies a
+// percentage-fill bar for the negotiated inner width.
 void ProgressBar::render_line(std::size_t pct, const std::string& info_text)
 {
     init();
-    constexpr std::size_t kVerbWidth = 12;
-    constexpr std::size_t kBarMax    = 20;
-    constexpr std::size_t kBarMin    = 6;
+    draw_status_line(verb_, label_,
+                     [pct](std::size_t w) { return render_bar(pct, w); },
+                     info_text);
+}
 
-    auto cols = terminal_cols();
-    if (cols < 30) cols = 30;             // pathological — give us a chance
-    auto budget = cols - 1;               // leave one cell for cursor
-
-    // Visible layout, accounting for `[…]` bracket chars on the bar:
-    //   <verb-padded-12><space><label><space>[<bar-inner>]<space><info>
-    //
-    // Fixed cost = verbWidth + 3 spaces + 2 brackets + info.
-    // Whatever's left in `contentBudget` is split between bar-inner and label.
-    auto fixed = kVerbWidth + 3 + 2 + info_text.size();
-    if (fixed >= budget) {
-        // Truly tiny terminal — drop the bar entirely.
-        auto labelBudget = budget > kVerbWidth + 1 + info_text.size() + 1
-                         ? budget - kVerbWidth - 1 - info_text.size() - 1
-                         : 0;
-        auto lbl = trunc_visible(label_, labelBudget);
-        if (g_color) {
-            std::print("\r\033[2K{}{}{}{} {} {}",
-                       kBold, kBrightCyan, verb_padded(verb_), kReset,
-                       lbl, info_text);
-        } else {
-            std::print("\r\033[2K{} {} {}", verb_padded(verb_), lbl, info_text);
-        }
-        std::fflush(stdout);
-        return;
-    }
-    auto contentBudget = budget - fixed;   // barInner + visible-label-cols
-
-    std::size_t barW = std::min(kBarMax, contentBudget);
-    std::size_t labelMax = contentBudget - barW;
-    if (barW < kBarMin && labelMax > 0) {
-        // Steal from label to keep at least a tiny bar.
-        auto steal = std::min(kBarMin - barW, labelMax);
-        barW += steal;
-        labelMax -= steal;
-    }
-    auto bar = render_bar(pct, barW);
-    auto lbl = trunc_visible(label_, labelMax);
-
-    if (g_color) {
-        std::print("\r\033[2K{}{}{}{} {} {} {}",
-                   kBold, kBrightCyan, verb_padded(verb_), kReset,
-                   lbl, bar, info_text);
-    } else {
-        std::print("\r\033[2K{} {} {} {}",
-                   verb_padded(verb_), lbl, bar, info_text);
-    }
-    std::fflush(stdout);
+// Same layout, but an animated swept/indeterminate bar (used while the total
+// download size is still unknown).
+void ProgressBar::render_line_swept(std::size_t frame, const std::string& info_text)
+{
+    init();
+    draw_status_line(verb_, label_,
+                     [frame](std::size_t w) { return render_bar_swept(frame, w); },
+                     info_text);
 }
 
 void ProgressBar::update(std::size_t percent) {
@@ -443,6 +528,27 @@ void ProgressBar::update_bytes(std::size_t current, std::size_t total,
     render_line(pct, info);
 }
 
+void ProgressBar::update_indeterminate(std::size_t current_bytes,
+                                       double elapsed_sec) {
+    if (g_quiet || finished_) return;
+    auto now = std::chrono::steady_clock::now();
+    // Same ~80ms throttle as update_bytes(); there is no "100%" early-out here
+    // because there is no known total.
+    if (now - lastDraw_ < std::chrono::milliseconds(80)) return;
+    lastDraw_ = now;
+
+    // Before any byte arrives we only have "connecting…"; once the body starts
+    // streaming (no Content-Length) show the running byte count instead. The
+    // ticking elapsed-seconds suffix proves the line is alive either way.
+    std::string info = current_bytes > 0 ? fmt_bytes(current_bytes)
+                                         : std::string{"connecting…"};
+    if (elapsed_sec > 0)
+        info += std::format("  {:.0f}s", elapsed_sec);
+
+    auto frame = static_cast<std::size_t>(elapsed_sec * 6.0);
+    render_line_swept(frame, info);
+}
+
 void ProgressBar::finish() {
     if (finished_) return;
     finished_ = true;
@@ -458,6 +564,67 @@ void ProgressBar::finish_with(std::string_view final_message) {
     if (g_quiet) return;
     std::print("\r\033[2K");
     info(verb_, final_message);
+}
+
+// --- DownloadProgress ---
+
+DownloadProgress::~DownloadProgress() { finish(); }
+
+void DownloadProgress::finish() {
+    if (bar_) bar_->finish();
+    bar_.reset();
+    active_.clear();
+}
+
+void DownloadProgress::update(std::span<const DownloadFile> files,
+                              double elapsed_sec) {
+    if (files.empty()) return;
+
+    // 1. Retire newly-finished entries. Each file's finished=true is reported
+    //    twice (xlings quirk); the `finished_` set dedupes that and the case
+    //    where the same file reappears at a different slot in a later event.
+    for (auto& f : files) {
+        if (finished_.contains(f.name)) continue;
+        if (!f.finished) continue;
+        if (active_ == f.name) {
+            if (bar_) bar_->finish();
+            bar_.reset();
+            active_.clear();
+        }
+        finished_.insert(f.name);
+    }
+
+    // 2. Pick what to display: keep showing `active_` if it's still streaming,
+    //    else the first started+unfinished file. This stops the bar from
+    //    flickering between names when files[] reshuffles across events during
+    //    a multi-package install.
+    const DownloadFile* current = nullptr;
+    for (auto& f : files) {
+        if (f.name == active_ && !f.finished && !finished_.contains(f.name)) {
+            current = &f;
+            break;
+        }
+    }
+    if (!current) {
+        for (auto& f : files) {
+            if (finished_.contains(f.name)) continue;
+            if (f.started && !f.finished) { current = &f; break; }
+        }
+    }
+    if (!current) return;
+
+    if (current->name != active_) {
+        if (bar_) bar_->finish();
+        active_ = current->name;
+        bar_.emplace("Downloading", current->name);
+    }
+    if (current->total > 0) {
+        bar_->update_bytes(current->downloaded, current->total, elapsed_sec);
+    } else {
+        // Size not known yet (connecting / no Content-Length): keep the line
+        // animated instead of frozen.
+        bar_->update_indeterminate(current->downloaded, elapsed_sec);
+    }
 }
 
 std::string shorten_path(const std::filesystem::path& p, const PathContext& ctx) {

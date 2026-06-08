@@ -122,6 +122,10 @@ if [[ "${1:-}" == "update" ]]; then
     exit 0
 fi
 
+# Project/custom-index deps install through the NDJSON interface (so the live
+# download-progress UI renders). The capability honors XLINGS_PROJECT_DIR and
+# installs into the project-local data root — assert that here and emit a
+# minimal NDJSON stream (a download_progress event + result).
 if [[ "${1:-}" == "interface" && "${2:-}" == "install_packages" ]]; then
     while [[ $# -gt 0 ]]; do
         if [[ "$1" == "--args" ]]; then
@@ -130,12 +134,6 @@ if [[ "${1:-}" == "interface" && "${2:-}" == "install_packages" ]]; then
         fi
         shift
     done
-    printf '{"kind":"result","exitCode":0}\n'
-    exit 0
-fi
-
-if [[ "${1:-}" == "install" ]]; then
-    printf '%s\n' "$*" > "${FAKE_XLINGS_DIRECT_LOG:?}"
     if ! grep -q '"name": "xim"' "${XLINGS_PROJECT_DIR:?}/.xlings.json"; then
         echo "missing official xim index in project .xlings.json" >&2
         cat "${XLINGS_PROJECT_DIR:?}/.xlings.json" >&2 2>/dev/null || true
@@ -154,6 +152,14 @@ int cfg_value(void) {
     return 42;
 }
 SRC
+    printf '{"kind":"data","dataKind":"download_progress","payload":{"elapsedSec":0.1,"files":[{"name":"compat:compat.cfg@1.0.0","downloadedBytes":0,"totalBytes":0,"started":true,"finished":false}]}}\n'
+    printf '{"kind":"data","dataKind":"download_progress","payload":{"elapsedSec":0.3,"files":[{"name":"compat:compat.cfg@1.0.0","downloadedBytes":1024,"totalBytes":1024,"started":true,"finished":true}]}}\n'
+    printf '{"kind":"result","exitCode":0}\n'
+    exit 0
+fi
+
+if [[ "${1:-}" == "install" ]]; then
+    printf '%s\n' "$*" > "${FAKE_XLINGS_DIRECT_LOG:?}"
     exit 0
 fi
 
@@ -213,7 +219,7 @@ if ! FAKE_XLINGS_LOG="$FAKE_LOG" \
      FAKE_XLINGS_DIRECT_LOG="$FAKE_DIRECT_LOG" \
      FAKE_XLINGS_UPDATE_LOG="$UPDATE_LOG" \
      "$MCPP" build > fetch.log 2>&1; then
-    echo "FAIL: clean local path dependency should use direct xlings install"
+    echo "FAIL: clean local path dependency install failed"
     cat fetch.log
     exit 1
 fi
@@ -224,17 +230,20 @@ if [[ -f "$UPDATE_LOG" ]]; then
     exit 1
 fi
 
-if [[ -f "$FAKE_LOG" ]]; then
-    echo "FAIL: project local path install should use direct xlings install, not interface"
-    cat "$FAKE_LOG"
+# Project/custom-index deps install through the NDJSON interface so the live
+# download-progress UI renders (the capability honors XLINGS_PROJECT_DIR and
+# still lands the package in the project-local data root).
+if [[ -f "$FAKE_DIRECT_LOG" ]]; then
+    echo "FAIL: project local path install should use the NDJSON interface, not direct xlings install"
+    cat "$FAKE_DIRECT_LOG"
     cat fetch.log
     exit 1
 fi
 
-grep -Fq 'install compat:compat.cfg@1.0.0 -y' "$FAKE_DIRECT_LOG" || {
-    echo "FAIL: clean local path install target should use direct xlings with full package name"
+grep -Fq 'compat:compat.cfg@1.0.0' "$FAKE_LOG" || {
+    echo "FAIL: clean local path install target should use the interface with the full package name"
     echo "recorded:"
-    cat "$FAKE_DIRECT_LOG" 2>/dev/null || true
+    cat "$FAKE_LOG" 2>/dev/null || true
     echo "build log:"
     cat fetch.log
     exit 1
