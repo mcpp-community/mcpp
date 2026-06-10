@@ -16,27 +16,9 @@ export module mcpp.pm.commands;
 import std;
 import mcpp.manifest;            // kDefaultNamespace alias
 import mcpp.lockfile;             // load / write (still via shim)
+import mcpp.project;              // shared find_manifest_root
 import mcpp.ui;
 import mcpplibs.cmdline;
-
-namespace mcpp::pm::commands::detail {
-
-// Locate mcpp.toml by walking upward from cwd. Local copy of the
-// `cli.cppm` helper of the same name so this module doesn't have to
-// import `mcpp.cli` (which would create a circular dep). A future
-// refactor can fold the two into a shared `mcpp.project` module.
-inline std::optional<std::filesystem::path>
-find_manifest_root(std::filesystem::path start) {
-    auto p = std::filesystem::absolute(start);
-    while (true) {
-        if (std::filesystem::exists(p / "mcpp.toml")) return p;
-        auto parent = p.parent_path();
-        if (parent == p) return std::nullopt;
-        p = parent;
-    }
-}
-
-} // namespace mcpp::pm::commands::detail
 
 export namespace mcpp::pm::commands {
 
@@ -75,7 +57,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
 
-    auto root = detail::find_manifest_root(std::filesystem::current_path());
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) { mcpp::ui::error("no mcpp.toml in current dir or parents"); return 2; }
     auto manifestPath = *root / "mcpp.toml";
 
@@ -130,7 +112,7 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
 
-    auto root = detail::find_manifest_root(std::filesystem::current_path());
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) { mcpp::ui::error("no mcpp.toml in current dir or parents"); return 2; }
     auto manifestPath = *root / "mcpp.toml";
 
@@ -282,7 +264,7 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::optional<std::string> only;
     if (parsed.positional_count() > 0) only = parsed.positional(0);
 
-    auto root = detail::find_manifest_root(std::filesystem::current_path());
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) { mcpp::ui::error("no mcpp.toml in current dir or parents"); return 2; }
     auto lockPath = *root / "mcpp.lock";
     if (only) {
