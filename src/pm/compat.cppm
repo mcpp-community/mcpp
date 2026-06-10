@@ -73,6 +73,47 @@ inline ResolvedName resolve_package_name(std::string_view name,
     return r;
 }
 
+// ─── Descriptor-derived coordinates ──────────────────────────────────
+//
+// Derive the structured (namespace, shortName) for a package whose index
+// descriptor was located by filename candidates from an unqualified spec
+// (`mcpp new --template <pkg>`). The filename hit alone is not enough:
+// pkgs/l/llmapi.lua is found by the bare name "llmapi" while the
+// descriptor declares `namespace = "mcpplibs"` (and possibly a legacy
+// dotted `name = "mcpplibs.llmapi"`), and xlings resolves install targets
+// by the descriptor's qualified name.
+//
+// Unlike resolve_package_name(), a bare name with no namespace field
+// stays in the index root (namespace "") — root packages such as "imgui"
+// install by their bare name.
+
+inline ResolvedName descriptor_coordinates(std::string_view specPkg,
+                                           std::string_view luaNs,
+                                           std::string_view luaName)
+{
+    ResolvedName r;
+    std::string name(luaName.empty() ? specPkg : luaName);
+    r.namespace_ = std::string(luaNs);
+
+    if (!r.namespace_.empty()) {
+        // Legacy descriptors embed the namespace in the name too
+        // (namespace = "mcpplibs", name = "mcpplibs.llmapi").
+        auto prefix = r.namespace_ + ".";
+        if (name.starts_with(prefix)) {
+            name = name.substr(prefix.size());
+            r.usedLegacySplit = true;
+        }
+    } else if (auto dot = name.find('.'); dot != std::string::npos) {
+        // Legacy dotted name without a namespace field.
+        r.namespace_ = name.substr(0, dot);
+        name         = name.substr(dot + 1);
+        r.usedLegacySplit = true;
+    }
+
+    r.shortName = std::move(name);
+    return r;
+}
+
 // Reconstruct the fully-qualified name from (namespace, shortName).
 // Default-namespace packages use the bare short name; others use
 // "ns.short".
