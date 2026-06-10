@@ -1,15 +1,13 @@
-// mcpp.cli.install_ui — xlings NDJSON install-progress -> ui renderer adapters
-//
-// Extracted verbatim from cli.cppm (cli modularization, see
-// .agents/docs/2026-06-10-cli-modularization.md). Zero behavior change:
-// bodies are byte-identical moves; only the surrounding module/namespace
-// changed (mcpp::cli::detail -> mcpp::cli).
+// mcpp.fetcher.progress — xlings NDJSON install events -> ui renderer
+// adapters, plus the path-shortening context used in status output.
+// Bodies moved verbatim from the CLI layer. Zero behavior change
+// (InstallProgressHandler was renamed InstallProgressHandler for its new home).
 
 module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.cli.install_ui;
+export module mcpp.fetcher.progress;
 
 import std;
 import mcpp.config;
@@ -17,7 +15,8 @@ import mcpp.fetcher;
 import mcpp.log;
 import mcpp.ui;
 
-namespace mcpp::cli {
+namespace mcpp::fetcher {
+
 
 // ─── Install-time progress display ───────────────────────────────────
 //
@@ -206,7 +205,7 @@ export mcpp::config::BootstrapProgressCallback make_bootstrap_progress_callback(
 // EventHandler that forwards xlings `download_progress` events to the same
 // centralized renderer. Used for toolchain, builtin-index and custom-index
 // installs alike, so all three show identical UI.
-export struct CliInstallProgress : mcpp::fetcher::EventHandler {
+export struct InstallProgressHandler : mcpp::fetcher::EventHandler {
     mcpp::ui::DownloadProgress progress_;
 
     void on_data(const mcpp::fetcher::DataEvent& d) override {
@@ -235,7 +234,8 @@ export struct CliInstallProgress : mcpp::fetcher::EventHandler {
     }
 
     // progress_'s own destructor finishes the active bar.
-    ~CliInstallProgress() override = default;
+    ~InstallProgressHandler() override = default;
 };
 
-} // namespace mcpp::cli
+
+} // namespace mcpp::fetcher

@@ -1,22 +1,19 @@
-// mcpp.cli.common — shared CLI helpers: project/workspace discovery + fs utils
+// mcpp.project — project/workspace location + workspace-dependency merging.
 //
-// Extracted verbatim from cli.cppm (cli modularization, see
-// .agents/docs/2026-06-10-cli-modularization.md). Zero behavior change:
-// bodies are byte-identical moves; only the surrounding module/namespace
-// changed (mcpp::cli::detail -> mcpp::cli).
+// Shared by the CLI layer and the pm subsystem (which previously kept a
+// private copy of find_manifest_root to avoid importing mcpp.cli).
+// Bodies moved verbatim from the CLI layer. Zero behavior change.
 
 module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.cli.common;
+export module mcpp.project;
 
 import std;
 import mcpp.manifest;
-import mcpp.toolchain.detect;      // re-exports toolchain.model (Toolchain)
-import mcpp.toolchain.fingerprint;
 
-namespace mcpp::cli {
+namespace mcpp::project {
 
 // Locate mcpp.toml by walking upward from cwd.
 export std::optional<std::filesystem::path> find_manifest_root(std::filesystem::path start) {
@@ -77,34 +74,4 @@ export void merge_workspace_deps(mcpp::manifest::Manifest& member,
     merge_map(member.buildDependencies);
 }
 
-export std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
-                                 const mcpp::toolchain::Fingerprint& fp,
-                                 const std::filesystem::path& root)
-{
-    auto triple = tc.targetTriple.empty() ? std::string{"unknown"} : tc.targetTriple;
-    return root / "target" / triple / fp.hex;
-}
-
-export std::uintmax_t dir_size(const std::filesystem::path& p) {
-    std::error_code ec;
-    if (!std::filesystem::exists(p, ec)) return 0;
-    std::uintmax_t total = 0;
-    for (auto& e : std::filesystem::recursive_directory_iterator(p, ec)) {
-        if (ec) break;
-        std::error_code ec2;
-        if (e.is_regular_file(ec2) && !ec2) {
-            total += e.file_size(ec2);
-        }
-    }
-    return total;
-}
-
-export std::string human_bytes(std::uintmax_t n) {
-    constexpr const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
-    double v = static_cast<double>(n);
-    int u = 0;
-    while (v >= 1024.0 && u < 4) { v /= 1024.0; ++u; }
-    return std::format("{:.1f} {}", v, units[u]);
-}
-
-} // namespace mcpp::cli
+} // namespace mcpp::project

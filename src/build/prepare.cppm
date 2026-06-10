@@ -1,15 +1,13 @@
-// mcpp.cli.build — BuildContext + prepare_build (the build-orchestration core)
-//
-// Extracted verbatim from cli.cppm (cli modularization, see
-// .agents/docs/2026-06-10-cli-modularization.md). Zero behavior change:
-// bodies are byte-identical moves; only the surrounding module/namespace
-// changed (mcpp::cli::detail -> mcpp::cli).
+// mcpp.build.prepare — BuildContext + prepare_build: the build-orchestration
+// core (workspace -> toolchain -> dependency resolution -> features ->
+// modgraph -> fingerprint -> plan -> lockfile).
+// Bodies moved verbatim from the CLI layer. Zero behavior change.
 
 module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.cli.build;
+export module mcpp.build.prepare;
 
 import std;
 import mcpp.libs.json;
@@ -29,6 +27,7 @@ import mcpp.config;
 import mcpp.xlings;
 import mcpp.platform;
 import mcpp.fetcher;
+import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
 import mcpp.pm.mangle;
@@ -39,10 +38,18 @@ import mcpp.ui;
 import mcpp.log;
 import mcpp.fallback.install_integrity;
 import mcpp.bmi_cache;
-import mcpp.cli.common;
-import mcpp.cli.install_ui;
+import mcpp.project;
 
-namespace mcpp::cli {
+namespace mcpp::build {
+
+export std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
+                                 const mcpp::toolchain::Fingerprint& fp,
+                                 const std::filesystem::path& root)
+{
+    auto triple = tc.targetTriple.empty() ? std::string{"unknown"} : tc.targetTriple;
+    return root / "target" / triple / fp.hex;
+}
+
 
 // Compose a stable canonical compile-flags string for fingerprinting.
 std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
@@ -291,7 +298,7 @@ prepare_build(bool print_fingerprint,
               bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {}) {
-    auto root = find_manifest_root(std::filesystem::current_path());
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
         return std::unexpected("no mcpp.toml found in current directory or any parent");
     }
@@ -352,7 +359,7 @@ prepare_build(bool print_fingerprint,
                 "workspace member '{}': {}", targetMember, m.error().format()));
 
             // Merge workspace dependency versions
-            merge_workspace_deps(*m, *wsManifest);
+            mcpp::project::merge_workspace_deps(*m, *wsManifest);
 
             // Inherit workspace toolchain if member doesn't define one
             if (m->toolchain.byPlatform.empty()) {
@@ -374,11 +381,11 @@ prepare_build(bool print_fingerprint,
         }
     } else {
         // Not at workspace root — check if we're inside a workspace
-        auto wsRoot = find_workspace_root(*root);
+        auto wsRoot = mcpp::project::find_workspace_root(*root);
         if (!wsRoot.empty()) {
             auto wsm = mcpp::manifest::load(wsRoot / "mcpp.toml");
             if (wsm && wsm->workspace.present) {
-                merge_workspace_deps(*m, *wsm);
+                mcpp::project::merge_workspace_deps(*m, *wsm);
                 if (m->toolchain.byPlatform.empty()) {
                     m->toolchain = wsm->toolchain;
                 }
@@ -409,7 +416,7 @@ prepare_build(bool print_fingerprint,
     auto get_cfg = [&](bool requireBootstrap = true) -> std::expected<mcpp::config::GlobalConfig*, std::string> {
         if (!cfg_opt) {
             auto c = mcpp::config::load_or_init(/*quiet=*/false,
-                make_bootstrap_progress_callback());
+                mcpp::fetcher::make_bootstrap_progress_callback());
             if (!c) return std::unexpected(c.error().message);
             cfg_opt = std::move(*c);
         }
@@ -524,7 +531,7 @@ prepare_build(bool print_fingerprint,
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
         mcpp::ui::info("Resolving", "toolchain");
-        CliInstallProgress progress;
+        mcpp::fetcher::InstallProgressHandler progress;
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         if (!payload) {
             return std::unexpected(std::format(
@@ -540,7 +547,7 @@ prepare_build(bool print_fingerprint,
         mcpp::ui::info("Resolved",
             std::format("{} → {}", *tcSpec,
                 mcpp::ui::shorten_path(explicit_compiler,
-                    make_path_ctx(&**get_cfg(), *root))));
+                    mcpp::fetcher::make_path_ctx(&**get_cfg(), *root))));
     } else if (tcSpec.has_value() && *tcSpec == "system") {
         // Explicit user opt-in to system PATH compiler — kept as escape hatch.
     } else if (auto* opt = std::getenv("MCPP_NO_AUTO_INSTALL"); opt && *opt && *opt != '0') {
@@ -596,7 +603,7 @@ prepare_build(bool print_fingerprint,
         if (!cfg) return std::unexpected(cfg.error());
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
-        CliInstallProgress progress;
+        mcpp::fetcher::InstallProgressHandler progress;
         // The glibc default toolchain needs the sysroot payloads (C library +
         // kernel headers), exactly like `mcpp toolchain install` provides.
         // The old musl-static default was self-contained, which masked this.
@@ -1188,14 +1195,14 @@ prepare_build(bool print_fingerprint,
                     auto projEnv = mcpp::config::make_project_xlings_env(**cfg, *root);
                     auto argsJson = std::format(
                         R"({{"targets":["{}"],"yes":true}})", target);
-                    CliInstallProgress progress;
+                    mcpp::fetcher::InstallProgressHandler progress;
                     auto r = mcpp::xlings::call(
                         projEnv, "install_packages", argsJson, &progress);
                     if (!r) return std::unexpected(mcpp::pm::CallError{r.error()});
                     return *r;
                 }
                 std::vector<std::string> targets{ std::move(target) };
-                CliInstallProgress progress;
+                mcpp::fetcher::InstallProgressHandler progress;
                 return fetcher.install(targets, &progress);
             };
             auto target = std::format("{}@{}", fqname, version);
@@ -2489,4 +2496,5 @@ prepare_build(bool print_fingerprint,
     return ctx;
 }
 
-} // namespace mcpp::cli
+
+} // namespace mcpp::build

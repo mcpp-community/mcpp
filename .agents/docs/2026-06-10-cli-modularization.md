@@ -123,17 +123,54 @@ The extraction is a single mechanical transformation of one immutable source rev
 - [x] **Step 2:** Watch ci-linux / ci-macos / ci-windows / fresh-install lanes; fix-forward on any platform-specific module issue (most likely candidate: MSVC/clang module-linkage strictness on exported-vs-internal helpers).
 - [x] **Step 3:** Update this doc's status section.
 
-## 4. Follow-ups (out of scope here)
+## 4. Phase 2 — domain relocation (cli = parse + route only)
 
-- Decompose `prepare_build` internally (workspace / toolchain / dep-resolution / feature phases as named functions) now that it has a home module.
-- Fold `pm.commands`' private `find_manifest_root` copy into a shared project-location module once a `cli`-independent home exists (`mcpp.cli.common` is still CLI-layer; a `mcpp.project` module would let pm import it without layering violations).
-- Tighten `mcpp.cli.build`'s import list (it inherited the union of the old `cli.cppm` imports).
+Phase 1 made `cli.cppm` a dispatcher but left implementations in `mcpp.cli.*`
+modules. Phase 2 finishes the architecture: every implementation lives in its
+owning subsystem, and `cli/cmd_*` modules contain ONLY argument handling,
+validation of CLI shapes, and routing. Relocation map (bodies verbatim again):
 
-## 5. Status
+| Phase-1 location | Phase-2 owner | Contents |
+|---|---|---|
+| `mcpp.cli.common` | `mcpp.project` (`src/project.cppm`) | `find_manifest_root`, `find_workspace_root`, `merge_workspace_deps` (also folds the private copy `pm.commands` kept) |
+| `mcpp.cli.common` | `mcpp.bmi_cache.ops` | `dir_size`, `human_bytes` |
+| `mcpp.cli.common` | `mcpp.build.prepare` (internal) | `target_dir` |
+| `mcpp.cli.install_ui` | `mcpp.fetcher.progress` (`src/fetcher/progress.cppm`) | NDJSON→ui adapters (`CliInstallProgress` → `InstallProgressHandler`), `make_bootstrap_progress_callback`, `make_path_ctx` |
+| `mcpp.cli.build` | `mcpp.build.prepare` (`src/build/prepare.cppm`) | `BuildContext`, `BuildOverrides`, `prepare_build` |
+| `mcpp.cli.cmd_build` | `mcpp.build.execute` (`src/build/execute.cppm`) | build cache + fast path, `run_build_plan`, `try_fast_build`, `build_run_target`, `run_tests`, `clean_project` |
+| `mcpp.cli.cmd_toolchain` | `mcpp.toolchain.manager` (`src/toolchain/manager.cppm`) | version matching + `toolchain_list/install/set_default/remove` |
+| `mcpp.cli.cmd_registry` | `mcpp.pm.index_ops` (`src/pm/index_ops.cppm`) | `search_packages`, `index_list/add/remove/update/pin/unpin` |
+| `mcpp.cli.cmd_cache` | `mcpp.bmi_cache.ops` (`src/bmi_cache/ops.cppm`) | `cache_list/info/prune/clean` |
+| `mcpp.cli.cmd_new` | `mcpp.scaffold.ops` (`src/scaffold/ops.cppm`) | template fetch/instantiate + `create_builtin_project` |
+| `mcpp.cli.cmd_publish` | `mcpp.publish.ops` (`src/publish/ops.cppm`) | `publish_package`, `emit_xpkg_to` |
+| `mcpp.cli.cmd_publish` | `mcpp.pack.ops` (`src/pack/ops.cppm`) | `build_and_pack` |
+| `mcpp.cli.cmd_self` | `mcpp.doctor` (`src/doctor.cppm`) | `env_report`, `doctor_report`, `why_report`, `explain_code`, `self_init`, `self_config` |
+
+Resulting cli layer: `cli.cppm` (dispatcher, 481) + seven `cmd_*` adapters
+totalling ~450 lines, none containing domain logic. Domain ops take plain
+typed parameters (never `ParsedArgs`); `mcpplibs.cmdline` is imported only by
+the cli layer. The split rule for each command: CLI-shape validation and
+usage errors stay in the adapter; everything after lives in the domain op
+with identical statements, messages and exit codes.
+
+## 5. Follow-ups (out of scope here)
+
+- Decompose `prepare_build` internally (workspace / toolchain / dep-resolution / feature phases) now that it lives in `mcpp.build.prepare`.
+- Tighten `mcpp.build.prepare`'s import list (it inherited the union of the old `cli.cppm` imports).
+- `pm.commands` still takes `ParsedArgs` (it predates the parse/route rule); migrating add/remove/update bodies behind typed ops would complete the pattern.
+
+## 6. Status
 
 - 2026-06-10: extraction done. `cli.cppm` 6192 -> 481 lines; 11 new modules.
   Verified: self-host build clean; unit suite 18/18 pass; e2e 67 pass /
   1 skip, with the only failures being the 6 `llvm_*` tests that fail
   identically with the pre-refactor baseline binary on the same host
   (local LLVM payload cannot exec — environment issue, not a regression).
-  PR opened; awaiting CI.
+  PR opened; CI green on linux/windows/macos.
+- 2026-06-10 (phase 2): domain relocation executed — implementations moved out
+  of `mcpp.cli.*` into `mcpp.project`, `mcpp.fetcher.progress`,
+  `mcpp.build.{prepare,execute}`, `mcpp.toolchain.manager`,
+  `mcpp.pm.index_ops`, `mcpp.bmi_cache.ops`, `mcpp.scaffold.ops`,
+  `mcpp.publish.ops`, `mcpp.pack.ops`, `mcpp.doctor`; `cli/cmd_*` reduced to
+  parse + route adapters (~450 lines total). Self-host build + 18/18 unit
+  tests pass; e2e parity with baseline re-verified.

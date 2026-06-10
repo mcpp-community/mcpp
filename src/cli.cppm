@@ -1,10 +1,13 @@
 // mcpp.cli — top-level command dispatch (and nothing else).
 //
-// Every command implementation lives in a focused module:
+// The cli layer only parses arguments and routes:
 //   mcpp.cli.cmd_build / cmd_new / cmd_registry / cmd_cache /
-//   mcpp.cli.cmd_toolchain / cmd_publish / cmd_self   (this layer)
+//   mcpp.cli.cmd_toolchain / cmd_publish / cmd_self   (parse + route)
 //   mcpp.pm.commands                                  (add / remove / update)
-// Shared plumbing: mcpp.cli.common, mcpp.cli.install_ui, mcpp.cli.build.
+// Domain logic lives in its owning subsystem: mcpp.build.{prepare,execute},
+// mcpp.pm.index_ops, mcpp.toolchain.manager, mcpp.scaffold.ops,
+// mcpp.publish.ops, mcpp.pack.ops, mcpp.bmi_cache.ops, mcpp.doctor,
+// mcpp.project, mcpp.fetcher.progress.
 // See .agents/docs/2026-06-10-cli-modularization.md for the architecture.
 
 module;
