@@ -93,3 +93,58 @@ TEST(DependencySelector, ExplicitRootSelectorHasOnlyThatRoot) {
     EXPECT_EQ(selector.candidates[0].namespace_, "compat");
     EXPECT_EQ(selector.candidates[0].shortName, "gtest");
 }
+
+// ─── descriptor_coordinates (package-template fetch) ────────────────
+
+TEST(PmCompat, DescriptorCoordinatesLegacyEmbeddedNamespace) {
+    // pkgs/l/llmapi.lua: namespace = "mcpplibs", name = "mcpplibs.llmapi"
+    auto r = mcpp::pm::compat::descriptor_coordinates(
+        "llmapi", "mcpplibs", "mcpplibs.llmapi");
+
+    EXPECT_EQ(r.namespace_, "mcpplibs");
+    EXPECT_EQ(r.shortName, "llmapi");
+    EXPECT_TRUE(r.usedLegacySplit);
+}
+
+TEST(PmCompat, DescriptorCoordinatesCanonicalNamespaceField) {
+    auto r = mcpp::pm::compat::descriptor_coordinates(
+        "llmapi", "mcpplibs", "llmapi");
+
+    EXPECT_EQ(r.namespace_, "mcpplibs");
+    EXPECT_EQ(r.shortName, "llmapi");
+    EXPECT_FALSE(r.usedLegacySplit);
+}
+
+TEST(PmCompat, DescriptorCoordinatesRootPackageStaysInRoot) {
+    // pkgs/i/imgui.lua: namespace = "", name = "imgui" — must NOT be
+    // promoted to the default namespace (it installs by its bare name).
+    auto r = mcpp::pm::compat::descriptor_coordinates("imgui", "", "imgui");
+
+    EXPECT_EQ(r.namespace_, "");
+    EXPECT_EQ(r.shortName, "imgui");
+    EXPECT_FALSE(r.usedLegacySplit);
+}
+
+TEST(PmCompat, DescriptorCoordinatesLegacyDottedNameWithoutNamespace) {
+    auto r = mcpp::pm::compat::descriptor_coordinates(
+        "tinyhttps", "", "mcpplibs.tinyhttps");
+
+    EXPECT_EQ(r.namespace_, "mcpplibs");
+    EXPECT_EQ(r.shortName, "tinyhttps");
+    EXPECT_TRUE(r.usedLegacySplit);
+}
+
+TEST(PmCompat, DescriptorCoordinatesFallsBackToSpecWhenNameMissing) {
+    auto r = mcpp::pm::compat::descriptor_coordinates("imgui", "", "");
+
+    EXPECT_EQ(r.namespace_, "");
+    EXPECT_EQ(r.shortName, "imgui");
+}
+
+TEST(PmCompat, DescriptorCoordinatesCompatNamespace) {
+    auto r = mcpp::pm::compat::descriptor_coordinates(
+        "mbedtls", "compat", "compat.mbedtls");
+
+    EXPECT_EQ(r.namespace_, "compat");
+    EXPECT_EQ(r.shortName, "mbedtls");
+}

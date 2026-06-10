@@ -1068,11 +1068,9 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
 
     // Namespace candidates mirror dependency lookup: index root first,
     // then the compat namespace.
-    std::string ns;
     std::optional<std::string> lua;
     for (std::string cand : {std::string{}, std::string{"compat"}}) {
         if (auto l = fetcher.read_xpkg_lua(cand, spec.pkg)) {
-            ns = cand;
             lua = std::move(*l);
             break;
         }
@@ -1083,16 +1081,28 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
             "(check the name, or run `mcpp index update`)", spec.pkg));
     }
 
+    // The filename hit alone does not carry the namespace: a bare spec
+    // like "llmapi" finds pkgs/l/llmapi.lua even though the descriptor
+    // declares `namespace = "mcpplibs"`, and xlings resolves install
+    // targets by the descriptor's qualified name. Derive the structured
+    // (namespace, shortName) from the descriptor fields.
+    auto coords = mcpp::pm::compat::descriptor_coordinates(
+        spec.pkg,
+        mcpp::manifest::extract_xpkg_namespace(*lua),
+        mcpp::manifest::extract_xpkg_name(*lua));
+    const std::string& ns        = coords.namespace_;
+    const std::string& shortName = coords.shortName;
+
     std::string version = spec.version;
     if (version.empty()) {
-        auto v = mcpp::pm::resolve_semver(ns, spec.pkg, "*", fetcher);
+        auto v = mcpp::pm::resolve_semver(ns, shortName, "*", fetcher);
         if (!v) return std::unexpected(v.error());
         version = *v;
     }
 
-    auto installed = fetcher.install_path(ns, spec.pkg, version);
+    auto installed = fetcher.install_path(ns, shortName, version);
     if (!installed) {
-        auto fq = ns.empty() ? spec.pkg : std::format("{}.{}", ns, spec.pkg);
+        auto fq = ns.empty() ? shortName : std::format("{}.{}", ns, shortName);
         mcpp::ui::info("Downloading", std::format("{} v{}", fq, version));
         CliInstallProgress progress;
         std::vector<std::string> targets{ std::format("{}@{}", fq, version) };
@@ -1101,7 +1111,7 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
             "fetch '{}@{}': {}", fq, version, r.error().message));
         if (r->exitCode != 0) return std::unexpected(std::format(
             "fetch '{}@{}' failed (exit {})", fq, version, r->exitCode));
-        installed = fetcher.install_path(ns, spec.pkg, version);
+        installed = fetcher.install_path(ns, shortName, version);
         if (!installed) return std::unexpected(std::format(
             "package '{}@{}' install path missing after fetch", fq, version));
     }
@@ -1123,7 +1133,7 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
         return std::unexpected(std::format(
             "package '{}@{}' has no mcpp.toml", spec.pkg, version));
     }
-    return FetchedTemplatePackage{root, spec.pkg, version};
+    return FetchedTemplatePackage{root, shortName, version};
 }
 
 void print_template_listing(const FetchedTemplatePackage& pkg,
