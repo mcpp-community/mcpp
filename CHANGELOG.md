@@ -3,6 +3,24 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.54] — 2026-06-10
+
+### 修复
+
+- `mcpp new <name> --template <pkg>`:对声明了命名空间的模板包(如
+  `mcpplibs.llmapi` 以裸名 `llmapi` 引用)现在能从描述符派生出
+  (namespace, shortName) 坐标,正确完成 semver 解析与安装(#130)。
+
+### 其他
+
+- 架构重构(零行为变更):`cli.cppm` 从 6192 行精简为约 480 行的纯命令
+  分发层;`src/cli/cmd_*` 仅保留参数解析与路由,全部领域实现下沉到属主
+  子系统 —— `mcpp.build.{prepare,execute}`、`mcpp.toolchain.{post_install,
+  lifecycle}`、`mcpp.pm.index_management`、`mcpp.bmi_cache.maintenance`、
+  `mcpp.scaffold.create`、`mcpp.publish.pipeline`、`mcpp.pack.pipeline`、
+  `mcpp.doctor`、`mcpp.project`、`mcpp.fetcher.progress`。
+  设计与迁移记录见 `.agents/docs/2026-06-10-cli-modularization.md`。
+
 ## [0.0.53] — 2026-06-09
 
 ### 新增
