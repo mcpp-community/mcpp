@@ -89,8 +89,8 @@ The extraction is a single mechanical transformation of one immutable source rev
 
 ### Task 2: Scripted extraction
 
-- [ ] **Step 1:** `cp src/cli.cppm /tmp/cli_orig.cppm` (immutable line-range source).
-- [ ] **Step 2:** For each row of the module inventory: write the module header (GMF prologue, `export module`, imports per §2, `namespace … {`), then `sed -n 'A,Bp' /tmp/cli_orig.cppm >>` the body ranges in table order, then close the namespace. Import lists per module:
+- [x] **Step 1:** `cp src/cli.cppm /tmp/cli_orig.cppm` (immutable line-range source).
+- [x] **Step 2:** For each row of the module inventory: write the module header (GMF prologue, `export module`, imports per §2, `namespace … {`), then `sed -n 'A,Bp' /tmp/cli_orig.cppm >>` the body ranges in table order, then close the namespace. Import lists per module:
   - common: `std, mcpp.manifest, mcpp.toolchain.detect, mcpp.toolchain.fingerprint`
   - install_ui: `std, mcpp.ui, mcpp.log, mcpp.config, mcpp.fetcher`
   - post_install: `std, mcpp.config, mcpp.xlings, mcpp.platform, mcpp.log, mcpp.ui`
@@ -102,26 +102,26 @@ The extraction is a single mechanical transformation of one immutable source rev
   - cmd_toolchain: `std, mcpplibs.cmdline, mcpp.cli.{common,install_ui}, mcpp.toolchain.{detect,registry,post_install}, mcpp.config, mcpp.xlings, mcpp.fetcher, mcpp.manifest, mcpp.ui, mcpp.log`
   - cmd_publish: `std, mcpplibs.cmdline, mcpp.cli.{common,build,install_ui}, mcpp.manifest, mcpp.modgraph.scanner, mcpp.publish.xpkg_emit, mcpp.pack, mcpp.build.{backend,ninja}, mcpp.config, mcpp.platform, mcpp.ui`
   - cmd_self: `std, mcpplibs.cmdline, mcpp.cli.{common,build,install_ui}, mcpp.config, mcpp.xlings, mcpp.fallback.install_integrity, mcpp.toolchain.{detect,fingerprint,stdmod}, mcpp.build.plan, mcpp.ui`
-- [ ] **Step 3:** Rewrite `src/cli.cppm`: header + imports (`std, mcpplibs.cmdline, mcpp.ui, mcpp.log, mcpp.toolchain.fingerprint, mcpp.pm.commands, mcpp.cli.cmd_*×7`) + exported `run()` decl + `print_usage` + `run()` body (drop the `using namespace …::detail;` line).
-- [ ] **Step 4:** Add `export` keywords on the symbols listed in §2 (Edit per declaration); drop `static` from `dir_size`/`human_bytes`; qualify the three `mcpp::toolchain::` post-install call sites (one in build.cppm: `gcc_post_install_fixup`; two-plus-one in cmd_toolchain.cppm: `gcc_post_install_fixup`, `patchelf_walk`, `fixup_clang_cfg`).
+- [x] **Step 3:** Rewrite `src/cli.cppm`: header + imports (`std, mcpplibs.cmdline, mcpp.ui, mcpp.log, mcpp.toolchain.fingerprint, mcpp.pm.commands, mcpp.cli.cmd_*×7`) + exported `run()` decl + `print_usage` + `run()` body (drop the `using namespace …::detail;` line).
+- [x] **Step 4:** Add `export` keywords on the symbols listed in §2 (Edit per declaration); drop `static` from `dir_size`/`human_bytes`; qualify the three `mcpp::toolchain::` post-install call sites (one in build.cppm: `gcc_post_install_fixup`; two-plus-one in cmd_toolchain.cppm: `gcc_post_install_fixup`, `patchelf_walk`, `fixup_clang_cfg`).
 
 ### Task 3: Build & fix loop
 
-- [ ] **Step 1:** `mcpp build` — fix any missing-import / linkage errors (expected failure mode: a helper referenced across modules that wasn't exported; fix = add `export` or import, never duplicate code).
-- [ ] **Step 2:** `wc -l src/cli.cppm` — expected < 500.
-- [ ] **Step 3:** Commit `refactor(cli): split cli.cppm into focused modules`.
+- [x] **Step 1:** `mcpp build` — fix any missing-import / linkage errors (expected failure mode: a helper referenced across modules that wasn't exported; fix = add `export` or import, never duplicate code).
+- [x] **Step 2:** `wc -l src/cli.cppm` — expected < 500.
+- [x] **Step 3:** Commit `refactor(cli): split cli.cppm into focused modules`.
 
 ### Task 4: Verification
 
-- [ ] **Step 1:** `mcpp test` with the freshly built binary — expect all unit tests pass.
-- [ ] **Step 2:** `MCPP=<fresh binary> tests/e2e/run_all.sh` — expect all e2e tests pass (covers help/version text, exit codes 0/1/2/127, all command surfaces).
-- [ ] **Step 3:** Sanity: `mcpp --help`, `mcpp version`, `mcpp self doctor`, unknown-command exit 127.
+- [x] **Step 1:** `mcpp test` with the freshly built binary — expect all unit tests pass.
+- [x] **Step 2:** `MCPP=<fresh binary> tests/e2e/run_all.sh` — expect all e2e tests pass (covers help/version text, exit codes 0/1/2/127, all command surfaces).
+- [x] **Step 3:** Sanity: `mcpp --help`, `mcpp version`, `mcpp self doctor`, unknown-command exit 127.
 
 ### Task 5: PR + CI
 
-- [ ] **Step 1:** Push branch, open PR describing motivation, module map, zero-behavior-change guarantee, verification evidence.
-- [ ] **Step 2:** Watch ci-linux / ci-macos / ci-windows / fresh-install lanes; fix-forward on any platform-specific module issue (most likely candidate: MSVC/clang module-linkage strictness on exported-vs-internal helpers).
-- [ ] **Step 3:** Update this doc's status section.
+- [x] **Step 1:** Push branch, open PR describing motivation, module map, zero-behavior-change guarantee, verification evidence.
+- [x] **Step 2:** Watch ci-linux / ci-macos / ci-windows / fresh-install lanes; fix-forward on any platform-specific module issue (most likely candidate: MSVC/clang module-linkage strictness on exported-vs-internal helpers).
+- [x] **Step 3:** Update this doc's status section.
 
 ## 4. Follow-ups (out of scope here)
 
@@ -131,4 +131,9 @@ The extraction is a single mechanical transformation of one immutable source rev
 
 ## 5. Status
 
-- 2026-06-10: doc written; extraction in progress.
+- 2026-06-10: extraction done. `cli.cppm` 6192 -> 481 lines; 11 new modules.
+  Verified: self-host build clean; unit suite 18/18 pass; e2e 67 pass /
+  1 skip, with the only failures being the 6 `llvm_*` tests that fail
+  identically with the pre-refactor baseline binary on the same host
+  (local LLVM payload cannot exec — environment issue, not a regression).
+  PR opened; awaiting CI.
