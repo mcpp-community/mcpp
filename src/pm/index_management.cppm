@@ -1,4 +1,4 @@
-// mcpp.pm.index_ops — registry/index operations: search, list, add,
+// mcpp.pm.index_management — registry/index operations: search, list, add,
 // remove, update, pin, unpin.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
@@ -6,7 +6,7 @@ module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.pm.index_ops;
+export module mcpp.pm.index_management;
 
 import std;
 import mcpp.config;

@@ -1,4 +1,4 @@
-// mcpp.toolchain.manager — toolchain lifecycle operations
+// mcpp.toolchain.lifecycle — toolchain lifecycle operations
 // (list / install / set-default / remove) + version-spec matching.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
@@ -6,7 +6,7 @@ module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.toolchain.manager;
+export module mcpp.toolchain.lifecycle;
 
 import std;
 import mcpp.config;

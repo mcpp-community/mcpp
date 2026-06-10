@@ -1,4 +1,4 @@
-// mcpp.bmi_cache.ops — global BMI cache inspection + pruning, and the
+// mcpp.bmi_cache.maintenance — global BMI cache inspection + pruning, and the
 // shared fs-size/byte-formatting helpers they are built on.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
@@ -6,7 +6,7 @@ module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.bmi_cache.ops;
+export module mcpp.bmi_cache.maintenance;
 
 import std;
 import mcpp.toolchain.stdmod;

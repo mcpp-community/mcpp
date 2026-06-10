@@ -1,5 +1,5 @@
 // mcpp.cli.cmd_registry — CLI parsing + routing for search and the
-// `mcpp index` family. Implementations live in mcpp.pm.index_ops.
+// `mcpp index` family. Implementations live in mcpp.pm.index_management.
 
 module;
 #include <cstdio>
@@ -9,7 +9,7 @@ export module mcpp.cli.cmd_registry;
 
 import std;
 import mcpplibs.cmdline;
-import mcpp.pm.index_ops;
+import mcpp.pm.index_management;
 import mcpp.ui;
 
 namespace mcpp::cli {

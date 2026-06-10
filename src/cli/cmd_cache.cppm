@@ -1,5 +1,5 @@
 // mcpp.cli.cmd_cache — CLI parsing + routing for the `mcpp cache` family.
-// Implementations live in mcpp.bmi_cache.ops.
+// Implementations live in mcpp.bmi_cache.maintenance.
 
 module;
 #include <cstdio>
@@ -9,7 +9,7 @@ export module mcpp.cli.cmd_cache;
 
 import std;
 import mcpplibs.cmdline;
-import mcpp.bmi_cache.ops;
+import mcpp.bmi_cache.maintenance;
 import mcpp.ui;
 
 namespace mcpp::cli {

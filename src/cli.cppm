@@ -5,8 +5,8 @@
 //   mcpp.cli.cmd_toolchain / cmd_publish / cmd_self   (parse + route)
 //   mcpp.pm.commands                                  (add / remove / update)
 // Domain logic lives in its owning subsystem: mcpp.build.{prepare,execute},
-// mcpp.pm.index_ops, mcpp.toolchain.manager, mcpp.scaffold.ops,
-// mcpp.publish.ops, mcpp.pack.ops, mcpp.bmi_cache.ops, mcpp.doctor,
+// mcpp.pm.index_management, mcpp.toolchain.lifecycle, mcpp.scaffold.create,
+// mcpp.publish.pipeline, mcpp.pack.pipeline, mcpp.bmi_cache.maintenance, mcpp.doctor,
 // mcpp.project, mcpp.fetcher.progress.
 // See .agents/docs/2026-06-10-cli-modularization.md for the architecture.
 

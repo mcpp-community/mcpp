@@ -1,4 +1,4 @@
-// mcpp.pack.ops — pack orchestration: build (re-preparing for musl static
+// mcpp.pack.pipeline — pack orchestration: build (re-preparing for musl static
 // when needed), pick the main binary, plan + run the bundler.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
@@ -6,7 +6,7 @@ module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.pack.ops;
+export module mcpp.pack.pipeline;
 
 import std;
 import mcpp.build.prepare;

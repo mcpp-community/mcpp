@@ -1,4 +1,4 @@
-// mcpp.scaffold.ops — project creation: package-shipped templates
+// mcpp.scaffold.create — project creation: package-shipped templates
 // (fetch + instantiate) and the builtin bin/gui skeletons.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
@@ -6,7 +6,7 @@ module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.scaffold.ops;
+export module mcpp.scaffold.create;
 
 import std;
 import mcpp.config;

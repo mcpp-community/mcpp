@@ -1,4 +1,4 @@
-// mcpp.publish.ops — the publish pipeline (tarball + sha256 + xpkg.lua +
+// mcpp.publish.pipeline — the publish pipeline (tarball + sha256 + xpkg.lua +
 // next-step instructions) and xpkg emission to file/stdout.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
@@ -6,7 +6,7 @@ module;
 #include <cstdio>
 #include <cstdlib>
 
-export module mcpp.publish.ops;
+export module mcpp.publish.pipeline;
 
 import std;
 import mcpp.manifest;

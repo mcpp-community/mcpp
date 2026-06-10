@@ -1,5 +1,5 @@
 // mcpp.cli.cmd_publish — CLI parsing + routing for publish / pack /
-// emit xpkg. Implementations live in mcpp.publish.ops and mcpp.pack.ops.
+// emit xpkg. Implementations live in mcpp.publish.pipeline and mcpp.pack.pipeline.
 
 module;
 #include <cstdio>
@@ -10,8 +10,8 @@ export module mcpp.cli.cmd_publish;
 import std;
 import mcpplibs.cmdline;
 import mcpp.pack;
-import mcpp.pack.ops;
-import mcpp.publish.ops;
+import mcpp.pack.pipeline;
+import mcpp.publish.pipeline;
 import mcpp.ui;
 
 namespace mcpp::cli {

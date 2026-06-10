@@ -1,5 +1,5 @@
 // mcpp.cli.cmd_new — CLI parsing + routing for `mcpp new`.
-// Implementation lives in mcpp.scaffold.ops.
+// Implementation lives in mcpp.scaffold.create.
 
 module;
 #include <cstdio>
@@ -10,7 +10,7 @@ export module mcpp.cli.cmd_new;
 import std;
 import mcpplibs.cmdline;
 import mcpp.scaffold;
-import mcpp.scaffold.ops;
+import mcpp.scaffold.create;
 import mcpp.ui;
 
 namespace mcpp::cli {

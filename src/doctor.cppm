@@ -10,7 +10,7 @@ module;
 export module mcpp.doctor;
 
 import std;
-import mcpp.bmi_cache.ops;
+import mcpp.bmi_cache.maintenance;
 import mcpp.build.prepare;
 import mcpp.build.plan;
 import mcpp.config;

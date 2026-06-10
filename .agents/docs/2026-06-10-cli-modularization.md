@@ -133,17 +133,17 @@ validation of CLI shapes, and routing. Relocation map (bodies verbatim again):
 | Phase-1 location | Phase-2 owner | Contents |
 |---|---|---|
 | `mcpp.cli.common` | `mcpp.project` (`src/project.cppm`) | `find_manifest_root`, `find_workspace_root`, `merge_workspace_deps` (also folds the private copy `pm.commands` kept) |
-| `mcpp.cli.common` | `mcpp.bmi_cache.ops` | `dir_size`, `human_bytes` |
+| `mcpp.cli.common` | `mcpp.bmi_cache.maintenance` | `dir_size`, `human_bytes` |
 | `mcpp.cli.common` | `mcpp.build.prepare` (internal) | `target_dir` |
 | `mcpp.cli.install_ui` | `mcpp.fetcher.progress` (`src/fetcher/progress.cppm`) | NDJSON→ui adapters (`CliInstallProgress` → `InstallProgressHandler`), `make_bootstrap_progress_callback`, `make_path_ctx` |
 | `mcpp.cli.build` | `mcpp.build.prepare` (`src/build/prepare.cppm`) | `BuildContext`, `BuildOverrides`, `prepare_build` |
 | `mcpp.cli.cmd_build` | `mcpp.build.execute` (`src/build/execute.cppm`) | build cache + fast path, `run_build_plan`, `try_fast_build`, `build_run_target`, `run_tests`, `clean_project` |
-| `mcpp.cli.cmd_toolchain` | `mcpp.toolchain.manager` (`src/toolchain/manager.cppm`) | version matching + `toolchain_list/install/set_default/remove` |
-| `mcpp.cli.cmd_registry` | `mcpp.pm.index_ops` (`src/pm/index_ops.cppm`) | `search_packages`, `index_list/add/remove/update/pin/unpin` |
-| `mcpp.cli.cmd_cache` | `mcpp.bmi_cache.ops` (`src/bmi_cache/ops.cppm`) | `cache_list/info/prune/clean` |
-| `mcpp.cli.cmd_new` | `mcpp.scaffold.ops` (`src/scaffold/ops.cppm`) | template fetch/instantiate + `create_builtin_project` |
-| `mcpp.cli.cmd_publish` | `mcpp.publish.ops` (`src/publish/ops.cppm`) | `publish_package`, `emit_xpkg_to` |
-| `mcpp.cli.cmd_publish` | `mcpp.pack.ops` (`src/pack/ops.cppm`) | `build_and_pack` |
+| `mcpp.cli.cmd_toolchain` | `mcpp.toolchain.lifecycle` (`src/toolchain/lifecycle.cppm`) | version matching + `toolchain_list/install/set_default/remove` |
+| `mcpp.cli.cmd_registry` | `mcpp.pm.index_management` (`src/pm/index_management.cppm`) | `search_packages`, `index_list/add/remove/update/pin/unpin` |
+| `mcpp.cli.cmd_cache` | `mcpp.bmi_cache.maintenance` (`src/bmi_cache/maintenance.cppm`) | `cache_list/info/prune/clean` |
+| `mcpp.cli.cmd_new` | `mcpp.scaffold.create` (`src/scaffold/create.cppm`) | template fetch/instantiate + `create_builtin_project` |
+| `mcpp.cli.cmd_publish` | `mcpp.publish.pipeline` (`src/publish/pipeline.cppm`) | `publish_package`, `emit_xpkg_to` |
+| `mcpp.cli.cmd_publish` | `mcpp.pack.pipeline` (`src/pack/pipeline.cppm`) | `build_and_pack` |
 | `mcpp.cli.cmd_self` | `mcpp.doctor` (`src/doctor.cppm`) | `env_report`, `doctor_report`, `why_report`, `explain_code`, `self_init`, `self_config` |
 
 Resulting cli layer: `cli.cppm` (dispatcher, 481) + seven `cmd_*` adapters
@@ -152,6 +152,10 @@ typed parameters (never `ParsedArgs`); `mcpplibs.cmdline` is imported only by
 the cli layer. The split rule for each command: CLI-shape validation and
 usage errors stay in the adapter; everything after lives in the domain op
 with identical statements, messages and exit codes.
+
+Naming rule: module names state the responsibility (`maintenance`, `create`,
+`pipeline`, `lifecycle`, `index_management`) — grab-bag suffixes like `ops`,
+`manager` or `utils` are not acceptable module names in this codebase.
 
 ## 5. Follow-ups (out of scope here)
 
@@ -169,8 +173,8 @@ with identical statements, messages and exit codes.
   PR opened; CI green on linux/windows/macos.
 - 2026-06-10 (phase 2): domain relocation executed — implementations moved out
   of `mcpp.cli.*` into `mcpp.project`, `mcpp.fetcher.progress`,
-  `mcpp.build.{prepare,execute}`, `mcpp.toolchain.manager`,
-  `mcpp.pm.index_ops`, `mcpp.bmi_cache.ops`, `mcpp.scaffold.ops`,
-  `mcpp.publish.ops`, `mcpp.pack.ops`, `mcpp.doctor`; `cli/cmd_*` reduced to
+  `mcpp.build.{prepare,execute}`, `mcpp.toolchain.lifecycle`,
+  `mcpp.pm.index_management`, `mcpp.bmi_cache.maintenance`, `mcpp.scaffold.create`,
+  `mcpp.publish.pipeline`, `mcpp.pack.pipeline`, `mcpp.doctor`; `cli/cmd_*` reduced to
   parse + route adapters (~450 lines total). Self-host build + 18/18 unit
   tests pass; e2e parity with baseline re-verified.

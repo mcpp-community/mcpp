@@ -1,5 +1,5 @@
 // mcpp.cli.cmd_toolchain — CLI parsing + routing for the `mcpp toolchain`
-// family. Implementations live in mcpp.toolchain.manager.
+// family. Implementations live in mcpp.toolchain.lifecycle.
 
 module;
 #include <cstdio>
@@ -11,7 +11,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.config;
 import mcpp.fetcher.progress;
-import mcpp.toolchain.manager;
+import mcpp.toolchain.lifecycle;
 import mcpp.ui;
 
 namespace mcpp::cli {
