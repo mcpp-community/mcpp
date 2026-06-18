@@ -22,15 +22,9 @@ module;
 #include <cstdio>
 #include <cstdlib>
 #if defined(_WIN32)
-#include <stdlib.h>    // _putenv_s, _spawnvpe, _environ
-#include <process.h>   // _spawnvpe, _P_WAIT
+#include <stdlib.h>    // _putenv_s
 #define popen  _popen
 #define pclose _pclose
-#else
-#include <unistd.h>    // pipe, dup2, close, read, environ
-#include <sys/wait.h>  // waitpid
-#include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_*
-extern "C" char **environ;
 #endif
 
 export module mcpp.platform.process;
@@ -131,26 +125,23 @@ int normalize_exit_code(int rc) {
 #endif
 }
 
-#if !defined(_WIN32)
-// Build a child environment block = the current environ with `extra` overrides
-// applied. Returned vector owns the strings; the caller derives a NUL-terminated
-// char* array from it. Built in the PARENT so the child env never requires a
-// post-fork setenv (async-signal-unsafe on macOS) and the parent is untouched.
-std::vector<std::string> merged_environ(
-    const std::vector<std::pair<std::string, std::string>>& extra)
-{
-    std::vector<std::string> out;
-    std::set<std::string> overridden;
-    for (auto& [k, v] : extra) { out.push_back(k + "=" + v); overridden.insert(k); }
-    for (char** e = environ; e && *e; ++e) {
-        std::string_view entry(*e);
-        auto eq = entry.find('=');
-        std::string key(eq == std::string_view::npos ? entry : entry.substr(0, eq));
-        if (!overridden.contains(key)) out.emplace_back(entry);
-    }
-    return out;
-}
+// Build a shell command line from an argv vector. The first token (program)
+// is kept RAW on Windows — quoting it would make cmd.exe's `/c "..."` strip the
+// outer quotes and mangle the path (see platform.shell) — and shell-quoted on
+// POSIX. Remaining args are always shell-quoted.
+std::string command_from_argv(const std::vector<std::string>& argv) {
+    if (argv.empty()) return "";
+#if defined(_WIN32)
+    std::string cmd = argv[0];
+#else
+    std::string cmd = mcpp::platform::shell::quote(argv[0]);
 #endif
+    for (std::size_t i = 1; i < argv.size(); ++i) {
+        cmd += ' ';
+        cmd += mcpp::platform::shell::quote(argv[i]);
+    }
+    return cmd;
+}
 
 } // namespace
 
@@ -264,39 +255,14 @@ int run_exec(const std::vector<std::string>& argv,
              const std::vector<std::pair<std::string, std::string>>& extraEnv)
 {
     if (argv.empty()) return 127;
-#if defined(_WIN32)
-    // Build a child env block (parent env + overrides); no cmd.exe involved.
-    std::vector<std::string> envStrings;
-    for (char** e = _environ; e && *e; ++e) envStrings.emplace_back(*e);
-    for (auto& [k, v] : extraEnv) envStrings.push_back(k + "=" + v);
-    std::vector<const char*> envp;
-    for (auto& s : envStrings) envp.push_back(s.c_str());
-    envp.push_back(nullptr);
-
-    std::vector<const char*> cargv;
-    for (auto& a : argv) cargv.push_back(a.c_str());
-    cargv.push_back(nullptr);
-
-    intptr_t rc = _spawnvpe(_P_WAIT, cargv[0], cargv.data(), envp.data());
-    return rc < 0 ? 127 : static_cast<int>(rc);
-#else
-    // posix_spawnp: direct exec (PATH-searched), child env built in the parent.
-    // No post-fork setenv (async-signal-unsafe on macOS); parent env untouched.
-    auto envStore = merged_environ(extraEnv);
-    std::vector<char*> envp;
-    for (auto& s : envStore) envp.push_back(s.data());
-    envp.push_back(nullptr);
-    std::vector<char*> cargv;
-    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-    cargv.push_back(nullptr);
-
-    pid_t pid = 0;
-    if (::posix_spawnp(&pid, cargv[0], nullptr, nullptr, cargv.data(), envp.data()) != 0)
-        return 127;  // exec/spawn failed (e.g. program not found)
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
-    return normalize_exit_code(status);
-#endif
+    // Shell launch via std::system, with the runtime env applied as a COMMAND
+    // PREFIX on POSIX (`KEY='val' cmd`). The shell std::system spawns starts
+    // with a clean environment — a bundled-glibc LD_LIBRARY_PATH is set only
+    // for the target child, never for /bin/sh itself (the newer-glibc `sh:`
+    // crash class). On Windows build_env_prefix does _putenv_s and returns "".
+    std::string prefix = mcpp::platform::env::build_env_prefix(extraEnv);
+    std::string cmd = prefix + command_from_argv(argv);
+    return normalize_exit_code(std::system(cmd.c_str()));
 }
 
 RunResult capture_exec(
@@ -305,53 +271,11 @@ RunResult capture_exec(
 {
     RunResult result;
     if (argv.empty()) { result.exit_code = 127; return result; }
-#if defined(_WIN32)
-    // Windows is unaffected by the glibc leak; reuse the shell capture path.
-    // Keep argv[0] RAW (never quote the first token under cmd.exe `/c "..."`,
-    // or it mangles the path — see platform.shell); quote later args only.
-    std::string cmd = argv[0];
-    for (std::size_t i = 1; i < argv.size(); ++i) {
-        cmd += ' ';
-        cmd += mcpp::platform::shell::quote(argv[i]);
-    }
+    // Capture stdout+stderr combined (the trailing `2>&1` replaces the old
+    // redirect). capture_with_env applies the env as a POSIX prefix / Windows
+    // _putenv_s, so the shell is never pre-poisoned with the loader path.
+    std::string cmd = command_from_argv(argv) + " 2>&1";
     return capture_with_env(cmd, extraEnv);
-#else
-    // posix_spawnp + a pipe: capture stdout+stderr (replaces `2>&1`), child env
-    // built in the parent. No post-fork setenv; parent env untouched.
-    int fds[2];
-    if (::pipe(fds) != 0) { result.exit_code = 127; return result; }
-
-    auto envStore = merged_environ(extraEnv);
-    std::vector<char*> envp;
-    for (auto& s : envStore) envp.push_back(s.data());
-    envp.push_back(nullptr);
-    std::vector<char*> cargv;
-    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-    cargv.push_back(nullptr);
-
-    posix_spawn_file_actions_t fa;
-    ::posix_spawn_file_actions_init(&fa);
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);  // stdout → pipe
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);  // stderr → same pipe
-    ::posix_spawn_file_actions_addclose(&fa, fds[0]);
-    ::posix_spawn_file_actions_addclose(&fa, fds[1]);
-
-    pid_t pid = 0;
-    int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
-    ::posix_spawn_file_actions_destroy(&fa);
-    ::close(fds[1]);
-    if (sp != 0) { ::close(fds[0]); result.exit_code = 127; return result; }
-
-    std::array<char, 4096> buf{};
-    ssize_t n;
-    while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
-        result.output.append(buf.data(), static_cast<size_t>(n));
-    ::close(fds[0]);
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
-    result.exit_code = normalize_exit_code(status);
-    return result;
-#endif
 }
 
 } // namespace mcpp::platform::process

@@ -6,8 +6,9 @@ import mcpp.platform.process;
 
 using namespace mcpp::platform;
 
-// These exercise the POSIX direct-exec path with POSIX program paths
-// (/bin/true, /bin/sh, /bin/echo). The Windows path (_spawnvpe) is covered by
+// These exercise the POSIX launch path with POSIX program paths (/bin/true,
+// /bin/sh, /bin/echo) — the env is applied as a `KEY='val' cmd` shell prefix,
+// so the parent environment is never mutated. The Windows path is covered by
 // the integration build (ninja launched via capture_exec).
 #if !defined(_WIN32)
 
