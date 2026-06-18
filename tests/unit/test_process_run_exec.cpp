@@ -6,6 +6,11 @@ import mcpp.platform.process;
 
 using namespace mcpp::platform;
 
+// These exercise the POSIX direct-exec path with POSIX program paths
+// (/bin/true, /bin/sh, /bin/echo). The Windows path (_spawnvpe) is covered by
+// the integration build (ninja launched via capture_exec).
+#if !defined(_WIN32)
+
 // The regression that matters: launching with an injected loader var must NOT
 // mutate the parent (mcpp) environment — that mutation is exactly what leaked
 // into /bin/sh and crashed it on newer-glibc hosts.
@@ -48,3 +53,13 @@ TEST(CaptureExec, CapturesStderrCombined) {
     EXPECT_EQ(r.exit_code, 0);
     EXPECT_EQ(r.output, "oops\n");
 }
+
+#else  // _WIN32
+
+TEST(RunExec, WindowsCoveredByIntegration) {
+    // The Windows path uses _spawnvpe (no /bin/* programs to point at here);
+    // it is exercised by the integration build that launches ninja.
+    SUCCEED();
+}
+
+#endif

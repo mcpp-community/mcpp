@@ -27,14 +27,17 @@ module;
 #define popen  _popen
 #define pclose _pclose
 #else
-#include <unistd.h>    // fork, execvp, _exit, pipe, dup2, close, read
+#include <unistd.h>    // pipe, dup2, close, read, environ
 #include <sys/wait.h>  // waitpid
+#include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_*
+extern "C" char **environ;
 #endif
 
 export module mcpp.platform.process;
 
 import std;
 import mcpp.platform.env;
+import mcpp.platform.shell;
 
 export namespace mcpp::platform::process {
 
@@ -127,6 +130,27 @@ int normalize_exit_code(int rc) {
     return rc;
 #endif
 }
+
+#if !defined(_WIN32)
+// Build a child environment block = the current environ with `extra` overrides
+// applied. Returned vector owns the strings; the caller derives a NUL-terminated
+// char* array from it. Built in the PARENT so the child env never requires a
+// post-fork setenv (async-signal-unsafe on macOS) and the parent is untouched.
+std::vector<std::string> merged_environ(
+    const std::vector<std::pair<std::string, std::string>>& extra)
+{
+    std::vector<std::string> out;
+    std::set<std::string> overridden;
+    for (auto& [k, v] : extra) { out.push_back(k + "=" + v); overridden.insert(k); }
+    for (char** e = environ; e && *e; ++e) {
+        std::string_view entry(*e);
+        auto eq = entry.find('=');
+        std::string key(eq == std::string_view::npos ? entry : entry.substr(0, eq));
+        if (!overridden.contains(key)) out.emplace_back(entry);
+    }
+    return out;
+}
+#endif
 
 } // namespace
 
@@ -253,22 +277,22 @@ int run_exec(const std::vector<std::string>& argv,
     for (auto& a : argv) cargv.push_back(a.c_str());
     cargv.push_back(nullptr);
 
-    intptr_t rc = _spawnvpe(_P_WAIT, cargv[0],
-                            const_cast<char* const*>(cargv.data()),
-                            const_cast<char* const*>(envp.data()));
+    intptr_t rc = _spawnvpe(_P_WAIT, cargv[0], cargv.data(), envp.data());
     return rc < 0 ? 127 : static_cast<int>(rc);
 #else
-    pid_t pid = ::fork();
-    if (pid < 0) return 127;
-    if (pid == 0) {
-        // Child only: mutate THIS address space, never the parent's.
-        for (auto& [k, v] : extraEnv) ::setenv(k.c_str(), v.c_str(), 1);
-        std::vector<char*> cargv;
-        for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-        cargv.push_back(nullptr);
-        ::execvp(cargv[0], cargv.data());
-        _exit(127);  // exec failed
-    }
+    // posix_spawnp: direct exec (PATH-searched), child env built in the parent.
+    // No post-fork setenv (async-signal-unsafe on macOS); parent env untouched.
+    auto envStore = merged_environ(extraEnv);
+    std::vector<char*> envp;
+    for (auto& s : envStore) envp.push_back(s.data());
+    envp.push_back(nullptr);
+    std::vector<char*> cargv;
+    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+    cargv.push_back(nullptr);
+
+    pid_t pid = 0;
+    if (::posix_spawnp(&pid, cargv[0], nullptr, nullptr, cargv.data(), envp.data()) != 0)
+        return 127;  // exec/spawn failed (e.g. program not found)
     int status = 0;
     while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
     return normalize_exit_code(status);
@@ -282,29 +306,42 @@ RunResult capture_exec(
     RunResult result;
     if (argv.empty()) { result.exit_code = 127; return result; }
 #if defined(_WIN32)
-    // Windows is unaffected by the glibc leak; reuse the shell capture path
-    // with additive env for parity.
-    std::string cmd;
-    for (auto& a : argv) { cmd += '"'; cmd += a; cmd += "\" "; }
+    // Windows is unaffected by the glibc leak; reuse the shell capture path.
+    // Keep argv[0] RAW (never quote the first token under cmd.exe `/c "..."`,
+    // or it mangles the path — see platform.shell); quote later args only.
+    std::string cmd = argv[0];
+    for (std::size_t i = 1; i < argv.size(); ++i) {
+        cmd += ' ';
+        cmd += mcpp::platform::shell::quote(argv[i]);
+    }
     return capture_with_env(cmd, extraEnv);
 #else
+    // posix_spawnp + a pipe: capture stdout+stderr (replaces `2>&1`), child env
+    // built in the parent. No post-fork setenv; parent env untouched.
     int fds[2];
     if (::pipe(fds) != 0) { result.exit_code = 127; return result; }
-    pid_t pid = ::fork();
-    if (pid < 0) { ::close(fds[0]); ::close(fds[1]); result.exit_code = 127; return result; }
-    if (pid == 0) {
-        ::close(fds[0]);
-        ::dup2(fds[1], 1);            // stdout → pipe
-        ::dup2(fds[1], 2);            // stderr → same pipe (replaces `2>&1`)
-        ::close(fds[1]);
-        for (auto& [k, v] : extraEnv) ::setenv(k.c_str(), v.c_str(), 1);
-        std::vector<char*> cargv;
-        for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-        cargv.push_back(nullptr);
-        ::execvp(cargv[0], cargv.data());
-        _exit(127);
-    }
+
+    auto envStore = merged_environ(extraEnv);
+    std::vector<char*> envp;
+    for (auto& s : envStore) envp.push_back(s.data());
+    envp.push_back(nullptr);
+    std::vector<char*> cargv;
+    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+    cargv.push_back(nullptr);
+
+    posix_spawn_file_actions_t fa;
+    ::posix_spawn_file_actions_init(&fa);
+    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);  // stdout → pipe
+    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);  // stderr → same pipe
+    ::posix_spawn_file_actions_addclose(&fa, fds[0]);
+    ::posix_spawn_file_actions_addclose(&fa, fds[1]);
+
+    pid_t pid = 0;
+    int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
+    ::posix_spawn_file_actions_destroy(&fa);
     ::close(fds[1]);
+    if (sp != 0) { ::close(fds[0]); result.exit_code = 127; return result; }
+
     std::array<char, 4096> buf{};
     ssize_t n;
     while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
