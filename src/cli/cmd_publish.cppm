@@ -37,7 +37,8 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
         auto m = mcpp::pack::parse_mode(*v);
         if (!m) {
             mcpp::ui::error(std::format(
-                "invalid --mode '{}'; expected static | bundle-project | bundle-all", *v));
+                "invalid --mode '{}'; expected: system | vendored | self-contained | static "
+                "(aliases: bundle-project=vendored, bundle-all=self-contained)", *v));
             return 2;
         }
         opts.mode = *m;

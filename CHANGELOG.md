@@ -3,6 +3,24 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.56] — 2026-06-19
+
+### 修复
+
+- `mcpp run` / `test` / `build` 不再把目标的捆绑 glibc `LD_LIBRARY_PATH` 注入到
+  mcpp 自身进程,因而泄漏进它启动的宿主 `/bin/sh`。在 glibc 比捆绑版(2.39)更新的
+  发行版上,`sh` 会被强制加载捆绑的旧 libc,无法满足宿主 `libtinfo` 的 `GLIBC_2.42`
+  符号而在目标运行前崩溃(报错形如 `sh: ... version 'GLIBC_2.42' not found`)。新增
+  `platform::process::run_exec` / `capture_exec`:直接 exec(不经 shell),额外环境
+  只作用于子进程;run / test / 快速路径 ninja / 整次构建 ninja 四个启动点全部改走它。
+
+### 变更
+
+- `mcpp pack --mode` 模式更名,语义更清晰(旧名保留为永久别名,tarball 后缀冻结不变):
+  `bundle-project`→`vendored`(默认)、`bundle-all`→`self-contained`;新增
+  `system` 模式(完全依赖宿主提供所有共享库,用于发行版打包 / 同发行版部署)。
+  `static` 不变。两轴模型:libc 由 `--target` 选(gnu/musl),`--mode` 只选打包深度。
+
 ## [0.0.55] — 2026-06-18
 
 ### 新增

@@ -27,7 +27,7 @@ import mcpp.manifest;
 
 export namespace mcpp::pack {
 
-enum class Mode { Static, BundleProject, BundleAll };
+enum class Mode { None, Static, BundleProject, BundleAll };
 
 enum class Format { Tar, Dir };
 
@@ -75,24 +75,44 @@ std::expected<void, Error>
 run(const Plan& plan, const mcpp::config::GlobalConfig& cfg);
 
 // Helpers used by cli.cppm to render mode names + parse `--mode`.
-std::string_view mode_name(Mode m);
+// Canonical name shown in `--help`/diagnostics (renamed for legibility).
+std::string_view mode_cli_name(Mode m);
+// FROZEN wire-format suffix for tarball filenames. Never rename these —
+// install.sh / download URLs depend on them. "" means "no suffix" (default).
+std::string_view mode_tarball_suffix(Mode m);
 std::optional<Mode> parse_mode(std::string_view s);
 
 } // namespace mcpp::pack
 
 namespace mcpp::pack {
 
-std::string_view mode_name(Mode m) {
+std::string_view mode_cli_name(Mode m) {
     switch (m) {
+        case Mode::None:          return "system";
         case Mode::Static:        return "static";
-        case Mode::BundleProject: return "bundle-project";
-        case Mode::BundleAll:     return "bundle-all";
+        case Mode::BundleProject: return "vendored";
+        case Mode::BundleAll:     return "self-contained";
     }
     return "?";
 }
 
+std::string_view mode_tarball_suffix(Mode m) {
+    switch (m) {
+        case Mode::None:          return "system";      // brand-new mode
+        case Mode::Static:        return "static";      // frozen
+        case Mode::BundleProject: return "";            // frozen: default → no suffix
+        case Mode::BundleAll:     return "bundle-all";  // frozen
+    }
+    return "";
+}
+
 std::optional<Mode> parse_mode(std::string_view s) {
+    // Canonical names.
+    if (s == "system")         return Mode::None;
+    if (s == "vendored")       return Mode::BundleProject;
+    if (s == "self-contained") return Mode::BundleAll;
     if (s == "static")         return Mode::Static;
+    // Permanent back-compat aliases (old names — keep forever).
     if (s == "bundle-project") return Mode::BundleProject;
     if (s == "bundle-all")     return Mode::BundleAll;
     return std::nullopt;
@@ -115,9 +135,10 @@ namespace detail {
 std::string default_tarball_name(std::string_view name, std::string_view version,
                                  std::string_view triple, Mode mode)
 {
-    if (mode == Mode::BundleProject)
+    auto sfx = mode_tarball_suffix(mode);
+    if (sfx.empty())
         return std::format("{}-{}-{}.tar.gz", name, version, triple);
-    return std::format("{}-{}-{}-{}.tar.gz", name, version, triple, mode_name(mode));
+    return std::format("{}-{}-{}-{}.tar.gz", name, version, triple, sfx);
 }
 
 // Strip the `.tar.gz` (or `.tgz`) suffix from a tarball filename to get
@@ -591,7 +612,9 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         std::vector<ResolvedDep> toBundle;
         for (auto& d : *deps) {
             bool skip = false;
-            if (plan.opts.mode == Mode::BundleProject) {
+            if (plan.opts.mode == Mode::None) {
+                skip = true;  // system: host provides every .so, bundle nothing
+            } else if (plan.opts.mode == Mode::BundleProject) {
                 if (is_system_lib(d.soname))                          skip = true;
                 if (soname_matches(d.soname, plan.alsoSkipLibs))      skip = true;
                 if (soname_matches(d.soname, plan.forceBundleLibs))   skip = false;  // override
@@ -620,7 +643,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             //   BundleAll     → leave PT_INTERP alone; the wrapper script
             //                   ignores it and launches via the bundled
             //                   loader directly.
-            if (plan.opts.mode == Mode::BundleProject) {
+            if (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None) {
                 if (auto r = set_interpreter(bundledBinary,
                         "/lib64/ld-linux-x86-64.so.2", patchelf); !r)
                     return std::unexpected(Error{r.error()});

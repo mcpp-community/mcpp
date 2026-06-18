@@ -5,26 +5,44 @@
 > machines or deploy it to a server, use `mcpp pack` to produce a
 > self-contained tarball.
 
-## Three Modes
+## Two axes: target (libc) × mode (bundling depth)
 
-| Mode | Description | Size Increase | Compatibility |
+Distribution is two orthogonal choices:
+
+- **libc / static** — a *build-target* property: `--target …-linux-gnu` (glibc)
+  vs `--target …-linux-musl` (musl, static). `--target …-musl` implies `static`.
+- **bundling depth** — a *pack* property: how much of the shared-lib closure
+  travels with the artifact. This is what `--mode` selects.
+
+| Mode | Host must provide | Size | Use case |
 |---|---|---|---|
-| `static` | Fully static via musl, no runtime dependencies | +5–10 MB | Any Linux x86_64 |
-| `bundle-project` (default) | Bundles only the project's third-party `.so` files | +a few MB | Mainstream distros (Ubuntu 22+, Debian 12+, RHEL 9+, etc.) |
-| `bundle-all` | Includes ld-linux, libc, libstdc++ and the project's `.so` files | +30–50 MB | Any Linux, including older versions |
+| `system` | every `.so` (incl. third-party) | smallest | `.deb`/`.rpm`, same-distro fleet (pkg manager declares deps) |
+| `vendored` (default) | libc / libstdc++ / loader | +a few MB | Mainstream distros (Ubuntu 22+, Debian 12+, RHEL 9+) |
+| `self-contained` | nothing | +30–50 MB | Any Linux incl. older glibc; bundles closure + `run.sh` wrapper |
+| `static` | nothing (single file) | +5–10 MB | musl; any Linux x86_64, Docker scratch, Alpine |
 
 How to choose:
 
-- Command-line tools, or targets like Docker scratch or Alpine minimal images → `static`
-- Desktop or server releases targeting mainstream Linux distros → `bundle-project` (default)
-- Environments that need compatibility with older glibc versions such as legacy CentOS or Kylin → `bundle-all`
+- Distro packages (`.deb`/`.rpm`) or same-distro internal deploy → `system`
+- Desktop / server releases for mainstream distros → `vendored` (default)
+- Cross-distro / older glibc (legacy CentOS, Kylin) → `self-contained`
+- Single portable file, no host deps → `static`
+
+### Mode name compatibility
+
+Canonical names are shown above. The old names remain **permanent aliases**:
+`bundle-project` = `vendored`, `bundle-all` = `self-contained`. Tarball-name
+suffixes are a frozen wire format (consumed by `install.sh`) and do **not**
+follow the rename: `vendored` → no suffix, `self-contained` → `-bundle-all`,
+`static` → `-static`, `system` → `-system`.
 
 ## Commands
 
 ```bash
-mcpp pack                          # bundle-project by default
+mcpp pack                          # vendored by default
+mcpp pack --mode system
 mcpp pack --mode static
-mcpp pack --mode bundle-all
+mcpp pack --mode self-contained        # alias: --mode bundle-all
 mcpp pack --target x86_64-linux-musl   # equivalent to --mode static
 mcpp pack --format dir                 # output as a directory, no tarball
 mcpp pack -o myapp.tar.gz              # filename only: lands at target/dist/myapp.tar.gz

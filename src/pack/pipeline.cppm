@@ -107,7 +107,7 @@ export int build_and_pack(Options opts, bool modeFromUser) {
 
     mcpp::ui::info("Packing", std::format("{} v{} ({})",
         plan->packageName, plan->packageVersion,
-        mcpp::pack::mode_name(plan->opts.mode)));
+        mcpp::pack::mode_cli_name(plan->opts.mode)));
 
     auto r = mcpp::pack::run(*plan, *cfg);
     if (!r) {

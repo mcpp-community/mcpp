@@ -59,7 +59,7 @@ void print_usage() {
     std::println("  mcpp update [pkg]                    Re-resolve deps and rewrite mcpp.lock");
     std::println("  mcpp search <keyword>                Search packages in registries");
     std::println("  mcpp publish [--dry-run]             Publish package to default registry");
-    std::println("  mcpp pack [--mode <m>]               Build + bundle into a distributable tarball");
+    std::println("  mcpp pack [--mode <m>]               Build + bundle a tarball (m: system|vendored|self-contained|static)");
     std::println("  mcpp emit xpkg [-V VER] [-o FILE]    Generate xpkg Lua entry");
     std::println("");
     std::println("Resource management:");
@@ -276,7 +276,7 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("pack")
             .description("Build + bundle into a self-contained tarball")
             .option(cl::Option("mode").takes_value()
-                .help("static | bundle-project (default) | bundle-all"))
+                .help("system | vendored (default) | self-contained | static"))
             .option(cl::Option("target").takes_value()
                 .help("Triple, e.g. x86_64-linux-musl"))
             .option(cl::Option("format").takes_value()

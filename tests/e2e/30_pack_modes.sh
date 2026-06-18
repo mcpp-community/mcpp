@@ -138,4 +138,36 @@ grep -q 'Hello' "$TMP/b-out.log" || {
 grep -q 'Hello' "$TMP/b-name.log" || {
     cat "$TMP/b-name.log"; echo "Mode B <name>-entry output missing"; exit 1; }
 
+# ─── Mode `system` (Mode::None — depend on OS for all .so) ─────────────
+"$MCPP" pack --mode system > "$TMP/pack-sys.log" 2>&1 || {
+    cat "$TMP/pack-sys.log"; echo "system pack failed"; exit 1; }
+
+tarball_sys="target/dist/myapp-0.1.0-x86_64-linux-gnu-system.tar.gz"
+[[ -f "$tarball_sys" ]] || { echo "system tarball missing at $tarball_sys"; exit 1; }
+
+mkdir -p "$TMP/sys"
+tar -xzf "$tarball_sys" -C "$TMP/sys"
+root_sys="$TMP/sys/myapp-0.1.0-x86_64-linux-gnu-system"
+[[ -x "$root_sys/bin/myapp" ]] || { echo "system: missing bin/myapp"; exit 1; }
+
+# system mode bundles NOTHING — lib/ must be empty or absent even though the
+# binary still links libc/libstdc++ (those come from the host).
+if [[ -d "$root_sys/lib" ]]; then
+    n=$(ls "$root_sys/lib" 2>/dev/null | wc -l)
+    [[ "$n" -eq 0 ]] || { echo "system: lib/ should be empty, has $n"; ls "$root_sys/lib"; exit 1; }
+fi
+
+# PT_INTERP repointed to the LSB-standard loader (host glibc).
+file "$root_sys/bin/myapp" | grep -q 'interpreter /lib64/ld-linux-x86-64.so.2' || {
+    file "$root_sys/bin/myapp"; echo "system: PT_INTERP not repointed to LSB loader"; exit 1; }
+
+# Runs on this (glibc) host.
+"$root_sys/bin/myapp" > "$TMP/sys-out.log" 2>&1 || {
+    cat "$TMP/sys-out.log"; echo "system: extracted binary failed to run"; exit 1; }
+grep -q 'Hello' "$TMP/sys-out.log" || { echo "system: runtime output missing"; exit 1; }
+
+# Old alias must still parse identically (back-compat).
+"$MCPP" pack --mode bundle-project > "$TMP/pack-alias.log" 2>&1 || {
+    cat "$TMP/pack-alias.log"; echo "alias bundle-project failed"; exit 1; }
+
 echo "OK"
