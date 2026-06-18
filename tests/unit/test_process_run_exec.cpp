@@ -17,7 +17,9 @@ using namespace mcpp::platform;
 // into /bin/sh and crashed it on newer-glibc hosts.
 TEST(RunExec, DoesNotMutateParentEnvironment) {
     ::setenv("MCPP_TEST_LEAK", "sentinel", 1);
-    int rc = process::run_exec({"/bin/true"},
+    // Use /bin/sh (present on Linux AND macOS) — /bin/true lives at
+    // /usr/bin/true on macOS, so it is not a portable launch target.
+    int rc = process::run_exec({"/bin/sh", "-c", "exit 0"},
                                {{"MCPP_TEST_LEAK", "injected"}});
     EXPECT_EQ(rc, 0);
     const char* v = ::getenv("MCPP_TEST_LEAK");
