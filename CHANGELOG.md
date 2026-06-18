@@ -3,6 +3,26 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.55] — 2026-06-18
+
+### 新增
+
+- `[targets.<name>]` 新增按目标的键 `defines` / `cxxflags` / `cflags`,作用于该目标
+  **独占的入口源**(它的 `main`)。用于二进制入口私有的标志(如 `-DBUILD_SERVER=1`、
+  局部告警抑制),不影响共享模块/实现对象(compile-once 模型不变)。需要穿透共享代码的
+  差异请用 workspace member 或 `[features]`(#131)。
+- `[targets.<name>]` 新增 `required_features`:仅当列出的 feature 全部激活时才构建该目标,
+  否则静默跳过。是构建选择门禁,不激活 feature。
+- `mcpp test` 现在接受 `--profile` / `--features` / `--strict`,让被测代码与测试二进制
+  在所选 profile/feature 下编译(适合 sanitizer、契约求值语义等整次构建模式)。
+
+### 变更
+
+- `[targets.<name>]` 下的不支持键不再被静默丢弃,而是产生 warning(`--strict` 下为 error),
+  并指引到正确的机制(workspace / features / profile)。
+- 文档 `docs/05-mcpp-toml.md`(及 `docs/zh`)新增"构建配置该放哪"的决策指引。
+  设计记录见 `.agents/docs/2026-06-18-per-target-build-config-design.md`。
+
 ## [0.0.54] — 2026-06-10
 
 ### 修复

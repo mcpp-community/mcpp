@@ -63,11 +63,18 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     return mcpp::build::build_run_target(targetName, passthrough);
 }
 
-export int cmd_test(const mcpplibs::cmdline::ParsedArgs& /*parsed*/,
+export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
              std::span<const std::string> passthrough) {
-    // `mcpp test` takes no pre-`--` flags or positionals; post-`--` args
-    // go to each test binary.
-    return mcpp::build::run_tests(passthrough);
+    // Pre-`--` flags select the build mode for the test build (so e.g.
+    // `mcpp test --profile contracts` compiles the code-under-test plus the
+    // test binaries under that profile — a whole-build mode, the right
+    // granularity for sanitizers / contract evaluation semantics). Post-`--`
+    // args go to each test binary.
+    mcpp::build::BuildOverrides ov;
+    if (auto pr = parsed.value("profile"))  ov.profile  = *pr;
+    if (auto fs = parsed.value("features")) ov.features = *fs;
+    ov.strict = parsed.is_flag_set("strict");
+    return mcpp::build::run_tests(passthrough, ov);
 }
 
 export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {

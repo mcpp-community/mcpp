@@ -403,7 +403,8 @@ export int build_run_target(const std::optional<std::string>& targetName,
 
 // `mcpp test` driver: discover tests/**/*.cpp, synthesize targets, build
 // with dev-deps, run each test binary, summarize.
-export int run_tests(std::span<const std::string> passthrough) {
+export int run_tests(std::span<const std::string> passthrough,
+                     BuildOverrides overrides = {}) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
         mcpp::ui::error("no mcpp.toml found in current directory or any parent");
@@ -439,7 +440,8 @@ export int run_tests(std::span<const std::string> passthrough) {
     // 3. prepare_build with dev-deps enabled + synthetic targets.
     auto ctx = prepare_build(/*print_fp=*/false,
                              /*includeDevDeps=*/true,
-                             std::move(testTargets));
+                             std::move(testTargets),
+                             std::move(overrides));
     if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
 
     // 4. "Compiling test_X (test)" lines for the test binaries.

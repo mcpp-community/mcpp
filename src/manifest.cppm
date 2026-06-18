@@ -57,6 +57,21 @@ struct Target {
     enum Kind { Library, Binary, SharedLibrary, TestBinary } kind;
     std::string                 main;           // for binary / test
     std::string                 soname;         // ABI name for shared libraries, e.g. libfoo.so.1
+    // Per-target compile flags. SCOPE: applied ONLY to this target's exclusive
+    // entry source (its `main`) — never to shared module/impl objects, which are
+    // compiled once and linked into every target (the build's compile-once model;
+    // see src/build/plan.cppm). `defines` are sugar desugared to `-D<x>` at plan
+    // time and applied to both the C and C++ entry compile. Use these for flags
+    // that are private to a binary's own entry (e.g. `-DBUILD_SERVER=1`,
+    // `-Wno-deprecated`); for divergence that must reach shared code, use a
+    // workspace member or a [features] knob instead.
+    std::vector<std::string>    cflags;
+    std::vector<std::string>    cxxflags;
+    std::vector<std::string>    defines;
+    // Build gate: this target is emitted ONLY when every listed feature is
+    // active in the current build (otherwise it is silently skipped). Gate
+    // only — it does not activate features (use --features / [features].default).
+    std::vector<std::string>    requiredFeatures;
 };
 
 // `DependencySpec` and `kDefaultNamespace` have moved to mcpp.pm.dep_spec.
@@ -248,6 +263,11 @@ struct Manifest {
     bool                        usesModules    = true;   // refined by scanner
     bool                        usesImportStd  = true;   // refined by scanner
     std::vector<std::string>    inferredNotes;           // for `Inferred ...` banner
+
+    // Non-fatal schema warnings collected during parse (e.g. unsupported keys
+    // under [targets.<name>]). The caller (prepare_build) prints these and, under
+    // --strict, escalates them to errors — mirroring the feature/platform path.
+    std::vector<std::string>    schemaWarnings;
 };
 
 struct ManifestError {
@@ -587,6 +607,48 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
         if (auto msg = validate_target_soname(t, std::format("targets.{}.", tname))) {
             return std::unexpected(error(origin, *msg));
+        }
+
+        // Per-target flags (entry-scoped) + required-features gate.
+        auto read_list = [&](const char* key, std::vector<std::string>& out) {
+            if (auto it = tt.find(key); it != tt.end() && it->second.is_array())
+                for (auto& v : it->second.as_array())
+                    if (v.is_string()) out.push_back(v.as_string());
+        };
+        read_list("cflags",            t.cflags);
+        read_list("cxxflags",          t.cxxflags);
+        read_list("defines",           t.defines);
+        read_list("required_features", t.requiredFeatures);
+        // Guard: -std=... belongs to [package].standard, not per-target flags
+        // (same rule as [build].cxxflags). Reject early with a clear message.
+        for (auto const& flag : t.cxxflags) {
+            if (starts_with_std_flag(flag)) {
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.cxxflags contains '{}'; use [package].standard to "
+                    "configure the C++ language standard", tname, flag)));
+            }
+        }
+
+        // Surface unsupported keys instead of silently dropping them — the
+        // historic footgun behind issue #131 (a `[targets.x] cxxflags` typo on
+        // an older mcpp just vanished). Per-target arbitrary build config that
+        // must reach SHARED code is intentionally not a target key; point users
+        // at the right axis (workspace / features / profile).
+        static constexpr std::string_view kKnownTargetKeys[] = {
+            "kind", "main", "soname",
+            "cflags", "cxxflags", "defines", "required_features",
+        };
+        for (auto& [key, _] : tt) {
+            bool known = false;
+            for (auto k : kKnownTargetKeys) if (key == k) { known = true; break; }
+            if (!known) {
+                m.schemaWarnings.push_back(std::format(
+                    "[targets.{}] has unsupported key '{}' (ignored). Per-target keys: "
+                    "kind, main, soname, cflags, cxxflags, defines, required_features. "
+                    "For config that must affect shared code, split into a workspace "
+                    "member or use [features]; for a whole-build mode use [profile.*].",
+                    tname, key));
+            }
         }
         m.targets.push_back(std::move(t));
     }

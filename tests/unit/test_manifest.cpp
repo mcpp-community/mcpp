@@ -909,6 +909,67 @@ version = "0.0.2"
     EXPECT_FALSE(mcpp::manifest::has_lib_target(*m));
 }
 
+TEST(Manifest, ParsesPerTargetFlagsAndRequiredFeatures) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.server]
+kind     = "bin"
+main     = "src/server.cpp"
+defines  = ["BUILD_SERVER=1", "PORT=8080"]
+cxxflags = ["-fno-exceptions"]
+cflags   = ["-DPURE_C"]
+required_features = ["server"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    auto& t = m->targets[0];
+    ASSERT_EQ(t.defines.size(), 2u);
+    EXPECT_EQ(t.defines[0], "BUILD_SERVER=1");
+    EXPECT_EQ(t.defines[1], "PORT=8080");
+    ASSERT_EQ(t.cxxflags.size(), 1u);
+    EXPECT_EQ(t.cxxflags[0], "-fno-exceptions");
+    ASSERT_EQ(t.cflags.size(), 1u);
+    EXPECT_EQ(t.cflags[0], "-DPURE_C");
+    ASSERT_EQ(t.requiredFeatures.size(), 1u);
+    EXPECT_EQ(t.requiredFeatures[0], "server");
+    EXPECT_TRUE(m->schemaWarnings.empty());
+}
+
+TEST(Manifest, WarnsOnUnsupportedTargetKey) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind   = "bin"
+main   = "src/main.cpp"
+cxxfalgs = ["-DTYPO"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("cxxfalgs"), std::string::npos);
+    EXPECT_NE(m->schemaWarnings[0].find("unsupported key"), std::string::npos);
+}
+
+TEST(Manifest, RejectsStdFlagInTargetCxxflags) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind     = "bin"
+main     = "src/main.cpp"
+cxxflags = ["-std=c++20"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("[package].standard"), std::string::npos);
+}
+
 TEST(ListXpkgVersions, IgnoresCommentedEntries) {
     constexpr auto src = R"(
 package = {

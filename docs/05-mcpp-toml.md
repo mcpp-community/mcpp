@@ -81,6 +81,54 @@ downstream programs can load the library via its standard ABI name through
 `DT_NEEDED` or `dlopen()`. This field only applies to `kind = "shared"`, and the
 value must be a filename basename.
 
+#### Per-target keys
+
+```toml
+[targets.server]
+kind     = "bin"
+main     = "src/server.cpp"
+defines  = ["BUILD_SERVER=1", "PORT=8080"]   # -D macros, applied to this target's entry only
+cxxflags = ["-Wno-deprecated-declarations"]  # extra C++ flags for this target's entry (no -std=...)
+cflags   = ["-DPURE_C"]                       # extra C flags for this target's entry
+
+[targets.gui]
+kind = "bin"
+main = "src/gui.cpp"
+required_features = ["gui"]                   # only built when feature `gui` is active
+```
+
+| Key | Meaning |
+|---|---|
+| `defines` | Preprocessor macros (`name` or `name=value`); desugar to `-D<x>` on both the C and C++ entry compile. |
+| `cxxflags` / `cflags` | Extra compile flags for this target. Do **not** put `-std=...` here — use `[package].standard`. |
+| `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). |
+
+> **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
+> target's exclusive entry source** (its `main`) — never to shared module/impl objects, which
+> are compiled once and linked into every target (mcpp's compile-once model). They are the right
+> tool when the flag only needs to affect a single binary's (or test's) own entry — for example a
+> per-test contract evaluation semantic (`-fcontract-evaluation-semantic=observe`) for a test whose
+> `main` exercises the violation, a feature macro the entry alone reads, or a local warning
+> suppression. If a flag must reach **shared** code, it does not belong here — split into a
+> [workspace](06-workspace.md) member or use `[features]`, or for a whole-build mode use a
+> `[profile.*]` (`mcpp test --profile <name>` builds the whole test image, code-under-test
+> included, under that profile).
+>
+> Unsupported keys under `[targets.<name>]` are reported as a warning (an error under `--strict`).
+
+**Choosing where build configuration goes** — when more than one binary must differ:
+
+| You want | Use |
+|---|---|
+| Different macros/flags on a binary's **own entry** | per-target `defines` / `cxxflags` (above) |
+| Two products that differ in code they **share** | split into [workspace](06-workspace.md) members, each with its own `[build]` flags over a shared `lib` |
+| To **select a variant** of a shared library (e.g. a backend) | `[features]` on that library (§2.8) — additive, reaches the library's own compile |
+| A **whole-build mode** (sanitizers, contract semantics, opt level) | `[profile.<name>]` (§2.9) + `--profile`; also honored by `mcpp test --profile <name>` |
+
+mcpp deliberately does not compile a shared source two different ways within one build: a source
+maps to one object (and one BMI for modules), so divergence that must reach shared code belongs at
+the package/feature boundary, not on an individual target.
+
 ### 2.3 `[build]` — Build Configuration
 
 ```toml
@@ -258,7 +306,8 @@ cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
 
-- Selection: `mcpp build --profile <name>`, defaulting to `release`.
+- Selection: `mcpp build --profile <name>` (and `mcpp test --profile <name>`, which builds the
+  code-under-test plus the test binaries under that profile), defaulting to `release`.
 - Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
   **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
   built-in definition wholesale.

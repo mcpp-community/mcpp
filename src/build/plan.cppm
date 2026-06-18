@@ -540,6 +540,27 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                 plan.compileUnits.push_back(main_cu);
             }
             lu.objects.push_back(main_cu.object);
+
+            // Per-target entry-scoped flags (issue #131). Applied to the compile
+            // unit that actually builds this target's entry — which may be the
+            // one just inserted, or a unit the source scan already produced when
+            // main was globbed into [build].sources. SCOPE: a target's entry is
+            // exclusive to it (distinct `main` per target, and foreign entries
+            // are excluded from every other target's object set below), so these
+            // flags never color a shared module/impl object. `defines` desugar
+            // to -D on both the C and C++ entry compile.
+            if (!t.defines.empty() || !t.cflags.empty() || !t.cxxflags.empty()) {
+                for (auto& cu : plan.compileUnits) {
+                    if (cu.source != main_cu.source) continue;
+                    for (auto const& d : t.defines) {
+                        cu.packageCflags.push_back("-D" + d);
+                        cu.packageCxxflags.push_back("-D" + d);
+                    }
+                    for (auto const& f : t.cflags)   cu.packageCflags.push_back(f);
+                    for (auto const& f : t.cxxflags) cu.packageCxxflags.push_back(f);
+                    break;
+                }
+            }
         }
 
         // Also include implementation .cpp/.cc/.cxx/.c units, but EXCLUDE any

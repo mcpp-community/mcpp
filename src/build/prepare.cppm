@@ -405,6 +405,14 @@ prepare_build(bool print_fingerprint,
     // Inject synthetic targets (e.g. test binaries from `mcpp test`).
     for (auto& t : extraTargets) m->targets.push_back(t);
 
+    // Surface non-fatal manifest schema warnings (e.g. unsupported [targets.*]
+    // keys). Under --strict they become errors — same policy as the
+    // feature/platform schema checks below.
+    for (auto const& w : m->schemaWarnings) {
+        if (overrides.strict) return std::unexpected(w);
+        std::println(stderr, "warning: {}", w);
+    }
+
     // ─── Toolchain resolution (docs/21) ────────────────────────────────
     // Priority chain:
     //   1. mcpp.toml [toolchain].<platform>      → resolve_xpkg_path → abs path
@@ -2068,6 +2076,9 @@ prepare_build(bool print_fingerprint,
     // Implied features expand transitively. Each active feature becomes
     // -DMCPP_FEATURE_<NAME> on that package's compile flags.
     // (Transitive dep→dep feature requests are not yet propagated.)
+    // Also captured here: the root package's active feature set, reused below
+    // for the [targets.*] required_features gate.
+    std::set<std::string> activeRootFeatures;
     {
         auto sanitize = [](std::string f) {
             for (auto& c : f)
@@ -2130,6 +2141,7 @@ prepare_build(bool print_fingerprint,
                 std::println(stderr, "warning: {}", msg);
             }
             apply(packages[0], rootReq);
+            for (auto& f : activate(*m, rootReq)) activeRootFeatures.insert(f);
         }
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto& pname = packages[i].manifest.package.name;
@@ -2151,6 +2163,16 @@ prepare_build(bool print_fingerprint,
                 apply(packages[i], req);
         }
     }
+
+    // [targets.*] required_features gate: a target is emitted only when ALL its
+    // required features are active in this build; otherwise it is silently
+    // skipped. A pure build-selection knob — it runs before the modgraph/plan
+    // so gated-out targets cost nothing.
+    std::erase_if(m->targets, [&](const mcpp::manifest::Target& t) {
+        for (auto const& rf : t.requiredFeatures)
+            if (!activeRootFeatures.contains(rf)) return true;
+        return false;
+    });
 
     // Modgraph: regex scanner by default; opt-in to compiler-driven P1689
     // scanner via env var MCPP_SCANNER=p1689 (see docs/27).

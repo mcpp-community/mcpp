@@ -231,6 +231,12 @@ int run(int argc, char** argv) {
             })))
         .subcommand(cl::App("test")
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
+            .option(cl::Option("profile").takes_value().value_name("NAME")
+                .help("Build profile for the test build: release (default) | dev | dist | <[profile.*] name>"))
+            .option(cl::Option("features").takes_value().value_name("LIST")
+                .help("Activate root-package features for the test build (comma-separated)"))
+            .option(cl::Option("strict")
+                .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_test(p, std::span<const std::string>(passthrough));
             })))
