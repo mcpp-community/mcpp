@@ -121,6 +121,83 @@ jobs:
           mcpp run
 
   # ──────────────────────────────────────────────────────────────────
+  # Newer/rolling-glibc distros — reproduction surface for the
+  # bundled-glibc-vs-host-libtinfo `sh:` crash (host glibc > bundled).
+  # Plus older-glibc legs (the safe reverse direction) proving the
+  # musl-static mcpp + self-contained toolchain run end-to-end on old
+  # hosts. Runs the released mcpp inside distro containers.
+  # ──────────────────────────────────────────────────────────────────
+  linux-distro-matrix:
+    name: Linux distro (${{ matrix.distro }})
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ matrix.image }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora-latest
+            image: fedora:latest
+            setup: dnf -y install curl bash tar gzip xz git findutils binutils file glibc-langpack-en
+          - distro: arch
+            image: archlinux:latest
+            setup: pacman -Sy --noconfirm curl bash tar gzip xz git binutils file
+          - distro: tumbleweed
+            image: opensuse/tumbleweed:latest
+            setup: zypper -n install curl bash tar gzip xz git binutils file
+          - distro: debian-testing
+            image: debian:testing
+            setup: apt-get update && apt-get -y install curl bash tar gzip xz-utils git ca-certificates binutils findutils file
+          - distro: ubuntu-2004
+            image: ubuntu:20.04
+            setup: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y install curl bash tar gzip xz-utils git ca-certificates binutils findutils file
+          - distro: debian-11
+            image: debian:11
+            setup: apt-get update && apt-get -y install curl bash tar gzip xz-utils git ca-certificates binutils findutils file
+    env:
+      XLINGS_NON_INTERACTIVE: '1'
+      HOME: /root
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install prerequisites (${{ matrix.distro }})
+        run: ${{ matrix.setup }}
+
+      - name: Install xlings + mcpp
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.38
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Configure mcpp
+        run: |
+          export PATH="$HOME/.xlings/subos/current/bin:$PATH"
+          xlings update
+          xlings install mcpp -y -g
+          mcpp --version
+          mcpp self config --mirror GLOBAL
+
+      - name: "Regression: new → run (loader env must not crash /bin/sh)"
+        run: |
+          export PATH="$HOME/.xlings/subos/current/bin:$PATH"
+          cd "$(mktemp -d)"
+          mcpp new hello_distro
+          cd hello_distro
+          mcpp run
+
+      - name: "Self-containment: produced binary uses bundled loader"
+        run: |
+          export PATH="$HOME/.xlings/subos/current/bin:$PATH"
+          cd "$(mktemp -d)" && mcpp new hc && cd hc && mcpp build
+          bin="$(find target -type f -name hc | head -1)"
+          interp="$(file "$bin" | grep -o 'interpreter [^,]*' | awk '{print $2}')"
+          echo "interp=$interp"
+          case "$interp" in
+            */.mcpp/*|*/registry/*|*xpkgs*) echo "OK bundled loader" ;;
+            *) echo "FAIL host loader: $interp"; exit 1 ;;
+          esac
+
+  # ──────────────────────────────────────────────────────────────────
   # macOS: llvm@20.1.7
   # ──────────────────────────────────────────────────────────────────
   macos-fresh:

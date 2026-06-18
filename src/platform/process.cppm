@@ -22,9 +22,13 @@ module;
 #include <cstdio>
 #include <cstdlib>
 #if defined(_WIN32)
-#include <stdlib.h>    // _putenv_s
+#include <stdlib.h>    // _putenv_s, _spawnvpe, _environ
+#include <process.h>   // _spawnvpe, _P_WAIT
 #define popen  _popen
 #define pclose _pclose
+#else
+#include <unistd.h>    // fork, execvp, _exit, pipe, dup2, close, read
+#include <sys/wait.h>  // waitpid
 #endif
 
 export module mcpp.platform.process;
@@ -54,6 +58,22 @@ RunResult capture_host_tool(std::string_view command);
 RunResult capture_with_env(
     std::string_view command,
     const std::vector<std::pair<std::string, std::string>>& env);
+
+// Launch a program DIRECTLY (no shell), inheriting stdio. argv[0] is the
+// program (PATH-searched). `extraEnv` is applied to the CHILD ONLY — the
+// calling process environment is never mutated, so a target's loader vars
+// (LD_LIBRARY_PATH) cannot poison mcpp itself or any sibling host process.
+// Returns a platform-normalized exit code, or 127 if exec fails.
+int run_exec(const std::vector<std::string>& argv,
+             const std::vector<std::pair<std::string, std::string>>& extraEnv = {});
+
+// Same as run_exec but captures stdout AND stderr combined (replaces the old
+// `… 2>&1` redirect) into RunResult::output. Required because the only consumer
+// (ninja fast-path) parses error text — which ninja writes to stderr — via
+// is_stale_ninja_failure / filter_ninja_output. No shell → no quoting/injection.
+RunResult capture_exec(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& extraEnv = {});
 
 // Run `command` silently (discard stdout/stderr).
 // On POSIX, stdin is automatically redirected from /dev/null.
@@ -214,6 +234,87 @@ int run_passthrough(std::string_view command, std::string* output) {
         std::fputs(buf.data(), stdout);
     }
     return normalize_exit_code(::pclose(fp));
+}
+
+int run_exec(const std::vector<std::string>& argv,
+             const std::vector<std::pair<std::string, std::string>>& extraEnv)
+{
+    if (argv.empty()) return 127;
+#if defined(_WIN32)
+    // Build a child env block (parent env + overrides); no cmd.exe involved.
+    std::vector<std::string> envStrings;
+    for (char** e = _environ; e && *e; ++e) envStrings.emplace_back(*e);
+    for (auto& [k, v] : extraEnv) envStrings.push_back(k + "=" + v);
+    std::vector<const char*> envp;
+    for (auto& s : envStrings) envp.push_back(s.c_str());
+    envp.push_back(nullptr);
+
+    std::vector<const char*> cargv;
+    for (auto& a : argv) cargv.push_back(a.c_str());
+    cargv.push_back(nullptr);
+
+    intptr_t rc = _spawnvpe(_P_WAIT, cargv[0],
+                            const_cast<char* const*>(cargv.data()),
+                            const_cast<char* const*>(envp.data()));
+    return rc < 0 ? 127 : static_cast<int>(rc);
+#else
+    pid_t pid = ::fork();
+    if (pid < 0) return 127;
+    if (pid == 0) {
+        // Child only: mutate THIS address space, never the parent's.
+        for (auto& [k, v] : extraEnv) ::setenv(k.c_str(), v.c_str(), 1);
+        std::vector<char*> cargv;
+        for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+        cargv.push_back(nullptr);
+        ::execvp(cargv[0], cargv.data());
+        _exit(127);  // exec failed
+    }
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
+    return normalize_exit_code(status);
+#endif
+}
+
+RunResult capture_exec(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& extraEnv)
+{
+    RunResult result;
+    if (argv.empty()) { result.exit_code = 127; return result; }
+#if defined(_WIN32)
+    // Windows is unaffected by the glibc leak; reuse the shell capture path
+    // with additive env for parity.
+    std::string cmd;
+    for (auto& a : argv) { cmd += '"'; cmd += a; cmd += "\" "; }
+    return capture_with_env(cmd, extraEnv);
+#else
+    int fds[2];
+    if (::pipe(fds) != 0) { result.exit_code = 127; return result; }
+    pid_t pid = ::fork();
+    if (pid < 0) { ::close(fds[0]); ::close(fds[1]); result.exit_code = 127; return result; }
+    if (pid == 0) {
+        ::close(fds[0]);
+        ::dup2(fds[1], 1);            // stdout → pipe
+        ::dup2(fds[1], 2);            // stderr → same pipe (replaces `2>&1`)
+        ::close(fds[1]);
+        for (auto& [k, v] : extraEnv) ::setenv(k.c_str(), v.c_str(), 1);
+        std::vector<char*> cargv;
+        for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+        cargv.push_back(nullptr);
+        ::execvp(cargv[0], cargv.data());
+        _exit(127);
+    }
+    ::close(fds[1]);
+    std::array<char, 4096> buf{};
+    ssize_t n;
+    while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
+        result.output.append(buf.data(), static_cast<size_t>(n));
+    ::close(fds[0]);
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
+    result.exit_code = normalize_exit_code(status);
+    return result;
+#endif
 }
 
 } // namespace mcpp::platform::process

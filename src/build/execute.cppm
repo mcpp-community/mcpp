@@ -274,6 +274,10 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
 
     auto outputDirStr = match->outputDir;
     auto ninjaProgram = match->ninjaProgram;
+    // Legacy caches stored a shell-quoted path; execvp needs the raw path.
+    if (ninjaProgram.size() >= 2 && ninjaProgram.front() == '\''
+                                 && ninjaProgram.back() == '\'')
+        ninjaProgram = ninjaProgram.substr(1, ninjaProgram.size() - 2);
     auto cachedFingerprint = match->fingerprint;
     auto runtimeEnvKey = match->runtimeEnvKey;
     auto runtimeEnvValue = match->runtimeEnvValue;
@@ -317,19 +321,21 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     }
 
     // All inputs are older than build.ninja → fast-path: just run ninja.
-    std::string cmd = ninjaProgram;
-    if (!verbose) cmd += " --quiet";
-    cmd += std::format(" -C {}", mcpp::platform::shell::quote(outputDir.string()));
-    if (verbose) cmd += " -v";
-    cmd += " 2>&1";
+    std::vector<std::string> argv{ninjaProgram};
+    if (!verbose) argv.push_back("--quiet");
+    argv.push_back("-C");
+    argv.push_back(outputDir.string());
+    if (verbose) argv.push_back("-v");
+
+    std::vector<std::pair<std::string, std::string>> childEnv;
+    if (runtimeEnvKey != "-" && !runtimeEnvValue.empty())
+        childEnv.emplace_back(runtimeEnvKey, runtimeEnvValue);
 
     auto t0 = std::chrono::steady_clock::now();
-    std::string out;
-    std::optional<mcpp::platform::env::ScopedEnv> scopedEnv;
-    if (runtimeEnvKey != "-" && !runtimeEnvValue.empty())
-        scopedEnv.emplace(runtimeEnvKey, runtimeEnvValue);
-    auto r = mcpp::platform::process::capture(cmd);
-    out = r.output;
+    // capture_exec merges stderr into the captured output (replacing `2>&1`),
+    // so is_stale_ninja_failure / filter_ninja_output still see ninja errors.
+    auto r = mcpp::platform::process::capture_exec(argv, childEnv);
+    std::string out = r.output;
     int status = r.exit_code;
     bool ok = (status == 0);
     if (!ok) {
@@ -386,19 +392,21 @@ export int build_run_target(const std::optional<std::string>& targetName,
         std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
     std::println("");
     std::fflush(stdout);
-    std::string cmd = mcpp::platform::shell::quote(exe.string());
-    for (auto& a : passthrough) cmd += " " + mcpp::platform::shell::quote(a);
+    std::vector<std::string> argv;
+    argv.push_back(exe.string());
+    for (auto& a : passthrough) argv.push_back(a);
 
-    std::optional<mcpp::platform::env::ScopedEnv> runtimeEnv;
+    std::vector<std::pair<std::string, std::string>> childEnv;
     auto runtimeEnvKey = mcpp::platform::env::runtime_library_path_key();
     auto runtimeEnvValue = mcpp::platform::env::prepend_path_list(
         runtimeEnvKey, ctx->plan.runtimeLibraryDirs);
-    if (!runtimeEnvKey.empty() && !runtimeEnvValue.empty()) {
-        runtimeEnv.emplace(runtimeEnvKey, runtimeEnvValue);
-    }
+    if (!runtimeEnvKey.empty() && !runtimeEnvValue.empty())
+        childEnv.emplace_back(runtimeEnvKey, runtimeEnvValue);
 
-    int rc = std::system(cmd.c_str());
-    return mcpp::platform::process::extract_exit_code(rc) == 0 ? 0 : 1;
+    // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
+    // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
+    // crash on newer-glibc distros.
+    return mcpp::platform::process::run_exec(argv, childEnv) == 0 ? 0 : 1;
 }
 
 // `mcpp test` driver: discover tests/**/*.cpp, synthesize targets, build
@@ -505,38 +513,40 @@ export int run_tests(std::span<const std::string> passthrough,
     int failed = 0;
     std::vector<std::string> failures;
 
-    std::optional<mcpp::platform::env::ScopedEnv> runtimeEnv;
     auto runtimeEnvKey = mcpp::platform::env::runtime_library_path_key();
     auto runtimeEnvValue = mcpp::platform::env::prepend_path_list(
         runtimeEnvKey, ctx->plan.runtimeLibraryDirs);
-    if (!runtimeEnvKey.empty() && !runtimeEnvValue.empty()) {
-        runtimeEnv.emplace(runtimeEnvKey, runtimeEnvValue);
-    }
 
     for (auto& lu : ctx->plan.linkUnits) {
         if (lu.kind != mcpp::build::LinkUnit::TestBinary) continue;
         auto exe = ctx->outputDir / lu.output;
         mcpp::ui::status("Running", std::format("bin/{}", lu.targetName));
 
-        // Prepend the sandbox's subos/default/bin to PATH so tools
-        // bootstrapped during sandbox init (patchelf, ninja, etc.) are
-        // visible to test binaries that shell out to them. The
-        // toolchain binary's path encodes the registry root — derive it.
-        std::string pathPrefix;
+        std::vector<std::string> argv;
+        argv.push_back(exe.string());
+        for (auto& a : passthrough) argv.push_back(a);
+
+        std::vector<std::pair<std::string, std::string>> childEnv;
+        if (!runtimeEnvKey.empty() && !runtimeEnvValue.empty())
+            childEnv.emplace_back(runtimeEnvKey, runtimeEnvValue);
+
+        // Prepend the sandbox's subos/default/bin to the CHILD PATH so test
+        // binaries that shell out to bootstrapped tools (patchelf, ninja) find
+        // them — applied to the child only, not via a leaky shell prefix.
         if constexpr (!mcpp::platform::is_windows) {
             if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(ctx->tc.binaryPath)) {
                 // xpkgs is <registry>/data/xpkgs → registry = xpkgs/../..
                 auto registryDir = xpkgs->parent_path().parent_path();
                 auto sandboxBin  = registryDir / "subos" / "default" / "bin";
-                if (std::filesystem::exists(sandboxBin))
-                    pathPrefix = std::format("PATH={}:\"$PATH\" ",
-                                             mcpp::platform::shell::quote(sandboxBin.string()));
+                if (std::filesystem::exists(sandboxBin)) {
+                    std::array<std::filesystem::path, 1> extra{sandboxBin};
+                    auto pathVal = mcpp::platform::env::prepend_path_list("PATH", extra);
+                    if (!pathVal.empty()) childEnv.emplace_back("PATH", pathVal);
+                }
             }
         }
 
-        std::string cmd = pathPrefix + mcpp::platform::shell::quote(exe.string());
-        for (auto& a : passthrough) cmd += " " + mcpp::platform::shell::quote(a);
-        int exitCode = mcpp::platform::process::extract_exit_code(std::system(cmd.c_str()));
+        int exitCode = mcpp::platform::process::run_exec(argv, childEnv);
 
         if (exitCode == 0) {
             std::println("{} ... ok", lu.targetName);

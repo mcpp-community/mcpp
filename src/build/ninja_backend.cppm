@@ -714,15 +714,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         ninjaBin = *nb;
     }
 
-    std::string ninjaProgram;
-    if (!ninjaBin.empty()) {
-        if constexpr (mcpp::platform::is_windows)
-            ninjaProgram = ninjaBin.string();
-        else
-            ninjaProgram = mcpp::platform::shell::quote(ninjaBin.string());
-    } else {
-        ninjaProgram = "ninja";
-    }
+    // Raw program path (no shell quoting): recorded in the fast-path cache and
+    // exec'd directly via capture_exec/execvp, which take argv (not a shell
+    // string). Shell-using call sites must quote it locally.
+    std::string ninjaProgram = ninjaBin.empty() ? std::string("ninja")
+                                                 : ninjaBin.string();
 
     // Record ninja binary for P0 fast-path cache.
     BuildResult r;
@@ -734,21 +730,27 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         r.runtimeEnvKey = "-";
     }
 
-    std::string cmd = ninjaProgram;
+    // Direct exec (no /bin/sh): argv, not a shell string. capture_exec merges
+    // stderr into the captured output (replacing the old `2>&1`), and applies
+    // the runtime env to the child ONLY — so a bundled-glibc LD_LIBRARY_PATH
+    // can never poison the host shell (the newer-glibc `sh:` crash class).
+    std::vector<std::string> nargv{ninjaProgram};
     if (!opts.verbose)
-        cmd += " --quiet";
-    cmd += std::format(" -C {}", mcpp::xlings::shq(plan.outputDir.string()));
+        nargv.push_back("--quiet");
+    nargv.push_back("-C");
+    nargv.push_back(plan.outputDir.string());
     if (opts.verbose)
-        cmd += " -v";
+        nargv.push_back("-v");
     if (opts.parallelJobs)
-        cmd += std::format(" -j{}", opts.parallelJobs);
-    cmd += " 2>&1";
+        nargv.push_back(std::format("-j{}", opts.parallelJobs));
 
-    std::string out;
-    std::optional<mcpp::platform::env::ScopedEnv> scopedEnv;
+    std::vector<std::pair<std::string, std::string>> nenv;
     if (r.runtimeEnvKey != "-" && !r.runtimeEnvValue.empty())
-        scopedEnv.emplace(r.runtimeEnvKey, r.runtimeEnvValue);
-    bool ok = run(cmd, out, /*capture=*/true);
+        nenv.emplace_back(r.runtimeEnvKey, r.runtimeEnvValue);
+
+    auto cap = mcpp::platform::process::capture_exec(nargv, nenv);
+    std::string out = cap.output;
+    bool ok = (cap.exit_code == 0);
 
     r.exitCode = ok ? 0 : 1;
     r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
