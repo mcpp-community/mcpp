@@ -1611,8 +1611,19 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
 
     if (ns == kDefaultNamespace) {
         if (luaNs == ns) return luaName == shortName || luaName == qname;
-        if (luaNs.empty() && luaName == qname) return true;
-        return allowLegacyBareDefault && luaNs.empty() && luaName == shortName;
+        // Legacy compat alias: a bare/default-namespace request resolves to a
+        // `compat.<short>` package. The candidate generator deliberately offers
+        // `compat.<short>.lua` for default-ns requests (compat.cppm), so e.g.
+        // the dev-dep `gtest` is satisfied by `compat.gtest` — accept it.
+        if (luaNs == "compat") {
+            std::string compatName = std::format("compat.{}", shortName);
+            return luaName == shortName || luaName == compatName;
+        }
+        if (luaNs.empty()) {
+            if (luaName == qname) return true;
+            return allowLegacyBareDefault && luaName == shortName;
+        }
+        return false;
     }
 
     // Non-default namespace (e.g. `compat`, `xim`, a custom index): the

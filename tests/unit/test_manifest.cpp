@@ -1064,3 +1064,18 @@ package = { namespace = "mcpplibs", name = "mcpplibs.llmapi", version = "0.2.8" 
     // ...but it is NOT a match for a different short name.
     EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(llmapi, "", "zlib"));
 }
+
+TEST(XpkgIdentity, DefaultNamespaceRequestMatchesCompatAlias) {
+    // Regression for the CI break: the dev-dep `gtest` is a bare/default-namespace
+    // request, but the descriptor is `compat.gtest` (namespace="compat"). A
+    // default-namespace request must accept its compat alias.
+    constexpr std::string_view compatGtest =
+        R"(package = { namespace = "compat", name = "compat.gtest", version = "1.15.2" })";
+    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(
+        compatGtest, "mcpplibs", "gtest"));
+    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(
+        compatGtest, "mcpplibs", "gtest", /*allowLegacyBareDefault=*/false));
+    // But a different default-ns name does not match it.
+    EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(
+        compatGtest, "mcpplibs", "zlib"));
+}
