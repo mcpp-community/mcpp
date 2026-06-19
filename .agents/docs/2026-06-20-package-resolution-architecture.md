@@ -409,8 +409,23 @@ choke-point consolidation (payload locators, `resolve_xpkg_path`,
 | Unit tests: identity-gate truth table | `tests/unit/test_manifest.cpp` | ☑ done |
 | Regression test: cross-index collision (`compat.zlib` vs bare `zlib`) | `tests/unit/test_pm_package_fetcher.cpp` | ☑ done |
 | Local build + `mcpp test` green (21/21 binaries, 8 new tests) | — | ☑ done |
-| Local e2e green: dep-resolution (27/31/62/63), scaffold (02), custom/local index (42/52), path dep (09), preinstall (58) | — | ☑ done |
-| CI green (linux/macos/windows) | — | ☐ pending |
+| Local e2e green: dep-resolution (27/31/62/63), scaffold (02), custom/local index (42/49/51/52), path dep (09), preinstall (58), dev-deps (18), compat flows (50/55/60/61) | — | ☑ done |
+| De-hardcode `compat` → shared `kCompatNamespace` constant (gate + candidate generator) | `dep_spec.cppm`, `manifest.cppm`, `compat.cppm` | ☑ done |
+| Index-owned-namespace attribution for **scoped** (`[indices]` path) indexes — fixes e2e 49/51 the unified-model way (no-ns descriptor inherits its index's ns) | `manifest.cppm`, `package_fetcher.cppm` | ☑ done |
+| CI green (linux/macos/windows) | — | ◐ macOS+Windows green; Linux re-running after 49/51 fix |
+
+**Unified-model note (per review):** `compat` is not a special namespace in the
+*matching logic*. The model is: a descriptor's effective namespace = its declared
+`package.namespace`, else **its owning index's namespace** (index-owned
+namespace); qualified requests then match by exact `(ns, shortName)` equality.
+`compat` survives only as a *data* entry in the default/unqualified-name search
+path (`kCompatNamespace`), not as a logic branch. This PR lands index attribution
+for **scoped** reads (`read_xpkg_lua_from_path`, where the owning index's
+namespace is known = the request ns). The **builtin global scan**
+(`read_xpkg_lua`) still uses the content-only proxy + `compat` search-path entry
+because it lacks a per-file `index-dir → namespace` map (`xim-pkgindex → xim`,
+etc.) — that map is the remaining §4.1 work, after which the builtin path also
+becomes pure exact-match and the `compat` matching branch disappears.
 
 **Fix mechanism (this PR):** a candidate filename is only a hint; every hit is
 verified against the descriptor's declared `(ns,name)` before acceptance, and

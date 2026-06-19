@@ -20,6 +20,7 @@ export namespace mcpp::manifest {
 // and these aliases can disappear.
 using DependencySpec = mcpp::pm::DependencySpec;
 inline constexpr auto kDefaultNamespace = mcpp::pm::kDefaultNamespace;
+inline constexpr auto kCompatNamespace  = mcpp::pm::kCompatNamespace;
 
 struct CppStandardConfig {
     std::string                 canonical = "c++23";
@@ -326,10 +327,19 @@ std::string extract_xpkg_name(std::string_view luaContent);
 // `allowLegacyBareDefault` governs only the default-namespace case: whether a
 // no-namespace descriptor whose bare name matches counts as the default-ns
 // package (preserves legacy bare-named mcpplibs descriptors).
+//
+// `indexDefaultNs` is the namespace OWNED BY the index the descriptor was found
+// in. When the read is scoped to a single known index (e.g. a `[indices]` local
+// path index owns namespace `local-dev`), a descriptor that declares no
+// namespace inherits the index's — so `tinycfg.lua` (name only) in the
+// `local-dev` index matches a request for `(local-dev, tinycfg)`. Empty for
+// multi-index scans where the owning index isn't known per-file (the builtin
+// global scan); see the design doc §4.1.
 bool xpkg_lua_identity_matches(std::string_view luaContent,
                                std::string_view ns,
                                std::string_view shortName,
-                               bool allowLegacyBareDefault = true);
+                               bool allowLegacyBareDefault = true,
+                               std::string_view indexDefaultNs = {});
 
 // Resolve the lib-root path for a manifest:
 //   1. `[lib].path` if explicitly set (cargo-style override),
@@ -1586,11 +1596,17 @@ std::string extract_xpkg_name(std::string_view luaContent) {
 bool xpkg_lua_identity_matches(std::string_view luaContent,
                                std::string_view ns,
                                std::string_view shortName,
-                               bool allowLegacyBareDefault) {
+                               bool allowLegacyBareDefault,
+                               std::string_view indexDefaultNs) {
     auto luaName = extract_xpkg_name(luaContent);
     if (luaName.empty()) return true;   // no declared name → cannot verify, accept
 
     auto luaNs = extract_xpkg_namespace(luaContent);
+    // Index-owned namespace: a descriptor that declares no namespace inherits
+    // the namespace of the (single, known) index it was found in.
+    if (luaNs.empty() && !indexDefaultNs.empty()) {
+        luaNs = std::string(indexDefaultNs);
+    }
 
     // Fully-qualified name as the requested coordinate would spell it
     // (`compat.zlib` for (compat, zlib); bare `zlib` for an empty-ns request).
@@ -1611,12 +1627,14 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
 
     if (ns == kDefaultNamespace) {
         if (luaNs == ns) return luaName == shortName || luaName == qname;
-        // Legacy compat alias: a bare/default-namespace request resolves to a
-        // `compat.<short>` package. The candidate generator deliberately offers
-        // `compat.<short>.lua` for default-ns requests (compat.cppm), so e.g.
-        // the dev-dep `gtest` is satisfied by `compat.gtest` — accept it.
-        if (luaNs == "compat") {
-            std::string compatName = std::format("compat.{}", shortName);
+        // Unqualified/default-namespace requests reach the `compat` wrapper
+        // namespace (the one entry in the default search path beyond the
+        // default namespace itself): the dev-dep `gtest` is satisfied by
+        // `compat.gtest`. `kCompatNamespace` is the shared source of truth with
+        // the candidate generator — not a literal baked in here.
+        if (luaNs == kCompatNamespace) {
+            std::string compatName =
+                std::format("{}.{}", kCompatNamespace, shortName);
             return luaName == shortName || luaName == compatName;
         }
         if (luaNs.empty()) {

@@ -54,4 +54,13 @@ struct DependencySpec {
 // mcpplibs "root". Bare `gtest = "1.15.2"` becomes `(mcpp, gtest)`.
 inline constexpr std::string_view kDefaultNamespace = "mcpplibs";
 
+// The `compat` namespace holds upstream-library wrappers (compat.zlib,
+// compat.gtest, …). It is the one non-default namespace that an unqualified
+// (default-namespace) dependency name reaches: bare `gtest` → `compat.gtest`.
+// Centralized here so the candidate generator (xpkg_lua_candidates) and the
+// identity gate (xpkg_lua_identity_matches) share one source of truth instead
+// of each hard-coding the literal "compat". See the design doc's §4.1 for the
+// fuller "unqualified namespace search path" direction this is a seed of.
+inline constexpr std::string_view kCompatNamespace = "compat";
+
 } // namespace mcpp::pm

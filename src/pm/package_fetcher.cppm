@@ -428,7 +428,8 @@ std::optional<std::string>
 read_identity_verified_xpkg_lua(const std::filesystem::path& pkgsDir,
                                 std::string_view ns,
                                 std::string_view shortName,
-                                const std::vector<std::string>& filenames)
+                                const std::vector<std::string>& filenames,
+                                std::string_view indexDefaultNs = {})
 {
     std::error_code ec;
     if (!std::filesystem::exists(pkgsDir, ec)) return std::nullopt;
@@ -442,7 +443,9 @@ read_identity_verified_xpkg_lua(const std::filesystem::path& pkgsDir,
         std::ifstream is(candidate);
         std::stringstream ss; ss << is.rdbuf();
         auto content = ss.str();
-        if (mcpp::manifest::xpkg_lua_identity_matches(content, ns, shortName)) {
+        if (mcpp::manifest::xpkg_lua_identity_matches(
+                content, ns, shortName, /*allowLegacyBareDefault=*/true,
+                indexDefaultNs)) {
             return content;
         }
         // Filename matched but the descriptor is a different package — keep
@@ -505,8 +508,10 @@ Fetcher::read_xpkg_lua_from_path(const std::filesystem::path& indexPath,
     if (shortName.empty()) return std::nullopt;
 
     auto filenames = mcpp::pm::compat::xpkg_lua_candidates(ns, shortName);
+    // A `[indices]` path index is scoped to a single namespace (`ns`), so a
+    // descriptor here that declares no namespace belongs to it.
     return read_identity_verified_xpkg_lua(
-        indexPath / "pkgs", ns, shortName, filenames);
+        indexPath / "pkgs", ns, shortName, filenames, /*indexDefaultNs=*/ns);
 }
 
 // ─── read_xpkg_lua from project-level data dir ─────────────────────

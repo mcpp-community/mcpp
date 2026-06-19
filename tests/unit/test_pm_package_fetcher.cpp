@@ -113,3 +113,23 @@ package = {
 
     std::filesystem::remove_all(project);
 }
+
+TEST(PmPackageFetcher, LocalPathIndexAttributesOwnNamespaceToNoNsDescriptor) {
+    // e2e 49/51: a `[indices]` path index `local-dev` whose descriptor declares
+    // only name="tinycfg" (no namespace field). The namespace is owned by the
+    // index, so a `(local-dev, tinycfg)` request must match via index-owned
+    // namespace attribution.
+    auto index = make_tempdir("mcpp-local-path-index");
+    write_file(index / "pkgs" / "t" / "tinycfg.lua",
+               R"(package = { name = "tinycfg", version = "1.0.0", mcpp = { sources = {"*.c"} } })");
+
+    auto lua = mcpp::pm::Fetcher::read_xpkg_lua_from_path(index, "local-dev", "tinycfg");
+    ASSERT_TRUE(lua.has_value()) << "no-namespace descriptor must inherit the index namespace";
+    EXPECT_NE(lua->find("tinycfg"), std::string::npos);
+
+    // A short name the index does not contain still resolves to nothing.
+    auto miss = mcpp::pm::Fetcher::read_xpkg_lua_from_path(index, "local-dev", "absent");
+    EXPECT_FALSE(miss.has_value());
+
+    std::filesystem::remove_all(index);
+}

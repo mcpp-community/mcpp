@@ -191,15 +191,17 @@ inline std::vector<std::string> xpkg_lua_candidates(std::string_view ns,
     }
 
     // Fallback: compat.<shortName>.lua — covers compat packages
-    // when the caller didn't specify the "compat" namespace.
+    // when the caller didn't specify the compat namespace.
+    auto compatPrefix = std::string(mcpp::pm::kCompatNamespace) + ".";
     if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
-        candidates.push_back("compat." + std::string(shortName) + ".lua");
+        candidates.push_back(compatPrefix + std::string(shortName) + ".lua");
     }
 
     // Fallback: compat variants for non-default/non-compat namespaces.
-    if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace && ns != "compat") {
-        candidates.push_back("compat." + fqname + ".lua");
-        candidates.push_back("compat." + std::string(shortName) + ".lua");
+    if (!ns.empty() && ns != mcpp::pm::kDefaultNamespace
+        && ns != mcpp::pm::kCompatNamespace) {
+        candidates.push_back(compatPrefix + fqname + ".lua");
+        candidates.push_back(compatPrefix + std::string(shortName) + ".lua");
     }
 
     return candidates;
