@@ -173,7 +173,13 @@ jobs:
       - name: Install xlings + mcpp
         run: |
           curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.38
-          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          # Deliberately NOT writing to $GITHUB_PATH here. On container
+          # images that declare no PATH in their config (opensuse/
+          # tumbleweed), appending a single dir to GITHUB_PATH makes the
+          # runner exec later steps' `sh` with only that dir on PATH —
+          # `sh` (in /usr/bin) vanishes and the next step dies with
+          # `exec: "sh": ... not found` / exit 127. Each step below already
+          # exports PATH itself, so the append is redundant anyway.
 
       - name: Configure mcpp
         run: |
