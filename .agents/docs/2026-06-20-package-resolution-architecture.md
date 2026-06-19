@@ -477,7 +477,9 @@ choke-point consolidation (payload locators, `resolve_xpkg_path`,
 | Local e2e green: dep-resolution (27/31/62/63), scaffold (02), custom/local index (42/49/51/52), path dep (09), preinstall (58), dev-deps (18), compat flows (50/55/60/61) | — | ☑ done |
 | De-hardcode `compat` → shared `kCompatNamespace` constant (gate + candidate generator) | `dep_spec.cppm`, `manifest.cppm`, `compat.cppm` | ☑ done |
 | Index-owned-namespace attribution for **scoped** (`[indices]` path) indexes — fixes e2e 49/51 the unified-model way (no-ns descriptor inherits its index's ns) | `manifest.cppm`, `package_fetcher.cppm` | ☑ done |
-| CI green (linux/macos/windows) | — | ◐ macOS+Windows green; Linux re-running after 49/51 fix |
+| **Unified `canonical_xpkg_identity()` normalizer** (§4.2): owning-index ns → FQN → split-on-last-dot → `(ns, name)`. Matcher rewritten on top: name equality + (qualified) exact ns / (unqualified) search path. Behavior-preserving over the prior branchy gate | `manifest.cppm` | ☑ done |
+| Comprehensive `CanonicalIdentity` unit suite (every §4.2 paradigm: prefix-embedded, bare+combine, index-attribution, hierarchical/nested ns, dotted-name split, from-lua) | `tests/unit/test_manifest.cpp` | ☑ done |
+| CI green (linux/macos/windows) | — | ◐ macOS+Windows green; Linux re-running |
 
 **Unified-model note (per review):** `compat` is not a special namespace in the
 *matching logic*. The model is: a descriptor's effective namespace = its declared

@@ -316,6 +316,31 @@ std::string extract_xpkg_namespace(std::string_view luaContent);
 // Returns empty string if the field is absent.
 std::string extract_xpkg_name(std::string_view luaContent);
 
+// Canonical package identity — the unified (ns, name) model (design doc §4.2).
+//
+// A package's identity is a 2-tuple: `ns` is a hierarchical namespace path
+// (sub-namespaces, dotted: `compat`, `a.b.c`), `name` is a single atomic
+// segment. Surface spellings (dotted name, embedded prefix, missing namespace)
+// all normalize to this tuple. Normalization:
+//   1. If `declaredNs` is empty, inherit `indexDefaultNs` (owning-index ns).
+//   2. Fully-qualified name: if `declaredName` already starts with `ns.`, it is
+//      the FQN; otherwise FQN = `ns.declaredName` (or just `declaredName` when
+//      there is no namespace at all).
+//   3. Split the FQN on its LAST dot: prefix → `ns`, final segment → `name`.
+struct XpkgIdentity {
+    std::string ns;
+    std::string name;
+    bool operator==(const XpkgIdentity&) const = default;
+};
+XpkgIdentity canonical_xpkg_identity(std::string_view declaredNs,
+                                     std::string_view declaredName,
+                                     std::string_view indexDefaultNs = {});
+
+// Convenience: the canonical identity of an xpkg .lua, read from its declared
+// `package.{namespace,name}`. Empty `name` field → empty identity.
+XpkgIdentity canonical_xpkg_identity_from_lua(std::string_view luaContent,
+                                              std::string_view indexDefaultNs = {});
+
 // Identity gate: does this xpkg .lua actually DECLARE the package the caller
 // asked for? Compares the descriptor's declared `package.{name,namespace}`
 // against the requested (ns, shortName) coordinate. This is the invariant that
@@ -1593,6 +1618,39 @@ std::string extract_xpkg_name(std::string_view luaContent) {
     return top_level_string_value_for_key(packageBody, "name");
 }
 
+XpkgIdentity canonical_xpkg_identity(std::string_view declaredNs,
+                                     std::string_view declaredName,
+                                     std::string_view indexDefaultNs) {
+    // Step 1 — owning-index namespace: a descriptor that declares no namespace
+    // inherits the namespace of the index it lives in.
+    std::string ns(declaredNs.empty() ? indexDefaultNs : declaredNs);
+    std::string name(declaredName);
+
+    // Step 2 — fully-qualified name. A declared name already prefixed with the
+    // namespace IS the FQN; otherwise the namespace is prepended. With no
+    // namespace at all, the declared name stands alone.
+    std::string fqn;
+    if (ns.empty()) {
+        fqn = name;
+    } else {
+        std::string prefix = ns + ".";
+        fqn = name.starts_with(prefix) ? name : ns + "." + name;
+    }
+
+    // Step 3 — split the FQN on its LAST dot: prefix → ns, final segment → name.
+    auto pos = fqn.rfind('.');
+    if (pos == std::string::npos) return XpkgIdentity{ /*ns=*/{}, /*name=*/fqn };
+    return XpkgIdentity{ fqn.substr(0, pos), fqn.substr(pos + 1) };
+}
+
+XpkgIdentity canonical_xpkg_identity_from_lua(std::string_view luaContent,
+                                              std::string_view indexDefaultNs) {
+    auto name = extract_xpkg_name(luaContent);
+    if (name.empty()) return {};
+    return canonical_xpkg_identity(extract_xpkg_namespace(luaContent), name,
+                                   indexDefaultNs);
+}
+
 bool xpkg_lua_identity_matches(std::string_view luaContent,
                                std::string_view ns,
                                std::string_view shortName,
@@ -1601,56 +1659,32 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
     auto luaName = extract_xpkg_name(luaContent);
     if (luaName.empty()) return true;   // no declared name → cannot verify, accept
 
-    auto luaNs = extract_xpkg_namespace(luaContent);
-    // Index-owned namespace: a descriptor that declares no namespace inherits
-    // the namespace of the (single, known) index it was found in.
-    if (luaNs.empty() && !indexDefaultNs.empty()) {
-        luaNs = std::string(indexDefaultNs);
-    }
+    // Reduce the descriptor to its canonical (ns, name) tuple (design doc §4.2),
+    // then match per the unified model.
+    auto id = canonical_xpkg_identity(extract_xpkg_namespace(luaContent),
+                                      luaName, indexDefaultNs);
 
-    // Fully-qualified name as the requested coordinate would spell it
-    // (`compat.zlib` for (compat, zlib); bare `zlib` for an empty-ns request).
-    std::string qname = ns.empty()
-        ? std::string(shortName)
-        : std::format("{}.{}", ns, shortName);
+    // The single atomic name must equal the requested short name in every mode.
+    if (id.name != shortName) return false;
 
-    if (ns.empty()) {
-        // Discovery mode (e.g. `mcpp new --template X`, scaffold): the caller
-        // does not know the namespace and derives it from the descriptor.
-        // Match by name only — bare, or the tail of a qualified declared name —
-        // accepting whatever namespace the file declares. Still stricter than
-        // the old no-identity-check read, which accepted any filename hit.
-        std::string dotted = ".";
-        dotted += shortName;
-        return luaName == shortName || luaName.ends_with(dotted);
-    }
+    // Discovery (empty request ns, e.g. `mcpp new --template X`): the caller
+    // derives the namespace from the descriptor, so a name match is enough.
+    if (ns.empty()) return true;
 
+    // Unqualified / default-namespace request: resolve the name against the
+    // default namespace search path — the default namespace itself, then the
+    // `compat` wrapper namespace (`kCompatNamespace`, shared with the candidate
+    // generator). A legacy no-namespace descriptor is admitted under the flag.
     if (ns == kDefaultNamespace) {
-        if (luaNs == ns) return luaName == shortName || luaName == qname;
-        // Unqualified/default-namespace requests reach the `compat` wrapper
-        // namespace (the one entry in the default search path beyond the
-        // default namespace itself): the dev-dep `gtest` is satisfied by
-        // `compat.gtest`. `kCompatNamespace` is the shared source of truth with
-        // the candidate generator — not a literal baked in here.
-        if (luaNs == kCompatNamespace) {
-            std::string compatName =
-                std::format("{}.{}", kCompatNamespace, shortName);
-            return luaName == shortName || luaName == compatName;
-        }
-        if (luaNs.empty()) {
-            if (luaName == qname) return true;
-            return allowLegacyBareDefault && luaName == shortName;
-        }
-        return false;
+        return id.ns == kDefaultNamespace
+            || id.ns == kCompatNamespace
+            || (allowLegacyBareDefault && id.ns.empty());
     }
 
-    // Non-default namespace (e.g. `compat`, `xim`, a custom index): the
-    // descriptor must declare the same namespace, or declare no namespace but
-    // carry the fully-qualified name. A foreign bare name (luaName==shortName
-    // with no/mismatched namespace) is rejected — this is the fix for the
-    // `compat.zlib` vs upstream bare `zlib.lua` collision.
-    if (luaNs == ns) return luaName == shortName || luaName == qname;
-    return luaNs.empty() && luaName == qname;
+    // Qualified request (concrete namespace: compat, xim, a custom/nested ns):
+    // exact namespace equality. Cross-namespace collisions are structurally
+    // impossible — a foreign `(xim, zlib)` never equals `(compat, zlib)`.
+    return id.ns == ns;
 }
 
 std::vector<std::string>

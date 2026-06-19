@@ -1079,3 +1079,78 @@ TEST(XpkgIdentity, DefaultNamespaceRequestMatchesCompatAlias) {
     EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(
         compatGtest, "mcpplibs", "zlib"));
 }
+
+// ─── canonical_xpkg_identity — the unified (ns, name) model (§4.2) ───
+//
+// Identity is a 2-tuple: ns is a hierarchical namespace path, name is a single
+// atomic segment. Every surface spelling normalizes to this tuple.
+
+namespace {
+mcpp::manifest::XpkgIdentity id(std::string_view ns, std::string_view name,
+                                std::string_view indexNs = {}) {
+    return mcpp::manifest::canonical_xpkg_identity(ns, name, indexNs);
+}
+mcpp::manifest::XpkgIdentity want(std::string n, std::string s) {
+    return mcpp::manifest::XpkgIdentity{std::move(n), std::move(s)};
+}
+}  // namespace
+
+TEST(CanonicalIdentity, PrefixEmbeddedNameCollapses) {
+    // ns=compat, name=compat.zlib  →  (compat, zlib)
+    EXPECT_EQ(id("compat", "compat.zlib"), want("compat", "zlib"));
+}
+
+TEST(CanonicalIdentity, BareNameCombinesWithNamespace) {
+    // ns=mcpplibs, name=cmdline  →  (mcpplibs, cmdline)
+    EXPECT_EQ(id("mcpplibs", "cmdline"), want("mcpplibs", "cmdline"));
+}
+
+TEST(CanonicalIdentity, AlreadyQualifiedNameIsIdempotent) {
+    EXPECT_EQ(id("mcpplibs", "mcpplibs.cmdline"), want("mcpplibs", "cmdline"));
+}
+
+TEST(CanonicalIdentity, NoNamespaceInheritsOwningIndex) {
+    // ns=∅, name=zlib, index=xim  →  (xim, zlib)
+    EXPECT_EQ(id("", "zlib", "xim"), want("xim", "zlib"));
+    EXPECT_EQ(id("", "tinycfg", "local-dev"), want("local-dev", "tinycfg"));
+}
+
+TEST(CanonicalIdentity, DeclaredNamespaceWinsOverIndexDefault) {
+    EXPECT_EQ(id("compat", "compat.zlib", "xim"), want("compat", "zlib"));
+}
+
+TEST(CanonicalIdentity, DottedNameWithNoNamespaceSplitsOnLastDot) {
+    // ns=∅, name=a.b  →  (a, b)
+    EXPECT_EQ(id("", "a.b"), want("a", "b"));
+    EXPECT_EQ(id("", "x.y.z"), want("x.y", "z"));
+}
+
+TEST(CanonicalIdentity, HierarchicalNamespaceIsSupported) {
+    // ns=a.b, name=c  →  (a.b, c) ; name is the single trailing segment.
+    EXPECT_EQ(id("a.b", "c"), want("a.b", "c"));
+    EXPECT_EQ(id("mcpplibs.capi", "lua"), want("mcpplibs.capi", "lua"));
+    // Nested + prefix-embedded forms both land on the same tuple.
+    EXPECT_EQ(id("mcpplibs", "mcpplibs.capi.lua"), want("mcpplibs.capi", "lua"));
+    EXPECT_EQ(id("mcpplibs.capi", "mcpplibs.capi.lua"),
+              want("mcpplibs.capi", "lua"));
+}
+
+TEST(CanonicalIdentity, BareNameNoNamespaceNoIndexStaysRootless) {
+    // The incident villain: a foreign bare descriptor with nothing to anchor it.
+    EXPECT_EQ(id("", "zlib"), want("", "zlib"));
+}
+
+TEST(CanonicalIdentity, FromLuaReadsDeclaredFields) {
+    constexpr std::string_view lua =
+        R"(package = { namespace = "compat", name = "compat.zlib" })";
+    EXPECT_EQ(mcpp::manifest::canonical_xpkg_identity_from_lua(lua),
+              want("compat", "zlib"));
+    // No-namespace descriptor + owning index.
+    constexpr std::string_view bare = R"(package = { name = "tinycfg" })";
+    EXPECT_EQ(mcpp::manifest::canonical_xpkg_identity_from_lua(bare, "local-dev"),
+              want("local-dev", "tinycfg"));
+    // No declared name → empty identity.
+    constexpr std::string_view noName = R"(package = { version = "1.0" })";
+    EXPECT_EQ(mcpp::manifest::canonical_xpkg_identity_from_lua(noName),
+              want("", ""));
+}
