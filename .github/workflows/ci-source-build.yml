@@ -1,0 +1,87 @@
+name: ci-source-build
+
+# Clean-room build of THIS repo's mcpp source, bootstrapped from
+# openxlings/xlings (https://github.com/openxlings/xlings).
+#
+# It proves that a fresh environment can:
+#   1. install xlings from openxlings/xlings,
+#   2. run `xlings --version` successfully, and
+#   3. `mcpp build` the checked-out source end to end.
+#
+# Complements the other CI:
+#   - ci-linux.yml         heavy self-host + full unit/e2e/toolchain matrix,
+#                          bootstrapped from the d2learn/xlings release tarball.
+#   - ci-fresh-install.yml released mcpp on sample projects (not PR source).
+# This workflow is the minimal "does the source build from a fresh openxlings
+# install" gate, run on every PR.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-source-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-from-source:
+    name: build from source (openxlings bootstrap, linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      XLINGS_NON_INTERACTIVE: '1'
+      # openxlings/xlings release to bootstrap from. Bump in lockstep with the
+      # version ci-fresh-install.yml pins.
+      XLINGS_VERSION: 'v0.4.38'
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cache the xlings install + mcpp sandbox (toolchain + package payloads)
+      # so repeat runs skip the multi-minute cold gcc@16.1.0 install. Keyed on
+      # the manifests so a toolchain/dep change refreshes the cache.
+      - name: Cache xlings + mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xlings
+            ~/.mcpp
+          key: ci-source-build-${{ runner.os }}-${{ hashFiles('mcpp.toml', '.xlings.json', 'mcpp.lock') }}
+          restore-keys: |
+            ci-source-build-${{ runner.os }}-
+
+      - name: Install xlings (openxlings/xlings)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
+            | bash -s "$XLINGS_VERSION"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: xlings --version
+        run: xlings --version
+
+      - name: Bootstrap mcpp via xlings
+        run: |
+          # Refresh the bundled pkgindex snapshot so the workspace pin in
+          # .xlings.json resolves, then install a bootstrap mcpp used to
+          # self-host the source build below.
+          xlings update
+          xlings install mcpp -y -g
+          mcpp --version
+          mcpp self config --mirror GLOBAL
+          echo "XLINGS_BIN=$HOME/.xlings/subos/current/bin/xlings" >> "$GITHUB_ENV"
+
+      - name: Build mcpp from source (this repo)
+        run: |
+          # Use the openxlings-bootstrapped xlings as mcpp's vendored backend,
+          # and keep toolchain downloads on the global mirror (runners are
+          # outside CN).
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          mcpp build
+
+          # The freshly-built binary must run.
+          FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' \
+            | sort -rn | head -1 | cut -d' ' -f2)")
+          test -x "$FRESH"
+          "$FRESH" --version
