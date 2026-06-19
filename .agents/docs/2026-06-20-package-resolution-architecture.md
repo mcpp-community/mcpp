@@ -220,6 +220,71 @@ unambiguous. Today it is not — two cases need a single, explicit rule:
 
 ---
 
+### 4.2 Canonical package identity (the unified model)
+
+Every package has exactly one canonical identity: a **2-tuple `(ns, name)`**
+derived by normalizing the descriptor's declared `package.namespace` +
+`package.name`. There are no other dimensions — filename, install-dir name, and
+candidate spellings are all derived from (or hints toward) this tuple, never part
+of it.
+
+- **`ns` is a namespace *path*** — it supports sub-namespaces and is therefore
+  hierarchical/dotted: `compat`, `mcpplibs`, `a.b.c`.
+- **`name` is a single, atomic segment** — it has no internal structure. The
+  descriptor *may write* `name = "a.b"` as a convenience/legacy spelling, but its
+  essence is `(ns=a, name=b)`: the leading dotted segments belong to the
+  namespace, only the final segment is the name.
+
+**Normalization — declared `(declaredNs, declaredName)` → canonical `(ns, name)`:**
+
+1. **Owning-index namespace.** If `declaredNs` is empty, it is the namespace of
+   the index the descriptor lives in (index-owned namespace, §4.1). A descriptor
+   is never left namespace-less.
+2. **Fully-qualified name (FQN).**
+   - If `declaredName` is dotted, it is already the FQN (e.g. `compat.zlib`,
+     `a.b`). A dotted name is expected to be consistent with — i.e. prefixed by —
+     the namespace.
+   - If `declaredName` is a single segment, `FQN = ns + "." + declaredName`
+     (e.g. `name=cmdline`, `ns=mcpplibs` → `mcpplibs.cmdline`; `name=zlib` in the
+     `xim` index → `xim.zlib`).
+3. **Split on the last dot.** Everything before the final `.` is the (hierarchical)
+   `ns`; the final segment is the single `name`.
+
+Worked examples:
+
+| declared `namespace` | declared `name` | owning index | canonical `(ns, name)` |
+|---|---|---|---|
+| `compat` | `compat.zlib` | mcpplibs | `(compat, zlib)` |
+| `mcpplibs` | `cmdline` | mcpplibs | `(mcpplibs, cmdline)` |
+| `mcpplibs` | `mcpplibs.cmdline` | mcpplibs | `(mcpplibs, cmdline)` |
+| *(none)* | `zlib` | xim-pkgindex | `(xim, zlib)` |
+| *(none)* | `tinycfg` | `local-dev` index | `(local-dev, tinycfg)` |
+| `a.b` | `c` | — | `(a.b, c)` |
+| *(none)* | `a.b` | — | `(a, b)` |
+
+The qualified serialization of `(ns, name)` is simply `ns + "." + name`
+(`compat.zlib`, `a.b.c`). That string is what a `[dependencies]` entry, an install
+dir (`<ns>-x-<ns>.<name>`), and a canonical filename (`<ns>.<name>.lua`) all
+encode — different *serializations of the same tuple*, never independent keys.
+
+**Matching** then reduces to:
+- **Qualified request** → canonical `(ns, name)` **exact equality**. (No special
+  cases; cross-namespace collisions are structurally impossible because the
+  namespaces differ.)
+- **Unqualified/bare request** → resolve the single `name` against an ordered
+  **namespace search path** (currently `[mcpplibs, compat]`). `compat` is a *data
+  entry* in that path — the wrapper namespace for upstream libraries — not a
+  branch in the matching logic.
+
+The codebase has the pieces of this normalization spread across
+`descriptor_coordinates` (strip redundant `ns.` prefix from name),
+`normalize_nested_namespace` (fold dotted `name` segments into `ns`), and the new
+index-owned-namespace attribution. The target is a single `canonical_identity()`
+that applies rules 1–3 uniformly, after which all matching is tuple equality plus
+the search path — and every remaining `compat`/filename special-case dissolves.
+
+---
+
 ## 5. Target architecture: an identity-first `PackageLocator`
 
 Introduce one component that owns **all** filesystem resolution. Every one of
