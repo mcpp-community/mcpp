@@ -91,6 +91,24 @@ jobs:
           export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
           "$MCPP_SELF" test
 
+      # Integration: the mcpp built from THIS PR's source ($MCPP_SELF, the
+      # self-hosted binary) builds & runs a real external C++ project — xlings
+      # (openxlings/xlings ships its own mcpp.toml). MCPP_VENDORED_XLINGS only
+      # supplies the xlings package backend mcpp resolves deps through.
+      - name: "Integration: mcpp builds & runs xlings (openxlings/xlings)"
+        shell: bash
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
+          # $MCPP_SELF is the freshly self-hosted mcpp built from this PR.
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/openxlings/xlings /tmp/xlings-src
+          cd /tmp/xlings-src
+          "$MCPP_SELF" self config --mirror GLOBAL
+          "$MCPP_SELF" build
+          "$MCPP_SELF" run
+
       # Regression test for the Windows first-run "press Enter to advance" hang.
       # Launches mcpp with an OPEN, EMPTY, never-closing stdin pipe. Without
       # seal_stdin's Windows fix, any grandchild that reads stdin would inherit

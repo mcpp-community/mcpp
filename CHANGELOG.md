@@ -3,6 +3,28 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.57] — 2026-06-20
+
+### 修复
+
+- 包描述符解析改为 **identity-first**:不再「按候选文件名跨索引无序扫描、撞上第一个就返回」,
+  而是用描述符声明的规范 `(ns, name)` 二元组校验命中文件的身份。修复 `compat.zlib` 在全新
+  CI 上偶发 `index entry has no mcpp field`(外来 `xim-pkgindex/.../zlib.lua` 因目录遍历
+  顺序先被撞到而冒充 `compat.zlib`)。索引目录改为排序后确定性遍历。
+
+### 重构
+
+- 新增统一的 `canonical_xpkg_identity()` 归一器(身份 = 二元组 `(ns, name)`;`ns` 为可分层命名
+  空间路径,`name` 为单一末段;点号名 `a.b` 本质 `(a, b)`)。归一三步:无声明 ns → 继承所属索引
+  默认 ns;求 FQN;按最后一个点切分。匹配 = 限定请求精确相等 / 非限定请求按默认搜索路径
+  `[mcpplibs, compat]`。`compat` 降级为搜索路径里的数据项(`kCompatNamespace`),不再是匹配
+  分支。`[indices]` 路径索引的无命名空间描述符继承索引命名空间。
+
+### CI
+
+- `ci-{linux,macos,windows}.yml` 各加一步:用本次构建出的 mcpp `git clone` 并 `mcpp build` /
+  `mcpp run` 外部 C++ 工程 xlings(openxlings/xlings),验证自托管 mcpp 能构建真实外部项目。
+
 ## [0.0.56] — 2026-06-19
 
 ### 修复

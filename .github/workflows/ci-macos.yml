@@ -356,3 +356,19 @@ jobs:
           "$MCPP" clean
           "$MCPP" build
           "$MCPP" --version
+
+      # Integration: the mcpp built from THIS PR's source (the self-host binary,
+      # $MCPP = /tmp/mcpp-fresh) builds & runs a real external C++ project —
+      # xlings (openxlings/xlings ships its own mcpp.toml).
+      - name: "Integration: mcpp builds & runs xlings (openxlings/xlings)"
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          MCPP=/tmp/mcpp-fresh   # the freshly self-hosted binary built from this PR
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/openxlings/xlings /tmp/xlings-src
+          cd /tmp/xlings-src
+          "$MCPP" self config --mirror GLOBAL
+          "$MCPP" build
+          "$MCPP" run

@@ -170,3 +170,20 @@ jobs:
           "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@20.1.7" build.log
           # Restore
           sed -i 's/^default = "llvm@20.1.7"/default = "gcc@16.1.0"/' mcpp.toml
+
+      # Integration: the mcpp built from THIS PR's source (the self-host binary,
+      # $MCPP = /tmp/mcpp-fresh) builds & runs a real external C++ project —
+      # xlings (openxlings/xlings ships its own mcpp.toml). MCPP_VENDORED_XLINGS
+      # only supplies the xlings package backend that mcpp resolves deps through.
+      - name: "Integration: mcpp builds & runs xlings (openxlings/xlings)"
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # $MCPP is the freshly self-hosted binary built from this PR.
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/openxlings/xlings /tmp/xlings-src
+          cd /tmp/xlings-src
+          "$MCPP" self config --mirror GLOBAL
+          "$MCPP" build
+          "$MCPP" run
