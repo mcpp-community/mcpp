@@ -935,40 +935,15 @@ prepare_build(bool print_fingerprint,
         return std::nullopt;
     };
 
-    auto candidateQualifiedName =
-        [](std::string_view ns, std::string_view shortName) {
-            if (ns.empty()) return std::string(shortName);
-            return std::format("{}.{}", ns, shortName);
-        };
-
     auto xpkgLuaMatchesCandidate =
-        [&](const mcpp::pm::DependencyCoordinate& coord,
-            std::string_view luaContent,
-            bool allowLegacyBareDefault) {
-            auto luaName = mcpp::manifest::extract_xpkg_name(luaContent);
-            if (luaName.empty()) return true;
-
-            auto luaNs = mcpp::manifest::extract_xpkg_namespace(luaContent);
-            auto qname = candidateQualifiedName(coord.namespace_, coord.shortName);
-
-            if (coord.namespace_.empty()) {
-                return luaNs.empty() && luaName == coord.shortName;
-            }
-
-            if (coord.namespace_ == mcpp::pm::kDefaultNamespace) {
-                if (luaNs == coord.namespace_) {
-                    return luaName == coord.shortName || luaName == qname;
-                }
-                if (luaNs.empty() && luaName == qname) return true;
-                return allowLegacyBareDefault
-                    && luaNs.empty()
-                    && luaName == coord.shortName;
-            }
-
-            if (luaNs == coord.namespace_) {
-                return luaName == coord.shortName || luaName == qname;
-            }
-            return luaNs.empty() && luaName == qname;
+        [](const mcpp::pm::DependencyCoordinate& coord,
+           std::string_view luaContent,
+           bool allowLegacyBareDefault) {
+            // Single source of truth: the descriptor identity gate lives in
+            // mcpp.manifest and is shared with the read_xpkg_lua family.
+            return mcpp::manifest::xpkg_lua_identity_matches(
+                luaContent, coord.namespace_, coord.shortName,
+                allowLegacyBareDefault);
         };
 
     auto dependencyCoordinates =

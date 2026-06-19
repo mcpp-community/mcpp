@@ -315,6 +315,22 @@ std::string extract_xpkg_namespace(std::string_view luaContent);
 // Returns empty string if the field is absent.
 std::string extract_xpkg_name(std::string_view luaContent);
 
+// Identity gate: does this xpkg .lua actually DECLARE the package the caller
+// asked for? Compares the descriptor's declared `package.{name,namespace}`
+// against the requested (ns, shortName) coordinate. This is the invariant that
+// makes filename-based lookup safe — a file found by a candidate filename is
+// only accepted when it *is* the requested package, so a bare `zlib.lua` from a
+// foreign index never satisfies a request for `compat.zlib`.
+//
+// A descriptor that declares no `name` is accepted (cannot verify → lenient).
+// `allowLegacyBareDefault` governs only the default-namespace case: whether a
+// no-namespace descriptor whose bare name matches counts as the default-ns
+// package (preserves legacy bare-named mcpplibs descriptors).
+bool xpkg_lua_identity_matches(std::string_view luaContent,
+                               std::string_view ns,
+                               std::string_view shortName,
+                               bool allowLegacyBareDefault = true);
+
 // Resolve the lib-root path for a manifest:
 //   1. `[lib].path` if explicitly set (cargo-style override),
 //   2. otherwise the convention `src/<package-tail>.cppm`, where
@@ -1565,6 +1581,47 @@ std::string extract_xpkg_name(std::string_view luaContent) {
     auto packageBody = top_level_table_body_for_key(luaContent, "package");
     if (packageBody.empty()) return {};
     return top_level_string_value_for_key(packageBody, "name");
+}
+
+bool xpkg_lua_identity_matches(std::string_view luaContent,
+                               std::string_view ns,
+                               std::string_view shortName,
+                               bool allowLegacyBareDefault) {
+    auto luaName = extract_xpkg_name(luaContent);
+    if (luaName.empty()) return true;   // no declared name → cannot verify, accept
+
+    auto luaNs = extract_xpkg_namespace(luaContent);
+
+    // Fully-qualified name as the requested coordinate would spell it
+    // (`compat.zlib` for (compat, zlib); bare `zlib` for an empty-ns request).
+    std::string qname = ns.empty()
+        ? std::string(shortName)
+        : std::format("{}.{}", ns, shortName);
+
+    if (ns.empty()) {
+        // Discovery mode (e.g. `mcpp new --template X`, scaffold): the caller
+        // does not know the namespace and derives it from the descriptor.
+        // Match by name only — bare, or the tail of a qualified declared name —
+        // accepting whatever namespace the file declares. Still stricter than
+        // the old no-identity-check read, which accepted any filename hit.
+        std::string dotted = ".";
+        dotted += shortName;
+        return luaName == shortName || luaName.ends_with(dotted);
+    }
+
+    if (ns == kDefaultNamespace) {
+        if (luaNs == ns) return luaName == shortName || luaName == qname;
+        if (luaNs.empty() && luaName == qname) return true;
+        return allowLegacyBareDefault && luaNs.empty() && luaName == shortName;
+    }
+
+    // Non-default namespace (e.g. `compat`, `xim`, a custom index): the
+    // descriptor must declare the same namespace, or declare no namespace but
+    // carry the fully-qualified name. A foreign bare name (luaName==shortName
+    // with no/mismatched namespace) is rejected — this is the fix for the
+    // `compat.zlib` vs upstream bare `zlib.lua` collision.
+    if (luaNs == ns) return luaName == shortName || luaName == qname;
+    return luaNs.empty() && luaName == qname;
 }
 
 std::vector<std::string>

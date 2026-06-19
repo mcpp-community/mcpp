@@ -985,3 +985,82 @@ package = {
     ASSERT_EQ(v.size(), 1u);
     EXPECT_EQ(v[0], "0.1.0");
 }
+
+// ─── xpkg_lua_identity_matches — descriptor identity gate ───────────
+//
+// Regression cover for the compat.zlib vs upstream bare zlib.lua collision:
+// a file found by a candidate filename must DECLARE the requested package.
+
+namespace {
+constexpr std::string_view kCompatZlibLua = R"(
+package = {
+    namespace   = "compat",
+    name        = "compat.zlib",
+    version     = "1.3.2",
+    mcpp = {
+        sources = { "*.c" },
+    },
+}
+)";
+
+// Upstream xim zlib: declares a bare name and NO namespace, no mcpp block.
+constexpr std::string_view kUpstreamZlibLua = R"(
+package = {
+    name = "zlib",
+    description = "A massively spiffy yet delicately unobtrusive compression library",
+}
+)";
+}  // namespace
+
+TEST(XpkgIdentity, CompatDescriptorMatchesCompatRequest) {
+    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(
+        kCompatZlibLua, "compat", "zlib"));
+}
+
+TEST(XpkgIdentity, UpstreamBareZlibDoesNotMatchCompatRequest) {
+    // The crux of the incident: a foreign bare `zlib.lua` must be rejected for
+    // a `compat.zlib` request, no matter that the candidate filename matched.
+    EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(
+        kUpstreamZlibLua, "compat", "zlib"));
+}
+
+TEST(XpkgIdentity, DescriptorDeclaringNamespaceMatchesOnlyThatNamespace) {
+    // When a descriptor DECLARES its namespace, it matches that namespace and no
+    // other. (Index-owned namespace for *no-namespace* descriptors — attributing
+    // a bare `zlib.lua` to its owning index as `(xim, zlib)` — is deferred to the
+    // §4.1 follow-up, since the content-only gate cannot know a file's index.)
+    constexpr std::string_view ximZlib =
+        R"(package = { namespace = "xim", name = "zlib" })";
+    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(
+        ximZlib, "xim", "zlib", /*allowLegacyBareDefault=*/false));
+    EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(
+        ximZlib, "compat", "zlib"));
+}
+
+TEST(XpkgIdentity, NoDeclaredNameIsAcceptedLeniently) {
+    // A descriptor without a package.name cannot be verified → accepted.
+    constexpr std::string_view noName = R"(package = { version = "1.0.0" })";
+    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(noName, "compat", "zlib"));
+}
+
+TEST(XpkgIdentity, DefaultNamespaceBareNameGatedByFlag) {
+    // Default-namespace (mcpplibs) bare-named legacy descriptor: accepted only
+    // when the legacy-bare flag is on.
+    constexpr std::string_view bareDefault = R"(package = { name = "cmdline" })";
+    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(
+        bareDefault, "mcpplibs", "cmdline", /*allowLegacyBareDefault=*/true));
+    EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(
+        bareDefault, "mcpplibs", "cmdline", /*allowLegacyBareDefault=*/false));
+}
+
+TEST(XpkgIdentity, EmptyNamespaceDiscoveryMatchesNamespacedDescriptor) {
+    // `mcpp new --template llmapi` reads with an empty (unknown) namespace and
+    // derives the real namespace from the file. A namespaced descriptor must
+    // still be discoverable by its short name.
+    constexpr std::string_view llmapi = R"(
+package = { namespace = "mcpplibs", name = "mcpplibs.llmapi", version = "0.2.8" }
+)";
+    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(llmapi, "", "llmapi"));
+    // ...but it is NOT a match for a different short name.
+    EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(llmapi, "", "zlib"));
+}
