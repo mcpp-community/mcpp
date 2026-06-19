@@ -136,16 +136,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # findutils (find) is mandatory on every leg: quick_install.sh
+        # locates the extracted xlings dir with `find`, so a missing find
+        # fails the install with exit 127 *before* mcpp ever runs. Minimal
+        # images (opensuse/tumbleweed) ship without it; arch's base merely
+        # bundles it by luck. List it explicitly everywhere — don't rely on
+        # the base image.
         include:
           - distro: fedora-latest
             image: fedora:latest
             setup: dnf -y install curl bash tar gzip xz git findutils binutils file glibc-langpack-en
           - distro: arch
             image: archlinux:latest
-            setup: pacman -Sy --noconfirm curl bash tar gzip xz git binutils file
+            setup: pacman -Sy --noconfirm curl bash tar gzip xz git findutils binutils file
           - distro: tumbleweed
             image: opensuse/tumbleweed:latest
-            setup: zypper -n install curl bash tar gzip xz git binutils file
+            setup: zypper -n install curl bash tar gzip xz git findutils binutils file
           - distro: debian-testing
             image: debian:testing
             setup: apt-get update && apt-get -y install curl bash tar gzip xz-utils git ca-certificates binutils findutils file
