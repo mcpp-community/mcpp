@@ -209,8 +209,12 @@ struct BootstrapProgress {
 using BootstrapProgressCallback = std::function<void(const BootstrapProgress&)>;
 
 // Run xlings install with progress callback (used by bootstrap functions).
+// When not `quiet` and stderr is a TTY, an elapsed-time spinner is shown
+// during the (otherwise silent) direct install so first-run doesn't look
+// frozen.
 int install_with_progress(const Env& env, std::string_view target,
-                          const BootstrapProgressCallback& cb);
+                          const BootstrapProgressCallback& cb,
+                          bool quiet = false);
 
 // Run direct `xlings install <target> -y`.
 // Used as a fallback when the NDJSON interface install path fails.
@@ -868,7 +872,8 @@ call(const Env& env, std::string_view capability,
 // ─── install_with_progress ──────────────────────────────────────────
 
 int install_with_progress(const Env& env, std::string_view target,
-                          const BootstrapProgressCallback& cb)
+                          const BootstrapProgressCallback& cb,
+                          bool quiet)
 {
     auto argsJson = std::format(
         R"({{"targets":["{}"],"yes":true}})", target);
@@ -893,8 +898,45 @@ int install_with_progress(const Env& env, std::string_view target,
         if constexpr (mcpp::platform::is_windows) {
             directCmd += " <NUL";
         }
-        int directRc = mcpp::platform::process::extract_exit_code(
-            std::system(directCmd.c_str()));
+
+        // The direct install redirects all output to the null device, so it
+        // produces zero feedback — on a slow/network-bound first run this
+        // looks frozen. Run the blocking std::system() on a worker thread and
+        // paint an in-place elapsed-time spinner on stderr while it runs.
+        // Only when interactive (not quiet, stderr/stdout is a TTY).
+        const bool showSpinner = !quiet && mcpp::platform::terminal::is_tty();
+
+        std::atomic<bool> done{false};
+        int directRaw = 0;
+        std::thread worker([&] {
+            directRaw = std::system(directCmd.c_str());
+            done.store(true, std::memory_order_release);
+        });
+
+        if (showSpinner) {
+            constexpr std::string_view frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+            // Each braille frame is 3 bytes in UTF-8.
+            constexpr std::size_t kFrameBytes = 3;
+            const std::size_t nFrames = frames.size() / kFrameBytes;
+            const auto start = std::chrono::steady_clock::now();
+            std::size_t i = 0;
+            while (!done.load(std::memory_order_acquire)) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - start).count();
+                std::print(stderr, "\r  {} installing {}  ({}s)\x1b[K",
+                    frames.substr((i % nFrames) * kFrameBytes, kFrameBytes),
+                    target, elapsed);
+                std::fflush(stderr);
+                ++i;
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            }
+            // Clear the spinner line.
+            std::print(stderr, "\r\x1b[K");
+            std::fflush(stderr);
+        }
+
+        worker.join();
+        int directRc = mcpp::platform::process::extract_exit_code(directRaw);
         if (directRc == 0) return 0;
     }
 
@@ -1053,6 +1095,14 @@ void ensure_init(const Env& env, bool quiet) {
             "warning: `xlings self init` failed for sandbox at '{}'",
             env.home.string());
     }
+
+    // The first real `xlings install` (the next bootstrap step) triggers
+    // xlings to fetch its package index — a one-time, network-bound step
+    // with no output of its own. Announce it so the user knows the silent
+    // wait that follows is expected. This runs once: ensure_init is gated
+    // by the sandbox-init marker above.
+    if (!quiet)
+        print_status("Fetching", "package index (one-time)");
 }
 
 void ensure_patchelf(const Env& env, bool quiet,
@@ -1073,7 +1123,7 @@ void ensure_patchelf(const Env& env, bool quiet,
     if (!quiet)
         print_status("Bootstrap", "patchelf into mcpp sandbox (one-time)");
     int rc = install_with_progress(env,
-        std::format("xim:patchelf@{}", pinned::kPatchelfVersion), cb);
+        std::format("xim:patchelf@{}", pinned::kPatchelfVersion), cb, quiet);
     if (rc != 0 && !quiet) {
         std::println(stderr,
             "warning: failed to bootstrap patchelf into mcpp sandbox; "
@@ -1099,7 +1149,7 @@ void ensure_ninja(const Env& env, bool quiet,
     if (!quiet)
         print_status("Bootstrap", "ninja into mcpp sandbox (one-time)");
     int rc = install_with_progress(env,
-        std::format("xim:ninja@{}", pinned::kNinjaVersion), cb);
+        std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet);
     if (rc != 0 && !quiet) {
         std::println(stderr,
             "warning: failed to bootstrap ninja into mcpp sandbox (exit {})",
