@@ -16,12 +16,50 @@ import mcpp.build.plan;
 import mcpp.config;
 import mcpp.fallback.install_integrity;
 import mcpp.fetcher.progress;
+import mcpp.platform.process;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.ui;
 import mcpp.xlings;
 
 namespace mcpp::doctor {
+
+// Parse the RUNPATH/RPATH search dirs out of a `readelf -d <binary>` dump.
+// readelf prints (one per DT_RUNPATH / DT_RPATH dynamic entry):
+//   0x...001d (RUNPATH)  Library runpath: [/a/lib:/b/lib:...]
+//   0x...000f (RPATH)    Library rpath:   [/a/lib:/b/lib:...]
+// We pull the text inside the [...] and split on ':'. Exported so it can be
+// unit-tested without spawning a process. Empty entries are dropped.
+export std::vector<std::string> parse_readelf_runpath(std::string_view dump) {
+    std::vector<std::string> out;
+    std::size_t pos = 0;
+    while (pos < dump.size()) {
+        auto nl = dump.find('\n', pos);
+        std::string_view line = dump.substr(pos, nl == std::string_view::npos
+            ? std::string_view::npos : nl - pos);
+        pos = (nl == std::string_view::npos) ? dump.size() : nl + 1;
+
+        if (line.find("(RUNPATH)") == std::string_view::npos
+            && line.find("(RPATH)") == std::string_view::npos)
+            continue;
+        auto lb = line.find('[');
+        auto rb = line.find(']', lb == std::string_view::npos ? 0 : lb);
+        if (lb == std::string_view::npos || rb == std::string_view::npos || rb <= lb + 1)
+            continue;
+        std::string_view body = line.substr(lb + 1, rb - lb - 1);
+        std::size_t s = 0;
+        while (s <= body.size()) {
+            auto c = body.find(':', s);
+            std::string_view tok = body.substr(s, c == std::string_view::npos
+                ? std::string_view::npos : c - s);
+            if (!tok.empty()) out.emplace_back(tok);
+            if (c == std::string_view::npos) break;
+            s = c + 1;
+        }
+    }
+    return out;
+}
 
 // `mcpp self env`.
 export int env_report() {
@@ -143,6 +181,98 @@ export int doctor_report() {
             }
         }
     }
+
+#if !defined(__APPLE__) && !defined(_WIN32)
+    // ─── Toolchain runtime dependencies (Linux/ELF only) ────────────────
+    //
+    // Installed xim toolchains bake absolute RUNPATH entries into their
+    // compiler binaries (e.g. clang++ points at xim-x-zlib/.../lib for
+    // libz.so.1). If the providing xim package is later removed, the
+    // RUNPATH dir vanishes and `<compiler>` dies at runtime with
+    // "libz.so.1: cannot open shared object" (exit 127) — the package
+    // builds fine but the produced binary can't run. We detect the broken
+    // state here before a build mysteriously fails.
+    //
+    // Two symptoms, both stemming from a deleted provider package:
+    //   1. a compiler RUNPATH entry pointing at a now-missing dir, and
+    //   2. dangling symlinks under <xlingsHome>/subos/default/lib
+    //      (std::filesystem::exists follows symlinks → false for dangling).
+    mcpp::ui::status("Checking", "toolchain runtime deps");
+    if (cfg) {
+        auto pkgsDir = (*cfg).xlingsHome() / "data" / "xpkgs";
+        std::error_code ec;
+        bool sawAny = false;
+        bool anyMissing = false;
+
+        if (std::filesystem::exists(pkgsDir, ec)) {
+            // Mirror `mcpp toolchain list`: each xim-x-<compiler>/<version>/bin
+            // holds one installed toolchain frontend (clang++/g++/musl-gcc-…).
+            for (auto& entry : std::filesystem::directory_iterator(pkgsDir, ec)) {
+                auto name = entry.path().filename().string();
+                if (name.rfind("xim-x-", 0) != 0) continue;          // toolchains only
+                std::string compiler = name.substr(std::string("xim-x-").size());
+
+                for (auto& vEntry : std::filesystem::directory_iterator(entry.path(), ec)) {
+                    auto bin = mcpp::toolchain::toolchain_frontend(
+                        vEntry.path() / "bin", compiler);
+                    if (bin.empty()) continue;                       // not a compiler pkg
+                    sawAny = true;
+
+                    auto label = mcpp::toolchain::display_label(
+                        compiler, vEntry.path().filename().string());
+
+                    // readelf is part of binutils, always present in our sandbox.
+                    auto cmd = std::format("readelf -d \"{}\"", bin.string());
+                    auto r = mcpp::platform::process::capture(cmd);
+                    if (r.exit_code != 0) {
+                        warn(std::format(
+                            "{}: could not read RUNPATH from '{}' (readelf exit {})",
+                            label, bin.string(), r.exit_code));
+                        continue;
+                    }
+                    for (auto& dir : parse_readelf_runpath(r.output)) {
+                        // Only absolute paths name on-disk dirs we can verify;
+                        // $ORIGIN-relative entries are resolved by the loader.
+                        if (dir.empty() || dir.front() != '/') continue;
+                        if (!std::filesystem::exists(dir, ec)) {
+                            anyMissing = true;
+                            warn(std::format(
+                                "{}: RUNPATH dir missing: {}  "
+                                "(its providing xim package may have been removed — "
+                                "reinstall the toolchain to repair)",
+                                label, dir));
+                        }
+                    }
+                }
+            }
+        }
+        if (sawAny && !anyMissing)
+            ok("all installed toolchain RUNPATH dirs present");
+        else if (!sawAny)
+            ok("no installed toolchains to check");
+
+        // Dangling symlinks under registry/subos/default/lib — these point
+        // into xim payload lib dirs; a removed package leaves them broken.
+        auto subosLib = (*cfg).xlingsHome() / "subos" / "default" / "lib";
+        if (std::filesystem::exists(subosLib, ec)) {
+            bool anyDangling = false;
+            for (auto& e : std::filesystem::directory_iterator(subosLib, ec)) {
+                if (!e.is_symlink(ec)) continue;
+                // exists() follows the link → false when the target is gone.
+                if (!std::filesystem::exists(e.path(), ec)) {
+                    anyDangling = true;
+                    auto target = std::filesystem::read_symlink(e.path(), ec);
+                    warn(std::format(
+                        "dangling subos symlink: {} -> {}  "
+                        "(target's xim package may have been removed)",
+                        e.path().filename().string(), target.string()));
+                }
+            }
+            if (!anyDangling)
+                ok(std::format("subos lib symlinks all resolve ({})", subosLib.string()));
+        }
+    }
+#endif
 
     std::println("");
     if (errors)        std::println("Doctor result: {} errors, {} warnings", errors, warns);
