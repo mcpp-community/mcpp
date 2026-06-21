@@ -13,6 +13,7 @@ import mcpp.config;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.manifest;
+import mcpp.platform;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.post_install;
@@ -151,8 +152,34 @@ list_available_xpkg_versions(const mcpp::config::GlobalConfig& cfg,
 // preserves the shared setup (cfg load + xlings bootstrap progress)
 
 // `mcpp toolchain list` — installed + available toolchains.
+// The toolchain that `mcpp build`/`run` actually resolves from the current
+// directory. A project mcpp.toml `[toolchain]` shadows the global config
+// default (see prepare.cppm resolution order), so `mcpp toolchain default`
+// and `mcpp toolchain list`'s `*` — which read only the global config — can
+// otherwise disagree with what a build in this directory really uses.
+// (`--target` overrides are intentionally not folded in: they only take
+// effect when an explicit `--target` is passed.)
+struct EffectiveDefault {
+    std::string spec;
+    bool        fromProject = false;
+};
+
+EffectiveDefault effective_default_toolchain(const mcpp::config::GlobalConfig& cfg) {
+    std::error_code ec;
+    auto mpath = std::filesystem::current_path(ec) / "mcpp.toml";
+    if (!ec && std::filesystem::exists(mpath, ec)) {
+        if (auto m = mcpp::manifest::load(mpath)) {
+            if (auto t = m->toolchain.for_platform(mcpp::platform::name);
+                t && !t->empty())
+                return { *t, true };
+        }
+    }
+    return { cfg.defaultToolchain, false };
+}
+
 export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
     auto pkgsDir = cfg.xlingsHome() / "data" / "xpkgs";
+    auto effective = effective_default_toolchain(cfg);
         auto pathCtx = mcpp::fetcher::make_path_ctx(&cfg);
         struct Row {
             std::string compiler;
@@ -178,7 +205,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
                     r.version   = vEntry.path().filename().string();
                     r.bin       = bin;
                     r.isDefault = mcpp::toolchain::matches_default_toolchain(
-                        cfg.defaultToolchain, r.compiler, r.version);
+                        effective.spec, r.compiler, r.version);
                     installed.push_back(std::move(r));
                 }
             }
@@ -195,6 +222,15 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
                     r.isDefault ? "*" : "",
                     mcpp::toolchain::display_label(r.compiler, r.version),
                     mcpp::ui::shorten_path(r.bin, pathCtx));
+            }
+            // Explain the `*` when it reflects a project override rather than
+            // the global default, so it never silently disagrees with what a
+            // build in this directory resolves.
+            if (effective.fromProject) {
+                std::println("  (* = effective toolchain from project mcpp.toml "
+                             "[toolchain]; global default is '{}')",
+                             cfg.defaultToolchain.empty() ? "<none>"
+                                                          : cfg.defaultToolchain);
             }
         }
 
