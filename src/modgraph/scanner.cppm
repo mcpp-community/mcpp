@@ -154,6 +154,53 @@ std::string_view strip_line_comment(std::string_view s) {
     return s.substr(0, p);
 }
 
+// Remove C++ raw-string-literal bodies from a line, tracking multi-line raw
+// strings across calls via (in_raw, raw_close). Returns the code-only portion
+// with raw-string contents blanked out.
+//
+// Without this, a template that embeds source text — e.g. the `mcpp new
+// --template gui` skeleton stored as R"GUI( ... import imgui.core; ... )GUI"
+// in scaffold/create.cppm — has its inner `import` lines misdetected as real
+// module imports, producing spurious "imported but not provided" warnings.
+// Ordinary "..." strings are intentionally left as-is: the import/module
+// matcher only fires on lines whose trimmed text *starts with* the keyword,
+// which a string body can only do when it spans lines (i.e. a raw string).
+std::string strip_raw_strings(std::string_view line, bool& in_raw,
+                              std::string& raw_close) {
+    std::string out;
+    std::size_t i = 0;
+    while (i < line.size()) {
+        if (in_raw) {
+            auto p = line.find(raw_close, i);
+            if (p == std::string_view::npos) return out;  // rest of line is raw body
+            i = p + raw_close.size();
+            in_raw = false;
+            raw_close.clear();
+            continue;
+        }
+        // Raw-string opener: R"delim( ... )delim"  (delim is up to 16 chars,
+        // no '(' / whitespace per the standard). Optional u8/u/U/L prefixes
+        // precede the R; we only need to spot the R" boundary.
+        if (line[i] == 'R' && i + 1 < line.size() && line[i + 1] == '"') {
+            std::size_t d = i + 2;
+            std::string delim;
+            while (d < line.size() && line[d] != '(' && (d - (i + 2)) < 16) {
+                delim.push_back(line[d]);
+                ++d;
+            }
+            if (d < line.size() && line[d] == '(') {
+                raw_close = ")" + delim + "\"";
+                in_raw = true;
+                i = d + 1;
+                continue;
+            }
+        }
+        out.push_back(line[i]);
+        ++i;
+    }
+    return out;
+}
+
 bool is_module_name_char(char c) {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == ':';
 }
@@ -220,10 +267,15 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
 
     int          if_depth        = 0;     // #if/#ifdef nesting
     std::size_t  lineno          = 0;
+    bool         in_raw          = false; // inside a multi-line raw string
+    std::string  raw_close;               // active )delim" terminator
     std::string  line;
     while (std::getline(is, line)) {
         ++lineno;
-        std::string_view sv = strip_line_comment(line);
+        // Blank out raw-string-literal bodies first so embedded source text
+        // (e.g. scaffold templates) isn't misparsed as imports.
+        std::string code = strip_raw_strings(line, in_raw, raw_close);
+        std::string_view sv = strip_line_comment(code);
         sv = trim(sv);
         if (sv.empty()) continue;
 

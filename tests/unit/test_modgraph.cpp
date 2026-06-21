@@ -46,6 +46,55 @@ TEST(Scanner, ProvidesAndRequires) {
     std::filesystem::remove_all(dir);
 }
 
+// Regression: `import` lines that live INSIDE a multi-line raw-string literal
+// (e.g. a `mcpp new --template gui` skeleton embedded as R"GUI( ... )GUI") must
+// not be detected as real module imports. Before the fix this produced a
+// spurious "module 'imgui.core' imported but not provided" warning.
+TEST(Scanner, IgnoresImportsInsideRawStringLiteral) {
+    auto dir = make_tempdir("mcpp-scanner-raw");
+    write(dir / "src" / "gen.cppm",
+          "export module gen;\n"
+          "import std;\n"
+          "const char* tmpl = R\"GUI(\n"
+          "import imgui.core;\n"
+          "import imgui.app;\n"
+          "int main() { return 0; }\n"
+          ")GUI\";\n"
+          "import bar;\n"               // a real import AFTER the raw string
+          "export void f();\n");
+
+    auto u = scan_file(dir / "src" / "gen.cppm", "pkg");
+    ASSERT_TRUE(u.has_value()) << u.error().format();
+    ASSERT_TRUE(u->provides.has_value());
+    EXPECT_EQ(u->provides->logicalName, "gen");
+    // Only the two genuine top-level imports — NOT imgui.core / imgui.app.
+    ASSERT_EQ(u->requires_.size(), 2u);
+    EXPECT_EQ(u->requires_[0].logicalName, "std");
+    EXPECT_EQ(u->requires_[1].logicalName, "bar");
+    for (auto& r : u->requires_) {
+        EXPECT_NE(r.logicalName, "imgui.core");
+        EXPECT_NE(r.logicalName, "imgui.app");
+    }
+
+    std::filesystem::remove_all(dir);
+}
+
+// A single-line raw string with an embedded import-looking body stays code.
+TEST(Scanner, IgnoresImportInsideSingleLineRawString) {
+    auto dir = make_tempdir("mcpp-scanner-raw1");
+    write(dir / "src" / "one.cppm",
+          "export module one;\n"
+          "const char* s = R\"(import nope;)\";\n"
+          "import real;\n");
+
+    auto u = scan_file(dir / "src" / "one.cppm", "pkg");
+    ASSERT_TRUE(u.has_value()) << u.error().format();
+    ASSERT_EQ(u->requires_.size(), 1u);
+    EXPECT_EQ(u->requires_[0].logicalName, "real");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Scanner, RecordsPackageLocalIncludeDirs) {
     auto dir = make_tempdir("mcpp-scanner-includes");
     write(dir / "src" / "foo.cpp",
