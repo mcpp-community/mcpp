@@ -39,6 +39,16 @@ bool has_ok_marker(const fs::path& verdir) {
     return fs::exists(verdir / ".mcpp_ok");
 }
 
+// Read the first line and CLOSE the handle before returning. On Windows an
+// open file handle blocks fs::remove_all() ("being used by another process"),
+// so readers must not outlive the read.
+std::string read_first_line(const fs::path& p) {
+    std::ifstream in(p);
+    std::string line;
+    std::getline(in, line);
+    return line;
+}
+
 }  // namespace
 
 // Reinstall fails (no commit) → a content-complete legacy package is rolled
@@ -58,9 +68,7 @@ TEST(InstallIntegrityStash, RestoresLegacyPackageOnFailedReinstall) {
 
     // Original content is back, and it is now marked complete.
     ASSERT_TRUE(fs::exists(verdir / "lib" / "libz.so.1"));
-    std::ifstream in(verdir / "lib" / "libz.so.1");
-    std::string body; std::getline(in, body);
-    EXPECT_EQ(body, "ORIGINAL");
+    EXPECT_EQ(read_first_line(verdir / "lib" / "libz.so.1"), "ORIGINAL");
     EXPECT_TRUE(has_ok_marker(verdir));
     EXPECT_FALSE(fs::exists(fs::path(verdir.string() + ".mcpp-stash")));
 
@@ -83,9 +91,7 @@ TEST(InstallIntegrityStash, CommitDropsBackupAndKeepsNewInstall) {
     }
 
     ASSERT_TRUE(fs::exists(verdir / "lib" / "libz.so.1"));
-    std::ifstream in(verdir / "lib" / "libz.so.1");
-    std::string body; std::getline(in, body);
-    EXPECT_EQ(body, "REINSTALLED");
+    EXPECT_EQ(read_first_line(verdir / "lib" / "libz.so.1"), "REINSTALLED");
     EXPECT_FALSE(fs::exists(fs::path(verdir.string() + ".mcpp-stash")));
 
     fs::remove_all(root);
@@ -106,9 +112,7 @@ TEST(InstallIntegrityStash, KeepsNewCompleteInstallWhenUncommitted) {
         mcpp::fallback::mark_install_complete(verdir);
     }  // destructor: live dir is complete → keep it
 
-    std::ifstream in(verdir / "lib" / "libz.so.1");
-    std::string body; std::getline(in, body);
-    EXPECT_EQ(body, "REINSTALLED");
+    EXPECT_EQ(read_first_line(verdir / "lib" / "libz.so.1"), "REINSTALLED");
     EXPECT_FALSE(fs::exists(fs::path(verdir.string() + ".mcpp-stash")));
 
     fs::remove_all(root);
