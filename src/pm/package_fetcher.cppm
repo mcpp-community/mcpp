@@ -714,11 +714,12 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     }
 
     // 2. Directory exists without marker → either interrupted install
-    //    or legacy package. Either way, the safe action is to clean and
-    //    re-resolve (install or copy fallback will produce a marked
-    //    installation). For legacy packages this is wasteful but correct;
-    //    for half-extracted residue it's required.
-    mcpp::fallback::clean_incomplete_install(verdir);
+    //    or legacy package. Stash it aside (don't delete outright) so a
+    //    failed reinstall can roll back to a content-complete legacy package
+    //    instead of leaving it destroyed (the xim-x-zlib regression). The
+    //    guard commits (drops the backup) on each success path below; on any
+    //    failure path its destructor restores a looks_complete_legacy() stash.
+    mcpp::fallback::InstallStash stash(verdir);
 
     // 3. Install via xlings (primary path).
     if (autoInstall) {
@@ -740,6 +741,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         if (inst->exitCode == 0 && std::filesystem::exists(verdir)) {
             // Normal success path.
             mcpp::fallback::mark_install_complete(verdir);
+            stash.commit();
             return make_payload();
         }
         if (inst->exitCode == 0 && !std::filesystem::exists(verdir)) {
@@ -754,6 +756,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
             if (copyOk && mcpp::fallback::looks_complete_legacy(verdir)) {
                 mcpp::fallback::mark_install_complete(verdir);
+                stash.commit();
                 mcpp::log::verbose("fetcher", "resolved via copy fallback");
                 return make_payload();
             }
@@ -774,12 +777,14 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             int directRc = mcpp::xlings::install_direct(directEnv, targets[0]);
             if (directRc == 0 && std::filesystem::exists(verdir)) {
                 mcpp::fallback::mark_install_complete(verdir);
+                stash.commit();
                 return make_payload();
             }
             if (directRc == 0 && !std::filesystem::exists(verdir)) {
                 bool copyOk = mcpp::fallback::copy_xpkg_from_global(verdir);
                 if (copyOk && mcpp::fallback::looks_complete_legacy(verdir)) {
                     mcpp::fallback::mark_install_complete(verdir);
+                    stash.commit();
                     mcpp::log::verbose("fetcher", "resolved via copy fallback after direct install");
                     return make_payload();
                 }

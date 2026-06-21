@@ -61,6 +61,42 @@ bool clean_incomplete_install(const std::filesystem::path& xpkgDir);
 // Returns number of directories cleaned.
 int clean_all_incomplete(const std::filesystem::path& xpkgsBase);
 
+// RAII rollback guard for the resolve/install path.
+//
+// Replaces a bare clean_incomplete_install() before a reinstall attempt.
+// Instead of DELETING a no-marker directory outright (which permanently
+// destroys a content-complete *legacy* package if the reinstall then fails —
+// the xim-x-zlib regression), it RENAMES the directory aside and only commits
+// to deleting it once the reinstall is known to have produced a good install.
+//
+// Usage:
+//   InstallStash stash(verdir);   // moves verdir -> verdir.mcpp-stash (no marker)
+//   ... attempt reinstall into verdir ...
+//   stash.commit();               // reinstall produced a good install: drop backup
+//   // On any return/throw WITHOUT commit(), the destructor:
+//   //   - keeps the new install if verdir now has a marker (reinstall won);
+//   //   - else, if the stashed dir looks_complete_legacy(), restores it and
+//   //     marks it complete (a working package was wrongly cleaned);
+//   //   - else discards it (genuine half-extracted residue).
+class InstallStash {
+public:
+    explicit InstallStash(std::filesystem::path xpkgDir);
+    ~InstallStash();
+    InstallStash(const InstallStash&) = delete;
+    InstallStash& operator=(const InstallStash&) = delete;
+
+    // Reinstall succeeded: discard the backup, leave the live dir in place.
+    void commit() noexcept;
+    // Whether anything was actually stashed (dir existed and had no marker).
+    bool stashed() const noexcept { return active_; }
+
+private:
+    std::filesystem::path orig_;
+    std::filesystem::path stash_;
+    bool active_    = false;
+    bool committed_ = false;
+};
+
 } // namespace mcpp::fallback
 
 // ─── Implementation ─────────────────────────────────────────────────
@@ -162,6 +198,72 @@ int clean_all_incomplete(const std::filesystem::path& xpkgsBase) {
         }
     }
     return cleaned;
+}
+
+// ─── InstallStash ───────────────────────────────────────────────────
+
+InstallStash::InstallStash(std::filesystem::path xpkgDir)
+    : orig_(std::move(xpkgDir))
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(orig_, ec)) return;  // nothing to stash
+    if (has_marker(orig_)) return;                    // complete: leave untouched
+
+    stash_ = orig_;
+    stash_ += ".mcpp-stash";
+    std::filesystem::remove_all(stash_, ec);          // clear any prior stash residue
+    std::filesystem::rename(orig_, stash_, ec);
+    if (ec) {
+        // Rename failed (e.g. cross-device); fall back to the historical
+        // delete-then-reinstall semantics so the caller still starts clean.
+        std::error_code rmec;
+        std::filesystem::remove_all(orig_, rmec);
+        stash_.clear();
+        return;
+    }
+    active_ = true;
+}
+
+void InstallStash::commit() noexcept {
+    committed_ = true;
+    if (!active_) return;
+    std::error_code ec;
+    std::filesystem::remove_all(stash_, ec);
+    active_ = false;
+}
+
+InstallStash::~InstallStash() {
+    if (!active_ || committed_) return;
+    std::error_code ec;
+
+    // Reinstall produced a complete install at orig_ — keep it, drop backup.
+    if (std::filesystem::exists(orig_, ec) && has_marker(orig_)) {
+        std::filesystem::remove_all(stash_, ec);
+        return;
+    }
+
+    if (looks_complete_legacy(stash_)) {
+        // A content-complete legacy package (no marker) was cleaned for a
+        // reinstall that then failed. Roll it back so we never leave a
+        // working package deleted, and adopt it (write the marker) so the
+        // next resolve trusts it instead of repeating the delete-then-fail.
+        std::filesystem::remove_all(orig_, ec);            // clear partial residue
+        std::error_code rnec;
+        std::filesystem::rename(stash_, orig_, rnec);
+        if (!rnec) {
+            mark_install_complete(orig_);
+            mcpp::log::verbose("integrity", std::format(
+                "rolled back stashed legacy install after failed reinstall: {}",
+                orig_.string()));
+        } else {
+            mcpp::log::verbose("integrity", std::format(
+                "failed to roll back stashed install {} -> {}: {}",
+                stash_.string(), orig_.string(), rnec.message()));
+        }
+    } else {
+        // Genuine interrupted residue — discard (historical semantics).
+        std::filesystem::remove_all(stash_, ec);
+    }
 }
 
 
