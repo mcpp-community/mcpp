@@ -155,7 +155,14 @@ bool is_stale_ninja_failure(std::string_view output) {
     return output.find("loading 'build.ninja'") != std::string_view::npos
         || output.find("loading build.ninja") != std::string_view::npos
         || output.find("unknown target") != std::string_view::npos
-        || output.find("manifest 'build.ninja' still dirty") != std::string_view::npos;
+        || output.find("manifest 'build.ninja' still dirty") != std::string_view::npos
+        // A cached build.ninja can reference an input (e.g. a dependency
+        // source under the registry) that moved or was reinstalled since the
+        // graph was generated — the build fingerprint does not yet cover
+        // registry dep state, so the stale graph is reused. Ninja then aborts
+        // with this signature. Treat it as stale → drop to a full regen
+        // instead of hard-failing and forcing the user to `mcpp clean`.
+        || output.find("missing and no known rule to make") != std::string_view::npos;
 }
 
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
