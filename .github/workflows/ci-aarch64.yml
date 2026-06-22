@@ -70,6 +70,10 @@ jobs:
           "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
+          # Refresh the package index so a cached ~/.xlings still sees newly
+          # published packages (xim:aarch64-linux-musl-gcc).
+          xlings config --mirror GLOBAL 2>/dev/null || true
+          xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
           xlings install mcpp -y
           echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
           echo "MCPP_BOOT=$HOME/.xlings/subos/default/bin/mcpp" >> "$GITHUB_ENV"
