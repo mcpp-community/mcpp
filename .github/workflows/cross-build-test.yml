@@ -1,34 +1,36 @@
-name: ci-cross
+name: cross-build-test
 
-# mcpp cross-build matrix — the single source of truth for "which cross-build
+# mcpp cross-build test — the single source of truth for "which CROSS-build
 # target combinations mcpp supports", verified end-to-end.
 #
-# Verification targets are mcpp ITSELF and xlings (both real, self-hosting C++23
-# module projects), cross-built from source for each target triple. The produced
-# binaries are arch-checked and smoke-run (natively when the target arch == host,
-# under qemu-user otherwise).
+# Cross = host arch ≠ target arch. Verification targets are mcpp ITSELF and
+# xlings (real, self-hosting C++23 module projects), cross-built from source for
+# each target triple, arch-checked, and smoke-run under qemu-user.
 #
-# ── Supported matrix (built + verified below) ──────────────────────────────
-#   target                | toolchain                       | host→target  | run
-#   ----------------------|---------------------------------|--------------|------
-#   x86_64-linux-musl     | gcc@15.1.0-musl (native musl)   | x86_64→x86_64| native
-#   aarch64-linux-musl    | aarch64-linux-musl-gcc@15.1.0   | x86_64→arm64 | qemu
+# ── Supported cross matrix (built + verified below) ────────────────────────
+#   target                | toolchain                       | host→target   | run
+#   ----------------------|---------------------------------|---------------|-----
+#   aarch64-linux-musl    | aarch64-linux-musl-gcc@15.1.0   | x86_64→arm64  | qemu
 #
-# mcpp resolves a `--target <triple>-musl` build to the matching gcc musl
-# toolchain from the xlings ecosystem (src/build/prepare.cppm): host==target →
-# the native `gcc@15.1.0-musl`; host!=target → the triple-named cross toolchain
-# `<triple>-gcc@15.1.0` (e.g. xim:aarch64-linux-musl-gcc). Output is a fully
-# static musl ELF (no PT_INTERP), which also makes the aarch64 artefact runnable
-# natively in Termux/Android — qemu-aarch64 is the CI proxy for "does it execute".
+# mcpp resolves a cross `--target <triple>-musl` build to the triple-named cross
+# gcc musl toolchain from the xlings ecosystem (xim:<triple>-gcc, see
+# src/build/prepare.cppm). Output is a fully static musl ELF (no PT_INTERP),
+# which also makes the aarch64 artefact runnable natively in Termux/Android —
+# qemu-aarch64 is the CI proxy for "does this cross artefact actually execute".
 #
-# ── Planned (NOT yet wired in mcpp — do not add as live jobs until implemented) ─
+# ── NOT here ───────────────────────────────────────────────────────────────
+#   * Same-arch builds (host arch == target arch) are NOT cross. The native musl
+#     static build `--target x86_64-linux-musl` (x86_64 host) is exercised by
+#     ci-linux.yml's "Toolchain: musl-gcc" step, and release.yml for the static
+#     release artefact. Keep them there; this file is cross-arch only.
+#
+# ── Planned cross rows (documented; NOT yet wired in mcpp — keep as comments) ─
 #   * llvm/clang cross  : clang is inherently a cross-compiler, but mcpp does not
 #                         yet inject `-target <triple>` + a cross sysroot for a
-#                         clang toolchain; `--target` currently resolves to gcc
-#                         musl only. Wire the clang cross path first, then add a
-#                         `llvm@20.1.7` row here.
-#   * more triples      : e.g. riscv64-linux-musl, once the cross toolchain asset
-#                         is published to xlings-res + xim-pkgindex.
+#                         clang toolchain; cross `--target` resolves to gcc musl
+#                         only. Wire the clang cross path first, then add a row.
+#   * riscv64-linux-musl: add once xim:riscv64-linux-musl-gcc ships to
+#                         xlings-res + xim-pkgindex.
 
 on:
   push:
@@ -50,12 +52,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-linux-musl
-            file_arch: "x86-64"
-            qemu: false
           - target: aarch64-linux-musl
             file_arch: "ARM aarch64"
-            qemu: true
+            qemu_bin: qemu-aarch64-static
     env:
       MCPP_HOME: /home/runner/.mcpp
     steps:
@@ -78,11 +77,10 @@ jobs:
             xlings-${{ runner.os }}-v2-
 
       - name: Install qemu-user-static
-        if: matrix.qemu
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y qemu-user-static
-          qemu-aarch64-static --version | head -1
+          ${{ matrix.qemu_bin }} --version | head -1
 
       - name: Bootstrap mcpp via xlings
         env:
@@ -140,10 +138,9 @@ jobs:
           file "$xbin" | grep -q "statically linked" || { echo "expected static"; exit 1; }
           echo "XLINGS_XBIN=$xbin" >> "$GITHUB_ENV"
 
-      - name: "Smoke-run cross artefacts (${{ matrix.qemu && 'qemu' || 'native' }})"
+      - name: "Smoke-run cross artefacts under qemu"
         run: |
-          RUN=""
-          if [ "${{ matrix.qemu }}" = "true" ]; then RUN="qemu-aarch64-static"; fi
+          RUN="${{ matrix.qemu_bin }}"
           echo "== mcpp --version =="
           mver=$($RUN "$MCPP_XBIN" --version)
           echo "$mver"; echo "$mver" | grep -q "mcpp" || { echo "mcpp --version failed"; exit 1; }
