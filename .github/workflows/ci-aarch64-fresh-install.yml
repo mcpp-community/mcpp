@@ -69,12 +69,20 @@ jobs:
           file "$bin"
           file "$bin" | grep -q "ARM aarch64" || { echo "expected aarch64 ELF"; exit 1; }
 
-      - name: Self-host — build mcpp from source natively
+      - name: Self-host — build mcpp + xlings from source natively
         run: |
+          # mcpp/xlings manifests pin a glibc default toolchain; on aarch64 the
+          # musl-static target is the published path, so build with --target.
           git clone --depth 1 https://github.com/mcpp-community/mcpp /tmp/mcpp-src
           cd /tmp/mcpp-src
           mcpp self config --mirror GLOBAL 2>/dev/null || true
-          mcpp build
-          m=$(find target -type f -name mcpp | head -1)
+          mcpp build --target aarch64-linux-musl
+          m=$(find target/aarch64-linux-musl -type f -name mcpp | head -1)
           file "$m" | grep -q "ARM aarch64" || { echo "expected aarch64 mcpp"; exit 1; }
           "$m" --version
+          git clone --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
+          cd /tmp/xlings-src
+          mcpp build --target aarch64-linux-musl
+          x=$(find target/aarch64-linux-musl -type f -name xlings | head -1)
+          file "$x" | grep -q "ARM aarch64" || { echo "expected aarch64 xlings"; exit 1; }
+          "$x" --version

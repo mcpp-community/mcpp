@@ -607,9 +607,29 @@ prepare_build(bool print_fingerprint,
         //        breaks GUI/native packages out of the box. musl-static stays
         //        opt-in via `mcpp build --target x86_64-linux-musl` for users
         //        who explicitly want portable static binaries.
-        std::string defaultSpec = (mcpp::platform::is_macos || mcpp::platform::is_windows)
-            ? "llvm@20.1.7" : "gcc@16.1.0";
+        // Linux default is arch-aware:
+        //   x86_64 → glibc gcc (native ABI; the glibc toolchain is published
+        //            for x86_64). musl-static stays opt-in via --target.
+        //   other arches (aarch64, ...) → musl-static gcc: it's what's
+        //            published for them, is self-contained, and yields portable
+        //            static binaries (ideal for aarch64 / Termux, no bionic dep).
+        //            glibc-world linking (X11/GL) needs an explicit glibc
+        //            toolchain, addable later for native-ABI aarch64 builds.
+        std::string defaultSpec;
+        if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
+            defaultSpec = "llvm@20.1.7";
+        } else if (mcpp::platform::host_arch == std::string_view("x86_64")) {
+            defaultSpec = "gcc@16.1.0";
+        } else {
+            defaultSpec = "gcc@15.1.0-musl";
+        }
+        bool muslDefault = defaultSpec.find("-musl") != std::string::npos;
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
+        // Host-native musl default has no --target, so seed the triple so the
+        // resolver finds the `<host_arch>-linux-musl-g++` frontend.
+        if (muslDefault)
+            defaultParsed->targetTriple =
+                std::string(mcpp::platform::host_arch) + "-linux-musl";
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
         if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
@@ -618,8 +638,8 @@ prepare_build(bool print_fingerprint,
                             defaultSpec));
         } else {
             mcpp::ui::info("First run",
-                std::format("no toolchain configured — installing {} (glibc, native ABI) as default",
-                            defaultSpec));
+                std::format("no toolchain configured — installing {} ({}) as default",
+                            defaultSpec, muslDefault ? "musl, static" : "glibc, native ABI"));
         }
 
         auto cfg = get_cfg();
@@ -628,9 +648,8 @@ prepare_build(bool print_fingerprint,
 
         mcpp::fetcher::InstallProgressHandler progress;
         // The glibc default toolchain needs the sysroot payloads (C library +
-        // kernel headers), exactly like `mcpp toolchain install` provides.
-        // The old musl-static default was self-contained, which masked this.
-        if constexpr (!mcpp::platform::is_macos && !mcpp::platform::is_windows) {
+        // kernel headers). The musl default is self-contained, so skip them.
+        if (!mcpp::platform::is_macos && !mcpp::platform::is_windows && !muslDefault) {
             for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
                 (void)fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
             }
