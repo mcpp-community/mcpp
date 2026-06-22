@@ -202,7 +202,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         auto sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
         compile_toolchain_flags = sysroot_flag;
         link_toolchain_flags = sysroot_flag;
-        if (plan.toolchain.payloadPaths && !plan.toolchain.payloadPaths->linuxInclude.empty()) {
+        // Self-contained musl toolchains ship their own kernel headers in the
+        // sysroot; for a cross target the host (x86) linux-headers payload is
+        // the wrong arch, so don't supplement it.
+        if (!mcpp::toolchain::is_musl_target(plan.toolchain)
+            && plan.toolchain.payloadPaths && !plan.toolchain.payloadPaths->linuxInclude.empty()) {
             auto sysrootLinux = plan.toolchain.sysroot / "usr" / "include" / "linux" / "limits.h";
             if (!std::filesystem::exists(sysrootLinux))
                 compile_toolchain_flags += " -isystem" + escape_path(plan.toolchain.payloadPaths->linuxInclude);

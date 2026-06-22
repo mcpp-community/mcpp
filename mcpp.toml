@@ -25,6 +25,14 @@ windows = "llvm@20.1.7"
 toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 
+# aarch64 (ARM64) static target. No explicit toolchain: mcpp's host-aware
+# convention picks it — on an aarch64 host this is a NATIVE build (xim:musl-gcc),
+# on an x86_64 host a CROSS build (xim:aarch64-linux-musl-gcc, gcc 15.1.0 from
+# musl-cross-make). linkage=static is also implied by the -musl suffix; kept
+# explicit for clarity. See .agents/docs/2026-06-22-aarch64-android-mvp-design.md.
+[target.aarch64-linux-musl]
+linkage = "static"
+
 # Eat our own dog food: mcpp uses mcpplibs.cmdline for argument parsing.
 # NOTE: uses legacy dotted-key syntax so older bootstrapping mcpp versions
 # (pre-0.0.6, which don't understand [dependencies.<ns>] subtables) can

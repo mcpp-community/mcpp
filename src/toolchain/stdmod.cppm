@@ -236,7 +236,10 @@ std::expected<StdModule, StdModError> ensure_built(
         // Supplement with -isystem for linux kernel headers from payload
         // if the probed sysroot is missing them.
         sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
-        if (tc.payloadPaths && !tc.payloadPaths->linuxInclude.empty()) {
+        // Skip the external linux-headers payload for self-contained musl
+        // toolchains: their sysroot ships kernel headers, and for a cross
+        // target the host (x86) headers are the wrong arch.
+        if (!is_musl_target(tc) && tc.payloadPaths && !tc.payloadPaths->linuxInclude.empty()) {
             auto sysrootLinux = tc.sysroot / "usr" / "include" / "linux" / "limits.h";
             if (!std::filesystem::exists(sysrootLinux))
                 sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());

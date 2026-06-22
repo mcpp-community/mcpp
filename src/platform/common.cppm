@@ -73,6 +73,24 @@ constexpr std::string_view name =
     "unknown";
 #endif
 
+// Host CPU architecture. Uses the GNU triple spelling (`aarch64`, not the
+// `arm64` token xlings uses for its release assets) so it composes directly
+// with target triples like `aarch64-linux-musl`. Used to decide native vs.
+// cross toolchain selection (target arch == host_arch → native musl-gcc;
+// otherwise a `<triple>-gcc` cross toolchain).
+constexpr std::string_view host_arch =
+#if defined(__aarch64__) || defined(_M_ARM64)
+    "aarch64";
+#elif defined(__x86_64__) || defined(_M_X64)
+    "x86_64";
+#elif defined(__i386__) || defined(_M_IX86)
+    "x86";
+#elif defined(__riscv) && (__riscv_xlen == 64)
+    "riscv64";
+#else
+    "unknown";
+#endif
+
 // xpkg platform key (used by resolver for xpkg.lua lookups).
 // Note: macOS uses "macosx" (not "macos") for xpkg compatibility.
 constexpr std::string_view xpkg_platform =

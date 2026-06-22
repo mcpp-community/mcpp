@@ -506,17 +506,27 @@ prepare_build(bool print_fingerprint,
             if (!it->second.linkage.empty())   m->buildConfig.linkage = it->second.linkage;
         }
         // Convention: "*-musl" target without an explicit `[target.X]`
-        // override gets the canonical musl-gcc spec the rest of mcpp
-        // uses internally. We can't just append "-musl" to the inherited
-        // toolchain version because xim doesn't have a `musl-gcc@<host
-        // gcc version>` for every gcc release — gcc 16.1 has no musl
-        // variant yet, only 9.4 / 11.5 / 13.3 / 15.1 do. Picking 15.1.0
-        // as the static default matches what mcpp itself uses for
-        // `mcpp build --target x86_64-linux-musl` (see mcpp.toml).
+        // override gets a canonical musl toolchain spec. The choice is
+        // host-aware:
+        //   - target arch == host arch → NATIVE build, use `gcc@15.1.0-musl`
+        //     (→ xim:musl-gcc; XLINGS_RES picks the host-matching asset).
+        //   - target arch != host arch → CROSS build, use the target-named
+        //     cross toolchain `<triple>-gcc@15.1.0` (→ xim:<triple>-gcc),
+        //     e.g. building aarch64 on an x86_64 host.
+        // We pin 15.1.0 because xim only has musl variants for 9.4 / 11.5 /
+        // 13.3 / 15.1 (gcc 16.1 has none yet); 15.1.0 matches what mcpp uses
+        // for `mcpp build --target x86_64-linux-musl` (see mcpp.toml).
         if (endswith(overrides.target_triple, "-musl")
             && (it == m->targetOverrides.end() || it->second.toolchain.empty()))
         {
-            tcSpec = "gcc@15.1.0-musl";
+            auto dash = overrides.target_triple.find('-');
+            std::string targetArch = dash == std::string::npos
+                ? overrides.target_triple
+                : overrides.target_triple.substr(0, dash);
+            if (targetArch.empty() || targetArch == mcpp::platform::host_arch)
+                tcSpec = "gcc@15.1.0-musl";                        // native
+            else
+                tcSpec = overrides.target_triple + "-gcc@15.1.0";  // cross
         }
         if (endswith(overrides.target_triple, "-musl")
             && m->buildConfig.linkage.empty()) {
@@ -532,6 +542,11 @@ prepare_build(bool print_fingerprint,
                 "[toolchain].{} = '{}' is invalid; expected '<pkg>@<version>'",
                 kCurrentPlatform, *tcSpec));
         }
+        // For a cross `--target <triple>` build, carry the triple into the spec
+        // so a musl toolchain resolves its `<triple>-g++` cross frontend
+        // (e.g. aarch64-linux-musl-g++) instead of the host x86_64 one.
+        if (spec->isMusl && !overrides.target_triple.empty())
+            spec->targetTriple = overrides.target_triple;
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
         auto cfg = get_cfg();

@@ -107,9 +107,15 @@ std::string std_module_build_command(const Toolchain& tc,
                                      const std::filesystem::path& cacheDir,
                                      std::string_view sysrootFlag,
                                      std::string_view cppStandardFlag) {
+    // musl-cross-make toolchains bundle their own as/ld (and for a cross
+    // target the host's binutils would mis-assemble, e.g. `as: unrecognized
+    // option '-EL'`). Only the glibc gcc needs an external binutils package
+    // wired via -B. Mirrors the guard in build/flags.cppm.
     std::string bFlag;
-    if (auto binutilsBin = find_binutils_bin(tc.binaryPath)) {
-        bFlag = std::format(" -B'{}'", binutilsBin->string());
+    if (!is_musl_target(tc)) {
+        if (auto binutilsBin = find_binutils_bin(tc.binaryPath)) {
+            bFlag = std::format(" -B'{}'", binutilsBin->string());
+        }
     }
 
     return std::format(

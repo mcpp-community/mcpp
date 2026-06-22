@@ -14,6 +14,10 @@ struct ToolchainSpec {
     std::string compiler;    // user-facing compiler name, namespace-stripped
     std::string version;     // user-facing version, may include -musl
     bool        isMusl = false;
+    // Target triple (e.g. "aarch64-linux-musl") when building for a non-host
+    // target via `--target`. For musl toolchains the cross frontend program is
+    // named `<triple>-g++`, so this drives frontend selection. Empty = host.
+    std::string targetTriple;
 };
 
 struct XimToolchainPackage {
@@ -79,8 +83,16 @@ std::string strip_namespace(std::string compiler) {
 }
 
 std::vector<std::string> frontend_candidates_for(std::string_view ximName,
-                                                 bool isMusl) {
-    if (isMusl) return {"x86_64-linux-musl-g++", "g++"};
+                                                 bool isMusl,
+                                                 std::string_view targetTriple = {}) {
+    if (isMusl) {
+        // Cross musl toolchains expose `<triple>-g++` (e.g.
+        // aarch64-linux-musl-g++). Prefer the triple-specific frontend so a
+        // `--target aarch64-linux-musl` build never falls back to the host g++.
+        if (!targetTriple.empty())
+            return {std::string(targetTriple) + "-g++", "g++"};
+        return {"x86_64-linux-musl-g++", "g++"};
+    }
     if (ximName == "gcc") return {"g++"};
     if (ximName == "llvm") return mcpp::toolchain::llvm::frontend_candidates();
     if (ximName == "msvc") return {"cl.exe"};
@@ -122,7 +134,12 @@ parse_toolchain_spec(std::string compilerArg,
     ToolchainSpec spec;
     spec.compiler = std::move(compilerArg);
     spec.version  = std::move(versionArg);
-    spec.isMusl   = spec.compiler == "musl-gcc" || ends_with(spec.version, "-musl");
+    // musl is signalled three ways: the canonical host-native `musl-gcc`, a
+    // `<ver>-musl` version suffix, or a target-named cross/native toolchain
+    // like `aarch64-linux-musl-gcc` (the compiler name carries the triple).
+    spec.isMusl   = spec.compiler == "musl-gcc"
+                 || ends_with(spec.version, "-musl")
+                 || ends_with(spec.compiler, "-linux-musl-gcc");
     return spec;
 }
 
@@ -130,6 +147,20 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     XimToolchainPackage pkg;
     pkg.displayCompiler = spec.compiler;
     pkg.displayVersion  = spec.version;
+
+    // Target-named musl toolchain, e.g. "aarch64-linux-musl-gcc". The compiler
+    // name IS the xim package name and encodes the target triple, so it serves
+    // both cross (x86 host → aarch64) and on-target native builds — xlings'
+    // XLINGS_RES sentinel picks the host-matching prebuilt asset. The frontend
+    // is `<triple>-g++` (triple = name minus the trailing "-gcc").
+    if (ends_with(spec.compiler, "-linux-musl-gcc")) {
+        pkg.ximName    = spec.compiler;
+        pkg.ximVersion = spec.version;
+        std::string triple = spec.compiler.substr(0, spec.compiler.size() - 4);
+        pkg.frontendCandidates = {triple + "-g++", "g++"};
+        pkg.needsGccPostInstallFixup = false;
+        return pkg;
+    }
 
     std::string ximCompiler = spec.compiler;
     if (mcpp::toolchain::llvm::is_alias(ximCompiler))
@@ -145,7 +176,8 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
             pkg.ximVersion.resize(pkg.ximVersion.size() - 5);
     }
 
-    pkg.frontendCandidates = frontend_candidates_for(pkg.ximName, spec.isMusl);
+    pkg.frontendCandidates = frontend_candidates_for(pkg.ximName, spec.isMusl,
+                                                     spec.targetTriple);
     pkg.needsGccPostInstallFixup = spec.compiler == "gcc" && !spec.isMusl;
     return pkg;
 }
@@ -218,7 +250,13 @@ std::filesystem::path archive_tool(const Toolchain& tc) {
             return *binutilsBin / "ar";
     }
 
-    auto muslAr = tc.binaryPath.parent_path() / "x86_64-linux-musl-ar";
+    // musl `ar` is the triple-prefixed cross tool (e.g. aarch64-linux-musl-ar),
+    // sitting next to the frontend. Derive from the resolved target triple so
+    // cross targets pick the matching archiver instead of the x86_64 one.
+    std::string arName = !tc.targetTriple.empty()
+        ? tc.targetTriple + "-ar"
+        : "x86_64-linux-musl-ar";
+    auto muslAr = tc.binaryPath.parent_path() / arName;
     if (std::filesystem::exists(muslAr)) return muslAr;
     return {};
 }
