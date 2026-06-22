@@ -56,6 +56,10 @@ jobs:
           mcpp --version
           mcpp self config --mirror GLOBAL 2>/dev/null || true
 
+      - name: Refresh mcpp package index (pull latest xim-pkgindex)
+        run: |
+          mcpp index update 2>/dev/null || true
+
       - name: Native build + run an `import std` program
         run: |
           work=$(mktemp -d); cd "$work"
