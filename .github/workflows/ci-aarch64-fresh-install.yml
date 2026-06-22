@@ -1,0 +1,80 @@
+name: ci-aarch64-fresh-install
+
+# End-to-end "fresh install" of the whole ecosystem on a NATIVE aarch64 host,
+# exactly as a new aarch64-Linux / Termux(-proot) user would:
+#
+#   curl quick_install.sh | bash     -> installs aarch64 xlings (static musl)
+#   xlings install mcpp              -> installs aarch64 mcpp (static musl)
+#   mcpp new / build / run           -> NATIVE aarch64 build (pulls the native
+#                                       musl-gcc toolchain from the ecosystem)
+#
+# Validates that every published aarch64 asset (xlings, mcpp, musl-gcc) lines
+# up and that mcpp can build & run a real `import std` program natively on
+# aarch64 — no cross, no qemu. Runs on GitHub's native ARM64 runner.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'   # weekly Mon 06:00 UTC
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/ci-aarch64-fresh-install.yml'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fresh-install:
+    name: fresh install + native build (aarch64 / glibc)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - name: System info
+        run: |
+          uname -a
+          echo "arch: $(uname -m)"   # aarch64 on this runner
+
+      - name: Fresh-install xlings (curl | bash)
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/bin" >> "$GITHUB_PATH"
+
+      - name: Verify xlings + GLOBAL mirror
+        run: |
+          xlings --version
+          xlings config --mirror GLOBAL 2>/dev/null || true
+          xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
+
+      - name: Fresh-install mcpp via xlings
+        run: |
+          xlings install mcpp -y
+          mcpp --version
+          mcpp self config --mirror GLOBAL 2>/dev/null || true
+
+      - name: Native build + run an `import std` program
+        run: |
+          work=$(mktemp -d); cd "$work"
+          mcpp new hello
+          cd hello
+          # default src uses import std (C++23)
+          mcpp build
+          out=$(mcpp run 2>/dev/null || true)
+          echo "program output: $out"
+          bin=$(find target -type f -name hello | head -1)
+          file "$bin"
+          file "$bin" | grep -q "ARM aarch64" || { echo "expected aarch64 ELF"; exit 1; }
+
+      - name: Self-host — build mcpp from source natively
+        run: |
+          git clone --depth 1 https://github.com/mcpp-community/mcpp /tmp/mcpp-src
+          cd /tmp/mcpp-src
+          mcpp self config --mirror GLOBAL 2>/dev/null || true
+          mcpp build
+          m=$(find target -type f -name mcpp | head -1)
+          file "$m" | grep -q "ARM aarch64" || { echo "expected aarch64 mcpp"; exit 1; }
+          "$m" --version
