@@ -1,0 +1,152 @@
+name: ci-cross
+
+# mcpp cross-build matrix — the single source of truth for "which cross-build
+# target combinations mcpp supports", verified end-to-end.
+#
+# Verification targets are mcpp ITSELF and xlings (both real, self-hosting C++23
+# module projects), cross-built from source for each target triple. The produced
+# binaries are arch-checked and smoke-run (natively when the target arch == host,
+# under qemu-user otherwise).
+#
+# ── Supported matrix (built + verified below) ──────────────────────────────
+#   target                | toolchain                       | host→target  | run
+#   ----------------------|---------------------------------|--------------|------
+#   x86_64-linux-musl     | gcc@15.1.0-musl (native musl)   | x86_64→x86_64| native
+#   aarch64-linux-musl    | aarch64-linux-musl-gcc@15.1.0   | x86_64→arm64 | qemu
+#
+# mcpp resolves a `--target <triple>-musl` build to the matching gcc musl
+# toolchain from the xlings ecosystem (src/build/prepare.cppm): host==target →
+# the native `gcc@15.1.0-musl`; host!=target → the triple-named cross toolchain
+# `<triple>-gcc@15.1.0` (e.g. xim:aarch64-linux-musl-gcc). Output is a fully
+# static musl ELF (no PT_INTERP), which also makes the aarch64 artefact runnable
+# natively in Termux/Android — qemu-aarch64 is the CI proxy for "does it execute".
+#
+# ── Planned (NOT yet wired in mcpp — do not add as live jobs until implemented) ─
+#   * llvm/clang cross  : clang is inherently a cross-compiler, but mcpp does not
+#                         yet inject `-target <triple>` + a cross sysroot for a
+#                         clang toolchain; `--target` currently resolves to gcc
+#                         musl only. Wire the clang cross path first, then add a
+#                         `llvm@20.1.7` row here.
+#   * more triples      : e.g. riscv64-linux-musl, once the cross toolchain asset
+#                         is published to xlings-res + xim-pkgindex.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-build:
+    name: cross-build ${{ matrix.target }} (mcpp + xlings)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-musl
+            file_arch: "x86-64"
+            qemu: false
+          - target: aarch64-linux-musl
+            file_arch: "ARM aarch64"
+            qemu: true
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp
+          key: mcpp-sandbox-${{ runner.os }}-cross-${{ matrix.target }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          restore-keys: |
+            mcpp-sandbox-${{ runner.os }}-cross-${{ matrix.target }}-
+
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-${{ runner.os }}-v2-
+
+      - name: Install qemu-user-static
+        if: matrix.qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-user-static
+          qemu-aarch64-static --version | head -1
+
+      - name: Bootstrap mcpp via xlings
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        run: |
+          tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "/tmp/${tarball}" -C /tmp
+          "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          # Refresh the index so a cached ~/.xlings still sees newly published
+          # cross toolchains (xim:aarch64-linux-musl-gcc, static ninja, ...).
+          xlings config --mirror GLOBAL 2>/dev/null || true
+          xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
+          xlings install mcpp -y
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+          echo "MCPP_BOOT=$HOME/.xlings/subos/default/bin/mcpp" >> "$GITHUB_ENV"
+
+      - name: Self-host build (bootstrap mcpp -> fresh host mcpp)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP_BOOT" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP_BOOT" build
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          test -x "$MCPP"
+          "$MCPP" self config --mirror GLOBAL
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+
+      - name: "Cross-build mcpp -> ${{ matrix.target }}"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build --target ${{ matrix.target }}
+          bin=$(find target/${{ matrix.target }} -type f -name mcpp | head -1)
+          [ -n "$bin" ] || { echo "no mcpp artefact for ${{ matrix.target }}"; exit 1; }
+          echo "== file =="; file "$bin"
+          file "$bin" | grep -q "${{ matrix.file_arch }}" || { echo "expected ${{ matrix.file_arch }}"; exit 1; }
+          file "$bin" | grep -q "statically linked" || { echo "expected static"; exit 1; }
+          echo "MCPP_XBIN=$bin" >> "$GITHUB_ENV"
+
+      - name: "Cross-build xlings -> ${{ matrix.target }}"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          git clone --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
+          cd /tmp/xlings-src
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build --target ${{ matrix.target }}
+          xbin=$(find target/${{ matrix.target }} -type f -name xlings | head -1)
+          [ -n "$xbin" ] || { echo "no xlings artefact for ${{ matrix.target }}"; exit 1; }
+          echo "== file =="; file "$xbin"
+          file "$xbin" | grep -q "${{ matrix.file_arch }}" || { echo "expected ${{ matrix.file_arch }}"; exit 1; }
+          file "$xbin" | grep -q "statically linked" || { echo "expected static"; exit 1; }
+          echo "XLINGS_XBIN=$xbin" >> "$GITHUB_ENV"
+
+      - name: "Smoke-run cross artefacts (${{ matrix.qemu && 'qemu' || 'native' }})"
+        run: |
+          RUN=""
+          if [ "${{ matrix.qemu }}" = "true" ]; then RUN="qemu-aarch64-static"; fi
+          echo "== mcpp --version =="
+          mver=$($RUN "$MCPP_XBIN" --version)
+          echo "$mver"; echo "$mver" | grep -q "mcpp" || { echo "mcpp --version failed"; exit 1; }
+          echo "== xlings --version =="
+          xver=$($RUN "$XLINGS_XBIN" --version)
+          echo "$xver"; echo "$xver" | grep -qiE "xlings|[0-9]+\.[0-9]+" || { echo "xlings --version failed"; exit 1; }
