@@ -56,6 +56,17 @@ jobs:
           mcpp --version
           mcpp self config --mirror GLOBAL 2>/dev/null || true
 
+      - name: Refresh mcpp package index (force latest xim-pkgindex)
+        run: |
+          # mcpp seeds a baseline index with a freshness TTL marker, so a plain
+          # `index update` can no-op within the window. Force the latest index
+          # so this run validates the native build against current packages.
+          mcpp index update || true
+          idx="$HOME/.mcpp/registry/data/xim-pkgindex"
+          rm -rf "$idx"
+          git clone --depth 1 https://github.com/openxlings/xim-pkgindex "$idx"
+          grep -n "skipping relocation\|os.isfile(path.join(bindir" "$idx/pkgs/m/musl-gcc.lua" | head -2 || true
+
       - name: Native build + run an `import std` program
         run: |
           work=$(mktemp -d); cd "$work"
