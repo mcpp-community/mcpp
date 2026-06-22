@@ -212,7 +212,7 @@ import mcpplibs.cmdline;
 | OS / arch        | GCC (glibc) | GCC (musl) | Clang / LLVM | MSVC |
 |------------------|:-----------:|:----------:|:------------:|:----:|
 | Linux x86_64     | ✅ | ✅ *default* | ✅ | — |
-| Linux aarch64    | 🔄 | 🔄 | 🔄 | — |
+| Linux aarch64    | 🔄 | ✅ *default* | 🔄 | — |
 | macOS arm64      | — | — | ✅ *default* | — |
 | macOS x86_64     | — | — | 🔄 | — |
 | Windows x86_64   | — | — | ✅ ¹ *default* | 🔄 |
