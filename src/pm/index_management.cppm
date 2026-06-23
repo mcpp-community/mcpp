@@ -154,6 +154,47 @@ export int index_update(const std::string& filterName) {
     return 0;
 }
 
+// `mcpp index status` — read-only, offline snapshot of the local indexes.
+// Never touches the network: reports presence/freshness/age and, when an
+// index is missing or stale, points at the explicit `mcpp index update`.
+export int index_status() {
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
+    if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
+    auto xlEnv = mcpp::config::make_xlings_env(*cfg);
+
+    auto fmt_age = [](std::int64_t s) -> std::string {
+        if (s < 0)      return "unknown";
+        if (s < 90)     return std::format("{}s ago", s);
+        if (s < 5400)   return std::format("{}m ago", s / 60);
+        if (s < 172800) return std::format("{}h ago", s / 3600);
+        return std::format("{}d ago", s / 86400);
+    };
+    auto show = [&](const char* label, const mcpp::xlings::IndexStatus& st) {
+        std::string state = !st.present ? "missing"
+                          :  st.fresh   ? "fresh"
+                          :              "stale";
+        std::println("  {:<10} {:<8} {:<12} {}",
+                     label, state, fmt_age(st.ageSeconds), st.dir.string());
+    };
+
+    auto official = mcpp::xlings::official_index_status(xlEnv, cfg->searchTtlSeconds);
+    auto deflt    = mcpp::xlings::default_index_status(xlEnv, cfg->searchTtlSeconds);
+
+    std::println("");
+    std::println("  {:<10} {:<8} {:<12} {}", "index", "state", "refreshed", "path");
+    show("xim", official);
+    show("mcpplibs", deflt);
+    std::println("");
+
+    bool anyMissing = !official.present || !deflt.present;
+    if (anyMissing) {
+        mcpp::ui::status("Hint", "an index is missing — run `mcpp index update` to fetch it");
+    } else {
+        std::println("  Up to date locally. Refresh on demand with `mcpp index update`.");
+    }
+    return 0;
+}
+
 // `mcpp index pin <name> [<rev>]` — empty rev falls back to mcpp.lock.
 export int index_pin(const std::string& name, std::string rev) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());

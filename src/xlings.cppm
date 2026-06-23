@@ -294,6 +294,18 @@ void ensure_official_package_index_fresh(const Env& env,
                                          std::int64_t ttlSeconds,
                                          bool quiet = false);
 
+// ─── Index status (read-only, offline) ──────────────────────────────
+// Snapshot of a local index directory — computed without touching the
+// network, for `mcpp index status`.
+struct IndexStatus {
+    std::filesystem::path dir;        // on-disk index directory
+    bool                  present;    // pkgs/ tree exists locally
+    bool                  fresh;      // refreshed within ttlSeconds
+    std::int64_t          ageSeconds; // since last refresh marker, -1 if unknown
+};
+IndexStatus default_index_status(const Env& env, std::int64_t ttlSeconds);
+IndexStatus official_index_status(const Env& env, std::int64_t ttlSeconds);
+
 // ─── run_capture utility ────────────────────────────────────────────
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd);
@@ -400,6 +412,29 @@ bool is_index_dir_fresh(const std::filesystem::path& indexDir, std::int64_t ttlS
     auto now = std::filesystem::file_time_type::clock::now();
     auto age = std::chrono::duration_cast<std::chrono::seconds>(now - newest);
     return age.count() < ttlSeconds;
+}
+
+// Seconds since the index's refresh marker was last touched, or -1 if the
+// marker is missing/unreadable. Read-only — no network, no side effects.
+std::int64_t index_age_seconds(const std::filesystem::path& indexDir) {
+    std::error_code ec;
+    auto marker = index_refresh_marker(indexDir);
+    auto newest = std::filesystem::last_write_time(marker, ec);
+    if (ec) return -1;
+    auto now = std::filesystem::file_time_type::clock::now();
+    return std::chrono::duration_cast<std::chrono::seconds>(now - newest).count();
+}
+
+IndexStatus index_status_for(const std::filesystem::path& indexDir,
+                             std::int64_t ttlSeconds) {
+    std::error_code ec;
+    bool present = std::filesystem::exists(index_pkgs_dir(indexDir), ec) && !ec;
+    return IndexStatus{
+        .dir        = indexDir,
+        .present    = present,
+        .fresh      = is_index_dir_fresh(indexDir, ttlSeconds),
+        .ageSeconds = index_age_seconds(indexDir),
+    };
 }
 
 void write_file(const std::filesystem::path& p, std::string_view content) {
@@ -1171,6 +1206,14 @@ bool is_official_index_fresh(const Env& env, std::int64_t ttlSeconds) {
     return is_index_dir_fresh(official_index_dir(env), ttlSeconds);
 }
 
+IndexStatus default_index_status(const Env& env, std::int64_t ttlSeconds) {
+    return index_status_for(default_index_dir(env), ttlSeconds);
+}
+
+IndexStatus official_index_status(const Env& env, std::int64_t ttlSeconds) {
+    return index_status_for(official_index_dir(env), ttlSeconds);
+}
+
 bool is_official_package_index_fresh(const Env& env,
                                      std::string_view packageName,
                                      std::int64_t ttlSeconds) {
@@ -1207,12 +1250,35 @@ void ensure_official_index_fresh(const Env& env, std::int64_t ttlSeconds, bool q
 
 void ensure_official_package_index_fresh(const Env& env,
                                          std::string_view packageName,
-                                         std::int64_t ttlSeconds,
+                                         [[maybe_unused]] std::int64_t ttlSeconds,
                                          bool quiet) {
-    if (is_official_package_index_fresh(env, packageName, ttlSeconds)) return;
+    // Offline-first, miss-triggered. We do NOT auto-update just because a TTL
+    // expired — that runs a network `xlings update` (git-syncs several index
+    // repos) that stalls for minutes on slow/blocked networks (the Termux
+    // first-run / build hang). But fully offline is too strict: if a requested
+    // dependency is NOT in the local index, we DO refresh once to discover it.
+    //
+    //   present locally  → use as-is, zero network (the common build case).
+    //   missing locally  → refresh once to try to fetch it.
+    //
+    // Routine, deps-already-present refresh stays the user's explicit
+    // `mcpp index update` / `xlings update`.
+    auto pkg = official_package_file(env, packageName);
+    if (!pkg.empty() && std::filesystem::exists(pkg)) return;
+
+    // The package is missing locally. Refresh once — but guard against a build
+    // that resolves several genuinely-absent packages re-running the heavy
+    // `xlings update` per package: if the index was refreshed moments ago and
+    // the package is STILL missing, upstream simply lacks it; re-pulling won't
+    // help. (A package added upstream before this run lands in that one pull.)
+    constexpr std::int64_t kJustRefreshedSeconds = 120;
+    if (is_official_index_fresh(env, kJustRefreshedSeconds)) return;
+
     if (!quiet)
-        print_status("Updating", "package index (auto-refresh)");
-    update_index(env, /*quiet=*/true);
+        print_status("Refreshing",
+            std::format("package index — `{}` not found locally (one-time)",
+                        packageName));
+    update_index(env, /*quiet=*/quiet);
 }
 
 } // namespace mcpp::xlings
