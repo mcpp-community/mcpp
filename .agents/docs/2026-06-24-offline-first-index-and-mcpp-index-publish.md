@@ -11,6 +11,15 @@
 
 ---
 
+## 已就绪的基础设施(2026-06-24)
+- **资源仓**:`xlings-res/mcpp-index`(github + gitcode 两端均已创建)—— 放 mcpp 索引 artifact + 指针。
+  复用 xlings-res(mcpp 二进制本就在 `xlings-res/mcpp`),不另起 mcpp-res 组织。
+- **secrets**:`mcpp-community/mcpp-index` 仓已配 `XLINGS_RES_TOKEN` + `GITCODE_TOKEN`。
+- **Actions**:mcpp-index 仓已启用。
+- **逐仓自文档**:发布机制说明见 `mcpp-community/mcpp-index` 仓
+  `.agents/docs/2026-06-24-artifact-publish-mechanism.md`。
+- 剩待办:① mcpp-index 仓加 `publish-artifact.yml`;② mcpp 侧加 artifact 拉取 + 离线优先(本文档 P0/P1)。
+
 ## 0. 现状
 
 - **`mcpp build` 自动联网刷索引**:`package_fetcher` 在装 xim 包前调
