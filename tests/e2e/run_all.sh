@@ -140,11 +140,34 @@ else
     echo "Per-test timeout: <unavailable> (no timeout/gtimeout on PATH)"
 fi
 
+# Wall-clock in milliseconds, portable. bash 5 exposes EPOCHREALTIME
+# ("secs.usecs"); older bash (e.g. macOS /bin/bash 3.2) falls back to
+# whole-second `date`. Used to time each test so slow ones surface for
+# later analysis/optimization instead of hiding behind a bare "OK".
+_t_ms() {
+    if [[ -n "${EPOCHREALTIME:-}" ]]; then
+        local er=${EPOCHREALTIME} s us
+        s=${er%.*}; us=${er#*.}
+        echo $(( 10#$s * 1000 + 10#$us / 1000 ))
+    else
+        echo $(( $(date +%s) * 1000 ))
+    fi
+}
+
+# Human-friendly duration from milliseconds: "<Nms" / "1.23s".
+_fmt_ms() {
+    local ms=$1
+    if (( ms < 1000 )); then echo "${ms}ms"; else
+        printf '%d.%02ds' $(( ms / 1000 )) $(( (ms % 1000) / 10 ))
+    fi
+}
+
 PASS=0
 FAIL=0
 SKIP=0
 FAILED_TESTS=()
 TIMED_OUT_TESTS=()
+TIMINGS=()   # "<ms> <name>" per executed test, for the slowest-first report
 
 for test in "$HERE"/[0-9]*.sh; do
     name="$(basename "$test")"
@@ -156,14 +179,18 @@ for test in "$HERE"/[0-9]*.sh; do
         continue
     fi
     echo "=== $name ==="
+    _start_ms=$(_t_ms)
     if [[ -n "$TIMEOUT_CMD" ]]; then
         MCPP="$MCPP" "$TIMEOUT_CMD" "$E2E_TEST_TIMEOUT" bash "$test"
     else
         MCPP="$MCPP" bash "$test"
     fi
     rc=$?
+    _dur_ms=$(( $(_t_ms) - _start_ms ))
+    TIMINGS+=("$_dur_ms $name")
+    _dur="$(_fmt_ms "$_dur_ms")"
     if [[ $rc -eq 0 ]]; then
-        echo "PASS: $name"
+        echo "PASS: $name (${_dur})"
         ((PASS++))
     elif [[ $rc -eq 124 ]]; then
         # GNU timeout: 124 = killed after deadline (TERM); 137 = SIGKILL after grace.
@@ -172,7 +199,7 @@ for test in "$HERE"/[0-9]*.sh; do
         FAILED_TESTS+=("$name (TIMEOUT)")
         TIMED_OUT_TESTS+=("$name")
     else
-        echo "FAIL: $name (exit $rc)"
+        echo "FAIL: $name (exit $rc, ${_dur})"
         ((FAIL++))
         FAILED_TESTS+=("$name (exit $rc)")
     fi
@@ -180,6 +207,17 @@ done
 
 echo
 echo "==============================================="
+# Timing report (slowest first) — surfaces the long-pole tests so the suite
+# can be sharded/optimized. Also prints the executed-test total wall time.
+if [[ ${#TIMINGS[@]} -gt 0 ]]; then
+    total_ms=0
+    for t in "${TIMINGS[@]}"; do total_ms=$(( total_ms + ${t%% *} )); done
+    echo "E2E timing (slowest first; executed total $(_fmt_ms "$total_ms")):"
+    printf '%s\n' "${TIMINGS[@]}" | sort -rn | head -15 | while read -r ms nm; do
+        printf '  %8s  %s\n' "$(_fmt_ms "$ms")" "$nm"
+    done
+    echo "==============================================="
+fi
 echo "E2E Summary: $PASS passed, $FAIL failed, $SKIP skipped"
 if [[ ${#TIMED_OUT_TESTS[@]} -gt 0 ]]; then
     echo "Timed out: ${TIMED_OUT_TESTS[*]}"

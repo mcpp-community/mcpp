@@ -5,7 +5,12 @@ name: ci-linux
 # workflow no longer depends on a previous-release tarball — the
 # chicken-and-egg now lives upstream in the xlings index.
 #
-# Paired workflows: ci-macos.yml, ci-windows.yml.
+# This job covers build + unit/integration tests + the toolchain matrix +
+# the xlings integration build. The ~18 min e2e suite is a SEPARATE workflow
+# (ci-linux-e2e.yml) that runs in parallel on the same warm caches, so the
+# per-PR critical path is max(this, e2e) instead of their sum.
+#
+# Paired workflows: ci-linux-e2e.yml, ci-macos.yml, ci-windows.yml.
 
 on:
   push:
@@ -109,40 +114,12 @@ jobs:
           "$MCPP_FRESH" self config --mirror GLOBAL
           "$MCPP_FRESH" test
 
-      - name: E2E suite
-        # Step-level guard: a single hung test (historically 10_env_command.sh
-        # on slow xlings/network) used to eat the full 60-min job budget.
-        # Cap the suite at 25 min so a hang fails fast and we still have room
-        # for the downstream toolchain steps. Per-test 600s timeout lives in
-        # tests/e2e/run_all.sh and identifies WHICH test hung.
-        timeout-minutes: 25
-        run: |
-          # Point the e2e runner at the freshly-built binary, not the
-          # bootstrap one. Tests cd into mktemp -d, so $MCPP must be
-          # absolute or the relative path breaks under the temp cwd.
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
-          test -x "$MCPP"
-          export MCPP
-          # Tests that set MCPP_HOME to a fresh tmpdir need an xlings
-          # to bootstrap from; surface the xlings binary installed
-          # above so they don't have to reinstall the sandbox.
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          test -x "$MCPP_VENDORED_XLINGS"
-          # GitHub-hosted runners are outside CN; keep CI toolchain downloads on
-          # the global mirror while mcpp's default remains CN for fresh local
-          # sandboxes. E2E tests with their own MCPP_HOME read this variable.
-          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
-          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
-          "$MCPP" self config
-          # Pin the global default so test 28 (which exercises the
-          # default-toolchain path) gets a deterministic GNU answer
-          # instead of whatever auto-install picks on a fresh sandbox.
-          "$MCPP" toolchain default gcc@16.1.0
-          # Warm musl once in the persistent sandbox. Fresh-home e2e tests
-          # inherit this payload, and the later --target musl job reuses it
-          # instead of downloading a second copy into another home.
-          "$MCPP" toolchain install gcc 15.1.0-musl
-          bash tests/e2e/run_all.sh
+      # NOTE: the e2e suite (tests/e2e/run_all.sh) moved to ci-linux-e2e.yml
+      # so it runs in parallel with this job. The toolchain matrix below no
+      # longer relies on e2e's toolchain warm-ups: the GCC build uses the
+      # mcpp.toml-pinned default (gcc@16.1.0, already in the sandbox from the
+      # self-host build above), and the musl `--target` build auto-installs
+      # gcc@15.1.0-musl on demand (cached across runs).
 
       - name: Save freshly-built mcpp for toolchain tests
         run: |

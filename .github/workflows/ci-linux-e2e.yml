@@ -1,0 +1,114 @@
+name: ci-linux-e2e
+
+# The e2e suite (tests/e2e/run_all.sh, ~18 min) split out of ci-linux.yml so it
+# runs in PARALLEL with the build/unit/toolchain-matrix job instead of tacked on
+# after it. Both workflows share the same cache lineage (mcpp sandbox + xlings +
+# target/), so this job restores a warm build and the only added wall-clock vs.
+# the inline version is one extra warm `mcpp build`. Net per-PR critical path
+# drops from "build + … + e2e" to max(build+matrix, build+e2e).
+#
+# Paired workflows: ci-linux.yml (build + unit + toolchain matrix + integration),
+# ci-macos.yml, ci-windows.yml.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e suite (linux x86_64, self-host)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same cache lineage as ci-linux.yml so this job lands on a warm
+      # toolchain/sandbox instead of re-installing it. Both workflows read
+      # (and may save) the same keys; actions/cache tolerates concurrent
+      # "already exists" saves.
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp
+          key: mcpp-sandbox-${{ runner.os }}-ci-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          restore-keys: |
+            mcpp-sandbox-${{ runner.os }}-ci-
+
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-${{ runner.os }}-v2-
+
+      - name: Bootstrap mcpp via xlings
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.30'
+        run: |
+          tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "/tmp/${tarball}" -C /tmp
+          "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          xlings --version
+          xlings install mcpp -y
+          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+
+      - name: Cache target/ (build artifacts + BMIs)
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: mcpp-target-${{ runner.os }}-${{ hashFiles('src/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
+          restore-keys: |
+            mcpp-target-${{ runner.os }}-
+
+      - name: Configure mirror + Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+
+      - name: E2E suite
+        # Per-test 600s timeout lives in tests/e2e/run_all.sh and identifies
+        # WHICH test hung; this caps the whole suite so a hang fails fast.
+        timeout-minutes: 25
+        run: |
+          # Point the e2e runner at the freshly-built binary, not the
+          # bootstrap one. Tests cd into mktemp -d, so $MCPP must be
+          # absolute or the relative path breaks under the temp cwd.
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          test -x "$MCPP"
+          export MCPP
+          # Tests that set MCPP_HOME to a fresh tmpdir need an xlings to
+          # bootstrap from; surface the xlings binary installed above.
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          test -x "$MCPP_VENDORED_XLINGS"
+          # GitHub-hosted runners are outside CN; keep CI toolchain downloads on
+          # the global mirror while mcpp's default remains CN for fresh local
+          # sandboxes. E2E tests with their own MCPP_HOME read this variable.
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
+          "$MCPP" self config
+          # Pin the global default so test 28 (default-toolchain path) gets a
+          # deterministic GNU answer instead of an auto-install pick.
+          "$MCPP" toolchain default gcc@16.1.0
+          # Warm musl once so fresh-home e2e tests inherit the payload.
+          "$MCPP" toolchain install gcc 15.1.0-musl
+          bash tests/e2e/run_all.sh
