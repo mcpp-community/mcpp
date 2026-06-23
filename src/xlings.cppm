@@ -1248,19 +1248,33 @@ void ensure_official_package_index_fresh(const Env& env,
                                          std::string_view packageName,
                                          [[maybe_unused]] std::int64_t ttlSeconds,
                                          bool quiet) {
-    // Offline-first: an existing local index entry is used as-is. We do NOT
-    // auto-update just because a TTL expired — that runs a network `xlings
-    // update` (git-syncs several index repos) that stalls for minutes on
-    // slow/blocked networks (the Termux first-run / build hang). Fetch ONLY when
-    // the entry is MISSING (first run / never-seen package), so the index is
-    // guaranteed to exist; routine refresh is the user's explicit
+    // Offline-first, miss-triggered. We do NOT auto-update just because a TTL
+    // expired — that runs a network `xlings update` (git-syncs several index
+    // repos) that stalls for minutes on slow/blocked networks (the Termux
+    // first-run / build hang). But fully offline is too strict: if a requested
+    // dependency is NOT in the local index, we DO refresh once to discover it.
+    //
+    //   present locally  → use as-is, zero network (the common build case).
+    //   missing locally  → refresh once to try to fetch it.
+    //
+    // Routine, deps-already-present refresh stays the user's explicit
     // `mcpp index update` / `xlings update`.
     auto pkg = official_package_file(env, packageName);
     if (!pkg.empty() && std::filesystem::exists(pkg)) return;
+
+    // The package is missing locally. Refresh once — but guard against a build
+    // that resolves several genuinely-absent packages re-running the heavy
+    // `xlings update` per package: if the index was refreshed moments ago and
+    // the package is STILL missing, upstream simply lacks it; re-pulling won't
+    // help. (A package added upstream before this run lands in that one pull.)
+    constexpr std::int64_t kJustRefreshedSeconds = 120;
+    if (is_official_index_fresh(env, kJustRefreshedSeconds)) return;
+
     if (!quiet)
-        print_status("Fetching",
-            std::format("index entry for {} (one-time)", packageName));
-    update_index(env, /*quiet=*/true);
+        print_status("Refreshing",
+            std::format("package index — `{}` not found locally (one-time)",
+                        packageName));
+    update_index(env, /*quiet=*/quiet);
 }
 
 } // namespace mcpp::xlings

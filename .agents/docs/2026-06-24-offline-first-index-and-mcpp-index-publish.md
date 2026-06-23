@@ -114,9 +114,15 @@ mcpp 第一次跑 / 沙盒初始化时(当前日志:`Initialize mcpp sandbox lay
 
 ### 4.1 实现进度(WS3)
 
-- **✅ P0②(build 离线优先)**:`ensure_official_package_index_fresh`(`src/xlings.cppm`)
-  不再因 TTL 过期就跑联网 `xlings update`;**只在本地索引项缺失(首次 / 没见过的包)时拉一次**。
-  稳态 `mcpp build` 不再联网 —— 直接消除 Termux 首跑/构建卡几分钟的根因(commit `f0f57ae`)。
+- **✅ P0②(build 离线优先 + 缺包触发刷新)**:`ensure_official_package_index_fresh`(`src/xlings.cppm`)
+  不再因 TTL 过期就跑联网 `xlings update`。改为 **miss-triggered**:
+  - **依赖在本地索引里 → 直接用,零网络**(常态 build,消除 Termux 首跑/构建卡几分钟的根因);
+  - **依赖在本地索引里查不到 → 自动刷新一次**去拉它(`mcpp build` 路径以 `quiet=false` 调用,
+    打印一行 `Refreshing package index — \`<pkg>\` not found locally`,让一次性网络停顿不像卡死)。
+  - **防重**:刚刷过(<120s)且包仍缺失 → 不再重复跑 `xlings update`(上游确实没有,重拉无益),
+    避免一个 build 里多个缺包各跑一遍全量 git 同步。
+  commit `f0f57ae`(初版纯离线)→ 增补 miss-triggered + 防重 + 可见提示。
+  > 即"完全不联网"过严;稳态(依赖齐全)不联网,**缺包则联网刷一次**,二者兼得。
 - **✅ P0③(`mcpp index status`)**:新增只读、**全程不联网**的 `mcpp index status`,显示
   xim/mcpplibs 两索引的 present/fresh/age/path;缺索引时提示显式 `mcpp index update`,否则确认本地可离线用。
   `src/xlings.cppm` 导出 `IndexStatus` + `{default,official}_index_status`;`src/pm/index_management.cppm`

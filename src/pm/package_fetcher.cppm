@@ -725,8 +725,13 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     if (autoInstall) {
         if (parsed.indexName == "xim") {
             mcpp::xlings::Env xlEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
+            // quiet=false: this only ever prints when a dependency is missing
+            // from the local index and we refresh once to fetch it — a rare,
+            // intentional event worth surfacing so a one-time network pause
+            // doesn't look like a silent hang. Steady-state builds (deps
+            // present) return early without a word.
             mcpp::xlings::ensure_official_package_index_fresh(
-                xlEnv, parsed.packageName, cfg_.searchTtlSeconds, /*quiet=*/true);
+                xlEnv, parsed.packageName, cfg_.searchTtlSeconds, /*quiet=*/false);
         }
 
         std::vector<std::string> targets {
