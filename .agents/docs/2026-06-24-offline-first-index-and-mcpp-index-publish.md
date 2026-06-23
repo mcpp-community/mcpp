@@ -114,6 +114,36 @@ mcpp 第一次跑 / 沙盒初始化时(当前日志:`Initialize mcpp sandbox lay
 
 ---
 
+## 4.5 追加计划:first-init 细粒度带时间戳 debug log(WS5)
+
+**动机**:mcpp 第一次运行常卡很久(Termux 实战),但日志太粗,看不出卡在哪一步。
+需要在**首次 init 全过程**加 **`--verbose` 才可见**的细粒度 debug log,且**每条带时间戳**,
+方便事后定位"卡很长时间"的具体步骤与耗时。
+
+**要覆盖的步骤**(日志现状只有一行,需细化):
+```
+Initialize mcpp sandbox layout (one-time)
+Fetching package index (one-time)
+Bootstrap patchelf into mcpp sandbox (one-time)     ← 重点
+Bootstrap ninja into mcpp sandbox (one-time)        ← 重点
+First run no toolchain configured — installing gcc@15.1.0-musl ...  ← 重点
+```
+每个步骤前后打 `[verbose][HH:MM:SS.mmm] <step> start/done (Δ=<ms>)`,尤其:
+- 每个 bootstrap(patchelf/ninja)的**下载 URL、镜像、connect/下载/解压各阶段**用时;
+- toolchain 安装的 resolve / download / extract 各阶段用时;
+- 索引 fetch 的 pointer 比对 / 下载 / git 各阶段用时。
+
+**约束**:
+- 仅 `--verbose`(或 `MCPP_LOG=debug`)可见,日常用户输出不变。
+- 时间戳统一(单调时钟取 Δ,墙钟取绝对时间)。
+- **和最新版一起发布**(随 mcpp 下个版本)。
+
+**配套铁律(已并入发布流程)**:**每次 xlings / mcpp 发新版,对应索引也要更新到 latest**
+—— xim-pkgindex(`xim:mcpp`/`xim:xlings` 版本块 + artifact)、mcpp-index(若涉及库)都要随发版同步,
+否则默认客户端装不到新版(见本仓 + xim-pkgindex 仓发布机制文档)。现已有 push 触发的
+publish-artifact CI,改索引即自动发 artifact;版本块(mcpp.lua/xlings.lua 的 `latest` ref)
+仍需在发版流程里 bump。
+
 ## 5. 一句话
 
 **首次 init 保证有索引(内置 seed 优先,否则自动拉一次);之后离线优先(默认不联网刷索引,
