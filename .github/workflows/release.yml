@@ -96,7 +96,7 @@ jobs:
           # Pin xlings to a known-good version. The upstream install
           # script always grabs `latest` (no version override), so we
           # download + self-install manually to avoid broken releases.
-          XLINGS_VERSION: '0.4.48'
+          XLINGS_VERSION: '0.4.56'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
@@ -255,6 +255,120 @@ jobs:
             dist/mcpp-${{ steps.stage.outputs.version }}.tar.gz
             dist/mcpp.lua
 
+  build-linux-aarch64:
+    name: build (linux / aarch64, cross)
+    runs-on: ubuntu-24.04
+    needs: build-release
+    permissions:
+      contents: write
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps + qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y curl git build-essential qemu-user-static
+          qemu-aarch64-static --version | head -1
+
+      - name: Resolve tag + version
+        id: resolve
+        run: |
+          VERSION=$(grep -E '^version' mcpp.toml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION"    >> "$GITHUB_OUTPUT"
+
+      - name: Bootstrap mcpp via xlings (latest 0.4.56)
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.56'
+        run: |
+          tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/openxlings/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "/tmp/${tarball}" -C /tmp
+          "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.xlings/bin"               >> "$GITHUB_PATH"
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+
+      - name: Bootstrap mcpp + refresh index (latest, GLOBAL)
+        run: |
+          xlings config --mirror GLOBAL 2>/dev/null || true
+          xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
+          xlings install mcpp -y
+          mcpp --version
+
+      - name: Cross-build mcpp -> aarch64-linux-musl (this release's source)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          mcpp self config --mirror GLOBAL 2>/dev/null || true
+          mcpp build --target aarch64-linux-musl
+          BIN=$(find target/aarch64-linux-musl -type f -name mcpp | head -1)
+          test -n "$BIN"
+          file "$BIN" | grep -q 'ARM aarch64'
+          file "$BIN" | grep -q 'statically linked'
+          echo "MCPP_AARCH64=$GITHUB_WORKSPACE/$BIN" >> "$GITHUB_ENV"
+
+      - name: Package aarch64 release (+ bundle aarch64 xlings)
+        id: stage
+        run: |
+          VERSION="${{ steps.resolve.outputs.version }}"
+          TARBALL_NAME="mcpp-${VERSION}-linux-aarch64.tar.gz"
+          WRAPPER="mcpp-${VERSION}-linux-aarch64"
+          STAGING=$(mktemp -d)
+          mkdir -p "$STAGING/$WRAPPER/bin"
+          cp "$MCPP_AARCH64" "$STAGING/$WRAPPER/bin/mcpp"
+          # Strip with the cross toolchain's strip if present (binary is aarch64).
+          STRIP=$(find "$HOME/.mcpp" -name 'aarch64-linux-musl-strip' -type f 2>/dev/null | head -1)
+          [ -n "$STRIP" ] && "$STRIP" "$STAGING/$WRAPPER/bin/mcpp" 2>/dev/null || true
+          cp LICENSE "$STAGING/$WRAPPER/" 2>/dev/null || true
+          cp README.md "$STAGING/$WRAPPER/" 2>/dev/null || true
+          cat > "$STAGING/$WRAPPER/mcpp" << 'LAUNCHER'
+          #!/bin/sh
+          exec "$(dirname "$0")/bin/mcpp" "$@"
+          LAUNCHER
+          chmod +x "$STAGING/$WRAPPER/mcpp"
+          # Bundle the aarch64 xlings (0.4.56) so install.sh consumers on aarch64
+          # get an aarch64 xlings, not the x86_64 bootstrap one.
+          XLA="xlings-0.4.56-linux-aarch64.tar.gz"
+          if curl -fsSL -o "/tmp/$XLA" \
+               "https://github.com/openxlings/xlings/releases/download/v0.4.56/$XLA"; then
+            tar -xzf "/tmp/$XLA" -C /tmp
+            XLBIN=$(find /tmp/xlings-0.4.56-linux-aarch64 -path '*/bin/xlings' -type f | head -1)
+            if [ -n "$XLBIN" ]; then
+              mkdir -p "$STAGING/$WRAPPER/registry/bin"
+              cp "$XLBIN" "$STAGING/$WRAPPER/registry/bin/xlings"
+              chmod +x "$STAGING/$WRAPPER/registry/bin/xlings"
+            fi
+          fi
+          mkdir -p dist
+          (cd "$STAGING" && tar -czf "$GITHUB_WORKSPACE/dist/${TARBALL_NAME}" "$WRAPPER")
+          cp "dist/${TARBALL_NAME}" "dist/mcpp-linux-aarch64.tar.gz"
+          (cd dist && sha256sum "${TARBALL_NAME}"      > "${TARBALL_NAME}.sha256")
+          (cd dist && sha256sum "mcpp-linux-aarch64.tar.gz" > "mcpp-linux-aarch64.tar.gz.sha256")
+          echo "tarball=${TARBALL_NAME}" >> "$GITHUB_OUTPUT"
+          ls -la dist/
+
+      - name: Smoke-test the aarch64 tarball (qemu)
+        run: |
+          TARBALL_NAME="${{ steps.stage.outputs.tarball }}"
+          WRAPPER="${TARBALL_NAME%.tar.gz}"
+          SMOKE=$(mktemp -d)
+          tar -xzf "dist/${TARBALL_NAME}" -C "$SMOKE"
+          ver=$(qemu-aarch64-static "$SMOKE/$WRAPPER/bin/mcpp" --version)
+          echo "$ver"; echo "$ver" | grep -q 'mcpp'
+
+      - name: Upload aarch64 artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.tag }}
+          files: |
+            dist/mcpp-${{ steps.resolve.outputs.version }}-linux-aarch64.tar.gz
+            dist/mcpp-${{ steps.resolve.outputs.version }}-linux-aarch64.tar.gz.sha256
+            dist/mcpp-linux-aarch64.tar.gz
+            dist/mcpp-linux-aarch64.tar.gz.sha256
+
   build-macos:
     name: build (macOS / ARM64)
     runs-on: macos-15
@@ -296,7 +410,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.48'
+          XLINGS_VERSION: '0.4.56'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             WORK=$(mktemp -d)
@@ -478,7 +592,7 @@ jobs:
         shell: bash
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.48'
+          XLINGS_VERSION: '0.4.56'
         run: |
           WORK=$(mktemp -d)
           zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
