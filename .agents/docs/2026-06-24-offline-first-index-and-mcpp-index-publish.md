@@ -23,23 +23,38 @@
 
 ---
 
-## 1. 设计原则:离线优先(offline-first)
+## 1. 设计原则:首次 bootstrap 保证有索引,之后离线优先
 
-**命令默认用本地索引,绝不为"顺手刷新"而联网;联网刷新是显式动作。**
+区分**两个阶段**:
+
+### 1.a 首次初始化(必须保证有索引)
+mcpp 第一次跑 / 沙盒初始化时(当前日志:`Initialize mcpp sandbox layout (one-time)` +
+`Fetching package index (one-time)`),**必须确保本地有一份可用索引** —— 这是**唯一允许
+"自动联网"的时刻**:
+- 优先用**随发行版内置/种子索引(seed)**:mcpp 二进制包里捎带一份索引快照,首次直接落地,
+  **零网络也能起步**(离线装机也能用,后续再显式刷新)。
+- 无 seed 或 seed 不可用时,**首次自动拉一次**(指针+artifact,失败回退 git);拉不到则
+  **明确报错**"首次初始化需要网络/或提供离线索引包",而不是静默半残。
+- 首次落地后写入索引的**版本/时间/sha 标记**,作为后续 `index status` 与 TTL 的依据。
+
+### 1.b 之后(steady-state):离线优先,刷新是显式动作
+**索引一旦存在,命令默认只用本地索引,绝不为"顺手刷新"而联网;联网刷新由用户显式触发。**
 
 | 命令 | 联网? | 行为 |
 |---|---|---|
-| `mcpp build` / `run` / `add` | **否(默认)** | 只读本地索引;本地缺包才提示 `mcpp index update` |
-| `mcpp index update [--force]` | 是 | 显式刷新(唯一默认联网入口) |
+| 首次 init | **是(仅此一次)** | seed 落地 / 或自动拉一次,保证有索引 |
+| `mcpp build` / `run` / `add` | **否(默认)** | 只读本地索引;缺包才提示 `mcpp index update` |
+| `mcpp index update [--force]` | 是 | 显式刷新(steady-state 唯一默认联网入口) |
 | `mcpp index status` | 否(可选 `--check` 联网比指针) | 显示本地索引版本/时间/来源 |
 | `mcpp index list/search` | 否 | 本地查询 |
 
 要点:
-- **build 不再自动 `xlings update`**。改为:本地索引存在即用;仅当**解析失败**(包/版本
-  本地查不到)时,给出明确提示"运行 `mcpp index update` 刷新",而不是默默联网卡住。
+- **build 不再自动 `xlings update`**(首次 init 已保证有索引)。本地索引存在即用;仅当**解析
+  失败**(包/版本本地查不到)时,提示"运行 `mcpp index update` 刷新",而不是默默联网卡住。
 - 保留一个**很长的软 TTL**(如 24h)做"温和提醒"(stderr 一行 hint),但**不阻塞、不自动拉**。
-- 提供 `mcpp index status`:打印本地索引的 **版本/时间戳/sha/来源(artifact|git)**,
+- `mcpp index status`:打印本地索引的 **版本/时间戳/sha/来源(seed|artifact|git)**,
   让用户/CI 知道是否该刷。
+- **不变量**:任何 steady-state 命令在**离线**下都能跑(只要首次 init 成功过)。
 
 ---
 
@@ -80,8 +95,9 @@
 
 ## 4. 落地顺序(建议)
 
-1. **P0(离线优先)**:`mcpp build` 去掉"自动 `xlings update`",改为"本地优先 + 解析失败提示
-   `mcpp index update`";加 `mcpp index status`。**纯 mcpp 改动,立刻提升弱网/离线体验。**
+1. **P0(离线优先)**:① 首次 init 保证有索引(优先内置 seed,否则自动拉一次,失败明确报错);
+   ② `mcpp build` 去掉"自动 `xlings update`",改为"本地优先 + 解析失败提示 `mcpp index update`";
+   ③ 加 `mcpp index status`。**纯 mcpp 改动,立刻提升弱网/离线体验。**
 2. **P1(低成本刷新)**:`mcpp index update` 走"指针 sha 比对 → 命中跳过 / 未命中下 artifact"。
    依赖 mcpp-index 有指针(见 P2)。
 3. **P2(发布解耦)**:mcpp-index 仓加 artifact 发布 CI + mcpp 侧 artifact 拉取(与
@@ -91,8 +107,9 @@
 
 ## 5. 一句话
 
-**build 离线优先(默认不联网刷索引,缺包才提示显式刷新),刷新走"轻量指针 sha 比对"
-而非全量 git;mcpp-index 补齐 artifact + push 触发发布 CI,与 xim-pkgindex 统一模型。**
+**首次 init 保证有索引(内置 seed 优先,否则自动拉一次);之后离线优先(默认不联网刷索引,
+缺包才提示显式 `mcpp index update`),刷新走"轻量指针 sha 比对"而非全量 git;mcpp-index
+补齐 artifact + push 触发发布 CI,与 xim-pkgindex 统一模型。**
 
 相关:`.agents/docs/2026-05-31-index-refresh-cache-labels-plan.md`、
 `.agents/docs/2026-05-08-package-index-config.md`;Termux 背景见
