@@ -1203,11 +1203,20 @@ void ensure_official_index_fresh(const Env& env, std::int64_t ttlSeconds, bool q
 
 void ensure_official_package_index_fresh(const Env& env,
                                          std::string_view packageName,
-                                         std::int64_t ttlSeconds,
+                                         [[maybe_unused]] std::int64_t ttlSeconds,
                                          bool quiet) {
-    if (is_official_package_index_fresh(env, packageName, ttlSeconds)) return;
+    // Offline-first: an existing local index entry is used as-is. We do NOT
+    // auto-update just because a TTL expired — that runs a network `xlings
+    // update` (git-syncs several index repos) that stalls for minutes on
+    // slow/blocked networks (the Termux first-run / build hang). Fetch ONLY when
+    // the entry is MISSING (first run / never-seen package), so the index is
+    // guaranteed to exist; routine refresh is the user's explicit
+    // `mcpp index update` / `xlings update`.
+    auto pkg = official_package_file(env, packageName);
+    if (!pkg.empty() && std::filesystem::exists(pkg)) return;
     if (!quiet)
-        print_status("Updating", "package index (auto-refresh)");
+        print_status("Fetching",
+            std::format("index entry for {} (one-time)", packageName));
     update_index(env, /*quiet=*/true);
 }
 
