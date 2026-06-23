@@ -23,38 +23,82 @@ VERSION="${MCPP_VERSION:-latest}"
 PREFIX="${MCPP_PREFIX:-$HOME/.mcpp}"
 
 # ---- platform detection ---------------------------------------------------
+# OS+arch → release asset platform tag. Linux reports the arch as aarch64;
+# macOS reports it as arm64 (Apple). Arch Linux et al. are distro-agnostic here
+# (uname-based), so x86_64 and aarch64 Arch both work.
 uname_s=$(uname -s)
 uname_m=$(uname -m)
 case "${uname_s}-${uname_m}" in
-    Linux-x86_64)   PLAT="linux-x86_64" ;;
-    Darwin-arm64)   PLAT="macosx-arm64" ;;
+    Linux-x86_64)                 PLAT="linux-x86_64"  ;;
+    Linux-aarch64 | Linux-arm64)  PLAT="linux-aarch64" ;;   # aarch64 / arm64 alias
+    Darwin-arm64)                 PLAT="macosx-arm64"  ;;
     *)
         echo "error: unsupported platform ${uname_s}-${uname_m}." >&2
-        echo "       Currently supported: linux-x86_64, macosx-arm64." >&2
+        echo "       Currently supported: linux-x86_64, linux-aarch64, macosx-arm64." >&2
         echo "       Build from source instead:" >&2
         echo "       https://github.com/${REPO}#从源码构建开发者" >&2
         exit 1
         ;;
 esac
 
-# ---- resolve download URLs ------------------------------------------------
-if [[ "$VERSION" == "latest" ]]; then
-    BASE="https://github.com/${REPO}/releases/latest/download"
-    ASSET_NAME_GLOB="mcpp-*-${PLAT}.tar.gz"   # `latest` redirect uses fixed asset name
-    TARBALL_URL="${BASE}/mcpp-${PLAT}.tar.gz" # versionless alias served by the release
-else
-    BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
-    TARBALL_URL="${BASE}/mcpp-${VERSION}-${PLAT}.tar.gz"
-fi
-SHA_URL="${TARBALL_URL}.sha256"
-
-# ---- fetch ----------------------------------------------------------------
+# ---- resolve + fetch (mirror-aware: GitHub GLOBAL → GitCode CN) ------------
+# Most users hit GitHub. On networks where GitHub is blocked/slow (e.g. CN,
+# Termux) we fall back to the GitCode mirror (xlings-res/mcpp), so the same
+# one-liner works without a manual --mirror flag. MCPP_MIRROR=CN forces GitCode.
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-echo ":: Downloading ${TARBALL_URL}"
-curl --fail --location --silent --show-error -o "$WORK/mcpp.tar.gz"  "$TARBALL_URL"
-curl --fail --location --silent --show-error -o "$WORK/mcpp.sha256" "$SHA_URL" || {
-    echo "warning: no .sha256 sidecar found, skipping verification" >&2
+
+GH_REL="https://github.com/${REPO}/releases"
+GTC_API="https://api.gitcode.com/api/v5/repos/xlings-res/mcpp"
+GTC_DL="https://gitcode.com/xlings-res/mcpp/releases/download"
+CT=8   # connect timeout (s) for the GitHub probe before falling back
+
+fetch_github() {
+    local url
+    if [[ "$VERSION" == "latest" ]]; then
+        url="${GH_REL}/latest/download/mcpp-${PLAT}.tar.gz"   # versionless alias
+    else
+        url="${GH_REL}/download/v${VERSION}/mcpp-${VERSION}-${PLAT}.tar.gz"
+    fi
+    echo ":: Trying GitHub: ${url}"
+    if curl --fail --location --silent --show-error \
+            --connect-timeout "$CT" -o "$WORK/mcpp.tar.gz" "$url"; then
+        SHA_URL="${url}.sha256"; SOURCE="GitHub"; return 0
+    fi
+    return 1
+}
+
+fetch_gitcode() {
+    local ver="$VERSION"
+    if [[ "$ver" == "latest" ]]; then
+        # GitCode has no 'latest' redirect — resolve the highest release tag.
+        # per_page=100: the default page (20) lists oldest-first and misses
+        # recent versions, so a plain sort would pick a stale release.
+        ver=$(curl --fail --location --silent --connect-timeout "$CT" \
+                "${GTC_API}/releases?per_page=100" 2>/dev/null \
+              | grep -oE '"tag_name":"[^"]+"' | sed 's/.*:"//; s/"$//' \
+              | sort -V | tail -1)
+        [[ -z "$ver" ]] && { echo "error: cannot resolve latest from GitCode" >&2; return 1; }
+    fi
+    local url="${GTC_DL}/${ver}/mcpp-${ver}-${PLAT}.tar.gz"
+    echo ":: Trying GitCode (CN mirror): ${url}"
+    if curl --fail --location --silent --show-error -o "$WORK/mcpp.tar.gz" "$url"; then
+        SHA_URL="${url}.sha256"; SOURCE="GitCode"; VERSION="$ver"; return 0
+    fi
+    return 1
+}
+
+SOURCE="" SHA_URL=""
+if [[ "${MCPP_MIRROR:-}" == "CN" ]]; then
+    fetch_gitcode || fetch_github || { echo "error: download failed (GitCode + GitHub)" >&2; exit 1; }
+else
+    fetch_github || { echo ":: GitHub unavailable — falling back to GitCode (CN mirror)"; fetch_gitcode; } \
+        || { echo "error: download failed (GitHub + GitCode)" >&2; exit 1; }
+fi
+echo ":: Downloaded from ${SOURCE}"
+# .sha256 sidecar is GitHub-only; GitCode mirror ships tarballs without it.
+curl --fail --location --silent --show-error -o "$WORK/mcpp.sha256" "$SHA_URL" 2>/dev/null || {
+    echo "warning: no .sha256 sidecar (${SOURCE}), skipping verification" >&2
 }
 
 # ---- verify ---------------------------------------------------------------
