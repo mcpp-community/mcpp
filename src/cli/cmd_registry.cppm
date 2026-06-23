@@ -50,6 +50,10 @@ export int cmd_index_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
     return mcpp::pm::index_update(parsed.positional(0));
 }
 
+export int cmd_index_status(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
+    return mcpp::pm::index_status();
+}
+
 export int cmd_index_pin(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string name = parsed.positional(0);
     if (name.empty()) {

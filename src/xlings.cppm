@@ -293,6 +293,18 @@ void ensure_official_package_index_fresh(const Env& env,
                                          std::int64_t ttlSeconds,
                                          bool quiet = false);
 
+// ─── Index status (read-only, offline) ──────────────────────────────
+// Snapshot of a local index directory — computed without touching the
+// network, for `mcpp index status`.
+struct IndexStatus {
+    std::filesystem::path dir;        // on-disk index directory
+    bool                  present;    // pkgs/ tree exists locally
+    bool                  fresh;      // refreshed within ttlSeconds
+    std::int64_t          ageSeconds; // since last refresh marker, -1 if unknown
+};
+IndexStatus default_index_status(const Env& env, std::int64_t ttlSeconds);
+IndexStatus official_index_status(const Env& env, std::int64_t ttlSeconds);
+
 // ─── run_capture utility ────────────────────────────────────────────
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd);
@@ -399,6 +411,29 @@ bool is_index_dir_fresh(const std::filesystem::path& indexDir, std::int64_t ttlS
     auto now = std::filesystem::file_time_type::clock::now();
     auto age = std::chrono::duration_cast<std::chrono::seconds>(now - newest);
     return age.count() < ttlSeconds;
+}
+
+// Seconds since the index's refresh marker was last touched, or -1 if the
+// marker is missing/unreadable. Read-only — no network, no side effects.
+std::int64_t index_age_seconds(const std::filesystem::path& indexDir) {
+    std::error_code ec;
+    auto marker = index_refresh_marker(indexDir);
+    auto newest = std::filesystem::last_write_time(marker, ec);
+    if (ec) return -1;
+    auto now = std::filesystem::file_time_type::clock::now();
+    return std::chrono::duration_cast<std::chrono::seconds>(now - newest).count();
+}
+
+IndexStatus index_status_for(const std::filesystem::path& indexDir,
+                             std::int64_t ttlSeconds) {
+    std::error_code ec;
+    bool present = std::filesystem::exists(index_pkgs_dir(indexDir), ec) && !ec;
+    return IndexStatus{
+        .dir        = indexDir,
+        .present    = present,
+        .fresh      = is_index_dir_fresh(indexDir, ttlSeconds),
+        .ageSeconds = index_age_seconds(indexDir),
+    };
 }
 
 void write_file(const std::filesystem::path& p, std::string_view content) {
@@ -1165,6 +1200,14 @@ bool is_index_fresh(const Env& env, std::int64_t ttlSeconds) {
 
 bool is_official_index_fresh(const Env& env, std::int64_t ttlSeconds) {
     return is_index_dir_fresh(official_index_dir(env), ttlSeconds);
+}
+
+IndexStatus default_index_status(const Env& env, std::int64_t ttlSeconds) {
+    return index_status_for(default_index_dir(env), ttlSeconds);
+}
+
+IndexStatus official_index_status(const Env& env, std::int64_t ttlSeconds) {
+    return index_status_for(official_index_dir(env), ttlSeconds);
 }
 
 bool is_official_package_index_fresh(const Env& env,

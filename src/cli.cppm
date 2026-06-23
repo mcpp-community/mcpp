@@ -354,6 +354,8 @@ int run(int argc, char** argv) {
             .subcommand(cl::App("update")
                 .description("Refresh local registry clones")
                 .arg(cl::Arg("name").help("If given, update only this index")))
+            .subcommand(cl::App("status")
+                .description("Show local index presence/freshness (offline)"))
             .subcommand(cl::App("pin")
                 .description("Pin a custom index to a commit rev in mcpp.toml")
                 .arg(cl::Arg("name").help("Index name").required())
@@ -367,6 +369,7 @@ int run(int argc, char** argv) {
                     {"add",    cmd_index_add},
                     {"remove", cmd_index_remove},
                     {"update", cmd_index_update},
+                    {"status", cmd_index_status},
                     {"pin",    cmd_index_pin},
                     {"unpin",  cmd_index_unpin},
                 });
