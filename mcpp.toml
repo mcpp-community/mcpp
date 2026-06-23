@@ -34,11 +34,12 @@ linkage   = "static"
 linkage = "static"
 
 # Eat our own dog food: mcpp uses mcpplibs.cmdline for argument parsing.
-# NOTE: uses legacy dotted-key syntax so older bootstrapping mcpp versions
-# (pre-0.0.6, which don't understand [dependencies.<ns>] subtables) can
-# still parse this file during the self-host release build.
+# TOML-native namespaced form: `mcpplibs.cmdline` is the dotted subtable
+# `[dependencies.mcpplibs] cmdline = "0.0.1"` ⇒ identity (mcpplibs, cmdline).
+# The bootstrap mcpp used by the self-host build (xlings install mcpp, well
+# past 0.0.6) understands this, so the legacy quoted form is no longer needed.
 [dependencies]
-"mcpplibs.cmdline" = "0.0.1"
+mcpplibs.cmdline = "0.0.1"
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
 [dev-dependencies]
