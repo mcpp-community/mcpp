@@ -112,6 +112,20 @@ mcpp 第一次跑 / 沙盒初始化时(当前日志:`Initialize mcpp sandbox lay
 3. **P2(发布解耦)**:mcpp-index 仓加 artifact 发布 CI + mcpp 侧 artifact 拉取(与
    xim-pkgindex 对齐)。
 
+### 4.1 实现进度(WS3)
+
+- **✅ P0②(build 离线优先)**:`ensure_official_package_index_fresh`(`src/xlings.cppm`)
+  不再因 TTL 过期就跑联网 `xlings update`;**只在本地索引项缺失(首次 / 没见过的包)时拉一次**。
+  稳态 `mcpp build` 不再联网 —— 直接消除 Termux 首跑/构建卡几分钟的根因(commit `f0f57ae`)。
+- **✅ P0③(`mcpp index status`)**:新增只读、**全程不联网**的 `mcpp index status`,显示
+  xim/mcpplibs 两索引的 present/fresh/age/path;缺索引时提示显式 `mcpp index update`,否则确认本地可离线用。
+  `src/xlings.cppm` 导出 `IndexStatus` + `{default,official}_index_status`;`src/pm/index_management.cppm`
+  `index_status()`;CLI 接线 + e2e `tests/e2e/75_index_status_offline.sh`(commit `ba92265`)。
+- **P0①(seed 内置索引)**:暂沿用"缺则自动拉一次"(已满足首次保证有索引);随发行版捎带 seed 快照为后续优化。
+- **P1 / P2(指针 sha 比对 + mcpp 侧 artifact 拉取)**:mcpp-index 发布侧已就绪(WS2,资源仓
+  `xlings-res/mcpp-index` push 触发发 artifact + 指针);mcpp 客户端的 artifact 拉取/比对为后续 PR。
+  当前闭环经 git 路径已可用(稳态离线、缺包显式刷新)。
+
 ---
 
 ## 4.5 追加计划:first-init 细粒度带时间戳 debug log(WS5)
