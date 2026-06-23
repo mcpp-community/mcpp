@@ -3,6 +3,30 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.61] — 2026-06-24
+
+### 新增
+
+- **离线优先的索引刷新**:`mcpp build` 不再因 TTL 过期就自动联网 `xlings update`。改为
+  **miss-triggered**——依赖在本地索引里就直接用(零网络,消除弱网/Termux 首跑卡顿);依赖在
+  本地查不到时才刷新一次去拉它(打印 `Refreshing package index — \`<pkg>\` not found locally`,
+  并有 120s 防重,避免一个 build 里多个缺包各跑一遍全量 git 同步)。
+- **`mcpp index status`**:只读、全程不联网,显示 xim/mcpplibs 两索引的 present/fresh/age/path;
+  缺索引时提示显式 `mcpp index update`。
+- **install.sh 多架构**:新增 `linux-aarch64`(aarch64 / arm64),并支持 GitHub→GitCode(CN)
+  镜像回退(`MCPP_MIRROR=CN` 强制 GitCode),让被墙网络下同一条安装命令可用。
+- **first-init 细粒度计时日志**:`--verbose` 下首次初始化(sandbox 布局、patchelf/ninja bootstrap)
+  各步带时间戳 + `ScopedTimer` 耗时(`[VERBOSE <ts>] … done (Δ=<ms>ms)`),便于定位"卡很久"的步骤。
+
+### CI
+
+- e2e 套件拆为独立的 `ci-linux-e2e.yml`,与 build/单测/工具链矩阵**并行**,缩短每个 PR 的关键路径。
+- `tests/e2e/run_all.sh` 每个用例输出耗时 + 末尾「最慢优先」汇总,便于后续分片/优化。
+
+### 杂项
+
+- 自托管清单改用 TOML 原生命名空间依赖写法 `mcpplibs.cmdline = "0.0.1"`(去掉遗留引号)。
+
 ## [0.0.57] — 2026-06-20
 
 ### 修复
