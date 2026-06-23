@@ -43,6 +43,22 @@ void set_verbose(bool v);
 bool is_verbose();
 void verbose(std::string_view tag, std::string_view message);
 
+// Scoped verbose timer for diagnosing slow steps (e.g. first-run init / bootstrap
+// hangs). Logs "<label>: start" on construction and "<label>: done (Δ=<ms>ms)" on
+// destruction, via verbose() — always to the timestamped log file
+// (~/.mcpp/log/mcpp.log), and to stderr under --verbose. Cheap: two log lines.
+struct ScopedTimer {
+    std::string tag;
+    std::string label;
+    std::chrono::steady_clock::time_point t0;
+    ScopedTimer(std::string_view tag_, std::string_view label_);
+    ~ScopedTimer();
+    ScopedTimer(const ScopedTimer&) = delete;
+    ScopedTimer& operator=(const ScopedTimer&) = delete;
+    // Emit an intermediate checkpoint: "<label>: <note> (+<ms>ms)".
+    void mark(std::string_view note) const;
+};
+
 // Check if a level is enabled (avoid constructing expensive messages).
 bool is_enabled(Level l);
 
@@ -136,8 +152,12 @@ void write_log(Level level, std::string_view tag, std::string_view message) {
 }
 
 void write_stderr(std::string_view tag, std::string_view message) {
-    // Dim gray for verbose output so it doesn't compete with ui::status
-    std::fprintf(stderr, "\033[2m[VERBOSE] %.*s: %.*s\033[0m\n",
+    // Dim gray for verbose output so it doesn't compete with ui::status.
+    // Carry the wall-clock timestamp so a long first-run hang is attributable
+    // to a specific step from the live --verbose stream (the log file already
+    // has it). Grep-friendly: "[VERBOSE <ts>]".
+    std::fprintf(stderr, "\033[2m[VERBOSE %s] %.*s: %.*s\033[0m\n",
+        timestamp().c_str(),
         static_cast<int>(tag.size()), tag.data(),
         static_cast<int>(message.size()), message.data());
 }
@@ -210,6 +230,23 @@ void verbose(std::string_view tag, std::string_view message) {
     if (g_verbose) {
         write_stderr(tag, message);
     }
+}
+
+ScopedTimer::ScopedTimer(std::string_view tag_, std::string_view label_)
+    : tag(tag_), label(label_), t0(std::chrono::steady_clock::now()) {
+    verbose(tag, std::format("{}: start", label));
+}
+
+ScopedTimer::~ScopedTimer() {
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - t0).count();
+    verbose(tag, std::format("{}: done (Δ={}ms)", label, ms));
+}
+
+void ScopedTimer::mark(std::string_view note) const {
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - t0).count();
+    verbose(tag, std::format("{}: {} (+{}ms)", label, note, ms));
 }
 
 } // namespace mcpp::log

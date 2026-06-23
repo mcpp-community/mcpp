@@ -16,6 +16,7 @@ export module mcpp.xlings;
 import std;
 import mcpp.pm.compat;
 import mcpp.platform;
+import mcpp.log;
 
 export namespace mcpp::xlings {
 
@@ -1075,6 +1076,7 @@ void ensure_init(const Env& env, bool quiet) {
 
     if (!quiet)
         print_status("Initialize", "mcpp sandbox layout (one-time)");
+    mcpp::log::ScopedTimer _t_init("init", "sandbox layout (xlings self init)");
     std::string cmd;
     if constexpr (mcpp::platform::is_windows) {
         mcpp::platform::env::set("XLINGS_HOME", env.home.string());
@@ -1122,6 +1124,7 @@ void ensure_patchelf(const Env& env, bool quiet,
 
     if (!quiet)
         print_status("Bootstrap", "patchelf into mcpp sandbox (one-time)");
+    mcpp::log::ScopedTimer _t_pe("init", std::format("bootstrap patchelf@{}", pinned::kPatchelfVersion));
     int rc = install_with_progress(env,
         std::format("xim:patchelf@{}", pinned::kPatchelfVersion), cb, quiet);
     if (rc != 0 && !quiet) {
@@ -1148,6 +1151,7 @@ void ensure_ninja(const Env& env, bool quiet,
     }
     if (!quiet)
         print_status("Bootstrap", "ninja into mcpp sandbox (one-time)");
+    mcpp::log::ScopedTimer _t_ninja("init", std::format("bootstrap ninja@{}", pinned::kNinjaVersion));
     int rc = install_with_progress(env,
         std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet);
     if (rc != 0 && !quiet) {
