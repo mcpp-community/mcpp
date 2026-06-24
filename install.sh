@@ -158,4 +158,8 @@ echo
 "$PREFIX/bin/mcpp" --version
 echo
 echo "✓ mcpp installed at $PREFIX"
-echo "  Open a new shell (or 'source $rc') and run:  mcpp --help"
+if [[ -n "${rc:-}" ]]; then
+    echo "  Open a new shell (or 'source $rc') and run:  mcpp --help"
+else
+    echo "  Add $PREFIX/bin to your PATH, then run:  mcpp --help"
+fi
