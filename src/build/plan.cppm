@@ -418,7 +418,13 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         LinkUnit ar;
         ar.targetName = qname;
         ar.kind       = LinkUnit::StaticLibrary;
-        ar.output     = std::filesystem::path("lib" + sanitize(qname) + ".a");
+        // Platform-aware archive name (libfoo.a on ELF/Mach-O, foo.lib on
+        // Windows) — mirrors target_output() so the toolchain's `ar` + lld
+        // accept it on every platform. (Hardcoding `.a` broke Windows, whose
+        // static_lib_ext is `.lib`.)
+        ar.output     = std::filesystem::path("bin") /
+            std::format("{}{}{}", mcpp::platform::lib_prefix, sanitize(qname),
+                        mcpp::platform::static_lib_ext);
         ar.objects    = std::move(archiveObjs);
         staticDepPackages.insert(qname);
         staticDepArchives.push_back({qname, ar.output});
