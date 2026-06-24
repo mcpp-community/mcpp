@@ -30,6 +30,7 @@ struct LinkUnit {
     std::string                     targetName;
     enum Kind { Binary, StaticLibrary, SharedLibrary, TestBinary } kind = Binary;
     std::vector<std::filesystem::path> objects;        // relative to plan.outputDir
+    std::vector<std::filesystem::path> archiveInputs;  // dep static libs (.a), linked AFTER objects
     std::vector<std::filesystem::path> implicitInputs; // relative to plan.outputDir
     std::vector<std::string>        linkFlags;          // per-link edge flags
     std::filesystem::path           output;            // relative to plan.outputDir
@@ -380,6 +381,50 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
 
+    // Static-library dependencies (kind="lib", e.g. gtest): build a per-package
+    // archive lib<pkg>.a from the package's non-module objects and link it into
+    // consumers AFTER their own objects. Standard archive semantics then pull
+    // only the members a symbol still needs — notably gtest_main.o's own main()
+    // is pulled ONLY when the consumer test defines none — which fixes
+    // "duplicate symbol: main" across the {own-main, framework-main} ×
+    // {uses-framework, doesn't} combinations. Module (.cppm) objects are NOT
+    // archived: they carry global init and must always be linked directly.
+    // Driven purely by the dependency's declared `kind` — no per-framework
+    // special-casing, so a future test framework just declares kind="lib".
+    struct StaticDepArchive {
+        std::string           packageName;   // qualified
+        std::filesystem::path output;        // lib<pkg>.a, relative to outputDir
+    };
+    std::vector<StaticDepArchive> staticDepArchives;
+    std::set<std::string> staticDepPackages;   // qualified names linked via .a
+    for (std::size_t i = 1; i < packages.size(); ++i) {
+        auto const& p = packages[i];
+        auto qname = qualified_package_name(p.manifest);
+        if (sharedDepPackages.contains(qname)) continue;   // shared takes precedence
+        bool isLib = false;
+        for (auto const& t : p.manifest.targets) {
+            if (t.kind == mcpp::manifest::Target::Library) { isLib = true; break; }
+        }
+        if (!isLib) continue;
+        std::vector<std::filesystem::path> archiveObjs;
+        for (auto& cu : plan.compileUnits) {
+            if (cu.packageName != qname) continue;
+            if (cu.source.extension() == ".cppm") continue;          // modules stay loose
+            if (!is_implementation_source(cu.source)) continue;
+            if (entryFilesAcrossTargets.contains(cu.source)) continue;
+            archiveObjs.push_back(cu.object);
+        }
+        if (archiveObjs.empty()) continue;   // header-only / pure-module lib → nothing to archive
+        LinkUnit ar;
+        ar.targetName = qname;
+        ar.kind       = LinkUnit::StaticLibrary;
+        ar.output     = std::filesystem::path("lib" + sanitize(qname) + ".a");
+        ar.objects    = std::move(archiveObjs);
+        staticDepPackages.insert(qname);
+        staticDepArchives.push_back({qname, ar.output});
+        plan.linkUnits.push_back(std::move(ar));
+    }
+
     std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
     for (std::size_t i = 0; i < packages.size(); ++i) {
         for (auto const& [depName, spec] : packages[i].manifest.dependencies) {
@@ -568,6 +613,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         // is exclusive to that binary).
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
+            if (staticDepPackages.contains(cu.packageName)) continue;    // archived → linked as .a
             if (!is_implementation_source(cu.source)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;     // own entry: already added above
             if (entryFilesAcrossTargets.contains(cu.source)) continue;     // foreign entry: skip
@@ -577,6 +623,12 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary
             || lu.kind == LinkUnit::SharedLibrary) {
             append_shared_deps_for_linked_objects(lu);
+            // Link each kind="lib" dependency archive AFTER this unit's objects.
+            // Harmless when unused: archive members are pulled on demand, so a
+            // binary that references no symbols from the lib pulls nothing.
+            for (auto const& sa : staticDepArchives) {
+                lu.archiveInputs.push_back(sa.output);
+            }
         }
 
         plan.linkUnits.push_back(std::move(lu));

@@ -3,6 +3,26 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.64] — 2026-06-25
+
+### 修复
+
+- **`mcpp test` 在自带 `main()` 的测试 + gtest dev-dep 下 `duplicate symbol: main`**:
+  gtest 的 `gtest_main.cc` 自带 `main()`,而 mcpp 此前把依赖的**全部对象内联**进每个
+  测试二进制,于是测试自己的 `main()` 与 `gtest_main.o` 撞符号。修复:**兑现依赖
+  描述符里已声明的 `kind="lib"`**——把这类依赖编译成静态归档 `lib<pkg>.a`,链接在
+  测试对象**之后**;标准归档语义只在符号未定义时拉成员,故 `gtest_main.o` 的 `main`
+  只在测试不自带 `main` 时才被拉入。`{自带/框架 main} × {用/不用 gtest}` 全部组合
+  皆正确,用户无感。纯模块依赖(如 mcpplibs.cmdline,无非模块对象)行为不变。
+  这是**通用** link-model 改进、由既有描述符 `kind` 驱动,**无 gtest 特例**,未来
+  测试框架声明 `kind="lib"` 即自动适配。详见
+  `.agents/docs/2026-06-25-dependency-archive-linking-design.md`。
+
+### 测试
+
+- 新增单测 `NinjaBackend.ArchiveInputsLinkedAfterObjects`(归档须排在对象之后)与
+  跨平台 e2e `78_test_main_combinations.sh`(四种 main×gtest 组合 `mcpp test` 全绿)。
+
 ## [0.0.63] — 2026-06-25
 
 ### 修复
