@@ -109,9 +109,38 @@ bool has_xcode_clt() {
 
 std::optional<std::filesystem::path> sdk_path() {
 #if defined(__APPLE__)
-    auto result = run_capture_trimmed("xcrun --show-sdk-path 2>/dev/null");
-    if (!result.empty() && std::filesystem::exists(result))
-        return std::filesystem::path(result);
+    // 1. Explicit override wins (matches clang's own SDKROOT handling).
+    if (const char* env = std::getenv("SDKROOT"); env && *env) {
+        std::filesystem::path p(env);
+        if (std::filesystem::exists(p)) return p;
+    }
+    // 2. xcrun — the canonical query. Try the generic form, then the
+    //    macosx-specific one (works even when the active developer dir's
+    //    default SDK isn't macOS, e.g. an iOS-defaulted setup).
+    for (const char* cmd : {"xcrun --show-sdk-path 2>/dev/null",
+                            "xcrun --sdk macosx --show-sdk-path 2>/dev/null"}) {
+        auto result = run_capture_trimmed(cmd);
+        if (!result.empty() && std::filesystem::exists(result))
+            return std::filesystem::path(result);
+    }
+    // 3. Derive from the active developer dir (`xcode-select -p`) — covers
+    //    machines where xcrun is misconfigured but the SDK is present.
+    auto devdir = run_capture_trimmed("xcode-select -p 2>/dev/null");
+    if (!devdir.empty()) {
+        std::filesystem::path base(devdir);
+        for (auto cand : {
+                base / "Platforms" / "MacOSX.platform" / "Developer" / "SDKs" / "MacOSX.sdk",
+                base / "SDKs" / "MacOSX.sdk" }) {
+            if (std::filesystem::exists(cand)) return cand;
+        }
+    }
+    // 4. Well-known fixed locations (Command-Line-Tools-only / standard Xcode).
+    for (const char* p : {
+            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+            "/Applications/Xcode.app/Contents/Developer/Platforms/"
+            "MacOSX.platform/Developer/SDKs/MacOSX.sdk" }) {
+        if (std::filesystem::exists(p)) return std::filesystem::path(p);
+    }
 #endif
     return std::nullopt;
 }

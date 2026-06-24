@@ -417,8 +417,19 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         if (!macosDeploymentTarget.empty()) {
             version_min = " -mmacosx-version-min=" + macosDeploymentTarget;
         }
-        f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}", full_static, static_stdlib,
-                           b_flag, version_min, user_ldflags, link_extra);
+        // Pass the macOS SDK to the LINKER explicitly. The link otherwise relies
+        // on clang's implicit SDK detection (xcrun/SDKROOT → ld64 -syslibroot)
+        // to resolve -lSystem and friends. On a clean Xcode (CI) that works, so
+        // the gap is latent; but on a machine where that detection fails —
+        // misconfigured `xcode-select`, Command-Line-Tools-only, or a freshly
+        // installed bundled clang — ld64.lld dies with "library not found for
+        // -lSystem". -isysroot makes it deterministic regardless of the host's
+        // developer-tools state. (compile side already gets --sysroot above.)
+        std::string macos_sdk;
+        if (auto sdk = mcpp::platform::macos::sdk_path())
+            macos_sdk = " -isysroot " + escape_path(*sdk);
+        f.ld = std::format("{}{}{}{} -fuse-ld=lld{}{}{}", full_static, static_stdlib,
+                           b_flag, macos_sdk, version_min, user_ldflags, link_extra);
     } else {
         f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
                            runtime_dirs, payload_ld, user_ldflags, link_extra);
