@@ -543,6 +543,13 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             }
         }
 
+        // Whether this consumer's own entry source defines `main`. Decides how
+        // kind="lib" dependencies are linked (archive vs inline) so the
+        // gtest_main-style optional entry works on EVERY linker — see the
+        // dependency-linking block further below. Default false → if we can't
+        // tell, fall back to inlining (the pre-archive behavior).
+        bool entryDefinesMain = false;
+
         if ((lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary) && lu.entryMain) {
             // Add main.cpp -> obj/main.o
             CompileUnit main_cu;
@@ -579,6 +586,18 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                         ++i;
                     }
                     if (!name.empty()) main_cu.imports.push_back(name);
+                }
+                // Detect a top-level `int main(`/`auto main(` definition
+                // (space-insensitive; skip comment lines). Heuristic, but the
+                // worst case is a wrong archive-vs-inline choice, not breakage.
+                if (!entryDefinesMain && !line.starts_with("//") && !line.starts_with("*")) {
+                    std::string nospace;
+                    for (char c : line)
+                        if (!std::isspace(static_cast<unsigned char>(c))) nospace.push_back(c);
+                    if (nospace.find("intmain(") != std::string::npos
+                        || nospace.find("automain(") != std::string::npos) {
+                        entryDefinesMain = true;
+                    }
                 }
             }
 
@@ -619,7 +638,13 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         // is exclusive to that binary).
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
-            if (staticDepPackages.contains(cu.packageName)) continue;    // archived → linked as .a
+            // kind="lib" deps: when THIS consumer defines its own main, link them
+            // as an archive (below) so the dep's own main-providing object (e.g.
+            // gtest_main.o) is NOT pulled — no `duplicate symbol: main`. When the
+            // consumer has NO main, inline the dep objects directly so the dep's
+            // entry object provides main on EVERY linker (MSVC lld-link does not
+            // pull an archive member just to satisfy the entry point → LNK1561).
+            if (entryDefinesMain && staticDepPackages.contains(cu.packageName)) continue;
             if (!is_implementation_source(cu.source)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;     // own entry: already added above
             if (entryFilesAcrossTargets.contains(cu.source)) continue;     // foreign entry: skip
@@ -629,11 +654,15 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary
             || lu.kind == LinkUnit::SharedLibrary) {
             append_shared_deps_for_linked_objects(lu);
-            // Link each kind="lib" dependency archive AFTER this unit's objects.
-            // Harmless when unused: archive members are pulled on demand, so a
-            // binary that references no symbols from the lib pulls nothing.
-            for (auto const& sa : staticDepArchives) {
-                lu.archiveInputs.push_back(sa.output);
+            // Consumers that define their own main link kind="lib" deps as an
+            // archive (placed AFTER objects): archive members are pulled on
+            // demand, so the dep's gtest_main-style entry object is skipped when
+            // main is already defined, and pulled is never needed here. Consumers
+            // without their own main inlined the dep objects directly above.
+            if (entryDefinesMain) {
+                for (auto const& sa : staticDepArchives) {
+                    lu.archiveInputs.push_back(sa.output);
+                }
             }
         }
 

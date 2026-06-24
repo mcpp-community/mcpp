@@ -70,31 +70,46 @@ mcpp 的 manifest 解析器也**已支持** `kind="lib"` → `Target::Library`
 
 ## 4. 核心设计：依赖库 → 静态归档 → 条件链接
 
-### 4.1 原理（标准链接器语义）
-静态归档 `.a` 的成员对象**仅在其提供的符号当前未定义时**才被拉入。于是单个
-`libgtest.a = { gtest-all.o, gtest_main.o }` 即同时正确处理「带/不带 main」：
+### 4.1 原理 + 跨链接器现实(归档 / 内联 **混合**)
 
-- 测试自带 `main` → 链接器处理归档时 `main` 已定义 → **不拉** `gtest_main.o`;
-  测试引用的 gtest 符号 → 拉 `gtest-all.o`。✓
-- 测试不带 `main` → `main` 未定义 → 拉 `gtest_main.o`(它提供 main + 调
-  `RUN_ALL_TESTS`)+ `gtest-all.o`。✓
-- 测试自带 main 且**不用** gtest(但 gtest 是 dev-dep)→ 归档**零贡献**(无未定义
-  符号引用它)→ 不再撞 main。✓(今天的失败用例)
-- 测试不带 main 且不用框架 → 无入口 → 链接器报 undefined `main`。mcpp 捕获并给出
-  清晰提示(见 §6)。✓
+理想模型:静态归档 `.a` 的成员对象**仅在其符号当前未定义时**才被拉入,于是单个
+`libgtest.a = { gtest-all.o, gtest_main.o }` 似乎能同时处理「带/不带 main」。
+**ELF(ld.lld)与 Mach-O(ld64)确实如此**:不带 main 的测试,`main` 被 CRT 引用
+为未定义 → 链接器从归档拉 `gtest_main.o` 当入口。
 
-> 单归档即可,**无需**把 gtest_main 拆成独立 target——归档的「按成员对象解析」已
-> 天然实现条件链接。
+**但 Windows 上 mcpp 走 MSVC 模式(clang-cl + lld-link)**,实测:
+```
+LINK : fatal error LNK1561: entry point must be defined
+```
+**MSVC lld-link 不会仅为「确定入口点」而从归档惰性拉取成员** → 不带 main 的测试拿不到
+`gtest_main.o` → LNK1561。而 `--start-lib/--end-lib` 又不被 Mach-O lld 支持,
+不能作为统一替代。
+
+**结论:按「消费者是否自带 main」选择链接方式(per-consumer,全平台正确):**
+
+| 测试自带 main? | 依赖链接方式 | 理由 |
+|---|---|---|
+| 是 | **归档** `lib<pkg>.a`(排在对象后) | 链接器不拉 `gtest_main.o`(main 已定义)→ 无 `duplicate main`;入口由测试提供,MSVC 也 OK |
+| 否 | **直接内联**依赖的非模块对象 | `gtest_main.o` 作为普通对象直接提供入口 → **任何**链接器(含 MSVC)都 OK;测试无 main 故无冲突 |
+
+判据 = **扫描消费者入口源是否定义 `int main`/`auto main`**(空白不敏感、跳过注释行;
+启发式,最坏只是选错链接方式而非出错;探测不到时默认按「无 main」内联=改动前行为)。
+**通用**:无需识别「哪个依赖对象提供 main」,只看消费者自己——对任何 `kind="lib"`
+依赖、任何未来测试框架都成立。
 
 ### 4.2 BuildPlan 变更（`plan.cppm`）
 对每个 `kind="lib"` 的**依赖**包(非根包),由其**非模块**实现对象(`.cc/.cpp/.c`)
 合成一个 `StaticLibrary` LinkUnit → 产 `lib<pkg>.a`:
 
-- 新增 LinkUnit:`{ kind=StaticLibrary, output="lib<mangled-pkg>.a", objects=<dep 的非模块对象> }`。
-- 消费者(Binary/TestBinary/SharedLibrary)**不再内联**该 dep 的非模块对象,改为:
-  - 把 `lib<pkg>.a` 路径追加到**链接命令、对象之后**(符号解析顺序正确);
-  - 把 `.a` 加入 `implicitInputs`(ninja 重建追踪)。
-- **模块对象(`.cppm` 的 `.o`)仍直接内联**:它们承载模块全局初始化、且从不提供
+- 新增 LinkUnit:`{ kind=StaticLibrary, output="bin/<prefix><mangled-pkg><static_lib_ext>",
+  objects=<dep 的非模块对象> }`。**命名平台感知**(`libfoo.a` / `foo.lib`,复用
+  `platform::lib_prefix`+`static_lib_ext`,镜像 `target_output`)——硬编码 `.a`
+  会断 Windows。
+- 消费者(Binary/TestBinary/SharedLibrary)按 §4.1 表二选一:
+  - **自带 main** → 不内联该 dep 的非模块对象,把 `.a` 路径追加到**链接命令、对象
+    之后**(经 `$in`,既上命令行又被 ninja 依赖追踪);
+  - **不带 main** → 直接内联该 dep 的非模块对象(走原内联路径)。
+- **模块对象(`.cppm` 的 `.o`)永远直接内联**:它们承载模块全局初始化、且从不提供
   `main`,放进归档可能因「无未定义符号引用」被丢弃 → 破坏全局初始化。故模块对象
   不归档(mcpplibs.cmdline 等纯模块依赖 → 无非模块对象 → 无归档 → **行为不变**)。
 
