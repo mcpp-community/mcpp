@@ -498,7 +498,16 @@ export int run_tests(std::span<const std::string> passthrough,
     mcpp::build::BuildOptions opts;
     auto buildResult = backend->build(ctx->plan, opts);
     if (!buildResult) {
+        std::fflush(stdout);
         mcpp::ui::error(buildResult.error().message);
+        // Surface the compiler/linker stderr (parity with run_build_plan) —
+        // otherwise `mcpp test` failures show only "build failed" with no
+        // diagnostic, which is undebuggable (notably on CI).
+        if (!buildResult.error().diagnosticOutput.empty()) {
+            std::fputs(buildResult.error().diagnosticOutput.c_str(), stderr);
+            if (buildResult.error().diagnosticOutput.back() != '\n')
+                std::fputc('\n', stderr);
+        }
         return 1;
     }
 
