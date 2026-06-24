@@ -924,15 +924,18 @@ int install_with_progress(const Env& env, std::string_view target,
     {
         auto directCmd = build_command_prefix(env) +
             std::format(" install {} -y {}", target, mcpp::platform::shell::silent_redirect);
-        // Windows: explicitly seal stdin (<NUL) so xlings and any grandchildren
-        // (curl, git, 7z, etc.) cannot block on a terminal read. The earlier
-        // comment claimed POSIX must keep stdin open for "subprocess
-        // coordination" — that's never been observed in practice on Linux/macOS,
-        // and on Windows it caused users to press Enter repeatedly during first-
-        // run toolchain install. POSIX keeps the original behavior to stay
-        // conservative.
+        // Seal stdin so xlings and any grandchildren (curl, git, 7z, xcode-select
+        // / brew prompts, etc.) cannot block on a terminal read. Without it,
+        // first-run toolchain install pauses waiting for the user to press Enter
+        // — first seen on Windows, now also reproduced on macOS (the "需要回车
+        // 才能继续" first-run report). The old "POSIX must keep stdin open for
+        // subprocess coordination" claim never held in practice; `-y` already
+        // makes the install non-interactive, so the redirect only removes the
+        // spurious terminal blocking. Windows uses <NUL, POSIX </dev/null.
         if constexpr (mcpp::platform::is_windows) {
             directCmd += " <NUL";
+        } else {
+            directCmd += " </dev/null";
         }
 
         // The direct install redirects all output to the null device, so it
@@ -977,15 +980,18 @@ int install_with_progress(const Env& env, std::string_view target,
     }
 
     // Fallback: NDJSON interface path (provides progress callbacks).
+    // Seal stdin (same rationale as the direct path above) so the install can't
+    // block on a terminal read. The protocol is NDJSON-over-stdout + "yes":true,
+    // so nothing here needs the terminal.
     auto cmd = [&]() -> std::string {
         if constexpr (mcpp::platform::is_windows) {
-            return std::format("{} interface install_packages --args {} {}",
+            return std::format("{} interface install_packages --args {} {} <NUL",
                 build_command_prefix(env),
                 shq(argsJson),
                 mcpp::platform::null_redirect);
         } else {
             return std::format(
-                "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} {}",
+                "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} {} </dev/null",
                 shq(env.home.string()),
                 shq(env.home.string()),
                 shq(env.binary.string()),
