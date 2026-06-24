@@ -3,6 +3,25 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.63] — 2026-06-25
+
+### 修复
+
+- **`tests/` 目录无代码提示**:clangd 在测试文件里对 `gtest::InitGoogleTest()`、
+  `import std` / `import mcpplibs.*` 全无补全。根因:`compile_commands.json` 是当次构建
+  plan 的镜像,`mcpp build` 的 plan 不含 `tests/**/*.cpp` 与 dev-deps,而它与 `mcpp test`
+  写同一个 cdb——后写覆盖前写,日常「编辑→build」循环里测试条目几乎总被擦掉。修复:
+  `write_compile_commands` 由「全量覆盖」改为「**合并保留**」——保留当前 plan 未覆盖但
+  文件仍存在的旧条目(上次 `mcpp test` 写入的测试条目),剪除已删文件。`mcpp build` 自身
+  **零改动**:不解析、不下载任何 dev-deps,build-only 用户与构建图均不受影响(offline-first)。
+  跑一次 `mcpp test` 后,测试补全在后续所有 `mcpp build` 中持久生效。
+  详见 `.agents/docs/2026-06-25-cdb-test-coverage-design.md`。
+
+### 测试
+
+- 新增单测 `tests/unit/test_compile_commands.cpp`(合并/剪除/去重/坏 JSON 回退)与跨平台
+  e2e `77_cdb_preserves_test_entries.sh`(`mcpp test` 后真实重建 `mcpp build` 仍保留测试条目)。
+
 ## [0.0.62] — 2026-06-24
 
 ### 修复

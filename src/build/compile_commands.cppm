@@ -24,6 +24,22 @@ export namespace mcpp::build {
 // Generate compile_commands.json content as a string.
 std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 
+// Merge freshly-emitted CDB text (`fresh`, from the current build plan) with a
+// prior CDB on disk (`existing`). A prior entry is preserved ONLY when its
+// `file` is absent from `fresh` AND still exists on disk (per `fileExists`);
+// everything else comes from `fresh`. Result is sorted by `file` for stable
+// output. A malformed `existing` is ignored (falls back to `fresh`).
+//
+// Rationale: `mcpp build` regenerates the CDB from a plan that lacks test files
+// / dev-deps, while `mcpp test` writes them in. Without merging, whichever ran
+// last wins and clangd loses coverage for tests/ (no completion). Merging makes
+// the CDB the union of every command's real plan — offline-safe, no extra
+// dependency resolution. See .agents/docs/2026-06-25-cdb-test-coverage-design.md.
+std::string merge_compile_commands(
+    std::string_view fresh,
+    std::string_view existing,
+    const std::function<bool(const std::filesystem::path&)>& fileExists);
+
 // Write compile_commands.json to the project root.
 void write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 
@@ -140,16 +156,58 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
     return entries.dump(2) + "\n";
 }
 
+std::string merge_compile_commands(
+    std::string_view fresh,
+    std::string_view existing,
+    const std::function<bool(const std::filesystem::path&)>& fileExists) {
+    auto freshJ = nlohmann::json::parse(fresh, nullptr, /*allow_exceptions=*/false);
+    if (freshJ.is_discarded() || !freshJ.is_array())
+        return std::string(fresh);
+
+    // Files the current plan already covers — those entries are authoritative.
+    std::set<std::string> freshFiles;
+    for (auto const& e : freshJ) {
+        if (e.contains("file") && e["file"].is_string())
+            freshFiles.insert(e["file"].get<std::string>());
+    }
+
+    // Keep fresh order, then append still-valid prior entries the plan doesn't
+    // cover (e.g. tests/ from a previous `mcpp test`). Drop entries for files
+    // that no longer exist so the CDB never accrues dead references.
+    nlohmann::json merged = freshJ;
+    auto existingJ = nlohmann::json::parse(existing, nullptr, /*allow_exceptions=*/false);
+    if (!existingJ.is_discarded() && existingJ.is_array()) {
+        for (auto const& e : existingJ) {
+            if (!e.contains("file") || !e["file"].is_string()) continue;
+            auto f = e["file"].get<std::string>();
+            if (freshFiles.contains(f)) continue;             // fresh wins
+            if (!fileExists(std::filesystem::path(f))) continue;  // pruned
+            merged.push_back(e);
+        }
+    }
+
+    return merged.dump(2) + "\n";
+}
+
 void write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
     auto content = emit_compile_commands(plan, flags);
     auto path = plan.projectRoot / "compile_commands.json";
 
-    // Only write if content changed (avoid triggering clangd re-index).
     if (std::filesystem::exists(path)) {
         std::ifstream is(path);
         std::stringstream ss;
         ss << is.rdbuf();
-        if (ss.str() == content)
+        auto existing = ss.str();
+
+        // Preserve still-valid prior entries this plan doesn't cover — chiefly
+        // tests/ entries a previous `mcpp test` wrote — so a plain `mcpp build`
+        // doesn't wipe clangd's coverage of test files. Offline-safe: no extra
+        // dependency resolution, just a merge of real prior plans.
+        content = merge_compile_commands(content, existing,
+            [](const std::filesystem::path& p) { return std::filesystem::exists(p); });
+
+        // Only write if content changed (avoid triggering clangd re-index).
+        if (existing == content)
             return;
     }
 
