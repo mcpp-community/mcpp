@@ -775,6 +775,23 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             // for large toolchain packages and keeps the real failure output
             // visible to CI/users when it still fails.
             mcpp::fallback::clean_incomplete_install(verdir);
+
+            // Offline-first refresh-on-miss: the failure may be a stale local
+            // index that doesn't list this package@version (e.g. installing a
+            // NEW toolchain version when the cached index predates it). The
+            // pre-install gate only refreshes when the package *file* is
+            // missing, so a version-miss slips through. Refresh the index ONCE
+            // here — on an actual install miss — then retry. Steady-state
+            // installs (package+version already local) succeed on the first
+            // try and never reach this path, so they stay offline.
+            if (parsed.indexName == "xim") {
+                mcpp::xlings::Env refreshEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
+                mcpp::log::verbose("fetcher",
+                    std::format("install failed for {}; refreshing index before retry",
+                                targets[0]));
+                mcpp::xlings::update_index(refreshEnv, /*quiet=*/true);
+            }
+
             mcpp::log::verbose("fetcher",
                 std::format("interface install failed for {}; retrying direct xlings install",
                             targets[0]));
