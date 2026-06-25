@@ -62,10 +62,14 @@ echo "$out" | grep -q '3 passed; 0 failed' || { echo "FAIL: summary mismatch"; e
 
 # A test that defines its own main must NOT also link gtest_main.o (that would be
 # `duplicate symbol: main`); a test relying on the framework's main MUST link it.
+# Match the ninja link target with an optional .exe suffix (Windows) and the
+# object with either .o / .obj — the gtest_main substring covers both.
 nj=$(find target -name build.ninja | head -1)
-own_link="$(grep 'bin/t_own_main_gtest :' "$nj" || true)"
-fw_link="$(grep 'bin/t_framework_main :' "$nj" || true)"
-echo "$own_link" | grep -q 'gtest_main' && { echo "FAIL: own-main test links gtest_main.o (dup main)"; exit 1; }
-echo "$fw_link" | grep -q 'gtest_main' || { echo "FAIL: framework-main test missing gtest_main.o"; exit 1; }
+own_link="$(grep -E 'bin/t_own_main_gtest(\.exe)? :' "$nj" || true)"
+fw_link="$(grep -E 'bin/t_framework_main(\.exe)? :' "$nj" || true)"
+[[ -n "$own_link" ]] || { echo "FAIL: no link line for t_own_main_gtest"; cat "$nj"; exit 1; }
+[[ -n "$fw_link" ]]  || { echo "FAIL: no link line for t_framework_main"; cat "$nj"; exit 1; }
+echo "$own_link" | grep -q 'gtest_main' && { echo "FAIL: own-main test links gtest_main (dup main)"; exit 1; }
+echo "$fw_link" | grep -q 'gtest_main' || { echo "FAIL: framework-main test missing gtest_main"; exit 1; }
 
 echo "OK"
