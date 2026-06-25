@@ -1,12 +1,16 @@
-# 依赖库归档链接（dependency `lib` → static archive）设计方案
+# 依赖入口对象的条件链接（fix `mcpp test` duplicate `main`）设计方案
 
-> mcpp 0.0.63 → 0.0.64 — 修复 `mcpp test` 的 `duplicate symbol: main`,并把
-> 「依赖库」从「散对象内联」升级为「静态归档按需链接」。
+> mcpp 0.0.63 → 0.0.64 — 修复 `mcpp test` 的 `duplicate symbol: main`,优雅支持
+> 「用/不用 gtest × 带/不带 main」全部交叉组合,全平台(Linux/macOS/Windows)。
 >
 > 关联：[2026-06-25-cdb-test-coverage-design.md](2026-06-25-cdb-test-coverage-design.md)
 >（同一轮 test 体验修复链的第三环）。
 >
-> **状态：设计定稿，进入实施。** 实施进度见 §8（动态更新）。
+> **状态：已实现并全平台 CI 通过。** 实施进度见 §8。
+>
+> **重要演进**:最初设计为「依赖 `kind="lib"` → 静态归档 `.a` 按需链接」(标题旧名),
+> 但该方案在 **Windows/MSVC lld-link 上两处致命**(见 §3.5 / §9),最终改为**保持依赖
+> 内联、仅条件性排除依赖自身的 main 对象**——等效、最小爆炸半径、全平台可行。
 
 ## 1. 问题
 
@@ -56,119 +60,98 @@ mcpp 的 manifest 解析器也**已支持** `kind="lib"` → `Target::Library`
 
 | 候选 | 评价 |
 |---|---|
-| ❌ mcpp 里给 gtest 加特判（跳过 gtest_main.o） | 把第三方库名硬编进构建核心,污染架构,未来每个框架都要再特判。否决。 |
-| ❌ 改 gtest 描述符拆出 `gtest_main` 单独目标 | 描述符**已**声明 `kind="lib"`,够用;拆分增加每个库包的作者负担,且仍需 mcpp 支持「按归档链接」。非必要。 |
-| ✅ **mcpp 核心:兑现依赖的 `kind="lib"` → 建静态归档 `.a` → 按归档链接** | 通用、由**既有**描述符元数据驱动、零 gtest 特例、未来框架自动适配。**采用。** |
+| ❌ mcpp 里给 gtest 加特判（跳过 gtest_main.o） | 把第三方库名硬编进构建核心,污染架构。否决。 |
+| ❌ 依赖 `kind="lib"` → 静态归档 `.a` 按需链接(最初采用) | 理念干净,但 **Windows/MSVC lld-link 两处致命**(§3.5);**否决**。 |
+| ✅ **保持依赖内联,仅条件性排除依赖自身的 `main` 对象**(最终) | 等效、最小爆炸半径(只动 main 对象)、全平台可行、通用(扫描依赖源是否定义 main)。**采用。** |
 
-**职责分层(干净):**
-- **描述符(mcpp-index)**:声明「我是什么」——`kind="lib"`。gtest 已声明,**不改**。
-- **mcpp 核心**:实现「怎么链」——依赖的 lib 包 → 归档 → 按归档链接。**通用 HOW。**
+### 3.5 为何放弃静态归档(Windows/MSVC 两处致命)
+最初实现「依赖 lib → `.a` 归档 → 按需链接」,Linux/macOS/aarch64 全绿,但 Windows CI
+连续失败,逐层揭开:
+1. **`LNK1561: entry point must be defined`** —— Windows 上 mcpp 走 **MSVC 模式
+   (lld-link)**,它**不会仅为确定入口点而从归档惰性拉取成员**。不带 main 的测试
+   (用 gtest TEST 宏 + gtest_main)拿不到 `gtest_main.o` 的 `main` → 失败。
+   (`--start-lib/--end-lib` 又不被 Mach-O lld 支持,不能统一替代。)
+2. **`LNK2019: unresolved external __imp_lzma_*`(构建 xlings)** —— 把**常规** lib
+   依赖(libarchive)也归档后,MSVC 链接器对「归档→另一归档(lzma)」的**传递符号
+   解析顺序**处理不同 → 一片未解析外部符号。
 
-**未来演进**:mcpplibs 生态测试框架 / mcpp 原生测试框架,只要在各自描述符里声明
-`kind="lib"`(并可选地提供一个含 `main` 的入口对象),就**自动**获得「带 main 用
-自己的、不带 main 用框架的」正确行为,mcpp 无需任何该框架的知识。
+两者证明:**静态归档在 MSVC 上不可行**(既不能供入口,又破坏传递链接)。故回退到内联。
 
-## 4. 核心设计：依赖库 → 静态归档 → 条件链接
+## 4. 核心设计：依赖入口对象的条件链接
 
-### 4.1 原理 + 跨链接器现实(归档 / 内联 **混合**)
+**保持所有依赖对象内联(沿用既有链接模型,xlings/libarchive/lzma 等逐字节不变),
+仅对「依赖自身定义 `main` 的对象」(如 gtest 的 `gtest_main.o`)做条件处理:**
 
-理想模型:静态归档 `.a` 的成员对象**仅在其符号当前未定义时**才被拉入,于是单个
-`libgtest.a = { gtest-all.o, gtest_main.o }` 似乎能同时处理「带/不带 main」。
-**ELF(ld.lld)与 Mach-O(ld64)确实如此**:不带 main 的测试,`main` 被 CRT 引用
-为未定义 → 链接器从归档拉 `gtest_main.o` 当入口。
+| 消费者自带 main? | 依赖的 main 对象(gtest_main.o)| 其余依赖对象 | 结果 |
+|---|---|---|---|
+| 是 | **排除**(不链接) | 内联 | 入口=消费者自己;无 `duplicate main` ✓ |
+| 否 | **内联**(直接链接,提供入口) | 内联 | 入口=gtest_main;全平台(含 MSVC)OK ✓ |
 
-**但 Windows 上 mcpp 走 MSVC 模式(clang-cl + lld-link)**,实测:
-```
-LINK : fatal error LNK1561: entry point must be defined
-```
-**MSVC lld-link 不会仅为「确定入口点」而从归档惰性拉取成员** → 不带 main 的测试拿不到
-`gtest_main.o` → LNK1561。而 `--start-lib/--end-lib` 又不被 Mach-O lld 支持,
-不能作为统一替代。
+- 「依赖的 main 对象」= 扫描每个**依赖**(非根包、非 shared)实现源,
+  `source_defines_main` 为真者(gtest_main.cc 有 main;gtest-all.cc / libarchive /
+  lzma 没有)。**一次性预扫描**存入 `depEntryMainSources`,消费者循环 O(1) 查表。
+- 「消费者自带 main」= `source_defines_main(entryMain)`(对测试即测试文件本身)。
+- **直接链接对象**(非归档)→ 不依赖任何链接器的归档拉取语义 → **Linux/macOS/Windows
+  一致**。
+- 仅排除「依赖的 main 对象」→ 其余链接**与改动前完全一致**,零回归(尤其 xlings)。
 
-**结论:按「消费者是否自带 main」选择链接方式(per-consumer,全平台正确):**
+### 4.1 `source_defines_main` 的健壮性(关键)
+判据是「源是否定义 `int main(`/`auto main(`」,**必须先剥离注释 + 字符串 + 字符 +
+raw-string 字面量再匹配**——否则测试夹具里的 `"int main(){...}"` 字符串会假阳性。
+`test_modgraph.cpp` 正是此坑:它在双引号字符串里嵌了 `int main()`,逐行启发式误判它
+「自带 main」→ 早期归档版把 no-main 测试错配 → MSVC LNK1561。现用字符状态机剥离后
+再匹配,导出 + 8 个单测守卫(`test_main_detection.cpp`)。
 
-| 测试自带 main? | 依赖链接方式 | 理由 |
-|---|---|---|
-| 是 | **归档** `lib<pkg>.a`(排在对象后) | 链接器不拉 `gtest_main.o`(main 已定义)→ 无 `duplicate main`;入口由测试提供,MSVC 也 OK |
-| 否 | **直接内联**依赖的非模块对象 | `gtest_main.o` 作为普通对象直接提供入口 → **任何**链接器(含 MSVC)都 OK;测试无 main 故无冲突 |
+### 4.2 通用性 / 面向未来
+不识别「哪个依赖、哪个对象」是 gtest_main——只看「依赖对象是否自带 main」+「消费者
+是否自带 main」。任何未来测试框架(mcpplibs 生态 / mcpp 原生)其 main-提供对象都被
+同样处理,mcpp **零框架知识、零特例**。描述符层(mcpp-index gtest)**无需改动**。
 
-判据 = **扫描消费者入口源是否定义 `int main`/`auto main`**(`source_defines_main`:先
-用字符状态机**剥离注释、字符串、字符、raw-string 字面量**再匹配——否则测试夹具里的
-`"int main(){...}"` 字符串会假阳性,导致对 no-main 测试错选归档 → MSVC LNK1561,正是
-`test_modgraph.cpp` 踩中的坑;启发式,最坏只是选错链接方式而非出错;探测不到时默认按
-「无 main」内联=改动前行为)。
-**通用**:无需识别「哪个依赖对象提供 main」,只看消费者自己——对任何 `kind="lib"`
-依赖、任何未来测试框架都成立。
-
-### 4.2 BuildPlan 变更（`plan.cppm`）
-对每个 `kind="lib"` 的**依赖**包(非根包),由其**非模块**实现对象(`.cc/.cpp/.c`)
-合成一个 `StaticLibrary` LinkUnit → 产 `lib<pkg>.a`:
-
-- 新增 LinkUnit:`{ kind=StaticLibrary, output="bin/<prefix><mangled-pkg><static_lib_ext>",
-  objects=<dep 的非模块对象> }`。**命名平台感知**(`libfoo.a` / `foo.lib`,复用
-  `platform::lib_prefix`+`static_lib_ext`,镜像 `target_output`)——硬编码 `.a`
-  会断 Windows。
-- 消费者(Binary/TestBinary/SharedLibrary)按 §4.1 表二选一:
-  - **自带 main** → 不内联该 dep 的非模块对象,把 `.a` 路径追加到**链接命令、对象
-    之后**(经 `$in`,既上命令行又被 ninja 依赖追踪);
-  - **不带 main** → 直接内联该 dep 的非模块对象(走原内联路径)。
-- **模块对象(`.cppm` 的 `.o`)永远直接内联**:它们承载模块全局初始化、且从不提供
-  `main`,放进归档可能因「无未定义符号引用」被丢弃 → 破坏全局初始化。故模块对象
-  不归档(mcpplibs.cmdline 等纯模块依赖 → 无非模块对象 → 无归档 → **行为不变**)。
-
-### 4.3 链接顺序与 ninja（`ninja_backend.cppm`）
-- 当前链接行:`build <out> : cxx_link <objects> | <implicitInputs>`。`implicitInputs`
-  在 `|` 之后是 ninja 的**order-only/隐式依赖,不进命令行**。归档要真正参与链接,
-  其路径必须进**命令行、且在对象之后**。
-- 方案:LinkUnit 新增 `std::vector<std::filesystem::path> archiveInputs`;ninja 发射
-  时把它们拼在 `objects`(及 std.o)**之后**、作为命令行实参,同时也加入 `| implicit`
-  做重建追踪。
-
-### 4.4 复用既有基建
-mcpp 已有 `cxx_archive` 规则(`ninja_backend.cppm:378`)、`archive_tool`(ar/llvm-ar,
-`flags.cppm:253`)、`StaticLibrary` LinkUnit。本设计复用之,无需新工具。
+### 4.3 实现位置(`plan.cppm`,`make_plan`)
+- 预扫描:`depEntryMainSources` = 所有依赖(非根、非 shared)实现源中
+  `source_defines_main` 为真者。
+- 每个消费者:`entryDefinesMain = source_defines_main(entryMain)`。
+- 内联循环新增一行:`if (entryDefinesMain && depEntryMainSources.contains(cu.source)) continue;`
+  ——自带 main 的消费者跳过依赖的 main 对象;其余一切照旧。
+- `source_defines_main` 导出供单测。**无新 LinkUnit、无 ninja 改动**(归档相关代码
+  及 `archiveInputs` 字段已全部移除)→ 后端/链接行与改动前一致。
 
 ## 5. 不破坏既有行为(回归边界)
-- **纯模块依赖**(mcpplibs.cmdline,`.cppm`)→ 无非模块对象 → 不生成归档 →
-  链接与今天**逐字节一致**。
-- **根包自身**对象 → 不归档(它就是要被链接的主体)。
-- **shared 依赖**(SharedLibrary)→ 走既有 `append_direct_shared_deps`,不变。
-- 仅「依赖包含有非模块实现对象且 `kind=lib`」(gtest、未来 C/C++ 库)行为改变:
-  由内联改为归档链接——这正是修复点。
+- 仅当「消费者自带 main」**且**「某依赖对象自身定义 main」时,该对象被排除——这是
+  唯一的行为变化点。
+- 所有其余链接(纯模块依赖、shared 依赖、根包、常规 C/C++ lib 如 libarchive/lzma、
+  无 main 的测试)**逐字节不变** → xlings 等复杂工程零回归(这正是放弃归档换来的)。
 
 ## 6. 边界用例
-- **无 main 且无框架的测试**:链接报 undefined `main`。mcpp 捕获 lld/ld 的该错误,
-  转成可读提示:`test '<name>' 无入口:请写 int main(),或依赖一个提供 main 的测试
-  框架(如 gtest,不写 main 时由 gtest_main 提供)`。(P2,可后续增强;P0 至少不崩。)
-- **多个 lib 依赖**:每个一个 `.a`,按依赖顺序排在对象之后;若库间有相互依赖,
-  保持拓扑序(已有 `directPackageDeps` 拓扑信息可复用)。
-- **静态库目标的根包**(`mcpp build` 产 `.a`)→ 不受影响(那是根包 target,非依赖)。
+- **无 main 且无框架的测试**:无入口 → 链接器报 undefined `main`(真实用户错误);
+  `mcpp test` 已透出诊断(本轮新增,见 cdb 修复链)。
+- **自带 main 且不用 gtest(但 gtest 是 dev-dep)**:依赖对象不被引用 → 链接器本就不
+  纳入(内联对象未引用即不产生符号需求);gtest_main 对象被显式排除 → 无冲突。
+- **多个依赖各自提供 main**:自带 main 消费者全部排除;无 main 消费者会拉多个 main →
+  duplicate(罕见,清晰报错)。
 
 ## 7. 验证策略(TDD)
-- **单元**(`tests/unit/test_ninja_backend.cpp` / 新增):给定一个 `kind=lib` 依赖 +
-  含非模块对象的 plan,断言:(a)生成 `StaticLibrary` LinkUnit;(b)消费者链接行含
-  该 `.a` 且**位于对象之后**;(c)纯模块依赖**不**生成归档。
-- **e2e**(新增 `78_test_main_combinations.sh`,三平台):一个含 `gtest` dev-dep 的
-  项目,覆盖四种交叉组合各一个 `tests/*.cpp`,断言 `mcpp test` 全绿:
-  1. 自带 main + 用 gtest;2. 不带 main + 用 gtest(TEST 宏);3. 自带 main + 不用
-  gtest;4.(可选)无 main 无框架 → 期望清晰错误。
-- **回归**:既有 15/16/17(test pass/fail/no-tests)、18(devdeps isolation)、
-  31(transitive deps)、07/08(static/shared lib)必须仍绿。
+- **单元** `test_main_detection.cpp`:`source_defines_main` 对真实 main / 带参 main /
+  `auto main` 判真;对字符串字面量、raw-string、注释里的 `int main()` 判假;对
+  `mainHelper` 判假。(8 例)
+- **e2e** `78_test_main_combinations.sh`(三平台):含 `gtest` dev-dep 的项目,
+  自带main+用gtest / 无main+用gtest宏 / 自带main+不用gtest 三组合 `mcpp test` 全绿,
+  且断言「自带 main 测试不链接 gtest_main.o、无 main 测试链接之」。
+- **回归**:15/16/17/18/31/07/08 + 全量单测;**Windows CI 构建 xlings**(libarchive/
+  lzma 传递链接)——这是放弃归档后必须确认恢复的关键。
 
-## 8. 实施计划(动态更新)
+## 8. 实施计划
 
-- [x] **P1 plan 模型**:`LinkUnit` 加 `archiveInputs`;为 `kind=lib` 依赖合成
-  `StaticLibrary` LinkUnit(`lib<pkg>.a`);消费者改为引用 `.a` 而非内联其非模块对象。
-  (`plan.cppm`:staticDep 检测 + 消费者排除内联 + `archiveInputs` 注入)
-- [x] **P2 ninja 发射**:链接行把 `archiveInputs` 经 `$in` 排在对象之后(既上命令行又
-  被 ninja 依赖追踪)。(`ninja_backend.cppm`)
-- [x] **P3 单元测试**:`NinjaBackend.ArchiveInputsLinkedAfterObjects`(归档在对象后);
-  全量 24 单测绿。
-- [x] **P4 e2e**:`78_test_main_combinations.sh` 四组合 `mcpp test` 全绿 + 断言生成
-  `cxx_archive`。本机验证:3 passed;`build libcompat_gtest.a : cxx_archive
-  obj/gtest_main.o obj/gtest-all.o`,测试链接行 `…objects… libcompat_gtest.a`。
-- [x] **P5 回归**:24 单测 + e2e 15/16/17/18/31/07/08 全绿。
-- [x] **P6 版本 + 文档**:bump 0.0.63→0.0.64;CHANGELOG;本文件勾选。
+- [x] **P1 plan 模型**:`source_defines_main`(剥离注释/字符串/raw-string)+ 导出;
+  `depEntryMainSources` 预扫描;消费者按「自带 main」排除依赖 main 对象。
+  (归档方案 staticDep/archiveInputs 已回退移除。)
+- [x] **P2 后端**:无改动(回退归档发射);`mcpp test` 透出 `diagnosticOutput`(可见性)。
+- [x] **P3 单元测试**:`MainDetection`(8 例)+ 全量 25 单测绿。
+- [x] **P4 e2e**:`78_test_main_combinations.sh` 三组合全绿 + 链接行断言。
+- [x] **P5 回归(本机)**:25 单测 + e2e 15/16/17/18/31/07/08 全绿;e2e 78 三组合 +
+  链接行断言绿。**全平台 CI(尤其 Windows 构建 xlings)→ 待本轮 PR 确认。**
+- [x] **P6 版本 + 文档**:bump 0.0.63→0.0.64;CHANGELOG;本文件。
+- [x] **历程**:归档 → MSVC LNK1561/LNK2019(§3.5)→ 回退内联+条件排除。
 - [ ] **P7 发布闭环**:PR → CI 全平台 → squash --admin 合入 → tag v0.0.64 →
   release → 镜像 xlings-res(gh+gtc,4 平台)→ xim-pkgindex mcpp.lua bump(PR)→
   索引产物自动发布 → `xlings install mcpp@0.0.64` 验证 → bootstrap pin bump。

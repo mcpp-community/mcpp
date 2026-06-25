@@ -30,7 +30,6 @@ struct LinkUnit {
     std::string                     targetName;
     enum Kind { Binary, StaticLibrary, SharedLibrary, TestBinary } kind = Binary;
     std::vector<std::filesystem::path> objects;        // relative to plan.outputDir
-    std::vector<std::filesystem::path> archiveInputs;  // dep static libs (.a), linked AFTER objects
     std::vector<std::filesystem::path> implicitInputs; // relative to plan.outputDir
     std::vector<std::string>        linkFlags;          // per-link edge flags
     std::filesystem::path           output;            // relative to plan.outputDir
@@ -450,54 +449,32 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
 
-    // Static-library dependencies (kind="lib", e.g. gtest): build a per-package
-    // archive lib<pkg>.a from the package's non-module objects and link it into
-    // consumers AFTER their own objects. Standard archive semantics then pull
-    // only the members a symbol still needs — notably gtest_main.o's own main()
-    // is pulled ONLY when the consumer test defines none — which fixes
-    // "duplicate symbol: main" across the {own-main, framework-main} ×
-    // {uses-framework, doesn't} combinations. Module (.cppm) objects are NOT
-    // archived: they carry global init and must always be linked directly.
-    // Driven purely by the dependency's declared `kind` — no per-framework
-    // special-casing, so a future test framework just declares kind="lib".
-    struct StaticDepArchive {
-        std::string           packageName;   // qualified
-        std::filesystem::path output;        // lib<pkg>.a, relative to outputDir
-    };
-    std::vector<StaticDepArchive> staticDepArchives;
-    std::set<std::string> staticDepPackages;   // qualified names linked via .a
-    for (std::size_t i = 1; i < packages.size(); ++i) {
-        auto const& p = packages[i];
-        auto qname = qualified_package_name(p.manifest);
-        if (sharedDepPackages.contains(qname)) continue;   // shared takes precedence
-        bool isLib = false;
-        for (auto const& t : p.manifest.targets) {
-            if (t.kind == mcpp::manifest::Target::Library) { isLib = true; break; }
-        }
-        if (!isLib) continue;
-        std::vector<std::filesystem::path> archiveObjs;
+    // Dependency-provided optional entry objects (e.g. gtest's gtest_main.cc,
+    // which defines its own `main`). A consumer must link such an object ONLY
+    // when it has no `main` of its own — otherwise `duplicate symbol: main`.
+    //
+    // We keep ALL dependency objects INLINED (the long-standing model) and just
+    // drop these specific entry objects from self-main consumers. An earlier
+    // attempt linked kind="lib" deps as static archives instead, but that is not
+    // viable on Windows/MSVC lld-link: (1) it won't pull an archive member just
+    // to satisfy the entry point (LNK1561), and (2) archiving regular libs broke
+    // transitive symbol resolution order (libarchive→lzma LNK2019 in xlings).
+    // Inlining + dropping only the entry object is portable and minimal — it
+    // leaves every other dependency's linkage byte-for-byte unchanged.
+    //
+    // Detected by scanning each DEPENDENCY implementation source for a top-level
+    // main definition (gtest_main.cc has one; gtest-all.cc / libarchive / lzma do
+    // not). Generic: no per-framework knowledge — a future test framework's
+    // main-providing object is handled the same way.
+    std::set<std::filesystem::path> depEntryMainSources;
+    {
+        std::string rootQname = qualified_package_name(manifest);
         for (auto& cu : plan.compileUnits) {
-            if (cu.packageName != qname) continue;
-            if (cu.source.extension() == ".cppm") continue;          // modules stay loose
+            if (cu.packageName == rootQname) continue;            // root entries handled elsewhere
+            if (sharedDepPackages.contains(cu.packageName)) continue;
             if (!is_implementation_source(cu.source)) continue;
-            if (entryFilesAcrossTargets.contains(cu.source)) continue;
-            archiveObjs.push_back(cu.object);
+            if (source_defines_main(cu.source)) depEntryMainSources.insert(cu.source);
         }
-        if (archiveObjs.empty()) continue;   // header-only / pure-module lib → nothing to archive
-        LinkUnit ar;
-        ar.targetName = qname;
-        ar.kind       = LinkUnit::StaticLibrary;
-        // Platform-aware archive name (libfoo.a on ELF/Mach-O, foo.lib on
-        // Windows) — mirrors target_output() so the toolchain's `ar` + lld
-        // accept it on every platform. (Hardcoding `.a` broke Windows, whose
-        // static_lib_ext is `.lib`.)
-        ar.output     = std::filesystem::path("bin") /
-            std::format("{}{}{}", mcpp::platform::lib_prefix, sanitize(qname),
-                        mcpp::platform::static_lib_ext);
-        ar.objects    = std::move(archiveObjs);
-        staticDepPackages.insert(qname);
-        staticDepArchives.push_back({qname, ar.output});
-        plan.linkUnits.push_back(std::move(ar));
     }
 
     std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
@@ -695,32 +672,21 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         // is exclusive to that binary).
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
-            // kind="lib" deps: when THIS consumer defines its own main, link them
-            // as an archive (below) so the dep's own main-providing object (e.g.
-            // gtest_main.o) is NOT pulled — no `duplicate symbol: main`. When the
-            // consumer has NO main, inline the dep objects directly so the dep's
-            // entry object provides main on EVERY linker (MSVC lld-link does not
-            // pull an archive member just to satisfy the entry point → LNK1561).
-            if (entryDefinesMain && staticDepPackages.contains(cu.packageName)) continue;
             if (!is_implementation_source(cu.source)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;     // own entry: already added above
             if (entryFilesAcrossTargets.contains(cu.source)) continue;     // foreign entry: skip
+            // A dependency's own main-providing object (e.g. gtest_main.o): link
+            // it ONLY when this consumer has no main of its own. With its own
+            // main, including it would be `duplicate symbol: main`; without one,
+            // it supplies the entry (gtest-style). Works on every linker — the
+            // object is linked directly, never relying on archive member pulling.
+            if (entryDefinesMain && depEntryMainSources.contains(cu.source)) continue;
             lu.objects.push_back(cu.object);
         }
 
         if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary
             || lu.kind == LinkUnit::SharedLibrary) {
             append_shared_deps_for_linked_objects(lu);
-            // Consumers that define their own main link kind="lib" deps as an
-            // archive (placed AFTER objects): archive members are pulled on
-            // demand, so the dep's gtest_main-style entry object is skipped when
-            // main is already defined, and pulled is never needed here. Consumers
-            // without their own main inlined the dep objects directly above.
-            if (entryDefinesMain) {
-                for (auto const& sa : staticDepArchives) {
-                    lu.archiveInputs.push_back(sa.output);
-                }
-            }
         }
 
         plan.linkUnits.push_back(std::move(lu));

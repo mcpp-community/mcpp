@@ -629,14 +629,6 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 rule = "cxx_shared";
                 break;
         }
-        // Dependency static archives (kind="lib" deps, e.g. gtest): linked
-        // AFTER the objects so the linker pulls members (e.g. gtest_main.o's
-        // own main) only when a symbol is still undefined. Explicit inputs →
-        // placed on the command line via $in AND dep-tracked for relink.
-        for (auto& a : lu.archiveInputs) {
-            ins += " " + escape_ninja_path(a);
-        }
-
         std::string implicit;
         for (auto& input : lu.implicitInputs) {
             implicit += " " + escape_ninja_path(input);

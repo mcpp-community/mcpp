@@ -60,8 +60,12 @@ for t in t_own_main_gtest t_framework_main t_own_main_no_gtest; do
 done
 echo "$out" | grep -q '3 passed; 0 failed' || { echo "FAIL: summary mismatch"; echo "$out"; exit 1; }
 
-# The dev-dep must be linked as an archive, not inlined object-by-object.
+# A test that defines its own main must NOT also link gtest_main.o (that would be
+# `duplicate symbol: main`); a test relying on the framework's main MUST link it.
 nj=$(find target -name build.ninja | head -1)
-grep -q 'cxx_archive' "$nj" || { echo "FAIL: no static archive built for kind=lib dep"; exit 1; }
+own_link="$(grep 'bin/t_own_main_gtest :' "$nj" || true)"
+fw_link="$(grep 'bin/t_framework_main :' "$nj" || true)"
+echo "$own_link" | grep -q 'gtest_main' && { echo "FAIL: own-main test links gtest_main.o (dup main)"; exit 1; }
+echo "$fw_link" | grep -q 'gtest_main' || { echo "FAIL: framework-main test missing gtest_main.o"; exit 1; }
 
 echo "OK"

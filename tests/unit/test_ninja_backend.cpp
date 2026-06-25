@@ -127,30 +127,6 @@ TEST(NinjaBackend, CxxFlagsIncludeBuildIncludeDirs) {
         << flags.cxx;
 }
 
-TEST(NinjaBackend, ArchiveInputsLinkedAfterObjects) {
-    // A dependency declared `kind = "lib"` (e.g. gtest) is linked as a static
-    // archive placed AFTER the consumer's own objects, so the linker only pulls
-    // members (like gtest_main.o providing main) when a symbol is still
-    // undefined. Order matters: archive must follow the objects on the command
-    // line, otherwise symbol resolution drops the needed members.
-    auto plan = minimal_plan();
-    LinkUnit lu;
-    lu.targetName = "test_smoke";
-    lu.kind = LinkUnit::TestBinary;
-    lu.output = "bin/test_smoke";
-    lu.objects = {"obj/test_smoke.o"};
-    lu.archiveInputs = {"libgtest.a"};
-    plan.linkUnits.push_back(std::move(lu));
-
-    auto ninja = emit_ninja_string(plan);
-
-    auto objPos = ninja.find("obj/test_smoke.o");
-    auto arPos  = ninja.find("libgtest.a");
-    ASSERT_NE(objPos, std::string::npos) << ninja;
-    ASSERT_NE(arPos, std::string::npos) << ninja;
-    EXPECT_LT(objPos, arPos) << "archive must be linked AFTER objects\n" << ninja;
-}
-
 TEST(NinjaBackend, RootPackageCxxflagsAreEmittedOncePerUnit) {
     auto plan = minimal_plan();
     plan.manifest.buildConfig.cxxflags = {"-DROOT_FLAG=1"};
