@@ -76,12 +76,26 @@ mcpp = {
 - 默认 `gtest = "1.15.2"` → 不含 gtest_main → 任何二进制都不撞 main → **#168 默认消失**;
 - `gtest = { version="1.15.2", features=["main"] }` → 纳入 gtest_main(进阶 opt-in)。
 
-### 3.2 mcpp 核心:依赖的「feature 门控源组」
-- 解析依赖描述符的 `[mcpp].features.<name>.sources`(feature → 附加源 glob)。
-- 合成依赖 manifest 时,把**已激活 feature**对应的源组**并入**该包 sources;未激活则
-  不并入 → 不编译 → 不内联。
-- 复用现有依赖级 feature 激活(`prepare.cppm:2083` 的 activated(pkg) 集合),只是把
-  作用对象从"target 门控"扩展到"源组纳入"。
+### 3.2 mcpp 核心:依赖的「feature 门控源组」——是现有 feature 系统**沿源轴扩一格**
+
+定位:**同一套 feature,不是并行机制。** mcpp 现有 feature 系统:
+- 数据 `featuresMap : map<string, vector<string>>`,值=**隐含的别的 feature 名**;
+- 作用:① feature → 隐含 feature;② `required_features` 门控 **target(link unit)**;
+- 激活:根 `--features`/`[features].default`,依赖 `dep={features=[...]}`(`prepare.cppm:2083`)。
+
+本提案**复用同一 feature 名 + 同一激活机制**,只新增**第三种作用**:
+- ③ feature → **纳入哪些源(CompileUnit)** —— 现有 feature 的"值"是 feature 名列表,
+  没有"源";所以 feature 声明的 schema 要从"值=feature 名列表"扩成"值=可带 `sources`
+  的表"。作用维度从 **target 级**下沉到 **源级**(正因依赖按包内联、源不归 target,
+  target 级门控够不到源)。
+
+且当前 `synthesize_from_xpkg_lua`(合成依赖 manifest)**根本没读 `mcpp.features`**
+(只读 sources/targets/deps 等)。故本提案两件事:
+1. 让 synthesize **开始解析** 依赖描述符的 `mcpp.features.<name>.sources`;
+2. 合成时把**已激活 feature**对应的源组**并入** `buildConfig.sources`;**被某 feature
+   列出的源**默认**排除**(不并入 base 构建),仅该 feature 激活时纳入。
+
+- 复用现有依赖级 feature 激活集合(`prepare.cppm:2083`)。
 - **不改 dev 轨、不改链接器、不引入 gtest 特例**——任何库都能用此通用能力。
 
 ## 4. `mcpp add --dev`(补齐缺失能力)
@@ -114,21 +128,44 @@ mcpp = {
      机制,`manifest.cppm:268`),据此选最小破坏方案。
 - **实现前敲定** 1/2/3。dev 轨(0.0.64)不依赖描述符改动,始终工作。
 
-## 7. 实施计划
+## 7. 实施计划(有序 + 可并行)
 
-- [x] **dev 轨**:`source_defines_main` 检测 + dev-dep 作用域(**已发布 0.0.64**)。
-- [ ] **src-core**:mcpp 支持依赖的「feature 门控源组」(`[mcpp].features.*.sources`),
-  默认不并入、激活后并入。
-- [ ] **src-index**:`compat.gtest.lua` 加 `main` feature,基础 sources 仅框架(按 §6
-  过渡方案落地)。
-- [ ] **add**:`mcpp add --dev` / `mcpp remove` 对称 + 测试框架建议提示。
-- [ ] **测试**:
-  - e2e:`mcpp add gtest && mcpp build`(应用自带 main)→ 成功(#168 哨兵);
-    `features=["main"]` → 链 gtest_main 成功;`mcpp add --dev gtest && mcpp test`
-    带/不带 main 两类全绿(已有 78 覆盖 dev 轨)。
-  - 单元:feature 门控源组解析与并入;`mcpp add --dev` 写表。
-- [ ] **发布闭环**:mcpp bump + release + 镜像 xlings-res(gh/gtc)+ xim-pkgindex +
-  索引发布;**mcpp-index 改了 → 重发 mcpp-index 索引产物**;按 §6 控制发布顺序。
+前置:**dev 轨已完成(0.0.64)**,本轮不动。
+
+依赖关系小结:
+- **W1 `mcpp add --dev`** 与 **W2 feature→源核心**:**两者完全独立**(都在 mcpp,互不
+  依赖)→ **可并行**(两个 PR / 两个 agent)。
+- **W3 `compat.gtest.lua`**(mcpp-index):语义依赖 W2,但因兼容①(gtest_main.cc 同时
+  在 `sources` 和 `features.main.sources`)→ **旧 mcpp 不回归**,故描述符**可提前/并行
+  编写与合入**;只是"#168 真正被修好"要等 W2 的 mcpp 发布并被使用。
+- **W4 端到端 e2e**(#168 哨兵)需 W2 + W3 都在。
+- 各自的**单测随代码 TDD**(与 W1/W2 并行)。
+
+### Phase 0 — 并行实现两个独立 mcpp 核心改动
+- [ ] **W1 `mcpp add --dev`**(`cli.cppm` 加旗标 + `commands.cppm` 写 `[dev-dependencies]`,
+  命名空间子表对称;`mcpp remove` 对称)+ 单测。**独立 PR,可随时合/发。**
+- [ ] **W2 feature→源核心**(`manifest.cppm` 的 `synthesize_from_xpkg_lua` 解析
+  `mcpp.features.*.sources`;合成时按已激活 feature 并入、未激活的"feature 列出源"
+  默认排除)+ 单测。**独立 PR。**
+- *(W1 ∥ W2)*
+
+### Phase 1 — 描述符(可与 Phase 0 并行编写;合入安全)
+- [ ] **W3 `compat.gtest.lua`**(mcpp-index):按兼容①——`gtest_main.cc` 同时列在
+  `sources` 与 `features.main.sources`。旧 mcpp 只认 sources(照旧含 main、不回归),
+  新 mcpp(W2)把它默认排除、`features=["main"]` 时纳入。
+
+### Phase 2 — 端到端验证(需 W2 + W3)
+- [ ] **W4 e2e**:`mcpp add gtest && mcpp build`(应用自带 main)→ 成功(#168 哨兵);
+  `gtest={features=["main"]}` → 链 gtest_main 成功;`mcpp add --dev gtest && mcpp test`
+  带/不带 main 两类全绿(dev 轨已有 e2e 78 覆盖)。
+
+### Phase 3 — 发布闭环(顺序敏感)
+- [ ] **W5**:mcpp bump + release + 镜像 xlings-res(gh/gtc)+ xim-pkgindex + 索引发布;
+  **mcpp-index 改了 → 重发 mcpp-index 索引产物**。
+  - 顺序:**先发含 W1+W2 的 mcpp**,再合/发 W3 描述符(兼容①下即便顺序反了也不回归,
+    但先 mcpp 能让 #168 立刻被修)。
+
+> 关键路径:**W2 → W3 → W4 → W5**;**W1 全程旁路可并行**。
 
 ## 8. 决策备注
 
