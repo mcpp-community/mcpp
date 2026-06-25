@@ -87,13 +87,16 @@ mcpp 的 manifest 解析器也**已支持** `kind="lib"` → `Target::Library`
 | 是 | **排除**(不链接) | 内联 | 入口=消费者自己;无 `duplicate main` ✓ |
 | 否 | **内联**(直接链接,提供入口) | 内联 | 入口=gtest_main;全平台(含 MSVC)OK ✓ |
 
-- 「依赖的 main 对象」= 扫描每个**依赖**(非根包、非 shared)实现源,
-  `source_defines_main` 为真者(gtest_main.cc 有 main;gtest-all.cc / libarchive /
-  lzma 没有)。**一次性预扫描**存入 `depEntryMainSources`,消费者循环 O(1) 查表。
+- 「依赖的 main 对象」= 扫描 **dev-dependency 包**(且非 shared)的实现源,
+  `source_defines_main` 为真者(gtest_main.cc 有 main;gtest-all.cc 没有)。
+  **一次性预扫描**存入 `depEntryMainSources`,消费者循环 O(1) 查表。
+  **作用域必须限 dev-dep**(见 §4.4):测试框架永远是 dev-dep,而常规库
+  (libarchive/lzma 等)**根本不进扫描**——这是保证常规依赖零影响的硬边界,
+  比"扫了但靠检测返回 false"更强、更安全。
 - 「消费者自带 main」= `source_defines_main(entryMain)`(对测试即测试文件本身)。
 - **直接链接对象**(非归档)→ 不依赖任何链接器的归档拉取语义 → **Linux/macOS/Windows
   一致**。
-- 仅排除「依赖的 main 对象」→ 其余链接**与改动前完全一致**,零回归(尤其 xlings)。
+- 仅排除「dev-dep 的 main 对象」→ 其余链接**与改动前完全一致**,零回归(尤其 xlings)。
 
 ### 4.1 `source_defines_main` 的健壮性(关键)
 判据是「源是否定义 `int main(`/`auto main(`」,**必须先剥离注释 + 字符串 + 字符 +
@@ -108,10 +111,22 @@ raw-string 字面量再匹配**——否则测试夹具里的 `"int main(){...}"
 同样处理,mcpp **零框架知识、零特例**。描述符层(mcpp-index gtest)**无需改动**。
 
 ### 4.3 实现位置(`plan.cppm`,`make_plan`)
-- 预扫描:`depEntryMainSources` = 所有依赖(非根、非 shared)实现源中
+- 先从根 manifest 的 `[dev-dependencies]` 解析出 `devDepPackages`(经
+  `dependency_name_candidates` 匹配到已解析包的限定名)。
+- 预扫描:`depEntryMainSources` = **仅 `devDepPackages` 内**的实现源中
   `source_defines_main` 为真者。
 - 每个消费者:`entryDefinesMain = source_defines_main(entryMain)`。
 - 内联循环新增一行:`if (entryDefinesMain && depEntryMainSources.contains(cu.source)) continue;`
+- 后端无改动;归档相关代码(`StaticDepArchive`/`LinkUnit.archiveInputs`/其 ninja 发射)
+  已全部移除。
+
+### 4.4 为何作用域必须限 dev-dependency(一段踩过的坑)
+最初的内联版**扫描所有依赖**的实现源找 main。`source_defines_main` 在构建 xlings 时
+对某个**常规依赖**(libarchive)源**假阳性**,把它需要的对象误排除 →
+`undefined reference to archive_entry_*`,Linux/aarch64/macOS **全部**构建失败。
+根因:在任意大型 C 库上扫 main 太脆。**修复 = 把扫描/排除限定到 dev-dependency
+包**——测试框架(gtest、未来 mcpplibs/原生框架)永远是 dev-dep;常规库永不被扫,
+天然零风险。`mcpp build`(不解析 dev-deps)更是从构造上完全不受影响。
   ——自带 main 的消费者跳过依赖的 main 对象;其余一切照旧。
 - `source_defines_main` 导出供单测。**无新 LinkUnit、无 ninja 改动**(归档相关代码
   及 `archiveInputs` 字段已全部移除)→ 后端/链接行与改动前一致。
