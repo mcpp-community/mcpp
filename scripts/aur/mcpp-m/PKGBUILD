@@ -1,12 +1,16 @@
 # Maintainer: mcpp-community <x.d2learn.org@gmail.com>
 #
-# mcpp — built from source, bootstrapped with the prebuilt `mcpp-bin`.
+# mcpp-m — mcpp built from source, bootstrapped with the prebuilt `mcpp-bin`.
 # mcpp is self-hosting: the mcpp-bin compiler builds this release's own
 # source (the same `mcpp build --target <arch>-linux-musl` path release.yml
 # ships). For the prebuilt-only package, install `mcpp-bin` instead.
+#
+# NB: the AUR/official name `mcpp` is taken by Matsui's C preprocessor
+# (extra/mcpp), so this package is `mcpp-m`. It still installs the `mcpp`
+# command at /usr/bin/mcpp, hence the conflict with that preprocessor.
 # See scripts/aur/README.md.
 
-pkgname=mcpp
+pkgname=mcpp-m
 pkgver=0.0.65
 pkgrel=1
 pkgdesc="Modern C++ build & package management tool (built from source)"
@@ -18,7 +22,9 @@ depends=('git')
 # mcpp-bin is the bootstrap compiler; it also supplies the bundled xlings we
 # ship at runtime. git is needed for toolchain/index sync during the build.
 makedepends=('mcpp-bin' 'git')
-conflicts=('mcpp-bin')
+# mcpp-bin = same tool (mutually exclusive); mcpp = the C preprocessor that
+# also owns /usr/bin/mcpp.
+conflicts=('mcpp-bin' 'mcpp')
 # We strip the built ELF ourselves; don't let makepkg re-strip the vendored
 # xlings binary (a prebuilt third-party artifact).
 options=('!strip')

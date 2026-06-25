@@ -2,7 +2,7 @@
 # scripts/aur/update.sh — bump BOTH AUR packages to a release version.
 #
 #   mcpp-bin/   prebuilt release binaries (per-arch tarball checksums)
-#   mcpp/       built from source via mcpp-bin (source-archive checksum)
+#   mcpp-m/     built from source via mcpp-bin (source-archive checksum)
 #
 # Pulls checksums straight from the GitHub release / archive, rewrites each
 # PKGBUILD's pkgver + sums, resets pkgrel to 1, regenerates both .SRCINFO
@@ -42,13 +42,13 @@ done
 x86=${SUMS[linux-x86_64]}
 arm=${SUMS[linux-aarch64]}
 
-# --- source-archive checksum (mcpp) ----------------------------------------
+# --- source-archive checksum (mcpp-m) ----------------------------------------
 echo ":: hashing source archive ${archive_url}"
 src=$(curl -fsSL --connect-timeout 30 "$archive_url" | sha256sum | awk '{print $1}')
 [[ -n "$src" ]] || { echo "error: cannot hash source archive" >&2; exit 1; }
 
 # --- keep the wrapper in sync ----------------------------------------------
-cp -f mcpp-bin/mcpp.sh mcpp/mcpp.sh 2>/dev/null || true
+cp -f mcpp-bin/mcpp.sh mcpp-m/mcpp.sh 2>/dev/null || true
 
 # --- rewrite mcpp-bin/PKGBUILD ---------------------------------------------
 sed -i -E \
@@ -58,12 +58,12 @@ sed -i -E \
     -e "s/^sha256sums_aarch64=\('[^']*'\)/sha256sums_aarch64=('${arm}')/" \
     mcpp-bin/PKGBUILD
 
-# --- rewrite mcpp/PKGBUILD -------------------------------------------------
+# --- rewrite mcpp-m/PKGBUILD ---------------------------------------------
 sed -i -E \
     -e "s/^pkgver=.*/pkgver=${VER}/" \
     -e "s/^pkgrel=.*/pkgrel=1/" \
     -e "s/^sha256sums=\('[^']*'\)/sha256sums=('${src}')/" \
-    mcpp/PKGBUILD
+    mcpp-m/PKGBUILD
 
 # --- regenerate .SRCINFO files ---------------------------------------------
 # Prefer makepkg's own generator on an Arch host; fall back to templates so
@@ -87,7 +87,7 @@ pkgbase = mcpp-bin
 	arch = aarch64
 	license = Apache-2.0
 	depends = git
-	provides = mcpp
+	conflicts = mcpp-m
 	conflicts = mcpp
 	options = !strip
 	source = mcpp.sh
@@ -100,9 +100,9 @@ pkgbase = mcpp-bin
 pkgname = mcpp-bin
 EOF
             ;;
-        mcpp)
-            cat > mcpp/.SRCINFO <<EOF
-pkgbase = mcpp
+        mcpp-m)
+            cat > mcpp-m/.SRCINFO <<EOF
+pkgbase = mcpp-m
 	pkgdesc = Modern C++ build & package management tool (built from source)
 	pkgver = ${VER}
 	pkgrel = 1
@@ -114,22 +114,23 @@ pkgbase = mcpp
 	makedepends = git
 	depends = git
 	conflicts = mcpp-bin
+	conflicts = mcpp
 	options = !strip
 	source = mcpp-${VER}.tar.gz::${archive_url}
 	source = mcpp.sh
 	sha256sums = ${src}
 	sha256sums = SKIP
 
-pkgname = mcpp
+pkgname = mcpp-m
 EOF
             ;;
     esac
 }
 _srcinfo mcpp-bin
-_srcinfo mcpp
+_srcinfo mcpp-m
 
 echo ":: updated to v${VER}"
 echo "   mcpp-bin  x86_64   ${x86}"
 echo "   mcpp-bin  aarch64  ${arm}"
-echo "   mcpp      source   ${src}"
+echo "   mcpp-m  source   ${src}"
 echo ":: review, then publish each package (see scripts/aur/README.md)"
