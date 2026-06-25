@@ -99,4 +99,4 @@ jobs:
           }
 
           publish mcpp-bin
-          publish mcpp
+          publish mcpp-m
