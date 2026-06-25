@@ -76,6 +76,11 @@ struct BuildPlan {
     std::vector<CapabilityProvider>    runtimeProviders;
 };
 
+// True if a source file defines a top-level `int main(`/`auto main(` entry,
+// ignoring comments and string/raw-string literals. Drives the archive-vs-inline
+// choice for kind="lib" dependencies (see plan.cppm).
+bool source_defines_main(const std::filesystem::path& src);
+
 // Build a BuildPlan from already-validated inputs.
 BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                     const mcpp::toolchain::Toolchain&       tc,
@@ -210,6 +215,70 @@ void append_unique_path(std::vector<std::filesystem::path>& out,
 }
 
 } // namespace
+
+// True if `src` defines a top-level `int main(` / `auto main(` entry point.
+// Comments and string/char/raw-string literals are stripped first, so test
+// fixtures that embed `"int main() {...}"` or R"(int main(){})" don't
+// false-positive (that misfire chose archive linking for a no-main test →
+// gtest_main.o not pulled by MSVC lld-link → LNK1561). Heuristic but robust;
+// worst case is a sub-optimal archive-vs-inline choice, never a miscompile.
+bool source_defines_main(const std::filesystem::path& src) {
+    std::ifstream is(src);
+    if (!is) return false;
+    std::string raw((std::istreambuf_iterator<char>(is)),
+                    std::istreambuf_iterator<char>());
+    std::string code;
+    code.reserve(raw.size());
+    enum State { Normal, Line, Block, Str, Chr, RawStr } st = Normal;
+    std::string rawEnd;  // ")delim\"" terminator for the active raw string
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        char c = raw[i];
+        char n = (i + 1 < raw.size()) ? raw[i + 1] : '\0';
+        switch (st) {
+        case Normal:
+            if (c == 'R' && n == '"') {
+                std::size_t j = i + 2;
+                std::string delim;
+                while (j < raw.size() && raw[j] != '(') delim.push_back(raw[j++]);
+                rawEnd = ")" + delim + "\"";
+                st = RawStr;
+                i = j;  // sit on '(' ; loop ++ moves past
+            } else if (c == '/' && n == '/') { st = Line; ++i; }
+            else if (c == '/' && n == '*') { st = Block; ++i; }
+            else if (c == '"')  { st = Str; }
+            else if (c == '\'') { st = Chr; }
+            else { code.push_back(c); }
+            break;
+        case Line:  if (c == '\n') { st = Normal; code.push_back(c); } break;
+        case Block: if (c == '*' && n == '/') { st = Normal; ++i; } break;
+        case Str:   if (c == '\\') ++i; else if (c == '"')  st = Normal; break;
+        case Chr:   if (c == '\\') ++i; else if (c == '\'') st = Normal; break;
+        case RawStr:
+            if (raw.compare(i, rawEnd.size(), rawEnd) == 0) {
+                st = Normal;
+                i += rawEnd.size() - 1;
+            }
+            break;
+        }
+    }
+    auto isws = [](char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+    };
+    for (std::size_t i = 0; i + 4 <= code.size(); ++i) {
+        if (code.compare(i, 4, "main") != 0) continue;
+        std::size_t p = i;
+        bool sawWs = false;
+        while (p > 0 && isws(code[p - 1])) { --p; sawWs = true; }
+        bool prevOk = sawWs && (
+            (p >= 3 && code.compare(p - 3, 3, "int") == 0) ||
+            (p >= 4 && code.compare(p - 4, 4, "auto") == 0));
+        std::size_t q = i + 4;
+        while (q < code.size() && isws(code[q])) ++q;
+        bool nextOk = q < code.size() && code[q] == '(';
+        if (prevOk && nextOk) return true;
+    }
+    return false;
+}
 
 BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                     const mcpp::toolchain::Toolchain&       tc,
@@ -380,6 +449,47 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
 
+    // Dependency-provided optional entry objects (e.g. gtest's gtest_main.cc,
+    // which defines its own `main`). A consumer must link such an object ONLY
+    // when it has no `main` of its own — otherwise `duplicate symbol: main`.
+    //
+    // We keep ALL dependency objects INLINED (the long-standing model) and just
+    // drop these specific entry objects from self-main consumers. An earlier
+    // attempt linked kind="lib" deps as static archives instead, but that is not
+    // viable on Windows/MSVC lld-link: (1) it won't pull an archive member just
+    // to satisfy the entry point (LNK1561), and (2) archiving regular libs broke
+    // transitive symbol resolution order (libarchive→lzma LNK2019 in xlings).
+    // Inlining + dropping only the entry object is portable and minimal — it
+    // leaves every other dependency's linkage byte-for-byte unchanged.
+    //
+    // SCOPE: only DEV-dependencies are considered. Test frameworks (gtest, future
+    // mcpplibs/native frameworks) are dev-deps; regular deps (libarchive, lzma,
+    // …) must NEVER be touched — a false-positive there would drop a needed
+    // object (e.g. archive_entry.o) and break normal binaries like xlings. Dev-
+    // deps are absent from `mcpp build` (includeDevDeps=false) entirely, so plain
+    // builds are unaffected by construction.
+    //
+    // Detected by scanning each dev-dep implementation source for a top-level
+    // main (gtest_main.cc has one; gtest-all.cc does not). Generic: no per-
+    // framework knowledge — any framework's main-providing object is handled the
+    // same way.
+    std::set<std::string> devDepPackages;
+    for (auto const& [depName, spec] : manifest.devDependencies) {
+        for (auto const& candidate : dependency_name_candidates(depName, spec)) {
+            auto it = packageIndexByName.find(candidate);
+            if (it != packageIndexByName.end()) {
+                devDepPackages.insert(qualified_package_name(packages[it->second].manifest));
+                break;
+            }
+        }
+    }
+    std::set<std::filesystem::path> depEntryMainSources;
+    for (auto& cu : plan.compileUnits) {
+        if (!devDepPackages.contains(cu.packageName)) continue;
+        if (!is_implementation_source(cu.source)) continue;
+        if (source_defines_main(cu.source)) depEntryMainSources.insert(cu.source);
+    }
+
     std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
     for (std::size_t i = 0; i < packages.size(); ++i) {
         for (auto const& [depName, spec] : packages[i].manifest.dependencies) {
@@ -492,6 +602,13 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             }
         }
 
+        // Whether this consumer's own entry source defines `main`. Decides how
+        // kind="lib" dependencies are linked (archive vs inline) so the
+        // gtest_main-style optional entry works on EVERY linker — see the
+        // dependency-linking block further below. Can't tell (no entry) →
+        // false → inline (the pre-archive behavior, always provides the entry).
+        bool entryDefinesMain = lu.entryMain && source_defines_main(*lu.entryMain);
+
         if ((lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary) && lu.entryMain) {
             // Add main.cpp -> obj/main.o
             CompileUnit main_cu;
@@ -571,6 +688,12 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             if (!is_implementation_source(cu.source)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;     // own entry: already added above
             if (entryFilesAcrossTargets.contains(cu.source)) continue;     // foreign entry: skip
+            // A dependency's own main-providing object (e.g. gtest_main.o): link
+            // it ONLY when this consumer has no main of its own. With its own
+            // main, including it would be `duplicate symbol: main`; without one,
+            // it supplies the entry (gtest-style). Works on every linker — the
+            // object is linked directly, never relying on archive member pulling.
+            if (entryDefinesMain && depEntryMainSources.contains(cu.source)) continue;
             lu.objects.push_back(cu.object);
         }
 
