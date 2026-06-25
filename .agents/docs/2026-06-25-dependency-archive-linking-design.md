@@ -148,8 +148,9 @@ raw-string 字面量再匹配**——否则测试夹具里的 `"int main(){...}"
 - [x] **P2 后端**:无改动(回退归档发射);`mcpp test` 透出 `diagnosticOutput`(可见性)。
 - [x] **P3 单元测试**:`MainDetection`(8 例)+ 全量 25 单测绿。
 - [x] **P4 e2e**:`78_test_main_combinations.sh` 三组合全绿 + 链接行断言。
-- [x] **P5 回归(本机)**:25 单测 + e2e 15/16/17/18/31/07/08 全绿;e2e 78 三组合 +
-  链接行断言绿。**全平台 CI(尤其 Windows 构建 xlings)→ 待本轮 PR 确认。**
+- [x] **P5 回归**:25 单测 + e2e 全套绿;**全平台 CI 全绿**(Linux/Windows/aarch64/
+  macOS/e2e)——含 Windows 构建 xlings(libarchive/lzma)、Windows e2e 78 三组合。
+  e2e 78 断言历经 `.exe` 后缀 + 反斜杠路径两次跨平台适配。
 - [x] **P6 版本 + 文档**:bump 0.0.63→0.0.64;CHANGELOG;本文件。
 - [x] **历程**:归档 → MSVC LNK1561/LNK2019(§3.5)→ 回退内联+条件排除。
 - [ ] **P7 发布闭环**:PR → CI 全平台 → squash --admin 合入 → tag v0.0.64 →
