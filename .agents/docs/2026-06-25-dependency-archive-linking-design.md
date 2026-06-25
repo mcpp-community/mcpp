@@ -92,8 +92,11 @@ LINK : fatal error LNK1561: entry point must be defined
 | 是 | **归档** `lib<pkg>.a`(排在对象后) | 链接器不拉 `gtest_main.o`(main 已定义)→ 无 `duplicate main`;入口由测试提供,MSVC 也 OK |
 | 否 | **直接内联**依赖的非模块对象 | `gtest_main.o` 作为普通对象直接提供入口 → **任何**链接器(含 MSVC)都 OK;测试无 main 故无冲突 |
 
-判据 = **扫描消费者入口源是否定义 `int main`/`auto main`**(空白不敏感、跳过注释行;
-启发式,最坏只是选错链接方式而非出错;探测不到时默认按「无 main」内联=改动前行为)。
+判据 = **扫描消费者入口源是否定义 `int main`/`auto main`**(`source_defines_main`:先
+用字符状态机**剥离注释、字符串、字符、raw-string 字面量**再匹配——否则测试夹具里的
+`"int main(){...}"` 字符串会假阳性,导致对 no-main 测试错选归档 → MSVC LNK1561,正是
+`test_modgraph.cpp` 踩中的坑;启发式,最坏只是选错链接方式而非出错;探测不到时默认按
+「无 main」内联=改动前行为)。
 **通用**:无需识别「哪个依赖对象提供 main」,只看消费者自己——对任何 `kind="lib"`
 依赖、任何未来测试框架都成立。
 

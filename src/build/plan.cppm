@@ -77,6 +77,11 @@ struct BuildPlan {
     std::vector<CapabilityProvider>    runtimeProviders;
 };
 
+// True if a source file defines a top-level `int main(`/`auto main(` entry,
+// ignoring comments and string/raw-string literals. Drives the archive-vs-inline
+// choice for kind="lib" dependencies (see plan.cppm).
+bool source_defines_main(const std::filesystem::path& src);
+
 // Build a BuildPlan from already-validated inputs.
 BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                     const mcpp::toolchain::Toolchain&       tc,
@@ -211,6 +216,70 @@ void append_unique_path(std::vector<std::filesystem::path>& out,
 }
 
 } // namespace
+
+// True if `src` defines a top-level `int main(` / `auto main(` entry point.
+// Comments and string/char/raw-string literals are stripped first, so test
+// fixtures that embed `"int main() {...}"` or R"(int main(){})" don't
+// false-positive (that misfire chose archive linking for a no-main test →
+// gtest_main.o not pulled by MSVC lld-link → LNK1561). Heuristic but robust;
+// worst case is a sub-optimal archive-vs-inline choice, never a miscompile.
+bool source_defines_main(const std::filesystem::path& src) {
+    std::ifstream is(src);
+    if (!is) return false;
+    std::string raw((std::istreambuf_iterator<char>(is)),
+                    std::istreambuf_iterator<char>());
+    std::string code;
+    code.reserve(raw.size());
+    enum State { Normal, Line, Block, Str, Chr, RawStr } st = Normal;
+    std::string rawEnd;  // ")delim\"" terminator for the active raw string
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        char c = raw[i];
+        char n = (i + 1 < raw.size()) ? raw[i + 1] : '\0';
+        switch (st) {
+        case Normal:
+            if (c == 'R' && n == '"') {
+                std::size_t j = i + 2;
+                std::string delim;
+                while (j < raw.size() && raw[j] != '(') delim.push_back(raw[j++]);
+                rawEnd = ")" + delim + "\"";
+                st = RawStr;
+                i = j;  // sit on '(' ; loop ++ moves past
+            } else if (c == '/' && n == '/') { st = Line; ++i; }
+            else if (c == '/' && n == '*') { st = Block; ++i; }
+            else if (c == '"')  { st = Str; }
+            else if (c == '\'') { st = Chr; }
+            else { code.push_back(c); }
+            break;
+        case Line:  if (c == '\n') { st = Normal; code.push_back(c); } break;
+        case Block: if (c == '*' && n == '/') { st = Normal; ++i; } break;
+        case Str:   if (c == '\\') ++i; else if (c == '"')  st = Normal; break;
+        case Chr:   if (c == '\\') ++i; else if (c == '\'') st = Normal; break;
+        case RawStr:
+            if (raw.compare(i, rawEnd.size(), rawEnd) == 0) {
+                st = Normal;
+                i += rawEnd.size() - 1;
+            }
+            break;
+        }
+    }
+    auto isws = [](char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+    };
+    for (std::size_t i = 0; i + 4 <= code.size(); ++i) {
+        if (code.compare(i, 4, "main") != 0) continue;
+        std::size_t p = i;
+        bool sawWs = false;
+        while (p > 0 && isws(code[p - 1])) { --p; sawWs = true; }
+        bool prevOk = sawWs && (
+            (p >= 3 && code.compare(p - 3, 3, "int") == 0) ||
+            (p >= 4 && code.compare(p - 4, 4, "auto") == 0));
+        std::size_t q = i + 4;
+        while (q < code.size() && isws(code[q])) ++q;
+        bool nextOk = q < code.size() && code[q] == '(';
+        if (prevOk && nextOk) return true;
+    }
+    return false;
+}
 
 BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                     const mcpp::toolchain::Toolchain&       tc,
@@ -546,9 +615,9 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         // Whether this consumer's own entry source defines `main`. Decides how
         // kind="lib" dependencies are linked (archive vs inline) so the
         // gtest_main-style optional entry works on EVERY linker — see the
-        // dependency-linking block further below. Default false → if we can't
-        // tell, fall back to inlining (the pre-archive behavior).
-        bool entryDefinesMain = false;
+        // dependency-linking block further below. Can't tell (no entry) →
+        // false → inline (the pre-archive behavior, always provides the entry).
+        bool entryDefinesMain = lu.entryMain && source_defines_main(*lu.entryMain);
 
         if ((lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary) && lu.entryMain) {
             // Add main.cpp -> obj/main.o
@@ -586,18 +655,6 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                         ++i;
                     }
                     if (!name.empty()) main_cu.imports.push_back(name);
-                }
-                // Detect a top-level `int main(`/`auto main(` definition
-                // (space-insensitive; skip comment lines). Heuristic, but the
-                // worst case is a wrong archive-vs-inline choice, not breakage.
-                if (!entryDefinesMain && !line.starts_with("//") && !line.starts_with("*")) {
-                    std::string nospace;
-                    for (char c : line)
-                        if (!std::isspace(static_cast<unsigned char>(c))) nospace.push_back(c);
-                    if (nospace.find("intmain(") != std::string::npos
-                        || nospace.find("automain(") != std::string::npos) {
-                        entryDefinesMain = true;
-                    }
                 }
             }
 
