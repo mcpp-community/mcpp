@@ -44,7 +44,7 @@ mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用
 
 ### 安装
 
-**方式一：使用 xlings 安装（推荐）**
+**使用 xlings 安装**（推荐）
 
 ```bash
 xlings install mcpp -y
@@ -67,7 +67,10 @@ irm https://d2learn.org/xlings-install.ps1.txt | iex
 
 </details>
 
-**方式二：一键安装脚本**
+**其他方式**
+
+<details>
+<summary><b>方式 1</b> — 一键安装脚本</summary>
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
@@ -75,7 +78,24 @@ curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/insta
 
 安装到 `~/.mcpp/`，自动加进 shell PATH。删除 `~/.mcpp` 即可干净卸载。
 
-**方式三：让 AI 助手帮你安装**
+</details>
+
+<details>
+<summary><b>方式 2</b> — Arch Linux（AUR）</summary>
+
+```bash
+yay -S mcpp-bin      # 预编译 release 二进制
+yay -S mcpp-m        # 或源码构建（用 mcpp-bin 自举）
+```
+
+系统级安装 `mcpp` 命令，每个用户的数据仍在各自的 `~/.mcpp/`。
+Arch 上 `mcpp` 这个名字属于一个无关的 C 预处理器，所以包名是
+`mcpp-bin` / `mcpp-m`（详见 [`scripts/aur/`](scripts/aur/)）。
+
+</details>
+
+<details>
+<summary><b>方式 3</b> — 让 AI 助手帮你安装</summary>
 
 将以下提示词复制给你的 AI 编码助手（Claude Code / Cursor / Copilot 等）：
 
@@ -84,6 +104,8 @@ curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/insta
 帮我安装 mcpp 并创建一个 C++23 模块项目，构建并运行。
 项目的 .agents/skills/mcpp-usage/SKILL.md 有详细的使用指南。
 ```
+
+</details>
 
 ### 创建项目 & 构建运行
 
@@ -245,6 +267,21 @@ import mcpplibs.cmdline;
 .agents/skills/mcpp-usage/SKILL.md 和 docs/ 目录下的文档，
 告诉我如何用 mcpp 创建一个带依赖的 C++23 模块项目。
 ```
+
+## 谁在使用 mcpp
+
+用 mcpp 构建的真实项目 —— 可直接 `import` 的 C++23 模块,以及它所依赖的工具链:
+
+| 项目 | 说明 |
+| --- | --- |
+| [mcpp](https://github.com/mcpp-community/mcpp) | mcpp 自身 —— 43+ 个 C++23 模块,完全自举 |
+| [xlings](https://github.com/openxlings/xlings) | mcpp 依赖的工具链与包管理底座 |
+| [tinyhttps](https://github.com/mcpplibs/tinyhttps) | 极简 C++23 HTTP/HTTPS 客户端,支持 SSE 流式 |
+| [llmapi](https://github.com/mcpplibs/llmapi) | 现代 C++ LLM API 客户端(OpenAI 兼容) |
+| [imgui-m](https://github.com/mcpplibs/imgui-m) | Dear ImGui 的 C++23 模块封装包 |
+| [cmdline](https://github.com/mcpplibs/cmdline) | 命令行解析库/框架(mcpp 自身在用) |
+
+更多模块化库 → [mcpplibs](https://github.com/mcpplibs) · 包索引 → [mcpp-index](https://github.com/mcpp-community/mcpp-index)
 
 ## 参与贡献
 

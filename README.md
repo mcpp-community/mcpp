@@ -44,7 +44,7 @@ mcpp is built specifically for **C++23 module-first development**. If you want t
 
 ### Install
 
-**Option 1: install via xlings (recommended)**
+**Install via xlings** (recommended)
 
 ```bash
 xlings install mcpp -y
@@ -67,7 +67,10 @@ irm https://d2learn.org/xlings-install.ps1.txt | iex
 
 </details>
 
-**Option 2: one-line install script**
+**Other options**
+
+<details>
+<summary><b>Option 1</b> — one-line install script</summary>
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
@@ -75,7 +78,24 @@ curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/insta
 
 Installs into `~/.mcpp/` and adds it to your shell PATH. Deleting `~/.mcpp` uninstalls cleanly.
 
-**Option 3: let an AI assistant install it for you**
+</details>
+
+<details>
+<summary><b>Option 2</b> — Arch Linux (AUR)</summary>
+
+```bash
+yay -S mcpp-bin      # prebuilt release binary
+yay -S mcpp-m        # or build from source (bootstrapped with mcpp-bin)
+```
+
+Installs the `mcpp` command system-wide; per-user data still lives in `~/.mcpp/`.
+On Arch the name `mcpp` is an unrelated C preprocessor, so the packages are
+`mcpp-bin` / `mcpp-m` (see [`scripts/aur/`](scripts/aur/)).
+
+</details>
+
+<details>
+<summary><b>Option 3</b> — let an AI assistant install it for you</summary>
 
 Copy the following prompt to your AI coding assistant (Claude Code / Cursor / Copilot, etc.):
 
@@ -84,6 +104,8 @@ Read the README of https://github.com/mcpp-community/mcpp,
 then install mcpp for me and create a C++23 module project, build and run it.
 The repo's .agents/skills/mcpp-usage/SKILL.md has a detailed usage guide.
 ```
+
+</details>
 
 ### Create, build & run a project
 
@@ -245,6 +267,21 @@ Read .agents/skills/mcpp-usage/SKILL.md and the docs/ directory of the
 https://github.com/mcpp-community/mcpp repository,
 then tell me how to create a C++23 module project with dependencies using mcpp.
 ```
+
+## Who's Using mcpp
+
+Real projects built with mcpp — `import`-able C++23 modules and the toolchain it builds on:
+
+| Project | Description |
+| --- | --- |
+| [mcpp](https://github.com/mcpp-community/mcpp) | mcpp itself — 43+ C++23 modules, fully self-hosted |
+| [xlings](https://github.com/openxlings/xlings) | Toolchain & package-management foundation mcpp builds on |
+| [tinyhttps](https://github.com/mcpplibs/tinyhttps) | Minimal C++23 HTTP/HTTPS client with SSE streaming |
+| [llmapi](https://github.com/mcpplibs/llmapi) | Modern C++ LLM API client (OpenAI-compatible) |
+| [imgui-m](https://github.com/mcpplibs/imgui-m) | Dear ImGui as a C++23 module package |
+| [cmdline](https://github.com/mcpplibs/cmdline) | Command-line parsing library / framework (mcpp uses it) |
+
+More modular libraries → [mcpplibs](https://github.com/mcpplibs) · package index → [mcpp-index](https://github.com/mcpp-community/mcpp-index)
 
 ## Contributing
 
