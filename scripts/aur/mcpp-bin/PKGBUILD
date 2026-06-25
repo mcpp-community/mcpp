@@ -22,8 +22,8 @@ _relbase="https://github.com/mcpp-community/mcpp/releases/download/v${pkgver}"
 
 source_x86_64=("mcpp-${pkgver}-linux-x86_64.tar.gz::${_relbase}/mcpp-${pkgver}-linux-x86_64.tar.gz")
 source_aarch64=("mcpp-${pkgver}-linux-aarch64.tar.gz::${_relbase}/mcpp-${pkgver}-linux-aarch64.tar.gz")
-# Shared, arch-independent files (versioned to invalidate makepkg's cache on bump).
-source=("mcpp-${pkgver}.sh::mcpp.sh")
+# Shared, arch-independent local file (the per-user launcher).
+source=("mcpp.sh")
 
 sha256sums=('SKIP')
 sha256sums_x86_64=('0d1d16aae05e4d7c59a00a2621abc4b99421b9821d2145c139fabf95fcf93409')
@@ -40,7 +40,7 @@ package() {
     install -Dm755 "${_src}/registry/bin/xlings" "${pkgdir}/opt/mcpp/registry/bin/xlings"
 
     # Per-user launcher on PATH (sets MCPP_HOME / MCPP_VENDORED_XLINGS).
-    install -Dm755 "${srcdir}/mcpp-${pkgver}.sh" "${pkgdir}/usr/bin/mcpp"
+    install -Dm755 "${srcdir}/mcpp.sh" "${pkgdir}/usr/bin/mcpp"
 
     install -Dm644 "${_src}/LICENSE"   "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
     install -Dm644 "${_src}/README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
