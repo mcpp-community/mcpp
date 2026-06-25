@@ -462,19 +462,32 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
     // Inlining + dropping only the entry object is portable and minimal — it
     // leaves every other dependency's linkage byte-for-byte unchanged.
     //
-    // Detected by scanning each DEPENDENCY implementation source for a top-level
-    // main definition (gtest_main.cc has one; gtest-all.cc / libarchive / lzma do
-    // not). Generic: no per-framework knowledge — a future test framework's
-    // main-providing object is handled the same way.
-    std::set<std::filesystem::path> depEntryMainSources;
-    {
-        std::string rootQname = qualified_package_name(manifest);
-        for (auto& cu : plan.compileUnits) {
-            if (cu.packageName == rootQname) continue;            // root entries handled elsewhere
-            if (sharedDepPackages.contains(cu.packageName)) continue;
-            if (!is_implementation_source(cu.source)) continue;
-            if (source_defines_main(cu.source)) depEntryMainSources.insert(cu.source);
+    // SCOPE: only DEV-dependencies are considered. Test frameworks (gtest, future
+    // mcpplibs/native frameworks) are dev-deps; regular deps (libarchive, lzma,
+    // …) must NEVER be touched — a false-positive there would drop a needed
+    // object (e.g. archive_entry.o) and break normal binaries like xlings. Dev-
+    // deps are absent from `mcpp build` (includeDevDeps=false) entirely, so plain
+    // builds are unaffected by construction.
+    //
+    // Detected by scanning each dev-dep implementation source for a top-level
+    // main (gtest_main.cc has one; gtest-all.cc does not). Generic: no per-
+    // framework knowledge — any framework's main-providing object is handled the
+    // same way.
+    std::set<std::string> devDepPackages;
+    for (auto const& [depName, spec] : manifest.devDependencies) {
+        for (auto const& candidate : dependency_name_candidates(depName, spec)) {
+            auto it = packageIndexByName.find(candidate);
+            if (it != packageIndexByName.end()) {
+                devDepPackages.insert(qualified_package_name(packages[it->second].manifest));
+                break;
+            }
         }
+    }
+    std::set<std::filesystem::path> depEntryMainSources;
+    for (auto& cu : plan.compileUnits) {
+        if (!devDepPackages.contains(cu.packageName)) continue;
+        if (!is_implementation_source(cu.source)) continue;
+        if (source_defines_main(cu.source)) depEntryMainSources.insert(cu.source);
     }
 
     std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
