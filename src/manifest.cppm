@@ -105,6 +105,13 @@ struct Toolchain {
 // (new). Defaults are injected by load() after parse if these are empty.
 struct BuildConfig {
     std::vector<std::string>           sources;        // glob patterns
+    // feature name → extra source globs gated by that feature. A glob listed
+    // here is EXCLUDED from the default build and only compiled/linked when the
+    // feature is active for this package (resolved in prepare_build). Lets a
+    // dependency expose an optional component (e.g. gtest's gtest_main.cc behind
+    // the "main" feature) without it being linked by default — see
+    // .agents/docs/2026-06-25-gtest-main-feature-and-add-dev-design.md.
+    std::map<std::string, std::vector<std::string>> featureSources;
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
     bool                                staticStdlib = true;
@@ -1947,6 +1954,55 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     return std::unexpected(ManifestError{*msg, m.sourcePath, 0, 0});
                 }
                 m.targets.push_back(std::move(t));
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
+        else if (key == "features") {
+            // `{ ["main"] = { sources = { "*/gtest_main.cc" } }, ... }`
+            // Registers the feature (so it's a known feature) and, when it
+            // carries `sources`, records them as feature-gated source globs
+            // (excluded by default; included only when the feature is active —
+            // resolved in prepare_build). A feature with no `sources` is still
+            // registered (empty implied set) so it can be requested/validated.
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `features =`", m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto fname = cur.read_key();
+                if (fname.empty()) { cur.skip_ws_and_comments(); break; }
+                cur.skip_ws_and_comments();
+                if (!cur.consume('=')) break;
+                cur.skip_ws_and_comments();
+                if (!cur.consume('{')) break;
+                // register the feature (no implied features for now)
+                m.featuresMap.try_emplace(fname, std::vector<std::string>{});
+                cur.skip_ws_and_comments();
+                while (!cur.eof() && cur.peek() != '}') {
+                    auto sub = cur.read_key();
+                    cur.skip_ws_and_comments();
+                    if (!cur.consume('=')) break;
+                    cur.skip_ws_and_comments();
+                    if (sub == "sources") {
+                        if (!cur.consume('{')) break;
+                        cur.skip_ws_and_comments();
+                        while (!cur.eof() && cur.peek() != '}') {
+                            auto s = cur.read_string();
+                            if (!s.empty())
+                                m.buildConfig.featureSources[fname].push_back(std::move(s));
+                            cur.skip_ws_and_comments();
+                        }
+                        cur.consume('}');
+                    } else {
+                        // unknown subfield — skip its value
+                        if (cur.peek() == '{') cur.skip_table();
+                        else (void)cur.read_bareword();
+                    }
+                    cur.skip_ws_and_comments();
+                }
+                cur.consume('}');
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');

@@ -76,11 +76,15 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     //   - Default namespace → `[dependencies] ... name = "version"` (no quotes).
     //   - Other namespace   → `[dependencies.<ns>] ... name = "version"`,
     //                         creating the subtable if absent.
+    // --dev → [dev-dependencies] (test-only deps like gtest; consumed by
+    // `mcpp test`, never linked into `mcpp build` app binaries).
+    const bool dev = parsed.is_flag_set("dev");
+    const std::string table = dev ? "dev-dependencies" : "dependencies";
     const bool isDefaultNs = !explicitNamespace
         || ns == mcpp::manifest::kDefaultNamespace;
     const std::string section = isDefaultNs
-        ? "[dependencies]"
-        : std::format("[dependencies.{}]", ns);
+        ? std::format("[{}]", table)
+        : std::format("[{}.{}]", table, ns);
     const std::string key = explicitNamespace ? shortName : nameSpec;
     auto pos = text.find(section);
     if (pos == std::string::npos) {
@@ -99,7 +103,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string display = explicitNamespace
         ? (isDefaultNs ? shortName : std::format("{}:{}", ns, shortName))
         : nameSpec;
-    mcpp::ui::status("Adding", std::format("{} v{} to dependencies", display, version));
+    mcpp::ui::status("Adding", std::format("{} v{} to {}", display, version, table));
     std::println("");
     std::println("Run `mcpp build` to fetch and build with the new dependency.");
     return 0;

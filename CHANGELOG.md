@@ -3,6 +3,35 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.65] — 2026-06-25
+
+### 修复
+
+- **`mcpp add gtest` + `mcpp build` 报 `duplicate symbol: main` / `LNK2005`**(#168):
+  gtest 作为**常规依赖**时,其 `gtest_main.cc`(自带 main)被链进应用,与应用自身的
+  main 冲突。修复采用**通用的「feature 门控源」机制**:依赖描述符可声明
+  `[mcpp].features.<名>.sources`,被某 feature 列出的源**默认不编译/链接**,仅在该
+  feature 被请求(`dep = { version="…", features=["…"] }`)时纳入。gtest 描述符把
+  `gtest_main.cc` 归入 `main` feature → **默认只链框架,不再撞 main**;需要 gtest 提供
+  main 时 `gtest = { version="1.15.2", features=["main"] }` 显式开启。
+  门控仅作用于 `mcpp build`;`mcpp test` 保持既有的 dev 依赖 main 检测(0.0.64)不变。
+  详见 `.agents/docs/2026-06-25-gtest-main-feature-and-add-dev-design.md`。
+
+### 新增
+
+- **`mcpp add --dev <pkg>`**:把依赖写入 `[dev-dependencies]`(测试专属,如 gtest;
+  由 `mcpp test` 消费,不链进 `mcpp build` 的应用)。
+
+### 测试
+
+- 单元 `SynthesizeFromXpkgLua.FeatureGatedSources`(描述符 feature 门控源解析);
+  e2e `79_gtest_regular_dep_feature_main.sh`(#168 哨兵 + `features=["main"]` opt-in +
+  `add --dev`)。
+
+### CI
+
+- release workflow 默认 xlings 版本 `0.4.58` → **`0.4.60`**(缓存键同步更新)。
+
 ## [0.0.64] — 2026-06-25
 
 ### 修复

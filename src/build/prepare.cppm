@@ -2113,12 +2113,43 @@ prepare_build(bool print_fingerprint,
         };
         auto apply = [&](mcpp::modgraph::PackageRoot& pkg,
                          const std::vector<std::string>& requested) {
-            for (auto& f : activate(pkg.manifest, requested)) {
+            auto active = activate(pkg.manifest, requested);
+            for (auto& f : active) {
                 auto def = "-DMCPP_FEATURE_" + sanitize(f);
                 pkg.manifest.buildConfig.cflags.push_back(def);
                 pkg.manifest.buildConfig.cxxflags.push_back(def);
                 pkg.privateBuild.cflags.push_back(def);
                 pkg.privateBuild.cxxflags.push_back(def);
+            }
+            // Feature-gated sources (e.g. gtest's gtest_main.cc behind "main"):
+            // drop EVERY feature-listed glob from the default build, then re-add
+            // only the ones whose feature is active. Runs even when no feature is
+            // active, so a gated source is excluded by default.
+            //
+            // ONLY in build mode (!includeDevDeps). `mcpp test` (includeDevDeps)
+            // keeps the full surface so the dev-dependency track's per-test main
+            // detection (run_tests / make_plan) still sees gtest_main.cc and
+            // prunes it per test — the two tracks stay decoupled. Combined with
+            // the descriptor keeping gtest_main.cc in base `sources` too, this
+            // means test mode is unaffected.
+            auto& bc = pkg.manifest.buildConfig;
+            if (!includeDevDeps && !bc.featureSources.empty()) {
+                std::set<std::string> gated;
+                for (auto& [f, globs] : bc.featureSources)
+                    for (auto& g : globs) gated.insert(g);
+                auto drop = [&](std::vector<std::string>& v) {
+                    std::erase_if(v, [&](const std::string& s) { return gated.contains(s); });
+                };
+                drop(bc.sources);
+                drop(pkg.manifest.modules.sources);
+                std::set<std::string> activeSet(active.begin(), active.end());
+                for (auto& [f, globs] : bc.featureSources) {
+                    if (!activeSet.contains(f)) continue;
+                    for (auto& g : globs) {
+                        bc.sources.push_back(g);
+                        pkg.manifest.modules.sources.push_back(g);
+                    }
+                }
             }
         };
         if (!packages.empty()) {
@@ -2168,8 +2199,9 @@ prepare_build(bool print_fingerprint,
                     std::println(stderr, "warning: {}", msg);
                 }
             }
-            if (!req.empty() || packages[i].manifest.featuresMap.contains("default"))
-                apply(packages[i], req);
+            // Always apply: even with no requested/default feature, a dep with
+            // feature-gated sources must have those sources dropped by default.
+            apply(packages[i], req);
         }
     }
 

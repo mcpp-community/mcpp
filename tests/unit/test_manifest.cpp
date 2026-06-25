@@ -395,6 +395,35 @@ package = {
     EXPECT_EQ(m->targets[0].soname, "libtinyshared.so.1");
 }
 
+TEST(SynthesizeFromXpkgLua, FeatureGatedSources) {
+    // gtest-style: gtest_main.cc listed in base `sources` (old-mcpp compat) AND
+    // under the `main` feature → featureSources records it; the feature is
+    // registered in featuresMap. prepare_build later gates it (off by default).
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "gtestlike",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources  = { "*/src/all.cc", "*/src/main.cc" },
+        targets  = { ["gtestlike"] = { kind = "lib" } },
+        features = {
+            ["main"] = { sources = { "*/src/main.cc" } },
+        },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "gtestlike", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    // base sources keep both (old mcpp ignores `features` → no regression)
+    ASSERT_EQ(m->buildConfig.sources.size(), 2u);
+    // the `main` feature is registered + carries its gated source
+    ASSERT_TRUE(m->featuresMap.contains("main"));
+    ASSERT_TRUE(m->buildConfig.featureSources.contains("main"));
+    ASSERT_EQ(m->buildConfig.featureSources.at("main").size(), 1u);
+    EXPECT_EQ(m->buildConfig.featureSources.at("main")[0], "*/src/main.cc");
+}
+
 TEST(SynthesizeFromXpkgLua, RuntimeConfig) {
     constexpr auto src = R"(
 package = {

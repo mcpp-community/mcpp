@@ -255,6 +255,8 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("add")
             .description("Add a dependency to mcpp.toml")
             .arg(cl::Arg("pkg").help("Package spec, e.g. foo@1.0.0").required())
+            .option(cl::Option("dev").help(
+                "Add to [dev-dependencies] (test-only, e.g. gtest)"))
             .action(wrap_rc(mcpp::pm::commands::cmd_add)))
         .subcommand(cl::App("remove")
             .description("Remove a dependency from mcpp.toml")

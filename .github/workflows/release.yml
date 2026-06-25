@@ -86,9 +86,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.xlings
-          key: xlings-${{ runner.os }}-release-xl0448-${{ hashFiles('.xlings.json') }}
+          key: xlings-${{ runner.os }}-release-xl0460-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-${{ runner.os }}-release-xl0448-
+            xlings-${{ runner.os }}-release-xl0460-
 
       - name: Bootstrap mcpp via xlings
         env:
@@ -96,7 +96,7 @@ jobs:
           # Pin xlings to a known-good version. The upstream install
           # script always grabs `latest` (no version override), so we
           # download + self-install manually to avoid broken releases.
-          XLINGS_VERSION: '0.4.58'
+          XLINGS_VERSION: '0.4.60'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
@@ -281,7 +281,7 @@ jobs:
       - name: Bootstrap mcpp via xlings (latest 0.4.58)
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.58'
+          XLINGS_VERSION: '0.4.60'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -410,14 +410,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.xlings
-          key: xlings-macos15-release-xl0448-${{ hashFiles('.xlings.json') }}
+          key: xlings-macos15-release-xl0460-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-macos15-release-xl0448-
+            xlings-macos15-release-xl0460-
 
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.58'
+          XLINGS_VERSION: '0.4.60'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             WORK=$(mktemp -d)
@@ -591,15 +591,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\.xlings
-          key: xlings-${{ runner.os }}-release-xl0448-${{ hashFiles('.xlings.json') }}
+          key: xlings-${{ runner.os }}-release-xl0460-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-${{ runner.os }}-release-xl0448-
+            xlings-${{ runner.os }}-release-xl0460-
 
       - name: Bootstrap mcpp via xlings
         shell: bash
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.58'
+          XLINGS_VERSION: '0.4.60'
         run: |
           WORK=$(mktemp -d)
           zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
