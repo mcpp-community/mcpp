@@ -3,6 +3,20 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.66] — 2026-06-26
+
+### 修复
+
+- **LLVM 工具链产物运行期 `libatomic.so.1: cannot open` / 真用原子时链接报 `undefined __atomic_*`**:
+  16 字节及超宽 `std::atomic` 会降级成 `__atomic_*` 外部调用,这些符号位于 **libatomic**
+  (GCC 运行时库,LLVM 无对应物),而编译器驱动**不会自动链接** libatomic。mcpp 现在在
+  Linux 链接行注入 `-Wl,--push-state,--as-needed -latomic -Wl,--pop-state`:真正用到原子的
+  程序自动链上并保留依赖,未用到的程序经 `--as-needed` 自动丢弃、产物零额外依赖。注入是
+  **自守卫**的——仅当工具链链接目录里存在可解析的 libatomic(动态链接 `libatomic.so`/`.a`,
+  静态链接 `libatomic.a`)时才发出 `-latomic`,因此对不附带 libatomic 的工具链零回归。
+  与之配套的 llvm 资源包需把 libatomic 打入 `lib/<triple>/`(详见
+  `.agents/docs/2026-06-26-llvm22-libatomic-self-containment-design.md`)。
+
 ## [0.0.65] — 2026-06-25
 
 ### 修复
