@@ -45,6 +45,21 @@ struct CompileFlags {
 
 CompileFlags compute_flags(const BuildPlan& plan);
 
+// Return the linker flag that pulls in libatomic, or "" when it should be
+// omitted. libatomic carries the out-of-line __atomic_* libcalls that
+// 16-byte / oversized std::atomic lowers to (a GCC runtime lib — LLVM ships
+// no equivalent, and compiler drivers don't auto-link it), so a genuine
+// atomic user otherwise fails at link with `undefined __atomic_*`. We guard
+// it with --as-needed so binaries that don't use it get no dependency. But
+// --as-needed does NOT skip a missing library (the linker still has to open
+// it), so the flag is emitted ONLY when a link-resolvable libatomic actually
+// exists on one of the toolchain's link dirs — otherwise it would break
+// toolchains that ship no libatomic at all. `staticLink` (a `-static` build,
+// e.g. musl targets) narrows the resolvable form to `libatomic.a`; a dynamic
+// link also accepts `libatomic.so`.
+std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
+                             bool staticLink);
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
@@ -89,6 +104,18 @@ std::string normalize_ldflag(const std::filesystem::path& root, const std::strin
 }
 
 }  // namespace
+
+std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
+                             bool staticLink) {
+    for (auto& dir : linkDirs) {
+        std::error_code ec;
+        if (std::filesystem::exists(dir / "libatomic.a", ec)
+            || (!staticLink && std::filesystem::exists(dir / "libatomic.so", ec))) {
+            return " -Wl,--push-state,--as-needed -latomic -Wl,--pop-state";
+        }
+    }
+    return {};
+}
 
 CompileFlags compute_flags(const BuildPlan& plan) {
     CompileFlags f;
@@ -431,8 +458,15 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         f.ld = std::format("{}{}{}{} -fuse-ld=lld{}{}{}", full_static, static_stdlib,
                            b_flag, macos_sdk, version_min, user_ldflags, link_extra);
     } else {
-        f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
-                           runtime_dirs, payload_ld, user_ldflags, link_extra);
+        // libatomic: 16-byte / oversized std::atomic needs the out-of-line
+        // __atomic_* libcalls from libatomic, which the driver won't add on
+        // its own. Inject `-latomic` (under --as-needed) after runtime_dirs
+        // so its -L entries are on the search path; self-guards on the lib
+        // actually being present (see atomic_link_flag).
+        std::string atomic_ld = atomic_link_flag(plan.toolchain.linkRuntimeDirs,
+                                                 !full_static.empty());
+        f.ld = std::format("{}{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
+                           runtime_dirs, atomic_ld, payload_ld, user_ldflags, link_extra);
     }
 
     return f;
