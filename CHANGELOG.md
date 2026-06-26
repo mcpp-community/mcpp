@@ -3,6 +3,22 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.67] — 2026-06-26
+
+### 修复
+
+- **带命名空间前缀的依赖解析失败 `index entry not found in local clone`(自定义 ns + 非规范文件名)**:
+  当一个包以「裸 `name` + 独立 `namespace` 字段」形态声明(如 `aimol.tensorvia-cpu`:
+  `name="tensorvia-cpu"`、`namespace="aimol"`),并以**非规范文件名**落盘在共享索引里
+  (`pkgs/t/tensorvia-cpu.lua` 而非 `pkgs/a/aimol.tensorvia-cpu.lua`)时,限定请求
+  `aimol.tensorvia-cpu` 报「索引条目缺失」,而裸名 `tensorvia-cpu` 却能解析。根因是
+  **候选消歧 `selectDependencyCandidate` 用「规范文件名 `<ns>.<short>.lua` 是否存在」当身份
+  判据**——描述符以非规范文件名落盘时,正确的 peer-root 候选 `(aimol, tensorvia-cpu)` 对消歧
+  器隐形,请求被钉死在错误的首选候选 `(mcpplibs.aimol, …)` 上并被身份门拒绝。修复:候选消歧
+  改为**身份优先**,经由加载路径同款的身份校验读取器(`read_xpkg_lua*`)按描述符**声明的
+  `(ns, name)`** 定位候选,文件名不再参与身份判定——选择层与加载层从此不可能对同一候选产生
+  分歧。详见 `.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`。
+
 ## [0.0.66] — 2026-06-26
 
 ### 修复
