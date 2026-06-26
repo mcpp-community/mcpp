@@ -133,3 +133,45 @@ TEST(PmPackageFetcher, LocalPathIndexAttributesOwnNamespaceToNoNsDescriptor) {
 
     std::filesystem::remove_all(index);
 }
+
+// Coverage gap closed: a custom-namespace descriptor filed under a NON-canonical
+// filename must still resolve for a qualified request, because identity is the
+// declared (namespace, name) — never the filename (design doc
+// 2026-06-26-identity-first-resolution-no-filename.md, P0/P2).
+//
+// Real-world trigger: `aimol.tensorvia-cpu` declares namespace="aimol",
+// name="tensorvia-cpu" but is filed in the mcpplibs index as the BARE
+// `pkgs/t/tensorvia-cpu.lua` (canonical would be `pkgs/a/aimol.tensorvia-cpu.lua`).
+// Every prior fetcher fixture sat at its canonical path, so this seam was untested.
+// `read_xpkg_lua*` already keys on declared identity, so this asserts the READ
+// layer is correct and the production failure is isolated to candidate SELECTION
+// (`selectDependencyCandidate`'s canonical-filename-only strict reader).
+TEST(PmPackageFetcher, ResolvesCustomNamespaceDescriptorUnderNonCanonicalFilename) {
+    auto project = make_tempdir("mcpp-noncanonical-filename");
+    auto dataRoot = project / ".mcpp" / "data";
+
+    // Declared identity (aimol, tensorvia-cpu), but filed under the bare short
+    // name in the mcpplibs index — filename does NOT encode the namespace.
+    write_file(dataRoot / "mcpplibs" / "pkgs" / "t" / "tensorvia-cpu.lua",
+               R"(package = {
+                      namespace = "aimol",
+                      name      = "tensorvia-cpu",
+                      version   = "0.1.1",
+                      mcpp = { sources = { "*.cppm" } },
+                  })");
+
+    // Qualified request for the custom namespace must resolve, filename be damned.
+    auto hit = mcpp::pm::Fetcher::read_xpkg_lua_from_project_data(
+        project, "aimol", "tensorvia-cpu");
+    ASSERT_TRUE(hit.has_value())
+        << "declared (aimol, tensorvia-cpu) must resolve regardless of filename";
+    EXPECT_NE(hit->find("tensorvia-cpu"), std::string::npos);
+
+    // A foreign namespace for the same short name must NOT match it.
+    auto wrongNs = mcpp::pm::Fetcher::read_xpkg_lua_from_project_data(
+        project, "mcpplibs", "tensorvia-cpu");
+    EXPECT_FALSE(wrongNs.has_value())
+        << "the descriptor is (aimol, …), so a (mcpplibs, …) request must miss";
+
+    std::filesystem::remove_all(project);
+}

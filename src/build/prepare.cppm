@@ -899,32 +899,20 @@ prepare_build(bool print_fingerprint,
         return nullptr;
     };
 
-    auto canonicalXpkgLuaFilename =
-        [](std::string_view ns, std::string_view shortName) {
-            if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
-                return std::string(shortName) + ".lua";
-            }
-            return std::format("{}.{}.lua", ns, shortName);
-        };
-
-    auto readStrictLuaFromPkgsDir =
-        [&](const std::filesystem::path& pkgsDir,
-            std::string_view ns,
-            std::string_view shortName) -> std::optional<std::string>
-    {
-        auto fname = canonicalXpkgLuaFilename(ns, shortName);
-        if (fname.empty()) return std::nullopt;
-        char first = static_cast<char>(std::tolower(
-            static_cast<unsigned char>(fname.front())));
-        auto candidate = pkgsDir / std::string(1, first) / fname;
-        if (!std::filesystem::exists(candidate)) return std::nullopt;
-
-        std::ifstream is(candidate);
-        std::stringstream ss;
-        ss << is.rdbuf();
-        return ss.str();
-    };
-
+    // Identity-first candidate probe. A candidate is located by the DECLARED
+    // (namespace, name) of whatever descriptor the index holds — never by whether
+    // a canonically-named file `<ns>.<short>.lua` happens to exist on disk. It
+    // routes through the same identity-verified readers the load path uses
+    // (`read_xpkg_lua*`, which gate every hit on the descriptor's declared
+    // identity and already cover non-canonical filenames), so candidate selection
+    // and loading can never disagree about what a candidate resolves to.
+    //
+    // Before this, selection probed the canonical filename only, so a descriptor
+    // filed under a non-canonical name (e.g. `aimol.tensorvia-cpu` declared in the
+    // mcpplibs index as bare `pkgs/t/tensorvia-cpu.lua`) was invisible to its own
+    // peer-root candidate `(aimol, tensorvia-cpu)`, leaving the request pinned to
+    // the wrong front candidate `(mcpplibs.aimol, …)`. See
+    // .agents/docs/2026-06-26-identity-first-resolution-no-filename.md.
     auto readStrictLuaForCandidate =
         [&](const mcpp::pm::DependencyCoordinate& coord)
             -> std::optional<std::string>
@@ -935,38 +923,15 @@ prepare_build(bool print_fingerprint,
         auto* idxSpec = findIndexForNs(coord.namespace_);
         if (idxSpec && idxSpec->is_local()) {
             auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
-            return readStrictLuaFromPkgsDir(indexPath / "pkgs",
-                                            coord.namespace_,
-                                            coord.shortName);
+            return mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
+                indexPath, coord.namespace_, coord.shortName);
         }
         if (idxSpec && !idxSpec->is_builtin()) {
-            std::error_code ec;
-            for (auto& data : mcpp::config::project_xlings_data_roots(*root)) {
-                if (!std::filesystem::exists(data)) continue;
-                for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
-                    if (!entry.is_directory()) continue;
-                    auto pkgsDir = entry.path() / "pkgs";
-                    if (auto lua = readStrictLuaFromPkgsDir(
-                            pkgsDir, coord.namespace_, coord.shortName)) {
-                        return lua;
-                    }
-                }
-            }
-            return std::nullopt;
+            return mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
+                *root, coord.namespace_, coord.shortName);
         }
-
-        auto data = (*cfg)->xlingsHome() / "data";
-        if (!std::filesystem::exists(data)) return std::nullopt;
-        std::error_code ec;
-        for (auto& entry : std::filesystem::directory_iterator(data, ec)) {
-            if (!entry.is_directory()) continue;
-            auto pkgsDir = entry.path() / "pkgs";
-            if (auto lua = readStrictLuaFromPkgsDir(
-                    pkgsDir, coord.namespace_, coord.shortName)) {
-                return lua;
-            }
-        }
-        return std::nullopt;
+        mcpp::fetcher::Fetcher fetcher(**cfg);
+        return fetcher.read_xpkg_lua(coord.namespace_, coord.shortName);
     };
 
     auto xpkgLuaMatchesCandidate =
