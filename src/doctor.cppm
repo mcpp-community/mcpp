@@ -20,6 +20,7 @@ import mcpp.platform.process;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
+import mcpp.toolchain.abi;
 import mcpp.ui;
 import mcpp.xlings;
 
@@ -290,16 +291,11 @@ export int why_report(const std::string& topic) {
     auto& tc   = ctx->tc;
     auto& plan = ctx->plan;
 
-    auto abi_of = [](const mcpp::toolchain::Toolchain& t) -> std::string {
-        if (t.targetTriple.find("musl") != std::string::npos) return "musl";
-        if (t.stdlibId == "libc++") return "libc++";
-        if (t.compiler == mcpp::toolchain::CompilerId::MSVC) return "msvc";
-        return "glibc";
-    };
-
     if (all || topic == "toolchain") {
+        const auto prof = mcpp::toolchain::abi_profile(tc);
         std::println("toolchain: {}", tc.label());
-        std::println("  abi={}  stdlib={}  triple={}", abi_of(tc), tc.stdlibId, tc.targetTriple);
+        std::println("  abi(libc)={}  cxxstdlib={}  arch={}  os={}  triple={}",
+                     prof.libc, prof.cxxStdlib, prof.arch, prof.os, tc.targetTriple);
         std::println("  reason: [toolchain] in mcpp.toml if set, else platform-native default");
         if (!ctx->manifest.package.platforms.empty()) {
             std::string ps;

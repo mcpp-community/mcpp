@@ -21,6 +21,7 @@ import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
+import mcpp.toolchain.abi;
 import mcpp.build.plan;
 import mcpp.lockfile;
 import mcpp.config;
@@ -2464,29 +2465,38 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    // Capability-driven ABI enforcement: if any dependency declares an
-    // `abi:<x>` capability, the resolved toolchain must satisfy it. (Toolchain
-    // is resolved before the dep graph, so this enforces/diagnoses rather than
-    // reselects — abi-driven reselection is a resolution-ordering follow-up.)
+    // Capability-driven ABI enforcement, dimensional (see src/toolchain/abi.cppm
+    // and .agents/docs/2026-06-27-abi-compat-model-single-pr-design.md). Each
+    // dependency may constrain specific toolchain dimensions via `abi:`
+    // capabilities (libc / cxxstdlib / arch / os / cxxabi); UNSPECIFIED
+    // DIMENSIONS ARE DON'T-CARE. The legacy bare form `abi:glibc` maps to the
+    // libc dimension only — so a glibc *C library* (glfw) builds fine under a
+    // clang+libc++ toolchain on `*-linux-gnu` (libc is still glibc), which the
+    // previous single-axis check wrongly rejected. The toolchain is resolved
+    // before the dep graph, so this enforces/diagnoses rather than reselects —
+    // abi-driven reselection is a resolution-ordering follow-up.
     {
-        const std::string tcAbi =
-            ctx.tc.targetTriple.find("musl") != std::string::npos ? "musl"
-            : ctx.tc.stdlibId == "libc++"                          ? "libc++"
-            : ctx.tc.compiler == mcpp::toolchain::CompilerId::MSVC ? "msvc"
-            :                                                         "glibc";
+        const auto prof = mcpp::toolchain::abi_profile(ctx.tc);
+        std::vector<mcpp::toolchain::AbiConstraint> constraints;
         for (auto& cap : ctx.plan.runtimeCapabilities) {
-            if (cap.rfind("abi:", 0) != 0) continue;
-            std::string need = cap.substr(4);
-            if (need == tcAbi) continue;
             std::string provider;
             for (auto& [c, p] : ctx.plan.runtimeProviders)
                 if (c == cap) { provider = p; break; }
+            if (auto con = mcpp::toolchain::parse_abi_capability(
+                    cap, provider.empty() ? std::string_view{"?"} : std::string_view{provider}))
+                constraints.push_back(std::move(*con));
+        }
+        if (auto mismatches = mcpp::toolchain::abi_check(prof, constraints);
+            !mismatches.empty()) {
+            const auto& mm = mismatches.front();
             return std::unexpected(std::format(
-                "ABI mismatch: dependency '{}' requires abi={} but the resolved "
-                "toolchain '{}' is abi={}.\n"
-                "       fix: `mcpp toolchain default <{}-compatible>` "
-                "(e.g. gcc@16.1.0 for glibc), or set [toolchain] in mcpp.toml.",
-                provider.empty() ? "?" : provider, need, ctx.tc.label(), tcAbi, need));
+                "ABI incompatibility: dependency '{}' requires {}={}, but the "
+                "resolved toolchain '{}' provides {}={}.\n"
+                "       fix: select a {}-compatible toolchain "
+                "(e.g. gcc@16.1.0 for glibc) or set [toolchain] in mcpp.toml.",
+                mm.source, mcpp::toolchain::dim_name(mm.dim), mm.need,
+                ctx.tc.label(), mcpp::toolchain::dim_name(mm.dim), mm.got,
+                mm.need));
         }
     }
 
