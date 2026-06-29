@@ -129,6 +129,51 @@ Spack, Nixpkgs, pkg-config. Distilled lessons that shaped this design:
    mutual exclusion structurally — no constraint DSL, no `backend-*` boolean
    pile.
 
+### Corollary — a feature define is an *interface* requirement
+
+Rule 1 names *what* a feature may contribute to compilation (a package-owned,
+namespaced define); it does not, by itself, fix *where* that define applies. For
+a **header-only** provider the answer is forced: the library has no sources of
+its own, so its feature switch only takes effect in the translation unit that
+*includes its headers* — i.e. in the **consumer**. `EIGEN_USE_BLAS` must be
+defined when the consumer compiles `a * b`, not (only) when Eigen's anchor TU
+compiles. Therefore a feature's `defines` are treated as **interface
+requirements**: they propagate to consumers along Public/Interface dependency
+edges, on exactly the same machinery and visibility discipline as a dependency's
+public `include_dirs` (`PackageRoot::publicUsage`, the `computeUsageRequirements`
+fixpoint). This is the realization of Rule 1 for header-only providers, not an
+exception to it — the define stays package-owned and namespaced; only its scope
+is corrected.
+
+Why this does **not** reintroduce the vcpkg failure mode ("flags leak into the
+ABI, break composition"):
+
+- **Only the namespaced, library-owned define crosses the boundary** — never
+  free-form flags. Link flags / include paths still come from the bound
+  provider's own build config (Rule 1 intact).
+- **Visibility-bounded.** Propagation follows the same Public/Interface edges as
+  include dirs; a `private` dependency edge keeps the define off the consumer's
+  public interface.
+- **ODR-safe by single-instance propagation.** Activation is unioned onto a
+  single shared provider instance (Cargo model); propagation flows outward from
+  that one `publicUsage`, so every consumer of the provider sees the *same*
+  define set. A header-only library compiled with the switch in one TU and
+  without it in another would be an ODR violation — single-instance propagation
+  structurally prevents that split.
+- **The automatic `MCPP_FEATURE_<NAME>` macro is deliberately NOT propagated.**
+  It is not namespaced by the library (two packages may each declare a
+  `use_blas` feature → colliding `MCPP_FEATURE_USE_BLAS`), so it stays private to
+  the owning package as a local build signal. Only the namespaced user define is
+  an interface contract — which reinforces, rather than relaxes, Rule 1.
+
+Simplicity note (少即是多): *all* feature defines are interface defines; mcpp does
+**not** add a CMake-style PUBLIC/PRIVATE/INTERFACE tri-state for defines — that is
+precisely the complexity this design avoids. A define that happens to matter only
+to the provider's own `.cpp` still propagates, but lands in consumers as an
+unused, namespaced `-D` (harmless). Should a genuinely provider-private feature
+define ever be needed, a `private-defines` key is the future-proofing escape
+hatch; it is YAGNI today.
+
 ## 4. The model — two primitives
 
 ### Primitive ① Feature — additive, composable, does only this

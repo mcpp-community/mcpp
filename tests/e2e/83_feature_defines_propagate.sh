@@ -78,8 +78,10 @@ cd app
 grep -q 'WIDGET_TURBO' compile_commands.json || {
     echo "FAIL: WIDGET_TURBO missing from consumer compile_commands.json"; cat compile_commands.json; exit 1; }
 
-# And the produced binary observes turbo mode at runtime.
-BIN=$(find target -name app -type f | head -1)
+# And the produced binary observes turbo mode at runtime. (Binary name is
+# platform-dependent — `app` on POSIX, `app.exe` on Windows.)
+BIN=$(find target -type f \( -name app -o -name app.exe \) | head -1)
+[ -n "$BIN" ] || { echo "FAIL: built binary not found under target/"; exit 1; }
 "$BIN"; rc=$?
 [ "$rc" -eq 0 ] || { echo "FAIL: binary did not observe WIDGET_TURBO (exit $rc)"; exit 1; }
 
