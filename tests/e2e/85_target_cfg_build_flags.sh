@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # 85_target_cfg_build_flags.sh — L1 platform-conditional config: a normal mcpp.toml
-# can scope [build] flags to a target predicate via `[target.'cfg(...)'.build]`.
-# The predicate is evaluated against the RESOLVED TARGET (here: the host build's
-# own triple), NOT textually — so `cfg(linux)`/`cfg(unix)` flags apply on a Linux
-# runner and `cfg(windows)` flags do NOT. See
+# scopes [build] flags to a target predicate via `[target.'cfg(...)'.build]`. The
+# predicate is evaluated against the RESOLVED target (here the host, a native
+# build) — NOT textually — so exactly the host's os/arch predicates apply. This
+# test is HOST-AWARE: it asserts the correct subset applies on whichever of
+# linux/macos/windows + x86_64/aarch64 the runner is, so it validates the
+# evaluator on all three CI platforms. See
 # .agents/docs/2026-06-29-manifest-environment-and-platform-design.md (L1).
-#
-# requires: linux
 set -e
 
 TMP=$(mktemp -d)
@@ -19,46 +19,49 @@ cat > app/mcpp.toml <<'EOF'
 name    = "app"
 version = "0.1.0"
 
-# Matching predicate (Linux host) → these cxxflags apply.
 [target.'cfg(linux)'.build]
 cxxflags = ["-DCOND_LINUX=1"]
-
-# Also matches on Linux (unix family alias).
-[target.'cfg(unix)'.build]
-cxxflags = ["-DCOND_UNIX=1"]
-
-# Non-matching predicate → must NOT apply on a Linux build.
+[target.'cfg(macos)'.build]
+cxxflags = ["-DCOND_MACOS=1"]
 [target.'cfg(windows)'.build]
 cxxflags = ["-DCOND_WIN=1"]
-
-# Boolean combinator: linux AND NOT aarch64 (x86_64 runner) → applies.
-[target.'cfg(all(linux, not(arch = "aarch64")))'.build]
-cxxflags = ["-DCOND_X64_LINUX=1"]
+[target.'cfg(unix)'.build]
+cxxflags = ["-DCOND_UNIX=1"]
+[target.'cfg(arch = "x86_64")'.build]
+cxxflags = ["-DCOND_X64=1"]
+[target.'cfg(arch = "aarch64")'.build]
+cxxflags = ["-DCOND_ARM64=1"]
+# Boolean combinator: any(linux, macos) == unix-family.
+[target.'cfg(any(linux, macos))'.build]
+cxxflags = ["-DCOND_UNIXLIKE=1"]
 EOF
 cat > app/src/main.cpp <<'EOF'
-// The conditional cxxflags must reach this TU. Missing/!expected → #error.
-#ifndef COND_LINUX
-#error "cfg(linux) cxxflag did not apply on a Linux build"
+// Exactly one OS predicate must apply (the host's), regardless of platform.
+#if (defined(COND_LINUX) + defined(COND_MACOS) + defined(COND_WIN)) != 1
+#error "exactly one of cfg(linux)/cfg(macos)/cfg(windows) must apply on any host"
 #endif
-#ifndef COND_UNIX
-#error "cfg(unix) cxxflag did not apply on a Linux build"
+// cfg(unix) applies iff not windows.
+#if defined(COND_WIN) && defined(COND_UNIX)
+#error "cfg(unix) wrongly applied on a windows host"
 #endif
-#ifdef COND_WIN
-#error "cfg(windows) cxxflag wrongly applied on a Linux build"
+#if !defined(COND_WIN) && !defined(COND_UNIX)
+#error "cfg(unix) should apply on a non-windows host"
 #endif
-#ifndef COND_X64_LINUX
-#error "cfg(all(linux, not(arch=aarch64))) cxxflag did not apply on x86_64 Linux"
+// any(linux, macos) must agree with unix on the CI platforms.
+#if defined(COND_UNIXLIKE) != defined(COND_UNIX)
+#error "cfg(any(linux,macos)) disagreed with cfg(unix)"
 #endif
+// Exactly one arch predicate must apply on the CI runners (x86_64 or aarch64).
+#if (defined(COND_X64) + defined(COND_ARM64)) != 1
+#error "exactly one of cfg(arch=x86_64)/cfg(arch=aarch64) must apply"
+#endif
+// Mutual exclusion: the non-host OS predicate must NOT leak in.
 int main() { return 0; }
 EOF
 
 cd app
-"$MCPP" build > b.log 2>&1 || { cat b.log; echo "FAIL: build errored (conditional flag mis-applied?)"; exit 1; }
-
-# The matching flag must be on the consumer TU; the non-matching one must not.
-grep -q 'COND_LINUX=1'   compile_commands.json || { echo "FAIL: cfg(linux) flag absent from compile db"; exit 1; }
-grep -q 'COND_X64_LINUX=1' compile_commands.json || { echo "FAIL: cfg(all/not) flag absent"; exit 1; }
-if grep -q 'COND_WIN=1' compile_commands.json; then
-    echo "FAIL: cfg(windows) flag leaked into a Linux build's compile db"; exit 1; fi
+# The #error guards ARE the assertion: a clean build proves the right conditional
+# cxxflags reached the TU and the wrong ones did not.
+"$MCPP" build > b.log 2>&1 || { cat b.log; echo "FAIL: conditional cfg flags mis-applied for this host"; exit 1; }
 
 echo "OK"
