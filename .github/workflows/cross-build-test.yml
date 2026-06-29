@@ -87,7 +87,11 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.30'
+          # 0.4.61 (current) carries the index-refresh fixes; 0.4.30 left a
+          # "fresh-looking" TTL marker on a cached ~/.xlings so `xlings update`
+          # no-op'd and the stale index never saw a just-bumped bootstrap pin
+          # (mcpp@<pin> "not found" on the first PR after a pin bump).
+          XLINGS_VERSION: '0.4.61'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -96,8 +100,10 @@ jobs:
           "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
-          # Refresh the index so a cached ~/.xlings still sees newly published
-          # cross toolchains (xim:aarch64-linux-musl-gcc, static ninja, ...).
+          # Force a real index re-sync even on a warm cache: drop the TTL refresh
+          # markers so `xlings update` actually pulls the latest index (sees the
+          # current bootstrap pin) while the toolchain payloads stay cached.
+          find "$HOME/.xlings" -name '.xlings-index-cache.json' -delete 2>/dev/null || true
           xlings config --mirror GLOBAL 2>/dev/null || true
           xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
           xlings install mcpp -y
