@@ -1544,6 +1544,56 @@ prepare_build(bool print_fingerprint,
         return {};
     };
 
+    // Stage 2a — feature-activated optional dependencies. Defined as local
+    // lambdas (NOT file-scope functions): keeping their std::map instantiations
+    // inside this implementation unit avoids polluting the exported module BMI,
+    // which otherwise trips a GCC-16 modules bug ("failed to load pendings for
+    // __normal_iterator") when other modules import std.
+    auto activateFeatures = [](const mcpp::manifest::Manifest& pm,
+                               const std::vector<std::string>& requested) {
+        std::vector<std::string> act, q;
+        if (auto it = pm.featuresMap.find("default"); it != pm.featuresMap.end())
+            q.insert(q.end(), it->second.begin(), it->second.end());
+        q.insert(q.end(), requested.begin(), requested.end());
+        std::set<std::string> seen;
+        while (!q.empty()) {
+            auto f = q.back(); q.pop_back();
+            if (f == "default" || !seen.insert(f).second) continue;
+            act.push_back(f);
+            if (auto it = pm.featuresMap.find(f); it != pm.featuresMap.end())
+                q.insert(q.end(), it->second.begin(), it->second.end());
+        }
+        return act;
+    };
+    // Merge a manifest's active feature-deps into its `dependencies` map so the
+    // worklist below pulls them like any normal dep. A top-level dep of the same
+    // key is never overwritten; deps declared only under a feature appear only
+    // when that feature is active.
+    auto mergeActiveFeatureDeps = [&](mcpp::manifest::Manifest& pm,
+                                      const std::vector<std::string>& requested) {
+        if (pm.featureDeps.empty()) return;
+        for (auto& f : activateFeatures(pm, requested)) {
+            auto it = pm.featureDeps.find(f);
+            if (it == pm.featureDeps.end()) continue;
+            for (auto& [k, spec] : it->second) pm.dependencies.try_emplace(k, spec);
+        }
+    };
+
+    // Pull the root package's active feature-deps into its dependency set before
+    // seeding, so `mcpp build --features X` resolves X's optional deps.
+    {
+        std::vector<std::string> rootReq;
+        for (std::size_t p = 0; p < overrides.features.size();) {
+            auto c = overrides.features.find_first_of(", ", p);
+            auto tok = overrides.features.substr(
+                p, c == std::string::npos ? std::string::npos : c - p);
+            if (!tok.empty()) rootReq.push_back(tok);
+            if (c == std::string::npos) break;
+            p = c + 1;
+        }
+        mergeActiveFeatureDeps(*m, rootReq);
+    }
+
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.
     const std::string mainPkgLabel = m->package.name;
@@ -1999,6 +2049,12 @@ prepare_build(bool print_fingerprint,
                     name, dep_manifest->package.name, expectedShort));
             }
         }
+
+        // Stage 2a: merge this dependency's active feature-deps into its own
+        // dependency set before its children are pushed, so a dep's feature can
+        // transitively pull a provider. `spec.features` = features the consumer
+        // requested for this dep.
+        mergeActiveFeatureDeps(*dep_manifest, spec.features);
 
         auto linkFlagsAdded = propagateLinkFlags(dep_root, *dep_manifest);
 

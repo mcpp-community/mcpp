@@ -403,6 +403,58 @@ package = {
     ASSERT_TRUE(m->buildConfig.featureSources.contains("eigen_blas"));
 }
 
+// Feature System v2 Stage 2a: optional deps activated by a feature.
+// TOML surface uses a dedicated [feature-deps.<name>] section.
+TEST(Manifest, FeatureDepsTomlSection) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[targets.x]
+kind = "lib"
+[features]
+default = []
+backend = []
+[feature-deps.backend]
+zlib = "1.3.x"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_TRUE(m->featureDeps.contains("backend"));
+    EXPECT_EQ(m->featureDeps["backend"].size(), 1u);
+    // The optional dep is NOT in the always-on dependency set.
+    EXPECT_FALSE(m->dependencies.contains("zlib"));
+}
+
+// Lua descriptor surface: a feature carries `deps` (nested table) + `implies`.
+TEST(SynthesizeFromXpkgLua, FeatureDepsAndImplies) {
+    constexpr auto lua = R"(
+package = {
+    spec = "1",
+    name = "compat.eigen",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/anchor.c" },
+        targets = { ["eigen"] = { kind = "lib" } },
+        features = {
+            ["use_blas"]         = { defines = { "EIGEN_USE_BLAS" }, requires = { "blas" } },
+            ["backend-openblas"] = { implies = { "use_blas" }, deps = { ["compat.openblas"] = "0.3.x" } },
+        },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.eigen", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    // implies recorded in featuresMap
+    ASSERT_TRUE(m->featuresMap.contains("backend-openblas"));
+    ASSERT_EQ(m->featuresMap["backend-openblas"].size(), 1u);
+    EXPECT_EQ(m->featuresMap["backend-openblas"][0], "use_blas");
+    // deps recorded in featureDeps, NOT in the always-on dependency set
+    ASSERT_TRUE(m->featureDeps.contains("backend-openblas"));
+    EXPECT_EQ(m->featureDeps["backend-openblas"].size(), 1u);
+    EXPECT_TRUE(m->dependencies.empty());
+}
+
 TEST(Manifest, BuildMacosDeploymentTarget) {
     constexpr auto src = R"(
 [package]

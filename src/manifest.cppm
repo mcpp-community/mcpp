@@ -268,6 +268,12 @@ struct Manifest {
     std::vector<std::string>                        provides;        // package-level
     std::map<std::string, std::vector<std::string>> featureProvides; // feature → caps
     std::map<std::string, std::vector<std::string>> featureRequires; // feature → caps
+    // Feature System v2 Stage 2a — dependencies activated by a feature. A dep
+    // declared ONLY here is optional: pulled into the resolution worklist only
+    // when its feature is active (root --features or a dep spec's features=[...]).
+    // Each value is a full DependencySpec, so a feature-dep may itself request
+    // features. See .agents/docs/2026-06-29-feature-optional-dependencies-s2-design.md.
+    std::map<std::string, std::map<std::string, DependencySpec>> featureDeps;
     // Root-only: [capabilities] cap = "provider" pins (also fed by --cap).
     std::map<std::string, std::string>              capabilityPins;
 
@@ -1049,6 +1055,19 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto r = load_deps("dependencies",       m.dependencies);       !r) return std::unexpected(r.error());
     if (auto r = load_deps("dev-dependencies",   m.devDependencies);    !r) return std::unexpected(r.error());
     if (auto r = load_deps("build-dependencies", m.buildDependencies);  !r) return std::unexpected(r.error());
+
+    // [feature-deps.<feature>] — optional dependencies activated by a feature
+    // (Stage 2a). Each sub-table is loaded with the same dependency loader as
+    // [dependencies], keyed by the feature name.
+    if (auto* fdeps = doc->get_table("feature-deps")) {
+        for (auto& [fname, fval] : *fdeps) {
+            if (!fval.is_table()) continue;
+            if (auto r = load_deps("feature-deps." + std::string(fname),
+                                   m.featureDeps[fname]); !r)
+                return std::unexpected(r.error());
+            m.featuresMap.try_emplace(fname, std::vector<std::string>{}); // register
+        }
+    }
 
     // [toolchain] — platform → "pkg@version" map (docs/21)
     if (auto* tt = doc->get_table("toolchain")) {
@@ -2052,12 +2071,41 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     cur.skip_ws_and_comments();
                     if (!cur.consume('=')) break;
                     cur.skip_ws_and_comments();
+                    if (sub == "deps" && cur.peek() == '{') {
+                        // Feature-activated optional deps (Stage 2a):
+                        //   deps = { ["compat.openblas"] = "0.3.x", ... }
+                        // Same flat/dotted form as the top-level `deps` table.
+                        cur.consume('{');
+                        cur.skip_ws_and_comments();
+                        while (!cur.eof() && cur.peek() != '}') {
+                            auto dname = cur.read_key();
+                            if (dname.empty()) break;
+                            cur.skip_ws_and_comments();
+                            if (!cur.consume('=')) break;
+                            cur.skip_ws_and_comments();
+                            auto dver = cur.read_string();
+                            DependencySpec spec;
+                            spec.version = dver;
+                            auto selector = mcpp::pm::resolve_dependency_selector(
+                                dname,
+                                mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                            if (!selector.candidates.empty()) {
+                                spec.namespace_ = selector.candidates.front().namespace_;
+                                spec.shortName  = selector.candidates.front().shortName;
+                                spec.candidates = std::move(selector.candidates);
+                                m.featureDeps[fname][selector.stableMapKey] = std::move(spec);
+                            }
+                            cur.skip_ws_and_comments();
+                        }
+                        cur.consume('}');
+                    } else {
                     // Feature subfields that carry a string array. `sources`
                     // gates source globs; `defines` carries package-owned macros
                     // (Stage 1); `requires`/`provides` declare capabilities
                     // (Stage 3). All share the `{ "...", ... }` shape.
                     std::vector<std::string>* arr =
-                        sub == "sources"  ? &m.buildConfig.featureSources[fname]
+                        sub == "implies"  ? &m.featuresMap[fname]
+                      : sub == "sources"  ? &m.buildConfig.featureSources[fname]
                       : sub == "defines"  ? &m.buildConfig.featureDefines[fname]
                       : sub == "requires" ? &m.featureRequires[fname]
                       : sub == "provides" ? &m.featureProvides[fname]
@@ -2075,6 +2123,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         // unknown subfield — skip its value
                         if (cur.peek() == '{') cur.skip_table();
                         else (void)cur.read_bareword();
+                    }
                     }
                     cur.skip_ws_and_comments();
                 }
