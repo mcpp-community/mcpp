@@ -220,6 +220,8 @@ int run(int argc, char** argv) {
                 .help("Build profile: release (default) | dev | dist | <[profile.*] name>"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate root-package features (comma-separated)"))
+            .option(cl::Option("cap").takes_value().value_name("LIST")
+                .help("Pin capability providers (e.g. blas=openblas,lapack=mkl)"))
             .option(cl::Option("strict")
                 .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
             .action(wrap_rc(cmd_build)))
@@ -235,6 +237,8 @@ int run(int argc, char** argv) {
                 .help("Build profile for the test build: release (default) | dev | dist | <[profile.*] name>"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate root-package features for the test build (comma-separated)"))
+            .option(cl::Option("cap").takes_value().value_name("LIST")
+                .help("Pin capability providers (e.g. blas=openblas,lapack=mkl)"))
             .option(cl::Option("strict")
                 .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {

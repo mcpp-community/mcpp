@@ -28,6 +28,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto p = parsed.value("package")) ov.package_filter = *p;
     if (auto pr = parsed.value("profile")) ov.profile = *pr;
     if (auto fs = parsed.value("features")) ov.features = *fs;
+    if (auto cp = parsed.value("cap")) ov.capabilities = *cp;
     ov.strict = parsed.is_flag_set("strict");
     ov.force_static = parsed.is_flag_set("static");
 
@@ -37,7 +38,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // the fast path would silently ignore the flags.
     if (!print_fp && ov.target_triple.empty() && !ov.force_static
         && ov.profile.empty() && ov.features.empty() && !ov.strict
-        && ov.package_filter.empty()) {
+        && ov.capabilities.empty() && ov.package_filter.empty()) {
         auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
         if (root) {
             if (auto rc = mcpp::build::try_fast_build(*root, verbose, no_cache)) {
@@ -73,6 +74,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     mcpp::build::BuildOverrides ov;
     if (auto pr = parsed.value("profile"))  ov.profile  = *pr;
     if (auto fs = parsed.value("features")) ov.features = *fs;
+    if (auto cp = parsed.value("cap")) ov.capabilities = *cp;
     ov.strict = parsed.is_flag_set("strict");
     return mcpp::build::run_tests(passthrough, ov);
 }

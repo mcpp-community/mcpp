@@ -259,6 +259,18 @@ struct Manifest {
     // [features] — feature name → implied features ("default" = default set).
     std::map<std::string, std::vector<std::string>> featuresMap;
 
+    // Feature System v2 Stage 3 — capabilities (provides/requires). A capability
+    // is just a shared string. A package satisfies one via package-level
+    // `provides` or via a feature's `provides`; a feature `requires` an abstract
+    // capability instead of a concrete package, and the resolver binds exactly
+    // one provider from the graph. See
+    // .agents/docs/2026-06-29-feature-capability-model-design.md.
+    std::vector<std::string>                        provides;        // package-level
+    std::map<std::string, std::vector<std::string>> featureProvides; // feature → caps
+    std::map<std::string, std::vector<std::string>> featureRequires; // feature → caps
+    // Root-only: [capabilities] cap = "provider" pins (also fed by --cap).
+    std::map<std::string, std::string>              capabilityPins;
+
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;
 
@@ -644,9 +656,23 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 std::vector<std::string> defs;
                 read_str_array(ft, "defines", defs);
                 if (!defs.empty()) m.buildConfig.featureDefines[fname] = std::move(defs);
+                std::vector<std::string> reqs, provs;
+                read_str_array(ft, "requires", reqs);
+                read_str_array(ft, "provides", provs);
+                if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
+                if (!provs.empty()) m.featureProvides[fname] = std::move(provs);
             }
             m.featuresMap[fname] = std::move(implied);
         }
+    }
+
+    // [package] provides — package-level capabilities (Feature System v2 S3).
+    if (auto v = doc->get_string_array("package.provides")) m.provides = *v;
+
+    // [capabilities] cap = "provider" — root-only provider pins.
+    if (auto* caps = doc->get_table("capabilities"); caps && !caps->empty()) {
+        for (auto& [cap, cval] : *caps)
+            if (cval.is_string()) m.capabilityPins[cap] = cval.as_string();
     }
 
     auto* targets_table = doc->get_table("targets");
@@ -1911,6 +1937,22 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.consume('}');
         }
+        else if (key == "provides") {
+            // Package-level capabilities (Feature System v2 S3): this package
+            // satisfies the listed abstract capability names for any dependent
+            // that `requires` them. `{ "blas", "lapack", ... }`.
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `provides =`", m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto s = cur.read_string();
+                if (!s.empty()) m.provides.push_back(std::move(s));
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
         else if (key == "generated_files") {
             // `{ ["relative/path"] = "contents", ... }`
             if (!cur.consume('{')) {
@@ -2010,13 +2052,22 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     cur.skip_ws_and_comments();
                     if (!cur.consume('=')) break;
                     cur.skip_ws_and_comments();
-                    if (sub == "sources") {
-                        if (!cur.consume('{')) break;
+                    // Feature subfields that carry a string array. `sources`
+                    // gates source globs; `defines` carries package-owned macros
+                    // (Stage 1); `requires`/`provides` declare capabilities
+                    // (Stage 3). All share the `{ "...", ... }` shape.
+                    std::vector<std::string>* arr =
+                        sub == "sources"  ? &m.buildConfig.featureSources[fname]
+                      : sub == "defines"  ? &m.buildConfig.featureDefines[fname]
+                      : sub == "requires" ? &m.featureRequires[fname]
+                      : sub == "provides" ? &m.featureProvides[fname]
+                      : nullptr;
+                    if (arr && cur.peek() == '{') {
+                        cur.consume('{');
                         cur.skip_ws_and_comments();
                         while (!cur.eof() && cur.peek() != '}') {
                             auto s = cur.read_string();
-                            if (!s.empty())
-                                m.buildConfig.featureSources[fname].push_back(std::move(s));
+                            if (!s.empty()) arr->push_back(std::move(s));
                             cur.skip_ws_and_comments();
                         }
                         cur.consume('}');

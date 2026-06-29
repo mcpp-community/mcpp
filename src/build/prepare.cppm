@@ -286,6 +286,7 @@ export struct BuildOverrides {
     std::string profile;             // --profile <name> (default "release")
     std::string features;            // --features a,b,c (root package activation)
     bool        strict = false;      // --strict: schema warnings become errors
+    std::string capabilities;        // --cap blas=openblas,lapack=mkl (provider pins)
 };
 
 // `prepare_build` builds the BuildContext for any verb that compiles.
@@ -2054,6 +2055,11 @@ prepare_build(bool print_fingerprint,
     // Also captured here: the root package's active feature set, reused below
     // for the [targets.*] required_features gate.
     std::set<std::string> activeRootFeatures;
+    // Capability accumulation (Stage 3): which packages provide each capability,
+    // and which (capability, requiring-package) pairs need binding. Filled by
+    // apply() as each package's features activate; bound after the loops below.
+    std::map<std::string, std::vector<std::string>> capProviders;
+    std::vector<std::pair<std::string, std::string>> capRequires;
     {
         auto sanitize = [](std::string f) {
             for (auto& c : f)
@@ -2080,6 +2086,19 @@ prepare_build(bool print_fingerprint,
         auto apply = [&](mcpp::modgraph::PackageRoot& pkg,
                          const std::vector<std::string>& requested) {
             auto active = activate(pkg.manifest, requested);
+            // Capability accumulation: package-level provides always count;
+            // feature-scoped provides/requires count only when the feature is
+            // active. Requirements are bound after all packages are processed.
+            const auto& pcap = pkg.manifest.package.name;
+            for (auto& cap : pkg.manifest.provides) capProviders[cap].push_back(pcap);
+            for (auto& f : active) {
+                if (auto it = pkg.manifest.featureProvides.find(f);
+                    it != pkg.manifest.featureProvides.end())
+                    for (auto& cap : it->second) capProviders[cap].push_back(pcap);
+                if (auto it = pkg.manifest.featureRequires.find(f);
+                    it != pkg.manifest.featureRequires.end())
+                    for (auto& cap : it->second) capRequires.emplace_back(cap, pcap);
+            }
             for (auto& f : active) {
                 auto def = "-DMCPP_FEATURE_" + sanitize(f);
                 pkg.manifest.buildConfig.cflags.push_back(def);
@@ -2180,6 +2199,62 @@ prepare_build(bool print_fingerprint,
             // Always apply: even with no requested/default feature, a dep with
             // feature-gated sources must have those sources dropped by default.
             apply(packages[i], req);
+        }
+
+        // ─── Capability binding (Stage 3) ──────────────────────────────────
+        // For each required capability, bind exactly one provider from the
+        // graph. Deterministic: an explicit [capabilities] pin wins; otherwise
+        // 0 providers / ≥2 providers are hard errors (never a silent guess); a
+        // single provider binds with no config. The provider's link/include
+        // requirements already flow through normal dependency mechanics — this
+        // pass is the selection-and-validation layer. See the capability-model
+        // design doc.
+        // --cap cap=provider[,cap=provider] overrides [capabilities] pins.
+        for (std::size_t p = 0; p < overrides.capabilities.size();) {
+            auto c = overrides.capabilities.find_first_of(", ", p);
+            auto tok = overrides.capabilities.substr(
+                p, c == std::string::npos ? std::string::npos : c - p);
+            if (auto eq = tok.find('='); eq != std::string::npos)
+                m->capabilityPins[tok.substr(0, eq)] = tok.substr(eq + 1);
+            if (c == std::string::npos) break;
+            p = c + 1;
+        }
+
+        std::set<std::string> boundCaps;
+        for (auto& [cap, requirer] : capRequires) {
+            if (!boundCaps.insert(cap).second) continue;   // one diagnosis per cap
+            auto& pins = m->capabilityPins;
+            // Dedup candidates, preserve first-seen order.
+            std::vector<std::string> cands;
+            if (auto it = capProviders.find(cap); it != capProviders.end())
+                for (auto& p : it->second)
+                    if (std::find(cands.begin(), cands.end(), p) == cands.end())
+                        cands.push_back(p);
+            if (auto pit = pins.find(cap); pit != pins.end()) {
+                const auto& pin = pit->second;
+                if (std::find(cands.begin(), cands.end(), pin) == cands.end()) {
+                    std::string list;
+                    for (auto& c : cands) list += (list.empty() ? "" : ", ") + c;
+                    return std::unexpected(std::format(
+                        "capability '{}' pinned to provider '{}' (via [capabilities]), "
+                        "but no such provider is in the graph; candidates: [{}]",
+                        cap, pin, list));
+                }
+                continue;   // pin satisfied
+            }
+            if (cands.empty())
+                return std::unexpected(std::format(
+                    "no package provides capability '{}' required by '{}'; add a "
+                    "dependency that declares `provides = [\"{}\"]`", cap, requirer, cap));
+            if (cands.size() > 1) {
+                std::string list;
+                for (auto& c : cands) list += (list.empty() ? "" : ", ") + c;
+                return std::unexpected(std::format(
+                    "capability '{}' has multiple providers in the graph: [{}]; select "
+                    "one with [capabilities] {} = \"<provider>\" or --cap {}=<provider>",
+                    cap, list, cap, cap));
+            }
+            // exactly one → bound implicitly.
         }
     }
 

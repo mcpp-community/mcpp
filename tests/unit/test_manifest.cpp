@@ -333,6 +333,76 @@ accel    = { defines = ["APP_ACCEL=1", "APP_FAST"], implies = ["base"] }
     EXPECT_FALSE(m->buildConfig.featureDefines.contains("base"));
 }
 
+// Feature System v2 Stage 3: capabilities. A feature may `requires`/`provides`
+// abstract capabilities; the package may `provides` them at package level; and
+// the root [capabilities] table pins providers.
+TEST(Manifest, CapabilitiesProvidesRequiresAndPins) {
+    constexpr auto src = R"(
+[package]
+name     = "x"
+version  = "0.1.0"
+provides = ["blas"]
+[targets.x]
+kind = "lib"
+[features]
+default     = []
+use_blas    = { requires = ["blas"] }
+provide_lap = { provides = ["lapack"] }
+[capabilities]
+blas = "openblas"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    ASSERT_EQ(m->provides.size(), 1u);
+    EXPECT_EQ(m->provides[0], "blas");
+
+    ASSERT_TRUE(m->featureRequires.contains("use_blas"));
+    ASSERT_EQ(m->featureRequires["use_blas"].size(), 1u);
+    EXPECT_EQ(m->featureRequires["use_blas"][0], "blas");
+
+    ASSERT_TRUE(m->featureProvides.contains("provide_lap"));
+    EXPECT_EQ(m->featureProvides["provide_lap"][0], "lapack");
+
+    ASSERT_TRUE(m->capabilityPins.contains("blas"));
+    EXPECT_EQ(m->capabilityPins["blas"], "openblas");
+}
+
+// The Lua descriptor surface (index packages) parses package-level `provides`
+// and feature-scoped `requires`/`provides`/`defines`.
+TEST(SynthesizeFromXpkgLua, CapabilitiesAndFeatureDefines) {
+    constexpr auto lua = R"(
+package = {
+    spec = "1",
+    name = "compat.eigen",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources  = { "*/anchor.c" },
+        provides = { "blas" },
+        targets  = { ["eigen"] = { kind = "lib" } },
+        features = {
+            ["use_blas"]   = { defines = { "EIGEN_USE_BLAS" }, requires = { "blas" } },
+            ["eigen_blas"] = { sources = { "*/blas/*.cpp" },   provides = { "blas" } },
+        },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.eigen", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    ASSERT_EQ(m->provides.size(), 1u);
+    EXPECT_EQ(m->provides[0], "blas");
+
+    ASSERT_TRUE(m->buildConfig.featureDefines.contains("use_blas"));
+    EXPECT_EQ(m->buildConfig.featureDefines["use_blas"][0], "EIGEN_USE_BLAS");
+    ASSERT_TRUE(m->featureRequires.contains("use_blas"));
+    EXPECT_EQ(m->featureRequires["use_blas"][0], "blas");
+    ASSERT_TRUE(m->featureProvides.contains("eigen_blas"));
+    EXPECT_EQ(m->featureProvides["eigen_blas"][0], "blas");
+    // sources still gated as before.
+    ASSERT_TRUE(m->buildConfig.featureSources.contains("eigen_blas"));
+}
+
 TEST(Manifest, BuildMacosDeploymentTarget) {
     constexpr auto src = R"(
 [package]
