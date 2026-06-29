@@ -233,9 +233,23 @@ int install_direct(const Env& env, std::string_view target, bool quiet = false);
 // slow/unreachable gitcode. An explicit `mcpp self config --mirror CN|GLOBAL`
 // still writes that fixed value (config priority). Mirror selection is xlings'
 // responsibility; mcpp just declines to override it by default.
+// The project's build-environment payload (L-1), materialized 1:1 into the
+// `.xlings.json` keys xlings already understands. Plain types (no manifest
+// dependency); the caller fills it from a manifest's [xlings] section.
+struct ProjectEnv {
+    std::vector<std::string>                          deps;       // → "deps"
+    std::vector<std::pair<std::string,std::string>>   workspace;  // → "workspace"
+    std::string                                       subos;      // → "subos"
+    std::vector<std::pair<std::string,std::string>>   envs;       // → "envs"
+    bool empty() const {
+        return deps.empty() && workspace.empty() && subos.empty() && envs.empty();
+    }
+};
+
 void seed_xlings_json(const Env& env,
                       std::span<const std::pair<std::string,std::string>> repos,
-                      std::string_view mirror = "auto");
+                      std::string_view mirror = "auto",
+                      const ProjectEnv& penv = {});
 
 // Persist the xlings mirror selection in .xlings.json via xlings itself.
 int config_show(const Env& env);
@@ -1069,7 +1083,8 @@ int install_direct(const Env& env, std::string_view target, bool quiet) {
 
 void seed_xlings_json(const Env& env,
                       std::span<const std::pair<std::string,std::string>> repos,
-                      std::string_view mirror)
+                      std::string_view mirror,
+                      const ProjectEnv& penv)
 {
     auto path = env.home / ".xlings.json";
     std::string json = "{\n";
@@ -1081,6 +1096,27 @@ void seed_xlings_json(const Env& env,
                             i + 1 == repos.size() ? "" : ",");
     }
     json += "  ],\n";
+    // [xlings] build environment (L-1): materialize deps/workspace/subos/envs
+    // verbatim into the keys xlings reads. Each is emitted only when non-empty.
+    auto emit_obj = [&](std::string_view key,
+                        std::span<const std::pair<std::string,std::string>> kv) {
+        json += std::format("  \"{}\": {{\n", key);
+        for (std::size_t i = 0; i < kv.size(); ++i)
+            json += std::format("    \"{}\": \"{}\"{}\n",
+                                json_escape(kv[i].first), json_escape(kv[i].second),
+                                i + 1 == kv.size() ? "" : ",");
+        json += "  },\n";
+    };
+    if (!penv.deps.empty()) {
+        json += "  \"deps\": [";
+        for (std::size_t i = 0; i < penv.deps.size(); ++i)
+            json += std::format("{}\"{}\"", i ? ", " : "", json_escape(penv.deps[i]));
+        json += "],\n";
+    }
+    if (!penv.workspace.empty()) emit_obj("workspace", penv.workspace);
+    if (!penv.subos.empty())
+        json += std::format("  \"subos\": \"{}\",\n", json_escape(penv.subos));
+    if (!penv.envs.empty()) emit_obj("envs", penv.envs);
     json += "  \"lang\": \"en\",\n";
     json += std::format("  \"mirror\": \"{}\"\n", json_escape(mirror));
     json += "}\n";

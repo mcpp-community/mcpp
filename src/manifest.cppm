@@ -172,6 +172,24 @@ struct RuntimeConfig {
     std::map<std::string, std::string> providerOverrides;
 };
 
+// `[xlings]` — the project's build ENVIRONMENT (L-1). The subsection names mirror
+// xlings' own `.xlings.json` schema 1:1, so mcpp materializes them verbatim into
+// `<proj>/.mcpp/.xlings.json` (no translation layer): `deps` (host build-tools
+// installed by xlings), `[xlings.workspace]` (tool→version pins, the general form
+// of `[toolchain]`), `subos` (a named per-project sandbox), `[xlings.envs]`
+// (env vars applied by xvm shims). See
+// .agents/docs/2026-06-29-manifest-environment-and-platform-design.md (L-1).
+struct XlingsConfig {
+    std::vector<std::string>           deps;       // → .xlings.json "deps"
+    std::map<std::string, std::string> workspace;  // → "workspace" (tool → version)
+    std::string                        subos;      // → "subos" (named project sandbox)
+    std::map<std::string, std::string> envs;       // → "envs" (env var → value)
+
+    bool empty() const {
+        return deps.empty() && workspace.empty() && subos.empty() && envs.empty();
+    }
+};
+
 // `[target.<triple>]` — per-target overrides.
 // Picked up when caller passes --target <triple> to build/run/test.
 struct TargetEntry {
@@ -283,6 +301,7 @@ struct Manifest {
     Toolchain                   toolchain;     // optional; empty == fallback
     BuildConfig                 buildConfig;
     RuntimeConfig               runtimeConfig;
+    XlingsConfig                xlings;             // [xlings] build environment (L-1)
     std::vector<ConditionalConfig> conditionalConfigs;  // [target.'cfg(...)'.build], deferred
     std::map<std::string, Profile> profiles;   // [profile.<name>]
     // [features] — feature name → implied features ("default" = default set).
@@ -1128,6 +1147,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
     else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
+
+    // [xlings] — build environment (L-1). Subsections mirror .xlings.json 1:1.
+    if (auto v = doc->get_string_array("xlings.deps"))  m.xlings.deps = *v;
+    if (auto v = doc->get_string("xlings.subos"))       m.xlings.subos = *v;
+    if (auto* wt = doc->get_table("xlings.workspace"))
+        for (auto& [k, val] : *wt)
+            if (val.is_string()) m.xlings.workspace[k] = val.as_string();
+    if (auto* et = doc->get_table("xlings.envs"))
+        for (auto& [k, val] : *et)
+            if (val.is_string()) m.xlings.envs[k] = val.as_string();
     if (auto v = doc->get_string("build.macos_deployment_target"))
         m.buildConfig.macosDeploymentTarget = *v;
     for (auto const& flag : m.buildConfig.cxxflags) {

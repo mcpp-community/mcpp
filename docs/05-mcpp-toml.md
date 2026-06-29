@@ -463,6 +463,29 @@ The vocabulary is fixed by mcpp (which owns the target/triple system):
 `linux | macos | windows`; unknown values produce a warning, and an error under
 `--strict`.
 
+### 2.12 `[xlings]` — Build Environment
+
+```toml
+[xlings]
+deps  = ["make@4.4", "cmake@3.28", "python@3.13"]   # host build-tools to provision
+subos = "dev"                                        # a named per-project sandbox
+
+[xlings.workspace]                                   # pin tool versions (general form of [toolchain])
+clang = "20.1.7"
+
+[xlings.envs]                                        # env vars applied to the tool environment
+OPENBLAS_NUM_THREADS = "1"
+```
+
+Declares the project's **build environment**, provisioned through xlings (which mcpp
+is built on). The subsection names mirror xlings' own `.xlings.json` schema **1:1**, so
+mcpp materializes them verbatim into `<project>/.mcpp/.xlings.json` (no translation
+layer): `deps` (host build-tools), `[xlings.workspace]` (tool→version pins),
+`subos` (a named sandbox), `[xlings.envs]` (env vars). Use it to declare host tools a
+build needs (`make`/`cmake`/`protoc`/…), pin tool versions per project, or set
+build-time env vars — without hand-editing `.xlings.json`. `[toolchain]` (§2.7) remains
+the ergonomic shorthand for the compiler; `[xlings.workspace]` is the general form.
+
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 
 > **Closed syntax, open vocabulary**: whoever owns the parsing semantics defines the keys; whoever owns the domain knowledge defines the values.
