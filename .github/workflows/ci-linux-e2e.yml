@@ -28,10 +28,11 @@ jobs:
     timeout-minutes: 45
     env:
       MCPP_HOME: /home/runner/.mcpp
-      # Verbose every mcpp invocation (incl. those nested in e2e scripts) so CI
-      # logs carry full diagnostics for failures like a cold index/sandbox
-      # bootstrap. Honoured via the MCPP_VERBOSE override in src/cli.cppm.
-      MCPP_VERBOSE: "1"
+      # NOTE: do NOT force MCPP_VERBOSE here. The e2e suite includes tests that
+      # assert mcpp's DEFAULT (quiet) output — e.g. 48_build_error_output and
+      # 53_namespaced_cache_label — which forced verbose would break. Verbose is
+      # set only in the fresh-install workflows (cold bootstrap, no such asserts).
+      # A specific test that needs verbose passes `--verbose` itself.
     steps:
       - uses: actions/checkout@v4
 

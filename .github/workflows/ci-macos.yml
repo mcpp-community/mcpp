@@ -19,9 +19,9 @@ jobs:
     name: macOS ARM64 — xlings LLVM end-to-end
     runs-on: macos-15
     timeout-minutes: 30
-    env:
-      # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm).
-      MCPP_VERBOSE: "1"
+    # NOTE: no MCPP_VERBOSE here — this job runs the e2e suite, which includes
+    # tests asserting mcpp's default quiet output (48/53). Verbose is forced only
+    # in the fresh-install workflows.
     steps:
       - uses: actions/checkout@v4
 

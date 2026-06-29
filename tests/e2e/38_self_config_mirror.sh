@@ -14,9 +14,13 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
     exit 1
 }
 
-grep -q '"mirror": "CN"' "$MCPP_HOME/registry/.xlings.json" || {
+# Default (no explicit --mirror): mcpp seeds "auto" so xlings' own region
+# detection (probe github vs gitcode) picks the reachable/faster mirror, instead
+# of mcpp hardcoding one. An explicit `mcpp self config --mirror X` still pins a
+# concrete value (asserted below).
+grep -q '"mirror": "auto"' "$MCPP_HOME/registry/.xlings.json" || {
     cat "$MCPP_HOME/registry/.xlings.json"
-    echo "FAIL: default mirror should be CN"
+    echo "FAIL: default mirror should be auto (defer to xlings region detection)"
     exit 1
 }
 
