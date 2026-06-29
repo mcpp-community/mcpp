@@ -3,6 +3,31 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.69] — 2026-06-29
+
+### 新增
+
+- **Feature 系统 v2 — feature 可贡献「包自有 defines」+ capability(provides/requires)能力绑定**:
+  解决「`compat.eigen` 启用 `blas` 特性后,`compile_commands.json` 里只有 `-DMCPP_FEATURE_BLAS`、
+  没有上游真正读的 `-DEIGEN_USE_BLAS`,特性形同未启用」这一类根因——旧版 feature 激活**只能**产出
+  `-DMCPP_FEATURE_<NAME>` 宏 + 门控源文件,无法表达任意宏、更无法做 backend 选择。本次按
+  「功能全覆盖 + 少即是多」收敛为**两个原语**(详见
+  `.agents/docs/2026-06-29-feature-capability-model-design.md`):
+
+  - **Stage 1 — feature `defines`**:`[features]` 条目可写成**表形式**
+    `name = { defines = ["EIGEN_USE_BLAS"], implies = [...] }`(TOML 与 Lua 描述符两面均支持);
+    激活时每个**裸名** define 脱糖为 `-D<x>` 加到该包编译标志,与自动的 `-DMCPP_FEATURE_<NAME>`
+    并存。按行业经验(vcpkg)**刻意限制**为「包自有命名空间宏」,feature **不**注入自由
+    `cflags`/`ldflags`,以保持 feature union 组合性。
+  - **Stage 3 — capabilities**:包/特性可 `provides`/`requires` 一个**抽象能力字符串**(如 `blas`),
+    解析器从依赖图中**绑定唯一 provider**——确定性:`[capabilities]` pin / `--cap` 指定者胜出;
+    图中**恰好一个** provider 自动绑定;**零个**或**多个未指定**均**硬报错**(绝不静默猜测)。
+    这把「静默用错/缺失后端」变成配置期显式报错。link/include 仍走既有依赖机制流动。
+
+  > Stage 2(feature 触发的可选依赖自动拉取 + 全图 feature union 统一)作为下一阶段:它需要把
+  > 特性计算提前到依赖解析之前(解析阶段重排),风险更高,且 capability/Eigen 用例并不依赖它
+  > (provider 以显式依赖声明)。本次先发坚实的 S1+S3,符合设计文档「各阶段独立可发」原则。
+
 ## [0.0.67] — 2026-06-26
 
 ### 修复

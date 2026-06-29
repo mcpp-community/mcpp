@@ -277,6 +277,70 @@ extra   = []
 - **strict 校验**:目标包声明了 `[features]` 表时,请求未声明的 feature 给出
   warning;`--strict` 下报错。未声明 `[features]` 的包接受任意请求(纯宏用法)。
 
+#### 表形式 —— 让 feature 贡献的不止是隐含 feature
+
+`[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature
+之外,携带包自有的预处理 `defines`,以及 capability 的 `requires` / `provides`
+(见 §2.8.1):
+
+```toml
+[features]
+default    = []
+# 数组简写:仅隐含 feature。
+docking    = ["extra"]
+extra      = []
+# 表形式:激活时贡献一个包自有的宏。
+mpl2only   = { defines = ["EIGEN_MPL2_ONLY"] }
+# 表形式:宏 + 一个隐含 feature。
+fast_math  = { defines = ["APP_FAST=1"], implies = ["extra"] }
+```
+
+- `defines` 为**裸**宏名(不带 `-D`);feature 激活时每个脱糖为 `-D<x>`,加到该包
+  自己的编译上——与 `[targets.*] defines` 完全一致。按约定仅限包**自有**的带命名
+  空间宏:feature **不**注入自由的 `cflags`/`ldflags`,否则会破坏加性的 feature
+  并集模型。链接旗标来自 provider 依赖(§2.8.1),而非 feature。
+- 每个激活的 feature 仍会得到自动的 `-DMCPP_FEATURE_<NAME>`,`defines` 与之叠加。
+
+### 2.8.1 `provides` / `requires` —— 能力(后端选择)
+
+**capability(能力)** 是一个共享的抽象名字(如 `blas`)。包可以 *provide*(提供)
+一种能力;feature 可以 *require*(需要)一种能力而非点名某个具体包,解析器会从依赖
+图中绑定**恰好一个** provider。这样就能在多个可互换后端(OpenBLAS / MKL / …)中选其
+一,而不必把选择写死进库里。
+
+```toml
+# provider 包为任何 require 它的依赖方满足某能力。
+[package]
+name     = "compat.openblas"
+version  = "0.3.0"
+provides = ["blas", "lapack"]
+```
+
+```toml
+# 消费方经由自己的某个 feature 来 require 这个抽象能力。
+[features]
+use_blas = { defines = ["EIGEN_USE_BLAS"], requires = ["blas"] }
+
+# 图中有 >1 个 provider 时,选其一(否则构建报错并列出候选)。
+[capabilities]
+blas = "compat.openblas"     # 等价于:mcpp build --cap blas=compat.openblas
+
+[dependencies]
+compat.openblas = "0.3.0"    # provider 必须是图中真实存在的依赖
+```
+
+绑定是**确定性**的:
+
+| 图中某被需要能力的 provider 数量 | 结果 |
+|---|---|
+| 恰好一个 | 自动绑定(无需配置) |
+| `[capabilities]` pin / `--cap` 指定了一个 | 以 pin 为准 |
+| 零个 | **报错**:没有包提供 `<cap>` |
+| 两个及以上且未 pin | **报错**并列出候选——绝不静默猜测 |
+
+被绑定 provider 的链接/头文件旗标经由常规依赖机制流到消费方;capability 层是那道
+*选择与校验* 步骤,把"静默选错后端 / 缺后端"变成构建期的显式报错。
+
 ### 2.9 `[profile.<name>]` — 构建档案
 
 ```toml

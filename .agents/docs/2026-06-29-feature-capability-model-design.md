@@ -1,9 +1,31 @@
 # Feature System v2 — Capability-Oriented Model (Design)
 
 Date: 2026-06-29
-Status: Draft (approved for spec; implementation staged S1→S3)
+Status: **S1 + S3 implemented & shipped** (see Implementation Status below);
+S2 scoped as the documented next stage.
 Scope: `src/manifest.cppm` (parse), `src/build/prepare.cppm` (feature activation +
-resolver), `src/pm/dep_spec.cppm` (optional deps), mcpp-index recipe schema.
+resolver), `src/cli.cppm` / `src/cli/cmd_build.cppm` (`--cap`), mcpp-index recipe schema.
+
+## Implementation Status
+
+- **Stage 1 — feature `defines`: DONE.** `[features]` table form
+  (`name = { defines = [...], implies = [...] }`) on both the TOML and Lua
+  surfaces; active features contribute package-owned macros (bare name → `-D<x>`)
+  next to the automatic `-DMCPP_FEATURE_<NAME>`. Tests: `e2e/80_feature_defines.sh`,
+  `Manifest.FeatureTableFormDefinesAndImplies`.
+- **Stage 3 — capabilities: DONE.** `provides` (package-level + per-feature),
+  `requires` (per-feature), the 0/1/many binding over in-graph providers,
+  `[capabilities]` pins and `--cap`. Tests: `e2e/81_capability_binding.sh`
+  (6 cases), `Manifest.CapabilitiesProvidesRequiresAndPins`,
+  `SynthesizeFromXpkgLua.CapabilitiesAndFeatureDefines`.
+- **Stage 2 — optional-dep activation + feature-union unification: NEXT.**
+  Deliberately deferred from this release. Rationale: activating a *new*
+  dependency from a feature requires moving feature computation ahead of
+  dependency resolution (resolution-phase reordering) — a deeper, higher-risk
+  change. It is also **not required** for the capability/Eigen use case, which
+  binds over providers that are explicitly declared as dependencies. Shipping
+  S1+S3 first matches this doc's "each stage independently shippable" intent and
+  keeps the release low-risk.
 
 ---
 

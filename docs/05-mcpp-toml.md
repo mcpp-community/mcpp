@@ -292,6 +292,75 @@ extra   = []
   requesting an undeclared feature produces a warning; an error under `--strict`. A
   package that does not declare `[features]` accepts any request (pure macro usage).
 
+#### Table form — a feature that contributes more than implied features
+
+A `[features]` entry may be written as a **table** instead of an array, letting the
+feature carry package-owned preprocessor `defines` and/or capability `requires` /
+`provides` (see §2.8.1) alongside its implied features:
+
+```toml
+[features]
+default    = []
+# Array shorthand: just implied features.
+docking    = ["extra"]
+extra      = []
+# Table form: contribute a package-owned define when active.
+mpl2only   = { defines = ["EIGEN_MPL2_ONLY"] }
+# Table form: a define + an implied feature.
+fast_math  = { defines = ["APP_FAST=1"], implies = ["extra"] }
+```
+
+- `defines` are **bare** macro names (no `-D`); each desugars to `-D<x>` on the
+  package's own compile when the feature is active — exactly like `[targets.*]
+  defines`. They are restricted by convention to the package's **own** namespaced
+  macros: a feature does **not** inject free-form `cflags`/`ldflags`, which would
+  break the additive feature-union model. Link flags come from a provider
+  dependency (§2.8.1), not from a feature.
+- The automatic `-DMCPP_FEATURE_<NAME>` is still defined for every active feature,
+  so `defines` are additive to it.
+
+### 2.8.1 `provides` / `requires` — Capabilities (backend selection)
+
+A **capability** is a shared abstract name (e.g. `blas`). A package can *provide*
+one; a feature can *require* one instead of naming a concrete package, and the
+resolver binds exactly one provider from the dependency graph. This is how you pick
+one of several interchangeable backends (OpenBLAS / MKL / …) without baking a choice
+into the library.
+
+```toml
+# A provider package satisfies a capability for any dependent that requires it.
+[package]
+name     = "compat.openblas"
+version  = "0.3.0"
+provides = ["blas", "lapack"]
+```
+
+```toml
+# A consumer requires the abstract capability via one of its features.
+[features]
+use_blas = { defines = ["EIGEN_USE_BLAS"], requires = ["blas"] }
+
+# When >1 provider is in the graph, pick one (else the build errors and lists them).
+[capabilities]
+blas = "compat.openblas"     # equivalently: mcpp build --cap blas=compat.openblas
+
+[dependencies]
+compat.openblas = "0.3.0"    # the provider must be a real dependency in the graph
+```
+
+Binding is **deterministic**:
+
+| Providers of a required capability in the graph | Result |
+|---|---|
+| exactly one | bound automatically (no config needed) |
+| a `[capabilities]` pin / `--cap` names one | the pin wins |
+| zero | **error**: no package provides `<cap>` |
+| two or more, unpinned | **error**, listing the candidates — never a silent guess |
+
+The bound provider's link/include flags reach the consumer through normal
+dependency mechanics; the capability layer is the *selection-and-validation* step
+that turns a silently-wrong or missing backend into a loud configure-time error.
+
 ### 2.9 `[profile.<name>]` — Build Profiles
 
 ```toml
