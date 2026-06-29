@@ -87,11 +87,11 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          # 0.4.61 (current) carries the index-refresh fixes; 0.4.30 left a
-          # "fresh-looking" TTL marker on a cached ~/.xlings so `xlings update`
-          # no-op'd and the stale index never saw a just-bumped bootstrap pin
-          # (mcpp@<pin> "not found" on the first PR after a pin bump).
-          XLINGS_VERSION: '0.4.61'
+          # Stay on 0.4.30: its XLINGS_RES download resolution matches the
+          # xlings-res/mcpp release asset layout (newer 0.4.61 changed it and
+          # 404s on the mcpp artifact). The real bug was a stale INDEX, not the
+          # version — fixed by the marker-clear below.
+          XLINGS_VERSION: '0.4.30'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
