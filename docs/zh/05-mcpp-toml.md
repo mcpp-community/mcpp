@@ -389,8 +389,14 @@ cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
 
-- 选择:`mcpp build --profile <name>`(以及 `mcpp test --profile <name>`,会让被测代码与测试二进制
-  都在该 profile 下编译),默认 `release`。
+- 选择与默认:裸 `mcpp build` 走 **`dev`** 档(`-O0 -g`)——主流惯例(参照
+  Cargo/Meson/CMake/Zig/Bazel)。**release 为 opt-in:** `mcpp build --release`(短写)或
+  `--profile release`;`--dev` 是 dev 的显式短写。`mcpp test --profile <name>` 同理
+  (被测代码与测试二进制都在该 profile 下编译)。
+- **项目级默认** —— `[build].default-profile = "<name>"`(别名 `profile`)设置该项目在不带
+  flag 时的默认。典型用途是"以发布优化为常态"的工具/库:`[build] default-profile = "release"`。
+  优先级:`--profile`/`--release`/`--dev` flag **>** `[build].default-profile` **>** 全局 `dev`。
+  (默认 dev 的项目在产出可分发物时应显式 `--release`。)
 - 内置档案:`release`(-O2)/ `dev`、`debug`(-O0 -g)/ `dist`(-O3 + strip;
   **不默认开 lto**)。`[profile.<内置名>]` 可整体覆盖内置定义。
 

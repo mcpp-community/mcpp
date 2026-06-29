@@ -411,8 +411,16 @@ cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
 
-- Selection: `mcpp build --profile <name>` (and `mcpp test --profile <name>`, which builds the
-  code-under-test plus the test binaries under that profile), defaulting to `release`.
+- Selection & default: a bare `mcpp build` uses the **`dev`** profile (`-O0 -g`) — the
+  mainstream convention (cf. Cargo/Meson/CMake/Zig/Bazel). **Release is opt-in:**
+  `mcpp build --release` (shorthand) or `--profile release`. `--dev` is the explicit
+  shorthand for dev. Same applies to `mcpp test --profile <name>` (builds the
+  code-under-test plus the test binaries under that profile).
+- **Per-project default** — `[build].default-profile = "<name>"` (alias: `profile`) sets
+  the project's own default when no flag is passed. The typical use is a tool/library
+  that should build optimized by default: `[build] default-profile = "release"`. Precedence:
+  `--profile`/`--release`/`--dev` flag **>** `[build].default-profile` **>** global `dev`.
+  (A project that defaults to dev should pass `--release` when producing a distributable.)
 - Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
   **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
   built-in definition wholesale.
