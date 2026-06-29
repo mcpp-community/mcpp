@@ -28,6 +28,10 @@ jobs:
     timeout-minutes: 45
     env:
       MCPP_HOME: /home/runner/.mcpp
+      # Verbose every mcpp invocation (incl. those nested in e2e scripts) so CI
+      # logs carry full diagnostics for failures like a cold index/sandbox
+      # bootstrap. Honoured via the MCPP_VERBOSE override in src/cli.cppm.
+      MCPP_VERBOSE: "1"
     steps:
       - uses: actions/checkout@v4
 

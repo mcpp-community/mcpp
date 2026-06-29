@@ -57,6 +57,8 @@ jobs:
             qemu_bin: qemu-aarch64-static
     env:
       MCPP_HOME: /home/runner/.mcpp
+      # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm).
+      MCPP_VERBOSE: "1"
     steps:
       - uses: actions/checkout@v4
 

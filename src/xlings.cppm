@@ -1232,11 +1232,29 @@ bool is_official_package_index_fresh(const Env& env,
 
 int update_index(const Env& env, bool quiet) {
     std::string cmd = build_command_prefix(env) + " update 2>&1";
-    int rc = mcpp::platform::process::run_streaming(cmd,
-        [quiet](std::string_view line) {
-            if (!quiet) std::println("{}", line);
-        });
-    if (rc == 0) mark_known_indexes_refreshed(env);
+    // The index sync is a network git operation; a single transient blip (DNS,
+    // TLS reset, a mirror hiccup) otherwise fails a cold `mcpp self env` /
+    // first-run init outright (e.g. CI's index/sandbox bootstrap). Retry with
+    // linear backoff. The success path returns on the FIRST attempt — zero
+    // added latency in steady state; only a genuine failure pays the backoff.
+    constexpr int kMaxAttempts = 3;
+    int rc = 0;
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+        rc = mcpp::platform::process::run_streaming(cmd,
+            [quiet](std::string_view line) {
+                if (!quiet) std::println("{}", line);
+            });
+        if (rc == 0) { mark_known_indexes_refreshed(env); return 0; }
+        if (attempt < kMaxAttempts) {
+            int delay = attempt * 2;  // 2s, then 4s
+            mcpp::log::verbose("index", std::format(
+                "index update attempt {}/{} failed (rc {}); retrying in {}s",
+                attempt, kMaxAttempts, rc, delay));
+            std::this_thread::sleep_for(std::chrono::seconds(delay));
+        }
+    }
+    mcpp::log::verbose("index", std::format(
+        "index update failed after {} attempts (rc {})", kMaxAttempts, rc));
     return rc;
 }
 

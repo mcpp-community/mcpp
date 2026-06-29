@@ -32,6 +32,8 @@ jobs:
       # MCPP_HOME pinned so the cache key below restores into the
       # same path mcpp resolves at runtime.
       MCPP_HOME: /home/runner/.mcpp
+      # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm).
+      MCPP_VERBOSE: "1"
     steps:
       - uses: actions/checkout@v4
 

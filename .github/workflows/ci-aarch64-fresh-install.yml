@@ -30,6 +30,9 @@ jobs:
     name: fresh install + native build (aarch64 / glibc)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
+    env:
+      # Verbose every mcpp invocation — cold bootstrap path (src/cli.cppm).
+      MCPP_VERBOSE: "1"
     steps:
       - name: System info
         run: |

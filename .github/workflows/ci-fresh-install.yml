@@ -30,6 +30,10 @@ jobs:
     name: Linux fresh install
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      # Verbose every mcpp invocation — fresh-install is the cold index/sandbox
+      # bootstrap path, exactly where extra diagnostics matter (src/cli.cppm).
+      MCPP_VERBOSE: "1"
     steps:
       - uses: actions/checkout@v4
 

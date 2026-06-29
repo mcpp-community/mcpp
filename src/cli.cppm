@@ -101,6 +101,14 @@ int run(int argc, char** argv) {
         else if (a == "--no-color")           mcpp::ui::disable_color();
         else if (a == "--verbose" || a == "-v") mcpp::log::set_verbose(true);
     }
+    // Env override (observability, esp. CI): MCPP_VERBOSE=<non-empty, not "0">
+    // turns on verbose logging for EVERY mcpp invocation — including the ones
+    // nested inside e2e test scripts that call $MCPP without flags. Lets a
+    // workflow flip on diagnostics globally with one env var. An explicit
+    // --quiet still wins (it is processed above and gates the verbose sinks).
+    if (const char* v = std::getenv("MCPP_VERBOSE");
+        v && *v && std::string_view(v) != "0")
+        mcpp::log::set_verbose(true);
 
     // ─── top-level --help / -h / --version intercept ────────────────────
     // cmdline auto-handles these but its formatter doesn't match the
