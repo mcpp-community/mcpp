@@ -341,6 +341,40 @@ compat.openblas = "0.3.0"    # provider 必须是图中真实存在的依赖
 被绑定 provider 的链接/头文件旗标经由常规依赖机制流到消费方;capability 层是那道
 *选择与校验* 步骤,把"静默选错后端 / 缺后端"变成构建期的显式报错。
 
+### 2.8.2 `[feature-deps.<name>]` —— 由 feature 拉取的依赖
+
+在 `[feature-deps.<name>]` 下声明的依赖是**可选的**:仅当该 feature 激活时(根 `--features`,
+或某依赖 spec 的 `features = [...]`)才会被解析。`[dependencies]` 中的依赖始终被解析;
+可选性由声明的*位置*表达,而非某个标志位。
+
+```toml
+[features]
+use_blas         = { defines = ["EIGEN_USE_BLAS"], requires = ["blas"] }
+backend-openblas = { implies = ["use_blas"] }
+
+# 仅当 `backend-openblas` 激活时才拉取。每个条目都是完整的依赖 spec
+#(version/path/git + 其自身的 features)。
+[feature-deps.backend-openblas]
+compat.openblas = "0.3.x"
+```
+
+该机制与能力(§2.8.1)组合:单个 `backend-openblas` feature 既**拉取** provider
+(`compat.openblas`,其 `provides = ["blas"]`),又**开启**消费方开关
+(`implies = ["use_blas"]`,其 `requires = ["blas"]`)。当图中只有一个 provider 时,
+能力自动绑定——消费方只需写 `features = ["backend-openblas"]`。
+
+在索引包的 Lua 描述符中,等价写法为内联形式:
+
+```lua
+features = {
+    use_blas         = { defines = { "EIGEN_USE_BLAS" }, requires = { "blas" } },
+    ["backend-openblas"] = {
+        implies = { "use_blas" },
+        deps    = { ["compat.openblas"] = "0.3.x" },
+    },
+}
+```
+
 ### 2.9 `[profile.<name>]` — 构建档案
 
 ```toml
