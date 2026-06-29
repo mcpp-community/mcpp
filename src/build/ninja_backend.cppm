@@ -633,6 +633,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         for (auto& input : lu.implicitInputs) {
             implicit += " " + escape_ninja_path(input);
         }
+        // Windows runtime-DLL deployment: an executable takes an implicit
+        // dependency on each staged dep DLL (bin/<dll>), so ninja copies them
+        // beside the .exe before the build is considered done. Empty on RPATH
+        // platforms (no *.dll deps), so other targets are unaffected.
+        if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary) {
+            for (auto const& d : plan.runtimeDeployFiles)
+                implicit += " " + escape_ninja_path(d.dest);
+        }
 
         std::string out_line = std::format("build {} : {}{}{}\n",
             escape_ninja_path(lu.output), rule, ins,
@@ -660,6 +668,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
     append("\n");
 
+    // Windows runtime-DLL deployment: one copy edge per staged dep DLL. Emitted
+    // once (deduped by dest in BuildPlan), reusing the generic cp_bmi copy rule.
+    // Inert on RPATH platforms where runtimeDeployFiles is empty.
+    for (auto const& d : plan.runtimeDeployFiles) {
+        append(std::format("build {} : cp_bmi {}\n",
+            escape_ninja_path(d.dest),
+            escape_ninja_path(d.source)));
+    }
+    if (!plan.runtimeDeployFiles.empty())
+        append("\n");
+
     if (!plan.linkUnits.empty()) {
         std::string defaults;
         for (auto& lu : plan.linkUnits) {
@@ -667,6 +686,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             for (auto const& alias : lu.runtimeAliases) {
                 defaults += " " + escape_ninja_path(alias);
             }
+        }
+        for (auto const& d : plan.runtimeDeployFiles) {
+            defaults += " " + escape_ninja_path(d.dest);
         }
         append("default" + defaults + "\n");
     }

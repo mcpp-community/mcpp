@@ -61,6 +61,19 @@ struct BuildPlan {
     // binary's RUNPATH (e.g. compat.glx-runtime). Kept separate so static/musl
     // links don't pull the glibc payload dir.
     std::vector<std::filesystem::path> depRuntimeLibraryDirs;
+    // Windows runtime-DLL deployment. On PE (`supports_rpath` is false) a
+    // directly-launched .exe cannot RUNPATH-locate a dependency's DLL, so each
+    // *.dll found in a dependency's [runtime] library_dir is copied beside the
+    // produced executable (into bin/). The filter is the *.dll extension, not a
+    // platform `if constexpr`: a real Linux/macOS dependency ships .so/.dylib
+    // (never .dll), so this list is empty there and non-Windows builds are
+    // byte-for-byte unchanged; only a Windows prebuilt-DLL package (or a test
+    // that ships a .dll) populates it. dest is relative to outputDir.
+    struct DeployFile {
+        std::filesystem::path source;   // absolute source DLL
+        std::filesystem::path dest;     // relative to outputDir, e.g. bin/libopenblas.dll
+    };
+    std::vector<DeployFile>            runtimeDeployFiles;
     // Aggregated host-runtime requirements from dependency packages'
     // [runtime] metadata. Capability/provider-driven — no platform special-casing
     // in mcpp: providers (e.g. compat.glx-runtime) declare these per platform.
@@ -309,6 +322,26 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             auto abs = dir.is_absolute() ? dir : package.root / dir;
             append_unique_path(plan.runtimeLibraryDirs, abs);
             append_unique_path(plan.depRuntimeLibraryDirs, abs);
+            // Windows runtime-DLL deployment: stage each *.dll from this dir
+            // beside the produced executable (bin/). The *.dll filter — not a
+            // platform guard — keeps this inert for real .so/.dylib deps, so
+            // non-Windows builds are unchanged. See BuildPlan::DeployFile.
+            std::error_code dirEc;
+            if (std::filesystem::is_directory(abs, dirEc)) {
+                for (auto const& entry :
+                         std::filesystem::directory_iterator(abs, dirEc)) {
+                    if (!entry.is_regular_file()) continue;
+                    auto ext = entry.path().extension().string();
+                    std::ranges::transform(ext, ext.begin(),
+                        [](unsigned char c){ return std::tolower(c); });
+                    if (ext != ".dll") continue;
+                    std::filesystem::path dest =
+                        std::filesystem::path("bin") / entry.path().filename();
+                    if (std::ranges::none_of(plan.runtimeDeployFiles,
+                            [&](auto const& d){ return d.dest == dest; }))
+                        plan.runtimeDeployFiles.push_back({entry.path(), dest});
+                }
+            }
         }
         for (auto const& lib : package.manifest.runtimeConfig.dlopenLibs) {
             if (std::ranges::find(plan.runtimeDlopenLibs, lib) == plan.runtimeDlopenLibs.end())

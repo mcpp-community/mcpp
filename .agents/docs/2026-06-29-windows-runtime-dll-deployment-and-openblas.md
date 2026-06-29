@@ -1,10 +1,35 @@
 # Windows Runtime-DLL Deployment & `compat.openblas` Windows Support (Design)
 
 Date: 2026-06-29
-Status: **Design — not yet implemented.** Proposed as the staged follow-up to the
-feature/capability work (mcpp 0.0.72) and the `compat.openblas` package
-(mcpp-index #54). Scope: `src/manifest.cppm`, `src/build/{plan,flags,ninja_backend}.cppm`
-(mcpp); `pkgs/c/compat.openblas.lua`, `.github/workflows/validate.yml` (mcpp-index).
+Status: **Phase A implemented in mcpp 0.0.73.** Phases B–D (release + recipe +
+Windows CI) track in the same effort. Staged follow-up to the feature/capability
+work (mcpp 0.0.72) and the `compat.openblas` package (mcpp-index #54). Scope:
+`src/build/{plan,ninja_backend}.cppm` (mcpp); `pkgs/c/compat.openblas.lua`,
+`.github/workflows/validate.yml` (mcpp-index).
+
+### Implementation note (deviation from the original design)
+
+The implemented mechanism is **gated by the `*.dll` file extension, not by
+`if constexpr(is_windows)` and not by a schema change.** During build planning,
+each `*.dll` found in a linked dependency's `[runtime] library_dirs` is staged
+into `bin/` beside the produced executable via a ninja `cp_bmi` copy edge that
+the executable target takes as an implicit dependency. Consequences:
+
+- **No `manifest.cppm` schema change** (the original Phase-A-step-1). A recipe
+  declares `[runtime] library_dirs` *globally*; on Linux/macOS the dependency
+  ships `.so`/`.dylib` (never `.dll`), so the glob matches nothing and the build
+  is byte-for-byte unchanged. This is exactly the §7 "declare it globally —
+  harmless on Linux" option, made safe by the extension filter. Per-OS scoping
+  under `mcpp.<os>` is therefore unnecessary (and already supported for free by
+  the existing per-OS textual merge if a recipe ever wants it).
+- **The deploy path is exercised on a Linux host** (test
+  `tests/e2e/84_runtime_dll_deploy.sh`) by a dummy dependency shipping a stub
+  `libdummy.dll` — the same code that runs on Windows, validated without a
+  Windows runner. The Windows link/run half is Phase D (mcpp-index CI).
+- **`mcpp pack`** needs no change here: Windows PE packaging is separately
+  stubbed (`src/pack/pack.cppm`, see `2026-05-19-pack-windows-design.md`); when
+  implemented it will pick up the staged `bin/*.dll`. On Linux `mcpp pack` uses
+  `ldd`, which never sees a `.dll`, so the deploy is invisible to it.
 
 ## 1. Problem
 
