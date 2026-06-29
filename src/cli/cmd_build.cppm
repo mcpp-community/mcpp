@@ -26,7 +26,12 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::build::BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
     if (auto p = parsed.value("package")) ov.package_filter = *p;
+    // Profile selection precedence: --profile NAME > --release / --dev > the
+    // project default ([build].default-profile) > "release", resolved in
+    // prepare_build. --release/--dev are shorthands only.
     if (auto pr = parsed.value("profile")) ov.profile = *pr;
+    else if (parsed.is_flag_set("release")) ov.profile = "release";
+    else if (parsed.is_flag_set("dev"))     ov.profile = "dev";
     if (auto fs = parsed.value("features")) ov.features = *fs;
     if (auto cp = parsed.value("cap")) ov.capabilities = *cp;
     ov.strict = parsed.is_flag_set("strict");
