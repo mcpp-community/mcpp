@@ -112,6 +112,14 @@ struct BuildConfig {
     // the "main" feature) without it being linked by default — see
     // .agents/docs/2026-06-25-gtest-main-feature-and-add-dev-design.md.
     std::map<std::string, std::vector<std::string>> featureSources;
+    // feature name → package-owned preprocessor defines (e.g. "-DEIGEN_USE_BLAS").
+    // Feature System v2 Stage 1: when the feature is active these are appended to
+    // the package's compile flags alongside the automatic -DMCPP_FEATURE_<NAME>
+    // (resolved in prepare_build). Restricted by convention to the package's own
+    // namespaced macros — features do NOT inject free-form cflags/ldflags, which
+    // would break feature-union composition. See
+    // .agents/docs/2026-06-29-feature-capability-model-design.md.
+    std::map<std::string, std::vector<std::string>> featureDefines;
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
     bool                                staticStdlib = true;
@@ -611,14 +619,31 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
 
     // [features] — feature name → implied features. "default" lists the
-    // default-active set.
+    // default-active set. Two accepted shapes (Feature System v2):
+    //   array form (shorthand):  name = ["implied", ...]
+    //   table form (full):       name = { implies = [...], defines = [...] }
+    // The table form lets a feature contribute package-owned defines (Stage 1);
+    // `requires`/`provides`/`deps` keys are reserved for later stages.
     if (auto* features_table = doc->get_table("features");
         features_table && !features_table->empty()) {
+        auto read_str_array = [](const auto& tbl, std::string_view key,
+                                 std::vector<std::string>& out) {
+            if (auto it = tbl.find(std::string(key));
+                it != tbl.end() && it->second.is_array())
+                for (auto& v : it->second.as_array())
+                    if (v.is_string()) out.push_back(v.as_string());
+        };
         for (auto& [fname, fval] : *features_table) {
             std::vector<std::string> implied;
             if (fval.is_array()) {
                 for (auto& v : fval.as_array())
                     if (v.is_string()) implied.push_back(v.as_string());
+            } else if (fval.is_table()) {
+                auto& ft = fval.as_table();
+                read_str_array(ft, "implies", implied);
+                std::vector<std::string> defs;
+                read_str_array(ft, "defines", defs);
+                if (!defs.empty()) m.buildConfig.featureDefines[fname] = std::move(defs);
             }
             m.featuresMap[fname] = std::move(implied);
         }

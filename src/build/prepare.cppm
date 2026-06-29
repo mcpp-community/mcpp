@@ -2086,6 +2086,18 @@ prepare_build(bool print_fingerprint,
                 pkg.manifest.buildConfig.cxxflags.push_back(def);
                 pkg.privateBuild.cflags.push_back(def);
                 pkg.privateBuild.cxxflags.push_back(def);
+                // Feature System v2 Stage 1: package-owned `defines` declared on
+                // this feature ride alongside the automatic MCPP_FEATURE_ macro.
+                // Bare names desugar to -D<x>, matching [targets.*] `defines`.
+                if (auto it = pkg.manifest.buildConfig.featureDefines.find(f);
+                    it != pkg.manifest.buildConfig.featureDefines.end())
+                    for (auto& d : it->second) {
+                        auto fdef = "-D" + d;
+                        pkg.manifest.buildConfig.cflags.push_back(fdef);
+                        pkg.manifest.buildConfig.cxxflags.push_back(fdef);
+                        pkg.privateBuild.cflags.push_back(fdef);
+                        pkg.privateBuild.cxxflags.push_back(fdef);
+                    }
             }
             // Feature-gated sources (e.g. gtest's gtest_main.cc behind "main"):
             // drop EVERY feature-listed glob from the default build, then re-add

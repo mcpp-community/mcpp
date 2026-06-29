@@ -295,6 +295,44 @@ kind = "lib"
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
 }
 
+// Feature System v2 Stage 1: a [features] entry may be a TABLE carrying
+// package-owned `defines` (and `implies`), while the array shorthand keeps
+// meaning "implied features". See
+// .agents/docs/2026-06-29-feature-capability-model-design.md.
+TEST(Manifest, FeatureTableFormDefinesAndImplies) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[targets.x]
+kind = "lib"
+[features]
+default  = ["base"]
+base     = []
+accel    = { defines = ["APP_ACCEL=1", "APP_FAST"], implies = ["base"] }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    // Array shorthand still registers an implied-feature list.
+    ASSERT_TRUE(m->featuresMap.contains("default"));
+    ASSERT_EQ(m->featuresMap["default"].size(), 1u);
+    EXPECT_EQ(m->featuresMap["default"][0], "base");
+
+    // Table form: `implies` flows into featuresMap, `defines` into featureDefines.
+    ASSERT_TRUE(m->featuresMap.contains("accel"));
+    ASSERT_EQ(m->featuresMap["accel"].size(), 1u);
+    EXPECT_EQ(m->featuresMap["accel"][0], "base");
+
+    ASSERT_TRUE(m->buildConfig.featureDefines.contains("accel"));
+    ASSERT_EQ(m->buildConfig.featureDefines["accel"].size(), 2u);
+    EXPECT_EQ(m->buildConfig.featureDefines["accel"][0], "APP_ACCEL=1");
+    EXPECT_EQ(m->buildConfig.featureDefines["accel"][1], "APP_FAST");
+
+    // A feature with no defines contributes no featureDefines entry.
+    EXPECT_FALSE(m->buildConfig.featureDefines.contains("base"));
+}
+
 TEST(Manifest, BuildMacosDeploymentTarget) {
     constexpr auto src = R"(
 [package]
