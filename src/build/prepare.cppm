@@ -898,13 +898,19 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    // Set up project-level .mcpp/ directory for custom indices.
-    // This creates .mcpp/.xlings.json with custom non-builtin index
-    // entries so xlings can clone them into the project-scoped data dir.
-    if (!m->indices.empty()) {
+    // Set up project-level .mcpp/ directory for custom indices and/or the
+    // [xlings] build environment (L-1). This creates .mcpp/.xlings.json with
+    // custom non-builtin index entries (so xlings can clone them) plus the
+    // [xlings] deps/workspace/subos/envs materialized verbatim.
+    if (!m->indices.empty() || !m->xlings.empty()) {
         auto cfg2 = get_cfg();
         if (cfg2) {
-            mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices);
+            mcpp::xlings::ProjectEnv penv;
+            penv.deps  = m->xlings.deps;
+            penv.subos = m->xlings.subos;
+            for (auto const& [k, v] : m->xlings.workspace) penv.workspace.emplace_back(k, v);
+            for (auto const& [k, v] : m->xlings.envs)      penv.envs.emplace_back(k, v);
+            mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices, penv);
 
             // On first build, the project index data root may be empty because
             // ensure_project_index_dir only writes .xlings.json but does not

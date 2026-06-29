@@ -433,6 +433,27 @@ platforms = ["linux", "macos", "windows"]
 (它拥有 target/triple 体系):`linux | macos | windows`;未知值 warning,
 `--strict` 下报错。
 
+### 2.12 `[xlings]` — 构建环境
+
+```toml
+[xlings]
+deps  = ["make@4.4", "cmake@3.28", "python@3.13"]   # 要供给的 host 构建工具
+subos = "dev"                                        # 命名的项目级沙箱
+
+[xlings.workspace]                                   # 固定工具版本([toolchain] 的通用形式)
+clang = "20.1.7"
+
+[xlings.envs]                                        # 应用到工具环境的环境变量
+OPENBLAS_NUM_THREADS = "1"
+```
+
+声明项目的**构建环境**,经 xlings(mcpp 的底座)供给。子段名与 xlings 自身的
+`.xlings.json` schema **1:1** 对齐,因此 mcpp 把它们**原样**物化进
+`<项目>/.mcpp/.xlings.json`(无翻译层):`deps`(host 构建工具)、`[xlings.workspace]`
+(工具→版本固定)、`subos`(命名沙箱)、`[xlings.envs]`(环境变量)。用它声明构建所需的
+host 工具(`make`/`cmake`/`protoc`…)、按项目固定工具版本、或设构建期环境变量——无需手改
+`.xlings.json`。`[toolchain]`(§2.7)仍是编译器的便捷简写;`[xlings.workspace]` 是其通用形式。
+
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 
 > **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。

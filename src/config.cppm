@@ -210,7 +210,8 @@ void reset_registry(const GlobalConfig& cfg) {
 bool ensure_project_index_dir(
     const GlobalConfig& cfg,
     const std::filesystem::path& projectDir,
-    const std::map<std::string, mcpp::pm::IndexSpec>& indices);
+    const std::map<std::string, mcpp::pm::IndexSpec>& indices,
+    const mcpp::xlings::ProjectEnv& penv = {});
 
 struct ConfigError { std::string message; };
 
@@ -661,7 +662,8 @@ void print_env(const GlobalConfig& cfg) {
 bool ensure_project_index_dir(
     const GlobalConfig& cfg,
     const std::filesystem::path& projectDir,
-    const std::map<std::string, mcpp::pm::IndexSpec>& indices)
+    const std::map<std::string, mcpp::pm::IndexSpec>& indices,
+    const mcpp::xlings::ProjectEnv& penv)
 {
     // Collect custom non-builtin indices that need xlings project-scope data.
     // Local path indices are also seeded so xlings can create its own
@@ -694,7 +696,7 @@ bool ensure_project_index_dir(
         }
     }
 
-    if (customRepos.empty()) return false;  // nothing to do
+    if (customRepos.empty() && penv.empty()) return false;  // nothing to do
 
     auto dotMcpp = projectDir / ".mcpp";
     std::filesystem::create_directories(dotMcpp, ec);
@@ -702,7 +704,7 @@ bool ensure_project_index_dir(
     // Seed .xlings.json with the custom index entries.
     mcpp::xlings::Env env;
     env.home = dotMcpp;
-    mcpp::xlings::seed_xlings_json(env, customRepos);
+    mcpp::xlings::seed_xlings_json(env, customRepos, "auto", penv);
 
     auto exposeLocalIndex = [&](const std::string& name,
                                 const std::filesystem::path& source,

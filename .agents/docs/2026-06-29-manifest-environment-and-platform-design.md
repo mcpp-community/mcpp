@@ -285,8 +285,13 @@ missing declared outputs as failure.
   `insert()` keeps an existing unconditional entry (no silent override). Test:
   `tests/e2e/86_target_cfg_dependencies.sh`. **Still TODO:** `lazy = true` (fetch only
   when a gated path requests it) + content-hash identity.
-- **Phase 2 — L-1 environment.** Surface `[xlings]` (+ `[xlings.workspace]`/`.deps`/
-  `.subos`/`.envs`, 1:1 with `.xlings.json`) → extend the project
+- **✅ Phase 2 — L-1 environment (mcpp 0.0.77).** `[xlings]` (+ `[xlings.workspace]`/
+  `deps`/`subos`/`[xlings.envs]`) parsed into `Manifest::xlings` (`manifest.cppm`) and
+  materialized **1:1** into `<proj>/.mcpp/.xlings.json` via an extended
+  `seed_xlings_json` (new `xlings::ProjectEnv`) called from `ensure_project_index_dir`
+  (now triggered by custom `[indices]` **or** a non-empty `[xlings]`). Test:
+  `tests/e2e/88_xlings_environment.sh`. The keys map verbatim onto what xlings already
+  consumes (no translation layer). *Superseded the rest of this bullet:* extend the project
   `.xlings.json` writer (`config.cppm:699-705`) to emit `deps`/`workspace`/`envs`/`subos`;
   fold `[toolchain]` into `workspace`; wire `[build-dependencies]`.
 - **Phase 3 — mcpp-index workspace** (companion doc) — first real consumer of Phase 1/1b.
