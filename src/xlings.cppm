@@ -225,22 +225,24 @@ int install_direct(const Env& env, std::string_view target, bool quiet = false);
 
 // Write .xlings.json seed file.
 //
-// TODO(mirror-default): the default `"CN"` is the historical setting for
-// the project's initial Chinese-mainland user base, but it bites overseas
-// users (and CI on GitHub-hosted runners) — the first network roundtrip
-// goes through a CN mirror that is slow/unreachable for them. The
-// `mcpp self config --mirror X` flow now passes the user's choice as an
-// override through to here, so they can pick the right mirror BEFORE the
-// first download. Longer term, consider:
-//   (a) flip the default to "GLOBAL" and have CN users opt in via
-//       `mcpp self config --mirror CN` (smaller blast radius once docs
-//       cover the switch); or
-//   (b) auto-detect on first init (env hint like LANG, a quick HEAD probe
-//       to github.com vs. ghproxy with a tight timeout, and pin the
-//       winning value into .xlings.json).
+// The `mirror` parameter still defaults to "CN" for direct callers, but the
+// first-init seed path (config.cppm) now passes the result of
+// `detect_best_mirror()` when the user gave no explicit `--mirror` — i.e.
+// TODO(mirror-default) option (b) is implemented: a quick latency probe to the
+// GLOBAL vs CN hosts picks the faster reachable one, so overseas users and
+// GitHub-hosted CI no longer get stranded on the historical CN default. An
+// explicit `mcpp self config --mirror X` always wins (config priority).
 void seed_xlings_json(const Env& env,
                       std::span<const std::pair<std::string,std::string>> repos,
                       std::string_view mirror = "CN");
+
+// Probe both index mirrors and return the lower-latency reachable one
+// ("GLOBAL" | "CN") — TODO(mirror-default) option (b). Used at first init when
+// the user gave no explicit --mirror; an explicit choice always wins (config
+// priority). Falls back to "GLOBAL" (reachable nearly everywhere) when neither
+// probe succeeds, since the historic "CN" default stranded overseas users and
+// GitHub-hosted CI behind a slow/unreachable mirror.
+std::string detect_best_mirror();
 
 // Persist the xlings mirror selection in .xlings.json via xlings itself.
 int config_show(const Env& env);
@@ -1090,6 +1092,35 @@ void seed_xlings_json(const Env& env,
     json += std::format("  \"mirror\": \"{}\"\n", json_escape(mirror));
     json += "}\n";
     write_file(path, json);
+}
+
+std::string detect_best_mirror() {
+    using namespace std::chrono;
+    // A short HEAD probe to each mirror host, timed by wall clock. Non-zero rc
+    // (DNS failure, connection refused, or the tight --max-time elapsing) means
+    // "unreachable". curl is present on every platform mcpp targets; if it is
+    // somehow absent both probes fail and we fall back to GLOBAL.
+    auto probe = [](std::string_view url) -> std::optional<double> {
+        // -I writes response headers to stdout; redirect both streams to null
+        // (cross-platform) so the probe stays silent — only its timing matters.
+        auto cmd = std::format("curl -s -I --max-time 3 {} {}",
+                               url, mcpp::platform::shell::silent_redirect);
+        auto t0 = steady_clock::now();
+        if (mcpp::platform::process::run_silent(cmd) != 0) return std::nullopt;
+        return duration<double>(steady_clock::now() - t0).count();
+    };
+    auto g = probe("https://github.com");
+    auto c = probe("https://gitcode.com");
+    if (g && c) {
+        std::string pick = (*g <= *c) ? "GLOBAL" : "CN";
+        mcpp::log::verbose("mirror", std::format(
+            "probe github={:.0f}ms gitcode={:.0f}ms -> {}", *g * 1000, *c * 1000, pick));
+        return pick;
+    }
+    if (g) { mcpp::log::verbose("mirror", "only github reachable -> GLOBAL"); return "GLOBAL"; }
+    if (c) { mcpp::log::verbose("mirror", "only gitcode reachable -> CN");   return "CN"; }
+    mcpp::log::verbose("mirror", "neither mirror reachable; defaulting -> GLOBAL");
+    return "GLOBAL";
 }
 
 int config_show(const Env& env) {

@@ -374,8 +374,11 @@ bool write_default_xlings_json(const std::filesystem::path& path,
     // construct a temporary Env with home = path.parent_path().
     mcpp::xlings::Env env;
     env.home = path.parent_path();
+    // No explicit --mirror: auto-detect the lower-latency reachable mirror
+    // instead of the historic hardcoded "CN" (which strands overseas users and
+    // GitHub-hosted CI). An explicit choice always wins (the else branch).
     if (mirror_override.empty())
-        mcpp::xlings::seed_xlings_json(env, pairs);
+        mcpp::xlings::seed_xlings_json(env, pairs, mcpp::xlings::detect_best_mirror());
     else
         mcpp::xlings::seed_xlings_json(env, pairs, mirror_override);
     return std::filesystem::exists(path);
