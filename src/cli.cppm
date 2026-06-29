@@ -226,6 +226,8 @@ int run(int argc, char** argv) {
                 .help("Build only the named workspace member"))
             .option(cl::Option("profile").takes_value().value_name("NAME")
                 .help("Build profile: release (default) | dev | dist | <[profile.*] name>"))
+            .option(cl::Option("release").help("Shorthand for --profile release"))
+            .option(cl::Option("dev").help("Shorthand for --profile dev (-O0 -g)"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate root-package features (comma-separated)"))
             .option(cl::Option("cap").takes_value().value_name("LIST")

@@ -87,7 +87,12 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.30'
+          # 0.4.61 (current). The earlier 0.4.61 "download 404 for mcpp@<pin>" was
+          # NOT a version bug — the xlings-res/mcpp GitHub release assets were
+          # uploaded in a broken state (records present, blobs missing → 404 on
+          # GET); re-uploaded clean. The stale-INDEX half is handled by the
+          # marker-clear below.
+          XLINGS_VERSION: '0.4.61'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -96,8 +101,10 @@ jobs:
           "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
-          # Refresh the index so a cached ~/.xlings still sees newly published
-          # cross toolchains (xim:aarch64-linux-musl-gcc, static ninja, ...).
+          # Force a real index re-sync even on a warm cache: drop the TTL refresh
+          # markers so `xlings update` actually pulls the latest index (sees the
+          # current bootstrap pin) while the toolchain payloads stay cached.
+          find "$HOME/.xlings" -name '.xlings-index-cache.json' -delete 2>/dev/null || true
           xlings config --mirror GLOBAL 2>/dev/null || true
           xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
           xlings install mcpp -y

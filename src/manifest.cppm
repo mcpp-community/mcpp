@@ -148,6 +148,14 @@ struct BuildConfig {
     bool                                debug    = false; // -g
     bool                                lto      = false; // -flto
     bool                                strip    = false; // link -s
+    // `[build].default-profile` (alias: `profile`) — the project's DEFAULT
+    // profile when no --profile/--dev/--release is passed. The global convention
+    // default stays "release"; this lets a project opt its plain `mcpp build`
+    // into e.g. "dev" without typing --profile. Precedence: --profile/--dev/
+    // --release flag > [build].default-profile > "release". NOTE (distribution
+    // footgun): a project that defaults to dev should pass `--profile release`
+    // when producing a distributable (a pack-time release guard is a follow-up).
+    std::string                         defaultProfile;
 };
 
 // `[runtime]` — requirements needed when launching built binaries.
@@ -1118,6 +1126,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
     if (auto v = doc->get_string_array("build.ldflags"))  m.buildConfig.ldflags  = *v;
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
+    if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
+    else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
     if (auto v = doc->get_string("build.macos_deployment_target"))
         m.buildConfig.macosDeploymentTarget = *v;
     for (auto const& flag : m.buildConfig.cxxflags) {

@@ -554,10 +554,19 @@ prepare_build(bool print_fingerprint,
     //   1. project mcpp.toml [toolchain].<platform> or .default
     //   2. global ~/.mcpp/config.toml [toolchain].default
     //   3. hard error (no system fallback)
-    // Resolve the build profile: --profile (default "release") → built-in
-    // defaults, overlaid by any [profile.<name>] from the manifest → buildConfig.
+    // Resolve the build profile, overlaid by any [profile.<name>] from the
+    // manifest → buildConfig.
     {
-        std::string pname = overrides.profile.empty() ? "release" : overrides.profile;
+        // Precedence: --profile / --release / --dev flag (overrides.profile) >
+        // [build].default-profile (project default) > "dev" (global default).
+        // The global default is "dev" (-O0 -g) to follow the dominant convention
+        // (Cargo/Meson/CMake/Zig/Bazel/MSBuild all default to debug); release is
+        // opt-in via --release / --profile release. A project that wants its
+        // plain `mcpp build` optimized sets [build].default-profile = "release"
+        // (mcpp's own mcpp.toml does this, so the released binary stays -O2).
+        std::string pname = !overrides.profile.empty()             ? overrides.profile
+                          : !m->buildConfig.defaultProfile.empty() ? m->buildConfig.defaultProfile
+                          :                                          "dev";
         mcpp::manifest::Profile pr;
         if (pname == "dev" || pname == "debug") { pr.optLevel = "0"; pr.debug = true; }
         else if (pname == "dist")               { pr.optLevel = "3"; pr.strip = true; }

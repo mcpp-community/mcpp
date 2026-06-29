@@ -17,15 +17,15 @@ strip    = true
 cxxflags = ["-fno-plt"]
 EOF
 
-# Built-in release default: -O2, no -g.
-"$MCPP" build --verbose > rel.log 2>&1 || { cat rel.log; echo "release build failed"; exit 1; }
+# Global default is now "dev" (-O0 -g, mainstream convention); release is opt-in.
+"$MCPP" build --release --verbose > rel.log 2>&1 || { cat rel.log; echo "release build failed"; exit 1; }
 grep -q -- "-O2" rel.log || { echo "release missing -O2"; exit 1; }
 
-# dev: -O0 -g.
+# Bare `mcpp build` (no flag) → the dev default: -O0 -g.
 rm -rf target
-"$MCPP" build --profile dev --verbose > dev.log 2>&1 || { cat dev.log; echo "dev build failed"; exit 1; }
-grep -q -- "-O0" dev.log || { echo "dev missing -O0"; exit 1; }
-grep -q -- "-g"  dev.log || { echo "dev missing -g"; exit 1; }
+"$MCPP" build --verbose > dev.log 2>&1 || { cat dev.log; echo "dev build failed"; exit 1; }
+grep -q -- "-O0" dev.log || { echo "default (dev) missing -O0"; exit 1; }
+grep -q -- "-g"  dev.log || { echo "default (dev) missing -g"; exit 1; }
 
 # dist from [profile.dist]: -O3 -flto + passthrough cxxflag, stripped binary.
 rm -rf target

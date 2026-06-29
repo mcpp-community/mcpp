@@ -1,12 +1,17 @@
 [package]
 name        = "mcpp"
-version     = "0.0.75"
+version     = "0.0.76"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
 repo        = "https://github.com/mcpp-community/mcpp"
 
 [build]
+# The global default profile is now "dev" (-O0 -g, mainstream convention);
+# mcpp itself is a shipped tool, so opt its plain `mcpp build` (and release.yml's
+# self-host build) back into the optimized profile. Without this the released
+# binary would be -O0. A `--profile`/`--dev`/`--release` flag still overrides.
+default-profile = "release"
 # nlohmann/json.hpp lives in src/libs/json/; expose it to the global
 # module fragment `#include <json.hpp>` in src/libs/json.cppm.
 include_dirs = ["src/libs/json"]

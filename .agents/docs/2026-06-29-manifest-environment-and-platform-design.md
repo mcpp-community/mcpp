@@ -92,6 +92,43 @@ expressible, all backed by existing xlings behavior.
 
 ---
 
+## L0.5 — Default build profile: follow the mainstream (dev), `--release` opt-in
+
+(Issue #179.) mcpp's old default was `release`; the prevailing convention across
+modern build tools is the **opposite** — a bare build is **debug/dev**, release is
+opt-in:
+
+| Tool | bare-command default | release via |
+|---|---|---|
+| Cargo | **dev/debug** (-O0 + debuginfo) | `cargo build --release` |
+| Meson | **debug** | `--buildtype=release` |
+| CMake | empty `CMAKE_BUILD_TYPE` (≈debug) | `-DCMAKE_BUILD_TYPE=Release` |
+| Zig | **Debug** | `-Doptimize=ReleaseFast/Safe/Small` |
+| Bazel | **fastbuild** (no opt) | `-c opt` |
+| MSBuild/VS | **Debug** | Release configuration |
+| **xmake** | **release** | `xmake f -m debug` |
+
+Debug-default dominates (Cargo/Meson/CMake/Zig/Bazel/MSBuild); only the **xmake**
+lineage defaults to release — exactly where mcpp's old default came from (mcpp builds
+on xlings/xmake). But mcpp's *surface* is Cargo-flavored, so users expect Cargo
+semantics. **Decision: flip the global default to `dev` (-O0 -g); release is opt-in
+via `--release` / `--profile release`.**
+
+- **Precedence**: `--profile NAME` / `--release` / `--dev` flag > `[build].default-profile`
+  (project default) > global `dev`. (`prepare.cppm`; `--dev`/`--release` are shorthands
+  in `cli.cppm`/`cmd_build.cppm`.)
+- **`[build].default-profile`** (alias: `profile`) — a project's own default; its role
+  *inverts* under the flip: it now means **"opt into release"** for projects that ship/
+  run optimized by default. **mcpp's own `mcpp.toml` sets `default-profile = "release"`**
+  so the self-host CI build and `release.yml` stay `-O2` with **zero workflow changes** —
+  the knob *is* the migration mechanism (no `--release` threaded through release pipelines,
+  and mcpp's own CI doesn't slow to `-O0`).
+- **Distribution footgun**: a project that defaults to dev passes `--release` to produce
+  a distributable (a pack-time release guard is a possible follow-up).
+- Tests: `tests/e2e/87_build_default_profile.sh`, `68_profile_passthrough.sh` (updated).
+
+---
+
 ## L0 — Dependency categories: keep three axes, wire `build`
 
 Keep Cargo/Conan's **normal / dev / build** trichotomy (mcpp already declares all
