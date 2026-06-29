@@ -183,6 +183,12 @@ struct ConditionalConfig {
     std::vector<std::string>            cflags;
     std::vector<std::string>            cxxflags;
     std::vector<std::string>            ldflags;
+    // Conditional dependencies (Phase 1b): merged into the corresponding
+    // manifest maps in prepare_build when the predicate matches the resolved
+    // target — before dependency resolution, so they resolve like any dep.
+    std::map<std::string, DependencySpec> dependencies;
+    std::map<std::string, DependencySpec> devDependencies;
+    std::map<std::string, DependencySpec> buildDependencies;
 };
 
 // `[lib]` — library "root" interface convention.
@@ -999,12 +1005,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         return {};
     };
 
-    auto load_deps = [&](std::string_view section, std::map<std::string, DependencySpec>& out)
+    // Parse a dependency table (already obtained) into `out`. Factored out of
+    // load_deps so the same logic serves both [dependencies] (via doc->get_table)
+    // and [target.'cfg(...)'.dependencies] (a nested table the dotted getter
+    // can't address). `section` is the logical section name, used for error
+    // messages and namespace/selector resolution.
+    auto load_deps_table = [&](std::string_view section, auto& tt,
+                               std::map<std::string, DependencySpec>& out)
         -> std::expected<void, ManifestError>
     {
-        auto* tt = doc->get_table(section);
-        if (!tt) return {};
-        for (auto& [k, v] : *tt) {
+        for (auto& [k, v] : tt) {
             // (1) string value → flat default-ns short version, or
             // (3) legacy "ns.name" = "ver" (dotted key).
             if (v.is_string()) {
@@ -1066,6 +1076,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             }
         }
         return {};
+    };
+    auto load_deps = [&](std::string_view section, std::map<std::string, DependencySpec>& out)
+        -> std::expected<void, ManifestError>
+    {
+        auto* tt = doc->get_table(section);
+        if (!tt) return {};
+        return load_deps_table(section, *tt, out);
     };
     if (auto r = load_deps("dependencies",       m.dependencies);       !r) return std::unexpected(r.error());
     if (auto r = load_deps("dev-dependencies",   m.devDependencies);    !r) return std::unexpected(r.error());
@@ -1183,14 +1200,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             }
             m.targetOverrides[canon_triple(triple)] = std::move(e);
 
-            // [target.<predicate>.build] — platform-conditional flags (L1).
-            // `triple` here is the predicate key (cfg(...) or a bare triple);
-            // stored deferred, evaluated against the resolved target in
-            // prepare_build. Reuses the [profile] array-reading idiom.
+            // [target.<predicate>.{build,dependencies,...}] — platform-conditional
+            // config (L1). `triple` is the predicate key (cfg(...) or a bare
+            // triple); stored deferred, evaluated against the resolved target in
+            // prepare_build.
+            ConditionalConfig cc;
+            cc.predicate = triple;
             if (auto bit = body.find("build"); bit != body.end() && bit->second.is_table()) {
                 auto& bt = bit->second.as_table();
-                ConditionalConfig cc;
-                cc.predicate = triple;
                 auto read_list = [&](const char* key, std::vector<std::string>& out) {
                     if (auto f = bt.find(key); f != bt.end() && f->second.is_array())
                         for (auto& v : f->second.as_array())
@@ -1199,9 +1216,24 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_list("cflags",   cc.cflags);
                 read_list("cxxflags", cc.cxxflags);
                 read_list("ldflags",  cc.ldflags);
-                if (!cc.cflags.empty() || !cc.cxxflags.empty() || !cc.ldflags.empty())
-                    m.conditionalConfigs.push_back(std::move(cc));
             }
+            // [target.<predicate>.{dependencies,dev-dependencies,build-dependencies}]
+            // parsed via the shared table-based loader (same selectors/namespaces
+            // as the global [dependencies]) into the deferred config.
+            auto read_deps = [&](const char* key, std::map<std::string, DependencySpec>& out)
+                -> std::expected<void, ManifestError>
+            {
+                if (auto f = body.find(key); f != body.end() && f->second.is_table())
+                    return load_deps_table(key, f->second.as_table(), out);
+                return {};
+            };
+            if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());
+            if (auto r = read_deps("dev-dependencies",   cc.devDependencies);  !r) return std::unexpected(r.error());
+            if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());
+            if (!cc.cflags.empty() || !cc.cxxflags.empty() || !cc.ldflags.empty()
+                || !cc.dependencies.empty() || !cc.devDependencies.empty()
+                || !cc.buildDependencies.empty())
+                m.conditionalConfigs.push_back(std::move(cc));
         }
     }
 

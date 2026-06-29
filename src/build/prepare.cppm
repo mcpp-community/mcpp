@@ -655,6 +655,12 @@ prepare_build(bool print_fingerprint,
                                            cc.cxxflags.begin(), cc.cxxflags.end());
             m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
                                           cc.ldflags.begin(), cc.ldflags.end());
+            // Conditional dependencies (Phase 1b): merge into the manifest maps
+            // before dependency resolution so they resolve like any dep. insert()
+            // keeps an existing unconditional entry (no silent override).
+            m->dependencies.insert(cc.dependencies.begin(), cc.dependencies.end());
+            m->devDependencies.insert(cc.devDependencies.begin(), cc.devDependencies.end());
+            m->buildDependencies.insert(cc.buildDependencies.begin(), cc.buildDependencies.end());
         }
     }
 

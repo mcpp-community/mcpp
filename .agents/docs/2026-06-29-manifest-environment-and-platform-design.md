@@ -230,10 +230,15 @@ missing declared outputs as failure.
   after `--target` resolution. Grammar: `all/any/not` over `os`/`arch`/`family`/`env`
   + bare `windows`/`unix`/`linux`/`macos`; native build → host coords, `--target` →
   target coords. Test: `tests/e2e/85_target_cfg_build_flags.sh`.
-- **Phase 1b — L1 conditional dependencies + `lazy` fetch.** Same `[target.'cfg(...)']`
-  namespace, `.dependencies`/`.dev-dependencies`/`.build-dependencies`; merge into
-  `m->dependencies` in the same window (before dep resolution at `prepare.cppm:~731`).
-  Add `lazy = true` (fetch only when a gated path requests it) + content-hash identity.
+- **✅ Phase 1b — L1 conditional dependencies (mcpp 0.0.75).** Same `[target.'cfg(...)']`
+  namespace, `.dependencies`/`.dev-dependencies`/`.build-dependencies`, parsed via a
+  refactored `load_deps_table` (the dep loader, now table-based so it serves both the
+  global `[dependencies]` and the nested conditional tables that dotted getters can't
+  address) into `ConditionalConfig`, merged into `m->dependencies` in the same
+  evaluation window — before dep resolution — so they resolve like any dep.
+  `insert()` keeps an existing unconditional entry (no silent override). Test:
+  `tests/e2e/86_target_cfg_dependencies.sh`. **Still TODO:** `lazy = true` (fetch only
+  when a gated path requests it) + content-hash identity.
 - **Phase 2 — L-1 environment.** Surface `[environment]` → extend the project
   `.xlings.json` writer (`config.cppm:699-705`) to emit `deps`/`workspace`/`envs`/`subos`;
   fold `[toolchain]` into `workspace`; wire `[build-dependencies]`.
