@@ -87,11 +87,12 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          # Stay on 0.4.30: its XLINGS_RES download resolution matches the
-          # xlings-res/mcpp release asset layout (newer 0.4.61 changed it and
-          # 404s on the mcpp artifact). The real bug was a stale INDEX, not the
-          # version — fixed by the marker-clear below.
-          XLINGS_VERSION: '0.4.30'
+          # 0.4.61 (current). The earlier 0.4.61 "download 404 for mcpp@<pin>" was
+          # NOT a version bug — the xlings-res/mcpp GitHub release assets were
+          # uploaded in a broken state (records present, blobs missing → 404 on
+          # GET); re-uploaded clean. The stale-INDEX half is handled by the
+          # marker-clear below.
+          XLINGS_VERSION: '0.4.61'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
