@@ -3,6 +3,31 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.70] — 2026-06-29
+
+### 修复
+
+- **首次初始化在海外网络与 GitHub 托管 CI 上的冷启动失败(`index missing`;patchelf / ninja
+  bootstrap 失败)**:`mcpp self env` 为新建的 `MCPP_HOME` 播种 `.xlings.json` 时,将 `mirror` 字段
+  硬编码为 `"CN"`。xlings 的 `normalize_mirror_` 仅接受 `GLOBAL` 与 `CN` 两个合法取值,故 `"CN"`
+  被直接采用并解析至 gitcode,致使 xlings 内置的区域探测 `detect_install_mirror_()` 被跳过——该例程
+  经 `tinyhttps::probe_latency` 测量 github 与 gitcode 的连接延迟,择可达且更低延迟者。在美国区域的
+  runner 上,gitcode 不可达或显著较慢(实测 github 70 ms、gitcode 1060 ms),由此索引与沙箱的冷
+  bootstrap 失败。本版将播种值改为 `"auto"`:`normalize_mirror_("auto")` 判定为非法取值,xlings 视其
+  为未设置并执行自身探测,在美国区域解析至 GLOBAL、在中国大陆解析至 CN。镜像选择的职责由此归还
+  xlings(其已基于 tinyhttps 实现该机制),mcpp 不再代为决策。播种仅在 `.xlings.json` 不存在时发生,
+  显式的 `mcpp self config --mirror CN|GLOBAL` 配置不会被覆盖。
+
+### 新增
+
+- **`MCPP_VERBOSE` 环境变量**:取非空且非 `"0"` 的值时,为每一次 mcpp 调用启用 verbose 日志,涵盖
+  e2e 脚本中未携带 flag 的 `$MCPP` 调用,便于 CI 诊断。该变量与既有的 `MCPP_LOG_LEVEL`(仅控制文件
+  日志级别)互补;显式 `--quiet` 仍具有更高优先级。该变量已在 fresh-install 等 workflow 中启用,但
+  不含运行「默认静默」输出断言的 e2e 套件。
+- **`update_index` 冷启动重试**:索引同步为网络 git 操作,单次瞬时故障原会直接导致冷启动失败。本版
+  改为有界退避重试(至多 3 次,退避 2 s / 4 s);成功路径于首次尝试即返回,稳态无额外延迟,仅失败
+  时方触发退避。
+
 ## [0.0.69] — 2026-06-29
 
 ### 新增
