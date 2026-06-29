@@ -1,7 +1,8 @@
 # mcpp.toml: Build Environment, Platform-Conditional Config, and `build.mcpp` (Design)
 
 Date: 2026-06-29
-Status: **Design — for discussion.** Synthesizes a multi-tool survey (Cargo, Zig,
+Status: **Phasing — L1 (flags) shipped in mcpp 0.0.74.** Remaining phases tracked
+in §"Phasing" below. Synthesizes a multi-tool survey (Cargo, Zig,
 vcpkg, Bazel, xmake, Conan) and the build-systems literature (*Build Systems à la
 Carte*, PubGrub, hermeticity/SLSA) against mcpp's current internals. Scope:
 `src/manifest.cppm`, `src/config.cppm`, `src/xlings.cppm`, `src/toolchain/*`,
@@ -220,17 +221,25 @@ missing declared outputs as failure.
 
 ---
 
-## Phasing (recommended order)
+## Phasing (status)
 
-1. **L-1 environment** — highest ROI, self-contained, no upstream dep beyond mcpp; the
-   xlings target model already exists. Surface `[environment]` + extend the project
-   `.xlings.json` writer. Fold `[toolchain]` into `workspace`. Wire `[build-dependencies]`.
-2. **mcpp-index workspace** (companion doc) — the first real consumer; exercises L1's
-   need (Windows-only `compat.openblas`).
-3. **L1 conditional graph** — `[target.'cfg()']` deps+flags, target-evaluated; then
-   `lazy` + content-hash identity.
-4. **L3 `build.mcpp`** — native build program with the two disciplines; backport the
-   declared-I/O contract to recipe `install()`.
+- **✅ Phase 1 — L1 conditional build flags (mcpp 0.0.74).** `[target.'cfg(...)'.build]`
+  `cflags`/`cxxflags`/`ldflags`, parsed deferred into `Manifest::conditionalConfigs`
+  (`manifest.cppm`), evaluated against the resolved target by a recursive `cfg()`
+  predicate evaluator (`prepare.cppm` `cfgpred::`) and merged into `buildConfig` right
+  after `--target` resolution. Grammar: `all/any/not` over `os`/`arch`/`family`/`env`
+  + bare `windows`/`unix`/`linux`/`macos`; native build → host coords, `--target` →
+  target coords. Test: `tests/e2e/85_target_cfg_build_flags.sh`.
+- **Phase 1b — L1 conditional dependencies + `lazy` fetch.** Same `[target.'cfg(...)']`
+  namespace, `.dependencies`/`.dev-dependencies`/`.build-dependencies`; merge into
+  `m->dependencies` in the same window (before dep resolution at `prepare.cppm:~731`).
+  Add `lazy = true` (fetch only when a gated path requests it) + content-hash identity.
+- **Phase 2 — L-1 environment.** Surface `[environment]` → extend the project
+  `.xlings.json` writer (`config.cppm:699-705`) to emit `deps`/`workspace`/`envs`/`subos`;
+  fold `[toolchain]` into `workspace`; wire `[build-dependencies]`.
+- **Phase 3 — mcpp-index workspace** (companion doc) — first real consumer of Phase 1/1b.
+- **Phase 4 — L3 `build.mcpp`** — native build program (structured output + declared-I/O);
+  backport the declared-I/O contract to recipe `install()`.
 
 ## Appendix — cross-tool summary
 - **Declarative-table vs imperative-script**: TOML is static data → declarative tables

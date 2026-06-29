@@ -171,6 +171,20 @@ struct TargetEntry {
     std::string                         linkage;       // "static" | "dynamic" | "" (= auto by libc)
 };
 
+// `[target.'cfg(...)'.build]` — platform-conditional build flags (L1). The
+// predicate is the raw `[target.<predicate>]` key (e.g. `cfg(windows)`,
+// `cfg(all(linux, not(arch="aarch64")))`, or a bare triple). It is stored
+// DEFERRED here because manifest parsing is target-agnostic; prepare_build
+// evaluates it against the RESOLVED target (host triple for a native build,
+// the --target triple for a cross build) and merges matching flags into
+// buildConfig. See .agents/docs/2026-06-29-manifest-environment-and-platform-design.md.
+struct ConditionalConfig {
+    std::string                         predicate;     // the [target.<predicate>] key
+    std::vector<std::string>            cflags;
+    std::vector<std::string>            cxxflags;
+    std::vector<std::string>            ldflags;
+};
+
 // `[lib]` — library "root" interface convention.
 //
 // Convention-over-configuration: a library package's primary module
@@ -255,6 +269,7 @@ struct Manifest {
     Toolchain                   toolchain;     // optional; empty == fallback
     BuildConfig                 buildConfig;
     RuntimeConfig               runtimeConfig;
+    std::vector<ConditionalConfig> conditionalConfigs;  // [target.'cfg(...)'.build], deferred
     std::map<std::string, Profile> profiles;   // [profile.<name>]
     // [features] — feature name → implied features ("default" = default set).
     std::map<std::string, std::vector<std::string>> featuresMap;
@@ -1167,6 +1182,26 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 }
             }
             m.targetOverrides[canon_triple(triple)] = std::move(e);
+
+            // [target.<predicate>.build] — platform-conditional flags (L1).
+            // `triple` here is the predicate key (cfg(...) or a bare triple);
+            // stored deferred, evaluated against the resolved target in
+            // prepare_build. Reuses the [profile] array-reading idiom.
+            if (auto bit = body.find("build"); bit != body.end() && bit->second.is_table()) {
+                auto& bt = bit->second.as_table();
+                ConditionalConfig cc;
+                cc.predicate = triple;
+                auto read_list = [&](const char* key, std::vector<std::string>& out) {
+                    if (auto f = bt.find(key); f != bt.end() && f->second.is_array())
+                        for (auto& v : f->second.as_array())
+                            if (v.is_string()) out.push_back(v.as_string());
+                };
+                read_list("cflags",   cc.cflags);
+                read_list("cxxflags", cc.cxxflags);
+                read_list("ldflags",  cc.ldflags);
+                if (!cc.cflags.empty() || !cc.cxxflags.empty() || !cc.ldflags.empty())
+                    m.conditionalConfigs.push_back(std::move(cc));
+            }
         }
     }
 

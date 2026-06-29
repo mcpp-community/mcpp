@@ -43,6 +43,109 @@ import mcpp.project;
 
 namespace mcpp::build {
 
+// ── L1 platform-conditional config: cfg() predicate evaluation ──────────────
+// Context = the RESOLVED target's coordinates. A `[target.'cfg(...)'.build]`
+// predicate is evaluated against this (target triple for a cross build, host
+// for a native build), so conditional flags follow what the binary will run on
+// — not the build host. See the manifest design doc.
+namespace cfgpred {
+
+struct Ctx { std::string os, arch, family, env; };
+
+// Derive the cfg context from the resolved --target triple, falling back to the
+// host for a native build. OS/arch/env detection mirrors abi_profile's
+// substring approach (toolchain/abi.cppm) so the vocabulary is consistent.
+inline Ctx context_for(std::string_view targetTriple) {
+    Ctx c;
+    if (targetTriple.empty()) {
+        c.os   = std::string(mcpp::platform::name);       // host: linux/macos/windows
+        c.arch = std::string(mcpp::platform::host_arch);  // host: x86_64/aarch64/...
+    } else {
+        auto has = [&](std::string_view n){ return targetTriple.find(n) != std::string_view::npos; };
+        c.os = has("windows") || has("mingw") ? "windows"
+             : has("darwin") || has("apple") || has("macos") ? "macos"
+             : has("linux") ? "linux" : "";
+        auto dash = targetTriple.find('-');
+        c.arch = std::string(dash == std::string_view::npos ? targetTriple
+                                                            : targetTriple.substr(0, dash));
+    }
+    c.family = (c.os == "linux" || c.os == "macos") ? "unix"
+             : (c.os == "windows") ? "windows" : "";
+    // env (libc/abi): musl/gnu on linux, msvc on windows; substring or host default.
+    if (!targetTriple.empty()) {
+        auto has = [&](std::string_view n){ return targetTriple.find(n) != std::string_view::npos; };
+        c.env = has("musl") ? "musl" : has("msvc") ? "msvc"
+              : (has("gnu") || c.os == "linux") ? "gnu" : "";
+    } else {
+        c.env = c.os == "linux" ? "gnu" : c.os == "windows" ? "msvc" : "";
+    }
+    return c;
+}
+
+// Recursive-descent evaluator over the inside of `cfg(...)`:
+//   expr := all(list) | any(list) | not(expr) | key="value" | bareword
+//   key  ∈ {os, arch, family, env}   bareword ∈ {windows, unix, linux, macos}
+struct Parser {
+    std::string_view s; std::size_t i = 0; const Ctx& c;
+    void ws() { while (i < s.size() && std::isspace((unsigned char)s[i])) ++i; }
+    bool eat(char ch) { ws(); if (i < s.size() && s[i] == ch) { ++i; return true; } return false; }
+    std::string ident() {
+        ws(); std::size_t b = i;
+        while (i < s.size() && (std::isalnum((unsigned char)s[i]) || s[i] == '_')) ++i;
+        return std::string(s.substr(b, i - b));
+    }
+    std::string str() {
+        ws(); if (i >= s.size() || s[i] != '"') return {};
+        ++i; std::size_t b = i; while (i < s.size() && s[i] != '"') ++i;
+        auto v = std::string(s.substr(b, i - b)); if (i < s.size()) ++i; return v;
+    }
+    bool match_alias(const std::string& a) {
+        if (a == "windows") return c.os == "windows";
+        if (a == "linux")   return c.os == "linux";
+        if (a == "macos")   return c.os == "macos";
+        if (a == "unix")    return c.family == "unix";
+        return false;  // unknown bareword → no match
+    }
+    bool match_kv(const std::string& k, const std::string& v) {
+        if (k == "os")     return c.os == v;
+        if (k == "arch")   return c.arch == v;
+        if (k == "family") return c.family == v;
+        if (k == "env")    return c.env == v;
+        return false;
+    }
+    bool expr() {
+        std::string id = ident();
+        if (id == "all" || id == "any") {
+            eat('(');
+            bool acc = (id == "all");
+            ws();
+            if (!(i < s.size() && s[i] == ')')) {
+                do { bool r = expr(); acc = (id == "all") ? (acc && r) : (acc || r); }
+                while (eat(','));
+            }
+            eat(')');
+            return acc;
+        }
+        if (id == "not") { eat('('); bool r = expr(); eat(')'); return !r; }
+        ws();
+        if (i < s.size() && s[i] == '=') { ++i; return match_kv(id, str()); }
+        return match_alias(id);
+    }
+};
+
+// Evaluate a `[target.<predicate>]` key. Returns the cfg() result, or — for a
+// non-cfg key (a bare triple) — an exact match against the resolved triple.
+inline bool matches(const std::string& predicate, const Ctx& c, std::string_view triple) {
+    std::string_view k = predicate;
+    if (k.starts_with("cfg(") && k.ends_with(")")) {
+        Parser p{ k.substr(4, k.size() - 5), 0, c };
+        return p.expr();
+    }
+    return !triple.empty() && predicate == triple;  // bare-triple exact match
+}
+
+}  // namespace cfgpred
+
 export std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
                                  const mcpp::toolchain::Fingerprint& fp,
                                  const std::filesystem::path& root)
@@ -536,6 +639,24 @@ prepare_build(bool print_fingerprint,
         }
     }
     if (overrides.force_static) m->buildConfig.linkage = "static";
+
+    // ── L1: merge platform-conditional [target.'cfg(...)'.build] flags ──────
+    // Evaluated now (target resolved) against the resolved target — the
+    // --target triple for a cross build, else the host. Matching predicates'
+    // flags append to buildConfig, mirroring the [profile] merge above.
+    if (!m->conditionalConfigs.empty()) {
+        auto cc_ctx = cfgpred::context_for(overrides.target_triple);
+        for (auto const& cc : m->conditionalConfigs) {
+            if (!cfgpred::matches(cc.predicate, cc_ctx, overrides.target_triple))
+                continue;
+            m->buildConfig.cflags.insert(m->buildConfig.cflags.end(),
+                                         cc.cflags.begin(), cc.cflags.end());
+            m->buildConfig.cxxflags.insert(m->buildConfig.cxxflags.end(),
+                                           cc.cxxflags.begin(), cc.cxxflags.end());
+            m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
+                                          cc.ldflags.begin(), cc.ldflags.end());
+        }
+    }
 
     if (tcSpec.has_value() && *tcSpec != "system") {
         auto spec = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
