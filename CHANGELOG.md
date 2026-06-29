@@ -3,6 +3,26 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.71] — 2026-06-29
+
+### 新增
+
+- **Feature 系统 v2 Stage 2a — 由 feature 激活的可选依赖**:声明于 `[feature-deps.<name>]`
+  段(或 Lua 描述符中 feature 的嵌套 `deps` 表)的依赖为**可选**依赖,仅当该 feature 处于激活
+  状态(根 `--features` 或依赖 spec 的 `features=[...]`)时才进入解析;声明于 `[dependencies]` 的
+  依赖始终解析。可选性由声明位置表达,无需额外的 `optional=true` 标志。实现上,`prepare_build`
+  在为根包播种解析 worklist 之前、以及在每个依赖的 manifest 加载之后,将该 manifest 的活跃
+  feature-deps 合并进其 `dependencies` 映射,后续既有的 worklist BFS 与 Stage 3 能力绑定即自动
+  接管——一个 `backend-openblas` feature 可同时**拉取** provider(`compat.openblas`,
+  `provides=["blas"]`)并**开启**消费开关(`implies=["use_blas"]`,`requires=["blas"]`),图中单一
+  provider 时能力自动绑定。Lua 描述符的 feature `implies` 亦补齐解析(此前仅 TOML 支持)。详见
+  `.agents/docs/2026-06-29-feature-optional-dependencies-s2-design.md`。
+
+  > 实现注记:上述两个 helper(`activateFeatures`/`mergeActiveFeatureDeps`)必须为 prepare_build
+  > 内的局部 lambda,而非文件作用域函数。若作为模块接口单元中的导出(inline)函数,其 `std::map`
+  > 实例化会泄入发射的 BMI,触发 GCC 16 modules 缺陷——另一导入 `std` 的翻译单元随即报
+  > `fatal error: failed to load pendings for __normal_iterator`。局部化可将实例化限制在实现单元内。
+
 ## [0.0.70] — 2026-06-29
 
 ### 修复

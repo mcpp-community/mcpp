@@ -361,6 +361,42 @@ The bound provider's link/include flags reach the consumer through normal
 dependency mechanics; the capability layer is the *selection-and-validation* step
 that turns a silently-wrong or missing backend into a loud configure-time error.
 
+### 2.8.2 `[feature-deps.<name>]` — dependencies a feature pulls in
+
+A dependency declared under `[feature-deps.<name>]` is **optional**: it is
+resolved only when that feature is active (root `--features`, or a dependency
+spec's `features = [...]`). A dependency in `[dependencies]` is always resolved;
+optionality is expressed by *where* you declare it, not a flag.
+
+```toml
+[features]
+use_blas         = { defines = ["EIGEN_USE_BLAS"], requires = ["blas"] }
+backend-openblas = { implies = ["use_blas"] }
+
+# Pulled ONLY when `backend-openblas` is active. Each entry is a full dependency
+# spec (version/path/git + its own features).
+[feature-deps.backend-openblas]
+compat.openblas = "0.3.x"
+```
+
+This composes with capabilities (§2.8.1): a single `backend-openblas` feature
+both **pulls** the provider (`compat.openblas`, which `provides = ["blas"]`) and
+**turns on** the consumer switch (`implies = ["use_blas"]`, which
+`requires = ["blas"]`). With one provider in the graph the capability binds
+automatically — `features = ["backend-openblas"]` is all the consumer writes.
+
+In an index package's Lua descriptor the same is written inline:
+
+```lua
+features = {
+    use_blas         = { defines = { "EIGEN_USE_BLAS" }, requires = { "blas" } },
+    ["backend-openblas"] = {
+        implies = { "use_blas" },
+        deps    = { ["compat.openblas"] = "0.3.x" },
+    },
+}
+```
+
 ### 2.9 `[profile.<name>]` — Build Profiles
 
 ```toml
