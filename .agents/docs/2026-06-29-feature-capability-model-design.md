@@ -1,8 +1,9 @@
 # Feature System v2 — Capability-Oriented Model (Design)
 
 Date: 2026-06-29
-Status: **S1 + S3 implemented & shipped** (see Implementation Status below);
-S2 scoped as the documented next stage.
+Status: **S1 + S2a + S3 + interface-define propagation implemented & shipped**
+(see Implementation Status below); the full eigen[backend-openblas] ecosystem
+closed loop is validated end-to-end.
 Scope: `src/manifest.cppm` (parse), `src/build/prepare.cppm` (feature activation +
 resolver), `src/cli.cppm` / `src/cli/cmd_build.cppm` (`--cap`), mcpp-index recipe schema.
 
@@ -18,14 +19,42 @@ resolver), `src/cli.cppm` / `src/cli/cmd_build.cppm` (`--cap`), mcpp-index recip
   `[capabilities]` pins and `--cap`. Tests: `e2e/81_capability_binding.sh`
   (6 cases), `Manifest.CapabilitiesProvidesRequiresAndPins`,
   `SynthesizeFromXpkgLua.CapabilitiesAndFeatureDefines`.
-- **Stage 2 — optional-dep activation + feature-union unification: NEXT.**
-  Deliberately deferred from this release. Rationale: activating a *new*
-  dependency from a feature requires moving feature computation ahead of
-  dependency resolution (resolution-phase reordering) — a deeper, higher-risk
-  change. It is also **not required** for the capability/Eigen use case, which
-  binds over providers that are explicitly declared as dependencies. Shipping
-  S1+S3 first matches this doc's "each stage independently shippable" intent and
-  keeps the release low-risk.
+- **Stage 2a — feature-activated optional dependencies: DONE.** A dependency
+  declared under `[feature-deps.<name>]` (TOML) or a feature's nested `deps`
+  (Lua) is pulled into the worklist only when that feature is active. Feature
+  activation (including transitive `implies`) is computed ahead of the
+  resolution worklist via local lambdas in `prepare.cppm` (kept local to avoid a
+  GCC-16 modules-BMI bug). Tests: `e2e/82_feature_optional_deps.sh`,
+  `Manifest.FeatureDepsTomlSection`, `SynthesizeFromXpkgLua.FeatureDepsAndImplies`.
+- **Interface-define propagation (header-only providers): DONE.** A dependency's
+  active-feature `defines` are **interface requirements**: they flow into every
+  consumer's own compile flags along Public/Interface dependency edges, mirroring
+  `include_dirs`. This is required for header-only libraries whose feature switch
+  only takes effect in the TU that includes their headers — the canonical case is
+  Eigen's `use_blas` → `EIGEN_USE_BLAS`, which must be defined when the
+  *consumer* compiles `a * b`, not only when Eigen's own anchor TU compiles. The
+  automatic `MCPP_FEATURE_<NAME>` macro stays private to the owning package (it
+  is a build signal, not a public contract). Implemented by routing feature
+  defines through `PackageRoot::publicUsage` and extending the
+  `computeUsageRequirements()` fixpoint to propagate `cflags`/`cxxflags`. Test:
+  `e2e/83_feature_defines_propagate.sh`.
+- **Stage 2b — feature-union unification across multiple consumers: NEXT.**
+  Deliberately deferred. When two consumers request different feature sets on the
+  same dependency, the activated set should be their union (single resolved
+  instance). The current model activates per the first-seen consumer's request;
+  divergent transitive feature requests are not yet unified. Not required for the
+  validated Eigen/OpenBLAS use case.
+
+### Validated closed loop (eigen[backend-openblas])
+
+`mcpp build` of a consumer declaring
+`compat.eigen = { features = ["backend-openblas"] }` exercises every stage:
+`backend-openblas` → (implies) `use_blas` → `-DEIGEN_USE_BLAS` propagated to the
+consumer's TUs + `requires "blas"`; `[feature-deps]` pulls `compat.openblas`,
+whose xpkg `install()` hook builds `libopenblas.a` from source (BLAS-only,
+`TARGET=GENERIC`, no Fortran) via the `xim:make` build-dep; `provides "blas"`
+binds the capability; the provider's `-lopenblas` links. Verified: the produced
+binary pulls OpenBLAS's `dgemm_` (not Eigen's built-in GEMM) and runs.
 
 ---
 

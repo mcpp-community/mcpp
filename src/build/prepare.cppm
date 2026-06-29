@@ -1343,6 +1343,19 @@ prepare_build(bool print_fingerprint,
         return changed;
     };
 
+    auto appendUniqueFlags =
+        [](std::vector<std::string>& flags,
+           const std::vector<std::string>& additions) -> bool
+    {
+        bool changed = false;
+        for (auto const& f : additions) {
+            if (std::find(flags.begin(), flags.end(), f) != flags.end()) continue;
+            flags.push_back(f);
+            changed = true;
+        }
+        return changed;
+    };
+
     auto expandIncludeDirs =
         [&](const std::filesystem::path& packageRoot,
             const mcpp::manifest::Manifest& manifest)
@@ -1424,11 +1437,27 @@ prepare_build(bool print_fingerprint,
                     changed = appendUniquePaths(consumer.privateBuild.includeDirs,
                                                 dependency.publicUsage.includeDirs)
                               || changed;
+                    // Interface defines (a dependency's active-feature `defines`)
+                    // ride the same edges as include dirs: they must reach the
+                    // consumer's own TUs so header-only switches like
+                    // EIGEN_USE_BLAS take effect where the headers are used.
+                    changed = appendUniqueFlags(consumer.privateBuild.cflags,
+                                                dependency.publicUsage.cflags)
+                              || changed;
+                    changed = appendUniqueFlags(consumer.privateBuild.cxxflags,
+                                                dependency.publicUsage.cxxflags)
+                              || changed;
                 }
                 if (edge.visibility == mcpp::modgraph::DependencyVisibility::Public
                     || edge.visibility == mcpp::modgraph::DependencyVisibility::Interface) {
                     changed = appendUniquePaths(consumer.publicUsage.includeDirs,
                                                 dependency.publicUsage.includeDirs)
+                              || changed;
+                    changed = appendUniqueFlags(consumer.publicUsage.cflags,
+                                                dependency.publicUsage.cflags)
+                              || changed;
+                    changed = appendUniqueFlags(consumer.publicUsage.cxxflags,
+                                                dependency.publicUsage.cxxflags)
                               || changed;
                 }
             }
@@ -2172,6 +2201,17 @@ prepare_build(bool print_fingerprint,
                         pkg.manifest.buildConfig.cxxflags.push_back(fdef);
                         pkg.privateBuild.cflags.push_back(fdef);
                         pkg.privateBuild.cxxflags.push_back(fdef);
+                        // Interface-propagate the user-declared feature define:
+                        // a header-only dependency's switch (e.g. EIGEN_USE_BLAS)
+                        // only takes effect in the TU that includes its headers,
+                        // so consumers that enable the feature must see it too.
+                        // computeUsageRequirements() flows publicUsage flags into
+                        // each consumer's privateBuild along Public/Interface
+                        // edges, mirroring include_dirs. The automatic
+                        // MCPP_FEATURE_<NAME> macro stays private to the owning
+                        // package (it is a build signal, not a public contract).
+                        pkg.publicUsage.cflags.push_back(fdef);
+                        pkg.publicUsage.cxxflags.push_back(fdef);
                     }
             }
             // Feature-gated sources (e.g. gtest's gtest_main.cc behind "main"):
@@ -2256,6 +2296,13 @@ prepare_build(bool print_fingerprint,
             // feature-gated sources must have those sources dropped by default.
             apply(packages[i], req);
         }
+
+        // apply() may have added interface defines to packages' publicUsage
+        // flags (a dependency's active-feature `defines`). Re-run the usage
+        // fixpoint so those flags flow into each consumer's privateBuild — the
+        // first pass (above) ran before features were activated. Idempotent:
+        // include-dir/flag propagation is unique-append.
+        computeUsageRequirements();
 
         // ─── Capability binding (Stage 3) ──────────────────────────────────
         // For each required capability, bind exactly one provider from the
