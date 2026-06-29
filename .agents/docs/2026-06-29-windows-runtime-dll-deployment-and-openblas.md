@@ -1,11 +1,17 @@
 # Windows Runtime-DLL Deployment & `compat.openblas` Windows Support (Design)
 
 Date: 2026-06-29
-Status: **Phase A implemented in mcpp 0.0.73.** Phases B–D (release + recipe +
-Windows CI) track in the same effort. Staged follow-up to the feature/capability
-work (mcpp 0.0.72) and the `compat.openblas` package (mcpp-index #54). Scope:
-`src/build/{plan,ninja_backend}.cppm` (mcpp); `pkgs/c/compat.openblas.lua`,
-`.github/workflows/validate.yml` (mcpp-index).
+Status: **Implemented & shipped.**
+- **Phase A** (mcpp runtime-DLL deployment) — merged in mcpp **#185**, released as
+  **v0.0.73**, mirrored to `xlings-res/mcpp` (GitHub + GitCode), indexed via
+  `openxlings/xim-pkgindex` **#326** (`latest → 0.0.73`), `xlings install
+  mcpp@0.0.73` verified, workspace bootstrap pin bumped.
+- **Phase C** (`compat.openblas` Windows recipe) + **Phase D** (Windows CI
+  build-and-run) — mcpp-index **#55**; the `OpenBLAS-0.3.33-x64.zip` CN mirror is
+  live on gitcode `mcpp-res/openblas` (byte-verified).
+
+Scope: `src/build/{plan,ninja_backend}.cppm` (mcpp); `pkgs/c/compat.openblas.lua`,
+`tests/smoke_compat_portable.sh`, `.github/workflows/validate.yml` (mcpp-index).
 
 ### Implementation note (deviation from the original design)
 
@@ -221,20 +227,33 @@ on the runner; correction is log-driven).
 
 | Item | Local (Linux host) | CI (`windows-latest`) |
 |---|---|---|
-| recipe parse / schema / Linux deploy mechanism | yes (dummy-lib e2e) | — |
-| clang-cl linking `libopenblas.lib` | no (no MSVC env) | yes |
-| DLL deployed beside the exe + loaded + `cblas_dgemm` runs | no | yes — once the Windows smoke is bumped to ≥ 0.0.73 and extended to run+assert (Phase D) |
+| recipe parse / schema / Linux deploy mechanism | yes (dummy-lib e2e `84_runtime_dll_deploy.sh`) | — |
+| clang linking `libopenblas.lib` | no (no MSVC env) | **yes — confirmed** (`-Llib -llibopenblas`) |
+| DLL deployed beside the exe + loaded + `cblas_dgemm` runs | no | **yes — confirmed** (mcpp-index #55 smoke-windows: `mcpp run` + direct-exe launch from a neutral CWD both green) |
 
-## 7. Open questions / risks
+## 7. Open questions / risks — resolved by CI
 
 - **Whole-directory `*.dll` vs an explicit list.** OpenBLAS's `bin/` holds a
   single DLL, so copying `*.dll` from each runtime library dir is sufficient and
   simple (preferred — YAGNI). If a future package's `bin/` mixes unrelated DLLs,
-  an optional explicit list can narrow it later.
-- **clang-cl link form and symbol decoration.** The exact flag to link
-  `libopenblas.lib` and the cdecl `cblas_*` symbol names must match what the
-  consumer references; only CI confirms this.
-- **`mcpp.<os>` runtime parsing.** If the parser reads `[runtime]` only at global
-  scope, allowing `library_dirs` under `mcpp.windows` is a small parser addition
-  (alternatively declare it globally — harmless on Linux, which links statically
-  and ships no DLL).
+  an optional explicit list can narrow it later. *(Shipped as whole-directory.)*
+- **clang link form and symbol decoration.** *Resolved:* mcpp links Windows with
+  the clang MSVC driver, and `-Llib -llibopenblas` resolves to `lib/libopenblas.lib`;
+  the cdecl `cblas_*` symbols matched and `cblas_dgemm` produced `[19 22; 43 50]`
+  on the runner.
+- **`mcpp.<os>` runtime parsing.** *Resolved without a parser change:* the deploy
+  is filtered by the `*.dll` extension (§"Implementation note"), so `[runtime]
+  library_dirs` is declared per-OS under `mcpp.windows` via the existing per-OS
+  textual merge — no new schema key. On Linux/macOS the static archive ships no
+  DLL, so the declaration is inert.
+
+## 8. Validation footnote — Phase D test bug (caught & fixed by CI)
+
+The first mcpp-index #55 run's `smoke-windows` failed *not* in the feature but in
+the test: the new openblas smoke ran the produced `.exe` from a path `find target`
+returned **relative**, after `cd /` to a neutral CWD — so the launch resolved to a
+nonexistent path. The build had already linked the import lib, deployed
+`bin/libopenblas.dll`, and `mcpp run` had exited 0 (correct GEMM). Absolutising the
+exe path (pwd + basename) fixed the assertion; the re-run is green. The lesson is
+the value of the direct-exe launch from a neutral CWD: it is the only check that
+proves the DLL loads *beside the exe* rather than via `mcpp run`'s `PATH` prepend.
