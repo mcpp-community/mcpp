@@ -23,6 +23,7 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.build.plan;
+import mcpp.build.build_program;
 import mcpp.lockfile;
 import mcpp.config;
 import mcpp.xlings;
@@ -846,6 +847,21 @@ prepare_build(bool print_fingerprint,
     // Sysroot comes from the toolchain payload itself (GCC -print-sysroot,
     // Clang clang++.cfg). mcpp does not override it — the payload is
     // self-describing. See docs: 2026-05-21-linux-sysroot-missing-kernel-headers.md
+
+    // ── L3: project-local `build.mcpp` imperative build program ─────────────
+    // Compiled with the (host) toolchain and run now — after target resolution
+    // + the L1 cfg-flag merge (buildConfig flags are final) and BEFORE the
+    // modgraph scan (so its `generated=` sources are picked up). Its stdout
+    // directives augment buildConfig; a declared-input cache re-runs it only
+    // when its source/inputs/env change. Leaf-only: it cannot gate the top-level
+    // dependency graph. Skipped under a cross --target (host program, host run).
+    // See .agents/docs/2026-06-30-l3-build-mcpp-implementation-design.md.
+    if (auto bp = mcpp::build::run_build_program(
+            *m, *root, explicit_compiler, m->cppStandard.canonical,
+            /*isCross=*/!overrides.target_triple.empty());
+        !bp) {
+        return std::unexpected(bp.error());
+    }
 
     // Resolve dependencies: walk the **transitive** graph from the main
     // manifest, BFS-style. Each unique `(namespace, shortName)` is fetched

@@ -9,3 +9,4 @@
 - [04 - Building from Source & Contributing](04-build-from-source.md)
 - [05 - mcpp.toml Manifest Guide](05-mcpp-toml.md)
 - [06 - Workspaces](06-workspace.md)
+- [07 - build.mcpp Build Program](07-build-mcpp.md)

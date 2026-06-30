@@ -9,3 +9,4 @@
 - [04 - 从源码构建 & 参与贡献](04-build-from-source.md)
 - [05 - mcpp.toml 工程文件指南](05-mcpp-toml.md)
 - [06 - 工作空间](06-workspace.md)
+- [07 - build.mcpp 构建程序](07-build-mcpp.md)
