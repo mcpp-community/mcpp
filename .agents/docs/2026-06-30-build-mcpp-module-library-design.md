@@ -105,6 +105,17 @@ The raw stdout protocol stays the documented low-level substrate; `import mcpp;`
 the typed layer over it (the Cargo `build-rs`-over-`cargo::` shape, but
 engine-bundled à la Zig).
 
+## Implementation gotcha (recorded)
+
+The embedded source contains the line `export module mcpp;`. mcpp's **default
+line-based regex module scanner** (used on the Windows self-host build; the P1689
+compiler-driven scanner ignores string literals) read that line *inside the raw
+string literal* as `build_program.cppm` declaring a second module → "file already
+exports module … cannot export 'mcpp'". Fix: write the declaration with a
+`@MODULE@` placeholder substituted to `export module` at file-write time, so no
+literal `export module <name>` text appears in mcpp's own source. (A broader fix
+would be to teach the regex scanner to skip string/raw-string literals.)
+
 ## Coverage / stability boundaries (recorded)
 
 - **Windows/macOS Clang path** is exercised by the mcpp-index `build-mcpp`
