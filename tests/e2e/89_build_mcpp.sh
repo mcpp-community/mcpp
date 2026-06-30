@@ -67,4 +67,36 @@ touch src/main.cpp
 MCPP_TEST_TOGGLE=1 "$MCPP" build > b3.log 2>&1 || { cat b3.log; echo "FAIL: build 3 errored"; exit 1; }
 grep -qi "build.mcpp.*\(running\|compiling\)" b3.log || { cat b3.log; echo "FAIL: changed env did not force build.mcpp re-run"; exit 1; }
 
+# ── CWD independence: build.mcpp must run with cwd = project root, so its
+#    relative file writes (the generated source) land in the project even when
+#    mcpp is invoked from a SUBDIRECTORY (e.g. workspace -p, or `cd src && mcpp`).
+cd "$TMP"
+mkdir -p sub/src
+cat > sub/mcpp.toml <<'EOF'
+[package]
+name    = "sub"
+version = "0.1.0"
+EOF
+cat > sub/src/main.cpp <<'EOF'
+#ifndef FROM_BUILD_MCPP
+#error "define missing"
+#endif
+int gen();
+int main() { return gen() == 7 ? 0 : 1; }
+EOF
+cat > sub/build.mcpp <<'EOF'
+#include <fstream>
+#include <cstdio>
+int main() {
+    std::ofstream("src/gen.cpp") << "int gen(){return 7;}\n";
+    std::puts("mcpp:generated=src/gen.cpp");
+    std::puts("mcpp:cxxflag=-DFROM_BUILD_MCPP=1");
+    return 0;
+}
+EOF
+# Invoke from the nested src/ dir — mcpp walks up to the project; build.mcpp must
+# still write src/gen.cpp into the project root, not into the cwd.
+( cd sub/src && "$MCPP" build > "$TMP/sub.log" 2>&1 ) || { cat "$TMP/sub.log"; echo "FAIL: build from subdir errored (cwd not project root?)"; exit 1; }
+[ -f sub/src/gen.cpp ] || { echo "FAIL: generated source not written to project root"; exit 1; }
+
 echo "OK"
