@@ -160,6 +160,21 @@ The index repo is simultaneously (a) the package index and (b) a mcpp workspace
 whose members really *use and test* every recipe — driven entirely by `mcpp`, no
 `.sh`. "基于 mcpp 自包含" achieved.
 
+### Findings during Phase 2 (recorded)
+- **build.mcpp cwd bug** — fixed in 0.0.79 (see §6.1); the `build-mcpp` member
+  drove it out (its `build.mcpp` wrote to the wrong dir under `-p`).
+- **Pure test projects work** — a member with only `[dependencies]` + `tests/*.cpp`
+  (no `src/`) builds + tests cleanly; the dep's headers/lib reach the test binary.
+- **Feature-built dependency objects don't link into test binaries** — the eigen
+  `eigen_blas` feature compiles Eigen's reference BLAS into compat.eigen's lib, but
+  the test binary calling `dgemm_` fails to link it (worked when the member was a
+  `bin`). The eigen member tests header-only Eigen for now; linking feature-gated
+  dependency objects into `mcpp test` binaries is a separate mcpp follow-up.
+- **Display/GL smokes stay shell for now** — `smoke_compat_{imgui,imgui_window,
+  glfw}` + the portable matrix need a display / broader libs; migrating them to
+  headless `mcpp test` members is a later increment. Phase 2 converts the 5
+  headless example members + switches their CI to `mcpp test`.
+
 ## 6. Typed `import mcpp;` library (task #20) — DEFERRED (own follow-up)
 
 A typed module **bundled in the mcpp binary**, emitting the existing stdout
@@ -180,18 +195,17 @@ export namespace mcpp {
 **from the dir containing `gcm.cache/`**) → `import mcpp;` resolves; the binary
 emits the directives. No `import std;` needed.
 
-**Why deferred (not in 0.0.79):** sound delivery needs two pieces this release
-won't rush:
-1. **cwd-capable spawn.** GCC C++ finds modules only via `gcm.cache/<m>.gcm`
-   *relative to the compile CWD* — the named `-fmodule-file=mcpp=<path>` form is
-   rejected ("valid for D but not for C++"), and `-fmodule-output=` is absent on
-   GCC 16. So compiling `build.mcpp` must run with `cwd = target/.build-mcpp/`;
-   `platform::process::capture_exec` has no `cwd` parameter yet (add one — child
-   `chdir` after fork on POSIX / `lpCurrentDirectory` on Windows).
+**Why deferred (not in 0.0.79):** one remaining piece this release won't rush:
+1. ~~**cwd-capable spawn.**~~ **DONE in 0.0.79** — `capture_exec` gained a `cwd`
+   parameter (Linux `posix_spawn_file_actions_addchdir_np`; else `cd … &&`), added
+   for the build.mcpp-cwd correctness fix. This is exactly what the typed lib needs
+   to stage `gcm.cache/<m>.gcm` (GCC C++ finds modules only relative to the compile
+   CWD — the named `-fmodule-file=mcpp=<path>` form is rejected "valid for D not
+   C++"; `-fmodule-output=` is absent on GCC 16). So the GCC path is now unblocked.
 2. **Clang path.** Clang uses `.pcm` + `--precompile` + `-fmodule-file=mcpp=<pcm>`
    (different ABI/flags), untested here. Without it, `build.mcpp` using
    `import mcpp;` on a Clang host (macOS/Windows) would fail to compile — a partial
-   feature. Both compiler paths must land together.
+   feature. Both compiler paths must land together → still a focused 0.0.80.
 
 Plus: embed the module source in the binary, compile it **once** into
 `target/.build-mcpp/` keyed on the toolchain (cache; don't rebuild), then convert
