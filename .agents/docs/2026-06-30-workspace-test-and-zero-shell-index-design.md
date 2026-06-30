@@ -160,22 +160,56 @@ The index repo is simultaneously (a) the package index and (b) a mcpp workspace
 whose members really *use and test* every recipe — driven entirely by `mcpp`, no
 `.sh`. "基于 mcpp 自包含" achieved.
 
-## 6. Typed `import mcpp;` library (task #20) — same 0.0.79
+## 6. Typed `import mcpp;` library (task #20) — DEFERRED (own follow-up)
 
-Independent of Phase 1; ships in the same release. Per the build.mcpp design doc's
-forward note: a typed module **bundled in the mcpp binary**, emitting the existing
-stdout `mcpp:` wire protocol, implemented with C-level I/O so neither it nor
-`build.mcpp` needs `import std;`. Converts the `build.mcpp` examples/docs to the
-modules-first `import mcpp;` form. The `build-mcpp` mcpp-index member adopts it in
-Phase 2.
+A typed module **bundled in the mcpp binary**, emitting the existing stdout
+`mcpp:` wire protocol, implemented with C-level I/O so neither it nor `build.mcpp`
+needs `import std;`. **De-risking confirmed the module itself works** (GCC 16):
+
+```cpp
+module; #include <cstdio>
+export module mcpp;
+export namespace mcpp {
+  inline void cxxflag(const char* f)   { std::printf("mcpp:cxxflag=%s\n", f); }
+  inline void link_lib(const char* n)  { std::printf("mcpp:link-lib=%s\n", n); }
+  // ...
+}
+```
+`g++ -std=c++23 --sysroot=… -fmodules -c mcpp.cppm -o mcpp.o` → `gcm.cache/mcpp.gcm`
++ `mcpp.o`; then `g++ … -fmodules -x c++ build.mcpp -x none mcpp.o -o bin` (run
+**from the dir containing `gcm.cache/`**) → `import mcpp;` resolves; the binary
+emits the directives. No `import std;` needed.
+
+**Why deferred (not in 0.0.79):** sound delivery needs two pieces this release
+won't rush:
+1. **cwd-capable spawn.** GCC C++ finds modules only via `gcm.cache/<m>.gcm`
+   *relative to the compile CWD* — the named `-fmodule-file=mcpp=<path>` form is
+   rejected ("valid for D but not for C++"), and `-fmodule-output=` is absent on
+   GCC 16. So compiling `build.mcpp` must run with `cwd = target/.build-mcpp/`;
+   `platform::process::capture_exec` has no `cwd` parameter yet (add one — child
+   `chdir` after fork on POSIX / `lpCurrentDirectory` on Windows).
+2. **Clang path.** Clang uses `.pcm` + `--precompile` + `-fmodule-file=mcpp=<pcm>`
+   (different ABI/flags), untested here. Without it, `build.mcpp` using
+   `import mcpp;` on a Clang host (macOS/Windows) would fail to compile — a partial
+   feature. Both compiler paths must land together.
+
+Plus: embed the module source in the binary, compile it **once** into
+`target/.build-mcpp/` keyed on the toolchain (cache; don't rebuild), then convert
+the build.mcpp docs/examples/test + the mcpp-index `build-mcpp` member to
+`import mcpp;`. Tracked as task #20 for a focused 0.0.80. The string-protocol
+substrate already ships `build.mcpp` today, so this is a pure ergonomic layer — no
+functionality is blocked by deferring it.
 
 ## 7. Sequencing & releases
 
-1. **mcpp PR A** — Phase 1 (workspace-aware test) + e2e + docs.
-2. **mcpp PR B** — typed `import mcpp;` library + convert build.mcpp docs/examples/test.
-3. **Release mcpp 0.0.79** (A+B) → full ecosystem loop (mirror → index → verify → pin).
-4. **mcpp-index PR C** — Phase 2 restructure on 0.0.79; delete all shell; CI =
-   `mcpp test --workspace` → its CI green → merge.
+1. **mcpp PR A** — Phase 1 (workspace-aware test) + e2e + docs → **release 0.0.79**
+   → full ecosystem loop (mirror → index → verify → pin).
+2. **mcpp-index PR B** — Phase 2 restructure on 0.0.79; delete all shell; CI =
+   `mcpp test --workspace` → its CI green → merge. (Primary user goal: zero-shell,
+   self-contained, `-p`-addressable index.)
+3. **(follow-up) mcpp 0.0.80** — typed `import mcpp;` library (§6), with the
+   cwd-capable spawn + Clang `.pcm` path; then convert build.mcpp docs/examples and
+   the mcpp-index `build-mcpp` member to `import mcpp;`.
 
 ## 8. Risks / soundness notes
 
