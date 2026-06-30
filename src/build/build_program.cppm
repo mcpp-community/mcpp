@@ -151,9 +151,12 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
 // module BMI. The functions mirror the directive set 1:1; they just print the
 // `mcpp:` lines the engine already parses. Embedded in the binary (not shipped as
 // a file) so it always matches this mcpp's protocol.
+// NOTE: the module declaration line uses a `@MODULE@` placeholder (substituted
+// with `export module` when written) so mcpp's own line-based module scanner does
+// not mistake this embedded string for build_program.cppm exporting a 2nd module.
 constexpr std::string_view kMcppModuleSource = R"CPP(module;
 #include <cstdio>
-export module mcpp;
+@MODULE@ mcpp;
 export namespace mcpp {
 inline void cxxflag(const char* flag)             { std::printf("mcpp:cxxflag=%s\n", flag); }
 inline void cflag(const char* flag)               { std::printf("mcpp:cflag=%s\n", flag); }
@@ -177,8 +180,11 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
                   bool isClang) {
     std::error_code ec;
     fs::path cppm = bdir / "mcpp.cppm";
+    std::string moduleSrc(kMcppModuleSource);
+    if (auto p = moduleSrc.find("@MODULE@"); p != std::string::npos)
+        moduleSrc.replace(p, std::string_view("@MODULE@").size(), "export module");
     { std::ofstream os(cppm, std::ios::trunc);
-      os << kMcppModuleSource;
+      os << moduleSrc;
       if (!os) return std::unexpected(std::string("could not write mcpp module source")); }
 
     auto run = [&](std::vector<std::string> argv, const char* what)
