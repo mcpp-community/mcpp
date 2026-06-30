@@ -234,6 +234,8 @@ int run(int argc, char** argv) {
                 .help("Pin capability providers (e.g. blas=openblas,lapack=mkl)"))
             .option(cl::Option("strict")
                 .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
+            .option(cl::Option("workspace")
+                .help("Build all workspace members"))
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
@@ -251,6 +253,10 @@ int run(int argc, char** argv) {
                 .help("Pin capability providers (e.g. blas=openblas,lapack=mkl)"))
             .option(cl::Option("strict")
                 .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
+            .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
+                .help("Run tests only for the named workspace member"))
+            .option(cl::Option("workspace")
+                .help("Run tests for all workspace members"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_test(p, std::span<const std::string>(passthrough));
             })))

@@ -153,13 +153,21 @@ default = "clang@19.0"
 
 ## 5. 构建命令
 
-### 5.1 从工作空间根目录构建
+### 5.1 从工作空间根目录构建与测试
 
 ```bash
-mcpp build                  # 构建默认目标（自动选择含二进制目标的成员）
+mcpp build                  # 虚拟工作空间 → 构建所有成员；带根包 → 构建根包
 mcpp build -p server        # 构建指定成员及其依赖
-mcpp build -p core          # 构建指定库成员
+mcpp build --workspace      # 显式构建每个成员
+mcpp test                   # 虚拟工作空间 → 测试所有成员；带根包 → 测试根包
+mcpp test  -p core          # 测试单个成员
+mcpp test  --workspace      # 测试每个成员（逐成员汇报；遇失败继续）
 ```
+
+在**虚拟工作空间**根(只有 `[workspace]`、无 `[package]`)下,裸 `mcpp build` /
+`mcpp test` 作用于**所有**成员;在**带根包工作空间**(`[package]` + `[workspace]`)下作用于
+根包,用 `--workspace` 纳入全部成员。`mcpp test --workspace` 独立构建+运行每个成员的
+`tests/**/*.cpp`——测试发现按成员隔离,因此两个成员各有一个 `tests/main.cpp` 也不会冲突。
 
 ### 5.2 从成员子目录构建
 
@@ -179,6 +187,10 @@ mcpp build -p server        # 匹配 apps/server
 mcpp test -p core           # 匹配 libs/core
 mcpp run -p server -- --port 8080
 ```
+
+`--workspace`(用于 `build` 和 `test`)是扇出形式:作用于**每个**成员。
+`mcpp test --workspace` 逐成员独立汇报、遇失败继续,只要有任一成员失败即非零退出——
+非常适合作为「一个测试众多库的工作空间」的单条、无 shell 的 CI 步骤。
 
 ## 6. 目录布局
 

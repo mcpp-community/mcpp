@@ -19,6 +19,9 @@
 // Callers are responsible for shell-quoting arguments (see platform.shell).
 
 module;
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE        // for posix_spawn_file_actions_addchdir_np (glibc)
+#endif
 #include <cstdio>
 #include <cstdlib>
 #if defined(_WIN32)
@@ -77,7 +80,8 @@ int run_exec(const std::vector<std::string>& argv,
 // is_stale_ninja_failure / filter_ninja_output. No shell → no quoting/injection.
 RunResult capture_exec(
     const std::vector<std::string>& argv,
-    const std::vector<std::pair<std::string, std::string>>& extraEnv = {});
+    const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
+    std::string_view cwd = {});
 
 // Run `command` silently (discard stdout/stderr).
 // On POSIX, stdin is automatically redirected from /dev/null.
@@ -325,7 +329,8 @@ int run_exec(const std::vector<std::string>& argv,
 
 RunResult capture_exec(
     const std::vector<std::string>& argv,
-    const std::vector<std::pair<std::string, std::string>>& extraEnv)
+    const std::vector<std::pair<std::string, std::string>>& extraEnv,
+    std::string_view cwd)
 {
     RunResult result;
     if (argv.empty()) { result.exit_code = 127; return result; }
@@ -345,6 +350,11 @@ RunResult capture_exec(
 
     posix_spawn_file_actions_t fa;
     ::posix_spawn_file_actions_init(&fa);
+    // Run the child in `cwd` when requested (e.g. build.mcpp, whose relative
+    // file writes must land in the project root regardless of mcpp's own cwd).
+    std::string cwdStore(cwd);
+    if (!cwdStore.empty())
+        ::posix_spawn_file_actions_addchdir_np(&fa, cwdStore.c_str());
     ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);  // stdout → pipe
     ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);  // stderr → same pipe
     ::posix_spawn_file_actions_addclose(&fa, fds[0]);
@@ -367,6 +377,8 @@ RunResult capture_exec(
     return result;
 #else
     std::string cmd = command_from_argv(argv) + " 2>&1";
+    if (!cwd.empty())
+        cmd = "cd " + mcpp::platform::shell::quote(cwd) + " && " + cmd;
     return capture_with_env(cmd, extraEnv);
 #endif
 }

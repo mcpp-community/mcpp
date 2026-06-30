@@ -299,15 +299,17 @@ std::expected<void, std::string> run_build_program(
     compileArgv.push_back(src.string());
     compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
     mcpp::ui::info("build.mcpp", "compiling");
-    auto cres = mcpp::platform::process::capture_exec(compileArgv);
+    auto cres = mcpp::platform::process::capture_exec(compileArgv, {}, root.string());
     if (cres.exit_code != 0) {
         return std::unexpected(std::format(
             "build.mcpp failed to compile (exit {}):\n{}", cres.exit_code, cres.output));
     }
 
     // ── Run it; capture stdout(+stderr) and parse directives ────────────────
+    // Run with cwd = project root so the program's relative file writes (e.g.
+    // mcpp:generated sources) land in the project, not in mcpp's invocation dir.
     mcpp::ui::info("build.mcpp", "running");
-    auto rres = mcpp::platform::process::capture_exec({bin.string()});
+    auto rres = mcpp::platform::process::capture_exec({bin.string()}, {}, root.string());
     if (rres.exit_code != 0) {
         return std::unexpected(std::format(
             "build.mcpp exited with {} (build aborted):\n{}", rres.exit_code, rres.output));
