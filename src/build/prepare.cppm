@@ -142,6 +142,14 @@ inline bool matches(const std::string& predicate, const Ctx& c, std::string_view
         Parser p{ k.substr(4, k.size() - 5), 0, c };
         return p.expr();
     }
+    // Bare OS/family alias sugar: `[target.linux]` ≡ `[target.'cfg(linux)']`.
+    // These aliases are never valid triples (no dash), so there is no ambiguity
+    // with the exact-triple namespace. Evaluated as the cfg bareword.
+    if (predicate == "windows" || predicate == "linux" ||
+        predicate == "macos"   || predicate == "unix") {
+        Parser p{ predicate, 0, c };
+        return p.expr();
+    }
     return !triple.empty() && predicate == triple;  // bare-triple exact match
 }
 

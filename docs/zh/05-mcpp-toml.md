@@ -260,6 +260,43 @@ toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 ```
 
+### 2.7.1 `[target.*]` — 平台条件依赖与编译旗标
+
+用 `[target.<sel>]` 表把依赖和编译旗标限定到某平台。选择子 `<sel>` 有三种形式:
+
+| 选择子 | 含义 | 例子 |
+|---|---|---|
+| **裸 OS 别名** | 单个 OS / 家族——简洁、最常用 | `[target.windows]`、`[target.unix]` |
+| **`cfg(...)` 谓词** | 复合条件(arch / env / 组合子) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
+| **精确三元组** | 某个具体目标(还承载 `toolchain` / `linkage`) | `[target.x86_64-linux-musl]` |
+
+任一选择子下都可放平台条件的**依赖**与**编译旗标**:
+
+```toml
+# 简洁的裸别名形式——仅在 Windows 上拉取并链接 OpenBLAS。
+[target.windows.dependencies.compat]
+openblas = "0.3.33"
+[target.windows.build]
+ldflags = ["-Llib", "-llibopenblas"]
+
+# 复合谓词用 cfg(...)(语法:all/any/not 作用在 os/arch/family/env 上,
+# 外加裸别名 windows/unix/linux/macos)。
+[target.'cfg(all(linux, not(arch = "aarch64")))'.build]
+cxxflags = ["-march=x86-64-v2"]
+```
+
+`[target.windows]` 与 `[target.'cfg(windows)']` 完全等价——裸别名
+`windows` / `linux` / `macos` / `unix` 永远不是合法的目标三元组,故无歧义。单个
+OS/家族用裸形式;需要 arch/env 条件或组合子时用 `cfg(...)`。
+
+- **可放的键**:`dependencies` / `dev-dependencies` / `build-dependencies`,以及
+  `build` 下的 `cflags` / `cxxflags` / `ldflags`。
+- **按解析后的目标求值**——交叉构建时是 `--target` 三元组,否则是 host。所以原生
+  Linux 构建**根本不会下载** `[target.windows]` 的依赖。
+- **优先级**:精确三元组表压过 `cfg`/别名表;多个命中的谓词表,其旗标会拼接。
+- **`toolchain` / `linkage` 仅限精确三元组**——它们描述某个具体交叉目标,故应放在
+  `[target.<triple>]`(见上)下,而非裸别名或 `cfg(...)` 下。
+
 ### 2.8 `[features]` — 特性(Cargo 式,加性)
 
 ```toml

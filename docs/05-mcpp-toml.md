@@ -272,6 +272,48 @@ toolchain = "gcc@15.1.0-musl"
 linkage   = "static"
 ```
 
+### 2.7.1 `[target.*]` — Platform-Conditional Dependencies & Flags
+
+Scope dependencies and build flags to a platform with a `[target.<sel>]` table.
+The selector `<sel>` has three forms:
+
+| Selector | Meaning | Example |
+|---|---|---|
+| **bare OS alias** | a single OS / family — the concise, common form | `[target.windows]`, `[target.unix]` |
+| **`cfg(...)` predicate** | a compound condition (arch / env / combinators) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
+| **exact triple** | one specific target (also carries `toolchain` / `linkage`) | `[target.x86_64-linux-musl]` |
+
+Under a selector you may put platform-conditional **dependencies** and **build flags**:
+
+```toml
+# Concise bare-alias form — pull OpenBLAS and link it only on Windows.
+[target.windows.dependencies.compat]
+openblas = "0.3.33"
+[target.windows.build]
+ldflags = ["-Llib", "-llibopenblas"]
+
+# cfg(...) for compound predicates (grammar: all/any/not over os/arch/family/env,
+# plus the bare aliases windows/unix/linux/macos).
+[target.'cfg(all(linux, not(arch = "aarch64")))'.build]
+cxxflags = ["-march=x86-64-v2"]
+```
+
+`[target.windows]` is exactly equivalent to `[target.'cfg(windows)']` — the bare
+aliases `windows` / `linux` / `macos` / `unix` are never valid target triples, so
+there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
+when you need arch/env conditions or combinators.
+
+- **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies`, and
+  `build` with `cflags` / `cxxflags` / `ldflags`.
+- **Evaluated against the resolved target** — the `--target` triple for a cross
+  build, otherwise the host. So a native Linux build never even *downloads* a
+  `[target.windows]` dependency.
+- **Precedence**: an exact-triple table wins over a `cfg`/alias table; multiple
+  matching predicate tables have their flags concatenated.
+- **`toolchain` / `linkage` are exact-triple only** — they describe one specific
+  cross target, so put them under `[target.<triple>]` (above), not under a bare
+  alias or `cfg(...)`.
+
 ### 2.8 `[features]` — Features (Cargo-style, additive)
 
 ```toml
