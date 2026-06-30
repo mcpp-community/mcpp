@@ -90,6 +90,21 @@ modgraph scanner (so `generated=` sources are scanned). Compile line:
 
 Compile/run failures are hard errors surfaced with captured output.
 
+**Host toolchain flags (sysroot).** A bare `g++ build.mcpp -o bin` works on a warm
+dev box but fails on a fresh sandbox: the sandbox compiler can't find crt/libc
+without the sysroot wiring the main build adds. So the compile reuses the host
+subset of that wiring from the resolved `Toolchain` (`host_base_flags`): GCC gets
+`--sysroot=<tc.sysroot>` (or, with no sysroot, the glibc-payload `-idirafter` /
+`-B` / `-L`) plus binutils `-B` and the link-runtime `-L`/`-rpath` dirs; Clang
+trusts its sibling `.cfg`. This mirrors `flags.cppm`'s GCC branch (kept a small
+parallel copy rather than refactoring the platform-sensitive `compute_flags`
+pre-release — a future unification should share one helper).
+
+**Artifacts under `target/`.** The compiled program + the declared-input cache live
+at `target/.build-mcpp/{build.mcpp.bin, build.mcpp.cache}` (a stable, non-
+fingerprint-keyed subdir, since build.mcpp runs before the fingerprint exists), so
+they persist across builds and aren't rebuilt needlessly.
+
 ## Tests
 
 - `tests/e2e/89_build_mcpp.sh` — a `build.mcpp` emitting a `cxxflag` define + a
@@ -108,6 +123,46 @@ main build's source glob (`src/**/*.{cppm,cpp,cc,c}` → `+ .mcpp`) with the sam
 extension becomes a marker of "an mcpp-native C++ file" rather than a separate
 language. `build.mcpp` is the first instance; the `-x c++` handling here is the
 seed. Deferred (out of MVP scope) but the direction is intentional.
+
+## Forward note — typed `import mcpp;` library (Zig-style code API over the wire protocol)
+
+The stdout `mcpp:` text protocol is the **substrate**: it decouples `build.mcpp`
+from mcpp's ABI/version, is language-agnostic, and ignores unknown directives
+(forward-compatible). This is the Cargo `build.rs` model. Zig sits at the other
+end — `build.zig` constructs the graph through a typed `std.Build` **library**.
+
+The chosen direction is the hybrid both ecosystems converge on (cf. Rust's
+`build-rs` crate): **keep the text protocol as the wire format, and ship a thin
+typed `import mcpp;` module on top** that just emits those strings. So instead of
+
+```cpp
+import std;
+int main() { std::puts("mcpp:link-lib=m"); }
+```
+
+a user writes the modules-first, no-headers form:
+
+```cpp
+import mcpp;                      // bundled in the mcpp binary
+int main() { mcpp::link_lib("m"); mcpp::cxxflag("-DX"); }
+```
+
+Design constraints for that iteration (per project direction):
+- **Bundled in the mcpp binary.** mcpp embeds the `mcpp` module source, writes +
+  compiles it (cached BMI + object under `target/`, not rebuilt unless the
+  toolchain changes), and makes it importable when compiling `build.mcpp`.
+- **No `import std;` requirement.** The `mcpp` module implements its I/O with
+  minimal C-level primitives (no `import std;` in its interface), so neither it nor
+  `build.mcpp` forces the std-module staging cost on a tiny build script.
+  (Empirically, a standalone `import std;` needs `gcm.cache/std.gcm` staged at the
+  compile CWD + `std.o` linked — GCC ignores `-fmodule-file=std=` for C++ — so the
+  module is found via the same `gcm.cache/` staging the ninja backend uses.)
+- **Typed API mirrors the directive set** 1:1 (`cxxflag`/`cflag`/`link_lib`/
+  `link_search`/`cfg`/`generated`/`rerun_if_changed`/`rerun_if_env_changed`).
+- The string protocol stays as the documented low-level escape hatch.
+
+This is the next iteration (post-0.0.78); the 0.0.78 core ships the wire-protocol
+substrate so everything above layers on a stable foundation.
 
 ## mcpp-index dual perspective
 

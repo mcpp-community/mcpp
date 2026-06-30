@@ -857,7 +857,7 @@ prepare_build(bool print_fingerprint,
     // dependency graph. Skipped under a cross --target (host program, host run).
     // See .agents/docs/2026-06-30-l3-build-mcpp-implementation-design.md.
     if (auto bp = mcpp::build::run_build_program(
-            *m, *root, explicit_compiler, m->cppStandard.canonical,
+            *m, *root, explicit_compiler, *tc, m->cppStandard.canonical,
             /*isCross=*/!overrides.target_triple.empty());
         !bp) {
         return std::unexpected(bp.error());

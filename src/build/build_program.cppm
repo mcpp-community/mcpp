@@ -16,17 +16,22 @@ import std;
 import mcpp.manifest;
 import mcpp.platform.process;
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
+import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target
+import mcpp.toolchain.registry;      // archive_tool
 import mcpp.ui;
 
 export namespace mcpp::build {
 
-// Compile + run `<root>/build.mcpp` (if present) with `hostCompiler` and apply its
-// directives to `m.buildConfig`. No-op when the file is absent. `isCross` skips
-// execution (host build program can't run when compiled for another target).
+// Compile + run `<root>/build.mcpp` (if present) with `hostCompiler` (the resolved
+// host frontend) and apply its directives to `m.buildConfig`. `tc` supplies the
+// sysroot / runtime flags a fresh sandbox needs to compile + link a freestanding
+// host program. No-op when the file is absent. `isCross` skips execution (a host
+// build program can't run when compiled for another target).
 std::expected<void, std::string> run_build_program(
     mcpp::manifest::Manifest& m,
     const std::filesystem::path& root,
     const std::filesystem::path& hostCompiler,
+    const mcpp::toolchain::Toolchain& tc,
     std::string_view cppStandard,
     bool isCross);
 
@@ -105,6 +110,41 @@ std::string env_value(const std::string& name) {
     return v ? std::string(v) : std::string();
 }
 
+// The host subset of flags.cppm's sysroot/runtime handling — enough to compile +
+// link a freestanding host program on a fresh sandbox (where bare `g++ file -o x`
+// can't find crt/libc). build.mcpp is host-only (skipped under cross), so we need
+// only the native cases; these are passed as separate argv tokens (no shell).
+std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
+    std::vector<std::string> f;
+    // Clang reads its sibling `<clang>.cfg` by default, which wires libc++ + the
+    // sysroot. A simple host compile trusts it (the main build bypasses the cfg
+    // for reproducibility; here correctness on a fresh box is all we need).
+    if (mcpp::toolchain::is_clang(tc)) return f;
+
+    // GCC: a fresh sandbox g++ needs --sysroot to find the C library + the
+    // include-fixed headers; without a sysroot, wire the glibc payload directly.
+    if (!tc.sysroot.empty()) {
+        f.push_back("--sysroot=" + tc.sysroot.string());
+    } else if (tc.payloadPaths) {
+        auto& pp = *tc.payloadPaths;
+        f.push_back("-idirafter"); f.push_back(pp.glibcInclude.string());
+        if (!pp.linuxInclude.empty()) { f.push_back("-idirafter"); f.push_back(pp.linuxInclude.string()); }
+        f.push_back("-B" + pp.glibcLib.string());   // crt1.o/crti.o discovery
+        f.push_back("-L" + pp.glibcLib.string());   // -lc/-lm resolution
+    }
+    // binutils -B so the driver finds ld/as (GCC, non-musl; musl ships its own).
+    if (!mcpp::toolchain::is_musl_target(tc)) {
+        auto ar = mcpp::toolchain::archive_tool(tc);
+        if (!ar.empty()) f.push_back("-B" + ar.parent_path().string());
+    }
+    // Runtime lib dirs so the produced program can load private libs in-tree.
+    for (auto& d : tc.linkRuntimeDirs) {
+        f.push_back("-L" + d.string());
+        f.push_back("-Wl,-rpath," + d.string());
+    }
+    return f;
+}
+
 // ── Cache (line-based; one record per line, internal format) ───────────────
 // program <hash>
 // compiler <hash>
@@ -114,8 +154,14 @@ std::string env_value(const std::string& name) {
 // The leading program/compiler/in/env lines are the re-run key; the `d` lines
 // are the directives to reapply on a hit.
 
+// build.mcpp artifacts live under target/ (the build output tree), not in the
+// project: target/.build-mcpp/{build.mcpp.bin, build.mcpp.cache}. A stable subdir
+// (not the fingerprint-keyed one — build.mcpp runs before the fingerprint exists)
+// so the binary + cache survive across builds and aren't rebuilt needlessly.
+fs::path build_dir(const fs::path& root) { return root / "target" / ".build-mcpp"; }
+
 std::string cache_path(const fs::path& root) {
-    return (root / ".mcpp" / "build.mcpp.cache").string();
+    return (build_dir(root) / "build.mcpp.cache").string();
 }
 
 void write_cache(const fs::path& root, const std::string& programHash,
@@ -214,6 +260,7 @@ std::expected<void, std::string> run_build_program(
     mcpp::manifest::Manifest& m,
     const fs::path& root,
     const fs::path& hostCompiler,
+    const mcpp::toolchain::Toolchain& tc,
     std::string_view cppStandard,
     bool isCross) {
 
@@ -239,17 +286,18 @@ std::expected<void, std::string> run_build_program(
         return {};
     }
 
-    fs::create_directories(root / ".mcpp", ec);
-    fs::path bin = root / ".mcpp" / "build.mcpp.bin";
+    fs::create_directories(build_dir(root), ec);
+    fs::path bin = build_dir(root) / "build.mcpp.bin";
 
     // ── Compile build.mcpp with the host toolchain ──────────────────────────
     std::string std_flag = "-std=" + std::string(cppStandard.empty() ? "c++23" : cppStandard);
     // `-x c++` is required: the `.mcpp` extension is unknown to the compiler, so
     // without it the driver hands build.mcpp to the linker as a linker script.
-    std::vector<std::string> compileArgv = {
-        hostCompiler.string(), std_flag, "-O0",
-        "-x", "c++", src.string(), "-o", bin.string(),
-    };
+    std::vector<std::string> compileArgv = { hostCompiler.string(), std_flag, "-O0" };
+    for (auto& bf : host_base_flags(tc)) compileArgv.push_back(bf);
+    compileArgv.push_back("-x"); compileArgv.push_back("c++");
+    compileArgv.push_back(src.string());
+    compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
     mcpp::ui::info("build.mcpp", "compiling");
     auto cres = mcpp::platform::process::capture_exec(compileArgv);
     if (cres.exit_code != 0) {

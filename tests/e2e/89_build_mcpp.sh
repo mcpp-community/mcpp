@@ -49,7 +49,7 @@ EOF
 "$MCPP" build > b1.log 2>&1 || { cat b1.log; echo "FAIL: build 1 errored"; exit 1; }
 grep -q "build.mcpp" b1.log || { cat b1.log; echo "FAIL: build.mcpp not invoked"; exit 1; }
 [ -f src/generated.cpp ] || { echo "FAIL: generated source not written"; exit 1; }
-[ -f .mcpp/build.mcpp.cache ] || { echo "FAIL: cache not written"; exit 1; }
+[ -f target/.build-mcpp/build.mcpp.cache ] || { echo "FAIL: cache not written under target/"; exit 1; }
 
 # The binary returns 0 only if both the define AND the generated source took effect.
 "$MCPP" run > r1.log 2>&1 || { cat r1.log; echo "FAIL: run returned non-zero (define/generated source missing)"; exit 1; }
