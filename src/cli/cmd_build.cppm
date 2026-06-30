@@ -15,8 +15,27 @@ import mcpp.build.execute;
 import mcpp.dyndep;
 import mcpp.log;
 import mcpp.project;
+import mcpp.manifest;
+import mcpp.ui;
 
 namespace mcpp::cli {
+
+// Decide whether a build/test invocation fans out over workspace members, and
+// if so which. Fan out when `--workspace` is given, or at a *virtual* workspace
+// root with no `-p` (the intuitive "act on the whole workspace"). Returns the
+// member paths to iterate, or nullopt for the single-package / single-`-p` /
+// rooted-bare path (handled by the existing per-package pipeline).
+std::optional<std::vector<std::string>>
+workspace_fanout_members(bool wantAll, const std::string& package_filter) {
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    if (!root) return std::nullopt;
+    auto m = mcpp::manifest::load(*root / "mcpp.toml");
+    if (!m || !m->workspace.present || m->workspace.members.empty()) return std::nullopt;
+    bool virtualWs = m->package.name.empty();
+    if (wantAll || (virtualWs && package_filter.empty()))
+        return m->workspace.members;
+    return std::nullopt;
+}
 
 export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     bool verbose  = parsed.is_flag_set("verbose") || mcpp::log::is_verbose();
@@ -36,6 +55,24 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto cp = parsed.value("cap")) ov.capabilities = *cp;
     ov.strict = parsed.is_flag_set("strict");
     ov.force_static = parsed.is_flag_set("static");
+
+    // Workspace fan-out: build every member, one per the existing per-package
+    // pipeline (continue-on-failure; first non-zero exit wins). Checked before
+    // the fast path, which is single-package only.
+    if (auto members = workspace_fanout_members(parsed.is_flag_set("workspace"),
+                                                ov.package_filter)) {
+        int rc = 0;
+        for (auto& mp : *members) {
+            mcpp::build::BuildOverrides mo = ov;
+            mo.package_filter = mp;
+            auto ctx = mcpp::build::prepare_build(print_fp, /*includeDevDeps=*/false,
+                                                  /*extraTargets=*/{}, mo);
+            if (!ctx) { std::println(stderr, "error: {}: {}", mp, ctx.error()); rc = 2; continue; }
+            int r = mcpp::build::run_build_plan(*ctx, verbose, no_cache, mo.target_triple);
+            if (r != 0) rc = r;
+        }
+        return rc;
+    }
 
     // P0: try fast-path if inputs haven't changed. Any resolution-affecting
     // override (--profile/--features/--strict, like --target/--static) must
@@ -81,6 +118,32 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto fs = parsed.value("features")) ov.features = *fs;
     if (auto cp = parsed.value("cap")) ov.capabilities = *cp;
     ov.strict = parsed.is_flag_set("strict");
+    if (auto p = parsed.value("package")) ov.package_filter = *p;
+
+    // Workspace fan-out: test every member through run_tests (which scopes its
+    // discovery to the member). Continue-on-failure + per-member summary so one
+    // red member never hides the rest.
+    if (auto members = workspace_fanout_members(parsed.is_flag_set("workspace"),
+                                                ov.package_filter)) {
+        int rc = 0;
+        std::vector<std::string> failed;
+        for (auto& mp : *members) {
+            mcpp::build::BuildOverrides mo = ov;
+            mo.package_filter = mp;
+            mcpp::ui::status("Workspace", std::format("testing member '{}'", mp));
+            int r = mcpp::build::run_tests(passthrough, mo);
+            if (r != 0) { rc = r; failed.push_back(mp); }
+        }
+        if (failed.empty())
+            mcpp::ui::status("Workspace",
+                std::format("all {} member(s) passed", members->size()));
+        else
+            mcpp::ui::error(std::format("workspace test: {}/{} member(s) failed: {}",
+                failed.size(), members->size(), [&]{
+                    std::string s; for (auto& f : failed) { if (!s.empty()) s += ", "; s += f; }
+                    return s; }()));
+        return rc;
+    }
     return mcpp::build::run_tests(passthrough, ov);
 }
 

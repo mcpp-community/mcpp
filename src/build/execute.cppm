@@ -426,8 +426,21 @@ export int run_tests(std::span<const std::string> passthrough,
         return 2;
     }
 
-    // 1. Discover test files.
-    auto testFiles = mcpp::modgraph::expand_glob(*root, "tests/**/*.cpp");
+    // Workspace scoping: discovery must run against the MEMBER, not the
+    // workspace root — otherwise `tests/**/*.cpp` globs every member's tests
+    // together (two `tests/main.cpp` → "duplicate test name 'main'"). When a
+    // member is selected (via -p, threaded as package_filter), glob from its
+    // dir; prepare_build below resolves the SAME member, so the two agree.
+    // (--workspace fans out over members at the cmd layer, one call per member.)
+    auto testRoot = *root;
+    if (auto rm = mcpp::manifest::load(*root / "mcpp.toml"); rm) {
+        auto member = mcpp::project::resolve_member_dir(*rm, *root, overrides.package_filter);
+        if (!member) { mcpp::ui::error(member.error()); return 2; }
+        if (!member->empty()) testRoot = *member;
+    }
+
+    // 1. Discover test files (scoped to the member/package).
+    auto testFiles = mcpp::modgraph::expand_glob(testRoot, "tests/**/*.cpp");
     if (testFiles.empty()) {
         std::println("no tests found in tests/");
         return 0;
@@ -447,8 +460,8 @@ export int run_tests(std::span<const std::string> passthrough,
         mcpp::manifest::Target t;
         t.name = name;
         t.kind = mcpp::manifest::Target::TestBinary;
-        // Store as path relative to project root for portability of error messages.
-        t.main = std::filesystem::relative(f, *root).string();
+        // Relative to the member/package root prepare_build will operate on.
+        t.main = std::filesystem::relative(f, testRoot).string();
         testTargets.push_back(std::move(t));
     }
 

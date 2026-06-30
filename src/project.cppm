@@ -74,4 +74,35 @@ export void merge_workspace_deps(mcpp::manifest::Manifest& member,
     merge_map(member.buildDependencies);
 }
 
+// Resolve which member directory a workspace command acts on, for the
+// single-member case. Shares the match rule (basename OR member path) with
+// prepare_build's member switch, so `build -p X` and `test -p X` agree.
+// Returns:
+//   - the member dir   when `package_filter` names a member,
+//   - empty path       when no switch applies (not a workspace, or a rooted
+//                      workspace with no filter → act on the root package),
+//   - error            when the filter names an unknown member, or a *virtual*
+//                      workspace is addressed with no filter (the caller must
+//                      pick a member with -p or fan out with --workspace).
+export std::expected<std::filesystem::path, std::string>
+resolve_member_dir(const mcpp::manifest::Manifest& rootManifest,
+                   const std::filesystem::path& rootDir,
+                   std::string_view package_filter) {
+    if (!rootManifest.workspace.present) return std::filesystem::path{};
+    if (!package_filter.empty()) {
+        for (auto& mp : rootManifest.workspace.members) {
+            auto basename = std::filesystem::path(mp).filename().string();
+            if (basename == package_filter || mp == package_filter)
+                return rootDir / mp;
+        }
+        return std::unexpected(std::format(
+            "workspace member '{}' not found in [workspace].members", package_filter));
+    }
+    if (rootManifest.package.name.empty()) {
+        return std::unexpected(std::string(
+            "virtual workspace: specify -p <member> or --workspace"));
+    }
+    return std::filesystem::path{};  // rooted workspace, no filter → root package
+}
+
 } // namespace mcpp::project

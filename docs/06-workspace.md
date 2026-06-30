@@ -153,13 +153,23 @@ default = "clang@19.0"
 
 ## 5. Build Commands
 
-### 5.1 Building from the Workspace Root
+### 5.1 Building & testing from the Workspace Root
 
 ```bash
-mcpp build                  # build the default target (auto-selects the member with a binary target)
+mcpp build                  # virtual workspace → builds ALL members; rooted → the root package
 mcpp build -p server        # build a specific member and its dependencies
-mcpp build -p core          # build a specific library member
+mcpp build --workspace      # build every member explicitly
+mcpp test                   # virtual workspace → tests ALL members; rooted → the root package
+mcpp test  -p core          # test a single member
+mcpp test  --workspace      # test every member (one report per member; continues past failures)
 ```
+
+At a **virtual** workspace root (only `[workspace]`, no `[package]`), bare
+`mcpp build` / `mcpp test` act on **all** members. At a **rooted** workspace
+(`[package]` + `[workspace]`), they act on the root package; use `--workspace` to
+include all members. `mcpp test --workspace` builds + runs each member's
+`tests/**/*.cpp` independently — discovery is scoped per member, so two members may
+each have a `tests/main.cpp` without colliding.
 
 ### 5.2 Building from a Member Subdirectory
 
@@ -179,6 +189,11 @@ mcpp build -p server        # matches apps/server
 mcpp test -p core           # matches libs/core
 mcpp run -p server -- --port 8080
 ```
+
+`--workspace` (on `build` and `test`) is the fan-out form: it acts on **every**
+member. `mcpp test --workspace` reports each member separately and continues past a
+failing member, exiting non-zero if any member failed — ideal as a single,
+shell-free CI step for a workspace that tests many libraries.
 
 ## 6. Directory Layout
 
