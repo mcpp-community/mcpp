@@ -145,6 +145,73 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
     return f;
 }
 
+// The bundled `mcpp` build module — a typed API over the stdout wire protocol so
+// build.mcpp can `import mcpp;` (no `#include`, no `import std;`). I/O uses
+// C-level primitives in the global module fragment, so the module needs no std
+// module BMI. The functions mirror the directive set 1:1; they just print the
+// `mcpp:` lines the engine already parses. Embedded in the binary (not shipped as
+// a file) so it always matches this mcpp's protocol.
+constexpr std::string_view kMcppModuleSource = R"CPP(module;
+#include <cstdio>
+export module mcpp;
+export namespace mcpp {
+inline void cxxflag(const char* flag)             { std::printf("mcpp:cxxflag=%s\n", flag); }
+inline void cflag(const char* flag)               { std::printf("mcpp:cflag=%s\n", flag); }
+inline void link_lib(const char* name)            { std::printf("mcpp:link-lib=%s\n", name); }
+inline void link_search(const char* dir)          { std::printf("mcpp:link-search=%s\n", dir); }
+inline void define(const char* name)              { std::printf("mcpp:cfg=%s\n", name); }
+inline void generated(const char* path)           { std::printf("mcpp:generated=%s\n", path); }
+inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }
+inline void rerun_if_env_changed(const char* var) { std::printf("mcpp:rerun-if-env-changed=%s\n", var); }
+}
+)CPP";
+
+// Compile the bundled `mcpp` module into `bdir` and return the extra flags the
+// build.mcpp compile needs to import it (the object `mcpp.o` is linked alongside).
+//   GCC   : -fmodules → gcm.cache/mcpp.gcm + mcpp.o; build.mcpp compiles from
+//           `bdir` (cwd) so GCC finds gcm.cache/mcpp.gcm.
+//   Clang : --precompile → mcpp.pcm, then -c → mcpp.o; pass -fmodule-file=mcpp=<pcm>.
+std::expected<std::vector<std::string>, std::string>
+build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
+                  const std::vector<std::string>& base, const std::string& stdFlag,
+                  bool isClang) {
+    std::error_code ec;
+    fs::path cppm = bdir / "mcpp.cppm";
+    { std::ofstream os(cppm, std::ios::trunc);
+      os << kMcppModuleSource;
+      if (!os) return std::unexpected(std::string("could not write mcpp module source")); }
+
+    auto run = [&](std::vector<std::string> argv, const char* what)
+        -> std::expected<void, std::string> {
+        auto r = mcpp::platform::process::capture_exec(argv, {}, bdir.string());
+        if (r.exit_code != 0)
+            return std::unexpected(std::format("mcpp module {} failed (exit {}):\n{}",
+                                               what, r.exit_code, r.output));
+        return {};
+    };
+    auto with_base = [&](std::vector<std::string> head) {
+        for (auto& b : base) head.push_back(b);
+        return head;
+    };
+
+    std::vector<std::string> extra;
+    if (isClang) {
+        if (auto r = run(with_base({compiler.string(), stdFlag, "--precompile",
+                                    "mcpp.cppm", "-o", "mcpp.pcm"}), "precompile"); !r)
+            return std::unexpected(r.error());
+        if (auto r = run(with_base({compiler.string(), stdFlag, "-c",
+                                    "mcpp.pcm", "-o", "mcpp.o"}), "object"); !r)
+            return std::unexpected(r.error());
+        extra.push_back("-fmodule-file=mcpp=" + (bdir / "mcpp.pcm").string());
+    } else {
+        if (auto r = run(with_base({compiler.string(), stdFlag, "-fmodules", "-c",
+                                    "mcpp.cppm", "-o", "mcpp.o"}), "compile"); !r)
+            return std::unexpected(r.error());
+        extra.push_back("-fmodules");
+    }
+    return extra;
+}
+
 // ── Cache (line-based; one record per line, internal format) ───────────────
 // program <hash>
 // compiler <hash>
@@ -286,20 +353,50 @@ std::expected<void, std::string> run_build_program(
         return {};
     }
 
-    fs::create_directories(build_dir(root), ec);
-    fs::path bin = build_dir(root) / "build.mcpp.bin";
+    fs::path bdir = build_dir(root);
+    fs::create_directories(bdir, ec);
+    fs::path bin = bdir / "build.mcpp.bin";
 
     // ── Compile build.mcpp with the host toolchain ──────────────────────────
     std::string std_flag = "-std=" + std::string(cppStandard.empty() ? "c++23" : cppStandard);
+    auto base = host_base_flags(tc);
+
+    // Only wire the bundled `mcpp` module when build.mcpp actually imports it —
+    // so the common `#include`-based program compiles exactly as before (no
+    // -fmodules, cwd = project root). When it does `import mcpp;`, compile the
+    // module, link its object, and run the build.mcpp compile from `bdir` so GCC
+    // finds gcm.cache/mcpp.gcm.
+    std::string srcText;
+    { std::ifstream is(src); std::ostringstream ss; ss << is.rdbuf(); srcText = ss.str(); }
+    bool usesModule = srcText.find("import mcpp") != std::string::npos;
+
+    std::vector<std::string> moduleFlags;
+    if (usesModule) {
+        auto mf = build_mcpp_module(bdir, hostCompiler, base, std_flag,
+                                    mcpp::toolchain::is_clang(tc));
+        if (!mf) return std::unexpected(mf.error());
+        moduleFlags = std::move(*mf);
+    }
+
     // `-x c++` is required: the `.mcpp` extension is unknown to the compiler, so
     // without it the driver hands build.mcpp to the linker as a linker script.
     std::vector<std::string> compileArgv = { hostCompiler.string(), std_flag, "-O0" };
-    for (auto& bf : host_base_flags(tc)) compileArgv.push_back(bf);
+    for (auto& bf : base)        compileArgv.push_back(bf);
+    for (auto& mf : moduleFlags) compileArgv.push_back(mf);
     compileArgv.push_back("-x"); compileArgv.push_back("c++");
     compileArgv.push_back(src.string());
+    if (usesModule) {
+        // Link the module object (reset the input language first so the .o isn't
+        // treated as C++ source).
+        compileArgv.push_back("-x"); compileArgv.push_back("none");
+        compileArgv.push_back((bdir / "mcpp.o").string());
+    }
     compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
     mcpp::ui::info("build.mcpp", "compiling");
-    auto cres = mcpp::platform::process::capture_exec(compileArgv, {}, root.string());
+    // GCC resolves `import mcpp;` via gcm.cache/ relative to the compile cwd, so
+    // run the module-using compile from bdir; otherwise the project root is fine.
+    std::string compileCwd = usesModule ? bdir.string() : root.string();
+    auto cres = mcpp::platform::process::capture_exec(compileArgv, {}, compileCwd);
     if (cres.exit_code != 0) {
         return std::unexpected(std::format(
             "build.mcpp failed to compile (exit {}):\n{}", cres.exit_code, cres.output));

@@ -50,8 +50,41 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
 
 程序**请求**构建边(开关、库、源码),它**不能**新增注册表依赖——请把依赖图保持在
-`mcpp.toml` 里声明式管理(包括平台条件依赖 `[target.'cfg(...)'.dependencies]`)。
+`mcpp.toml` 里声明式管理(包括平台条件依赖 `[target.windows.dependencies]`)。
 `build.mcpp` 用于*叶子*决策:开关、代码生成、链接需求。
+
+## 类型化 API:`import mcpp;`(推荐)
+
+除了打印裸字符串,你还可以把 `build.mcpp` 写成**模块优先**——`import mcpp;`,无
+`#include`、无 `import std;`。`mcpp` 模块**内置在 mcpp 二进制里**(因此永远和你这版 mcpp
+的协议匹配),按需编译;它的函数只是 emit 上面那些指令:
+
+```cpp
+// build.mcpp
+import mcpp;
+
+int main() {
+    mcpp::cxxflag("-DHAVE_BANNER=1");
+    mcpp::link_lib("m");                 // -lm
+    mcpp::link_search("vendor/lib");     // -L…
+    mcpp::define("HAVE_FEATURE");         // == mcpp:cfg= → -DHAVE_FEATURE
+    mcpp::generated("src/gen.cpp");
+    mcpp::rerun_if_changed("config.h");
+    mcpp::rerun_if_env_changed("USE_FAST");
+}
+```
+
+| 函数 | emit |
+|---|---|
+| `mcpp::cxxflag(s)` / `mcpp::cflag(s)` | `mcpp:cxxflag=` / `mcpp:cflag=` |
+| `mcpp::link_lib(s)` / `mcpp::link_search(s)` | `mcpp:link-lib=` / `mcpp:link-search=` |
+| `mcpp::define(s)` | `mcpp:cfg=`(即 `-D<s>`) |
+| `mcpp::generated(p)` | `mcpp:generated=` |
+| `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
+
+如果 `build.mcpp` 还需要*写*生成文件,混入一个文本 `#include <fstream>` 即可——这没问题,
+只有 `import std;` 是不必要的。上面的裸 stdout 协议仍是底层基底;`import mcpp;` 是其上的
+类型化层。
 
 ## 增量:声明输入(避免无谓重跑)
 

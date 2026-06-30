@@ -54,8 +54,43 @@ is ignored, so you can freely log diagnostics.
 
 The program **requests** build edges (flags, libraries, sources). It cannot add a
 registry dependency — keep your dependency graph declarative in `mcpp.toml`
-(including platform-conditional `[target.'cfg(...)'.dependencies]`). `build.mcpp`
+(including platform-conditional `[target.windows.dependencies]`). `build.mcpp`
 is for *leaf* decisions: flags, codegen, link requirements.
+
+## Typed API: `import mcpp;` (recommended)
+
+Instead of printing raw strings you can write `build.mcpp` **modules-first** —
+`import mcpp;`, no `#include`, no `import std;`. The `mcpp` module is bundled in the
+mcpp binary (so it always matches your mcpp's protocol) and is compiled on demand;
+its functions just emit the directives above:
+
+```cpp
+// build.mcpp
+import mcpp;
+
+int main() {
+    mcpp::cxxflag("-DHAVE_BANNER=1");
+    mcpp::link_lib("m");                 // -lm
+    mcpp::link_search("vendor/lib");     // -L…
+    mcpp::define("HAVE_FEATURE");         // == mcpp:cfg= → -DHAVE_FEATURE
+    mcpp::generated("src/gen.cpp");
+    mcpp::rerun_if_changed("config.h");
+    mcpp::rerun_if_env_changed("USE_FAST");
+}
+```
+
+| Function | Emits |
+|---|---|
+| `mcpp::cxxflag(s)` / `mcpp::cflag(s)` | `mcpp:cxxflag=` / `mcpp:cflag=` |
+| `mcpp::link_lib(s)` / `mcpp::link_search(s)` | `mcpp:link-lib=` / `mcpp:link-search=` |
+| `mcpp::define(s)` | `mcpp:cfg=` (i.e. `-D<s>`) |
+| `mcpp::generated(p)` | `mcpp:generated=` |
+| `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
+
+If your `build.mcpp` also needs to *write* a generated file, mix in a textual
+`#include <fstream>` — that's fine; only `import std;` is unnecessary. The raw
+stdout protocol above remains the low-level substrate; `import mcpp;` is the typed
+layer over it.
 
 ## Incremental: declared inputs (no needless re-runs)
 
