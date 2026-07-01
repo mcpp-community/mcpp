@@ -695,3 +695,45 @@ jobs:
             dist/mcpp-${{ steps.resolve.outputs.version }}-windows-x86_64.zip.sha256
             dist/mcpp-windows-x86_64.zip
             dist/mcpp-windows-x86_64.zip.sha256
+
+  # Publish this release into the xlings ecosystem, after ALL platform builds
+  # have uploaded their assets:
+  #   ① mirror binaries → xlings-res/mcpp (GitHub + GitCode) so XLINGS_RES
+  #      downloads resolve on every platform (incl. the CN/GitCode path);
+  #   ② open a PR against openxlings/xim-pkgindex bumping mcpp to this version
+  #      (a maintainer merges it — index git source is not on the critical path).
+  # Best-effort / non-blocking: a failure here never fails the release.
+  # Shared vendored scripts live in .github/tools/ (kept in sync with xlings).
+  publish-ecosystem:
+    needs: [build-release, build-linux-aarch64, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    env:
+      XLINGS_RES_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+      XIM_PKGINDEX_TOKEN: ${{ secrets.XIM_PKGINDEX_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Determine version
+        id: version
+        run: echo "version=$(awk -F '\"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Mirror binaries to xlings-res/mcpp (gh + gtc)
+        if: ${{ env.XLINGS_RES_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
+        run: |
+          chmod +x .github/tools/gtc .github/tools/mirror_res.sh
+          export PATH="$PWD/.github/tools:$PATH"
+          bash .github/tools/mirror_res.sh mcpp "${{ steps.version.outputs.version }}" \
+            || echo "binary mirror reported issues (non-blocking)"
+
+      - name: Open index bump PR (xim-pkgindex)
+        if: ${{ env.XIM_PKGINDEX_TOKEN != '' }}
+        env:
+          PKGINDEX_TOKEN: ${{ secrets.XIM_PKGINDEX_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x .github/tools/bump_index.sh
+          bash .github/tools/bump_index.sh mcpp "${{ steps.version.outputs.version }}" \
+            || echo "index bump reported issues (non-blocking)"
