@@ -114,7 +114,27 @@ jobs:
           # Use freshly-built mcpp for test (it has --mirror support)
           MCPP_FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           "$MCPP_FRESH" self config --mirror GLOBAL
+          # TEMP-DEBUG(#196): exit-time segfault reproduces only on CI —
+          # capture a core + backtrace, then remove this block.
+          ulimit -c unlimited
+          sudo sysctl -w kernel.core_pattern="$PWD/core.%p" || true
+          set +e
           "$MCPP_FRESH" test
+          rc=$?
+          set -e
+          if [[ $rc -ne 0 ]]; then
+            sudo apt-get install -y -qq gdb >/dev/null 2>&1 || true
+            core=$(ls -t core.* 2>/dev/null | head -1)
+            if [[ -n "$core" ]]; then
+              gdb -batch -ex 'bt full' -ex 'info sharedlibrary' -ex 'thread apply all bt' \
+                  "$MCPP_FRESH" "$core" 2>&1 | head -150
+            else
+              echo "no core file found"
+            fi
+            ldd "$MCPP_FRESH" || true
+            readelf -d "$MCPP_FRESH" | head -20 || true
+            exit $rc
+          fi
 
       # NOTE: the e2e suite (tests/e2e/run_all.sh) moved to ci-linux-e2e.yml
       # so it runs in parallel with this job. The toolchain matrix below no
