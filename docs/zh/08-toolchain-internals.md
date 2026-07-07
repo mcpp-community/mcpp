@@ -135,10 +135,10 @@ glibc、payload 从别的 home 继承而来)发生在 mcpp 视野之外,trust-bu
   新 home 时——mcpp 退为只读 + 校验。本管线在那之前是兼容层,也是双向漂移的
   自愈机制。
 
-## 5. clang cfg:只服务人类
+## 5. clang cfg:仅服务直接调用场景
 
-`bin/clang++.cfg` 的存在意义是:人类直接敲打包内 `clang++` 时得到一个可用且
-hermetic 的编译器。mcpp 自己的构建从不读它(永远 `--no-default-config`)。
+`bin/clang++.cfg` 的职责是:直接调用打包内 `clang++`(不经由 mcpp)时,
+获得可用且 hermetic 的编译器配置。mcpp 自己的构建从不读它(永远 `--no-default-config`)。
 fixup 管线从链接模型**确定性再生**它——同一 payload ⇒ 任何机器、任何安装路径
 产出字节一致的 cfg——而不是对装机产物做行级补丁。Linux 上内容为:CRT 发现
 (`-B`)、payload loader + rpath、lld/compiler-rt/libunwind、C++ 驱动附加

@@ -5,18 +5,22 @@
 
 ## [0.0.84] — 2026-07-08
 
-### 修复 / 完善
+### 修复
 
-- **clang cfg 头文件轴补齐(供人类直接使用的完备性)**:`fixup_clang_cfg` 再生的
-  cfg 此前只覆盖链接轴(`-B`/`-L`/loader/rpath),缺 C 库与内核头——裸
-  `clang hello.c` 只有在宿主恰好装有 `/usr/include` 时才能编译(静默不 hermetic,
-  无宿主头的机器直接失败)。现补上 `-isystem <glibc payload>/include` 与
-  `-isystem <linux-headers payload>/include`,置于 libc++ 头块**之后**
-  (保持 `#include_next` 链),与 xim-pkgindex 侧 `llvm.lua` 装机生成的 cfg
-  内容一致——两个写手不再漂移。fixup rev 升至 `hermetic-3`,存量 payload 在
-  下次构建时自动再收敛。已实测:宿主头被屏蔽(`--sysroot=<空目录>`)下,
-  cfg 驱动的裸 `clang`/`clang++` 编译运行均成功。mcpp 自身构建不受影响
-  (linkmodel 一直自带头轴)。
+- **clang 驱动配置文件(cfg)补全头文件搜索路径**:`fixup_clang_cfg` 再生成的
+  cfg 此前仅包含链接相关条目(`-B`/`-L`/动态链接器/rpath),缺少 C 标准库头文件
+  与内核头文件的搜索路径。该 cfg 服务于直接调用打包内 `clang`/`clang++`
+  (不经由 mcpp)的场景:缺少这两项时,此类调用仅在宿主系统存在
+  `/usr/include` 时可编译(依赖宿主环境,违背沙箱自包含约束),在无宿主开发头
+  文件的环境中直接报头文件缺失错误。本次补充
+  `-isystem <glibc payload>/include` 与 `-isystem <linux-headers payload>/include`,
+  置于 libc++ 头文件条目之后以保持 `#include_next` 搜索链;生成内容与
+  xim-pkgindex 侧 `llvm.lua` 安装期生成的 cfg 保持一致,消除两个生成端之间的
+  内容差异。fixup 修订号升级至 `hermetic-3`,既有 payload 在下一次构建时自动
+  重新收敛,无需重新安装。验证方式:以 `--sysroot=<空目录>` 屏蔽宿主头文件后,
+  由 cfg 驱动的 `clang`/`clang++` 直接调用编译与运行均通过;移除上述搜索路径的
+  对照组按预期失败。mcpp 自身构建路径不受影响(构建 flags 由 linkmodel
+  独立提供,不读取 cfg)。
 
 
 

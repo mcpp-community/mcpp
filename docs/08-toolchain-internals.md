@@ -159,10 +159,10 @@ mcpp's sight — trust-but-verify is the only reliable semantic.
   mcpp read-only + verification. The pipeline here is the compatibility
   layer until then, and the self-healing mechanism for drift either way.
 
-## 5. The clang cfg: for humans only
+## 5. The clang cfg: direct-invocation support only
 
-`bin/clang++.cfg` exists so a human running the bundled `clang++` directly
-gets a working, hermetic compiler. mcpp's own builds never read it
+`bin/clang++.cfg` exists so that direct invocations of the bundled
+`clang++` (outside mcpp) get a working, hermetic compiler configuration. mcpp's own builds never read it
 (`--no-default-config` always). The fixup pipeline **regenerates** it
 deterministically from the link model — same payload ⇒ byte-identical cfg on
 every machine and install path — rather than line-patching whatever an

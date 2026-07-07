@@ -311,8 +311,8 @@ probe_sysroot(const std::filesystem::path& compilerBin,
     // artifact that mcpp's own fixup pipeline now REGENERATES without a
     // --sysroot line (the C library comes from the payload link model), so
     // the mined value existed only on never-fixed-up installs and pointed at
-    // an environment directory the payload doesn't own. The cfg is for
-    // humans running clang++ directly; builds derive everything from the
+    // an environment directory the payload doesn't own. The cfg serves
+    // direct driver invocations only; builds derive everything from the
     // link model. Kept as a diagnostic only.
     if (auto cfg = mcpp::fallback::parse_clang_cfg_sysroot(compilerBin)) {
         mcpp::log::debug("probe", std::format(
