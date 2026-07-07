@@ -117,3 +117,76 @@ jobs:
           # Warm musl once so fresh-home e2e tests inherit the payload.
           "$MCPP" toolchain install gcc 15.1.0-musl
           bash tests/e2e/run_all.sh
+
+  # ──────────────────────────────────────────────────────────────────
+  # Hermetic (no host toolchain): the ONLY environment class that
+  # faithfully reproduces issue #195. Standard runners ship gcc +
+  # libc6-dev, so a sandbox toolchain that leaks to the host's CRT
+  # still links "green" there; this container has no compiler and no
+  # host Scrt1.o, so any leak fails loudly. Builds PR code with the
+  # bootstrap mcpp, then runs the llvm flow end-to-end.
+  # ──────────────────────────────────────────────────────────────────
+  hermetic:
+    name: hermetic e2e (no host toolchain, container)
+    runs-on: ubuntu-24.04
+    container: debian:stable-slim
+    timeout-minutes: 60
+    env:
+      XLINGS_NON_INTERACTIVE: '1'
+    steps:
+      - name: Install base utilities (NO compiler)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl ca-certificates git xz-utils unzip
+          # The whole point of this job: no host toolchain, no host CRT.
+          ! command -v gcc
+          ! command -v cc
+          test ! -e /usr/lib/x86_64-linux-gnu/Scrt1.o
+          test ! -e /usr/lib/gcc
+
+      - uses: actions/checkout@v4
+
+      # Payload cache (downloads only — the container still has no host
+      # toolchain, which is the property under test).
+      - name: Cache mcpp sandbox payloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp
+          key: mcpp-hermetic-${{ hashFiles('mcpp.toml') }}
+          restore-keys: |
+            mcpp-hermetic-
+
+      - name: Bootstrap xlings + released mcpp
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.62
+          export PATH="$HOME/.xlings/subos/current/bin:$PATH"
+          xlings update
+          xlings install mcpp -y -g
+          MCPP_BOOT="$HOME/.xlings/subos/current/bin/mcpp"
+          "$MCPP_BOOT" --version
+          "$MCPP_BOOT" self config --mirror GLOBAL
+          echo "MCPP_BOOT=$MCPP_BOOT" >> "$GITHUB_ENV"
+
+      - name: Build PR mcpp from source (sandbox gcc only)
+        run: |
+          "$MCPP_BOOT" build
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          test -x "$MCPP"
+          "$MCPP" --version
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+
+      - name: "issue #195 reproduction: manifest llvm toolchain, fresh"
+        run: |
+          cd "$(mktemp -d)"
+          "$MCPP" new hello195
+          cd hello195
+          printf '\n[toolchain]\nlinux = "llvm@22.1.8"\n' >> mcpp.toml
+          printf 'import std;\nint main() { std::println("hello {}", 195); return 0; }\n' > src/main.cpp
+          "$MCPP" run
+
+      - name: Hermetic llvm e2e subset
+        run: |
+          export PATH="$HOME/.xlings/subos/current/bin:$PATH"
+          export MCPP
+          bash tests/e2e/86_llvm_hermetic_link.sh
+          bash tests/e2e/37_llvm_import_std.sh
