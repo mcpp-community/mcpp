@@ -714,6 +714,10 @@ prepare_build(bool print_fingerprint,
                 "toolchain payload '{}' has no known C++ frontend in {}",
                 pkg.target(), payload->binDir.string()));
         }
+        // Same post-install fixup as `mcpp toolchain install` — this manifest
+        // [toolchain] path previously ran none, so a freshly auto-installed
+        // payload kept its stale install-time cfg / unpatched runtime libs.
+        mcpp::toolchain::ensure_post_install_fixup(**cfg, payload->root, pkg);
         mcpp::ui::info("Resolved",
             std::format("{} → {}", *tcSpec,
                 mcpp::ui::shorten_path(explicit_compiler,
@@ -818,13 +822,12 @@ prepare_build(bool print_fingerprint,
                 defaultPkg.target(), payload->binDir.string()));
         }
 
-        // The freshly-installed glibc gcc needs the SAME post-install fixup
-        // (patchelf + specs wiring against the sandbox glibc) that
+        // The freshly-installed toolchain needs the SAME post-install fixup
+        // (patchelf / specs / cfg wiring against the sandbox glibc) that
         // `mcpp toolchain install` performs — without it a fresh sandbox
-        // cannot find the C library (stdlib.h: No such file or directory).
-        if (defaultPkg.needsGccPostInstallFixup) {
-            mcpp::toolchain::gcc_post_install_fixup(**cfg, payload->root);
-        }
+        // gcc cannot find the C library (stdlib.h: No such file or
+        // directory) and a fresh llvm keeps its stale install-time cfg.
+        mcpp::toolchain::ensure_post_install_fixup(**cfg, payload->root, defaultPkg);
 
         // Persist the default so we don't ask again next time.
         if (auto wr = mcpp::config::write_default_toolchain(**cfg, defaultSpec); wr) {

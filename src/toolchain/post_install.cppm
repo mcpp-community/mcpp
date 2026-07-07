@@ -13,8 +13,11 @@ export module mcpp.toolchain.post_install;
 
 import std;
 import mcpp.config;
+import mcpp.libs.json;
 import mcpp.log;
 import mcpp.platform;
+import mcpp.toolchain.linkmodel;
+import mcpp.toolchain.registry;
 import mcpp.ui;
 import mcpp.xlings;
 
@@ -155,160 +158,102 @@ void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
     }
 }
 
-// Rewrite clang++.cfg paths after the LLVM payload has been copied to the
-// mcpp sandbox. The cfg was authored by xlings at install time and contains
-// absolute paths pointing to ~/.xlings/. We rewrite them to point to the
-// actual payload location + sibling xpkgs (glibc, linux-headers).
+// Regenerate the clang driver cfg files after the LLVM payload landed in the
+// sandbox. The cfg xlings authored at install time is a per-machine,
+// per-install-path artifact (its content depended on what existed when the
+// package was installed); mcpp's builds bypass it entirely
+// (--no-default-config), so its only remaining job is to make a HUMAN
+// running `clang++` directly get a working, hermetic compiler. We therefore
+// regenerate it deterministically from the same link model the builds use,
+// instead of line-patching whatever a given install produced:
+//   C + C++:  -B/-L glibc payload, payload dynamic linker + rpath,
+//             lld / compiler-rt / libunwind
+//   C++ only: -nostdinc++ -stdlib=libc++ + payload libc++ headers/libs
+// On macOS the C library comes from the SDK: --sysroot=<sdk> + libc++ headers.
 export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
                      const std::filesystem::path& glibcLibDir) {
-    for (auto cfgName : {"clang++.cfg", "clang.cfg"}) {
-        auto cfgPath = payloadRoot / "bin" / cfgName;
-        if (!std::filesystem::exists(cfgPath)) continue;
+    auto binDir = payloadRoot / "bin";
+    if (!std::filesystem::exists(binDir)) return;
 
-        std::ifstream is(cfgPath);
-        std::stringstream ss;  ss << is.rdbuf();
-        std::string content = ss.str();
-        is.close();
-
-        auto llvmRoot = payloadRoot;
-        auto replace_line_prefix = [&](std::string& s, std::string_view prefix,
-                                       const std::string& newValue) {
-            std::istringstream lines(s);
-            std::string result, line;
-            while (std::getline(lines, line)) {
-                if (line.starts_with(prefix)) {
-                    result += std::string(prefix) + newValue + '\n';
-                } else {
-                    result += line + '\n';
-                }
-            }
-            s = result;
-        };
-
-        // Rewrite --sysroot to remove (mcpp provides this explicitly).
-        // Rewrite -isystem to point to payload's libc++ headers.
-        // Rewrite -L and -rpath to point to payload's lib dir.
-        // Rewrite dynamic-linker to use glibc payload's ld-linux.
-        std::istringstream lines(content);
-        std::string result, line;
-        while (std::getline(lines, line)) {
-            if (line.starts_with("--sysroot=")) {
-                // Remove — mcpp provides sysroot via payload paths.
-                continue;
-            }
-            if (line.starts_with("-isystem ")) {
-                auto oldPath = line.substr(9);
-                if (oldPath.find("include/c++/v1") != std::string::npos) {
-                    auto relative = oldPath.substr(oldPath.find("include/c++/v1"));
-                    result += "-isystem " + (llvmRoot / relative).string() + '\n';
-                    continue;
-                }
-                if (oldPath.find("include/x86_64") != std::string::npos ||
-                    oldPath.find("include/aarch64") != std::string::npos) {
-                    // Target-specific libc++ include.
-                    auto includePos = oldPath.find("include/");
-                    auto relative = oldPath.substr(includePos);
-                    result += "-isystem " + (llvmRoot / relative).string() + '\n';
-                    continue;
-                }
-            }
-            if (line.starts_with("-L")) {
-                auto oldPath = line.substr(2);
-                if (oldPath.find("lib/x86_64") != std::string::npos ||
-                    oldPath.find("lib/aarch64") != std::string::npos) {
-                    auto libPos = oldPath.find("lib/");
-                    auto relative = oldPath.substr(libPos);
-                    result += "-L" + (llvmRoot / relative).string() + '\n';
-                    continue;
-                }
-            }
-            if (line.starts_with("-Wl,-rpath,")) {
-                auto oldPath = line.substr(11);
-                // Rpath for LLVM lib dir
-                if (oldPath.find("lib/x86_64") != std::string::npos ||
-                    oldPath.find("lib/aarch64") != std::string::npos) {
-                    auto libPos = oldPath.find("lib/");
-                    auto relative = oldPath.substr(libPos);
-                    result += "-Wl,-rpath," + (llvmRoot / relative).string() + '\n';
-                    continue;
-                }
-                // Rpath for subos/glibc — rewrite to glibc payload.
-                if (!glibcLibDir.empty()) {
-                    auto parentDir = std::filesystem::path(oldPath).parent_path();
-                    // subos rpath lines like -Wl,-rpath,<subos>/lib
-                    if (oldPath.find("subos") != std::string::npos) {
-                        result += "-Wl,-rpath," + glibcLibDir.string() + '\n';
-                        continue;
-                    }
-                }
-            }
-            if (line.starts_with("-Wl,--dynamic-linker=")) {
-                // Rewrite to glibc payload's ld-linux.
-                if (!glibcLibDir.empty()) {
-                    result += "-Wl,--dynamic-linker=" +
-                              (glibcLibDir / "ld-linux-x86-64.so.2").string() + '\n';
-                    continue;
-                }
-            }
-            if (line.starts_with("-Wl,--enable-new-dtags,-rpath,")) {
-                if (!glibcLibDir.empty()) {
-                    result += "-Wl,--enable-new-dtags,-rpath," + glibcLibDir.string() + '\n';
-                    continue;
-                }
-            }
-            if (line.starts_with("-Wl,-rpath-link,")) {
-                if (!glibcLibDir.empty()) {
-                    result += "-Wl,-rpath-link," + glibcLibDir.string() + '\n';
-                    continue;
-                }
-            }
-            result += line + '\n';
+    // Target triple from the payload layout (lib/<triple>), used for the
+    // loader lookup and the per-target libc++ include/lib dirs.
+    std::string triple;
+    std::error_code ec;
+    for (auto it = std::filesystem::directory_iterator(payloadRoot / "lib", ec);
+         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+        auto name = it->path().filename().string();
+        if (it->is_directory(ec) && name.find("-linux-") != std::string::npos) {
+            triple = name;
+            break;
         }
-
-        // Remove trailing newline
-        while (!result.empty() && result.back() == '\n') result.pop_back();
-        result += '\n';
-
-        std::ofstream os(cfgPath);
-        os << result;
     }
+
+    std::string common, cxxOnly;
+    if constexpr (mcpp::platform::is_macos) {
+        if (auto sdk = mcpp::platform::macos::sdk_path())
+            common += "--sysroot=" + sdk->string() + "\n";
+    } else {
+        if (!glibcLibDir.empty()) {
+            auto loader = resolve_loader(glibcLibDir, triple);
+            common += "-B" + glibcLibDir.string() + "\n";
+            common += "-L" + glibcLibDir.string() + "\n";
+            if (!loader.empty())
+                common += "-Wl,--dynamic-linker=" + loader.string() + "\n";
+            common += "-Wl,--enable-new-dtags,-rpath," + glibcLibDir.string() + "\n";
+        }
+        common += "-fuse-ld=lld\n--rtlib=compiler-rt\n--unwindlib=libunwind\n";
+    }
+
+    auto cxxInclude = payloadRoot / "include" / "c++" / "v1";
+    if (std::filesystem::exists(cxxInclude)) {
+        cxxOnly += "-nostdinc++\n-stdlib=libc++\n";
+        cxxOnly += "-isystem " + cxxInclude.string() + "\n";
+    }
+    if (!triple.empty()) {
+        auto tripleInclude = payloadRoot / "include" / triple / "c++" / "v1";
+        if (std::filesystem::exists(tripleInclude))
+            cxxOnly += "-isystem " + tripleInclude.string() + "\n";
+        auto tripleLib = payloadRoot / "lib" / triple;
+        if (std::filesystem::exists(tripleLib)) {
+            cxxOnly += "-L" + tripleLib.string() + "\n";
+            cxxOnly += "-Wl,-rpath," + tripleLib.string() + "\n";
+        }
+    }
+
+    // Regenerate every existing cfg in bin/ (clang.cfg, clang++.cfg, and any
+    // versioned clang-<major>.cfg xlings created), classified C vs C++ by
+    // whether the driver name contains "++".
+    for (auto it = std::filesystem::directory_iterator(binDir, ec);
+         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+        auto name = it->path().filename().string();
+        if (!name.ends_with(".cfg")) continue;
+        const bool isCxx = name.find("++") != std::string::npos;
+        std::ofstream os(it->path());
+        os << common << (isCxx ? cxxOnly : std::string{});
+    }
+}
+
+// Locate the sandbox glibc payload's lib dir (the newest installed version
+// that actually carries a dynamic loader). Shared by the gcc and llvm fixups.
+std::filesystem::path find_sandbox_glibc_lib(const mcpp::xlings::Env& xlEnv) {
+    auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
+    std::error_code ec;
+    for (auto it = std::filesystem::directory_iterator(glibcRoot, ec);
+         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+        if (auto lib = payload_lib_dir_with_loader(it->path()); !lib.empty())
+            return lib;
+    }
+    return {};
 }
 
 // Post-install fixup for a freshly-installed GNU gcc payload: patchelf
 // PT_INTERP/RUNPATH for gcc/binutils binaries + linker-specs wiring against
-// the sandbox glibc. ONE pipeline shared by `mcpp toolchain install` and the
-// first-run auto-install (the latter previously skipped this, leaving a
-// fresh-sandbox glibc gcc unable to find the C library: stdlib.h not found).
-export void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
-                            const std::filesystem::path& payloadRoot) {
-    // Ownership guard: payloads inherited via symlink from another MCPP_HOME
-    // are not ours to patch — their owner already ran the fixup, and patching
-    // through the symlink would rewrite the canonical files against OUR
-    // (possibly ephemeral) paths, bricking the owner's toolchain.
-    {
-        std::error_code ec;
-        auto canonicalRoot = std::filesystem::weakly_canonical(payloadRoot, ec);
-        auto homeRegistry  = std::filesystem::weakly_canonical(cfg.registryDir, ec);
-        if (!ec && !canonicalRoot.string().starts_with(homeRegistry.string())) {
-            mcpp::log::verbose("toolchain", std::format(
-                "skip gcc fixup: payload '{}' resolves outside this home ('{}') — "
-                "inherited payload, owner is responsible for its fixup",
-                payloadRoot.string(), canonicalRoot.string()));
-            return;
-        }
-    }
+// the sandbox glibc — without it a fresh-sandbox glibc gcc cannot find the
+// C library (stdlib.h not found).
+void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
+                            const std::filesystem::path& payloadRoot,
+                            const std::filesystem::path& glibcLibDir) {
     auto xlEnv = mcpp::config::make_xlings_env(cfg);
-    auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
-    std::filesystem::path glibcLibDir;
-    if (std::filesystem::exists(glibcRoot)) {
-        for (auto& v : std::filesystem::directory_iterator(glibcRoot)) {
-            auto candidate = v.path() / "lib64";
-            if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
-                glibcLibDir = candidate;
-                break;
-            }
-        }
-    }
     auto gccLibDir = payloadRoot / "lib64";
     auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
         mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
@@ -316,7 +261,7 @@ export void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
     if (!glibcLibDir.empty() && std::filesystem::exists(gccLibDir)
         && std::filesystem::exists(patchelfBin))
     {
-        auto loader = glibcLibDir / "ld-linux-x86-64.so.2";
+        auto loader = resolve_loader(glibcLibDir, /*targetTriple=*/{});
         auto rpath = std::format("{}:{}",
             glibcLibDir.string(), gccLibDir.string());
 
@@ -336,6 +281,107 @@ export void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
             "could not locate sandbox glibc/gcc/patchelf paths; "
             "gcc-built binaries may have unresolved PT_INTERP/RUNPATH");
     }
+}
+
+// LLVM payload fixup: RUNPATH for the bundled runtime shared libraries
+// (libc++.so / libunwind.so need to find siblings like libatomic.so.1 after
+// the payload moved) + deterministic cfg regeneration. Only lib/ dirs are
+// walked — NOT bin/: the clang++ binary's own RUNPATH (zlib, libxml2, …) was
+// set by xlings and must be preserved.
+void llvm_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
+                             const std::filesystem::path& payloadRoot,
+                             const std::filesystem::path& glibcLibDir) {
+    auto xlEnv = mcpp::config::make_xlings_env(cfg);
+    auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
+        mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
+    if (!glibcLibDir.empty() && std::filesystem::exists(patchelfBin)) {
+        auto loader = resolve_loader(glibcLibDir, /*targetTriple=*/{});
+        auto llvmLib = payloadRoot / "lib";
+        std::string rpath;
+        std::error_code ec;
+        for (auto it = std::filesystem::directory_iterator(llvmLib, ec);
+             !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+            if (it->is_directory(ec)
+                && it->path().filename().string().find("-linux-") != std::string::npos)
+                rpath += it->path().string() + ":";
+        }
+        rpath += llvmLib.string() + ":" + glibcLibDir.string();
+        mcpp::log::verbose("toolchain", std::format(
+            "llvm fixup: patchelf_walk lib/ rpath='{}'", rpath));
+        patchelf_walk(llvmLib, loader, rpath, patchelfBin);
+    }
+    mcpp::log::verbose("toolchain", "llvm fixup: fixup_clang_cfg");
+    fixup_clang_cfg(payloadRoot, glibcLibDir);
+}
+
+// ── the single fixup pipeline entry ──────────────────────────────────────
+//
+// Called from the payload-resolution seam shared by ALL toolchain install
+// paths (explicit `mcpp toolchain install`, default-toolchain auto-install,
+// and manifest `[toolchain]` auto-install). Previously each path remembered
+// (or forgot) its own subset of fixups: the manifest path ran none, which is
+// how a fresh llvm install kept a stale install-time cfg and unpatched
+// runtime libs. Idempotent via a content-fingerprinted marker.
+//
+// Bump when the fixup logic changes so existing installs re-run it.
+constexpr std::string_view kFixupRev = "hermetic-1";
+
+export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
+                                      const std::filesystem::path& payloadRoot,
+                                      const XimToolchainPackage& pkg) {
+    std::string kind;
+    if (pkg.needsGccPostInstallFixup) kind = "gcc";
+    else if (pkg.ximName == "llvm")   kind = "llvm";
+    else return;
+    if constexpr (mcpp::platform::is_windows) return;  // PE world: no fixups
+
+    // Ownership guard: payloads inherited via symlink from another MCPP_HOME
+    // are not ours to patch — their owner already ran the fixup, and patching
+    // through the symlink would rewrite the canonical files against OUR
+    // (possibly ephemeral) paths, bricking the owner's toolchain.
+    {
+        std::error_code ec;
+        auto canonicalRoot = std::filesystem::weakly_canonical(payloadRoot, ec);
+        auto homeRegistry  = std::filesystem::weakly_canonical(cfg.registryDir, ec);
+        if (!ec && !canonicalRoot.string().starts_with(homeRegistry.string())) {
+            mcpp::log::verbose("toolchain", std::format(
+                "skip {} fixup: payload '{}' resolves outside this home ('{}') — "
+                "inherited payload, owner is responsible for its fixup",
+                kind, payloadRoot.string(), canonicalRoot.string()));
+            return;
+        }
+    }
+
+    auto xlEnv = mcpp::config::make_xlings_env(cfg);
+    std::filesystem::path glibcLibDir;
+    if constexpr (mcpp::platform::is_linux)
+        glibcLibDir = find_sandbox_glibc_lib(xlEnv);
+
+    // Content-fingerprinted marker: a marker whose INPUTS drifted (different
+    // glibc payload, newer fixup logic) re-runs the fixup — "a process once
+    // exited 0" is not evidence the current inputs were ever applied.
+    auto markerPath = payloadRoot / ".mcpp-fixup.json";
+    nlohmann::json expected;
+    expected["schema"]   = 1;
+    expected["kind"]     = kind;
+    expected["rev"]      = std::string(kFixupRev);
+    expected["glibcLib"] = glibcLibDir.generic_string();
+    {
+        std::ifstream is(markerPath);
+        if (is) {
+            try {
+                nlohmann::json actual;
+                is >> actual;
+                if (actual == expected) return;  // fixup already applied
+            } catch (...) { /* corrupt marker → re-run */ }
+        }
+    }
+
+    if (kind == "gcc")  gcc_post_install_fixup(cfg, payloadRoot, glibcLibDir);
+    else                llvm_post_install_fixup(cfg, payloadRoot, glibcLibDir);
+
+    std::ofstream os(markerPath);
+    os << expected.dump(2) << "\n";
 }
 
 } // namespace mcpp::toolchain

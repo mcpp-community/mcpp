@@ -280,7 +280,6 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
 // `mcpp toolchain install <spec>` — install + post-install fixups.
 export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
                              const std::string& pos0, const std::string& pos1) {
-    auto xlEnv = mcpp::config::make_xlings_env(cfg);
         // Toolchain install needs patchelf (ELF fixup) and ninja (build).
         // Fail early if bootstrap is incomplete rather than producing a
         // broken toolchain with missing fixups.
@@ -356,67 +355,10 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             return 1;
         }
 
-        // For GNU gcc only: post-install ELF + specs fixup so the toolchain
-        // is self-contained in the sandbox.
-        //   1. patchelf walk: rewrites PT_INTERP of gcc/binutils binaries
-        //      themselves (xim's elfpatch is supposed to but currently
-        //      scans 0 files — see `patchelf_walk_set_interp` doc).
-        //   2. specs fixup: rewrites the linker-spec dynamic-linker/rpath
-        //      so binaries gcc *compiles* use sandbox-local paths.
-        // musl-gcc ships its own self-contained sysroot at
-        // `<root>/x86_64-linux-musl/{include,lib}` and doesn't link against
-        // xim:glibc, so this fixup is both unnecessary and harmful for it.
-        if (pkg.needsGccPostInstallFixup) {
-            mcpp::toolchain::gcc_post_install_fixup(cfg, payload->root);
-        }
-
-        // For LLVM/Clang: post-install fixup so the shared libraries and
-        // clang++.cfg paths point to the payload's actual location instead
-        // of the xlings install-time paths (which become stale after copy).
-        if (pkg.ximName == "llvm") {
-            auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
-            std::filesystem::path glibcLibDir;
-            if (std::filesystem::exists(glibcRoot)) {
-                for (auto& v : std::filesystem::directory_iterator(glibcRoot)) {
-                    auto candidate = v.path() / "lib64";
-                    if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
-                        glibcLibDir = candidate;
-                        break;
-                    }
-                    candidate = v.path() / "lib";
-                    if (std::filesystem::exists(candidate / "ld-linux-x86-64.so.2")) {
-                        glibcLibDir = candidate;
-                        break;
-                    }
-                }
-            }
-
-            // patchelf: rewrite RUNPATH for LLVM runtime shared libraries
-            // (libc++.so, libunwind.so, etc.) so transitive deps like
-            // libatomic.so.1 are found at runtime.  Without this,
-            // libc++.so.1 keeps stale xlings-era RUNPATH and cannot locate
-            // libatomic.so.1 which lives in the same xpkg.
-            //
-            // Only walk lib/ dirs — NOT bin/. The clang++ binary has its
-            // own RUNPATH set by xlings (pointing to zlib, libxml2, etc.)
-            // that must be preserved.
-            auto patchelfBin = mcpp::xlings::paths::xim_tool(xlEnv, "patchelf",
-                mcpp::xlings::pinned::kPatchelfVersion) / "bin" / "patchelf";
-            if (!glibcLibDir.empty() && std::filesystem::exists(patchelfBin)) {
-                auto loader = glibcLibDir / "ld-linux-x86-64.so.2";
-                auto llvmTargetLib = payload->root / "lib" / "x86_64-unknown-linux-gnu";
-                auto llvmLib = payload->root / "lib";
-                std::string rpath = llvmTargetLib.string()
-                    + ":" + llvmLib.string()
-                    + ":" + glibcLibDir.string();
-                mcpp::log::verbose("toolchain", std::format(
-                    "llvm fixup: patchelf_walk lib/ rpath='{}'", rpath));
-                mcpp::toolchain::patchelf_walk(llvmLib, loader, rpath, patchelfBin);
-            }
-
-            mcpp::log::verbose("toolchain", "llvm fixup: fixup_clang_cfg");
-            mcpp::toolchain::fixup_clang_cfg(payload->root, glibcLibDir);
-        }
+        // Post-install fixup (patchelf / specs / cfg regeneration) — ONE
+        // pipeline shared by every toolchain install path, dispatched and
+        // made idempotent inside ensure_post_install_fixup.
+        mcpp::toolchain::ensure_post_install_fixup(cfg, payload->root, pkg);
 
         mcpp::ui::status("Installed",
             std::format("{} → {}", pkg.display_spec(), bin.string()));
