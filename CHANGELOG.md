@@ -3,6 +3,37 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.83] — 2026-07-07
+
+### 修复
+
+- **Linux llvm 工具链链接失败 `cannot open Scrt1.o/crti.o/crtn.o`(#195)**:clang-with-cfg
+  的 payload 链接路径此前只带 `-L/-rpath/--dynamic-linker`,缺少 CRT 启动对象的发现前缀
+  `-B<glibc payload lib>`——driver 查找 `Scrt1.o/crti.o/crtn.o` 只走 `-B` 前缀与 sysroot
+  派生路径,不查 `-L`。在装有宿主 libc6-dev 的机器上 driver 会静默兜底宿主 `/lib` 的 CRT
+  (污染式"假绿"),在没有的机器(如全新 WSL2)上则把裸文件名传给 lld 直接失败。
+
+### 新增 / 架构
+
+- **工具链链接模型单一化(hermetic toolchain link model)**:新增 `mcpp.toolchain.linkmodel`
+  作为「如何对该工具链的 C 库编译/链接」的唯一解析器(payload-first,--sysroot 回退),
+  `flags` / `stdmod` / `build_program` / cfg 再生全部消费同一模型,消除四份漂移实现;
+  动态链接器名按 声明式 payload 元数据 → 按 triple 的 arch 映射 → glob 三级解析,全链
+  不再硬编码 `ld-linux-x86-64.so.2`(aarch64 glibc 的 loader 障碍随之消除)。详见
+  `.agents/docs/2026-07-07-hermetic-toolchain-link-model-design.md`。
+- **post-install fixup 归位为统一管线**:`ensure_post_install_fixup` 成为所有工具链安装
+  路径(显式 install / 默认工具链 auto-install / manifest `[toolchain]` auto-install)共享
+  的唯一 fixup 入口,内容指纹 marker 幂等;此前 manifest 路径不跑任何 fixup。clang cfg
+  由行级补丁改为从链接模型**确定性再生**(同一 payload 在任何机器/安装路径产出一致 cfg,
+  人类直接使用 `clang++` 同样获得 hermetic 的 CRT 发现)。
+- **hermetic 链接校验**:构建前用 `-###` 干跑断言 CRT 对象与生效 dynamic linker 全部解析
+  在沙箱(xpkgs registry)内,越界即报错并指明泄漏路径;逃生阀
+  `[build] allow_host_libs = true` / `MCPP_ALLOW_HOST_LIBS=1`。按 flag 集缓存判定。
+- **测试与 CI**:新增 e2e `86_llvm_hermetic_link.sh`(`-###` 前缀断言,双向防「链接失败」
+  与「宿主污染」回归);llvm e2e 解除 20.1.7 硬 pin(`MCPP_E2E_LLVM_VERSION`,默认最新
+  已装 payload);ci-linux-e2e 新增 **无宿主工具链容器 job**(debian:stable-slim,无 gcc /
+  无宿主 CRT)——唯一能真实复现 #195 环境类的 CI 形态。
+
 ## [0.0.71] — 2026-06-29
 
 ### 新增
