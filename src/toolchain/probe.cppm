@@ -304,11 +304,21 @@ probe_sysroot(const std::filesystem::path& compilerBin,
         }
     }
 
-    // 2. Parse the compiler driver config file (Clang .cfg).
-    if (auto cfg = mcpp::fallback::parse_clang_cfg_sysroot(compilerBin))
-        return *cfg;
-
-    // 3. macOS fallback: use xcrun to discover the SDK path.
+    // 2. macOS fallback: use xcrun to discover the SDK path.
+    //
+    // NOTE: mcpp used to also mine the Clang driver cfg for --sysroot here.
+    // That trust was dead code walking: the cfg is an install-time-generated
+    // artifact that mcpp's own fixup pipeline now REGENERATES without a
+    // --sysroot line (the C library comes from the payload link model), so
+    // the mined value existed only on never-fixed-up installs and pointed at
+    // an environment directory the payload doesn't own. The cfg is for
+    // humans running clang++ directly; builds derive everything from the
+    // link model. Kept as a diagnostic only.
+    if (auto cfg = mcpp::fallback::parse_clang_cfg_sysroot(compilerBin)) {
+        mcpp::log::debug("probe", std::format(
+            "clang cfg declares sysroot '{}' — ignored (payload-first model)",
+            cfg->string()));
+    }
     if (auto sdk = mcpp::fallback::probe_macos_sdk_sysroot())
         return *sdk;
 
