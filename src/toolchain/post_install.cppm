@@ -92,28 +92,37 @@ export void patchelf_walk(const std::filesystem::path& dir,
 // gcc specs file. xim bakes the installing user's XLINGS_HOME into specs at
 // install time, so the DIR varies per machine, and the loader NAME varies
 // per arch — detect both instead of hardcoding either.
-std::string detect_baked_loader(const std::string& specsContent) {
+export std::string detect_baked_loader(const std::string& specsContent) {
+    // Path-character whitelist. Specs embed loader paths inside %-spec
+    // syntax (`%{mmusl:...;:/baked/dir/ld-linux-x86-64.so.2}`), so scanning
+    // to "whitespace or :;" is NOT a valid boundary — it would swallow the
+    // closing braces, and replacing that string corrupts the spec grammar
+    // ("braced spec body ... is invalid" from every subsequent g++ run).
+    auto is_path_char = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c))
+            || c == '/' || c == '.' || c == '-' || c == '_' || c == '+';
+    };
+
+    // The baked GNU loader is the ld-linux entry whose directory is NOT a
+    // standard /lib* location — specs also contain pristine defaults
+    // (/lib/ld-linux.so.2, /libx32/…) for other multilib branches that must
+    // never be rewritten.
     constexpr std::string_view kLoaderMark = "/ld-linux-";
-    auto pos = specsContent.find(kLoaderMark);
-    if (pos == std::string::npos) return "";
-    // Walk backwards to find start of the absolute path…
-    auto start = pos;
-    while (start > 0 && specsContent[start - 1] != ' '
-                     && specsContent[start - 1] != ':'
-                     && specsContent[start - 1] != ';'
-                     && specsContent[start - 1] != '\n') {
-        --start;
+    for (std::size_t pos = specsContent.find(kLoaderMark);
+         pos != std::string::npos;
+         pos = specsContent.find(kLoaderMark, pos + 1)) {
+        auto start = pos;
+        while (start > 0 && is_path_char(specsContent[start - 1])) --start;
+        auto end = pos + 1;
+        while (end < specsContent.size() && is_path_char(specsContent[end])) ++end;
+        auto loader = specsContent.substr(start, end - start);
+        if (loader.empty() || loader[0] != '/') continue;
+        auto dir = std::filesystem::path(loader).parent_path().string();
+        if (dir == "/lib" || dir == "/lib64" || dir == "/lib32" || dir == "/libx32")
+            continue;  // pristine multilib default, not a baked path
+        return loader;
     }
-    // …and forwards to its end.
-    auto end = pos + kLoaderMark.size();
-    while (end < specsContent.size()
-           && !std::isspace(static_cast<unsigned char>(specsContent[end]))
-           && specsContent[end] != ':' && specsContent[end] != ';') {
-        ++end;
-    }
-    auto loader = specsContent.substr(start, end - start);
-    if (loader.empty() || loader[0] != '/') return "";
-    return loader;
+    return "";
 }
 
 void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
@@ -199,9 +208,18 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
     }
 
     std::string common, cxxOnly;
+    auto cxxInclude = payloadRoot / "include" / "c++" / "v1";
     if constexpr (mcpp::platform::is_macos) {
+        // macOS keeps its historical cfg semantics: the C library and the
+        // C++ runtime LINK both come from the SDK; only the libc++ HEADERS
+        // come from the payload. Do NOT add -nostdinc++/-stdlib=libc++
+        // here — a bare cfg-driven link has no libc++abi handling (that
+        // lives in the main build's needs_explicit_libcxx path) and dies
+        // with undefined __cxa_* / __gxx_personality_v0.
         if (auto sdk = mcpp::platform::macos::sdk_path())
             common += "--sysroot=" + sdk->string() + "\n";
+        if (std::filesystem::exists(cxxInclude))
+            cxxOnly += "-isystem " + cxxInclude.string() + "\n";
     } else {
         if (!glibcLibDir.empty()) {
             auto loader = resolve_loader(glibcLibDir, triple);
@@ -212,21 +230,20 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
             common += "-Wl,--enable-new-dtags,-rpath," + glibcLibDir.string() + "\n";
         }
         common += "-fuse-ld=lld\n--rtlib=compiler-rt\n--unwindlib=libunwind\n";
-    }
 
-    auto cxxInclude = payloadRoot / "include" / "c++" / "v1";
-    if (std::filesystem::exists(cxxInclude)) {
-        cxxOnly += "-nostdinc++\n-stdlib=libc++\n";
-        cxxOnly += "-isystem " + cxxInclude.string() + "\n";
-    }
-    if (!triple.empty()) {
-        auto tripleInclude = payloadRoot / "include" / triple / "c++" / "v1";
-        if (std::filesystem::exists(tripleInclude))
-            cxxOnly += "-isystem " + tripleInclude.string() + "\n";
-        auto tripleLib = payloadRoot / "lib" / triple;
-        if (std::filesystem::exists(tripleLib)) {
-            cxxOnly += "-L" + tripleLib.string() + "\n";
-            cxxOnly += "-Wl,-rpath," + tripleLib.string() + "\n";
+        if (std::filesystem::exists(cxxInclude)) {
+            cxxOnly += "-nostdinc++\n-stdlib=libc++\n";
+            cxxOnly += "-isystem " + cxxInclude.string() + "\n";
+        }
+        if (!triple.empty()) {
+            auto tripleInclude = payloadRoot / "include" / triple / "c++" / "v1";
+            if (std::filesystem::exists(tripleInclude))
+                cxxOnly += "-isystem " + tripleInclude.string() + "\n";
+            auto tripleLib = payloadRoot / "lib" / triple;
+            if (std::filesystem::exists(tripleLib)) {
+                cxxOnly += "-L" + tripleLib.string() + "\n";
+                cxxOnly += "-Wl,-rpath," + tripleLib.string() + "\n";
+            }
         }
     }
 
@@ -334,7 +351,7 @@ void llvm_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 // runtime libs. Idempotent via a content-fingerprinted marker.
 //
 // Bump when the fixup logic changes so existing installs re-run it.
-constexpr std::string_view kFixupRev = "hermetic-1";
+constexpr std::string_view kFixupRev = "hermetic-2";
 
 export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
                                       const std::filesystem::path& payloadRoot,

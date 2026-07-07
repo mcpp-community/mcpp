@@ -14,6 +14,7 @@ export module mcpp.build.build_program;
 
 import std;
 import mcpp.manifest;
+import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
@@ -119,12 +120,17 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
     std::vector<std::string> f;
     const auto lm = mcpp::toolchain::resolve_link_model(tc);
 
-    // Clang with a bundled cfg: bypass it (--no-default-config) and provide
-    // everything explicitly, same as the main build — the cfg is an
-    // install-time-generated artifact whose content varies per machine and
-    // install path, so trusting it here while bypassing it in the main build
-    // meant two different toolchains for the same project.
+    // Clang with a bundled cfg on LINUX: bypass it (--no-default-config) and
+    // provide everything explicitly, same as the main build — the cfg is an
+    // install-time-generated artifact, so trusting it here while bypassing
+    // it in the main build meant two different toolchains for one project.
+    // On macOS/Windows keep trusting the cfg: the macOS link additionally
+    // needs the platform's libc++abi/unwind handling that the main build's
+    // needs_explicit_libcxx path owns (duplicating it for a host compile
+    // produced undefined __cxa_*/__gxx_personality_v0), and the fixup
+    // pipeline regenerates the cfg deterministically anyway.
     if (mcpp::toolchain::is_clang(tc)) {
+        if constexpr (!mcpp::platform::is_linux) return f;
         const auto dm = mcpp::toolchain::resolve_clang_driver(tc);
         if (dm.hasCfg) {
             f.push_back("--no-default-config");
