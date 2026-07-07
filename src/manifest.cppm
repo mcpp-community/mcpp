@@ -135,6 +135,12 @@ struct BuildConfig {
     std::vector<std::string>           cxxflags;
     std::vector<std::string>           ldflags;
     std::string                         cStandard;
+    // Escape hatch for the hermetic link check: a sandbox toolchain whose
+    // CRT/loader resolve OUTSIDE the sandbox is a hard error by default
+    // (silent host contamination, or issue #195's bare-CRT link failure);
+    // set true to deliberately link against host libraries.
+    // MCPP_ALLOW_HOST_LIBS=1 is the per-invocation equivalent.
+    bool                                allowHostLibs = false;
     // macOS minimum supported OS version for produced binaries
     // (LC_BUILD_VERSION minos), e.g. "14.0". Mirrors the ecosystem
     // conventions around deployment targets (the MACOSX_DEPLOYMENT_TARGET
@@ -1141,6 +1147,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 
     // [build] — backend tunables
     if (auto v = doc->get_bool("build.static_stdlib")) m.buildConfig.staticStdlib = *v;
+    if (auto v = doc->get_bool("build.allow_host_libs")) m.buildConfig.allowHostLibs = *v;
     if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
     if (auto v = doc->get_string_array("build.ldflags"))  m.buildConfig.ldflags  = *v;

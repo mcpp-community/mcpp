@@ -21,6 +21,7 @@ import std;
 import mcpp.build.backend;
 import mcpp.build.plan;
 import mcpp.build.flags;
+import mcpp.build.hermetic;
 import mcpp.build.compile_commands;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
@@ -720,6 +721,15 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - t0);
         return r;
+    }
+
+    // Hermetic link check: assert the sandbox toolchain resolves its CRT
+    // objects + dynamic linker inside the sandbox BEFORE running the build —
+    // catches both the bare-CRT link failure (#195) and silent host-library
+    // contamination, cached per flag-set.
+    if (auto h = verify_hermetic_link(plan.toolchain, flags.ld, plan.outputDir,
+                                      plan.manifest.buildConfig.allowHostLibs); !h) {
+        return std::unexpected(BuildError{h.error(), {}});
     }
 
     // When the toolchain comes from mcpp's private sandbox, use the
