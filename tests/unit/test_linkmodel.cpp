@@ -7,7 +7,7 @@ import mcpp.toolchain.model;
 // The toolchain link model is the single resolver for "how do we compile and
 // link against this toolchain's C library" (issue #195 / the hermetic link
 // model design doc). These tests pin its three contracts:
-//   1. loader names come from data (exports → triple map → glob), never a
+//   1. loader names come from data (triple map → glob), never a
 //      hardcoded x86_64 string;
 //   2. the payload link flags include -B (CRT discovery — the driver never
 //      consults -L for Scrt1.o/crti.o/crtn.o);
@@ -57,17 +57,6 @@ TEST(ResolveLoader, TripleMapHit) {
     touch(lib / "ld-linux-x86-64.so.2");
     EXPECT_EQ(tc::resolve_loader(lib, "x86_64-unknown-linux-gnu"),
               lib / "ld-linux-x86-64.so.2");
-}
-
-TEST(ResolveLoader, DeclaredExportsWinOverTripleMap) {
-    Tmp dir;
-    auto lib = dir.path / "lib64";
-    touch(lib / "ld-linux-x86-64.so.2");
-    touch(dir.path / "custom" / "ld-linux-x86-64.so.2");
-    std::ofstream(dir.path / ".xpkg-exports.json")
-        << R"({"runtime":{"loader":"custom/ld-linux-x86-64.so.2"}})";
-    EXPECT_EQ(tc::resolve_loader(lib, "x86_64-unknown-linux-gnu"),
-              dir.path / "custom" / "ld-linux-x86-64.so.2");
 }
 
 TEST(ResolveLoader, GlobFallbackForUnknownTriple) {

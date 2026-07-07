@@ -10,3 +10,4 @@
 - [05 - mcpp.toml Manifest Guide](05-mcpp-toml.md)
 - [06 - Workspaces](06-workspace.md)
 - [07 - build.mcpp Build Program](07-build-mcpp.md)
+- [08 - Toolchain Internals](08-toolchain-internals.md)

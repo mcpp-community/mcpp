@@ -10,3 +10,4 @@
 - [05 - mcpp.toml 工程文件指南](05-mcpp-toml.md)
 - [06 - 工作空间](06-workspace.md)
 - [07 - build.mcpp 构建程序](07-build-mcpp.md)
+- [08 - 工具链机制内幕](08-toolchain-internals.md)

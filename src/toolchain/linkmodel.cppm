@@ -8,8 +8,8 @@
 // fixup_clang_cfg) — the link side of one copy lost the CRT discovery prefix
 // (-B) and every copy hardcoded the x86_64 loader name. All consumers now
 // derive their flags from ToolchainLinkModel / ClangDriverModel so they can
-// never diverge again, and the loader comes from data (declared payload
-// exports → triple map → glob), never from a hardcoded string.
+// never diverge again, and the loader comes from data (per-arch triple map,
+// then a glob of the payload contents), never from a hardcoded string.
 //
 // Scope: the C-library axis only — CRT dir, libc lib dirs, dynamic linker,
 // libc/kernel headers. Driver-level flags that are not about the C library
@@ -18,8 +18,6 @@
 export module mcpp.toolchain.linkmodel;
 
 import std;
-import mcpp.libs.json;
-import mcpp.log;
 import mcpp.platform;
 import mcpp.toolchain.model;
 
@@ -124,12 +122,15 @@ struct ClangDriverModel {
 // ── loader resolution: data over hardcodes ───────────────────────────────
 //
 // Priority:
-//   1. Declared payload metadata: `<payload-root>/.xpkg-exports.json`
-//      { "runtime": { "loader": "lib64/ld-linux-x86-64.so.2" } } — written by
-//      xlings at install time from the package's `exports.runtime` (glibc.lua
-//      declares this precisely so consumers don't hardcode the name).
-//   2. Triple map (x86_64/aarch64/riscv64/loongarch64 glibc + musl).
-//   3. Glob: first `ld-*.so*` regular file in the lib dir.
+//   1. Triple map (x86_64/aarch64/riscv64/loongarch64 glibc + musl) —
+//      loader file names are platform-ABI-level stable conventions.
+//   2. Glob: first `ld-*.so*` regular file in the lib dir (covers arches
+//      the map doesn't know yet).
+//
+// A third, declared-metadata source (a persisted `.xpkg-exports.json`
+// written by the installer) was evaluated and removed: its only consumer
+// would have been this resolver, while the two sources above already cover
+// every real payload — see docs/08-toolchain-internals.md for the record.
 //
 // Returns the loader's absolute path, or empty when none was found (callers
 // then omit --dynamic-linker and the hermeticity check reports the gap).
@@ -169,33 +170,13 @@ std::filesystem::path resolve_loader(const std::filesystem::path& libDir,
     if (libDir.empty()) return {};
     std::error_code ec;
 
-    // 1. Declared exports next to the payload lib dir.
-    auto exportsPath = libDir.parent_path() / ".xpkg-exports.json";
-    if (std::filesystem::exists(exportsPath, ec)) {
-        std::ifstream is(exportsPath);
-        try {
-            nlohmann::json j;
-            is >> j;
-            if (auto rel = j.value("runtime", nlohmann::json::object())
-                            .value("loader", std::string{}); !rel.empty()) {
-                auto p = libDir.parent_path() / rel;
-                if (std::filesystem::exists(p, ec)) return p;
-                mcpp::log::verbose("linkmodel", std::format(
-                    "declared loader '{}' missing on disk — falling through", p.string()));
-            }
-        } catch (...) {
-            mcpp::log::verbose("linkmodel", std::format(
-                "unparsable exports file '{}' — falling through", exportsPath.string()));
-        }
-    }
-
-    // 2. Triple map.
+    // 1. Triple map.
     if (auto name = loader_filename(targetTriple); !name.empty()) {
         auto p = libDir / name;
         if (std::filesystem::exists(p, ec)) return p;
     }
 
-    // 3. Glob fallback: ld-*.so*
+    // 2. Glob fallback: ld-*.so*
     for (auto it = std::filesystem::directory_iterator(libDir, ec);
          !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
         auto name = it->path().filename().string();
