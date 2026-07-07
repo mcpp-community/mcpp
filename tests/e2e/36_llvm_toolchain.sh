@@ -3,17 +3,17 @@
 # 36_llvm_toolchain.sh — build a non-module C/C++ package with xlings LLVM.
 set -e
 
+source "$(dirname "$0")/_llvm_env.sh"
+
 OS="$(uname -s)"
 # On Windows the clang++ binary has a .exe suffix
 if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
-    LLVM_ROOT="${USERPROFILE}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
     CLANGPP_BIN="$LLVM_ROOT/bin/clang++.exe"
 else
-    LLVM_ROOT="${HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
     CLANGPP_BIN="$LLVM_ROOT/bin/clang++"
 fi
 if [[ ! -x "$CLANGPP_BIN" ]]; then
-    echo "SKIP: xlings llvm@20.1.7 is not installed"
+    echo "SKIP: xlings llvm@${LLVM_VERSION} is not installed"
     exit 0
 fi
 
@@ -40,7 +40,7 @@ version = "0.1.0"
 import_std = false
 
 [toolchain]
-${TC_KEY} = "llvm@20.1.7"
+${TC_KEY} = "llvm@${LLVM_VERSION}"
 EOF
 
 cat > src/main.cpp <<'EOF'
@@ -61,9 +61,9 @@ int answer(void) {
 EOF
 
 "$MCPP" toolchain list > "$TMP/list.log" 2>&1
-grep -q 'llvm 20.1.7' "$TMP/list.log" || {
+grep -q "llvm ${LLVM_VERSION}" "$TMP/list.log" || {
     cat "$TMP/list.log"
-    echo "FAIL: toolchain list did not show installed llvm 20.1.7"
+    echo "FAIL: toolchain list did not show installed llvm ${LLVM_VERSION}"
     exit 1
 }
 

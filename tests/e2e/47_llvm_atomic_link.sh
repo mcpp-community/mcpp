@@ -17,17 +17,18 @@ if [[ "$OS" == Darwin* ]]; then
     exit 0
 fi
 
-LLVM_ROOT="${HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
+source "$(dirname "$0")/_llvm_env.sh"
+
 if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
-    echo "SKIP: xlings llvm@20.1.7 is not installed"
+    echo "SKIP: xlings llvm@${LLVM_VERSION} is not installed"
     exit 0
 fi
 # The fix only emits -latomic when a link-resolvable libatomic is present in
-# the toolchain (self-guarding). 20.1.7 bundles it; if a slimmed package does
-# not, the genuine-atomic case is out of scope here.
+# the toolchain (self-guarding). If a slimmed package does not bundle it, the
+# genuine-atomic case is out of scope here.
 if [[ ! -e "$LLVM_ROOT/lib/x86_64-unknown-linux-gnu/libatomic.so" \
    && ! -e "$LLVM_ROOT/lib/x86_64-unknown-linux-gnu/libatomic.a" ]]; then
-    echo "SKIP: llvm@20.1.7 package ships no link-resolvable libatomic"
+    echo "SKIP: llvm@${LLVM_VERSION} package ships no link-resolvable libatomic"
     exit 0
 fi
 
@@ -39,13 +40,13 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 mkdir -p "$TMP/proj/src"
 cd "$TMP/proj"
 
-cat > mcpp.toml <<'EOF'
+cat > mcpp.toml <<EOF
 [package]
 name    = "atomic_link"
 version = "0.1.0"
 
 [toolchain]
-linux = "llvm@20.1.7"
+linux = "llvm@${LLVM_VERSION}"
 EOF
 
 # 16-byte atomic → __atomic_load_16 / __atomic_compare_exchange_16 libcalls.

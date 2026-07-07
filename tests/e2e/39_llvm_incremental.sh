@@ -3,13 +3,14 @@
 # 39_llvm_incremental.sh — Clang per-file incremental rebuild via clang-scan-deps dyndep.
 set -e
 
-LLVM_ROOT="${HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
+source "$(dirname "$0")/_llvm_env.sh"
+
 if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
-    echo "SKIP: xlings llvm@20.1.7 is not installed"
+    echo "SKIP: xlings llvm@${LLVM_VERSION} is not installed"
     exit 0
 fi
 if [[ ! -f "$LLVM_ROOT/share/libc++/v1/std.cppm" ]]; then
-    echo "SKIP: xlings llvm@20.1.7 has no libc++ std.cppm"
+    echo "SKIP: xlings llvm@${LLVM_VERSION} has no libc++ std.cppm"
     exit 0
 fi
 
@@ -21,12 +22,12 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 mkdir -p "$TMP/proj/src"
 cd "$TMP/proj"
 
-cat > mcpp.toml <<'EOF'
+cat > mcpp.toml <<EOF
 [package]
 name    = "llvm_inc"
 version = "0.1.0"
 [toolchain]
-linux = "llvm@20.1.7"
+linux = "llvm@${LLVM_VERSION}"
 EOF
 
 cat > src/greet.cppm <<'EOF'

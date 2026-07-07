@@ -11,9 +11,10 @@ if [[ "$OS" != "Linux" ]]; then
     exit 0
 fi
 
-LLVM_ROOT="${HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
+source "$(dirname "$0")/_llvm_env.sh"
+
 if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
-    echo "SKIP: xlings llvm@20.1.7 is not installed"
+    echo "SKIP: xlings llvm@${LLVM_VERSION} is not installed"
     exit 0
 fi
 
@@ -25,13 +26,13 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 mkdir -p "$TMP/proj/src"
 cd "$TMP/proj"
 
-cat > mcpp.toml <<'EOF'
+cat > mcpp.toml <<EOF
 [package]
 name    = "toolchain_runtime_env"
 version = "0.1.0"
 
 [toolchain]
-linux = "llvm@20.1.7"
+linux = "llvm@${LLVM_VERSION}"
 
 [targets.toolchain_runtime_env]
 kind = "bin"
@@ -47,11 +48,13 @@ int main() {
     if (value == nullptr) return 10;
 
     std::string path(value);
-    if (path.find("xim-x-llvm/20.1.7/lib") == std::string::npos) return 11;
+    if (path.find("@LLVM_LIB_SUBSTR@") == std::string::npos) return 11;
     if (path.find("xim-x-glibc/2.39/lib64") == std::string::npos) return 12;
     return 0;
 }
 EOF
+# Inject the resolved LLVM version into the quoted heredoc via a placeholder.
+sed -i "s|@LLVM_LIB_SUBSTR@|xim-x-llvm/${LLVM_VERSION}/lib|" src/main.cpp
 
 "$MCPP" build > "$TMP/build.log" 2>&1 || {
     cat "$TMP/build.log"
