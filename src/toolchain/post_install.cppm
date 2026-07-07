@@ -60,21 +60,46 @@ export void patchelf_walk(const std::filesystem::path& dir,
                                  mcpp::platform::shell::quote(path.string()));
         auto probeResult = mcpp::platform::process::capture(probe);
         bool hasInterp = (probeResult.exit_code == 0 && !probeResult.output.empty());
+
+        // Patch a COPY and atomically rename it into place. The payload can
+        // contain libraries the CURRENT process has mmapped (a self-hosted
+        // mcpp links the sandbox glibc/libgcc_s, and since the fixup
+        // pipeline runs on every install path, the patching process may BE
+        // such a consumer). In-place patchelf rewrites the backing file of
+        // those live mappings and corrupts the running process — observed
+        // on CI as an exit-time SIGSEGV in _dl_fini jumping to an
+        // unrelocated address. rename() gives the patched content a fresh
+        // inode while live processes keep the old one.
+        auto tmp = path;
+        tmp += ".mcpp-patch.tmp";
+        {
+            std::error_code cec;
+            std::filesystem::copy_file(
+                path, tmp, std::filesystem::copy_options::overwrite_existing, cec);
+            if (cec) continue;
+            std::filesystem::permissions(
+                tmp, std::filesystem::status(path, cec).permissions(),
+                std::filesystem::perm_options::replace, cec);
+        }
+        bool patched = true;
         if (hasInterp) {
-            (void)mcpp::platform::process::run_silent(std::format(
+            patched = (mcpp::platform::process::run_silent(std::format(
                 "{} --set-interpreter {} {} 2>/dev/null",
                 mcpp::platform::shell::quote(patchelfBin.string()),
                 mcpp::platform::shell::quote(loader.string()),
-                mcpp::platform::shell::quote(path.string())));
+                mcpp::platform::shell::quote(tmp.string()))) == 0) && patched;
         }
         // Always set RUNPATH (works on .so too — they need to find deps).
         if (!rpath.empty()) {
-            (void)mcpp::platform::process::run_silent(std::format(
+            patched = (mcpp::platform::process::run_silent(std::format(
                 "{} --set-rpath {} {} 2>/dev/null",
                 mcpp::platform::shell::quote(patchelfBin.string()),
                 mcpp::platform::shell::quote(rpath),
-                mcpp::platform::shell::quote(path.string())));
+                mcpp::platform::shell::quote(tmp.string()))) == 0) && patched;
         }
+        std::error_code rec;
+        if (patched) std::filesystem::rename(tmp, path, rec);
+        if (!patched || rec) std::filesystem::remove(tmp, rec);
     }
 }
 
