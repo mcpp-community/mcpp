@@ -16,6 +16,7 @@ import mcpp.build.plan;
 import mcpp.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 
@@ -153,34 +154,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         include_flags += " -I" + escape_path(abs);
     }
 
-    // Sysroot / payload paths.
-    //
-    // Payload-first: when PayloadPaths are available (glibc + linux-headers
-    // xpkgs found), use -isystem for each payload include dir. This avoids
-    // dependency on xlings subos.
-    //
-    // For Clang with a cfg file: use --no-default-config to bypass
-    // potentially-stale paths, then provide all flags explicitly.
-    //
-    // Fallback: if no PayloadPaths, use --sysroot from probe_sysroot().
+    // Sysroot / payload paths — resolved ONCE by the toolchain link model
+    // (mcpp.toolchain.linkmodel, the single source of truth shared with
+    // stdmod / build_program / the cfg fixup; see
+    // .agents/docs/2026-07-07-hermetic-toolchain-link-model-design.md).
+    // Payload-first, --sysroot fallback; for Clang with a cfg file we bypass
+    // the (install-time-generated, non-reproducible) cfg with
+    // --no-default-config and provide everything explicitly.
+    const auto dm = mcpp::toolchain::resolve_clang_driver(plan.toolchain);
+    const auto lm = mcpp::toolchain::resolve_link_model(plan.toolchain);
+    const mcpp::toolchain::PathEscape ninjaEsc =
+        [](const std::filesystem::path& p) { return escape_path(p); };
+
     std::string compile_toolchain_flags;
     std::string link_toolchain_flags;
-    bool isClangWithCfg = false;
-    std::filesystem::path cfgPath;
+    const bool isClangWithCfg = dm.hasCfg;
     // LLVM root of a clang-with-cfg toolchain — used by the macOS link
     // path below to locate libc++.a/libc++abi.a for staticStdlib.
     std::filesystem::path llvmRootForStdlib;
-    if (mcpp::toolchain::is_clang(plan.toolchain)) {
-        cfgPath = plan.toolchain.binaryPath.parent_path()
-                  / (plan.toolchain.binaryPath.stem().string() + ".cfg");
-        isClangWithCfg = std::filesystem::exists(cfgPath);
-    }
 
     if (isClangWithCfg) {
-        // Clang with cfg: bypass cfg and provide all paths explicitly.
-        auto llvmRoot = plan.toolchain.binaryPath.parent_path().parent_path();
-        auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-        compile_toolchain_flags = " --no-default-config -nostdinc++";
+        // --no-default-config -nostdinc++ + libc++ headers.
+        compile_toolchain_flags = dm.compile_flags(ninjaEsc);
         // macOS deployment target: make the resolved value explicit on
         // the command line so (a) the ninja commands don't depend on env
         // propagation and (b) the value participates in the BMI
@@ -193,71 +188,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             compile_toolchain_flags +=
                 " -mmacosx-version-min=" + macosDeploymentTarget;
         }
-        llvmRootForStdlib = llvmRoot;
-        // libc++ headers
-        compile_toolchain_flags += " -isystem" + escape_path(libcxxInclude);
-        if (!plan.toolchain.targetTriple.empty()) {
-            auto targetInclude = llvmRoot / "include"
-                                 / plan.toolchain.targetTriple / "c++" / "v1";
-            if (std::filesystem::exists(targetInclude))
-                compile_toolchain_flags += " -isystem" + escape_path(targetInclude);
-        }
-        // C library + kernel headers from payload
-        if (plan.toolchain.payloadPaths) {
-            auto& pp = *plan.toolchain.payloadPaths;
-            compile_toolchain_flags += " -isystem" + escape_path(pp.glibcInclude);
-            if (!pp.linuxInclude.empty())
-                compile_toolchain_flags += " -isystem" + escape_path(pp.linuxInclude);
-        } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
-            auto sysroot_flag = " --sysroot=" + escape_path(*sdk);
-            compile_toolchain_flags += sysroot_flag;
-            link_toolchain_flags += sysroot_flag;
-        } else if (!plan.toolchain.sysroot.empty()) {
-            auto sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
-            compile_toolchain_flags += sysroot_flag;
-            link_toolchain_flags += sysroot_flag;
-        }
-        // Linker flags that cfg normally provides
-        link_toolchain_flags = " --no-default-config" + link_toolchain_flags
-            + " -stdlib=libc++ -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
+        llvmRootForStdlib = dm.llvmRoot;
+        // C library headers (payload -isystem, or --sysroot fallback).
+        compile_toolchain_flags += lm.compile_flags(ninjaEsc);
+        // Linker flags that cfg normally provides. The payload C-runtime
+        // flags (-B/-L/loader) are appended via payload_ld below.
+        link_toolchain_flags = " --no-default-config";
+        if (lm.mode == mcpp::toolchain::CLibMode::Sysroot)
+            link_toolchain_flags += lm.link_flags(ninjaEsc);
+        link_toolchain_flags +=
+            mcpp::toolchain::ClangDriverModel::kLinkDriverFlags;
         f.sysroot = link_toolchain_flags;
-    } else if (!plan.toolchain.sysroot.empty()) {
-        // GCC (or Clang without cfg): use --sysroot from probe.
-        // GCC requires --sysroot for include-fixed headers (stdlib.h wrapper).
-        // Supplement with -isystem for linux kernel headers from payload
-        // if the probed sysroot is missing them.
-        auto sysroot_flag = " --sysroot=" + escape_path(plan.toolchain.sysroot);
-        compile_toolchain_flags = sysroot_flag;
-        link_toolchain_flags = sysroot_flag;
-        // Self-contained musl toolchains ship their own kernel headers in the
-        // sysroot; for a cross target the host (x86) linux-headers payload is
-        // the wrong arch, so don't supplement it.
-        if (!mcpp::toolchain::is_musl_target(plan.toolchain)
-            && plan.toolchain.payloadPaths && !plan.toolchain.payloadPaths->linuxInclude.empty()) {
-            auto sysrootLinux = plan.toolchain.sysroot / "usr" / "include" / "linux" / "limits.h";
-            if (!std::filesystem::exists(sysrootLinux))
-                compile_toolchain_flags += " -isystem" + escape_path(plan.toolchain.payloadPaths->linuxInclude);
-        }
-        f.sysroot = link_toolchain_flags;
-    } else if (plan.toolchain.payloadPaths) {
-        // No usable sysroot: wire the C library headers from the payload.
-        // For GCC use -idirafter (appended after the built-in dirs) so that
-        // libstdc++'s #include_next wrappers can reach them; -isystem would
-        // place them BEFORE the built-ins, invisible to #include_next.
-        auto& pp = *plan.toolchain.payloadPaths;
-        const bool clangTc = mcpp::toolchain::is_clang(plan.toolchain);
-        auto inc_flag = [&](const std::filesystem::path& p) {
-            return (clangTc ? " -isystem" : " -idirafter") + escape_path(p);
-        };
-        compile_toolchain_flags += inc_flag(pp.glibcInclude);
-        if (!pp.linuxInclude.empty())
-            compile_toolchain_flags += inc_flag(pp.linuxInclude);
-        // Link-time C runtime: a usable --sysroot would have provided the
-        // startup objects and core libs implicitly. Without one, point the
-        // driver at the glibc payload lib dir: -B for crt1.o/crti.o discovery,
-        // -L for -lm/-lc resolution.
-        link_toolchain_flags += " -B" + escape_path(pp.glibcLib);
-        link_toolchain_flags += " -L" + escape_path(pp.glibcLib);
+    } else if (lm.mode != mcpp::toolchain::CLibMode::None) {
+        // GCC (or Clang without cfg): --sysroot from probe, or the payload
+        // headers + C runtime (-B for crt discovery, -L for -lc/-lm).
+        compile_toolchain_flags = lm.compile_flags(ninjaEsc);
+        link_toolchain_flags = lm.link_flags(ninjaEsc);
         f.sysroot = link_toolchain_flags;
     }
 
@@ -358,16 +304,15 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
     }
 
-    // For Clang with payload paths: add glibc lib + dynamic linker to link flags.
+    // For Clang with payload paths: the payload C runtime — -B so the driver
+    // resolves Scrt1.o/crti.o/crtn.o inside the payload (the driver never
+    // consults -L for CRT objects; without -B it silently falls back to the
+    // host's /lib or, on hosts without a system toolchain, passes bare names
+    // that lld cannot open — issue #195), -L/-rpath for -lc/-lm, and the
+    // payload's dynamic linker.
     std::string payload_ld;
-    if (isClangWithCfg && plan.toolchain.payloadPaths) {
-        auto& pp = *plan.toolchain.payloadPaths;
-        payload_ld += " -L" + escape_path(pp.glibcLib);
-        payload_ld += " -Wl,-rpath," + escape_path(pp.glibcLib);
-        auto loader = pp.glibcLib / "ld-linux-x86-64.so.2";
-        if (std::filesystem::exists(loader))
-            payload_ld += " -Wl,--dynamic-linker=" + escape_path(loader);
-    }
+    if (isClangWithCfg && lm.mode == mcpp::toolchain::CLibMode::PayloadFirst)
+        payload_ld = lm.link_flags(ninjaEsc);
 
     std::string link_extra;
     if (prof.lto)   link_extra += " -flto";

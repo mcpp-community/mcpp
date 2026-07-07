@@ -29,6 +29,7 @@ import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.gcc;
+import mcpp.toolchain.linkmodel;
 
 export namespace mcpp::toolchain {
 
@@ -194,72 +195,24 @@ std::expected<StdModule, StdModError> ensure_built(
                   : mcpp::toolchain::gcc::std_bmi_path(sm.cacheDir);
     sm.objectPath = sm.cacheDir / "std.o";
 
-    // Build sysroot + include flags for std module precompilation.
-    //
-    // Payload-first: use fine-grained -isystem paths from xpkgs payloads
-    // when available, falling back to --sysroot.
-    //
-    // For Clang with a cfg file: use --no-default-config to bypass
-    // potentially-stale paths, then provide all flags explicitly.
+    // Build sysroot + include flags for std module precompilation, derived
+    // from the shared toolchain link model (same resolver as flags.cppm —
+    // identical flags also keep the std_build_commands cache key honest).
     // Std module precompilation only needs compile flags (no linker flags),
     // so --no-default-config is safe here on all platforms.
+    const auto dm = resolve_clang_driver(tc);
+    const auto lm = resolve_link_model(tc);
+    const PathEscape shellEsc = [](const std::filesystem::path& p) {
+        return std::format("'{}'", p.string());
+    };
     std::string sysroot_flag;
-    if (is_clang(tc)) {
-        auto cfgPath = tc.binaryPath.parent_path()
-                       / (tc.binaryPath.stem().string() + ".cfg");
-        if (std::filesystem::exists(cfgPath)) {
-            auto llvmRoot = tc.binaryPath.parent_path().parent_path();
-            auto libcxxInclude = llvmRoot / "include" / "c++" / "v1";
-            sysroot_flag = " --no-default-config -nostdinc++ -stdlib=libc++";
-            sysroot_flag += std::format(" -isystem'{}'", libcxxInclude.string());
-            if (!tc.targetTriple.empty()) {
-                auto targetInclude = llvmRoot / "include"
-                                     / tc.targetTriple / "c++" / "v1";
-                if (std::filesystem::exists(targetInclude))
-                    sysroot_flag += std::format(" -isystem'{}'", targetInclude.string());
-            }
-            // C library + kernel headers from payload paths.
-            if (tc.payloadPaths) {
-                sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->glibcInclude.string());
-                if (!tc.payloadPaths->linuxInclude.empty())
-                    sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
-            } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
-                sysroot_flag += std::format(" --sysroot='{}'", sdk->string());
-            } else if (!tc.sysroot.empty()) {
-                sysroot_flag += std::format(" --sysroot='{}'", tc.sysroot.string());
-            }
-        } else if (!tc.sysroot.empty()) {
-            sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
-        }
-    } else if (!tc.sysroot.empty()) {
-        // GCC: use --sysroot (required for include-fixed headers).
-        // Supplement with -isystem for linux kernel headers from payload
-        // if the probed sysroot is missing them.
-        sysroot_flag = std::format(" --sysroot='{}'", tc.sysroot.string());
-        // Skip the external linux-headers payload for self-contained musl
-        // toolchains: their sysroot ships kernel headers, and for a cross
-        // target the host (x86) headers are the wrong arch.
-        if (!is_musl_target(tc) && tc.payloadPaths && !tc.payloadPaths->linuxInclude.empty()) {
-            auto sysrootLinux = tc.sysroot / "usr" / "include" / "linux" / "limits.h";
-            if (!std::filesystem::exists(sysrootLinux))
-                sysroot_flag += std::format(" -isystem'{}'", tc.payloadPaths->linuxInclude.string());
-        }
-    } else if (tc.payloadPaths) {
-        // No usable sysroot: wire the C library headers from the payload.
-        // GCC's libstdc++ wraps libc headers via #include_next, which only
-        // searches directories AFTER the one the current header came from —
-        // and gcc's built-in dirs are LAST in the search order, so an
-        // -isystem payload dir (inserted before the built-ins) is unreachable
-        // from #include_next. -idirafter appends the payload to the very end,
-        // exactly where #include_next looks.
-        const bool clang = is_clang(tc);
-        auto add_inc = [&](const std::filesystem::path& p) {
-            if (clang) sysroot_flag += std::format(" -isystem'{}'", p.string());
-            else       sysroot_flag += std::format(" -idirafter'{}'", p.string());
-        };
-        add_inc(tc.payloadPaths->glibcInclude);
-        if (!tc.payloadPaths->linuxInclude.empty())
-            add_inc(tc.payloadPaths->linuxInclude);
+    if (dm.hasCfg) {
+        sysroot_flag = " --no-default-config -nostdinc++ -stdlib=libc++";
+        for (auto& inc : dm.cxxIncludes)
+            sysroot_flag += " -isystem" + shellEsc(inc);
+        sysroot_flag += lm.compile_flags(shellEsc);
+    } else {
+        sysroot_flag = lm.compile_flags(shellEsc);
     }
 
     // Deployment target must mirror what flags.cppm emits for normal TUs

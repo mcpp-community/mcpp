@@ -16,6 +16,7 @@ import std;
 import mcpp.manifest;
 import mcpp.platform.process;
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
+import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
 import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target
 import mcpp.toolchain.registry;      // archive_tool
 import mcpp.ui;
@@ -116,21 +117,58 @@ std::string env_value(const std::string& name) {
 // only the native cases; these are passed as separate argv tokens (no shell).
 std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
     std::vector<std::string> f;
-    // Clang reads its sibling `<clang>.cfg` by default, which wires libc++ + the
-    // sysroot. A simple host compile trusts it (the main build bypasses the cfg
-    // for reproducibility; here correctness on a fresh box is all we need).
-    if (mcpp::toolchain::is_clang(tc)) return f;
+    const auto lm = mcpp::toolchain::resolve_link_model(tc);
+
+    // Clang with a bundled cfg: bypass it (--no-default-config) and provide
+    // everything explicitly, same as the main build — the cfg is an
+    // install-time-generated artifact whose content varies per machine and
+    // install path, so trusting it here while bypassing it in the main build
+    // meant two different toolchains for the same project.
+    if (mcpp::toolchain::is_clang(tc)) {
+        const auto dm = mcpp::toolchain::resolve_clang_driver(tc);
+        if (dm.hasCfg) {
+            f.push_back("--no-default-config");
+            f.push_back("-nostdinc++");
+            f.push_back("-stdlib=libc++");
+            for (auto& inc : dm.cxxIncludes) f.push_back("-isystem" + inc.string());
+            f.push_back("-fuse-ld=lld");
+            f.push_back("--rtlib=compiler-rt");
+            f.push_back("--unwindlib=libunwind");
+            for (auto& d : dm.libDirs) {
+                f.push_back("-L" + d.string());
+                f.push_back("-Wl,-rpath," + d.string());
+            }
+        }
+        if (lm.mode == mcpp::toolchain::CLibMode::Sysroot) {
+            f.push_back("--sysroot=" + lm.sysroot.string());
+        } else if (lm.mode == mcpp::toolchain::CLibMode::PayloadFirst) {
+            for (auto& inc : lm.systemIncludes) f.push_back("-isystem" + inc.string());
+            f.push_back("-B" + lm.crtDir.string());   // Scrt1.o/crti.o discovery
+            for (auto& d : lm.libDirs) {
+                f.push_back("-L" + d.string());
+                f.push_back("-Wl,-rpath," + d.string());
+            }
+            if (!lm.loader.empty())
+                f.push_back("-Wl,--dynamic-linker=" + lm.loader.string());
+        }
+        // Runtime lib dirs so the produced program can load private libs in-tree.
+        for (auto& d : tc.linkRuntimeDirs) {
+            f.push_back("-L" + d.string());
+            f.push_back("-Wl,-rpath," + d.string());
+        }
+        return f;
+    }
 
     // GCC: a fresh sandbox g++ needs --sysroot to find the C library + the
     // include-fixed headers; without a sysroot, wire the glibc payload directly.
-    if (!tc.sysroot.empty()) {
-        f.push_back("--sysroot=" + tc.sysroot.string());
-    } else if (tc.payloadPaths) {
-        auto& pp = *tc.payloadPaths;
-        f.push_back("-idirafter"); f.push_back(pp.glibcInclude.string());
-        if (!pp.linuxInclude.empty()) { f.push_back("-idirafter"); f.push_back(pp.linuxInclude.string()); }
-        f.push_back("-B" + pp.glibcLib.string());   // crt1.o/crti.o discovery
-        f.push_back("-L" + pp.glibcLib.string());   // -lc/-lm resolution
+    if (lm.mode == mcpp::toolchain::CLibMode::Sysroot) {
+        f.push_back("--sysroot=" + lm.sysroot.string());
+    } else if (lm.mode == mcpp::toolchain::CLibMode::PayloadFirst) {
+        for (auto& inc : lm.systemIncludes) {
+            f.push_back("-idirafter"); f.push_back(inc.string());
+        }
+        f.push_back("-B" + lm.crtDir.string());          // crt1.o/crti.o discovery
+        for (auto& d : lm.libDirs) f.push_back("-L" + d.string());  // -lc/-lm
     }
     // binutils -B so the driver finds ld/as (GCC, non-musl; musl ships its own).
     if (!mcpp::toolchain::is_musl_target(tc)) {
