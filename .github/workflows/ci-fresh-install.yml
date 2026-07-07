@@ -11,8 +11,17 @@ name: ci-fresh-install
 # It runs on release publish, manual trigger, and daily schedule.
 
 on:
+  # NOTE: `release: published` never fires from the release pipeline — the
+  # release is created by release.yml with GITHUB_TOKEN, and GitHub
+  # suppresses workflow triggers from GITHUB_TOKEN-generated events. Kept
+  # only for releases created manually outside the pipeline. The reliable
+  # post-release hook is `workflow_run` below: a platform-generated event,
+  # exempt from that suppression, and requiring no cross-repo PAT.
   release:
     types: [ published ]
+  workflow_run:
+    workflows: [ release ]
+    types: [ completed ]
   workflow_dispatch:
   schedule:
     # Run daily at 06:00 UTC to catch issues from xlings/runner updates
@@ -28,6 +37,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   linux-fresh:
     name: Linux fresh install
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -133,6 +143,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   linux-distro-matrix:
     name: Linux distro (${{ matrix.distro }})
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     container:
       image: ${{ matrix.image }}
@@ -218,6 +229,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   macos-fresh:
     name: macOS fresh install
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     # macos-14: the support floor (mcpp ≥0.0.50 / xlings ≥0.4.50 ship
     # minos=14.0 static-libc++ binaries). A fresh install passing here
     # is the continuous proof of the macOS 14 floor — and of host-tool
@@ -278,6 +290,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   windows-fresh:
     name: Windows fresh install
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:

@@ -738,15 +738,9 @@ jobs:
           bash .github/tools/bump_index.sh mcpp "${{ steps.version.outputs.version }}" \
             || echo "index bump reported issues (non-blocking)"
 
-      # ci-fresh-install declares `on: release published`, but the release is
-      # created with GITHUB_TOKEN and GitHub suppresses workflow triggers from
-      # GITHUB_TOKEN-generated events — so that hook has never fired (only the
-      # daily schedule ran it). Dispatch it explicitly with a PAT; best-effort
-      # (the schedule remains the fallback).
-      - name: Dispatch fresh-install verification
-        if: ${{ env.XIM_PKGINDEX_TOKEN != '' }}
-        env:
-          GH_TOKEN: ${{ secrets.XIM_PKGINDEX_TOKEN }}
-        run: |
-          gh workflow run ci-fresh-install.yml -R "${{ github.repository }}" --ref main \
-            || echo "fresh-install dispatch failed (non-blocking; daily schedule covers it)"
+      # Post-release verification (ci-fresh-install) is triggered via its
+      # `workflow_run: [release]` hook — a platform-generated event that is
+      # exempt from GITHUB_TOKEN trigger suppression and needs no cross-repo
+      # PAT. (A PAT-based dispatch step lived here briefly; it never worked —
+      # XIM_PKGINDEX_TOKEN's resource owner is the index org and cannot cover
+      # this repository.)
