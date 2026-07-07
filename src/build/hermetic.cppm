@@ -116,6 +116,17 @@ std::expected<void, std::string> verify_hermetic_link(
     if (xpkgsPos == std::string::npos) return {};
     std::vector<std::filesystem::path> allowed;
     allowed.emplace_back(binStr.substr(0, xpkgsPos + 5));  // the xpkgs root
+    // Payloads may be symlink-inherited from another MCPP_HOME (the e2e
+    // isolation pattern): mcpp passes the symlink-view paths on the command
+    // line, but the driver reports its own resource dir (clang_rt.crt*)
+    // through the CANONICAL path. Allow that registry too.
+    {
+        std::error_code ec;
+        auto canon = std::filesystem::weakly_canonical(tc.binaryPath, ec).string();
+        auto pos = ec ? std::string::npos : canon.find("xpkgs");
+        if (pos != std::string::npos)
+            allowed.emplace_back(canon.substr(0, pos + 5));
+    }
     if (!tc.sysroot.empty()) allowed.push_back(tc.sysroot);
 
     if (const char* e = std::getenv("MCPP_ALLOW_HOST_LIBS"); e && *e && *e != '0')
