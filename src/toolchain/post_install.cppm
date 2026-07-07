@@ -232,7 +232,7 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
         }
     }
 
-    std::string common, cxxOnly;
+    std::string common, cxxOnly, cHdr;
     auto cxxInclude = payloadRoot / "include" / "c++" / "v1";
     if constexpr (mcpp::platform::is_macos) {
         // macOS keeps its historical cfg semantics: the C library and the
@@ -256,6 +256,28 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
         }
         common += "-fuse-ld=lld\n--rtlib=compiler-rt\n--unwindlib=libunwind\n";
 
+        // HEADER axis (C and C++ drivers alike): the C library and kernel
+        // headers come from the same payloads the link axis uses. Without
+        // these, a direct `clang hello.c` only works when the HOST happens
+        // to ship /usr/include — silently non-hermetic, broken on
+        // header-less machines. For C++ they must come AFTER the libc++
+        // block (its C-header wrappers reach libc via #include_next), so
+        // they are collected separately and appended in order below —
+        // byte-consistent with what llvm.lua's install hook generates.
+        if (!glibcLibDir.empty()) {
+            auto glibcInclude = glibcLibDir.parent_path() / "include";
+            if (std::filesystem::exists(glibcInclude / "features.h"))
+                cHdr += "-isystem " + glibcInclude.string() + "\n";
+            constexpr std::string_view kLinuxLimits = "include/linux/limits.h";
+            auto linuxHeaders = mcpp::xlings::paths::find_sibling_package(
+                payloadRoot / "bin" / "clang++", "linux-headers", kLinuxLimits);
+            if (!linuxHeaders)
+                linuxHeaders = mcpp::xlings::paths::find_home_tool(
+                    "linux-headers", kLinuxLimits);
+            if (linuxHeaders)
+                cHdr += "-isystem " + (*linuxHeaders / "include").string() + "\n";
+        }
+
         if (std::filesystem::exists(cxxInclude)) {
             cxxOnly += "-nostdinc++\n-stdlib=libc++\n";
             cxxOnly += "-isystem " + cxxInclude.string() + "\n";
@@ -264,6 +286,9 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
             auto tripleInclude = payloadRoot / "include" / triple / "c++" / "v1";
             if (std::filesystem::exists(tripleInclude))
                 cxxOnly += "-isystem " + tripleInclude.string() + "\n";
+        }
+        cxxOnly += cHdr;
+        if (!triple.empty()) {
             auto tripleLib = payloadRoot / "lib" / triple;
             if (std::filesystem::exists(tripleLib)) {
                 cxxOnly += "-L" + tripleLib.string() + "\n";
@@ -281,7 +306,7 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
         if (!name.ends_with(".cfg")) continue;
         const bool isCxx = name.find("++") != std::string::npos;
         std::ofstream os(it->path());
-        os << common << (isCxx ? cxxOnly : std::string{});
+        os << common << (isCxx ? cxxOnly : cHdr);
     }
 }
 
@@ -376,7 +401,7 @@ void llvm_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 // runtime libs. Idempotent via a content-fingerprinted marker.
 //
 // Bump when the fixup logic changes so existing installs re-run it.
-constexpr std::string_view kFixupRev = "hermetic-2";
+constexpr std::string_view kFixupRev = "hermetic-3";
 
 export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
                                       const std::filesystem::path& payloadRoot,

@@ -3,7 +3,22 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [0.0.83] — 2026-07-07
+## [0.0.84] — 2026-07-08
+
+### 修复 / 完善
+
+- **clang cfg 头文件轴补齐(供人类直接使用的完备性)**:`fixup_clang_cfg` 再生的
+  cfg 此前只覆盖链接轴(`-B`/`-L`/loader/rpath),缺 C 库与内核头——裸
+  `clang hello.c` 只有在宿主恰好装有 `/usr/include` 时才能编译(静默不 hermetic,
+  无宿主头的机器直接失败)。现补上 `-isystem <glibc payload>/include` 与
+  `-isystem <linux-headers payload>/include`,置于 libc++ 头块**之后**
+  (保持 `#include_next` 链),与 xim-pkgindex 侧 `llvm.lua` 装机生成的 cfg
+  内容一致——两个写手不再漂移。fixup rev 升至 `hermetic-3`,存量 payload 在
+  下次构建时自动再收敛。已实测:宿主头被屏蔽(`--sysroot=<空目录>`)下,
+  cfg 驱动的裸 `clang`/`clang++` 编译运行均成功。mcpp 自身构建不受影响
+  (linkmodel 一直自带头轴)。
+
+
 
 ### 修复
 
