@@ -638,15 +638,23 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                 return std::unexpected(Error{r.error()});
 
             // PT_INTERP handling differs by mode:
-            //   BundleProject → repoint to /lib64/ld-linux-x86-64.so.2
-            //                   (LSB-mandated symlink on glibc distros)
+            //   BundleProject → repoint to the target distro's loader
+            //                   (LSB layout: /lib64/<loader> on x86_64,
+            //                   /lib/<loader> elsewhere), derived from the
+            //                   loader soname ldd resolved for THIS binary —
+            //                   arch-correct without hardcoding a name.
             //   BundleAll     → leave PT_INTERP alone; the wrapper script
             //                   ignores it and launches via the bundled
             //                   loader directly.
             if (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None) {
-                if (auto r = set_interpreter(bundledBinary,
-                        "/lib64/ld-linux-x86-64.so.2", patchelf); !r)
-                    return std::unexpected(Error{r.error()});
+                if (auto soname = find_loader_soname(*deps); !soname.empty()) {
+                    auto distroLoader =
+                        (soname == "ld-linux-x86-64.so.2" ? "/lib64/" : "/lib/")
+                        + soname;
+                    if (auto r = set_interpreter(bundledBinary, distroLoader,
+                                                 patchelf); !r)
+                        return std::unexpected(Error{r.error()});
+                }
             }
         }
 

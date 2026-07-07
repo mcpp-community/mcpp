@@ -84,19 +84,19 @@ export void patchelf_walk(const std::filesystem::path& dir,
 // xlings' home, not mcpp's sandbox glibc — binaries would fail to exec.
 //
 // Mcpp does a post-install spec rewrite:
-//   - Dynamically detects the baked-in lib dir from the specs file
-//   - Replaces the dynamic-linker path with <glibc_lib64>/ld-linux-x86-64.so.2
-//   - Replaces the rpath with <glibc_lib64>:<gcc_lib64>
+//   - Dynamically detects the baked-in loader path from the specs file
+//   - Replaces it with the sandbox glibc payload's loader
+//   - Replaces the rpath with <glibc_lib>:<gcc_lib64>
 // Idempotent — skips if already pointing at the correct glibc.
-// Extract the baked-in lib directory from a gcc specs file by finding
-// the dynamic-linker path that ends with `/ld-linux-x86-64.so.2`.
-// xim bakes the installing user's XLINGS_HOME into specs at install
-// time, so the path varies per machine — we cannot hardcode it.
-std::string detect_baked_lib_dir(const std::string& specsContent) {
-    constexpr std::string_view kLoader = "/ld-linux-x86-64.so.2";
-    auto pos = specsContent.find(kLoader);
+// Extract the baked-in glibc loader path (".../ld-linux-<arch>.so.N") from a
+// gcc specs file. xim bakes the installing user's XLINGS_HOME into specs at
+// install time, so the DIR varies per machine, and the loader NAME varies
+// per arch — detect both instead of hardcoding either.
+std::string detect_baked_loader(const std::string& specsContent) {
+    constexpr std::string_view kLoaderMark = "/ld-linux-";
+    auto pos = specsContent.find(kLoaderMark);
     if (pos == std::string::npos) return "";
-    // Walk backwards to find start of the absolute path
+    // Walk backwards to find start of the absolute path…
     auto start = pos;
     while (start > 0 && specsContent[start - 1] != ' '
                      && specsContent[start - 1] != ':'
@@ -104,21 +104,32 @@ std::string detect_baked_lib_dir(const std::string& specsContent) {
                      && specsContent[start - 1] != '\n') {
         --start;
     }
-    auto dir = specsContent.substr(start, pos - start);
-    // Sanity: must be absolute
-    if (dir.empty() || dir[0] != '/') return "";
-    // Skip if it already points to the target glibc (no fixup needed)
-    return dir;
+    // …and forwards to its end.
+    auto end = pos + kLoaderMark.size();
+    while (end < specsContent.size()
+           && !std::isspace(static_cast<unsigned char>(specsContent[end]))
+           && specsContent[end] != ':' && specsContent[end] != ';') {
+        ++end;
+    }
+    auto loader = specsContent.substr(start, end - start);
+    if (loader.empty() || loader[0] != '/') return "";
+    return loader;
 }
 
 void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
                      const std::filesystem::path& glibcLibDir,
                      const std::filesystem::path& gccLibDir)
 {
-    auto specsParent = gccPkgRoot / "lib" / "gcc" / "x86_64-linux-gnu";
-    if (!std::filesystem::exists(specsParent)) return;
+    std::filesystem::path specsParent;
+    std::error_code ec;
+    for (auto it = std::filesystem::directory_iterator(gccPkgRoot / "lib" / "gcc", ec);
+         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+        if (it->is_directory(ec)) { specsParent = it->path(); break; }
+    }
+    if (specsParent.empty()) return;
 
-    auto loaderReplacement = (glibcLibDir / "ld-linux-x86-64.so.2").string();
+    auto loaderReplacement = resolve_loader(glibcLibDir, /*targetTriple=*/{}).string();
+    if (loaderReplacement.empty()) return;
     auto rpathReplacement  = std::format("{}:{}",
                                          glibcLibDir.string(),
                                          gccLibDir.string());
@@ -141,12 +152,11 @@ void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
         std::stringstream ss;  ss << is.rdbuf();
         std::string content = ss.str();
 
-        auto bakedDir = detect_baked_lib_dir(content);
-        if (bakedDir.empty()) continue;
+        auto bakedLoader = detect_baked_loader(content);
+        if (bakedLoader.empty()) continue;
+        auto bakedDir = std::filesystem::path(bakedLoader).parent_path().string();
         // Already pointing at the right place — no fixup needed.
         if (bakedDir == glibcLibDir.string()) continue;
-
-        auto bakedLoader = bakedDir + "/ld-linux-x86-64.so.2";
 
         // Order matters: replace the full loader file path first so the
         // shorter dir pattern doesn't eat its prefix.
