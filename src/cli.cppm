@@ -22,6 +22,7 @@ import mcpp.cli.cmd_build;
 import mcpp.cli.cmd_cache;
 import mcpp.cli.cmd_new;
 import mcpp.cli.cmd_publish;
+import mcpp.cli.cmd_xpkg;
 import mcpp.cli.cmd_registry;
 import mcpp.cli.cmd_self;
 import mcpp.cli.cmd_toolchain;
@@ -61,6 +62,7 @@ void print_usage() {
     std::println("  mcpp publish [--dry-run]             Publish package to default registry");
     std::println("  mcpp pack [--mode <m>]               Build + bundle a tarball (m: system|vendored|self-contained|static)");
     std::println("  mcpp emit xpkg [-V VER] [-o FILE]    Generate xpkg Lua entry");
+    std::println("  mcpp xpkg parse <file.lua> [--json]  Validate an xpkg descriptor (resolver grammar)");
     std::println("");
     std::println("Resource management:");
     std::println("  mcpp toolchain install|list|default  Manage mcpp's private toolchains");
@@ -320,6 +322,18 @@ int run(int argc, char** argv) {
                 return dispatch_sub("emit", p, {{"xpkg", cmd_emit_xpkg}});
             })))
 
+        // ─── xpkg (descriptor tooling: parse) ──────────────────────────
+        .subcommand(cl::App("xpkg")
+            .description("Inspect / validate xpkg descriptors")
+            .subcommand(cl::App("parse")
+                .description("Parse a descriptor's mcpp segment exactly as the resolver would (strict: unknown keys are errors)")
+                .option(cl::Option("json").help("Emit machine-readable JSON"))
+                .option(cl::Option("allow-unknown")
+                    .help("Downgrade unknown mcpp-segment keys from error to warning")))
+            .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
+                return dispatch_sub("xpkg", p, {{"parse", cmd_xpkg_parse}});
+            })))
+
         // ─── resource management ───────────────────────────────────────
         .subcommand(cl::App("toolchain")
             .description("Install / list / select / remove C++ toolchains")
@@ -491,9 +505,9 @@ int run(int argc, char** argv) {
     {
         std::string_view first = argv[1];
         if (!first.starts_with('-')) {
-            static constexpr std::array<std::string_view, 21> known = {
+            static constexpr std::array<std::string_view, 22> known = {
                 "new", "build", "run", "test", "clean", "add", "remove",
-                "update", "search", "publish", "pack", "emit",
+                "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve",
             };
