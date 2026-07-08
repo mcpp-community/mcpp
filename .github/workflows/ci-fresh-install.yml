@@ -35,7 +35,36 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   # Linux: gcc@16.1.0, musl-gcc@15.1.0, llvm@20.1.7
   # ──────────────────────────────────────────────────────────────────
+  # A4: post-release runs race the xim-pkgindex bump (a PR a maintainer
+  # merges asynchronously) — the 0.0.85 fresh-install failed with
+  # "version not found: available 0.0.84" 55s after the bump merged.
+  # Convert the race into a bounded wait: poll the index's mcpp.lua until
+  # it carries the released version (<=15 min), then let every job run.
+  # Non-workflow_run triggers (manual, cron, PR) skip the wait.
+  wait-index:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 20
+    steps:
+      - name: Wait for xim-pkgindex to track the released mcpp
+        if: ${{ github.event_name == 'workflow_run' }}
+        run: |
+          VER=$(curl -fsSL "https://api.github.com/repos/mcpp-community/mcpp/releases/latest" | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
+          echo "released: $VER — waiting for index..."
+          for i in $(seq 1 30); do
+            if curl -fsSL "https://raw.githubusercontent.com/openxlings/xim-pkgindex/main/pkgs/m/mcpp.lua" | grep -q "\"$VER\""; then
+              echo "index tracks $VER (after $((i*30))s)"; exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::index never tracked $VER within 15min — merge the bump PR (openxlings/xim-pkgindex) and re-run"
+          exit 1
+      - name: No wait needed (manual/cron trigger)
+        if: ${{ github.event_name != 'workflow_run' }}
+        run: echo "not a post-release run; skipping index wait"
+
   linux-fresh:
+    needs: [wait-index]
     name: Linux fresh install
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
@@ -142,6 +171,7 @@ jobs:
   # hosts. Runs the released mcpp inside distro containers.
   # ──────────────────────────────────────────────────────────────────
   linux-distro-matrix:
+    needs: [wait-index]
     name: Linux distro (${{ matrix.distro }})
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
@@ -228,6 +258,7 @@ jobs:
   # macOS: llvm@20.1.7
   # ──────────────────────────────────────────────────────────────────
   macos-fresh:
+    needs: [wait-index]
     name: macOS fresh install
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     # macos-14: the support floor (mcpp ≥0.0.50 / xlings ≥0.4.50 ship
@@ -289,6 +320,7 @@ jobs:
   # Windows: llvm@20.1.7 + MSVC STL
   # ──────────────────────────────────────────────────────────────────
   windows-fresh:
+    needs: [wait-index]
     name: Windows fresh install
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-latest

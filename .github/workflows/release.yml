@@ -707,6 +707,9 @@ jobs:
   publish-ecosystem:
     needs: [build-release, build-linux-aarch64, build-macos, build-windows]
     runs-on: ubuntu-latest
+    # A4 hardening: a single stuck upload once held this job >1h (6h default
+    # ceiling). The mirror script now has per-file timeouts, so 20min is ample.
+    timeout-minutes: 20
     env:
       XLINGS_RES_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
@@ -725,8 +728,10 @@ jobs:
         run: |
           chmod +x .github/tools/gtc .github/tools/mirror_res.sh
           export PATH="$PWD/.github/tools:$PATH"
-          bash .github/tools/mirror_res.sh mcpp "${{ steps.version.outputs.version }}" \
-            || echo "binary mirror reported issues (non-blocking)"
+          # A4: BLOCKING. Both mirror hosts serve users (GLOBAL + CN install
+          # paths); an incomplete mirror must fail here, visibly, instead of
+          # surfacing as a 404 in the first user's install (or fresh-install CI).
+          bash .github/tools/mirror_res.sh mcpp "${{ steps.version.outputs.version }}"
 
       - name: Open index bump PR (xim-pkgindex)
         if: ${{ env.XIM_PKGINDEX_TOKEN != '' }}
@@ -735,8 +740,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x .github/tools/bump_index.sh
-          bash .github/tools/bump_index.sh mcpp "${{ steps.version.outputs.version }}" \
-            || echo "index bump reported issues (non-blocking)"
+          # A4: BLOCKING — a missing bump PR means the index never learns the
+          # release exists and every post-release install of the new version 404s.
+          bash .github/tools/bump_index.sh mcpp "${{ steps.version.outputs.version }}"
 
       # Post-release verification (ci-fresh-install) is triggered via its
       # `workflow_run: [release]` hook — a platform-generated event that is

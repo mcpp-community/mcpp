@@ -49,27 +49,52 @@ for a in "${ASSETS[@]}"; do
   gh release download "v$VER" -R "$SRC_REPO" -D "$DL" -p "$a" 2>/dev/null || { echo "[mirror] FAIL: missing $a in $SRC_REPO v$VER" >&2; exit 1; }
 done
 
-# ── GitHub (gh --clobber, reliable) ───────────────────────────────
+# ── GitHub (per-file timeout + verify + delete-and-reupload retry) ──
+# A4 hardening: `gh release upload` was observed both HANGING (>1h on one
+# asset, 2026-07-08) and leaving a phantom asset that later 404s. Treat GH
+# exactly like GitCode below: bounded upload, verify the actual download,
+# retry with a delete first (the observed bad state cleared on re-upload).
+GH_ENABLED=0
 if [[ -n "${XLINGS_RES_TOKEN:-}" ]] || gh auth status >/dev/null 2>&1; then
+  GH_ENABLED=1
   info "GitHub $GH_DST tag $VER"
   GH_TOKEN="${XLINGS_RES_TOKEN:-}" gh release view "$VER" -R "$GH_DST" >/dev/null 2>&1 \
     || GH_TOKEN="${XLINGS_RES_TOKEN:-}" gh release create "$VER" -R "$GH_DST" --title "$VER" --notes "$PROJ $VER (mirror of $SRC_REPO)"
   for a in "${ASSETS[@]}"; do
-    GH_TOKEN="${XLINGS_RES_TOKEN:-}" gh release upload "$VER" "$DL/$a" -R "$GH_DST" --clobber
+    # Idempotent re-runs (incident recovery) skip assets already serving 200.
+    if [[ "$(curl -fsSL -o /dev/null -w '%{http_code}' -L "https://github.com/${GH_DST}/releases/download/${VER}/${a}" 2>/dev/null)" == 200 ]]; then
+      info "gh $a already mirrored (200), skipping"
+      continue
+    fi
+    for try in 1 2 3 4 5; do
+      GH_TOKEN="${XLINGS_RES_TOKEN:-}" timeout 300 gh release upload "$VER" "$DL/$a" -R "$GH_DST" --clobber || true
+      if [[ "$(curl -fsSL -o /dev/null -w '%{http_code}' -L "https://github.com/${GH_DST}/releases/download/${VER}/${a}" 2>/dev/null)" == 200 ]]; then
+        break
+      fi
+      echo "[mirror] gh $a not 200 after try $try; delete + reupload..."
+      GH_TOKEN="${XLINGS_RES_TOKEN:-}" gh release delete-asset "$VER" "$a" -R "$GH_DST" -y 2>/dev/null || true
+      sleep 4
+    done
   done
 else
   info "no github auth; skipping github mirror"
 fi
 
 # ── GitCode (gtc, per-file retry — multi-file upload can 502 and drop files) ──
+GTC_ENABLED=0
 if [[ -n "${GITCODE_TOKEN:-}" ]] && command -v gtc >/dev/null 2>&1; then
+  GTC_ENABLED=1
   info "GitCode $GTC_DST tag $VER"
   gtc release create "$GTC_DST" --tag "$VER" --name "$VER" 2>/dev/null || true
   # Upload then verify the actual DOWNLOAD is 200 (gtc can report success yet
   # leave a phantom/missing asset — obs_callback flakiness), retry up to 5.
   for a in "${ASSETS[@]}"; do
+    if [[ "$(curl -fsSL -o /dev/null -w '%{http_code}' -L "https://gitcode.com/${GTC_DST}/releases/download/${VER}/${a}" 2>/dev/null)" == 200 ]]; then
+      info "gtc $a already mirrored (200), skipping"
+      continue
+    fi
     for try in 1 2 3 4 5; do
-      gtc release upload "$GTC_DST" "$DL/$a" --tag "$VER" >/dev/null 2>&1 || true
+      timeout 300 gtc release upload "$GTC_DST" "$DL/$a" --tag "$VER" >/dev/null 2>&1 || true
       if [[ "$(curl -fsSL -o /dev/null -w '%{http_code}' -L "https://gitcode.com/${GTC_DST}/releases/download/${VER}/${a}" 2>/dev/null)" == 200 ]]; then
         break
       fi
@@ -80,15 +105,21 @@ else
   info "no GITCODE_TOKEN/gtc; skipping gitcode mirror"
 fi
 
-# ── Verify every platform on both hosts ───────────────────────────
+# ── Completeness gate: verify every asset on every ENABLED host ──
+# A4: this is the mirror's definition of done. The caller must treat a
+# non-zero exit as a hard failure (release.yml does since the 0.0.85
+# incident — the old `|| echo non-blocking` swallowed exactly this).
 info "verify:"
 rc=0
-for host in "github.com/$GH_DST" "gitcode.com/$GTC_DST"; do
+hosts=()
+[[ "${GH_ENABLED:-0}"  == 1 ]] && hosts+=("github.com/$GH_DST")
+[[ "${GTC_ENABLED:-0}" == 1 ]] && hosts+=("gitcode.com/$GTC_DST")
+for host in "${hosts[@]}"; do
   for a in "${ASSETS[@]}"; do
     code=$(curl -fsSL -o /dev/null -w '%{http_code}' -L "https://${host}/releases/download/${VER}/${a}" 2>/dev/null || echo ERR)
     echo "  $code  https://${host}/releases/download/${VER}/${a}"
-    [[ "$code" == 200 ]] || rc=1
+    [[ "$code" == 200 ]] || { rc=1; echo "[mirror] FAIL: missing/unverified: https://${host}/releases/download/${VER}/${a}" >&2; }
   done
 done
-[[ $rc == 0 ]] && info "all platforms mirrored OK" || { echo "[mirror] WARN: some assets not 200" >&2; }
+[[ $rc == 0 ]] && info "all assets mirrored + verified on ${#hosts[@]} host(s)"
 exit $rc
