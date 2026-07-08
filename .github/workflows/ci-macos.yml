@@ -58,7 +58,10 @@ jobs:
 
       - name: Install LLVM via xlings
         run: |
-          xlings install llvm -y || xlings install llvm@20.1.7 -y
+          # Pin 20.1.7: llvm 22.1.8's libc++ headers reference __hash_memory,
+          # absent from the libc++ the link resolves on macOS (ld64.lld
+          # undefined symbol; hermetic-link follow-up tracks the real fix).
+          xlings install llvm@20.1.7 -y || xlings install llvm -y
           # Verify clang++ is available
           LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
           echo "LLVM_ROOT=$LLVM_ROOT"
