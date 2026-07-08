@@ -21,3 +21,4 @@ doctor.log
 *.ifc
 *.ddi
 compile_commands.json
+.cache/
