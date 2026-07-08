@@ -24,6 +24,9 @@ struct CompileUnit {
     std::vector<std::string>        packageCxxflags;
     std::optional<std::string>      providesModule;   // logical name, if .cppm export
     std::vector<std::string>        imports;           // logical names imported
+    // Unit came from a scan_overrides declaration — plan-vs-ddi
+    // verification is mandatory for it (ninja_backend emits --expect-*).
+    bool                            scanOverridden = false;
 };
 
 struct LinkUnit {
@@ -420,6 +423,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             cu.providesModule = u.provides->logicalName;
         }
         for (auto& req : u.requires_) cu.imports.push_back(req.logicalName);
+        cu.scanOverridden = u.scanOverridden;
         plan.compileUnits.push_back(std::move(cu));
     }
 

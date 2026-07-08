@@ -469,6 +469,12 @@ int run(int argc, char** argv) {
                 .help("BMI cache directory name (default: gcm.cache)"))
             .option(cl::Option("bmi-ext").takes_value().value_name("EXT")
                 .help("BMI file extension (default: .gcm)"))
+            .option(cl::Option("expect-provides").takes_value().value_name("NAME")
+                .help("(verification) planned provided module for this TU"))
+            .option(cl::Option("expect-imports").takes_value().value_name("CSV")
+                .help("(verification) planned imports for this TU, comma-separated"))
+            .option(cl::Option("expect-none")
+                .help("(verification) planner assumed no provides/imports"))
             .action(wrap_rc(cmd_dyndep)))
     ;
 

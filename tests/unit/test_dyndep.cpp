@@ -104,3 +104,33 @@ TEST(Dyndep, EmitDyndepFromFiles) {
 
     std::filesystem::remove_all(tmp);
 }
+
+// ── plan-vs-ddi reconciliation (scan_overrides auditor) ──
+
+TEST(VerifyUnitExpectations, MatchPasses) {
+    mcpp::dyndep::UnitInfo u;
+    u.primaryOutput = "obj/fmt.o";
+    u.provides = {"fmt"};
+    u.requires_ = {"std"};
+    auto err = mcpp::dyndep::verify_unit_expectations(u, "fmt", {"std"});
+    EXPECT_FALSE(err.has_value()) << *err;
+}
+
+TEST(VerifyUnitExpectations, DivergenceReportsBothSides) {
+    mcpp::dyndep::UnitInfo u;
+    u.primaryOutput = "obj/fmt.o";
+    u.provides = {"fmt"};
+    u.requires_ = {"std"};
+    auto err = mcpp::dyndep::verify_unit_expectations(u, "fmt", {});
+    ASSERT_TRUE(err.has_value());
+    EXPECT_NE(err->find("divergence"), std::string::npos);
+    EXPECT_NE(err->find("planned"), std::string::npos);
+    EXPECT_NE(err->find("std"), std::string::npos);
+}
+
+TEST(VerifyUnitExpectations, ExpectNoneMatchesEmptyUnit) {
+    mcpp::dyndep::UnitInfo u;
+    u.primaryOutput = "obj/plain.o";
+    auto err = mcpp::dyndep::verify_unit_expectations(u, std::nullopt, {});
+    EXPECT_FALSE(err.has_value());
+}

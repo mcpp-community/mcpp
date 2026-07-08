@@ -66,6 +66,18 @@ std::expected<std::string, std::string>
 emit_dyndep_single(const std::filesystem::path& ddiPath,
                    const DyndepOptions& opts = {});
 
+// Plan-vs-ddi reconciliation: compare the compiler's OWN scan of a TU
+// (the .ddi — ground truth of what phase 4 saw under real flags) against
+// the planner's assumption. Returns an error message on divergence.
+// Mandatory for scan_overrides units (an assertion needs its auditor);
+// opt-in for the rest via MCPP_VERIFY_MODGRAPH=1 (ninja_backend decides
+// at generation time). Design: .agents/docs/2026-07-08-scanner-backend-
+// abstraction-design.md §3d.
+std::optional<std::string>
+verify_unit_expectations(const UnitInfo& actual,
+                         const std::optional<std::string>& expectProvides,
+                         const std::vector<std::string>&   expectImports);
+
 } // namespace mcpp::dyndep
 
 namespace mcpp::dyndep {
@@ -325,6 +337,36 @@ emit_dyndep_single(const std::filesystem::path& ddiPath,
         out += line;
     }
     return out;
+}
+
+
+std::optional<std::string>
+verify_unit_expectations(const UnitInfo& actual,
+                         const std::optional<std::string>& expectProvides,
+                         const std::vector<std::string>&   expectImports)
+{
+    std::set<std::string> act_p(actual.provides.begin(), actual.provides.end());
+    std::set<std::string> exp_p;
+    if (expectProvides && !expectProvides->empty()) exp_p.insert(*expectProvides);
+    std::set<std::string> act_r(actual.requires_.begin(), actual.requires_.end());
+    std::set<std::string> exp_r(expectImports.begin(), expectImports.end());
+
+    if (act_p == exp_p && act_r == exp_r) return std::nullopt;
+
+    auto join = [](const std::set<std::string>& s) {
+        std::string out;
+        for (auto& v : s) { if (!out.empty()) out += ", "; out += v; }
+        return out.empty() ? std::string("<none>") : out;
+    };
+    return std::format(
+        "module-graph divergence in {}:\n"
+        "  planned : provides [{}] imports [{}]\n"
+        "  compiler: provides [{}] imports [{}]\n"
+        "  The compiler's P1689 scan disagrees with the planner's assumption\n"
+        "  (stale scan_overrides declaration, or a conditional/include-carried\n"
+        "  import). Fix the declaration or the source.",
+        actual.primaryOutput.string(),
+        join(exp_p), join(exp_r), join(act_p), join(act_r));
 }
 
 } // namespace mcpp::dyndep

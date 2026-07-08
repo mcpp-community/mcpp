@@ -314,7 +314,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // P1: per-file dyndep rule. Converts one .ddi → .dd independently.
     append(std::format(
         "rule cxx_dyndep\n"
-        "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} --output $out $in\n"
+        "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} $expect --output $out $in\n"
         "  description = DYNDEP $out\n"
         "  restat = 1\n\n",
         traits.bmiDir, traits.bmiExt));
@@ -502,10 +502,42 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // invalidates that file's .dd and its compile edge, not all edges.
         // Map ddi path → dd path for Phase 3 reference.
         std::map<std::string, std::string> ddi_to_dd;
+        // Plan-vs-ddi reconciliation (design 2026-07-08 scanner doc §3d):
+        // scan_overrides units ALWAYS carry their planned (provides, imports)
+        // on the dyndep edge — the compiler's own P1689 scan audits the
+        // author's assertion, per TU, failing the edge on divergence.
+        // MCPP_VERIFY_MODGRAPH=1 (read at generation time) extends the
+        // check to every module unit.
+        const bool verifyAll = [] {
+            const char* v = std::getenv("MCPP_VERIFY_MODGRAPH");
+            return v && std::string_view(v) == "1";
+        }();
+        std::map<std::string, std::string> ddi_expect;
+        for (auto& cu : plan.compileUnits) {
+            if (is_c_source(cu.source)) continue;
+            if (!cu.scanOverridden && !verifyAll) continue;
+            auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
+            std::string exp;
+            if (cu.providesModule)
+                exp += std::format("--expect-provides {}", *cu.providesModule);
+            if (!cu.imports.empty()) {
+                std::string csv;
+                for (auto& m : cu.imports) {
+                    if (!csv.empty()) csv += ",";
+                    csv += m;
+                }
+                if (!exp.empty()) exp += " ";
+                exp += std::format("--expect-imports {}", csv);
+            }
+            if (exp.empty()) exp = "--expect-none";
+            ddi_expect[ddi] = std::move(exp);
+        }
         for (auto& ddi : ddi_paths) {
             auto dd = ddi + ".dd";   // e.g. obj/cli.cppm.ddi.dd
             ddi_to_dd[ddi] = dd;
             append(std::format("build {} : cxx_dyndep {}\n", dd, ddi));
+            if (auto it = ddi_expect.find(ddi); it != ddi_expect.end())
+                append(std::format("  expect = {}\n", it->second));
         }
         append("\n");
 

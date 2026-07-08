@@ -182,6 +182,35 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
             std::println(stderr, "error: --single requires exactly one .ddi input");
             return 2;
         }
+        // Plan-vs-ddi reconciliation: when the generator declared what the
+        // planner assumed for this TU, compare against the compiler's own
+        // scan and fail the edge on divergence (mandatory for
+        // scan_overrides units; opt-in elsewhere via MCPP_VERIFY_MODGRAPH).
+        std::string expProvides = parsed.option_or_empty("expect-provides").value();
+        std::string expImports  = parsed.option_or_empty("expect-imports").value();
+        if (!expProvides.empty() || !expImports.empty() ||
+            parsed.is_flag_set("expect-none")) {
+            std::ifstream is{std::filesystem::path{parsed.positional(0)}};
+            std::string ddiBody{std::istreambuf_iterator<char>(is), {}};
+            auto unit = mcpp::dyndep::parse_ddi(ddiBody);
+            if (!unit) {
+                std::println(stderr, "error: {}: {}", parsed.positional(0), unit.error());
+                return 1;
+            }
+            std::optional<std::string> ep;
+            if (!expProvides.empty()) ep = expProvides;
+            std::vector<std::string> ei;
+            for (std::size_t b = 0; b < expImports.size();) {
+                auto e = expImports.find(',', b);
+                if (e == std::string::npos) e = expImports.size();
+                if (e > b) ei.emplace_back(expImports.substr(b, e - b));
+                b = e + 1;
+            }
+            if (auto err = mcpp::dyndep::verify_unit_expectations(*unit, ep, ei)) {
+                std::println(stderr, "error: {}", *err);
+                return 1;
+            }
+        }
         body = mcpp::dyndep::emit_dyndep_single(parsed.positional(0), opts);
     } else {
         std::vector<std::filesystem::path> ddis;
