@@ -25,7 +25,18 @@ train (seam documented, deferred until demanded).
 | W3 scan_overrides | ✅ done (ea7ea43) | fmt WITHOUT generated_files builds + tests green end-to-end |
 | W4 ddi reconciliation | ✅ done (9211fd4) | negative test: omitted imports={std} → DYNDEP fails with planned-vs-compiler delta |
 | W5 index floor | ✅ done (94e4c6b) | E0006 + upgrade hint + once-per-index; ignore hatch; 9.9.9/0.0.84 e2e. Deviation: staged-unpack lives in vendored xlings → follow-up there; open-time check is the mcpp-side enforcement |
-| W6 release 0.0.85 | 🔄 in progress | version bumped; docs/05 scan_overrides section; key e2e green |
+| W6 release 0.0.85 | 🔄 PR #200 open, CI running | version bumped; docs/05 scan_overrides section; key e2e green |
+
+Findings during W6 hardening (both fixed in PR #200):
+- **Corpus dry-run of strict lint over all 42 mcpp-index descriptors** caught:
+  single-quoted version keys invisible to list_xpkg_versions (real bug —
+  tensorvia had NO visible versions); platform sub-tables misread as unknown
+  keys; Form A descriptors failing on the missing segment. 42/42 now pass.
+- **GCC 15 partition bug**: module partitions drop implicit template
+  instantiations of module-attached types at the aarch64 cross link; the
+  manifest split became three separate modules + umbrella (same API).
+
+| P1..P3 prepared | see mcpp-index adoption plan progress table | branches feat/index-floor-0.0.85 (2523dd9), feat/long-bracket-migrations (7f1e624) |
 | P0 merge PR #63 | pending maintainer | tested locally 2026-07-08, green on 0.0.81 |
 | P1 index floor PR | pending (after 0.0.85 release) | |
 | P2 fmt → scan_overrides | ✅ validated locally only (per instruction: user's PR untouched) | override descriptor kept out of tree |
