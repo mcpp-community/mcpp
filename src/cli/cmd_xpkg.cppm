@@ -95,6 +95,22 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 1;
     }
 
+    // Form A descriptors carry no `mcpp = {}` table — build info comes
+    // from the fetched source's own mcpp.toml. Nothing further to parse.
+    auto field = mcpp::manifest::extract_mcpp_field(lua);
+    if (field.kind != mcpp::manifest::McppField::TableBody) {
+        if (asJson) {
+            std::println("{{\"namespace\":\"{}\",\"name\":\"{}\",\"form\":\"A\"}}",
+                         json_escape(id.ns), json_escape(id.name));
+        } else {
+            std::println("package    {} (namespace '{}')", fqn, id.ns);
+            std::println("form       A — no mcpp segment (build info from the "
+                         "source's mcpp.toml)");
+            std::println("parse OK");
+        }
+        return 0;
+    }
+
     // The parse users get at build time — same function, same grammar.
     auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, fqn, anyVersion);
     if (!m) {

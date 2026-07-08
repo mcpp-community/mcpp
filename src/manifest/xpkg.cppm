@@ -702,11 +702,12 @@ list_xpkg_versions(std::string_view luaContent, std::string_view platform) {
         if (text[q] == '[') {
             std::size_t r = q + 1;
             while (r < plat_end && (text[r] == ' ' || text[r] == '\t')) ++r;
-            if (r < plat_end && text[r] == '"') {
+            if (r < plat_end && (text[r] == '"' || text[r] == '\'')) {
+                const char quote = text[r];
                 ++r;
                 std::size_t key_start = r;
-                while (r < plat_end && text[r] != '"' && text[r] != '\n') ++r;
-                if (r < plat_end && text[r] == '"') {
+                while (r < plat_end && text[r] != quote && text[r] != '\n') ++r;
+                if (r < plat_end && text[r] == quote) {
                     versions.emplace_back(luaContent.substr(key_start, r - key_start));
                 }
             }
@@ -1181,6 +1182,12 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');
+        }
+        else if (key == "linux" || key == "macosx" || key == "windows") {
+            // Per-platform sub-table. The CURRENT platform's body was already
+            // appended to the segment before this loop (see above), so every
+            // spelling here is a known key: skip the table itself.
+            if (cur.peek() == '{') cur.skip_table();
         }
         else if (key == "schema") {
             // Descriptor schema tag (e.g. "0.1") — accepted, currently
