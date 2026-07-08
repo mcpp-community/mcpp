@@ -386,35 +386,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                   + " -Wl,-load_hidden," + escape_path(libcxxAbiA);
             }
         }
-        // TestBinary: link the toolchain's OWN libc++, dynamically. Tests
-        // previously took the SYSTEM -lc++ while compiling against the
+        // TestBinary: SAME static -load_hidden libc++ as distributables.
+        // Tests previously took the SYSTEM -lc++ while compiling against the
         // toolchain's libc++ HEADERS — a header/dylib version split that
         // detonated when libc++ 22 moved string hashing out of line
-        // (undefined __hash_memory against Apple's older dylib, 2026-07-08).
-        // Tests are host-only by definition, so an rpath into the toolchain
-        // registry is fine here in a way it isn't for distributables:
-        // same-version headers and dylib by construction, and dynamic
-        // teardown avoids the static-destruction SIGABRT that motivated the
-        // system-lib exception in the first place (gtest's main has no _Exit
-        // guard). Falls back to the system -lc++ when the toolchain ships no
-        // dylib. Design: .agents/docs/2026-07-08-root-cause-remediation-design.md A1.
+        // (undefined __hash_memory, 2026-07-08). The dynamic alternative
+        // (toolchain libc++.dylib + rpath) is a dead end with this
+        // distribution: its abi/unwind dylibs upward-link /usr/lib/libc++,
+        // so the SYSTEM libc++ still loads next to the toolchain's and
+        // gtest's initializers freed across the two copies
+        // (BUG_IN_CLIENT_OF_LIBMALLOC, CI crash forensics rounds 5-6).
+        // Static hidden archives keep exactly ONE libc++, inside the
+        // binary — the same already-proven shape mcpp/xlings ship with.
+        // Design: .agents/docs/2026-07-08-root-cause-remediation-design.md A1.
         if (!llvmRootForStdlib.empty()) {
-            auto libDir = llvmRootForStdlib / "lib";
-            if (std::filesystem::exists(libDir / "libc++.dylib")
-                || std::filesystem::exists(libDir / "libc++.1.dylib")) {
-                // Link the dylibs BY PATH, not -l: with libc++.a and
-                // libc++.dylib side by side in libDir, -l resolution pulled
-                // part of the ARCHIVE into the binary alongside the dylib —
-                // two libc++ global states in one process, and every exit
-                // aborted in locale::~locale with
-                // BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED (CI crash
-                // report, round 5). A concrete dylib file path has no
-                // search ambiguity. -lc++abi stays (this distribution's
-                // libc++ does not reexport the abi — round 2).
-                f.ldStdlibTest = " -nostdlib++ "
-                               + escape_path(libDir / "libc++.1.dylib")
-                               + " " + escape_path(libDir / "libc++abi.1.dylib")
-                               + " -Wl,-rpath," + escape_path(libDir);
+            auto libDir     = llvmRootForStdlib / "lib";
+            auto libcxxA    = libDir / "libc++.a";
+            auto libcxxAbiA = libDir / "libc++abi.a";
+            if (std::filesystem::exists(libcxxA)
+                && std::filesystem::exists(libcxxAbiA)) {
+                f.ldStdlibTest = " -nostdlib++"
+                    " -Wl,-load_hidden," + escape_path(libcxxA)
+                  + " -Wl,-load_hidden," + escape_path(libcxxAbiA);
             }
         }
         std::string version_min;
