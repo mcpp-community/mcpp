@@ -1440,3 +1440,77 @@ package = {
     EXPECT_EQ(m->xpkgUnknownKeys[0], "bogus_key");
     EXPECT_EQ(m->xpkgUnknownKeys[1], "future_table");
 }
+
+// ── scan_overrides: author-asserted scan results ──
+// Design: .agents/docs/2026-07-08-scanner-backend-abstraction-design.md §3-pre
+
+TEST(ScanOverrides, XpkgSegmentParses) {
+    constexpr auto lua = R"(
+package = {
+    spec = "1",
+    namespace = "fmtlib",
+    name = "fmtlib.fmt",
+    xpm  = { linux = { ["12.2.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources  = { "*/src/fmt.cc" },
+        cxxflags = { "-DFMT_IMPORT_STD" },
+        scan_overrides = {
+            ["*/src/fmt.cc"] = { provides = { "fmt" }, imports = { "std" } },
+        },
+        targets  = { ["fmt"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "fmtlib.fmt", "12.2.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->modules.scanOverrides.size(), 1u);
+    auto& ov = m->modules.scanOverrides.at("*/src/fmt.cc");
+    ASSERT_EQ(ov.provides.size(), 1u);
+    EXPECT_EQ(ov.provides[0], "fmt");
+    ASSERT_EQ(ov.imports.size(), 1u);
+    EXPECT_EQ(ov.imports[0], "std");
+    EXPECT_TRUE(m->xpkgUnknownKeys.empty());
+}
+
+TEST(ScanOverrides, XpkgRejectsEmptyDeclaration) {
+    constexpr auto lua = R"(
+package = {
+    spec = "1",
+    name = "so",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "a.cc" },
+        scan_overrides = { ["a.cc"] = { } },
+        targets = { ["so"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "so", "1.0.0");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("neither provides nor imports"),
+              std::string::npos) << m.error().format();
+}
+
+TEST(ScanOverrides, TomlParses) {
+    constexpr auto src = R"(
+[package]
+name = "app"
+version = "0.1.0"
+[language]
+standard = "c++23"
+[modules]
+sources = ["src/**/*.cppm", "vendor/fmt.cc"]
+["scan_overrides"."vendor/fmt.cc"]
+provides = ["fmt"]
+imports  = ["std"]
+[targets.app]
+kind = "bin"
+main = "src/main.cpp"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->modules.scanOverrides.size(), 1u);
+    auto& ov = m->modules.scanOverrides.at("vendor/fmt.cc");
+    EXPECT_EQ(ov.provides, std::vector<std::string>{"fmt"});
+    EXPECT_EQ(ov.imports,  std::vector<std::string>{"std"});
+}

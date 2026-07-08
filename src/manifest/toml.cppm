@@ -191,6 +191,42 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (cval.is_string()) m.capabilityPins[cap] = cval.as_string();
     }
 
+    // [scan_overrides."<glob>"] — author-asserted scan results (see
+    // manifest:types ScanOverride). provides/imports are string arrays.
+    if (auto* so_table = doc->get_table("scan_overrides");
+        so_table && !so_table->empty()) {
+        for (auto& [glob, val] : *so_table) {
+            if (!val.is_table()) {
+                return std::unexpected(error(origin,
+                    std::format("[scan_overrides.\"{}\"] must be a table", glob)));
+            }
+            manifest::ScanOverride ov;
+            auto& st = val.as_table();
+            auto read_names = [&](const char* key, std::vector<std::string>& out)
+                -> std::optional<std::string> {
+                auto it = st.find(key);
+                if (it == st.end()) return std::nullopt;
+                if (!it->second.is_array())
+                    return std::format("scan_overrides.\"{}\".{} must be an array", glob, key);
+                for (auto& v : it->second.as_array()) {
+                    if (!v.is_string() || v.as_string().empty())
+                        return std::format("scan_overrides.\"{}\".{} entries must be non-empty strings", glob, key);
+                    out.push_back(v.as_string());
+                }
+                return std::nullopt;
+            };
+            if (auto msg = read_names("provides", ov.provides))
+                return std::unexpected(error(origin, *msg));
+            if (auto msg = read_names("imports", ov.imports))
+                return std::unexpected(error(origin, *msg));
+            if (ov.provides.empty() && ov.imports.empty()) {
+                return std::unexpected(error(origin, std::format(
+                    "scan_overrides.\"{}\" declares neither provides nor imports", glob)));
+            }
+            m.modules.scanOverrides.emplace(glob, std::move(ov));
+        }
+    }
+
     auto* targets_table = doc->get_table("targets");
     if (targets_table && !targets_table->empty()) {
     for (auto& [tname, tval] : *targets_table) {

@@ -1123,6 +1123,65 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 rc.skip_ws_and_comments();
             }
         }
+        else if (key == "scan_overrides") {
+            // `{ ["glob"] = { provides = { "m" }, imports = { "std" } }, ... }`
+            // Author-asserted scan results (manifest:types ScanOverride):
+            // matched files bypass the M1 text scan; verified against the
+            // compiler's P1689 output at build time.
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `scan_overrides =`", m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto glob = cur.read_key();
+                if (glob.empty()) break;
+                cur.skip_ws_and_comments();
+                if (!cur.consume('=') || !cur.consume('{')) {
+                    return std::unexpected(ManifestError{
+                        std::format("malformed scan_overrides entry '{}'", glob),
+                        m.sourcePath, 0, 0});
+                }
+                ScanOverride ov;
+                cur.skip_ws_and_comments();
+                while (!cur.eof() && cur.peek() != '}') {
+                    auto sub = cur.read_key();
+                    cur.skip_ws_and_comments();
+                    if (sub.empty() || !cur.consume('=')) break;
+                    cur.skip_ws_and_comments();
+                    std::vector<std::string>* arr =
+                        sub == "provides" ? &ov.provides
+                      : sub == "imports"  ? &ov.imports
+                      : nullptr;
+                    if (arr && cur.peek() == '{') {
+                        cur.consume('{');
+                        cur.skip_ws_and_comments();
+                        while (!cur.eof() && cur.peek() != '}') {
+                            auto s = cur.read_string();
+                            if (!s.empty()) arr->push_back(std::move(s));
+                            cur.skip_ws_and_comments();
+                        }
+                        cur.consume('}');
+                    } else {
+                        return std::unexpected(ManifestError{
+                            std::format("scan_overrides '{}': unknown subfield '{}' "
+                                        "(expected provides / imports)", glob, sub),
+                            m.sourcePath, 0, 0});
+                    }
+                    cur.skip_ws_and_comments();
+                }
+                cur.consume('}');
+                if (ov.provides.empty() && ov.imports.empty()) {
+                    return std::unexpected(ManifestError{
+                        std::format("scan_overrides '{}' declares neither provides "
+                                    "nor imports", glob),
+                        m.sourcePath, 0, 0});
+                }
+                m.modules.scanOverrides.emplace(std::move(glob), std::move(ov));
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
         else if (key == "schema") {
             // Descriptor schema tag (e.g. "0.1") — accepted, currently
             // informational only.

@@ -439,7 +439,45 @@ void scan_one_into(ScanResult& result,
         manifest.package.namespace_.empty()
             ? manifest.package.name
             : manifest.package.namespace_ + "." + manifest.package.name;
+    // scan_overrides: author-asserted units bypass the text scan entirely.
+    // Every override glob must match at least one collected source file —
+    // an unmatched glob is a typo or a stale declaration, not a no-op.
+    std::map<std::string, int> overrideHits;
+    for (auto const& [glob, ov] : manifest.modules.scanOverrides)
+        overrideHits[glob] = 0;
+
     for (auto const& f : all_files) {
+        const mcpp::manifest::ScanOverride* ov = nullptr;
+        for (auto const& [glob, o] : manifest.modules.scanOverrides) {
+            if (path_matches_glob(f, root, glob)) {
+                ov = &o;
+                ++overrideHits[glob];
+                break;
+            }
+        }
+        if (ov) {
+            SourceUnit u;
+            u.path           = f;
+            u.packageName    = qualifiedName;
+            u.scanOverridden = true;
+            if (!ov->provides.empty()) {
+                u.provides          = ModuleId{ov->provides.front()};
+                u.isModuleInterface = true;
+                if (ov->provides.size() > 1) {
+                    result.errors.push_back(ScanError{f, 0,
+                        "scan_overrides: a unit may declare at most one "
+                        "provided module"});
+                    continue;
+                }
+            }
+            for (auto const& name : ov->imports)
+                u.requires_.push_back(ModuleId{name});
+            u.localIncludeDirs = localIncludeDirs;
+            u.packageCflags    = packageCflags;
+            u.packageCxxflags  = packageCxxflags;
+            result.graph.units.push_back(std::move(u));
+            continue;
+        }
         auto r = scan_file(f, qualifiedName);
         if (!r) {
             result.errors.push_back(r.error());
@@ -449,6 +487,14 @@ void scan_one_into(ScanResult& result,
         r->packageCflags = packageCflags;
         r->packageCxxflags = packageCxxflags;
         result.graph.units.push_back(std::move(*r));
+    }
+
+    for (auto const& [glob, hits] : overrideHits) {
+        if (hits == 0) {
+            result.errors.push_back(ScanError{root, 0, std::format(
+                "scan_overrides glob '{}' matched no source file "
+                "(typo, or the glob is not covered by `sources`)", glob)});
+        }
     }
 }
 

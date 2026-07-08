@@ -22,6 +22,9 @@ struct SourceUnit {
     std::vector<ModuleId>           requires_;
     bool                            isModuleInterface = false;   // .cppm with export module
     bool                            isImplementation   = false;   // .cpp without export
+    // Unit built from a manifest scan_overrides declaration instead of a
+    // real scan — plan-vs-ddi verification is mandatory for these.
+    bool                            scanOverridden     = false;
 };
 
 struct Graph {

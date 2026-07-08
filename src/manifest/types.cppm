@@ -49,10 +49,23 @@ struct Language {
     bool                        importStd = true;
 };
 
+// Author-asserted scan result for one source glob (scan_overrides).
+// Files matched by the glob bypass the M1 text scan entirely; the declared
+// (provides, imports) enter the module graph directly. Sound because the
+// declaration is verified against the compiler's own P1689 (.ddi) output
+// at build time — assertion + verification instead of computation.
+// Design: .agents/docs/2026-07-08-scanner-backend-abstraction-design.md §3-pre.
+struct ScanOverride {
+    std::vector<std::string> provides;   // module logical names the file exports
+    std::vector<std::string> imports;    // module logical names the file imports
+};
+
 struct Modules {
     std::vector<std::string>    sources;        // glob patterns
     std::vector<std::string>    exports_;       // declared module names (optional)
     bool                        strict = false;
+    // glob → declared scan result; every glob must match ≥1 source file.
+    std::map<std::string, ScanOverride> scanOverrides;
 };
 
 struct Target {
