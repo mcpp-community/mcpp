@@ -15,6 +15,25 @@ train (seam documented, deferred until demanded).
 
 ---
 
+## 0. PROGRESS (live, updated as the train executes)
+
+| Item | Status | Evidence |
+|---|---|---|
+| W1 long brackets | ✅ done (b6c5793) | 4 unit tests; fmt descriptor in `[==[ ]==]` form parses + member test green |
+| W2 xpkg parse | ✅ done (0b2b9b9) | strict IS default (unknown key → exit 1; `--allow-unknown` downgrades); e2e 93; `--json` parity vs lua5.4 = byte-identical |
+| (extra) manifest split | ✅ done (bc24f8e) | :types/:toml/:xpkg partitions, API unchanged, suite green |
+| W3 scan_overrides | ✅ done (ea7ea43) | fmt WITHOUT generated_files builds + tests green end-to-end |
+| W4 ddi reconciliation | ✅ done (9211fd4) | negative test: omitted imports={std} → DYNDEP fails with planned-vs-compiler delta |
+| W5 index floor | ✅ done (94e4c6b) | E0006 + upgrade hint + once-per-index; ignore hatch; 9.9.9/0.0.84 e2e. Deviation: staged-unpack lives in vendored xlings → follow-up there; open-time check is the mcpp-side enforcement |
+| W6 release 0.0.85 | 🔄 in progress | version bumped; docs/05 scan_overrides section; key e2e green |
+| P0 merge PR #63 | pending maintainer | tested locally 2026-07-08, green on 0.0.81 |
+| P1 index floor PR | pending (after 0.0.85 release) | |
+| P2 fmt → scan_overrides | ✅ validated locally only (per instruction: user's PR untouched) | override descriptor kept out of tree |
+| P3/P4 migrations + docs | pending (after P1) | |
+
+Decision taken during execution (user-directed): `--strict` semantics are the
+DEFAULT of `xpkg parse`; the escape flag is `--allow-unknown`.
+
 ## 1. Work breakdown — repo `mcpp` (release 0.0.85)
 
 | # | Item | Design ref | Depends on |
