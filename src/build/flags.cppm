@@ -402,11 +402,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             auto libDir = llvmRootForStdlib / "lib";
             if (std::filesystem::exists(libDir / "libc++.dylib")
                 || std::filesystem::exists(libDir / "libc++.1.dylib")) {
-                // -lc++abi is REQUIRED with this llvm distribution: its
-                // libc++.dylib does not reexport the abi (round 2 linked
-                // without it and died on undefined __cxa_* / operator new).
-                f.ldStdlibTest = " -nostdlib++ -L" + escape_path(libDir)
-                               + " -lc++ -lc++abi"
+                // Link the dylibs BY PATH, not -l: with libc++.a and
+                // libc++.dylib side by side in libDir, -l resolution pulled
+                // part of the ARCHIVE into the binary alongside the dylib —
+                // two libc++ global states in one process, and every exit
+                // aborted in locale::~locale with
+                // BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED (CI crash
+                // report, round 5). A concrete dylib file path has no
+                // search ambiguity. -lc++abi stays (this distribution's
+                // libc++ does not reexport the abi — round 2).
+                f.ldStdlibTest = " -nostdlib++ "
+                               + escape_path(libDir / "libc++.1.dylib")
+                               + " " + escape_path(libDir / "libc++abi.1.dylib")
                                + " -Wl,-rpath," + escape_path(libDir);
             }
         }

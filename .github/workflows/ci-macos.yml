@@ -346,6 +346,8 @@ jobs:
           [ -n "$BIN" ] || exit 0
           echo "--- otool -L ---";  otool -L "$BIN" || true
           echo "--- rpaths ---";    otool -l "$BIN" | grep -A2 LC_RPATH || true
+          echo "--- statically embedded libc++? ---"
+          nm "$BIN" 2>/dev/null | grep -cE "T __ZNSt3__1" || echo "0 (good: no libc++ code in binary)"
           echo "--- direct run ---"
           set +e
           "$BIN" > run.out 2>&1
