@@ -339,6 +339,17 @@ jobs:
           "$MCPP" self config --mirror GLOBAL
           "$MCPP" test
 
+      - name: Forensics — test-binary link + load state (on failure)
+        if: failure()
+        run: |
+          BIN=$(find target -path "*/bin/test_manifest" | head -1)
+          echo "binary: $BIN"
+          [ -n "$BIN" ] || exit 0
+          echo "--- otool -L ---";  otool -L "$BIN" || true
+          echo "--- rpaths ---";    otool -l "$BIN" | grep -A2 LC_RPATH || true
+          echo "--- direct run ---"
+          "$BIN" 2>&1 | head -20 || echo "exit=$?"
+
       - name: E2E suite
         # See ci-linux.yml — fail-fast on hung tests instead of burning the
         # whole job budget. Per-test 600s timeout lives in run_all.sh.

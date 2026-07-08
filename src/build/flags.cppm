@@ -402,13 +402,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             auto libDir = llvmRootForStdlib / "lib";
             if (std::filesystem::exists(libDir / "libc++.dylib")
                 || std::filesystem::exists(libDir / "libc++.1.dylib")) {
-                // No explicit -lc++abi: libc++.1.dylib reexports its abi,
-                // and adding the abi dylib EXPLICITLY next to the system one
-                // (pulled in transitively by macOS frameworks) doubles the
-                // __cxa_* runtime state — every binary aborted at load
-                // (SIGABRT before main) on the first CI round of this fix.
+                // -lc++abi is REQUIRED with this llvm distribution: its
+                // libc++.dylib does not reexport the abi (round 2 linked
+                // without it and died on undefined __cxa_* / operator new).
                 f.ldStdlibTest = " -nostdlib++ -L" + escape_path(libDir)
-                               + " -lc++"
+                               + " -lc++ -lc++abi"
                                + " -Wl,-rpath," + escape_path(libDir);
             }
         }
