@@ -18,7 +18,7 @@ include_dirs = ["src/libs/json"]
 
 [toolchain]
 default = "gcc@16.1.0"
-macos   = "llvm@20.1.7"
+macos   = "llvm@22.1.8"
 windows = "llvm@20.1.7"
 
 # Per-target overrides: `mcpp build --target x86_64-linux-musl` (or the

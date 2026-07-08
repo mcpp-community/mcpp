@@ -351,10 +351,26 @@ jobs:
           "$BIN" > run.out 2>&1
           echo "exit=$?"
           head -20 run.out
-          sleep 3
-          echo "--- newest crash report ---"
+          sleep 5
+          echo "--- newest crash report (termination) ---"
           CR=$(ls -t "$HOME/Library/Logs/DiagnosticReports"/*.ips 2>/dev/null | head -1)
-          [ -n "$CR" ] && head -c 4000 "$CR" || echo "none"
+          if [ -n "$CR" ]; then
+            python3 - "$CR" <<'PY'
+          import json, sys
+          lines = open(sys.argv[1]).read().splitlines()
+          meta = json.loads(lines[0]); body = json.loads("\n".join(lines[1:]))
+          print("proc:", meta.get("app_name"), "| exc:", body.get("exception", {}))
+          print("termination:", body.get("termination", {}))
+          t = [th for th in body.get("threads", []) if th.get("triggered")]
+          for fr in (t[0].get("frames", [])[:12] if t else []):
+              print("  ", fr.get("imageIndex"), fr.get("symbol", fr.get("imageOffset")))
+          imgs = body.get("usedImages", [])
+          for i, im in enumerate(imgs[:12]):
+              print("img", i, im.get("path"))
+          PY
+          else
+            echo "none"
+          fi
 
       - name: E2E suite
         # See ci-linux.yml — fail-fast on hung tests instead of burning the
