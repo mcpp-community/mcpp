@@ -286,11 +286,10 @@ jobs:
 
       - name: Configure dev mcpp sandbox to reuse xlings LLVM
         run: |
-          # Discover whatever LLVM version `xlings install llvm` provided —
-          # hardcoding it (20.1.7) broke the job the day xlings bumped its
-          # default to 22.1.8.
-          LLVM_PKG=$(ls -d "$HOME/.xlings/data/xpkgs/xim-x-llvm"/*/ 2>/dev/null | head -1)
-          LLVM_PKG="${LLVM_PKG%/}"
+          # Use EXACTLY the LLVM the install step resolved (env LLVM_ROOT) —
+          # a version-glob pick chose a stale cached 20.1.7 next to the
+          # freshly installed 22.1.8 and silently tested the wrong toolchain.
+          LLVM_PKG="$LLVM_ROOT"
           test -d "$LLVM_PKG"
           LLVM_VER=$(basename "$LLVM_PKG")
           echo "MCPP_LLVM_VER=$LLVM_VER" >> "$GITHUB_ENV"
@@ -348,7 +347,14 @@ jobs:
           echo "--- otool -L ---";  otool -L "$BIN" || true
           echo "--- rpaths ---";    otool -l "$BIN" | grep -A2 LC_RPATH || true
           echo "--- direct run ---"
-          "$BIN" 2>&1 | head -20 || echo "exit=$?"
+          set +e
+          "$BIN" > run.out 2>&1
+          echo "exit=$?"
+          head -20 run.out
+          sleep 3
+          echo "--- newest crash report ---"
+          CR=$(ls -t "$HOME/Library/Logs/DiagnosticReports"/*.ips 2>/dev/null | head -1)
+          [ -n "$CR" ] && head -c 4000 "$CR" || echo "none"
 
       - name: E2E suite
         # See ci-linux.yml — fail-fast on hung tests instead of burning the
