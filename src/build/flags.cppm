@@ -35,10 +35,11 @@ struct CompileFlags {
     std::string linkage;  // "static" or ""
     // macOS per-unit C++ stdlib link (appended via unit_ldflags):
     // distributable targets get the static LLVM libc++ (portable across
-    // macOS versions), TestBinary targets get the system -lc++ — they
-    // only ever run on the build host, and statically linked libc++
-    // SIGABRTs during static destruction unless the entry point guards
-    // with _Exit (mcpp/xlings do; gtest main does not). Empty on other
+    // macOS versions); TestBinary targets get the toolchain's own libc++
+    // DYNAMICALLY (-L + -lc++ + rpath into the toolchain) — host-only
+    // binaries, so the rpath is fine, and it keeps headers and dylib the
+    // same version (the system -lc++ they used before was a version split
+    // that broke on libc++ 22's out-of-line __hash_memory). Empty on other
     // platforms (stdlib handled by their existing paths).
     std::string ldStdlibDefault;
     std::string ldStdlibTest;
@@ -383,6 +384,27 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                 f.ldStdlibDefault = " -nostdlib++"
                     " -Wl,-load_hidden," + escape_path(libcxxA)
                   + " -Wl,-load_hidden," + escape_path(libcxxAbiA);
+            }
+        }
+        // TestBinary: link the toolchain's OWN libc++, dynamically. Tests
+        // previously took the SYSTEM -lc++ while compiling against the
+        // toolchain's libc++ HEADERS — a header/dylib version split that
+        // detonated when libc++ 22 moved string hashing out of line
+        // (undefined __hash_memory against Apple's older dylib, 2026-07-08).
+        // Tests are host-only by definition, so an rpath into the toolchain
+        // registry is fine here in a way it isn't for distributables:
+        // same-version headers and dylib by construction, and dynamic
+        // teardown avoids the static-destruction SIGABRT that motivated the
+        // system-lib exception in the first place (gtest's main has no _Exit
+        // guard). Falls back to the system -lc++ when the toolchain ships no
+        // dylib. Design: .agents/docs/2026-07-08-root-cause-remediation-design.md A1.
+        if (!llvmRootForStdlib.empty()) {
+            auto libDir = llvmRootForStdlib / "lib";
+            if (std::filesystem::exists(libDir / "libc++.dylib")
+                || std::filesystem::exists(libDir / "libc++.1.dylib")) {
+                f.ldStdlibTest = " -nostdlib++ -L" + escape_path(libDir)
+                               + " -lc++ -lc++abi"
+                               + " -Wl,-rpath," + escape_path(libDir);
             }
         }
         std::string version_min;

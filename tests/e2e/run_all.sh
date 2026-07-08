@@ -58,7 +58,7 @@ case "$OS" in
         fi
         ;;
     Darwin)
-        CAPS+=(unix-shell fresh-sandbox)
+        CAPS+=(unix-shell fresh-sandbox macos)
         # macOS g++ is Apple Clang, not real GCC — don't add gcc capability.
         # Tests requiring gcc need actual GNU GCC (modules, gcm.cache, etc.)
         ;;
