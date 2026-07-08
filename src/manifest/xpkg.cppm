@@ -1,9 +1,9 @@
 // mcpp.manifest:xpkg — parse the `mcpp = {}` segment of xpkg .lua
 // descriptors (tiny Lua-subset reader; we never execute Lua).
 
-export module mcpp.manifest:xpkg;
+export module mcpp.manifest.xpkg;
 
-import :types;
+import mcpp.manifest.types;
 import std;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;

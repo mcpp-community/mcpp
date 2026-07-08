@@ -3,7 +3,7 @@
 // Everything both descriptor formats (mcpp.toml, xpkg .lua) synthesize
 // into, plus format-agnostic helpers. No parsing lives here.
 
-export module mcpp.manifest:types;
+export module mcpp.manifest.types;
 
 import std;
 import mcpp.pm.dep_spec;     // M5.x pm/ subsystem refactor: DependencySpec lives here
@@ -401,8 +401,9 @@ bool has_lib_target(const Manifest& manifest);
 
 } // namespace mcpp::manifest
 
-// ── module-linkage helpers shared by the :toml and :xpkg parsers ──
-namespace mcpp::manifest {
+// ── helpers shared by the toml and xpkg parsers (exported: separate
+//    modules need them reachable; they live in the manifest namespace) ──
+export namespace mcpp::manifest {
 
 bool starts_with_std_flag(std::string_view flag) {
     return flag == "-std" || flag.starts_with("-std=");

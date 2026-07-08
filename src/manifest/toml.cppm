@@ -1,8 +1,8 @@
 // mcpp.manifest:toml — load and validate mcpp.toml.
 
-export module mcpp.manifest:toml;
+export module mcpp.manifest.toml;
 
-import :types;
+import mcpp.manifest.types;
 import std;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
