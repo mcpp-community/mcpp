@@ -294,6 +294,11 @@ struct Profile {
 struct Manifest {
     std::filesystem::path       sourcePath;    // mcpp.toml's filesystem path
 
+    // Unknown top-level keys silently skipped while synthesizing from an
+    // xpkg mcpp segment — surfaced as warnings by `mcpp xpkg parse` so
+    // schema evolution is loud in lint instead of invisible.
+    std::vector<std::string>    xpkgUnknownKeys;
+
     Package                     package;
     Language                    language;
     Modules                     modules;
@@ -1477,7 +1482,14 @@ struct LuaCursor {
             if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' || c == ';') {
                 ++pos;
             } else if (c == '-' && pos + 1 < text.size() && text[pos + 1] == '-') {
-                while (!eof() && peek() != '\n') ++pos;
+                // Block comment --[[…]] / --[=[…]=] spans lines; otherwise
+                // line comment to end of line.
+                if (long_bracket_level_at(pos + 2) >= 0) {
+                    pos += 2;
+                    (void)read_long_bracket();
+                } else {
+                    while (!eof() && peek() != '\n') ++pos;
+                }
             } else {
                 break;
             }
@@ -1490,8 +1502,54 @@ struct LuaCursor {
         return false;
     }
 
+    // Lua long-bracket support ([[…]], [=[…]=], …). Returns the level
+    // (number of '=' between the brackets) if `at` starts a long-bracket
+    // opening, -1 otherwise.
+    int long_bracket_level_at(std::size_t at) const {
+        if (at >= text.size() || text[at] != '[') return -1;
+        std::size_t i = at + 1;
+        int level = 0;
+        while (i < text.size() && text[i] == '=') { ++level; ++i; }
+        return (i < text.size() && text[i] == '[') ? level : -1;
+    }
+
+    // True when the next value token is a string in either spelling
+    // (quoted or long-bracket). Skips leading ws/comments like read_string.
+    bool at_string_start() {
+        skip_ws_and_comments();
+        return peek() == '"' || peek() == '\'' ||
+               long_bracket_level_at(pos) >= 0;
+    }
+
+    // Read a long-bracket string; caller ensured `pos` is at an opening.
+    // Content is verbatim (no escape processing); per Lua semantics a
+    // newline immediately after the opening bracket is skipped.
+    std::string read_long_bracket() {
+        int level = long_bracket_level_at(pos);
+        if (level < 0) return {};
+        pos += 2 + static_cast<std::size_t>(level);   // consume [=*[
+        if (pos < text.size() && (text[pos] == '\n' || text[pos] == '\r')) {
+            char first = text[pos++];
+            if (pos < text.size() && (text[pos] == '\n' || text[pos] == '\r') &&
+                text[pos] != first)
+                ++pos;                                 // \r\n / \n\r pair
+        }
+        std::string close = "]" + std::string(static_cast<std::size_t>(level), '=') + "]";
+        auto end = text.find(close, pos);
+        std::string out;
+        if (end == std::string_view::npos) {           // unterminated
+            out.assign(text.substr(pos));
+            pos = text.size();
+        } else {
+            out.assign(text.substr(pos, end - pos));
+            pos = end + close.size();
+        }
+        return out;
+    }
+
     std::string read_string() {
         skip_ws_and_comments();
+        if (long_bracket_level_at(pos) >= 0) return read_long_bracket();
         if (peek() != '"' && peek() != '\'') return {};
         char q = text[pos++];
         std::string out;
@@ -1561,8 +1619,16 @@ struct LuaCursor {
             if (c == '"' || c == '\'') {
                 read_string();
                 continue;
+            } else if (c == '[' && long_bracket_level_at(pos) >= 0) {
+                (void)read_long_bracket();
+                continue;
             } else if (c == '-' && pos + 1 < text.size() && text[pos+1] == '-') {
-                while (!eof() && peek() != '\n') ++pos;
+                if (long_bracket_level_at(pos + 2) >= 0) {
+                    pos += 2;
+                    (void)read_long_bracket();
+                } else {
+                    while (!eof() && peek() != '\n') ++pos;
+                }
                 continue;
             } else if (c == '{') { ++depth; ++pos; }
             else if (c == '}') { --depth; ++pos; }
@@ -1581,8 +1647,17 @@ struct LuaCursor {
                 read_string();
                 continue;
             }
+            if (c == '[' && long_bracket_level_at(pos) >= 0) {
+                (void)read_long_bracket();
+                continue;
+            }
             if (c == '-' && pos + 1 < text.size() && text[pos + 1] == '-') {
-                while (!eof() && peek() != '\n') ++pos;
+                if (long_bracket_level_at(pos + 2) >= 0) {
+                    pos += 2;
+                    (void)read_long_bracket();
+                } else {
+                    while (!eof() && peek() != '\n') ++pos;
+                }
                 continue;
             }
             if (c == '{') {
@@ -1627,7 +1702,7 @@ std::string top_level_table_body_for_key(std::string_view body, std::string_view
             return cur.read_table_body();
         }
         if (cur.peek() == '{') cur.skip_table();
-        else if (cur.peek() == '"' || cur.peek() == '\'') (void)cur.read_string();
+        else if (cur.at_string_start()) (void)cur.read_string();
         else (void)cur.read_bareword();
         cur.skip_ws_and_comments();
     }
@@ -1651,11 +1726,11 @@ std::string top_level_string_value_for_key(std::string_view body, std::string_vi
             continue;
         }
         cur.skip_ws_and_comments();
-        if (key == wantedKey && (cur.peek() == '"' || cur.peek() == '\'')) {
+        if (key == wantedKey && cur.at_string_start()) {
             return cur.read_string();
         }
         if (cur.peek() == '{') cur.skip_table();
-        else if (cur.peek() == '"' || cur.peek() == '\'') (void)cur.read_string();
+        else if (cur.at_string_start()) (void)cur.read_string();
         else (void)cur.read_bareword();
         cur.skip_ws_and_comments();
     }
@@ -1670,14 +1745,52 @@ std::string top_level_string_value_for_key(std::string_view body, std::string_vi
 std::string strip_lua_comments_and_strings(std::string_view text) {
     std::string out(text.size(), ' ');
     std::size_t i = 0;
+    // Long-bracket opening at `at`? Returns level (count of '='), else -1.
+    auto lb_level = [&](std::size_t at) -> int {
+        if (at >= text.size() || text[at] != '[') return -1;
+        std::size_t k = at + 1;
+        int level = 0;
+        while (k < text.size() && text[k] == '=') { ++level; ++k; }
+        return (k < text.size() && text[k] == '[') ? level : -1;
+    };
+    // Blank [begin,end) preserving newlines for line-number fidelity.
+    auto blank = [&](std::size_t begin, std::size_t end) {
+        for (std::size_t d = begin; d < end && d < text.size(); ++d)
+            out[d] = (text[d] == '\n') ? '\n' : ' ';
+    };
     while (i < text.size()) {
         char c = text[i];
-        // Line comment
+        // Comment: block (--[[…]] / --[=[…]=]) spans lines; else line comment.
         if (c == '-' && i + 1 < text.size() && text[i+1] == '-') {
+            if (int lvl = lb_level(i + 2); lvl >= 0) {
+                std::string close = "]" + std::string(static_cast<std::size_t>(lvl), '=') + "]";
+                auto end = text.find(close, i + 2 + 2 + static_cast<std::size_t>(lvl));
+                std::size_t stop = (end == std::string_view::npos)
+                                 ? text.size() : end + close.size();
+                blank(i, stop);
+                i = stop;
+                continue;
+            }
             while (i < text.size() && text[i] != '\n') {
-                // keep newlines for line-number fidelity
-                out[i] = (text[i] == '\n') ? '\n' : ' ';
+                out[i] = ' ';
                 ++i;
+            }
+            continue;
+        }
+        // Long-bracket string: keep delimiters, blank content (it may
+        // contain braces that would corrupt the structural depth count).
+        if (int lvl = lb_level(i); lvl >= 0) {
+            std::size_t openLen = 2 + static_cast<std::size_t>(lvl);
+            for (std::size_t d = 0; d < openLen; ++d) out[i + d] = text[i + d];
+            std::string close = "]" + std::string(static_cast<std::size_t>(lvl), '=') + "]";
+            auto end = text.find(close, i + openLen);
+            if (end == std::string_view::npos) {
+                blank(i + openLen, text.size());
+                i = text.size();
+            } else {
+                blank(i + openLen, end);
+                for (std::size_t d = 0; d < close.size(); ++d) out[end + d] = text[end + d];
+                i = end + close.size();
             }
             continue;
         }
@@ -2362,17 +2475,25 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         return std::unexpected(r.error());
                 } else {
                     rc.skip_ws_and_comments();
-                    if      (rc.peek() == '"' || rc.peek() == '\'') (void)rc.read_string();
+                    if      (rc.at_string_start()) (void)rc.read_string();
                     else if (rc.peek() == '{') rc.skip_table();
                     else                        (void)rc.read_bareword();
                 }
                 rc.skip_ws_and_comments();
             }
         }
+        else if (key == "schema") {
+            // Descriptor schema tag (e.g. "0.1") — accepted, currently
+            // informational only.
+            (void)cur.read_string();
+        }
         else {
-            // Unknown key — skip the value (string / bareword / table).
+            // Unknown key — skip the value (string / bareword / table), but
+            // record the key so `mcpp xpkg parse` can warn (schema evolution
+            // must be loud, not silently ignored).
+            m.xpkgUnknownKeys.push_back(key);
             cur.skip_ws_and_comments();
-            if      (cur.peek() == '"' || cur.peek() == '\'') (void)cur.read_string();
+            if      (cur.at_string_start()) (void)cur.read_string();
             else if (cur.peek() == '{') cur.skip_table();
             else                        (void)cur.read_bareword();
         }
