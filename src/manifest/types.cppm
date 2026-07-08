@@ -399,6 +399,10 @@ std::filesystem::path resolve_lib_root_path(const Manifest& manifest);
 // Lib-root convention only applies when this returns true.
 bool has_lib_target(const Manifest& manifest);
 
+
+// GCC 15 cross-link workaround anchor — see definition below.
+void force_template_instantiations();
+
 } // namespace mcpp::manifest
 
 // ── helpers shared by the toml and xpkg parsers (exported: separate
@@ -510,5 +514,31 @@ std::filesystem::path resolve_lib_root_path(const Manifest& manifest) {
     return std::filesystem::path("src") / (tail + ".cppm");
 }
 
+
+
+// ── GCC 15 cross-link workaround ────────────────────────────────────
+// GCC 15 (aarch64-linux-musl cross, xim gcc 15.1.0) does not emit
+// implicit template instantiations for std::map/... members of
+// module-attached structs in IMPORTER object files — it expects the
+// owning module to provide them. The old single-file mcpp.manifest
+// emitted them by accident (its parser code constructed every struct);
+// this non-inline, exported definition recreates that guarantee
+// deliberately. Remove once the cross toolchain floor is GCC 16.
+void force_template_instantiations() {
+    Manifest          m;
+    WorkspaceConfig   w;
+    XlingsConfig      x;
+    Modules           mo;
+    BuildConfig       bc;
+    RuntimeConfig     rc;
+    TargetEntry       te;
+    ConditionalConfig cc;
+    LibConfig         lc;
+    PackConfig        pc;
+    Profile           pr;
+    Toolchain         tc;
+    (void)m; (void)w; (void)x; (void)mo; (void)bc; (void)rc;
+    (void)te; (void)cc; (void)lc; (void)pc; (void)pr; (void)tc;
+}
 
 } // namespace mcpp::manifest
