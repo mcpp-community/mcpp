@@ -283,9 +283,15 @@ jobs:
 
       - name: Configure dev mcpp sandbox to reuse xlings LLVM
         run: |
-          LLVM_PKG="$HOME/.xlings/data/xpkgs/xim-x-llvm/20.1.7"
-          MCPP_LLVM_LINK="$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7"
+          # Discover whatever LLVM version `xlings install llvm` provided —
+          # hardcoding it (20.1.7) broke the job the day xlings bumped its
+          # default to 22.1.8.
+          LLVM_PKG=$(ls -d "$HOME/.xlings/data/xpkgs/xim-x-llvm"/*/ 2>/dev/null | head -1)
+          LLVM_PKG="${LLVM_PKG%/}"
           test -d "$LLVM_PKG"
+          LLVM_VER=$(basename "$LLVM_PKG")
+          echo "MCPP_LLVM_VER=$LLVM_VER" >> "$GITHUB_ENV"
+          MCPP_LLVM_LINK="$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm/$LLVM_VER"
           printf '1\n' > "$LLVM_PKG/.mcpp_ok"
 
           mkdir -p "$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm"
@@ -345,7 +351,7 @@ jobs:
           "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
           "$MCPP" self config
           # macOS default toolchain is LLVM
-          "$MCPP" toolchain default llvm@20.1.7
+          "$MCPP" toolchain default "llvm@${MCPP_LLVM_VER}"
           bash tests/e2e/run_all.sh
 
       - name: "Toolchain: LLVM — build mcpp (self-host)"
@@ -355,7 +361,7 @@ jobs:
           test -x "$MCPP"
           cp "$MCPP" /tmp/mcpp-fresh
           MCPP=/tmp/mcpp-fresh
-          "$MCPP" toolchain default llvm@20.1.7
+          "$MCPP" toolchain default "llvm@${MCPP_LLVM_VER}"
           "$MCPP" clean
           "$MCPP" build
           "$MCPP" --version
