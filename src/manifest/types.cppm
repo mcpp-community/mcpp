@@ -517,7 +517,10 @@ std::filesystem::path resolve_lib_root_path(const Manifest& manifest) {
 
 
 // ── GCC 15 cross-link workaround ────────────────────────────────────
-// GCC 15 (aarch64-linux-musl cross, xim gcc 15.1.0) does not emit
+// GCC 15 does not emit
+// (cross is on gcc 16 since 2026-07-08; this anchor stays for the
+//  x86_64-linux-musl NATIVE release build, still on musl-gcc 15.1.0 —
+//  remove when xim ships an x86_64 musl gcc 16, remediation doc R5b)
 // implicit template instantiations for std::map/... members of
 // module-attached structs in IMPORTER object files — it expects the
 // owning module to provide them. The old single-file mcpp.manifest

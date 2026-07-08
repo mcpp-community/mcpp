@@ -636,9 +636,11 @@ prepare_build(bool print_fingerprint,
         //   - target arch != host arch → CROSS build, use the target-named
         //     cross toolchain `<triple>-gcc@15.1.0` (→ xim:<triple>-gcc),
         //     e.g. building aarch64 on an x86_64 host.
-        // We pin 15.1.0 because xim only has musl variants for 9.4 / 11.5 /
-        // 13.3 / 15.1 (gcc 16.1 has none yet); 15.1.0 matches what mcpp uses
-        // for `mcpp build --target x86_64-linux-musl` (see mcpp.toml).
+        // Versions: CROSS uses 16.1.0 (packaged 2026-07-08; GCC 15 drops
+        // module template instantiations at link — remediation doc A2).
+        // NATIVE musl stays 15.1.0 until xim ships an x86_64 musl gcc 16
+        // (R5b); the manifest:types instantiation anchor covers it until
+        // then.
         if (endswith(overrides.target_triple, "-musl")
             && (it == m->targetOverrides.end() || it->second.toolchain.empty()))
         {
@@ -649,7 +651,7 @@ prepare_build(bool print_fingerprint,
             if (targetArch.empty() || targetArch == mcpp::platform::host_arch)
                 tcSpec = "gcc@15.1.0-musl";                        // native
             else
-                tcSpec = overrides.target_triple + "-gcc@15.1.0";  // cross
+                tcSpec = overrides.target_triple + "-gcc@16.1.0";  // cross
         }
         if (endswith(overrides.target_triple, "-musl")
             && m->buildConfig.linkage.empty()) {

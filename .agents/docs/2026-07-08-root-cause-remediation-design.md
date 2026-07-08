@@ -189,11 +189,11 @@ defense-in-depth for the next regression of any kind.
 
 | # | Task | Repo / PR | Status |
 |---|------|-----------|--------|
-| R1 (A4) | pipeline hardening: timeouts, GH-side verify+retry, completeness gate, fresh-install bounded wait | mcpp `.github/` | 🔄 |
-| R2 (A1) | TestBinary → toolchain libc++ (dynamic+rpath); e2e otool assertion; unpin macOS llvm | mcpp `flags.cppm` | pending |
-| R3 (A3) | staged+atomic index acquisition | xlings `downloader.cppm` | pending |
-| R4 (C.1) | toolchain-bump consumer smoke | xim-pkgindex CI | pending |
-| R5 (A2) | cross gcc 16 packaging feasibility → floor bump → delete anchor | xlings-res packaging | pending |
+| R1 (A4) | pipeline hardening | ✅ PR #201 merged (6/6); positive+negative tested against live 0.0.85 mirror | ✅ |
+| R2 (A1) | TestBinary stdlib unification | ✅ PR #202 merged (6/6, 8 forensics-driven rounds): static -load_hidden for tests = distributable model; llvm 22.1.8 green; dynamic route falsified (dylib set upward-links system libc++) | ✅ |
+| R3 (A3) | staged+atomic git index acquisition + catalog self-heal | ✅ xlings PR #353 merged; artifact path already atomic since 0.4.62 — incidents were v0.4.44 pins, bumped in #343 | ✅ |
+| R4 (C.1) | toolchain-bump consumer smoke + xlings pin v0.4.62 | ✅ xim-pkgindex PR #343 merged | ✅ |
+| R5 (A2) | cross gcc 16 packaging → floor bump | ✅ packaged (build-cross/build-native workflows added, release 16.1.0 4 assets, smoke-tested); xim entry merged (#344); mcpp cross pin → 16.1.0. **R5b remains**: anchor stays until xim ships x86_64 musl gcc 16 (the x86_64-linux-musl release build is still on musl-gcc 15.1.0) | 🔄 |
 | R6 | mcpp 0.0.86 release + ecosystem closure (mirror / index bump / fresh-install) | all | pending |
 
 ## Order of execution

@@ -10,7 +10,7 @@ name: cross-build-test
 # ── Supported cross matrix (built + verified below) ────────────────────────
 #   target                | toolchain                       | host→target   | run
 #   ----------------------|---------------------------------|---------------|-----
-#   aarch64-linux-musl    | aarch64-linux-musl-gcc@15.1.0   | x86_64→arm64  | qemu
+#   aarch64-linux-musl    | aarch64-linux-musl-gcc@16.1.0   | x86_64→arm64  | qemu
 #
 # mcpp resolves a cross `--target <triple>-musl` build to the triple-named cross
 # gcc musl toolchain from the xlings ecosystem (xim:<triple>-gcc, see
