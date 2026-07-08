@@ -52,6 +52,33 @@ dylib reference at all).
 `xlings install llvm -y` first); delete the "TestBinary → system -lc++"
 comment block. LLVM 22.1.8 becomes usable on macOS.
 
+### A1 addendum — evidence-driven revision (CI forensics, rounds 1–7)
+
+The dynamic-dylib design above was falsified by crash-report forensics:
+this llvm distribution's libc++abi/libunwind dylibs upward-link
+/usr/lib/libc++, so the SYSTEM libc++ always loads beside the toolchain's
+(.ips image list), and gtest's initializers constructed a stringstream in
+one copy and destroyed it in the other
+(BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED at locale::~locale).
+
+Process invariant: exactly one ACTIVE libc++ state per process. Options:
+system -lc++ (the original workaround — falsified by __hash_memory);
+toolchain dylib + rpath (falsified above); **static -load_hidden archives
+— adopted**: the already-proven distributable model, now uniform across
+ALL mcpp-built binaries (tests were the only exception, and the exception
+was the landmine); fixing the distribution itself — see below.
+
+**Ecosystem root fix (new item, xim llvm packaging)**: rewrite the
+packaged lib/*.dylib install names/deps at packaging time (@rpath
+inter-references, no /usr/lib/libc++ upward link) so the dylib set is
+self-contained. Owned by the xlings-res/llvm builder; the C.1 consumer
+smoke gate keeps non-self-contained packages out of the index. Until
+then, dynamic toolchain-libc++ linking stays unsupported on macOS.
+
+Also part of the exit criteria: mcpp.toml's own macos toolchain pin moves
+with the current llvm (20.1.7 → 22.1.8) so mcpp builds itself on what
+users get.
+
 ## A2 — GCC 15 module instantiation: raise the cross-toolchain floor (repos `xlings-res` packaging + `mcpp` CI)
 
 **Defect anchor**: `src/manifest/types.cppm` `force_template_instantiations()`
