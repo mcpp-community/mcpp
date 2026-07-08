@@ -439,6 +439,45 @@ features = {
 }
 ```
 
+### 2.8.3 `[scan_overrides."<glob>"]` — Author-Asserted Scan Results
+
+The default module scanner is a text-level pass that (deliberately) rejects
+`import` statements inside conditional preprocessor blocks. Some legitimate
+module units carry them — e.g. fmt's official `src/fmt.cc` guards
+`import std;` behind `#ifdef FMT_IMPORT_STD`. When the file's import set is
+known and stable, declare it instead of scanning:
+
+```toml
+[modules]
+sources = ["src/**/*.cppm", "vendor/fmt.cc"]
+
+[scan_overrides."vendor/fmt.cc"]
+provides = ["fmt"]      # at most one provided module per unit
+imports  = ["std"]
+```
+
+Files matched by the glob skip the text scan; the declared unit enters the
+module graph directly. The declaration is **audited every build**: the
+compiler's own P1689 scan of the file (the `.ddi` dyndep input) is compared
+against it, and any divergence fails that compile edge with both sides
+printed — a stale declaration cannot silently corrupt the graph. An override
+glob that matches no source file is an error.
+
+The same key exists in xpkg descriptors (index packages):
+
+```lua
+mcpp = {
+    sources  = { "*/src/fmt.cc" },
+    cxxflags = { "-DFMT_IMPORT_STD" },
+    scan_overrides = {
+        ["*/src/fmt.cc"] = { provides = { "fmt" }, imports = { "std" } },
+    },
+}
+```
+
+To extend the plan-vs-ddi audit to *every* module unit (not just overrides),
+set `MCPP_VERIFY_MODGRAPH=1` when generating the build.
+
 ### 2.9 `[profile.<name>]` — Build Profiles
 
 ```toml
