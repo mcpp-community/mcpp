@@ -18,6 +18,8 @@ import mcpp.log;
 import mcpp.manifest;        // xpkg_lua_identity_matches — descriptor identity gate
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
+import mcpp.pm.index_contract;   // index.toml floor check (E0006)
+import mcpp.ui;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
 import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
@@ -431,6 +433,16 @@ read_identity_verified_xpkg_lua(const std::filesystem::path& pkgsDir,
                                 const std::vector<std::string>& filenames,
                                 std::string_view indexDefaultNs = {})
 {
+    // Index→client version contract: the tree carries its own floor
+    // (<indexRoot>/index.toml min_mcpp). Checked here — the single choke
+    // point every transport converges on (artifact snapshot, git clone,
+    // [indices] path, CI-restored cache). Loud once per index; the
+    // resolve then fails as not-found with the cause already printed.
+    if (auto violation = mcpp::pm::check_index_floor(pkgsDir.parent_path())) {
+        mcpp::ui::error(*violation);
+        return std::nullopt;
+    }
+
     std::error_code ec;
     if (!std::filesystem::exists(pkgsDir, ec)) return std::nullopt;
     for (auto& fname : filenames) {

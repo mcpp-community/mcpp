@@ -377,6 +377,12 @@ export int explain_code(std::string_view code) {
          "A cached BMI file referenced by manifest.txt is missing on disk. Run\n"
          "`mcpp cache prune --older-than 0d` to drop stale entries; the next build\n"
          "will repopulate."},
+        {"E0006", "index requires a newer mcpp",
+         "The package index declares (index.toml [index].min_mcpp) that its\n"
+         "descriptors need a newer mcpp than this binary — parsing them would\n"
+         "silently misbehave, so resolution stops instead. Upgrade mcpp:\n"
+         "  curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash\n"
+         "To bypass for debugging only: MCPP_INDEX_FLOOR=ignore mcpp build"},
     };
     for (auto& e : table) {
         if (e.code == code) {
@@ -387,7 +393,7 @@ export int explain_code(std::string_view code) {
         }
     }
     std::println(stderr, "error: unknown error code '{}'", code);
-    std::println(stderr, "       known codes: E0001..E0005");
+    std::println(stderr, "       known codes: E0001..E0006");
     return 2;
 }
 
