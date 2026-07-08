@@ -28,7 +28,7 @@ int main() {
 EOF
 
 "$MCPP" test > test.log 2>&1 || { cat test.log; echo "FAIL: mcpp test failed"; exit 1; }
-grep -q "1 passed" test.log
+grep -Eq "[0-9]+ passed; 0 failed" test.log   # template ships its own test_smoke too
 
 # The link assertion only applies to clang/llvm toolchains (gcc on macOS is
 # not a supported config; if resolution picked something else, the behavior
