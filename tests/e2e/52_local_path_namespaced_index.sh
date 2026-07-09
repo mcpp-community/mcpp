@@ -134,8 +134,12 @@ if [[ "${1:-}" == "interface" && "${2:-}" == "install_packages" ]]; then
         fi
         shift
     done
-    if ! grep -q '"name": "xim"' "${XLINGS_PROJECT_DIR:?}/.xlings.json"; then
-        echo "missing official xim index in project .xlings.json" >&2
+    # The official global `xim` index must NOT be injected into the project's
+    # .xlings.json — it's a global-default index (global IS the default scope);
+    # injecting it project-scoped mis-scopes every xim:* tool into the project
+    # store. Only user-declared local custom indices belong here.
+    if grep -q '"name": "xim"' "${XLINGS_PROJECT_DIR:?}/.xlings.json"; then
+        echo "official xim index must NOT be injected into project .xlings.json" >&2
         cat "${XLINGS_PROJECT_DIR:?}/.xlings.json" >&2 2>/dev/null || true
         exit 24
     fi
