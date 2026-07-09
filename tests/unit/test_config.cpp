@@ -1,4 +1,7 @@
 #include <gtest/gtest.h>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 import std;
 import mcpp.config;
@@ -85,7 +88,14 @@ TEST(Config, ProjectIndexJsonEscapesLocalIndexPath) {
     std::filesystem::remove_all(project);
 }
 
-TEST(Config, ProjectIndexDirExposesOfficialXimIndex) {
+// The official global `xim` index must NOT be injected/exposed into the project
+// scope. `xim` (and its dynamic sub-indexes) are xlings GLOBAL-default indices —
+// global IS the default scope; injecting xim as a project repo made every `xim:*`
+// tool (cmake/glibc/gcc/make) resolve project-scoped and install into the project
+// store instead of the shared registry, breaking ELF loader resolution for
+// build-dep tools. `xim:*` resolves at global scope via the registry-local clone.
+// See .agents/docs/2026-07-09-project-index-scope-global-infra-fix.md.
+TEST(Config, ProjectIndexDirDoesNotInjectOfficialXimIndex) {
     auto project = make_tempdir("mcpp-config-project-xim-index");
     auto registry = make_tempdir("mcpp-config-registry");
     auto official = registry / "data" / "xim-pkgindex";
@@ -109,9 +119,22 @@ TEST(Config, ProjectIndexDirExposesOfficialXimIndex) {
     cfg.registryDir = registry;
     ASSERT_TRUE(mcpp::config::ensure_project_index_dir(cfg, project, indices));
 
+    // xim is NOT copied/exposed into the project data dir (it stays global).
     auto projectOfficial =
         project / ".mcpp" / ".xlings" / "data" / "xim-pkgindex";
-    EXPECT_TRUE(std::filesystem::exists(projectOfficial / "pkgs" / "p" / "python.lua"));
+    EXPECT_FALSE(std::filesystem::exists(projectOfficial / "pkgs" / "p" / "python.lua"));
+
+    // The user-declared local `compat` index IS exposed project-locally.
+    auto projectLocal = project / ".mcpp" / ".xlings" / "data" / "compat";
+    EXPECT_TRUE(std::filesystem::exists(projectLocal / "pkgs"));
+
+    // The seeded project .xlings.json index_repos must not contain `xim`.
+    auto projJson = project / ".mcpp" / ".xlings.json";
+    if (std::filesystem::exists(projJson)) {
+        std::ifstream is(projJson);
+        std::stringstream ss; ss << is.rdbuf();
+        EXPECT_EQ(ss.str().find("\"xim\""), std::string::npos);
+    }
 
     std::filesystem::remove_all(project);
     std::filesystem::remove_all(registry);

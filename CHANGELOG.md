@@ -3,6 +3,26 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.87] — 2026-07-09
+
+### 修复
+
+- **项目本地模式:不再把官方全局索引 `xim` 注入项目作用域**。此前带自定义
+  `[indices]`(本地 path 索引)的工程进入项目本地模式时,`ensure_project_index_dir`
+  会无条件把官方 `xim` 索引 append 进项目 `.xlings.json` 的 `index_repos`
+  (`config.cppm`),意在让 `xim:*` 依赖在项目模式可解析。但 xlings 按"repo 落在
+  哪一组"决定作用域——项目 `index_repos` 里的包一律 `PackageScope::Project`,于是
+  `xim` 的**全局工具**(cmake/glibc/gcc/make/binutils 等)整体被错误地"项目化"、
+  装进项目 store 而非共享 registry。由此 build-dep 工具(如 `xim:cmake`)的 ELF
+  interpreter 被指向项目 store 里未物化的 glibc → `cannot execute`,任何在
+  `install()` 里执行 glibc-动态 build-dep 工具的 compat 包(如从源码 CMake 构建的
+  OpenCV)在 `mcpp test` 下必现,且与宿主历史无关(fresh `MCPP_HOME` 亦复现)。
+  **修复**:移除该注入及配套的项目 data dir `xim` 副本暴露。`xim`(及其动态发现的
+  sub-index)是 xlings 全局默认索引,**global 即默认作用域**——`xim:*` 经全局
+  index_repos + registry 本地 clone 正常解析、装 registry,并经 additive 对项目
+  可见;只有用户在 `[indices]` 声明的本地自定义索引才项目化。设计与分析见
+  `.agents/docs/2026-07-09-project-index-scope-global-infra-fix.md`。
+
 ## [0.0.84] — 2026-07-08
 
 ### 修复
