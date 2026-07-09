@@ -33,7 +33,7 @@ concurrency:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
-  # Linux: gcc@16.1.0, musl-gcc@15.1.0, llvm@20.1.7
+  # Linux: gcc@16.1.0, musl-gcc@16.1.0, llvm@20.1.7
   # ──────────────────────────────────────────────────────────────────
   # A4: post-release runs race the xim-pkgindex bump (a PR a maintainer
   # merges asynchronously) — the 0.0.85 fresh-install failed with
@@ -120,8 +120,8 @@ jobs:
 
       - name: "musl-gcc: mcpp new → run"
         run: |
-          mcpp toolchain install gcc 15.1.0-musl
-          mcpp toolchain default gcc@15.1.0-musl
+          mcpp toolchain install gcc 16.1.0-musl
+          mcpp toolchain default gcc@16.1.0-musl
           cd "$(mktemp -d)"
           mcpp new hello_musl
           cd hello_musl
@@ -129,7 +129,7 @@ jobs:
 
       - name: "musl-gcc: build mcpp"
         run: |
-          mcpp toolchain default gcc@15.1.0-musl
+          mcpp toolchain default gcc@16.1.0-musl
           mcpp clean
           mcpp run
 

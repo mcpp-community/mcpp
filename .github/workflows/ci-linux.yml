@@ -121,7 +121,7 @@ jobs:
       # longer relies on e2e's toolchain warm-ups: the GCC build uses the
       # mcpp.toml-pinned default (gcc@16.1.0, already in the sandbox from the
       # self-host build above), and the musl `--target` build auto-installs
-      # gcc@15.1.0-musl on demand (cached across runs).
+      # gcc@16.1.0-musl on demand (cached across runs).
 
       - name: Save freshly-built mcpp for toolchain tests
         run: |
@@ -138,7 +138,7 @@ jobs:
       - name: "Toolchain: musl-gcc — build mcpp (--target)"
         run: |
           "$MCPP" clean
-          "$MCPP" build --target x86_64-linux-musl 2>&1 | tee build.log; grep -q "Resolved gcc@15.1.0-musl" build.log
+          "$MCPP" build --target x86_64-linux-musl 2>&1 | tee build.log; grep -q "Resolved gcc@16.1.0-musl" build.log
 
       - name: "Toolchain: LLVM — build mcpp"
         run: |

@@ -115,7 +115,7 @@ jobs:
           # deterministic GNU answer instead of an auto-install pick.
           "$MCPP" toolchain default gcc@16.1.0
           # Warm musl once so fresh-home e2e tests inherit the payload.
-          "$MCPP" toolchain install gcc 15.1.0-musl
+          "$MCPP" toolchain install gcc 16.1.0-musl
           bash tests/e2e/run_all.sh
 
   # ──────────────────────────────────────────────────────────────────
