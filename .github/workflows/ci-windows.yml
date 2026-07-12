@@ -220,19 +220,11 @@ jobs:
           cd hello_win
           "$MCPP_SELF" run
 
-      - name: "Toolchain: LLVM — build mcpp (self-host)"
-        shell: bash
-        run: |
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          cp "$MCPP_SELF" /tmp/mcpp-fresh.exe
-          MCPP=/tmp/mcpp-fresh.exe
-          "$MCPP" toolchain default llvm@20.1.7
-          "$MCPP" clean --bmi-cache
-          "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@20.1.7" build.log
-
       # windows-latest ships VS 2022 Enterprise with the VC workload, so
       # msvc@system detection MUST succeed here — a failure is a regression
       # in the discovery/identification chain (vswhere → env → paths).
+      # Runs BEFORE the LLVM self-host rebuild: that step cleans + rebuilds
+      # target/, invalidating this job's $MCPP_SELF fingerprint path.
       - name: "Toolchain: MSVC — detection & selection (msvc@system)"
         shell: bash
         run: |
@@ -264,6 +256,16 @@ jobs:
           # restore the LLVM default for the remaining steps
           cd "$GITHUB_WORKSPACE"
           "$MCPP_SELF" toolchain default llvm@20.1.7
+
+      - name: "Toolchain: LLVM — build mcpp (self-host)"
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cp "$MCPP_SELF" /tmp/mcpp-fresh.exe
+          MCPP=/tmp/mcpp-fresh.exe
+          "$MCPP" toolchain default llvm@20.1.7
+          "$MCPP" clean --bmi-cache
+          "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved llvm@20.1.7" build.log
 
       - name: Package Windows release zip
         id: package
