@@ -8,6 +8,7 @@ export import mcpp.toolchain.probe;
 import std;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
+import mcpp.toolchain.msvc;
 import mcpp.xlings;
 
 export namespace mcpp::toolchain {
@@ -38,6 +39,17 @@ detect(const std::filesystem::path& explicit_compiler) {
 
     Toolchain tc;
     tc.binaryPath = *bin_r;
+
+    // MSVC cl.exe has no --version / -dumpmachine / -print-sysroot; classify
+    // it by filename and take a dedicated enrich path (banner → version,
+    // arch → triple, std.ixx lookup). No runtime dirs / sysroot / payloads —
+    // those concepts are GCC/Clang-shaped.
+    if (auto stem = lower_copy(tc.binaryPath.stem().string()); stem == "cl") {
+        if (auto r = mcpp::toolchain::msvc::enrich_toolchain_from_cl(tc); !r)
+            return std::unexpected(r.error());
+        return tc;
+    }
+
     tc.compilerRuntimeDirs = discover_compiler_runtime_dirs(tc.binaryPath);
     auto envPrefix = compiler_env_prefix(tc);
 

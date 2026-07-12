@@ -85,6 +85,18 @@ bool is_msvc_target(const Toolchain& tc) {
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {
+    if (tc.compiler == CompilerId::MSVC) {
+        // Native cl.exe builds are gated off until the .ifc pipeline lands;
+        // these traits exist so nothing silently reuses the GCC defaults.
+        return {
+            .bmiDir = "ifc.cache",
+            .bmiExt = ".ifc",
+            .manifestPrefix = "ifc",
+            .needsExplicitModuleOutput = true,
+            .needsPrebuiltModulePath = false,
+            .scanNeedsFModules = false,
+        };
+    }
     if (is_clang(tc)) {
         return {
             .bmiDir = "pcm.cache",

@@ -69,6 +69,52 @@ Available (run `mcpp toolchain install <compiler> <version>`):
 
 The entry marked with `*` is the current default toolchain. `@mcpp/...` is shorthand for `~/.mcpp/...`, used to keep the output narrower.
 
+## MSVC (System Toolchain, Windows)
+
+MSVC is different from every other toolchain mcpp manages: it is a **system
+toolchain**. mcpp locates and identifies an installed Visual Studio / Build
+Tools — it never installs, updates, or removes MSVC itself.
+
+```bash
+mcpp toolchain default msvc
+```
+
+On a machine with MSVC installed, mcpp auto-locates it (via `vswhere.exe`,
+then `VSINSTALLDIR`/`VS*COMNTOOLS`, then the standard install paths),
+identifies the versions involved, and persists the stable spec `msvc@system`:
+
+```
+Detected   msvc 19.44.35211 (VS 2022 BuildTools) (VC tools 14.44.35207)
+           cl: C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe
+           import std: available (std.ixx)
+Default    set to msvc@system (was: llvm@20.1.7)
+```
+
+If MSVC is **not** installed, mcpp prints installation guidance instead
+(Visual Studio Installer with the *Desktop development with C++* workload, or
+`winget install Microsoft.VisualStudio.2022.BuildTools`) and exits non-zero —
+install it yourself, then re-run the command.
+
+`mcpp toolchain list` shows the detected MSVC in a separate `System:` section,
+and `mcpp self doctor` reports its status on Windows. In a manifest you can
+pin it per-platform:
+
+```toml
+[toolchain]
+windows = "msvc@system"
+```
+
+`msvc@<prefix>` (e.g. `msvc@19.44`) acts as a pin-verify: mcpp still uses the
+newest installed VC tools, but errors if the detected version doesn't match
+the prefix.
+
+> [!NOTE]
+> Selection and detection are supported today; **building with native MSVC
+> (cl.exe) is not yet supported** — `mcpp build` fails with a clear message
+> naming the detected version. For building on Windows use the MSVC-ABI Clang
+> toolchain: `mcpp toolchain default llvm@20.1.7` (it borrows the MSVC STL
+> from the same detected installation).
+
 ## Project-Level Version Pinning
 
 If a project needs to pin a specific version rather than rely on the global default, declare it in the project's `mcpp.toml`:

@@ -67,6 +67,15 @@ case "$OS" in
         if [[ "${MSYS:-}" == *winsymlinks* ]] || cmd.exe /c "mklink /?" &>/dev/null 2>&1; then
             CAPS+=(symlink)
         fi
+        # msvc: a system Visual Studio / Build Tools with the VC workload
+        # (what `mcpp toolchain default msvc` must be able to detect).
+        VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+        if [[ -f "$VSWHERE" ]] \
+           && "$VSWHERE" -latest -products '*' \
+                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
+                -property installationPath 2>/dev/null | grep -q .; then
+            CAPS+=(msvc)
+        fi
         # NOTE: Windows runners may have g++.exe (MinGW/Strawberry) in PATH
         # but it's not a proper mcpp-compatible GCC. Don't add gcc capability.
         # fresh-sandbox: not yet reliable on Windows — xlings LLVM auto-install

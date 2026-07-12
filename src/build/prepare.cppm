@@ -18,6 +18,7 @@ import mcpp.modgraph.validate;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
@@ -682,7 +683,28 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    if (tcSpec.has_value() && *tcSpec != "system") {
+    // msvc@system: a *system* toolchain — located on the machine, never
+    // resolved through xim packages. mcpp does not install MSVC.
+    bool tcSpecIsMsvc = false;
+    if (tcSpec.has_value()) {
+        if (auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+            s && mcpp::toolchain::is_system_toolchain(*s))
+            tcSpecIsMsvc = true;
+    }
+    if (tcSpecIsMsvc) {
+        if (!mcpp::platform::is_windows) {
+            return std::unexpected(std::format(
+                "toolchain '{}' is only available on Windows hosts", *tcSpec));
+        }
+        auto inst = mcpp::toolchain::msvc::detect_installation();
+        if (!inst) {
+            return std::unexpected(mcpp::toolchain::msvc::install_guidance());
+        }
+        explicit_compiler = inst->clPath;
+        mcpp::ui::info("Resolved", std::format(
+            "msvc@system → msvc {} ({})",
+            inst->display_version(), inst->clPath.string()));
+    } else if (tcSpec.has_value() && *tcSpec != "system") {
         auto spec = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
         if (!spec || spec->version.empty()) {
             return std::unexpected(std::format(
@@ -840,6 +862,19 @@ prepare_build(bool print_fingerprint,
 
     auto tc = mcpp::toolchain::detect(explicit_compiler);
     if (!tc) return std::unexpected(tc.error().message);
+
+    // Native MSVC builds are gated off until the cl.exe/.ifc pipeline lands.
+    // Selection & detection (`mcpp toolchain default msvc`, `list`, `doctor`)
+    // work; the build must fail here with one owned message rather than an
+    // incidental error deep in the GCC/Clang-shaped flag machinery.
+    if (tc->compiler == mcpp::toolchain::CompilerId::MSVC) {
+        return std::unexpected(std::format(
+            "native MSVC (cl.exe) builds are not yet supported by mcpp.\n"
+            "       detected: msvc {} at {} (selection & detection work today)\n"
+            "       for building on Windows use the MSVC-ABI Clang toolchain instead:\n"
+            "         mcpp toolchain default llvm@20.1.7",
+            tc->version, tc->binaryPath.string()));
+    }
 
     // For musl-gcc the toolchain is fully self-contained
     // (`<root>/x86_64-linux-musl/{include,lib}` is its own sysroot).
