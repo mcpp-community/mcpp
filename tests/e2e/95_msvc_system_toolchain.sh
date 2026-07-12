@@ -26,6 +26,11 @@ restore() {
 }
 trap restore EXIT
 
+# Neutral cwd: `toolchain list` stars the *effective* default, and a project
+# mcpp.toml [toolchain] in the cwd (e.g. the mcpp repo root, where run_all.sh
+# executes) would shadow the global default we're about to set.
+cd "$TMP"
+
 # 1) switch to msvc: detect + identify + persist
 out=$("$MCPP" toolchain default msvc 2>&1) || { echo "FAIL: default msvc: $out"; exit 1; }
 [[ "$out" == *"Detected"* ]]     || { echo "FAIL: no Detected line: $out"; exit 1; }
@@ -54,7 +59,6 @@ out=$("$MCPP" toolchain install msvc 2>&1) \
     || { echo "FAIL: install msvc message: $out"; exit 1; }
 
 # 5) native cl.exe builds are gated with one owned message
-cd "$TMP"
 "$MCPP" new hello_msvc >/dev/null 2>&1
 cd hello_msvc
 rc=0; out=$("$MCPP" build 2>&1) || rc=$?

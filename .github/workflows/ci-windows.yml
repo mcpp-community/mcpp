@@ -238,6 +238,10 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
 
+          # Neutral cwd: the repo root's mcpp.toml [toolchain] would shadow
+          # the global default in `toolchain list` / doctor output.
+          TMP=$(mktemp -d); cd "$TMP"
+
           out=$("$MCPP_SELF" toolchain default msvc); echo "$out"
           grep -q "Detected"     <<<"$out"
           grep -q "msvc@system"  <<<"$out"
@@ -249,7 +253,6 @@ jobs:
           grep -qi "msvc" doctor.txt
 
           # native cl.exe builds are gated with one owned message
-          TMP=$(mktemp -d); cd "$TMP"
           "$MCPP_SELF" new hello_msvc && cd hello_msvc
           set +e
           bout=$("$MCPP_SELF" build 2>&1); brc=$?
