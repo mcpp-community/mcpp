@@ -3,6 +3,30 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.88] — 2026-07-13
+
+### 新增
+
+- **MSVC 系统工具链支持(`msvc@system`,detection-first)**。MSVC 作为首个
+  "系统工具链"接入:mcpp 负责**定位与识别**(vswhere → `VSINSTALLDIR`/
+  `VS*COMNTOOLS` → 标准安装路径三级发现;cl.exe banner 解析出编译器版本/架构,
+  容错本地化 banner),**从不安装/卸载** MSVC 本体。
+  - `mcpp toolchain default msvc`:检测系统 MSVC,打印 VS 产品/VC tools/
+    cl 版本与 `std.ixx`(import std)可用性,持久化稳定 spec `msvc@system`
+    (不落具体版本,VS 升级后配置依然有效);未安装时输出安装指引
+    (VS Installer C++ 工作负载 / `winget install …BuildTools`)并退出非零。
+    `msvc@19.44` 形式为 pin 校验(仍取最新 VC tools,前缀不符则报错)。
+  - `mcpp toolchain list`:Windows 上新增 `System:` 段展示检测到的 MSVC;
+    `install msvc` 报告已装现状或给指引;`remove msvc` 明确拒绝(系统组件)。
+  - `mcpp self doctor`:Windows 上新增 "msvc (system)" 检查段。
+  - manifest 支持 `[toolchain] windows = "msvc@system"`(types.cppm 注释中的
+    既有 schema 首次落地);非 Windows 主机使用 msvc spec 时给出明确报错。
+  - `mcpp build`:原生 cl.exe 构建(.ifc 管线)**本版暂不支持**,在工具链解析
+    后以单一 owned 错误信息拦截,并提示可用的 `llvm@20.1.7`(MSVC-ABI Clang)。
+  - detect() 新增 cl.exe 分类路径(文件名短路,banner → 版本/triple),
+    `bmi_traits` 预置 MSVC `.ifc` 分支;e2e 95/96 + 单测覆盖。
+  - 设计文档:`.agents/docs/2026-07-13-msvc-system-toolchain-detection-design.md`。
+
 ## [0.0.87] — 2026-07-09
 
 ### 修复

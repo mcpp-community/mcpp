@@ -58,6 +58,11 @@ bool matches_default_toolchain(std::string_view configuredDefault,
                                std::string_view compiler,
                                std::string_view version);
 
+// System toolchains are located on the machine, never installed/removed by
+// mcpp. Today that's MSVC (`msvc@system`); the PATH-compiler escape hatch
+// (`[toolchain] … = "system"`) is a separate, older mechanism.
+bool is_system_toolchain(const ToolchainSpec& spec);
+
 std::vector<std::pair<std::string, std::string>> available_toolchain_indexes();
 
 std::filesystem::path derive_c_compiler(const Toolchain& tc);
@@ -227,7 +232,14 @@ bool matches_default_toolchain(std::string_view configuredDefault,
         && configuredDefault == std::format("gcc@{}-musl", version)) {
         return true;
     }
+    // The persisted msvc default is always the stable "msvc@system" (never a
+    // concrete version), so it matches whatever version detection reports.
+    if (compiler == "msvc" && configuredDefault == "msvc@system") return true;
     return false;
+}
+
+bool is_system_toolchain(const ToolchainSpec& spec) {
+    return spec.compiler == "msvc";
 }
 
 std::vector<std::pair<std::string, std::string>> available_toolchain_indexes() {

@@ -16,8 +16,10 @@ import mcpp.build.plan;
 import mcpp.config;
 import mcpp.fallback.install_integrity;
 import mcpp.fetcher.progress;
+import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.abi;
@@ -94,6 +96,30 @@ export int doctor_report() {
         err(std::format("toolchain detection failed: {}", tc.error().message));
     } else {
         ok(std::format("{} at {}", tc->label(), tc->binaryPath.string()));
+    }
+
+    // Windows: report the system MSVC (msvc@system). Absence is a warning,
+    // not an error — mcpp works with LLVM/Clang without it, and mcpp never
+    // installs MSVC itself.
+    if (mcpp::platform::is_windows) {
+        mcpp::ui::status("Checking", "msvc (system)");
+        if (auto inst = mcpp::toolchain::msvc::detect_installation()) {
+            ok(std::format("msvc {}{} (VC tools {})",
+                inst->display_version(),
+                inst->vsProduct.empty()
+                    ? std::string{}
+                    : std::format(" (VS {})", inst->vsProduct),
+                inst->toolsVersion));
+            ok(std::format("cl at {}", inst->clPath.string()));
+            if (inst->hasStdModules) {
+                ok("import std: std.ixx available");
+            } else {
+                warn("MSVC STL std.ixx missing (VC tools too old for import std?)");
+            }
+        } else {
+            warn("msvc not detected — run `mcpp toolchain default msvc` for "
+                 "setup guidance (mcpp does not install MSVC)");
+        }
     }
 
     mcpp::ui::status("Checking", "std module");

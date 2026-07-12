@@ -15,6 +15,7 @@ import mcpp.fetcher.progress;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
@@ -164,6 +165,27 @@ struct EffectiveDefault {
     bool        fromProject = false;
 };
 
+// ─── msvc@system: system-toolchain helpers ──────────────────────────────
+//
+// MSVC is located and identified, never installed/removed by mcpp. All four
+// subcommands branch here before the xim-package path.
+
+int msvc_wrong_host() {
+    mcpp::ui::error("the msvc toolchain is only available on Windows hosts");
+    return 1;
+}
+
+void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst) {
+    mcpp::ui::status("Detected", std::format(
+        "msvc {}{} (VC tools {})",
+        inst.display_version(),
+        inst.vsProduct.empty() ? "" : std::format(" (VS {})", inst.vsProduct),
+        inst.toolsVersion));
+    std::println("           cl: {}", inst.clPath.string());
+    std::println("           import std: {}",
+        inst.hasStdModules ? "available (std.ixx)" : "not available");
+}
+
 EffectiveDefault effective_default_toolchain(const mcpp::config::GlobalConfig& cfg) {
     std::error_code ec;
     auto mpath = std::filesystem::current_path(ec) / "mcpp.toml";
@@ -234,6 +256,26 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
             }
         }
 
+        // ─── System section (Windows: detected MSVC) ────────────────────
+        // MSVC is never in xpkgs — it's located on the machine. Show it so
+        // `toolchain list` reflects everything `toolchain default` accepts.
+        if (mcpp::platform::is_windows) {
+            if (auto inst = mcpp::toolchain::msvc::detect_installation()) {
+                bool isDefault = mcpp::toolchain::matches_default_toolchain(
+                    effective.spec, "msvc", inst->display_version());
+                std::println("");
+                std::println("System:");
+                std::println("  {:<3}{:<22}  {}",
+                    isDefault ? "*" : "",
+                    mcpp::toolchain::display_label("msvc", inst->display_version()),
+                    inst->clPath.string());
+            } else {
+                std::println("");
+                std::println("  (msvc: not detected — run `mcpp toolchain default msvc` "
+                             "for setup guidance)");
+            }
+        }
+
         // ─── Available section ──────────────────────────────────────────
         // List xim:gcc + xim:musl-gcc versions known to the local index
         // that aren't already installed. Helpful to discover what users
@@ -280,6 +322,34 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
 // `mcpp toolchain install <spec>` — install + post-install fixups.
 export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
                              const std::string& pos0, const std::string& pos1) {
+        // Accept three input shapes — they all collapse to (compiler, version):
+        //   mcpp toolchain install gcc 16.1.0      → ("gcc", "16.1.0")
+        //   mcpp toolchain install gcc@16.1.0      → ("gcc", "16.1.0")
+        //   mcpp toolchain install gcc 15          → ("gcc", "15")  partial
+        // (parsed before the bootstrap check: system toolchains need no
+        // bootstrap, and an invalid spec should not report a bootstrap error)
+        auto spec = mcpp::toolchain::parse_toolchain_spec(
+            pos0, pos1);
+        if (!spec || spec->compiler.empty()) {
+            mcpp::ui::error("missing compiler name; e.g. `mcpp toolchain install gcc 16.1.0`");
+            return 2;
+        }
+
+        // msvc@system: mcpp never installs MSVC — report what's there, or
+        // print installation guidance.
+        if (mcpp::toolchain::is_system_toolchain(*spec)) {
+            if (!mcpp::platform::is_windows) return msvc_wrong_host();
+            if (auto inst = mcpp::toolchain::msvc::detect_installation()) {
+                msvc_print_detected(*inst);
+                std::println("");
+                std::println("MSVC is already installed — mcpp does not manage it.");
+                std::println("Tip: `mcpp toolchain default msvc` to make it the default.");
+                return 0;
+            }
+            mcpp::ui::error(mcpp::toolchain::msvc::install_guidance());
+            return 1;
+        }
+
         // Toolchain install needs patchelf (ELF fixup) and ninja (build).
         // Fail early if bootstrap is incomplete rather than producing a
         // broken toolchain with missing fixups.
@@ -291,16 +361,6 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             return 1;
         }
 
-        // Accept three input shapes — they all collapse to (compiler, version):
-        //   mcpp toolchain install gcc 16.1.0      → ("gcc", "16.1.0")
-        //   mcpp toolchain install gcc@16.1.0      → ("gcc", "16.1.0")
-        //   mcpp toolchain install gcc 15          → ("gcc", "15")  partial
-        auto spec = mcpp::toolchain::parse_toolchain_spec(
-            pos0, pos1);
-        if (!spec || spec->compiler.empty()) {
-            mcpp::ui::error("missing compiler name; e.g. `mcpp toolchain install gcc 16.1.0`");
-            return 2;
-        }
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
         // Partial-version resolution: `gcc 15` → highest available 15.x.y in
@@ -385,6 +445,39 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
             mcpp::ui::error("missing spec; e.g. `mcpp toolchain default gcc@16.1.0`");
             return 2;
         }
+
+        // msvc@system: locate + identify the system MSVC, persist the stable
+        // spec (never a concrete version — config survives VS updates).
+        if (mcpp::toolchain::is_system_toolchain(*spec)) {
+            if (!mcpp::platform::is_windows) return msvc_wrong_host();
+            auto inst = mcpp::toolchain::msvc::detect_installation();
+            if (!inst) {
+                mcpp::ui::error(mcpp::toolchain::msvc::install_guidance());
+                return 1;
+            }
+            // `msvc@19.44` is a pin-verify against the detected install, not
+            // a selection among many — mcpp always uses the newest VC tools.
+            if (!spec->version.empty() && spec->version != "system"
+                && !inst->display_version().starts_with(spec->version)) {
+                mcpp::ui::error(std::format(
+                    "msvc@{} requested, but the system MSVC is {} (VC tools {})",
+                    spec->version, inst->display_version(), inst->toolsVersion));
+                return 1;
+            }
+            msvc_print_detected(*inst);
+            auto wr = mcpp::config::write_default_toolchain(cfg, "msvc@system");
+            if (!wr) {
+                mcpp::ui::error(wr.error().message);
+                return 1;
+            }
+            mcpp::ui::status("Default", std::format(
+                "set to msvc@system (was: {})",
+                cfg.defaultToolchain.empty() ? "<none>" : cfg.defaultToolchain));
+            std::println("note: `mcpp build` with native MSVC (cl.exe) is not yet "
+                         "supported — coming in a later release.");
+            return 0;
+        }
+
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
         // Partial-version resolution against installed payloads.
@@ -421,6 +514,11 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
                             const std::string& pos0) {
     auto xlEnv = mcpp::config::make_xlings_env(cfg);
         auto parsedSpec = mcpp::toolchain::parse_toolchain_spec(pos0);
+        if (parsedSpec && mcpp::toolchain::is_system_toolchain(*parsedSpec)) {
+            mcpp::ui::error("msvc is a system toolchain managed by the Visual "
+                            "Studio Installer — mcpp cannot remove it");
+            return 1;
+        }
         if (!parsedSpec || parsedSpec->version.empty()) {
             mcpp::ui::error(std::format("invalid spec '{}'", pos0));
             return 2;

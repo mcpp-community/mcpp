@@ -18,6 +18,8 @@ export module mcpp.toolchain.msvc;
 
 import std;
 import mcpp.platform;
+import mcpp.toolchain.model;
+import mcpp.toolchain.probe;
 
 export namespace mcpp::toolchain::msvc {
 
@@ -32,6 +34,46 @@ std::optional<std::filesystem::path> find_std_module_source();
 
 // Find cl.exe (for future MSVC toolchain support).
 std::optional<std::filesystem::path> find_cl();
+
+// ─── System-toolchain detection (msvc@system) ────────────────────────────
+//
+// mcpp treats MSVC as a *system* toolchain: it locates and identifies an
+// installed Visual Studio / Build Tools, but never installs or removes one.
+
+struct MsvcInstallation {
+    std::filesystem::path vsRoot;        // …\Microsoft Visual Studio\2022\BuildTools
+    std::string           vsProduct;     // "2022 BuildTools" (path-derived; may be empty)
+    std::string           toolsVersion;  // "14.44.35207" (VC\Tools\MSVC\<dir>)
+    std::filesystem::path clPath;        // …\bin\Hostx64\x64\cl.exe
+    std::string           clVersion;     // "19.44.35211" (banner; empty if unparseable)
+    std::string           arch;          // "x64" | "x86" | "arm64"
+    bool                  hasStdModules = false; // modules\std.ixx present
+
+    // Preferred user-facing version: compiler version, else tools version.
+    std::string display_version() const {
+        return clVersion.empty() ? toolsVersion : clVersion;
+    }
+};
+
+// Locate the best (newest) usable installation. nullopt = MSVC absent.
+std::optional<MsvcInstallation> detect_installation();
+
+// Parse a cl.exe banner into (version, arch). Token-based so localized
+// banners work: first "d.d.d[.d]" run is the version, arch is the arm64/x64/
+// x86 token. Pure and cross-platform for unit testing.
+std::optional<std::pair<std::string, std::string>>
+parse_cl_banner(std::string_view banner);
+
+// Map a cl banner arch token to the canonical windows-msvc triple.
+std::string triple_for_arch(std::string_view arch);
+
+// Multi-line guidance shown wherever MSVC is required but absent.
+// States what was searched and how to install (mcpp does not install MSVC).
+std::string install_guidance();
+
+// Classify + enrich an already-probed cl.exe binary for detect():
+// version/arch from the banner, targetTriple, driverIdent, std.ixx lookup.
+std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc);
 
 } // namespace mcpp::toolchain::msvc
 
@@ -183,6 +225,164 @@ std::optional<std::filesystem::path> find_cl() {
         return cl;
 #endif
     return std::nullopt;
+}
+
+// ─── System-toolchain detection ──────────────────────────────────────────
+
+std::optional<std::pair<std::string, std::string>>
+parse_cl_banner(std::string_view banner) {
+    // Version: first digit/dot run with at least two dots ("19.44.35211",
+    // possibly four components). Never anchored to the English word
+    // "Version" — localized banners reorder the sentence.
+    std::string version;
+    {
+        std::string run;
+        int dots = 0;
+        auto flush = [&] {
+            if (version.empty() && dots >= 2 && run.back() != '.')
+                version = run;
+            run.clear();
+            dots = 0;
+        };
+        for (char c : banner) {
+            if (c >= '0' && c <= '9') { run += c; }
+            else if (c == '.' && !run.empty()) { run += c; ++dots; }
+            else if (!run.empty()) { flush(); }
+            if (!version.empty()) break;
+        }
+        if (!run.empty()) flush();
+    }
+    if (version.empty()) return std::nullopt;
+
+    auto lower = mcpp::toolchain::lower_copy(banner);
+    std::string arch;
+    if (lower.find("arm64") != std::string::npos)     arch = "arm64";
+    else if (lower.find("x64") != std::string::npos)  arch = "x64";
+    else if (lower.find("x86") != std::string::npos)  arch = "x86";
+
+    return std::pair{version, arch};
+}
+
+std::string triple_for_arch(std::string_view arch) {
+    if (arch == "arm64") return "aarch64-pc-windows-msvc";
+    if (arch == "x86")   return "i686-pc-windows-msvc";
+    return "x86_64-pc-windows-msvc";
+}
+
+std::string install_guidance() {
+    return
+        "MSVC was not found on this system.\n"
+        "  searched: vswhere.exe, VSINSTALLDIR / VS*COMNTOOLS, and the standard\n"
+        "            'Program Files\\Microsoft Visual Studio\\<year>\\<edition>' paths\n"
+        "  mcpp does not install MSVC — install it yourself, then retry:\n"
+        "    - Visual Studio Installer: add the 'Desktop development with C++' workload\n"
+        "      (component: Microsoft.VisualStudio.Component.VC.Tools.x86.x64)\n"
+        "    - or Build Tools only: winget install Microsoft.VisualStudio.2022.BuildTools\n"
+        "      then add the C++ workload in the installer\n"
+        "  afterwards run: mcpp toolchain default msvc";
+}
+
+namespace {
+
+// "…\Microsoft Visual Studio\2022\BuildTools" → "2022 BuildTools".
+[[maybe_unused]] std::string product_from_vs_root(const std::filesystem::path& vsRoot) {
+    std::vector<std::string> parts;
+    for (auto& seg : vsRoot) parts.push_back(seg.string());
+    for (std::size_t i = 0; i + 2 < parts.size(); ++i) {
+        if (parts[i] == "Microsoft Visual Studio")
+            return parts[i + 1] + " " + parts[i + 2];
+    }
+    return {};
+}
+
+// Capture cl.exe's banner. cl prints it (plus a usage complaint) when run
+// bare; the exit status is irrelevant — parse whatever came out.
+std::string capture_cl_banner(const std::filesystem::path& cl) {
+    auto r = mcpp::platform::process::capture(
+        "\"" + cl.string() + "\" 2>&1");
+    return r.output;
+}
+
+} // namespace
+
+std::optional<MsvcInstallation> detect_installation() {
+#if defined(_WIN32)
+    auto vs = find_vs_install_path();
+    if (!vs) return std::nullopt;
+    auto tools = find_latest_msvc_tools(*vs);
+    if (!tools) return std::nullopt;
+
+    MsvcInstallation inst;
+    inst.vsRoot       = *vs;
+    inst.vsProduct    = product_from_vs_root(*vs);
+    inst.toolsVersion = tools->filename().string();
+
+    // Host-native bin dir first (arm64 hosts run arm64 cl; everything else
+    // x64), with the remaining pairs as fallback.
+    std::vector<std::pair<std::string_view, std::string_view>> pairs;
+    if (mcpp::platform::host_arch == std::string_view("aarch64")
+        || mcpp::platform::host_arch == std::string_view("arm64")) {
+        pairs = {{"Hostarm64", "arm64"}, {"Hostx64", "x64"}, {"Hostx86", "x86"}};
+    } else {
+        pairs = {{"Hostx64", "x64"}, {"Hostarm64", "arm64"}, {"Hostx86", "x86"}};
+    }
+    for (auto [host, target] : pairs) {
+        auto cl = *tools / "bin" / host / target / "cl.exe";
+        std::error_code ec;
+        if (std::filesystem::exists(cl, ec)) {
+            inst.clPath = cl;
+            inst.arch   = std::string(target);
+            break;
+        }
+    }
+    if (inst.clPath.empty()) return std::nullopt;
+
+    std::error_code ec;
+    inst.hasStdModules =
+        std::filesystem::exists(*tools / "modules" / "std.ixx", ec);
+
+    // Version identification: banner is authoritative; tolerate failure
+    // (clVersion stays empty and display_version() falls back to the
+    // tools-dir version).
+    if (auto parsed = parse_cl_banner(capture_cl_banner(inst.clPath))) {
+        inst.clVersion = parsed->first;
+        if (!parsed->second.empty()) inst.arch = parsed->second;
+    }
+    return inst;
+#else
+    return std::nullopt;
+#endif
+}
+
+std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
+    auto banner = capture_cl_banner(tc.binaryPath);
+    auto parsed = parse_cl_banner(banner);
+    if (!parsed) {
+        return std::unexpected(DetectError{std::format(
+            "'{}' looks like MSVC cl but produced no recognizable banner:\n{}",
+            tc.binaryPath.string(), banner)});
+    }
+    tc.compiler     = CompilerId::MSVC;
+    tc.version      = parsed->first;
+    tc.targetTriple = triple_for_arch(parsed->second);
+    tc.driverIdent  = mcpp::toolchain::normalize_driver_output(banner);
+
+    // MSVC STL ships std.ixx next to the tools dir the cl binary lives in:
+    // <tools>\bin\Host*\*\cl.exe → <tools>\modules\std.ixx.
+    auto toolsDir = tc.binaryPath.parent_path()   // x64
+                        .parent_path()            // Hostx64
+                        .parent_path()            // bin
+                        .parent_path();           // <tools>
+    std::error_code ec;
+    if (auto ixx = toolsDir / "modules" / "std.ixx";
+        std::filesystem::exists(ixx, ec)) {
+        tc.stdModuleSource = ixx;
+        tc.hasImportStd    = true;
+    } else if (auto found = find_std_module_source()) {
+        tc.stdModuleSource = *found;
+        tc.hasImportStd    = true;
+    }
+    return {};
 }
 
 } // namespace mcpp::toolchain::msvc
