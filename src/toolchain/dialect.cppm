@@ -56,6 +56,13 @@ struct CommandDialect {
 // Dialect lookup. GCC / Clang / MinGW → gnu; MSVC → msvc.
 const CommandDialect& dialect_for(const Toolchain& tc);
 
+// The full -std=/-/std: flag for a normalized standard (canonical like
+// "c++26"/"gnu++23", numeric level). MSVC: /std:c++20 exists; everything
+// newer maps to /std:c++latest (required for import std); gnu dialects have
+// no MSVC equivalent and take the same mapping.
+std::string std_flag_for(const CommandDialect& d,
+                         std::string_view canonical, int level);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -104,6 +111,15 @@ constexpr CommandDialect kMsvcDialect{
 const CommandDialect& dialect_for(const Toolchain& tc) {
     if (tc.compiler == CompilerId::MSVC) return kMsvcDialect;
     return kGnuDialect;
+}
+
+std::string std_flag_for(const CommandDialect& d,
+                         std::string_view canonical, int level) {
+    if (d.id == "msvc") {
+        if (level <= 20) return "/std:c++20";
+        return "/std:c++latest";
+    }
+    return std::format("{}{}", d.stdPrefix, canonical);
 }
 
 } // namespace mcpp::toolchain

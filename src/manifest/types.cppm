@@ -149,6 +149,15 @@ struct BuildConfig {
     std::vector<std::string>           cflags;
     std::vector<std::string>           cxxflags;
     std::vector<std::string>           ldflags;
+    // Dialect-class C++ flags: flags that change what the standard library's
+    // headers DECLARE or participate in module dialect checks (issue #210's
+    // -freflection: libstdc++'s <meta> is gated on __cpp_impl_reflection).
+    // These are module-graph-global — they ride -std='s channels (global
+    // cxxflags for every TU incl. deps, the std/std.compat BMI prebuild,
+    // scan commands). Populated from [build] dialect_cxxflags plus
+    // auto-promotion of known flags found in [build] cxxflags
+    // (see dialect_flags()).
+    std::vector<std::string>           dialectCxxflags;
     std::string                         cStandard;
     // Escape hatch for the hermetic link check: a sandbox toolchain whose
     // CRT/loader resolve OUTSIDE the sandbox is a hard error by default
@@ -393,6 +402,16 @@ struct ManifestError {
 
 std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string_view raw);
 
+// The module-graph-global dialect flag set: explicit [build] dialect_cxxflags
+// plus KNOWN dialect-class flags auto-promoted out of [build] cxxflags
+// (they also stay per-unit there — duplication is harmless and keeps the
+// mechanism explainable). Deduplicated, declaration order preserved.
+std::vector<std::string> dialect_flags(const BuildConfig& bc);
+
+// True when `flag` belongs to the known dialect-class list (changes what
+// libstdc++/libc++ headers declare, or participates in BMI dialect checks).
+bool is_dialect_flag(std::string_view flag);
+
 std::filesystem::path resolve_lib_root_path(const Manifest& manifest);
 
 // True if the manifest declares at least one `kind = "lib"` target.
@@ -430,6 +449,34 @@ std::optional<std::string> validate_target_soname(const Target& t,
     return std::nullopt;
 }
 
+
+bool is_dialect_flag(std::string_view flag) {
+    // Deliberately conservative first list (design doc §1.3a):
+    // -fno-exceptions / -fno-rtti stay per-unit until separately reviewed
+    // (dependencies may assume exceptions are available).
+    static constexpr std::string_view exact[] = {
+        "-freflection",  "-fno-reflection",   // P2996 (GCC 16+)
+        "-fcontracts",   "-fno-contracts",    // P2900
+        "-fchar8_t",     "-fno-char8_t",
+    };
+    for (auto e : exact)
+        if (flag == e) return true;
+    // libstdc++ dual-ABI switch changes declared symbols/types wholesale.
+    if (flag.starts_with("-D_GLIBCXX_USE_CXX11_ABI=")) return true;
+    return false;
+}
+
+std::vector<std::string> dialect_flags(const BuildConfig& bc) {
+    std::vector<std::string> out;
+    auto add = [&](const std::string& f) {
+        if (std::find(out.begin(), out.end(), f) == out.end())
+            out.push_back(f);
+    };
+    for (auto& f : bc.dialectCxxflags) add(f);
+    for (auto& f : bc.cxxflags)
+        if (is_dialect_flag(f)) add(f);
+    return out;
+}
 
 std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string_view raw) {
     auto trim_copy = [](std::string_view input) {

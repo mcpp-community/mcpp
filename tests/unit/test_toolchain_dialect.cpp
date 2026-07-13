@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.manifest;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
@@ -79,6 +80,43 @@ TEST(MingwSpec, DisplayAndDefaultMatching) {
     EXPECT_TRUE(matches_default_toolchain("mingw@16.1.0", "mingw-gcc", "16.1.0"));
     EXPECT_FALSE(matches_default_toolchain("mingw@16.1.0", "mingw-gcc", "15.1.0"));
     EXPECT_FALSE(matches_default_toolchain("gcc@16.1.0", "mingw-gcc", "16.1.0"));
+}
+
+TEST(StdFlagFor, PerDialectSpelling) {
+    const auto& gnu  = dialect_for(make_tc(CompilerId::GCC));
+    const auto& msvc = dialect_for(make_tc(CompilerId::MSVC));
+    EXPECT_EQ(std_flag_for(gnu, "c++26", 26), "-std=c++26");
+    EXPECT_EQ(std_flag_for(gnu, "gnu++23", 23), "-std=gnu++23");
+    EXPECT_EQ(std_flag_for(msvc, "c++20", 20), "/std:c++20");
+    EXPECT_EQ(std_flag_for(msvc, "c++23", 23), "/std:c++latest");
+    EXPECT_EQ(std_flag_for(msvc, "c++26", 26), "/std:c++latest");
+}
+
+// ─── issue #210: dialect-class flag extraction ───────────────────────────
+
+TEST(DialectFlags, KnownListAndEscapeHatch) {
+    mcpp::manifest::BuildConfig bc;
+    bc.cxxflags = {"-freflection", "-O3", "-Wall", "-D_GLIBCXX_USE_CXX11_ABI=0"};
+    bc.dialectCxxflags = {"-fcustom-std-thing", "-freflection"};  // dup dedups
+    auto flags = mcpp::manifest::dialect_flags(bc);
+    ASSERT_EQ(flags.size(), 3u);
+    EXPECT_EQ(flags[0], "-fcustom-std-thing");   // explicit first, order kept
+    EXPECT_EQ(flags[1], "-freflection");         // deduped against cxxflags copy
+    EXPECT_EQ(flags[2], "-D_GLIBCXX_USE_CXX11_ABI=0");  // auto-promoted
+}
+
+TEST(DialectFlags, ExtractionDetails) {
+    using mcpp::manifest::is_dialect_flag;
+    EXPECT_TRUE(is_dialect_flag("-freflection"));
+    EXPECT_TRUE(is_dialect_flag("-fcontracts"));
+    EXPECT_TRUE(is_dialect_flag("-fno-char8_t"));
+    EXPECT_TRUE(is_dialect_flag("-D_GLIBCXX_USE_CXX11_ABI=1"));
+    // Conservative first list: these stay per-unit.
+    EXPECT_FALSE(is_dialect_flag("-fno-exceptions"));
+    EXPECT_FALSE(is_dialect_flag("-fno-rtti"));
+    EXPECT_FALSE(is_dialect_flag("-O2"));
+    EXPECT_FALSE(is_dialect_flag("-Wall"));
+    EXPECT_FALSE(is_dialect_flag("-fPIC"));
 }
 
 TEST(MingwModel, TargetPredicate) {

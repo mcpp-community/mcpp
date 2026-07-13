@@ -17,6 +17,7 @@ import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
@@ -200,6 +201,12 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     }
     for (auto const& flag : m.buildConfig.cxxflags) {
         s += " cxxflag:";
+        s += flag;
+    }
+    // Explicit [build] dialect_cxxflags (auto-promoted ones are already in
+    // cxxflags above) — they change every BMI in the graph.
+    for (auto const& flag : m.buildConfig.dialectCxxflags) {
+        s += " dialect:";
         s += flag;
     }
     for (auto const& flag : m.buildConfig.ldflags) {
@@ -2633,8 +2640,21 @@ prepare_build(bool print_fingerprint,
     std::filesystem::path stdCompatBmiPath;
     std::filesystem::path stdCompatObjectPath;
     if (needsStdModule) {
+        // The std BMI must be compiled with the SAME dialect set its
+        // importers use (issue #210: -freflection gates libstdc++'s <meta> —
+        // a std BMI built without it structurally lacks std::meta). The
+        // standard flag is spelled per-dialect and the graph-global dialect
+        // flags ride along; both were already in the fingerprint, so this
+        // only fixes the COMMAND construction the fingerprint promised.
+        std::string stdFlagAndDialect = mcpp::toolchain::std_flag_for(
+            mcpp::toolchain::dialect_for(*tc),
+            m->cppStandard.canonical, m->cppStandard.level);
+        for (auto& f : mcpp::manifest::dialect_flags(m->buildConfig)) {
+            stdFlagAndDialect += ' ';
+            stdFlagAndDialect += f;
+        }
         auto sm = mcpp::toolchain::ensure_built(
-            *tc, fp.hex, m->package.standard, m->cppStandard.flag,
+            *tc, fp.hex, m->package.standard, stdFlagAndDialect,
             mcpp::platform::macos::deployment_target(
                 m->buildConfig.macosDeploymentTarget));
         if (!sm) return std::unexpected(sm.error().message);

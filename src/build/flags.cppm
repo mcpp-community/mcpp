@@ -287,7 +287,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string cxx_std_flag =
         plan.cppStandardFlag.empty()
             ? std::format("{}c++23", d.stdPrefix) : plan.cppStandardFlag;
-    f.cxx = std::format("{}{}{}{}{}{}{}{}{}{}", cxx_std_flag, module_flag, std_module_flag,
+    // plan.dialectFlags rides right behind -std= (issue #210): module-graph-
+    // global dialect flags reach every TU (deps included) via this global
+    // cxxflags string, exactly like the standard flag itself.
+    f.cxx = std::format("{}{}{}{}{}{}{}{}{}{}{}", cxx_std_flag, plan.dialectFlags,
+                        module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
                         opt_flag, pic_flag, compile_toolchain_flags, b_flag, include_flags);
     f.cc = std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, opt_flag, pic_flag,

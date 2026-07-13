@@ -10,6 +10,7 @@ import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.platform;
 
@@ -47,6 +48,10 @@ struct BuildPlan {
     mcpp::toolchain::Fingerprint    fingerprint;
     std::string                     cppStandard = "c++23";
     std::string                     cppStandardFlag = "-std=c++23";
+    // Module-graph-global dialect flags (issue #210), pre-joined with a
+    // leading space per flag (e.g. " -freflection"). Rides -std='s channels:
+    // global $cxxflags (all TUs incl. deps), std BMI prebuild, scans.
+    std::string                     dialectFlags;
 
     std::filesystem::path           projectRoot;      // where mcpp.toml lives
     std::filesystem::path           outputDir;        // target/<triple>/<fp>/
@@ -313,7 +318,13 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.fingerprint      = fp;
     if (auto stdCfg = mcpp::manifest::normalize_cpp_standard(manifest.package.standard)) {
         plan.cppStandard = stdCfg->canonical;
-        plan.cppStandardFlag = stdCfg->flag;
+        // Spelled per-dialect: "-std=c++26" (gnu) vs "/std:c++latest" (msvc).
+        plan.cppStandardFlag = mcpp::toolchain::std_flag_for(
+            mcpp::toolchain::dialect_for(tc), stdCfg->canonical, stdCfg->level);
+    }
+    for (auto& f : mcpp::manifest::dialect_flags(manifest.buildConfig)) {
+        plan.dialectFlags += ' ';
+        plan.dialectFlags += f;
     }
     plan.projectRoot     = projectRoot;
     plan.outputDir       = outputDir;
