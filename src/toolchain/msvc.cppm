@@ -141,7 +141,10 @@ std::optional<std::filesystem::path> find_vs_via_paths() {
         "C:\\Program Files\\Microsoft Visual Studio",
         "C:\\Program Files (x86)\\Microsoft Visual Studio",
     };
-    static constexpr std::string_view years[] = {"2025", "2022", "2019", "2017"};
+    // Newer VS installs use the major version as the directory ("18", seen
+    // on windows-latest 2026-07: …\Microsoft Visual Studio\18\Enterprise),
+    // older ones the year branding.
+    static constexpr std::string_view years[] = {"19", "18", "2025", "2022", "2019", "2017"};
     static constexpr std::string_view editions[] = {
         "Enterprise", "Professional", "Community", "BuildTools", "Preview"
     };
