@@ -33,6 +33,11 @@ struct ProviderCapabilities {
     // alongside the compiler binary.  Currently only Clang provides this.
     bool has_scan_deps = false;
 
+    // True when the compiler itself emits P1689 during preprocessing
+    // (GCC -fdeps-format=p1689r5). Clang needs the external clang-scan-deps;
+    // MSVC's /scanDependencies is compiler-integrated but not wired yet.
+    bool has_builtin_p1689_scan = false;
+
     // True when the compiler supports C++ named modules at all.
     // All three supported compilers do; kept for future use when we add
     // compilers that don't (e.g. old MSVC versions, ICC).
@@ -73,6 +78,7 @@ ProviderCapabilities capabilities_for(const Toolchain& tc) {
     switch (tc.compiler) {
         case CompilerId::GCC: {
             caps.has_scan_deps   = false;   // GCC has no clang-scan-deps equivalent
+            caps.has_builtin_p1689_scan = true;
             caps.stdlib_id       = "libstdc++";
             caps.archive_format  = "ar";
             break;

@@ -25,6 +25,8 @@ import mcpp.build.hermetic;
 import mcpp.build.compile_commands;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.dialect;
+import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.xlings;
 import mcpp.platform;
@@ -258,10 +260,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // dyndep requires P1689 scanning capability:
     //   GCC: built-in -fdeps-format=p1689r5
     //   Clang: external clang-scan-deps tool (same P1689 output format)
-    bool has_scanner = mcpp::toolchain::is_gcc(plan.toolchain)
-                    || !plan.scanDepsPath.empty();
+    //   (MSVC /scanDependencies is the future third driver — scanner design §3a)
+    auto caps = mcpp::toolchain::capabilities_for(plan.toolchain);
+    bool has_scanner = caps.has_builtin_p1689_scan || !plan.scanDepsPath.empty();
     bool dyndep = dyndep_mode_enabled() && has_scanner;
     auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
+    const auto& dial = mcpp::toolchain::dialect_for(plan.toolchain);
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
 
@@ -331,25 +335,30 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // Runtime library paths for private toolchain executables are scoped onto
     // the ninja subprocess instead of being emitted into each visible rule.
 
+    // Command spellings come from the toolchain's CommandDialect (gnu vs
+    // msvc); the rule *structure* is shared across compilers.
     std::string module_output_flag = traits.needsExplicitModuleOutput
-        ? " -fmodule-output=$bmi_out" : "";
+        ? std::string(traits.moduleOutputPrefix) + "$bmi_out" : "";
+    const std::string compile_tail = std::format(
+        "{} $in {}$out", dial.compileOnly, dial.outputObjPrefix);
     append("rule cxx_module\n");
     if constexpr (mcpp::platform::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
         append(std::format("  command = "
-               "$cxx $local_includes $cxxflags $unit_cxxflags{} -c $in -o $out\n", module_output_flag));
+               "$cxx $local_includes $cxxflags $unit_cxxflags{} {}\n",
+               module_output_flag, compile_tail));
     } else {
         append(std::format("  command = "
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
                  "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
                "fi && "
-               "$cxx $local_includes $cxxflags $unit_cxxflags{} -c $in -o $out && "
+               "$cxx $local_includes $cxxflags $unit_cxxflags{} {} && "
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
                   "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
                  "mv \"$bmi_out.bak\" \"$bmi_out\"; "
                "else "
                  "rm -f \"$bmi_out.bak\"; "
-               "fi\n", module_output_flag));
+               "fi\n", module_output_flag, compile_tail));
     }
     append("  description = MOD $out\n");
     if (dyndep)
@@ -357,7 +366,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("\n");
 
     append("rule cxx_object\n");
-    append("  command = $cxx $local_includes $cxxflags $unit_cxxflags -c $in -o $out\n");
+    append(std::format(
+        "  command = $cxx $local_includes $cxxflags $unit_cxxflags {}\n",
+        compile_tail));
     append("  description = OBJ $out\n");
     if (dyndep)
         append("  restat = 1\n");
@@ -365,19 +376,24 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (need_c_rule) {
         append("rule c_object\n");
-        append("  command = $cc $local_includes $cflags $unit_cflags -c $in -o $out\n");
+        append(std::format(
+            "  command = $cc $local_includes $cflags $unit_cflags {}\n",
+            compile_tail));
         append("  description = CC $out\n");
         if (dyndep)
             append("  restat = 1\n");
         append("\n");
     }
 
+    // Link rule: driver-style today (g++/clang++ act as the linker). The
+    // dialect's LinkStyle::SeparateLinker (link.exe /OUT: + rspfile) is the
+    // MSVC backend's insertion point — unreachable until that lands.
     append("rule cxx_link\n");
     append("  command = $cxx $in -o $out $ldflags $unit_ldflags\n");
     append("  description = LINK $out\n\n");
 
     append("rule cxx_archive\n");
-    append("  command = $ar rcs $out $in\n");
+    append(std::format("  command = {}\n", dial.archiveCmd));
     append("  description = AR $out\n\n");
 
     append("rule cxx_shared\n");
@@ -811,6 +827,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     std::vector<std::pair<std::string, std::string>> nenv;
     if (r.runtimeEnvKey != "-" && !r.runtimeEnvValue.empty())
         nenv.emplace_back(r.runtimeEnvKey, r.runtimeEnvValue);
+    // Toolchain-declared env (empty for GCC/Clang; MSVC's INCLUDE/LIB/PATH).
+    // NOTE: not persisted in the fast-path cache yet — revisit when the MSVC
+    // backend lands (its fast path must re-derive these from detection).
+    for (auto& ev : plan.toolchain.envOverrides)
+        nenv.emplace_back(ev.key, ev.value);
 
     auto cap = mcpp::platform::process::capture_exec(nargv, nenv);
     std::string out = cap.output;

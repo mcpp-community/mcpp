@@ -228,6 +228,12 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     lm.clangDriver  = is_clang(tc);
     lm.clangWithCfg = resolve_clang_driver(tc).hasCfg;
 
+    // Windows / PE: no ELF loader, no rpath, no glibc payload/sysroot model.
+    // MSVC-ABI Clang gets STL+SDK via the driver, MinGW is self-contained —
+    // both want CLibMode::None. Explicit early-out rather than relying on
+    // "no payloads found" falling through to the same answer.
+    if constexpr (mcpp::platform::is_windows) return lm;
+
     auto payload_first = [&] {
         auto& pp = *tc.payloadPaths;
         lm.mode   = CLibMode::PayloadFirst;

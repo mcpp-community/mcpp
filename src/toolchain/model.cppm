@@ -10,6 +10,12 @@ enum class CompilerId { Unknown, GCC, Clang, MSVC };
 
 // Fine-grained sysroot paths derived from xpkgs payloads.
 // When populated, flags are assembled from these paths instead of --sysroot.
+// One environment variable a toolchain needs at tool-invocation time.
+struct EnvVar {
+    std::string key;
+    std::string value;
+};
+
 struct PayloadPaths {
     std::filesystem::path glibcInclude;     // glibc headers (features.h, bits/)
     std::filesystem::path glibcLib;          // glibc runtime (libc.so, crt*.o, ld-linux)
@@ -30,6 +36,13 @@ struct Toolchain {
     std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
+    // Environment the toolchain's tools need when invoked (set on the ninja
+    // process, inherited by compiler/linker children). Empty for GCC/Clang
+    // (their LD_LIBRARY_PATH need goes through compilerRuntimeDirs); the
+    // MSVC backend fills INCLUDE/LIB/PATH here (design §5.1).
+    // (Own struct, not std::pair — GCC 16 modules choke on a std::pair
+    // member added to this exported class: "failed to load pendings".)
+    std::vector<EnvVar> envOverrides;
     bool                                hasImportStd = false;
 
     std::string label() const {
@@ -54,12 +67,18 @@ bool is_musl_target(const Toolchain& tc);
 bool is_msvc_target(const Toolchain& tc);
 
 struct BmiTraits {
-    std::string_view bmiDir;     // "gcm.cache" | "pcm.cache"
-    std::string_view bmiExt;     // ".gcm"      | ".pcm"
-    std::string_view manifestPrefix; // "gcm"   | "pcm"
+    std::string_view bmiDir;     // "gcm.cache" | "pcm.cache" | "ifc.cache"
+    std::string_view bmiExt;     // ".gcm"      | ".pcm"      | ".ifc"
+    std::string_view manifestPrefix; // "gcm"   | "pcm"       | "ifc"
     bool needsExplicitModuleOutput = false;
     bool needsPrebuiltModulePath = false;
     bool scanNeedsFModules = true;
+    // Module-flag spellings (leading space included; empty = not emitted).
+    std::string_view compileModulesFlag;    // " -fmodules" (GCC) | ""
+    std::string_view stdBmiUsePrefix;       // "" | " -fmodule-file=std=" | " /reference std="
+    std::string_view stdCompatBmiUsePrefix; // "" | " -fmodule-file=std.compat=" | " /reference std.compat="
+    std::string_view moduleOutputPrefix;    // "" | " -fmodule-output=" | " /ifcOutput "
+    std::string_view bmiSearchPrefix;       // "" | " -fprebuilt-module-path=" | " /ifcSearchDir "
 };
 
 BmiTraits bmi_traits(const Toolchain& tc);
@@ -93,8 +112,13 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             .bmiExt = ".ifc",
             .manifestPrefix = "ifc",
             .needsExplicitModuleOutput = true,
-            .needsPrebuiltModulePath = false,
+            .needsPrebuiltModulePath = true,
             .scanNeedsFModules = false,
+            .compileModulesFlag = "",
+            .stdBmiUsePrefix = " /reference std=",
+            .stdCompatBmiUsePrefix = " /reference std.compat=",
+            .moduleOutputPrefix = " /ifcOutput ",
+            .bmiSearchPrefix = " /ifcSearchDir ",
         };
     }
     if (is_clang(tc)) {
@@ -105,6 +129,11 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             .needsExplicitModuleOutput = true,
             .needsPrebuiltModulePath = true,
             .scanNeedsFModules = false,
+            .compileModulesFlag = "",
+            .stdBmiUsePrefix = " -fmodule-file=std=",
+            .stdCompatBmiUsePrefix = " -fmodule-file=std.compat=",
+            .moduleOutputPrefix = " -fmodule-output=",
+            .bmiSearchPrefix = " -fprebuilt-module-path=",
         };
     }
     return {
@@ -114,6 +143,13 @@ BmiTraits bmi_traits(const Toolchain& tc) {
         .needsExplicitModuleOutput = false,
         .needsPrebuiltModulePath = false,
         .scanNeedsFModules = true,
+        // GCC: -fmodules on every TU; BMIs implicit in cwd/gcm.cache, no
+        // std=/search flags needed.
+        .compileModulesFlag = " -fmodules",
+        .stdBmiUsePrefix = "",
+        .stdCompatBmiUsePrefix = "",
+        .moduleOutputPrefix = "",
+        .bmiSearchPrefix = "",
     };
 }
 

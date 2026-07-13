@@ -222,14 +222,13 @@ std::expected<StdModule, StdModError> ensure_built(
                                     macos_deployment_target);
     }
 
-    std::vector<std::string> stdCommands;
-    if (is_clang(tc)) {
-        stdCommands = mcpp::toolchain::clang::std_module_build_commands(
-            tc, sm.cacheDir, sm.bmiPath, sysroot_flag, cpp_standard_flag);
-    } else {
-        stdCommands.push_back(mcpp::toolchain::gcc::std_module_build_command(
-            tc, sm.cacheDir, sysroot_flag, cpp_standard_flag));
-    }
+    // Both providers expose the same command-sequence shape (A5 backend
+    // surface normalization) — no per-compiler arity branching here.
+    std::vector<std::string> stdCommands = is_clang(tc)
+        ? mcpp::toolchain::clang::std_module_build_commands(
+              tc, sm.cacheDir, sm.bmiPath, sysroot_flag, cpp_standard_flag)
+        : mcpp::toolchain::gcc::std_module_build_commands(
+              tc, sm.cacheDir, sysroot_flag, cpp_standard_flag);
     std::vector<std::string> compatCommands;
     if (is_clang(tc) && !tc.stdCompatSource.empty()) {
         auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);

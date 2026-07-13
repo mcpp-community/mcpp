@@ -16,6 +16,7 @@ import mcpp.build.plan;
 import mcpp.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.dialect;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
@@ -122,10 +123,13 @@ std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
 CompileFlags compute_flags(const BuildPlan& plan) {
     CompileFlags f;
 
-    // ProviderCapabilities: centralised query point for per-toolchain decisions.
-    // Prefer caps.* checks over ad-hoc is_clang()/is_musl_target() calls for
-    // any new branching added to this function.
+    // Central query points for per-toolchain decisions — prefer these over
+    // ad-hoc is_clang()/is_gcc() calls:
+    //   caps   — what the toolchain can do (scan-deps, stdlib id, …)
+    //   d      — how a flag is SPELT (GNU "-I" vs MSVC "/I")
+    //   traits — BMI mechanics + module-flag spellings
     auto caps = mcpp::toolchain::capabilities_for(plan.toolchain);
+    const auto& d = mcpp::toolchain::dialect_for(plan.toolchain);
 
     // macOS minimum supported OS version for produced binaries.
     // Precedence: MACOSX_DEPLOYMENT_TARGET env (explicit per-invocation
@@ -152,7 +156,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string include_flags;
     for (auto& inc : plan.manifest.buildConfig.includeDirs) {
         auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
-        include_flags += " -I" + escape_path(abs);
+        include_flags += std::format(" {}{}", d.includePrefix, escape_path(abs));
     }
 
     // Sysroot / payload paths — resolved ONCE by the toolchain link model
@@ -208,11 +212,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         f.sysroot = link_toolchain_flags;
     }
 
-    // Binutils -B flag
+    // Binutils -B flag — a GCC/libstdc++ payload concern (musl bundles its
+    // own as/ld; Clang and MSVC never take an external binutils).
     bool isMuslTc = mcpp::toolchain::is_musl_target(plan.toolchain);
-    bool isClang = mcpp::toolchain::is_clang(plan.toolchain);
     std::filesystem::path binutilsBin;
-    if (!isMuslTc && !isClang) {
+    if (!isMuslTc && caps.stdlib_id == "libstdc++") {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
         if (!ar.empty())
             binutilsBin = ar.parent_path();
@@ -231,8 +235,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // unless the profile pins -O0.
     auto& prof = plan.manifest.buildConfig;
     std::string opt_flag = isMuslTc && prof.optLevel != "0"
-        ? " -Og" : (" -O" + prof.optLevel);
-    if (prof.debug) opt_flag += " -g";
+        ? " -Og" : std::format(" {}{}", d.optPrefix, prof.optLevel);
+    if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
     if (prof.lto)   opt_flag += " -flto";
 
     // User link flags
@@ -247,20 +251,25 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         plan.manifest.buildConfig.cStandard.empty() ? "c11" : plan.manifest.buildConfig.cStandard;
 
     // Assemble
-    // -fmodules is a GCC-only flag; Clang uses a different module ABI and does
-    // not need it.  caps.stdlib_id distinguishes GCC (libstdc++) from Clang
-    // (libc++ / msvc-stl) without an extra is_clang() call.
-    std::string module_flag = (caps.stdlib_id == "libstdc++") ? " -fmodules" : "";
+    // Module-flag spellings come from BmiTraits: GCC needs -fmodules on every
+    // TU (BMIs implicit); Clang/MSVC reference the staged std BMI and a BMI
+    // search dir explicitly (spelled -fmodule-file=/-fprebuilt-module-path vs
+    // /reference//ifcSearchDir).
+    auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
+    std::string module_flag{traits.compileModulesFlag};
     std::string std_module_flag;
-    if (isClang && !plan.stdBmiPath.empty()) {
-        std_module_flag = " -fmodule-file=std=" + escape_path(staged_std_bmi_path(plan));
+    if (!traits.stdBmiUsePrefix.empty() && !plan.stdBmiPath.empty()) {
+        std_module_flag = std::string(traits.stdBmiUsePrefix)
+                        + escape_path(staged_std_bmi_path(plan));
     }
     std::string std_compat_module_flag;
-    if (isClang && !plan.stdCompatBmiPath.empty()) {
+    if (!traits.stdCompatBmiUsePrefix.empty() && !plan.stdCompatBmiPath.empty()) {
+        // NOTE: staging path is Clang's today; registry-dispatch when the
+        // MSVC backend lands (std.compat.ixx staging).
         auto compatDst = mcpp::toolchain::clang::staged_std_compat_bmi_path(plan.outputDir);
-        std_compat_module_flag = " -fmodule-file=std.compat=" + escape_path(compatDst);
+        std_compat_module_flag = std::string(traits.stdCompatBmiUsePrefix)
+                               + escape_path(compatDst);
     }
-    auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     std::string prebuilt_module_flag;
     if (traits.needsPrebuiltModulePath) {
         // Absolute path: a bare `pcm.cache` / `gcm.cache` works at ninja
@@ -272,22 +281,32 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // resolution fails with `module 'X' not found`. The other
         // `-fmodule-file=` flags in this block are already escape_path'd
         // (absolute) for the same reason — this one was a leftover.
-        prebuilt_module_flag = std::format(" -fprebuilt-module-path={}",
-            escape_path(plan.outputDir / traits.bmiDir));
+        prebuilt_module_flag = std::string(traits.bmiSearchPrefix)
+                             + escape_path(plan.outputDir / traits.bmiDir);
     }
     std::string cxx_std_flag =
-        plan.cppStandardFlag.empty() ? std::string("-std=c++23") : plan.cppStandardFlag;
+        plan.cppStandardFlag.empty()
+            ? std::format("{}c++23", d.stdPrefix) : plan.cppStandardFlag;
     f.cxx = std::format("{}{}{}{}{}{}{}{}{}{}", cxx_std_flag, module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
                         opt_flag, pic_flag, compile_toolchain_flags, b_flag, include_flags);
-    f.cc = std::format("-std={}{}{}{}{}{}", c_std, opt_flag, pic_flag, compile_toolchain_flags,
-                       b_flag, include_flags);
+    f.cc = std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, opt_flag, pic_flag,
+                       compile_toolchain_flags, b_flag, include_flags);
 
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;
     f.linkage = plan.manifest.buildConfig.linkage;
     std::string full_static = (mcpp::platform::supports_full_static && f.linkage == "static") ? " -static" : "";
-    std::string static_stdlib = (f.staticStdlib && !isClang && !mcpp::platform::is_windows) ? " -static-libstdc++" : "";
+    // Static C++ stdlib: a libstdc++ (GCC/MinGW) concern. On Windows a MinGW
+    // toolchain also statically links libgcc, so produced binaries don't
+    // depend on libstdc++-6.dll / libgcc_s DLLs from the toolchain dir
+    // (portable-by-default, same spirit as the macOS static-libc++ path).
+    std::string static_stdlib;
+    if (f.staticStdlib && caps.stdlib_id == "libstdc++") {
+        static_stdlib = " -static-libstdc++";
+        if constexpr (mcpp::platform::is_windows)
+            static_stdlib += " -static-libgcc";
+    }
     std::string runtime_dirs;
     if constexpr (mcpp::platform::supports_rpath) {
         // Toolchain runtime dirs (glibc/gcc) as before...
@@ -320,7 +339,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if (prof.strip) link_extra += " -s";
 
     if constexpr (mcpp::platform::is_windows) {
-        f.ld = user_ldflags + link_extra;
+        // PE link: no rpath/loader/payload model. MSVC-ABI Clang needs
+        // nothing extra (MSVC STL/SDK via the driver); MinGW adds the static
+        // libstdc++/libgcc pair (static_stdlib above) and -B so its own
+        // binutils resolve, plus `-static` for full static when requested
+        // (MinGW supports it, unlike MSVC-ABI links).
+        std::string mingw_static =
+            (caps.stdlib_id == "libstdc++" && f.linkage == "static")
+                ? " -static" : "";
+        f.ld = std::format("{}{}{}{}{}", mingw_static, static_stdlib, b_flag,
+                           user_ldflags, link_extra);
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         // macOS. Two min-version concerns (see xlings
         // .agents/docs/2026-06-05-macos-min-version-support.md):

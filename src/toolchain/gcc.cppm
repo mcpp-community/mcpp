@@ -29,6 +29,14 @@ std::string std_module_build_command(const Toolchain& tc,
                                      std::string_view sysrootFlag,
                                      std::string_view cppStandardFlag);
 
+// Normalized backend surface: same shape as clang::std_module_build_commands
+// (a command sequence), so consumers don't branch on arity per compiler.
+std::vector<std::string> std_module_build_commands(
+    const Toolchain& tc,
+    const std::filesystem::path& cacheDir,
+    std::string_view sysrootFlag,
+    std::string_view cppStandardFlag);
+
 } // namespace mcpp::toolchain::gcc
 
 namespace mcpp::toolchain::gcc {
@@ -114,7 +122,7 @@ std::string std_module_build_command(const Toolchain& tc,
     std::string bFlag;
     if (!is_musl_target(tc)) {
         if (auto binutilsBin = find_binutils_bin(tc.binaryPath)) {
-            bFlag = std::format(" -B'{}'", binutilsBin->string());
+            bFlag = std::format(" -B{}", mcpp::xlings::shq(binutilsBin->string()));
         }
     }
 
@@ -127,6 +135,14 @@ std::string std_module_build_command(const Toolchain& tc,
         sysrootFlag,
         bFlag,
         mcpp::xlings::shq(tc.stdModuleSource.string()));
+}
+
+std::vector<std::string> std_module_build_commands(
+    const Toolchain& tc,
+    const std::filesystem::path& cacheDir,
+    std::string_view sysrootFlag,
+    std::string_view cppStandardFlag) {
+    return { std_module_build_command(tc, cacheDir, sysrootFlag, cppStandardFlag) };
 }
 
 } // namespace mcpp::toolchain::gcc
