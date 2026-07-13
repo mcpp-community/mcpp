@@ -344,11 +344,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // libstdc++/libgcc pair (static_stdlib above) and -B so its own
         // binutils resolve, plus `-static` for full static when requested
         // (MinGW supports it, unlike MSVC-ABI links).
-        std::string mingw_static =
-            (caps.stdlib_id == "libstdc++" && f.linkage == "static")
-                ? " -static" : "";
-        f.ld = std::format("{}{}{}{}{}", mingw_static, static_stdlib, b_flag,
-                           user_ldflags, link_extra);
+        std::string mingw_static;
+        std::string mingw_stdexp;
+        if (caps.stdlib_id == "libstdc++") {
+            if (f.linkage == "static") mingw_static = " -static";
+            // std::print's terminal probe (__open_terminal /
+            // __write_to_terminal, bits/print.h) lives in libstdc++exp.a on
+            // Windows targets — plain -lstdc++ leaves them undefined.
+            mingw_stdexp = " -lstdc++exp";
+        }
+        f.ld = std::format("{}{}{}{}{}{}", mingw_static, static_stdlib, b_flag,
+                           user_ldflags, mingw_stdexp, link_extra);
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         // macOS. Two min-version concerns (see xlings
         // .agents/docs/2026-06-05-macos-min-version-support.md):
