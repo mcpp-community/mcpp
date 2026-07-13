@@ -220,6 +220,16 @@ jobs:
           cd hello_win
           "$MCPP_SELF" run
 
+      # MinGW-w64 GCC via the xlings ecosystem (xim:mingw-gcc → xlings-res
+      # winlibs mirror): install → default → modules build/run → standalone
+      # exe. Same flow as e2e 97 but as a visible CI step. Payload is cached
+      # via the mcpp sandbox cache after the first run.
+      - name: "Toolchain: MinGW — install → build → run (xim:mingw-gcc)"
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          MCPP="$MCPP_SELF" bash tests/e2e/97_mingw_toolchain.sh
+
       # windows-latest ships VS 2022 Enterprise with the VC workload, so
       # msvc@system detection MUST succeed here — a failure is a regression
       # in the discovery/identification chain (vswhere → env → paths).

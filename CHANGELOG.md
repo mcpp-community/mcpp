@@ -3,6 +3,36 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.89] — 2026-07-13
+
+### 新增
+
+- **MinGW-w64 工具链入 xlings 生态(Windows 原生 GCC,无需 Visual Studio)**。
+  `mcpp toolchain install mingw 16.1.0` / `default mingw@16.1.0`:xim 包
+  `mingw-gcc`(winlibs GCC 16.1.0 + MinGW-w64 14.0.0 UCRT 独立构建,镜像于
+  xlings-res/mingw-gcc,GitHub+GitCode 双端)。复用既有 GCC 后端
+  (gcm 模块管线、libstdc++ `bits/std.cc` 的 `import std`);Windows 上
+  libstdc++/libgcc 默认静态链接(产物免带 DLL,`[build] static_stdlib=false`
+  可关),`linkage="static"` 升级全静态。e2e 97 覆盖 install→default→
+  多模块 build/run→独立 exe 验证;ci-windows 新增专项步骤。
+  连带修复:`toolchain list` 的 Available 段与部分版本解析此前硬编码按
+  "linux" 平台读取 xpkg 版本(Windows/macOS 上恒空);`toolchain install`
+  在 Windows/macOS 不再错误安装 glibc/linux-headers 依赖。
+
+### 重构
+
+- **工具链后端抽象层(Part A,对 GCC/Clang 零行为变化,build.ninja 零 diff
+  实证)**。新增 `mcpp.toolchain.dialect`(命令行拼写 traits:gnu/msvc 两行
+  数据,`-I/-D/-std=/-c/-o/-O/-g/ar` 及归档命令模板经其发射);`BmiTraits`
+  并入模块旗标拼写(`compileModulesFlag`/`stdBmiUsePrefix`/
+  `moduleOutputPrefix`/`bmiSearchPrefix`),flags.cppm 的 is_clang 分支改由
+  数据驱动;`ProviderCapabilities.has_builtin_p1689_scan` 取代 ninja 后端的
+  is_gcc 门;`Toolchain::envOverrides`(EnvVar 表,注入 ninja 子进程环境,
+  为 MSVC 后端 INCLUDE/LIB/PATH 预留);gcc provider 增加与 clang 同形的
+  `std_module_build_commands`(命令序列);`resolve_link_model` 在 Windows
+  显式返回 PE 空模型。设计:`.agents/docs/2026-07-13-toolchain-backend-
+  abstraction-msvc-mingw-design.md` + 同日触点审计文档。
+
 ## [0.0.88] — 2026-07-13
 
 ### 新增

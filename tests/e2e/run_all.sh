@@ -63,6 +63,7 @@ case "$OS" in
         # Tests requiring gcc need actual GNU GCC (modules, gcm.cache, etc.)
         ;;
     MINGW* | MSYS* | CYGWIN*)
+        CAPS+=(windows)
         # Git Bash / MSYS2 on Windows: symlinks need admin or Developer Mode
         if [[ "${MSYS:-}" == *winsymlinks* ]] || cmd.exe /c "mklink /?" &>/dev/null 2>&1; then
             CAPS+=(symlink)

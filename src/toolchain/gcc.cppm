@@ -70,6 +70,21 @@ std::optional<std::filesystem::path> find_std_module_source(
     auto p = root / "include" / "c++" / std::string(version) / "bits" / "std.cc";
     if (std::filesystem::exists(p)) return p;
 
+    // Version-dir scan fallback: the header dir doesn't always equal the
+    // full driver version (e.g. distro / MinGW-w64 builds using the major
+    // version, or a patched banner). Any bits/std.cc under include/c++ is
+    // this installation's — take the first.
+    {
+        std::error_code ec;
+        auto cxxInclude = root / "include" / "c++";
+        if (std::filesystem::exists(cxxInclude, ec)) {
+            for (auto& entry : std::filesystem::directory_iterator(cxxInclude, ec)) {
+                auto cand = entry.path() / "bits" / "std.cc";
+                if (std::filesystem::exists(cand, ec)) return cand;
+            }
+        }
+    }
+
     auto cmd = std::format("'{}' -print-file-name=libstdc++.so 2>/dev/null",
                            cxx_binary.string());
     auto r = mcpp::toolchain::run_capture(cmd);

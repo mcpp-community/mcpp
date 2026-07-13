@@ -65,6 +65,7 @@ bool is_gcc(const Toolchain& tc);
 bool is_clang(const Toolchain& tc);
 bool is_musl_target(const Toolchain& tc);
 bool is_msvc_target(const Toolchain& tc);
+bool is_mingw_target(const Toolchain& tc);
 
 struct BmiTraits {
     std::string_view bmiDir;     // "gcm.cache" | "pcm.cache" | "ifc.cache"
@@ -101,6 +102,11 @@ bool is_musl_target(const Toolchain& tc) {
 
 bool is_msvc_target(const Toolchain& tc) {
     return tc.targetTriple.find("msvc") != std::string::npos;
+}
+
+bool is_mingw_target(const Toolchain& tc) {
+    // "x86_64-w64-mingw32" (mingw-w64) / legacy "*-pc-mingw32".
+    return tc.targetTriple.find("mingw32") != std::string::npos;
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {

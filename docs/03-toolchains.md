@@ -69,6 +69,30 @@ Available (run `mcpp toolchain install <compiler> <version>`):
 
 The entry marked with `*` is the current default toolchain. `@mcpp/...` is shorthand for `~/.mcpp/...`, used to keep the output narrower.
 
+## MinGW (Windows-native GCC, no Visual Studio required)
+
+On Windows, `mingw` installs a self-contained MinGW-w64 GCC (winlibs
+standalone build, UCRT runtime) into mcpp's sandbox — the same managed-xpkg
+model as `gcc`/`llvm`, no Visual Studio needed:
+
+```bash
+mcpp toolchain install mingw 16.1.0
+mcpp toolchain default mingw@16.1.0
+```
+
+It uses the regular GCC module pipeline (`gcm.cache`, `import std` via
+libstdc++'s `bits/std.cc`). Produced binaries statically link libstdc++ and
+libgcc by default, so they run standalone — no `libstdc++-6.dll` needs to
+travel next to your exe (opt out with `[build] static_stdlib = false`).
+`[build] linkage = "static"` upgrades that to a fully static link.
+
+In a manifest:
+
+```toml
+[toolchain]
+windows = "mingw@16.1.0"
+```
+
 ## MSVC (System Toolchain, Windows)
 
 MSVC is different from every other toolchain mcpp manages: it is a **system

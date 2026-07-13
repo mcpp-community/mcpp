@@ -123,7 +123,15 @@ list_available_xpkg_versions(const mcpp::config::GlobalConfig& cfg,
         if (!std::filesystem::exists(p, ec)) return std::nullopt;
         std::ifstream is(p);
         std::string body((std::istreambuf_iterator<char>(is)), {});
-        return mcpp::manifest::list_xpkg_versions(body, "linux");
+        // xpkg descriptors key platforms as linux / macosx / windows — list
+        // the HOST's block (previously hardcoded "linux", which made the
+        // Available section and partial-version resolution empty on
+        // Windows/macOS for any package, e.g. mingw-gcc has no linux block).
+        constexpr std::string_view xpkgPlatform =
+            mcpp::platform::is_windows ? "windows"
+          : mcpp::platform::is_macos   ? "macosx"
+                                       : "linux";
+        return mcpp::manifest::list_xpkg_versions(body, xpkgPlatform);
     };
 
     auto data = cfg.xlingsHome() / "data";
@@ -388,8 +396,11 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
 
         // Ensure sysroot dependencies (glibc, linux-headers) are installed.
         // These are required for C library + kernel headers during compilation.
-        // musl-gcc is self-contained and doesn't need these.
-        if (!spec->isMusl) {
+        // musl-gcc is self-contained and doesn't need these; neither do
+        // Windows (llvm/mingw — PE, own CRT) or macOS (SDK) toolchains.
+        // Mirrors the platform guard on prepare.cppm's first-run install.
+        if (!spec->isMusl
+            && !mcpp::platform::is_windows && !mcpp::platform::is_macos) {
             for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
                 mcpp::log::verbose("toolchain", std::format("installing dep: {}", dep));
                 auto depPayload = fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);

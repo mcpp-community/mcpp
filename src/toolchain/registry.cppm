@@ -3,6 +3,7 @@
 export module mcpp.toolchain.registry;
 
 import std;
+import mcpp.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.llvm;
@@ -101,6 +102,7 @@ std::vector<std::string> frontend_candidates_for(std::string_view ximName,
     if (ximName == "gcc") return {"g++"};
     if (ximName == "llvm") return mcpp::toolchain::llvm::frontend_candidates();
     if (ximName == "msvc") return {"cl.exe"};
+    if (ximName == "mingw-gcc") return {"g++.exe", "g++"};
     return {"g++", "clang++", "x86_64-linux-musl-g++", "cl.exe"};
 }
 
@@ -170,6 +172,10 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     std::string ximCompiler = spec.compiler;
     if (mcpp::toolchain::llvm::is_alias(ximCompiler))
         ximCompiler = mcpp::toolchain::llvm::package_name();
+    // Windows-native MinGW-w64 GCC: user-facing name `mingw`, xim package
+    // `mingw-gcc` (winlibs GCC+MinGW-w64 UCRT builds mirrored at xlings-res).
+    if (ximCompiler == "mingw")
+        ximCompiler = "mingw-gcc";
 
     pkg.ximName = ximCompiler;
     pkg.ximVersion = spec.version;
@@ -221,6 +227,8 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
 std::string display_label(std::string_view compiler, std::string_view version) {
     if (compiler == "musl-gcc")
         return std::format("gcc {}-musl", version);
+    if (compiler == "mingw-gcc")
+        return std::format("mingw {}", version);
     return std::format("{} {}", compiler, version);
 }
 
@@ -235,6 +243,12 @@ bool matches_default_toolchain(std::string_view configuredDefault,
     // The persisted msvc default is always the stable "msvc@system" (never a
     // concrete version), so it matches whatever version detection reports.
     if (compiler == "msvc" && configuredDefault == "msvc@system") return true;
+    // Installed-payload rows report the xim name (mingw-gcc); the user-facing
+    // spec is mingw@<ver> (same shape as the musl-gcc clause above).
+    if (compiler == "mingw-gcc"
+        && configuredDefault == std::format("mingw@{}", version)) {
+        return true;
+    }
     return false;
 }
 
@@ -243,11 +257,15 @@ bool is_system_toolchain(const ToolchainSpec& spec) {
 }
 
 std::vector<std::pair<std::string, std::string>> available_toolchain_indexes() {
-    return {
+    std::vector<std::pair<std::string, std::string>> out{
         {"gcc",      "gcc"},
         {"musl-gcc", "musl-gcc"},
         {mcpp::toolchain::llvm::package_name(), "llvm"},
     };
+    // Windows-native toolchain — only meaningful to list on Windows hosts.
+    if constexpr (mcpp::platform::is_windows)
+        out.emplace_back("mingw-gcc", "mingw-gcc");
+    return out;
 }
 
 std::filesystem::path derive_c_compiler(const Toolchain& tc) {
@@ -256,6 +274,15 @@ std::filesystem::path derive_c_compiler(const Toolchain& tc) {
 
 std::filesystem::path archive_tool(const Toolchain& tc) {
     if (is_clang(tc)) return mcpp::toolchain::clang::archive_tool(tc);
+
+    // MinGW bundles its own binutils next to the frontend (self-contained,
+    // like musl) — never an external binutils xpkg.
+    if (is_mingw_target(tc)) {
+        auto ar = tc.binaryPath.parent_path() / "ar.exe";
+        std::error_code ec;
+        if (std::filesystem::exists(ar, ec)) return ar;
+        return {};
+    }
 
     if (!is_musl_target(tc)) {
         if (auto binutilsBin = mcpp::toolchain::gcc::find_binutils_bin(tc.binaryPath))
