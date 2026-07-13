@@ -347,14 +347,19 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string mingw_static;
         std::string mingw_stdexp;
         if (caps.stdlib_id == "libstdc++") {
-            if (f.linkage == "static") mingw_static = " -static";
+            // `-static` for the whole link — winlibs' own recommendation for
+            // standalone exes. The piecemeal recipe (-static-libstdc++ +
+            // -Wl,-Bstatic -lwinpthread) verifiably loses to the driver's
+            // implicit closing libs: CI import tables still showed
+            // libwinpthread-1.dll. System DLLs (KERNEL32/UCRT) still resolve
+            // via their import libs. Tied to staticStdlib so
+            // [build] static_stdlib=false opts back into DLL-coupled links.
+            if (f.staticStdlib || f.linkage == "static")
+                mingw_static = " -static";
             // std::print's terminal probe (__open_terminal /
             // __write_to_terminal, bits/print.h) lives in libstdc++exp.a on
-            // Windows targets — plain -lstdc++ leaves them undefined. And
-            // POSIX-threads libstdc++ (winlibs) pulls libwinpthread-1.dll
-            // unless winpthread is forced static — the classic third DLL
-            // that -static-libstdc++/-static-libgcc do NOT cover.
-            mingw_stdexp = " -lstdc++exp -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic";
+            // Windows targets — plain -lstdc++ leaves them undefined.
+            mingw_stdexp = " -lstdc++exp";
         }
         f.ld = std::format("{}{}{}{}{}{}", mingw_static, static_stdlib, b_flag,
                            user_ldflags, mingw_stdexp, link_extra);
