@@ -64,7 +64,7 @@ run_out=$("$MCPP" run 2>&1) || { echo "FAIL: run: $run_out"; exit 1; }
 #    it must run from a clean dir without the toolchain bin on PATH.
 EXE=$(find target -name "hello_mingw.exe" -path "*/bin/*" | head -1)
 [[ -n "$EXE" ]] || { echo "FAIL: no exe produced"; exit 1; }
-OBJDUMP="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-mingw-gcc/16.1.0/bin/objdump.exe"
+OBJDUMP=$(ls "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-mingw-gcc/*/bin/objdump.exe 2>/dev/null | head -1)
 imports=""
 if [[ -x "$OBJDUMP" ]]; then
     imports=$("$OBJDUMP" -p "$EXE" 2>/dev/null | grep -i "DLL Name" || true)

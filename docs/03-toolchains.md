@@ -132,12 +132,14 @@ windows = "msvc@system"
 newest installed VC tools, but errors if the detected version doesn't match
 the prefix.
 
-> [!NOTE]
-> Selection and detection are supported today; **building with native MSVC
-> (cl.exe) is not yet supported** — `mcpp build` fails with a clear message
-> naming the detected version. For building on Windows use the MSVC-ABI Clang
-> toolchain: `mcpp toolchain default llvm@20.1.7` (it borrows the MSVC STL
-> from the same detected installation).
+Since 0.0.90, **native cl.exe builds work**: mcpp synthesizes the
+INCLUDE/LIB environment from the detected VC tools + Windows SDK (no
+`vcvarsall` involved), stages `std.ixx`/`std.compat.ixx` as `.ifc` BMIs,
+compiles `.cppm` module units via `/interface /TP /ifcOutput`, scans with
+`/scanDependencies`, and links with `link.exe`/`lib.exe` through response
+files. `[build] linkage = "static"` selects the `/MT` CRT. A missing Windows
+SDK fails the build with installation guidance (`mcpp self doctor` reports
+SDK status).
 
 ## Project-Level Version Pinning
 

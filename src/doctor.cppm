@@ -120,6 +120,34 @@ export int doctor_report() {
             warn("msvc not detected — run `mcpp toolchain default msvc` for "
                  "setup guidance (mcpp does not install MSVC)");
         }
+        // Windows SDK (native cl.exe builds need its UCRT/um headers).
+        if (auto sdk = mcpp::toolchain::msvc::find_windows_sdk()) {
+            ok(std::format("Windows SDK {} at {}", sdk->version,
+                           sdk->root.string()));
+        } else {
+            warn("no Windows SDK found — native msvc builds will fail "
+                 "(install the 'Windows 11 SDK' VS component)");
+        }
+
+        mcpp::ui::status("Checking", "mingw (xim:mingw-gcc)");
+        {
+            auto pkgs = std::filesystem::path(
+                std::getenv("MCPP_HOME") ? std::getenv("MCPP_HOME")
+                                         : (std::string(std::getenv("USERPROFILE")
+                                               ? std::getenv("USERPROFILE") : "") + "\\.mcpp"))
+                / "registry" / "data" / "xpkgs" / "xim-x-mingw-gcc";
+            std::error_code ec;
+            bool any = false;
+            if (std::filesystem::exists(pkgs, ec)) {
+                for (auto& v : std::filesystem::directory_iterator(pkgs, ec)) {
+                    if (!v.is_directory(ec)) continue;
+                    ok(std::format("mingw {} installed", v.path().filename().string()));
+                    any = true;
+                }
+            }
+            if (!any)
+                ok("mingw not installed (optional — `mcpp toolchain install mingw 16.1.0`)");
+        }
     }
 
     mcpp::ui::status("Checking", "std module");

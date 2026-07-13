@@ -183,6 +183,18 @@ int msvc_wrong_host() {
     return 1;
 }
 
+// MinGW is a Windows-native toolchain package; on other hosts fail with a
+// clear message instead of the confusing empty-version xim error
+// (`invalid xpkg target 'xim:mingw-gcc@'`).
+bool mingw_wrong_host(const mcpp::toolchain::XimToolchainPackage& pkg) {
+    if (pkg.ximName == "mingw-gcc" && !mcpp::platform::is_windows) {
+        mcpp::ui::error("mingw is a Windows-only toolchain (MinGW-w64 GCC); "
+                        "on this host use gcc/llvm instead");
+        return true;
+    }
+    return false;
+}
+
 void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst) {
     mcpp::ui::status("Detected", std::format(
         "msvc {}{} (VC tools {})",
@@ -370,6 +382,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         }
 
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
+        if (mingw_wrong_host(pkg)) return 1;
 
         // Partial-version resolution: `gcc 15` → highest available 15.x.y in
         // the synced index. Empty version → latest of any major.
@@ -490,6 +503,7 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         }
 
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
+        if (mingw_wrong_host(pkg)) return 1;
 
         // Partial-version resolution against installed payloads.
         if (auto picked = resolve_version_match(

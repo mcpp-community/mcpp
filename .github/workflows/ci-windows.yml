@@ -254,17 +254,11 @@ jobs:
           "$MCPP_SELF" self doctor 2>&1 | tee doctor.txt || true
           grep -qi "msvc" doctor.txt
 
-          # native cl.exe builds are gated with one owned message
-          "$MCPP_SELF" new hello_msvc && cd hello_msvc
-          set +e
-          bout=$("$MCPP_SELF" build 2>&1); brc=$?
-          set -e
-          echo "$bout"
-          test $brc -ne 0
-          grep -q "not yet supported" <<<"$bout"
+          # native cl.exe build: full e2e (modules, import std, incremental)
+          cd "$GITHUB_WORKSPACE"
+          MCPP="$MCPP_SELF" bash tests/e2e/99_msvc_native_build.sh
 
           # restore the LLVM default for the remaining steps
-          cd "$GITHUB_WORKSPACE"
           "$MCPP_SELF" toolchain default llvm@20.1.7
 
       - name: "Toolchain: LLVM — build mcpp (self-host)"

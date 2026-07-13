@@ -708,8 +708,10 @@ jobs:
     needs: [build-release, build-linux-aarch64, build-macos, build-windows]
     runs-on: ubuntu-latest
     # A4 hardening: a single stuck upload once held this job >1h (6h default
-    # ceiling). The mirror script now has per-file timeouts, so 20min is ample.
-    timeout-minutes: 20
+    # ceiling). The mirror script has per-file timeouts and (post-0.0.89)
+    # batch-upload + ranged-GET verification — normal runs are minutes; 30
+    # is the generous backstop (20 was hit by the old per-asset verify loop).
+    timeout-minutes: 30
     env:
       XLINGS_RES_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}

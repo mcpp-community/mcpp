@@ -3,6 +3,42 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.90] — 2026-07-13
+
+### 新增
+
+- **MSVC 原生构建后端(cl.exe)落地,0.0.88 的构建门移除**。选定 `msvc@system`
+  后 `mcpp build/run` 直接用系统 MSVC 编译链接:
+  - 环境模型:`find_windows_sdk()` + 从检测到的 VC tools/SDK 直接合成
+    INCLUDE/LIB/PATH(+`VSLANG=1033`),不跑 vcvarsall;SDK 缺失时检测/选择仍可用,
+    构建报带指引的明确错误;doctor 新增 SDK 与 mingw 检查行。
+  - 模块管线:std/std.compat.ixx 单命令 staging(`/ifcOutput` → ifc.cache),
+    命名模块 `.cppm` 经 `/interface /TP` 编译、`/ifcSearchDir` 消费;
+    `/scanDependencies` 作为第三个编译器内建 P1689 扫描驱动接入 dyndep。
+  - 链接:link.exe/lib.exe(SeparateLinker)+ 响应文件(绕 cmd 8191 限制),
+    DLL=`/DLL /IMPLIB:`;`deps=msvc`(/showIncludes)头文件依赖;`/MD|/MT` CRT
+    随 linkage;`/std:c++20|c++latest` 映射;`.obj` 扩展名全链路。
+  - fast-path 增量:构建缓存 env 槽新增 `@env` 多变量编码,增量构建重建
+    INCLUDE/LIB 环境。e2e 99(模块/import std/增量)+ 95 改造为真实构建断言。
+- **`[build] dialect_cxxflags` + 方言旗标全图化(issue #210 修复)**。
+  `-freflection` 等"改变标准库头声明集"的 flag 现随 `-std=` 的通道到达:
+  全局 cxxflags(项目+依赖所有 TU)、std/std.compat BMI 预构建命令、P1689 扫描。
+  known-list 自动提升(reflection/contracts/char8_t/`_GLIBCXX_USE_CXX11_ABI`)+
+  显式 `dialect_cxxflags` 逃生舱;指纹早已包含这些 flag,修的是命令构造。
+  实证:#210 的最小复现(gcc16 + `import std;` + `std::meta`)输出 `x 2/y 3`;
+  e2e 98 含依赖模块变体。
+
+### 修复与优化
+
+- mingw 在非 Windows 主机的 `toolchain install/default` 现在明确报
+  windows-only(此前是 `invalid xpkg target 'xim:mingw-gcc@'`)。
+- std 模块 staging 命令在 Windows 用 `cd /d`(跨盘;工作区 D: + 缓存 C: 的
+  真实 CI 布局)。
+- release 的 publish-ecosystem:镜像脚本改为批量上传+带耐心的 ranged-GET 验证、
+  **验证超时不再删除资产**(0.0.89 因逐资产"18s 即删重传"+全量 GET 探测触顶
+  20min 被杀);timeout 兜底 20→30。
+- stdmod 执行层支持工具链声明环境(capture_with_env);shell 引用平台化。
+
 ## [0.0.89] — 2026-07-13
 
 ### 新增

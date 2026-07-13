@@ -58,12 +58,13 @@ out=$("$MCPP" toolchain install msvc 2>&1) \
 [[ "$out" == *"already installed"* ]] \
     || { echo "FAIL: install msvc message: $out"; exit 1; }
 
-# 5) native cl.exe builds are gated with one owned message
+# 5) native cl.exe builds WORK (0.0.90; the 0.0.88 gate is gone) — the full
+#    modules/import-std flow is covered by 99_msvc_native_build.sh; here we
+#    assert the basic hello builds and runs under msvc@system.
 "$MCPP" new hello_msvc >/dev/null 2>&1
 cd hello_msvc
-rc=0; out=$("$MCPP" build 2>&1) || rc=$?
-[[ $rc -ne 0 ]]                        || { echo "FAIL: build should be gated"; exit 1; }
-[[ "$out" == *"not yet supported"* ]]  || { echo "FAIL: gate message: $out"; exit 1; }
-[[ "$out" == *"llvm@20.1.7"* ]]        || { echo "FAIL: no alternative hint: $out"; exit 1; }
+out=$("$MCPP" run 2>&1) || { echo "FAIL: msvc hello build/run: $out"; exit 1; }
+[[ "$out" == *"Hello"* || "$out" == *"hello"* ]] \
+    || { echo "FAIL: hello output: $out"; exit 1; }
 
-echo "PASS: msvc@system detection, selection, guidance, and build gate"
+echo "PASS: msvc@system detection, selection, guidance, and native build"
