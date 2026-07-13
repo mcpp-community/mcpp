@@ -290,7 +290,8 @@ namespace {
 // "…\Microsoft Visual Studio\2022\BuildTools" → "2022 BuildTools".
 [[maybe_unused]] std::string product_from_vs_root(const std::filesystem::path& vsRoot) {
     std::vector<std::string> parts;
-    for (auto& seg : vsRoot) parts.push_back(seg.string());
+    // path iterators yield temporaries under libc++ — const ref only.
+    for (const auto& seg : vsRoot) parts.push_back(seg.string());
     for (std::size_t i = 0; i + 2 < parts.size(); ++i) {
         if (parts[i] == "Microsoft Visual Studio")
             return parts[i + 1] + " " + parts[i + 2];
