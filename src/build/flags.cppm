@@ -27,9 +27,10 @@ struct CompileFlags {
     std::string cxx;                  // full cxxflags string
     std::string cc;                   // full cflags string
     std::string ld;                   // ldflags string
-    std::filesystem::path cxxBinary;  // g++ / clang++
-    std::filesystem::path ccBinary;   // gcc / clang (derived)
-    std::filesystem::path arBinary;   // ar path (may be empty → use PATH)
+    std::filesystem::path cxxBinary;  // g++ / clang++ / cl.exe
+    std::filesystem::path ccBinary;   // gcc / clang (derived; cl.exe = same)
+    std::filesystem::path arBinary;   // ar / llvm-ar / lib.exe (empty → PATH)
+    std::filesystem::path ldBinary;   // link.exe (SeparateLinker dialects only)
     std::string sysroot;              // --sysroot=... (for ninja ldflags)
     std::string bFlag;                // -B<binutils> (for ninja ldflags)
     bool staticStdlib = true;
@@ -142,7 +143,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     f.cxxBinary = plan.toolchain.binaryPath;
     f.ccBinary = mcpp::toolchain::derive_c_compiler(plan.toolchain);
 
-    // PIC?
+    const bool isMsvcDialect = (d.id == "msvc");
+
+    // PIC? (GNU-only concept; PE code is position independent by design.)
     bool need_pic = false;
     for (auto& lu : plan.linkUnits) {
         if (lu.kind == LinkUnit::SharedLibrary) {
@@ -150,7 +153,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             break;
         }
     }
-    std::string pic_flag = need_pic ? " -fPIC" : "";
+    std::string pic_flag = (need_pic && !isMsvcDialect) ? " -fPIC" : "";
 
     // Include dirs
     std::string include_flags;
@@ -235,9 +238,21 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // unless the profile pins -O0.
     auto& prof = plan.manifest.buildConfig;
     std::string opt_flag = isMuslTc && prof.optLevel != "0"
-        ? " -Og" : std::format(" {}{}", d.optPrefix, prof.optLevel);
+        ? " -Og"
+        : (isMsvcDialect && prof.optLevel == "0")
+        ? " /Od"    // MSVC's no-opt spelling (there is no /O0)
+        : std::format(" {}{}", d.optPrefix, prof.optLevel);
     if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
-    if (prof.lto)   opt_flag += " -flto";
+    if (prof.lto && !isMsvcDialect) opt_flag += " -flto";
+
+    // MSVC baseline: /nologo /EHsc /utf-8 (dialect alwaysFlags) + the CRT
+    // model — /MD default, /MT under static linkage (portable-by-default is
+    // impossible on MSVC-ABI; /MT at least removes the vcruntime DLL dep).
+    std::string msvc_base;
+    if (isMsvcDialect) {
+        msvc_base = std::format(" {}", d.alwaysFlags);
+        msvc_base += (plan.manifest.buildConfig.linkage == "static") ? " /MT" : " /MD";
+    }
 
     // User link flags
     std::string user_ldflags;
@@ -264,9 +279,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     }
     std::string std_compat_module_flag;
     if (!traits.stdCompatBmiUsePrefix.empty() && !plan.stdCompatBmiPath.empty()) {
-        // NOTE: staging path is Clang's today; registry-dispatch when the
-        // MSVC backend lands (std.compat.ixx staging).
-        auto compatDst = mcpp::toolchain::clang::staged_std_compat_bmi_path(plan.outputDir);
+        auto compatDst = mcpp::toolchain::staged_std_compat_bmi_path(
+            plan.toolchain, plan.outputDir);
         std_compat_module_flag = std::string(traits.stdCompatBmiUsePrefix)
                                + escape_path(compatDst);
     }
@@ -290,12 +304,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // plan.dialectFlags rides right behind -std= (issue #210): module-graph-
     // global dialect flags reach every TU (deps included) via this global
     // cxxflags string, exactly like the standard flag itself.
-    f.cxx = std::format("{}{}{}{}{}{}{}{}{}{}{}", cxx_std_flag, plan.dialectFlags,
-                        module_flag, std_module_flag,
+    f.cxx = std::format("{}{}{}{}{}{}{}{}{}{}{}{}", cxx_std_flag, plan.dialectFlags,
+                        msvc_base, module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
                         opt_flag, pic_flag, compile_toolchain_flags, b_flag, include_flags);
-    f.cc = std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, opt_flag, pic_flag,
-                       compile_toolchain_flags, b_flag, include_flags);
+    // MSVC compiles C with cl.exe too; /std: for C uses cN spellings — skip
+    // the C standard flag there (cl defaults are fine for the C entry TUs).
+    f.cc = isMsvcDialect
+        ? std::format("{}{}{}{}{}", msvc_base, opt_flag, compile_toolchain_flags,
+                      b_flag, include_flags)
+        : std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, opt_flag, pic_flag,
+                      compile_toolchain_flags, b_flag, include_flags);
 
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;
@@ -343,6 +362,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if (prof.strip) link_extra += " -s";
 
     if constexpr (mcpp::platform::is_windows) {
+        if (isMsvcDialect) {
+            // Native cl.exe: link.exe does the link (SeparateLinker). Search
+            // paths for dependency runtime import libs via /LIBPATH; user
+            // ldflags pass through verbatim; GNU link_extra (-flto/-s) does
+            // not apply.
+            f.ldBinary = mcpp::toolchain::link_tool(plan.toolchain);
+            std::string libpaths;
+            for (auto& dir : plan.depRuntimeLibraryDirs)
+                libpaths += " /LIBPATH:" + escape_path(dir);
+            f.ld = libpaths + user_ldflags;
+            return f;
+        }
         // PE link: no rpath/loader/payload model. MSVC-ABI Clang needs
         // nothing extra (MSVC STL/SDK via the driver); MinGW adds the static
         // libstdc++/libgcc pair (static_stdlib above) and -B so its own

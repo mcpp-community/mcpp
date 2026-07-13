@@ -870,16 +870,17 @@ prepare_build(bool print_fingerprint,
     auto tc = mcpp::toolchain::detect(explicit_compiler);
     if (!tc) return std::unexpected(tc.error().message);
 
-    // Native MSVC builds are gated off until the cl.exe/.ifc pipeline lands.
-    // Selection & detection (`mcpp toolchain default msvc`, `list`, `doctor`)
-    // work; the build must fail here with one owned message rather than an
-    // incidental error deep in the GCC/Clang-shaped flag machinery.
-    if (tc->compiler == mcpp::toolchain::CompilerId::MSVC) {
+    // Native MSVC builds need the synthesized INCLUDE/LIB env — absent when
+    // detection found VC tools but no Windows SDK. Fail here with guidance
+    // instead of cl.exe's later "cannot open include file: 'corecrt.h'".
+    if (tc->compiler == mcpp::toolchain::CompilerId::MSVC
+        && tc->envOverrides.empty()) {
         return std::unexpected(std::format(
-            "native MSVC (cl.exe) builds are not yet supported by mcpp.\n"
-            "       detected: msvc {} at {} (selection & detection work today)\n"
-            "       for building on Windows use the MSVC-ABI Clang toolchain instead:\n"
-            "         mcpp toolchain default llvm@20.1.7",
+            "msvc {} was detected at {}, but no Windows SDK was found —\n"
+            "       cl.exe cannot compile without the UCRT/SDK headers.\n"
+            "       Install the 'Windows 11 SDK' component via the Visual Studio\n"
+            "       Installer (it is part of the Desktop development with C++\n"
+            "       workload), then retry.",
             tc->version, tc->binaryPath.string()));
     }
 
@@ -2582,6 +2583,18 @@ prepare_build(bool print_fingerprint,
         return false;
     });
 
+    // The dialect-complete standard flag: spelled per-dialect and carrying
+    // the module-graph-global dialect flags (issue #210). ONE string shared
+    // by the p1689 scan and the std BMI prebuild so scan-time, prebuild-time
+    // and compile-time dialect provably agree.
+    std::string stdFlagAndDialect = mcpp::toolchain::std_flag_for(
+        mcpp::toolchain::dialect_for(*tc),
+        m->cppStandard.canonical, m->cppStandard.level);
+    for (auto& f : mcpp::manifest::dialect_flags(m->buildConfig)) {
+        stdFlagAndDialect += ' ';
+        stdFlagAndDialect += f;
+    }
+
     // Modgraph: regex scanner by default; opt-in to compiler-driven P1689
     // scanner via env var MCPP_SCANNER=p1689 (see docs/27).
     auto scan = [&] {
@@ -2590,7 +2603,8 @@ prepare_build(bool print_fingerprint,
             auto tmp = std::filesystem::temp_directory_path()
                      / std::format("mcpp_p1689_{}", std::random_device{}());
             std::filesystem::create_directories(tmp);
-            return mcpp::modgraph::scan_packages_p1689(packages, *tc, tmp, m->cppStandard.flag);
+            return mcpp::modgraph::scan_packages_p1689(packages, *tc, tmp,
+                                                       stdFlagAndDialect);
         }
         return mcpp::modgraph::scan_packages(packages);
     }();
@@ -2642,17 +2656,9 @@ prepare_build(bool print_fingerprint,
     if (needsStdModule) {
         // The std BMI must be compiled with the SAME dialect set its
         // importers use (issue #210: -freflection gates libstdc++'s <meta> —
-        // a std BMI built without it structurally lacks std::meta). The
-        // standard flag is spelled per-dialect and the graph-global dialect
-        // flags ride along; both were already in the fingerprint, so this
-        // only fixes the COMMAND construction the fingerprint promised.
-        std::string stdFlagAndDialect = mcpp::toolchain::std_flag_for(
-            mcpp::toolchain::dialect_for(*tc),
-            m->cppStandard.canonical, m->cppStandard.level);
-        for (auto& f : mcpp::manifest::dialect_flags(m->buildConfig)) {
-            stdFlagAndDialect += ' ';
-            stdFlagAndDialect += f;
-        }
+        // a std BMI built without it structurally lacks std::meta). Both
+        // pieces were already in the fingerprint; this fixes the COMMAND
+        // construction the fingerprint promised (stdFlagAndDialect above).
         auto sm = mcpp::toolchain::ensure_built(
             *tc, fp.hex, m->package.standard, stdFlagAndDialect,
             mcpp::platform::macos::deployment_target(

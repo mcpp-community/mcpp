@@ -95,9 +95,9 @@ ProviderCapabilities capabilities_for(const Toolchain& tc) {
         }
 
         case CompilerId::MSVC: {
-            // Pure MSVC (cl.exe) — not yet fully supported, but stubs are here
-            // so callers can branch on it without another unknown-compiler guard.
             caps.has_scan_deps  = false;
+            // cl.exe emits P1689 itself via /scanDependencies.
+            caps.has_builtin_p1689_scan = true;
             caps.stdlib_id      = "msvc-stl";
             caps.archive_format = "lib.exe";
             break;

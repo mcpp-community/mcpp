@@ -297,6 +297,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     } else {
         append("ar        = ar\n");
     }
+    // Separate linker (link.exe) for the msvc dialect.
+    const bool separateLinker =
+        dial.linkStyle == mcpp::toolchain::CommandDialect::LinkStyle::SeparateLinker;
+    if (separateLinker) {
+        append(std::format("ld        = {}\n",
+            flags.ldBinary.empty() ? std::string("link.exe")
+                                   : escape_ninja_path(flags.ldBinary)));
+    }
     if (dyndep) {
         append(std::format("mcpp      = {}\n", escape_ninja_path(mcpp_exe_path())));
         if (!plan.scanDepsPath.empty()) {
@@ -339,14 +347,25 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // msvc); the rule *structure* is shared across compilers.
     std::string module_output_flag = traits.needsExplicitModuleOutput
         ? std::string(traits.moduleOutputPrefix) + "$bmi_out" : "";
+    // msvc: /showIncludes feeds ninja's deps=msvc header tracking; the
+    // stable-English prefix is guaranteed by VSLANG=1033 in envOverrides.
+    const bool msvcDeps = dial.ninjaDepsMode == std::string_view("msvc");
     const std::string compile_tail = std::format(
-        "{} $in {}$out", dial.compileOnly, dial.outputObjPrefix);
+        "{}{} $in {}$out",
+        msvcDeps ? "/showIncludes " : "", dial.compileOnly, dial.outputObjPrefix);
+    auto append_deps = [&] {
+        if (msvcDeps) append("  deps = msvc\n");
+    };
+    // cl.exe needs /TP (our module interfaces are .cppm, unknown to cl) and
+    // /interface to treat the TU as a module interface unit.
+    const std::string module_src_flags = msvcDeps ? " /interface /TP" : "";
     append("rule cxx_module\n");
     if constexpr (mcpp::platform::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
         append(std::format("  command = "
-               "$cxx $local_includes $cxxflags $unit_cxxflags{} {}\n",
-               module_output_flag, compile_tail));
+               "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}\n",
+               module_output_flag, module_src_flags, compile_tail));
+        append_deps();
     } else {
         append(std::format("  command = "
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
@@ -370,6 +389,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         "  command = $cxx $local_includes $cxxflags $unit_cxxflags {}\n",
         compile_tail));
     append("  description = OBJ $out\n");
+    append_deps();
     if (dyndep)
         append("  restat = 1\n");
     append("\n");
@@ -380,25 +400,47 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             "  command = $cc $local_includes $cflags $unit_cflags {}\n",
             compile_tail));
         append("  description = CC $out\n");
+        append_deps();
         if (dyndep)
             append("  restat = 1\n");
         append("\n");
     }
 
-    // Link rule: driver-style today (g++/clang++ act as the linker). The
-    // dialect's LinkStyle::SeparateLinker (link.exe /OUT: + rspfile) is the
-    // MSVC backend's insertion point — unreachable until that lands.
-    append("rule cxx_link\n");
-    append("  command = $cxx $in -o $out $ldflags $unit_ldflags\n");
-    append("  description = LINK $out\n\n");
+    // Link/archive/shared: driver-style (g++/clang++ are the linker) vs the
+    // msvc dialect's separate link.exe/lib.exe. The msvc commands go through
+    // response files — object lists exceed cmd.exe's 8191-char limit fast.
+    if (separateLinker) {
+        append("rule cxx_link\n");
+        append("  command = $ld /nologo /OUT:$out @$out.rsp $ldflags $unit_ldflags\n");
+        append("  rspfile = $out.rsp\n");
+        append("  rspfile_content = $in\n");
+        append("  description = LINK $out\n\n");
 
-    append("rule cxx_archive\n");
-    append(std::format("  command = {}\n", dial.archiveCmd));
-    append("  description = AR $out\n\n");
+        append("rule cxx_archive\n");
+        append("  command = $ar /nologo /OUT:$out @$out.rsp\n");
+        append("  rspfile = $out.rsp\n");
+        append("  rspfile_content = $in\n");
+        append("  description = AR $out\n\n");
 
-    append("rule cxx_shared\n");
-    append("  command = $cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags\n");
-    append("  description = SHARED $out\n\n");
+        append("rule cxx_shared\n");
+        append("  command = $ld /nologo /DLL /OUT:$out /IMPLIB:$out.lib "
+               "@$out.rsp $ldflags $unit_ldflags\n");
+        append("  rspfile = $out.rsp\n");
+        append("  rspfile_content = $in\n");
+        append("  description = SHARED $out\n\n");
+    } else {
+        append("rule cxx_link\n");
+        append("  command = $cxx $in -o $out $ldflags $unit_ldflags\n");
+        append("  description = LINK $out\n\n");
+
+        append("rule cxx_archive\n");
+        append(std::format("  command = {}\n", dial.archiveCmd));
+        append("  description = AR $out\n\n");
+
+        append("rule cxx_shared\n");
+        append("  command = $cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags\n");
+        append("  description = SHARED $out\n\n");
+    }
 
     append("rule runtime_alias\n");
     if constexpr (mcpp::platform::is_windows) {
@@ -413,7 +455,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // GCC: built-in -fdeps-format=p1689r5 flags during preprocessing.
         // Clang: external clang-scan-deps tool with -format=p1689.
         append("rule cxx_scan\n");
-        if (plan.scanDepsPath.empty()) {
+        if (msvcDeps) {
+            // MSVC: compiler-integrated P1689 via /scanDependencies (scan
+            // only — no codegen); /TP because our module units are .cppm.
+            append("  command = $cxx $local_includes $cxxflags $unit_cxxflags "
+                   "/scanDependencies $out /TP /c $in /Fo:$compile_target\n");
+        } else if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
             append("  command = $cxx $local_includes $cxxflags -fmodules "
                    "$unit_cxxflags "
@@ -445,7 +492,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     // Stage prebuilt std artifacts into the compiler-specific BMI cache.
     auto std_bmi_dst = mcpp::toolchain::staged_std_bmi_path(plan.toolchain, {});
-    auto std_o_dst = std::filesystem::path("obj") / "std.o";
+    auto std_o_dst = std::filesystem::path("obj")
+                   / std::format("std{}", dial.objExt);
 
     bool has_std_artifacts = !plan.stdBmiPath.empty() && !plan.stdObjectPath.empty();
     if (has_std_artifacts) {
@@ -456,8 +504,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     bool has_std_compat = !plan.stdCompatBmiPath.empty() && !plan.stdCompatObjectPath.empty();
-    auto compat_bmi_dst = std::filesystem::path("pcm.cache") / "std.compat.pcm";
-    auto compat_o_dst = std::filesystem::path("obj") / "std.compat.o";
+    auto compat_bmi_dst = std::filesystem::path(traits.bmiDir)
+                        / std::format("std.compat{}", traits.bmiExt);
+    auto compat_o_dst = std::filesystem::path("obj")
+                      / std::format("std.compat{}", dial.objExt);
     if (has_std_compat) {
         // std.compat.pcm depends on std.pcm — ensure std.pcm is staged first
         // so clang can resolve the transitive dependency when loading std.compat.pcm.
@@ -803,7 +853,22 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // Record ninja binary for P0 fast-path cache.
     BuildResult r;
     r.ninjaProgram = ninjaProgram;
-    if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs)) {
+    if (!plan.toolchain.envOverrides.empty()) {
+        // Toolchain-declared env (MSVC INCLUDE/LIB/PATH/VSLANG). Encode all
+        // pairs (plus any runtime-dirs pair) into the fast-path cache's
+        // single env slot: "@env" key + \x1f-separated k=v records — the
+        // fast path must re-create this exact environment for ninja.
+        r.runtimeEnvKey = "@env";
+        std::string joined;
+        auto add = [&](const std::string& k, const std::string& v) {
+            if (!joined.empty()) joined += '\x1f';
+            joined += k; joined += '='; joined += v;
+        };
+        if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
+            add(runtimeEnv->first, runtimeEnv->second);
+        for (auto& ev : plan.toolchain.envOverrides) add(ev.key, ev.value);
+        r.runtimeEnvValue = std::move(joined);
+    } else if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs)) {
         r.runtimeEnvKey = runtimeEnv->first;
         r.runtimeEnvValue = runtimeEnv->second;
     } else {
@@ -824,12 +889,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (opts.parallelJobs)
         nargv.push_back(std::format("-j{}", opts.parallelJobs));
 
+    // Real env pairs for THIS run (the "@env" cache encoding above is only
+    // for the fast path's later re-creation of the same environment).
     std::vector<std::pair<std::string, std::string>> nenv;
-    if (r.runtimeEnvKey != "-" && !r.runtimeEnvValue.empty())
-        nenv.emplace_back(r.runtimeEnvKey, r.runtimeEnvValue);
-    // Toolchain-declared env (empty for GCC/Clang; MSVC's INCLUDE/LIB/PATH).
-    // NOTE: not persisted in the fast-path cache yet — revisit when the MSVC
-    // backend lands (its fast path must re-derive these from detection).
+    if (auto runtimeEnv = runtime_env_for_dirs(plan.toolchain.compilerRuntimeDirs))
+        nenv.emplace_back(runtimeEnv->first, runtimeEnv->second);
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
 

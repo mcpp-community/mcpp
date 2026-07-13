@@ -3,6 +3,7 @@
 export module mcpp.toolchain.gcc;
 
 import std;
+import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
 import mcpp.xlings;
@@ -141,8 +142,12 @@ std::string std_module_build_command(const Toolchain& tc,
         }
     }
 
+    // Windows (MinGW): cmd.exe needs `/d` to change DRIVE (project on D:,
+    // BMI cache on C: is the real CI layout — same-drive runs masked this).
+    const char* cd = mcpp::platform::is_windows ? "cd /d" : "cd";
     return std::format(
-        "cd {} && {}{} {} -fmodules -O2{}{} -c {} -o std.o 2>&1",
+        "{} {} && {}{} {} -fmodules -O2{}{} -c {} -o std.o 2>&1",
+        cd,
         mcpp::xlings::shq(cacheDir.string()),
         mcpp::toolchain::compiler_env_prefix(tc),
         mcpp::xlings::shq(tc.binaryPath.string()),

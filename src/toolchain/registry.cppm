@@ -8,6 +8,7 @@ import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.llvm;
 import mcpp.toolchain.model;
+import mcpp.toolchain.msvc;
 
 export namespace mcpp::toolchain {
 
@@ -68,8 +69,11 @@ std::vector<std::pair<std::string, std::string>> available_toolchain_indexes();
 
 std::filesystem::path derive_c_compiler(const Toolchain& tc);
 std::filesystem::path archive_tool(const Toolchain& tc);
+std::filesystem::path link_tool(const Toolchain& tc);
 std::filesystem::path staged_std_bmi_path(const Toolchain& tc,
                                           const std::filesystem::path& outputDir);
+std::filesystem::path staged_std_compat_bmi_path(const Toolchain& tc,
+                                                 const std::filesystem::path& outputDir);
 
 } // namespace mcpp::toolchain
 
@@ -273,6 +277,12 @@ std::filesystem::path derive_c_compiler(const Toolchain& tc) {
 }
 
 std::filesystem::path archive_tool(const Toolchain& tc) {
+    if (tc.compiler == CompilerId::MSVC) {
+        auto lib = tc.binaryPath.parent_path() / "lib.exe";
+        std::error_code ec;
+        if (std::filesystem::exists(lib, ec)) return lib;
+        return {};
+    }
     if (is_clang(tc)) return mcpp::toolchain::clang::archive_tool(tc);
 
     // MinGW bundles its own binutils next to the frontend (self-contained,
@@ -302,8 +312,27 @@ std::filesystem::path archive_tool(const Toolchain& tc) {
 
 std::filesystem::path staged_std_bmi_path(const Toolchain& tc,
                                           const std::filesystem::path& outputDir) {
+    if (tc.compiler == CompilerId::MSVC)
+        return mcpp::toolchain::msvc::staged_std_bmi_path(outputDir);
     if (is_clang(tc)) return mcpp::toolchain::clang::staged_std_bmi_path(outputDir);
     return mcpp::toolchain::gcc::staged_std_bmi_path(outputDir);
+}
+
+std::filesystem::path staged_std_compat_bmi_path(const Toolchain& tc,
+                                                 const std::filesystem::path& outputDir) {
+    if (tc.compiler == CompilerId::MSVC)
+        return mcpp::toolchain::msvc::staged_std_compat_bmi_path(outputDir);
+    return mcpp::toolchain::clang::staged_std_compat_bmi_path(outputDir);
+}
+
+// Separate linker binary for SeparateLinker dialects (link.exe beside cl).
+// Empty for driver-link toolchains.
+std::filesystem::path link_tool(const Toolchain& tc) {
+    if (tc.compiler != CompilerId::MSVC) return {};
+    auto link = tc.binaryPath.parent_path() / "link.exe";
+    std::error_code ec;
+    if (std::filesystem::exists(link, ec)) return link;
+    return {};
 }
 
 } // namespace mcpp::toolchain

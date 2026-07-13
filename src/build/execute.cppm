@@ -335,8 +335,22 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     if (verbose) argv.push_back("-v");
 
     std::vector<std::pair<std::string, std::string>> childEnv;
-    if (runtimeEnvKey != "-" && !runtimeEnvValue.empty())
+    if (runtimeEnvKey == "@env") {
+        // Multi-var encoding (MSVC INCLUDE/LIB/PATH/VSLANG + optional runtime
+        // pair): \x1f-separated k=v records in the single value slot.
+        std::string_view rest = runtimeEnvValue;
+        while (!rest.empty()) {
+            auto sep = rest.find('\x1f');
+            auto rec = rest.substr(0, sep);
+            if (auto eq = rec.find('='); eq != std::string_view::npos && eq > 0)
+                childEnv.emplace_back(std::string(rec.substr(0, eq)),
+                                      std::string(rec.substr(eq + 1)));
+            if (sep == std::string_view::npos) break;
+            rest.remove_prefix(sep + 1);
+        }
+    } else if (runtimeEnvKey != "-" && !runtimeEnvValue.empty()) {
         childEnv.emplace_back(runtimeEnvKey, runtimeEnvValue);
+    }
 
     auto t0 = std::chrono::steady_clock::now();
     // capture_exec merges stderr into the captured output (replacing `2>&1`),

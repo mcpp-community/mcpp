@@ -130,10 +130,13 @@ std::string sanitize_for_path(std::string_view module_name) {
     return s;
 }
 
-std::string object_filename_for(const std::filesystem::path& src) {
+std::string object_filename_for(const std::filesystem::path& src,
+                                std::string_view objExt = ".o") {
     auto stem = src.stem().string();
     // distinguish .cppm vs .cpp by extension prefix to avoid collisions
-    return stem + (src.extension() == ".cppm" ? ".m.o" : ".o");
+    return stem + (src.extension() == ".cppm"
+                       ? ".m" + std::string(objExt)
+                       : std::string(objExt));
 }
 
 std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
@@ -326,6 +329,8 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         plan.dialectFlags += ' ';
         plan.dialectFlags += f;
     }
+    // Object extension is dialect-spelled (.o vs .obj).
+    const std::string_view objExt = mcpp::toolchain::dialect_for(tc).objExt;
     plan.projectRoot     = projectRoot;
     plan.outputDir       = outputDir;
     plan.stdBmiPath     = stdBmiPath;
@@ -400,7 +405,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
     //     derived from `<pkg>/<parent-dir>` so collisions are impossible.
     std::map<std::string, int> basenameCount;
     for (auto idx : topoOrder) {
-        basenameCount[object_filename_for(graph.units[idx].path)]++;
+        basenameCount[object_filename_for(graph.units[idx].path, objExt)]++;
     }
     auto sanitize = [](const std::string& s) {
         std::string out; out.reserve(s.size());
@@ -417,7 +422,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         cu.localIncludeDirs = u.localIncludeDirs;
         cu.packageCflags = u.packageCflags;
         cu.packageCxxflags = u.packageCxxflags;
-        const auto fname = object_filename_for(u.path);
+        const auto fname = object_filename_for(u.path, objExt);
         if (basenameCount[fname] > 1) {
             // Use <sanitized-pkg>/<parent-dir-name> as prefix to handle
             // both cross-package (multi-version mangling) and intra-package
@@ -661,7 +666,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
             // Add main.cpp -> obj/main.o
             CompileUnit main_cu;
             main_cu.source = *lu.entryMain;
-            main_cu.object = std::filesystem::path("obj") / object_filename_for(*lu.entryMain);
+            main_cu.object = std::filesystem::path("obj") / object_filename_for(*lu.entryMain, objExt);
             main_cu.packageName = qualified_package_name(manifest);
             if (!packages.empty() && packages[0].usageResolved) {
                 main_cu.localIncludeDirs = packages[0].privateBuild.includeDirs;

@@ -20,6 +20,7 @@ import std;
 import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
+import mcpp.xlings;
 
 export namespace mcpp::toolchain::msvc {
 
@@ -72,8 +73,47 @@ std::string triple_for_arch(std::string_view arch);
 std::string install_guidance();
 
 // Classify + enrich an already-probed cl.exe binary for detect():
-// version/arch from the banner, targetTriple, driverIdent, std.ixx lookup.
+// version/arch from the banner, targetTriple, driverIdent, std.ixx lookup,
+// and the build env (INCLUDE/LIB/PATH from VC tools + Windows SDK) into
+// tc.envOverrides. Missing SDK leaves envOverrides empty — detection still
+// succeeds (selection UX must work on SDK-less boxes); the build path
+// checks and errors with guidance.
 std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc);
+
+// ─── Windows SDK + build environment (native cl.exe builds) ──────────────
+
+struct WindowsSdk {
+    std::filesystem::path root;      // C:\Program Files (x86)\Windows Kits\10
+    std::string           version;   // "10.0.26100.0" (highest usable)
+};
+
+// Locate the Windows 10/11 SDK (highest version with ucrt headers).
+std::optional<WindowsSdk> find_windows_sdk();
+
+// Synthesize the environment cl.exe/link.exe need — what vcvars would set,
+// derived directly from the located VC tools + SDK (no vcvarsall.bat run):
+//   INCLUDE = <tools>\include; <sdk>\Include\<v>\{ucrt,um,shared,winrt}
+//   LIB     = <tools>\lib\<arch>; <sdk>\Lib\<v>\{ucrt,um}\<arch>
+//   PATH    = <cl dir>;<existing PATH>       (mspdb*.dll etc.)
+//   VSLANG  = 1033  (stable English /showIncludes prefix for ninja deps=msvc)
+std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
+                                     std::string_view arch,
+                                     const WindowsSdk& sdk);
+
+// std / std.compat module staging commands (single cl step each):
+//   cl /nologo <stdFlagAndDialect> /EHsc /W0 /O2 /c <tools>\modules\std.ixx
+//      /ifcOutput <cacheDir>\ifc.cache\std.ifc /Fo:<cacheDir>\std.obj
+std::vector<std::string> std_module_build_commands(
+    const Toolchain& tc, const std::filesystem::path& cacheDir,
+    std::string_view cppStandardFlag);
+std::vector<std::string> std_compat_build_commands(
+    const Toolchain& tc, const std::filesystem::path& cacheDir,
+    std::string_view cppStandardFlag);
+
+std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir);
+std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir);
+std::filesystem::path std_compat_bmi_path(const std::filesystem::path& cacheDir);
+std::filesystem::path staged_std_compat_bmi_path(const std::filesystem::path& outputDir);
 
 } // namespace mcpp::toolchain::msvc
 
@@ -358,6 +398,131 @@ std::optional<MsvcInstallation> detect_installation() {
 #endif
 }
 
+std::optional<WindowsSdk> find_windows_sdk() {
+#if defined(_WIN32)
+    // Directory scan of the conventional install roots; highest version dir
+    // that actually carries the UCRT headers wins. (Registry Installed
+    // Roots would be marginally more correct — the path scan covers every
+    // real installer layout seen so far and needs no Win32 API surface.)
+    for (const char* base : {"C:\\Program Files (x86)\\Windows Kits\\10",
+                             "C:\\Program Files\\Windows Kits\\10"}) {
+        std::filesystem::path root{base};
+        std::error_code ec;
+        if (!std::filesystem::exists(root / "Include", ec)) continue;
+        std::string best;
+        for (auto& e : std::filesystem::directory_iterator(root / "Include", ec)) {
+            if (!e.is_directory()) continue;
+            auto v = e.path().filename().string();
+            if (std::filesystem::exists(e.path() / "ucrt" / "corecrt.h", ec)
+                && v > best)
+                best = v;
+        }
+        if (!best.empty()) return WindowsSdk{root, best};
+    }
+#endif
+    return std::nullopt;
+}
+
+std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
+                                     std::string_view arch,
+                                     const WindowsSdk& sdk) {
+    // <tools>\bin\Host<h>\<arch>\cl.exe → <tools>
+    auto clDir  = clPath.parent_path();
+    auto tools  = clDir.parent_path().parent_path().parent_path();
+    std::string a = arch.empty() ? std::string("x64") : std::string(arch);
+
+    auto join = [](std::initializer_list<std::filesystem::path> ps) {
+        std::string s;
+        for (auto& p : ps) {
+            if (!s.empty()) s += ';';
+            s += p.string();
+        }
+        return s;
+    };
+
+    std::vector<EnvVar> env;
+    env.push_back({"INCLUDE", join({
+        tools / "include",
+        sdk.root / "Include" / sdk.version / "ucrt",
+        sdk.root / "Include" / sdk.version / "um",
+        sdk.root / "Include" / sdk.version / "shared",
+        sdk.root / "Include" / sdk.version / "winrt",
+    })});
+    env.push_back({"LIB", join({
+        tools / "lib" / a,
+        sdk.root / "Lib" / sdk.version / "ucrt" / a,
+        sdk.root / "Lib" / sdk.version / "um" / a,
+    })});
+    std::string path = clDir.string();
+    if (const char* p = std::getenv("PATH"); p && *p) {
+        path += ';';
+        path += p;
+    }
+    env.push_back({"PATH", std::move(path)});
+    // Stable English "Note: including file:" prefix for ninja's deps=msvc.
+    env.push_back({"VSLANG", "1033"});
+    return env;
+}
+
+std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir) {
+    return cacheDir / "ifc.cache" / "std.ifc";
+}
+std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir) {
+    return outputDir / "ifc.cache" / "std.ifc";
+}
+std::filesystem::path std_compat_bmi_path(const std::filesystem::path& cacheDir) {
+    return cacheDir / "ifc.cache" / "std.compat.ifc";
+}
+std::filesystem::path staged_std_compat_bmi_path(const std::filesystem::path& outputDir) {
+    return outputDir / "ifc.cache" / "std.compat.ifc";
+}
+
+namespace {
+
+std::string cl_stage_command(const Toolchain& tc,
+                             const std::filesystem::path& cacheDir,
+                             std::string_view cppStandardFlag,
+                             const std::filesystem::path& source,
+                             const std::filesystem::path& ifcOut,
+                             std::string_view objName,
+                             std::string_view extraRef) {
+    // cd into the cache dir (relative outputs land there); env (INCLUDE/LIB)
+    // comes from tc.envOverrides via the executor, not the command string.
+    // `/d`: cmd.exe won't change DRIVE without it (workspace on D:, BMI
+    // cache on C: is the real CI layout).
+    return std::format(
+        "cd /d {} && {} /nologo {} /EHsc /O2 /W0{} /c {} /ifcOutput {} /Fo:{} 2>&1",
+        mcpp::xlings::shq(cacheDir.string()),
+        mcpp::xlings::shq(tc.binaryPath.string()),
+        cppStandardFlag,
+        extraRef,
+        mcpp::xlings::shq(source.string()),
+        mcpp::xlings::shq(ifcOut.string()),
+        objName);
+}
+
+} // namespace
+
+std::vector<std::string> std_module_build_commands(
+    const Toolchain& tc, const std::filesystem::path& cacheDir,
+    std::string_view cppStandardFlag) {
+    return { cl_stage_command(tc, cacheDir, cppStandardFlag,
+                              tc.stdModuleSource,
+                              std_bmi_path(cacheDir), "std.obj", "") };
+}
+
+std::vector<std::string> std_compat_build_commands(
+    const Toolchain& tc, const std::filesystem::path& cacheDir,
+    std::string_view cppStandardFlag) {
+    // std.compat imports std — reference the freshly staged std.ifc.
+    auto ref = std::format(" /reference std={}",
+                           mcpp::xlings::shq(std_bmi_path(cacheDir).string()));
+    return { cl_stage_command(tc, cacheDir, cppStandardFlag,
+                              tc.stdCompatSource,
+                              std_compat_bmi_path(cacheDir), "std.compat.obj",
+                              ref) };
+}
+
 std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     auto banner = capture_cl_banner(tc.binaryPath);
     auto parsed = parse_cl_banner(banner);
@@ -385,6 +550,17 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     } else if (auto found = find_std_module_source()) {
         tc.stdModuleSource = *found;
         tc.hasImportStd    = true;
+    }
+    if (auto compat = toolsDir / "modules" / "std.compat.ixx";
+        std::filesystem::exists(compat, ec)) {
+        tc.stdCompatSource = compat;
+    }
+
+    // Build environment (INCLUDE/LIB/PATH/VSLANG). SDK absence keeps
+    // detection working (selection UX on SDK-less boxes); the build path
+    // errors with guidance when envOverrides is empty.
+    if (auto sdk = find_windows_sdk()) {
+        tc.envOverrides = build_env_for_cl(tc.binaryPath, parsed->second, *sdk);
     }
     return {};
 }

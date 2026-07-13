@@ -30,6 +30,7 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.linkmodel;
+import mcpp.toolchain.msvc;
 
 export namespace mcpp::toolchain {
 
@@ -64,8 +65,12 @@ namespace mcpp::toolchain {
 
 namespace {
 
-std::expected<std::string, StdModError> run_capture_command(const std::string& cmd) {
-    auto r = mcpp::platform::process::capture(cmd);
+std::expected<std::string, StdModError> run_capture_command(
+    const std::string& cmd,
+    const std::vector<std::pair<std::string, std::string>>& env) {
+    auto r = env.empty()
+        ? mcpp::platform::process::capture(cmd)
+        : mcpp::platform::process::capture_with_env(cmd, env);
     if (r.exit_code != 0) {
         // Include the command: its --sysroot/-isystem flags are the first
         // thing needed to diagnose header-resolution failures.
@@ -154,10 +159,16 @@ std::expected<void, StdModError> write_metadata(const std::filesystem::path& pat
     return {};
 }
 
-std::expected<std::string, StdModError> run_commands(const std::vector<std::string>& commands) {
+// Toolchain-declared env (MSVC's INCLUDE/LIB/PATH) applies to every std
+// module build command; empty for GCC/Clang (their LD_LIBRARY_PATH need is
+// carried as an in-command `env` prefix on POSIX for now).
+std::expected<std::string, StdModError> run_commands(
+    const std::vector<std::string>& commands, const Toolchain& tc) {
+    std::vector<std::pair<std::string, std::string>> env;
+    for (auto& ev : tc.envOverrides) env.emplace_back(ev.key, ev.value);
     std::string out;
     for (auto const& cmd : commands) {
-        if (auto r = run_capture_command(cmd); !r) return std::unexpected(r.error());
+        if (auto r = run_capture_command(cmd, env); !r) return std::unexpected(r.error());
         else out += *r;
     }
     return out;
@@ -188,12 +199,14 @@ std::expected<StdModule, StdModError> ensure_built(
             "toolchain has no std module source (import std unsupported on this compiler)"});
     }
 
+    const bool isMsvc = tc.compiler == CompilerId::MSVC;
     StdModule sm;
     sm.cacheDir   = cache_root / std::string(fingerprint_hex);
-    sm.bmiPath    = is_clang(tc)
+    sm.bmiPath    = isMsvc ? mcpp::toolchain::msvc::std_bmi_path(sm.cacheDir)
+                 : is_clang(tc)
                   ? mcpp::toolchain::clang::std_bmi_path(sm.cacheDir)
                   : mcpp::toolchain::gcc::std_bmi_path(sm.cacheDir);
-    sm.objectPath = sm.cacheDir / "std.o";
+    sm.objectPath = sm.cacheDir / (isMsvc ? "std.obj" : "std.o");
 
     // Build sysroot + include flags for std module precompilation, derived
     // from the shared toolchain link model (same resolver as flags.cppm —
@@ -222,18 +235,26 @@ std::expected<StdModule, StdModError> ensure_built(
                                     macos_deployment_target);
     }
 
-    // Both providers expose the same command-sequence shape (A5 backend
+    // All three providers expose the same command-sequence shape (A5 backend
     // surface normalization) — no per-compiler arity branching here.
-    std::vector<std::string> stdCommands = is_clang(tc)
+    std::vector<std::string> stdCommands =
+        isMsvc ? mcpp::toolchain::msvc::std_module_build_commands(
+                     tc, sm.cacheDir, cpp_standard_flag)
+      : is_clang(tc)
         ? mcpp::toolchain::clang::std_module_build_commands(
               tc, sm.cacheDir, sm.bmiPath, sysroot_flag, cpp_standard_flag)
         : mcpp::toolchain::gcc::std_module_build_commands(
               tc, sm.cacheDir, sysroot_flag, cpp_standard_flag);
     std::vector<std::string> compatCommands;
-    if (is_clang(tc) && !tc.stdCompatSource.empty()) {
-        auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
-        compatCommands = mcpp::toolchain::clang::std_compat_build_commands(
-            tc, sm.cacheDir, compatBmi, sm.bmiPath, sysroot_flag, cpp_standard_flag);
+    if (!tc.stdCompatSource.empty()) {
+        if (isMsvc) {
+            compatCommands = mcpp::toolchain::msvc::std_compat_build_commands(
+                tc, sm.cacheDir, cpp_standard_flag);
+        } else if (is_clang(tc)) {
+            auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
+            compatCommands = mcpp::toolchain::clang::std_compat_build_commands(
+                tc, sm.cacheDir, compatBmi, sm.bmiPath, sysroot_flag, cpp_standard_flag);
+        }
     }
     auto metadata = metadata_for(tc, cpp_standard, cpp_standard_flag, stdCommands, compatCommands);
     auto metaPath = metadata_path(sm.cacheDir);
@@ -248,7 +269,7 @@ std::expected<StdModule, StdModError> ensure_built(
         if (ec) return std::unexpected(StdModError{
             std::format("cannot create '{}': {}", sm.bmiPath.parent_path().string(), ec.message())});
 
-        auto out = run_commands(stdCommands);
+        auto out = run_commands(stdCommands, tc);
         if (!out) return std::unexpected(out.error());
 
         if (!std::filesystem::exists(sm.bmiPath)) {
@@ -259,17 +280,19 @@ std::expected<StdModule, StdModError> ensure_built(
         rebuiltStd = true;
     }
 
-    // Build std.compat after std (std.compat depends on std, Clang only).
-    if (is_clang(tc) && !tc.stdCompatSource.empty()) {
-        auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
+    // Build std.compat after std (std.compat imports std; Clang + MSVC).
+    if (!compatCommands.empty()) {
+        auto compatBmi = isMsvc
+            ? mcpp::toolchain::msvc::std_compat_bmi_path(sm.cacheDir)
+            : mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
         if (rebuiltStd || !std::filesystem::exists(compatBmi)
             || !metadata_matches(metaPath, metadata)) {
-            if (auto out = run_commands(compatCommands); !out) {
+            if (auto out = run_commands(compatCommands, tc); !out) {
                 return std::unexpected(out.error());
             }
         }
         sm.compatBmiPath = compatBmi;
-        sm.compatObjectPath = sm.cacheDir / "std.compat.o";
+        sm.compatObjectPath = sm.cacheDir / (isMsvc ? "std.compat.obj" : "std.compat.o");
     }
 
     if (auto r = write_metadata(metaPath, metadata); !r) {
