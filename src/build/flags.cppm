@@ -350,8 +350,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             if (f.linkage == "static") mingw_static = " -static";
             // std::print's terminal probe (__open_terminal /
             // __write_to_terminal, bits/print.h) lives in libstdc++exp.a on
-            // Windows targets — plain -lstdc++ leaves them undefined.
-            mingw_stdexp = " -lstdc++exp";
+            // Windows targets — plain -lstdc++ leaves them undefined. And
+            // POSIX-threads libstdc++ (winlibs) pulls libwinpthread-1.dll
+            // unless winpthread is forced static — the classic third DLL
+            // that -static-libstdc++/-static-libgcc do NOT cover.
+            mingw_stdexp = " -lstdc++exp -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic";
         }
         f.ld = std::format("{}{}{}{}{}{}", mingw_static, static_stdlib, b_flag,
                            user_ldflags, mingw_stdexp, link_extra);
