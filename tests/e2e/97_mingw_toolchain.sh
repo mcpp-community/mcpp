@@ -59,14 +59,27 @@ out=$("$MCPP" build 2>&1) || { echo "FAIL: build: $out"; exit 1; }
 run_out=$("$MCPP" run 2>&1) || { echo "FAIL: run: $run_out"; exit 1; }
 [[ "$run_out" == *"mingw-ok"* ]] || { echo "FAIL: run output: $run_out"; exit 1; }
 
-# 4) portability: the exe must run from a clean dir WITHOUT the toolchain
-#    bin dir on PATH (no libstdc++-6.dll / libgcc_s hitchhikers needed).
+# 4) portability: the exe's import table must not reference toolchain DLLs
+#    (libstdc++-6 / libgcc_s / libwinpthread — static_stdlib defaults), and
+#    it must run from a clean dir without the toolchain bin on PATH.
 EXE=$(find target -name "hello_mingw.exe" -path "*/bin/*" | head -1)
 [[ -n "$EXE" ]] || { echo "FAIL: no exe produced"; exit 1; }
+OBJDUMP="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-mingw-gcc/16.1.0/bin/objdump.exe"
+imports=""
+if [[ -x "$OBJDUMP" ]]; then
+    imports=$("$OBJDUMP" -p "$EXE" 2>/dev/null | grep -i "DLL Name" || true)
+    echo "exe imports:"; echo "$imports"
+    bad=$(echo "$imports" | grep -iE "libstdc|libgcc|libwinpthread" || true)
+    [[ -z "$bad" ]] || { echo "FAIL: toolchain DLLs in import table: $bad"; exit 1; }
+fi
 ISO="$TMP/iso"; mkdir -p "$ISO"
 cp "$EXE" "$ISO/"
-iso_out=$(cd "$ISO" && PATH="/usr/bin:/c/Windows/System32" ./hello_mingw.exe 2>&1) \
-    || { echo "FAIL: exe not standalone (static libstdc++/libgcc?): $iso_out"; exit 1; }
-[[ "$iso_out" == *"mingw-ok"* ]] || { echo "FAIL: standalone output: $iso_out"; exit 1; }
+iso_rc=0
+iso_out=$(cd "$ISO" && PATH="/usr/bin:/c/Windows/System32" ./hello_mingw.exe 2>&1) || iso_rc=$?
+if [[ $iso_rc -ne 0 || "$iso_out" != *"mingw-ok"* ]]; then
+    echo "FAIL: standalone run rc=$iso_rc out='$iso_out'"
+    echo "$imports"
+    exit 1
+fi
 
 echo "PASS: mingw toolchain — install, default, modules build/run, standalone exe"
