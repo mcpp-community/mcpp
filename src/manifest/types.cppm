@@ -29,6 +29,9 @@ struct CppStandardConfig {
     std::string                 flag = "-std=c++23";
     int                         level = 23;
     bool                        gnuDialect = false;
+    // standard = "c++fly": latest level + all experimental gates the
+    // resolved toolchain supports (toolchain/cppfly.cppm owns the mapping).
+    bool                        experimental = false;
 };
 
 struct Package {
@@ -532,9 +535,17 @@ std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string
         out.gnuDialect = false;
         return out;
     }
+    if (s == "c++fly") {
+        out.canonical = "c++fly";
+        out.flag = "-std=c++26";      // static GNU fallback; the real spelling
+        out.level = 1000;             // comes from cppfly::std_flag (per-toolchain
+        out.gnuDialect = false;       // latest, > c++latest's 999)
+        out.experimental = true;
+        return out;
+    }
 
     return std::unexpected(std::format(
-        "unsupported C++ standard '{}'; expected c++23, c++26, c++2c, gnu++23, gnu++26, or c++latest",
+        "unsupported C++ standard '{}'; expected c++23, c++26, c++2c, gnu++23, gnu++26, c++latest, or c++fly",
         raw));
 }
 

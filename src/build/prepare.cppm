@@ -16,6 +16,7 @@ import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
 import mcpp.toolchain.clang;
+import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
@@ -2586,11 +2587,31 @@ prepare_build(bool print_fingerprint,
     // The dialect-complete standard flag: spelled per-dialect and carrying
     // the module-graph-global dialect flags (issue #210). ONE string shared
     // by the p1689 scan and the std BMI prebuild so scan-time, prebuild-time
-    // and compile-time dialect provably agree.
-    std::string stdFlagAndDialect = mcpp::toolchain::std_flag_for(
-        mcpp::toolchain::dialect_for(*tc),
-        m->cppStandard.canonical, m->cppStandard.level);
-    for (auto& f : mcpp::manifest::dialect_flags(m->buildConfig)) {
+    // and compile-time dialect provably agree. Both this and make_plan go
+    // through the same cppfly merge, so the c++fly gates (and the
+    // c++latest/c++fly per-toolchain std spelling) stay graph-consistent.
+    std::string stdFlagAndDialect = mcpp::toolchain::cppfly::std_flag(
+        *tc, m->cppStandard.canonical, m->cppStandard.level);
+    if (m->cppStandard.experimental) {
+        // c++fly is best-effort by design: say exactly what this toolchain
+        // got and what it lacks (the value's contract, design §5.4).
+        auto fly = mcpp::toolchain::cppfly::resolve(*tc);
+        std::string enabled, skipped;
+        for (auto& f : fly.features) {
+            auto& dst = f.enabled ? enabled : skipped;
+            if (!dst.empty()) dst += ", ";
+            dst += f.name;
+            if (f.enabled && !f.flags.empty()) dst += std::format(" ({})", f.flags);
+            if (!f.enabled) dst += std::format(" ({})", f.reason);
+        }
+        std::println("c++fly on {}: {}; enabled: {}; skipped: {}",
+                     tc->label(), stdFlagAndDialect,
+                     enabled.empty() ? "(none)" : enabled,
+                     skipped.empty() ? "(none)" : skipped);
+    }
+    for (auto& f : mcpp::toolchain::cppfly::effective_dialect_flags(
+             *tc, m->cppStandard.experimental,
+             mcpp::manifest::dialect_flags(m->buildConfig))) {
         stdFlagAndDialect += ' ';
         stdFlagAndDialect += f;
     }
@@ -2644,6 +2665,14 @@ prepare_build(bool print_fingerprint,
     fpi.cppStandard         = m->package.standard;
     fpi.compileFlags        = canonical_compile_flags(*m)
                               + canonical_package_build_metadata(packages);
+    if (m->cppStandard.experimental) {
+        // c++fly gate flags are derived (not manifest-declared): fold them in
+        // so a cppfly table change across mcpp versions re-fingerprints.
+        for (auto& f : mcpp::toolchain::cppfly::resolve(*tc).flags) {
+            fpi.compileFlags += ' ';
+            fpi.compileFlags += f;
+        }
+    }
     fpi.dependencyLockHash = "";    // M2
     fpi.stdBmiHash         = "";    // updated after stdmod build (chicken/egg ok for M1)
     auto fp = mcpp::toolchain::compute_fingerprint(fpi);

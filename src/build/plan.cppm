@@ -9,6 +9,7 @@ import std;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
+import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
@@ -319,13 +320,21 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.manifest         = manifest;
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
+    bool experimentalStd = false;
     if (auto stdCfg = mcpp::manifest::normalize_cpp_standard(manifest.package.standard)) {
         plan.cppStandard = stdCfg->canonical;
-        // Spelled per-dialect: "-std=c++26" (gnu) vs "/std:c++latest" (msvc).
-        plan.cppStandardFlag = mcpp::toolchain::std_flag_for(
-            mcpp::toolchain::dialect_for(tc), stdCfg->canonical, stdCfg->level);
+        experimentalStd  = stdCfg->experimental;
+        // Spelled per-dialect ("-std=c++26" gnu vs "/std:c++latest" msvc) AND
+        // per-toolchain-latest for c++latest/c++fly (raw canonical is not a
+        // valid -std= spelling on GNU).
+        plan.cppStandardFlag = mcpp::toolchain::cppfly::std_flag(
+            tc, stdCfg->canonical, stdCfg->level);
     }
-    for (auto& f : mcpp::manifest::dialect_flags(manifest.buildConfig)) {
+    // Graph-global dialect flags: manifest-declared ∪ c++fly gates — the same
+    // merge prepare.cppm feeds the scan/std-BMI with (single source, #210).
+    for (auto& f : mcpp::toolchain::cppfly::effective_dialect_flags(
+             tc, experimentalStd,
+             mcpp::manifest::dialect_flags(manifest.buildConfig))) {
         plan.dialectFlags += ' ';
         plan.dialectFlags += f;
     }

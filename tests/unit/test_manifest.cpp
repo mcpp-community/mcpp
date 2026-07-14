@@ -4,6 +4,21 @@ import std;
 import mcpp.manifest;
 import mcpp.platform;
 
+TEST(Manifest, CppFlyStandard) {
+    // standard = "c++fly": latest level + all experimental gates (design
+    // 2026-07-14-std-features-experimental-gate-design.md §5.1).
+    auto cfg = mcpp::manifest::normalize_cpp_standard("c++fly");
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->canonical, "c++fly");
+    EXPECT_EQ(cfg->level, 1000);          // above c++latest's 999
+    EXPECT_TRUE(cfg->experimental);
+    EXPECT_FALSE(mcpp::manifest::normalize_cpp_standard("c++latest")->experimental);
+    EXPECT_FALSE(mcpp::manifest::normalize_cpp_standard("c++26")->experimental);
+    auto bad = mcpp::manifest::normalize_cpp_standard("c++flyy");
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_NE(bad.error().find("c++fly"), std::string::npos);  // listed in the allow-list message
+}
+
 TEST(Manifest, MinimalValid) {
     constexpr auto src = R"(
 [package]
