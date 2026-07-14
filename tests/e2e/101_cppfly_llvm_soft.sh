@@ -59,20 +59,29 @@ grep -qE '^cxxflags  = -std=c\+\+2c' "$build_ninja" || {
     exit 1
 }
 
-# xim llvm payloads use libc++ → the stdlib experimental gate applies.
-grep -q 'experimental-library (-fexperimental-library)' "$TMP/build.log" || {
-    cat "$TMP/build.log"
-    echo "FAIL: summary missing libc++ experimental-library gate"
-    exit 1
-}
-grep -q -- '-fexperimental-library' "$build_ninja" || {
-    echo "FAIL: build.ninja missing -fexperimental-library"
-    exit 1
-}
+# stdlib gate: libc++ (linux/macos llvm payloads) → enabled + flag present;
+# clang on MSVC STL (windows) → reported skipped + flag absent. Assert the
+# summary and the emitted flags AGREE rather than hardcoding one stdlib.
+if grep -q 'experimental-library (-fexperimental-library)' "$TMP/build.log"; then
+    grep -q -- '-fexperimental-library' "$build_ninja" || {
+        echo "FAIL: summary claims experimental-library but build.ninja lacks the flag"
+        exit 1
+    }
+else
+    grep -q 'skipped: .*experimental-library' "$TMP/build.log" || {
+        cat "$TMP/build.log"
+        echo "FAIL: experimental-library neither enabled nor reported skipped"
+        exit 1
+    }
+    if grep -q -- '-fexperimental-library' "$build_ninja"; then
+        echo "FAIL: -fexperimental-library emitted for a non-libc++ stdlib"
+        exit 1
+    fi
+fi
 
-binary=$(find target -type f -path '*/bin/flysoft' | head -1)
+binary=$(find target -type f \( -path '*/bin/flysoft' -o -path '*/bin/flysoft.exe' \) | head -1)
 out=$("$binary")
-[[ "$out" == "fly soft ok" ]] || {
+[[ "$out" == *"fly soft ok"* ]] || {
     echo "FAIL: runtime output: $out"
     exit 1
 }
