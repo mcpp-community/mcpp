@@ -71,6 +71,31 @@ std::optional<std::filesystem::path> find_std_module_source(
     auto p = root / "include" / "c++" / std::string(version) / "bits" / "std.cc";
     if (std::filesystem::exists(p)) return p;
 
+    // Cross toolchains (e.g. MinGW-w64 `x86_64-w64-mingw32-g++`) install the
+    // TARGET libstdc++ — and its bits/std.cc — under a target-triple subdir:
+    //   <prefix>/<triple>/include/c++/<version>/bits/std.cc
+    // rather than the host-native <prefix>/include/c++/. Derive the triple from
+    // the frontend filename (strip the -g++/-gcc/-c++ suffix) and look there.
+    {
+        std::error_code ec;
+        auto stem = cxx_binary.stem().string();
+        for (std::string_view suf : {"-g++", "-gcc", "-c++"}) {
+            if (stem.size() > suf.size() && stem.ends_with(suf)) {
+                std::string triple = stem.substr(0, stem.size() - suf.size());
+                auto base = root / triple / "include" / "c++";
+                auto pv = base / std::string(version) / "bits" / "std.cc";
+                if (std::filesystem::exists(pv, ec)) return pv;
+                if (std::filesystem::exists(base, ec)) {
+                    for (auto& entry : std::filesystem::directory_iterator(base, ec)) {
+                        auto cand = entry.path() / "bits" / "std.cc";
+                        if (std::filesystem::exists(cand, ec)) return cand;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
     // Version-dir scan fallback: the header dir doesn't always equal the
     // full driver version (e.g. distro / MinGW-w64 builds using the major
     // version, or a patched banner). Any bits/std.cc under include/c++ is
@@ -131,12 +156,13 @@ std::string std_module_build_command(const Toolchain& tc,
                                      const std::filesystem::path& cacheDir,
                                      std::string_view sysrootFlag,
                                      std::string_view cppStandardFlag) {
-    // musl-cross-make toolchains bundle their own as/ld (and for a cross
-    // target the host's binutils would mis-assemble, e.g. `as: unrecognized
-    // option '-EL'`). Only the glibc gcc needs an external binutils package
-    // wired via -B. Mirrors the guard in build/flags.cppm.
+    // musl-cross-make AND MinGW-w64 cross toolchains bundle their own as/ld
+    // (and for a cross target the host's binutils would mis-assemble — e.g.
+    // the Linux `as` chokes on MinGW's PE/SEH directives `.def`/`.seh_proc`).
+    // Only the glibc gcc needs an external binutils package wired via -B.
+    // Mirrors the guard in build/flags.cppm.
     std::string bFlag;
-    if (!is_musl_target(tc)) {
+    if (!is_musl_target(tc) && !is_mingw_target(tc)) {
         if (auto binutilsBin = find_binutils_bin(tc.binaryPath)) {
             bFlag = std::format(" -B{}", mcpp::xlings::shq(binutilsBin->string()));
         }

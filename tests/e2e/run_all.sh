@@ -52,6 +52,16 @@ case "$OS" in
            || [[ -x "${MCPP_HOME}/registry/data/xpkgs/xim-x-musl-gcc/15.1.0/bin/x86_64-linux-musl-g++" ]]; then
             CAPS+=(musl)
         fi
+        # mingw-cross: the Linux-hosted MinGW-w64 cross toolchain (xim
+        # mingw-cross-gcc, GCC 16 MSVCRT). Must be the xim-managed GCC-16 build,
+        # NOT the distro apt g++-mingw-w64 (GCC 13 — no `import std`). Probe the
+        # xlings/mcpp payload location, mirroring the musl probe above.
+        if [[ -x "$HOME/.xlings/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++" ]] \
+           || [[ -x "${MCPP_HOME}/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++" ]]; then
+            CAPS+=(mingw-cross)
+        fi
+        # wine: run cross-built Windows PE artifacts on the Linux host.
+        command -v wine &>/dev/null && CAPS+=(wine)
         # pack capability: ELF + patchelf both required
         if [[ " ${CAPS[*]} " == *" patchelf "* ]]; then
             CAPS+=(pack)

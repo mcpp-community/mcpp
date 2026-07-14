@@ -3,6 +3,30 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.92] — 2026-07-15
+
+### 新增
+
+- **Linux → Windows MinGW-w64 交叉工具链(`mingw-cross`)—— host≠target 一等公民**。
+  在 Linux 主机上交叉编译出 Windows x86_64 PE,含 `import std`。补 0.0.89
+  `msvc-mingw-design` §4.4/§7 登记的延期项(交叉维:host≠target)。
+  - **工具链**:从源码构建的 GCC 16.1.0 mingw-w64 **MSVCRT** 交叉链(triple
+    `x86_64-w64-mingw32`,跟随 Rust Tier-1 `x86_64-pc-windows-gnu` 的 CRT 选型);
+    自包含(自带 binutils/CRT/libstdc++ 含 `bits/std.cc` + `libstdc++exp`);
+    发布于 `xlings-res/mingw-cross-gcc`(GitHub+GitCode)+ `xim-pkgindex`。
+  - **mcpp 侧**:用户名 `mingw-cross` → xim `mingw-cross-gcc`(前端
+    `x86_64-w64-mingw32-g++`);解除 MinGW 的 Windows-host 门(Linux 主机可装,native
+    `mingw` 仍 Windows-only);`--target x86_64-w64-mingw32` 约定解析(默认 static);
+    跳过 glibc/linux-headers(PE 自带 CRT)。
+  - **host≠target 化**:PE 产物形态判断一律按 target 而非 host constexpr——std 模块源
+    探测补 `<prefix>/<triple>/include/c++/` 子目录;自包含工具链跳过外部 binutils `-B`
+    (musl + mingw);MinGW link 分支(`-static` / `-lstdc++exp`)由 `if constexpr(is_windows)`
+    host 门提为运行期 `is_mingw_target` target 判定。
+  - **验证**:e2e `102_mingw_cross_wine.sh`(`# requires: mingw-cross wine`,build --target
+    → PE 静态自包含断言 → wine 跑 import std + 多模块);CI `cross-build-test.yml` 加
+    `mingw-cross-wine` job(OS-cross,wine)。全链实测闭环(install→build→wine)。
+  - 设计:`.agents/docs/2026-07-15-mingw-linux-cross-windows-design.md`。
+
 ## [0.0.91] — 2026-07-15
 
 ### 新增

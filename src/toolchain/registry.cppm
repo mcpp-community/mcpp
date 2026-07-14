@@ -107,6 +107,10 @@ std::vector<std::string> frontend_candidates_for(std::string_view ximName,
     if (ximName == "llvm") return mcpp::toolchain::llvm::frontend_candidates();
     if (ximName == "msvc") return {"cl.exe"};
     if (ximName == "mingw-gcc") return {"g++.exe", "g++"};
+    // Linux-hosted MinGW-w64 cross toolchain: an ELF frontend that produces
+    // Windows PE. Triple-prefixed name (like the musl cross tools), never the
+    // host g++ — a cross build must never silently fall back to native.
+    if (ximName == "mingw-cross-gcc") return {"x86_64-w64-mingw32-g++"};
     return {"g++", "clang++", "x86_64-linux-musl-g++", "cl.exe"};
 }
 
@@ -180,6 +184,11 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     // `mingw-gcc` (winlibs GCC+MinGW-w64 UCRT builds mirrored at xlings-res).
     if (ximCompiler == "mingw")
         ximCompiler = "mingw-gcc";
+    // Linux→Windows MinGW-w64 cross: user-facing `mingw-cross`, xim package
+    // `mingw-cross-gcc` (from-source GCC-16 MSVCRT cross, xlings-res). host≠target:
+    // an ELF toolchain producing PE. See 2026-07-15-mingw-linux-cross-windows-design.
+    if (ximCompiler == "mingw-cross")
+        ximCompiler = "mingw-cross-gcc";
 
     pkg.ximName = ximCompiler;
     pkg.ximVersion = spec.version;
@@ -233,6 +242,8 @@ std::string display_label(std::string_view compiler, std::string_view version) {
         return std::format("gcc {}-musl", version);
     if (compiler == "mingw-gcc")
         return std::format("mingw {}", version);
+    if (compiler == "mingw-cross-gcc")
+        return std::format("mingw-cross {}", version);
     return std::format("{} {}", compiler, version);
 }
 
@@ -253,6 +264,12 @@ bool matches_default_toolchain(std::string_view configuredDefault,
         && configuredDefault == std::format("mingw@{}", version)) {
         return true;
     }
+    // Cross MinGW: installed-payload row reports xim name (mingw-cross-gcc);
+    // user-facing spec is mingw-cross@<ver>.
+    if (compiler == "mingw-cross-gcc"
+        && configuredDefault == std::format("mingw-cross@{}", version)) {
+        return true;
+    }
     return false;
 }
 
@@ -266,9 +283,13 @@ std::vector<std::pair<std::string, std::string>> available_toolchain_indexes() {
         {"musl-gcc", "musl-gcc"},
         {mcpp::toolchain::llvm::package_name(), "llvm"},
     };
-    // Windows-native toolchain — only meaningful to list on Windows hosts.
+    // MinGW-w64 toolchains are host-conditional (host≠target axis):
+    //   - native mingw-gcc (produces PE, runs on Windows)   → Windows hosts
+    //   - cross mingw-cross-gcc (ELF frontend, produces PE)  → Linux hosts
     if constexpr (mcpp::platform::is_windows)
         out.emplace_back("mingw-gcc", "mingw-gcc");
+    else if constexpr (mcpp::platform::is_linux)
+        out.emplace_back("mingw-cross-gcc", "mingw-cross-gcc");
     return out;
 }
 
@@ -286,10 +307,17 @@ std::filesystem::path archive_tool(const Toolchain& tc) {
     if (is_clang(tc)) return mcpp::toolchain::clang::archive_tool(tc);
 
     // MinGW bundles its own binutils next to the frontend (self-contained,
-    // like musl) — never an external binutils xpkg.
+    // like musl) — never an external binutils xpkg. Native (Windows-host) ships
+    // `ar.exe`; the Linux-hosted cross ships the triple-prefixed ELF tool
+    // `x86_64-w64-mingw32-ar`. Try the cross form first, then native.
     if (is_mingw_target(tc)) {
-        auto ar = tc.binaryPath.parent_path() / "ar.exe";
         std::error_code ec;
+        auto dir = tc.binaryPath.parent_path();
+        if (!tc.targetTriple.empty()) {
+            auto crossAr = dir / (tc.targetTriple + "-ar");
+            if (std::filesystem::exists(crossAr, ec)) return crossAr;
+        }
+        auto ar = dir / "ar.exe";
         if (std::filesystem::exists(ar, ec)) return ar;
         return {};
     }

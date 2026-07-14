@@ -11,6 +11,11 @@ name: cross-build-test
 #   target                | toolchain                       | host→target   | run
 #   ----------------------|---------------------------------|---------------|-----
 #   aarch64-linux-musl    | aarch64-linux-musl-gcc@16.1.0   | x86_64→arm64  | qemu
+#   x86_64-w64-mingw32    | mingw-cross-gcc@16.1.0 (MSVCRT)  | linux→windows | wine
+#
+# The mingw row is OS-cross (same arch, different OS/ABI: ELF→PE), so it lives
+# in its own job below with wine verification instead of the qemu arch matrix.
+# See .agents/docs/2026-07-15-mingw-linux-cross-windows-design.md.
 #
 # mcpp resolves a cross `--target <triple>-musl` build to the triple-named cross
 # gcc musl toolchain from the xlings ecosystem (xim:<triple>-gcc, see
@@ -163,3 +168,80 @@ jobs:
           echo "== xlings --version (best-effort under qemu) =="
           xver=$($RUN "$XLINGS_XBIN" --version 2>&1 || true)
           echo "$xver"
+
+  # ── Linux → Windows MinGW cross (OS-cross, same arch: ELF→PE) ─────────────
+  # Builds a demo project for x86_64-w64-mingw32 with the from-source GCC-16
+  # MSVCRT cross toolchain, asserts the artefact is a fully-static PE, and runs
+  # it under wine. Delegated to the e2e harness (tests/e2e/102_mingw_cross_wine.sh,
+  # `# requires: mingw-cross wine`) so the run_all cap-gating stays the single
+  # source of truth. See 2026-07-15-mingw-linux-cross-windows-design.md Part C.
+  mingw-cross-wine:
+    name: mingw-cross linux→windows (build + wine run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+      MCPP_VERBOSE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache mcpp sandbox
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp
+          key: mcpp-sandbox-${{ runner.os }}-mingw-cross-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+          restore-keys: |
+            mcpp-sandbox-${{ runner.os }}-mingw-cross-
+
+      - name: Cache xlings
+        uses: actions/cache@v4
+        with:
+          path: ~/.xlings
+          key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
+          restore-keys: |
+            xlings-${{ runner.os }}-v2-
+
+      - name: Install wine
+        run: |
+          sudo dpkg --add-architecture i386 || true
+          sudo apt-get update -qq
+          sudo apt-get install -y wine64 wine || sudo apt-get install -y wine
+          wine --version
+
+      - name: Bootstrap mcpp via xlings
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+          XLINGS_VERSION: '0.4.62'
+        run: |
+          tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          tar -xzf "/tmp/${tarball}" -C /tmp
+          "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
+          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+          find "$HOME/.xlings" -name '.xlings-index-cache.json' -delete 2>/dev/null || true
+          xlings config --mirror GLOBAL 2>/dev/null || true
+          xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
+          xlings install mcpp -y
+          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+          echo "MCPP_BOOT=$HOME/.xlings/subos/default/bin/mcpp" >> "$GITHUB_ENV"
+
+      - name: Self-host build (fresh host mcpp)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP_BOOT" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP_BOOT" build
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          test -x "$MCPP"
+          "$MCPP" self config --mirror GLOBAL
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+
+      - name: Install mingw-cross toolchain
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" toolchain install mingw-cross 16.1.0
+
+      - name: "e2e: cross-build + wine run"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash tests/e2e/102_mingw_cross_wine.sh

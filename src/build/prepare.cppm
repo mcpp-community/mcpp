@@ -664,6 +664,19 @@ prepare_build(bool print_fingerprint,
             && m->buildConfig.linkage.empty()) {
             m->buildConfig.linkage = "static";
         }
+        // Convention: the Windows PE cross target `x86_64-w64-mingw32` without
+        // an explicit [target.X] override resolves to the from-source GCC-16
+        // MSVCRT cross toolchain. host≠target — an ELF frontend producing PE.
+        // Default static linkage: MinGW standalone-exe convention and the clean
+        // path for running the artifact under wine (no DLL deployment needed).
+        // See .agents/docs/2026-07-15-mingw-linux-cross-windows-design.md.
+        if (overrides.target_triple == "x86_64-w64-mingw32"
+            && (it == m->targetOverrides.end() || it->second.toolchain.empty()))
+        {
+            tcSpec = "mingw-cross@16.1.0";
+            if (m->buildConfig.linkage.empty())
+                m->buildConfig.linkage = "static";
+        }
     }
     if (overrides.force_static) m->buildConfig.linkage = "static";
 

@@ -215,11 +215,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         f.sysroot = link_toolchain_flags;
     }
 
-    // Binutils -B flag — a GCC/libstdc++ payload concern (musl bundles its
-    // own as/ld; Clang and MSVC never take an external binutils).
-    bool isMuslTc = mcpp::toolchain::is_musl_target(plan.toolchain);
+    // Binutils -B flag — a GCC/libstdc++ payload concern (musl and MinGW-w64
+    // cross both bundle their own as/ld; Clang and MSVC never take an external
+    // binutils). MinGW must not get the Linux binutils -B — its PE/SEH output
+    // is only assemblable by its own x86_64-w64-mingw32-as.
+    bool isMuslTc  = mcpp::toolchain::is_musl_target(plan.toolchain);
+    bool isMingwTc = mcpp::toolchain::is_mingw_target(plan.toolchain);
     std::filesystem::path binutilsBin;
-    if (!isMuslTc && caps.stdlib_id == "libstdc++") {
+    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++") {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
         if (!ar.empty())
             binutilsBin = ar.parent_path();
@@ -361,6 +364,27 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if (prof.lto)   link_extra += " -flto";
     if (prof.strip) link_extra += " -s";
 
+    // MinGW PE link — keyed on the TARGET (is_mingw_target), NOT the host: a
+    // Linux-hosted cross build produces exactly the same PE link as a native
+    // Windows MinGW build (host≠target). No rpath/loader/payload model. Static
+    // + libstdc++exp (std::print's __open_terminal/__write_to_terminal live in
+    // libstdc++exp.a, not plain libstdc++). Self-contained binutils → no -B.
+    if (isMingwTc) {
+        std::string mingw_static;
+        std::string mingw_stdexp;
+        if (caps.stdlib_id == "libstdc++") {
+            // `-static` for the whole link — MinGW's standalone-exe convention
+            // (the piecemeal -static-libstdc++ recipe still pulls
+            // libwinpthread-1.dll). Opt out via [build] static_stdlib=false.
+            if (f.staticStdlib || f.linkage == "static")
+                mingw_static = " -static";
+            mingw_stdexp = " -lstdc++exp";
+        }
+        f.ld = std::format("{}{}{}{}{}", mingw_static, static_stdlib,
+                           user_ldflags, mingw_stdexp, link_extra);
+        return f;
+    }
+
     if constexpr (mcpp::platform::is_windows) {
         if (isMsvcDialect) {
             // Native cl.exe: link.exe does the link (SeparateLinker). Search
@@ -374,30 +398,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             f.ld = libpaths + user_ldflags;
             return f;
         }
-        // PE link: no rpath/loader/payload model. MSVC-ABI Clang needs
-        // nothing extra (MSVC STL/SDK via the driver); MinGW adds the static
-        // libstdc++/libgcc pair (static_stdlib above) and -B so its own
-        // binutils resolve, plus `-static` for full static when requested
-        // (MinGW supports it, unlike MSVC-ABI links).
-        std::string mingw_static;
-        std::string mingw_stdexp;
-        if (caps.stdlib_id == "libstdc++") {
-            // `-static` for the whole link — winlibs' own recommendation for
-            // standalone exes. The piecemeal recipe (-static-libstdc++ +
-            // -Wl,-Bstatic -lwinpthread) verifiably loses to the driver's
-            // implicit closing libs: CI import tables still showed
-            // libwinpthread-1.dll. System DLLs (KERNEL32/UCRT) still resolve
-            // via their import libs. Tied to staticStdlib so
-            // [build] static_stdlib=false opts back into DLL-coupled links.
-            if (f.staticStdlib || f.linkage == "static")
-                mingw_static = " -static";
-            // std::print's terminal probe (__open_terminal /
-            // __write_to_terminal, bits/print.h) lives in libstdc++exp.a on
-            // Windows targets — plain -lstdc++ leaves them undefined.
-            mingw_stdexp = " -lstdc++exp";
-        }
-        f.ld = std::format("{}{}{}{}{}{}", mingw_static, static_stdlib, b_flag,
-                           user_ldflags, mingw_stdexp, link_extra);
+        // PE link, MSVC-ABI Clang (native MinGW is handled by the target-keyed
+        // branch above and has already returned): no rpath/loader/payload —
+        // MSVC STL/SDK come via the driver, nothing extra needed.
+        f.ld = std::format("{}{}{}", static_stdlib, user_ldflags, link_extra);
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         // macOS. Two min-version concerns (see xlings
         // .agents/docs/2026-06-05-macos-min-version-support.md):

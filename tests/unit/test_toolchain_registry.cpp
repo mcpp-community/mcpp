@@ -32,6 +32,25 @@ TEST(ToolchainRegistry, MapsGccMuslSuffixToMuslGccPackage) {
     EXPECT_FALSE(pkg.needsGccPostInstallFixup);
 }
 
+TEST(ToolchainRegistry, MapsMingwCrossSpecToCrossPackage) {
+    // Linux → Windows MinGW cross: user-facing `mingw-cross` maps to the xim
+    // package `mingw-cross-gcc`, an ELF frontend producing PE. Distinct from the
+    // Windows-native `mingw`/`mingw-gcc`. No ELF post-install fixup (PE target).
+    auto spec = parse_toolchain_spec("mingw-cross@16.1.0");
+    ASSERT_TRUE(spec.has_value()) << spec.error();
+
+    auto pkg = to_xim_package(*spec);
+    EXPECT_FALSE(spec->isMusl);
+    EXPECT_EQ(pkg.ximName, "mingw-cross-gcc");
+    EXPECT_EQ(pkg.ximVersion, "16.1.0");
+    ASSERT_FALSE(pkg.frontendCandidates.empty());
+    EXPECT_EQ(pkg.frontendCandidates.front(), "x86_64-w64-mingw32-g++");
+    EXPECT_FALSE(pkg.needsGccPostInstallFixup);
+    EXPECT_EQ(display_label("mingw-cross-gcc", "16.1.0"), "mingw-cross 16.1.0");
+    EXPECT_TRUE(matches_default_toolchain("mingw-cross@16.1.0",
+                                          "mingw-cross-gcc", "16.1.0"));
+}
+
 TEST(ToolchainRegistry, MapsLlvmAndClangAliasesToLlvmPackage) {
     auto llvmSpec = parse_toolchain_spec("llvm", "20.1.7");
     auto clangSpec = parse_toolchain_spec("clang@20.1.7");

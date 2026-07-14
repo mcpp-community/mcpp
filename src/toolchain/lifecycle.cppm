@@ -410,9 +410,12 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // Ensure sysroot dependencies (glibc, linux-headers) are installed.
         // These are required for C library + kernel headers during compilation.
         // musl-gcc is self-contained and doesn't need these; neither do
-        // Windows (llvm/mingw — PE, own CRT) or macOS (SDK) toolchains.
+        // Windows (llvm/mingw — PE, own CRT) or macOS (SDK) toolchains, nor a
+        // Linux-hosted mingw CROSS toolchain (host is Linux but the TARGET is
+        // Windows PE with its own CRT — glibc/linux-headers are irrelevant).
         // Mirrors the platform guard on prepare.cppm's first-run install.
         if (!spec->isMusl
+            && pkg.ximName != "mingw-cross-gcc"
             && !mcpp::platform::is_windows && !mcpp::platform::is_macos) {
             for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
                 mcpp::log::verbose("toolchain", std::format("installing dep: {}", dep));
