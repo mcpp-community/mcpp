@@ -54,7 +54,8 @@ repo        = "https://github.com/user/myapp"  # Repository URL (optional)
 - `c++26`: use when you need C++26 language features.
 - `c++2c`: a compatibility alias, normalized to `c++26` after parsing.
 - `gnu++23` / `gnu++26`: use when you need a GNU dialect; this enters the fingerprint and the std BMI cache key.
-- `c++latest`: follows the newest standard mcpp currently supports. Good for local experimentation, but not recommended for release packages that require reproducibility.
+- `c++latest`: resolves to the newest standard level the resolved toolchain supports. Good for local experimentation, but not recommended for release packages that require reproducibility.
+- `c++fly`: `c++latest` **plus every experimental standard feature the resolved toolchain can enable** (language + standard library). On GCC ≥ 16 this turns on C++26 reflection (`-freflection`) and contracts; on Clang/libc++ it adds `-fexperimental-library`; unsupported gates are skipped with a printed summary. Deliberately toolchain-dependent — the bleeding-edge playground mode, never for published packages.
 
 ### 2.2 `[targets.<name>]` — Build Targets
 
@@ -718,7 +719,7 @@ mcpp build --target x86_64-linux-musl
 | Source files | `src/**/*.{cppm,cpp,cc,c}` | Scanned recursively and automatically |
 | Entry point | `src/main.cpp` | If this file exists, a `bin` target is inferred |
 | Library root | `src/<pkg-tail>.cppm` | Override with `[lib].path` |
-| C++ standard | `c++23` | Configure with `[package].standard`; supports `c++26` / `c++2c` |
+| C++ standard | `c++23` | Configure with `[package].standard`; supports `c++26` / `c++2c` / `c++latest` / `c++fly` (experimental playground) |
 | C standard | `c11` | `.c` files go through the C compiler automatically |
 | Static stdlib | `true` | Portable binary |
 | Headers | `include/` (if present) | Added to `-I` automatically |

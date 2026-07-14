@@ -3,6 +3,29 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.91] — 2026-07-15
+
+### 新增
+
+- **`standard = "c++fly"` — 一行启用"最新标准 + 全部实验特性"(语言 + 标准库)**。
+  语义三件套,全部按 resolved 工具链自动判定:①族最新 `-std=` 档位(GCC16→c++26、
+  Clang→c++2c、MSVC→/std:c++latest);②该工具链支持的全部实验性语言特性门
+  (GCC≥16:反射 `-freflection`;契约随 `-std=c++26` 默认启用,实机探测定案);
+  ③标准库实验门(libc++→`-fexperimental-library`)。不支持的特性**软跳过**并打印
+  summary(`c++fly on <toolchain>: <std>; enabled: ...; skipped: ...`)。
+  新模块 `src/toolchain/cppfly.cppm` 承载三张数据表(族×版本×stdlib)——首个真正
+  使用 `Toolchain::version` 做门控的查询点;产物汇入 0.0.90 的图全局方言旗标通道
+  (全图 TU + P1689 扫描 + std BMI 预构建同源),派生旗标并入指纹。
+  设计:`.agents/docs/2026-07-14-std-features-experimental-gate-design.md`。
+  e2e 100(gcc16 硬路径:零手写旗标跑通 std::meta 反射)/ 101(clang 软路径:
+  c++2c + skipped summary)。
+
+### 修复
+
+- **`standard = "c++latest"` 在 GNU 族误拼 `-std=c++latest`**(GCC/Clang 不识别,
+  构建必败):canonical 现经 cppfly 的"族最新档"表解析为真实档位(GCC16→
+  `-std=c++26`)。e2e 100 尾段回归覆盖。
+
 ## [0.0.90] — 2026-07-13
 
 ### 新增
