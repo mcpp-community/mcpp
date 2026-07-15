@@ -42,7 +42,55 @@ read -r -a ASSETS <<< "${ASSETS:-$DEFAULT_ASSETS}"
 
 info() { echo "[mirror] $*"; }
 
+# Per-asset upload cap. Exceeding it WARNs and abandons that asset (no retry,
+# no delete) so one slow cross-border PUT can't eat the whole job budget — the
+# v0.0.94 release lost `publish-ecosystem` to a 30min job timeout with zero
+# per-asset visibility, and the two biggest linux tarballs had to be pushed by
+# hand afterwards.
+#
+# CAUTION (v0.0.90 postmortem, still binding): a cap that kills a
+# slow-but-PROGRESSING upload and then RETRIES it is strictly worse than no cap
+# — every restart resumes from byte zero and the mirror never converges. This
+# cap is safe only because a capped asset is SKIPPED, never re-uploaded. The
+# completeness gate at the bottom is still the pass/fail, so a skipped asset
+# fails the release loudly instead of silently shipping a half mirror.
+#
+# Raise it (or set it per-host) when the cross-border leg legitimately needs
+# longer than the cap for the big archives; the gate will tell you.
+: "${MIRROR_UPLOAD_TIMEOUT:=120}"
+
 DL="$(mktemp -d)"; trap 'rm -rf "$DL"' EXIT
+
+human_size() { # path → e.g. 31.9MB
+  local b; b=$(stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0)
+  awk -v b="$b" 'BEGIN{ if (b>=1048576) printf "%.1fMB", b/1048576; else if (b>=1024) printf "%.1fKB", b/1024; else printf "%dB", b }'
+}
+
+host_label() { [[ "$1" == gh ]] && echo github || echo gitcode; }
+
+# Upload one asset under the cap, timing it. 0 = the command returned within
+# the cap (NOT proof it landed — gtc's exit code lies both ways, so the probe /
+# gate remains the only source of truth); 1 = the cap fired, asset abandoned.
+upload_asset() { # kind(gh|gtc) asset → 0 returned / 1 capped
+  local kind="$1" a="$2" start elapsed rc=0 sz host
+  sz=$(human_size "$DL/$a")
+  host=$(host_label "$kind")
+  start=$SECONDS
+  if [[ "$kind" == gh ]]; then
+    GH_TOKEN="${XLINGS_RES_TOKEN:-}" timeout "$MIRROR_UPLOAD_TIMEOUT" \
+      gh release upload "$VER" "$DL/$a" -R "$GH_DST" --clobber >/dev/null 2>&1 || rc=$?
+  else
+    timeout "$MIRROR_UPLOAD_TIMEOUT" gtc release upload "$GTC_DST" "$DL/$a" --tag "$VER" \
+      >/dev/null 2>&1 || rc=$?
+  fi
+  elapsed=$((SECONDS - start))
+  if [[ $rc == 124 || $rc == 137 ]]; then
+    info "WARN: $host $a ($sz) exceeded the ${MIRROR_UPLOAD_TIMEOUT}s cap after ${elapsed}s — skipping (not retried; the verify gate below decides the release)"
+    return 1
+  fi
+  info "$host $a ($sz) uploaded in ${elapsed}s"
+  return 0
+}
 
 info "downloading $SRC_REPO v$VER assets ($PROJ)"
 for a in "${ASSETS[@]}"; do
@@ -93,36 +141,43 @@ verify_batch() { # base_url asset... → prints assets still not serving
 # Hard-won rules (0.0.86 / 0.0.89 / 0.0.90 postmortems):
 #  - NEVER delete on a verify timeout — the eager 404→delete loop repeatedly
 #    deleted GOOD uploads whose propagation was merely slow.
-#  - NEVER kill a slow-but-progressing upload: the outer `timeout` MUST
-#    exceed gtc's inner PUT timeout (600s). v0.0.90 wrapped uploads in
-#    `timeout 300`, so every cross-border PUT >5min was SIGKILLed at 60%%
-#    and restarted from byte zero — the 20min job ceiling fell to this.
+#  - NEVER kill a slow-but-progressing upload AND RETRY IT. v0.0.90 wrapped
+#    uploads in `timeout 300`, so every cross-border PUT >5min was SIGKILLed
+#    at 60%% and restarted from byte zero — the 20min job ceiling fell to
+#    this. MIRROR_UPLOAD_TIMEOUT keeps a cap but ABANDONS the asset instead of
+#    retrying it, which is what makes the cap safe; the gate then fails the
+#    release loudly rather than thrashing until the job is killed.
 #  - gtc's exit code lies both ways (obs_callback flakiness); the download
 #    probe is the only source of truth.
 mirror_host() { # kind(gh|gtc) base_url
   local kind="$1" base="$2" try a
   local pending failed
+  local -A capped=()
+  local host_start=$SECONDS
+  local host; host=$(host_label "$kind")
   for try in 1 2 3; do
     pending=()
     for a in "${ASSETS[@]}"; do
+      # A capped asset is never re-attempted (see MIRROR_UPLOAD_TIMEOUT).
+      [[ -n "${capped[$a]:-}" ]] && continue
+      # Step 1: already serving? then it's mirrored — never re-upload it.
       if probe "${base}/${a}"; then
-        [[ $try == 1 ]] && info "$kind $a already mirrored, skipping"
+        [[ $try == 1 ]] && info "$host $a already mirrored, skipping"
         continue
       fi
-      pending+=("$a")
-      if [[ "$kind" == gh ]]; then
-        GH_TOKEN="${XLINGS_RES_TOKEN:-}" timeout 900 \
-          gh release upload "$VER" "$DL/$a" -R "$GH_DST" --clobber || true
+      if upload_asset "$kind" "$a"; then
+        pending+=("$a")
       else
-        timeout 900 gtc release upload "$GTC_DST" "$DL/$a" --tag "$VER" \
-          >/dev/null 2>&1 || true
+        capped[$a]=1
       fi
     done
-    [[ ${#pending[@]} == 0 ]] && return 0
+    [[ ${#pending[@]} == 0 ]] && break
     failed=$(verify_batch "$base" "${pending[@]}")
-    [[ -z "$failed" ]] && return 0
-    echo "[mirror] $kind not serving after patience (try $try): $failed — re-uploading (no delete)"
+    [[ -z "$failed" ]] && break
+    info "$host not serving after patience (try $try): $failed — re-uploading (no delete)"
   done
+  ((${#capped[@]})) && info "WARN: $host abandoned ${#capped[@]} asset(s) at the ${MIRROR_UPLOAD_TIMEOUT}s cap: ${!capped[*]}"
+  info "$host mirror leg finished in $((SECONDS - host_start))s"
   return 0  # the completeness gate below is the real pass/fail
 }
 
@@ -174,5 +229,9 @@ for host in "${hosts[@]}"; do
     [[ "$code" == 200 ]] || { rc=1; echo "[mirror] FAIL: missing/unverified: https://${host}/releases/download/${VER}/${a}" >&2; }
   done
 done
-[[ $rc == 0 ]] && info "all assets mirrored + verified on ${#hosts[@]} host(s)"
+if [[ $rc != 0 ]]; then
+  echo "[mirror] hint: if the asset above was WARNed as capped at ${MIRROR_UPLOAD_TIMEOUT}s, either raise MIRROR_UPLOAD_TIMEOUT for this run or push it by hand:" >&2
+  echo "[mirror]       gh release download v$VER -R $SRC_REPO -p '<asset>' && gtc release upload $GTC_DST '<asset>' --tag $VER" >&2
+fi
+[[ $rc == 0 ]] && info "all assets mirrored + verified on ${#hosts[@]} host(s) in ${SECONDS}s"
 exit $rc
