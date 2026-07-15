@@ -3,6 +3,28 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.94] — 2026-07-15
+
+### 修复
+
+- **依赖包被激活 feature 的 `sources` 在 `mcpp test` 下不编译**。`prepare_build()`
+  把 feature 源集解析(drop + add)**整段**门在 `!includeDevDeps`,而 `mcpp test`
+  走 `includeDevDeps = true` → 激活 feature 的 sources **从不被加回**构建图。
+  descriptor 若把某个 glob **只**写在 `features` 下(xpkg 的 `features.X.sources`
+  只落进 `featureSources`、从不进 base `sources`),该包在 `mcpp build` 下正常、
+  在 `mcpp test` 下必然链接失败(`undefined reference`)。
+  - 命中面:`compat.cjson` 的 `utils`(`cJSONUtils_*`)、`compat.eigen` 的
+    `eigen_blas`(`dgemm_`)、`compat.spdlog` 的 `compiled`。
+  - **`eigen_blas` 的 `dgemm_` 一直被记为「把 feature 编出的依赖目标链进 test
+    二进制是 follow-up」——定性是错的**:不是链接问题,是**源集解析**问题。
+  - 修复:**drop 仍只在 build 模式做**(`mcpp test` 需要保留完整源面,让 dev-dep
+    轨的 per-test main 检测看得见 `gtest_main.cc` 并逐 test 剪枝——见
+    `tests/e2e/79_gtest_regular_dep_feature_main.sh`);**add 改为两模式都做**,
+    并**去重**,使 gtest 那种 base/feature 双列的 glob 不会进两次。
+  - 回归测试:`tests/e2e/100_feature_sources_test_mode.sh`(cjson `utils` 在
+    `mcpp test` 下必须编译并链接;`mcpp build` 仍正常;不请求 feature 时 gated
+    源仍被排除)。
+
 ## [0.0.93] — 2026-07-15
 
 ### 变更(命名统一,全部旧拼写永久兼容)

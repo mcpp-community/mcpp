@@ -2479,32 +2479,47 @@ prepare_build(bool print_fingerprint,
                     }
             }
             // Feature-gated sources (e.g. gtest's gtest_main.cc behind "main"):
-            // drop EVERY feature-listed glob from the default build, then re-add
-            // only the ones whose feature is active. Runs even when no feature is
-            // active, so a gated source is excluded by default.
+            // drop EVERY feature-listed glob from the default build, then add
+            // back only the ones whose feature is active. Runs even when no
+            // feature is active, so a gated source is excluded by default.
             //
-            // ONLY in build mode (!includeDevDeps). `mcpp test` (includeDevDeps)
-            // keeps the full surface so the dev-dependency track's per-test main
-            // detection (run_tests / make_plan) still sees gtest_main.cc and
-            // prunes it per test — the two tracks stay decoupled. Combined with
-            // the descriptor keeping gtest_main.cc in base `sources` too, this
-            // means test mode is unaffected.
+            // The DROP is build-mode only (!includeDevDeps). `mcpp test`
+            // (includeDevDeps) keeps the full surface so the dev-dependency
+            // track's per-test main detection (run_tests / make_plan) still sees
+            // gtest_main.cc and prunes it per test — the two tracks stay
+            // decoupled; gtest's descriptor keeps gtest_main.cc in base `sources`
+            // too, so skipping the drop leaves it visible.
+            //
+            // The ADD runs in BOTH modes. A descriptor may list a glob ONLY under
+            // `features` and never in base `sources` (xpkg's `features.X.sources`
+            // lands in featureSources alone — compat.spdlog's `compiled`,
+            // compat.cjson's `utils`, compat.eigen's `eigen_blas`). Gating the add
+            // on !includeDevDeps meant those sources were never compiled under
+            // `mcpp test` → link-time `undefined reference` (the eigen_blas
+            // `dgemm_` failure, long misread as a linking follow-up: it was
+            // source-set resolution, not linking). Add is dedup'd so gtest's
+            // doubly-listed gtest_main.cc cannot land twice.
             auto& bc = pkg.manifest.buildConfig;
-            if (!includeDevDeps && !bc.featureSources.empty()) {
-                std::set<std::string> gated;
-                for (auto& [f, globs] : bc.featureSources)
-                    for (auto& g : globs) gated.insert(g);
-                auto drop = [&](std::vector<std::string>& v) {
-                    std::erase_if(v, [&](const std::string& s) { return gated.contains(s); });
-                };
-                drop(bc.sources);
-                drop(pkg.manifest.modules.sources);
+            if (!bc.featureSources.empty()) {
+                if (!includeDevDeps) {
+                    std::set<std::string> gated;
+                    for (auto& [f, globs] : bc.featureSources)
+                        for (auto& g : globs) gated.insert(g);
+                    auto drop = [&](std::vector<std::string>& v) {
+                        std::erase_if(v, [&](const std::string& s) { return gated.contains(s); });
+                    };
+                    drop(bc.sources);
+                    drop(pkg.manifest.modules.sources);
+                }
                 std::set<std::string> activeSet(active.begin(), active.end());
+                auto add = [](std::vector<std::string>& v, const std::string& g) {
+                    if (std::ranges::find(v, g) == v.end()) v.push_back(g);
+                };
                 for (auto& [f, globs] : bc.featureSources) {
                     if (!activeSet.contains(f)) continue;
                     for (auto& g : globs) {
-                        bc.sources.push_back(g);
-                        pkg.manifest.modules.sources.push_back(g);
+                        add(bc.sources, g);
+                        add(pkg.manifest.modules.sources, g);
                     }
                 }
             }
