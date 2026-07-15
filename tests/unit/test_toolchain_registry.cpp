@@ -10,6 +10,14 @@ static std::string host_musl() {
     return std::string(mcpp::platform::host_arch) + "-linux-musl";
 }
 
+// The host-native `musl-gcc` package only exists for Linux hosts; on other
+// hosts the payload mapping resolves the triple-named package (a linux-musl
+// target from macOS/Windows is cross by definition).
+static std::string expected_musl_xim() {
+    if constexpr (mcpp::platform::is_linux) return "musl-gcc";
+    else                                    return host_musl() + "-gcc";
+}
+
 // ── canonical two-axis identity ──────────────────────────────────────────────
 
 TEST(ToolchainRegistry, MapsGccSpecToGccPackage) {
@@ -46,7 +54,7 @@ TEST(ToolchainRegistry, LegacyMuslSuffixNormalizesToMuslTarget) {
     EXPECT_FALSE(spec->compatHint.empty());      // legacy spelling → hint
 
     auto pkg = to_xim_package(*spec);
-    EXPECT_EQ(pkg.ximName, "musl-gcc");
+    EXPECT_EQ(pkg.ximName, expected_musl_xim());
     EXPECT_EQ(pkg.ximVersion, "15.1.0");
     ASSERT_FALSE(pkg.frontendCandidates.empty());
     EXPECT_EQ(pkg.frontendCandidates.front(), host_musl() + "-g++");
@@ -133,7 +141,7 @@ TEST(ToolchainRegistry, ResolvesPartialMuslVersion) {
     auto resolved = with_resolved_xim_version(*spec, "15.1.0");
     auto pkg = to_xim_package(resolved);
     EXPECT_EQ(resolved.version, "15.1.0");
-    EXPECT_EQ(pkg.ximName, "musl-gcc");
+    EXPECT_EQ(pkg.ximName, expected_musl_xim());
     EXPECT_EQ(pkg.ximVersion, "15.1.0");
     EXPECT_EQ(pkg.display_spec(),
               std::format("gcc@15.1.0 → {}", host_musl()));
