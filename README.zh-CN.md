@@ -231,22 +231,35 @@ import mcpplibs.cmdline;
 
 ## 平台支持
 
-| OS / arch        | GCC (glibc) | GCC (musl) | Clang / LLVM | MSVC |
-|------------------|:-----------:|:----------:|:------------:|:----:|
-| Linux x86_64     | ✅ | ✅ *默认* | ✅ | — |
-| Linux aarch64    | 🔄 | ✅ *默认* | 🔄 | — |
-| macOS arm64      | — | — | ✅ *默认* | — |
-| macOS x86_64     | — | — | 🔄 | — |
-| Windows x86_64   | — | — | ✅ ¹ *默认* | 🔄 |
+mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family ∈ gcc | llvm | msvc),
+**目标** = 三段 triple `arch-os[-env]`。交叉编译只需 `mcpp build --target <triple>`——
+对应的工具链包会自动解析并安装。`mcpp toolchain list` 查看本机实时状态。
 
-✅ 已支持 ｜ 🔄 计划中
+**宿主**(mcpp 本身运行在哪):Linux x86_64 / aarch64、macOS arm64、Windows x86_64。
 
-> *默认*：Linux 默认工具链为 musl-gcc,release 二进制走 musl 全静态；
-> macOS ARM64 / Windows x86_64 默认工具链均为 LLVM/Clang。
+**目标**(`--target` 接受什么;本表与代码内词汇表同源):
+
+| Target | 约定工具链 | 状态 |
+|---|---|:---:|
+| `x86_64-linux-gnu`    | gcc(*Linux 默认*)或 llvm | ✅ |
+| `x86_64-linux-musl`   | gcc 16,全静态 | ✅ |
+| `aarch64-linux-musl`  | gcc 16,全静态——x86_64 交叉(qemu 实测)或原生 | ✅ |
+| `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine 实测) | ✅ |
+| `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*Windows 默认*) | ✅ |
+| `aarch64-macos`       | llvm(*macOS 默认*) | ✅ |
+| `riscv64-linux-musl`  | — | 🔄 |
+| `aarch64-linux-gnu`   | — | 🔄 |
+| `x86_64-macos`        | — | 🔄 |
+
+✅ 已验证——CI 端到端构建**并真实执行**产物(含 qemu/wine)｜ 🔄 计划中
+
+> Linux release 二进制为 musl 全静态构建(`x86_64-linux-musl`)。
+> 旧拼写——`x86_64-w64-mingw32`、`gcc@16.1.0-musl`、`mingw-cross@…`、`musl-gcc@…`——
+> 作为别名**永久接受**,归一到上表的 canonical 形式。
 >
-> ¹ Windows 上 Clang/LLVM 当前依赖系统已安装 **MSVC BuildTools 或 Visual Studio**
-> （提供 UCRT、Windows SDK、MSVC STL）。零-MSVC 依赖的 `llvm-mingw` 路线在规划中
-> ([讨论](https://github.com/mcpp-community/mcpp/issues))。
+> ¹ Windows 上 llvm 依赖已安装的 **MSVC BuildTools 或 Visual Studio**(UCRT、Windows
+> SDK、MSVC STL)。MinGW 路线(`--target x86_64-windows-gnu`,或
+> `mcpp toolchain default gcc@16 --target x86_64-windows-gnu`)完全不需要 Visual Studio。
 
 ## 文档
 

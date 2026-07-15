@@ -3,6 +3,53 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.93] — 2026-07-15
+
+### 变更(命名统一,全部旧拼写永久兼容)
+
+- **工具链 × 目标 命名统一 —— 二轴身份模型**。toolchain = `family@version`
+  (family 只剩 **gcc | llvm | msvc**),target = mcpp 自有三段 triple
+  `arch-os[-env]`(Zig 式砍 vendor)。变体(gnu/musl/msvc)进 triple env 段,
+  **"cross"/"musl"/"mingw" 不再是工具链名字**——`mingw-cross 16.1.0` 的本体是
+  `gcc@16.1.0 → x86_64-windows-gnu`,交叉只是 host≠target 的关系。业界对照
+  (rustup 零 "cross" 命名/Zig 三段 triple/musl.cc 分发层先例)与决策记录见
+  `.agents/docs/2026-07-15-toolchain-target-naming-unification-design.md`。
+  - **canonical triple**:`x86_64-windows-gnu` 为正典(D1);GNU 拼写
+    `x86_64-w64-mingw32` 及 4 段 Rust 拼写为**永久别名**,归一后进同一
+    `target/<canonical>/` 目录(同一构建缓存)。macOS 产物目录随 canonical 变为
+    `aarch64-macos`。
+  - **`--target` 封闭词汇表校验**:打错字**硬错 + did-you-mean**
+    (`did you mean 'x86_64-linux-musl'?`),不再静默 fall through 编成宿主产物
+    (最坏失败模式根治);自定义 triple 走显式 `[target.X]` 节逃生舱;planned
+    档位(riscv64 等)报「registered but not yet supported」。两条硬编码约定
+    (`*-musl`、`x86_64-w64-mingw32`)改为词汇表数据行(pin + 默认 static)。
+  - **单一 triple 解析器 `triple.cppm`**:cfgpred/abi/model 谓词/registry 四处
+    平行解析收敛;abi 的 os 维 `darwin`→`macos`(与 cfg 词汇分叉消灭,
+    `darwin`/`arm64` 作为约束别名接受)。
+  - **`compat.cppm` 兼容层**:唯一知道旧拼写的文件(musl-gcc/gcc@V-musl/
+    <triple>-gcc/mingw/mingw-cross/clang),归一 + 单行 `note:` 提示;xim 分发包名
+    (`mingw-cross-gcc` 等)不动——"cross" 在分发层合法(musl.cc/Debian 先例)。
+  - **CLI 单名词 + `--target` 选项**(D4,不设 `mcpp target` 子命令):
+    `toolchain install [gcc 16] --target <triple>`(family 可省→约定 pin)、
+    `toolchain default gcc@16 --target <triple>`(默认变 **pair**,持久化
+    `default` + `default_target` 两键)、`toolchain remove … --target <triple>`;
+    主路径仍是 `mcpp build --target <triple>` 自动装链(零仪式)。
+  - **`[build] target = "<triple>"`** 新 manifest 键(≙ cargo `build.target`):
+    「默认全静态 musl」的正确归宿(产物属性,非编译器家族属性);优先级
+    `--target` flag > `[build] target` > 全局 `default_target` > host。
+  - **`toolchain list` 两轴重排**:Toolchains 块(family@version)+ Targets 块
+    (target × 状态 installed/available/**planned**,planned 行使词汇表用户可见);
+    修版本字典序排序 bug(9.4.0 不再排在 15.1.0 前);`gcc X-musl` 行不再被
+    `llvm` 劈开。README 平台表从词汇表重画(target × tier 维度,补 MSVC=✅ 与
+    windows-gnu 行——旧表 MSVC 仍标 planned 是错的)。
+  - 修 Windows host 上 `mingw` 的门:Linux 上 `toolchain install mingw` 现在
+    合法(= 装交叉 payload,同一身份 host 分流);`mcpp run` 位置参数 help 改为
+    「Binary name」消除与 `--target` 的语义撞名。
+  - 验证:单测 35(新增 triple/compat 套件);e2e 新增 103(typo/planned/逃生舱/
+    `[build] target`/别名同目录)、102 双拼写断言;本机实测双拼写同 Resolved
+    行+同缓存(alias 二跑 0.07s 全命中)、PE wine 真跑、musl 静态链、typo
+    did-you-mean。
+
 ## [0.0.92] — 2026-07-15
 
 ### 新增

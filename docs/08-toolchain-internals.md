@@ -41,12 +41,19 @@ Two principles run through everything:
 
 ## 2. Toolchain resolution
 
-A toolchain spec (`gcc@16.1.0`, `llvm@22.1.8`, `gcc@15.1.0-musl`) maps to an
-xim package (`src/toolchain/registry.cppm`: `parse_toolchain_spec` →
-`to_xim_package`, producing an `XimToolchainPackage` with the xim name,
-version, and frontend candidates). The payload is resolved/auto-installed via
-the xlings backend into the sandbox
-(`$MCPP_HOME/registry/data/xpkgs/xim-x-<name>/<version>/`).
+Since 0.0.93 identity is two orthogonal axes: a `ToolchainSpec` is
+`(family ∈ gcc|llvm|msvc, version, target Triple)`. `triple.cppm` is the
+single triple parser + the closed known-target vocabulary; `compat.cppm` is
+the only file that knows legacy spellings (`gcc@15.1.0-musl`, `musl-gcc`,
+`mingw`, `mingw-cross`, `clang`, `<triple>-gcc` — normalized on parse,
+permanently accepted). `to_xim_package` is a *(family, target, host)* payload
+mapping producing an `XimToolchainPackage` with the xim name, version, and
+frontend candidates — this is where host-split distribution names like
+`mingw-cross-gcc` (Linux host) vs `mingw-gcc` (Windows host) live; they are
+current distribution-layer identity, not user-facing spellings. The payload
+is resolved/auto-installed via the xlings backend into the sandbox
+(`$MCPP_HOME/registry/data/xpkgs/xim-x-<name>/<version>/`). See
+`.agents/docs/2026-07-15-toolchain-target-naming-unification-design.md`.
 
 `detect`/`probe` (`src/toolchain/detect.cppm`, `probe.cppm`) then derive:
 
@@ -200,9 +207,11 @@ machine.
    `xim:linux-headers`). Follow the llvm/gcc packaging SOP including the
    admission gate (`verify-toolchain.sh`): completeness + hermetic CRT
    resolution + a real compile/link/run before an asset ships.
-2. **Registry** (`src/toolchain/registry.cppm`): teach
-   `parse_toolchain_spec`/`to_xim_package` the spec spelling, xim package
-   name, and `frontendCandidates` (which binary is the C++ driver).
+2. **Vocabulary + registry**: add the target row to `triple.cppm`'s
+   `kKnownTargets` (tier/pin/defaultStatic), then teach
+   `to_xim_package` (`src/toolchain/registry.cppm`) the *(family, target,
+   host)* → xim package row and its `frontendCandidates` (which binary is
+   the C++ driver). Legacy spellings, if any, go in `compat.cppm` only.
 3. **Capabilities** (`src/toolchain/provider.cppm`): stdlib identity, BMI
    traits, and feature switches consumed by `flags.cppm`.
 4. **Fixup kind** (`post_install.cppm`): decide what post-install alignment

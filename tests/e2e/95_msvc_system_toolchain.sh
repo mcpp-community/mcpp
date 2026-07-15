@@ -15,7 +15,7 @@ CONF="${MCPP_HOME:-$HOME/.mcpp}/config.toml"
 ORIG_DEFAULT=""
 if [[ -f "$CONF" ]]; then
     ORIG_DEFAULT=$(sed -n '/^\[toolchain\]/,/^\[/p' "$CONF" \
-        | grep '^default' | head -1 | cut -d'"' -f2 || true)
+        | grep -E '^default[[:space:]]*=' | head -1 | cut -d'"' -f2 || true)
 fi
 TMP=$(mktemp -d)
 restore() {

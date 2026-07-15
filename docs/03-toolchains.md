@@ -16,21 +16,44 @@ Downloading xim:musl-gcc@15.1.0 [====>      ] 312 MB / 808 MB  3.7 MB/s
 Default set to gcc@15.1.0-musl
 ```
 
-Linux defaults to `gcc@15.1.0-musl`; macOS defaults to `llvm@20.1.7`.
+The first-run default is host-aware: Linux x86_64 → `gcc@16.1.0` (glibc — the
+native ABI, so X11/GL/system libraries link out of the box); other Linux
+arches (aarch64, …) → `gcc@15.1.0-musl` (self-contained, fully static);
+macOS and Windows → `llvm@20.1.7`. Fully-static musl output stays one flag
+away on any Linux host: `mcpp build --target x86_64-linux-musl`.
 
 Subsequent builds do not trigger this process again.
 
 > [!TIP]
 > In CI or offline environments, you can disable automatic installation by setting `MCPP_NO_AUTO_INSTALL=1`. With this set, if no toolchain is installed, `mcpp build` fails immediately instead of making any network requests.
 
+## The Identity Model: Toolchain × Target
+
+Two orthogonal axes name everything:
+
+- **toolchain** = `family@version`, family ∈ `gcc | llvm | msvc` — *who compiles*
+- **target** = a triple `arch-os[-env]` (e.g. `x86_64-linux-musl`,
+  `x86_64-windows-gnu`, `aarch64-macos`) — *what it produces for*
+
+Variants live in the target's `env` segment (`gnu | musl | msvc`), never in
+the toolchain name. "Cross" is not a name either — it's just the relation
+`host ≠ target`, and the same command works for both. Legacy spellings
+(`musl-gcc`, `gcc@15.1.0-musl`, `mingw`, `mingw-cross`, `clang`,
+`x86_64-w64-mingw32`) are **permanently accepted aliases** that normalize to
+this model with a one-line `note:` hint.
+
 ## Manual Installation
 
 ```bash
-mcpp toolchain install gcc 16.1.0           # GNU libc, for the default dynamic-linking case
-mcpp toolchain install gcc 15.1.0-musl      # musl libc, for fully static builds
-mcpp toolchain install musl-gcc 15.1.0      # equivalent to the line above
-mcpp toolchain install llvm 20.1.7          # LLVM/Clang, the default toolchain on macOS
+mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
+mcpp toolchain install llvm 20.1.7          # LLVM/Clang, the default on macOS/Windows
+mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
+mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
+                                            # target's convention pin (gcc@16.1.0)
 ```
+
+Explicit installation is mostly for CI cache warm-up and offline prep —
+`mcpp build --target <triple>` auto-installs whatever the target needs.
 
 Version numbers support partial matching:
 
@@ -41,10 +64,18 @@ mcpp toolchain install gcc@16               # the @ form works too
 
 ## Switching the Default Toolchain
 
+The default is a *pair* — toolchain axis + target axis (target omitted = host):
+
 ```bash
 mcpp toolchain default gcc@16.1.0
-mcpp toolchain default gcc 15               # with a partial version, picks the highest installed match
+mcpp toolchain default gcc 15               # partial version → highest installed match
+mcpp toolchain default gcc@16 --target x86_64-linux-musl   # "default to fully-static musl"
 ```
+
+The pair persists as `[toolchain] default = "gcc@16.1.0"` +
+`default_target = "x86_64-linux-musl"` in `~/.mcpp/config.toml`. (Older
+configs with combined spellings like `default = "gcc@15.1.0-musl"` keep
+working unchanged.)
 
 ## Inspecting Toolchain Status
 
@@ -52,45 +83,57 @@ mcpp toolchain default gcc 15               # with a partial version, picks the 
 mcpp toolchain list
 ```
 
-The output looks like this:
+The output has two blocks — one per axis:
 
 ```
-Installed:
-     TOOLCHAIN               BINARY
-     gcc 15.1.0-musl         @mcpp/registry/data/xpkgs/xim-x-musl-gcc/15.1.0/bin/x86_64-linux-musl-g++
-  *  gcc 16.1.0              @mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++
+Toolchains:
+  *  gcc 16.1.0              (default)
+     gcc 15.1.0
+     llvm 22.1.8
 
-Available (run `mcpp toolchain install <compiler> <version>`):
-     TOOLCHAIN
-     gcc 13.3.0
-     gcc 11.5.0
-     ...
+Targets:
+     TARGET                  NOTE                  TOOLCHAIN         STATUS
+     x86_64-linux-gnu        host                  gcc 16.1.0        installed
+  *  x86_64-linux-musl       static                gcc 16.1.0        installed
+     x86_64-windows-gnu      PE, static, cross     gcc 16.1.0        installed
+     aarch64-linux-musl      static, cross         gcc 16.1.0        available
+     riscv64-linux-musl      static, cross         —                 planned
+
+Available toolchains (run `mcpp toolchain install <family> <version>`):
+     gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0
+     llvm 20.1.7
 ```
 
-The entry marked with `*` is the current default toolchain. `@mcpp/...` is shorthand for `~/.mcpp/...`, used to keep the output narrower.
+`*` marks the default pair. The Targets block is the live view of the target
+vocabulary: `installed` payloads, `available` targets this host can install,
+and `planned` targets that are registered but not yet shipped.
 
-## MinGW (Windows-native GCC, no Visual Studio required)
+## Windows PE via MinGW-w64 (`x86_64-windows-gnu`, no Visual Studio required)
 
-On Windows, `mingw` installs a self-contained MinGW-w64 GCC (winlibs
-standalone build, UCRT runtime) into mcpp's sandbox — the same managed-xpkg
-model as `gcc`/`llvm`, no Visual Studio needed:
+"MinGW" in mcpp is a **target**, not a toolchain name: `x86_64-windows-gnu`
+— GCC producing Windows PE with the GNU CRT. The same identity works from
+both hosts; which self-contained payload serves it is resolved automatically
+(Windows host → winlibs UCRT build; Linux host → the from-source MSVCRT
+cross toolchain, wine-verified in CI):
 
 ```bash
-mcpp toolchain install mingw 16.1.0
-mcpp toolchain default mingw@16.1.0
+mcpp build --target x86_64-windows-gnu       # from Windows OR Linux
+mcpp toolchain default gcc@16 --target x86_64-windows-gnu
+# legacy spellings still accepted: mingw@16.1.0, mingw-cross@16.1.0,
+# --target x86_64-w64-mingw32
 ```
 
 It uses the regular GCC module pipeline (`gcm.cache`, `import std` via
-libstdc++'s `bits/std.cc`). Produced binaries statically link libstdc++ and
-libgcc by default, so they run standalone — no `libstdc++-6.dll` needs to
-travel next to your exe (opt out with `[build] static_stdlib = false`).
-`[build] linkage = "static"` upgrades that to a fully static link.
+libstdc++'s `bits/std.cc`). The target's default linkage is **static** —
+the produced `.exe` is fully self-contained (no `libstdc++-6.dll` to ship,
+runs directly under wine); `[build] linkage = "dynamic"` opts out.
 
 In a manifest:
 
 ```toml
 [toolchain]
-windows = "mingw@16.1.0"
+windows = "gcc@16"            # gcc family on Windows = MinGW-w64
+# legacy value "mingw@16.1.0" keeps working
 ```
 
 ## MSVC (System Toolchain, Windows)
@@ -157,13 +200,42 @@ macos = "llvm@20"
 
 A project-level declaration takes precedence over the global default configuration.
 
-## Cross-Toolchain Builds
+## Targets & Cross Builds
 
 ```bash
-mcpp build --target x86_64-linux-musl
+mcpp build --target x86_64-linux-musl        # fully static ELF
+mcpp build --target aarch64-linux-musl       # cross-arch (aarch64 on x86_64)
+mcpp build --target x86_64-windows-gnu       # Windows PE from Linux
 ```
 
-mcpp reads the `[target.x86_64-linux-musl]` section in `mcpp.toml`, overriding the default toolchain and linkage settings. Combined with `mcpp pack --mode static`, this lets you produce a fully static release package; for a complete example, see [`examples/03-pack-static`](../examples/03-pack-static/).
+`--target` is validated against the known-target vocabulary (see the README
+platform table, which mirrors it): a typo is a **hard error with a
+suggestion** (`did you mean 'x86_64-linux-musl'?`) — never a silent host
+build. Custom triples outside the vocabulary are allowed when an explicit
+`[target.<triple>]` section declares them in `mcpp.toml`.
+
+Each known target carries a convention: its pinned toolchain (installed on
+demand) and its default linkage (`*-linux-musl` and `x86_64-windows-gnu`
+default to static). An explicit `[target.<triple>]` section overrides both:
+
+```toml
+[target.x86_64-linux-musl]
+toolchain = "gcc@16.1.0"
+linkage   = "static"
+```
+
+A project can set its *default* build target — this is where "this project
+ships fully-static" belongs (static output is a product property, not a
+compiler-family property):
+
+```toml
+[build]
+target = "x86_64-linux-musl"                 # ≙ cargo's build.target
+```
+
+Combined with `mcpp pack --mode static` this produces a fully static release
+package; for a complete example, see
+[`examples/03-pack-static`](../examples/03-pack-static/).
 
 ## Uninstalling
 

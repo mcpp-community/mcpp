@@ -141,6 +141,8 @@ cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
 static_stdlib = true               # Statically link libstdc++ (default true)
+target       = "x86_64-linux-musl" # Default build target when no --target is passed
+                                   # (≙ cargo build.target; e.g. "ship fully-static")
 macos_deployment_target = "14.0"   # Minimum supported OS version for macOS artifacts (macOS only)
 ```
 

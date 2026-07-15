@@ -12,8 +12,10 @@ set -e
 CONF="${MCPP_HOME:-$HOME/.mcpp}/config.toml"
 ORIG_DEFAULT=""
 if [[ -f "$CONF" ]]; then
+    # NB: match `default =` exactly — `default_target =` also starts with
+    # "default" (the persisted pair since the naming unification).
     ORIG_DEFAULT=$(sed -n '/^\[toolchain\]/,/^\[/p' "$CONF" \
-        | grep '^default' | head -1 | cut -d'"' -f2 || true)
+        | grep -E '^default[[:space:]]*=' | head -1 | cut -d'"' -f2 || true)
 fi
 TMP=$(mktemp -d)
 restore() {
@@ -32,12 +34,15 @@ out=$("$MCPP" toolchain install mingw 16.1.0 2>&1) \
 [[ "$out" == *"Installed"* || "$out" == *"already"* || "$out" == *"mingw"* ]] \
     || { echo "FAIL: install output: $out"; exit 1; }
 
-# 2) switch default + list shows it starred
+# 2) switch default (legacy spelling — normalizes to the pair
+#    gcc@16.1.0 + x86_64-windows-gnu) + list stars both axes
 "$MCPP" toolchain default mingw@16.1.0 \
     || { echo "FAIL: default mingw@16.1.0"; exit 1; }
 out=$("$MCPP" toolchain list 2>&1)
-echo "$out" | grep -E '\*\s*mingw 16\.1\.0' >/dev/null \
-    || { echo "FAIL: mingw not starred: $out"; exit 1; }
+echo "$out" | grep -E '\*\s*gcc 16\.1\.0' >/dev/null \
+    || { echo "FAIL: gcc 16.1.0 not starred in Toolchains: $out"; exit 1; }
+echo "$out" | grep -E '\*\s*x86_64-windows-gnu' >/dev/null \
+    || { echo "FAIL: x86_64-windows-gnu not starred in Targets: $out"; exit 1; }
 
 # 3) real build: import std + named module through the gcm pipeline
 "$MCPP" new hello_mingw >/dev/null 2>&1

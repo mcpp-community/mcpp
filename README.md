@@ -231,22 +231,39 @@ import mcpplibs.cmdline;
 
 ## Platform Support
 
-| OS / arch        | GCC (glibc) | GCC (musl) | Clang / LLVM | MSVC |
-|------------------|:-----------:|:----------:|:------------:|:----:|
-| Linux x86_64     | ✅ | ✅ *default* | ✅ | — |
-| Linux aarch64    | 🔄 | ✅ *default* | 🔄 | — |
-| macOS arm64      | — | — | ✅ *default* | — |
-| macOS x86_64     | — | — | 🔄 | — |
-| Windows x86_64   | — | — | ✅ ¹ *default* | 🔄 |
+mcpp's identity model has two orthogonal axes: a **toolchain** is
+`family@version` (family ∈ gcc | llvm | msvc), a **target** is a triple
+`arch-os[-env]`. Cross-compiling is just `mcpp build --target <triple>` —
+the right toolchain payload is resolved and installed automatically.
+`mcpp toolchain list` shows live status on your machine.
 
-✅ supported ｜ 🔄 planned
+**Hosts** (where mcpp itself runs): Linux x86_64 / aarch64, macOS arm64, Windows x86_64.
 
-> *default*: the default toolchain on Linux is musl-gcc; release binaries are fully static musl builds.
-> The default toolchain on macOS ARM64 / Windows x86_64 is LLVM/Clang.
+**Targets** (what `--target` accepts; this table mirrors the in-code vocabulary):
+
+| Target | Convention toolchain | Status |
+|---|---|:---:|
+| `x86_64-linux-gnu`    | gcc *(Linux default)* or llvm | ✅ |
+| `x86_64-linux-musl`   | gcc 16, fully static | ✅ |
+| `aarch64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu-verified) or native | ✅ |
+| `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) | ✅ |
+| `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default)* | ✅ |
+| `aarch64-macos`       | llvm *(macOS default)* | ✅ |
+| `riscv64-linux-musl`  | — | 🔄 |
+| `aarch64-linux-gnu`   | — | 🔄 |
+| `x86_64-macos`        | — | 🔄 |
+
+✅ verified — CI builds **and executes** the artifact end-to-end (qemu/wine included) ｜ 🔄 planned
+
+> Release binaries for Linux are fully static musl builds (`x86_64-linux-musl`).
+> Legacy spellings — `x86_64-w64-mingw32`, `gcc@16.1.0-musl`, `mingw-cross@…`,
+> `musl-gcc@…` — stay permanently accepted as aliases and normalize to the
+> canonical forms above.
 >
-> ¹ On Windows, Clang/LLVM currently requires an existing **MSVC BuildTools or Visual Studio** installation
-> (providing the UCRT, Windows SDK, and MSVC STL). A zero-MSVC `llvm-mingw` route is planned
-> ([discussion](https://github.com/mcpp-community/mcpp/issues)).
+> ¹ On Windows, llvm requires an existing **MSVC BuildTools or Visual Studio**
+> (UCRT, Windows SDK, MSVC STL). The MinGW route (`--target x86_64-windows-gnu`,
+> or `mcpp toolchain default gcc@16 --target x86_64-windows-gnu`) needs no
+> Visual Studio at all.
 
 ## Documentation
 
