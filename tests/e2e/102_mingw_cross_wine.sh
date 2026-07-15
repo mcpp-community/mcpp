@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # requires: mingw-cross wine
 # Linux → Windows MinGW cross: build a multi-module + `import std` project for
-# x86_64-w64-mingw32, verify the PE is statically self-contained, run it under
-# wine. Realizes Part C of 2026-07-15-mingw-linux-cross-windows-design.md.
+# the Windows PE target, verify the PE is statically self-contained, run it
+# under wine. Realizes Part C of 2026-07-15-mingw-linux-cross-windows-design.md.
+# Both triple spellings are exercised: canonical `x86_64-windows-gnu` for the
+# build, plus the permanent GNU alias `x86_64-w64-mingw32` asserting it lands
+# in the SAME canonical target/ directory (naming-unification design D1/§6.2).
 set -e
 
 TMP=$(mktemp -d)
@@ -32,11 +35,25 @@ int main() {
 }
 EOF
 
-TRIPLE=x86_64-w64-mingw32
+# Canonical triple names the output directory; the GNU spelling is a
+# permanent input alias that must land in the same place.
+TRIPLE=x86_64-windows-gnu
+ALIAS_TRIPLE=x86_64-w64-mingw32
 
-# ── build for the Windows PE target ────────────────────────────────────────
+# ── build for the Windows PE target (canonical spelling) ────────────────────
 "$MCPP" build --target "$TRIPLE" > "$TMP/build.log" 2>&1 || {
     echo "cross build failed:"; cat "$TMP/build.log"; exit 1; }
+grep -q "Resolved gcc@16.1.0 → x86_64-windows-gnu" "$TMP/build.log" || {
+    echo "missing canonical Resolved line:"; cat "$TMP/build.log"; exit 1; }
+
+# ── alias spelling: same canonical directory, no second toolchain ──────────
+"$MCPP" build --target "$ALIAS_TRIPLE" > "$TMP/build-alias.log" 2>&1 || {
+    echo "alias-spelling build failed:"; cat "$TMP/build-alias.log"; exit 1; }
+[[ -d "target/$TRIPLE" ]] || { echo "canonical target dir missing"; exit 1; }
+if [[ -d "target/$ALIAS_TRIPLE" ]]; then
+    echo "alias spelling created its own target/$ALIAS_TRIPLE — should normalize to target/$TRIPLE"
+    exit 1
+fi
 
 EXE="$(find target/$TRIPLE -name '*.exe' -type f | head -1)"
 [[ -n "$EXE" && -f "$EXE" ]] || { echo "no .exe produced under target/$TRIPLE"; exit 1; }

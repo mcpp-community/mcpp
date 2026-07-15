@@ -24,6 +24,7 @@ export module mcpp.toolchain.abi;
 
 import std;
 import mcpp.toolchain.model;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
 
@@ -61,37 +62,46 @@ struct AbiProfile {
     }
 };
 
-// The single derivation site. libc/arch/os come from the target triple;
-// cxxStdlib/cxxAbi come from the compiler. NO cross-dimension inference
-// (that conflation was the bug).
+// The single derivation site. libc/arch/os come from the target triple
+// (parsed by triple.cppm — the one triple parser); cxxStdlib/cxxAbi come
+// from the compiler. NO cross-dimension inference (that conflation was the
+// bug). os vocabulary is the canonical one: linux | macos | windows —
+// this used to say "darwin" while cfg() said "macos" for the same concept;
+// converged on "macos" (parse_abi_capability accepts "darwin" as an alias).
 inline AbiProfile abi_profile(const Toolchain& tc) {
     AbiProfile p;
+
+    if (auto t = mcpp::toolchain::triple::parse(tc.targetTriple)) {
+        p.arch = t->arch;
+        p.os   = t->os;
+        // libc — the C runtime ABI a C library links against. Windows is
+        // msvcrt for BOTH env=msvc and env=gnu (MinGW links the Windows CRT).
+        if      (t->is_musl())        p.libc = "musl";
+        else if (t->os == "macos")    p.libc = "macos";
+        else if (t->os == "windows")  p.libc = "msvcrt";
+        else if (t->os == "linux")    p.libc = "glibc";   // *-linux-gnu (gcc AND clang+libc++)
+        p.cxxStdlib = tc.stdlibId;
+        p.cxxAbi = (tc.compiler == CompilerId::MSVC || t->is_msvc_env())
+                       ? "msvc" : "itanium";
+        return p;
+    }
+
+    // Fallback for triples outside the language (leave dims empty =
+    // don't-care where nothing is recognizable).
     const std::string& t = tc.targetTriple;
     auto has = [&](std::string_view s) { return t.find(s) != std::string::npos; };
-
-    // libc — the C runtime ABI a C library links against.
     if      (has("musl"))                  p.libc = "musl";
     else if (has("darwin") || has("apple")) p.libc = "macos";
     else if (has("msvc"))                  p.libc = "msvcrt";
-    else if (has("windows"))               p.libc = "msvcrt";   // mingw → windows CRT
-    else if (has("linux") || has("gnu"))   p.libc = "glibc";    // *-linux-gnu (gcc AND clang+libc++)
-    // else: leave empty (unknown) → don't-care
-
-    // os
+    else if (has("windows"))               p.libc = "msvcrt";
+    else if (has("linux") || has("gnu"))   p.libc = "glibc";
     if      (has("linux"))                  p.os = "linux";
-    else if (has("darwin") || has("apple")) p.os = "darwin";
+    else if (has("darwin") || has("apple")) p.os = "macos";
     else if (has("windows"))               p.os = "windows";
-
-    // arch — leading triple segment ("x86_64-linux-gnu" → "x86_64").
     if (auto dash = t.find('-'); dash != std::string::npos) p.arch = t.substr(0, dash);
     else                                                    p.arch = t;
-
-    // cxxStdlib — already canonical on the toolchain.
     p.cxxStdlib = tc.stdlibId;
-
-    // cxxAbi
     p.cxxAbi = (tc.compiler == CompilerId::MSVC || has("msvc")) ? "msvc" : "itanium";
-
     return p;
 }
 
@@ -127,7 +137,11 @@ parse_abi_capability(std::string_view cap, std::string_view source = {}) {
     else if (dimStr == "os")        dim = AbiDim::Os;
     else if (dimStr == "cxxabi")    dim = AbiDim::CxxAbi;
     else return std::nullopt;
-    return AbiConstraint{ dim, std::string(val), std::string(source) };
+    // Vocabulary aliases → canonical (profiles emit macos / aarch64).
+    std::string v(val);
+    if (dim == AbiDim::Os   && v == "darwin") v = "macos";
+    if (dim == AbiDim::Arch && v == "arm64")  v = "aarch64";
+    return AbiConstraint{ dim, std::move(v), std::string(source) };
 }
 
 struct AbiMismatch {

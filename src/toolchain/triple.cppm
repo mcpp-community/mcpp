@@ -209,7 +209,9 @@ std::optional<Triple> parse(std::string_view s) {
         if (t.os != "macos") {
             if (k == "musl" || starts_with(k, "musleabi")) { t.env = "musl"; continue; }
             if (k == "gnu"  || starts_with(k, "gnueabi"))  { t.env = "gnu";  continue; }
-            if (k == "msvc")                               { t.env = "msvc"; continue; }
+            // starts_with: clang effective triples can carry a version suffix
+            // on the env segment ("…-windows-msvc19.44.35211").
+            if (starts_with(k, "msvc"))                    { t.env = "msvc"; continue; }
         }
         // Unrecognized segment (androideabi, wasi, …): not in mcpp's target
         // language — treat as unparseable rather than guessing.

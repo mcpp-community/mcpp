@@ -3,6 +3,7 @@
 export module mcpp.toolchain.model;
 
 import std;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
 
@@ -96,15 +97,23 @@ bool is_clang(const Toolchain& tc) {
     return tc.compiler == CompilerId::Clang;
 }
 
+// Target-shape predicates read the parsed canonical Triple (triple.cppm is
+// the single triple parser), with the old substring heuristics kept only as
+// a fallback for triples outside the language. This makes them spelling-
+// independent: "x86_64-w64-mingw32" and canonical "x86_64-windows-gnu" give
+// the same answer.
 bool is_musl_target(const Toolchain& tc) {
+    if (auto t = triple::parse(tc.targetTriple)) return t->is_musl();
     return tc.targetTriple.find("-musl") != std::string::npos;
 }
 
 bool is_msvc_target(const Toolchain& tc) {
+    if (auto t = triple::parse(tc.targetTriple)) return t->is_msvc_env();
     return tc.targetTriple.find("msvc") != std::string::npos;
 }
 
 bool is_mingw_target(const Toolchain& tc) {
+    if (auto t = triple::parse(tc.targetTriple)) return t->is_windows_gnu();
     // "x86_64-w64-mingw32" (mingw-w64) / legacy "*-pc-mingw32".
     return tc.targetTriple.find("mingw32") != std::string::npos;
 }

@@ -57,32 +57,28 @@ namespace cfgpred {
 
 struct Ctx { std::string os, arch, family, env; };
 
-// Derive the cfg context from the resolved --target triple, falling back to the
-// host for a native build. OS/arch/env detection mirrors abi_profile's
-// substring approach (toolchain/abi.cppm) so the vocabulary is consistent.
+// Derive the cfg context from the resolved --target triple, falling back to
+// the host for a native build. Parsing goes through triple.cppm — the single
+// triple parser — so the cfg vocabulary IS the canonical triple vocabulary
+// (os: linux|macos|windows, arch: GNU spellings, env: gnu|musl|msvc), and
+// alias spellings ("x86_64-w64-mingw32") evaluate identically to canonical.
 inline Ctx context_for(std::string_view targetTriple) {
+    namespace triple = mcpp::toolchain::triple;
     Ctx c;
-    if (targetTriple.empty()) {
-        c.os   = std::string(mcpp::platform::name);       // host: linux/macos/windows
-        c.arch = std::string(mcpp::platform::host_arch);  // host: x86_64/aarch64/...
+    auto t = targetTriple.empty()
+        ? std::optional<triple::Triple>(triple::host_triple())
+        : triple::parse(targetTriple);
+    if (t) {
+        c.os     = t->os;
+        c.arch   = t->arch;
+        c.env    = t->env;
+        c.family = t->family();
     } else {
-        auto has = [&](std::string_view n){ return targetTriple.find(n) != std::string_view::npos; };
-        c.os = has("windows") || has("mingw") ? "windows"
-             : has("darwin") || has("apple") || has("macos") ? "macos"
-             : has("linux") ? "linux" : "";
+        // Escape-hatch triple outside the language: only the leading arch
+        // segment is derivable; other dimensions stay empty (never match).
         auto dash = targetTriple.find('-');
         c.arch = std::string(dash == std::string_view::npos ? targetTriple
                                                             : targetTriple.substr(0, dash));
-    }
-    c.family = (c.os == "linux" || c.os == "macos") ? "unix"
-             : (c.os == "windows") ? "windows" : "";
-    // env (libc/abi): musl/gnu on linux, msvc on windows; substring or host default.
-    if (!targetTriple.empty()) {
-        auto has = [&](std::string_view n){ return targetTriple.find(n) != std::string_view::npos; };
-        c.env = has("musl") ? "musl" : has("msvc") ? "msvc"
-              : (has("gnu") || c.os == "linux") ? "gnu" : "";
-    } else {
-        c.env = c.os == "linux" ? "gnu" : c.os == "windows" ? "msvc" : "";
     }
     return c;
 }
@@ -154,7 +150,16 @@ inline bool matches(const std::string& predicate, const Ctx& c, std::string_view
         Parser p{ predicate, 0, c };
         return p.expr();
     }
-    return !triple.empty() && predicate == triple;  // bare-triple exact match
+    // Bare-triple match, spelling-independent: a `[target.x86_64-w64-mingw32]`
+    // key matches a resolved `x86_64-windows-gnu` build (and vice versa) —
+    // both normalize through triple::parse. Unparseable keys (the explicit-
+    // section escape hatch) fall back to exact string comparison.
+    if (triple.empty()) return false;
+    if (auto p = mcpp::toolchain::triple::parse(predicate)) {
+        if (auto rt = mcpp::toolchain::triple::parse(triple))
+            return p->str() == rt->str();
+    }
+    return predicate == triple;
 }
 
 }  // namespace cfgpred
@@ -163,7 +168,12 @@ export std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
                                  const mcpp::toolchain::Fingerprint& fp,
                                  const std::filesystem::path& root)
 {
+    // Canonical triple names the output directory (D1: `target/
+    // x86_64-windows-gnu/`, not the GNU spelling the compiler reports via
+    // -dumpmachine) — alias inputs land in the same directory. Triples
+    // outside the language keep their raw spelling.
     auto triple = tc.targetTriple.empty() ? std::string{"unknown"} : tc.targetTriple;
+    if (auto t = mcpp::toolchain::triple::parse(triple)) triple = t->str();
     return root / "target" / triple / fp.hex;
 }
 
@@ -626,58 +636,69 @@ prepare_build(bool print_fingerprint,
     }
 
     // ─── --target / --static overrides ──────────────────────────────────
-    // Look up [target.<triple>] from manifest; fall back to convention
-    // (anything ending with "-musl" → gcc@<inherited-version>-musl + static).
-    auto endswith = [](std::string_view s, std::string_view suf) {
-        return s.size() >= suf.size()
-            && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
-    };
+    // Normalize the triple (alias spellings → canonical), validate against
+    // the known-target vocabulary, then apply the manifest [target.<triple>]
+    // override and the vocabulary-table convention (pin + default linkage).
     if (!overrides.target_triple.empty()) {
+        namespace triple = mcpp::toolchain::triple;
+        auto parsed = triple::parse(overrides.target_triple);
+
+        // [target.X] lookup is spelling-independent: a section keyed
+        // `x86_64-w64-mingw32` matches `--target x86_64-windows-gnu` and
+        // vice versa. Unparseable keys/inputs compare exactly (escape hatch).
         auto it = m->targetOverrides.find(overrides.target_triple);
-        if (it != m->targetOverrides.end()) {
+        if (it == m->targetOverrides.end() && parsed) {
+            for (auto o = m->targetOverrides.begin();
+                 o != m->targetOverrides.end(); ++o) {
+                if (auto k = triple::parse(o->first);
+                    k && k->str() == parsed->str()) { it = o; break; }
+            }
+        }
+        bool hasExplicitSection   = it != m->targetOverrides.end();
+        bool hasToolchainOverride = hasExplicitSection
+                                 && !it->second.toolchain.empty();
+        const triple::TargetInfo* known =
+            parsed ? triple::find_known_target(*parsed) : nullptr;
+
+        // Validation: a typo must never silently fall through to the host
+        // toolchain (the worst failure mode — you think you cross-compiled).
+        // An explicit [target.X] section is the escape hatch for custom
+        // triples outside the vocabulary.
+        if (!known && !hasExplicitSection) {
+            auto sug = triple::did_you_mean(overrides.target_triple);
+            return std::unexpected(std::format(
+                "unknown target '{}'{}\n"
+                "       known targets: `mcpp toolchain list`; a custom triple needs an\n"
+                "       explicit [target.{}] section in mcpp.toml",
+                overrides.target_triple,
+                sug ? std::format(" — did you mean '{}'?", *sug) : "",
+                overrides.target_triple));
+        }
+        if (known && known->tier == "planned" && !hasToolchainOverride) {
+            return std::unexpected(std::format(
+                "target '{}' is registered but not yet supported (planned) — "
+                "no toolchain is published for it yet.\n"
+                "       An explicit [target.{}] toolchain override can opt in early.",
+                parsed->str(), parsed->str()));
+        }
+        // Canonical from here on: cfg evaluation, spec attachment and the
+        // target/ output directory all see one spelling.
+        if (parsed) overrides.target_triple = parsed->str();
+
+        if (hasExplicitSection) {
             if (!it->second.toolchain.empty()) tcSpec = it->second.toolchain;
             if (!it->second.linkage.empty())   m->buildConfig.linkage = it->second.linkage;
         }
-        // Convention: "*-musl" target without an explicit `[target.X]`
-        // override gets a canonical musl toolchain spec. The choice is
-        // host-aware:
-        //   - target arch == host arch → NATIVE build, use `gcc@15.1.0-musl`
-        //     (→ xim:musl-gcc; XLINGS_RES picks the host-matching asset).
-        //   - target arch != host arch → CROSS build, use the target-named
-        //     cross toolchain `<triple>-gcc@15.1.0` (→ xim:<triple>-gcc),
-        //     e.g. building aarch64 on an x86_64 host.
-        // Both native and cross musl default to gcc 16.1.0 — GCC 15 drops
-        // module template instantiations at link (remediation doc A2;
-        // packages shipped 2026-07-08/09, stripped, GitHub+GitCode).
-        if (endswith(overrides.target_triple, "-musl")
-            && (it == m->targetOverrides.end() || it->second.toolchain.empty()))
-        {
-            auto dash = overrides.target_triple.find('-');
-            std::string targetArch = dash == std::string::npos
-                ? overrides.target_triple
-                : overrides.target_triple.substr(0, dash);
-            if (targetArch.empty() || targetArch == mcpp::platform::host_arch)
-                tcSpec = "gcc@16.1.0-musl";                        // native
-            else
-                tcSpec = overrides.target_triple + "-gcc@16.1.0";  // cross
-        }
-        if (endswith(overrides.target_triple, "-musl")
-            && m->buildConfig.linkage.empty()) {
+        // Convention from the vocabulary table (triple.cppm): the target's
+        // pinned toolchain (host-awareness — native musl-gcc vs triple-named
+        // cross, winlibs mingw vs Linux-hosted cross — lives in the payload
+        // mapping, not here) and its default linkage. GCC 16 pin rationale:
+        // GCC 15 drops module template instantiations at link (remediation
+        // doc A2; packages shipped 2026-07-08/09, GitHub+GitCode).
+        if (known && !hasToolchainOverride && !known->pin.empty())
+            tcSpec = std::string(known->pin);
+        if (known && known->defaultStatic && m->buildConfig.linkage.empty())
             m->buildConfig.linkage = "static";
-        }
-        // Convention: the Windows PE cross target `x86_64-w64-mingw32` without
-        // an explicit [target.X] override resolves to the from-source GCC-16
-        // MSVCRT cross toolchain. host≠target — an ELF frontend producing PE.
-        // Default static linkage: MinGW standalone-exe convention and the clean
-        // path for running the artifact under wine (no DLL deployment needed).
-        // See .agents/docs/2026-07-15-mingw-linux-cross-windows-design.md.
-        if (overrides.target_triple == "x86_64-w64-mingw32"
-            && (it == m->targetOverrides.end() || it->second.toolchain.empty()))
-        {
-            tcSpec = "mingw-cross@16.1.0";
-            if (m->buildConfig.linkage.empty())
-                m->buildConfig.linkage = "static";
-        }
     }
     if (overrides.force_static) m->buildConfig.linkage = "static";
 
@@ -733,12 +754,13 @@ prepare_build(bool print_fingerprint,
                 "[toolchain].{} = '{}' is invalid; expected '<pkg>@<version>'",
                 kCurrentPlatform, *tcSpec));
         }
-        // For a cross `--target <triple>` build, carry the triple into the spec
-        // so a musl toolchain resolves its `<triple>-g++` cross frontend
-        // (e.g. aarch64-linux-musl-g++) instead of the host x86_64 one.
+        // A `--target <triple>` build carries the (already canonical) triple
+        // into the spec's target axis: the payload mapping then resolves the
+        // right package/frontend (e.g. aarch64-linux-musl-g++ for a cross
+        // musl build, never the host g++). Escape-hatch triples outside the
+        // language don't parse and leave the spec on the host target.
         if (!overrides.target_triple.empty()) {
-            if (auto t = mcpp::toolchain::triple::parse(overrides.target_triple);
-                t && t->is_musl() && spec->target.is_musl())
+            if (auto t = mcpp::toolchain::triple::parse(overrides.target_triple))
                 spec->target = *t;
         }
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
@@ -765,8 +787,10 @@ prepare_build(bool print_fingerprint,
         // [toolchain] path previously ran none, so a freshly auto-installed
         // payload kept its stale install-time cfg / unpatched runtime libs.
         mcpp::toolchain::ensure_post_install_fixup(**cfg, payload->root, pkg);
+        // Canonical rendering, whatever spelling the manifest/config used:
+        // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
         mcpp::ui::info("Resolved",
-            std::format("{} → {}", *tcSpec,
+            std::format("{} → {}", spec->display(),
                 mcpp::ui::shorten_path(explicit_compiler,
                     mcpp::fetcher::make_path_ctx(&**get_cfg(), *root))));
     } else if (tcSpec.has_value() && *tcSpec == "system") {
