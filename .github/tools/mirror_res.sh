@@ -55,9 +55,11 @@ info() { echo "[mirror] $*"; }
 # completeness gate at the bottom is still the pass/fail, so a skipped asset
 # fails the release loudly instead of silently shipping a half mirror.
 #
-# Raise it (or set it per-host) when the cross-border leg legitimately needs
-# longer than the cap for the big archives; the gate will tell you.
-: "${MIRROR_UPLOAD_TIMEOUT:=120}"
+# Sizing: mcpp's largest asset is ~30MB (no package exceeds 100MB). 180s is a
+# generous ceiling for that — an upload still running at 3min is not "slow", it
+# is stuck, and the right move is to stop paying CI for it and push that one
+# asset by hand (the gate below prints the exact command).
+: "${MIRROR_UPLOAD_TIMEOUT:=180}"
 
 DL="$(mktemp -d)"; trap 'rm -rf "$DL"' EXIT
 

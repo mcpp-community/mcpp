@@ -725,6 +725,13 @@ jobs:
 
       - name: Mirror binaries to xlings-res/mcpp (gh + gtc)
         if: ${{ env.XLINGS_RES_TOKEN != '' }}
+        # Hard ceiling for the whole mirror segment. The script caps each asset
+        # at MIRROR_UPLOAD_TIMEOUT (180s) and abandons anything slower, so a
+        # healthy run lands well inside this; 10min is the backstop that keeps a
+        # pathological host from burning the job's budget the way v0.0.94 did
+        # (30min, killed, zero per-asset visibility). Whatever gets skipped is
+        # reported by name + size and pushed by hand.
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
         run: |
