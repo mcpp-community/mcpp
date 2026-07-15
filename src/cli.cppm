@@ -241,7 +241,9 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
-            .arg(cl::Arg("target").help("Binary target name (optional)"))
+            // NB: this positional is a BINARY NAME from [[bin]]/src layout —
+            // unrelated to `--target <triple>` (the cross-target axis).
+            .arg(cl::Arg("target").help("Binary name (optional)"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))
@@ -343,17 +345,26 @@ int run(int argc, char** argv) {
                 // Both `mcpp toolchain install gcc 16.1.0` and `mcpp toolchain
                 // install gcc@16.1.0` are accepted, and the version may be
                 // partial (`15`, `15.1`) — mcpp resolves to the highest match.
-                .arg(cl::Arg("compiler").help("e.g. gcc, gcc@16.1.0, gcc@15-musl").required())
-                .arg(cl::Arg("version").help("e.g. 16.1.0, 15, 15.1, 15.1.0-musl")))
+                // With --target the family may be omitted entirely (taken from
+                // the target's convention pin):
+                //   mcpp toolchain install --target x86_64-windows-gnu
+                .arg(cl::Arg("compiler").help("gcc | llvm | msvc (or gcc@16.1.0; legacy aliases accepted)"))
+                .arg(cl::Arg("version").help("e.g. 16.1.0, 15, 15.1"))
+                .option(cl::Option("target").takes_value().help(
+                    "Install the toolchain payload for <triple> (e.g. x86_64-windows-gnu)")))
             .subcommand(cl::App("default")
-                .description("Set the default toolchain")
+                .description("Set the default toolchain (and optionally the default target)")
                 // Same dual-form as `install`: `gcc@16.1.0` or `gcc 16.1.0`,
                 // partial versions allowed.
-                .arg(cl::Arg("spec").help("<compiler>[@<version>] (version may be partial)").required())
-                .arg(cl::Arg("version").help("(optional, alternative to @-form)")))
+                .arg(cl::Arg("spec").help("<family>[@<version>] (version may be partial)").required())
+                .arg(cl::Arg("version").help("(optional, alternative to @-form)"))
+                .option(cl::Option("target").takes_value().help(
+                    "Default build target <triple> (omit = host)")))
             .subcommand(cl::App("remove")
                 .description("Uninstall a toolchain")
-                .arg(cl::Arg("spec").help("<compiler>@<version>").required()))
+                .arg(cl::Arg("spec").help("<family>@<version>").required())
+                .option(cl::Option("target").takes_value().help(
+                    "Remove the payload for <triple> instead of the host one")))
             .action(wrap_rc(cmd_toolchain)))
         .subcommand(cl::App("cache")
             .description("Inspect and manage the global BMI cache")

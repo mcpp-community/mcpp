@@ -145,6 +145,11 @@ struct BuildConfig {
     // time from --static / --target / [target.<triple>].linkage. Wired
     // through to ninja backend as the `-static` link flag.
     std::string                         linkage;
+    // [build] target = "<triple>" — the project's default build target
+    // (≙ cargo's build.target). Used when no --target flag is passed;
+    // "default to fully-static musl" belongs here, not in a toolchain name
+    // (static output is a product property, not a compiler-family property).
+    std::string                         target;
     // M5.x C-language support. `cflags` / `cxxflags` are appended verbatim
     // to the per-rule baseline (see `ninja_backend` cflags / cxxflags).
     // `cStandard` controls -std= for the C compile rule (.c files).

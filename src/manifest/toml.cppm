@@ -649,6 +649,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.buildConfig.dialectCxxflags = *v;
     if (auto v = doc->get_string_array("build.ldflags"))  m.buildConfig.ldflags  = *v;
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
+    if (auto v = doc->get_string("build.target"))         m.buildConfig.target = *v;
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
     else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
 

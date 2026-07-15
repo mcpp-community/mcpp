@@ -636,6 +636,15 @@ prepare_build(bool print_fingerprint,
     }
 
     // ─── --target / --static overrides ──────────────────────────────────
+    // Target-axis default resolution when no --target flag was passed:
+    // [build] target (project default, ≙ cargo build.target) >
+    // [toolchain] default_target (global config) > host.
+    if (overrides.target_triple.empty() && !m->buildConfig.target.empty())
+        overrides.target_triple = m->buildConfig.target;
+    if (overrides.target_triple.empty()) {
+        if (auto cfg = get_cfg(); cfg && !(*cfg)->defaultTarget.empty())
+            overrides.target_triple = (*cfg)->defaultTarget;
+    }
     // Normalize the triple (alias spellings → canonical), validate against
     // the known-target vocabulary, then apply the manifest [target.<triple>]
     // override and the vocabulary-table convention (pin + default linkage).

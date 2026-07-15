@@ -31,16 +31,21 @@ export int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
+    // The optional --target axis (install/default/remove): which target's
+    // payload the command operates on. Omitted = host.
+    std::string targetArg;
+    if (auto t = sub_parsed.value("target")) targetArg = *t;
+
     if (subname == "list")
         return mcpp::toolchain::toolchain_list(*cfg);
     if (subname == "install")
         return mcpp::toolchain::toolchain_install(
-            *cfg, sub_parsed.positional(0), sub_parsed.positional(1));
+            *cfg, sub_parsed.positional(0), sub_parsed.positional(1), targetArg);
     if (subname == "default")
         return mcpp::toolchain::toolchain_set_default(
-            *cfg, sub_parsed.positional(0), sub_parsed.positional(1));
+            *cfg, sub_parsed.positional(0), sub_parsed.positional(1), targetArg);
     if (subname == "remove")
-        return mcpp::toolchain::toolchain_remove(*cfg, sub_parsed.positional(0));
+        return mcpp::toolchain::toolchain_remove(*cfg, sub_parsed.positional(0), targetArg);
 
     mcpp::ui::error(std::format("unknown toolchain subcommand '{}'", subname));
     return 2;
