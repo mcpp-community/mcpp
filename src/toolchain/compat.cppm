@@ -52,7 +52,7 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compiler,
 // Print a normalization hint at most once per process (quiet by design:
 // note-level, aliases are permanently supported — this is a pointer to the
 // canonical spelling, not a deprecation warning).
-void print_hint_once(const NormalizedSpec& spec);
+void print_hint_once(std::string_view hint);
 
 } // namespace mcpp::toolchain::compat
 
@@ -151,12 +151,12 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     return std::nullopt;
 }
 
-void print_hint_once(const NormalizedSpec& spec) {
-    if (!spec.changed || spec.hint.empty()) return;
+void print_hint_once(std::string_view hint) {
+    if (hint.empty()) return;
     static bool printed = false;
     if (printed) return;
     printed = true;
-    std::println(stderr, "note: {}", spec.hint);
+    std::println(stderr, "note: {}", hint);
 }
 
 } // namespace mcpp::toolchain::compat

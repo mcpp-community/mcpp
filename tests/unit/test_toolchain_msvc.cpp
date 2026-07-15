@@ -77,10 +77,18 @@ TEST(MsvcSpec, SystemToolchainClassification) {
 }
 
 TEST(MsvcSpec, StableDefaultMatchesAnyDetectedVersion) {
-    EXPECT_TRUE(matches_default_toolchain("msvc@system", "msvc", "19.44.35211"));
-    EXPECT_TRUE(matches_default_toolchain("msvc@system", "msvc", "19.29.30133"));
-    EXPECT_FALSE(matches_default_toolchain("msvc@system", "gcc", "16.1.0"));
-    EXPECT_FALSE(matches_default_toolchain("gcc@16.1.0", "msvc", "19.44.35211"));
+    // The persisted default is always the stable "msvc@system" — it matches
+    // whatever concrete version detection reports (family-level match).
+    auto def = parse_toolchain_spec("msvc@system");
+    ASSERT_TRUE(def.has_value());
+    PayloadIdentity msvcId{ Family::Msvc, {} };
+    EXPECT_TRUE(spec_matches_payload(*def, msvcId, "19.44.35211"));
+    EXPECT_TRUE(spec_matches_payload(*def, msvcId, "19.29.30133"));
+    PayloadIdentity gccId{ Family::Gcc, {} };
+    EXPECT_FALSE(spec_matches_payload(*def, gccId, "16.1.0"));
+    auto gccDef = parse_toolchain_spec("gcc@16.1.0");
+    ASSERT_TRUE(gccDef.has_value());
+    EXPECT_FALSE(spec_matches_payload(*gccDef, msvcId, "19.44.35211"));
 }
 
 // ─── model traits ────────────────────────────────────────────────────────

@@ -1,32 +1,70 @@
-// mcpp.toolchain.registry - user spec and package/provider mapping.
+// mcpp.toolchain.registry — the two-axis toolchain identity model and its
+// payload mapping.
+//
+// Identity (design §4.1–§4.3): a toolchain is `family@version` (family ∈
+// gcc | llvm | msvc), a target is a canonical Triple (triple.cppm). The two
+// axes are orthogonal: "cross", "musl" and "mingw" are NOT names — the
+// variant lives in the target's env segment, and cross is the host≠target
+// relation. Which xim PACKAGE serves a (family, version, target, host)
+// combination is a data mapping below — that's the distribution layer, where
+// names like `mingw-cross-gcc` are current identity (not legacy) and stay.
+//
+// Legacy spellings (musl-gcc, gcc@V-musl, mingw, mingw-cross, clang,
+// <triple>-gcc) are normalized by mcpp.toolchain.compat before this module
+// ever sees them; core code deals in canonical form only.
 
 export module mcpp.toolchain.registry;
 
 import std;
 import mcpp.platform;
 import mcpp.toolchain.clang;
+import mcpp.toolchain.compat;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.llvm;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
 
+enum class Family { Gcc, Llvm, Msvc };
+
+inline std::string_view family_name(Family f) {
+    switch (f) {
+        case Family::Gcc:  return "gcc";
+        case Family::Llvm: return "llvm";
+        case Family::Msvc: return "msvc";
+    }
+    return "?";
+}
+
 struct ToolchainSpec {
-    std::string compiler;    // user-facing compiler name, namespace-stripped
-    std::string version;     // user-facing version, may include -musl
-    bool        isMusl = false;
-    // Target triple (e.g. "aarch64-linux-musl") when building for a non-host
-    // target via `--target`. For musl toolchains the cross frontend program is
-    // named `<triple>-g++`, so this drives frontend selection. Empty = host.
-    std::string targetTriple;
+    Family          family = Family::Gcc;
+    std::string     version;      // numeric (possibly partial), or "system"
+    triple::Triple  target;       // empty = host
+    // One-line canonical hint when the input used a legacy spelling
+    // (compat.cppm); empty otherwise. Printed at most once per process by
+    // print_compat_hint().
+    std::string     compatHint;
+
+    bool is_host_target() const { return target.empty(); }
+
+    // "gcc@16.1.0" — the toolchain axis alone (config persistence, matching).
+    std::string spec_str() const {
+        return std::format("{}@{}", family_name(family), version);
+    }
+
+    // "gcc@16.1.0" or "gcc@16.1.0 → x86_64-windows-gnu" — user-facing.
+    std::string display() const {
+        if (target.empty()) return spec_str();
+        return std::format("{} → {}", spec_str(), target.str());
+    }
 };
 
 struct XimToolchainPackage {
     std::string                     ximName;
     std::string                     ximVersion;
-    std::string                     displayCompiler;
-    std::string                     displayVersion;
+    std::string                     displaySpec;   // canonical, from the spec
     std::vector<std::string>        frontendCandidates;
     bool                            needsGccPostInstallFixup = false;
 
@@ -34,9 +72,7 @@ struct XimToolchainPackage {
         return std::format("xim:{}@{}", ximName, ximVersion);
     }
 
-    std::string display_spec() const {
-        return std::format("{}@{}", displayCompiler, displayVersion);
-    }
+    std::string display_spec() const { return displaySpec; }
 };
 
 std::expected<ToolchainSpec, std::string>
@@ -44,28 +80,47 @@ parse_toolchain_spec(std::string compilerArg,
                      std::string versionArg = {},
                      bool requireCompiler = true);
 
+// Print the spec's compat hint (once per process; no-op for canonical input).
+void print_compat_hint(const ToolchainSpec& spec);
+
+// The (family, target, host) → xim package mapping — the distribution layer.
 XimToolchainPackage to_xim_package(const ToolchainSpec& spec);
 
 ToolchainSpec with_resolved_xim_version(const ToolchainSpec& spec,
                                         std::string_view ximVersion);
 
 std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
-                                         std::string_view compiler);
-
-std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
                                          const XimToolchainPackage& pkg);
 
-std::string display_label(std::string_view compiler, std::string_view version);
-bool matches_default_toolchain(std::string_view configuredDefault,
-                               std::string_view compiler,
-                               std::string_view version);
+// Reverse mapping: an installed `xim-x-<name>` payload directory back to its
+// (family, target) identity. nullopt for non-toolchain xpkgs (ninja, glibc,
+// python, …) — list/doctor use this to filter what they enumerate.
+struct PayloadIdentity {
+    Family          family;
+    triple::Triple  target;       // empty = host-target payload (gcc, llvm)
+};
+std::optional<PayloadIdentity> identify_xim_payload(std::string_view ximDirName);
+
+// Does an installed payload row match the configured default (toolchain axis;
+// version exact)? msvc matches on family alone — the persisted spec is the
+// stable "msvc@system", never a concrete version.
+bool spec_matches_payload(const ToolchainSpec& def,
+                          const PayloadIdentity& id,
+                          std::string_view payloadVersion);
 
 // System toolchains are located on the machine, never installed/removed by
 // mcpp. Today that's MSVC (`msvc@system`); the PATH-compiler escape hatch
 // (`[toolchain] … = "system"`) is a separate, older mechanism.
 bool is_system_toolchain(const ToolchainSpec& spec);
 
-std::vector<std::pair<std::string, std::string>> available_toolchain_indexes();
+// xim index names to query for the Available section, with the family each
+// one contributes versions to. Host-conditional: a host only lists payloads
+// it can install.
+struct AvailableIndex {
+    std::string ximName;
+    Family      family;
+};
+std::vector<AvailableIndex> available_toolchain_indexes();
 
 std::filesystem::path derive_c_compiler(const Toolchain& tc);
 std::filesystem::path archive_tool(const Toolchain& tc);
@@ -86,34 +141,6 @@ bool ends_with(std::string_view s, std::string_view suf) {
         && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
 }
 
-std::string strip_namespace(std::string compiler) {
-    if (auto colon = compiler.find(':'); colon != std::string::npos)
-        return compiler.substr(colon + 1);
-    return compiler;
-}
-
-std::vector<std::string> frontend_candidates_for(std::string_view ximName,
-                                                 bool isMusl,
-                                                 std::string_view targetTriple = {}) {
-    if (isMusl) {
-        // Cross musl toolchains expose `<triple>-g++` (e.g.
-        // aarch64-linux-musl-g++). Prefer the triple-specific frontend so a
-        // `--target aarch64-linux-musl` build never falls back to the host g++.
-        if (!targetTriple.empty())
-            return {std::string(targetTriple) + "-g++", "g++"};
-        return {"x86_64-linux-musl-g++", "g++"};
-    }
-    if (ximName == "gcc") return {"g++"};
-    if (ximName == "llvm") return mcpp::toolchain::llvm::frontend_candidates();
-    if (ximName == "msvc") return {"cl.exe"};
-    if (ximName == "mingw-gcc") return {"g++.exe", "g++"};
-    // Linux-hosted MinGW-w64 cross toolchain: an ELF frontend that produces
-    // Windows PE. Triple-prefixed name (like the musl cross tools), never the
-    // host g++ — a cross build must never silently fall back to native.
-    if (ximName == "mingw-cross-gcc") return {"x86_64-w64-mingw32-g++"};
-    return {"g++", "clang++", "x86_64-linux-musl-g++", "cl.exe"};
-}
-
 std::filesystem::path derive_c_compiler_path(const std::filesystem::path& cxxPath) {
     auto stem = cxxPath.stem().string();
     auto parent = cxxPath.parent_path();
@@ -130,6 +157,10 @@ std::filesystem::path derive_c_compiler_path(const std::filesystem::path& cxxPat
     return parent / (cc_stem + ext.string());
 }
 
+triple::Triple host_musl_triple() {
+    return { std::string(mcpp::platform::host_arch), "linux", "musl" };
+}
+
 } // namespace
 
 std::expected<ToolchainSpec, std::string>
@@ -140,69 +171,86 @@ parse_toolchain_spec(std::string compilerArg,
         if (versionArg.empty()) versionArg = compilerArg.substr(at + 1);
         compilerArg = compilerArg.substr(0, at);
     }
-
-    compilerArg = strip_namespace(std::move(compilerArg));
     if (compilerArg.empty() && requireCompiler) {
         return std::unexpected("missing compiler name");
     }
 
+    auto norm = compat::normalize_spec(compilerArg, versionArg);
+    if (!norm) {
+        return std::unexpected(std::format(
+            "unknown toolchain '{}' (expected gcc | llvm | msvc, or a "
+            "supported alias like mingw / musl-gcc)", compilerArg));
+    }
+
     ToolchainSpec spec;
-    spec.compiler = std::move(compilerArg);
-    spec.version  = std::move(versionArg);
-    // musl is signalled three ways: the canonical host-native `musl-gcc`, a
-    // `<ver>-musl` version suffix, or a target-named cross/native toolchain
-    // like `aarch64-linux-musl-gcc` (the compiler name carries the triple).
-    spec.isMusl   = spec.compiler == "musl-gcc"
-                 || ends_with(spec.version, "-musl")
-                 || ends_with(spec.compiler, "-linux-musl-gcc");
+    if      (norm->family == "llvm") spec.family = Family::Llvm;
+    else if (norm->family == "msvc") spec.family = Family::Msvc;
+    else                             spec.family = Family::Gcc;
+    spec.version = std::move(norm->version);
+    spec.target  = std::move(norm->target);
+    if (norm->changed) spec.compatHint = std::move(norm->hint);
     return spec;
+}
+
+void print_compat_hint(const ToolchainSpec& spec) {
+    if (spec.compatHint.empty()) return;
+    compat::print_hint_once(spec.compatHint);
 }
 
 XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     XimToolchainPackage pkg;
-    pkg.displayCompiler = spec.compiler;
-    pkg.displayVersion  = spec.version;
+    pkg.displaySpec = spec.display();
+    pkg.ximVersion  = spec.version;
 
-    // Target-named musl toolchain, e.g. "aarch64-linux-musl-gcc". The compiler
-    // name IS the xim package name and encodes the target triple, so it serves
-    // both cross (x86 host → aarch64) and on-target native builds — xlings'
-    // XLINGS_RES sentinel picks the host-matching prebuilt asset. The frontend
-    // is `<triple>-g++` (triple = name minus the trailing "-gcc").
-    if (ends_with(spec.compiler, "-linux-musl-gcc")) {
-        pkg.ximName    = spec.compiler;
-        pkg.ximVersion = spec.version;
-        std::string triple = spec.compiler.substr(0, spec.compiler.size() - 4);
-        pkg.frontendCandidates = {triple + "-g++", "g++"};
-        pkg.needsGccPostInstallFixup = false;
+    if (spec.family == Family::Msvc) {
+        pkg.ximName = "msvc";                 // never resolved via xim
+        pkg.frontendCandidates = {"cl.exe"};
+        return pkg;
+    }
+    if (spec.family == Family::Llvm) {
+        pkg.ximName = mcpp::toolchain::llvm::package_name();
+        pkg.frontendCandidates = mcpp::toolchain::llvm::frontend_candidates();
         return pkg;
     }
 
-    std::string ximCompiler = spec.compiler;
-    if (mcpp::toolchain::llvm::is_alias(ximCompiler))
-        ximCompiler = mcpp::toolchain::llvm::package_name();
-    // Windows-native MinGW-w64 GCC: user-facing name `mingw`, xim package
-    // `mingw-gcc` (winlibs GCC+MinGW-w64 UCRT builds mirrored at xlings-res).
-    if (ximCompiler == "mingw")
-        ximCompiler = "mingw-gcc";
-    // Linux→Windows MinGW-w64 cross: user-facing `mingw-cross`, xim package
-    // `mingw-cross-gcc` (from-source GCC-16 MSVCRT cross, xlings-res). host≠target:
-    // an ELF toolchain producing PE. See 2026-07-15-mingw-linux-cross-windows-design.
-    if (ximCompiler == "mingw-cross")
-        ximCompiler = "mingw-cross-gcc";
+    // Family::Gcc — the target decides the payload.
+    const auto& t = spec.target;
 
-    pkg.ximName = ximCompiler;
-    pkg.ximVersion = spec.version;
-
-    if (spec.isMusl) {
-        if (pkg.ximName != "musl-gcc")
-            pkg.ximName = "musl-" + pkg.ximName;
-        if (ends_with(pkg.ximVersion, "-musl"))
-            pkg.ximVersion.resize(pkg.ximVersion.size() - 5);
+    if (t.is_musl()) {
+        // Same target, two payload shapes: the host-native `musl-gcc` package
+        // (XLINGS_RES picks the host-matching asset) when target arch == host
+        // arch, else the triple-named cross package. Canonical linux-musl
+        // triples coincide with the GNU tool spelling, so `<triple>-g++` is
+        // the frontend either way.
+        bool native = mcpp::platform::is_linux
+                   && t.arch == mcpp::platform::host_arch;
+        pkg.ximName = native ? "musl-gcc" : t.str() + "-gcc";
+        pkg.frontendCandidates = { t.str() + "-g++", "g++" };
+        return pkg;
     }
 
-    pkg.frontendCandidates = frontend_candidates_for(pkg.ximName, spec.isMusl,
-                                                     spec.targetTriple);
-    pkg.needsGccPostInstallFixup = spec.compiler == "gcc" && !spec.isMusl;
+    if (t.is_windows_gnu()
+        || (t.empty() && mcpp::platform::is_windows)) {
+        // GCC targeting Windows PE (GNU CRT) — ONE user-facing identity,
+        // host-split at the distribution layer only:
+        //   Windows host → native winlibs UCRT build (PE frontend g++.exe)
+        //   other hosts  → Linux-hosted MSVCRT cross (ELF frontend, triple-
+        //                  prefixed so a cross build never silently falls
+        //                  back to a native g++)
+        if constexpr (mcpp::platform::is_windows) {
+            pkg.ximName = "mingw-gcc";
+            pkg.frontendCandidates = {"g++.exe", "g++"};
+        } else {
+            pkg.ximName = "mingw-cross-gcc";
+            pkg.frontendCandidates = {"x86_64-w64-mingw32-g++"};
+        }
+        return pkg;
+    }
+
+    // Host target (or linux-gnu): the glibc gcc package.
+    pkg.ximName = "gcc";
+    pkg.frontendCandidates = {"g++"};
+    pkg.needsGccPostInstallFixup = true;
     return pkg;
 }
 
@@ -210,22 +258,7 @@ ToolchainSpec with_resolved_xim_version(const ToolchainSpec& spec,
                                         std::string_view ximVersion) {
     ToolchainSpec out = spec;
     out.version = std::string(ximVersion);
-    if (out.isMusl) out.version += "-musl";
     return out;
-}
-
-std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
-                                         std::string_view compiler) {
-    bool isMusl = compiler == "musl-gcc";
-    std::string ximName(compiler);
-    if (mcpp::toolchain::llvm::is_alias(ximName))
-        ximName = mcpp::toolchain::llvm::package_name();
-
-    for (auto& cand : frontend_candidates_for(ximName, isMusl)) {
-        auto p = binDir / cand;
-        if (std::filesystem::exists(p)) return p;
-    }
-    return {};
 }
 
 std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
@@ -237,59 +270,47 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
     return {};
 }
 
-std::string display_label(std::string_view compiler, std::string_view version) {
-    if (compiler == "musl-gcc")
-        return std::format("gcc {}-musl", version);
-    if (compiler == "mingw-gcc")
-        return std::format("mingw {}", version);
-    if (compiler == "mingw-cross-gcc")
-        return std::format("mingw-cross {}", version);
-    return std::format("{} {}", compiler, version);
+std::optional<PayloadIdentity> identify_xim_payload(std::string_view ximDirName) {
+    if (ximDirName == "gcc")
+        return PayloadIdentity{ Family::Gcc, {} };
+    if (ximDirName == mcpp::toolchain::llvm::package_name())
+        return PayloadIdentity{ Family::Llvm, {} };
+    if (ximDirName == "musl-gcc")
+        return PayloadIdentity{ Family::Gcc, host_musl_triple() };
+    if (ximDirName == "mingw-gcc" || ximDirName == "mingw-cross-gcc")
+        return PayloadIdentity{ Family::Gcc, { "x86_64", "windows", "gnu" } };
+    if (ends_with(ximDirName, "-gcc")) {
+        auto prefix = ximDirName.substr(0, ximDirName.size() - 4);
+        if (auto t = triple::parse(prefix))
+            return PayloadIdentity{ Family::Gcc, *t };
+    }
+    return std::nullopt;   // not a toolchain payload (ninja, glibc, …)
 }
 
-bool matches_default_toolchain(std::string_view configuredDefault,
-                               std::string_view compiler,
-                               std::string_view version) {
-    if (configuredDefault == std::format("{}@{}", compiler, version)) return true;
-    if (compiler == "musl-gcc"
-        && configuredDefault == std::format("gcc@{}-musl", version)) {
-        return true;
-    }
-    // The persisted msvc default is always the stable "msvc@system" (never a
-    // concrete version), so it matches whatever version detection reports.
-    if (compiler == "msvc" && configuredDefault == "msvc@system") return true;
-    // Installed-payload rows report the xim name (mingw-gcc); the user-facing
-    // spec is mingw@<ver> (same shape as the musl-gcc clause above).
-    if (compiler == "mingw-gcc"
-        && configuredDefault == std::format("mingw@{}", version)) {
-        return true;
-    }
-    // Cross MinGW: installed-payload row reports xim name (mingw-cross-gcc);
-    // user-facing spec is mingw-cross@<ver>.
-    if (compiler == "mingw-cross-gcc"
-        && configuredDefault == std::format("mingw-cross@{}", version)) {
-        return true;
-    }
-    return false;
+bool spec_matches_payload(const ToolchainSpec& def,
+                          const PayloadIdentity& id,
+                          std::string_view payloadVersion) {
+    if (def.family != id.family) return false;
+    if (def.family == Family::Msvc) return true;   // msvc@system: family match
+    return def.version == payloadVersion;
 }
 
 bool is_system_toolchain(const ToolchainSpec& spec) {
-    return spec.compiler == "msvc";
+    return spec.family == Family::Msvc;
 }
 
-std::vector<std::pair<std::string, std::string>> available_toolchain_indexes() {
-    std::vector<std::pair<std::string, std::string>> out{
-        {"gcc",      "gcc"},
-        {"musl-gcc", "musl-gcc"},
-        {mcpp::toolchain::llvm::package_name(), "llvm"},
+std::vector<AvailableIndex> available_toolchain_indexes() {
+    std::vector<AvailableIndex> out{
+        { "gcc",      Family::Gcc },
+        { "musl-gcc", Family::Gcc },
+        { mcpp::toolchain::llvm::package_name(), Family::Llvm },
     };
-    // MinGW-w64 toolchains are host-conditional (host≠target axis):
-    //   - native mingw-gcc (produces PE, runs on Windows)   → Windows hosts
-    //   - cross mingw-cross-gcc (ELF frontend, produces PE)  → Linux hosts
+    // The Windows-PE gcc payload is host-split at the distribution layer
+    // (§4.3); each host lists the package it would actually install.
     if constexpr (mcpp::platform::is_windows)
-        out.emplace_back("mingw-gcc", "mingw-gcc");
+        out.push_back({ "mingw-gcc", Family::Gcc });
     else if constexpr (mcpp::platform::is_linux)
-        out.emplace_back("mingw-cross-gcc", "mingw-cross-gcc");
+        out.push_back({ "mingw-cross-gcc", Family::Gcc });
     return out;
 }
 

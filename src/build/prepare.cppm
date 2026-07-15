@@ -25,6 +25,7 @@ import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
+import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.build_program;
 import mcpp.lockfile;
@@ -735,8 +736,11 @@ prepare_build(bool print_fingerprint,
         // For a cross `--target <triple>` build, carry the triple into the spec
         // so a musl toolchain resolves its `<triple>-g++` cross frontend
         // (e.g. aarch64-linux-musl-g++) instead of the host x86_64 one.
-        if (spec->isMusl && !overrides.target_triple.empty())
-            spec->targetTriple = overrides.target_triple;
+        if (!overrides.target_triple.empty()) {
+            if (auto t = mcpp::toolchain::triple::parse(overrides.target_triple);
+                t && t->is_musl() && spec->target.is_musl())
+                spec->target = *t;
+        }
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
         auto cfg = get_cfg();
@@ -771,20 +775,23 @@ prepare_build(bool print_fingerprint,
         // CI / offline / test opt-out: hard-error instead of silently
         // pulling ~800 MB of toolchain. Preserves the original M5.5
         // contract for environments that need it.
+        namespace pins = mcpp::toolchain::triple::pins;
         if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
-            return std::unexpected(
+            return std::unexpected(std::format(
                 "no toolchain configured.\n"
                 "       run one of:\n"
-                "         mcpp toolchain install llvm 20.1.7\n"
-                "         mcpp toolchain default llvm@20.1.7\n"
-                "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.");
+                "         mcpp toolchain install {}\n"
+                "         mcpp toolchain default {}\n"
+                "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.",
+                pins::kSuggestLlvm, pins::kFirstRunMacWin));
         } else {
-            return std::unexpected(
+            return std::unexpected(std::format(
                 "no toolchain configured.\n"
                 "       run one of:\n"
-                "         mcpp toolchain install gcc 15.1.0-musl\n"
-                "         mcpp toolchain default gcc@15.1.0-musl\n"
-                "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.");
+                "         mcpp toolchain install {}\n"
+                "         mcpp toolchain default {}\n"
+                "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.",
+                pins::kSuggestGccMusl, pins::kFirstRunLinuxOther));
         }
     } else {
         // First-run UX: no project-level [toolchain], no global default,
@@ -809,21 +816,20 @@ prepare_build(bool print_fingerprint,
         //            static binaries (ideal for aarch64 / Termux, no bionic dep).
         //            glibc-world linking (X11/GL) needs an explicit glibc
         //            toolchain, addable later for native-ABI aarch64 builds.
+        namespace pins = mcpp::toolchain::triple::pins;
         std::string defaultSpec;
         if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
-            defaultSpec = "llvm@20.1.7";
+            defaultSpec = std::string(pins::kFirstRunMacWin);
         } else if (mcpp::platform::host_arch == std::string_view("x86_64")) {
-            defaultSpec = "gcc@16.1.0";
+            defaultSpec = std::string(pins::kFirstRunLinuxX86_64);
         } else {
-            defaultSpec = "gcc@15.1.0-musl";
+            defaultSpec = std::string(pins::kFirstRunLinuxOther);
         }
-        bool muslDefault = defaultSpec.find("-musl") != std::string::npos;
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
-        // Host-native musl default has no --target, so seed the triple so the
-        // resolver finds the `<host_arch>-linux-musl-g++` frontend.
-        if (muslDefault)
-            defaultParsed->targetTriple =
-                std::string(mcpp::platform::host_arch) + "-linux-musl";
+        // The legacy "-musl" spelling normalizes to (gcc, <host>-linux-musl),
+        // so the resolver finds the `<host_arch>-linux-musl-g++` frontend
+        // without any manual triple seeding.
+        bool muslDefault = defaultParsed->target.is_musl();
         auto defaultPkg = mcpp::toolchain::to_xim_package(*defaultParsed);
 
         if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
@@ -854,9 +860,8 @@ prepare_build(bool print_fingerprint,
             return std::unexpected(std::format(
                 "auto-installing default toolchain {} failed: {}\n"
                 "       you can install it manually with:\n"
-                "         mcpp toolchain install {} {}",
-                defaultSpec, payload.error().message,
-                defaultParsed->compiler, defaultParsed->version));
+                "         mcpp toolchain install {}",
+                defaultSpec, payload.error().message, defaultSpec));
         }
         explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, defaultPkg);
         if (!std::filesystem::exists(explicit_compiler)) {

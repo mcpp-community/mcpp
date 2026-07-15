@@ -73,6 +73,10 @@ struct GlobalConfig {
     // Empty means no global default; mcpp will hard-error unless the project
     // mcpp.toml declares its own [toolchain].
     std::string                     defaultToolchain;
+    //   default_target = "<triple>"        e.g. "x86_64-linux-musl"
+    // The target axis of the default pair (toolchain = family@version and
+    // target = triple are orthogonal axes). Empty means host.
+    std::string                     defaultTarget;
 
     // Resolved xlings home (registryDir unless overridden)
     std::filesystem::path xlingsHome() const {
@@ -250,6 +254,10 @@ void print_env(const GlobalConfig& cfg);
 // M5.5: persist [toolchain].default to config.toml.
 std::expected<void, ConfigError>
 write_default_toolchain(const GlobalConfig& cfg, std::string_view spec);
+
+// Persist [toolchain].default_target ("" = host / clear).
+std::expected<void, ConfigError>
+write_default_target(const GlobalConfig& cfg, std::string_view targetTriple);
 
 } // namespace mcpp::config
 
@@ -505,6 +513,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
     cfg.defaultBackend = doc->get_string("build.default_backend").value_or("ninja");
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");
+    cfg.defaultTarget    = doc->get_string("toolchain.default_target").value_or("");
 
     // [log] section — re-initialize logger with config values
     {
@@ -751,14 +760,15 @@ bool ensure_project_index_dir(
 // M5.5: persist [toolchain].default into config.toml without disturbing
 // other fields. Naive: read text, replace/insert one line.
 std::expected<void, ConfigError>
-write_default_toolchain(const GlobalConfig& cfg, std::string_view spec) {
+write_toolchain_key(const GlobalConfig& cfg, std::string_view key,
+                    std::string_view value) {
     std::ifstream is(cfg.configFile);
     if (!is) return std::unexpected(ConfigError{
         std::format("cannot open '{}'", cfg.configFile.string())});
     std::stringstream ss; ss << is.rdbuf();
     std::string text = ss.str();
 
-    std::string line = std::format("default = \"{}\"\n", spec);
+    std::string line = std::format("{} = \"{}\"\n", key, value);
 
     auto sectionPos = text.find("[toolchain]");
     if (sectionPos == std::string::npos) {
@@ -766,18 +776,34 @@ write_default_toolchain(const GlobalConfig& cfg, std::string_view spec) {
         if (!text.empty() && text.back() != '\n') text += '\n';
         text += std::format("\n[toolchain]\n{}", line);
     } else {
-        // Locate existing `default = ...` within [toolchain]. If absent,
-        // insert just after the section header.
+        // Locate an existing `<key> = ...` line within [toolchain]. Match at
+        // line starts with a word boundary after the key, so `default` never
+        // matches the `default_target` line (and vice versa).
         auto eol = text.find('\n', sectionPos);
         if (eol == std::string::npos) eol = text.size();
         auto bodyStart = (eol == text.size()) ? text.size() : eol + 1;
         auto nextSec = text.find("\n[", bodyStart);
         auto bodyEnd = (nextSec == std::string::npos) ? text.size() : nextSec;
         auto body = std::string_view(text).substr(bodyStart, bodyEnd - bodyStart);
-        auto k = body.find("default");
-        if (k != std::string_view::npos) {
-            // replace that whole line
-            auto kAbs = bodyStart + k;
+
+        std::size_t kRel = std::string_view::npos;
+        for (std::size_t p = 0; p < body.size();) {
+            auto lineEnd = body.find('\n', p);
+            if (lineEnd == std::string_view::npos) lineEnd = body.size();
+            auto l = body.substr(p, lineEnd - p);
+            auto ws = l.find_first_not_of(" \t");
+            if (ws != std::string_view::npos && l.substr(ws).starts_with(key)) {
+                auto after = l.substr(ws + key.size());
+                if (after.empty() || after[0] == ' ' || after[0] == '\t'
+                    || after[0] == '=') {
+                    kRel = p + ws;
+                    break;
+                }
+            }
+            p = lineEnd + 1;
+        }
+        if (kRel != std::string_view::npos) {
+            auto kAbs = bodyStart + kRel;
             auto lineEnd = text.find('\n', kAbs);
             if (lineEnd == std::string::npos) lineEnd = text.size();
             text.replace(kAbs, lineEnd - kAbs + 1, line);
@@ -791,6 +817,16 @@ write_default_toolchain(const GlobalConfig& cfg, std::string_view spec) {
         std::format("cannot write '{}'", cfg.configFile.string())});
     os << text;
     return {};
+}
+
+std::expected<void, ConfigError>
+write_default_toolchain(const GlobalConfig& cfg, std::string_view spec) {
+    return write_toolchain_key(cfg, "default", spec);
+}
+
+std::expected<void, ConfigError>
+write_default_target(const GlobalConfig& cfg, std::string_view targetTriple) {
+    return write_toolchain_key(cfg, "default_target", targetTriple);
 }
 
 } // namespace mcpp::config

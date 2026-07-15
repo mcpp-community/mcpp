@@ -62,24 +62,47 @@ TEST(BmiTraitsSpellings, ModuleFlagRowsAreConsistent) {
     EXPECT_EQ(msvc.bmiSearchPrefix, " /ifcSearchDir ");
 }
 
-TEST(MingwSpec, MapsToMingwGccPackage) {
+TEST(MingwSpec, LegacyMingwSpellingIsGccTargetingWindowsGnu) {
+    // `mingw` is no longer a family: it normalizes to gcc targeting
+    // x86_64-windows-gnu. Which payload serves it is host-split at the
+    // distribution layer (winlibs mingw-gcc on Windows, mingw-cross-gcc
+    // elsewhere) — the user-facing identity is the same either way.
     auto spec = parse_toolchain_spec("mingw@16.1.0");
     ASSERT_TRUE(spec.has_value());
     EXPECT_FALSE(is_system_toolchain(*spec));
+    EXPECT_EQ(spec->family, Family::Gcc);
+    EXPECT_EQ(spec->target.str(), "x86_64-windows-gnu");
+    EXPECT_EQ(spec->display(), "gcc@16.1.0 → x86_64-windows-gnu");
+
     auto pkg = to_xim_package(*spec);
-    EXPECT_EQ(pkg.ximName, "mingw-gcc");
     EXPECT_EQ(pkg.ximVersion, "16.1.0");
-    EXPECT_EQ(pkg.display_spec(), "mingw@16.1.0");
     ASSERT_FALSE(pkg.frontendCandidates.empty());
+#if defined(_WIN32)
+    EXPECT_EQ(pkg.ximName, "mingw-gcc");
     EXPECT_EQ(pkg.frontendCandidates.front(), "g++.exe");
+#else
+    EXPECT_EQ(pkg.ximName, "mingw-cross-gcc");
+    EXPECT_EQ(pkg.frontendCandidates.front(), "x86_64-w64-mingw32-g++");
+#endif
     EXPECT_FALSE(pkg.needsGccPostInstallFixup);
 }
 
-TEST(MingwSpec, DisplayAndDefaultMatching) {
-    EXPECT_EQ(display_label("mingw-gcc", "16.1.0"), "mingw 16.1.0");
-    EXPECT_TRUE(matches_default_toolchain("mingw@16.1.0", "mingw-gcc", "16.1.0"));
-    EXPECT_FALSE(matches_default_toolchain("mingw@16.1.0", "mingw-gcc", "15.1.0"));
-    EXPECT_FALSE(matches_default_toolchain("gcc@16.1.0", "mingw-gcc", "16.1.0"));
+TEST(MingwSpec, PayloadIdentityAndDefaultMatching) {
+    // Both host-split payload dirs identify as the SAME (gcc, windows-gnu).
+    for (auto dir : {"mingw-gcc", "mingw-cross-gcc"}) {
+        auto id = identify_xim_payload(dir);
+        ASSERT_TRUE(id.has_value()) << dir;
+        EXPECT_EQ(id->family, Family::Gcc) << dir;
+        EXPECT_EQ(id->target.str(), "x86_64-windows-gnu") << dir;
+    }
+    auto id = *identify_xim_payload("mingw-cross-gcc");
+    auto def = parse_toolchain_spec("mingw-cross@16.1.0");   // legacy default string
+    ASSERT_TRUE(def.has_value());
+    EXPECT_TRUE(spec_matches_payload(*def, id, "16.1.0"));
+    EXPECT_FALSE(spec_matches_payload(*def, id, "15.1.0"));
+    auto llvmDef = parse_toolchain_spec("llvm@16.1.0");
+    ASSERT_TRUE(llvmDef.has_value());
+    EXPECT_FALSE(spec_matches_payload(*llvmDef, id, "16.1.0"));
 }
 
 TEST(StdFlagFor, PerDialectSpelling) {

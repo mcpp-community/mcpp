@@ -82,17 +82,19 @@ struct TargetInfo {
     bool defaultStatic;           // target's default linkage is static
 };
 
+// (note deliberately excludes "static" — the display layer derives that tag
+// from defaultStatic, so listing it here would duplicate it.)
 inline constexpr TargetInfo kKnownTargets[] = {
-    // canonical               tier         note      pin           defaultStatic
-    { "x86_64-linux-gnu",      "verified",  "",       "",           false },
-    { "x86_64-linux-musl",     "verified",  "static", "gcc@16.1.0", true  },
-    { "aarch64-linux-musl",    "verified",  "static", "gcc@16.1.0", true  },
-    { "x86_64-windows-gnu",    "verified",  "PE",     "gcc@16.1.0", true  },
-    { "x86_64-windows-msvc",   "verified",  "PE",     "",           false },
-    { "aarch64-macos",         "verified",  "",       "",           false },
-    { "riscv64-linux-musl",    "planned",   "static", "",           true  },
-    { "aarch64-linux-gnu",     "planned",   "",       "",           false },
-    { "x86_64-macos",          "planned",   "",       "",           false },
+    // canonical               tier         note   pin           defaultStatic
+    { "x86_64-linux-gnu",      "verified",  "",    "",           false },
+    { "x86_64-linux-musl",     "verified",  "",    "gcc@16.1.0", true  },
+    { "aarch64-linux-musl",    "verified",  "",    "gcc@16.1.0", true  },
+    { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", true  },
+    { "x86_64-windows-msvc",   "verified",  "PE",  "",           false },
+    { "aarch64-macos",         "verified",  "",    "",           false },
+    { "riscv64-linux-musl",    "planned",   "",    "",           true  },
+    { "aarch64-linux-gnu",     "planned",   "",    "",           false },
+    { "x86_64-macos",          "planned",   "",    "",           false },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

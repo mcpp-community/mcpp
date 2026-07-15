@@ -260,21 +260,26 @@ export int doctor_report() {
         bool anyMissing = false;
 
         if (std::filesystem::exists(pkgsDir, ec)) {
-            // Mirror `mcpp toolchain list`: each xim-x-<compiler>/<version>/bin
+            // Mirror `mcpp toolchain list`: each xim-x-<name>/<version>/bin
             // holds one installed toolchain frontend (clang++/g++/musl-gcc-…).
             for (auto& entry : std::filesystem::directory_iterator(pkgsDir, ec)) {
                 auto name = entry.path().filename().string();
                 if (name.rfind("xim-x-", 0) != 0) continue;          // toolchains only
-                std::string compiler = name.substr(std::string("xim-x-").size());
+                auto id = mcpp::toolchain::identify_xim_payload(
+                    name.substr(std::string("xim-x-").size()));
+                if (!id) continue;                                   // not a compiler pkg
 
                 for (auto& vEntry : std::filesystem::directory_iterator(entry.path(), ec)) {
+                    mcpp::toolchain::ToolchainSpec s;
+                    s.family  = id->family;
+                    s.version = vEntry.path().filename().string();
+                    s.target  = id->target;
                     auto bin = mcpp::toolchain::toolchain_frontend(
-                        vEntry.path() / "bin", compiler);
-                    if (bin.empty()) continue;                       // not a compiler pkg
+                        vEntry.path() / "bin", mcpp::toolchain::to_xim_package(s));
+                    if (bin.empty()) continue;
                     sawAny = true;
 
-                    auto label = mcpp::toolchain::display_label(
-                        compiler, vEntry.path().filename().string());
+                    auto label = s.display();
 
                     // readelf is part of binutils, always present in our sandbox.
                     auto cmd = std::format("readelf -d \"{}\"", bin.string());
