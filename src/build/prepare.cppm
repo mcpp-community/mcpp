@@ -939,7 +939,7 @@ prepare_build(bool print_fingerprint,
     // For musl-gcc the toolchain is fully self-contained
     // (`<root>/x86_64-linux-musl/{include,lib}` is its own sysroot).
     // musl-gcc's `-dumpmachine` reports `x86_64-linux-musl`.
-    bool isMuslTc = tc->targetTriple.find("-musl") != std::string::npos;
+    bool isMuslTc = mcpp::toolchain::is_musl_target(*tc);
 
     // A musl toolchain only really makes sense with static linkage —
     // dynamic-musl binaries depend on a system /lib/ld-musl-x86_64.so.1
