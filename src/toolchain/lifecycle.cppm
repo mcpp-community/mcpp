@@ -647,6 +647,15 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
                 mcpp::ui::error(wr.error().message);
                 return 1;
             }
+            // Clear the target axis too: a stale default_target (e.g.
+            // x86_64-windows-gnu left by a previous mingw default) would
+            // otherwise hijack the next build — the target's convention pin
+            // overrides the toolchain, silently building with gcc instead
+            // of the just-selected cl.exe. Caught by ci-windows e2e 99.
+            if (auto wt = mcpp::config::write_default_target(cfg, ""); !wt) {
+                mcpp::ui::error(wt.error().message);
+                return 1;
+            }
             mcpp::ui::status("Default", std::format(
                 "set to msvc@system (was: {})",
                 cfg.defaultToolchain.empty() ? "<none>" : cfg.defaultToolchain));

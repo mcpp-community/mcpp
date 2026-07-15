@@ -9,8 +9,10 @@ set -e
 CONF="${MCPP_HOME:-$HOME/.mcpp}/config.toml"
 ORIG_DEFAULT=""
 if [[ -f "$CONF" ]]; then
+    # NB: match `default =` exactly — `default_target =` also starts with
+    # "default" (the persisted pair since the naming unification).
     ORIG_DEFAULT=$(sed -n '/^\[toolchain\]/,/^\[/p' "$CONF" \
-        | grep '^default' | head -1 | cut -d'"' -f2 || true)
+        | grep -E '^default[[:space:]]*=' | head -1 | cut -d'"' -f2 || true)
 fi
 TMP=$(mktemp -d)
 restore() {
@@ -42,6 +44,10 @@ int main() { std::println("{}", hello::greet()); return 0; }
 EOF
 
 out=$("$MCPP" build 2>&1) || { echo "FAIL: msvc build: $out"; exit 1; }
+# the build must actually resolve msvc — a stale default_target could
+# otherwise silently reroute to another toolchain (that exact bug shipped
+# once: mingw's leftover default_target hijacked `toolchain default msvc`)
+grep -q "msvc" <<<"$out" || { echo "FAIL: build did not resolve msvc: $out"; exit 1; }
 run_out=$("$MCPP" run 2>&1) || { echo "FAIL: msvc run: $run_out"; exit 1; }
 [[ "$run_out" == *"cl-ok"* ]] || { echo "FAIL: run output: $run_out"; exit 1; }
 
