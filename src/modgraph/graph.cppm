@@ -18,6 +18,7 @@ struct SourceUnit {
     std::vector<std::filesystem::path> localIncludeDirs;
     std::vector<std::string>        packageCflags;
     std::vector<std::string>        packageCxxflags;
+    std::vector<std::string>        packageAsmflags;   // per-glob asmflags (G4)
     std::optional<ModuleId>         provides;
     std::vector<ModuleId>           requires_;
     bool                            isModuleInterface = false;   // .cppm with export module

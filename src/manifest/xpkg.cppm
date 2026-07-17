@@ -861,6 +861,133 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.consume('}');
         }
+        else if (key == "flags") {
+            // `{ { glob = "...", cflags = {...}, cxxflags = {...},
+            //     asmflags = {...}, defines = {...} }, ... }` — per-glob
+            // compile flags (G4), same ordered data model as mcpp.toml's
+            // [build] flags array. Lua array-of-tables preserves order.
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `flags =`", m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                if (!cur.consume('{')) {
+                    return std::unexpected(ManifestError{
+                        "expected '{' opening a `flags` entry", m.sourcePath, 0, 0});
+                }
+                GlobFlags gf;
+                cur.skip_ws_and_comments();
+                while (!cur.eof() && cur.peek() != '}') {
+                    auto sub = cur.read_key();
+                    if (sub.empty()) break;
+                    if (!cur.consume('=')) {
+                        return std::unexpected(ManifestError{
+                            "expected '=' in `flags` entry", m.sourcePath, 0, 0});
+                    }
+                    cur.skip_ws_and_comments();
+                    if (sub == "glob") {
+                        gf.glob = cur.read_string();
+                        cur.skip_ws_and_comments();
+                        continue;
+                    }
+                    std::vector<std::string>* dst =
+                          sub == "cflags"   ? &gf.cflags
+                        : sub == "cxxflags" ? &gf.cxxflags
+                        : sub == "asmflags" ? &gf.asmflags
+                        : sub == "defines"  ? &gf.defines
+                        : nullptr;
+                    if (!dst) {
+                        return std::unexpected(ManifestError{
+                            std::format("unknown flags key '{}' (expected glob/"
+                                        "cflags/cxxflags/asmflags/defines)", sub),
+                            m.sourcePath, 0, 0});
+                    }
+                    if (!cur.consume('{')) {
+                        return std::unexpected(ManifestError{
+                            std::format("expected '{{' after flags entry key '{}'", sub),
+                            m.sourcePath, 0, 0});
+                    }
+                    cur.skip_ws_and_comments();
+                    while (!cur.eof() && cur.peek() != '}') {
+                        auto s = cur.read_string();
+                        if (!s.empty()) dst->push_back(std::move(s));
+                        cur.skip_ws_and_comments();
+                    }
+                    cur.consume('}');
+                    cur.skip_ws_and_comments();
+                }
+                cur.consume('}');
+                if (gf.glob.empty()) {
+                    return std::unexpected(ManifestError{
+                        "`flags` entry is missing its `glob` key", m.sourcePath, 0, 0});
+                }
+                m.buildConfig.globFlags.push_back(std::move(gf));
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
+        else if (key == "target_cfg") {
+            // `{ ["cfg(...)"] = { cflags = {...}, cxxflags = {...},
+            //    ldflags = {...}, sources = {...} }, ... }` — deferred
+            // platform-conditional build config (L1), the same data model as
+            // mcpp.toml's [target.'cfg(...)'.build]. Evaluated against the
+            // RESOLVED target in prepare_build (root and dependency alike),
+            // so arch-gated sources (x86 .asm) work under cross builds.
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `target_cfg =`", m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto pred = cur.read_key();
+                if (pred.empty()) break;
+                if (!cur.consume('=') || !cur.consume('{')) {
+                    return std::unexpected(ManifestError{
+                        std::format("expected `= {{` after target_cfg entry '{}'", pred),
+                        m.sourcePath, 0, 0});
+                }
+                ConditionalConfig cc;
+                cc.predicate = pred;
+                cur.skip_ws_and_comments();
+                while (!cur.eof() && cur.peek() != '}') {
+                    auto sub = cur.read_key();
+                    if (sub.empty()) break;
+                    std::vector<std::string>* dst =
+                          sub == "cflags"   ? &cc.cflags
+                        : sub == "cxxflags" ? &cc.cxxflags
+                        : sub == "ldflags"  ? &cc.ldflags
+                        : sub == "sources"  ? &cc.sources
+                        : nullptr;
+                    if (!dst) {
+                        return std::unexpected(ManifestError{
+                            std::format("unknown target_cfg key '{}' (expected "
+                                        "cflags/cxxflags/ldflags/sources)", sub),
+                            m.sourcePath, 0, 0});
+                    }
+                    if (!cur.consume('=') || !cur.consume('{')) {
+                        return std::unexpected(ManifestError{
+                            std::format("expected `= {{` after target_cfg '{}'.{}",
+                                        pred, sub),
+                            m.sourcePath, 0, 0});
+                    }
+                    cur.skip_ws_and_comments();
+                    while (!cur.eof() && cur.peek() != '}') {
+                        auto s = cur.read_string();
+                        if (!s.empty()) dst->push_back(std::move(s));
+                        cur.skip_ws_and_comments();
+                    }
+                    cur.consume('}');
+                    cur.skip_ws_and_comments();
+                }
+                cur.consume('}');
+                if (!cc.cflags.empty() || !cc.cxxflags.empty()
+                    || !cc.ldflags.empty() || !cc.sources.empty())
+                    m.conditionalConfigs.push_back(std::move(cc));
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
         else if (key == "targets") {
             // `{ ["name"] = { kind = "lib" }, ... }`
             if (!cur.consume('{')) {

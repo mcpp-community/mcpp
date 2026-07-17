@@ -175,6 +175,49 @@ sources = [
 ]
 ```
 
+**per-glob 旗标**(mcpp 0.0.95+):`[build] flags` 是**有序**的内联表数组,把额外
+编译旗标只附加到 glob 命中的源文件——SIMD 多档 dispatch TU 与三方代码告警隔离的
+正解:
+
+```toml
+[build]
+flags = [
+  { glob = "third_party/**",         cflags = ["-w"], cxxflags = ["-w"] },
+  { glob = "src/simd/**/*.avx2.cpp", cxxflags = ["-mavx2"], defines = ["HAVE_AVX2"] },
+  { glob = "src/x86/**/*.asm",       asmflags = ["-DPREFIX"] },
+]
+```
+
+每条目键:`glob`(相对包根,必填)+ `cflags` / `cxxflags` / `asmflags` /
+`defines`(没有 `ldflags`——链接没有 per-TU 作用域)。声明顺序即应用顺序:靠后
+条目的旗标排在命令行更后,配合 GNU "后旗标胜",窄 glob 放在宽 glob 之后即可覆盖。
+所有命中条目都生效;这些是私有构建旗标,不会传播给消费者。glob 零命中会打印
+warning(打错的 glob 不允许静默无效)。
+
+**生成文件**(mcpp 0.0.95+):`[generated_files]` 把相对路径映射到文件内容(支持
+TOML 多行字符串)。条目在源 glob 展开之前写入工程树——与 index 描述符合成模块
+包装文件是同一机制——内容进指纹,改内容即重建:
+
+```toml
+[generated_files]
+"src/gen/wrap.cppm" = """
+module;
+#include <vendored.h>
+export module wrap;
+"""
+```
+
+路径必须留在工程根之内(`..` / 绝对路径是解析错误)。
+
+**汇编源**(mcpp 0.0.95+):`.S`/`.s`(GAS——由 C 驱动器预处理,覆盖 ARM 与
+AT&T 语法 x86)和 `.asm`(NASM——Intel 语法 x86)是一等源文件:默认 glob 收录、
+进指纹、增量并行构建、像任何对象一样链接。NASM 的输出格式由目标三元组推导
+(`elf64`/`win64`/`macho64`/...——交叉构建零特判);`nasm` 仅在存在 `.asm` 单元时
+惰性解析:先 `PATH`,再 mcpp 沙箱,再 `xlings install nasm`;找不到 ≥2.16 的
+nasm 则**硬失败**(汇编绝不静默跳过)。限制:`.asm` 仅限 x86 目标(其他目标硬
+报错——用条件 sources 门控)、MSVC 工具链不支持 `.S`、`.asm` 即 NASM 语法
+(MASM 源请用 `!` 排除)。
+
 ### 2.4 `[lib]` — 库根模块约定
 
 ```toml
@@ -290,7 +333,9 @@ cxxflags = ["-march=x86-64-v2"]
 OS/家族用裸形式;需要 arch/env 条件或组合子时用 `cfg(...)`。
 
 - **可放的键**:`dependencies` / `dev-dependencies` / `build-dependencies`,以及
-  `build` 下的 `cflags` / `cxxflags` / `ldflags`。
+  `build` 下的 `cflags` / `cxxflags` / `ldflags` / `sources`(mcpp 0.0.95+——
+  条件源 glob,如把 `src/x86/**/*.asm` 门控在 `cfg(arch = "x86_64")` 之后;
+  `!` 排除 glob 同样可用)。
 - **按解析后的目标求值**——交叉构建时是 `--target` 三元组,否则是 host。所以原生
   Linux 构建**根本不会下载** `[target.windows]` 的依赖。
 - **优先级**:精确三元组表压过 `cfg`/别名表;多个命中的谓词表,其旗标会拼接。
@@ -317,7 +362,10 @@ extra   = []
 #### 表形式 —— 让 feature 贡献的不止是隐含 feature
 
 `[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature
-之外,携带包自有的预处理 `defines`,以及 capability 的 `requires` / `provides`
+之外,携带包自有的预处理 `defines`、feature 门控的源 glob(`sources`,mcpp
+0.0.95+——列出的 glob 离开默认构建,仅当 feature 激活时才编译,与 index 描述符的
+`features.<f>.sources` 完全对等;这正是 vendored 大库最高频的形态:*feature =
+一组源文件 + 一个 define*),以及 capability 的 `requires` / `provides`
 (见 §2.8.1):
 
 ```toml

@@ -51,6 +51,14 @@ struct ScanResult {
 ScanResult scan_package(const std::filesystem::path& root,
                         const mcpp::manifest::Manifest& manifest);
 
+// Absolutize relative `-I<path>` compile flags against the package root
+// (G8b). A manifest's relative -I means root-relative, but ninja runs
+// commands with cwd = the output dir, so a verbatim relative flag resolves
+// against the wrong base. Called at every point where per-unit flag vectors
+// are attached (the scanner here; plan.cppm for a target's entry unit).
+void absolutize_include_flags(const std::filesystem::path& root,
+                              std::vector<std::string>& flags);
+
 enum class DependencyVisibility {
     Private,
     Public,
@@ -302,6 +310,20 @@ std::vector<std::filesystem::path> expand_dir_glob(const std::filesystem::path& 
     return out;
 }
 
+void absolutize_include_flags(const std::filesystem::path& root,
+                              std::vector<std::string>& flags)
+{
+    for (auto& f : flags) {
+        if (f.size() > 2 && f.starts_with("-I")) {
+            std::filesystem::path p(f.substr(2));
+            // has_root_path: leave absolute AND root-relative ("/x" on
+            // Windows) spellings alone — only genuinely root-less paths are
+            // project-relative.
+            if (!p.has_root_path()) f = "-I" + (root / p).string();
+        }
+    }
+}
+
 std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file,
                                                const std::string&           packageName)
 {
@@ -505,6 +527,31 @@ void scan_one_into(ScanResult& result,
     for (auto const& [glob, ov] : manifest.modules.scanOverrides)
         overrideHits[glob] = 0;
 
+    // [build].flags per-glob entries (G4): append each matching entry's
+    // flags to the unit IN DECLARATION ORDER (later entries land later on
+    // the command line — "last flag wins" precedence). `defines` desugar to
+    // -D on every unit kind. Zero-hit globs warn after the walk (a typo'd
+    // glob silently doing nothing is the classic trap) — warn, not error:
+    // a cfg-gated source set can legitimately leave a glob empty on some
+    // targets.
+    std::vector<int> globFlagHits(manifest.buildConfig.globFlags.size(), 0);
+    auto apply_glob_flags = [&](SourceUnit& u) {
+        for (std::size_t i = 0; i < manifest.buildConfig.globFlags.size(); ++i) {
+            auto const& gf = manifest.buildConfig.globFlags[i];
+            if (!path_matches_glob(u.path, root, gf.glob)) continue;
+            ++globFlagHits[i];
+            // defines reach asm units too — via the -D subset the backend
+            // filters out of packageCflags (no third copy needed here).
+            for (auto const& d : gf.defines) {
+                u.packageCflags.push_back("-D" + d);
+                u.packageCxxflags.push_back("-D" + d);
+            }
+            for (auto const& f : gf.cflags)   u.packageCflags.push_back(f);
+            for (auto const& f : gf.cxxflags) u.packageCxxflags.push_back(f);
+            for (auto const& f : gf.asmflags) u.packageAsmflags.push_back(f);
+        }
+    };
+
     for (auto const& f : all_files) {
         const mcpp::manifest::ScanOverride* ov = nullptr;
         for (auto const& [glob, o] : manifest.modules.scanOverrides) {
@@ -534,6 +581,10 @@ void scan_one_into(ScanResult& result,
             u.localIncludeDirs = localIncludeDirs;
             u.packageCflags    = packageCflags;
             u.packageCxxflags  = packageCxxflags;
+            apply_glob_flags(u);
+            absolutize_include_flags(root, u.packageCflags);
+            absolutize_include_flags(root, u.packageCxxflags);
+            absolutize_include_flags(root, u.packageAsmflags);
             result.graph.units.push_back(std::move(u));
             continue;
         }
@@ -545,6 +596,10 @@ void scan_one_into(ScanResult& result,
         r->localIncludeDirs = localIncludeDirs;
         r->packageCflags = packageCflags;
         r->packageCxxflags = packageCxxflags;
+        apply_glob_flags(*r);
+        absolutize_include_flags(root, r->packageCflags);
+        absolutize_include_flags(root, r->packageCxxflags);
+        absolutize_include_flags(root, r->packageAsmflags);
         result.graph.units.push_back(std::move(*r));
     }
 
@@ -553,6 +608,13 @@ void scan_one_into(ScanResult& result,
             result.errors.push_back(ScanError{root, 0, std::format(
                 "scan_overrides glob '{}' matched no source file "
                 "(typo, or the glob is not covered by `sources`)", glob)});
+        }
+    }
+    for (std::size_t i = 0; i < globFlagHits.size(); ++i) {
+        if (globFlagHits[i] == 0) {
+            result.warnings.push_back(ScanError{root, 0, std::format(
+                "[build].flags glob '{}' matched no source file",
+                manifest.buildConfig.globFlags[i].glob)});
         }
     }
 }

@@ -188,6 +188,46 @@ sources = [
 ]
 ```
 
+**Per-glob flags** (mcpp 0.0.95+): `[build] flags` is an ordered array of
+inline tables attaching extra compile flags to exactly the sources a glob
+matches — the tool for SIMD dispatch TUs and vendored-code warning isolation:
+
+```toml
+[build]
+flags = [
+  { glob = "third_party/**",            cflags = ["-w"], cxxflags = ["-w"] },
+  { glob = "src/simd/**/*.avx2.cpp",    cxxflags = ["-mavx2"], defines = ["HAVE_AVX2"] },
+  { glob = "src/x86/**/*.asm",          asmflags = ["-DPREFIX"] },
+]
+```
+
+Keys per entry: `glob` (package-root-relative, required) plus `cflags` /
+`cxxflags` / `asmflags` / `defines` (no `ldflags` — linking has no per-TU
+scope). Declaration order is application order: a later entry's flags land
+later on the command line, so with GNU "last flag wins" a narrower glob
+placed after a broader one overrides it. All matching entries apply. These
+are private build flags — they never propagate to consumers. A glob that
+matches no source file prints a warning (a typo'd glob must not silently do
+nothing).
+
+**Generated files** (mcpp 0.0.95+): `[generated_files]` maps a relative path
+to file contents (TOML multiline strings supported). Entries are written
+into the project tree before source globs expand — the same mechanism index
+descriptors use to synthesize module wrappers — and the content enters the
+fingerprint, so editing it rebuilds:
+
+```toml
+[generated_files]
+"src/gen/wrap.cppm" = """
+module;
+#include <vendored.h>
+export module wrap;
+"""
+```
+
+Paths must stay inside the project root (`..` / absolute paths are parse
+errors).
+
 **Assembly sources** (mcpp 0.0.95+): `.S`/`.s` (GAS — preprocessed by the C
 driver, covers ARM and AT&T-syntax x86) and `.asm` (NASM — Intel-syntax x86)
 are first-class sources: default-globbed, fingerprinted, built incrementally
@@ -319,7 +359,9 @@ there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
 when you need arch/env conditions or combinators.
 
 - **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies`, and
-  `build` with `cflags` / `cxxflags` / `ldflags`.
+  `build` with `cflags` / `cxxflags` / `ldflags` / `sources` (mcpp 0.0.95+ —
+  conditional source globs, e.g. gating `src/x86/**/*.asm` behind
+  `cfg(arch = "x86_64")`; `!`-exclusion globs work here too).
 - **Evaluated against the resolved target** — the `--target` triple for a cross
   build, otherwise the host. So a native Linux build never even *downloads* a
   `[target.windows]` dependency.
@@ -352,8 +394,12 @@ extra   = []
 #### Table form — a feature that contributes more than implied features
 
 A `[features]` entry may be written as a **table** instead of an array, letting the
-feature carry package-owned preprocessor `defines` and/or capability `requires` /
-`provides` (see §2.8.1) alongside its implied features:
+feature carry package-owned preprocessor `defines`, feature-gated source globs
+(`sources`, mcpp 0.0.95+ — the globs leave the default build and compile only when
+the feature is active, exactly like an index descriptor's `features.<f>.sources`;
+the highest-frequency shape for vendored libraries: *feature = a source set + a
+define*), and/or capability `requires` / `provides` (see §2.8.1) alongside its
+implied features:
 
 ```toml
 [features]

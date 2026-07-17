@@ -1529,3 +1529,205 @@ main = "src/main.cpp"
     EXPECT_EQ(ov.provides, std::vector<std::string>{"fmt"});
     EXPECT_EQ(ov.imports,  std::vector<std::string>{"std"});
 }
+
+// ── declarative source-set parity: mcpp.toml ↔ xpkg descriptor ───────────────
+// One data model, two grammars (manifest.cppm): what a descriptor can express
+// through `features.<f>.sources` / `generated_files`, mcpp.toml must express
+// identically. This test locks the symmetry as a contract.
+
+TEST(Manifest, FeatureSourcesParseFromToml) {
+    constexpr auto src = R"(
+[package]
+name = "sym"
+version = "1.0.0"
+[features]
+default = []
+compiled = { sources = ["src/impl/**"], defines = ["SYM_COMPILED"] }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_TRUE(m->buildConfig.featureSources.contains("compiled"));
+    EXPECT_EQ(m->buildConfig.featureSources.at("compiled"),
+              (std::vector<std::string>{"src/impl/**"}));
+    ASSERT_TRUE(m->buildConfig.featureDefines.contains("compiled"));
+}
+
+TEST(Manifest, GeneratedFilesParseFromToml) {
+    constexpr auto src = R"(
+[package]
+name = "genf"
+version = "1.0.0"
+
+[generated_files]
+"src/gen/wrap.cppm" = """
+module;
+export module wrap;
+"""
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.generatedFiles.size(), 1u);
+    auto it = m->buildConfig.generatedFiles.find(
+        std::filesystem::path("src/gen/wrap.cppm"));
+    ASSERT_NE(it, m->buildConfig.generatedFiles.end());
+    EXPECT_EQ(it->second, "module;\nexport module wrap;\n");
+}
+
+TEST(Manifest, GeneratedFilesRejectEscapingPaths) {
+    for (auto path : { "\"../evil.cpp\"", "\"/abs/evil.cpp\"", "\"a/../../evil.cpp\"" }) {
+        auto src = std::format(R"(
+[package]
+name = "genf"
+version = "1.0.0"
+[generated_files]
+{} = "x"
+)", path);
+        auto m = mcpp::manifest::parse_string(src);
+        EXPECT_FALSE(m.has_value()) << "path accepted: " << path;
+    }
+}
+
+TEST(Manifest, TomlAndXpkgFeatureSourcesAreSymmetric) {
+    constexpr auto toml = R"(
+[package]
+name = "sym"
+version = "1.0.0"
+[features]
+compiled = { sources = ["src/impl/**"], defines = ["SYM_COMPILED"] }
+[generated_files]
+"src/gen/wrap.cppm" = "module;\nexport module wrap;\n"
+)";
+    constexpr auto lua = R"(
+package = { name = "sym" }
+mcpp = {
+    sources = { "src/**/*.cpp" },
+    features = {
+        compiled = { sources = { "src/impl/**" }, defines = { "SYM_COMPILED" } },
+    },
+    generated_files = {
+        ["src/gen/wrap.cppm"] = "module;\nexport module wrap;\n",
+    },
+}
+)";
+    auto mt = mcpp::manifest::parse_string(toml);
+    ASSERT_TRUE(mt.has_value()) << mt.error().format();
+    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "sym", "1.0.0");
+    ASSERT_TRUE(mx.has_value()) << mx.error().format();
+
+    EXPECT_EQ(mt->buildConfig.featureSources, mx->buildConfig.featureSources);
+    EXPECT_EQ(mt->buildConfig.featureDefines, mx->buildConfig.featureDefines);
+    EXPECT_EQ(mt->buildConfig.generatedFiles, mx->buildConfig.generatedFiles);
+}
+
+TEST(Manifest, CfgConditionalSourcesParseFromToml) {
+    constexpr auto src = R"(
+[package]
+name = "condsrc"
+version = "1.0.0"
+
+[target.'cfg(arch = "x86_64")'.build]
+sources  = ["src/x86/**/*.asm", "!src/x86/legacy/**"]
+cxxflags = ["-DHAVE_X86=1"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    auto& cc = m->conditionalConfigs[0];
+    EXPECT_EQ(cc.predicate, "cfg(arch = \"x86_64\")");
+    EXPECT_EQ(cc.sources, (std::vector<std::string>{
+        "src/x86/**/*.asm", "!src/x86/legacy/**"}));
+    EXPECT_EQ(cc.cxxflags, (std::vector<std::string>{"-DHAVE_X86=1"}));
+}
+
+TEST(Manifest, TargetCfgParsesFromXpkgSymmetrically) {
+    constexpr auto lua = R"(
+package = { name = "condsrc" }
+mcpp = {
+    sources = { "src/**/*.c" },
+    target_cfg = {
+        ['cfg(arch = "x86_64")'] = {
+            sources  = { "src/x86/**/*.asm" },
+            cxxflags = { "-DHAVE_X86=1" },
+        },
+        ['cfg(windows)'] = {
+            ldflags = { "-lws2_32" },
+        },
+    },
+}
+)";
+    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "condsrc", "1.0.0");
+    ASSERT_TRUE(mx.has_value()) << mx.error().format();
+    ASSERT_EQ(mx->conditionalConfigs.size(), 2u);
+    EXPECT_EQ(mx->conditionalConfigs[0].predicate, "cfg(arch = \"x86_64\")");
+    EXPECT_EQ(mx->conditionalConfigs[0].sources,
+              (std::vector<std::string>{"src/x86/**/*.asm"}));
+    EXPECT_EQ(mx->conditionalConfigs[1].predicate, "cfg(windows)");
+    EXPECT_EQ(mx->conditionalConfigs[1].ldflags,
+              (std::vector<std::string>{"-lws2_32"}));
+}
+
+TEST(Manifest, PerGlobFlagsParseOrderedFromToml) {
+    constexpr auto src = R"(
+[package]
+name = "globf"
+version = "1.0.0"
+
+[build]
+flags = [
+  { glob = "third_party/**", cflags = ["-w"], cxxflags = ["-w"] },
+  { glob = "src/simd/**/*.avx2.cpp", cxxflags = ["-mavx2"], defines = ["HAVE_AVX2"] },
+  { glob = "src/x86/**/*.asm", asmflags = ["-DPIC"] },
+]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto& gfs = m->buildConfig.globFlags;
+    ASSERT_EQ(gfs.size(), 3u);
+    // Declaration order IS the data (override semantics ride on it).
+    EXPECT_EQ(gfs[0].glob, "third_party/**");
+    EXPECT_EQ(gfs[0].cxxflags, (std::vector<std::string>{"-w"}));
+    EXPECT_EQ(gfs[1].glob, "src/simd/**/*.avx2.cpp");
+    EXPECT_EQ(gfs[1].defines, (std::vector<std::string>{"HAVE_AVX2"}));
+    EXPECT_EQ(gfs[2].asmflags, (std::vector<std::string>{"-DPIC"}));
+}
+
+TEST(Manifest, PerGlobFlagsRejectUnknownKeysAndMissingGlob) {
+    auto bad1 = mcpp::manifest::parse_string(R"(
+[package]
+name = "globf"
+version = "1.0.0"
+[build]
+flags = [{ glob = "src/**", ldflags = ["-lfoo"] }]
+)");
+    EXPECT_FALSE(bad1.has_value());   // ldflags is not per-TU — closed grammar
+
+    auto bad2 = mcpp::manifest::parse_string(R"(
+[package]
+name = "globf"
+version = "1.0.0"
+[build]
+flags = [{ cxxflags = ["-w"] }]
+)");
+    EXPECT_FALSE(bad2.has_value());   // missing glob
+}
+
+TEST(Manifest, PerGlobFlagsParseFromXpkgSymmetrically) {
+    constexpr auto lua = R"(
+package = { name = "globf" }
+mcpp = {
+    sources = { "src/**/*.cpp" },
+    flags = {
+        { glob = "third_party/**", cxxflags = { "-w" } },
+        { glob = "src/simd/**", cxxflags = { "-mavx2" }, defines = { "HAVE_AVX2" } },
+    },
+}
+)";
+    auto mx = mcpp::manifest::synthesize_from_xpkg_lua(lua, "globf", "1.0.0");
+    ASSERT_TRUE(mx.has_value()) << mx.error().format();
+    ASSERT_EQ(mx->buildConfig.globFlags.size(), 2u);
+    EXPECT_EQ(mx->buildConfig.globFlags[0].glob, "third_party/**");
+    EXPECT_EQ(mx->buildConfig.globFlags[1].cxxflags,
+              (std::vector<std::string>{"-mavx2"}));
+    EXPECT_EQ(mx->buildConfig.globFlags[1].defines,
+              (std::vector<std::string>{"HAVE_AVX2"}));
+}

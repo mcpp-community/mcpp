@@ -172,6 +172,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 std::vector<std::string> defs;
                 read_str_array(ft, "defines", defs);
                 if (!defs.empty()) m.buildConfig.featureDefines[fname] = std::move(defs);
+                // Feature-gated source globs — same semantics as the index
+                // descriptor's `sources` key (one data model, two grammars):
+                // listed globs leave the default build and compile only when
+                // the feature is active.
+                std::vector<std::string> fsrcs;
+                read_str_array(ft, "sources", fsrcs);
+                if (!fsrcs.empty()) m.buildConfig.featureSources[fname] = std::move(fsrcs);
                 std::vector<std::string> reqs, provs;
                 read_str_array(ft, "requires", reqs);
                 read_str_array(ft, "provides", provs);
@@ -189,6 +196,35 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto* caps = doc->get_table("capabilities"); caps && !caps->empty()) {
         for (auto& [cap, cval] : *caps)
             if (cval.is_string()) m.capabilityPins[cap] = cval.as_string();
+    }
+
+    // [generated_files] — "relative/path" = "file contents" (multiline
+    // strings supported). Same mechanism as the index descriptor's
+    // generated_files key: materialized into the package root before glob
+    // expansion, content folded into the package fingerprint. Paths are
+    // validated again at materialize time; checking here gives the error a
+    // manifest location.
+    if (auto* gf = doc->get_table("generated_files"); gf && !gf->empty()) {
+        for (auto& [rel, val] : *gf) {
+            if (!val.is_string()) {
+                return std::unexpected(error(origin, std::format(
+                    "[generated_files].\"{}\" must be a string (file contents)", rel)));
+            }
+            std::filesystem::path p(rel);
+            // has_root_path, not is_absolute: on Windows "/x" is root-relative
+            // (not absolute) yet still escapes the project root.
+            bool escapes = rel.empty() || p.has_root_path();
+            // const&: libc++'s path iterator dereferences to a temporary
+            // path (libstdc++ hands out a reference) — auto& won't bind.
+            for (auto const& part : p.lexically_normal())
+                if (part == "..") { escapes = true; break; }
+            if (escapes) {
+                return std::unexpected(error(origin, std::format(
+                    "[generated_files] path '{}' must be relative and stay "
+                    "inside the project root", rel)));
+            }
+            m.buildConfig.generatedFiles.emplace(std::move(p), val.as_string());
+        }
     }
 
     // [scan_overrides."<glob>"] — author-asserted scan results (see
@@ -648,6 +684,50 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("build.dialect_cxxflags"))
         m.buildConfig.dialectCxxflags = *v;
     if (auto v = doc->get_string_array("build.ldflags"))  m.buildConfig.ldflags  = *v;
+    // [build] flags = [{ glob = "...", cflags/cxxflags/asmflags/defines }]
+    // Per-glob compile flags (G4). An ARRAY of inline tables — TOML tables
+    // are sorted maps, so only the array form can carry declaration order,
+    // and order is the override semantics (later entries win via "last flag
+    // wins"). Unknown keys are errors: closed grammar.
+    if (auto* fv = doc->get("build.flags")) {
+        if (!fv->is_array()) {
+            return std::unexpected(error(origin,
+                "[build].flags must be an array of inline tables: "
+                "flags = [{ glob = \"...\", cxxflags = [...] }, ...]"));
+        }
+        for (auto& ev : fv->as_array()) {
+            if (!ev.is_table()) {
+                return std::unexpected(error(origin,
+                    "[build].flags entries must be inline tables with a `glob` key"));
+            }
+            auto& et = ev.as_table();
+            GlobFlags gf;
+            for (auto& [k, v] : et) {
+                auto read_list = [&](std::vector<std::string>& out) -> bool {
+                    if (!v.is_array()) return false;
+                    for (auto& s : v.as_array())
+                        if (s.is_string()) out.push_back(s.as_string());
+                    return true;
+                };
+                bool ok = false;
+                if      (k == "glob")     { ok = v.is_string(); if (ok) gf.glob = v.as_string(); }
+                else if (k == "cflags")   ok = read_list(gf.cflags);
+                else if (k == "cxxflags") ok = read_list(gf.cxxflags);
+                else if (k == "asmflags") ok = read_list(gf.asmflags);
+                else if (k == "defines")  ok = read_list(gf.defines);
+                if (!ok) {
+                    return std::unexpected(error(origin, std::format(
+                        "[build].flags: invalid key '{}' (expected glob = \"...\" "
+                        "plus cflags/cxxflags/asmflags/defines arrays)", k)));
+                }
+            }
+            if (gf.glob.empty()) {
+                return std::unexpected(error(origin,
+                    "[build].flags entry is missing its `glob` key"));
+            }
+            m.buildConfig.globFlags.push_back(std::move(gf));
+        }
+    }
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
     if (auto v = doc->get_string("build.target"))         m.buildConfig.target = *v;
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
@@ -760,6 +840,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_list("cflags",   cc.cflags);
                 read_list("cxxflags", cc.cxxflags);
                 read_list("ldflags",  cc.ldflags);
+                read_list("sources",  cc.sources);
             }
             // [target.<predicate>.{dependencies,dev-dependencies,build-dependencies}]
             // parsed via the shared table-based loader (same selectors/namespaces
@@ -775,6 +856,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (auto r = read_deps("dev-dependencies",   cc.devDependencies);  !r) return std::unexpected(r.error());
             if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());
             if (!cc.cflags.empty() || !cc.cxxflags.empty() || !cc.ldflags.empty()
+                || !cc.sources.empty()
                 || !cc.dependencies.empty() || !cc.devDependencies.empty()
                 || !cc.buildDependencies.empty())
                 m.conditionalConfigs.push_back(std::move(cc));
