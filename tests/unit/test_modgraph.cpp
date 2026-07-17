@@ -456,3 +456,67 @@ TEST(IsForbiddenTopModule, KnownNames) {
     EXPECT_TRUE(is_forbidden_top_module("util.x"));
     EXPECT_FALSE(is_forbidden_top_module("myorg.foo"));
 }
+
+// G4: per-glob flags attach to exactly the matched units, in declaration
+// order; a zero-hit glob warns (not errors — cfg-gated source sets may
+// legitimately leave a glob empty on some targets).
+TEST(Scanner, PerGlobFlagsAttachToMatchedUnits) {
+    auto dir = make_tempdir("mcpp-scanner-globflags");
+    write(dir / "src" / "hot.cpp", "int hot() { return 1; }\n");
+    write(dir / "third_party" / "noisy.cpp", "int noisy() { return 2; }\n");
+
+    mcpp::manifest::Manifest m;
+    m.package.name = "globpkg";
+    m.modules.sources = { "src/**/*.cpp", "third_party/**/*.cpp" };
+    m.buildConfig.globFlags.push_back(
+        { .glob = "third_party/**", .cxxflags = {"-w"} });
+    m.buildConfig.globFlags.push_back(
+        { .glob = "src/**", .cxxflags = {"-mavx2"}, .defines = {"HOT"} });
+    m.buildConfig.globFlags.push_back(
+        { .glob = "nothing/**", .cxxflags = {"-Wnever"} });
+
+    auto res = scan_package(dir, m);
+    ASSERT_TRUE(res.errors.empty());
+    ASSERT_EQ(res.graph.units.size(), 2u);
+    for (auto& u : res.graph.units) {
+        if (u.path.filename() == "noisy.cpp") {
+            EXPECT_EQ(u.packageCxxflags, (std::vector<std::string>{"-w"}));
+        } else {
+            // defines land before the entry's own flag lists
+            EXPECT_EQ(u.packageCxxflags,
+                      (std::vector<std::string>{"-DHOT", "-mavx2"}));
+        }
+    }
+    // The unmatched glob warns.
+    bool warned = false;
+    for (auto& w : res.warnings)
+        if (w.message.find("nothing/**") != std::string::npos) warned = true;
+    EXPECT_TRUE(warned);
+
+    std::filesystem::remove_all(dir);
+}
+
+// G8b: relative -I flags are root-relative in the manifest but ninja runs
+// with cwd = output dir — the scanner absolutizes them on every unit.
+TEST(Scanner, RelativeIncludeFlagsAbsolutized) {
+    auto dir = make_tempdir("mcpp-scanner-relinc");
+    write(dir / "src" / "a.cpp", "int a();\n");
+
+    mcpp::manifest::Manifest m;
+    m.package.name = "relinc";
+    m.modules.sources = {"src/*.cpp"};
+
+    // via package flags
+    auto res = [&] {
+        mcpp::manifest::Manifest mm = m;
+        mm.buildConfig.cxxflags = {"-Iinc", "-I/abs/path", "-DKEEP"};
+        return scan_package(dir, mm);
+    }();
+    ASSERT_EQ(res.graph.units.size(), 1u);
+    auto& fl = res.graph.units[0].packageCxxflags;
+    EXPECT_EQ(fl[0], "-I" + (dir / "inc").string());
+    EXPECT_EQ(fl[1], "-I/abs/path");   // absolute stays
+    EXPECT_EQ(fl[2], "-DKEEP");        // non-include untouched
+
+    std::filesystem::remove_all(dir);
+}

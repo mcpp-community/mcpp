@@ -6,7 +6,7 @@
 //  - Integers
 //  - Arrays of strings: key = ["a", "b"]
 //  - Inline tables (rudimentary): key = { version = "..." }
-// Comments: # to end of line. No multiline strings, no datetime.
+// Comments: # to end of line. Multiline strings ("""/''') supported; no datetime.
 
 export module mcpp.libs.toml;
 
@@ -152,10 +152,69 @@ inline bool is_bare_key_char(char c) {
         || (c >= '0' && c <= '9') || c == '_' || c == '-';
 }
 
+// """multi-line basic""" / '''multi-line literal''' strings (TOML 1.0).
+// Entered from read_string once it has seen the triple quote. A newline
+// immediately after the opening delimiter is trimmed (spec); basic form
+// supports the same escapes as single-line plus the line-ending backslash
+// (strips the newline and following whitespace).
+inline std::expected<std::string, ParseError> read_multiline_string(Lexer& L, char quote) {
+    for (int i = 0; i < 3; ++i) L.advance();          // consume opening delim
+    if (L.peek() == '\r') L.advance();
+    if (L.peek() == '\n') L.advance();                 // trim first newline
+    std::string out;
+    while (!L.eof()) {
+        if (L.peek() == quote && L.peek(1) == quote && L.peek(2) == quote) {
+            // TOML allows 1–2 extra quotes glued to the closing delimiter.
+            std::size_t extra = 0;
+            while (extra < 2 && L.peek(3 + extra) == quote) ++extra;
+            for (std::size_t i = 0; i < extra; ++i) out.push_back(quote);
+            for (std::size_t i = 0; i < 3 + extra; ++i) L.advance();
+            return out;
+        }
+        char c = L.peek();
+        if (c == '\\' && quote == '"') {
+            char nxt = L.peek(1);
+            if (nxt == '\n' || nxt == '\r'
+                || ((nxt == ' ' || nxt == '\t') && [&] {   // ws-only tail → line-ending backslash
+                       std::size_t o = 1;
+                       while (L.peek(o) == ' ' || L.peek(o) == '\t') ++o;
+                       return L.peek(o) == '\n' || L.peek(o) == '\r';
+                   }())) {
+                L.advance();                                // backslash
+                while (!L.eof() && (L.peek() == ' ' || L.peek() == '\t'
+                                    || L.peek() == '\r' || L.peek() == '\n'))
+                    L.advance();
+                continue;
+            }
+            L.advance();
+            char esc = L.peek();
+            switch (esc) {
+                case 'n': out.push_back('\n'); break;
+                case 't': out.push_back('\t'); break;
+                case 'r': out.push_back('\r'); break;
+                case '"': out.push_back('"'); break;
+                case '\\': out.push_back('\\'); break;
+                case '0': out.push_back('\0'); break;
+                default:
+                    return std::unexpected(ParseError{
+                        std::format("invalid escape '\\{}'", esc), L.position()});
+            }
+            L.advance();
+            continue;
+        }
+        out.push_back(c);
+        L.advance();
+    }
+    return std::unexpected(ParseError{"unterminated multi-line string", L.position()});
+}
+
 inline std::expected<std::string, ParseError> read_string(Lexer& L) {
     char quote = L.peek();
     if (quote != '"' && quote != '\'') {
         return std::unexpected(ParseError{"expected string literal", L.position()});
+    }
+    if (L.peek(1) == quote && L.peek(2) == quote) {
+        return read_multiline_string(L, quote);
     }
     L.advance();
     std::string out;

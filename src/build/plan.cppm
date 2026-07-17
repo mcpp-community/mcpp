@@ -24,6 +24,7 @@ struct CompileUnit {
     std::vector<std::filesystem::path> localIncludeDirs;
     std::vector<std::string>        packageCflags;
     std::vector<std::string>        packageCxxflags;
+    std::vector<std::string>        packageAsmflags;   // per-glob asmflags (G4)
     std::optional<std::string>      providesModule;   // logical name, if .cppm export
     std::vector<std::string>        imports;           // logical names imported
     // Unit came from a scan_overrides declaration — plan-vs-ddi
@@ -445,6 +446,7 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
         cu.localIncludeDirs = u.localIncludeDirs;
         cu.packageCflags = u.packageCflags;
         cu.packageCxxflags = u.packageCxxflags;
+        cu.packageAsmflags = u.packageAsmflags;
         const auto fname = object_filename_for(u.path, objExt);
         if (basenameCount[fname] > 1) {
             // Use <sanitized-pkg>/<parent-dir-name> as prefix to handle
@@ -700,6 +702,10 @@ BuildPlan make_plan(const mcpp::manifest::Manifest&         manifest,
                 main_cu.packageCflags = manifest.buildConfig.cflags;
                 main_cu.packageCxxflags = manifest.buildConfig.cxxflags;
             }
+            // Root-relative -I flags → absolute (G8b), mirroring the scanner's
+            // treatment of every scanned unit.
+            mcpp::modgraph::absolutize_include_flags(projectRoot, main_cu.packageCflags);
+            mcpp::modgraph::absolutize_include_flags(projectRoot, main_cu.packageCxxflags);
 
             // We didn't scan main.cpp earlier (it's not in scanner output unless globbed in).
             // Best-effort: scan its imports here.

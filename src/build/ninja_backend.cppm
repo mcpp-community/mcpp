@@ -170,13 +170,15 @@ bool is_scan_exempt(const std::filesystem::path& src) {
 // Per-unit flags an assembler can take: the -D/-U/-I subset of the unit's C
 // flags (feature defines land there). NASM shares the GNU -D/-U/-I spelling
 // (and ≥2.14 inserts a missing -I path separator itself), so one filter
-// serves both asm rules.
+// serves both asm rules. Explicit per-glob asmflags (G4) append after the
+// filtered subset — author-directed flags win.
 std::vector<std::string> asm_unit_flags(const CompileUnit& cu) {
     std::vector<std::string> out;
     for (auto& f : cu.packageCflags) {
         if (f.starts_with("-D") || f.starts_with("-U") || f.starts_with("-I"))
             out.push_back(f);
     }
+    out.insert(out.end(), cu.packageAsmflags.begin(), cu.packageAsmflags.end());
     return out;
 }
 

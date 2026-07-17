@@ -117,6 +117,19 @@ struct Toolchain {
     }
 };
 
+// `[build] flags = [{ glob = "...", ... }]` — per-glob compile flags (G4).
+// A VECTOR, not a map: declaration order is application order (a later
+// entry's flags land later on the command line, so GNU "last flag wins"
+// gives it precedence over an earlier, broader glob). Private build flags —
+// they never enter usage requirements / never propagate to consumers.
+struct GlobFlags {
+    std::string              glob;      // matched against package-root-relative paths
+    std::vector<std::string> cflags;    // C units (.c/.m)
+    std::vector<std::string> cxxflags;  // C++ units (.cpp/.cc/.cxx/.cppm)
+    std::vector<std::string> asmflags;  // assembly units (.S/.s via cc, .asm via nasm)
+    std::vector<std::string> defines;   // desugars to -D on every matched unit kind
+};
+
 // `[build]` section — tunables for the build backend.
 //
 // M5.0: now also carries `sources` (moved from [modules]) and `include_dirs`
@@ -140,6 +153,7 @@ struct BuildConfig {
     std::map<std::string, std::vector<std::string>> featureDefines;
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
+    std::vector<GlobFlags>              globFlags;      // [build] flags = [...] (ordered)
     bool                                staticStdlib = true;
     // "" (default = dynamic), "static", "dynamic" — chosen at resolve
     // time from --static / --target / [target.<triple>].linkage. Wired
@@ -247,6 +261,11 @@ struct ConditionalConfig {
     std::vector<std::string>            cflags;
     std::vector<std::string>            cxxflags;
     std::vector<std::string>            ldflags;
+    // Conditional source globs (G1b): appended to [build].sources when the
+    // predicate matches the resolved target — the declarative gate for
+    // arch-specific code (x86 .asm on x86 targets only). `!`-exclusion
+    // globs work here too (the scanner handles positive+negative sets).
+    std::vector<std::string>            sources;
     // Conditional dependencies (Phase 1b): merged into the corresponding
     // manifest maps in prepare_build when the predicate matches the resolved
     // target — before dependency resolution, so they resolve like any dep.

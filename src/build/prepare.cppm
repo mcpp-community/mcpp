@@ -225,6 +225,15 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
         s += " ldflag:";
         s += flag;
     }
+    // Per-glob flags (G4): full ordered serialization — glob + every list —
+    // so editing any entry (or reordering) re-fingerprints the output dir.
+    for (auto const& gf : m.buildConfig.globFlags) {
+        s += " globflags:"; s += gf.glob;
+        for (auto const& f : gf.cflags)   { s += " gc:";  s += f; }
+        for (auto const& f : gf.cxxflags) { s += " gxx:"; s += f; }
+        for (auto const& f : gf.asmflags) { s += " gas:"; s += f; }
+        for (auto const& f : gf.defines)  { s += " gd:";  s += f; }
+    }
     return s;
 }
 
@@ -325,6 +334,31 @@ materialize_generated_files(const std::filesystem::path& root,
         }
     }
     return {};
+}
+
+// L1 cfg merge for ONE manifest (root or dependency): append the matching
+// conditional cflags/cxxflags/ldflags and sources (G1b) to its buildConfig.
+// Sources also update the legacy modules.sources mirror — the scanner walks
+// that. Conditional dependency maps are root-only and handled at the root
+// call site; a dependency's conditional configs otherwise evaluate the same
+// way (descriptor `target_cfg` must not be silently inert).
+void merge_conditional_build(mcpp::manifest::Manifest& m,
+                             const cfgpred::Ctx& ctx,
+                             std::string_view targetTriple)
+{
+    for (auto const& cc : m.conditionalConfigs) {
+        if (!cfgpred::matches(cc.predicate, ctx, targetTriple)) continue;
+        m.buildConfig.cflags.insert(m.buildConfig.cflags.end(),
+                                    cc.cflags.begin(), cc.cflags.end());
+        m.buildConfig.cxxflags.insert(m.buildConfig.cxxflags.end(),
+                                      cc.cxxflags.begin(), cc.cxxflags.end());
+        m.buildConfig.ldflags.insert(m.buildConfig.ldflags.end(),
+                                     cc.ldflags.begin(), cc.ldflags.end());
+        for (auto const& s : cc.sources) {
+            m.buildConfig.sources.push_back(s);
+            m.modules.sources.push_back(s);
+        }
+    }
 }
 
 bool is_std_module(std::string_view name) {
@@ -717,18 +751,14 @@ prepare_build(bool print_fingerprint,
     // flags append to buildConfig, mirroring the [profile] merge above.
     if (!m->conditionalConfigs.empty()) {
         auto cc_ctx = cfgpred::context_for(overrides.target_triple);
+        merge_conditional_build(*m, cc_ctx, overrides.target_triple);
         for (auto const& cc : m->conditionalConfigs) {
             if (!cfgpred::matches(cc.predicate, cc_ctx, overrides.target_triple))
                 continue;
-            m->buildConfig.cflags.insert(m->buildConfig.cflags.end(),
-                                         cc.cflags.begin(), cc.cflags.end());
-            m->buildConfig.cxxflags.insert(m->buildConfig.cxxflags.end(),
-                                           cc.cxxflags.begin(), cc.cxxflags.end());
-            m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
-                                          cc.ldflags.begin(), cc.ldflags.end());
             // Conditional dependencies (Phase 1b): merge into the manifest maps
             // before dependency resolution so they resolve like any dep. insert()
             // keeps an existing unconditional entry (no silent override).
+            // Root-only — a dependency's own conditional deps are out of scope.
             m->dependencies.insert(cc.dependencies.begin(), cc.dependencies.end());
             m->devDependencies.insert(cc.devDependencies.begin(), cc.devDependencies.end());
             m->buildDependencies.insert(cc.buildDependencies.begin(), cc.buildDependencies.end());
@@ -962,6 +992,16 @@ prepare_build(bool print_fingerprint,
     // when its source/inputs/env change. Leaf-only: it cannot gate the top-level
     // dependency graph. Skipped under a cross --target (host program, host run).
     // See .agents/docs/2026-06-30-l3-build-mcpp-implementation-design.md.
+    // Root [generated_files]: materialize before build.mcpp and the modgraph
+    // scan so synthesized sources are globbed like any on-disk file. (The
+    // per-dependency call sits in the dep resolution loop below; the root
+    // manifest needs its own.)
+    if (!m->buildConfig.generatedFiles.empty()) {
+        if (auto r = materialize_generated_files(*root, *m); !r) {
+            return std::unexpected(r.error());
+        }
+    }
+
     if (auto bp = mcpp::build::run_build_program(
             *m, *root, explicit_compiler, *tc, m->cppStandard.canonical,
             /*isCross=*/!overrides.target_triple.empty());
@@ -1561,6 +1601,15 @@ prepare_build(bool print_fingerprint,
         if (auto r = materialize_generated_files(effRoot, *manifest); !r) {
             return std::unexpected(std::format(
                 "dependency '{}': {}", depName, r.error()));
+        }
+
+        // Dependency-side L1 cfg merge (flags + sources): a descriptor's
+        // `target_cfg` / a dep mcpp.toml's [target.'cfg(...)'.build] must
+        // evaluate here too — before its globs expand.
+        if (!manifest->conditionalConfigs.empty()) {
+            merge_conditional_build(*manifest,
+                                    cfgpred::context_for(overrides.target_triple),
+                                    overrides.target_triple);
         }
 
         return std::pair{effRoot, std::move(*manifest)};
@@ -2502,14 +2551,27 @@ prepare_build(bool print_fingerprint,
             auto& bc = pkg.manifest.buildConfig;
             if (!bc.featureSources.empty()) {
                 if (!includeDevDeps) {
-                    std::set<std::string> gated;
+                    // glob → owned by at least one ACTIVE feature?
+                    std::set<std::string> activeNow(active.begin(), active.end());
+                    std::map<std::string, bool> gated;
                     for (auto& [f, globs] : bc.featureSources)
-                        for (auto& g : globs) gated.insert(g);
+                        for (auto& g : globs)
+                            gated[g] = gated[g] || activeNow.contains(f);
                     auto drop = [&](std::vector<std::string>& v) {
                         std::erase_if(v, [&](const std::string& s) { return gated.contains(s); });
                     };
                     drop(bc.sources);
                     drop(pkg.manifest.modules.sources);
+                    // Dropping the glob STRING is not enough: files it matches
+                    // may still be covered by a broader base glob (the default
+                    // src/** — the mcpp.toml G5 case). An inactive gate becomes
+                    // a `!` exclusion so the gate actually gates; active gates
+                    // are re-added below.
+                    for (auto& [g, isActive] : gated) {
+                        if (isActive || g.starts_with("!")) continue;
+                        bc.sources.push_back("!" + g);
+                        pkg.manifest.modules.sources.push_back("!" + g);
+                    }
                 }
                 std::set<std::string> activeSet(active.begin(), active.end());
                 auto add = [](std::vector<std::string>& v, const std::string& g) {

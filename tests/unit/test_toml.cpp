@@ -81,3 +81,35 @@ TEST(Toml, EscapeStringHelper) {
     EXPECT_EQ(t::escape_string("a\"b"),  "\"a\\\"b\"");
     EXPECT_EQ(t::escape_string("a\\b"),  "\"a\\\\b\"");
 }
+
+TEST(Toml, MultilineBasicString) {
+    auto d = t::parse("body = \"\"\"\nline1\nline2 \"quoted\"\n\"\"\"\nafter = 1");
+    ASSERT_TRUE(d.has_value()) << d.error().message;
+    // First newline after the opening delimiter is trimmed (TOML 1.0).
+    EXPECT_EQ(d->get_string("body").value_or(""), "line1\nline2 \"quoted\"\n");
+    EXPECT_EQ(d->get_int("after").value_or(-1), 1);
+}
+
+TEST(Toml, MultilineLiteralString) {
+    auto d = t::parse("raw = '''\nno \\escapes here\n'''");
+    ASSERT_TRUE(d.has_value()) << d.error().message;
+    EXPECT_EQ(d->get_string("raw").value_or(""), "no \\escapes here\n");
+}
+
+TEST(Toml, MultilineLineEndingBackslash) {
+    auto d = t::parse("s = \"\"\"a\\\n   b\"\"\"");
+    ASSERT_TRUE(d.has_value()) << d.error().message;
+    EXPECT_EQ(d->get_string("s").value_or(""), "ab");
+}
+
+TEST(Toml, MultilineUnterminatedIsError) {
+    auto d = t::parse("s = \"\"\"never closed");
+    EXPECT_FALSE(d.has_value());
+}
+
+TEST(Toml, EmptyStringStillParses) {
+    auto d = t::parse("e = \"\"\nx = 2");
+    ASSERT_TRUE(d.has_value()) << d.error().message;
+    EXPECT_EQ(d->get_string("e").value_or("?"), "");
+    EXPECT_EQ(d->get_int("x").value_or(-1), 2);
+}
