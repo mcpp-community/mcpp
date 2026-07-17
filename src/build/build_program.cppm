@@ -20,22 +20,41 @@ import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
 import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target
 import mcpp.toolchain.registry;      // archive_tool
+import mcpp.toolchain.triple;        // host_triple (MCPP_HOST contract value)
 import mcpp.ui;
 
 export namespace mcpp::build {
 
+// Build-program environment contract (G3) — what the running build.mcpp can
+// see, mirroring Cargo's env family. Injected as MCPP_* variables into the
+// child ONLY (never the calling process), and folded into the cache key so a
+// target/profile/feature change re-runs the program.
+struct BuildProgramEnv {
+    std::string targetTriple;               // resolved canonical triple; "" = host
+    std::string profile;                    // effective profile name (dev/release/…)
+    std::vector<std::string> features;      // active feature closure of the package
+    // Artifact home (bin/cache/out). Empty → <root>/target/.build-mcpp (the
+    // root-project default). Dependencies MUST point this into the CONSUMING
+    // project's tree — a registry package root is shared and may be read-only.
+    std::filesystem::path artifactsDir;
+    // Base for resolving relative `mcpp:generated=` paths. Empty → root (the
+    // root-project contract, unchanged). Dependencies point this at OUT_DIR so
+    // a shared package root is never written to.
+    std::filesystem::path genBase;
+};
+
 // Compile + run `<root>/build.mcpp` (if present) with `hostCompiler` (the resolved
-// host frontend) and apply its directives to `m.buildConfig`. `tc` supplies the
-// sysroot / runtime flags a fresh sandbox needs to compile + link a freestanding
-// host program. No-op when the file is absent. `isCross` skips execution (a host
-// build program can't run when compiled for another target).
+// HOST frontend — under a cross --target the caller resolves a host toolchain;
+// the program always compiles AND runs on the host) and apply its directives to
+// `m.buildConfig`. `tc` supplies the sysroot / runtime flags a fresh sandbox
+// needs to compile + link a freestanding host program. No-op when absent.
 std::expected<void, std::string> run_build_program(
     mcpp::manifest::Manifest& m,
     const std::filesystem::path& root,
     const std::filesystem::path& hostCompiler,
     const mcpp::toolchain::Toolchain& tc,
     std::string_view cppStandard,
-    bool isCross);
+    const BuildProgramEnv& env);
 
 } // namespace mcpp::build
 
@@ -200,6 +219,7 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
 // not mistake this embedded string for build_program.cppm exporting a 2nd module.
 constexpr std::string_view kMcppModuleSource = R"CPP(module;
 #include <cstdio>
+#include <cstdlib>
 @MODULE@ mcpp;
 export namespace mcpp {
 inline void cxxflag(const char* flag)             { std::printf("mcpp:cxxflag=%s\n", flag); }
@@ -210,6 +230,24 @@ inline void define(const char* name)              { std::printf("mcpp:cfg=%s\n",
 inline void generated(const char* path)           { std::printf("mcpp:generated=%s\n", path); }
 inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }
 inline void rerun_if_env_changed(const char* var) { std::printf("mcpp:rerun-if-env-changed=%s\n", var); }
+// ── environment contract (read side; values injected by the engine) ─────
+inline const char* env_or(const char* n)          { const char* v = std::getenv(n); return v ? v : ""; }
+inline const char* target()                       { return env_or("MCPP_TARGET"); }
+inline const char* host()                         { return env_or("MCPP_HOST"); }
+inline const char* profile()                      { return env_or("MCPP_PROFILE"); }
+inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"); }
+inline const char* manifest_dir()                 { return env_or("MCPP_MANIFEST_DIR"); }
+inline bool has_feature(const char* name) {
+    char buf[256] = "MCPP_FEATURE_";
+    unsigned long o = 13;
+    for (const char* p = name; *p && o + 1 < sizeof buf; ++p, ++o) {
+        char c = *p;
+        buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+               : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+    }
+    buf[o] = 0;
+    return std::getenv(buf) != nullptr;
+}
 }
 )CPP";
 
@@ -275,18 +313,64 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
 // project: target/.build-mcpp/{build.mcpp.bin, build.mcpp.cache}. A stable subdir
 // (not the fingerprint-keyed one — build.mcpp runs before the fingerprint exists)
 // so the binary + cache survive across builds and aren't rebuilt needlessly.
-fs::path build_dir(const fs::path& root) { return root / "target" / ".build-mcpp"; }
-
-std::string cache_path(const fs::path& root) {
-    return (build_dir(root) / "build.mcpp.cache").string();
+// A dependency's artifacts are redirected into the CONSUMING project's tree
+// via BuildProgramEnv::artifactsDir (a registry root may be read-only).
+fs::path build_dir(const fs::path& root, const BuildProgramEnv& env) {
+    return env.artifactsDir.empty() ? root / "target" / ".build-mcpp"
+                                    : env.artifactsDir;
 }
 
-void write_cache(const fs::path& root, const std::string& programHash,
-                 const std::string& compilerHash, const Directives& d) {
-    std::ofstream os(cache_path(root), std::ios::trunc);
+std::string cache_path(const fs::path& bdir) {
+    return (bdir / "build.mcpp.cache").string();
+}
+
+// MCPP_FEATURE_<NAME> spelling — same sanitizer as the compile-side
+// -DMCPP_FEATURE_ macro (prepare.cppm): uppercase, non-alnum → '_'.
+std::string sanitize_feature_env(std::string f) {
+    for (auto& c : f)
+        c = std::isalnum(static_cast<unsigned char>(c))
+          ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : '_';
+    return f;
+}
+
+// The injected contract values, as (NAME, value) pairs for the child process.
+std::vector<std::pair<std::string, std::string>>
+contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv& env) {
+    std::vector<std::pair<std::string, std::string>> e;
+    auto hostT = mcpp::toolchain::triple::host_triple().str();
+    e.emplace_back("MCPP_TARGET", env.targetTriple.empty() ? hostT : env.targetTriple);
+    e.emplace_back("MCPP_HOST", hostT);
+    e.emplace_back("MCPP_PROFILE", env.profile);
+    e.emplace_back("MCPP_OUT_DIR", outDir.string());
+    e.emplace_back("MCPP_MANIFEST_DIR", root.string());
+    std::string csv;
+    for (auto const& f : env.features) {
+        if (!csv.empty()) csv += ',';
+        csv += f;
+        e.emplace_back("MCPP_FEATURE_" + sanitize_feature_env(f), "1");
+    }
+    e.emplace_back("MCPP_FEATURES", csv);
+    return e;
+}
+
+// The contract values are part of the re-run key UNCONDITIONALLY — a target /
+// profile / feature change must re-run the program; that correctness cannot
+// depend on the author remembering rerun-if-env-changed.
+std::string contract_hash(const std::vector<std::pair<std::string, std::string>>& e) {
+    std::string s;
+    for (auto const& [k, v] : e) { s += k; s += '='; s += v; s += '\n'; }
+    return mcpp::toolchain::hash_string(s);
+}
+
+void write_cache(const fs::path& bdir, const fs::path& root,
+                 const std::string& programHash,
+                 const std::string& compilerHash, const std::string& ctxHash,
+                 const Directives& d) {
+    std::ofstream os(cache_path(bdir), std::ios::trunc);
     if (!os) return;  // best-effort: a failed cache write only loses the optimization
     os << "program " << programHash << '\n';
     os << "compiler " << compilerHash << '\n';
+    os << "ctx " << ctxHash << '\n';
     for (auto const& f : d.rerunFiles)
         os << "in " << mcpp::toolchain::hash_file(abs_against_root(root, f)) << ' ' << f << '\n';
     for (auto const& e : d.rerunEnv)
@@ -304,15 +388,16 @@ void write_cache(const fs::path& root, const std::string& programHash,
 struct CacheRecord {
     std::string programHash;
     std::string compilerHash;
+    std::string ctxHash;   // contract env (target/profile/features/out-dir)
     std::vector<std::pair<std::string, std::string>> inputs;  // (hash, path)
     std::vector<std::pair<std::string, std::string>> envs;    // (hash, name)
     Directives directives;
     bool loaded = false;
 };
 
-CacheRecord read_cache(const fs::path& root) {
+CacheRecord read_cache(const fs::path& bdir) {
     CacheRecord r;
-    std::ifstream is(cache_path(root));
+    std::ifstream is(cache_path(bdir));
     if (!is) return r;
     std::string line;
     while (std::getline(is, line)) {
@@ -323,6 +408,7 @@ CacheRecord read_cache(const fs::path& root) {
         std::string rest = line.substr(sp + 1);
         if (tag == "program") r.programHash = rest;
         else if (tag == "compiler") r.compilerHash = rest;
+        else if (tag == "ctx") r.ctxHash = rest;
         else if (tag == "in" || tag == "env") {
             auto sp2 = rest.find(' ');
             if (sp2 == std::string::npos) continue;
@@ -345,10 +431,12 @@ CacheRecord read_cache(const fs::path& root) {
 
 // Decide whether the cached run is still valid (so we can skip recompiling/running).
 bool cache_fresh(const fs::path& root, const CacheRecord& c,
-                 const std::string& programHash, const std::string& compilerHash) {
+                 const std::string& programHash, const std::string& compilerHash,
+                 const std::string& ctxHash) {
     if (!c.loaded) return false;
     if (c.programHash != programHash) return false;
     if (c.compilerHash != compilerHash) return false;
+    if (c.ctxHash != ctxHash) return false;   // pre-G3 caches (no ctx line) rerun once
     for (auto const& [h, path] : c.inputs)
         if (mcpp::toolchain::hash_file(abs_against_root(root, path)) != h) return false;
     for (auto const& [h, name] : c.envs)
@@ -367,8 +455,13 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     // cfg defines apply to both C and C++ translation units.
     bc.cflags.insert(bc.cflags.end(), d.defines.begin(), d.defines.end());
     bc.cxxflags.insert(bc.cxxflags.end(), d.defines.begin(), d.defines.end());
-    // Generated sources join the source glob set so the modgraph scanner finds them.
-    for (auto const& g : d.generated) bc.sources.push_back(g);
+    // Generated sources join the source set. BOTH lists: the scanner walks the
+    // legacy modules.sources mirror — pushing only bc.sources left a generated
+    // file outside the base globs invisible to the scan (latent since L3).
+    for (auto const& g : d.generated) {
+        bc.sources.push_back(g);
+        m.modules.sources.push_back(g);
+    }
 }
 
 } // namespace
@@ -379,32 +472,30 @@ std::expected<void, std::string> run_build_program(
     const fs::path& hostCompiler,
     const mcpp::toolchain::Toolchain& tc,
     std::string_view cppStandard,
-    bool isCross) {
+    const BuildProgramEnv& env) {
 
     fs::path src = root / "build.mcpp";
     std::error_code ec;
     if (!fs::exists(src, ec)) return {};  // no build program — nothing to do
 
-    if (isCross) {
-        mcpp::ui::warning(
-            "build.mcpp present but skipped under a cross --target build "
-            "(it compiles and runs on the host; host-toolchain-for-cross is a follow-up)");
-        return {};
-    }
+    fs::path bdir = build_dir(root, env);
+    fs::path outDir = bdir / "out";
+    auto childEnv = contract_env(root, outDir, env);
+    std::string ctxHash = contract_hash(childEnv);
 
     std::string programHash  = mcpp::toolchain::hash_file(src);
     std::string compilerHash = mcpp::toolchain::hash_string(hostCompiler.string());
 
-    // Fast path: declared inputs unchanged → reapply cached directives, no run.
-    CacheRecord cache = read_cache(root);
-    if (cache_fresh(root, cache, programHash, compilerHash)) {
+    // Fast path: declared inputs + contract unchanged → reapply cached
+    // directives, no run.
+    CacheRecord cache = read_cache(bdir);
+    if (cache_fresh(root, cache, programHash, compilerHash, ctxHash)) {
         apply(m, cache.directives);
         mcpp::ui::info("build.mcpp", "up to date (cached)");
         return {};
     }
 
-    fs::path bdir = build_dir(root);
-    fs::create_directories(bdir, ec);
+    fs::create_directories(outDir, ec);   // creates bdir too
     fs::path bin = bdir / "build.mcpp.bin";
 
     // ── Compile build.mcpp with the host toolchain ──────────────────────────
@@ -453,10 +544,11 @@ std::expected<void, std::string> run_build_program(
     }
 
     // ── Run it; capture stdout(+stderr) and parse directives ────────────────
-    // Run with cwd = project root so the program's relative file writes (e.g.
-    // mcpp:generated sources) land in the project, not in mcpp's invocation dir.
+    // Run with cwd = package root so the program's relative file writes (e.g.
+    // mcpp:generated sources) land in the project, not in mcpp's invocation
+    // dir. The MCPP_* contract env is injected into the CHILD only.
     mcpp::ui::info("build.mcpp", "running");
-    auto rres = mcpp::platform::process::capture_exec({bin.string()}, {}, root.string());
+    auto rres = mcpp::platform::process::capture_exec({bin.string()}, childEnv, root.string());
     if (rres.exit_code != 0) {
         return std::unexpected(std::format(
             "build.mcpp exited with {} (build aborted):\n{}", rres.exit_code, rres.output));
@@ -464,6 +556,16 @@ std::expected<void, std::string> run_build_program(
 
     Directives d;
     parse_output(root, rres.output, d);
+
+    // Dependency mode (genBase set): relative `generated=` paths resolve
+    // against OUT_DIR-style genBase, not the (possibly read-only, shared)
+    // package root — rewrite them to absolute before validation/apply/cache.
+    if (!env.genBase.empty()) {
+        for (auto& g : d.generated) {
+            fs::path gp(g);
+            if (gp.is_relative()) g = (env.genBase / gp).lexically_normal().string();
+        }
+    }
 
     // Missing declared generated outputs are a hard error (declared-output contract).
     for (auto const& g : d.generated) {
@@ -474,7 +576,7 @@ std::expected<void, std::string> run_build_program(
     }
 
     apply(m, d);
-    write_cache(root, programHash, compilerHash, d);
+    write_cache(bdir, root, programHash, compilerHash, ctxHash, d);
     return {};
 }
 

@@ -506,6 +506,14 @@ void scan_one_into(ScanResult& result,
                 excluded.insert(p);
             }
         } else {
+            // Literal absolute entry — e.g. a dependency build.mcpp's OUT_DIR
+            // generated source, which lives OUTSIDE the (possibly read-only)
+            // package root. No glob expansion; taken as-is when it exists.
+            if (std::filesystem::path gp(g); gp.is_absolute()) {
+                std::error_code aec;
+                if (std::filesystem::is_regular_file(gp, aec)) all_files.insert(gp);
+                continue;
+            }
             for (auto& p : expand_glob(root, g)) {
                 all_files.insert(p);
             }

@@ -92,6 +92,37 @@ If your `build.mcpp` also needs to *write* a generated file, mix in a textual
 stdout protocol above remains the low-level substrate; `import mcpp;` is the typed
 layer over it.
 
+## Environment contract (mcpp 0.0.95+)
+
+The running program receives the build context as `MCPP_*` variables
+(Cargo's env-family equivalent), also exposed through typed readers:
+
+| Variable | Typed reader | Value |
+|---|---|---|
+| `MCPP_TARGET` | `mcpp::target()` | resolved canonical triple (the `--target` triple under cross; the host triple natively) |
+| `MCPP_HOST` | `mcpp::host()` | the host triple |
+| `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
+| `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
+| `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |
+| `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | set to `1` per active feature (same `<NAME>` sanitization as the `MCPP_FEATURE_` compile macro) |
+| `MCPP_FEATURES` | — | comma-separated active feature list |
+
+These values are folded into the re-run key **unconditionally** — changing the
+target, profile, or feature set re-runs the program without any
+`rerun-if-env-changed` declaration.
+
+## Dependencies' build.mcpp (mcpp 0.0.95+)
+
+A dependency that ships a `build.mcpp` gets it compiled and run too (the
+Cargo `build.rs` model — building a package means trusting its build program),
+after its features are resolved and before the source scan. Scope follows
+Cargo: `cxxflag`/`cflag`/`cfg` directives color **only that package's own
+TUs**; `link-lib`/`link-search` reach the final link. Its artifacts (binary,
+cache, `MCPP_OUT_DIR`) live in the **consuming project's**
+`target/.build-mcpp/deps/<pkg>@<ver>/` — a registry package root is shared
+across projects (and may be read-only), so it is never written to; relative
+`generated=` paths resolve against `MCPP_OUT_DIR`, not the package root.
+
 ## Incremental: declared inputs (no needless re-runs)
 
 mcpp does **not** re-run `build.mcpp` on every build. It caches the program's
@@ -113,11 +144,11 @@ When nothing changed you'll see `build.mcpp up to date (cached)`; otherwise
 
 ## Notes & limits
 
-- **Runs on the host.** `build.mcpp` compiles and runs with the host toolchain.
-  Under a cross build (`mcpp build --target <triple>`) it is **skipped with a
-  warning** for now (host-toolchain-for-cross is a planned follow-up). Gate
-  *dependencies* on the target with `[target.'cfg(...)']` tables instead — those
-  evaluate on the resolved target. See [05 - mcpp.toml Manifest Guide](05-mcpp-toml.md).
+- **Runs on the host — including under cross** (mcpp 0.0.95+). Under
+  `mcpp build --target <triple>` the program is compiled with a host-resolved
+  toolchain, runs on the host, and sees `MCPP_TARGET` = the cross triple.
+  For purely declarative target gating, `[target.'cfg(...)']` tables remain
+  the first choice — see [05 - mcpp.toml Manifest Guide](05-mcpp-toml.md).
 - **CWD is the project root**, so relative paths (`src/generated.cpp`) land where
   you expect.
 - A non-zero exit from `build.mcpp` aborts the build and prints its output.

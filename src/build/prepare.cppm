@@ -361,6 +361,41 @@ void merge_conditional_build(mcpp::manifest::Manifest& m,
     }
 }
 
+// Feature-activation closure — THE single implementation (build.mcpp env
+// contract, Stage 2a feature-deps, and the main feature pass all call this):
+// seed = [features].default ∪ requested, expanded transitively over implies;
+// the literal name "default" is never itself a feature.
+std::vector<std::string> feature_closure(const mcpp::manifest::Manifest& pm,
+                                         const std::vector<std::string>& requested)
+{
+    std::vector<std::string> act, q;
+    if (auto it = pm.featuresMap.find("default"); it != pm.featuresMap.end())
+        q.insert(q.end(), it->second.begin(), it->second.end());
+    q.insert(q.end(), requested.begin(), requested.end());
+    std::set<std::string> seen;
+    while (!q.empty()) {
+        auto f = q.back(); q.pop_back();
+        if (f == "default" || !seen.insert(f).second) continue;
+        act.push_back(f);
+        if (auto it = pm.featuresMap.find(f); it != pm.featuresMap.end())
+            q.insert(q.end(), it->second.begin(), it->second.end());
+    }
+    return act;
+}
+
+// --features value → tokens (comma/space separated).
+std::vector<std::string> parse_feature_request(std::string_view s) {
+    std::vector<std::string> out;
+    for (std::size_t p = 0; p < s.size();) {
+        auto c = s.find_first_of(", ", p);
+        auto tok = s.substr(p, c == std::string_view::npos ? std::string_view::npos : c - p);
+        if (!tok.empty()) out.emplace_back(tok);
+        if (c == std::string_view::npos) break;
+        p = c + 1;
+    }
+    return out;
+}
+
 bool is_std_module(std::string_view name) {
     return name == "std" || name == "std.compat";
 }
@@ -618,8 +653,11 @@ prepare_build(bool print_fingerprint,
     //   2. global ~/.mcpp/config.toml [toolchain].default
     //   3. hard error (no system fallback)
     // Resolve the build profile, overlaid by any [profile.<name>] from the
-    // manifest → buildConfig.
+    // manifest → buildConfig. `effectiveProfile` outlives the block: the
+    // build.mcpp env contract exposes it as MCPP_PROFILE.
+    std::string effectiveProfile;
     {
+        auto& pname = effectiveProfile;
         // Precedence: --profile / --release / --dev flag (overrides.profile) >
         // [build].default-profile (project default) > "dev" (global default).
         // The global default is "dev" (-O0 -g) to follow the dominant convention
@@ -627,9 +665,9 @@ prepare_build(bool print_fingerprint,
         // opt-in via --release / --profile release. A project that wants its
         // plain `mcpp build` optimized sets [build].default-profile = "release"
         // (mcpp's own mcpp.toml does this, so the released binary stays -O2).
-        std::string pname = !overrides.profile.empty()             ? overrides.profile
-                          : !m->buildConfig.defaultProfile.empty() ? m->buildConfig.defaultProfile
-                          :                                          "dev";
+        pname = !overrides.profile.empty()             ? overrides.profile
+              : !m->buildConfig.defaultProfile.empty() ? m->buildConfig.defaultProfile
+              :                                          "dev";
         mcpp::manifest::Profile pr;
         if (pname == "dev" || pname == "debug") { pr.optLevel = "0"; pr.debug = true; }
         else if (pname == "dist")               { pr.optLevel = "3"; pr.strip = true; }
@@ -985,13 +1023,16 @@ prepare_build(bool print_fingerprint,
     // self-describing. See docs: 2026-05-21-linux-sysroot-missing-kernel-headers.md
 
     // ── L3: project-local `build.mcpp` imperative build program ─────────────
-    // Compiled with the (host) toolchain and run now — after target resolution
+    // Compiled with the HOST toolchain and run now — after target resolution
     // + the L1 cfg-flag merge (buildConfig flags are final) and BEFORE the
     // modgraph scan (so its `generated=` sources are picked up). Its stdout
     // directives augment buildConfig; a declared-input cache re-runs it only
-    // when its source/inputs/env change. Leaf-only: it cannot gate the top-level
-    // dependency graph. Skipped under a cross --target (host program, host run).
-    // See .agents/docs/2026-06-30-l3-build-mcpp-implementation-design.md.
+    // when its source/inputs/env/contract change. It cannot gate the top-level
+    // dependency graph (leaf-only rule). Under a cross --target it runs with a
+    // host-resolved toolchain and sees MCPP_TARGET = the cross triple (G3).
+    // Dependencies' build.mcpp run in a later pass (G2), after their features
+    // are known. See .agents/docs/2026-06-30-l3-build-mcpp-implementation-design.md
+    // and 2026-07-17-asm-sources-and-general-build-capabilities-design.md §2.4.
     // Root [generated_files]: materialize before build.mcpp and the modgraph
     // scan so synthesized sources are globbed like any on-disk file. (The
     // per-dependency call sits in the dep resolution loop below; the root
@@ -1002,11 +1043,74 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    if (auto bp = mcpp::build::run_build_program(
-            *m, *root, explicit_compiler, *tc, m->cppStandard.canonical,
-            /*isCross=*/!overrides.target_triple.empty());
-        !bp) {
-        return std::unexpected(bp.error());
+    // Canonical rendering of the resolved target (for the env contract).
+    std::string resolvedTargetCanonical;
+    if (!overrides.target_triple.empty()) {
+        auto tt = mcpp::toolchain::triple::parse(overrides.target_triple);
+        resolvedTargetCanonical = tt ? tt->str() : overrides.target_triple;
+    }
+
+    // Host toolchain for build.mcpp (G3): under a cross --target the resolved
+    // `tc` is the cross toolchain, whose products cannot run here — resolve a
+    // host-target toolchain from the same spec vocabulary (the spec WITHOUT
+    // the --target axis), lazily and only when a build.mcpp actually exists
+    // (root or dependency).
+    std::optional<std::pair<std::filesystem::path, mcpp::toolchain::Toolchain>> hostTcCache;
+    auto host_tc_for_build_program = [&]() -> std::expected<
+            std::pair<std::filesystem::path, mcpp::toolchain::Toolchain>, std::string> {
+        if (overrides.target_triple.empty())
+            return std::pair{explicit_compiler, *tc};
+        if (hostTcCache) return *hostTcCache;
+        if (!tcSpec || *tcSpec == "system" || tcSpecIsMsvc) {
+            return std::unexpected(std::string(
+                "build.mcpp under a cross --target needs a resolvable host "
+                "toolchain — set one via [toolchain] or `mcpp toolchain default`"));
+        }
+        auto spec = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+        if (!spec || spec->version.empty()) {
+            return std::unexpected(std::format(
+                "toolchain spec '{}' is invalid for the build.mcpp host resolve", *tcSpec));
+        }
+        // Deliberately NO target injection: the spec resolves for the host.
+        auto pkg = mcpp::toolchain::to_xim_package(*spec);
+        auto cfgH = get_cfg();
+        if (!cfgH) return std::unexpected(cfgH.error());
+        mcpp::fetcher::Fetcher fetcher(**cfgH);
+        mcpp::fetcher::InstallProgressHandler progress;
+        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
+        if (!payload) {
+            return std::unexpected(std::format(
+                "host toolchain for build.mcpp ('{}'): {}", *tcSpec,
+                payload.error().message));
+        }
+        auto frontend = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
+        if (!std::filesystem::exists(frontend)) {
+            return std::unexpected(std::format(
+                "host toolchain payload '{}' has no known C++ frontend in {}",
+                pkg.target(), payload->binDir.string()));
+        }
+        mcpp::toolchain::ensure_post_install_fixup(**cfgH, payload->root, pkg);
+        auto htc = mcpp::toolchain::detect(frontend);
+        if (!htc) return std::unexpected(htc.error().message);
+        mcpp::ui::info("Resolved", std::format(
+            "host toolchain for build.mcpp: {}", htc->label()));
+        hostTcCache = std::pair{frontend, *htc};
+        return *hostTcCache;
+    };
+
+    if (std::filesystem::exists(*root / "build.mcpp")) {
+        auto host = host_tc_for_build_program();
+        if (!host) return std::unexpected(host.error());
+        mcpp::build::BuildProgramEnv bpEnv;
+        bpEnv.targetTriple = resolvedTargetCanonical;
+        bpEnv.profile      = effectiveProfile;
+        bpEnv.features     = feature_closure(*m, parse_feature_request(overrides.features));
+        if (auto bp = mcpp::build::run_build_program(
+                *m, *root, host->first, host->second,
+                m->cppStandard.canonical, bpEnv);
+            !bp) {
+            return std::unexpected(bp.error());
+        }
     }
 
     // Resolve dependencies: walk the **transitive** graph from the main
@@ -1893,19 +1997,7 @@ prepare_build(bool print_fingerprint,
     // __normal_iterator") when other modules import std.
     auto activateFeatures = [](const mcpp::manifest::Manifest& pm,
                                const std::vector<std::string>& requested) {
-        std::vector<std::string> act, q;
-        if (auto it = pm.featuresMap.find("default"); it != pm.featuresMap.end())
-            q.insert(q.end(), it->second.begin(), it->second.end());
-        q.insert(q.end(), requested.begin(), requested.end());
-        std::set<std::string> seen;
-        while (!q.empty()) {
-            auto f = q.back(); q.pop_back();
-            if (f == "default" || !seen.insert(f).second) continue;
-            act.push_back(f);
-            if (auto it = pm.featuresMap.find(f); it != pm.featuresMap.end())
-                q.insert(q.end(), it->second.begin(), it->second.end());
-        }
-        return act;
+        return feature_closure(pm, requested);   // single shared implementation
     };
     // Merge a manifest's active feature-deps into its `dependencies` map so the
     // worklist below pulls them like any normal dep. A top-level dep of the same
@@ -2467,19 +2559,7 @@ prepare_build(bool print_fingerprint,
         };
         auto activate = [](const mcpp::manifest::Manifest& pm,
                            const std::vector<std::string>& requested) {
-            std::vector<std::string> act, q;
-            if (auto it = pm.featuresMap.find("default"); it != pm.featuresMap.end())
-                q.insert(q.end(), it->second.begin(), it->second.end());
-            q.insert(q.end(), requested.begin(), requested.end());
-            std::set<std::string> seen;
-            while (!q.empty()) {
-                auto f = q.back(); q.pop_back();
-                if (f == "default" || !seen.insert(f).second) continue;
-                act.push_back(f);
-                if (auto it = pm.featuresMap.find(f); it != pm.featuresMap.end())
-                    q.insert(q.end(), it->second.begin(), it->second.end());
-            }
-            return act;
+            return feature_closure(pm, requested);   // single shared implementation
         };
         auto apply = [&](mcpp::modgraph::PackageRoot& pkg,
                          const std::vector<std::string>& requested) {
@@ -2587,15 +2667,7 @@ prepare_build(bool print_fingerprint,
             }
         };
         if (!packages.empty()) {
-            std::vector<std::string> rootReq;
-            for (std::size_t p = 0; p < overrides.features.size();) {
-                auto c = overrides.features.find_first_of(", ", p);
-                auto tok = overrides.features.substr(
-                    p, c == std::string::npos ? std::string::npos : c - p);
-                if (!tok.empty()) rootReq.push_back(tok);
-                if (c == std::string::npos) break;
-                p = c + 1;
-            }
+            auto rootReq = parse_feature_request(overrides.features);
             // Strict schema check: a requested feature must exist in the
             // target package's [features] table when one is declared (a
             // package with no [features] accepts any request — pure-define
@@ -2636,6 +2708,64 @@ prepare_build(bool print_fingerprint,
             // Always apply: even with no requested/default feature, a dep with
             // feature-gated sources must have those sources dropped by default.
             apply(packages[i], req);
+        }
+
+        // ── G2: dependency build.mcpp (Cargo build.rs model) ────────────────
+        // Runs AFTER feature activation (the env contract exposes the dep's
+        // active features) and BEFORE the modgraph scan (generated sources
+        // must be visible to the glob walk). Scope is Cargo's: flag directives
+        // land in the dep's own buildConfig (its TUs only); link directives
+        // ride the dep's ldflags to the final link. Artifacts and generated
+        // files live in the CONSUMING project's tree — a registry package
+        // root is shared across projects and may be read-only; it is never
+        // written to.
+        for (std::size_t i = 1; i < packages.size(); ++i) {
+            auto& pkg = packages[i];
+            std::error_code bpEc;
+            if (!std::filesystem::exists(pkg.root / "build.mcpp", bpEc)) continue;
+            auto host = host_tc_for_build_program();
+            if (!host) return std::unexpected(host.error());
+            std::vector<std::string> req;
+            for (auto& [dname, dspec] : m->dependencies) {
+                if (dname == pkg.manifest.package.name
+                    || dspec.shortName == pkg.manifest.package.name) {
+                    req = dspec.features;
+                    break;
+                }
+            }
+            auto dirSafe = [](std::string s) {
+                for (auto& c : s) if (c == '/' || c == '\\' || c == ':') c = '_';
+                return s;
+            };
+            mcpp::build::BuildProgramEnv bpEnv;
+            bpEnv.targetTriple = resolvedTargetCanonical;
+            bpEnv.profile      = effectiveProfile;
+            bpEnv.features     = feature_closure(pkg.manifest, req);
+            bpEnv.artifactsDir = *root / "target" / ".build-mcpp" / "deps"
+                / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
+            bpEnv.genBase      = bpEnv.artifactsDir / "out";
+            auto& bcDep = pkg.manifest.buildConfig;
+            const auto cN = bcDep.cflags.size(), cxN = bcDep.cxxflags.size(),
+                       ldN = bcDep.ldflags.size();
+            if (auto r = mcpp::build::run_build_program(
+                    pkg.manifest, pkg.root, host->first, host->second,
+                    pkg.manifest.cppStandard.canonical, bpEnv);
+                !r) {
+                return std::unexpected(std::format(
+                    "dependency '{}': {}", pkg.manifest.package.name, r.error()));
+            }
+            // Cargo scope wiring. Compile flags: the dep's TUs read the
+            // usage-resolved privateBuild (not bc) — mirror the newly added
+            // flags there, same as the MCPP_FEATURE_ macro does. Link flags:
+            // dep ldflags were propagated to the root during the BFS walk,
+            // which ran before this pass — forward the new tail (link-search
+            // paths are already absolute from parse_line).
+            pkg.privateBuild.cflags.insert(pkg.privateBuild.cflags.end(),
+                bcDep.cflags.begin() + cN, bcDep.cflags.end());
+            pkg.privateBuild.cxxflags.insert(pkg.privateBuild.cxxflags.end(),
+                bcDep.cxxflags.begin() + cxN, bcDep.cxxflags.end());
+            m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
+                bcDep.ldflags.begin() + ldN, bcDep.ldflags.end());
         }
 
         // apply() may have added interface defines to packages' publicUsage
