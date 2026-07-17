@@ -110,7 +110,18 @@ bool path_matches_glob(const std::filesystem::path& candidate,
     // through a directory symlink back to its real location and break the
     // match (globs are about where a file appears in the tree, not where
     // its bits live).
-    auto rel = candidate.lexically_relative(root).generic_string();
+    std::string rel;
+    try {
+        rel = candidate.lexically_relative(root).generic_string();
+    } catch (const std::exception&) {
+        // MSVC's narrow conversion throws std::system_error when the
+        // native (wide) name has no spelling in the ANSI codepage (e.g. a
+        // CJK filename on an en-US host — mcpp#230 hit this on an issue
+        // template inside a walked index tree). Such a name can never be
+        // spelled in a glob or a compile command either: not a match, and
+        // never a reason to tear down the whole build.
+        return false;
+    }
 
     auto match = [](std::string_view s, std::string_view p) -> bool {
         // Simple recursive matcher.
@@ -242,6 +253,15 @@ std::vector<std::filesystem::path> expand_glob(const std::filesystem::path& root
     for (fs::recursive_directory_iterator end; !ec && it != end; it.increment(ec)) {
         auto& e = *it;
         if (e.is_directory(eec) && !eec) {
+            // `.mcpp` is mcpp's own project metadata dir. Its xlings data
+            // tree holds a SYMLINK back to each path-dep index root, so
+            // following it walks that entire checkout (mcpp#230: the CI
+            // workspace walked into a vendored xim-pkgindex and died on a
+            // CJK filename). Never a source dir — prune by name.
+            if (e.path().filename() == ".mcpp") {
+                it.disable_recursion_pending();
+                continue;
+            }
             auto depth = static_cast<std::size_t>(it.depth());
             chain.resize(std::min(chain.size(), depth + 1));
             auto c = fs::canonical(e.path(), eec);
@@ -294,6 +314,11 @@ std::vector<std::filesystem::path> expand_dir_glob(const std::filesystem::path& 
          !ec && it != end; it.increment(ec)) {
         auto& e = *it;
         if (!e.is_directory(eec) || eec) continue;
+        // Same `.mcpp` prune as expand_glob (see comment there / mcpp#230).
+        if (e.path().filename() == ".mcpp") {
+            it.disable_recursion_pending();
+            continue;
+        }
         auto depth = static_cast<std::size_t>(it.depth());
         chain.resize(std::min(chain.size(), depth + 1));
         auto c = std::filesystem::canonical(e.path(), eec);
