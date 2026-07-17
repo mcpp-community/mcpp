@@ -266,6 +266,13 @@ void ensure_patchelf(const Env& env, bool quiet,
 void ensure_ninja(const Env& env, bool quiet,
                   const BootstrapProgressCallback& cb);
 
+// Resolve a usable nasm (≥ kNasmMinMajor.kNasmMinMinor): PATH first (CI
+// images ship one), the mcpp sandbox second, `xlings install nasm` third.
+// Called lazily — only when a build plan actually contains .asm units. The
+// caller HARD-FAILS on nullopt; assembly sources are never silently skipped.
+std::optional<std::filesystem::path> ensure_nasm(const Env& env, bool quiet,
+                                                 const BootstrapProgressCallback& cb);
+
 // ─── Index freshness ────────────────────────────────────────────────
 
 // Check whether the default mcpplibs index data exists and is fresh
@@ -1231,6 +1238,60 @@ void ensure_ninja(const Env& env, bool quiet,
             "warning: failed to bootstrap ninja into mcpp sandbox (exit {})",
             rc);
     }
+}
+
+namespace {
+
+// "NASM version 2.16.03 compiled on ..." → true iff ≥ 2.16. A binary that
+// fails to run or reports something unparseable is unusable — false.
+bool nasm_version_ok(const std::filesystem::path& bin) {
+    auto r = mcpp::platform::process::capture_exec({bin.string(), "-v"});
+    if (r.exit_code != 0) return false;
+    auto pos = r.output.find("version ");
+    if (pos == std::string::npos) return false;
+    int major = 0, minor = 0;
+    const char* p = r.output.c_str() + pos + 8;
+    while (*p >= '0' && *p <= '9') major = major * 10 + (*p++ - '0');
+    if (*p++ != '.') return false;
+    while (*p >= '0' && *p <= '9') minor = minor * 10 + (*p++ - '0');
+    return major > 2 || (major == 2 && minor >= 16);
+}
+
+std::optional<std::filesystem::path> find_sandbox_nasm(const Env& env) {
+    auto root = paths::xim_tool_root(env, "nasm");
+    auto nasm_name = std::string("nasm") + std::string(mcpp::platform::exe_suffix);
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec)) return std::nullopt;
+    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
+        for (auto cand : { v.path() / nasm_name, v.path() / "bin" / nasm_name }) {
+            if (std::filesystem::exists(cand, ec) && nasm_version_ok(cand))
+                return cand;
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+std::optional<std::filesystem::path> ensure_nasm(const Env& env, bool quiet,
+                                                 const BootstrapProgressCallback& cb)
+{
+    auto nasm_name = std::string("nasm") + std::string(mcpp::platform::exe_suffix);
+    if (auto sys = mcpp::platform::fs::which(nasm_name);
+        sys && nasm_version_ok(*sys)) {
+        return sys;
+    }
+    if (auto boxed = find_sandbox_nasm(env)) return boxed;
+
+    if (!quiet)
+        print_status("Bootstrap", "nasm into mcpp sandbox (one-time)");
+    mcpp::log::ScopedTimer _t_nasm("init", "bootstrap nasm");
+    int rc = install_with_progress(env, "xim:nasm", cb, quiet);
+    if (rc != 0 && !quiet) {
+        std::println(stderr,
+            "warning: failed to bootstrap nasm into mcpp sandbox (exit {})", rc);
+    }
+    return find_sandbox_nasm(env);
 }
 
 // ─── Index freshness ────────────────────────────────────────────────

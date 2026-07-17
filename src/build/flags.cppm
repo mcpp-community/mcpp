@@ -26,6 +26,8 @@ export namespace mcpp::build {
 struct CompileFlags {
     std::string cxx;                  // full cxxflags string
     std::string cc;                   // full cflags string
+    std::string as;                   // asm-safe subset for .S/.s via the C driver
+    std::string nasm;                 // NASM global flags (.asm; own spelling)
     std::string ld;                   // ldflags string
     std::filesystem::path cxxBinary;  // g++ / clang++ / cl.exe
     std::filesystem::path ccBinary;   // gcc / clang (derived; cl.exe = same)
@@ -318,6 +320,30 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                       b_flag, include_flags)
         : std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, opt_flag, pic_flag,
                       compile_toolchain_flags, b_flag, include_flags);
+
+    // GAS assembly (.S/.s via the C driver): the asm-safe subset — no -std
+    // (C-only) and no -O (meaningless), but PIC stays (.S sources gate on
+    // __PIC__), -g is fine, and the toolchain-location flags must come along
+    // (hermetic link model: never fall back to a host `as`). MSVC dialect has
+    // no GAS path — prepare hard-errors before these flags are consumed.
+    f.as = std::format("{}{}{}{}{}",
+                       prof.debug ? " -g" : "", pic_flag,
+                       compile_toolchain_flags, b_flag, include_flags);
+
+    // NASM (.asm): fixed GNU-ish spelling of its own — include dirs are
+    // re-spelt with -I regardless of dialect (nasm ≥2.14 inserts a missing
+    // path separator itself); DWARF debug info exists on ELF only.
+    if (!plan.nasmPath.empty()) {
+        std::string nasm_includes;
+        for (auto& inc : plan.manifest.buildConfig.includeDirs) {
+            auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
+            nasm_includes += " -I" + escape_path(abs);
+        }
+        std::string nasm_debug;
+        if (prof.debug && plan.nasmFormat.starts_with("elf"))
+            nasm_debug = " -g -F dwarf";
+        f.nasm = nasm_debug + nasm_includes;
+    }
 
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;

@@ -56,6 +56,20 @@ struct Triple {
         return {};
     }
 
+    // NASM `-f` output format for this target. NASM is x86-family only:
+    // nullopt off x86, and the caller must hard-error (suggesting cfg-gated
+    // sources) rather than pick a format.
+    std::optional<std::string> nasm_format() const {
+        bool x64 = arch == "x86_64";
+        bool x32 = arch == "x86" || arch == "i386" || arch == "i486"
+                || arch == "i586" || arch == "i686";
+        if (!x64 && !x32) return std::nullopt;
+        if (os == "windows") return x64 ? "win64" : "win32";
+        if (os == "macos")   return x64 ? "macho64" : "macho32";
+        if (os == "linux")   return x64 ? "elf64" : "elf32";
+        return std::nullopt;
+    }
+
     bool operator==(const Triple&) const = default;
 };
 

@@ -61,6 +61,11 @@ struct BuildPlan {
     std::filesystem::path           stdCompatBmiPath;    // absolute path to prebuilt std.compat.pcm
     std::filesystem::path           stdCompatObjectPath; // absolute path to prebuilt std.compat.o
     std::filesystem::path           scanDepsPath;    // clang-scan-deps binary (Clang only)
+    // NASM assembly (.asm sources). Both resolved in prepare AFTER the plan
+    // exists — only when the plan actually contains .asm units (lazy, hard
+    // failure when unavailable; never a silent skip).
+    std::filesystem::path           nasmPath;        // nasm binary (empty → no .asm units)
+    std::string                     nasmFormat;      // -f value derived from the target triple
 
     std::vector<CompileUnit>        compileUnits;     // topologically sorted
     std::vector<LinkUnit>           linkUnits;
@@ -133,9 +138,17 @@ std::string sanitize_for_path(std::string_view module_name) {
 
 std::string object_filename_for(const std::filesystem::path& src,
                                 std::string_view objExt = ".o") {
+    auto ext = src.extension();
+    // Assembly siblings of a C/C++ TU commonly share its stem (foo.c +
+    // foo.asm); keep the full extension in the object name so they can never
+    // collide — the per-package collision prefix can't help two same-stem
+    // files in the same directory.
+    if (ext == ".S" || ext == ".s" || ext == ".asm") {
+        return src.filename().string() + std::string(objExt);
+    }
     auto stem = src.stem().string();
     // distinguish .cppm vs .cpp by extension prefix to avoid collisions
-    return stem + (src.extension() == ".cppm"
+    return stem + (ext == ".cppm"
                        ? ".m" + std::string(objExt)
                        : std::string(objExt));
 }
@@ -199,7 +212,8 @@ std::vector<std::filesystem::path> runtime_aliases_for_target(
 
 bool is_implementation_source(const std::filesystem::path& source) {
     auto ext = source.extension();
-    return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".c" || ext == ".m";
+    return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".c" || ext == ".m"
+        || ext == ".S" || ext == ".s" || ext == ".asm";
 }
 
 std::vector<std::string> shared_library_link_flags(const mcpp::manifest::Target& t) {

@@ -127,6 +127,99 @@ TEST(NinjaBackend, CxxFlagsIncludeBuildIncludeDirs) {
         << flags.cxx;
 }
 
+// ── assembly sources (.S/.s → asm_object via $cc, .asm → nasm_object) ────────
+
+TEST(NinjaBackend, GasSourceUsesAsmObjectRule) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/copy.S",
+        .object = "obj/copy.S.o",
+        .packageName = "asm_rule_test",
+        // Only the -D/-U/-I subset may reach the assembler: -std/-O/-w on an
+        // asm command line are driver noise (or errors).
+        .packageCflags = {"-DHAVE_ASM=1", "-std=c99", "-O2", "-w"},
+        .packageCxxflags = {"-DWRONG_CXX_FLAG=1"},
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    EXPECT_NE(ninja.find("rule asm_object"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("build obj/copy.S.o : asm_object src/copy.S"),
+              std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("cc        = "), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("unit_asmflags = -DHAVE_ASM=1\n"), std::string::npos)
+        << ninja;
+    EXPECT_EQ(ninja.find("unit_asmflags = -DHAVE_ASM=1 -std=c99"), std::string::npos)
+        << ninja;
+    // The global asm flag string must not carry a C standard or opt level.
+    auto asmline_pos = ninja.find("asmflags  =");
+    ASSERT_NE(asmline_pos, std::string::npos) << ninja;
+    auto asmline = ninja.substr(asmline_pos, ninja.find('\n', asmline_pos) - asmline_pos);
+    EXPECT_EQ(asmline.find("-std="), std::string::npos) << asmline;
+    EXPECT_EQ(asmline.find("-O"), std::string::npos) << asmline;
+}
+
+TEST(NinjaBackend, NasmSourceUsesNasmRuleWithDerivedFormat) {
+    auto plan = minimal_plan();
+    plan.nasmPath = "/opt/bin/nasm";
+    plan.nasmFormat = "elf64";
+    plan.compileUnits.push_back({
+        .source = "src/simd.asm",
+        .object = "obj/simd.asm.o",
+        .packageName = "nasm_rule_test",
+        .packageCflags = {"-DHAVE_AVX2=1", "-O2"},
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    EXPECT_NE(ninja.find("rule nasm_object"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("nasm      = /opt/bin/nasm"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("nasmfmt   = elf64"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("build obj/simd.asm.o : nasm_object src/simd.asm"),
+              std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("unit_asmflags = -DHAVE_AVX2=1\n"), std::string::npos)
+        << ninja;
+}
+
+TEST(NinjaBackend, NoAsmRulesWithoutAsmSources) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "plain_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    EXPECT_EQ(ninja.find("rule asm_object"), std::string::npos) << ninja;
+    EXPECT_EQ(ninja.find("rule nasm_object"), std::string::npos) << ninja;
+}
+
+TEST(NinjaBackend, CompileCommandsSkipNasmAndCoverGas) {
+    auto plan = minimal_plan();
+    plan.nasmPath = "/opt/bin/nasm";
+    plan.nasmFormat = "elf64";
+    plan.compileUnits.push_back({
+        .source = "src/simd.asm",
+        .object = "obj/simd.asm.o",
+        .packageName = "cdb_test",
+    });
+    plan.compileUnits.push_back({
+        .source = "src/copy.S",
+        .object = "obj/copy.S.o",
+        .packageName = "cdb_test",
+    });
+
+    auto flags = compute_flags(plan);
+    auto cdb = emit_compile_commands(plan, flags);
+
+    // NASM command lines are meaningless to CDB consumers (clangd) — excluded.
+    EXPECT_EQ(cdb.find("simd.asm"), std::string::npos) << cdb;
+    // GAS units ride the C driver and stay in the CDB.
+    EXPECT_NE(cdb.find("copy.S"), std::string::npos) << cdb;
+    EXPECT_EQ(cdb.find("\"-std=c11\""), std::string::npos) << cdb;   // asm-safe flags, no C std
+}
+
 TEST(NinjaBackend, RootPackageCxxflagsAreEmittedOncePerUnit) {
     auto plan = minimal_plan();
     plan.manifest.buildConfig.cxxflags = {"-DROOT_FLAG=1"};

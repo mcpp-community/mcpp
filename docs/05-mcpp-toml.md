@@ -15,7 +15,7 @@ version = "0.1.0"
 ```
 
 mcpp infers automatically:
-- Source files: `src/**/*.{cppm,cpp,cc,c}`
+- Source files: `src/**/*.{cppm,cpp,cc,c,S,s,asm}`
 - Entry point: `src/main.cpp` → produces the `hello` binary
 - Standard: C++23
 - Modules: scans `export module ...` declarations and builds the dependency graph automatically
@@ -134,7 +134,7 @@ the package/feature boundary, not on an individual target.
 
 ```toml
 [build]
-sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c})
+sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
 include_dirs = ["include", "third_party/include"]  # Header search paths
 c_standard   = "c11"              # Standard for C source files (default c11)
 cflags       = ["-DFOO=1"]        # Extra C compile flags
@@ -187,6 +187,18 @@ sources = [
     "!src/**/*_fuzzer.cpp",     # Exclude fuzzers
 ]
 ```
+
+**Assembly sources** (mcpp 0.0.95+): `.S`/`.s` (GAS — preprocessed by the C
+driver, covers ARM and AT&T-syntax x86) and `.asm` (NASM — Intel-syntax x86)
+are first-class sources: default-globbed, fingerprinted, built incrementally
+in parallel, and linked like any other object. The NASM output format is
+derived from the target triple (`elf64`/`win64`/`macho64`/... — cross builds
+just work), and `nasm` itself is resolved lazily only when `.asm` units exist:
+`PATH` first, then the mcpp sandbox, then `xlings install nasm`; if none
+yields nasm ≥ 2.16 the build **fails hard** (assembly is never silently
+skipped). Limits: `.asm` targets x86 only (hard error elsewhere — gate the
+files off other targets), `.S` is unavailable on the MSVC toolchain, and
+`.asm` means NASM syntax (MASM sources should be `!`-excluded).
 
 ### 2.4 `[lib]` — Library Root Module Convention
 
@@ -718,7 +730,7 @@ mcpp build --target x86_64-linux-musl
 
 | Item | Default | Notes |
 |---|---|---|
-| Source files | `src/**/*.{cppm,cpp,cc,c}` | Scanned recursively and automatically |
+| Source files | `src/**/*.{cppm,cpp,cc,c,S,s,asm}` | Scanned recursively and automatically |
 | Entry point | `src/main.cpp` | If this file exists, a `bin` target is inferred |
 | Library root | `src/<pkg-tail>.cppm` | Override with `[lib].path` |
 | C++ standard | `c++23` | Configure with `[package].standard`; supports `c++26` / `c++2c` / `c++latest` / `c++fly` (experimental playground) |

@@ -2794,6 +2794,52 @@ prepare_build(bool print_fingerprint,
         }
     }
 
+    // ─── Assembly units: validate + resolve the assembler ─────────────
+    // .S/.s ride the C driver (GAS) — the MSVC dialect has no such path.
+    // .asm is NASM: x86-family only, and the binary is resolved LAZILY —
+    // only when the plan actually contains .asm units — as a hard failure,
+    // never a silent skip (a dropped .o surfaces as undefined references
+    // much later; fail here with the real cause instead).
+    {
+        bool hasGas = false, hasNasm = false;
+        for (auto& cu : ctx.plan.compileUnits) {
+            auto ext = cu.source.extension();
+            if (ext == ".S" || ext == ".s") hasGas = true;
+            else if (ext == ".asm")         hasNasm = true;
+        }
+        if (hasGas && mcpp::toolchain::dialect_for(*tc).id == "msvc") {
+            return std::unexpected(std::string(
+                "GAS assembly sources (.S/.s) are not supported by the MSVC "
+                "toolchain; use NASM syntax (.asm) or a MinGW/LLVM toolchain, "
+                "or `!`-exclude them in [build].sources"));
+        }
+        if (hasNasm) {
+            auto trip = mcpp::toolchain::triple::parse(tc->targetTriple)
+                            .value_or(mcpp::toolchain::triple::host_triple());
+            auto fmt = trip.nasm_format();
+            if (!fmt) {
+                return std::unexpected(std::format(
+                    "NASM sources (.asm) are x86-only, but the target is {}; "
+                    "gate them off non-x86 targets (a feature, or a "
+                    "`!`-exclude glob in [build].sources)", trip.str()));
+            }
+            ctx.plan.nasmFormat = *fmt;
+            auto cfgNasm = get_cfg();
+            std::optional<std::filesystem::path> nasmBin;
+            if (cfgNasm) {
+                nasmBin = mcpp::xlings::ensure_nasm(
+                    mcpp::config::make_xlings_env(**cfgNasm), /*quiet=*/false, {});
+            }
+            if (!nasmBin) {
+                return std::unexpected(std::string(
+                    "NASM sources (.asm) present but no usable nasm (>= 2.16) "
+                    "was found or installable; install one via `xlings install "
+                    "nasm` or your system package manager"));
+            }
+            ctx.plan.nasmPath = *nasmBin;
+        }
+    }
+
     // ─── M3.2: BMI cache stage / populate-task collection ─────────────
     // For each version-based dep package (i.e. fetched from a registry,
     // not a path dep), check the global BMI cache. If cached → stage into

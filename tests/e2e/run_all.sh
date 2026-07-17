@@ -99,6 +99,14 @@ case "$OS" in
     Linux|Darwin) CAPS+=(symlink) ;;
 esac
 
+# nasm: the x86 assembler for .asm sources (PATH — including the xlings
+# subos shim — or the mcpp sandbox tool dir).
+if command -v nasm &>/dev/null \
+   || ls "${MCPP_HOME}/registry/data/xpkgs/xim-x-nasm"/*/nasm 2>/dev/null | head -1 | grep -q . \
+   || ls "${MCPP_HOME}/registry/data/xpkgs/xim-x-nasm"/*/bin/nasm 2>/dev/null | head -1 | grep -q .; then
+    CAPS+=(nasm)
+fi
+
 # scan-deps: clang-scan-deps available (needed for P1689 / Clang dyndep flows)
 if command -v clang-scan-deps &>/dev/null \
    || ls "${MCPP_HOME}/registry/data/xpkgs/xim-x-llvm"/*/bin/clang-scan-deps 2>/dev/null | head -1 | grep -q . \

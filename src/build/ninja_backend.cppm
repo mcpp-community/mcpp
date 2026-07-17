@@ -151,6 +151,35 @@ bool is_c_source(const std::filesystem::path& src) {
     return ext == ".c" || ext == ".m";
 }
 
+bool is_gas_source(const std::filesystem::path& src) {
+    auto ext = src.extension();
+    return ext == ".S" || ext == ".s";
+}
+
+bool is_nasm_source(const std::filesystem::path& src) {
+    return src.extension() == ".asm";
+}
+
+// TUs the P1689 module scan must skip: C-family and assembly units cannot
+// contain `import`/`module` declarations, and feeding them to the scanner
+// would route them through the C++ frontend.
+bool is_scan_exempt(const std::filesystem::path& src) {
+    return is_c_source(src) || is_gas_source(src) || is_nasm_source(src);
+}
+
+// Per-unit flags an assembler can take: the -D/-U/-I subset of the unit's C
+// flags (feature defines land there). NASM shares the GNU -D/-U/-I spelling
+// (and ≥2.14 inserts a missing -I path separator itself), so one filter
+// serves both asm rules.
+std::vector<std::string> asm_unit_flags(const CompileUnit& cu) {
+    std::vector<std::string> out;
+    for (auto& f : cu.packageCflags) {
+        if (f.starts_with("-D") || f.starts_with("-U") || f.starts_with("-I"))
+            out.push_back(f);
+    }
+    return out;
+}
+
 std::string ltrim_copy(std::string_view s) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
         s.remove_prefix(1);
@@ -275,19 +304,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // All compile/link flags are computed once via flags.cppm.
     auto flags = compute_flags(plan);
 
-    bool need_c_rule = false;
+    bool need_c_rule = false, need_asm_rule = false, need_nasm_rule = false;
     for (auto& cu : plan.compileUnits) {
-        if (is_c_source(cu.source)) {
-            need_c_rule = true;
-            break;
-        }
+        if (is_c_source(cu.source))         need_c_rule = true;
+        else if (is_gas_source(cu.source))  need_asm_rule = true;
+        else if (is_nasm_source(cu.source)) need_nasm_rule = true;
     }
 
     append(std::format("cxx       = {}\n", escape_ninja_path(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
-    if (need_c_rule) {
+    if (need_c_rule || need_asm_rule) {   // asm_object drives the C compiler too
         append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
+    }
+    if (need_c_rule) {
         append(std::format("cflags    = {}\n", flags.cc));
+    }
+    if (need_asm_rule) {
+        append(std::format("asmflags  ={}\n", flags.as));
+    }
+    if (need_nasm_rule) {
+        append(std::format("nasm      = {}\n", escape_ninja_path(plan.nasmPath)));
+        append(std::format("nasmfmt   = {}\n", plan.nasmFormat));
+        append(std::format("nasmflags ={}\n", flags.nasm));
     }
     append(std::format("ldflags   ={}\n", flags.ld));
 
@@ -404,6 +442,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         if (dyndep)
             append("  restat = 1\n");
         append("\n");
+    }
+
+    if (need_asm_rule) {
+        // GAS assembly (.S/.s) through the C driver: it preprocesses .S (cpp)
+        // and assembles both, dispatching by extension. $asmflags is the
+        // asm-safe flag subset (no -std / no -O — see flags.cppm).
+        append("rule asm_object\n");
+        append(std::format(
+            "  command = $cc $local_includes $asmflags $unit_asmflags {}\n",
+            compile_tail));
+        append("  description = AS $out\n\n");
+    }
+
+    if (need_nasm_rule) {
+        // NASM (.asm): its own fixed flag spelling — deliberately outside
+        // CommandDialect. -MD/-MQ feed ninja's header tracking for %include.
+        append("rule nasm_object\n");
+        append("  command = $nasm -f $nasmfmt $local_includes $nasmflags "
+               "$unit_asmflags -MD $out.d -MQ $out -o $out $in\n");
+        append("  deps = gcc\n");
+        append("  depfile = $out.d\n");
+        append("  description = NASM $out\n\n");
     }
 
     // Link/archive/shared: driver-style (g++/clang++ are the linker) vs the
@@ -533,6 +593,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             return "cxx_module";
         if (ext == ".c" || ext == ".m")
             return "c_object";
+        if (ext == ".S" || ext == ".s")
+            return "asm_object";
+        if (ext == ".asm")
+            return "nasm_object";
         return "cxx_object";
     };
 
@@ -549,7 +613,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::vector<std::string> ddi_paths;
         ddi_paths.reserve(plan.compileUnits.size());
         for (auto& cu : plan.compileUnits) {
-            if (is_c_source(cu.source))
+            if (is_scan_exempt(cu.source))
                 continue;
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             ddi_paths.push_back(ddi);
@@ -580,7 +644,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         }();
         std::map<std::string, std::string> ddi_expect;
         for (auto& cu : plan.compileUnits) {
-            if (is_c_source(cu.source)) continue;
+            if (is_scan_exempt(cu.source)) continue;
             if (!cu.scanOverridden && !verifyAll) continue;
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             std::string exp;
@@ -618,7 +682,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 out_line += " | " + bmi_path(*cu.providesModule);
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
-            if (rule != "c_object") {
+            if (!is_scan_exempt(cu.source)) {
                 auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
                 auto it = ddi_to_dd.find(ddi);
                 if (it != ddi_to_dd.end()) {
@@ -637,7 +701,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             }
             if (auto includes = local_include_flags(cu); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
-            if (is_c_source(cu.source)) {
+            if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
+                if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
+                    out_line += "  unit_asmflags =" + flags + "\n";
+            } else if (is_c_source(cu.source)) {
                 if (auto flags = join_flags(cu.packageCflags); !flags.empty())
                     out_line += "  unit_cflags =" + flags + "\n";
             } else {
@@ -653,8 +720,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             std::string rule = pick_rule(cu.source);
 
             std::string implicit;
-            // .c files don't `import` modules; skip BMI implicit inputs.
-            if (rule != "c_object") {
+            // C/asm files don't `import` modules; skip BMI implicit inputs.
+            if (!is_scan_exempt(cu.source)) {
                 for (auto& imp : cu.imports) {
                     if (imp == "std") {
                         if (has_std_artifacts)
@@ -684,7 +751,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             out_line += "\n";
             if (auto includes = local_include_flags(cu); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
-            if (is_c_source(cu.source)) {
+            if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
+                if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
+                    out_line += "  unit_asmflags =" + flags + "\n";
+            } else if (is_c_source(cu.source)) {
                 if (auto flags = join_flags(cu.packageCflags); !flags.empty())
                     out_line += "  unit_cflags =" + flags + "\n";
             } else {

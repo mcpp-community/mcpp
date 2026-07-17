@@ -126,6 +126,26 @@ TEST(Triple, DidYouMeanStaysQuietOnGarbage) {
     EXPECT_FALSE(did_you_mean("totally-unrelated-string-xyz").has_value());
 }
 
+// ── nasm output format ───────────────────────────────────────────────────────
+
+TEST(Triple, NasmFormatCoversX86Targets) {
+    EXPECT_EQ(parse("x86_64-linux-gnu")->nasm_format(), "elf64");
+    EXPECT_EQ(parse("x86_64-linux-musl")->nasm_format(), "elf64");
+    EXPECT_EQ(parse("x86_64-windows-gnu")->nasm_format(), "win64");
+    EXPECT_EQ(parse("x86_64-windows-msvc")->nasm_format(), "win64");
+    EXPECT_EQ(parse("x86_64-macos")->nasm_format(), "macho64");
+    EXPECT_EQ(parse("i686-linux-gnu")->nasm_format(), "elf32");
+    EXPECT_EQ(parse("i686-windows-gnu")->nasm_format(), "win32");
+}
+
+TEST(Triple, NasmFormatIsNulloptOffX86) {
+    // NASM is an x86-family assembler; non-x86 targets have no format and the
+    // caller must hard-error (with a cfg-gating hint) instead of guessing.
+    EXPECT_FALSE(parse("aarch64-linux-musl")->nasm_format().has_value());
+    EXPECT_FALSE(parse("aarch64-macos")->nasm_format().has_value());
+    EXPECT_FALSE(parse("riscv64-linux-musl")->nasm_format().has_value());
+}
+
 // ── host ─────────────────────────────────────────────────────────────────────
 
 TEST(Triple, HostTripleIsCanonicalAndNonEmpty) {

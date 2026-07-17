@@ -95,6 +95,51 @@ TEST(Scanner, IgnoresImportInsideSingleLineRawString) {
     std::filesystem::remove_all(dir);
 }
 
+// Assembly units skip the module text scan entirely (like .c): an .asm/.S
+// file legally contains no `import`/`module` declarations, and asm comment
+// syntax would misparse.
+TEST(Scanner, AssemblySourcesSkipModuleScan) {
+    auto dir = make_tempdir("mcpp-scanner-asm");
+    write(dir / "src" / "simd.asm",
+          "; import std -- a comment, not a declaration\n"
+          "section .text\n"
+          "global sum2\n"
+          "sum2:\n  lea rax, [rdi+rsi]\n  ret\n");
+    write(dir / "src" / "copy.S",
+          "#include \"defs.h\"\n"
+          ".text\n.globl asm_copy\nasm_copy:\n  ret\n");
+
+    for (auto name : { "simd.asm", "copy.S" }) {
+        auto u = scan_file(dir / "src" / name, "pkg");
+        ASSERT_TRUE(u.has_value()) << u.error().format();
+        EXPECT_FALSE(u->provides.has_value()) << name;
+        EXPECT_TRUE(u->requires_.empty()) << name;
+    }
+
+    std::filesystem::remove_all(dir);
+}
+
+// G8a: source globs follow directory symlinks (vendored trees are often
+// symlink farms) without looping on cycles.
+TEST(Scanner, ExpandGlobFollowsDirectorySymlinks) {
+    auto dir = make_tempdir("mcpp-scanner-symlink");
+    auto real = dir / "vendor-real";
+    write(real / "impl.cpp", "int f() { return 1; }\n");
+    std::error_code ec;
+    std::filesystem::create_directories(dir / "src");
+    std::filesystem::create_directory_symlink(real, dir / "src" / "vendor", ec);
+    if (ec) GTEST_SKIP() << "symlinks unsupported here: " << ec.message();
+    // A cycle: the linked tree points back at its parent.
+    std::filesystem::create_directory_symlink(dir, real / "loop", ec);
+
+    auto files = expand_glob(dir, "src/**/*.cpp");
+
+    ASSERT_EQ(files.size(), 1u);
+    EXPECT_EQ(files[0].filename(), "impl.cpp");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Scanner, RecordsPackageLocalIncludeDirs) {
     auto dir = make_tempdir("mcpp-scanner-includes");
     write(dir / "src" / "foo.cpp",

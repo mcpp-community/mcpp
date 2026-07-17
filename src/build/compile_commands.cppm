@@ -123,10 +123,19 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
     nlohmann::json entries = nlohmann::json::array();
 
     for (auto& cu : plan.compileUnits) {
-        // Pick compiler + flags based on source type.
-        const bool isCSource = is_c_source(cu.source);
+        // NASM units carry a command line no CDB consumer (clangd, …) can
+        // interpret — a bogus entry actively harms LSP diagnostics, so they
+        // are excluded from the CDB entirely.
+        if (cu.source.extension() == ".asm") continue;
+        // Pick compiler + flags based on source type. GAS units (.S/.s) ride
+        // the C driver with the asm-safe flag string, mirroring build.ninja.
+        const auto ext = cu.source.extension();
+        const bool isGasSource = ext == ".S" || ext == ".s";
+        const bool isCSource = is_c_source(cu.source) || isGasSource;
         const auto& compiler = isCSource ? flags.ccBinary : flags.cxxBinary;
-        const auto& flagStr = isCSource ? flags.cc : flags.cxx;
+        const auto& flagStr = isGasSource ? flags.as
+                            : isCSource   ? flags.cc
+                                          : flags.cxx;
 
         auto output_path = (plan.outputDir / cu.object).string();
 

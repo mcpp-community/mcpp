@@ -875,16 +875,21 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 namespace {
 
 void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
-    // Default sources glob (covers .cppm/.cpp/.cc/.c under src/).
+    // Default sources glob (covers .cppm/.cpp/.cc/.c plus assembly under
+    // src/). Assembly in the tree almost certainly wants building; a project
+    // that vendors foreign-syntax .asm can `!`-exclude it.
     if (m.buildConfig.sources.empty()) {
         m.buildConfig.sources = {
             "src/**/*.cppm",
             "src/**/*.cpp",
             "src/**/*.cc",
             "src/**/*.c",
+            "src/**/*.S",
+            "src/**/*.s",
+            "src/**/*.asm",
         };
         m.modules.sources = m.buildConfig.sources;   // legacy mirror
-        m.inferredNotes.push_back("sources [src/**/*.{cppm,cpp,cc,c}]");
+        m.inferredNotes.push_back("sources [src/**/*.{cppm,cpp,cc,c,S,s,asm}]");
     }
 
     // Default include_dirs: ["include"] iff <root>/include/ exists.

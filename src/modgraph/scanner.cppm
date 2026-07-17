@@ -97,8 +97,12 @@ bool path_matches_glob(const std::filesystem::path& candidate,
                        std::string_view             glob)
 {
     // Supports "**" (any number of dirs) and "*" (within one segment).
-    // Matches relative-path of candidate against glob.
-    auto rel = std::filesystem::relative(candidate, root).generic_string();
+    // Matches relative-path of candidate against glob. LEXICAL relative:
+    // fs::relative() canonicalizes, which would resolve a path reached
+    // through a directory symlink back to its real location and break the
+    // match (globs are about where a file appears in the tree, not where
+    // its bits live).
+    auto rel = candidate.lexically_relative(root).generic_string();
 
     auto match = [](std::string_view s, std::string_view p) -> bool {
         // Simple recursive matcher.
@@ -210,13 +214,47 @@ bool is_module_name_char(char c) {
 std::vector<std::filesystem::path> expand_glob(const std::filesystem::path& root,
                                                std::string_view glob)
 {
-    std::vector<std::filesystem::path> out;
-    if (!std::filesystem::exists(root)) return out;
-    for (auto& e : std::filesystem::recursive_directory_iterator(root)) {
-        if (!e.is_regular_file()) continue;
+    namespace fs = std::filesystem;
+    std::vector<fs::path> out;
+    if (!fs::exists(root)) return out;
+    // Follow directory symlinks (vendored trees are often symlink farms).
+    // Cycle guard: a directory whose canonical path is already on the
+    // CURRENT recursion chain is a link loop — only that is pruned; the same
+    // real directory reached via a second lexical path (dir + link to it)
+    // still walks, because glob matching is lexical. Files reachable twice
+    // are deduped by canonical identity afterwards.
+    std::vector<fs::path> chain;   // canonical dirs of the recursion stack
+    std::error_code ec, eec;       // ec: iteration; eec: per-entry probes
+    {
+        auto c = fs::canonical(root, eec);
+        chain.push_back(eec ? root : c);
+    }
+    fs::recursive_directory_iterator it(
+        root, fs::directory_options::follow_directory_symlink, ec);
+    for (fs::recursive_directory_iterator end; !ec && it != end; it.increment(ec)) {
+        auto& e = *it;
+        if (e.is_directory(eec) && !eec) {
+            auto depth = static_cast<std::size_t>(it.depth());
+            chain.resize(std::min(chain.size(), depth + 1));
+            auto c = fs::canonical(e.path(), eec);
+            if (!eec && std::find(chain.begin(), chain.end(), c) != chain.end()) {
+                it.disable_recursion_pending();   // link cycle
+            } else {
+                chain.push_back(eec ? e.path() : c);
+            }
+            continue;
+        }
+        if (!e.is_regular_file(eec) || eec) continue;
         if (path_matches_glob(e.path(), root, glob)) out.push_back(e.path());
     }
     std::sort(out.begin(), out.end());
+    // Dedup files reachable through more than one directory link (first
+    // lexical occurrence wins).
+    std::set<fs::path> seenFiles;
+    out.erase(std::remove_if(out.begin(), out.end(), [&](const fs::path& p) {
+        auto c = fs::canonical(p, eec);
+        return !eec && !seenFiles.insert(c).second;
+    }), out.end());
     return out;
 }
 
@@ -233,11 +271,29 @@ std::vector<std::filesystem::path> expand_dir_glob(const std::filesystem::path& 
         if (std::filesystem::is_directory(p, ec)) out.push_back(p);
         return out;
     }
-    // Walk all directories under root, match each against the glob.
+    // Walk all directories under root, match each against the glob. Same
+    // follow-symlinks + recursion-chain cycle guard as expand_glob above.
     out.push_back(root);   // root itself eligible if glob is "" (rare)
-    for (auto& e : std::filesystem::recursive_directory_iterator(root, ec)) {
-        if (ec) break;
-        if (!e.is_directory(ec) || ec) continue;
+    std::vector<std::filesystem::path> chain;
+    std::error_code eec;   // per-entry probes; ec drives iteration
+    {
+        auto c = std::filesystem::canonical(root, eec);
+        chain.push_back(eec ? root : c);
+    }
+    std::filesystem::recursive_directory_iterator it(
+        root, std::filesystem::directory_options::follow_directory_symlink, ec);
+    for (std::filesystem::recursive_directory_iterator end;
+         !ec && it != end; it.increment(ec)) {
+        auto& e = *it;
+        if (!e.is_directory(eec) || eec) continue;
+        auto depth = static_cast<std::size_t>(it.depth());
+        chain.resize(std::min(chain.size(), depth + 1));
+        auto c = std::filesystem::canonical(e.path(), eec);
+        if (!eec && std::find(chain.begin(), chain.end(), c) != chain.end()) {
+            it.disable_recursion_pending();   // link cycle
+            continue;
+        }
+        chain.push_back(eec ? e.path() : c);
         if (path_matches_glob(e.path(), root, glob)) out.push_back(e.path());
     }
     out.erase(out.begin());   // drop root sentinel
@@ -260,8 +316,11 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     // declarations, and we route them to the C-language compile rule (no
     // P1689 scan, no BMI lookups). Skip the line-by-line module scan to
     // avoid any chance of a benign identifier (`import_foo`, `module_t`, ...)
-    // being misparsed. Objective-C .m files use the same C-like path.
-    if (file.extension() == ".c" || file.extension() == ".m") {
+    // being misparsed. Objective-C .m files use the same C-like path, and so
+    // does assembly (.S/.s via the C driver, .asm via NASM).
+    auto sext = file.extension();
+    if (sext == ".c" || sext == ".m"
+        || sext == ".S" || sext == ".s" || sext == ".asm") {
         return u;
     }
 
