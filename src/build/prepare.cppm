@@ -2853,6 +2853,19 @@ prepare_build(bool print_fingerprint,
             bpEnv.artifactsDir = *root / "target" / ".build-mcpp" / "deps"
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
             bpEnv.genBase      = bpEnv.artifactsDir / "out";
+            // mcpp#241: expose this package's resolved dependencies (verdir /
+            // payload root) as MCPP_DEP_<NAME>_DIR, keyed by the dependency's
+            // canonical package name. Uses the authoritative consumer→dep edge
+            // graph (no name-guessing); covers feature-activated deps too, since
+            // mergeActiveFeatureDeps folded them into `dependencies` before the
+            // edges were recorded. (The ROOT project's own build.mcpp runs
+            // before dependency resolution, so it does not yet receive these —
+            // tracked as a follow-up in the #230-#243 ledger.)
+            for (auto const& edge : dependencyEdges) {
+                if (edge.consumerPackageIndex != i) continue;
+                auto const& depPkg = packages[edge.dependencyPackageIndex];
+                bpEnv.depDirs.emplace_back(depPkg.manifest.package.name, depPkg.root);
+            }
             auto& bcDep = pkg.manifest.buildConfig;
             const auto cN = bcDep.cflags.size(), cxN = bcDep.cxxflags.size(),
                        ldN = bcDep.ldflags.size();

@@ -41,6 +41,11 @@ struct BuildProgramEnv {
     // root-project contract, unchanged). Dependencies point this at OUT_DIR so
     // a shared package root is never written to.
     std::filesystem::path genBase;
+    // mcpp#241: this package's resolved dependencies, as (declared-name → dir).
+    // Emitted as MCPP_DEP_<SANITIZED_NAME>_DIR so a build.mcpp can locate a
+    // dependency's payload (e.g. a data-asset package) by name instead of
+    // reverse-engineering the store layout. Same sanitizer as MCPP_FEATURE_.
+    std::vector<std::pair<std::string, std::filesystem::path>> depDirs;
 };
 
 // Compile + run `<root>/build.mcpp` (if present) with `hostCompiler` (the resolved
@@ -248,6 +253,20 @@ inline bool has_feature(const char* name) {
     buf[o] = 0;
     return std::getenv(buf) != nullptr;
 }
+// mcpp#241: resolved install dir of a declared dependency (by its package
+// name), or "" if not found. Same sanitize as has_feature; wraps
+// MCPP_DEP_<SANITIZED_NAME>_DIR.
+inline const char* dep_dir(const char* name) {
+    char buf[256] = "MCPP_DEP_";
+    unsigned long o = 9;
+    for (const char* p = name; *p && o + 5 < sizeof buf; ++p, ++o) {
+        char c = *p;
+        buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+               : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+    }
+    buf[o++] = '_'; buf[o++] = 'D'; buf[o++] = 'I'; buf[o++] = 'R'; buf[o] = 0;
+    return env_or(buf);
+}
 }
 )CPP";
 
@@ -350,6 +369,11 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         e.emplace_back("MCPP_FEATURE_" + sanitize_feature_env(f), "1");
     }
     e.emplace_back("MCPP_FEATURES", csv);
+    // mcpp#241: per-dependency payload dir. Sanitize the DECLARED dep name (what
+    // the author wrote in `deps`) so the var name is predictable from the
+    // manifest, not from store internals.
+    for (auto const& [name, dir] : env.depDirs)
+        e.emplace_back("MCPP_DEP_" + sanitize_feature_env(name) + "_DIR", dir.string());
     return e;
 }
 
