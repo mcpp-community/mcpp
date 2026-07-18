@@ -95,9 +95,75 @@ std::expected<Manifest, ManifestError>
 synthesize_from_xpkg_lua(std::string_view luaContent,
                          std::string_view packageName,
                          std::string_view packageVersion);
+
+// mcpp#237: the mcpp-segment key vocabulary is a CLOSED whitelist (the parse
+// loop's else-if chain). An unrecognised key is collected into
+// `Manifest::xpkgUnknownKeys` and silently skipped — historically only `mcpp
+// xpkg parse` surfaced it, so a descriptor written with `dependencies = {...}`
+// (the real key is `deps`) built with the dependency silently dropped and NO
+// diagnostic. `closest_known_xpkg_key` maps an unknown key back to its most
+// likely intended key (well-known confusables like dependencies→deps, plus a
+// small edit-distance fallback for typos); returns "" when nothing is close.
+// The build-time warning that consumes it lives at the descriptor-adoption
+// sites in prepare.cppm (which owns the ui layer) — the loud-failure principle
+// (0.0.97 closed-grammar guard) extended to the xpkg build path.
+std::string closest_known_xpkg_key(std::string_view unknownKey);
 } // namespace mcpp::manifest
 
 namespace mcpp::manifest {
+
+// mcpp#237: the closed vocabulary of mcpp-segment keys — MUST stay in sync with
+// the else-if chain in the parse loop below (any `key == "X"` handled there).
+// Kept as one array so the did-you-mean suggester speaks the same vocabulary
+// the parser accepts.
+inline constexpr std::string_view kKnownXpkgKeys[] = {
+    "cflags", "c_standard", "cxxflags", "deps", "features", "flags",
+    "generated_files", "import_std", "include_dirs", "language", "ldflags",
+    "linux", "macosx", "modules", "provides", "runtime", "scan_overrides",
+    "schema", "sources", "target_cfg", "targets", "windows",
+};
+
+// Well-known confusables an edit-distance metric cannot bridge (the intended
+// key is spelled very differently from what the user wrote).
+inline constexpr std::pair<std::string_view, std::string_view> kXpkgKeyAliases[] = {
+    { "dependencies", "deps" },
+    { "dependency",   "deps" },
+    { "requires",     "deps" },   // cargo muscle memory
+    { "define",       "flags" },
+    { "defines",      "flags" },
+    { "feature",      "features" },
+    { "source",       "sources" },
+    { "target",       "targets" },
+    { "include",      "include_dirs" },
+    { "include_dir",  "include_dirs" },
+};
+
+std::string closest_known_xpkg_key(std::string_view unknownKey) {
+    for (auto const& [wrong, right] : kXpkgKeyAliases)
+        if (unknownKey == wrong) return std::string(right);
+
+    // Small Levenshtein for single/double typos of a real key.
+    auto edit_distance = [](std::string_view a, std::string_view b) {
+        std::vector<std::size_t> prev(b.size() + 1), cur(b.size() + 1);
+        for (std::size_t j = 0; j <= b.size(); ++j) prev[j] = j;
+        for (std::size_t i = 1; i <= a.size(); ++i) {
+            cur[0] = i;
+            for (std::size_t j = 1; j <= b.size(); ++j) {
+                std::size_t sub = prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
+                cur[j] = std::min({ sub, prev[j] + 1, cur[j - 1] + 1 });
+            }
+            std::swap(prev, cur);
+        }
+        return prev[b.size()];
+    };
+    std::string_view best;
+    std::size_t bestDist = 3;   // require distance ≤ 2 to suggest anything
+    for (auto known : kKnownXpkgKeys) {
+        auto d = edit_distance(unknownKey, known);
+        if (d < bestDist) { bestDist = d; best = known; }
+    }
+    return std::string(best);
+}
 
 
 // =====================================================================

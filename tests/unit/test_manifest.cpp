@@ -470,6 +470,38 @@ package = {
     EXPECT_TRUE(m->dependencies.empty());
 }
 
+// mcpp#237: an unknown mcpp-segment key is collected (so the build path can
+// surface it) and the did-you-mean helper maps well-known confusables +
+// edit-distance typos back to the closed key vocabulary.
+TEST(XpkgUnknownKeys, CollectedAndDidYouMean) {
+    // `dependencies` is the canonical wrong spelling of `deps` (issue #237).
+    EXPECT_EQ(mcpp::manifest::closest_known_xpkg_key("dependencies"), "deps");
+    EXPECT_EQ(mcpp::manifest::closest_known_xpkg_key("dependency"),   "deps");
+    // single-typo of a real key resolves via edit distance.
+    EXPECT_EQ(mcpp::manifest::closest_known_xpkg_key("cxxflag"),      "cxxflags");
+    EXPECT_EQ(mcpp::manifest::closest_known_xpkg_key("feature"),      "features");
+    // a genuinely unrelated key has no suggestion.
+    EXPECT_EQ(mcpp::manifest::closest_known_xpkg_key("wibble"),       "");
+
+    // The build-path synthesizer records the unknown key rather than dropping
+    // it silently.
+    constexpr auto lua = R"(
+package = {
+    name = "x",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/a.c" },
+        targets = { ["x"] = { kind = "lib" } },
+        dependencies = { ["zlib"] = "1.3.x" },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "x", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->xpkgUnknownKeys.size(), 1u);
+    EXPECT_EQ(m->xpkgUnknownKeys[0], "dependencies");
+}
+
 TEST(Manifest, BuildMacosDeploymentTarget) {
     constexpr auto src = R"(
 [package]

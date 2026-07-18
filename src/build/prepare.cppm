@@ -49,6 +49,29 @@ import mcpp.project;
 
 namespace mcpp::build {
 
+// mcpp#237: surface xpkg-descriptor mcpp-segment keys this mcpp did not
+// recognise. The parser collects them into `xpkgUnknownKeys` and skips the
+// value; without this a typo like `dependencies = {...}` (correct key: `deps`)
+// dropped the dependency with no diagnostic. Called at the descriptor-adoption
+// sites (a fetched dep with no mcpp.toml, synthesized from the index `mcpp={}`
+// block) — the single place the descriptor becomes a build input. Warning (not
+// hard error) keeps forward-compat: an older mcpp building a newer descriptor
+// should not fail outright, only tell the user what it ignored.
+inline void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
+                                   std::string_view depLabel) {
+    for (auto const& key : dm.xpkgUnknownKeys) {
+        auto suggestion = mcpp::manifest::closest_known_xpkg_key(key);
+        if (suggestion.empty())
+            mcpp::ui::warning(std::format(
+                "dependency '{}': unknown mcpp-segment key '{}' in its xpkg "
+                "descriptor — ignored (schema mismatch or typo)", depLabel, key));
+        else
+            mcpp::ui::warning(std::format(
+                "dependency '{}': unknown mcpp-segment key '{}' in its xpkg "
+                "descriptor — ignored; did you mean '{}'?", depLabel, key, suggestion));
+    }
+}
+
 // ── L1 platform-conditional config: cfg() predicate evaluation ──────────────
 // Context = the RESOLVED target's coordinates. A `[target.'cfg(...)'.build]`
 // predicate is evaluated against this (target triple for a cross build, host
@@ -1578,6 +1601,7 @@ prepare_build(bool print_fingerprint,
                         return std::unexpected(std::format(
                             "dependency '{}': {}", depName, depManifest.error().format()));
                     }
+                    warn_unknown_xpkg_keys(*depManifest, depName);
 
                     auto preinstallKey = std::format("{}:{}@{}", ns, shortName, version);
                     if (preinstallStack.contains(preinstallKey)) {
@@ -1728,6 +1752,7 @@ prepare_build(bool print_fingerprint,
             auto dm = mcpp::manifest::synthesize_from_xpkg_lua(*luaContent, depName, version);
             if (!dm) return std::unexpected(std::format(
                 "dependency '{}': {}", depName, dm.error().format()));
+            warn_unknown_xpkg_keys(*dm, depName);
             manifest = std::move(*dm);
             // effRoot stays as verRoot
         } else {
