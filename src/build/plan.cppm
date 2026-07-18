@@ -445,14 +445,79 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     //     files keep the pre-existing flat `obj/<name>` layout untouched
     //     (back-compat for the overwhelmingly common single-file-per-
     //     basename project).
+    std::set<std::filesystem::path> scannedSources;
     std::map<std::string, int> basenameCount;
     for (auto idx : topoOrder) {
         basenameCount[object_filename_for(graph.units[idx].path, objExt)]++;
+        scannedSources.insert(graph.units[idx].path);
+    }
+    // mcpp#240: entry `main` sources are synthesized into compile units later
+    // (during link assembly), NOT part of topoOrder — but they still occupy an
+    // object path and must share ONE disambiguation census with everything
+    // else. Count each root target's entry that isn't already scanned (a globbed
+    // main IS scanned, so counting it again would falsely disambiguate the
+    // common single-binary project). This makes "consumer main not globbed +
+    // dependency ships a same-named main" disambiguate correctly too.
+    for (auto& t : manifest.targets) {
+        if (t.main.empty()) continue;
+        if (t.kind != mcpp::manifest::Target::Binary
+            && t.kind != mcpp::manifest::Target::TestBinary) continue;
+        auto entry = projectRoot / t.main;
+        if (scannedSources.contains(entry)) continue;
+        basenameCount[object_filename_for(entry, objExt)]++;
     }
     auto sanitize = [](const std::string& s) {
         std::string out; out.reserve(s.size());
         for (char c : s) out += (c == '.' || c == '/' ? '_' : c);
         return out;
+    };
+    // mcpp#239: fold a source's package-relative directory into an object
+    // subdir that is ALWAYS downward AND shell-safe. relPath may be absolute or
+    // carry `..` when the source lives outside its package root (e.g. a
+    // dependency build.mcpp's OUT_DIR-generated source under
+    // `.../<name>@<ver>/out/`) — pasting it straight into `obj/` both climbs
+    // out of the build tree AND drags shell-hostile chars (the `@` in the deps
+    // dir) into the object path, which ninja then single-quotes, breaking the
+    // #235 `"$out.d"` depfile redirect. Map each component: drop the root
+    // (`/`, drive) and `.`, turn `..` into `__up`, and replace any char outside
+    // the portable set `[A-Za-z0-9._+-]` with `_`. The mapping is injective
+    // enough to preserve the uniqueness the relPath-mirroring scheme (mcpp#233)
+    // relies on (the L1b assertion backstops the residual).
+    auto safe_component = [](std::string s) {
+        if (s == "..") return std::string("__up");
+        for (auto& c : s) {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                         || (c >= '0' && c <= '9')
+                         || c == '.' || c == '_' || c == '+' || c == '-';
+            if (!ok) c = '_';
+        }
+        return s;
+    };
+    auto safe_object_prefix = [&](const std::string& pkg,
+                                  const std::filesystem::path& relDir)
+        -> std::filesystem::path {
+        std::filesystem::path safe;
+        for (auto const& comp : relDir) {
+            if (comp.has_root_name() || comp.has_root_directory()) continue;
+            auto s = comp.string();
+            if (s.empty() || s == ".") continue;
+            safe /= safe_component(s);
+        }
+        return pkg.empty() ? safe
+                           : std::filesystem::path(sanitize(pkg)) / safe;
+    };
+    // mcpp#233/#240: the single source of truth for a compile unit's object
+    // path — scanned units AND the synthesized entry main go through here, so
+    // the link input can never diverge from the compile edge.
+    auto object_for = [&](const std::filesystem::path& src,
+                          const std::string& pkg,
+                          const std::filesystem::path& relPath)
+        -> std::filesystem::path {
+        const auto fname = object_filename_for(src, objExt);
+        if (basenameCount[fname] > 1)
+            return std::filesystem::path("obj")
+                 / safe_object_prefix(pkg, relPath.parent_path()) / fname;
+        return std::filesystem::path("obj") / fname;
     };
 
     // 1. Compile units in topological order
@@ -465,16 +530,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         cu.packageCflags = u.packageCflags;
         cu.packageCxxflags = u.packageCxxflags;
         cu.packageAsmflags = u.packageAsmflags;
-        const auto fname = object_filename_for(u.path, objExt);
-        if (basenameCount[fname] > 1) {
-            auto relDir = u.relPath.parent_path();
-            auto prefix = u.packageName.empty()
-                ? relDir
-                : std::filesystem::path(sanitize(u.packageName)) / relDir;
-            cu.object = std::filesystem::path("obj") / prefix / fname;
-        } else {
-            cu.object = std::filesystem::path("obj") / fname;
-        }
+        cu.object = object_for(u.path, u.packageName, u.relPath);
         if (u.provides) {
             cu.providesModule = u.provides->logicalName;
         }
@@ -731,10 +787,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         bool entryDefinesMain = lu.entryMain && source_defines_main(*lu.entryMain);
 
         if ((lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary) && lu.entryMain) {
-            // Add main.cpp -> obj/main.o
+            // Synthesize the entry main's compile unit. Its object path is
+            // NOT computed here — it comes from the shared `object_for`
+            // disambiguator below, so the link input matches the compile edge
+            // even when the entry collides with a dependency's same-named
+            // source (mcpp#240).
             CompileUnit main_cu;
             main_cu.source = *lu.entryMain;
-            main_cu.object = std::filesystem::path("obj") / object_filename_for(*lu.entryMain, objExt);
             main_cu.packageName = qualified_package_name(manifest);
             if (!packages.empty() && packages[0].usageResolved) {
                 main_cu.localIncludeDirs = packages[0].privateBuild.includeDirs;
@@ -773,15 +832,30 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 }
             }
 
-            // Avoid duplicate insert if main was already scanned
+            // mcpp#240: the entry main may ALSO have been scanned (globbed into
+            // [modules].sources — the near-universal `src/**/*.cpp`). When it
+            // was, reuse THAT compile unit's already-disambiguated object; the
+            // synthesized main_cu is a duplicate and must not be linked under a
+            // divergent (flat) path. When it wasn't scanned, route the
+            // synthesized unit through the same `object_for` census so it, too,
+            // disambiguates against any same-named dependency source.
+            std::filesystem::path entryObject;
             bool already = false;
             for (auto& cu : plan.compileUnits) {
-                if (cu.source == main_cu.source) { already = true; break; }
+                if (cu.source == main_cu.source) {
+                    already = true;
+                    entryObject = cu.object;
+                    break;
+                }
             }
             if (!already) {
+                main_cu.object = object_for(
+                    main_cu.source, main_cu.packageName,
+                    std::filesystem::relative(main_cu.source, projectRoot));
                 plan.compileUnits.push_back(main_cu);
+                entryObject = main_cu.object;
             }
-            lu.objects.push_back(main_cu.object);
+            lu.objects.push_back(entryObject);
 
             // Per-target entry-scoped flags (issue #131). Applied to the compile
             // unit that actually builds this target's entry — which may be the
