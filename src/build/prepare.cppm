@@ -1666,6 +1666,9 @@ prepare_build(bool print_fingerprint,
                 : std::format("{}.{}", ns, shortName);
             mcpp::ui::info("Downloading", std::format("{} v{}", fqname, version));
 
+            // #238: retain whatever error/warn text the child DID emit so we
+            // can fold it into a diagnostic if install_packages exits non-zero.
+            std::string capturedChildError;
             auto install_one = [&](std::string target) -> std::expected<mcpp::xlings::CallResult, mcpp::pm::CallError> {
                 if (useProjectEnv) {
                     // Project/custom-index deps install into the project-local
@@ -1684,12 +1687,15 @@ prepare_build(bool print_fingerprint,
                     mcpp::fetcher::InstallProgressHandler progress;
                     auto r = mcpp::xlings::call(
                         projEnv, "install_packages", argsJson, &progress);
+                    capturedChildError = progress.captured_error();
                     if (!r) return std::unexpected(mcpp::pm::CallError{r.error()});
                     return *r;
                 }
                 std::vector<std::string> targets{ std::move(target) };
                 mcpp::fetcher::InstallProgressHandler progress;
-                return fetcher.install(targets, &progress);
+                auto r = fetcher.install(targets, &progress);
+                capturedChildError = progress.captured_error();
+                return r;
             };
             auto target = std::format("{}@{}", fqname, version);
             // For custom indices, use indexName:fullPackageName@version so
@@ -1711,10 +1717,27 @@ prepare_build(bool print_fingerprint,
             if (!r) return std::unexpected(std::format(
                 "fetch '{}@{}': {}", depName, version, r.error().message));
             if (r->exitCode != 0) {
-                std::string err = std::format(
-                    "fetch '{}@{}' failed (exit {})", depName, version, r->exitCode);
-                if (r->error) err += ": " + r->error->message;
-                return std::unexpected(err);
+                // #238: the opaque `fetch failed (exit 1)` hid the actionable
+                // context mcpp actually has. Reconstruct it: the target, the
+                // configured index repos (read back from the seeded
+                // .xlings.json — project scope when useProjectEnv, else the
+                // global xlings home), any child error text we captured, plus
+                // a hint about the known ≥2-repo xlings resolution gap. The
+                // real fix lives in openxlings/xlings; this only surfaces WHY.
+                auto xlingsJson = (useProjectEnv
+                        ? (*root / ".mcpp")
+                        : (*cfg)->xlingsHome())
+                    / ".xlings.json";
+                auto indexRepos = mcpp::pm::read_seeded_index_repos(xlingsJson);
+                std::string childErr = capturedChildError;
+                if (r->error) {
+                    if (!childErr.empty()) childErr += "; ";
+                    childErr += r->error->message;
+                }
+                auto target = std::format("{}@{}", depName, version);
+                return std::unexpected(
+                    mcpp::pm::format_install_failure_diagnostic(
+                        target, r->exitCode, indexRepos, childErr));
             }
             // After install, check project data first for custom index packages.
             installed = findRawInstalled();

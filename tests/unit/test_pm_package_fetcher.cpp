@@ -175,3 +175,81 @@ TEST(PmPackageFetcher, ResolvesCustomNamespaceDescriptorUnderNonCanonicalFilenam
 
     std::filesystem::remove_all(project);
 }
+
+// ─── #238: install_packages failure diagnostics ─────────────────────
+//
+// The root cause of #238 is in xlings (its resolver silently exits 1 with ≥2
+// project-level index_repos). mcpp cannot fix that; it can only make the
+// failure diagnosable. These tests pin the message-formatting helper and the
+// .xlings.json index_repos reader so the enriched, actionable error shape is
+// locked without needing a live (failing) multi-repo xlings.
+
+TEST(PmPackageFetcher, InstallFailureDiagnosticFlagsMultiRepoGap) {
+    std::vector<std::string> repos = {
+        "mcpplibs -> https://example/mcpplibs",
+        "myindex  -> https://example/myindex",
+    };
+    auto msg = mcpp::pm::format_install_failure_diagnostic(
+        "acme.widget@1.2.3", 1, repos, /*childError=*/"");
+
+    // Names the target + exit code.
+    EXPECT_NE(msg.find("acme.widget@1.2.3"), std::string::npos);
+    EXPECT_NE(msg.find("exit 1"), std::string::npos);
+    // Enumerates the configured repos (count + identities).
+    EXPECT_NE(msg.find("2 index repos"), std::string::npos);
+    EXPECT_NE(msg.find("mcpplibs"), std::string::npos);
+    EXPECT_NE(msg.find("myindex"), std::string::npos);
+    // Flags the known ≥2-repo xlings gap and links the tracking issue.
+    EXPECT_NE(msg.find("#238"), std::string::npos);
+    EXPECT_NE(msg.find("openxlings/xlings"), std::string::npos);
+    // No child error → points at MCPP_VERBOSE for the raw output.
+    EXPECT_NE(msg.find("MCPP_VERBOSE"), std::string::npos);
+}
+
+TEST(PmPackageFetcher, InstallFailureDiagnosticSingleRepoNoGapFlag) {
+    std::vector<std::string> repos = { "mcpplibs" };
+    auto msg = mcpp::pm::format_install_failure_diagnostic(
+        "acme.widget@1.2.3", 1, repos, /*childError=*/"");
+
+    EXPECT_NE(msg.find("1 index repo"), std::string::npos);
+    // A single repo is NOT the #238 failure mode; do not misattribute it.
+    EXPECT_EQ(msg.find("known xlings resolution gap"), std::string::npos);
+    EXPECT_EQ(msg.find("#238"), std::string::npos);
+}
+
+TEST(PmPackageFetcher, InstallFailureDiagnosticPreservesChildError) {
+    std::vector<std::string> repos = { "a", "b" };
+    auto msg = mcpp::pm::format_install_failure_diagnostic(
+        "acme.widget@1.2.3", 1, repos,
+        /*childError=*/"[error] descriptor not found in index");
+
+    // Child-emitted text must be surfaced, not swallowed.
+    EXPECT_NE(msg.find("descriptor not found in index"), std::string::npos);
+    EXPECT_NE(msg.find("xlings reported"), std::string::npos);
+    // With a real child error we don't fall back to the MCPP_VERBOSE nudge.
+    EXPECT_EQ(msg.find("MCPP_VERBOSE"), std::string::npos);
+}
+
+TEST(PmPackageFetcher, ReadSeededIndexReposParsesXlingsJson) {
+    auto project = make_tempdir("mcpp-238-xlings-json");
+    auto xjson = project / ".xlings.json";
+    write_file(xjson, R"({
+  "index_repos": [
+    { "name": "mcpplibs", "url": "https://example/mcpplibs" },
+    { "name": "myindex", "url": "https://example/myindex" }
+  ],
+  "lang": "en"
+})");
+
+    auto repos = mcpp::pm::read_seeded_index_repos(xjson);
+    ASSERT_EQ(repos.size(), 2u);
+    EXPECT_NE(repos[0].find("mcpplibs"), std::string::npos);
+    EXPECT_NE(repos[0].find("https://example/mcpplibs"), std::string::npos);
+    EXPECT_NE(repos[1].find("myindex"), std::string::npos);
+
+    // Missing file → empty (caller degrades to "unknown configuration").
+    auto none = mcpp::pm::read_seeded_index_repos(project / "does-not-exist.json");
+    EXPECT_TRUE(none.empty());
+
+    std::filesystem::remove_all(project);
+}

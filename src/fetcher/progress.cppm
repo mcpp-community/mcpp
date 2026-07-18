@@ -208,6 +208,24 @@ export mcpp::config::BootstrapProgressCallback make_bootstrap_progress_callback(
 export struct InstallProgressHandler : mcpp::fetcher::EventHandler {
     mcpp::ui::DownloadProgress progress_;
 
+    // #238: retain any error/warn text the child DID emit so the caller can
+    // fold it into the install_packages failure diagnostic. The known
+    // multi-repo failure mode emits {"exitCode":1} with no error event, so
+    // this is usually empty — but when xlings does say something, we must not
+    // discard it (the whole point of the diagnostics work).
+    std::vector<std::string> capturedDiagnostics_;
+
+    // Join the captured error/warn lines into a single blob (empty if the
+    // child emitted nothing structured).
+    std::string captured_error() const {
+        std::string out;
+        for (auto& d : capturedDiagnostics_) {
+            if (!out.empty()) out += "; ";
+            out += d;
+        }
+        return out;
+    }
+
     void on_data(const mcpp::fetcher::DataEvent& d) override {
         if (d.dataKind != "download_progress") return;
         auto files = parse_all_install_files(d.payloadJson);
@@ -218,12 +236,15 @@ export struct InstallProgressHandler : mcpp::fetcher::EventHandler {
     }
 
     void on_log(const mcpp::fetcher::LogEvent& e) override {
-        if (e.level == "error")
+        if (e.level == "error") {
             mcpp::log::error("xlings", e.message);
-        else if (e.level == "warn")
+            capturedDiagnostics_.push_back(std::format("[error] {}", e.message));
+        } else if (e.level == "warn") {
             mcpp::log::warn("xlings", e.message);
-        else
+            capturedDiagnostics_.push_back(std::format("[warn] {}", e.message));
+        } else {
             mcpp::log::info("xlings", e.message);
+        }
         mcpp::log::verbose("xlings", std::format("[{}] {}", e.level, e.message));
     }
 
@@ -231,6 +252,10 @@ export struct InstallProgressHandler : mcpp::fetcher::EventHandler {
         mcpp::log::error("xlings", std::format("{}: {}", e.code, e.message));
         if (!e.hint.empty())
             mcpp::log::info("xlings", std::format("hint: {}", e.hint));
+        std::string blob = e.code.empty() ? e.message
+                                          : std::format("{}: {}", e.code, e.message);
+        if (!e.hint.empty()) blob += std::format(" (hint: {})", e.hint);
+        capturedDiagnostics_.push_back(std::move(blob));
     }
 
     // progress_'s own destructor finishes the active bar.

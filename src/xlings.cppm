@@ -902,6 +902,13 @@ call(const Env& env, std::string_view capability,
 {
     auto cmd = build_interface_command(env, capability, argsJson);
 
+    // #238: under MCPP_VERBOSE=1 surface the exact xlings invocation so a
+    // failing install_packages can be reproduced/inspected by hand. The
+    // NDJSON child's own error/warn lines are surfaced by the caller's
+    // EventHandler (e.g. InstallProgressHandler).
+    mcpp::log::verbose("xlings",
+        std::format("interface {} exec: {}", capability, cmd));
+
     CallResult result;
     int rc = mcpp::platform::process::run_streaming(cmd,
         [&](std::string_view line) {

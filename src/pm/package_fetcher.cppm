@@ -178,6 +178,39 @@ private:
                               std::string_view argsJson) const;
 };
 
+// ─── install_packages failure diagnostics (#238) ────────────────────
+//
+// When `xlings install_packages` exits non-zero, mcpp historically reported
+// only `fetch '<pkg>@<ver>' failed (exit 1)`. The known #238 failure mode —
+// ≥2 project-level index_repos (root [indices] inheritance + a default-ns
+// redirect, per #224) making the xlings resolver silently fail — left the
+// user with an opaque exit code and no next step. The child emits
+// {"exitCode":1,"kind":"result"} with NO error event (see
+// mcpp.fetcher.progress), so mcpp must reconstruct actionable context from
+// what IT knows: the target, the configured index repos, and whatever the
+// child DID log. The two helpers below are pure/self-contained so the message
+// shape is unit-testable without a live xlings.
+
+// Read the `index_repos` entry names out of a seeded `.xlings.json`. Returns
+// the entries as "name" (or "name -> url" when a url is present). Missing or
+// unreadable file yields an empty vector — callers treat "unknown" gracefully.
+std::vector<std::string>
+read_seeded_index_repos(const std::filesystem::path& xlingsJson);
+
+// Compose the enriched, actionable error for an install_packages exit!=0.
+//   target      : "<ns.name>@<version>" (or index-scoped "idx:ns.name@ver")
+//   exitCode    : the child's non-zero exit
+//   indexRepos  : names/identities of the configured index repos (see reader)
+//   childError  : any error/warn text the child DID emit (may be empty)
+// When ≥2 repos are configured the message flags the known xlings-side gap
+// and links the tracking issue; otherwise it still names the target, the repo
+// set, and points at MCPP_VERBOSE=1 for the raw xlings output.
+std::string
+format_install_failure_diagnostic(std::string_view target,
+                                  int exitCode,
+                                  std::span<const std::string> indexRepos,
+                                  std::string_view childError = {});
+
 } // namespace mcpp::pm
 
 namespace mcpp::pm {
@@ -201,6 +234,125 @@ std::string Fetcher::build_command(std::string_view capability,
 {
     mcpp::xlings::Env env{ cfg_.xlingsBinary, cfg_.xlingsHome() };
     return mcpp::xlings::build_interface_command(env, capability, argsJson);
+}
+
+// ─── install_packages failure diagnostics (#238) ────────────────────
+
+std::vector<std::string>
+read_seeded_index_repos(const std::filesystem::path& xlingsJson)
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    if (!std::filesystem::exists(xlingsJson, ec)) return out;
+    std::ifstream in(xlingsJson, std::ios::binary);
+    if (!in) return out;
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+
+    // The array is emitted by seed_xlings_json as:
+    //   "index_repos": [ { "name": "..", "url": ".." }, ... ]
+    // Parse just the slice between "index_repos": [ ... matching ] and pull
+    // each object's name/url. Cheap hand-roll (matches the module's existing
+    // manual-JSON style); tolerant of missing url.
+    auto key = text.find("\"index_repos\"");
+    if (key == std::string::npos) return out;
+    auto lb = text.find('[', key);
+    if (lb == std::string::npos) return out;
+    // find matching ']' at the same bracket depth.
+    std::size_t p = lb + 1;
+    int depth = 1;
+    std::size_t rb = std::string::npos;
+    bool in_str = false;
+    for (; p < text.size(); ++p) {
+        char c = text[p];
+        if (in_str) {
+            if (c == '\\' && p + 1 < text.size()) { ++p; continue; }
+            if (c == '"') in_str = false;
+            continue;
+        }
+        if (c == '"') in_str = true;
+        else if (c == '[') ++depth;
+        else if (c == ']') { if (--depth == 0) { rb = p; break; } }
+    }
+    if (rb == std::string::npos) return out;
+    std::string_view arr(text.data() + lb + 1, rb - lb - 1);
+
+    // Whitespace-tolerant field reader: seed_xlings_json PRETTY-prints the
+    // objects (`"name": "value"` — space after the colon), whereas the shared
+    // extract_string assumes compact NDJSON (`"name":"value"`). Reusing it here
+    // silently matched nothing. Read `"key"` then skip ws/`:` then the quoted
+    // value ourselves. (Repo names/urls carry no escaped quotes.)
+    auto field = [](std::string_view obj, std::string_view key) -> std::string {
+        std::string needle = std::format("\"{}\"", key);
+        auto p = obj.find(needle);
+        if (p == std::string_view::npos) return "";
+        p += needle.size();
+        while (p < obj.size() && (obj[p] == ' ' || obj[p] == '\t' || obj[p] == ':'))
+            ++p;
+        if (p >= obj.size() || obj[p] != '"') return "";
+        ++p;
+        std::string out;
+        while (p < obj.size() && obj[p] != '"') out.push_back(obj[p++]);
+        return out;
+    };
+
+    // Walk each { ... } object inside the array.
+    std::size_t q = 0;
+    while (q < arr.size()) {
+        auto ob = arr.find('{', q);
+        if (ob == std::string_view::npos) break;
+        auto oe = arr.find('}', ob);
+        if (oe == std::string_view::npos) break;
+        auto obj = arr.substr(ob, oe - ob + 1);
+        auto name = field(obj, "name");
+        auto url  = field(obj, "url");
+        if (!name.empty()) {
+            out.push_back(url.empty() ? name
+                                      : std::format("{} -> {}", name, url));
+        }
+        q = oe + 1;
+    }
+    return out;
+}
+
+std::string
+format_install_failure_diagnostic(std::string_view target,
+                                  int exitCode,
+                                  std::span<const std::string> indexRepos,
+                                  std::string_view childError)
+{
+    std::string repoList;
+    for (std::size_t i = 0; i < indexRepos.size(); ++i) {
+        if (i) repoList += ", ";
+        repoList += indexRepos[i];
+    }
+
+    std::string msg = std::format(
+        "xlings install_packages failed (exit {}) for '{}'", exitCode, target);
+
+    if (indexRepos.empty()) {
+        msg += " with an unknown index-repo configuration";
+    } else {
+        msg += std::format(" with {} index repo{} configured [{}]",
+                           indexRepos.size(),
+                           indexRepos.size() == 1 ? "" : "s",
+                           repoList);
+    }
+
+    if (indexRepos.size() >= 2) {
+        msg += "; ≥2 project-level index repos is a known xlings resolution "
+               "gap that can make install_packages silently exit non-zero "
+               "(mcpp #238; root cause in openxlings/xlings — the resolver "
+               "does not report which repo/package failed)";
+    }
+
+    if (!childError.empty()) {
+        msg += std::format("\n  xlings reported: {}", childError);
+    } else {
+        msg += "\n  xlings emitted no structured error; re-run with "
+               "MCPP_VERBOSE=1 to see the raw xlings invocation + output.";
+    }
+    return msg;
 }
 
 std::expected<CallResult, CallError>
