@@ -423,7 +423,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     auto is_dep_spec_key = [](std::string_view k) {
         return k == "path"   || k == "version" || k == "git"
             || k == "rev"    || k == "tag"     || k == "branch"
-            || k == "features" || k == "workspace" || k == "visibility"
+            || k == "features" || k == "default-features"
+            || k == "workspace" || k == "visibility"
             || k == "backend";
     };
     auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
@@ -455,6 +456,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto it = sub.find("features"); it != sub.end() && it->second.is_array()) {
             for (auto& fv : it->second.as_array())
                 if (fv.is_string()) spec.features.push_back(fv.as_string());
+        }
+        // `default-features = false` — consumer opts out of the dependency's
+        // own `[features].default` seed (Cargo parity). Explicitly requested
+        // `features = [...]` still activate. Threaded into feature_closure so
+        // the default pseudo-feature is not seeded for this dependency.
+        if (auto it = sub.find("default-features"); it != sub.end() && it->second.is_bool()) {
+            spec.defaultFeatures = it->second.as_bool();
         }
         // `backend = "<impl>"` — sugar for requesting the dependency's
         // `backend-<impl>` feature (library-level backend selection knob).
@@ -513,7 +521,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (!looks_like_inline_dep_spec(sub)) {
                 return std::unexpected(error(origin, std::format(
                     "[{}.{}] must be a version string or table of "
-                    "(path/version/git/rev/tag/branch/features/visibility)",
+                    "(path/version/git/rev/tag/branch/features/default-features/visibility)",
                     section, key)));
             }
             if (auto r = fill_inline_spec(spec, section, key, sub); !r) return r;

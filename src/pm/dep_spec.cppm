@@ -40,6 +40,9 @@ struct DependencySpec {
     std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
     std::string                 visibility = "public"; // public / private / interface
     std::vector<std::string>    features;       // requested feature set (long-form dep spec)
+    bool                        defaultFeatures = true; // consumer opt-out: `default-features = false`
+                                                        // suppresses the dep's own [features].default seed
+                                                        // (Cargo parity). Explicit `features = [...]` still apply.
     std::vector<DependencyCoordinate> candidates; // ordered lookup candidates
 
     bool                        inheritWorkspace = false;  // .workspace = true

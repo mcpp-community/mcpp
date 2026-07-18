@@ -404,12 +404,21 @@ void merge_conditional_sources_flags(mcpp::manifest::Manifest& m,
 // contract, Stage 2a feature-deps, and the main feature pass all call this):
 // seed = [features].default ∪ requested, expanded transitively over implies;
 // the literal name "default" is never itself a feature.
+//
+// `seedDefault` is the funnel for consumer-side `default-features = false`
+// (#242, Cargo parity): when false the dependency's own `[features].default`
+// is NOT seeded, so only the explicitly `requested` features (and their
+// transitive `implies`) activate. The root package always seeds its own
+// default (seedDefault=true); a dependency passes its dep spec's
+// `defaultFeatures` flag. `requested` is applied identically either way.
 std::vector<std::string> feature_closure(const mcpp::manifest::Manifest& pm,
-                                         const std::vector<std::string>& requested)
+                                         const std::vector<std::string>& requested,
+                                         bool seedDefault = true)
 {
     std::vector<std::string> act, q;
-    if (auto it = pm.featuresMap.find("default"); it != pm.featuresMap.end())
-        q.insert(q.end(), it->second.begin(), it->second.end());
+    if (seedDefault)
+        if (auto it = pm.featuresMap.find("default"); it != pm.featuresMap.end())
+            q.insert(q.end(), it->second.begin(), it->second.end());
     q.insert(q.end(), requested.begin(), requested.end());
     std::set<std::string> seen;
     while (!q.empty()) {
@@ -2091,17 +2100,21 @@ prepare_build(bool print_fingerprint,
     // which otherwise trips a GCC-16 modules bug ("failed to load pendings for
     // __normal_iterator") when other modules import std.
     auto activateFeatures = [](const mcpp::manifest::Manifest& pm,
-                               const std::vector<std::string>& requested) {
-        return feature_closure(pm, requested);   // single shared implementation
+                               const std::vector<std::string>& requested,
+                               bool seedDefault = true) {
+        return feature_closure(pm, requested, seedDefault); // single shared implementation
     };
     // Merge a manifest's active feature-deps into its `dependencies` map so the
     // worklist below pulls them like any normal dep. A top-level dep of the same
     // key is never overwritten; deps declared only under a feature appear only
-    // when that feature is active.
+    // when that feature is active. `seedDefault` carries consumer-side
+    // `default-features = false` (#242): when a consumer opts out of this dep's
+    // default set, feature-deps behind the default pseudo-feature stay dormant.
     auto mergeActiveFeatureDeps = [&](mcpp::manifest::Manifest& pm,
-                                      const std::vector<std::string>& requested) {
+                                      const std::vector<std::string>& requested,
+                                      bool seedDefault = true) {
         if (pm.featureDeps.empty()) return;
-        for (auto& f : activateFeatures(pm, requested)) {
+        for (auto& f : activateFeatures(pm, requested, seedDefault)) {
             auto it = pm.featureDeps.find(f);
             if (it == pm.featureDeps.end()) continue;
             for (auto& [k, spec] : it->second) pm.dependencies.try_emplace(k, spec);
@@ -2597,7 +2610,7 @@ prepare_build(bool print_fingerprint,
         // dependency set before its children are pushed, so a dep's feature can
         // transitively pull a provider. `spec.features` = features the consumer
         // requested for this dep.
-        mergeActiveFeatureDeps(*dep_manifest, spec.features);
+        mergeActiveFeatureDeps(*dep_manifest, spec.features, spec.defaultFeatures);
 
         auto linkFlagsAdded = propagateLinkFlags(dep_root, *dep_manifest);
 
@@ -2667,12 +2680,14 @@ prepare_build(bool print_fingerprint,
             return f;
         };
         auto activate = [](const mcpp::manifest::Manifest& pm,
-                           const std::vector<std::string>& requested) {
-            return feature_closure(pm, requested);   // single shared implementation
+                           const std::vector<std::string>& requested,
+                           bool seedDefault = true) {
+            return feature_closure(pm, requested, seedDefault); // single shared implementation
         };
         auto apply = [&](mcpp::modgraph::PackageRoot& pkg,
-                         const std::vector<std::string>& requested) {
-            auto active = activate(pkg.manifest, requested);
+                         const std::vector<std::string>& requested,
+                         bool seedDefault = true) {
+            auto active = activate(pkg.manifest, requested, seedDefault);
             // Capability accumulation: package-level provides always count;
             // feature-scoped provides/requires count only when the feature is
             // active. Requirements are bound after all packages are processed.
@@ -2801,8 +2816,13 @@ prepare_build(bool print_fingerprint,
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto& pname = packages[i].manifest.package.name;
             std::vector<std::string> req;
+            bool depDefaultFeatures = true;   // #242: consumer opt-out
             for (auto& [dname, dspec] : m->dependencies) {
-                if (dname == pname || dspec.shortName == pname) { req = dspec.features; break; }
+                if (dname == pname || dspec.shortName == pname) {
+                    req = dspec.features;
+                    depDefaultFeatures = dspec.defaultFeatures;
+                    break;
+                }
             }
             if (!req.empty() && !packages[i].manifest.featuresMap.empty()) {
                 for (auto& f : req) {
@@ -2816,7 +2836,9 @@ prepare_build(bool print_fingerprint,
             }
             // Always apply: even with no requested/default feature, a dep with
             // feature-gated sources must have those sources dropped by default.
-            apply(packages[i], req);
+            // depDefaultFeatures carries the consumer's `default-features = false`
+            // (#242): when opted out, the dep's [features].default is not seeded.
+            apply(packages[i], req, depDefaultFeatures);
         }
 
         // ── G2: dependency build.mcpp (Cargo build.rs model) ────────────────
@@ -2835,10 +2857,12 @@ prepare_build(bool print_fingerprint,
             auto host = host_tc_for_build_program();
             if (!host) return std::unexpected(host.error());
             std::vector<std::string> req;
+            bool depDefaultFeatures = true;   // #242: consumer opt-out
             for (auto& [dname, dspec] : m->dependencies) {
                 if (dname == pkg.manifest.package.name
                     || dspec.shortName == pkg.manifest.package.name) {
                     req = dspec.features;
+                    depDefaultFeatures = dspec.defaultFeatures;
                     break;
                 }
             }
@@ -2849,7 +2873,7 @@ prepare_build(bool print_fingerprint,
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = resolvedTargetCanonical;
             bpEnv.profile      = effectiveProfile;
-            bpEnv.features     = feature_closure(pkg.manifest, req);
+            bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = *root / "target" / ".build-mcpp" / "deps"
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
             bpEnv.genBase      = bpEnv.artifactsDir / "out";

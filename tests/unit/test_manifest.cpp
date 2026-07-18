@@ -229,6 +229,36 @@ opengl = "2026.05.31"
     EXPECT_EQ(m->dependencies.at("compat.opengl").visibility, "public");
 }
 
+// #242 — consumer-side `default-features = false`: a consumer opts out of a
+// dependency's own [features].default set (Cargo parity). The flag parses into
+// DependencySpec.defaultFeatures; explicitly requested `features = [...]` still
+// come through. Default (omitted) stays true.
+TEST(Manifest, ParsesDependencyDefaultFeaturesOptOut) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "x"
+version = "0.1.0"
+[modules]
+sources = ["src/**/*.cppm"]
+[targets.x]
+kind = "bin"
+main = "src/main.cpp"
+[dependencies.compat]
+ffmpeg = { version = "6.1", default-features = false, features = ["avcodec"] }
+zlib = "1.3"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->dependencies.size(), 2u);
+    // Opt-out dependency: flag is false, but the explicit feature still parses.
+    const auto& ff = m->dependencies.at("compat.ffmpeg");
+    EXPECT_FALSE(ff.defaultFeatures);
+    ASSERT_EQ(ff.features.size(), 1u);
+    EXPECT_EQ(ff.features[0], "avcodec");
+    EXPECT_EQ(ff.version, "6.1");
+    // Bare-string dependency: defaultFeatures defaults to true.
+    EXPECT_TRUE(m->dependencies.at("compat.zlib").defaultFeatures);
+}
+
 TEST(Manifest, RejectsInvalidDependencyVisibility) {
     auto m = mcpp::manifest::parse_string(R"(
 [package]
