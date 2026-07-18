@@ -3,19 +3,21 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [0.0.99] — 2026-07-19
+## [0.0.98] — 2026-07-19
 
-> #230–#243 批次的第二发:#237/#241/#242 根因级实现 + #238 mcpp 侧诊断(根因在 xlings)+ #243 设计。总账见 `.agents/docs/2026-07-19-issues-230-243-batch-ledger-and-architecture-assessment.md`。
+> #230–#243 批次(单 PR 统一发布,逐 commit):#233 对象路径消歧的两个后续缺口(#239/#240,解阻塞 mcpplibs #79 opencv 收录)+ #237/#241/#242 根因级实现 + #238 mcpp 侧诊断(根因在 openxlings/xlings#374)+ #243 设计。总账 + 架构评估见 `.agents/docs/2026-07-19-issues-230-243-batch-ledger-and-architecture-assessment.md`;各设计文档见 `.agents/docs/2026-07-19-*`。
 
 ### 新增
 
-- **`MCPP_DEP_<NAME>_DIR` build.mcpp 契约**(#241):包的 `build.mcpp` 现可经 `mcpp::dep_dir("<name>")` 拿到依赖的安装目录(verdir/payload 根),不必再逆向 store 布局(实例:compat.opencv 的 `unifont` feature 读数据资产包 compat.opencv-unifont 的字体 blob)。用权威的 consumer→dep 边图注入,覆盖 feature 激活的依赖;同款 sanitize、自动进 rerun hash。作用域为依赖侧 build.mcpp(root 工程 build.mcpp 早于依赖解析运行,列为后续项)。
+- **`MCPP_DEP_<NAME>_DIR` build.mcpp 契约**(#241):包的 `build.mcpp` 现可经 `mcpp::dep_dir("<name>")` 拿到依赖的安装目录(verdir/payload 根),不必再逆向 store 布局(实例:compat.opencv 的 `unifont` feature 读数据资产包 compat.opencv-unifont 的字体 blob)。用权威的 consumer→dep 边图注入,覆盖 feature 激活的依赖;canonical + short 双发(`dep_dir("compat.zlib")`/`dep_dir("zlib")` 皆可)、同款 sanitize、碰撞守卫、自动进 rerun hash。作用域为依赖侧 build.mcpp(root 工程 build.mcpp 早于依赖解析运行,列为后续项)。
 - **消费端 `default-features = false`**(#242):依赖 spec 支持关闭该依赖的默认 feature 集(`{ default-features = false, features = ["x"] }`),Cargo 平价。根因收敛在 `feature_closure` 的单一 `seedDefault` 门:关闭时不 seed 该依赖 `[features].default`,仅显式请求 + `implies` 激活;root 包/工程 build.mcpp 仍默认 seed。(挡住 compat.ffmpeg 裁剪档形态。)
 
 ### 修复
 
+- **消歧后链接输入未跟随改名,依赖与消费者同名源即挂**(#240):当依赖包与消费者存在同名源(近乎必现——双方都有 `src/main.cpp`,如 OpenCV 自带的 sample `main.cpp` × 消费者的入口)时,#233 已把被扫描的消费者 `main` 编到 `obj/<pkg>/src/main.o`,但链接步骤仍引用消歧前的扁平 `obj/main.o` → `ninja: error: 'obj/main.o' … missing and no known rule`。现将对象路径分配收敛为**单一来源**:被 glob 进来的入口复用其编译边已消歧的对象;未被 glob 的入口也纳入同一碰撞普查后消歧——链接输入与编译边永不背离。常见单二进制工程(`main` 唯一)仍为扁平 `obj/main.o`,字节不变。
+- **绝对/越根路径源的消歧对象逃逸出 `obj/`**(#239):依赖 `build.mcpp` 写进 OUT_DIR(`target/.build-mcpp/deps/<name>@<ver>/out/`,在包根之外)的生成源,其 `relPath` 携带 `..`,#233 曾原样拼进 `obj/<pkg>/../…` 致对象路径爬出构建树(甚至在 CWD 镜像整棵绝对路径树);且路径里的 `@` 会被 ninja 单引号包裹,连带压垮 #235 的 `"$out.d"` depfile 重定向。现消歧前缀逐分量净化:去绝对根、`.` 丢弃、`..`→`__up`、非可移植字符(如 `@`)→`_`——对象永远向下且 shell 安全;逐分量单射,保住 #233 的唯一性(L1b 断言兜底残余)。
 - **xpkg 描述符 mcpp 段未知键 build 时静默忽略**(#237):`dependencies` 误写(正确键 `deps`)等未知键此前只有 `mcpp xpkg parse` 报,build 路径静默丢弃致依赖消失无诊断。现描述符被采纳为依赖时按键**响亮告警**并给 did-you-mean(封闭词表别名 + Levenshtein 回退);沿用 0.0.97 封闭文法先例,告警而非硬错以保前向兼容。
-- **feature 请求集收敛到依赖边图(#242 传递边 + #241 命名;0.0.99 架构评估头号优化)**:此前 feature 请求集在解析(`mergeActiveFeatureDeps`,读 per-edge spec)与激活(`apply()`,只扫 root 直接依赖)两处独立推导且对**传递边**不自洽——传递依赖的请求 feature 与其消费者的 `default-features = false` 被静默丢弃(激活仍 seed 该依赖默认 feature,定义其宏/保留默认门控源,而解析已跳过)。现 `DependencyEdge` 携带 per-edge `requestedFeatures + defaultFeatures`,新 `aggregatedRequest` 对某依赖包所有入边做 union/OR(Cargo 菱形语义),激活与依赖 build.mcpp 共享之;直接依赖行为不变,顺带补掉长期的传递 feature 未传播缺口。#241 的 `MCPP_DEP_<NAME>_DIR` 改为 canonical + short 双发(`dep_dir("compat.zlib")`/`dep_dir("zlib")` 皆可)+ 碰撞守卫。e2e 127。
+- **feature 请求集收敛到依赖边图(#242 传递边 + #241 命名;架构评估头号优化)**:此前 feature 请求集在解析(`mergeActiveFeatureDeps`,读 per-edge spec)与激活(`apply()`,只扫 root 直接依赖)两处独立推导且对**传递边**不自洽——传递依赖的请求 feature 与其消费者的 `default-features = false` 被静默丢弃(激活仍 seed 该依赖默认 feature,定义其宏/保留默认门控源,而解析已跳过)。现 `DependencyEdge` 携带 per-edge `requestedFeatures + defaultFeatures`,新 `aggregatedRequest` 对某依赖包所有入边做 union/OR(Cargo 菱形语义),激活与依赖 build.mcpp 共享之;直接依赖行为不变,顺带补掉长期的传递 feature 未传播缺口。e2e 127。
 - **多 index repo 下 `install_packages` 失败无诊断**(#238,**根因在 xlings**):裸 `fetch failed (exit 1)` 现重建为可操作诊断——点名目标、已配置 index repos 清单、`≥2` 仓的已知 xlings 解析缺口提示、保留子进程输出、`MCPP_VERBOSE=1` 看原始调用。**仅诊断改进**;多仓解析的根因修复须落在 openxlings/xlings(已开 **openxlings/xlings#374**)。
 
 ### 设计(未实现,后续 PR)
@@ -24,18 +26,9 @@
 
 ### 备注
 
-- #230(windows workspace exit 127)已于 0.0.96 修复,待 mcpp-index windows CI pin ≥0.0.96 复验后关闭。#239/#240 见 0.0.98。
+- #230(windows workspace exit 127)已于 0.0.96 修复,待 mcpp-index windows CI pin ≥0.0.98 复验后关闭。
 
-## [0.0.98] — 2026-07-19
-
-> #233 对象路径消歧的两个后续缺口修复(单 PR,逐 commit)。解阻塞 mcpplibs #79 opencv 收录。设计见 `.agents/docs/2026-07-19-object-path-disambiguation-followups-239-240-design.md`。
-
-### 修复
-
-- **消歧后链接输入未跟随改名,依赖与消费者同名源即挂**(#240):当依赖包与消费者存在同名源(近乎必现——双方都有 `src/main.cpp`,如 OpenCV 自带的 sample `main.cpp` × 消费者的入口)时,#233 已把被扫描的消费者 `main` 编到 `obj/<pkg>/src/main.o`,但链接步骤仍引用消歧前的扁平 `obj/main.o` → `ninja: error: 'obj/main.o' … missing and no known rule`。现将对象路径分配收敛为**单一来源**:被 glob 进来的入口复用其编译边已消歧的对象;未被 glob 的入口也纳入同一碰撞普查后消歧——链接输入与编译边永不背离。常见单二进制工程(`main` 唯一)仍为扁平 `obj/main.o`,字节不变。
-- **绝对/越根路径源的消歧对象逃逸出 `obj/`**(#239):依赖 `build.mcpp` 写进 OUT_DIR(`target/.build-mcpp/deps/<name>@<ver>/out/`,在包根之外)的生成源,其 `relPath` 携带 `..`,#233 曾原样拼进 `obj/<pkg>/../…` 致对象路径爬出构建树(甚至在 CWD 镜像整棵绝对路径树);且路径里的 `@` 会被 ninja 单引号包裹,连带压垮 #235 的 `"$out.d"` depfile 重定向。现消歧前缀逐分量净化:去绝对根、`.` 丢弃、`..`→`__up`、非可移植字符(如 `@`)→`_`——对象永远向下且 shell 安全;逐分量单射,保住 #233 的唯一性(L1b 断言兜底残余)。
-
-
+## [0.0.97] — 2026-07-18
 
 > 架构级修复批次(单 PR,逐簇 commit):ffmpeg-m/opencv-m 全源码直编暴露的第二层缺口 + workspace 测试基建语法空洞。
 
