@@ -342,7 +342,7 @@ format_install_failure_diagnostic(std::string_view target,
     if (indexRepos.size() >= 2) {
         msg += "; ≥2 project-level index repos is a known xlings resolution "
                "gap that can make install_packages silently exit non-zero "
-               "(mcpp #238; root cause in openxlings/xlings — the resolver "
+               "(mcpp #238; root cause openxlings/xlings#374 — the resolver "
                "does not report which repo/package failed)";
     }
 
