@@ -3,7 +3,16 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [0.0.97] — 2026-07-18
+## [0.0.98] — 2026-07-19
+
+> #233 对象路径消歧的两个后续缺口修复(单 PR,逐 commit)。解阻塞 mcpplibs #79 opencv 收录。设计见 `.agents/docs/2026-07-19-object-path-disambiguation-followups-239-240-design.md`。
+
+### 修复
+
+- **消歧后链接输入未跟随改名,依赖与消费者同名源即挂**(#240):当依赖包与消费者存在同名源(近乎必现——双方都有 `src/main.cpp`,如 OpenCV 自带的 sample `main.cpp` × 消费者的入口)时,#233 已把被扫描的消费者 `main` 编到 `obj/<pkg>/src/main.o`,但链接步骤仍引用消歧前的扁平 `obj/main.o` → `ninja: error: 'obj/main.o' … missing and no known rule`。现将对象路径分配收敛为**单一来源**:被 glob 进来的入口复用其编译边已消歧的对象;未被 glob 的入口也纳入同一碰撞普查后消歧——链接输入与编译边永不背离。常见单二进制工程(`main` 唯一)仍为扁平 `obj/main.o`,字节不变。
+- **绝对/越根路径源的消歧对象逃逸出 `obj/`**(#239):依赖 `build.mcpp` 写进 OUT_DIR(`target/.build-mcpp/deps/<name>@<ver>/out/`,在包根之外)的生成源,其 `relPath` 携带 `..`,#233 曾原样拼进 `obj/<pkg>/../…` 致对象路径爬出构建树(甚至在 CWD 镜像整棵绝对路径树);且路径里的 `@` 会被 ninja 单引号包裹,连带压垮 #235 的 `"$out.d"` depfile 重定向。现消歧前缀逐分量净化:去绝对根、`.` 丢弃、`..`→`__up`、非可移植字符(如 `@`)→`_`——对象永远向下且 shell 安全;逐分量单射,保住 #233 的唯一性(L1b 断言兜底残余)。
+
+
 
 > 架构级修复批次(单 PR,逐簇 commit):ffmpeg-m/opencv-m 全源码直编暴露的第二层缺口 + workspace 测试基建语法空洞。
 
