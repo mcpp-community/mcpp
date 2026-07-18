@@ -15,6 +15,7 @@
 ### 修复
 
 - **xpkg 描述符 mcpp 段未知键 build 时静默忽略**(#237):`dependencies` 误写(正确键 `deps`)等未知键此前只有 `mcpp xpkg parse` 报,build 路径静默丢弃致依赖消失无诊断。现描述符被采纳为依赖时按键**响亮告警**并给 did-you-mean(封闭词表别名 + Levenshtein 回退);沿用 0.0.97 封闭文法先例,告警而非硬错以保前向兼容。
+- **feature 请求集收敛到依赖边图(#242 传递边 + #241 命名;0.0.99 架构评估头号优化)**:此前 feature 请求集在解析(`mergeActiveFeatureDeps`,读 per-edge spec)与激活(`apply()`,只扫 root 直接依赖)两处独立推导且对**传递边**不自洽——传递依赖的请求 feature 与其消费者的 `default-features = false` 被静默丢弃(激活仍 seed 该依赖默认 feature,定义其宏/保留默认门控源,而解析已跳过)。现 `DependencyEdge` 携带 per-edge `requestedFeatures + defaultFeatures`,新 `aggregatedRequest` 对某依赖包所有入边做 union/OR(Cargo 菱形语义),激活与依赖 build.mcpp 共享之;直接依赖行为不变,顺带补掉长期的传递 feature 未传播缺口。#241 的 `MCPP_DEP_<NAME>_DIR` 改为 canonical + short 双发(`dep_dir("compat.zlib")`/`dep_dir("zlib")` 皆可)+ 碰撞守卫。e2e 127。
 - **多 index repo 下 `install_packages` 失败无诊断**(#238,**根因在 xlings**):裸 `fetch failed (exit 1)` 现重建为可操作诊断——点名目标、已配置 index repos 清单、`≥2` 仓的已知 xlings 解析缺口提示、保留子进程输出、`MCPP_VERBOSE=1` 看原始调用。**仅诊断改进**;多仓解析的根因修复须落在 openxlings/xlings(已开 **openxlings/xlings#374**)。
 
 ### 设计(未实现,后续 PR)

@@ -36,8 +36,8 @@
 | **#238** | bug | ⛔ **根因在 xlings**(mcpp 诊断✅) | xlings `install_packages` 多 index_repos(≥2)解析静默 exit 1 | mcpp 侧只:写多仓 `xlings.cppm:1109-1117`、shell-out `:1016/1022`、吞失败 `package_fetcher.cppm:343`(NDJSON 无 `error` 事件 `progress.cppm:23`);触发链 = #224 root `[indices]` 继承 | mcpp 侧**诊断已落地**(`00b66c5`):`read_seeded_index_repos`(空格容错解析,修了复用 compact `extract_string` 的假 0 仓 bug)+ `format_install_failure_diagnostic` 点名目标/仓清单/`≥2` 缺口提示,`captured_error()` 保留子进程输出,`MCPP_VERBOSE` 记原始调用。单测 `PmPackageFetcher.*`。**根因仍须落 xlings**:已提交 **openxlings/xlings#374** | mcpp 诊断:`00b66c5`(0.0.99);根因:**openxlings/xlings#374** |
 | **#239** | bug | 🟢 已修待发 | #233 消歧对越根/绝对 relPath 逃逸 `obj/` + `@` 撞 ninja 引号×#235 depfile | `plan.cppm` 消歧前缀 | `safe_object_prefix` 逐分量净化(去根/`.`丢/`..`→`__up`/非可移植→`_`),逐分量单射保 #233 唯一性 | `b7f32f6`(本 branch,0.0.98) |
 | **#240** | bug | 🟢 已修待发 | #233 消歧后 entry-main link 输入用陈旧扁平 `obj/main.o` | `plan.cppm` entry-main 独立重算 + census 盲区 | 对象路径收敛单一 `object_for`;entry-main 纳入普查 / 复用已扫描单元对象 | `b7f32f6`(本 branch,0.0.98) |
-| **#241** | enhancement | ✅ 已修待发 | build.mcpp G3 环境契约缺 per-dep 路径 | `build_program.cppm` contract_env(无 per-dep);sanitizer `sanitize_feature_env`;rerun hash;调用点 `prepare.cppm` 依赖 build.mcpp 站 + `dependencyEdges` 图;struct `BuildProgramEnv` | `BuildProgramEnv.depDirs` + `contract_env` 发 `MCPP_DEP_<NAME>_DIR`(同 feature sanitize,自动进 rerun hash)+ `mcpp::dep_dir()` 模块助手;用权威 consumer→dep 边图注入(覆盖 feature 激活依赖)。**根因**:消除包侧自导航 store 布局。作用域=依赖侧 build.mcpp(root 工程 build.mcpp 早于依赖解析,列后续)。e2e 125 | `df3750b`(0.0.99) |
-| **#242** | enhancement | ✅ 已修待发 | 消费端无法关默认 feature 集 | `feature_closure` 无条件 seed default;dep-spec 键白名单缺 `default-features` `toml.cppm`;`DependencySpec`(`dep_spec.cppm`)无 `defaultFeatures` | `default-features` 键→`DependencySpec.defaultFeatures`(默认 true)→穿进 `feature_closure` 单一 `seedDefault` 门(false 时跳过 default seed);root/工程 build.mcpp 仍 seed。**Cargo 平价,单一收敛点**。单测 + e2e 126 | `bba624d`(0.0.99) |
+| **#241** | enhancement | ✅ 已修待发 | build.mcpp G3 环境契约缺 per-dep 路径 | `build_program.cppm` contract_env(无 per-dep);sanitizer `sanitize_feature_env`;rerun hash;调用点 `prepare.cppm` 依赖 build.mcpp 站 + `dependencyEdges` 图;struct `BuildProgramEnv` | `BuildProgramEnv.depDirs` + `contract_env` 发 `MCPP_DEP_<NAME>_DIR`(同 feature sanitize,自动进 rerun hash)+ `mcpp::dep_dir()` 模块助手;用权威 consumer→dep 边图注入(覆盖 feature 激活依赖)。**根因**:消除包侧自导航 store 布局。作用域=依赖侧 build.mcpp(root 工程 build.mcpp 早于依赖解析,列后续)。e2e 125;**架构评审补**:canonical+short 双发 + 碰撞守卫(`4449077`) | `df3750b` + `4449077`(0.0.99) |
+| **#242** | enhancement | ✅ 已修待发 | 消费端无法关默认 feature 集 | `feature_closure` 无条件 seed default;dep-spec 键白名单缺 `default-features` `toml.cppm`;`DependencySpec`(`dep_spec.cppm`)无 `defaultFeatures` | `default-features` 键→`DependencySpec.defaultFeatures`(默认 true)→穿进 `feature_closure` 单一 `seedDefault` 门(false 时跳过 default seed);root/工程 build.mcpp 仍 seed。**Cargo 平价,单一收敛点**。单测 + e2e 126;**架构评审补**:传递边 opt-out 收敛到 `aggregatedRequest`(e2e 127) | `bba624d` + `4449077`(0.0.99) |
 | **#243** | enhancement | 📐 设计✅ / 实现待后续 PR | manifest `[features]` 缺条件依赖(**实为已存在**)+ 依赖 feature 转发(`dep/feat`,真缺口) | 条件依赖已存在:`[feature-deps.<name>]` `toml.cppm:699-710` + xpkg `features.x.deps` `xpkg.cppm:1135-1161` → `featureDeps`;转发无处表达;请求集两处不自洽(`mergeActiveFeatureDeps` vs `apply()` `:2801-2806`,`:2653` 传递性 TODO) | 设计定稿 `.agents/docs/2026-07-19-issue-243-feature-forwarding-design.md`:`[features]` 内 `dep/feat` token 转发;引入**单一** per-package 请求 feature 漏斗 `requestedFeaturesByPkg`(顺带补 `:2653` 传递性),与 #242 加性组合。**实现列 0.0.99+ 独立 PR** | 设计:本 branch;实现:后续 |
 
 > 上批(#224–#235 + R6)已于 **0.0.97** 发布,总账见
@@ -64,17 +64,51 @@
 
 ---
 
-## 4. 【待补】批次全部完成后的整体架构评估
+## 4. 整体架构评估(批次落地后)
 
-> 本节在 #230–#243 **全部落地**后填写,评估维度(现在先锁定标准,避免事后放水):
+> 方法:实现全部落地后,派一个**独立对抗性 reviewer**(冷上下文)审全量 batch diff（`05155ff..HEAD`),按"workaround 味 / 单漏斗违背 / 回归 / 一致性债 / 测试是否真门控"五维找问题并给可复现触发。下述结论基于其发现 + 逐条核实 + 实测。
 
-1. **设计合理性**:本批全部修复是否都落在**单一汇聚点**,而非新增特判 / 旁路?逐条对照 §0 主线打分。
-2. **一致性**:manifest 文法 / xpkg 描述符 / feature 模型三处是否收敛为**一数据模型多文法**(#243 是关键检验点),还是又分叉出平行实现?
-3. **稳定性 / 回归面**:是否复用了"build+test 双路径""合并后全量 e2e + 多平台 CI"来堵 per-commit 单测的盲区?有无跨构建 / 共享库运行期未验的假绿?
-4. **架构债清算**:§2 登记的 `"$out.d"`×`@` 脆性、#238 的 xlings 侧根因、#241 的 payload-mount 子项——是清了、还是显式转为后续 issue?**不允许静默遗留。**
-5. **issue↔实现映射完整性**:§1 总账是否每条都有 commit/PR 且状态如实(尤其 #238 不得冒充已修)。
+### 4.1 设计合理性(单一汇聚点 vs 特判)——逐条
 
-**评估触发条件**:§1 表中不再有 🔧/📐/⛔/🟢(全部 ✅ 或显式转 issue 的 ⛔)。
+| # | 判定 | 依据 |
+|---|------|------|
+| #239/#240 | ✅ 根因/单漏斗 | `object_for`/`safe_object_prefix` 是真正的单一对象路径分配器,scanner 单元与 synthesized entry-main 同源;残余非单射由 L1b 响亮断言兜底。非特判。 |
+| #237 | ✅ 根因 | 单一描述符采纳点 funnel(`warn_unknown_xpkg_keys` 两站同调)+ 封闭词表随 parser else-if 同步。 |
+| #238 | ✅ 正确归属 | 根因在 xlings(openxlings/xlings#374);mcpp 侧只从自有上下文重建可操作诊断,纯函数可测,不吞子进程输出。非冒充修复。 |
+| #241 | ✅ 根因(修正后) | 用权威 consumer→dep 边图注入(非名字猜测)。review 指出"canonical vs declared 名"矛盾 → 已改为**canonical + short 双发**并加碰撞守卫。 |
+| #242 | ⚠️→✅ 根因(修正后) | `seedDefault` 门本身干净,但 review 证实 **feature 请求集在解析与激活两处独立推导且对传递边不自洽**(激活只扫 root 直接依赖)——`default-features=false` 对传递依赖被静默丢弃,甚至编译默认门控源却不解析其依赖。**已收敛**:见 §4.6。 |
+
+### 4.2 一致性(一数据模型多文法)
+
+- **feature 条件依赖**:TOML `[feature-deps]` 与 xpkg `features.x.deps` 已收敛到单一 `Manifest::featureDeps`(#243 核实)。✅
+- **feature 请求集**:此前是**反例**——解析用 per-edge `spec.features`,激活用 root 直接边重推,两处漂移。§4.6 已把二者收敛到唯一权威源(`dependencyEdges` 图的 `aggregatedRequest`)。✅(本批次最大的架构收益)
+- **残留不一致(如实登记)**:xpkg 描述符 `deps` 仍是**纯版本串**,不支持 per-dep `features`/`default-features`;#242 的 opt-out 只在 TOML 面。属**先于本批**的表面不对称(xpkg deps 从来没有 per-dep features),消费端 opt-out 也只在 root(TOML)面有意义 → 非本批回归,列为一致性债。
+
+### 4.3 稳定性 / 回归面
+
+- feature 激活是本批风险最高的改动面;已跑**全部 feature e2e**(67/71/72/79/80/81/82/83/100/106/125/126)+ 新增 127 + 单测 35/35 全绿,直接依赖行为逐字节不变(root 边携带 root spec)。
+- 对象路径改动对常见工程逐字节不变(§2)。
+- **未做多平台/跨构建 e2e**(本机仅 Linux)——沿用"合并后全量 e2e + 多平台 CI"堵盲区,故**发版前置条件 = CI 全绿**(见 §5,用户要求)。
+
+### 4.4 架构债清算(不静默遗留)
+
+| 债 | 处置 |
+|----|------|
+| `"$out.d"`×`@` depfile 脆性(§2) | 本批靠净化前缀绕开触发面;`"$out.d"` 自身脆性**未根治** → 候选独立 issue(登记在案)。 |
+| #238 多仓解析根因 | 已开 **openxlings/xlings#374**,mcpp 侧诊断到位。 |
+| #241 payload-mount 子项(裸文件 payload 实体在共享 runtimedir) | 未做(fetcher/store 侧改动),issue 中为"顺带"项 → 后续。 |
+| #243 转发实现 | 设计定稿,列 0.0.99+ 独立 PR。 |
+| **新发现**:传递依赖的 active feature 集变化跨"就地重建"未触发该依赖重编(e2e 127 control 需 `clean` 才对) | fingerprint 未覆盖传递 feature 态 → 登记为候选后续(非本批引入的正确性回归:首次干净构建正确,只是增量重建缓存过旧)。 |
+
+### 4.5 issue↔实现映射完整性
+
+§1 每行均有 commit + 状态如实;#238 明确标 ⛔(根因在 xlings),未冒充已修。✅
+
+### 4.6 已执行的架构优化(review 头号建议)
+
+**把 feature 请求集收敛到唯一权威漏斗。** `DependencyEdge` 现携带 per-edge `requestedFeatures + defaultFeatures`;新 `aggregatedRequest(depPkgIndex)` 对某依赖包的**所有入边**做 union(features)/OR(default-features)(Cargo 菱形语义),feature 激活与依赖 build.mcpp env **共同消费**之。一次改动同时:(a) 修 #242 传递边 opt-out 丢失(commit `4449077`);(b) 退休 `prepare.cppm` 长期的"传递 dep→dep feature 请求未传播"限制;(c) 与 #243 设计的 `requestedFeaturesByPkg` 漏斗同向(#243 实现可直接在此之上做转发注入)。e2e 127 门控。
+
+**结论**:本批全部修复均为根因级,无 workaround 冒充;唯一 review 抓到的真隐患(#242 传递边)已按"收敛到单漏斗"原则修掉而非打补丁。剩余为显式登记的后续项(§4.4),无静默遗留。
 
 ---
 
