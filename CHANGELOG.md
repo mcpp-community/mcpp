@@ -3,6 +3,28 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.99] — 2026-07-19
+
+> #230–#243 批次的第二发:#237/#241/#242 根因级实现 + #238 mcpp 侧诊断(根因在 xlings)+ #243 设计。总账见 `.agents/docs/2026-07-19-issues-230-243-batch-ledger-and-architecture-assessment.md`。
+
+### 新增
+
+- **`MCPP_DEP_<NAME>_DIR` build.mcpp 契约**(#241):包的 `build.mcpp` 现可经 `mcpp::dep_dir("<name>")` 拿到依赖的安装目录(verdir/payload 根),不必再逆向 store 布局(实例:compat.opencv 的 `unifont` feature 读数据资产包 compat.opencv-unifont 的字体 blob)。用权威的 consumer→dep 边图注入,覆盖 feature 激活的依赖;同款 sanitize、自动进 rerun hash。作用域为依赖侧 build.mcpp(root 工程 build.mcpp 早于依赖解析运行,列为后续项)。
+- **消费端 `default-features = false`**(#242):依赖 spec 支持关闭该依赖的默认 feature 集(`{ default-features = false, features = ["x"] }`),Cargo 平价。根因收敛在 `feature_closure` 的单一 `seedDefault` 门:关闭时不 seed 该依赖 `[features].default`,仅显式请求 + `implies` 激活;root 包/工程 build.mcpp 仍默认 seed。(挡住 compat.ffmpeg 裁剪档形态。)
+
+### 修复
+
+- **xpkg 描述符 mcpp 段未知键 build 时静默忽略**(#237):`dependencies` 误写(正确键 `deps`)等未知键此前只有 `mcpp xpkg parse` 报,build 路径静默丢弃致依赖消失无诊断。现描述符被采纳为依赖时按键**响亮告警**并给 did-you-mean(封闭词表别名 + Levenshtein 回退);沿用 0.0.97 封闭文法先例,告警而非硬错以保前向兼容。
+- **多 index repo 下 `install_packages` 失败无诊断**(#238,**根因在 xlings**):裸 `fetch failed (exit 1)` 现重建为可操作诊断——点名目标、已配置 index repos 清单、`≥2` 仓的已知 xlings 解析缺口提示、保留子进程输出、`MCPP_VERBOSE=1` 看原始调用。**仅诊断改进**;多仓解析的根因修复须落在 openxlings/xlings(已另开 issue)。
+
+### 设计(未实现,后续 PR)
+
+- **#243 feature 依赖转发(`dep/feat`)**:核实条件依赖半边已存在(`[feature-deps]`/xpkg `features.x.deps`),真正缺口是转发;设计见 `.agents/docs/2026-07-19-issue-243-feature-forwarding-design.md`,收敛为单一 per-package 请求 feature 漏斗(顺带补 `prepare.cppm:2653` 传递性缺口),与 #242 opt-out 加性组合。
+
+### 备注
+
+- #230(windows workspace exit 127)已于 0.0.96 修复,待 mcpp-index windows CI pin ≥0.0.96 复验后关闭。#239/#240 见 0.0.98。
+
 ## [0.0.98] — 2026-07-19
 
 > #233 对象路径消歧的两个后续缺口修复(单 PR,逐 commit)。解阻塞 mcpplibs #79 opencv 收录。设计见 `.agents/docs/2026-07-19-object-path-disambiguation-followups-239-240-design.md`。
