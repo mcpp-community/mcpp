@@ -1851,6 +1851,14 @@ prepare_build(bool print_fingerprint,
         std::size_t dependencyPackageIndex = 0;
         mcpp::modgraph::DependencyVisibility visibility =
             mcpp::modgraph::DependencyVisibility::Public;
+        // #242/#243: the per-edge feature request that THIS consumer made of
+        // THIS dependency. Feature activation must consume these off the edge
+        // graph (union over all incoming edges) rather than re-scanning only
+        // the root manifest's direct deps — otherwise a transitive dep's
+        // requested features and its consumer's `default-features = false` are
+        // silently dropped (resolution honors them per-edge; activation did not).
+        std::vector<std::string> requestedFeatures;
+        bool defaultFeatures = true;
     };
     std::vector<DependencyEdge> dependencyEdges;
 
@@ -1961,6 +1969,8 @@ prepare_build(bool print_fingerprint,
             .consumerPackageIndex = consumerPackageIndex,
             .dependencyPackageIndex = dependencyPackageIndex,
             .visibility = visibility,
+            .requestedFeatures = spec.features,
+            .defaultFeatures = spec.defaultFeatures,
         });
     };
 
@@ -2836,17 +2846,32 @@ prepare_build(bool print_fingerprint,
             apply(packages[0], rootReq);
             for (auto& f : activate(*m, rootReq)) activeRootFeatures.insert(f);
         }
+        // #242/#243: the feature request for a dependency PACKAGE, aggregated
+        // over ALL its incoming edges (a package may be depended on by several
+        // consumers — diamond — or reached only transitively). Cargo semantics:
+        // requested features UNION; default-features stays on unless EVERY
+        // consumer opted out. Sourcing this from the authoritative edge graph —
+        // rather than scanning only the root manifest's direct deps — makes
+        // activation AGREE with resolution (mergeActiveFeatureDeps, which reads
+        // the true per-edge spec): a transitive dep's requested features and its
+        // consumer's `default-features = false` are no longer silently dropped.
+        auto aggregatedRequest = [&](std::size_t depPkgIndex)
+            -> std::pair<std::vector<std::string>, bool> {
+            std::vector<std::string> feats;
+            bool anyEdge = false, anyDefault = false;
+            for (auto const& edge : dependencyEdges) {
+                if (edge.dependencyPackageIndex != depPkgIndex) continue;
+                anyEdge = true;
+                if (edge.defaultFeatures) anyDefault = true;
+                for (auto const& f : edge.requestedFeatures)
+                    if (std::find(feats.begin(), feats.end(), f) == feats.end())
+                        feats.push_back(f);
+            }
+            return { std::move(feats), anyEdge ? anyDefault : true };
+        };
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto& pname = packages[i].manifest.package.name;
-            std::vector<std::string> req;
-            bool depDefaultFeatures = true;   // #242: consumer opt-out
-            for (auto& [dname, dspec] : m->dependencies) {
-                if (dname == pname || dspec.shortName == pname) {
-                    req = dspec.features;
-                    depDefaultFeatures = dspec.defaultFeatures;
-                    break;
-                }
-            }
+            auto [req, depDefaultFeatures] = aggregatedRequest(i);
             if (!req.empty() && !packages[i].manifest.featuresMap.empty()) {
                 for (auto& f : req) {
                     if (packages[i].manifest.featuresMap.contains(f)) continue;
@@ -2879,16 +2904,10 @@ prepare_build(bool print_fingerprint,
             if (!std::filesystem::exists(pkg.root / "build.mcpp", bpEc)) continue;
             auto host = host_tc_for_build_program();
             if (!host) return std::unexpected(host.error());
-            std::vector<std::string> req;
-            bool depDefaultFeatures = true;   // #242: consumer opt-out
-            for (auto& [dname, dspec] : m->dependencies) {
-                if (dname == pkg.manifest.package.name
-                    || dspec.shortName == pkg.manifest.package.name) {
-                    req = dspec.features;
-                    depDefaultFeatures = dspec.defaultFeatures;
-                    break;
-                }
-            }
+            // Same edge-graph aggregation as feature activation above, so a
+            // dep build.mcpp sees the SAME active feature set the dep is built
+            // with (incl. transitive requests / default-features opt-out).
+            auto [req, depDefaultFeatures] = aggregatedRequest(i);
             auto dirSafe = [](std::string s) {
                 for (auto& c : s) if (c == '/' || c == '\\' || c == ':') c = '_';
                 return s;
@@ -2901,17 +2920,24 @@ prepare_build(bool print_fingerprint,
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
             bpEnv.genBase      = bpEnv.artifactsDir / "out";
             // mcpp#241: expose this package's resolved dependencies (verdir /
-            // payload root) as MCPP_DEP_<NAME>_DIR, keyed by the dependency's
-            // canonical package name. Uses the authoritative consumer→dep edge
-            // graph (no name-guessing); covers feature-activated deps too, since
-            // mergeActiveFeatureDeps folded them into `dependencies` before the
-            // edges were recorded. (The ROOT project's own build.mcpp runs
+            // payload root) as MCPP_DEP_<NAME>_DIR. Uses the authoritative
+            // consumer→dep edge graph (no name-guessing); covers feature-
+            // activated deps too (mergeActiveFeatureDeps folded them into
+            // `dependencies` before the edges were recorded). A dep is emitted
+            // under BOTH its canonical package name AND its namespace-stripped
+            // short name, so `mcpp::dep_dir("compat.zlib")` and
+            // `mcpp::dep_dir("zlib")` both resolve regardless of which spelling
+            // the author used in `deps`. (The ROOT project's own build.mcpp runs
             // before dependency resolution, so it does not yet receive these —
             // tracked as a follow-up in the #230-#243 ledger.)
             for (auto const& edge : dependencyEdges) {
                 if (edge.consumerPackageIndex != i) continue;
                 auto const& depPkg = packages[edge.dependencyPackageIndex];
-                bpEnv.depDirs.emplace_back(depPkg.manifest.package.name, depPkg.root);
+                const auto& canon = depPkg.manifest.package.name;
+                bpEnv.depDirs.emplace_back(canon, depPkg.root);
+                if (auto dot = canon.rfind('.'); dot != std::string::npos
+                        && dot + 1 < canon.size())
+                    bpEnv.depDirs.emplace_back(canon.substr(dot + 1), depPkg.root);
             }
             auto& bcDep = pkg.manifest.buildConfig;
             const auto cN = bcDep.cflags.size(), cxN = bcDep.cxxflags.size(),

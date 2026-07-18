@@ -41,10 +41,12 @@ struct BuildProgramEnv {
     // root-project contract, unchanged). Dependencies point this at OUT_DIR so
     // a shared package root is never written to.
     std::filesystem::path genBase;
-    // mcpp#241: this package's resolved dependencies, as (declared-name → dir).
-    // Emitted as MCPP_DEP_<SANITIZED_NAME>_DIR so a build.mcpp can locate a
-    // dependency's payload (e.g. a data-asset package) by name instead of
-    // reverse-engineering the store layout. Same sanitizer as MCPP_FEATURE_.
+    // mcpp#241: this package's resolved dependencies, as (name → dir) pairs.
+    // The caller emits each dep under BOTH its canonical package name and its
+    // short (namespace-stripped) name, so a build.mcpp can locate a dependency's
+    // payload (e.g. a data-asset package) via either spelling. Emitted as
+    // MCPP_DEP_<SANITIZED_NAME>_DIR (same sanitizer as MCPP_FEATURE_) instead of
+    // reverse-engineering the store layout.
     std::vector<std::pair<std::string, std::filesystem::path>> depDirs;
 };
 
@@ -369,11 +371,25 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         e.emplace_back("MCPP_FEATURE_" + sanitize_feature_env(f), "1");
     }
     e.emplace_back("MCPP_FEATURES", csv);
-    // mcpp#241: per-dependency payload dir. Sanitize the DECLARED dep name (what
-    // the author wrote in `deps`) so the var name is predictable from the
-    // manifest, not from store internals.
-    for (auto const& [name, dir] : env.depDirs)
-        e.emplace_back("MCPP_DEP_" + sanitize_feature_env(name) + "_DIR", dir.string());
+    // mcpp#241: per-dependency payload dir, under MCPP_DEP_<SANITIZED_NAME>_DIR
+    // (same sanitizer as MCPP_FEATURE_ — predictable from the manifest, not
+    // store internals). Two distinct dep names can sanitize to the same var
+    // (e.g. `foo.bar` vs `foo-bar`, or a bare `zlib` vs another dep's short
+    // `zlib`); guard so a silent last-wins can't hand one dep another's dir —
+    // keep the first and warn on a conflicting value.
+    std::map<std::string, std::string> depVarValue;
+    for (auto const& [name, dir] : env.depDirs) {
+        auto var = "MCPP_DEP_" + sanitize_feature_env(name) + "_DIR";
+        auto [it, inserted] = depVarValue.try_emplace(var, dir.string());
+        if (inserted) {
+            e.emplace_back(var, dir.string());
+        } else if (it->second != dir.string()) {
+            mcpp::ui::warning(std::format(
+                "build.mcpp: dependency name collides on {} (kept '{}', ignored "
+                "'{}') — rename one dependency to disambiguate", var,
+                it->second, dir.string()));
+        }
+    }
     return e;
 }
 
