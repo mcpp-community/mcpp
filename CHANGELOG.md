@@ -3,6 +3,40 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.96] — 2026-07-18
+
+### 修复
+
+- **[windows] `mcpp test --workspace` 静默崩溃(裸 exit 127,实为 0xC0000409)**
+  (#230,修复 #231)。三层根因:
+  1. 0.0.95 扫描器的 glob walk 新增 `follow_directory_symlink`,而项目本地
+     `.mcpp/.xlings/data/<index>` 是指回索引根的**符号链接** → walk 逃逸出成员
+     目录、扫遍整个索引 checkout(CI 里含 vendored xim-pkgindex);
+  2. `path_matches_glob` 用 `generic_string()` 拼窄串,MSVC 在非 CJK ANSI 代码页
+     (runner ACP=1252)下遇到中文文件名 `bug-report---问题反馈.md` 抛
+     `std::system_error`;
+  3. 异常逃出 `main` 未捕获 → `std::terminate` → `__fastfail`(0xC0000409),
+     git-bash 显示为无任何输出的 exit 127。
+  - 修复:`expand_glob`/`expand_dir_glob` **按名剪枝 `.mcpp` 目录**(mcpp 自身
+    元数据目录永远不是源码目录,从源头切断符号链接逃逸,顺带避免每个成员把
+    整个索引树白走一遍);`path_matches_glob` 对无法窄化的文件名按"不匹配"
+    跳过而不是摧毁构建;`main()` 增加最后防线 catch,逃逸异常打印真实错误并
+    以 70 退出,不再静默 fastfail。
+  - 取证:runner 开 WER 全内存 dump,崩溃栈+被转换字符串逐帧还原(记录见
+    mcpplibs/mcpp-index `debug/mcpp230-windows-repro` 分支及 #230)。
+  - 回归测试:`tests/e2e/113_scanner_mcpp_dir_prune.sh`(`.mcpp` 符号链接逃逸
+    必须被剪枝;CJK 文件名不得致命)。linux 行为对照:0.0.95 会顺着该符号链接
+    把项目外源码编进来(链接期 duplicate `main`),修复后构建干净。
+
+## [0.0.95] — 2026-07-17
+
+- 见 GitHub Release v0.0.95:声明式清单能力(features.sources / generated_files /
+  cfg 条件 sources / per-glob flags,#223)、汇编源一等公民(.S/.s/.asm 进
+  sources,NASM 按目标推导 `-f`,#220)、build.mcpp 补全(环境契约 + cross 下
+  运行 + 依赖包执行,#222)。
+  已知问题:#230(本版 windows workspace 崩溃,0.0.96 修复)、#232(冷环境
+  `xim:nasm` 自举产出空载荷,待修)。
+
 ## [0.0.94] — 2026-07-15
 
 ### 修复
