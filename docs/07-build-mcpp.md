@@ -49,6 +49,7 @@ is ignored, so you can freely log diagnostics.
 | `mcpp:link-search=<dir>`           | add a library search dir (`-L`; relative dirs resolve against the project root) |
 | `mcpp:cfg=<name>`                  | define `-D<name>` for both C and C++ |
 | `mcpp:generated=<path>`            | add a generated source (relative to the project root) to the build |
+| `mcpp:source=<path>`               | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
 | `mcpp:rerun-if-changed=<path>`     | re-run `build.mcpp` when this file changes |
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
 
@@ -85,6 +86,7 @@ int main() {
 | `mcpp::link_lib(s)` / `mcpp::link_search(s)` | `mcpp:link-lib=` / `mcpp:link-search=` |
 | `mcpp::define(s)` | `mcpp:cfg=` (i.e. `-D<s>`) |
 | `mcpp::generated(p)` | `mcpp:generated=` |
+| `mcpp::source(p)` | `mcpp:source=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
 
 If your `build.mcpp` also needs to *write* a generated file, mix in a textual

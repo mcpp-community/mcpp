@@ -46,6 +46,7 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:link-search=<dir>`           | 增加库搜索目录(`-L`;相对路径按工程根目录解析) |
 | `mcpp:cfg=<name>`                  | 为 C 与 C++ 同时定义 `-D<name>` |
 | `mcpp:generated=<path>`            | 把生成的源码(相对工程根目录)加入构建 |
+| `mcpp:source=<path>`               | 把一份**既有**源文件选入构建(绝对路径,或相对包根)。下游效果与 `generated=` 相同;语义区别在于文件是程序*选中*的(tarball payload / vendored 源树)而非程序写出的——例如对大型源码包做 per-target 源选择 |
 | `mcpp:rerun-if-changed=<path>`     | 该文件变化时重跑 `build.mcpp` |
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
 
@@ -80,6 +81,7 @@ int main() {
 | `mcpp::link_lib(s)` / `mcpp::link_search(s)` | `mcpp:link-lib=` / `mcpp:link-search=` |
 | `mcpp::define(s)` | `mcpp:cfg=`(即 `-D<s>`) |
 | `mcpp::generated(p)` | `mcpp:generated=` |
+| `mcpp::source(p)` | `mcpp:source=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
 
 如果 `build.mcpp` 还需要*写*生成文件,混入一个文本 `#include <fstream>` 即可——这没问题,

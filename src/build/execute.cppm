@@ -359,6 +359,16 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
 bool sources_newer_than(const std::filesystem::path& projectRoot,
                         std::filesystem::file_time_type ninjaTime) {
     std::error_code ec;
+    // The root build.mcpp is a build input too — its directives shape
+    // build.ninja (flags, generated/selected sources). A changed program must
+    // abandon the fast path and fall through to prepare_build, where the
+    // declared-input cache decides whether it actually re-runs. Without this
+    // the documented "re-runs when the build.mcpp source itself changes" was
+    // unreachable behind a fresh build.ninja.
+    if (auto bp = projectRoot / "build.mcpp"; std::filesystem::exists(bp, ec)) {
+        auto bt = std::filesystem::last_write_time(bp, ec);
+        if (ec || bt > ninjaTime) return true;
+    }
     for (auto& f : mcpp::modgraph::expand_glob(projectRoot, "src/**/*")) {
         auto ext = f.extension().string();
         if (ext != ".cppm" && ext != ".cpp" && ext != ".cc" &&

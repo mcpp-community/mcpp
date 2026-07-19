@@ -79,6 +79,13 @@ struct Directives {
     std::vector<std::string> ldflags;       // -> buildConfig.ldflags (already -l/-L)
     std::vector<std::string> defines;       // cfg=  -> -D, into BOTH c/cxx flags
     std::vector<std::string> generated;     // relative source paths
+    // source= — select a PRE-EXISTING file (tarball payload / vendored tree)
+    // into the compile set. Downstream identical to generated=; the semantic
+    // difference is intent only: the program did not write this file, it chose
+    // it. Relative paths resolve against the PACKAGE ROOT in both root and
+    // dependency mode (a payload file lives in the package tree, never in
+    // OUT_DIR) — unlike generated=, whose dep-mode relatives resolve to genBase.
+    std::vector<std::string> sources;
     std::vector<std::string> rerunFiles;    // declared file inputs
     std::vector<std::string> rerunEnv;      // declared env-var inputs
 };
@@ -116,6 +123,7 @@ bool parse_line(const fs::path& root, std::string_view raw, Directives& d) {
     else if (key == "link-search")   d.ldflags.push_back("-L" + abs_against_root(root, val));
     else if (key == "cfg")           d.defines.push_back("-D" + val);
     else if (key == "generated")     d.generated.push_back(val);
+    else if (key == "source")        d.sources.push_back(val);
     else if (key == "rerun-if-changed")     d.rerunFiles.push_back(val);
     else if (key == "rerun-if-env-changed") d.rerunEnv.push_back(val);
     else mcpp::ui::warning(std::format("build.mcpp: ignoring unknown directive 'mcpp:{}'", key));
@@ -235,6 +243,7 @@ inline void link_lib(const char* name)            { std::printf("mcpp:link-lib=%
 inline void link_search(const char* dir)          { std::printf("mcpp:link-search=%s\n", dir); }
 inline void define(const char* name)              { std::printf("mcpp:cfg=%s\n", name); }
 inline void generated(const char* path)           { std::printf("mcpp:generated=%s\n", path); }
+inline void source(const char* path)              { std::printf("mcpp:source=%s\n", path); }
 inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }
 inline void rerun_if_env_changed(const char* var) { std::printf("mcpp:rerun-if-env-changed=%s\n", var); }
 // ── environment contract (read side; values injected by the engine) ─────
@@ -326,7 +335,7 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
 // compiler <hash>
 // in <contenthash> <path>
 // env <valuehash> <NAME>
-// d cxxflag|cflag|ldflag|define|generated <verbatim value to end of line>
+// d cxxflag|cflag|ldflag|define|generated|source <verbatim value to end of line>
 // The leading program/compiler/in/env lines are the re-run key; the `d` lines
 // are the directives to reapply on a hit.
 
@@ -423,6 +432,7 @@ void write_cache(const fs::path& bdir, const fs::path& root,
     emit("ldflag", d.ldflags);
     emit("define", d.defines);
     emit("generated", d.generated);
+    emit("source", d.sources);
 }
 
 struct CacheRecord {
@@ -463,6 +473,7 @@ CacheRecord read_cache(const fs::path& bdir) {
             else if (kind == "ldflag") r.directives.ldflags.push_back(val);
             else if (kind == "define") r.directives.defines.push_back(val);
             else if (kind == "generated") r.directives.generated.push_back(val);
+            else if (kind == "source") r.directives.sources.push_back(val);
         }
     }
     r.loaded = true;
@@ -481,9 +492,12 @@ bool cache_fresh(const fs::path& root, const CacheRecord& c,
         if (mcpp::toolchain::hash_file(abs_against_root(root, path)) != h) return false;
     for (auto const& [h, name] : c.envs)
         if (mcpp::toolchain::hash_string(env_value(name)) != h) return false;
-    // A declared generated output that vanished invalidates the cache.
+    // A declared generated output / selected source that vanished invalidates
+    // the cache.
     for (auto const& g : c.directives.generated)
         if (!fs::exists(abs_against_root(root, g))) return false;
+    for (auto const& s : c.directives.sources)
+        if (!fs::exists(abs_against_root(root, s))) return false;
     return true;
 }
 
@@ -495,12 +509,17 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     // cfg defines apply to both C and C++ translation units.
     bc.cflags.insert(bc.cflags.end(), d.defines.begin(), d.defines.end());
     bc.cxxflags.insert(bc.cxxflags.end(), d.defines.begin(), d.defines.end());
-    // Generated sources join the source set. BOTH lists: the scanner walks the
-    // legacy modules.sources mirror — pushing only bc.sources left a generated
-    // file outside the base globs invisible to the scan (latent since L3).
+    // Generated + selected (source=) sources join the source set. BOTH lists:
+    // the scanner walks the legacy modules.sources mirror — pushing only
+    // bc.sources left a generated file outside the base globs invisible to the
+    // scan (latent since L3).
     for (auto const& g : d.generated) {
         bc.sources.push_back(g);
         m.modules.sources.push_back(g);
+    }
+    for (auto const& s : d.sources) {
+        bc.sources.push_back(s);
+        m.modules.sources.push_back(s);
     }
 }
 
@@ -607,6 +626,8 @@ std::expected<void, std::string> run_build_program(
     // Dependency mode (genBase set): relative `generated=` paths resolve
     // against OUT_DIR-style genBase, not the (possibly read-only, shared)
     // package root — rewrite them to absolute before validation/apply/cache.
+    // `source=` paths are NOT rewritten: they name pre-existing files in the
+    // package tree (MCPP_MANIFEST_DIR-relative), never OUT_DIR products.
     if (!env.genBase.empty()) {
         for (auto& g : d.generated) {
             fs::path gp(g);
@@ -619,6 +640,15 @@ std::expected<void, std::string> run_build_program(
         if (!fs::exists(abs_against_root(root, g))) {
             return std::unexpected(std::format(
                 "build.mcpp declared generated source '{}' but it does not exist after the run", g));
+        }
+    }
+    // A `source=` selection must already exist — the program selects a file it
+    // did NOT write (payload / vendored tree); a missing one is a typo or a
+    // broken payload, surfaced now instead of as a later glob no-match.
+    for (auto const& s : d.sources) {
+        if (!fs::exists(abs_against_root(root, s))) {
+            return std::unexpected(std::format(
+                "build.mcpp selected source '{}' (mcpp:source=) but no such file exists", s));
         }
     }
 
