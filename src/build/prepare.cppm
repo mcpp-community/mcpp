@@ -297,6 +297,14 @@ std::string canonical_package_build_metadata(
                 s += " public_include:";
                 s += dir.generic_string();
             }
+            for (auto const& dir : pkg.privateBuild.includeDirsAfter) {
+                s += " private_include_after:";
+                s += dir.generic_string();
+            }
+            for (auto const& dir : pkg.publicUsage.includeDirsAfter) {
+                s += " public_include_after:";
+                s += dir.generic_string();
+            }
         }
         for (auto const& [path, content] : pkg.manifest.buildConfig.generatedFiles) {
             s += " genfile:";
@@ -1945,6 +1953,27 @@ prepare_build(bool print_fingerprint,
         return dirs;
     };
 
+    // #249: same glob expansion for `include_dirs_after` (the -idirafter
+    // channel — searched after the toolchain's system dirs).
+    auto expandIncludeDirsAfter =
+        [&](const std::filesystem::path& packageRoot,
+            const mcpp::manifest::Manifest& manifest)
+    {
+        std::vector<std::filesystem::path> dirs;
+        for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
+            std::filesystem::path p(inc);
+            if (p.is_absolute()) {
+                appendUniquePath(dirs, p);
+                continue;
+            }
+            for (auto& dir : mcpp::modgraph::expand_dir_glob(
+                     packageRoot, p.generic_string())) {
+                appendUniquePath(dirs, dir);
+            }
+        }
+        return dirs;
+    };
+
     auto makePackageRoot =
         [&](const std::filesystem::path& packageRoot,
             const mcpp::manifest::Manifest& manifest)
@@ -1955,9 +1984,11 @@ prepare_build(bool print_fingerprint,
         pkg.usageResolved = true;
 
         pkg.privateBuild.includeDirs = expandIncludeDirs(packageRoot, manifest);
+        pkg.privateBuild.includeDirsAfter = expandIncludeDirsAfter(packageRoot, manifest);
         pkg.privateBuild.cflags = manifest.buildConfig.cflags;
         pkg.privateBuild.cxxflags = manifest.buildConfig.cxxflags;
         pkg.publicUsage.includeDirs = pkg.privateBuild.includeDirs;
+        pkg.publicUsage.includeDirsAfter = pkg.privateBuild.includeDirsAfter;
         pkg.linkUsage.ldflags = manifest.buildConfig.ldflags;
         return pkg;
     };
@@ -2010,6 +2041,12 @@ prepare_build(bool print_fingerprint,
                     changed = appendUniquePaths(consumer.privateBuild.includeDirs,
                                                 dependency.publicUsage.includeDirs)
                               || changed;
+                    // #249: after-dirs ride the same edges but keep their
+                    // after-ness — consumers receive them as -idirafter,
+                    // never upgraded to -I.
+                    changed = appendUniquePaths(consumer.privateBuild.includeDirsAfter,
+                                                dependency.publicUsage.includeDirsAfter)
+                              || changed;
                     // Interface defines (a dependency's active-feature `defines`)
                     // ride the same edges as include dirs: they must reach the
                     // consumer's own TUs so header-only switches like
@@ -2025,6 +2062,9 @@ prepare_build(bool print_fingerprint,
                     || edge.visibility == mcpp::modgraph::DependencyVisibility::Interface) {
                     changed = appendUniquePaths(consumer.publicUsage.includeDirs,
                                                 dependency.publicUsage.includeDirs)
+                              || changed;
+                    changed = appendUniquePaths(consumer.publicUsage.includeDirsAfter,
+                                                dependency.publicUsage.includeDirsAfter)
                               || changed;
                     changed = appendUniqueFlags(consumer.publicUsage.cflags,
                                                 dependency.publicUsage.cflags)
@@ -2414,6 +2454,10 @@ prepare_build(bool print_fingerprint,
                     // install root so the staged copy still finds headers.
                     for (auto& inc : stagedManifest.buildConfig.includeDirs) {
                         if (inc.is_relative()) inc = secondaryRoot / inc;
+                    }
+                    for (auto& inc : stagedManifest.buildConfig.includeDirsAfter) {
+                        if (std::filesystem::path p(inc); p.is_relative())
+                            inc = (secondaryRoot / p).generic_string();
                     }
 
                     dep_manifests.push_back(

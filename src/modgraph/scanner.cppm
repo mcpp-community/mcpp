@@ -89,6 +89,9 @@ enum class DependencyVisibility {
 
 struct UsageRequirements {
     std::vector<std::filesystem::path> includeDirs;
+    // #249: emitted as -idirafter (searched after system dirs); propagated
+    // along the same consumer edges as includeDirs, never upgraded to -I.
+    std::vector<std::filesystem::path> includeDirsAfter;
     std::vector<std::string>           cflags;
     std::vector<std::string>           cxxflags;
     std::vector<std::string>           ldflags;
@@ -750,6 +753,26 @@ local_include_dirs_for(const std::filesystem::path& root,
     return dirs;
 }
 
+// #249: same expansion for `include_dirs_after` entries (the -idirafter
+// channel). Shares the `*` extracted-tarball-root glob convention.
+std::vector<std::filesystem::path>
+local_include_dirs_after_for(const std::filesystem::path& root,
+                             const mcpp::manifest::Manifest& manifest)
+{
+    std::vector<std::filesystem::path> dirs;
+    for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
+        std::filesystem::path p(inc);
+        if (p.is_absolute()) {
+            dirs.push_back(std::move(p));
+            continue;
+        }
+        for (auto& d : expand_dir_glob(root, p.generic_string())) {
+            dirs.push_back(std::move(d));
+        }
+    }
+    return dirs;
+}
+
 // Phase 1: scan a single package, append units to result.graph.units;
 // errors go straight into result.errors. producerOf/edges are NOT built
 // here — the caller does that after all packages are scanned.
@@ -757,6 +780,7 @@ void scan_one_into(ScanResult& result,
                    const std::filesystem::path& root,
                    const mcpp::manifest::Manifest& manifest,
                    const std::vector<std::filesystem::path>& localIncludeDirs,
+                   const std::vector<std::filesystem::path>& localIncludeDirsAfter,
                    const std::vector<std::string>& packageCflags,
                    const std::vector<std::string>& packageCxxflags)
 {
@@ -871,6 +895,7 @@ void scan_one_into(ScanResult& result,
             for (auto const& name : ov->imports)
                 u.requires_.push_back(ModuleId{name});
             u.localIncludeDirs = localIncludeDirs;
+            u.localIncludeDirsAfter = localIncludeDirsAfter;
             u.packageCflags    = packageCflags;
             u.packageCxxflags  = packageCxxflags;
             apply_glob_flags(u);
@@ -889,6 +914,7 @@ void scan_one_into(ScanResult& result,
         // scan_overrides branch above.
         r->relPath = std::filesystem::relative(f, root);
         r->localIncludeDirs = localIncludeDirs;
+        r->localIncludeDirsAfter = localIncludeDirsAfter;
         r->packageCflags = packageCflags;
         r->packageCxxflags = packageCxxflags;
         apply_glob_flags(*r);
@@ -954,7 +980,8 @@ ScanResult scan_package(const std::filesystem::path& root,
 {
     ScanResult result;
     auto localIncludeDirs = local_include_dirs_for(root, manifest);
-    scan_one_into(result, root, manifest, localIncludeDirs,
+    auto localIncludeDirsAfter = local_include_dirs_after_for(root, manifest);
+    scan_one_into(result, root, manifest, localIncludeDirs, localIncludeDirsAfter,
                   manifest.buildConfig.cflags, manifest.buildConfig.cxxflags);
     resolve_graph(result);
     return result;
@@ -966,6 +993,9 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages) {
         auto localIncludeDirs = p.usageResolved
             ? p.privateBuild.includeDirs
             : local_include_dirs_for(p.root, p.manifest);
+        auto localIncludeDirsAfter = p.usageResolved
+            ? p.privateBuild.includeDirsAfter
+            : local_include_dirs_after_for(p.root, p.manifest);
         auto const& packageCflags = p.usageResolved
             ? p.privateBuild.cflags
             : p.manifest.buildConfig.cflags;
@@ -973,7 +1003,7 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages) {
             ? p.privateBuild.cxxflags
             : p.manifest.buildConfig.cxxflags;
         scan_one_into(result, p.root, p.manifest, localIncludeDirs,
-                      packageCflags, packageCxxflags);
+                      localIncludeDirsAfter, packageCflags, packageCxxflags);
     }
     resolve_graph(result);
     return result;
@@ -993,6 +1023,9 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
         const auto localIncludeDirs = p.usageResolved
             ? p.privateBuild.includeDirs
             : local_include_dirs_for(p.root, p.manifest);
+        const auto localIncludeDirsAfter = p.usageResolved
+            ? p.privateBuild.includeDirsAfter
+            : local_include_dirs_after_for(p.root, p.manifest);
         for (auto const& f : all_files) {
             auto r = mcpp::modgraph::p1689::scan_file(
                 f, p.manifest.package.name, tc, tmpDir,
@@ -1004,6 +1037,7 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
             // mcpp#233: same relPath contract as scan_one_into above.
             r->relPath = std::filesystem::relative(f, p.root);
             r->localIncludeDirs = localIncludeDirs;
+            r->localIncludeDirsAfter = localIncludeDirsAfter;
             r->packageCflags = p.usageResolved
                 ? p.privateBuild.cflags
                 : p.manifest.buildConfig.cflags;

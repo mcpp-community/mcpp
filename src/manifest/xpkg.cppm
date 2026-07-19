@@ -125,7 +125,8 @@ namespace mcpp::manifest {
 // the parser accepts.
 inline constexpr std::string_view kKnownXpkgKeys[] = {
     "cflags", "c_standard", "cxxflags", "deps", "features", "flags",
-    "generated_files", "import_std", "include_dirs", "language", "ldflags",
+    "generated_files", "import_std", "include_dirs", "include_dirs_after",
+    "language", "ldflags",
     "linux", "macosx", "modules", "provides", "runtime", "scan_overrides",
     "schema", "sources", "target_cfg", "targets", "windows",
 };
@@ -143,6 +144,8 @@ inline constexpr std::pair<std::string_view, std::string_view> kXpkgKeyAliases[]
     { "target",       "targets" },
     { "include",      "include_dirs" },
     { "include_dir",  "include_dirs" },
+    { "include_after",     "include_dirs_after" },
+    { "include_dir_after", "include_dirs_after" },
 };
 
 std::string closest_known_xpkg_key(std::string_view unknownKey) {
@@ -896,6 +899,23 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             while (!cur.eof() && cur.peek() != '}') {
                 auto s = cur.read_string();
                 if (!s.empty()) m.buildConfig.includeDirs.emplace_back(s);
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
+        else if (key == "include_dirs_after") {
+            // #249: header dirs searched AFTER the toolchain's system dirs
+            // (-idirafter). Use for extracted-tarball roots that contain
+            // files shadowing standard headers on case-insensitive
+            // filesystems (ffmpeg's VERSION vs libc++'s <version>).
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `include_dirs_after =`", m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto s = cur.read_string();
+                if (!s.empty()) m.buildConfig.includeDirsAfter.emplace_back(s);
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');

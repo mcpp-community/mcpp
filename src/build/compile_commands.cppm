@@ -104,6 +104,11 @@ std::vector<std::string> local_include_args(const CompileUnit& cu) {
     for (auto const& inc : cu.localIncludeDirs) {
         args.push_back("-I" + inc.string());
     }
+    // #249: after-dirs keep their -idirafter spelling in the compile DB so
+    // tooling (clangd) reproduces the compiler's search order.
+    for (auto const& inc : cu.localIncludeDirsAfter) {
+        args.push_back("-idirafter" + inc.string());
+    }
     return args;
 }
 

@@ -87,10 +87,28 @@ std::string escape_flag_path(const std::filesystem::path& p) {
     return out;
 }
 
-std::string local_include_flags(const CompileUnit& cu) {
+std::string local_include_flags(const CompileUnit& cu, bool msvcDialect,
+                                bool nasmUnit) {
     std::string flags;
     for (auto const& inc : cu.localIncludeDirs) {
         flags += " -I";
+        flags += escape_flag_path(inc);
+    }
+    // #249: after-dirs are searched AFTER the toolchain's system dirs
+    // (-idirafter, gcc+clang), so a dep source root that contains a file
+    // named like a standard header (ffmpeg's VERSION vs libc++'s <version>
+    // on case-insensitive macOS) can't shadow it, while its real headers
+    // are still found. Appended after the -I entries — the flag's
+    // semantics, not its position, carry the priority; the ordering is
+    // just for readability. Two degradations, both safe because only the
+    // C/C++ frontends have a system-header chain to protect:
+    //   • cl.exe has no -idirafter → plain /I at the END of the list
+    //     (clang targeting MSVC uses the gnu dialect and gets the real flag);
+    //   • nasm_object edges share $local_includes but NASM would parse
+    //     `-idirafter<p>` as its `-i` option with value `dirafter<p>` —
+    //     a silently wrong search dir — so nasm units get plain -I.
+    for (auto const& inc : cu.localIncludeDirsAfter) {
+        flags += nasmUnit ? " -I" : (msvcDialect ? " /I" : " -idirafter");
         flags += escape_flag_path(inc);
     }
     return flags;
@@ -732,7 +750,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             append(std::format("build {} : cxx_scan {}\n", escape_ninja_path(ddi),
                                escape_ninja_path(cu.source)));
             append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
-            if (auto includes = local_include_flags(cu); !includes.empty())
+            if (auto includes = local_include_flags(cu, msvcDeps, is_nasm_source(cu.source)); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
             if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
                 append(std::format("  unit_cxxflags ={}\n", flags));
@@ -811,7 +829,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             } else {
                 out_line += "\n";
             }
-            if (auto includes = local_include_flags(cu); !includes.empty())
+            if (auto includes = local_include_flags(cu, msvcDeps, is_nasm_source(cu.source)); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
             if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
                 if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
@@ -861,7 +879,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (!implicit.empty())
                 out_line += " |" + implicit;
             out_line += "\n";
-            if (auto includes = local_include_flags(cu); !includes.empty())
+            if (auto includes = local_include_flags(cu, msvcDeps, is_nasm_source(cu.source)); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
             if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
                 if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())

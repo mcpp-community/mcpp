@@ -26,6 +26,9 @@ struct SourceUnit {
     std::filesystem::path           relPath;
     std::string                     packageName;
     std::vector<std::filesystem::path> localIncludeDirs;
+    // #249: dirs emitted as -idirafter — searched after the toolchain's
+    // system dirs, so a dep's source root can't shadow standard headers.
+    std::vector<std::filesystem::path> localIncludeDirsAfter;
     std::vector<std::string>        packageCflags;
     std::vector<std::string>        packageCxxflags;
     std::vector<std::string>        packageAsmflags;   // per-glob asmflags (G4)

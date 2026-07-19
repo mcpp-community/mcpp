@@ -22,6 +22,9 @@ struct CompileUnit {
     std::filesystem::path           object;            // relative to plan.outputDir
     std::string                     packageName;
     std::vector<std::filesystem::path> localIncludeDirs;
+    // #249: emitted as -idirafter (searched after the toolchain's system
+    // dirs) — a dep source root on this list can't shadow standard headers.
+    std::vector<std::filesystem::path> localIncludeDirsAfter;
     std::vector<std::string>        packageCflags;
     std::vector<std::string>        packageCxxflags;
     std::vector<std::string>        packageAsmflags;   // per-glob asmflags (G4)
@@ -239,13 +242,46 @@ std::vector<std::string> shared_library_link_flags(const mcpp::manifest::Target&
     return flags;
 }
 
+// #249 consistency fix: expand include_dirs entries with the same
+// `expand_dir_glob` the dep path (prepare.cppm) uses, so a main-manifest
+// `include_dirs = ["*/include"]` glob works identically here. For a literal
+// (wildcard-free) entry expand_dir_glob only returns EXISTING directories,
+// whereas this helper historically joined unconditionally — keep the plain
+// join as a fallback so an -I for a dir created later (e.g. by a build
+// step) isn't silently dropped.
+std::vector<std::filesystem::path>
+expand_manifest_include_entry(const std::filesystem::path& root,
+                              const std::filesystem::path& inc)
+{
+    if (inc.is_absolute()) return { inc };
+    const auto glob = inc.generic_string();
+    auto expanded = mcpp::modgraph::expand_dir_glob(root, glob);
+    if (expanded.empty() && glob.find('*') == std::string::npos)
+        expanded.push_back(root / inc);
+    return expanded;
+}
+
 std::vector<std::filesystem::path>
 local_include_dirs_for_manifest(const std::filesystem::path& root,
                                 const mcpp::manifest::Manifest& manifest)
 {
     std::vector<std::filesystem::path> dirs;
     for (auto const& inc : manifest.buildConfig.includeDirs) {
-        dirs.push_back(inc.is_absolute() ? inc : root / inc);
+        for (auto& d : expand_manifest_include_entry(root, inc))
+            dirs.push_back(std::move(d));
+    }
+    return dirs;
+}
+
+// #249: same, for the -idirafter channel.
+std::vector<std::filesystem::path>
+local_include_dirs_after_for_manifest(const std::filesystem::path& root,
+                                      const mcpp::manifest::Manifest& manifest)
+{
+    std::vector<std::filesystem::path> dirs;
+    for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
+        for (auto& d : expand_manifest_include_entry(root, std::filesystem::path(inc)))
+            dirs.push_back(std::move(d));
     }
     return dirs;
 }
@@ -527,6 +563,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         cu.source = u.path;
         cu.packageName = u.packageName;
         cu.localIncludeDirs = u.localIncludeDirs;
+        cu.localIncludeDirsAfter = u.localIncludeDirsAfter;
         cu.packageCflags = u.packageCflags;
         cu.packageCxxflags = u.packageCxxflags;
         cu.packageAsmflags = u.packageAsmflags;
@@ -797,10 +834,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             main_cu.packageName = qualified_package_name(manifest);
             if (!packages.empty() && packages[0].usageResolved) {
                 main_cu.localIncludeDirs = packages[0].privateBuild.includeDirs;
+                main_cu.localIncludeDirsAfter = packages[0].privateBuild.includeDirsAfter;
                 main_cu.packageCflags = packages[0].privateBuild.cflags;
                 main_cu.packageCxxflags = packages[0].privateBuild.cxxflags;
             } else {
                 main_cu.localIncludeDirs = local_include_dirs_for_manifest(projectRoot, manifest);
+                main_cu.localIncludeDirsAfter =
+                    local_include_dirs_after_for_manifest(projectRoot, manifest);
                 main_cu.packageCflags = manifest.buildConfig.cflags;
                 main_cu.packageCxxflags = manifest.buildConfig.cxxflags;
             }

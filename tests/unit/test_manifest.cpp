@@ -340,6 +340,32 @@ kind = "lib"
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
 }
 
+// #249: `[build] include_dirs_after` parses into buildConfig.includeDirsAfter
+// — the -idirafter channel (searched AFTER the toolchain's system dirs), so
+// an extracted-tarball root containing a file named like a standard header
+// (ffmpeg's VERSION vs libc++'s <version> on case-insensitive macOS) can't
+// shadow it while its real headers stay findable.
+TEST(Manifest, BuildIncludeDirsAfterToml) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+sources           = ["src/**/*.cpp"]
+include_dirs      = ["include"]
+include_dirs_after = ["*", "vendor/include"]
+[targets.x]
+kind = "lib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.includeDirs.size(), 1u);
+    EXPECT_EQ(m->buildConfig.includeDirs[0], "include");
+    ASSERT_EQ(m->buildConfig.includeDirsAfter.size(), 2u);
+    EXPECT_EQ(m->buildConfig.includeDirsAfter[0], "*");
+    EXPECT_EQ(m->buildConfig.includeDirsAfter[1], "vendor/include");
+}
+
 // Feature System v2 Stage 1: a [features] entry may be a TABLE carrying
 // package-owned `defines` (and `implies`), while the array shorthand keeps
 // meaning "implied features". See
@@ -885,6 +911,32 @@ package = {
     auto it = m->buildConfig.generatedFiles.find("mcpp_generated/include/config.h");
     ASSERT_NE(it, m->buildConfig.generatedFiles.end());
     EXPECT_EQ(it->second, "#pragma once\n#define TINYC_OK 1\n");
+}
+
+// #249: the xpkg descriptor body accepts `include_dirs_after` alongside
+// `include_dirs` and keeps the two channels separate (after-dirs are never
+// upgraded to -I).
+TEST(SynthesizeFromXpkgLua, IncludeDirsAfter) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "tinyc",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources            = { "*/src/*.c" },
+        include_dirs       = { "*/include" },
+        include_dirs_after = { "*" },
+        targets = { ["tinyc"] = { kind = "lib" } },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.includeDirs.size(), 1u);
+    EXPECT_EQ(m->buildConfig.includeDirs[0], "*/include");
+    ASSERT_EQ(m->buildConfig.includeDirsAfter.size(), 1u);
+    EXPECT_EQ(m->buildConfig.includeDirsAfter[0], "*");
+    EXPECT_TRUE(m->xpkgUnknownKeys.empty());
 }
 
 TEST(Manifest, DependenciesFlatDefaultNamespace) {

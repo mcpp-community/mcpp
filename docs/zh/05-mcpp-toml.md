@@ -131,6 +131,7 @@ mcpp 刻意不在一次构建里把同一个共享源编译成两份:一个源�
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # 源文件 glob(默认: src/**/*.{cppm,cpp,cc,c,S,s,asm})
 include_dirs = ["include", "third_party/include"]  # 头文件搜索路径
+include_dirs_after = ["*"]         # 排在系统目录之后搜索的头文件目录(-idirafter)
 c_standard   = "c11"              # C 源文件的标准(默认 c11)
 cflags       = ["-DFOO=1"]        # 额外 C 编译参数
 cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数(不要放 -std=...)
@@ -138,6 +139,16 @@ ldflags      = ["-lfoo"]          # 额外链接参数
 static_stdlib = true               # 静态链接 libstdc++(默认 true)
 macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
 ```
+
+`include_dirs_after`(#249)列出**排在工具链系统目录之后**搜索的头文件目录
+(GCC/Clang 发射为 `-idirafter`;MSVC 方言无对应能力,退化为排在末尾的
+`/I`)。当目录是解压后的源码 tarball 根目录、且其中的文件名会与标准头冲突时,
+用它代替 `include_dirs` —— 例如 ffmpeg 根目录的 `VERSION` 文件在大小写不敏感
+的 macOS 文件系统上会把 libc++ 的 `<version>` 遮蔽(若该根目录挂在 `-I` 上)。
+使用 `include_dirs_after` 时系统头永远优先,而包自己的真实头文件
+(`<libavutil/frame.h>`)仍能找到。条目支持与 `include_dirs` 相同的 `*` glob
+约定,并沿相同的依赖边传播给消费者 —— 消费者收到的仍是 after 目录,
+永远不会被升级为 `-I`。
 
 `macos_deployment_target` 设定产物 Mach-O 头里的最低系统版本
 (`LC_BUILD_VERSION minos`),即二进制能运行的最老 macOS。优先级与各生态

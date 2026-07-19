@@ -224,6 +224,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::filesystem::path p = inc.has_root_path() ? inc : (plan.projectRoot / inc);
         includeTokens.push_back(std::string(d.includePrefix) + p.string());
     }
+    // #249: `[build] include_dirs_after` — searched AFTER the toolchain's
+    // system dirs via -idirafter (gcc+clang), so entries can't shadow
+    // standard headers. cl.exe has no -idirafter; under the msvc dialect
+    // they degrade to regular /I appended at the END of the include list
+    // (documented degradation; clang-MSVC uses the gnu dialect).
+    const bool msvcInclude = d.includePrefix == std::string_view("/I");
+    for (auto& inc : plan.manifest.buildConfig.includeDirsAfter) {
+        std::filesystem::path ip(inc);
+        std::filesystem::path p = ip.has_root_path() ? ip : (plan.projectRoot / ip);
+        includeTokens.push_back((msvcInclude ? "/I" : "-idirafter") + p.string());
+    }
     std::string include_flags;
     for (auto& t : includeTokens) {
         include_flags += ' ';
@@ -403,6 +414,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string nasm_includes;
         for (auto& inc : plan.manifest.buildConfig.includeDirs) {
             auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
+            nasm_includes += " -I" + escape_path(abs);
+        }
+        // #249: nasm has no system header dirs to defer to — after-dirs
+        // degrade to plain -I appended at the end.
+        for (auto& inc : plan.manifest.buildConfig.includeDirsAfter) {
+            std::filesystem::path ip(inc);
+            auto abs = ip.is_absolute() ? ip : (plan.projectRoot / ip);
             nasm_includes += " -I" + escape_path(abs);
         }
         std::string nasm_debug;

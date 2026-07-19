@@ -136,6 +136,7 @@ the package/feature boundary, not on an individual target.
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
 include_dirs = ["include", "third_party/include"]  # Header search paths
+include_dirs_after = ["*"]         # Header dirs searched AFTER system dirs (-idirafter)
 c_standard   = "c11"              # Standard for C source files (default c11)
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
@@ -145,6 +146,18 @@ target       = "x86_64-linux-musl" # Default build target when no --target is pa
                                    # (≙ cargo build.target; e.g. "ship fully-static")
 macos_deployment_target = "14.0"   # Minimum supported OS version for macOS artifacts (macOS only)
 ```
+
+`include_dirs_after` (#249) lists header directories that are searched **after**
+the toolchain's system directories (emitted as `-idirafter` on GCC/Clang, as
+trailing `/I` under the MSVC dialect, which has no equivalent). Use it instead of
+`include_dirs` when the directory is an extracted source-tarball root that
+contains files whose names collide with standard headers — e.g. ffmpeg's
+top-level `VERSION` file shadows libc++'s `<version>` on case-insensitive macOS
+filesystems when the root is put on `-I`. With `include_dirs_after` the system
+header always wins while the package's real headers (`<libavutil/frame.h>`)
+remain findable. Entries support the same `*` glob convention as
+`include_dirs`, and they propagate to dependent packages along the same edges —
+consumers receive them as after-dirs, never upgraded to `-I`.
 
 `macos_deployment_target` sets the minimum system version in the artifact's
 Mach-O header (`LC_BUILD_VERSION minos`), i.e. the oldest macOS the binary can

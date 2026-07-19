@@ -165,6 +165,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("build.include_dirs")) {
         for (auto& s : *v) m.buildConfig.includeDirs.emplace_back(s);
     }
+    // [build].include_dirs_after (#249) — searched after system dirs (-idirafter).
+    if (auto v = doc->get_string_array("build.include_dirs_after")) {
+        for (auto& s : *v) m.buildConfig.includeDirsAfter.emplace_back(s);
+    }
 
     // [targets.*] — M5.0: now optional. If absent, defer to auto-inference (in load()).
     // [profile.<name>] — bundled build settings.

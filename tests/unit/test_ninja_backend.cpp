@@ -168,6 +168,100 @@ TEST(NinjaBackend, CxxFlagsIncludeBuildIncludeDirs) {
         << flags.cxx;
 }
 
+// #249: a compile unit's localIncludeDirsAfter emit as -idirafter into the
+// same $local_includes variable, APPENDED after the -I entries. -idirafter
+// dirs are searched after the toolchain's system dirs (gcc+clang), so a dep
+// source root containing a file named like a standard header (ffmpeg's
+// VERSION vs libc++'s <version> on case-insensitive macOS) can't shadow it
+// while the dep's real headers stay findable. The flag's semantics — not
+// its position — carry the priority; the -I-then-idirafter ordering is for
+// readability.
+TEST(NinjaBackend, LocalIncludeDirsAfterEmitIdirafterAppendedAfterDashI) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "after_test",
+        .localIncludeDirs = {"/dep/include"},
+        .localIncludeDirsAfter = {"/dep/tarball-root"},
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    auto line_start = ninja.find("local_includes =");
+    ASSERT_NE(line_start, std::string::npos) << ninja;
+    auto line_end = ninja.find('\n', line_start);
+    auto line = ninja.substr(line_start, line_end - line_start);
+
+    auto i_pos = line.find("-I/dep/include");
+    auto after_pos = line.find("-idirafter/dep/tarball-root");
+    ASSERT_NE(i_pos, std::string::npos) << line;
+    ASSERT_NE(after_pos, std::string::npos) << line;
+    // After-dirs come after the -I entries within $local_includes.
+    EXPECT_LT(i_pos, after_pos) << line;
+    // Never upgraded to -I.
+    EXPECT_EQ(line.find("-I/dep/tarball-root"), std::string::npos) << line;
+}
+
+// #249 MSVC degradation: cl.exe has no -idirafter, so under the msvc
+// dialect after-dirs are emitted as regular /I at the END of the include
+// list (clang targeting MSVC uses the gnu dialect and gets -idirafter).
+TEST(NinjaBackend, MsvcDialectEmitsIncludeDirsAfterAsTrailingSlashI) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    plan.toolchain.binaryPath = "cl.exe";
+    plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "after_test",
+        .localIncludeDirs = {"/dep/include"},
+        .localIncludeDirsAfter = {"/dep/tarball-root"},
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    auto line_start = ninja.find("local_includes =");
+    ASSERT_NE(line_start, std::string::npos) << ninja;
+    auto line_end = ninja.find('\n', line_start);
+    auto line = ninja.substr(line_start, line_end - line_start);
+
+    auto i_pos = line.find("-I/dep/include");
+    auto after_pos = line.find("/I/dep/tarball-root");
+    ASSERT_NE(i_pos, std::string::npos) << line;
+    ASSERT_NE(after_pos, std::string::npos) << line;
+    EXPECT_LT(i_pos, after_pos) << line;
+    EXPECT_EQ(line.find("-idirafter"), std::string::npos) << line;
+}
+
+// #249 NASM degradation: nasm_object edges share $local_includes, but NASM
+// would parse `-idirafter<p>` as its `-i` option with value `dirafter<p>` —
+// a silently wrong search dir. Only the C/C++ frontends have a system-header
+// chain to protect, so a nasm unit's after-dirs degrade to plain -I.
+TEST(NinjaBackend, NasmUnitEmitsIncludeDirsAfterAsPlainDashI) {
+    auto plan = minimal_plan();
+    plan.nasmPath = "/usr/bin/nasm";
+    plan.compileUnits.push_back({
+        .source = "src/scale.asm",
+        .object = "obj/scale.asm.o",
+        .packageName = "after_test",
+        .localIncludeDirs = {"/dep/x86"},
+        .localIncludeDirsAfter = {"/dep/tarball-root"},
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    auto edge_start = ninja.find("build obj/scale.asm.o : nasm_object");
+    ASSERT_NE(edge_start, std::string::npos) << ninja;
+    auto line_start = ninja.find("local_includes =", edge_start);
+    ASSERT_NE(line_start, std::string::npos) << ninja;
+    auto line = ninja.substr(line_start, ninja.find('\n', line_start) - line_start);
+
+    EXPECT_NE(line.find("-I/dep/x86"), std::string::npos) << line;
+    EXPECT_NE(line.find("-I/dep/tarball-root"), std::string::npos) << line;
+    EXPECT_EQ(line.find("-idirafter"), std::string::npos) << line;
+}
+
 // Cluster A review fix (#226/#234 follow-up): `[build] include_dirs` is a
 // TYPED PATH channel — bare paths from the manifest, dialect prefix applied
 // at emission (-I under GNU, /I under MSVC) — not the FLAG-STRING channel
