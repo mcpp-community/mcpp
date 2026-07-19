@@ -654,6 +654,36 @@ package = {
     EXPECT_EQ(m->xpkgUnknownKeys[0], "dependencies");
 }
 
+// A feature's UNKNOWN sub-key (e.g. an unsupported `include_dirs`) is recorded
+// as `features.<name>.<sub>` instead of being silently swallowed — the
+// adoption-site warning (warn_unknown_xpkg_keys) then names it. Known sub-keys
+// keep parsing around it.
+TEST(XpkgUnknownKeys, FeatureSubKeyRecorded) {
+    constexpr auto lua = R"(
+package = {
+    name = "x",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/a.c" },
+        targets = { ["x"] = { kind = "lib" } },
+        features = {
+            ["opt"] = {
+                include_dirs = { "inc" },
+                defines = { "OPT_ON" },
+            },
+        },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "x", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->xpkgUnknownKeys.size(), 1u);
+    EXPECT_EQ(m->xpkgUnknownKeys[0], "features.opt.include_dirs");
+    // the known sub-key after the unknown one still parsed.
+    ASSERT_TRUE(m->buildConfig.featureDefines.contains("opt"));
+    EXPECT_EQ(m->buildConfig.featureDefines.at("opt").size(), 1u);
+}
+
 TEST(Manifest, BuildMacosDeploymentTarget) {
     constexpr auto src = R"(
 [package]

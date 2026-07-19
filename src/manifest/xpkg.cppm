@@ -1211,7 +1211,15 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         }
                         cur.consume('}');
                     } else {
-                        // unknown subfield — skip its value
+                        // Unknown subfield — skip its value, but RECORD it so
+                        // the adoption-site diagnostic (warn_unknown_xpkg_keys,
+                        // prepare.cppm) can name it: a descriptor author writing
+                        // an unsupported per-feature key (e.g.
+                        // `features.X.include_dirs`) used to be silently
+                        // swallowed, leaving the feature half-configured with
+                        // no signal.
+                        m.xpkgUnknownKeys.push_back(
+                            std::format("features.{}.{}", fname, sub));
                         if (cur.peek() == '{') cur.skip_table();
                         else (void)cur.read_bareword();
                     }

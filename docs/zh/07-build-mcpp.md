@@ -47,12 +47,18 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:cfg=<name>`                  | 为 C 与 C++ 同时定义 `-D<name>` |
 | `mcpp:generated=<path>`            | 把生成的源码(相对工程根目录)加入构建 |
 | `mcpp:source=<path>`               | 把一份**既有**源文件选入构建(绝对路径,或相对包根)。下游效果与 `generated=` 相同;语义区别在于文件是程序*选中*的(tarball payload / vendored 源树)而非程序写出的——例如对大型源码包做 per-target 源选择 |
+| `mcpp:include-dir=<dir>`           | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
+| `mcpp:include-dir-after=<dir>`     | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
 | `mcpp:rerun-if-changed=<path>`     | 该文件变化时重跑 `build.mcpp` |
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
 
 程序**请求**构建边(开关、库、源码),它**不能**新增注册表依赖——请把依赖图保持在
 `mcpp.toml` 里声明式管理(包括平台条件依赖 `[target.windows.dependencies]`)。
 `build.mcpp` 用于*叶子*决策:开关、代码生成、链接需求。
+
+`include-dir`/`include-dir-after` 刻意保持**私有**(Cargo 纪律):只染色本包自身的
+TU,绝不向消费者传播。需要消费者可见的 include 目录属于公共接口,应写在声明式
+manifest/描述符里(`[build] include_dirs`),而不是构建期程序里。
 
 ## 类型化 API:`import mcpp;`(推荐)
 
@@ -82,6 +88,7 @@ int main() {
 | `mcpp::define(s)` | `mcpp:cfg=`(即 `-D<s>`) |
 | `mcpp::generated(p)` | `mcpp:generated=` |
 | `mcpp::source(p)` | `mcpp:source=` |
+| `mcpp::include_dir(d)` / `mcpp::include_dir_after(d)` | `mcpp:include-dir=` / `mcpp:include-dir-after=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
 
 如果 `build.mcpp` 还需要*写*生成文件,混入一个文本 `#include <fstream>` 即可——这没问题,

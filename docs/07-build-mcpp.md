@@ -50,6 +50,8 @@ is ignored, so you can freely log diagnostics.
 | `mcpp:cfg=<name>`                  | define `-D<name>` for both C and C++ |
 | `mcpp:generated=<path>`            | add a generated source (relative to the project root) to the build |
 | `mcpp:source=<path>`               | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
+| `mcpp:include-dir=<dir>`           | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
+| `mcpp:include-dir-after=<dir>`     | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
 | `mcpp:rerun-if-changed=<path>`     | re-run `build.mcpp` when this file changes |
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
 
@@ -57,6 +59,12 @@ The program **requests** build edges (flags, libraries, sources). It cannot add 
 registry dependency — keep your dependency graph declarative in `mcpp.toml`
 (including platform-conditional `[target.windows.dependencies]`). `build.mcpp`
 is for *leaf* decisions: flags, codegen, link requirements.
+
+`include-dir`/`include-dir-after` are deliberately **private** (Cargo
+discipline): they color only this package's own TUs and are never propagated
+to consumers. An include directory consumers must see is part of the public
+interface and belongs in the declarative manifest/descriptor
+(`[build] include_dirs`), not in a build-time program.
 
 ## Typed API: `import mcpp;` (recommended)
 
@@ -87,6 +95,7 @@ int main() {
 | `mcpp::define(s)` | `mcpp:cfg=` (i.e. `-D<s>`) |
 | `mcpp::generated(p)` | `mcpp:generated=` |
 | `mcpp::source(p)` | `mcpp:source=` |
+| `mcpp::include_dir(d)` / `mcpp::include_dir_after(d)` | `mcpp:include-dir=` / `mcpp:include-dir-after=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
 
 If your `build.mcpp` also needs to *write* a generated file, mix in a textual

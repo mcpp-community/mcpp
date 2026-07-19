@@ -3065,7 +3065,9 @@ prepare_build(bool print_fingerprint,
             }
             auto& bcDep = pkg.manifest.buildConfig;
             const auto cN = bcDep.cflags.size(), cxN = bcDep.cxxflags.size(),
-                       ldN = bcDep.ldflags.size();
+                       ldN = bcDep.ldflags.size(),
+                       incN = bcDep.includeDirs.size(),
+                       incAfterN = bcDep.includeDirsAfter.size();
             if (auto r = mcpp::build::run_build_program(
                     pkg.manifest, pkg.root, host->first, host->second,
                     pkg.manifest.cppStandard.canonical, bpEnv);
@@ -3085,6 +3087,29 @@ prepare_build(bool print_fingerprint,
                 bcDep.cxxflags.begin() + cxN, bcDep.cxxflags.end());
             m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
                 bcDep.ldflags.begin() + ldN, bcDep.ldflags.end());
+            // include-dir[/-after] directives are PRIVATE (design §3.1: Cargo
+            // discipline — a build-time program must not widen the package's
+            // public interface). The dep's own TUs read privateBuild; its
+            // consumers read publicUsage (re-flowed by the usage fixpoint
+            // below) — so mirror the new tail into privateBuild ONLY, never
+            // publicUsage. The bcDep entries themselves are inert here: the
+            // descriptor include_dirs propagation snapshotted publicUsage at
+            // makePackageRoot, long before this pass.
+            for (auto it = bcDep.includeDirs.begin() + incN;
+                 it != bcDep.includeDirs.end(); ++it)
+                appendUniquePath(pkg.privateBuild.includeDirs, *it);
+            // No privateBuild slot exists for after-dirs (the -idirafter
+            // emission chain is #249's); spell them as private compile flags
+            // (two argv tokens, matching host_base_flags) so a dep gets the
+            // semantics today.
+            for (auto it = bcDep.includeDirsAfter.begin() + incAfterN;
+                 it != bcDep.includeDirsAfter.end(); ++it) {
+                for (auto* dst : { &pkg.privateBuild.cflags,
+                                   &pkg.privateBuild.cxxflags }) {
+                    dst->push_back("-idirafter");
+                    dst->push_back(*it);
+                }
+            }
         }
 
         // apply() may have added interface defines to packages' publicUsage

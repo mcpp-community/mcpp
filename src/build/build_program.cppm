@@ -86,6 +86,15 @@ struct Directives {
     // dependency mode (a payload file lives in the package tree, never in
     // OUT_DIR) — unlike generated=, whose dep-mode relatives resolve to genBase.
     std::vector<std::string> sources;
+    // include-dir[/-after]= — private include directories for THIS package's
+    // own TUs (-I / -idirafter). Normalized to absolute at parse time (abs
+    // taken as-is, relative against the package root, same as link-search).
+    // Cargo discipline: NEVER propagated as a usage requirement — an include
+    // dir that consumers must see belongs in the declarative descriptor, not
+    // in a build-time program (supply-chain surface: a build program must not
+    // silently widen a package's public interface).
+    std::vector<std::string> includeDirs;
+    std::vector<std::string> includeDirsAfter;
     std::vector<std::string> rerunFiles;    // declared file inputs
     std::vector<std::string> rerunEnv;      // declared env-var inputs
 };
@@ -124,6 +133,9 @@ bool parse_line(const fs::path& root, std::string_view raw, Directives& d) {
     else if (key == "cfg")           d.defines.push_back("-D" + val);
     else if (key == "generated")     d.generated.push_back(val);
     else if (key == "source")        d.sources.push_back(val);
+    else if (key == "include-dir")   d.includeDirs.push_back(abs_against_root(root, val));
+    else if (key == "include-dir-after")
+                                     d.includeDirsAfter.push_back(abs_against_root(root, val));
     else if (key == "rerun-if-changed")     d.rerunFiles.push_back(val);
     else if (key == "rerun-if-env-changed") d.rerunEnv.push_back(val);
     else mcpp::ui::warning(std::format("build.mcpp: ignoring unknown directive 'mcpp:{}'", key));
@@ -244,6 +256,8 @@ inline void link_search(const char* dir)          { std::printf("mcpp:link-searc
 inline void define(const char* name)              { std::printf("mcpp:cfg=%s\n", name); }
 inline void generated(const char* path)           { std::printf("mcpp:generated=%s\n", path); }
 inline void source(const char* path)              { std::printf("mcpp:source=%s\n", path); }
+inline void include_dir(const char* dir)          { std::printf("mcpp:include-dir=%s\n", dir); }
+inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-dir-after=%s\n", dir); }
 inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }
 inline void rerun_if_env_changed(const char* var) { std::printf("mcpp:rerun-if-env-changed=%s\n", var); }
 // ── environment contract (read side; values injected by the engine) ─────
@@ -335,7 +349,7 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
 // compiler <hash>
 // in <contenthash> <path>
 // env <valuehash> <NAME>
-// d cxxflag|cflag|ldflag|define|generated|source <verbatim value to end of line>
+// d cxxflag|cflag|ldflag|define|generated|source|include-dir|include-dir-after <verbatim value to end of line>
 // The leading program/compiler/in/env lines are the re-run key; the `d` lines
 // are the directives to reapply on a hit.
 
@@ -433,6 +447,8 @@ void write_cache(const fs::path& bdir, const fs::path& root,
     emit("define", d.defines);
     emit("generated", d.generated);
     emit("source", d.sources);
+    emit("include-dir", d.includeDirs);
+    emit("include-dir-after", d.includeDirsAfter);
 }
 
 struct CacheRecord {
@@ -474,6 +490,8 @@ CacheRecord read_cache(const fs::path& bdir) {
             else if (kind == "define") r.directives.defines.push_back(val);
             else if (kind == "generated") r.directives.generated.push_back(val);
             else if (kind == "source") r.directives.sources.push_back(val);
+            else if (kind == "include-dir") r.directives.includeDirs.push_back(val);
+            else if (kind == "include-dir-after") r.directives.includeDirsAfter.push_back(val);
         }
     }
     r.loaded = true;
@@ -521,6 +539,14 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
         bc.sources.push_back(s);
         m.modules.sources.push_back(s);
     }
+    // Include dirs (already absolute from parse_line). PRIVATE by design: for
+    // the root they join buildConfig before the package snapshot; for a
+    // dependency the caller (prepare.cppm dep loop) mirrors them into the
+    // dep's privateBuild only — never into publicUsage (see Directives note).
+    for (auto const& p : d.includeDirs)
+        bc.includeDirs.emplace_back(p);
+    for (auto const& p : d.includeDirsAfter)
+        bc.includeDirsAfter.push_back(p);
 }
 
 } // namespace
