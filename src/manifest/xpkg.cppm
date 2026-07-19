@@ -1189,6 +1189,21 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     cur.skip_ws_and_comments();
                 }
                 cur.consume('}');
+                // #243: partition `dep/feat` tokens collected under this
+                // feature's `implies` into featureForwards (Cargo parity).
+                // Mirrors the TOML surface — both grammars share the one split
+                // point split_feature_forward_token; the `deps` branch above is
+                // untouched (that is featureDeps, a different concern).
+                if (auto fmi = m.featuresMap.find(fname); fmi != m.featuresMap.end()) {
+                    std::vector<std::string> localImplies;
+                    for (auto& tok : fmi->second) {
+                        if (auto fwd = mcpp::pm::split_feature_forward_token(tok))
+                            m.featureForwards[fname].push_back(std::move(*fwd));
+                        else
+                            localImplies.push_back(std::move(tok));
+                    }
+                    fmi->second = std::move(localImplies);
+                }
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');

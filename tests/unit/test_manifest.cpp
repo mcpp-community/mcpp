@@ -500,6 +500,102 @@ package = {
     EXPECT_TRUE(m->dependencies.empty());
 }
 
+// Feature System v2 #243: dep/feat forwarding (Cargo parity). A `[features]`
+// implied-feature token containing '/' means "when this feature is active,
+// request <depFeature> from dependency <depKey>". It is split out of the
+// implies list into featureForwards; plain names stay implies.
+TEST(Manifest, FeatureForwardTomlArrayAndImplies) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[targets.x]
+kind = "lib"
+[features]
+default = []
+dnn = ["dnn-local", "compat.opencv/dnn"]
+[dependencies]
+compat.opencv = { version = "0.0.3", default-features = false }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    // The plain name stays an implied feature.
+    ASSERT_TRUE(m->featuresMap.contains("dnn"));
+    ASSERT_EQ(m->featuresMap["dnn"].size(), 1u);
+    EXPECT_EQ(m->featuresMap["dnn"][0], "dnn-local");
+
+    // The `dep/feat` token becomes a forward (depKey verbatim = stableMapKey).
+    ASSERT_TRUE(m->featureForwards.contains("dnn"));
+    ASSERT_EQ(m->featureForwards["dnn"].size(), 1u);
+    EXPECT_EQ(m->featureForwards["dnn"][0].first,  "compat.opencv");
+    EXPECT_EQ(m->featureForwards["dnn"][0].second, "dnn");
+}
+
+// The table form accepts forwards both mixed into `implies` and via the
+// dedicated self-documenting `forward` key; both feed featureForwards.
+TEST(Manifest, FeatureForwardTableForms) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[targets.x]
+kind = "lib"
+[features]
+default = []
+a = { implies = ["base", "dep.one/x"] }
+b = { forward = ["dep.two/y", "dep.two/z"] }
+base = []
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    // `implies` keeps the plain name, forwards the slashed token.
+    ASSERT_EQ(m->featuresMap["a"].size(), 1u);
+    EXPECT_EQ(m->featuresMap["a"][0], "base");
+    ASSERT_TRUE(m->featureForwards.contains("a"));
+    ASSERT_EQ(m->featureForwards["a"].size(), 1u);
+    EXPECT_EQ(m->featureForwards["a"][0].first,  "dep.one");
+    EXPECT_EQ(m->featureForwards["a"][0].second, "x");
+
+    // Dedicated `forward` key: all tokens are forwards; feature has no implies.
+    EXPECT_TRUE(m->featuresMap["b"].empty());
+    ASSERT_TRUE(m->featureForwards.contains("b"));
+    ASSERT_EQ(m->featureForwards["b"].size(), 2u);
+    EXPECT_EQ(m->featureForwards["b"][0].first,  "dep.two");
+    EXPECT_EQ(m->featureForwards["b"][0].second, "y");
+    EXPECT_EQ(m->featureForwards["b"][1].second, "z");
+}
+
+// The Lua descriptor surface splits `dep/feat` tokens the same way (one shared
+// split point, two grammars).
+TEST(SynthesizeFromXpkgLua, FeatureForwardParse) {
+    constexpr auto lua = R"(
+package = {
+    spec = "1",
+    name = "opencv",
+    xpm  = { linux = { ["0.0.3"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/anchor.c" },
+        targets = { ["opencv"] = { kind = "lib" } },
+        features = {
+            ["dnn"] = { sources = { "*/dnn.cppm" }, implies = { "compat.opencv/dnn" } },
+        },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "opencv", "0.0.3");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    // The forward token left featuresMap for featureForwards.
+    EXPECT_TRUE(m->featuresMap["dnn"].empty());
+    ASSERT_TRUE(m->featureForwards.contains("dnn"));
+    ASSERT_EQ(m->featureForwards["dnn"].size(), 1u);
+    EXPECT_EQ(m->featureForwards["dnn"][0].first,  "compat.opencv");
+    EXPECT_EQ(m->featureForwards["dnn"][0].second, "dnn");
+    // sources still gated normally (untouched by the split).
+    ASSERT_TRUE(m->buildConfig.featureSources.contains("dnn"));
+}
+
 // mcpp#237: an unknown mcpp-segment key is collected (so the build path can
 // surface it) and the did-you-mean helper maps well-known confusables +
 // edit-distance typos back to the closed key vocabulary.

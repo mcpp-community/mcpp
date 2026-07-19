@@ -56,6 +56,25 @@ inline DependencySelector make_direct_dependency_selector(
     return out;
 }
 
+// #243 Cargo dep/feat forwarding. Split a `[features]` implied-feature token:
+// a token containing '/' means "when this feature is active, request
+// <depFeature> from dependency <depKey>" (Cargo `[features] F = ["dep/feat"]`).
+// <depKey> is returned verbatim so it lands in the same keyspace as the
+// `dependencies` / `featureDeps` maps (both keyed by the raw selector string,
+// == stableMapKey). Split on the FIRST '/' (feature names contain no '/').
+// A token with no '/', or with an empty dep/feature half, is a plain local
+// implied feature → nullopt.
+inline std::optional<std::pair<std::string, std::string>>
+split_feature_forward_token(std::string_view token)
+{
+    auto slash = token.find('/');
+    if (slash == std::string_view::npos) return std::nullopt;
+    auto depKey  = token.substr(0, slash);
+    auto depFeat = token.substr(slash + 1);
+    if (depKey.empty() || depFeat.empty()) return std::nullopt;
+    return std::pair{std::string(depKey), std::string(depFeat)};
+}
+
 inline DependencySelector resolve_dependency_selector(
     std::string_view selector,
     DependencySelectorMode)

@@ -210,12 +210,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         };
         for (auto& [fname, fval] : *features_table) {
             std::vector<std::string> implied;
+            std::vector<std::string> forwardTokens;
             if (fval.is_array()) {
                 for (auto& v : fval.as_array())
                     if (v.is_string()) implied.push_back(v.as_string());
             } else if (fval.is_table()) {
                 auto& ft = fval.as_table();
                 read_str_array(ft, "implies", implied);
+                // #243: a feature may forward features to its dependencies
+                // (Cargo `dep/feat`). Two equivalent spellings, one data model:
+                // `dep/feat` tokens mixed into `implies` (Cargo parity), or a
+                // dedicated self-documenting `forward = ["dep/feat", ...]` key.
+                read_str_array(ft, "forward", forwardTokens);
                 std::vector<std::string> defs;
                 read_str_array(ft, "defines", defs);
                 if (!defs.empty()) m.buildConfig.featureDefines[fname] = std::move(defs);
@@ -232,7 +238,20 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
                 if (!provs.empty()) m.featureProvides[fname] = std::move(provs);
             }
-            m.featuresMap[fname] = std::move(implied);
+            // #243: split `dep/feat` tokens out of `implies` into featureForwards
+            // (raw depKey shares the `dependencies`/`featureDeps` keyspace); the
+            // dedicated `forward` key is always forwards. Plain names stay implies.
+            std::vector<std::string> localImplies;
+            for (auto& tok : implied) {
+                if (auto fwd = mcpp::pm::split_feature_forward_token(tok))
+                    m.featureForwards[fname].push_back(std::move(*fwd));
+                else
+                    localImplies.push_back(std::move(tok));
+            }
+            for (auto& tok : forwardTokens)
+                if (auto fwd = mcpp::pm::split_feature_forward_token(tok))
+                    m.featureForwards[fname].push_back(std::move(*fwd));
+            m.featuresMap[fname] = std::move(localImplies);
         }
     }
 

@@ -384,6 +384,18 @@ struct Manifest {
     // Each value is a full DependencySpec, so a feature-dep may itself request
     // features. See .agents/docs/2026-06-29-feature-optional-dependencies-s2-design.md.
     std::map<std::string, std::map<std::string, DependencySpec>> featureDeps;
+    // Feature System v2 #243 — dep/feat forwarding (Cargo parity). When this
+    // package's feature <featureName> is active, each <depFeature> is injected
+    // into the request set for dependency <depStableKey>, so a feature can open
+    // a feature OF a dependency (e.g. an opencv module package's `dnn` feature
+    // forwarding `compat.opencv/dnn`). <depStableKey> shares the keyspace of
+    // `featuresMap`'s siblings `dependencies` / `featureDeps` (the raw selector
+    // string == resolve_dependency_selector(...).stableMapKey). Forwarding is
+    // additive: it only opens more of a dep's features, never pulls the dep in
+    // (that is featureDeps' job) and is unaffected by `default-features`.
+    // featureName → [(depStableKey, depFeature)].
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>>
+        featureForwards;
     // Root-only: [capabilities] cap = "provider" pins (also fed by --cap).
     std::map<std::string, std::string>              capabilityPins;
 
