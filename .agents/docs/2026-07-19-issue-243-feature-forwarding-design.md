@@ -1,5 +1,7 @@
 # Issue #243 —— feature 依赖转发(`dep/feat`)设计
 
+> **⚠️ 实现路径已校正(见 [2026-07-19-v0.0.99-feature-forwarding-238-230-design.md](2026-07-19-v0.0.99-feature-forwarding-238-230-design.md))**:本文 §5 提出的 `requestedFeaturesByPkg` 累加器,在 0.0.98 已由 `0cca9e0` 的 `DependencyEdge` + `aggregatedRequest` 单一漏斗实现;#243 只需**把转发注入这个既有漏斗**(把转发 feature 追加进子依赖 push 前的 `spec.features`),不再新建平行结构。§1–§4、§6–§8 的语义分析仍然有效。
+>
 > 日期:2026-07-19
 > 基线:mcpp **0.0.98**(HEAD;`MCPP_VERSION = "0.0.98"` @ `src/toolchain/fingerprint.cppm:21`)
 > 范围:GitHub issue **#243** —— manifest `[features]` 的 (1) feature 条件依赖 与 (2) 依赖 feature **转发**(Cargo `dep/feat` 语法)。阻塞用例:opencv 模块包的 `opencv.dnn` 接口(一个 feature 既要拉入一个依赖、又要打开该依赖的某个 feature)。
