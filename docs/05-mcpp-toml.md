@@ -149,7 +149,9 @@ macos_deployment_target = "14.0"   # Minimum supported OS version for macOS arti
 
 `include_dirs_after` (#249) lists header directories that are searched **after**
 the toolchain's system directories (emitted as `-idirafter` on GCC/Clang, as
-trailing `/I` under the MSVC dialect, which has no equivalent). Use it instead of
+trailing `/I` under the MSVC dialect, and as plain `-I` for NASM
+assembly units — neither has an equivalent, and neither has a system-header
+chain to protect). Use it instead of
 `include_dirs` when the directory is an extracted source-tarball root that
 contains files whose names collide with standard headers — e.g. ffmpeg's
 top-level `VERSION` file shadows libc++'s `<version>` on case-insensitive macOS

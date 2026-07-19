@@ -60,7 +60,15 @@ namespace {
 std::string escape_ninja_path(const std::filesystem::path& p) {
     // Ninja escapes: $ → $$, : → $:, space → $ (with leading space).
     // For simplicity we wrap in case-by-case.
-    std::string s = p.string();
+    //
+    // generic_string(): ninja node names must be forward-slash even on
+    // Windows (#247). rspfile_content = $in copies node names verbatim into
+    // a response file that gcc/clang/GNU ar tokenize GNU-style, where
+    // backslash is an ESCAPE character — `obj\cli.o` would arrive as
+    // `objcli.o`. Every Windows consumer of these strings (CreateProcess
+    // path resolution, cl.exe/link.exe, PowerShell Copy-Item, ninja itself)
+    // accepts forward slashes; POSIX output is byte-identical.
+    std::string s = p.generic_string();
     std::string out;
     for (char c : s) {
         if (c == '$')
@@ -87,8 +95,12 @@ std::string escape_flag_path(const std::filesystem::path& p) {
     return out;
 }
 
-std::string local_include_flags(const CompileUnit& cu, bool msvcDialect,
-                                bool nasmUnit) {
+bool is_nasm_source(const std::filesystem::path& src) {
+    return src.extension() == ".asm";
+}
+
+std::string local_include_flags(const CompileUnit& cu, bool msvcDialect) {
+    const bool nasmUnit = is_nasm_source(cu.source);
     std::string flags;
     for (auto const& inc : cu.localIncludeDirs) {
         flags += " -I";
@@ -195,10 +207,6 @@ bool is_c_source(const std::filesystem::path& src) {
 bool is_gas_source(const std::filesystem::path& src) {
     auto ext = src.extension();
     return ext == ".S" || ext == ".s";
-}
-
-bool is_nasm_source(const std::filesystem::path& src) {
-    return src.extension() == ".asm";
 }
 
 // TUs the P1689 module scan must skip: C-family and assembly units cannot
@@ -580,39 +588,25 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     // Link/archive/shared: driver-style (g++/clang++ are the linker) vs the
-    // msvc dialect's separate link.exe/lib.exe. The msvc commands go through
-    // response files — object lists exceed cmd.exe's 8191-char limit fast.
-    if (separateLinker) {
-        append("rule cxx_link\n");
-        append("  command = $ld /nologo /OUT:$out @$out.rsp $ldflags $unit_ldflags\n");
-        append("  rspfile = $out.rsp\n");
-        append("  rspfile_content = $in\n");
-        append("  description = LINK $out\n\n");
-
-        append("rule cxx_archive\n");
-        append("  command = $ar /nologo /OUT:$out @$out.rsp\n");
-        append("  rspfile = $out.rsp\n");
-        append("  rspfile_content = $in\n");
-        append("  description = AR $out\n\n");
-
-        append("rule cxx_shared\n");
-        append("  command = $ld /nologo /DLL /OUT:$out /IMPLIB:$out.lib "
-               "@$out.rsp $ldflags $unit_ldflags\n");
-        append("  rspfile = $out.rsp\n");
-        append("  rspfile_content = $in\n");
-        append("  description = SHARED $out\n\n");
-    } else {
-        // Driver-style toolchains (g++/clang++ as the link driver). On
-        // Windows these still spawn through CreateProcess (32 KiB command
-        // line ceiling), and large source packages (ffmpeg/opencv-class)
-        // link thousands of objects — an inlined $in overflows it (#247).
-        // gcc/clang drivers and GNU/llvm ar all accept @rspfile, so route
-        // $in through one there. POSIX keeps the inline form byte-identical:
-        // ARG_MAX is ample and the plain command is easier to reproduce.
-        auto driver_rule = [&](std::string_view name, std::string cmd,
-                               std::string_view desc) {
+    // msvc dialect's separate link.exe/lib.exe. One emitter owns the rule
+    // shape; `useRsp` decides whether $in is inlined or routed through a
+    // response file (`$in → @$out.rsp` — the only `$i…` variable in any
+    // link/archive command; revisit the first-match replace if a dialect
+    // ever grows another).
+    //
+    // rsp is used when the command spawns through CreateProcess (32 KiB
+    // command-line ceiling): always for the separate-linker msvc dialect,
+    // and on Windows for driver-style too (#247 — ffmpeg/opencv-class
+    // packages link thousands of objects; clang/gcc drivers and GNU/llvm ar
+    // all accept @rspfile). POSIX driver-style keeps the inline form
+    // byte-identical: ARG_MAX is ample and the plain command is easier to
+    // reproduce by hand.
+    {
+        const bool useRsp = separateLinker || mcpp::platform::is_windows;
+        auto link_rule = [&](std::string_view name, std::string cmd,
+                             std::string_view desc) {
             append(std::format("rule {}\n", name));
-            if constexpr (mcpp::platform::is_windows) {
+            if (useRsp) {
                 if (auto pos = cmd.find("$in"); pos != std::string::npos)
                     cmd.replace(pos, 3, "@$out.rsp");
                 append(std::format("  command = {}\n", cmd));
@@ -623,12 +617,23 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             }
             append(std::format("  description = {} $out\n\n", desc));
         };
-        driver_rule("cxx_link",
-                    "$cxx $in -o $out $ldflags $unit_ldflags", "LINK");
-        driver_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
-        driver_rule("cxx_shared",
-                    "$cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags",
-                    "SHARED");
+        if (separateLinker) {
+            link_rule("cxx_link",
+                      "$ld /nologo /OUT:$out $in $ldflags $unit_ldflags",
+                      "LINK");
+            link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
+            link_rule("cxx_shared",
+                      "$ld /nologo /DLL /OUT:$out /IMPLIB:$out.lib "
+                      "$in $ldflags $unit_ldflags",
+                      "SHARED");
+        } else {
+            link_rule("cxx_link",
+                      "$cxx $in -o $out $ldflags $unit_ldflags", "LINK");
+            link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
+            link_rule("cxx_shared",
+                      "$cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags",
+                      "SHARED");
+        }
     }
 
     append("rule runtime_alias\n");
@@ -750,7 +755,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             append(std::format("build {} : cxx_scan {}\n", escape_ninja_path(ddi),
                                escape_ninja_path(cu.source)));
             append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
-            if (auto includes = local_include_flags(cu, msvcDeps, is_nasm_source(cu.source)); !includes.empty())
+            if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
             if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
                 append(std::format("  unit_cxxflags ={}\n", flags));
@@ -829,7 +834,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             } else {
                 out_line += "\n";
             }
-            if (auto includes = local_include_flags(cu, msvcDeps, is_nasm_source(cu.source)); !includes.empty())
+            if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
             if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
                 if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
@@ -879,7 +884,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (!implicit.empty())
                 out_line += " |" + implicit;
             out_line += "\n";
-            if (auto includes = local_include_flags(cu, msvcDeps, is_nasm_source(cu.source)); !includes.empty())
+            if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
             if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
                 if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())

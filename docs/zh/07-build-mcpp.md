@@ -46,9 +46,9 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:link-search=<dir>`           | 增加库搜索目录(`-L`;相对路径按工程根目录解析) |
 | `mcpp:cfg=<name>`                  | 为 C 与 C++ 同时定义 `-D<name>` |
 | `mcpp:generated=<path>`            | 把生成的源码(相对工程根目录)加入构建 |
-| `mcpp:source=<path>`               | 把一份**既有**源文件选入构建(绝对路径,或相对包根)。下游效果与 `generated=` 相同;语义区别在于文件是程序*选中*的(tarball payload / vendored 源树)而非程序写出的——例如对大型源码包做 per-target 源选择 |
-| `mcpp:include-dir=<dir>`           | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
-| `mcpp:include-dir-after=<dir>`     | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
+| `mcpp:source=<path>` *(0.0.100+)*  | 把一份**既有**源文件选入构建(绝对路径,或相对包根)。下游效果与 `generated=` 相同;语义区别在于文件是程序*选中*的(tarball payload / vendored 源树)而非程序写出的——例如对大型源码包做 per-target 源选择 |
+| `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
+| `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
 | `mcpp:rerun-if-changed=<path>`     | 该文件变化时重跑 `build.mcpp` |
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
 
@@ -103,16 +103,16 @@ int main() {
 | 变量 | 类型化读取 | 值 |
 |---|---|---|
 | `MCPP_TARGET` | `mcpp::target()` | 解析后的 canonical 三元组(交叉构建下是 `--target` 三元组,原生构建是宿主) |
-| `MCPP_TARGET_OS` | `mcpp::target_os()` | 目标的 OS 段(`linux`/`macos`/`windows`)——不必再手撕 `MCPP_TARGET` |
-| `MCPP_TARGET_ARCH` | `mcpp::target_arch()` | 目标的 arch 段(GNU 拼写:`x86_64`、`aarch64`…) |
-| `MCPP_TARGET_ENV` | `mcpp::target_env()` | 目标的 env 段(`gnu`/`musl`/`msvc`);三元组无 env 段(macOS)时为空串 |
+| `MCPP_TARGET_OS` *(0.0.100+)* | `mcpp::target_os()` | 目标的 OS 段(`linux`/`macos`/`windows`)——不必再手撕 `MCPP_TARGET` |
+| `MCPP_TARGET_ARCH` *(0.0.100+)* | `mcpp::target_arch()` | 目标的 arch 段(GNU 拼写:`x86_64`、`aarch64`…) |
+| `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | 目标的 env 段(`gnu`/`musl`/`msvc`);三元组无 env 段(macOS)时为空串 |
 | `MCPP_HOST` | `mcpp::host()` | 宿主三元组 |
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名(`dev`/`release`/…) |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根(= CWD) |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | 每个活跃 feature 置 `1`(`<NAME>` 消毒规则与 `MCPP_FEATURE_` 编译宏一致) |
 | `MCPP_FEATURES` | — | 活跃 feature 逗号列表 |
-| `MCPP_DEP_<NAME>_DIR` | `mcpp::dep_dir("name")` | 每个已声明依赖解析后的安装目录(canonical 名与去命名空间短名两种拼写都可用;`<NAME>` 消毒规则同 `MCPP_FEATURE_`)。依赖包的 build.mcpp **和**根工程的 build.mcpp 都能拿到(根工程的 build.mcpp 在依赖解析之后运行) |
+| `MCPP_DEP_<NAME>_DIR` | `mcpp::dep_dir("name")` | 每个已声明依赖解析后的安装目录(canonical 名与去命名空间短名两种拼写都可用;`<NAME>` 消毒规则同 `MCPP_FEATURE_`)。依赖包的 build.mcpp **和**根工程的 build.mcpp 都能拿到(根工程的 build.mcpp 在依赖解析之后运行,0.0.100+) |
 
 这些契约值**无条件**折入重跑键——换 target、换 profile、开关 feature 都会触发重跑,
 不需要任何 `rerun-if-env-changed` 声明。
@@ -135,7 +135,7 @@ mcpp **不会**每次构建都重跑 `build.mcpp`。它会缓存程序产出的�
 - 工具链,
 - 任何用 `rerun-if-changed` 声明的文件,
 - 任何用 `rerun-if-env-changed` 声明的环境变量,
-- (或某个 `generated` 产物丢失了)。
+- (或某个 `generated` 产物 / `source=` 选中的文件丢失了)。
 
 所以请**声明你的输入**:如果程序读了 `config.h` 或 `USE_FAST` 变量,就分别 emit
 `mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`。这用一份明确的

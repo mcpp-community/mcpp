@@ -1911,6 +1911,45 @@ prepare_build(bool print_fingerprint,
         return changed;
     };
 
+    // ONE owner of "which compile-visible channels a build.mcpp directive
+    // lands in" — shared by the dep loop and the root call site so the
+    // next directive kind cannot be threaded through one and silently
+    // missed in the other (the #242 two-derivations failure shape).
+    // apply() mutates the manifest the program ran against; this folds
+    // the NEW tail (recorded sizes → end) into the package's
+    // usage-resolved privateBuild, which is what its TUs actually read.
+    // Link/source/fingerprint residues stay at the call sites — they
+    // genuinely differ between root and dep (see each).
+    struct DirectiveMark { std::size_t c, cx, inc, incAfter; };
+    auto markDirectiveTail = [](const mcpp::manifest::Manifest& mm) {
+        return DirectiveMark{ mm.buildConfig.cflags.size(),
+                              mm.buildConfig.cxxflags.size(),
+                              mm.buildConfig.includeDirs.size(),
+                              mm.buildConfig.includeDirsAfter.size() };
+    };
+    auto foldDirectiveTailIntoPrivateBuild =
+        [&](auto& pkg, const mcpp::manifest::Manifest& ran,
+            const DirectiveMark& t)
+    {
+        auto const& bc = ran.buildConfig;
+        pkg.privateBuild.cflags.insert(pkg.privateBuild.cflags.end(),
+            bc.cflags.begin() + t.c, bc.cflags.end());
+        pkg.privateBuild.cxxflags.insert(pkg.privateBuild.cxxflags.end(),
+            bc.cxxflags.begin() + t.cx, bc.cxxflags.end());
+        // include-dir[/-after] directives are PRIVATE (design §3.1: Cargo
+        // discipline — a build-time program must not widen the package's
+        // public interface): privateBuild only, never publicUsage. The
+        // after-dirs ride the typed #249 channel, which owns the
+        // per-dialect degradations (cl.exe /I, NASM -I).
+        for (auto it = bc.includeDirs.begin() + t.inc;
+             it != bc.includeDirs.end(); ++it)
+            appendUniquePath(pkg.privateBuild.includeDirs, *it);
+        for (auto it = bc.includeDirsAfter.begin() + t.incAfter;
+             it != bc.includeDirsAfter.end(); ++it)
+            appendUniquePath(pkg.privateBuild.includeDirsAfter, *it);
+    };
+
+
     auto appendUniqueFlags =
         [](std::vector<std::string>& flags,
            const std::vector<std::string>& additions) -> bool
@@ -1950,13 +1989,12 @@ prepare_build(bool print_fingerprint,
     {
         std::vector<std::filesystem::path> dirs;
         for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
-            std::filesystem::path p(inc);
-            if (p.is_absolute()) {
-                appendUniquePath(dirs, p);
+            if (inc.is_absolute()) {
+                appendUniquePath(dirs, inc);
                 continue;
             }
             for (auto& dir : mcpp::modgraph::expand_dir_glob(
-                     packageRoot, p.generic_string())) {
+                     packageRoot, inc.generic_string())) {
                 appendUniquePath(dirs, dir);
             }
         }
@@ -2445,8 +2483,7 @@ prepare_build(bool print_fingerprint,
                         if (inc.is_relative()) inc = secondaryRoot / inc;
                     }
                     for (auto& inc : stagedManifest.buildConfig.includeDirsAfter) {
-                        if (std::filesystem::path p(inc); p.is_relative())
-                            inc = (secondaryRoot / p).generic_string();
+                        if (inc.is_relative()) inc = secondaryRoot / inc;
                     }
 
                     dep_manifests.push_back(
@@ -3052,10 +3089,8 @@ prepare_build(bool print_fingerprint,
                     bpEnv.depDirs.emplace_back(canon.substr(dot + 1), depPkg.root);
             }
             auto& bcDep = pkg.manifest.buildConfig;
-            const auto cN = bcDep.cflags.size(), cxN = bcDep.cxxflags.size(),
-                       ldN = bcDep.ldflags.size(),
-                       incN = bcDep.includeDirs.size(),
-                       incAfterN = bcDep.includeDirsAfter.size();
+            const auto mark = markDirectiveTail(pkg.manifest);
+            const auto ldN = bcDep.ldflags.size();
             if (auto r = mcpp::build::run_build_program(
                     pkg.manifest, pkg.root, host->first, host->second,
                     pkg.manifest.cppStandard.canonical, bpEnv);
@@ -3063,36 +3098,18 @@ prepare_build(bool print_fingerprint,
                 return std::unexpected(std::format(
                     "dependency '{}': {}", pkg.manifest.package.name, r.error()));
             }
-            // Cargo scope wiring. Compile flags: the dep's TUs read the
-            // usage-resolved privateBuild (not bc) — mirror the newly added
-            // flags there, same as the MCPP_FEATURE_ macro does. Link flags:
-            // dep ldflags were propagated to the root during the BFS walk,
-            // which ran before this pass — forward the new tail (link-search
-            // paths are already absolute from parse_line).
-            pkg.privateBuild.cflags.insert(pkg.privateBuild.cflags.end(),
-                bcDep.cflags.begin() + cN, bcDep.cflags.end());
-            pkg.privateBuild.cxxflags.insert(pkg.privateBuild.cxxflags.end(),
-                bcDep.cxxflags.begin() + cxN, bcDep.cxxflags.end());
+            // Cargo scope wiring: compile-visible tail → privateBuild (the
+            // shared fold above; the dep's TUs read privateBuild, not bc —
+            // its consumers read publicUsage, which the fold never touches;
+            // the bcDep entries themselves are inert here: the descriptor
+            // include_dirs propagation snapshotted publicUsage at
+            // makePackageRoot, long before this pass). Dep residue: link
+            // flags — dep ldflags were propagated to the root during the
+            // BFS walk, which ran before this pass — forward the new tail
+            // (link-search paths are already absolute from parse_line).
+            foldDirectiveTailIntoPrivateBuild(pkg, pkg.manifest, mark);
             m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
                 bcDep.ldflags.begin() + ldN, bcDep.ldflags.end());
-            // include-dir[/-after] directives are PRIVATE (design §3.1: Cargo
-            // discipline — a build-time program must not widen the package's
-            // public interface). The dep's own TUs read privateBuild; its
-            // consumers read publicUsage (re-flowed by the usage fixpoint
-            // below) — so mirror the new tail into privateBuild ONLY, never
-            // publicUsage. The bcDep entries themselves are inert here: the
-            // descriptor include_dirs propagation snapshotted publicUsage at
-            // makePackageRoot, long before this pass.
-            for (auto it = bcDep.includeDirs.begin() + incN;
-                 it != bcDep.includeDirs.end(); ++it)
-                appendUniquePath(pkg.privateBuild.includeDirs, *it);
-            // After-dirs ride the same typed #249 channel
-            // (privateBuild.includeDirsAfter → per-unit -idirafter), which
-            // owns the per-dialect degradations (cl.exe /I, NASM -I) a raw
-            // flag spelling would bypass.
-            for (auto it = bcDep.includeDirsAfter.begin() + incAfterN;
-                 it != bcDep.includeDirsAfter.end(); ++it)
-                appendUniquePath(pkg.privateBuild.includeDirsAfter, *it);
         }
 
         // apply() may have added interface defines to packages' publicUsage
@@ -3198,10 +3215,8 @@ prepare_build(bool print_fingerprint,
                 bpEnv.depDirs.emplace_back(canon.substr(dot + 1), depPkg.root);
         }
         auto& bcRoot = m->buildConfig;
-        const auto rcN = bcRoot.cflags.size(), rcxN = bcRoot.cxxflags.size(),
-                   rldN = bcRoot.ldflags.size(), rsrcN = bcRoot.sources.size(),
-                   rincN = bcRoot.includeDirs.size(),
-                   rincAfterN = bcRoot.includeDirsAfter.size(),
+        const auto mark = markDirectiveTail(*m);
+        const auto rldN = bcRoot.ldflags.size(), rsrcN = bcRoot.sources.size(),
                    rmodN = m->modules.sources.size();
         if (auto bp = mcpp::build::run_build_program(
                 *m, *root, host->first, host->second,
@@ -3210,52 +3225,42 @@ prepare_build(bool print_fingerprint,
             return std::unexpected(bp.error());
         }
         auto& pkg0 = packages[0];
-        // Sources → the scan walks packages[0].manifest, not *m.
+        // Compile-visible tail → privateBuild: the shared fold (same owner
+        // as the dep loop; the root's TUs read privateBuild).
+        foldDirectiveTailIntoPrivateBuild(pkg0, *m, mark);
+        // Root residues — apply() mutated *m, but packages[0].manifest is a
+        // value-copy snapshot taken at makePackageRoot, so everything the
+        // scan/fingerprint read from the snapshot needs the tail mirrored:
+        // sources → the scan walks packages[0].manifest, not *m.
         pkg0.manifest.buildConfig.sources.insert(
             pkg0.manifest.buildConfig.sources.end(),
             bcRoot.sources.begin() + rsrcN, bcRoot.sources.end());
         pkg0.manifest.modules.sources.insert(
             pkg0.manifest.modules.sources.end(),
             m->modules.sources.begin() + rmodN, m->modules.sources.end());
-        // Compile flags → the root's TUs read privateBuild (and the
-        // fingerprint folds packages[].manifest.buildConfig via
-        // canonical_package_build_metadata) — mirror both, as the old
-        // pre-snapshot ordering implicitly did.
-        pkg0.privateBuild.cflags.insert(pkg0.privateBuild.cflags.end(),
-            bcRoot.cflags.begin() + rcN, bcRoot.cflags.end());
-        pkg0.privateBuild.cxxflags.insert(pkg0.privateBuild.cxxflags.end(),
-            bcRoot.cxxflags.begin() + rcxN, bcRoot.cxxflags.end());
+        // Fingerprint metadata (canonical_package_build_metadata folds
+        // packages[].manifest.buildConfig) — mirror the flag/include tails,
+        // as the old pre-snapshot ordering implicitly did.
         pkg0.manifest.buildConfig.cflags.insert(
             pkg0.manifest.buildConfig.cflags.end(),
-            bcRoot.cflags.begin() + rcN, bcRoot.cflags.end());
+            bcRoot.cflags.begin() + mark.c, bcRoot.cflags.end());
         pkg0.manifest.buildConfig.cxxflags.insert(
             pkg0.manifest.buildConfig.cxxflags.end(),
-            bcRoot.cxxflags.begin() + rcxN, bcRoot.cxxflags.end());
+            bcRoot.cxxflags.begin() + mark.cx, bcRoot.cxxflags.end());
+        pkg0.manifest.buildConfig.includeDirs.insert(
+            pkg0.manifest.buildConfig.includeDirs.end(),
+            bcRoot.includeDirs.begin() + mark.inc, bcRoot.includeDirs.end());
+        pkg0.manifest.buildConfig.includeDirsAfter.insert(
+            pkg0.manifest.buildConfig.includeDirsAfter.end(),
+            bcRoot.includeDirsAfter.begin() + mark.incAfter,
+            bcRoot.includeDirsAfter.end());
         // Link flags → the final link reads *m (already applied); keep the
-        // linkUsage snapshot equivalent too.
+        // linkUsage snapshot and fingerprint metadata equivalent too.
         pkg0.linkUsage.ldflags.insert(pkg0.linkUsage.ldflags.end(),
             bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
         pkg0.manifest.buildConfig.ldflags.insert(
             pkg0.manifest.buildConfig.ldflags.end(),
             bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
-        // include-dir[/-after] directives: PRIVATE (already absolute from
-        // parse_line) — privateBuild only, never publicUsage (see the dep
-        // loop's rationale). privateBuild is what scanned units read
-        // (scanner → localIncludeDirs[After]); the manifest mirror keeps the
-        // fingerprint metadata equivalent, same as the flag mirrors above.
-        for (auto it = bcRoot.includeDirs.begin() + rincN;
-             it != bcRoot.includeDirs.end(); ++it)
-            appendUniquePath(pkg0.privateBuild.includeDirs, *it);
-        pkg0.manifest.buildConfig.includeDirs.insert(
-            pkg0.manifest.buildConfig.includeDirs.end(),
-            bcRoot.includeDirs.begin() + rincN, bcRoot.includeDirs.end());
-        for (auto it = bcRoot.includeDirsAfter.begin() + rincAfterN;
-             it != bcRoot.includeDirsAfter.end(); ++it)
-            appendUniquePath(pkg0.privateBuild.includeDirsAfter, *it);
-        pkg0.manifest.buildConfig.includeDirsAfter.insert(
-            pkg0.manifest.buildConfig.includeDirsAfter.end(),
-            bcRoot.includeDirsAfter.begin() + rincAfterN,
-            bcRoot.includeDirsAfter.end());
     }
 
     // [targets.*] required_features gate: a target is emitted only when ALL its

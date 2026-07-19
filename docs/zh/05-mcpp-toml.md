@@ -141,8 +141,8 @@ macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅
 ```
 
 `include_dirs_after`(#249)列出**排在工具链系统目录之后**搜索的头文件目录
-(GCC/Clang 发射为 `-idirafter`;MSVC 方言无对应能力,退化为排在末尾的
-`/I`)。当目录是解压后的源码 tarball 根目录、且其中的文件名会与标准头冲突时,
+(GCC/Clang 发射为 `-idirafter`;MSVC 方言退化为排在末尾的 `/I`,NASM 汇编
+单元退化为普通 `-I`——两者都没有对应 flag,也都没有需要保护的系统头搜索链)。当目录是解压后的源码 tarball 根目录、且其中的文件名会与标准头冲突时,
 用它代替 `include_dirs` —— 例如 ffmpeg 根目录的 `VERSION` 文件在大小写不敏感
 的 macOS 文件系统上会把 libc++ 的 `<version>` 遮蔽(若该根目录挂在 `-I` 上)。
 使用 `include_dirs_after` 时系统头永远优先,而包自己的真实头文件

@@ -280,7 +280,7 @@ local_include_dirs_after_for_manifest(const std::filesystem::path& root,
 {
     std::vector<std::filesystem::path> dirs;
     for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
-        for (auto& d : expand_manifest_include_entry(root, std::filesystem::path(inc)))
+        for (auto& d : expand_manifest_include_entry(root, inc))
             dirs.push_back(std::move(d));
     }
     return dirs;

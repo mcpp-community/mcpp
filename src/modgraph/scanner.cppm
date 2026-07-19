@@ -761,12 +761,11 @@ local_include_dirs_after_for(const std::filesystem::path& root,
 {
     std::vector<std::filesystem::path> dirs;
     for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
-        std::filesystem::path p(inc);
-        if (p.is_absolute()) {
-            dirs.push_back(std::move(p));
+        if (inc.is_absolute()) {
+            dirs.push_back(inc);
             continue;
         }
-        for (auto& d : expand_dir_glob(root, p.generic_string())) {
+        for (auto& d : expand_dir_glob(root, inc.generic_string())) {
             dirs.push_back(std::move(d));
         }
     }

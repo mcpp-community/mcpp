@@ -49,9 +49,9 @@ is ignored, so you can freely log diagnostics.
 | `mcpp:link-search=<dir>`           | add a library search dir (`-L`; relative dirs resolve against the project root) |
 | `mcpp:cfg=<name>`                  | define `-D<name>` for both C and C++ |
 | `mcpp:generated=<path>`            | add a generated source (relative to the project root) to the build |
-| `mcpp:source=<path>`               | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
-| `mcpp:include-dir=<dir>`           | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
-| `mcpp:include-dir-after=<dir>`     | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
+| `mcpp:source=<path>` *(0.0.100+)*  | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
+| `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
+| `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
 | `mcpp:rerun-if-changed=<path>`     | re-run `build.mcpp` when this file changes |
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
 
@@ -111,16 +111,16 @@ The running program receives the build context as `MCPP_*` variables
 | Variable | Typed reader | Value |
 |---|---|---|
 | `MCPP_TARGET` | `mcpp::target()` | resolved canonical triple (the `--target` triple under cross; the host triple natively) |
-| `MCPP_TARGET_OS` | `mcpp::target_os()` | the target's OS segment (`linux`/`macos`/`windows`) — no need to hand-split `MCPP_TARGET` |
-| `MCPP_TARGET_ARCH` | `mcpp::target_arch()` | the target's arch segment (GNU spelling: `x86_64`, `aarch64`, …) |
-| `MCPP_TARGET_ENV` | `mcpp::target_env()` | the target's env segment (`gnu`/`musl`/`msvc`); empty string when the triple has none (macOS) |
+| `MCPP_TARGET_OS` *(0.0.100+)* | `mcpp::target_os()` | the target's OS segment (`linux`/`macos`/`windows`) — no need to hand-split `MCPP_TARGET` |
+| `MCPP_TARGET_ARCH` *(0.0.100+)* | `mcpp::target_arch()` | the target's arch segment (GNU spelling: `x86_64`, `aarch64`, …) |
+| `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | the target's env segment (`gnu`/`musl`/`msvc`); empty string when the triple has none (macOS) |
 | `MCPP_HOST` | `mcpp::host()` | the host triple |
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | set to `1` per active feature (same `<NAME>` sanitization as the `MCPP_FEATURE_` compile macro) |
 | `MCPP_FEATURES` | — | comma-separated active feature list |
-| `MCPP_DEP_<NAME>_DIR` | `mcpp::dep_dir("name")` | the resolved install dir of each declared dependency (canonical **and** namespace-stripped name spellings; same `<NAME>` sanitization as `MCPP_FEATURE_`). Received by dependencies' build.mcpp **and** the root project's (the root runs after dependency resolution) |
+| `MCPP_DEP_<NAME>_DIR` | `mcpp::dep_dir("name")` | the resolved install dir of each declared dependency (canonical **and** namespace-stripped name spellings; same `<NAME>` sanitization as `MCPP_FEATURE_`). Received by dependencies' build.mcpp **and** the root project's (the root runs after dependency resolution, 0.0.100+) |
 
 These values are folded into the re-run key **unconditionally** — changing the
 target, profile, or feature set re-runs the program without any
@@ -147,7 +147,7 @@ directives and re-runs only when something it depends on changed:
 - the toolchain,
 - any file you declared with `rerun-if-changed`,
 - any env var you declared with `rerun-if-env-changed`,
-- (or a `generated` output went missing).
+- (or a `generated` output / `source=` selection went missing).
 
 So **declare your inputs**: if your program reads `config.h` or the `USE_FAST`
 variable, emit `mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`.

@@ -153,7 +153,7 @@ struct BuildConfig {
     std::map<std::string, std::vector<std::string>> featureDefines;
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     // #249: emitted as -idirafter (searched after system dirs)
-    std::vector<std::string> includeDirsAfter;
+    std::vector<std::filesystem::path> includeDirsAfter;
     std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
     std::vector<GlobFlags>              globFlags;      // [build] flags = [...] (ordered)
     bool                                staticStdlib = true;

@@ -398,8 +398,16 @@ RunResult capture_exec(
     return result;
 #else
     std::string cmd = command_from_argv(argv) + " 2>&1";
-    if (!cwd.empty())
+    if (!cwd.empty()) {
+#if defined(_WIN32)
+        // cmd.exe `cd` without /d does not switch drives — a project on a
+        // different drive than mcpp's own cwd would run the child (the
+        // build.mcpp contract's only cwd consumer) in the wrong directory.
+        cmd = "cd /d " + mcpp::platform::shell::quote(cwd) + " && " + cmd;
+#else
         cmd = "cd " + mcpp::platform::shell::quote(cwd) + " && " + cmd;
+#endif
+    }
     return capture_with_env(cmd, extraEnv);
 #endif
 }
