@@ -120,6 +120,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | set to `1` per active feature (same `<NAME>` sanitization as the `MCPP_FEATURE_` compile macro) |
 | `MCPP_FEATURES` | — | comma-separated active feature list |
+| `MCPP_DEP_<NAME>_DIR` | `mcpp::dep_dir("name")` | the resolved install dir of each declared dependency (canonical **and** namespace-stripped name spellings; same `<NAME>` sanitization as `MCPP_FEATURE_`). Received by dependencies' build.mcpp **and** the root project's (the root runs after dependency resolution) |
 
 These values are folded into the re-run key **unconditionally** — changing the
 target, profile, or feature set re-runs the program without any

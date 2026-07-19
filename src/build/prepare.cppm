@@ -1129,20 +1129,24 @@ prepare_build(bool print_fingerprint,
     // self-describing. See docs: 2026-05-21-linux-sysroot-missing-kernel-headers.md
 
     // ── L3: project-local `build.mcpp` imperative build program ─────────────
-    // Compiled with the HOST toolchain and run now — after target resolution
-    // + the L1 cfg-flag merge (buildConfig flags are final) and BEFORE the
-    // modgraph scan (so its `generated=` sources are picked up). Its stdout
-    // directives augment buildConfig; a declared-input cache re-runs it only
-    // when its source/inputs/env/contract change. It cannot gate the top-level
-    // dependency graph (leaf-only rule). Under a cross --target it runs with a
-    // host-resolved toolchain and sees MCPP_TARGET = the cross triple (G3).
-    // Dependencies' build.mcpp run in a later pass (G2), after their features
-    // are known. See .agents/docs/2026-06-30-l3-build-mcpp-implementation-design.md
-    // and 2026-07-17-asm-sources-and-general-build-capabilities-design.md §2.4.
+    // The ROOT program is compiled with the HOST toolchain and run AFTER
+    // dependency resolution + feature activation (so it receives
+    // MCPP_DEP_<NAME>_DIR like a dependency's does — design §3.1 item 4) and
+    // BEFORE the modgraph scan (so its `generated=`/`source=` sources are
+    // picked up) — see the call site further below, after the dep build.mcpp
+    // loop. Its stdout directives augment buildConfig; a declared-input cache
+    // re-runs it only when its source/inputs/env/contract change. It cannot
+    // gate the top-level dependency graph (leaf-only rule). Under a cross
+    // --target it runs with a host-resolved toolchain and sees MCPP_TARGET =
+    // the cross triple (G3).
+    // See .agents/docs/2026-06-30-l3-build-mcpp-implementation-design.md,
+    // 2026-07-17-asm-sources-and-general-build-capabilities-design.md §2.4 and
+    // 2026-07-19-large-source-pkg-platform-fixes-and-buildmcpp-generation-design.md.
     // Root [generated_files]: materialize before build.mcpp and the modgraph
-    // scan so synthesized sources are globbed like any on-disk file. (The
-    // per-dependency call sits in the dep resolution loop below; the root
-    // manifest needs its own.)
+    // scan so synthesized sources are globbed like any on-disk file — and
+    // BEFORE dependency resolution, since generated_files may produce
+    // build.mcpp itself. (The per-dependency call sits in the dep resolution
+    // loop below; the root manifest needs its own.)
     if (!m->buildConfig.generatedFiles.empty()) {
         if (auto r = materialize_generated_files(*root, *m); !r) {
             return std::unexpected(r.error());
@@ -1203,21 +1207,6 @@ prepare_build(bool print_fingerprint,
         hostTcCache = std::pair{frontend, *htc};
         return *hostTcCache;
     };
-
-    if (std::filesystem::exists(*root / "build.mcpp")) {
-        auto host = host_tc_for_build_program();
-        if (!host) return std::unexpected(host.error());
-        mcpp::build::BuildProgramEnv bpEnv;
-        bpEnv.targetTriple = resolvedTargetCanonical;
-        bpEnv.profile      = effectiveProfile;
-        bpEnv.features     = feature_closure(*m, parse_feature_request(overrides.features));
-        if (auto bp = mcpp::build::run_build_program(
-                *m, *root, host->first, host->second,
-                m->cppStandard.canonical, bpEnv);
-            !bp) {
-            return std::unexpected(bp.error());
-        }
-    }
 
     // Resolve dependencies: walk the **transitive** graph from the main
     // manifest, BFS-style. Each unique `(namespace, shortName)` is fetched
@@ -3051,9 +3040,8 @@ prepare_build(bool print_fingerprint,
             // under BOTH its canonical package name AND its namespace-stripped
             // short name, so `mcpp::dep_dir("compat.zlib")` and
             // `mcpp::dep_dir("zlib")` both resolve regardless of which spelling
-            // the author used in `deps`. (The ROOT project's own build.mcpp runs
-            // before dependency resolution, so it does not yet receive these —
-            // tracked as a follow-up in the #230-#243 ledger.)
+            // the author used in `deps`. (The ROOT project's build.mcpp gets
+            // the same treatment at its own call site right after this loop.)
             for (auto const& edge : dependencyEdges) {
                 if (edge.consumerPackageIndex != i) continue;
                 auto const& depPkg = packages[edge.dependencyPackageIndex];
@@ -3174,6 +3162,96 @@ prepare_build(bool print_fingerprint,
             }
             // exactly one → bound implicitly.
         }
+    }
+
+    // ── L3: ROOT build.mcpp (moved after dependency resolution, design §3.1
+    // item 4) ────────────────────────────────────────────────────────────────
+    // Runs HERE — after dep resolution + feature activation (so the contract
+    // env can expose MCPP_DEP_<NAME>_DIR exactly like the dep loop above does)
+    // and BEFORE the modgraph scan / flag canonicalization / fingerprint (so
+    // its generated=/source= sources and flag directives are fully visible).
+    // Ordering invariants preserved relative to the pre-move call site:
+    // materialize_generated_files (may produce build.mcpp itself) and the L1
+    // cfg merge still run earlier — ONLY this call moved later.
+    //
+    // One wrinkle the old ordering hid: back then apply() mutated *m BEFORE
+    // `packages[0] = makePackageRoot(*root, *m)` snapshotted buildConfig into
+    // privateBuild/manifest — the copies the scan and per-TU flag assembly
+    // actually read. Now the snapshot (and root feature activation on it)
+    // already happened, so mirror the directive TAILS into packages[0]
+    // explicitly, the same way the dep loop does for its package.
+    if (std::filesystem::exists(*root / "build.mcpp")) {
+        auto host = host_tc_for_build_program();
+        if (!host) return std::unexpected(host.error());
+        mcpp::build::BuildProgramEnv bpEnv;
+        bpEnv.targetTriple = resolvedTargetCanonical;
+        bpEnv.profile      = effectiveProfile;
+        // Same expression as the pre-move call site (and same order), so the
+        // contract hash — and therefore the build.mcpp cache — is unchanged
+        // across the move for feature-identical builds.
+        bpEnv.features     = feature_closure(*m, parse_feature_request(overrides.features));
+        // mcpp#241 (root): the root's resolved direct deps, from the same
+        // authoritative edge graph as the dep loop (consumer index 0 = root),
+        // emitted under canonical AND namespace-stripped names.
+        for (auto const& edge : dependencyEdges) {
+            if (edge.consumerPackageIndex != 0) continue;
+            auto const& depPkg = packages[edge.dependencyPackageIndex];
+            const auto& canon = depPkg.manifest.package.name;
+            bpEnv.depDirs.emplace_back(canon, depPkg.root);
+            if (auto dot = canon.rfind('.'); dot != std::string::npos
+                    && dot + 1 < canon.size())
+                bpEnv.depDirs.emplace_back(canon.substr(dot + 1), depPkg.root);
+        }
+        auto& bcRoot = m->buildConfig;
+        const auto rcN = bcRoot.cflags.size(), rcxN = bcRoot.cxxflags.size(),
+                   rldN = bcRoot.ldflags.size(), rsrcN = bcRoot.sources.size(),
+                   rincN = bcRoot.includeDirs.size(),
+                   rincAfterN = bcRoot.includeDirsAfter.size(),
+                   rmodN = m->modules.sources.size();
+        if (auto bp = mcpp::build::run_build_program(
+                *m, *root, host->first, host->second,
+                m->cppStandard.canonical, bpEnv);
+            !bp) {
+            return std::unexpected(bp.error());
+        }
+        auto& pkg0 = packages[0];
+        // Sources → the scan walks packages[0].manifest, not *m.
+        pkg0.manifest.buildConfig.sources.insert(
+            pkg0.manifest.buildConfig.sources.end(),
+            bcRoot.sources.begin() + rsrcN, bcRoot.sources.end());
+        pkg0.manifest.modules.sources.insert(
+            pkg0.manifest.modules.sources.end(),
+            m->modules.sources.begin() + rmodN, m->modules.sources.end());
+        // Compile flags → the root's TUs read privateBuild (and the
+        // fingerprint folds packages[].manifest.buildConfig via
+        // canonical_package_build_metadata) — mirror both, as the old
+        // pre-snapshot ordering implicitly did.
+        pkg0.privateBuild.cflags.insert(pkg0.privateBuild.cflags.end(),
+            bcRoot.cflags.begin() + rcN, bcRoot.cflags.end());
+        pkg0.privateBuild.cxxflags.insert(pkg0.privateBuild.cxxflags.end(),
+            bcRoot.cxxflags.begin() + rcxN, bcRoot.cxxflags.end());
+        pkg0.manifest.buildConfig.cflags.insert(
+            pkg0.manifest.buildConfig.cflags.end(),
+            bcRoot.cflags.begin() + rcN, bcRoot.cflags.end());
+        pkg0.manifest.buildConfig.cxxflags.insert(
+            pkg0.manifest.buildConfig.cxxflags.end(),
+            bcRoot.cxxflags.begin() + rcxN, bcRoot.cxxflags.end());
+        // Link flags → the final link reads *m (already applied); keep the
+        // linkUsage snapshot equivalent too.
+        pkg0.linkUsage.ldflags.insert(pkg0.linkUsage.ldflags.end(),
+            bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
+        pkg0.manifest.buildConfig.ldflags.insert(
+            pkg0.manifest.buildConfig.ldflags.end(),
+            bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
+        // include-dir directives: PRIVATE (already absolute from parse_line) —
+        // privateBuild only, never publicUsage (see the dep loop's rationale).
+        for (auto it = bcRoot.includeDirs.begin() + rincN;
+             it != bcRoot.includeDirs.end(); ++it)
+            appendUniquePath(pkg0.privateBuild.includeDirs, *it);
+        pkg0.manifest.buildConfig.includeDirsAfter.insert(
+            pkg0.manifest.buildConfig.includeDirsAfter.end(),
+            bcRoot.includeDirsAfter.begin() + rincAfterN,
+            bcRoot.includeDirsAfter.end());
     }
 
     // [targets.*] required_features gate: a target is emitted only when ALL its
