@@ -3,6 +3,27 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.100] — 2026-07-19
+
+> 大型源码直编包(ffmpeg/opencv 级,数千 TU)全平台化批次:#247/#248/#249 平台三修 + 增量构建修复 + build.mcpp 指令面补全(P1)。设计见 `.agents/docs/2026-07-19-large-source-pkg-platform-fixes-and-buildmcpp-generation-design.md`。
+
+### 修复
+
+- **windows driver-style 链接命令行溢出**(#247):gnu 方言(g++/clang++ 作链接驱动——windows 托管 clang-MSVC 即此)的 `cxx_link`/`cxx_archive`/`cxx_shared` 此前内联 `$in`,数千对象直接溢出 CreateProcess 32 KiB 上限。现 windows 上 driver-style 也走 response file;两方言分支收敛为单一 `link_rule` 发射器(msvc 规则文本逐字节不变),POSIX 保持内联零变化。配套:ninja 节点名统一 `generic_string()` 正斜杠——rsp 内容按 GNU 文法分词,反斜杠是转义符(`obj\cli.o` 会被吃成 `objcli.o`)。
+- **macOS dep/root build.mcpp 收不到 G3 契约环境**(#248,launcher-unify):非 Linux 的 `capture_exec` 走 shell 字符串拼接,`ENV… cd <cwd> && bin` 里 env 只绑给 `cd`(全仓唯一 env+cwd 双非空调用点恰是 build.mcpp)。现 macOS 与 Linux 同走 posix_spawn 直启路径(child-only env + `addchdir_np`,`environ` 经 `_NSGetEnviron()` portable-correct),顺带消掉 macOS 的 shell quoting/注入面。windows shell 回退补 `cd /d`(跨盘符)。
+- **generated_files 每次构建无条件重写毁增量**:materialize 此前不比内容直接写,mtime 抖动令 ninja 把 include 该头的全部 TU 判脏——冻结快照包(config.h × 数千 TU)每次 build 都全量重编。现内容逐字节相同即跳写(变更检测本就由指纹负责)。
+- xpkg feature 表未知子键(如 `features.X.include_dirs`)此前静默吞掉,现进 `xpkgUnknownKeys` 走统一告警面。
+
+### 新增
+
+- **`[build] include_dirs_after` → `-idirafter`**(#249):排在工具链系统目录**之后**搜索的 include 目录(descriptor/xpkg 与 mcpp.toml 双文法、`*` tarball 根 glob、沿 Public/Interface 边传播且不升级为 `-I`)。治大小写不敏感 macOS 上依赖源根 `VERSION` 顶替 libc++ `<version>` 一类系统头遮蔽;`-isystem` 不解此症(仍先于默认系统目录)。方言降级单点收敛:cl.exe → 末尾 `/I`,NASM 单元 → 普通 `-I`(NASM 会把 `-idirafter<p>` 误吞成 `-i dirafter<p>`)。附带统一主工程 include 路径的 glob 展开(此前与 dep 路径两套推导)。
+- **build.mcpp 指令面补全**(P1,0.0.100+):`mcpp:source=`(选既有 payload 源入编译集,`generated=` 的"绝对路径灰色用法"正名)、`mcpp:include-dir=` / `mcpp:include-dir-after=`(私有 include,Cargo 纪律不进公共接口;typed 通道享方言降级);typed `import mcpp;` 同步 `source()/include_dir()/include_dir_after()`。契约环境拆分 `MCPP_TARGET_OS/ARCH/ENV`(免手撕三元组)。**root build.mcpp 后移至依赖解析之后**,与 dep 一样拿到 `MCPP_DEP_<NAME>_DIR`;指令落通道收敛为 root/dep 共享的单一 fold(防"同一决策两处推导")。顺修:root `build.mcpp` 变更此前被整库 fast-path 吞掉不触发重跑。
+- **`mcpp xpkg parse --all-os`**:按 xpm 声明的平台集逐 OS 校验 per-OS 段(构建路径只 splice 宿主段,windows 段的 typo 在 linux CI 上原本不可见);mcpp-index CI 可单 runner lint 多平台描述符。
+
+### 备注
+
+- e2e 新增 141–145(-idirafter 语义/增量跳写/source= /include-dir/root dep-dirs);linux 全量 e2e 134 过(3 项为既知环境性失败)。macOS/windows 断面由平台 CI 与 mcpp-index spike 复现件(PR#89/90/91)收口。
+
 ## [0.0.99] — 2026-07-19
 
 > #230–#243 批次收尾:#243 feature 转发落地(0.0.98 只出了设计)+ #238 根因修复随 xlings 0.4.67 vendored 入包 + #230 windows build.mcpp 次生面补齐。设计见 `.agents/docs/2026-07-19-v0.0.99-feature-forwarding-238-230-design.md`。
