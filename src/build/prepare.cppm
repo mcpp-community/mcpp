@@ -346,6 +346,25 @@ materialize_generated_files(const std::filesystem::path& root,
                 out.string(), ec.message()));
         }
 
+        // Skip the write when the on-disk content is already identical: ninja
+        // is mtime-driven, and an unconditional rewrite bumps the mtime every
+        // build, recompiling every TU that #includes the materialized file
+        // (via depfiles) — e.g. a frozen-snapshot config.h included by
+        // thousands of TUs. Change detection is already owned by the
+        // fingerprint (content is folded in above), so skipping only
+        // preserves the mtime — mirroring the build.mcpp cache design,
+        // which likewise avoids mtime churn on unchanged outputs.
+        {
+            std::ifstream is(out, std::ios::binary);
+            if (is) {
+                std::string existing((std::istreambuf_iterator<char>(is)),
+                                     std::istreambuf_iterator<char>());
+                if (is && existing == content) {
+                    continue;
+                }
+            }
+        }
+
         std::ofstream os(out, std::ios::binary);
         if (!os) {
             return std::unexpected(std::format(
