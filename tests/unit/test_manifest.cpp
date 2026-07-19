@@ -849,6 +849,18 @@ package = {
     EXPECT_EQ(m->buildConfig.cflags[1], expectedCflag);
     EXPECT_EQ(m->dependencies.count("compat.base"), 1u);
     EXPECT_EQ(m->dependencies.count(expectedDep), 1u);
+
+    // osOverride seam (`mcpp xpkg parse --all-os`): a foreign OS section is
+    // spliced on request, independent of the running host — the build path
+    // (empty override) above stays host-selected. Reuses this fixture.
+    auto win = mcpp::manifest::synthesize_from_xpkg_lua(src, "tinyc", "1.0.0",
+                                                        "windows");
+    ASSERT_TRUE(win.has_value()) << win.error().format();
+    ASSERT_EQ(win->modules.sources.size(), 2u);
+    EXPECT_EQ(win->modules.sources[1], "*/src/win32.c");
+    ASSERT_EQ(win->buildConfig.cflags.size(), 2u);
+    EXPECT_EQ(win->buildConfig.cflags[1], "-DWINDOWS=1");
+    EXPECT_EQ(win->dependencies.count("compat.win32"), 1u);
 }
 
 TEST(SynthesizeFromXpkgLua, GeneratedFiles) {

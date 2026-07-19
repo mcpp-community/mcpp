@@ -91,10 +91,17 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
 //
 // The resulting Manifest is in-memory only; sourcePath is set to the
 // supplied package name + version so error messages can refer to it.
+//
+// `osOverride` selects which per-OS section (linux/macosx/windows) is
+// spliced into the parse instead of the running host's — the seam behind
+// `mcpp xpkg parse --all-os`, which validates the sections a host build
+// never reads (they are skip-tabled, so a typo in the `windows` block is
+// otherwise invisible on linux CI). Empty = host platform (build path).
 std::expected<Manifest, ManifestError>
 synthesize_from_xpkg_lua(std::string_view luaContent,
                          std::string_view packageName,
-                         std::string_view packageVersion);
+                         std::string_view packageVersion,
+                         std::string_view osOverride = {});
 
 // mcpp#237: the mcpp-segment key vocabulary is a CLOSED whitelist (the parse
 // loop's else-if chain). An unrecognised key is collected into
@@ -786,7 +793,8 @@ list_xpkg_versions(std::string_view luaContent, std::string_view platform) {
 std::expected<Manifest, ManifestError>
 synthesize_from_xpkg_lua(std::string_view luaContent,
                          std::string_view packageName,
-                         std::string_view packageVersion)
+                         std::string_view packageVersion,
+                         std::string_view osOverride)
 {
     auto body = extract_mcpp_segment_body(luaContent);
     if (body.empty()) {
@@ -798,7 +806,9 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             std::format("xpkg-lua of {}@{}", packageName, packageVersion),
             0, 0});
     }
-    if (auto platformBody = top_level_table_body_for_key(body, mcpp::platform::xpkg_platform);
+    const std::string_view osKey =
+        osOverride.empty() ? mcpp::platform::xpkg_platform : osOverride;
+    if (auto platformBody = top_level_table_body_for_key(body, osKey);
         !platformBody.empty()) {
         body += "\n";
         body += platformBody;

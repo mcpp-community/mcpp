@@ -333,7 +333,10 @@ int run(int argc, char** argv) {
                 .description("Parse a descriptor's mcpp segment exactly as the resolver would (strict: unknown keys are errors)")
                 .option(cl::Option("json").help("Emit machine-readable JSON"))
                 .option(cl::Option("allow-unknown")
-                    .help("Downgrade unknown mcpp-segment keys from error to warning")))
+                    .help("Downgrade unknown mcpp-segment keys from error to warning"))
+                .option(cl::Option("all-os")
+                    .help("Validate every per-OS section (linux/macosx/windows), "
+                          "not just the running host's")))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("xpkg", p, {{"parse", cmd_xpkg_parse}});
             })))

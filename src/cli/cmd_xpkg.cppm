@@ -58,7 +58,7 @@ std::string json_array(const std::vector<std::string>& v) {
 export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto file = parsed.positional(0);
     if (file.empty()) {
-        mcpp::ui::error("usage: mcpp xpkg parse <file.lua> [--json] [--allow-unknown]");
+        mcpp::ui::error("usage: mcpp xpkg parse <file.lua> [--json] [--allow-unknown] [--all-os]");
         return 2;
     }
     std::ifstream is{std::filesystem::path{file}};
@@ -70,6 +70,11 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     const bool asJson       = parsed.is_flag_set("json");
     const bool allowUnknown = parsed.is_flag_set("allow-unknown");
+    const bool allOs        = parsed.is_flag_set("all-os");
+    if (allOs && asJson) {
+        mcpp::ui::error("--all-os and --json are mutually exclusive");
+        return 2;
+    }
 
     // Identity — same normalization the filename-lookup gate uses.
     auto id = mcpp::manifest::canonical_xpkg_identity_from_lua(lua);
@@ -109,6 +114,42 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
             std::println("parse OK");
         }
         return 0;
+    }
+
+    // --all-os: re-parse the descriptor once per OS section. The build path
+    // splices only the running host's per-OS block and skip-tables the rest,
+    // so a typo in e.g. the `windows` block is invisible on linux CI; this
+    // is the lint-time closure over all three (design doc 2026-07-19 §4).
+    if (allOs) {
+        int allRc = 0;
+        for (auto plat : kPlatforms) {
+            // Only OSes the xpm table ships for: a linux+macosx-only package
+            // legitimately has no windows section to validate.
+            if (versions[std::string(plat)].empty()) {
+                std::println("parse --   [{}]  (no xpm versions declared)", plat);
+                continue;
+            }
+            auto pm = mcpp::manifest::synthesize_from_xpkg_lua(
+                lua, fqn, anyVersion, plat);
+            if (!pm) {
+                mcpp::ui::error(std::format("{} [{}]: {}", file, plat,
+                                            pm.error().format()));
+                allRc = 1;
+                continue;
+            }
+            for (auto& k : pm->xpkgUnknownKeys) {
+                auto msg = std::format(
+                    "{} [{}]: unknown mcpp-segment key '{}' — silently "
+                    "ignored at build time by this mcpp version", file, plat, k);
+                if (allowUnknown) std::println(stderr, "warning: {}", msg);
+                else              { mcpp::ui::error(msg); allRc = 1; }
+            }
+            std::println("parse OK [{}]  sources {}  includes {}  generated {}",
+                         plat, pm->modules.sources.size(),
+                         pm->buildConfig.includeDirs.size(),
+                         pm->buildConfig.generatedFiles.size());
+        }
+        return allRc;
     }
 
     // The parse users get at build time — same function, same grammar.
