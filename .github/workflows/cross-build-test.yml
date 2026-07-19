@@ -92,13 +92,17 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          # 0.4.62 (current) — kept in lock-step with the xlings the release
-          # is built/bundled against (release.yml). A past 0.4.61 "download 404
+          # 0.4.67 (current) — kept in lock-step with the xlings the release
+          # is built/bundled against (release.yml). Bumped 0.4.62 -> 0.4.67 for
+          # mcpp#238: xlings 0.4.67 carries the multi-index_repo install fix
+          # (openxlings/xlings#374, commit cf9b60d5) so a workspace member with
+          # >=2 inherited index_repos installs uncached packages instead of
+          # failing silently. A past 0.4.61 "download 404
           # for mcpp@<pin>" was NOT a version bug — the xlings-res/mcpp GitHub
           # release assets were uploaded in a broken state (records present,
           # blobs missing → 404 on GET); re-uploaded clean. The stale-INDEX
           # half is handled by the marker-clear below.
-          XLINGS_VERSION: '0.4.62'
+          XLINGS_VERSION: '0.4.67'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -211,7 +215,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.62'
+          XLINGS_VERSION: '0.4.67'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
