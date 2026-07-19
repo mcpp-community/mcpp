@@ -28,13 +28,18 @@ module;
 #include <stdlib.h>    // _putenv_s
 #define popen  _popen
 #define pclose _pclose
-#elif defined(__linux__)
-// Linux is the only platform where the launcher does a direct exec (see
-// run_exec / capture_exec below); macOS keeps the std::system shell path.
-#include <unistd.h>    // pipe, dup2, close, read, environ
+#elif defined(__linux__) || defined(__APPLE__)
+// Linux and macOS launchers do a direct exec (see run_exec / capture_exec
+// below); only Windows keeps the std::system shell path (#248).
+#include <unistd.h>    // pipe, dup2, close, read
 #include <sys/wait.h>  // waitpid
-#include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_*
+#include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_* (incl. addchdir_np)
+#if defined(__APPLE__)
+#include <crt_externs.h>  // _NSGetEnviron — direct `environ` is only linkable
+                          // from executables on Apple, not from dylibs
+#else
 extern "C" char **environ;
+#endif
 #endif
 
 export module mcpp.platform.process;
@@ -136,7 +141,18 @@ int normalize_exit_code(int rc) {
 #endif
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
+// Portable accessor for the host environment block. On Apple, `environ` is
+// only linkable from executables (not dylibs), so _NSGetEnviron() is the
+// sanctioned spelling; Linux keeps the plain `environ` symbol.
+char** host_environ() {
+#if defined(__APPLE__)
+    return *::_NSGetEnviron();
+#else
+    return environ;
+#endif
+}
+
 // Build a child environment block = the current environ with `extra` overrides
 // applied. Returned vector owns the strings; the caller derives a NUL-terminated
 // char* array from it. Built in the PARENT so the child env never requires a
@@ -147,7 +163,7 @@ std::vector<std::string> merged_environ(
     std::vector<std::string> out;
     std::set<std::string> overridden;
     for (auto& [k, v] : extra) { out.push_back(k + "=" + v); overridden.insert(k); }
-    for (char** e = environ; e && *e; ++e) {
+    for (char** e = host_environ(); e && *e; ++e) {
         std::string_view entry(*e);
         auto eq = entry.find('=');
         std::string key(eq == std::string_view::npos ? entry : entry.substr(0, eq));
@@ -156,10 +172,11 @@ std::vector<std::string> merged_environ(
     return out;
 }
 #else
-// Build a shell command line from an argv vector. The first token (program)
+// Build a shell command line from an argv vector (Windows + residual non-POSIX
+// fallback only; Linux/macOS exec directly, #248). The first token (program)
 // is kept RAW on Windows — quoting it would make cmd.exe's `/c "..."` strip the
-// outer quotes and mangle the path (see platform.shell) — and shell-quoted on
-// macOS. Remaining args are always shell-quoted.
+// outer quotes and mangle the path (see platform.shell) — and shell-quoted
+// otherwise. Remaining args are always shell-quoted.
 std::string command_from_argv(const std::vector<std::string>& argv) {
     if (argv.empty()) return "";
 #if defined(_WIN32)
@@ -285,27 +302,31 @@ int run_passthrough(std::string_view command, std::string* output) {
 
 // run_exec / capture_exec are split by platform on purpose:
 //
-//   Linux   — DIRECT exec via posix_spawn. The runtime env (a bundled-glibc
-//             LD_LIBRARY_PATH) goes into the child's envp ONLY; it never enters
-//             mcpp's own environment nor the host /bin/sh. That is the exact
-//             fix for the newer-glibc `sh:` crash, and a direct exec also drops
-//             the shell quoting / signal / injection surface entirely.
-//   macOS /
-//   Windows — KEEP the proven std::system shell path. The leak does not exist
-//             here (macOS injects no runtime library env; Windows has no glibc
-//             symbol versioning), so we deliberately do not swap the launch
-//             primitive on platforms we cannot iterate on locally. The env is
-//             applied as a `KEY='val' cmd` prefix (macOS) / _putenv_s (Windows)
-//             via the existing build_env_prefix / capture_with_env helpers.
+//   Linux /
+//   macOS   — DIRECT exec via posix_spawn (unified in #248). The extra env goes
+//             into the child's envp ONLY (merged_environ); it never enters
+//             mcpp's own environment nor a host /bin/sh. On Linux that is the
+//             exact fix for the newer-glibc `sh:` crash; on macOS the old shell
+//             path built `KEY='v' cd <cwd> && prog`, where POSIX binds the env
+//             assignments to `cd` alone — the real program (build.mcpp, the
+//             only env+cwd call site) received NO extra env and lost the whole
+//             MCPP_* contract. Direct exec also drops the shell quoting /
+//             signal / injection surface entirely. cwd is applied via
+//             posix_spawn_file_actions_addchdir_np, available on both glibc
+//             and macOS 10.15+ (mcpp's floor is macOS 14).
+//   Windows — KEEP the proven std::system shell path. The env-binding hazard
+//             does not exist here (env goes through _putenv_s, not a prefix),
+//             so we deliberately do not swap the launch primitive on a platform
+//             we cannot iterate on locally.
 //
-// TODO(launcher-unify): if macOS/Windows ever need the same child-only env
-// isolation (e.g. they start bundling a runtime), unify both onto posix_spawn
-// and a Windows CreateProcess/_spawn equivalent, and delete the shell branch.
+// TODO(launcher-unify): Windows is the remaining exception; if it ever needs
+// child-only env isolation, move it onto a CreateProcess/_spawn equivalent and
+// delete the residual shell branch below.
 int run_exec(const std::vector<std::string>& argv,
              const std::vector<std::pair<std::string, std::string>>& extraEnv)
 {
     if (argv.empty()) return 127;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     auto envStore = merged_environ(extraEnv);
     std::vector<char*> envp;
     for (auto& s : envStore) envp.push_back(s.data());
@@ -334,7 +355,7 @@ RunResult capture_exec(
 {
     RunResult result;
     if (argv.empty()) { result.exit_code = 127; return result; }
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     // posix_spawn + a pipe; stdout and stderr both go to the pipe so the
     // captured text is combined (replaces the old `2>&1`).
     int fds[2];
