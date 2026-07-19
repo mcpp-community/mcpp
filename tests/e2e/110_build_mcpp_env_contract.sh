@@ -24,6 +24,11 @@ int main() {
     f << "extern \"C\" const char* bp_target()   { return \"" << env_or("MCPP_TARGET") << "\"; }\n";
     f << "extern \"C\" const char* bp_host()     { return \"" << env_or("MCPP_HOST") << "\"; }\n";
     f << "extern \"C\" const char* bp_profile()  { return \"" << env_or("MCPP_PROFILE") << "\"; }\n";
+    f << "extern \"C\" const char* bp_tos()      { return \"" << env_or("MCPP_TARGET_OS") << "\"; }\n";
+    f << "extern \"C\" const char* bp_tarch()    { return \"" << env_or("MCPP_TARGET_ARCH") << "\"; }\n";
+    // ENV may legitimately be empty (macOS) — assert set-ness, not content.
+    f << "extern \"C\" int bp_tenv_set() { return "
+      << (std::getenv("MCPP_TARGET_ENV") ? 1 : 0) << "; }\n";
     f << "extern \"C\" const char* bp_features() { return \"" << env_or("MCPP_FEATURES") << "\"; }\n";
     f << "extern \"C\" int bp_has_extra() { return "
       << (std::getenv("MCPP_FEATURE_EXTRA") ? 1 : 0) << "; }\n";
@@ -45,9 +50,13 @@ extern "C" const char* bp_host();
 extern "C" const char* bp_profile();
 extern "C" const char* bp_features();
 extern "C" int bp_has_extra();
+extern "C" const char* bp_tos();
+extern "C" const char* bp_tarch();
+extern "C" int bp_tenv_set();
 int main() {
-    std::println("target={} host={} profile={} features=[{}] extra={}",
-                 bp_target(), bp_host(), bp_profile(), bp_features(), bp_has_extra());
+    std::println("target={} host={} profile={} features=[{}] extra={} tos={} tarch={} tenvset={}",
+                 bp_target(), bp_host(), bp_profile(), bp_features(), bp_has_extra(),
+                 bp_tos(), bp_tarch(), bp_tenv_set());
     return 0;
 }
 EOF
@@ -67,6 +76,14 @@ out="$("$MCPP" run 2>&1 | tail -1)"
 host_triple_re='[a-z0-9_]+-(linux|macos|windows)(-[a-z]+)?'
 [[ "$out" =~ target=$host_triple_re\ host=$host_triple_re\ profile=dev\ features=\[\]\ extra=0 ]] || {
     echo "unexpected contract values: $out"; exit 1; }
+# MCPP_TARGET_OS/ARCH/ENV splits: OS is one of the canonical spellings, ARCH is
+# non-empty, ENV is always SET (may be "" — no env segment on macOS) and must
+# agree with the full triple's segments.
+[[ "$out" =~ tos=(linux|macos|windows)\ tarch=([a-z0-9_]+)\ tenvset=1 ]] || {
+    echo "target split vars missing/odd: $out"; exit 1; }
+tos="${BASH_REMATCH[1]}"; tarch="${BASH_REMATCH[2]}"
+[[ "$out" == *"target=${tarch}-${tos}"* ]] || {
+    echo "target split disagrees with MCPP_TARGET: $out"; exit 1; }
 
 # Identical build → no re-run (either the whole-build fast path short-circuits
 # before build.mcpp, or the build.mcpp cache hits — both are fine; a "running"

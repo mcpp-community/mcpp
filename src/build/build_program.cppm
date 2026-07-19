@@ -263,6 +263,9 @@ inline void rerun_if_env_changed(const char* var) { std::printf("mcpp:rerun-if-e
 // ── environment contract (read side; values injected by the engine) ─────
 inline const char* env_or(const char* n)          { const char* v = std::getenv(n); return v ? v : ""; }
 inline const char* target()                       { return env_or("MCPP_TARGET"); }
+inline const char* target_os()                    { return env_or("MCPP_TARGET_OS"); }
+inline const char* target_arch()                  { return env_or("MCPP_TARGET_ARCH"); }
+inline const char* target_env()                   { return env_or("MCPP_TARGET_ENV"); }
 inline const char* host()                         { return env_or("MCPP_HOST"); }
 inline const char* profile()                      { return env_or("MCPP_PROFILE"); }
 inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"); }
@@ -383,6 +386,20 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     std::vector<std::pair<std::string, std::string>> e;
     auto hostT = mcpp::toolchain::triple::host_triple().str();
     e.emplace_back("MCPP_TARGET", env.targetTriple.empty() ? hostT : env.targetTriple);
+    // Convenience splits of the resolved target (Cargo CARGO_CFG_TARGET_*
+    // parity): parsed ONCE here through the canonical triple parser so every
+    // build.mcpp stops hand-splitting MCPP_TARGET. MCPP_TARGET_ENV is "" when
+    // the triple has no env segment (macOS); all three are "" for an
+    // escape-hatch triple outside the canonical vocabulary. They ride the
+    // same env vector, so contract_hash folds them into the re-run key.
+    {
+        mcpp::toolchain::triple::Triple t{};
+        if (env.targetTriple.empty()) t = mcpp::toolchain::triple::host_triple();
+        else if (auto p = mcpp::toolchain::triple::parse(env.targetTriple)) t = *p;
+        e.emplace_back("MCPP_TARGET_OS", t.os);
+        e.emplace_back("MCPP_TARGET_ARCH", t.arch);
+        e.emplace_back("MCPP_TARGET_ENV", t.env);
+    }
     e.emplace_back("MCPP_HOST", hostT);
     e.emplace_back("MCPP_PROFILE", env.profile);
     e.emplace_back("MCPP_OUT_DIR", outDir.string());

@@ -103,6 +103,9 @@ int main() {
 | 变量 | 类型化读取 | 值 |
 |---|---|---|
 | `MCPP_TARGET` | `mcpp::target()` | 解析后的 canonical 三元组(交叉构建下是 `--target` 三元组,原生构建是宿主) |
+| `MCPP_TARGET_OS` | `mcpp::target_os()` | 目标的 OS 段(`linux`/`macos`/`windows`)——不必再手撕 `MCPP_TARGET` |
+| `MCPP_TARGET_ARCH` | `mcpp::target_arch()` | 目标的 arch 段(GNU 拼写:`x86_64`、`aarch64`…) |
+| `MCPP_TARGET_ENV` | `mcpp::target_env()` | 目标的 env 段(`gnu`/`musl`/`msvc`);三元组无 env 段(macOS)时为空串 |
 | `MCPP_HOST` | `mcpp::host()` | 宿主三元组 |
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名(`dev`/`release`/…) |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |

@@ -111,6 +111,9 @@ The running program receives the build context as `MCPP_*` variables
 | Variable | Typed reader | Value |
 |---|---|---|
 | `MCPP_TARGET` | `mcpp::target()` | resolved canonical triple (the `--target` triple under cross; the host triple natively) |
+| `MCPP_TARGET_OS` | `mcpp::target_os()` | the target's OS segment (`linux`/`macos`/`windows`) — no need to hand-split `MCPP_TARGET` |
+| `MCPP_TARGET_ARCH` | `mcpp::target_arch()` | the target's arch segment (GNU spelling: `x86_64`, `aarch64`, …) |
+| `MCPP_TARGET_ENV` | `mcpp::target_env()` | the target's env segment (`gnu`/`musl`/`msvc`); empty string when the triple has none (macOS) |
 | `MCPP_HOST` | `mcpp::host()` | the host triple |
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
