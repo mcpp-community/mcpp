@@ -536,7 +536,14 @@ std::expected<void, std::string> run_build_program(
     }
 
     fs::create_directories(outDir, ec);   // creates bdir too
-    fs::path bin = bdir / "build.mcpp.bin";
+    // #230: on Windows the capture_exec shell is cmd.exe, which can only launch
+    // a PE by an executable extension — a bare `.bin` is not in PATHEXT and
+    // fails to run. Name the compiled program `.exe` there; other platforms keep
+    // `.bin` (cosmetic — bdir is separate from the `.mcpp` source). Surfaces
+    // once a workspace build.mcpp member is reached on Windows, after the
+    // scanner symlink-escape crash fix (df985df) stops masking it as exit 127.
+    fs::path bin = bdir / (mcpp::platform::is_windows
+                               ? "build.mcpp.exe" : "build.mcpp.bin");
 
     // ── Compile build.mcpp with the host toolchain ──────────────────────────
     std::string std_flag = "-std=" + std::string(cppStandard.empty() ? "c++23" : cppStandard);
