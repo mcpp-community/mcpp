@@ -5,9 +5,9 @@
 # (`mcpp:cxxflag=-I…` + `mcpp:cflag=-I…`, unnormalized). Scenario: build.mcpp
 # writes a header under MCPP_OUT_DIR and points include-dir at it (absolute);
 # a source #includes it; the build succeeds with NO -I flag emitted manually.
-# Also: `mcpp:include-dir-after=` is accepted (no unknown-directive warning)
-# and both round-trip the directive cache. Its -idirafter ninja emission for
-# the root lands with #249; this test pins the directive+cache surface.
+# Also: `mcpp:include-dir-after=` rides the typed #249 channel end-to-end —
+# the emitted build.ninja must carry -idirafter for the directive dir — and
+# both directives round-trip the directive cache.
 set -e
 
 TMP=$(mktemp -d)
@@ -63,6 +63,13 @@ grep -q "ignoring unknown directive" build1.log && {
 
 out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
 [[ "$out" == "ANSWER=42" ]] || { echo "FAIL: include dir not on the -I chain: $out"; exit 1; }
+
+# include-dir-after reaches the compile edges as -idirafter (typed #249
+# channel: privateBuild.includeDirsAfter → localIncludeDirsAfter).
+ninja_file=$(find target -name build.ninja | head -1)
+grep -q -- "-idirafter.*vendor/sysinc" "$ninja_file" || {
+    echo "FAIL: include-dir-after not emitted as -idirafter in build.ninja";
+    grep -n "local_includes" "$ninja_file" | head; exit 1; }
 
 # Cache round-trip: touch a source (defeats the whole-build fast path, keeps
 # build.mcpp inputs unchanged) → the cached include-dir record must reapply

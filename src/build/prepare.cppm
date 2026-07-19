@@ -3086,18 +3086,13 @@ prepare_build(bool print_fingerprint,
             for (auto it = bcDep.includeDirs.begin() + incN;
                  it != bcDep.includeDirs.end(); ++it)
                 appendUniquePath(pkg.privateBuild.includeDirs, *it);
-            // No privateBuild slot exists for after-dirs (the -idirafter
-            // emission chain is #249's); spell them as private compile flags
-            // (two argv tokens, matching host_base_flags) so a dep gets the
-            // semantics today.
+            // After-dirs ride the same typed #249 channel
+            // (privateBuild.includeDirsAfter → per-unit -idirafter), which
+            // owns the per-dialect degradations (cl.exe /I, NASM -I) a raw
+            // flag spelling would bypass.
             for (auto it = bcDep.includeDirsAfter.begin() + incAfterN;
-                 it != bcDep.includeDirsAfter.end(); ++it) {
-                for (auto* dst : { &pkg.privateBuild.cflags,
-                                   &pkg.privateBuild.cxxflags }) {
-                    dst->push_back("-idirafter");
-                    dst->push_back(*it);
-                }
-            }
+                 it != bcDep.includeDirsAfter.end(); ++it)
+                appendUniquePath(pkg.privateBuild.includeDirsAfter, *it);
         }
 
         // apply() may have added interface defines to packages' publicUsage
@@ -3243,11 +3238,20 @@ prepare_build(bool print_fingerprint,
         pkg0.manifest.buildConfig.ldflags.insert(
             pkg0.manifest.buildConfig.ldflags.end(),
             bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
-        // include-dir directives: PRIVATE (already absolute from parse_line) —
-        // privateBuild only, never publicUsage (see the dep loop's rationale).
+        // include-dir[/-after] directives: PRIVATE (already absolute from
+        // parse_line) — privateBuild only, never publicUsage (see the dep
+        // loop's rationale). privateBuild is what scanned units read
+        // (scanner → localIncludeDirs[After]); the manifest mirror keeps the
+        // fingerprint metadata equivalent, same as the flag mirrors above.
         for (auto it = bcRoot.includeDirs.begin() + rincN;
              it != bcRoot.includeDirs.end(); ++it)
             appendUniquePath(pkg0.privateBuild.includeDirs, *it);
+        pkg0.manifest.buildConfig.includeDirs.insert(
+            pkg0.manifest.buildConfig.includeDirs.end(),
+            bcRoot.includeDirs.begin() + rincN, bcRoot.includeDirs.end());
+        for (auto it = bcRoot.includeDirsAfter.begin() + rincAfterN;
+             it != bcRoot.includeDirsAfter.end(); ++it)
+            appendUniquePath(pkg0.privateBuild.includeDirsAfter, *it);
         pkg0.manifest.buildConfig.includeDirsAfter.insert(
             pkg0.manifest.buildConfig.includeDirsAfter.end(),
             bcRoot.includeDirsAfter.begin() + rincAfterN,
