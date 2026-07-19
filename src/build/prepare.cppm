@@ -2154,31 +2154,79 @@ prepare_build(bool print_fingerprint,
         }
     };
 
+    // #243: dep/feat forwarding. When a resolved package's feature F is active,
+    // it may forward features to its dependencies (Cargo `[features] F =
+    // ["dep/feat"]`). Injecting the forwarded feature into the child's request
+    // BEFORE the child is pushed onto the worklist makes BOTH consumption points
+    // observe it: resolution (mergeActiveFeatureDeps reads the child's
+    // spec.features) and activation (recordDependencyEdge stores spec.features on
+    // the P->D edge, which aggregatedRequest unions and apply() activates).
+    // Transitive forwarding rides the BFS forward edge (root -> mid -> leaf).
+    auto injectForwards = [](const mcpp::manifest::Manifest& parent,
+                             const std::vector<std::string>& parentActive,
+                             const std::string& childKey,
+                             mcpp::manifest::DependencySpec& childSpec) {
+        if (parent.featureForwards.empty()) return;
+        for (auto const& f : parentActive) {
+            auto it = parent.featureForwards.find(f);
+            if (it == parent.featureForwards.end()) continue;
+            for (auto const& [depKey, depFeat] : it->second) {
+                if (depKey != childKey) continue;
+                if (std::find(childSpec.features.begin(), childSpec.features.end(),
+                              depFeat) == childSpec.features.end())
+                    childSpec.features.push_back(depFeat);
+            }
+        }
+    };
+    // #243: a forward whose active feature targets a dependency that is not
+    // declared (in [dependencies], [dev-dependencies], or an active
+    // [feature-deps] already folded into `dependencies`) is a manifest bug —
+    // name it instead of silently dropping. Only active features' forwards are
+    // checked (lazy, like the unknown-requested-feature gate at ~2875).
+    auto validateForwards = [&](const mcpp::manifest::Manifest& parent,
+                                const std::vector<std::string>& parentActive,
+                                std::string_view parentName)
+        -> std::expected<void, std::string> {
+        for (auto const& f : parentActive) {
+            auto it = parent.featureForwards.find(f);
+            if (it == parent.featureForwards.end()) continue;
+            for (auto const& [depKey, depFeat] : it->second) {
+                if (parent.dependencies.contains(depKey)
+                    || parent.devDependencies.contains(depKey)) continue;
+                auto msg = std::format(
+                    "feature '{}' of '{}' forwards to dependency '{}' (as "
+                    "'{}/{}') which is not declared in [dependencies] or "
+                    "[feature-deps]", f, parentName, depKey, depKey, depFeat);
+                if (overrides.strict) return std::unexpected(msg);
+                std::println(stderr, "warning: {}", msg);
+            }
+        }
+        return {};
+    };
+
     // Pull the root package's active feature-deps into its dependency set before
     // seeding, so `mcpp build --features X` resolves X's optional deps.
-    {
-        std::vector<std::string> rootReq;
-        for (std::size_t p = 0; p < overrides.features.size();) {
-            auto c = overrides.features.find_first_of(", ", p);
-            auto tok = overrides.features.substr(
-                p, c == std::string::npos ? std::string::npos : c - p);
-            if (!tok.empty()) rootReq.push_back(tok);
-            if (c == std::string::npos) break;
-            p = c + 1;
-        }
-        mergeActiveFeatureDeps(*m, rootReq);
-    }
+    std::vector<std::string> rootReq = parse_feature_request(overrides.features);
+    mergeActiveFeatureDeps(*m, rootReq);
+    // #243: the root's active features may forward features to its direct deps.
+    std::vector<std::string> rootActive = feature_closure(*m, rootReq, true);
+    if (auto fe = validateForwards(*m, rootActive, m->package.name); !fe)
+        return std::unexpected(fe.error());
 
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.
     const std::string mainPkgLabel = m->package.name;
     for (auto& [n, s] : m->dependencies) {
-        worklist.push_back({n, s, mainPkgLabel, s.version, kMainConsumer, {}});
+        auto req = s;
+        injectForwards(*m, rootActive, n, req);
+        worklist.push_back({n, req, mainPkgLabel, req.version, kMainConsumer, {}});
     }
     if (includeDevDeps) {
         for (auto& [n, s] : m->devDependencies) {
-            worklist.push_back({n, s, mainPkgLabel + " (dev-dep)",
-                                s.version, kMainConsumer, {}});
+            auto req = s;
+            injectForwards(*m, rootActive, n, req);
+            worklist.push_back({n, req, mainPkgLabel + " (dev-dep)",
+                                req.version, kMainConsumer, {}});
         }
     }
 
@@ -2683,9 +2731,22 @@ prepare_build(bool print_fingerprint,
             key.shortName,
             sourceKind == "version" ? spec.version : sourceKind);
         const std::size_t selfIdx = dep_manifests.size() - 1;
+        // #243: forward this dep's active features to ITS children before they
+        // are pushed (transitive dep->dep forwarding rides the BFS forward
+        // edge). Uses the SAME closure inputs as mergeActiveFeatureDeps above
+        // (this edge's spec.features, already carrying any forward injected by
+        // this dep's own consumer, + defaultFeatures), so activation agrees
+        // with resolution.
+        auto depActive = feature_closure(*dep_manifests.back(), spec.features,
+                                         spec.defaultFeatures);
+        if (auto fe = validateForwards(*dep_manifests.back(), depActive,
+                                       dep_manifests.back()->package.name); !fe)
+            return std::unexpected(fe.error());
         for (auto& [child_name, child_spec] : dep_manifests.back()->dependencies) {
-            worklist.push_back({child_name, child_spec, thisDepLabel,
-                                child_spec.version, selfIdx, dep_root});
+            auto childReq = child_spec;
+            injectForwards(*dep_manifests.back(), depActive, child_name, childReq);
+            worklist.push_back({child_name, childReq, thisDepLabel,
+                                childReq.version, selfIdx, dep_root});
         }
     }
 
