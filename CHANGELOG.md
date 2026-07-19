@@ -3,6 +3,23 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.99] — 2026-07-19
+
+> #230–#243 批次收尾:#243 feature 转发落地(0.0.98 只出了设计)+ #238 根因修复随 xlings 0.4.67 vendored 入包 + #230 windows build.mcpp 次生面补齐。设计见 `.agents/docs/2026-07-19-v0.0.99-feature-forwarding-238-230-design.md`。
+
+### 新增
+
+- **feature 依赖 feature 转发 `dep/feat`**(#243,Cargo 平价):`[features]` 里含 `/` 的 token(或表格形专用 `forward = ["dep/feat"]` 键)表示"本包该 feature 激活时,顺带打开依赖 `dep` 的 `feat` feature"——一个 feature 既能本地拉源、又能开依赖的重档 feature,解阻塞模块包的可选模块接口(opencv-m 的 `import opencv.dnn;`:`dnn` 一档同时拉 `dnn.cppm` 源集并把 `compat.opencv` 以 `features=["dnn"]` 参与构建,而非对所有消费者全量 +309 TU)。收敛为**一数据模型 `featureForwards` 两文法**(TOML 与 xpkg 描述符共享唯一切分点 `split_feature_forward_token`);转发**注入 0.0.98 既有的 `aggregatedRequest` 依赖边漏斗**(在子依赖 push 进 worklist 前把转发 feature 并入其请求集),一处注入同时覆盖解析(`mergeActiveFeatureDeps` 拉被转发 feature 的条件依赖)与激活(边图 union → `apply()` 发宏/源集)两个消费点;沿 BFS 前向边天然**传递**(root→mid→leaf)。与 #242 `default-features = false` 加性组合(转发进显式请求集、不受默认门控影响),`mcpp build`/`mcpp test` 双路径一致。转发到未声明依赖 strict 报错 / 非 strict 告警;转发未声明的依赖 feature 复用既有 "does not declare requested feature" 门。单测 3 例、e2e 128(含双路径)。
+
+### 修复
+
+- **≥2 项目级 index_repo 时 `install_packages` 静默失败**(#238,**根因修复上游落地**):vendored xlings 由 0.4.62 升至 **0.4.67**,携 openxlings/xlings#374 的多仓安装修复(`fix(xim): surface multi-repo install failures + best-effort catalog`,commit `cf9b60d5`)。此前 workspace 根级 `[indices]` 继承(#224)× default 重定向(R6)组合会给每个成员播下 ≥2 个 `index_repos`,任一未缓存包安装裸 `exit 1` 无 error 事件;0.0.98 已在 mcpp 侧把它变成可操作诊断,0.0.99 随 bundle 带上真正的解析修复。发布/交叉构建/e2e 三处 workflow pin 同步 0.4.67。
+- **windows 下依赖/成员 `build.mcpp` 产物名缺 `.exe` 无法执行**(#230 次生面):`build.mcpp` 编出的宿主程序此前恒名 `build.mcpp.bin`;windows 的 `capture_exec` 走 cmd.exe,`.bin` 不在 PATHEXT 故无法按名启动 PE。现按平台取后缀(windows=`build.mcpp.exe`,其余保持 `.bin`,`is_windows` 为 constexpr,非 windows 字节不变)。此面在 0.0.96 的 scanner symlink-逃逸崩溃(`df985df`,裸 127 的真凶)修复后才会被 workspace 的 build-mcpp 成员在 windows 走到。
+
+### 备注
+
+- #230 主因(scanner glob 顺 `.mcpp/.xlings` symlink 逃逸进 vendored 索引、CJK 文件名触发 MSVC 窄串转换抛异常→`__fastfail`→裸 127)已于 0.0.96 根治并在 0.0.98/0.0.99 在库;`src/main.cpp` 顶层 catch 兜底(未捕获异常→exit 70,不再裸 127)。0.0.99 补齐 build.mcpp 次生面后,mcpp-index 的 workspace(windows)CI 从临时钉回的 0.0.94 升到 0.0.99 复验全绿即关闭。
+
 ## [0.0.98] — 2026-07-19
 
 > #230–#243 批次(单 PR 统一发布,逐 commit):#233 对象路径消歧的两个后续缺口(#239/#240,解阻塞 mcpplibs #79 opencv 收录)+ #237/#241/#242 根因级实现 + #238 mcpp 侧诊断(根因在 openxlings/xlings#374)+ #243 设计。总账 + 架构评估见 `.agents/docs/2026-07-19-issues-230-243-batch-ledger-and-architecture-assessment.md`;各设计文档见 `.agents/docs/2026-07-19-*`。
