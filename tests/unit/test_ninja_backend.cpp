@@ -400,6 +400,34 @@ TEST(NinjaBackend, RawMultiTokenFlagIsNotQuoted) {
               std::string::npos) << ninja;
 }
 
+// mcpp#247: driver-style (gnu dialect) link/archive/shared rules must route
+// the object list through a response file on Windows — every command spawns
+// via CreateProcess (32 KiB command-line ceiling), and ffmpeg/opencv-class
+// source packages link thousands of objects, so an inlined $in overflows it.
+// POSIX keeps the inline form byte-identical (ARG_MAX is ample).
+TEST(NinjaBackend, DriverStyleLinkRulesUseRspfileOnWindowsOnly) {
+    auto plan = minimal_plan();  // GCC → gnu dialect → driver-style branch
+
+    auto ninja = emit_ninja_string(plan);
+
+    for (std::string_view rule : {"rule cxx_link\n", "rule cxx_archive\n",
+                                  "rule cxx_shared\n"}) {
+        auto start = ninja.find(rule);
+        ASSERT_NE(start, std::string::npos) << ninja;
+        auto end = ninja.find("\n\n", start);
+        ASSERT_NE(end, std::string::npos) << ninja;
+        auto body = ninja.substr(start, end - start);
+        if constexpr (mcpp::platform::is_windows) {
+            EXPECT_NE(body.find("@$out.rsp"), std::string::npos) << body;
+            EXPECT_NE(body.find("rspfile = $out.rsp"), std::string::npos) << body;
+            EXPECT_NE(body.find("rspfile_content = $in"), std::string::npos) << body;
+        } else {
+            EXPECT_EQ(body.find("rspfile"), std::string::npos) << body;
+            EXPECT_NE(body.find("$in"), std::string::npos) << body;
+        }
+    }
+}
+
 TEST(NinjaBackend, RootPackageCxxflagsAreEmittedOncePerUnit) {
     auto plan = minimal_plan();
     plan.manifest.buildConfig.cxxflags = {"-DROOT_FLAG=1"};

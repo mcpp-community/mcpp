@@ -584,17 +584,33 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("  rspfile_content = $in\n");
         append("  description = SHARED $out\n\n");
     } else {
-        append("rule cxx_link\n");
-        append("  command = $cxx $in -o $out $ldflags $unit_ldflags\n");
-        append("  description = LINK $out\n\n");
-
-        append("rule cxx_archive\n");
-        append(std::format("  command = {}\n", dial.archiveCmd));
-        append("  description = AR $out\n\n");
-
-        append("rule cxx_shared\n");
-        append("  command = $cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags\n");
-        append("  description = SHARED $out\n\n");
+        // Driver-style toolchains (g++/clang++ as the link driver). On
+        // Windows these still spawn through CreateProcess (32 KiB command
+        // line ceiling), and large source packages (ffmpeg/opencv-class)
+        // link thousands of objects — an inlined $in overflows it (#247).
+        // gcc/clang drivers and GNU/llvm ar all accept @rspfile, so route
+        // $in through one there. POSIX keeps the inline form byte-identical:
+        // ARG_MAX is ample and the plain command is easier to reproduce.
+        auto driver_rule = [&](std::string_view name, std::string cmd,
+                               std::string_view desc) {
+            append(std::format("rule {}\n", name));
+            if constexpr (mcpp::platform::is_windows) {
+                if (auto pos = cmd.find("$in"); pos != std::string::npos)
+                    cmd.replace(pos, 3, "@$out.rsp");
+                append(std::format("  command = {}\n", cmd));
+                append("  rspfile = $out.rsp\n");
+                append("  rspfile_content = $in\n");
+            } else {
+                append(std::format("  command = {}\n", cmd));
+            }
+            append(std::format("  description = {} $out\n\n", desc));
+        };
+        driver_rule("cxx_link",
+                    "$cxx $in -o $out $ldflags $unit_ldflags", "LINK");
+        driver_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
+        driver_rule("cxx_shared",
+                    "$cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags",
+                    "SHARED");
     }
 
     append("rule runtime_alias\n");
