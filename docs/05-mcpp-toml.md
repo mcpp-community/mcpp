@@ -413,8 +413,8 @@ feature carry package-owned preprocessor `defines`, feature-gated source globs
 (`sources`, mcpp 0.0.95+ — the globs leave the default build and compile only when
 the feature is active, exactly like an index descriptor's `features.<f>.sources`;
 the highest-frequency shape for vendored libraries: *feature = a source set + a
-define*), and/or capability `requires` / `provides` (see §2.8.1) alongside its
-implied features:
+define*), feature-gated per-glob compile flags (`flags`, mcpp 0.0.101+), and/or
+capability `requires` / `provides` (see §2.8.1) alongside its implied features:
 
 ```toml
 [features]
@@ -426,16 +426,31 @@ extra      = []
 mpl2only   = { defines = ["EIGEN_MPL2_ONLY"] }
 # Table form: a define + an implied feature.
 fast_math  = { defines = ["APP_FAST=1"], implies = ["extra"] }
+# Table form: feature-gated sources + per-glob flags that co-locate with them.
+simd       = { sources = ["src/simd/**"], flags = [
+                 { glob = "src/simd/**/*.avx2.cpp", cxxflags = ["-mavx2"] } ] }
 ```
 
 - `defines` are **bare** macro names (no `-D`); each desugars to `-D<x>` on the
   package's own compile when the feature is active — exactly like `[targets.*]
   defines`. They are restricted by convention to the package's **own** namespaced
-  macros: a feature does **not** inject free-form `cflags`/`ldflags`, which would
-  break the additive feature-union model. Link flags come from a provider
-  dependency (§2.8.1), not from a feature.
+  macros: a feature does **not** inject free-form package-wide `cflags`/`ldflags`,
+  which would break the additive feature-union model. Link flags come from a
+  provider dependency (§2.8.1), not from a feature.
 - The automatic `-DMCPP_FEATURE_<NAME>` is still defined for every active feature,
   so `defines` are additive to it.
+- `flags` (mcpp 0.0.101+) is the same ordered array-of-inline-tables grammar as
+  `[build].flags` (§2.3: `glob` required, plus `cflags`/`cxxflags`/`asmflags`/
+  `defines`; the `[[features.<name>.flags]]` array-of-tables spelling is accepted
+  too, like `[[build.flags]]`). When the feature is active the entries
+  are appended **after** the base `[build].flags`, features in name order, so a
+  feature rule wins over a broader base rule via "last flag wins"; when it is
+  inactive the entries do not exist (no dead-glob warning). This is how a
+  feature's group-specific flags co-locate with its `sources` instead of living
+  as base rules whose globs go dead on feature-off builds. Unlike `defines`,
+  feature `flags` are **private per-TU build flags** — they never propagate to
+  consumers (same contract as `[build].flags`), so they stay inside the additive
+  model: scoped by glob, deterministic order, no cross-package effect.
 
 ### 2.8.1 `provides` / `requires` — Capabilities (backend selection)
 

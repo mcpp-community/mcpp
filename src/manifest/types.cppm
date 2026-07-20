@@ -128,6 +128,12 @@ struct GlobFlags {
     std::vector<std::string> cxxflags;  // C++ units (.cpp/.cc/.cxx/.cppm)
     std::vector<std::string> asmflags;  // assembly units (.S/.s via cc, .asm via nasm)
     std::vector<std::string> defines;   // desugars to -D on every matched unit kind
+    // #253: non-empty when this entry came from `features.<name>.flags` and was
+    // folded in at feature activation (prepare_build). Diagnostic context only
+    // (names the owning feature in the zero-hit warning); deliberately NOT part
+    // of the fingerprint — the active feature set is already fingerprinted via
+    // the -DMCPP_FEATURE_* cflags.
+    std::string              featureOrigin;
 };
 
 // `[build]` section — tunables for the build backend.
@@ -151,6 +157,15 @@ struct BuildConfig {
     // would break feature-union composition. See
     // .agents/docs/2026-06-29-feature-capability-model-design.md.
     std::map<std::string, std::vector<std::string>> featureDefines;
+    // #253: feature name → per-glob compile flags gated by that feature. Same
+    // ordered GlobFlags model as `globFlags` below; when the feature is active
+    // the entries are appended AFTER the base globFlags (prepare_build), so a
+    // feature rule wins over a broader base rule via "last flag wins". Lets a
+    // feature's group-specific flags co-locate with its sources (e.g. opencv
+    // dnn's mlas defines) instead of living as base rules whose globs go dead
+    // on feature-off builds. Private per-TU flags — never propagate (contrast
+    // featureDefines above, which are interface switches).
+    std::map<std::string, std::vector<GlobFlags>> featureFlags;
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     // #249: emitted as -idirafter (searched after system dirs)
     std::vector<std::filesystem::path> includeDirsAfter;

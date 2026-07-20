@@ -52,6 +52,71 @@ bool is_array_of_tables(const t::Value& v) {
     return true;
 }
 
+// #253: shared parser for the per-glob flags array shape
+// `[{ glob = "...", cflags/cxxflags/asmflags/defines = [...] }, ...]` —
+// one entry grammar for `[build].flags` and `[features].<name>.flags`.
+// `ctxLabel` names the anchoring key in error messages. Entries append to
+// `dst` in declaration order (order is the override semantics). Returns an
+// error message, or nullopt on success.
+std::optional<std::string> parse_glob_flags_value(
+    const t::Value& fv, std::string_view ctxLabel, std::vector<GlobFlags>& dst)
+{
+    if (!fv.is_array()) {
+        return std::format(
+            "{} must be an array of inline tables "
+            "(flags = [{{ glob = \"...\", cxxflags = [...] }}, ...])", ctxLabel);
+    }
+    for (auto& ev : fv.as_array()) {
+        if (!ev.is_table()) {
+            return std::format(
+                "{} entries must be inline tables with a `glob` key", ctxLabel);
+        }
+        auto& et = ev.as_table();
+        GlobFlags gf;
+        for (auto& [k, v] : et) {
+            auto read_list = [&](std::vector<std::string>& out) -> bool {
+                if (!v.is_array()) return false;
+                for (auto& s : v.as_array())
+                    if (s.is_string()) out.push_back(s.as_string());
+                return true;
+            };
+            bool ok = false;
+            if      (k == "glob")     { ok = v.is_string(); if (ok) gf.glob = v.as_string(); }
+            else if (k == "cflags")   ok = read_list(gf.cflags);
+            else if (k == "cxxflags") ok = read_list(gf.cxxflags);
+            else if (k == "asmflags") ok = read_list(gf.asmflags);
+            else if (k == "defines")  ok = read_list(gf.defines);
+            if (!ok) {
+                return std::format(
+                    "{}: invalid key '{}' (expected glob = \"...\" "
+                    "plus cflags/cxxflags/asmflags/defines arrays)", ctxLabel, k);
+            }
+        }
+        if (gf.glob.empty()) {
+            return std::format("{} entry is missing its `glob` key", ctxLabel);
+        }
+        dst.push_back(std::move(gf));
+    }
+    return std::nullopt;
+}
+
+// Allowlist entries are dotted paths whose segments may be the wildcard `*`,
+// matching exactly one path segment — needed for #253's `features.<name>.flags`,
+// whose middle segment (the feature name) is author-chosen.
+bool aot_path_matches(std::string_view pattern, std::string_view path) {
+    while (true) {
+        auto pDot = pattern.find('.');
+        auto sDot = path.find('.');
+        auto pSeg = pattern.substr(0, pDot);
+        auto sSeg = path.substr(0, sDot);
+        if (pSeg != "*" && pSeg != sSeg) return false;
+        if (pDot == std::string_view::npos || sDot == std::string_view::npos)
+            return pDot == std::string_view::npos && sDot == std::string_view::npos;
+        pattern.remove_prefix(pDot + 1);
+        path.remove_prefix(sDot + 1);
+    }
+}
+
 std::optional<std::string> find_disallowed_array_of_tables(
     const t::Table& tbl, const std::string& prefix,
     std::span<const std::string_view> allowlist)
@@ -60,7 +125,7 @@ std::optional<std::string> find_disallowed_array_of_tables(
         std::string path = prefix.empty() ? k : std::format("{}.{}", prefix, k);
         if (is_array_of_tables(v)) {
             bool allowed = false;
-            for (auto a : allowlist) if (a == path) { allowed = true; break; }
+            for (auto a : allowlist) if (aot_path_matches(a, path)) { allowed = true; break; }
             if (!allowed) return path;
         } else if (v.is_table()) {
             if (auto found = find_disallowed_array_of_tables(v.as_table(), path, allowlist))
@@ -82,11 +147,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // Closed-grammar guard: reject any array-of-tables whose dotted path
     // isn't explicitly allowlisted, BEFORE any section is read. See
     // find_disallowed_array_of_tables above.
-    static constexpr std::string_view kAllowedArraysOfTables[] = { "build.flags" };
+    static constexpr std::string_view kAllowedArraysOfTables[] = {
+        "build.flags",
+        "features.*.flags",   // #253 — the middle segment is the feature name
+    };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
             "[[{}]] (array-of-tables) is not allowed for section '{}'; "
-            "array-of-tables syntax is only supported for [[build.flags]]",
+            "array-of-tables syntax is only supported for [[build.flags]] "
+            "and [[features.<name>.flags]]",
             *badPath, *badPath)));
     }
 
@@ -241,6 +310,21 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_str_array(ft, "provides", provs);
                 if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
                 if (!provs.empty()) m.featureProvides[fname] = std::move(provs);
+                // #253: per-feature per-glob compile flags — same entry grammar
+                // as [build].flags (shared parse_glob_flags_value), gated by
+                // this feature and folded in AFTER base globFlags at activation
+                // so feature rules win via "last flag wins". Both spellings
+                // reach here: the inline array and [[features.X.flags]] AOT
+                // (allowlisted via the features.*.flags pattern, mirroring
+                // #227's build.flags decision — libs/toml builds one shape).
+                if (auto it = ft.find(std::string("flags")); it != ft.end()) {
+                    if (auto err = parse_glob_flags_value(
+                            it->second,
+                            std::format("[features].{}.flags", fname),
+                            m.buildConfig.featureFlags[fname])) {
+                        return std::unexpected(error(origin, *err));
+                    }
+                }
             }
             // #243: split `dep/feat` tokens out of `implies` into featureForwards
             // (raw depKey shares the `dependencies`/`featureDeps` keyspace); the
@@ -782,37 +866,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 "(flags = [{ glob = \"...\", cxxflags = [...] }, ...]) "
                 "or an array of tables ([[build.flags]] glob = \"...\")"));
         }
-        for (auto& ev : fv->as_array()) {
-            if (!ev.is_table()) {
-                return std::unexpected(error(origin,
-                    "[build].flags entries must be inline tables with a `glob` key"));
-            }
-            auto& et = ev.as_table();
-            GlobFlags gf;
-            for (auto& [k, v] : et) {
-                auto read_list = [&](std::vector<std::string>& out) -> bool {
-                    if (!v.is_array()) return false;
-                    for (auto& s : v.as_array())
-                        if (s.is_string()) out.push_back(s.as_string());
-                    return true;
-                };
-                bool ok = false;
-                if      (k == "glob")     { ok = v.is_string(); if (ok) gf.glob = v.as_string(); }
-                else if (k == "cflags")   ok = read_list(gf.cflags);
-                else if (k == "cxxflags") ok = read_list(gf.cxxflags);
-                else if (k == "asmflags") ok = read_list(gf.asmflags);
-                else if (k == "defines")  ok = read_list(gf.defines);
-                if (!ok) {
-                    return std::unexpected(error(origin, std::format(
-                        "[build].flags: invalid key '{}' (expected glob = \"...\" "
-                        "plus cflags/cxxflags/asmflags/defines arrays)", k)));
-                }
-            }
-            if (gf.glob.empty()) {
-                return std::unexpected(error(origin,
-                    "[build].flags entry is missing its `glob` key"));
-            }
-            m.buildConfig.globFlags.push_back(std::move(gf));
+        if (auto err = parse_glob_flags_value(
+                *fv, "[build].flags", m.buildConfig.globFlags)) {
+            return std::unexpected(error(origin, *err));
         }
     }
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;

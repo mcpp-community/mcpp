@@ -376,8 +376,8 @@ extra   = []
 之外,携带包自有的预处理 `defines`、feature 门控的源 glob(`sources`,mcpp
 0.0.95+——列出的 glob 离开默认构建,仅当 feature 激活时才编译,与 index 描述符的
 `features.<f>.sources` 完全对等;这正是 vendored 大库最高频的形态:*feature =
-一组源文件 + 一个 define*),以及 capability 的 `requires` / `provides`
-(见 §2.8.1):
+一组源文件 + 一个 define*)、feature 门控的 per-glob 编译旗标(`flags`,mcpp
+0.0.101+),以及 capability 的 `requires` / `provides`(见 §2.8.1):
 
 ```toml
 [features]
@@ -389,13 +389,25 @@ extra      = []
 mpl2only   = { defines = ["EIGEN_MPL2_ONLY"] }
 # 表形式:宏 + 一个隐含 feature。
 fast_math  = { defines = ["APP_FAST=1"], implies = ["extra"] }
+# 表形式:feature 门控源 + 与其同居的 per-glob 旗标。
+simd       = { sources = ["src/simd/**"], flags = [
+                 { glob = "src/simd/**/*.avx2.cpp", cxxflags = ["-mavx2"] } ] }
 ```
 
 - `defines` 为**裸**宏名(不带 `-D`);feature 激活时每个脱糖为 `-D<x>`,加到该包
   自己的编译上——与 `[targets.*] defines` 完全一致。按约定仅限包**自有**的带命名
-  空间宏:feature **不**注入自由的 `cflags`/`ldflags`,否则会破坏加性的 feature
+  空间宏:feature **不**注入自由的包级 `cflags`/`ldflags`,否则会破坏加性的 feature
   并集模型。链接旗标来自 provider 依赖(§2.8.1),而非 feature。
 - 每个激活的 feature 仍会得到自动的 `-DMCPP_FEATURE_<NAME>`,`defines` 与之叠加。
+- `flags`(mcpp 0.0.101+)与 `[build].flags`(§2.3)共用同一有序 inline-table 数组
+  文法(`glob` 必填,加 `cflags`/`cxxflags`/`asmflags`/`defines`;与
+  `[[build.flags]]` 一样也接受 `[[features.<name>.flags]]` 拼写)。feature 激活时
+  条目追加在 base `[build].flags` **之后**(feature 按名
+  序),"last flag wins" 使 feature 规则可覆盖更宽的 base 规则;未激活时条目根本
+  不存在(不会有死 glob 告警)。这让 feature 的组内专属旗标与其 `sources` 同居,
+  而不必写成 base 规则、在 feature-off 构建里留下必死的 glob。与 `defines` 不同,
+  feature `flags` 是**私有 per-TU 构建旗标**——永不传播给消费者(与 `[build].flags`
+  同契约),因此不破坏加性模型:glob 限定作用面、顺序确定、无跨包效应。
 
 ### 2.8.1 `provides` / `requires` —— 能力(后端选择)
 

@@ -474,6 +474,206 @@ package = {
     ASSERT_TRUE(m->buildConfig.featureSources.contains("eigen_blas"));
 }
 
+// #253: a [features] table-form entry may carry `flags` — per-feature per-glob
+// compile flags, the same entry grammar as [build].flags. Parsed into
+// buildConfig.featureFlags keyed by feature; base globFlags stay untouched at
+// parse time (activation folds them in later, in prepare_build).
+TEST(Manifest, FeatureFlagsTomlTableForm) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[targets.x]
+kind = "lib"
+[build]
+flags = [{ glob = "src/base/**", defines = ["BASE"] }]
+[features]
+default = []
+simd    = { sources = ["src/simd/**"], flags = [
+              { glob = "src/simd/**/*.avx2.cpp", cxxflags = ["-mavx2"], defines = ["HAVE_AVX2"] },
+              { glob = "src/simd/**/*.neon.cpp", cxxflags = ["-mfpu=neon"] } ] }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    ASSERT_TRUE(m->buildConfig.featureFlags.contains("simd"));
+    auto& ff = m->buildConfig.featureFlags["simd"];
+    ASSERT_EQ(ff.size(), 2u);   // declaration order preserved
+    EXPECT_EQ(ff[0].glob, "src/simd/**/*.avx2.cpp");
+    ASSERT_EQ(ff[0].cxxflags.size(), 1u);
+    EXPECT_EQ(ff[0].cxxflags[0], "-mavx2");
+    ASSERT_EQ(ff[0].defines.size(), 1u);
+    EXPECT_EQ(ff[0].defines[0], "HAVE_AVX2");
+    EXPECT_EQ(ff[1].glob, "src/simd/**/*.neon.cpp");
+    // Parse-time base globFlags carry ONLY the [build].flags entry.
+    ASSERT_EQ(m->buildConfig.globFlags.size(), 1u);
+    EXPECT_EQ(m->buildConfig.globFlags[0].glob, "src/base/**");
+    // Gated sources still land in featureSources alongside.
+    ASSERT_TRUE(m->buildConfig.featureSources.contains("simd"));
+}
+
+// #253: feature `flags` entries share [build].flags' closed grammar — a
+// missing `glob` and an unknown entry key are hard errors naming the
+// feature-scoped anchoring key.
+TEST(Manifest, FeatureFlagsTomlErrors) {
+    constexpr auto missingGlob = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[targets.x]
+kind = "lib"
+[features]
+simd = { flags = [{ cxxflags = ["-mavx2"] }] }
+)";
+    auto m1 = mcpp::manifest::parse_string(missingGlob);
+    ASSERT_FALSE(m1.has_value());
+    EXPECT_NE(m1.error().message.find("[features].simd.flags"), std::string::npos)
+        << m1.error().message;
+    EXPECT_NE(m1.error().message.find("glob"), std::string::npos);
+
+    constexpr auto badKey = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[targets.x]
+kind = "lib"
+[features]
+simd = { flags = [{ glob = "src/**", ldflags = ["-lfoo"] }] }
+)";
+    auto m2 = mcpp::manifest::parse_string(badKey);
+    ASSERT_FALSE(m2.has_value());
+    EXPECT_NE(m2.error().message.find("ldflags"), std::string::npos)
+        << m2.error().message;
+}
+
+// #253 Lua descriptor surface: `features.<name>.flags` parses into
+// featureFlags (same entry grammar as the build-level `flags` key) and is a
+// KNOWN subfield — it must not land in xpkgUnknownKeys.
+TEST(SynthesizeFromXpkgLua, FeatureFlagsParse) {
+    constexpr auto lua = R"(
+package = {
+    spec = "1",
+    name = "compat.opencv",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/core/*.cpp" },
+        targets = { ["opencv"] = { kind = "lib" } },
+        flags   = { { glob = "*/core/*.cpp", defines = { "BASE" } } },
+        features = {
+            ["dnn"] = {
+                sources = { "*/3rdparty/mlas/lib/*.cpp" },
+                flags = {
+                    { glob = "**/3rdparty/mlas/**",
+                      defines = { "BUILD_MLAS_NO_ONNXRUNTIME=1", "MLAS_GEMM_ONLY=1" } },
+                    { glob = "**/modules/dnn/**/*.avx2.cpp",
+                      cxxflags = { "-mavx2" } },
+                },
+            },
+        },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "compat.opencv", "1.0.0");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_TRUE(m->xpkgUnknownKeys.empty());
+
+    ASSERT_TRUE(m->buildConfig.featureFlags.contains("dnn"));
+    auto& ff = m->buildConfig.featureFlags["dnn"];
+    ASSERT_EQ(ff.size(), 2u);
+    EXPECT_EQ(ff[0].glob, "**/3rdparty/mlas/**");
+    ASSERT_EQ(ff[0].defines.size(), 2u);
+    EXPECT_EQ(ff[0].defines[0], "BUILD_MLAS_NO_ONNXRUNTIME=1");
+    EXPECT_EQ(ff[1].glob, "**/modules/dnn/**/*.avx2.cpp");
+    // Base per-glob flags untouched at parse time.
+    ASSERT_EQ(m->buildConfig.globFlags.size(), 1u);
+    EXPECT_EQ(m->buildConfig.globFlags[0].glob, "*/core/*.cpp");
+
+    // Unknown entry subkey is a hard error carrying the feature-scoped label.
+    constexpr auto bad = R"(
+package = {
+    spec = "1",
+    name = "compat.opencv",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources  = { "*/core/*.cpp" },
+        features = { ["dnn"] = { flags = { { glob = "x", ldflags = { "-lfoo" } } } } },
+    },
+}
+)";
+    auto mb = mcpp::manifest::synthesize_from_xpkg_lua(bad, "compat.opencv", "1.0.0");
+    ASSERT_FALSE(mb.has_value());
+    EXPECT_NE(mb.error().message.find("features.dnn.flags"), std::string::npos)
+        << mb.error().message;
+}
+
+// #253: per-OS descriptor sections participate in `features` via the same
+// textual-splice additive overlay every mcpp-segment key gets — same-named
+// features merge per-subkey by APPEND (base body first, OS body second), and a
+// per-OS section may register an OS-only feature. Locked here because the
+// common/delta pattern (neutral common payload + per-OS delta) depends on it.
+TEST(SynthesizeFromXpkgLua, PerOsFeaturesAdditiveMerge) {
+    constexpr auto lua = R"(
+package = {
+    spec = "1",
+    name = "compat.opencv",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/core/*.cpp" },
+        features = {
+            ["dnn"] = {
+                defines = { "HAVE_OPENCV_DNN" },
+                sources = { "*/modules/dnn/src/*.cpp" },
+            },
+        },
+        linux = {
+            features = {
+                ["dnn"] = {
+                    sources = { "*/3rdparty/mlas/lib/x86_64/*.S" },
+                    flags   = { { glob = "**/3rdparty/mlas/**", defines = { "MLAS_X86" } } },
+                },
+                ["vaapi"] = { defines = { "HAVE_VAAPI" } },
+            },
+        },
+        macosx = {
+            features = {
+                ["dnn"] = { sources = { "*/modules/dnn/neon/*.cpp" } },
+            },
+        },
+    },
+}
+)";
+    // linux leg: neutral payload + linux delta, macosx section invisible.
+    auto ml = mcpp::manifest::synthesize_from_xpkg_lua(
+        lua, "compat.opencv", "1.0.0", "linux");
+    ASSERT_TRUE(ml.has_value()) << ml.error().format();
+    ASSERT_TRUE(ml->buildConfig.featureSources.contains("dnn"));
+    {
+        auto& srcs = ml->buildConfig.featureSources["dnn"];
+        ASSERT_EQ(srcs.size(), 2u);   // append order: neutral first, OS delta after
+        EXPECT_EQ(srcs[0], "*/modules/dnn/src/*.cpp");
+        EXPECT_EQ(srcs[1], "*/3rdparty/mlas/lib/x86_64/*.S");
+    }
+    ASSERT_TRUE(ml->buildConfig.featureFlags.contains("dnn"));
+    EXPECT_EQ(ml->buildConfig.featureFlags["dnn"][0].glob, "**/3rdparty/mlas/**");
+    // OS-only feature registered (requestable) on this leg only.
+    EXPECT_TRUE(ml->featuresMap.contains("vaapi"));
+    ASSERT_TRUE(ml->buildConfig.featureDefines.contains("vaapi"));
+    EXPECT_EQ(ml->buildConfig.featureDefines["vaapi"][0], "HAVE_VAAPI");
+
+    // macosx leg: NEON delta instead, no mlas flags, no vaapi.
+    auto mm = mcpp::manifest::synthesize_from_xpkg_lua(
+        lua, "compat.opencv", "1.0.0", "macosx");
+    ASSERT_TRUE(mm.has_value()) << mm.error().format();
+    {
+        auto& srcs = mm->buildConfig.featureSources["dnn"];
+        ASSERT_EQ(srcs.size(), 2u);
+        EXPECT_EQ(srcs[0], "*/modules/dnn/src/*.cpp");
+        EXPECT_EQ(srcs[1], "*/modules/dnn/neon/*.cpp");
+    }
+    EXPECT_FALSE(mm->buildConfig.featureFlags.contains("dnn"));
+    EXPECT_FALSE(mm->featuresMap.contains("vaapi"));
+}
+
 // Feature System v2 Stage 2a: optional deps activated by a feature.
 // TOML surface uses a dedicated [feature-deps.<name>] section.
 TEST(Manifest, FeatureDepsTomlSection) {

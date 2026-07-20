@@ -793,6 +793,82 @@ list_xpkg_versions(std::string_view luaContent, std::string_view platform) {
     return versions;
 }
 
+// Parses the `{ { glob = "...", cflags/cxxflags/asmflags/defines = {...} },
+// ... }` array-of-tables shape shared by `[build]`-level `flags` and #253's
+// `features.<name>.flags` — one entry grammar, two anchoring keys. `ctxLabel`
+// names the anchoring key in error messages ("flags" or "features.X.flags").
+// The cursor must sit on the opening '{' of the array; on success it is
+// consumed past the closing '}'. Parsed entries are appended to `dst`.
+static std::optional<ManifestError>
+parse_glob_flags_array(LuaCursor& cur, const std::string& sourcePath,
+                       std::string_view ctxLabel, std::vector<GlobFlags>& dst)
+{
+    if (!cur.consume('{')) {
+        return ManifestError{
+            std::format("expected '{{' after `{} =`", ctxLabel), sourcePath, 0, 0};
+    }
+    cur.skip_ws_and_comments();
+    while (!cur.eof() && cur.peek() != '}') {
+        if (!cur.consume('{')) {
+            return ManifestError{
+                std::format("expected '{{' opening a `{}` entry", ctxLabel),
+                sourcePath, 0, 0};
+        }
+        GlobFlags gf;
+        cur.skip_ws_and_comments();
+        while (!cur.eof() && cur.peek() != '}') {
+            auto sub = cur.read_key();
+            if (sub.empty()) break;
+            if (!cur.consume('=')) {
+                return ManifestError{
+                    std::format("expected '=' in `{}` entry", ctxLabel),
+                    sourcePath, 0, 0};
+            }
+            cur.skip_ws_and_comments();
+            if (sub == "glob") {
+                gf.glob = cur.read_string();
+                cur.skip_ws_and_comments();
+                continue;
+            }
+            std::vector<std::string>* dstList =
+                  sub == "cflags"   ? &gf.cflags
+                : sub == "cxxflags" ? &gf.cxxflags
+                : sub == "asmflags" ? &gf.asmflags
+                : sub == "defines"  ? &gf.defines
+                : nullptr;
+            if (!dstList) {
+                return ManifestError{
+                    std::format("unknown {} key '{}' (expected glob/"
+                                "cflags/cxxflags/asmflags/defines)", ctxLabel, sub),
+                    sourcePath, 0, 0};
+            }
+            if (!cur.consume('{')) {
+                return ManifestError{
+                    std::format("expected '{{' after {} entry key '{}'", ctxLabel, sub),
+                    sourcePath, 0, 0};
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto s = cur.read_string();
+                if (!s.empty()) dstList->push_back(std::move(s));
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+            cur.skip_ws_and_comments();
+        }
+        cur.consume('}');
+        if (gf.glob.empty()) {
+            return ManifestError{
+                std::format("`{}` entry is missing its `glob` key", ctxLabel),
+                sourcePath, 0, 0};
+        }
+        dst.push_back(std::move(gf));
+        cur.skip_ws_and_comments();
+    }
+    cur.consume('}');
+    return std::nullopt;
+}
+
 std::expected<Manifest, ManifestError>
 synthesize_from_xpkg_lua(std::string_view luaContent,
                          std::string_view packageName,
@@ -962,66 +1038,11 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             //     asmflags = {...}, defines = {...} }, ... }` — per-glob
             // compile flags (G4), same ordered data model as mcpp.toml's
             // [build] flags array. Lua array-of-tables preserves order.
-            if (!cur.consume('{')) {
-                return std::unexpected(ManifestError{
-                    "expected '{' after `flags =`", m.sourcePath, 0, 0});
+            // Entry grammar shared with features.<name>.flags (#253).
+            if (auto err = parse_glob_flags_array(
+                    cur, m.sourcePath, "flags", m.buildConfig.globFlags)) {
+                return std::unexpected(std::move(*err));
             }
-            cur.skip_ws_and_comments();
-            while (!cur.eof() && cur.peek() != '}') {
-                if (!cur.consume('{')) {
-                    return std::unexpected(ManifestError{
-                        "expected '{' opening a `flags` entry", m.sourcePath, 0, 0});
-                }
-                GlobFlags gf;
-                cur.skip_ws_and_comments();
-                while (!cur.eof() && cur.peek() != '}') {
-                    auto sub = cur.read_key();
-                    if (sub.empty()) break;
-                    if (!cur.consume('=')) {
-                        return std::unexpected(ManifestError{
-                            "expected '=' in `flags` entry", m.sourcePath, 0, 0});
-                    }
-                    cur.skip_ws_and_comments();
-                    if (sub == "glob") {
-                        gf.glob = cur.read_string();
-                        cur.skip_ws_and_comments();
-                        continue;
-                    }
-                    std::vector<std::string>* dst =
-                          sub == "cflags"   ? &gf.cflags
-                        : sub == "cxxflags" ? &gf.cxxflags
-                        : sub == "asmflags" ? &gf.asmflags
-                        : sub == "defines"  ? &gf.defines
-                        : nullptr;
-                    if (!dst) {
-                        return std::unexpected(ManifestError{
-                            std::format("unknown flags key '{}' (expected glob/"
-                                        "cflags/cxxflags/asmflags/defines)", sub),
-                            m.sourcePath, 0, 0});
-                    }
-                    if (!cur.consume('{')) {
-                        return std::unexpected(ManifestError{
-                            std::format("expected '{{' after flags entry key '{}'", sub),
-                            m.sourcePath, 0, 0});
-                    }
-                    cur.skip_ws_and_comments();
-                    while (!cur.eof() && cur.peek() != '}') {
-                        auto s = cur.read_string();
-                        if (!s.empty()) dst->push_back(std::move(s));
-                        cur.skip_ws_and_comments();
-                    }
-                    cur.consume('}');
-                    cur.skip_ws_and_comments();
-                }
-                cur.consume('}');
-                if (gf.glob.empty()) {
-                    return std::unexpected(ManifestError{
-                        "`flags` entry is missing its `glob` key", m.sourcePath, 0, 0});
-                }
-                m.buildConfig.globFlags.push_back(std::move(gf));
-                cur.skip_ws_and_comments();
-            }
-            cur.consume('}');
         }
         else if (key == "target_cfg") {
             // `{ ["cfg(...)"] = { cflags = {...}, cxxflags = {...},
@@ -1189,6 +1210,19 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             cur.skip_ws_and_comments();
                         }
                         cur.consume('}');
+                    } else if (sub == "flags" && cur.peek() == '{') {
+                        // #253: per-feature per-glob compile flags — the same
+                        // entry grammar as the build-level `flags` key, gated
+                        // by this feature. Folded into buildConfig.globFlags
+                        // at activation (prepare_build), AFTER base entries,
+                        // so feature rules win via "last flag wins". Private,
+                        // per-TU, non-propagating (contrast `defines`).
+                        if (auto err = parse_glob_flags_array(
+                                cur, m.sourcePath,
+                                std::format("features.{}.flags", fname),
+                                m.buildConfig.featureFlags[fname])) {
+                            return std::unexpected(std::move(*err));
+                        }
                     } else {
                     // Feature subfields that carry a string array. `sources`
                     // gates source globs; `defines` carries package-owned macros

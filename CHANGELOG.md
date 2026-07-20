@@ -3,6 +3,23 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.101] — 2026-07-20
+
+> #253:feature 模型两缺口收口——per-feature per-glob `flags` + per-OS `features` 语义锁定,解锁 compat.opencv `dnn` off-linux 腿并消除 feature-off 构建的死 glob 告警。设计见 `.agents/docs/2026-07-20-issue-253-feature-flags-and-per-os-features-design.md`。
+
+### 新增
+
+- **`features.<name>.flags`**(#253):feature 级 per-glob 编译旗标,与 `[build].flags` 共用同一 entry 文法(`glob` 必填 + `cflags`/`cxxflags`/`asmflags`/`defines`),xpkg 与 mcpp.toml 双文法一数据模型(共享解析 helper)。激活时折入既有 globFlags 单一漏斗(scanner 匹配/per-TU 落旗标/死 glob 告警/fingerprint 四个下游零改动),追加在 base 规则之后、feature 按名序,"last flag wins" 使 feature 规则可覆盖 base;折入点在 `includeDevDeps` 门外(0.0.94 双路径不变量)。**私有 per-TU、不传播**(与接口开关 `defines` 的语义分界)。feature off 时规则不存在 → opencv mlas 一类"结构性必死 glob"的告警自然消失;feature on 而 glob 空仍告警,且文案点名归属 feature(`features.<f>.flags glob '...' matched no source file`)。TOML 侧 `[[features.<name>.flags]]` AOT 拼写同步进 #227 封闭文法 allowlist(`features.*.flags` 通配段)。
+- **per-OS `features` 语义锁定**(#253):`mcpp.<os>` 段的文本拼接 additive overlay 本就覆盖 `features` 键——同名 feature 逐子键 append(中性段在前、OS 段在后),per-OS 段可注册 OS-only feature;现以单测(逐 OS `osOverride`)+ e2e 锁死并写入文档,配合 `features.<f>.flags` 构成 opencv `dnn` 的 common/delta 形态(中性段放跨平台公共载荷,per-OS 段放 mlas x86 / NEON 差集与其旗标)。
+
+### 修复
+
+- **依赖包 per-glob flags 此前不入 per-package fingerprint**:`canonical_package_build_metadata` 只序列化 cflags/cxxflags/ldflags/genfiles,globFlags 靠"descriptor 随版本冻结"间接成立;feature 折入使该向量随构建变化,现与根侧同款全量有序序列化(`globflags:/gc:/gxx:/gas:/gd:`)。
+
+### 备注
+
+- e2e 新增 146(feature flags 四象限 + 死 glob 告警消除/点名 + 私有不传播对照)/147(per-OS features 端到端,宿主段生效、非宿主段投毒不可见);单测新增 xpkg/TOML 解析与 per-OS 合并锁定。host/target 轴缺陷(per-OS 拼接键=宿主常量,交叉编译选段错误)另开 issue 跟踪,不入本版。
+
 ## [0.0.100] — 2026-07-19
 
 > 大型源码直编包(ffmpeg/opencv 级,数千 TU)全平台化批次:#247/#248/#249 平台三修 + 增量构建修复 + build.mcpp 指令面补全(P1)。设计见 `.agents/docs/2026-07-19-large-source-pkg-platform-fixes-and-buildmcpp-generation-design.md`。

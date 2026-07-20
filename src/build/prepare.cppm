@@ -288,6 +288,20 @@ std::string canonical_package_build_metadata(
             s += " ldflag:";
             s += flag;
         }
+        // Per-glob flags — same full ordered serialization as the root-side
+        // block above. Until #253 dependency globFlags were unfingerprinted
+        // (held only by "descriptor frozen per version" + "feature toggles
+        // always change cflags via -DMCPP_FEATURE_*"); feature-folded entries
+        // make the vector build-variant, so fingerprint it directly.
+        // featureOrigin is diagnostic-only and deliberately NOT serialized
+        // (the active feature set is already in cflags above).
+        for (auto const& gf : pkg.manifest.buildConfig.globFlags) {
+            s += " globflags:"; s += gf.glob;
+            for (auto const& f : gf.cflags)   { s += " gc:";  s += f; }
+            for (auto const& f : gf.cxxflags) { s += " gxx:"; s += f; }
+            for (auto const& f : gf.asmflags) { s += " gas:"; s += f; }
+            for (auto const& f : gf.defines)  { s += " gd:";  s += f; }
+        }
         if (pkg.usageResolved) {
             for (auto const& dir : pkg.privateBuild.includeDirs) {
                 s += " private_include:";
@@ -2970,6 +2984,26 @@ prepare_build(bool print_fingerprint,
                         add(bc.sources, g);
                         add(pkg.manifest.modules.sources, g);
                     }
+                }
+            }
+            // #253: per-feature per-glob flags — fold each ACTIVE feature's
+            // entries into the base globFlags funnel. Everything downstream
+            // (scanner glob match, per-TU flag landing, zero-hit warning,
+            // fingerprint serialization) consumes the ONE vector unchanged.
+            // Appended AFTER base entries, features in map (= name) order, so
+            // application order is deterministic and a feature rule wins over
+            // a broader base rule via "last flag wins". An inactive feature
+            // contributes nothing — its dead globs no longer exist to warn
+            // about. Deliberately OUTSIDE any includeDevDeps gate: like the
+            // sources ADD above, `mcpp build` and `mcpp test` must agree
+            // (0.0.94 dual-path invariant). featureOrigin tags the entry so
+            // the scanner's zero-hit warning can name the owning feature.
+            for (auto& [f, entries] : bc.featureFlags) {
+                if (std::ranges::find(active, f) == active.end()) continue;
+                for (auto const& gf : entries) {
+                    auto tagged = gf;
+                    tagged.featureOrigin = f;
+                    bc.globFlags.push_back(std::move(tagged));
                 }
             }
         };

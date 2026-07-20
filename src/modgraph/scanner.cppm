@@ -932,9 +932,18 @@ void scan_one_into(ScanResult& result,
     }
     for (std::size_t i = 0; i < globFlagHits.size(); ++i) {
         if (globFlagHits[i] == 0) {
-            result.warnings.push_back(ScanError{root, 0, std::format(
-                "[build].flags glob '{}' matched no source file",
-                manifest.buildConfig.globFlags[i].glob)});
+            // #253: a feature-folded entry only exists when its feature is
+            // active, so a zero hit here is a REAL dead glob either way —
+            // name the owning feature so the author knows which table to fix.
+            auto const& gf = manifest.buildConfig.globFlags[i];
+            result.warnings.push_back(ScanError{root, 0,
+                gf.featureOrigin.empty()
+                    ? std::format(
+                          "[build].flags glob '{}' matched no source file",
+                          gf.glob)
+                    : std::format(
+                          "features.{}.flags glob '{}' matched no source file",
+                          gf.featureOrigin, gf.glob)});
         }
     }
 }
