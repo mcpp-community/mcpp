@@ -800,7 +800,7 @@ list_xpkg_versions(std::string_view luaContent, std::string_view platform) {
 // The cursor must sit on the opening '{' of the array; on success it is
 // consumed past the closing '}'. Parsed entries are appended to `dst`.
 static std::optional<ManifestError>
-parse_glob_flags_array(LuaCursor& cur, const std::string& sourcePath,
+parse_glob_flags_array(LuaCursor& cur, const std::filesystem::path& sourcePath,
                        std::string_view ctxLabel, std::vector<GlobFlags>& dst)
 {
     if (!cur.consume('{')) {
