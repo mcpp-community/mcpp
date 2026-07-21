@@ -980,10 +980,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         for (auto& v : f->second.as_array())
                             if (v.is_string()) out.push_back(v.as_string());
                 };
-                read_list("cflags",   cc.cflags);
-                read_list("cxxflags", cc.cxxflags);
-                read_list("ldflags",  cc.ldflags);
-                read_list("sources",  cc.sources);
+                read_list("cflags",   cc.inputs.cflags);
+                read_list("cxxflags", cc.inputs.cxxflags);
+                read_list("ldflags",  cc.inputs.ldflags);
+                read_list("sources",  cc.inputs.sources);
             }
             // [target.<predicate>.{dependencies,dev-dependencies,build-dependencies}]
             // parsed via the shared table-based loader (same selectors/namespaces
@@ -998,8 +998,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());
             if (auto r = read_deps("dev-dependencies",   cc.devDependencies);  !r) return std::unexpected(r.error());
             if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());
-            if (!cc.cflags.empty() || !cc.cxxflags.empty() || !cc.ldflags.empty()
-                || !cc.sources.empty()
+            if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
+                || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
+                || !cc.inputs.globFlags.empty() || !cc.inputs.includeDirs.empty()
+                || !cc.inputs.includeDirsAfter.empty()
                 || !cc.dependencies.empty() || !cc.devDependencies.empty()
                 || !cc.buildDependencies.empty())
                 m.conditionalConfigs.push_back(std::move(cc));

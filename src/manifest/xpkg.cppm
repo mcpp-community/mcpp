@@ -1071,10 +1071,10 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     auto sub = cur.read_key();
                     if (sub.empty()) break;
                     std::vector<std::string>* dst =
-                          sub == "cflags"   ? &cc.cflags
-                        : sub == "cxxflags" ? &cc.cxxflags
-                        : sub == "ldflags"  ? &cc.ldflags
-                        : sub == "sources"  ? &cc.sources
+                          sub == "cflags"   ? &cc.inputs.cflags
+                        : sub == "cxxflags" ? &cc.inputs.cxxflags
+                        : sub == "ldflags"  ? &cc.inputs.ldflags
+                        : sub == "sources"  ? &cc.inputs.sources
                         : nullptr;
                     if (!dst) {
                         return std::unexpected(ManifestError{
@@ -1098,8 +1098,9 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     cur.skip_ws_and_comments();
                 }
                 cur.consume('}');
-                if (!cc.cflags.empty() || !cc.cxxflags.empty()
-                    || !cc.ldflags.empty() || !cc.sources.empty())
+                if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
+                    || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
+                    )
                     m.conditionalConfigs.push_back(std::move(cc));
                 cur.skip_ws_and_comments();
             }

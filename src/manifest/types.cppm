@@ -136,12 +136,73 @@ struct GlobFlags {
     std::string              featureOrigin;
 };
 
+// The additive build inputs — the ONLY things any conditional axis may
+// contribute (#258).
+//
+// mcpp has two conditional axes: `[target.'cfg(...)']` (platform) and
+// `[features.<name>]`. Each used to hand-pick which build fields it could
+// carry, and they picked DIFFERENT subsets — cfg took cflags/cxxflags/
+// ldflags/sources, features took sources/defines/flags. "Which build inputs
+// may be contributed conditionally" was being decided twice, differently,
+// which is exactly the architectural debt the batch ledger warns about.
+//
+// Membership here is the answer, and it is a type rather than a hand-kept
+// list, so it cannot drift from the struct it describes. Two properties
+// qualify a field:
+//
+//   1. APPENDING is its merge semantics. Scalars (linkage, cStandard, the
+//      profile knobs) would need last-wins override semantics — a different
+//      operation, and a separate design.
+//   2. It is consumed AFTER the conditional merge point. `target` and
+//      `linkage` are consumed BEFORE it — indeed `target` SELECTS the triple
+//      the cfg predicate is evaluated against, so conditioning it is
+//      circular by construction.
+//
+// Two deliberate non-members worth naming, because their exclusion is about
+// category rather than mechanics:
+//   • generatedFiles is a side-effecting materialization ACTION, not an
+//     input (and root/dep materialize on opposite sides of the merge — see
+//     the design doc; that ordering bug is tracked separately).
+//   • featureDefines are INTERFACE contributions that propagate along Public
+//     edges, not private build inputs. Per-glob `defines` (GlobFlags::defines
+//     below) are private and per-TU, so those DO belong here.
+struct BuildInputs {
+    std::vector<std::string>           sources;        // glob patterns
+    std::vector<std::string>           cflags;
+    std::vector<std::string>           cxxflags;
+    std::vector<std::string>           ldflags;
+    std::vector<GlobFlags>             globFlags;      // flags = [...] (ordered)
+    std::vector<std::filesystem::path> includeDirs;    // relative to package root
+    // #249: emitted as -idirafter (searched after the toolchain's system dirs)
+    std::vector<std::filesystem::path> includeDirsAfter;
+};
+
+// The single additive merge. Every conditional axis folds through this, so
+// "how does a contribution combine with the base" has one answer: append, in
+// declaration order, which gives later entries GNU last-wins precedence.
+inline void append(BuildInputs& dst, const BuildInputs& src) {
+    dst.sources.insert(dst.sources.end(), src.sources.begin(), src.sources.end());
+    dst.cflags.insert(dst.cflags.end(), src.cflags.begin(), src.cflags.end());
+    dst.cxxflags.insert(dst.cxxflags.end(), src.cxxflags.begin(), src.cxxflags.end());
+    dst.ldflags.insert(dst.ldflags.end(), src.ldflags.begin(), src.ldflags.end());
+    dst.globFlags.insert(dst.globFlags.end(),
+                         src.globFlags.begin(), src.globFlags.end());
+    dst.includeDirs.insert(dst.includeDirs.end(),
+                           src.includeDirs.begin(), src.includeDirs.end());
+    dst.includeDirsAfter.insert(dst.includeDirsAfter.end(),
+                                src.includeDirsAfter.begin(),
+                                src.includeDirsAfter.end());
+}
+
 // `[build]` section — tunables for the build backend.
 //
 // M5.0: now also carries `sources` (moved from [modules]) and `include_dirs`
 // (new). Defaults are injected by load() after parse if these are empty.
-struct BuildConfig {
-    std::vector<std::string>           sources;        // glob patterns
+//
+// Inherits the additive inputs rather than nesting them: `buildConfig.cflags`
+// is read in ~150 places, and a BuildConfig genuinely IS a set of build
+// inputs plus the selection axis and resolved policy scalars.
+struct BuildConfig : BuildInputs {
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a
@@ -166,11 +227,7 @@ struct BuildConfig {
     // on feature-off builds. Private per-TU flags — never propagate (contrast
     // featureDefines above, which are interface switches).
     std::map<std::string, std::vector<GlobFlags>> featureFlags;
-    std::vector<std::filesystem::path> includeDirs;    // relative to package root
-    // #249: emitted as -idirafter (searched after system dirs)
-    std::vector<std::filesystem::path> includeDirsAfter;
     std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
-    std::vector<GlobFlags>              globFlags;      // [build] flags = [...] (ordered)
     bool                                staticStdlib = true;
     // "" (default = dynamic), "static", "dynamic" — chosen at resolve
     // time from --static / --target / [target.<triple>].linkage. Wired
@@ -181,13 +238,9 @@ struct BuildConfig {
     // "default to fully-static musl" belongs here, not in a toolchain name
     // (static output is a product property, not a compiler-family property).
     std::string                         target;
-    // M5.x C-language support. `cflags` / `cxxflags` are appended verbatim
-    // to the per-rule baseline (see `ninja_backend` cflags / cxxflags).
-    // `cStandard` controls -std= for the C compile rule (.c files).
-    // Empty cStandard → backend default ("c11" today).
-    std::vector<std::string>           cflags;
-    std::vector<std::string>           cxxflags;
-    std::vector<std::string>           ldflags;
+    // M5.x C-language support: `cStandard` controls -std= for the C compile
+    // rule (.c files); empty → backend default ("c11" today). The cflags /
+    // cxxflags / ldflags vectors themselves live in BuildInputs above.
     // Dialect-class C++ flags: flags that change what the standard library's
     // headers DECLARE or participate in module dialect checks (issue #210's
     // -freflection: libstdc++'s <meta> is gated on __cpp_impl_reflection).
@@ -275,14 +328,22 @@ struct TargetEntry {
 // buildConfig. See .agents/docs/2026-06-29-manifest-environment-and-platform-design.md.
 struct ConditionalConfig {
     std::string                         predicate;     // the [target.<predicate>] key
-    std::vector<std::string>            cflags;
-    std::vector<std::string>            cxxflags;
-    std::vector<std::string>            ldflags;
-    // Conditional source globs (G1b): appended to [build].sources when the
-    // predicate matches the resolved target — the declarative gate for
-    // arch-specific code (x86 .asm on x86 targets only). `!`-exclusion
-    // globs work here too (the scanner handles positive+negative sets).
-    std::vector<std::string>            sources;
+    // Everything `[target.<pred>.build]` may contribute, and nothing else.
+    //
+    // Previously four hand-listed vectors, which is why per-glob `flags` was
+    // inexpressible here while the xpkg descriptor's `mcpp.<os>` sections
+    // supported it (#258): the conditional reader maintained its own subset
+    // of [build]'s keys and nobody noticed it had fallen behind. Carrying the
+    // BuildInputs type instead means the set cannot drift, and a key outside
+    // it — `linkage`, `target`, a profile knob — is simply not a member, so
+    // it cannot silently parse into a field nothing downstream reads.
+    //
+    // Conditional source globs (G1b) live in `inputs.sources`: appended to
+    // [build].sources when the predicate matches the resolved target — the
+    // declarative gate for arch-specific code (x86 .asm on x86 targets only).
+    // `!`-exclusion globs work there too (the scanner handles positive+
+    // negative sets).
+    BuildInputs                         inputs;
     // Conditional dependencies (Phase 1b): merged into the corresponding
     // manifest maps in prepare_build when the predicate matches the resolved
     // target — before dependency resolution, so they resolve like any dep.

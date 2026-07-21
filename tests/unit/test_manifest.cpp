@@ -2238,9 +2238,9 @@ cxxflags = ["-DHAVE_X86=1"]
     ASSERT_EQ(m->conditionalConfigs.size(), 1u);
     auto& cc = m->conditionalConfigs[0];
     EXPECT_EQ(cc.predicate, "cfg(arch = \"x86_64\")");
-    EXPECT_EQ(cc.sources, (std::vector<std::string>{
+    EXPECT_EQ(cc.inputs.sources, (std::vector<std::string>{
         "src/x86/**/*.asm", "!src/x86/legacy/**"}));
-    EXPECT_EQ(cc.cxxflags, (std::vector<std::string>{"-DHAVE_X86=1"}));
+    EXPECT_EQ(cc.inputs.cxxflags, (std::vector<std::string>{"-DHAVE_X86=1"}));
 }
 
 TEST(Manifest, TargetCfgParsesFromXpkgSymmetrically) {
@@ -2263,10 +2263,10 @@ mcpp = {
     ASSERT_TRUE(mx.has_value()) << mx.error().format();
     ASSERT_EQ(mx->conditionalConfigs.size(), 2u);
     EXPECT_EQ(mx->conditionalConfigs[0].predicate, "cfg(arch = \"x86_64\")");
-    EXPECT_EQ(mx->conditionalConfigs[0].sources,
+    EXPECT_EQ(mx->conditionalConfigs[0].inputs.sources,
               (std::vector<std::string>{"src/x86/**/*.asm"}));
     EXPECT_EQ(mx->conditionalConfigs[1].predicate, "cfg(windows)");
-    EXPECT_EQ(mx->conditionalConfigs[1].ldflags,
+    EXPECT_EQ(mx->conditionalConfigs[1].inputs.ldflags,
               (std::vector<std::string>{"-lws2_32"}));
 }
 

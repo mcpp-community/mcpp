@@ -423,22 +423,21 @@ materialize_generated_files(const std::filesystem::path& root,
 // merged into the dependency map BEFORE resolution even starts, so a
 // dependency's own conditional deps are out of scope — see the root cfg
 // block that merges `cc.dependencies` etc.)
-void merge_conditional_sources_flags(mcpp::manifest::Manifest& m,
+void merge_conditional_build_inputs(mcpp::manifest::Manifest& m,
                              const cfgpred::Ctx& ctx,
                              std::string_view targetTriple)
 {
     for (auto const& cc : m.conditionalConfigs) {
         if (!cfgpred::matches(cc.predicate, ctx, targetTriple)) continue;
-        m.buildConfig.cflags.insert(m.buildConfig.cflags.end(),
-                                    cc.cflags.begin(), cc.cflags.end());
-        m.buildConfig.cxxflags.insert(m.buildConfig.cxxflags.end(),
-                                      cc.cxxflags.begin(), cc.cxxflags.end());
-        m.buildConfig.ldflags.insert(m.buildConfig.ldflags.end(),
-                                     cc.ldflags.begin(), cc.ldflags.end());
-        for (auto const& s : cc.sources) {
-            m.buildConfig.sources.push_back(s);
+        // One append() for every field the axis may carry (#258). Matching
+        // sections land AFTER the base entries, so a conditional rule beats
+        // a broader unconditional one under GNU last-wins — which is what
+        // makes an off-OS REMOVAL expressible (`-U` after the base `-D`).
+        mcpp::manifest::append(m.buildConfig, cc.inputs);
+        // `modules.sources` is the scanner's own view and is not part of
+        // BuildInputs, so conditional sources are mirrored into it here.
+        for (auto const& s : cc.inputs.sources)
             m.modules.sources.push_back(s);
-        }
     }
 }
 
@@ -898,7 +897,7 @@ prepare_build(bool print_fingerprint,
     // Evaluated now (target resolved) against the resolved target — the
     // --target triple for a cross build, else the host.
     //
-    // #229: merge_conditional_sources_flags MUST run here — before
+    // #229: merge_conditional_build_inputs MUST run here — before
     // `packages[0] = makePackageRoot(*root, *m)` snapshots `m->buildConfig`
     // into `packages[0].privateBuild`/`.manifest` — because that snapshot,
     // not `*m`, is what the modgraph scan and per-TU compile-flag assembly
@@ -910,7 +909,7 @@ prepare_build(bool print_fingerprint,
     // merged exactly once, immediately before it is captured into `packages[]`.
     if (!m->conditionalConfigs.empty()) {
         auto cc_ctx = cfgpred::context_for(overrides.target_triple);
-        merge_conditional_sources_flags(*m, cc_ctx, overrides.target_triple);
+        merge_conditional_build_inputs(*m, cc_ctx, overrides.target_triple);
         for (auto const& cc : m->conditionalConfigs) {
             if (!cfgpred::matches(cc.predicate, cc_ctx, overrides.target_triple))
                 continue;
@@ -1869,7 +1868,7 @@ prepare_build(bool print_fingerprint,
         // just keyed off a different loading branch since path/git deps never
         // pass through loadVersionDep.
         if (!manifest->conditionalConfigs.empty()) {
-            merge_conditional_sources_flags(*manifest,
+            merge_conditional_build_inputs(*manifest,
                                     cfgpred::context_for(overrides.target_triple),
                                     overrides.target_triple);
         }
@@ -2760,7 +2759,7 @@ prepare_build(bool print_fingerprint,
             // BEFORE `propagateLinkFlags`/`makePackageRoot` below, which
             // snapshot this manifest's flags/sources into `packages[]`.
             if (!dep_manifest->conditionalConfigs.empty()) {
-                merge_conditional_sources_flags(*dep_manifest,
+                merge_conditional_build_inputs(*dep_manifest,
                     cfgpred::context_for(overrides.target_triple),
                     overrides.target_triple);
             }
