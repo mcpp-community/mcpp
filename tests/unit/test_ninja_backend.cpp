@@ -539,3 +539,57 @@ TEST(NinjaBackend, RootPackageCxxflagsAreEmittedOncePerUnit) {
     EXPECT_EQ(ninja.find("cxxflags  = -std=c++23 -O2 -DROOT_FLAG=1"), std::string::npos)
         << ninja;
 }
+
+// mcpp#261: the clang scan rule used shell redirection (`> $out`), which on
+// Windows forced a `cmd /c` wrapper and with it cmd.exe's 8191-char command
+// line ceiling — a quarter of what ninja's CreateProcess path allows. Any
+// package with a large include-dir list overran it. clang-scan-deps has -o
+// (LLVM 17+), so the redirect and the wrapper are both unnecessary.
+TEST(NinjaBackend, ClangScanRuleWritesViaDashOWithoutShellRedirection) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    plan.toolchain.binaryPath = "/usr/bin/clang++";
+    plan.scanDepsPath = "/usr/bin/clang-scan-deps";
+    plan.compileUnits.push_back({
+        .source = "src/m.cppm",
+        .object = "obj/m.o",
+        .packageName = "objc_rule_test",
+        .providesModule = "m",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    auto scanRule = ninja.find("rule cxx_scan");
+    ASSERT_NE(scanRule, std::string::npos) << ninja;
+    auto scanEnd = ninja.find("description = SCAN", scanRule);
+    ASSERT_NE(scanEnd, std::string::npos) << ninja;
+    auto rule = ninja.substr(scanRule, scanEnd - scanRule);
+
+    EXPECT_NE(rule.find("-format=p1689 -o $out --"), std::string::npos) << rule;
+    EXPECT_EQ(rule.find("> $out"), std::string::npos)
+        << "scan rule must not use shell redirection: " << rule;
+}
+
+// The `cmd /c` wrapper was the only place mcpp put a shell between ninja and
+// a compiler invocation. Keep it gone: it is what re-imposes the 8191 ceiling.
+TEST(NinjaBackend, NoRuleWrapsItsCommandInCmdSlashC) {
+    for (auto compiler : {mcpp::toolchain::CompilerId::GCC,
+                          mcpp::toolchain::CompilerId::Clang}) {
+        auto plan = minimal_plan();
+        plan.toolchain.compiler = compiler;
+        if (compiler == mcpp::toolchain::CompilerId::Clang) {
+            plan.toolchain.binaryPath = "/usr/bin/clang++";
+            plan.scanDepsPath = "/usr/bin/clang-scan-deps";
+        }
+        plan.compileUnits.push_back({
+            .source = "src/m.cppm",
+            .object = "obj/m.o",
+            .packageName = "objc_rule_test",
+            .providesModule = "m",
+        });
+
+        auto ninja = emit_ninja_string(plan);
+        EXPECT_EQ(ninja.find("cmd /c"), std::string::npos)
+            << "compiler=" << static_cast<int>(compiler) << "\n" << ninja;
+    }
+}

@@ -662,16 +662,15 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                    "-fdeps-file=$out -fdeps-target=$compile_target "
                    "-M -MM -MF $out.dep -E $in -o $compile_target\n");
         } else {
-            // Clang path: clang-scan-deps produces P1689 JSON to stdout.
-            if constexpr (mcpp::platform::is_windows) {
-                // Wrap in cmd /c for shell redirection (ninja on Windows uses
-                // CreateProcess which doesn't interpret > as redirect).
-                append("  command = cmd /c \"$scan_deps -format=p1689 -- "
-                       "$cxx $local_includes $cxxflags $unit_cxxflags -c $in -o $compile_target > $out\"\n");
-            } else {
-                append("  command = $scan_deps -format=p1689 -- "
-                       "$cxx $local_includes $cxxflags $unit_cxxflags -c $in -o $compile_target > $out\n");
-            }
+            // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
+            // (LLVM 17+), like the GCC and MSVC branches above write theirs
+            // via -fdeps-file= / /scanDependencies. Shell redirection would
+            // force a `cmd /c` wrapper on Windows, and cmd.exe caps a command
+            // line at 8191 chars — a quarter of the 32767 ninja gets from
+            // CreateProcess — which any package with a large include-dir list
+            // overruns (#261: 48 -I entries at a deep consumer path).
+            append("  command = $scan_deps -format=p1689 -o $out -- "
+                   "$cxx $local_includes $cxxflags $unit_cxxflags -c $in -o $compile_target\n");
         }
         append("  description = SCAN $out\n\n");
 
