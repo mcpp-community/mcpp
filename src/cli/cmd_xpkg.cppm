@@ -18,6 +18,7 @@ export module mcpp.cli.cmd_xpkg;
 import std;
 import mcpplibs.cmdline;
 import mcpp.manifest;
+import mcpp.platform.axis;
 import mcpp.ui;
 
 namespace mcpp::cli {
@@ -90,7 +91,8 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::map<std::string, std::vector<std::string>> versions;
     std::string anyVersion;
     for (auto plat : kPlatforms) {
-        auto v = mcpp::manifest::list_xpkg_versions(lua, plat);
+        auto v = mcpp::manifest::list_xpkg_versions(
+            lua, mcpp::platform::TargetPlatform::for_lint_of(plat));
         if (!v.empty() && anyVersion.empty()) anyVersion = v.front();
         versions.emplace(std::string(plat), std::move(v));
     }
@@ -130,7 +132,8 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 continue;
             }
             auto pm = mcpp::manifest::synthesize_from_xpkg_lua(
-                lua, fqn, anyVersion, plat);
+                lua, fqn, anyVersion,
+                mcpp::platform::TargetPlatform::for_lint_of(plat));
             if (!pm) {
                 mcpp::ui::error(std::format("{} [{}]: {}", file, plat,
                                             pm.error().format()));
@@ -153,7 +156,10 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     // The parse users get at build time — same function, same grammar.
-    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, fqn, anyVersion);
+    // Host axis here: `mcpp xpkg parse` with no --all-os is inspecting what
+    // THIS machine would read, which is a diagnostic question about the host.
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(
+        lua, fqn, anyVersion, mcpp::platform::HostPlatform::current());
     if (!m) {
         mcpp::ui::error(std::format("{}: {}", file, m.error().format()));
         return 1;

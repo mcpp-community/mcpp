@@ -18,6 +18,7 @@ export module mcpp.pm.resolver;
 import std;
 import mcpp.manifest;
 import mcpp.platform;
+import mcpp.platform.axis;
 import mcpp.pm.compat;
 import mcpp.pm.package_fetcher;
 import mcpp.version_req;
@@ -44,7 +45,8 @@ bool is_version_constraint(std::string_view v);
 std::expected<std::string, std::string>
 resolve_semver(std::string_view ns, std::string_view shortName,
                std::string_view constraint,
-               mcpp::pm::Fetcher& fetcher);
+               mcpp::pm::Fetcher& fetcher,
+               const mcpp::platform::PlatformKey& platform);
 
 // Try to AND-merge two version constraints and resolve to a single
 // concrete version satisfying both. Uses structured (ns, shortName).
@@ -52,7 +54,8 @@ std::expected<std::string, std::string>
 try_merge_semver(std::string_view ns, std::string_view shortName,
                  std::string_view a,
                  std::string_view b,
-                 mcpp::pm::Fetcher& fetcher);
+                 mcpp::pm::Fetcher& fetcher,
+                 const mcpp::platform::PlatformKey& platform);
 
 // ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────────────
 
@@ -85,7 +88,8 @@ bool is_version_constraint(std::string_view v) {
 std::expected<std::string, std::string>
 resolve_semver(std::string_view ns, std::string_view shortName,
                std::string_view constraint,
-               mcpp::pm::Fetcher& fetcher)
+               mcpp::pm::Fetcher& fetcher,
+               const mcpp::platform::PlatformKey& platform)
 {
     namespace vr = mcpp::version_req;
     auto qname = mcpp::pm::compat::qualified_name(ns, shortName);
@@ -105,11 +109,11 @@ resolve_semver(std::string_view ns, std::string_view shortName,
             qname, constraint, req.error()));
     }
 
-    auto rawVersions = mcpp::manifest::list_xpkg_versions(*luaContent, kXpkgPlatform);
+    auto rawVersions = mcpp::manifest::list_xpkg_versions(*luaContent, platform);
     if (rawVersions.empty()) {
         return std::unexpected(std::format(
             "dependency '{}': index entry has no versions for platform '{}'",
-            qname, kXpkgPlatform));
+            qname, platform.key()));
     }
 
     std::vector<vr::Version> parsed;
@@ -141,7 +145,8 @@ std::expected<std::string, std::string>
 try_merge_semver(std::string_view ns, std::string_view shortName,
                  std::string_view a,
                  std::string_view b,
-                 mcpp::pm::Fetcher& fetcher)
+                 mcpp::pm::Fetcher& fetcher,
+                 const mcpp::platform::PlatformKey& platform)
 {
     auto canon = [](std::string_view v) -> std::string {
         if (v.empty() || v == "*") return std::string{};
@@ -157,7 +162,7 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
     else if (!cb.empty())            merged = cb;
     else                              merged = "*";
 
-    return resolve_semver(ns, shortName, merged, fetcher);
+    return resolve_semver(ns, shortName, merged, fetcher, platform);
 }
 
 // ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────────────
@@ -168,8 +173,11 @@ resolve_semver(std::string_view name,
                mcpp::pm::Fetcher& fetcher)
 {
     auto resolved = mcpp::pm::compat::resolve_package_name(name, "");
+    // Legacy overload: no target is threaded through it, so it names the host
+    // axis explicitly rather than inheriting a silent default (#254).
     return resolve_semver(resolved.namespace_, resolved.shortName,
-                          constraint, fetcher);
+                          constraint, fetcher,
+                          mcpp::platform::HostPlatform::current());
 }
 
 std::expected<std::string, std::string>
@@ -179,8 +187,10 @@ try_merge_semver(std::string_view name,
                  mcpp::pm::Fetcher& fetcher)
 {
     auto resolved = mcpp::pm::compat::resolve_package_name(name, "");
+    // Legacy overload — see the resolve_semver note above.
     return try_merge_semver(resolved.namespace_, resolved.shortName,
-                            a, b, fetcher);
+                            a, b, fetcher,
+                            mcpp::platform::HostPlatform::current());
 }
 
 } // namespace mcpp::pm

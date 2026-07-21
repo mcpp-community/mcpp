@@ -11,6 +11,7 @@ export module mcpp.build.prepare;
 
 import std;
 import mcpp.diag;
+import mcpp.platform.axis;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
@@ -594,6 +595,15 @@ prepare_build(bool print_fingerprint,
     if (!root) {
         return std::unexpected("no mcpp.toml found in current directory or any parent");
     }
+
+    // #254: everything compiled INTO this build is resolved for the TARGET —
+    // an xpkg descriptor's per-OS sections (sources, flags, deps) and its xpm
+    // asset/version table all describe code that will run on the target, not
+    // on the machine building it. This used to be a compile-time host
+    // constant, which is invisible natively (host == target) and picks the
+    // wrong leg under --target.
+    const auto targetPlatform = mcpp::platform::TargetPlatform::for_os(
+        cfgpred::context_for(overrides.target_triple).os);
 
     auto m = mcpp::manifest::load(*root / "mcpp.toml");
     if (!m) return std::unexpected(m.error().format());
@@ -1395,7 +1405,7 @@ prepare_build(bool print_fingerprint,
         // 0.0.10+: use structured namespace from DependencySpec.
         auto resolved = mcpp::pm::resolve_semver(
             s.namespace_, s.shortName.empty() ? depName : s.shortName,
-            s.version, fetcher);
+            s.version, fetcher, targetPlatform);
         if (!resolved) return std::unexpected(resolved.error());
         mcpp::ui::info("Resolved",
             std::format("{} {} → v{}", depName, s.version, *resolved));
@@ -1587,7 +1597,7 @@ prepare_build(bool print_fingerprint,
             }
             if (field.kind == mcpp::manifest::McppField::TableBody) {
                 auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
-                    *luaContent, depName, version);
+                    *luaContent, depName, version, targetPlatform);
                 if (!dm) return false;
                 for (auto const& [generatedPath, _] : dm->buildConfig.generatedFiles) {
                     if (!generatedPath.empty()) return true;
@@ -1635,7 +1645,7 @@ prepare_build(bool print_fingerprint,
                 auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
                 if (field.kind == mcpp::manifest::McppField::TableBody) {
                     auto depManifest = mcpp::manifest::synthesize_from_xpkg_lua(
-                        *luaContent, depName, version);
+                        *luaContent, depName, version, targetPlatform);
                     if (!depManifest) {
                         return std::unexpected(std::format(
                             "dependency '{}': {}", depName, depManifest.error().format()));
@@ -1811,7 +1821,8 @@ prepare_build(bool print_fingerprint,
                 "(expected exactly one)", depName, field.value, matches.size()));
             if (auto r = loadFrom(matches.front()); !r) return std::unexpected(r.error());
         } else if (field.kind == mcpp::manifest::McppField::TableBody) {
-            auto dm = mcpp::manifest::synthesize_from_xpkg_lua(*luaContent, depName, version);
+            auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
+                *luaContent, depName, version, targetPlatform);
             if (!dm) return std::unexpected(std::format(
                 "dependency '{}': {}", depName, dm.error().format()));
             warn_unknown_xpkg_keys(*dm, depName);
@@ -2396,7 +2407,7 @@ prepare_build(bool print_fingerprint,
                     key.ns, key.shortName,
                     it->second.constraint,
                     item.originalConstraint,
-                    fetcher);
+                    fetcher, targetPlatform);
                 if (!merged) {
                     // Level 1 fallback: multi-version mangling. Two
                     // versions can't be reconciled by SemVer, but they

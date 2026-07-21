@@ -14,6 +14,7 @@ import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.manifest;
 import mcpp.pm.compat;
+import mcpp.platform.axis;
 import mcpp.pm.resolver;
 import mcpp.scaffold;
 import mcpp.ui;
@@ -67,7 +68,10 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
 
     std::string version = spec.version;
     if (version.empty()) {
-        auto v = mcpp::pm::resolve_semver(ns, shortName, "*", fetcher);
+        // `mcpp add` has no target concept — the axis it means is the host,
+        // named explicitly rather than inherited from a default (#254).
+        auto v = mcpp::pm::resolve_semver(ns, shortName, "*", fetcher,
+                                          mcpp::platform::HostPlatform::current());
         if (!v) return std::unexpected(v.error());
         version = *v;
     }

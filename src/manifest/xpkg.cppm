@@ -8,6 +8,7 @@ import std;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.platform;
+import mcpp.platform.axis;
 
 export namespace mcpp::manifest {
 
@@ -24,7 +25,8 @@ McppField extract_mcpp_field(std::string_view luaContent);
 // "windows") from an xpkg .lua's xpm.<platform> = { ["X.Y.Z"] = {...}, ... }.
 // Returns an empty vector if the platform table is missing or has no entries.
 std::vector<std::string>
-list_xpkg_versions(std::string_view luaContent, std::string_view platform);
+list_xpkg_versions(std::string_view luaContent,
+                   const mcpp::platform::PlatformKey& platform);
 // Extract the `namespace` field from an xpkg .lua's `package = { ... }` block.
 // Returns empty string if the field is absent (legacy descriptors).
 std::string extract_xpkg_namespace(std::string_view luaContent);
@@ -92,16 +94,22 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
 // The resulting Manifest is in-memory only; sourcePath is set to the
 // supplied package name + version so error messages can refer to it.
 //
-// `osOverride` selects which per-OS section (linux/macosx/windows) is
-// spliced into the parse instead of the running host's — the seam behind
-// `mcpp xpkg parse --all-os`, which validates the sections a host build
-// never reads (they are skip-tabled, so a typo in the `windows` block is
-// otherwise invisible on linux CI). Empty = host platform (build path).
+// `platform` selects which per-OS section (linux/macosx/windows) is spliced
+// into the parse. It is REQUIRED and axis-typed (#254): the per-OS sections
+// carry sources, flags, deps and the xpm asset table, so a package compiled
+// into the user's build must be spliced for the TARGET, while a host tool
+// wants the HOST. Before #254 this defaulted to a compile-time host
+// constant, which silently gave cross builds the wrong leg.
+//
+// TargetPlatform::for_lint_of() is the seam behind `mcpp xpkg parse
+// --all-os`, which validates the sections a build never reads (they are
+// skip-tabled, so a typo in the `windows` block is otherwise invisible on
+// linux CI).
 std::expected<Manifest, ManifestError>
 synthesize_from_xpkg_lua(std::string_view luaContent,
                          std::string_view packageName,
                          std::string_view packageVersion,
-                         std::string_view osOverride = {});
+                         const mcpp::platform::PlatformKey& platform);
 
 // mcpp#237: the mcpp-segment key vocabulary is a CLOSED whitelist (the parse
 // loop's else-if chain). An unrecognised key is collected into
@@ -708,7 +716,9 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
 }
 
 std::vector<std::string>
-list_xpkg_versions(std::string_view luaContent, std::string_view platform) {
+list_xpkg_versions(std::string_view luaContent,
+                   const mcpp::platform::PlatformKey& platformAxis) {
+    const std::string_view platform = platformAxis.key();
     // Locate `xpm = { ... <platform> = { ["X.Y.Z"] = {...}, ... } ... }`.
     // We work on a sanitized copy so quoted version keys remain locatable
     // by their offsets in the original text.
@@ -873,7 +883,7 @@ std::expected<Manifest, ManifestError>
 synthesize_from_xpkg_lua(std::string_view luaContent,
                          std::string_view packageName,
                          std::string_view packageVersion,
-                         std::string_view osOverride)
+                         const mcpp::platform::PlatformKey& platform)
 {
     auto body = extract_mcpp_segment_body(luaContent);
     if (body.empty()) {
@@ -885,8 +895,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             std::format("xpkg-lua of {}@{}", packageName, packageVersion),
             0, 0});
     }
-    const std::string_view osKey =
-        osOverride.empty() ? mcpp::platform::xpkg_platform : osOverride;
+    const std::string_view osKey = platform.key();
     if (auto platformBody = top_level_table_body_for_key(body, osKey);
         !platformBody.empty()) {
         body += "\n";

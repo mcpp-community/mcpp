@@ -14,6 +14,7 @@ import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.manifest;
 import mcpp.platform;
+import mcpp.platform.axis;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
@@ -124,15 +125,14 @@ list_available_xpkg_versions(const mcpp::config::GlobalConfig& cfg,
         if (!std::filesystem::exists(p, ec)) return std::nullopt;
         std::ifstream is(p);
         std::string body((std::istreambuf_iterator<char>(is)), {});
-        // xpkg descriptors key platforms as linux / macosx / windows — list
-        // the HOST's block (previously hardcoded "linux", which made the
-        // Available section and partial-version resolution empty on
-        // Windows/macOS for any package, e.g. mingw-gcc has no linux block).
-        constexpr std::string_view xpkgPlatform =
-            mcpp::platform::is_windows ? "windows"
-          : mcpp::platform::is_macos   ? "macosx"
-                                       : "linux";
-        return mcpp::manifest::list_xpkg_versions(body, xpkgPlatform);
+        // The HOST axis, deliberately (#254): a toolchain payload runs on
+        // this machine, so its version/asset table is the host's block —
+        // unlike a library dependency, which is resolved for the target.
+        // (Previously hardcoded "linux", which made the Available section
+        // and partial-version resolution empty on Windows/macOS for any
+        // package, e.g. mingw-gcc has no linux block.)
+        return mcpp::manifest::list_xpkg_versions(
+            body, mcpp::platform::HostPlatform::current());
     };
 
     auto data = cfg.xlingsHome() / "data";
