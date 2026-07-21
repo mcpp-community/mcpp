@@ -547,6 +547,11 @@ bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
 }
 
 export struct BuildContext {
+    // --strict: degradations reported through mcpp::diag become errors.
+    // Carried on the context because the build's degradations are discovered
+    // during backend emission, i.e. after prepare_build has returned — the
+    // single place that settles the policy is run_build_plan (execute.cppm).
+    bool                            strict = false;
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      tc;
     mcpp::toolchain::Fingerprint    fp;
@@ -595,15 +600,6 @@ prepare_build(bool print_fingerprint,
     if (!root) {
         return std::unexpected("no mcpp.toml found in current directory or any parent");
     }
-
-    // #254: everything compiled INTO this build is resolved for the TARGET —
-    // an xpkg descriptor's per-OS sections (sources, flags, deps) and its xpm
-    // asset/version table all describe code that will run on the target, not
-    // on the machine building it. This used to be a compile-time host
-    // constant, which is invisible natively (host == target) and picks the
-    // wrong leg under --target.
-    const auto targetPlatform = mcpp::platform::TargetPlatform::for_os(
-        cfgpred::context_for(overrides.target_triple).os);
 
     auto m = mcpp::manifest::load(*root / "mcpp.toml");
     if (!m) return std::unexpected(m.error().format());
@@ -901,6 +897,21 @@ prepare_build(bool print_fingerprint,
             m->buildConfig.linkage = "static";
     }
     if (overrides.force_static) m->buildConfig.linkage = "static";
+
+    // #254: everything compiled INTO this build is resolved for the TARGET —
+    // an xpkg descriptor's per-OS sections (sources, flags, deps) and its xpm
+    // asset/version table all describe code that will run on the target, not
+    // on the machine building it. Previously a compile-time host constant,
+    // which is invisible natively (host == target) and picks the wrong leg
+    // under --target.
+    //
+    // Computed HERE, not earlier: `overrides.target_triple` is only complete
+    // above — it is filled from `[build] target` and the config default, then
+    // canonicalized. Reading it before that point would silently fall back to
+    // the host for any project that sets its target in the manifest rather
+    // than on the command line.
+    const auto targetPlatform = mcpp::platform::TargetPlatform::for_os(
+        cfgpred::context_for(overrides.target_triple).os);
 
     // ── L1: merge conditional [target.'cfg(...)'.build] sources/flags AND
     // root-only [target.'cfg(...)'.dependencies] ─────────────────────────────
@@ -3009,13 +3020,24 @@ prepare_build(bool print_fingerprint,
             // sources ADD above, `mcpp build` and `mcpp test` must agree
             // (0.0.94 dual-path invariant). featureOrigin tags the entry so
             // the scanner's zero-hit warning can name the owning feature.
+            //
+            // Routed through the SAME append(BuildInputs&) the cfg axis uses
+            // (#258): both axes are contributing additive build inputs, so
+            // "how does a contribution combine with the base" must have one
+            // answer. Only the flags half of the feature axis is expressible
+            // that way — feature `sources` above carry DROP-then-ADD
+            // semantics, and feature `defines` are interface contributions
+            // that propagate along Public edges, so neither is a plain
+            // append and neither belongs in BuildInputs.
             for (auto& [f, entries] : bc.featureFlags) {
                 if (std::ranges::find(active, f) == active.end()) continue;
+                mcpp::manifest::BuildInputs contribution;
                 for (auto const& gf : entries) {
                     auto tagged = gf;
                     tagged.featureOrigin = f;
-                    bc.globFlags.push_back(std::move(tagged));
+                    contribution.globFlags.push_back(std::move(tagged));
                 }
+                mcpp::manifest::append(bc, contribution);
             }
         };
         if (!packages.empty()) {
@@ -3450,6 +3472,7 @@ prepare_build(bool print_fingerprint,
     }
 
     BuildContext ctx;
+    ctx.strict      = overrides.strict;
     ctx.manifest    = *m;
     ctx.tc          = *tc;
     ctx.fp          = fp;

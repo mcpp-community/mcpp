@@ -10,6 +10,7 @@ export module mcpp.build.execute;
 
 import std;
 import mcpp.build.prepare;
+import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.build.backend;
 import mcpp.build.ninja;
@@ -333,6 +334,14 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           r->runtimeEnvValue,
                           std::move(runTargets), runEnvKey, runEnvValue);
     }
+
+    // The one place the --strict policy is settled. Degradations reported by
+    // the backend (e.g. a toolchain/platform combination that cannot emit a
+    // depfile, #257) are discovered during emission, so this has to come
+    // after the build rather than at the end of prepare_build. Without this
+    // call the whole diag channel would report and then be ignored — the
+    // exact failure mode it exists to prevent.
+    if (!mcpp::diag::flush(ctx.strict)) return 1;
 
     mcpp::ui::finished("release", r->elapsed);
     return 0;

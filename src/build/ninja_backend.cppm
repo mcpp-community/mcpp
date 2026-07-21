@@ -636,14 +636,25 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // GAS assembly (.S/.s) through the C driver: it preprocesses .S (cpp)
         // and assembles both, dispatching by extension. $asmflags is the
         // asm-safe flag subset (no -std / no -O — see flags.cppm).
-        append("rule asm_object\n");
+        // TWO rules, split by case: the C driver preprocesses `.S` but not
+        // `.s`. Asking for a depfile on a `.s` unit is not merely useless —
+        // clang emits `argument unused during compilation: '-MMD'` for every
+        // such file and writes nothing, and ninja's `deps = gcc` treats an
+        // absent depfile as an error. So `.s` keeps the pre-#257 shape.
         const std::string payload = " $local_includes $asmflags $unit_asmflags";
+        append("rule asm_object\n");     // .S — preprocessed, tracks #include
         append(std::format("  command = $cc{} {}{}\n",
                            rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n");
         append_cxx_deps();
         append("\n");
+
+        append("rule asm_object_raw\n");  // .s — not preprocessed, no depfile
+        append(std::format("  command = $cc{} {}\n",
+                           rsp_ref(payload), compile_tail));
+        append_rspfile(payload);
+        append("  description = AS $out\n\n");
     }
 
     if (need_nasm_rule) {
@@ -803,8 +814,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             return "cxx_module";
         if (ext == ".c" || ext == ".m")
             return "c_object";
-        if (ext == ".S" || ext == ".s")
+        if (ext == ".S")
             return "asm_object";
+        if (ext == ".s")
+            return "asm_object_raw";
         if (ext == ".asm")
             return "nasm_object";
         return "cxx_object";

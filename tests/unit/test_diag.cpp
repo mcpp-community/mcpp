@@ -79,3 +79,24 @@ TEST_F(DiagTest, FlushClearsRunState) {
     EXPECT_EQ(records().size(), 0u);
     EXPECT_EQ(count(Severity::Degraded), 0u);
 }
+
+// Regression guard for the review finding on this batch: flush() is the ONLY
+// place the --strict policy is settled, and it was initially never called
+// outside this file — the channel reported degradations and then everyone
+// ignored them, which is precisely the failure mode it exists to prevent.
+// run_build_plan now calls it; this pins the contract flush() must honour.
+TEST_F(DiagTest, FlushIsTheSolePolicyPointAndReportsFailureToTheCaller) {
+    // No records at all: strict must not fail a clean build.
+    EXPECT_TRUE(flush(/*strict=*/true));
+
+    // A degradation under --strict must tell the caller to fail. The caller
+    // (run_build_plan) turns this into a non-zero exit.
+    degraded("build/depfile", "no depfile on this toolchain",
+             "stale BMI possible after editing an included file");
+    EXPECT_FALSE(flush(/*strict=*/true));
+
+    // Same degradation without --strict: reported, not fatal.
+    degraded("build/depfile", "no depfile on this toolchain",
+             "stale BMI possible after editing an included file");
+    EXPECT_TRUE(flush(/*strict=*/false));
+}

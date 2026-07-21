@@ -727,6 +727,8 @@ TEST(NinjaBackend, CAndAsmRulesAlsoTrackHeaderDeps) {
     auto ninja = emit_ninja_string(plan);
 
     for (std::string_view rule : {"rule c_object\n", "rule asm_object\n"}) {
+        // NOTE: asm_object is the `.S` rule. `.s` uses asm_object_raw and
+        // deliberately has no depfile — see below.
         auto start = ninja.find(rule);
         ASSERT_NE(start, std::string::npos) << rule << "\n" << ninja;
         auto end = ninja.find("\n\n", start);
@@ -740,4 +742,49 @@ TEST(NinjaBackend, CAndAsmRulesAlsoTrackHeaderDeps) {
         EXPECT_EQ(body.find("$out.d.raw"), std::string::npos) << body;
         EXPECT_EQ(body.find("awk"), std::string::npos) << body;
     }
+}
+
+// The C driver preprocesses `.S` but not `.s`, so only `.S` can produce a
+// depfile. Asking anyway makes clang emit "argument unused during
+// compilation: '-MMD'" for every such file and write nothing, and ninja's
+// `deps = gcc` treats an absent depfile as an error — so the two cases need
+// separate rules.
+TEST(NinjaBackend, LowercaseAsmHasNoDepfileAndItsOwnRule) {
+    if constexpr (mcpp::platform::is_windows)
+        GTEST_SKIP() << "POSIX depfile shape only";
+
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/upper.S",
+        .object = "obj/upper.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.compileUnits.push_back({
+        .source = "src/lower.s",
+        .object = "obj/lower.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    auto body_of = [&](std::string_view rule) {
+        auto start = ninja.find(rule);
+        EXPECT_NE(start, std::string::npos) << rule << "\n" << ninja;
+        auto end = ninja.find("\n\n", start);
+        return ninja.substr(start, end - start);
+    };
+
+    auto upper = body_of("rule asm_object\n");
+    EXPECT_NE(upper.find("-MMD -MF $out.d"), std::string::npos) << upper;
+    EXPECT_NE(upper.find("depfile = $out.d"), std::string::npos) << upper;
+
+    auto lower = body_of("rule asm_object_raw\n");
+    EXPECT_EQ(lower.find("-MMD"), std::string::npos) << lower;
+    EXPECT_EQ(lower.find("depfile"), std::string::npos) << lower;
+
+    // And the edges must be routed to the matching rule.
+    EXPECT_NE(ninja.find("build obj/upper.o : asm_object src/upper.S"),
+              std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("build obj/lower.o : asm_object_raw src/lower.s"),
+              std::string::npos) << ninja;
 }
