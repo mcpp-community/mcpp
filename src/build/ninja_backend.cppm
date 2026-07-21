@@ -23,6 +23,7 @@ import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.build.hermetic;
 import mcpp.build.compile_commands;
+import mcpp.diag;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
@@ -488,20 +489,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // behavior (no depfile) rather than depend on an unavailable filter —
     // msvcDeps (cl.exe) is unaffected either way (deps=msvc, no -MMD).
     //
-    // GCC-only: the awk filter strips the "reversed" make-rules that GCC's
-    // `-fmodules -MMD` bolts onto a module-TU depfile (`gcm.cache/<m>.gcm: |
-    // <obj>` etc., which ninja rejects as "inputs may not also have inputs").
-    // Clang's module system (.pcm) does not emit those and its module-TU
-    // depfile shape is different; applying the GCC-shaped filter there is
-    // untested and could yield a wrong dep set. Until Clang is verified,
-    // scope this to GCC — Clang keeps the pre-#235 behavior (no compile-edge
-    // depfile; header/purview rebuild tracking on Clang is a follow-up, same
-    // as it was on 0.0.96, so this is not a regression). e2e 118 declares
-    // `# requires: gcc` and skips where GCC is not the toolchain.
-    const bool posixDepfile = !msvcDeps && !mcpp::platform::is_windows
-        && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC;
-    const std::string mmd_flag = posixDepfile ? "-MMD -MF $out.d.raw " : "";
-    const std::string mmd_filter = posixDepfile
+    // #257: these are TWO decisions, and 0.0.97 conflated them. Emitting a
+    // depfile at all is the minimum correctness contract for textual include
+    // tracking — without it, editing a file #include'd in a module purview
+    // silently reuses a stale BMI. Stripping GCC's reversed make-rules is a
+    // GCC-shaped detail of HOW that depfile arrives. Gating the first on the
+    // second left Clang with no include tracking for four releases.
+    //
+    // Measured (bundled 20.1.7 / 22.1.8 vs gcc 16.1.0, module TU with a
+    // purview #include):
+    //   clang:  `x.o: x.cppm ops.inc`               — one plain rule
+    //   gcc:    `x.o gcm.cache/x.gcm: x.cppm ops.inc`
+    //           `x.c++-module: gcm.cache/x.gcm` + .PHONY + `gcm.cache/x.gcm:| x.o`
+    // So Clang emits nothing the filter would need to remove, and the
+    // conflated gate was protecting against a shape that does not exist.
+    const bool posixDepfile = !msvcDeps && !mcpp::platform::is_windows;
+    const bool needsGnuModuleFilter =
+        posixDepfile && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC;
+    const std::string mmd_flag =
+        posixDepfile ? (needsGnuModuleFilter ? "-MMD -MF $out.d.raw "
+                                             : "-MMD -MF $out.d ")
+                     : "";
+    const std::string mmd_filter = needsGnuModuleFilter
         ? " && awk 'NR==1{print;next} /^[^ ]/{exit} {print}' "
           "\"$out.d.raw\" > \"$out.d\" && rm -f \"$out.d.raw\""
         : "";
@@ -513,6 +522,23 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             append_deps();
         }
     };
+    // C and GAS units include headers too, and had no depfile on ANY
+    // toolchain — the second half of the same asymmetry #257 reports. They
+    // never carry module reversed-rules, so they need the flag but not the
+    // filter.
+    const std::string c_mmd_flag = posixDepfile ? "-MMD -MF $out.d " : "";
+    // Windows non-MSVC (mingw gcc / clang) is the one combination left with
+    // no include tracking: the GCC filter needs awk, which is not available
+    // there. cl.exe is fine — deps=msvc via /showIncludes is the equivalent
+    // mechanism, not a degradation.
+    if (!posixDepfile && !msvcDeps) {
+        mcpp::diag::degraded("build/depfile",
+            "this toolchain and platform combination emits no GNU depfile",
+            "editing a file #include'd inside a module interface purview (or a "
+            "header pulled into a .cpp) will not trigger a rebuild, so the build "
+            "may reuse a stale BMI or object",
+            "touch the including .cppm/.cpp after editing such a file");
+    }
     // #261: the flag payload of every compile/scan rule is unbounded — one
     // -I per dependency include dir — and on Windows ninja spawns through
     // CreateProcess, whose command line caps at 32767 chars. Route the
@@ -596,11 +622,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     if (need_c_rule) {
         append("rule c_object\n");
         const std::string payload = " $local_includes $cflags $unit_cflags";
-        append(std::format("  command = $cc{} {}\n",
-                           rsp_ref(payload), compile_tail));
+        append(std::format("  command = $cc{} {}{}\n",
+                           rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = CC $out\n");
-        append_deps();
+        append_cxx_deps();
         if (dyndep)
             append("  restat = 1\n");
         append("\n");
@@ -612,10 +638,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // asm-safe flag subset (no -std / no -O — see flags.cppm).
         append("rule asm_object\n");
         const std::string payload = " $local_includes $asmflags $unit_asmflags";
-        append(std::format("  command = $cc{} {}\n",
-                           rsp_ref(payload), compile_tail));
+        append(std::format("  command = $cc{} {}{}\n",
+                           rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
-        append("  description = AS $out\n\n");
+        append("  description = AS $out\n");
+        append_cxx_deps();
+        append("\n");
     }
 
     if (need_nasm_rule) {

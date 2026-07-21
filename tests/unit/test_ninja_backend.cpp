@@ -675,3 +675,69 @@ TEST(NinjaBackend, CompileRulesStayInlineOnPosixDrivers) {
         }
     }
 }
+
+// mcpp#257: "emit a depfile" and "strip GCC's reversed module rules" are two
+// decisions; 0.0.97 conflated them and left Clang with no include tracking
+// at all. Clang emits a single plain make rule (measured on 20.1.7/22.1.8),
+// so it takes the depfile WITHOUT the awk filter, writing -MF straight to
+// $out.d.
+TEST(NinjaBackend, ClangGetsDepfileWithoutTheGccModuleRuleFilter) {
+    if constexpr (mcpp::platform::is_windows)
+        GTEST_SKIP() << "POSIX depfile shape only";
+
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    plan.toolchain.binaryPath = "/usr/bin/clang++";
+
+    auto ninja = emit_ninja_string(plan);
+
+    auto module_rule_start = ninja.find("rule cxx_module");
+    auto object_rule_start = ninja.find("rule cxx_object");
+    ASSERT_NE(module_rule_start, std::string::npos) << ninja;
+    ASSERT_NE(object_rule_start, std::string::npos) << ninja;
+    auto module_rule = ninja.substr(module_rule_start,
+                                    object_rule_start - module_rule_start);
+
+    EXPECT_NE(module_rule.find("-MMD -MF $out.d"), std::string::npos) << ninja;
+    EXPECT_NE(module_rule.find("deps = gcc"), std::string::npos) << ninja;
+    EXPECT_NE(module_rule.find("depfile = $out.d\n"), std::string::npos) << ninja;
+    // No scratch file and no filter: there is nothing to strip.
+    EXPECT_EQ(module_rule.find("$out.d.raw"), std::string::npos) << ninja;
+    EXPECT_EQ(module_rule.find("awk"), std::string::npos) << ninja;
+}
+
+// The other half of the same asymmetry: C and GAS edges include headers too
+// and had no depfile on ANY toolchain.
+TEST(NinjaBackend, CAndAsmRulesAlsoTrackHeaderDeps) {
+    if constexpr (mcpp::platform::is_windows)
+        GTEST_SKIP() << "POSIX depfile shape only";
+
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/a.c",
+        .object = "obj/a.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.compileUnits.push_back({
+        .source = "src/b.S",
+        .object = "obj/b.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    for (std::string_view rule : {"rule c_object\n", "rule asm_object\n"}) {
+        auto start = ninja.find(rule);
+        ASSERT_NE(start, std::string::npos) << rule << "\n" << ninja;
+        auto end = ninja.find("\n\n", start);
+        ASSERT_NE(end, std::string::npos) << ninja;
+        auto body = ninja.substr(start, end - start);
+        EXPECT_NE(body.find("-MMD -MF $out.d"), std::string::npos) << body;
+        EXPECT_NE(body.find("deps = gcc"), std::string::npos) << body;
+        EXPECT_NE(body.find("depfile = $out.d"), std::string::npos) << body;
+        // C/GAS units never carry module reversed-rules — no filter, and so
+        // no scratch file to bind by mistake.
+        EXPECT_EQ(body.find("$out.d.raw"), std::string::npos) << body;
+        EXPECT_EQ(body.find("awk"), std::string::npos) << body;
+    }
+}
