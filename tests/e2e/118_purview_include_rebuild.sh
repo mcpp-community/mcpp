@@ -24,6 +24,19 @@ subst() {  # subst <sed-expr> <file>
     sed "$1" "$2" > "$2.tmp" && mv "$2.tmp" "$2"
 }
 
+# Windows + a GNU-dialect toolchain (the CI leg's clang) is the one
+# combination that genuinely CANNOT track textual includes: the depfile GCC
+# emits for a module TU needs an awk filter to be loadable by ninja, and
+# native Windows has no awk. #257 does not fix that — it makes the engine SAY
+# so, through diag::degraded. On that platform this test therefore asserts
+# the degradation is reported rather than asserting a capability the build
+# does not have; silence would be the actual defect.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) EXPECT_TRACKING=0 ;;
+    *)                    EXPECT_TRACKING=1 ;;
+esac
+DEGRADED_MSG="emits no GNU depfile"
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
@@ -55,8 +68,21 @@ name    = "purviewinc"
 version = "0.1.0"
 EOF
 
-out="$("$MCPP" run 2>&1 | tail -1)"
+run_log=$("$MCPP" run 2>&1)
+out="$(echo "$run_log" | tail -1)"
 [[ "$out" == "41" ]] || { echo "unexpected initial output: $out"; exit 1; }
+
+if [[ $EXPECT_TRACKING -eq 0 ]]; then
+    echo "$run_log" | grep -q "$DEGRADED_MSG" || {
+        echo "$run_log"
+        echo "FAIL: this toolchain/platform cannot emit a depfile, and said nothing."
+        echo "      A capability gap must be reported, not silent (#257)."
+        exit 1
+    }
+    echo "  windows: depfile degradation reported as expected; rebuild tracking not asserted"
+    echo "OK"
+    exit 0
+fi
 
 subst 's/41/42/' src/vals.inc
 
