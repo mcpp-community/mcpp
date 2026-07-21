@@ -593,3 +593,85 @@ TEST(NinjaBackend, NoRuleWrapsItsCommandInCmdSlashC) {
             << "compiler=" << static_cast<int>(compiler) << "\n" << ninja;
     }
 }
+
+// mcpp#261: the compile and scan rules carry an UNBOUNDED flag payload —
+// one -I per dependency include dir — and on Windows ninja spawns through
+// CreateProcess (32767-char ceiling). They now route that payload through a
+// response file, the same mitigation #247 gave the link rules for the same
+// reason. Reachable from a POSIX test host via the msvc dialect, which only
+// ever runs on Windows. NASM is excluded on purpose (it spells response
+// files `-@ file`), and POSIX keeps the inline form byte-identical.
+TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    plan.toolchain.binaryPath = "cl.exe";
+    plan.compileUnits.push_back({
+        .source = "src/m.cppm",
+        .object = "obj/m.o",
+        .packageName = "objc_rule_test",
+        .providesModule = "m",
+    });
+    plan.compileUnits.push_back({
+        .source = "src/a.c",
+        .object = "obj/a.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    // cxx_module and cxx_object pick their Windows shape through
+    // `if constexpr (is_windows)`, so their response-file form is only
+    // reachable on a Windows host; c_object and cxx_scan have no such
+    // compile-time branch and are assertable everywhere.
+    std::vector<std::string_view> rules{"rule c_object\n", "rule cxx_scan\n"};
+    if constexpr (mcpp::platform::is_windows) {
+        rules.push_back("rule cxx_module\n");
+        rules.push_back("rule cxx_object\n");
+    }
+    for (std::string_view rule : rules) {
+        auto start = ninja.find(rule);
+        ASSERT_NE(start, std::string::npos) << rule << "\n" << ninja;
+        auto end = ninja.find("\n\n", start);
+        ASSERT_NE(end, std::string::npos) << ninja;
+        auto body = ninja.substr(start, end - start);
+
+        EXPECT_NE(body.find("@$out.rsp"), std::string::npos) << body;
+        EXPECT_NE(body.find("rspfile = $out.rsp"), std::string::npos) << body;
+        EXPECT_NE(body.find("rspfile_content = $local_includes"),
+                  std::string::npos) << body;
+        // The payload must not ALSO remain inline, or the ceiling stands.
+        auto cmdStart = body.find("command = ");
+        auto cmdEnd = body.find('\n', cmdStart);
+        auto cmd = body.substr(cmdStart, cmdEnd - cmdStart);
+        EXPECT_EQ(cmd.find("$local_includes"), std::string::npos) << cmd;
+    }
+}
+
+// POSIX must keep the inline form: ARG_MAX is ample and an inline command is
+// far easier to re-run by hand. This is the byte-identity guard for the
+// #261 change on the platform where it must be a no-op.
+TEST(NinjaBackend, CompileRulesStayInlineOnPosixDrivers) {
+    if constexpr (mcpp::platform::is_windows) {
+        GTEST_SKIP() << "inline form is Windows-exempt by design";
+    } else {
+        auto plan = minimal_plan();  // GCC → gnu dialect, non-msvc deps
+        plan.compileUnits.push_back({
+            .source = "src/a.c",
+            .object = "obj/a.o",
+            .packageName = "objc_rule_test",
+        });
+
+        auto ninja = emit_ninja_string(plan);
+
+        for (std::string_view rule : {"rule cxx_module\n", "rule cxx_object\n",
+                                      "rule c_object\n"}) {
+            auto start = ninja.find(rule);
+            ASSERT_NE(start, std::string::npos) << rule << "\n" << ninja;
+            auto end = ninja.find("\n\n", start);
+            ASSERT_NE(end, std::string::npos) << ninja;
+            auto body = ninja.substr(start, end - start);
+            EXPECT_EQ(body.find("rspfile"), std::string::npos) << body;
+            EXPECT_NE(body.find("$local_includes"), std::string::npos) << body;
+        }
+    }
+}

@@ -84,7 +84,12 @@ std::string escape_ninja_path(const std::filesystem::path& p) {
 }
 
 std::string escape_flag_path(const std::filesystem::path& p) {
-    auto s = p.string();
+    // generic_string() for the same reason node names use it (#247): on
+    // Windows these -I/-idirafter paths are copied verbatim into a response
+    // file (#261), which the drivers tokenize GNU-style, where backslash is
+    // an ESCAPE character — a path like C:\src\inc would lose its separators.
+    // Every Windows consumer accepts forward slashes; POSIX is unchanged.
+    auto s = p.generic_string();
     std::string out;
     out.reserve(s.size());
     for (char c : s) {
@@ -508,15 +513,49 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             append_deps();
         }
     };
+    // #261: the flag payload of every compile/scan rule is unbounded — one
+    // -I per dependency include dir — and on Windows ninja spawns through
+    // CreateProcess, whose command line caps at 32767 chars. Route the
+    // payload through a response file: the same mitigation the link rules
+    // got in #247, for the same reason (there it was thousands of objects).
+    //
+    // Safe for every consumer: the gcc and clang drivers and cl.exe all
+    // expand @file, and clang-scan-deps passes an @file in its post-`--`
+    // command straight through to the driver (verified on the bundled
+    // 20.1.7). nasm_object is deliberately NOT converted — NASM spells
+    // response files `-@ file`, not `@file`, and its rule already sits
+    // outside CommandDialect for that class of reason.
+    //
+    // POSIX keeps the inline form byte-identical: ARG_MAX is ample and an
+    // inline command is far easier to re-run by hand when debugging.
+    // Also keyed on the msvc dialect, which only ever runs on Windows: it
+    // makes the response-file shape reachable from a non-Windows test host,
+    // the same over-approximation the link rules use (`separateLinker ||
+    // is_windows`).
+    const bool useCompileRsp = mcpp::platform::is_windows || msvcDeps;
+    // Both take the payload with its leading space, so callers read as
+    // `command = $cxx{payload} ...` exactly like the inline form did.
+    auto rsp_ref = [&](const std::string& payload) {
+        return useCompileRsp ? std::string(" @$out.rsp") : payload;
+    };
+    auto append_rspfile = [&](const std::string& payload) {
+        if (!useCompileRsp) return;
+        append("  rspfile = $out.rsp\n");
+        append(std::format("  rspfile_content ={}\n", payload));
+    };
+
     // cl.exe needs /TP (our module interfaces are .cppm, unknown to cl) and
     // /interface to treat the TU as a module interface unit.
     const std::string module_src_flags = msvcDeps ? " /interface /TP" : "";
     append("rule cxx_module\n");
     if constexpr (mcpp::platform::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
-        append(std::format("  command = "
-               "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}\n",
-               module_output_flag, module_src_flags, compile_tail));
+        const auto payload = std::format(
+            " $local_includes $cxxflags $unit_cxxflags{}{}",
+            module_output_flag, module_src_flags);
+        append(std::format("  command = $cxx{} {}\n",
+                           rsp_ref(payload), compile_tail));
+        append_rspfile(payload);
         append_cxx_deps();
     } else {
         append(std::format("  command = "
@@ -539,9 +578,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     append("rule cxx_object\n");
     if constexpr (mcpp::platform::is_windows) {
-        append(std::format(
-            "  command = $cxx $local_includes $cxxflags $unit_cxxflags {}\n",
-            compile_tail));
+        const std::string payload = " $local_includes $cxxflags $unit_cxxflags";
+        append(std::format("  command = $cxx{} {}\n",
+                           rsp_ref(payload), compile_tail));
+        append_rspfile(payload);
     } else {
         append(std::format(
             "  command = $cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
@@ -555,9 +595,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (need_c_rule) {
         append("rule c_object\n");
-        append(std::format(
-            "  command = $cc $local_includes $cflags $unit_cflags {}\n",
-            compile_tail));
+        const std::string payload = " $local_includes $cflags $unit_cflags";
+        append(std::format("  command = $cc{} {}\n",
+                           rsp_ref(payload), compile_tail));
+        append_rspfile(payload);
         append("  description = CC $out\n");
         append_deps();
         if (dyndep)
@@ -570,9 +611,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // and assembles both, dispatching by extension. $asmflags is the
         // asm-safe flag subset (no -std / no -O — see flags.cppm).
         append("rule asm_object\n");
-        append(std::format(
-            "  command = $cc $local_includes $asmflags $unit_asmflags {}\n",
-            compile_tail));
+        const std::string payload = " $local_includes $asmflags $unit_asmflags";
+        append(std::format("  command = $cc{} {}\n",
+                           rsp_ref(payload), compile_tail));
+        append_rspfile(payload);
         append("  description = AS $out\n\n");
     }
 
@@ -649,18 +691,23 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // GCC: built-in -fdeps-format=p1689r5 flags during preprocessing.
         // Clang: external clang-scan-deps tool with -format=p1689.
         append("rule cxx_scan\n");
+        // The scan command is strictly LONGER than the compile command for
+        // the same TU (it wraps it), so it carries the same unbounded
+        // include payload through the same response file (#261).
+        const std::string scanPayload = " $local_includes $cxxflags $unit_cxxflags";
         if (msvcDeps) {
             // MSVC: compiler-integrated P1689 via /scanDependencies (scan
             // only — no codegen); /TP because our module units are .cppm.
-            append("  command = $cxx $local_includes $cxxflags $unit_cxxflags "
-                   "/scanDependencies $out /TP /c $in /Fo:$compile_target\n");
+            append(std::format("  command = $cxx{} "
+                   "/scanDependencies $out /TP /c $in /Fo:$compile_target\n",
+                   rsp_ref(scanPayload)));
         } else if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
-            append("  command = $cxx $local_includes $cxxflags -fmodules "
-                   "$unit_cxxflags "
+            append(std::format("  command = $cxx{} -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$compile_target "
-                   "-M -MM -MF $out.dep -E $in -o $compile_target\n");
+                   "-M -MM -MF $out.dep -E $in -o $compile_target\n",
+                   rsp_ref(scanPayload)));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
             // (LLVM 17+), like the GCC and MSVC branches above write theirs
@@ -669,9 +716,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // line at 8191 chars — a quarter of the 32767 ninja gets from
             // CreateProcess — which any package with a large include-dir list
             // overruns (#261: 48 -I entries at a deep consumer path).
-            append("  command = $scan_deps -format=p1689 -o $out -- "
-                   "$cxx $local_includes $cxxflags $unit_cxxflags -c $in -o $compile_target\n");
+            append(std::format(
+                   "  command = $scan_deps -format=p1689 -o $out -- "
+                   "$cxx{} -c $in -o $compile_target\n", rsp_ref(scanPayload)));
         }
+        append_rspfile(scanPayload);
         append("  description = SCAN $out\n\n");
 
         // Aggregate .ddi files into a Ninja dyndep file.
