@@ -376,12 +376,39 @@ when you need arch/env conditions or combinators.
 - **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies`, and
   `build` with `cflags` / `cxxflags` / `ldflags` / `sources` (mcpp 0.0.95+ —
   conditional source globs, e.g. gating `src/x86/**/*.asm` behind
-  `cfg(arch = "x86_64")`; `!`-exclusion globs work here too).
+  `cfg(arch = "x86_64")`; `!`-exclusion globs work here too), plus `flags` and
+  `include_dirs` / `include_dirs_after` (mcpp 0.0.102+).
+- **What `build` accepts is exactly the set of *additive build inputs*** — the
+  things that combine by appending and are consumed after the predicate is
+  evaluated. `linkage`, `target`, and the profile knobs are deliberately not
+  among them: they are *inputs to* target selection (conditioning `target` on
+  a predicate evaluated against `target` is circular), or they need
+  override-rather-than-append semantics.
 - **Evaluated against the resolved target** — the `--target` triple for a cross
   build, otherwise the host. So a native Linux build never even *downloads* a
   `[target.windows]` dependency.
 - **Precedence**: an exact-triple table wins over a `cfg`/alias table; multiple
-  matching predicate tables have their flags concatenated.
+  matching predicate tables have their flags concatenated. Conditional entries
+  are appended **after** the unconditional `[build]` ones, so under GNU
+  "last flag wins" a conditional rule overrides a broader unconditional one.
+  That is what makes a per-OS **removal** expressible:
+
+  ```toml
+  [build]
+  flags = [{ glob = "third_party/zlib/**", defines = ["HAVE_UNISTD_H=1"] }]
+
+  # clang-MSVC has no <unistd.h>: undo the base define, add the windows one.
+  [target.'cfg(windows)'.build]
+  flags = [{ glob = "third_party/zlib/**",
+             defines = ["NO_FSEEKO"], cflags = ["-UHAVE_UNISTD_H"] }]
+  ```
+
+- **A conditional `flags` entry that does not match the current target does not
+  exist at all**, so it cannot produce a "glob matched no source file" warning.
+  One manifest can therefore carry all three OSes' flag tables without any of
+  them generating noise on the other two — the same way an inactive feature's
+  entries simply are not there. A zero-hit glob in the *unconditional* table
+  still warns, because there it is a real defect.
 - **`toolchain` / `linkage` are exact-triple only** — they describe one specific
   cross target, so put them under `[target.<triple>]` (above), not under a bare
   alias or `cfg(...)`.

@@ -3,6 +3,31 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.102] — 2026-07-22
+
+> 四条 issue 一个批次:#261 windows 命令行长度、#257 clang 依赖跟踪缺口、#258 条件段表达力、#254 host/target 双轴不自洽。贯穿主线是**同一决策不许两处推导**,以及本批次新立的第二条不变量**失败必须响,不许静默降级**。设计见 `.agents/docs/2026-07-22-v0.0.102-batch-254-261-design.md`,issue 裁决见 `.agents/docs/2026-07-22-issue-triage-254-261.md`。
+
+### 修复
+
+- **windows scan-deps 撞 8191 字符上限**(#261):clang 扫描规则此前用 shell 重定向产出 P1689 JSON,ninja 在 windows 走 CreateProcess 不解释 `>`,于是整条命令被 `cmd /c` 包裹——而 cmd.exe 的命令行上限是 8191,只有 CreateProcess 的 1/4。改用 `clang-scan-deps -o`(LLVM 17+,两个自带工具链均实测可用),重定向与包裹一并消失,与 GCC 的 `-fdeps-file=`、MSVC 的 `/scanDependencies` 三条分支形态统一。`cmd /c` 自此在全仓 ninja 规则中绝迹。
+- **windows 编译/扫描命令行无长度兜底**(#261):`local_include_flags()` 每依赖一个 `-I`、无上界,而 `cxx_module`/`cxx_object`/`c_object`/`asm_object`/`cxx_scan` 全部内联该载荷;扫描命令包住编译命令,只是恰好先炸。把 #247 给链接规则的 response file 推广到所有携带无界载荷的规则(gcc/clang 驱动与 cl.exe 均展开 `@file`,clang-scan-deps 会把 `--` 之后的 `@file` 透传给驱动;NASM 因为拼写是 `-@ file` 而排除)。顺带把 `escape_flag_path` 改用 `generic_string()`——这是 #247 那个坑往下一层:response file 内容按 GNU 文法分词,反斜杠是转义符,windows 的 `-I` 路径一旦离开命令行就会丢分隔符。POSIX 逐字节不变。
+- **clang 路径 purview `#include` 不触发重建**(#257):编辑模块接口 purview 内 `#include` 的文件后,构建静默复用陈旧 BMI,导入方对着旧接口编译——最差的一类失效,错误结果看起来像一次正常的增量构建。根因是 0.0.97 把两个决策捆在一个谓词里:**是否发 depfile** 与 **是否剥离 GCC `-fmodules` 附加的 reversed make-rules**。实测两个自带工具链,clang 的 module-TU depfile 就是一条普通规则(`x.o: x.cppm ops.inc`),没有任何需要过滤的东西——当年那道闸在防一个不存在的形状,代价是把与它捆在一起的正确性契约一起关掉了。现拆为 `posixDepfile`(所有 POSIX 非 MSVC)与 `needsGnuModuleFilter`(仅 GCC)。同时补上同一处不对称的另一半:`c_object`/`asm_object` 此前在**任何**工具链上都没有 depfile。windows 非 MSVC(mingw gcc / 托管 clang)仍无 depfile(GCC 过滤器依赖 awk),但现在经 `diag::degraded` 明确上报影响,不再静默。
+- **xpkg per-OS 段按宿主而非目标拼接**(#254):per-OS 段的 sources/flags/deps 与 xpm 版本/资产表全部按 `xpkg_platform` 这个**编译期宿主常量**选取,而 `[target.'cfg(...)']` 按**解析后的目标**求值——同一决策两处推导。交叉编译时依赖包因此被拼进宿主那条腿。原生构建 host == target 恰好掩盖了它,所以三平台 CI 从未发现。
+
+### 新增
+
+- **`mcpp::diag` 统一降级/告警通道**:`degraded()` 强制填写 `impact`——作者必须回答"用户会因此遭遇什么",而这正是每一个静默降级 bug 当年缺的那句话。记录按整条载荷去重、报告即渲染(告警与 `ui::status` 的交织顺序、以及提前返回前已报内容都不变),`--strict` 提升策略收敛到单点(此前在 `prepare.cppm` 里 copy-paste 了 5 处)。告警内容首次可单测。`prepare.cppm` 的 8 处裸 `println(stderr, "warning: ...")` 已迁入;渲染仍走 `ui::warning`,输出逐字节不变。
+- **`[target.'cfg(...)'.build]` 支持 per-glob `flags` 与 `include_dirs`**(#258,xpkg `target_cfg` 同步):此前 `sources` 可按 OS 条件化而 `flags` 不能,于是一份覆盖三 OS 的 manifest 必须让每个 OS 都看到另外两个 OS 的 flag 条目,而它们按构造必然零命中。vendored-opencv 移植为此付出 **703 个 stub 文件**(唯一用途是给 windows TU 制造 OS-唯一路径好让全局 flag 表 key 上去)、32 条指向它们的 glob,以及每次构建 ~23 条结构性死 glob 告警。条件条目追加在 base 之后,GNU last-wins 使**撤销**可表达(windows 需要 `-UHAVE_UNISTD_H` 对抗 base 的 `-D`,而无条件覆盖层做不到——`-U` 反条目自身也需要按 OS 条件化,递归回同一缺口)。死 glob 告警由**结构**消除:不匹配当前 OS 的条目根本不进 `globFlags`,与 #253 在 feature 轴上的做法同构;issue 里提的 `optional = true` 逃生口**明确不做**,那会成为第二套抑制机制。
+- **`mcpp.platform.axis`:host / target 两轴成为不同类型**(#254):互不可转换,且都不能由裸字符串构造;API 声明自己要哪一轴,调用点必须**指名**自己给的是哪一轴。`synthesize_from_xpkg_lua` 的平台参数去掉宿主默认值改为必填——静默默认正是这个 bug 得以存活的方式。三段 triple 与 xpkg 的词汇差异("macos" vs "macosx")收进 `TargetPlatform::for_os`。分类:依赖包 manifest 合成与版本/资产选择走 **target**;工具链版本列举走 **host**(其注释本就写明了理由);`--all-os` lint 走刻意起得别扭的 `for_lint_of()`。
+- **`BuildInputs` 类型**(#258 的架构面):cfg 轴与 feature 轴此前各自手挑可条件化的字段子集,**且挑得不一样**(cfg 拿 cflags/cxxflags/ldflags/sources,feature 拿 sources/defines/flags)。"哪些构建输入可被条件化"这一决策被提炼成一个**类型**而非一张要靠人记得更新的表。入选判据两条:合并语义是**追加**;消费点在条件合并**之后**。据此排除选型轴(`target` 用来*选定* triple,而谓词要靠该 triple 求值——构造性循环)与策略标量(需 last-wins,是另一场设计);`generatedFiles` 因为是写磁盘的**副作用动作**而非输入、`featureDefines` 因为是沿 Public 边**传播的接口贡献**而非私有构建输入,各自按范畴排除。`BuildConfig` 以**继承**方式承载(该字段在 ~150 处被读,嵌套只会是 150 次无收益的机械改动),`ConditionalConfig` 则**嵌套**——保证需要落在那里。合并收敛为单一 `append(BuildInputs&, const BuildInputs&)`。
+- **#256 clang 模块运算符模板 canary + 文档**:mcpp 侧无缺陷(`--precompile` 成功,崩溃在 clang 前端的导入侧),但 mcpp 自带 LLVM,且该 hazard 正落在本项目推荐的模块包模式上。文档给出可操作规则(导出的运算符模板,所有模板参数应由**第一个实参**绑定;否则改为对整个推导操作数类型建模)与可直接套用的改写范式。e2e 150 是**状态** canary 而非通过/失败契约:期望表记录 LLVM 20-22 崩、18-19 正常,一旦现实与期望不符即失败——未来某次 clang bump **修好**它与**再弄坏**它同样是需要被看见的信号。
+
+### 备注
+
+- 新增不变量写入批次总账:**任何"因条件不满足而少做一步"的分支,必须要么返回错误,要么经 `diag::degraded` 上报;`log::debug`/`log::verbose` 不算用户可见;丢弃 `std::expected` 返回值视为缺陷。**
+- e2e 新增 148(64 个 include dir 的宽 include 表,POSIX 验内联形态、windows 验 response file)、149(条件段 per-glob flags 四象限:命中生效/覆盖 base 的 removal/非命中零告警/真死 glob 仍告警)、150(#256 canary);118 去掉 `# requires: gcc` 并加 clang 腿。
+- **未包含**:#259(根因在 xlings 侧的 dep 静默丢弃,调查结论已发 issue 评论;mcpp 侧另发现 sysroot 兜底是死代码——`resolve_xpkg_path("xim:glibc")` 缺版本必然失败且两处都丢弃返回值——一并另行安排);manifest 未知键策略五处不一致([#263](https://github.com/mcpp-community/mcpp/issues/263),有兼容性面,与 #258 无依赖)。
+
 ## [0.0.101] — 2026-07-20
 
 > #253:feature 模型两缺口收口——per-feature per-glob `flags` + per-OS `features` 语义锁定,解锁 compat.opencv `dnn` off-linux 腿并消除 feature-off 构建的死 glob 告警。设计见 `.agents/docs/2026-07-20-issue-253-feature-flags-and-per-os-features-design.md`。
