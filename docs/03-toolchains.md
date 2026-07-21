@@ -267,3 +267,56 @@ When `MCPP_HOME` is not set explicitly, mcpp locates the sandbox automatically b
 ## ABI Capability Enforcement
 
 A dependency can declare an `abi:<name>` capability (for example, `compat.glfw` declares `abi:glibc`). When the resolved toolchain's ABI does not satisfy any dependency's abi requirement, the build **fails early** with a suggested fix (for example, a musl-static toolchain encountering an abi:glibc dependency), replacing deeper link/header errors. Inspect with: `mcpp why toolchain`.
+
+## Known Toolchain Hazard: Operator Templates in Module Interfaces (Clang 20+)
+
+A module that exports **replacement operator templates** can poison name
+lookup for that operator in every importer when compiled by Clang 20 or 22:
+any translation unit that `import`s the module and uses that operator — **on
+any type at all** — crashes the frontend (SIGSEGV). GCC 16 and Clang 18 are
+unaffected, so this is a regression somewhere between Clang 18 and 20.
+
+This bites the module-package pattern directly. Wrapping an upstream header
+whose operators are `static inline` templates, and mirroring their signatures
+with a trivially-true constraint (the standard mixed-TU subsumption recipe),
+is exactly how you hit it.
+
+**The rule of thumb:** every template parameter should be pinned by the
+**first** function argument. Shapes that break this are the poisonous ones:
+
+```cpp
+// Poisonous — `n` and `l` are not determined by argument 1
+template<typename T, int m, int n, int l>
+Matx<T, m, n> operator*(const Matx<T, m, l>& a, const Matx<T, l, n>& b);
+
+// Poisonous — second typename appears only in argument 2
+template<typename T1, typename T2, int n>
+Vec<T1, n>& operator+=(Vec<T1, n>& a, const Vec<T2, n>& b);
+
+// Fine — every parameter is pinned by argument 1
+template<typename T, int m, int n>
+Matx<T, m, n> operator+(const Matx<T, m, n>& a, const Matx<T, m, n>& b);
+```
+
+The crash is **name-keyed**: one poisoned `operator*` declaration makes every
+`x * y` in every importer crash, for entirely unrelated types. The function
+body is irrelevant.
+
+**The workaround** is to deduce whole operand types and constrain them,
+rather than destructuring them in the parameter list. It stays
+call-compatible, and mixed-TU semantics survive because the upstream
+exact-pattern `static inline` remains more specialized and still wins there:
+
+```cpp
+template<typename MA, typename MB>
+    requires pick<typename MA::value_type>
+          && __is_same(MA, typename MA::mat_type)
+          && __is_same(MB, Matx<typename MB::value_type,
+                               (int)MA::rows, (int)MA::cols>)
+inline MA& operator+=(MA& a, const MB& b);
+```
+
+Tracked as [mcpp#256](https://github.com/mcpp-community/mcpp/issues/256).
+`tests/e2e/150_clang_module_operator_template.sh` is a canary over the
+bundled LLVM toolchains, so a future Clang bump that fixes — or re-breaks —
+this becomes visible instead of silently changing what packages can express.
