@@ -25,6 +25,7 @@
 ### 备注
 
 - 新增不变量写入批次总账:**任何"因条件不满足而少做一步"的分支,必须要么返回错误,要么经 `diag::degraded` 上报;`log::debug`/`log::verbose` 不算用户可见;丢弃 `std::expected` 返回值视为缺陷。**
+- **#254 的覆盖是单测级**:per-OS 段按 target 选段、host==target 逐字节不变、轴类型互不可转,三条单测锁定;原计划的"cross 腿消费带 per-OS 段的 xpkg dep"e2e 未落地(需要 e2e 侧先有"复用宿主 registry + 本地索引 + 预置 payload"的夹具,临时 MCPP_HOME 会触发整套交叉工具链重装),记为已知缺口。
 - e2e 新增 148(64 个 include dir 的宽 include 表,POSIX 验内联形态、windows 验 response file)、149(条件段 per-glob flags 四象限:命中生效/覆盖 base 的 removal/非命中零告警/真死 glob 仍告警)、150(#256 canary);118 去掉 `# requires: gcc` 并加 clang 腿。
 - **未包含**:#259(根因在 xlings 侧的 dep 静默丢弃,调查结论已发 issue 评论;mcpp 侧另发现 sysroot 兜底是死代码——`resolve_xpkg_path("xim:glibc")` 缺版本必然失败且两处都丢弃返回值——一并另行安排);manifest 未知键策略五处不一致([#263](https://github.com/mcpp-community/mcpp/issues/263),有兼容性面,与 #258 无依赖)。
 
