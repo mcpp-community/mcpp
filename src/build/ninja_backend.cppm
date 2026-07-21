@@ -554,6 +554,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     //
     // POSIX keeps the inline form byte-identical: ARG_MAX is ample and an
     // inline command is far easier to re-run by hand when debugging.
+    //
+    // ONLY $local_includes goes in. Response-file content is tokenized
+    // GNU-style, where backslash is an ESCAPE character, so every path that
+    // moves off the command line must be forward-slashed — and the only
+    // paths whose form this file controls are the -I/-idirafter entries it
+    // builds via escape_flag_path(). $cxxflags carries paths produced
+    // elsewhere (flags.cppm's -fprebuilt-module-path=, module-file mappings)
+    // that are still native-separated; routing those through the rsp ate the
+    // separators of the std.pcm path and broke every `import std;` on the
+    // Windows CI leg. They stay inline, where a backslash is just a
+    // character. Sufficient, too: the unbounded axis #261 is about is one -I
+    // per dependency include dir, and the rest of the payload is bounded.
     // Also keyed on the msvc dialect, which only ever runs on Windows: it
     // makes the response-file shape reachable from a non-Windows test host,
     // the same over-approximation the link rules use (`separateLinker ||
@@ -576,11 +588,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("rule cxx_module\n");
     if constexpr (mcpp::platform::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
-        const auto payload = std::format(
-            " $local_includes $cxxflags $unit_cxxflags{}{}",
-            module_output_flag, module_src_flags);
-        append(std::format("  command = $cxx{} {}\n",
-                           rsp_ref(payload), compile_tail));
+        const std::string payload = " $local_includes";
+        append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags{}{} {}\n",
+                           rsp_ref(payload), module_output_flag,
+                           module_src_flags, compile_tail));
         append_rspfile(payload);
         append_cxx_deps();
     } else {
@@ -604,8 +615,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     append("rule cxx_object\n");
     if constexpr (mcpp::platform::is_windows) {
-        const std::string payload = " $local_includes $cxxflags $unit_cxxflags";
-        append(std::format("  command = $cxx{} {}\n",
+        const std::string payload = " $local_includes";
+        append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags {}\n",
                            rsp_ref(payload), compile_tail));
         append_rspfile(payload);
     } else {
@@ -621,8 +632,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     if (need_c_rule) {
         append("rule c_object\n");
-        const std::string payload = " $local_includes $cflags $unit_cflags";
-        append(std::format("  command = $cc{} {}{}\n",
+        const std::string payload = " $local_includes";
+        append(std::format("  command = $cc{} $cflags $unit_cflags {}{}\n",
                            rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = CC $out\n");
@@ -641,9 +652,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // clang emits `argument unused during compilation: '-MMD'` for every
         // such file and writes nothing, and ninja's `deps = gcc` treats an
         // absent depfile as an error. So `.s` keeps the pre-#257 shape.
-        const std::string payload = " $local_includes $asmflags $unit_asmflags";
+        const std::string payload = " $local_includes";
         append("rule asm_object\n");     // .S — preprocessed, tracks #include
-        append(std::format("  command = $cc{} {}{}\n",
+        append(std::format("  command = $cc{} $asmflags $unit_asmflags {}{}\n",
                            rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n");
@@ -651,7 +662,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("\n");
 
         append("rule asm_object_raw\n");  // .s — not preprocessed, no depfile
-        append(std::format("  command = $cc{} {}\n",
+        append(std::format("  command = $cc{} $asmflags $unit_asmflags {}\n",
                            rsp_ref(payload), compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n\n");
@@ -733,16 +744,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // The scan command is strictly LONGER than the compile command for
         // the same TU (it wraps it), so it carries the same unbounded
         // include payload through the same response file (#261).
-        const std::string scanPayload = " $local_includes $cxxflags $unit_cxxflags";
+        const std::string scanPayload = " $local_includes";
         if (msvcDeps) {
             // MSVC: compiler-integrated P1689 via /scanDependencies (scan
             // only — no codegen); /TP because our module units are .cppm.
-            append(std::format("  command = $cxx{} "
+            append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags "
                    "/scanDependencies $out /TP /c $in /Fo:$compile_target\n",
                    rsp_ref(scanPayload)));
         } else if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
-            append(std::format("  command = $cxx{} -fmodules "
+            append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$compile_target "
                    "-M -MM -MF $out.dep -E $in -o $compile_target\n",
@@ -757,7 +768,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // overruns (#261: 48 -I entries at a deep consumer path).
             append(std::format(
                    "  command = $scan_deps -format=p1689 -o $out -- "
-                   "$cxx{} -c $in -o $compile_target\n", rsp_ref(scanPayload)));
+                   "$cxx{} $cxxflags $unit_cxxflags -c $in -o $compile_target\n",
+                   rsp_ref(scanPayload)));
         }
         append_rspfile(scanPayload);
         append("  description = SCAN $out\n\n");

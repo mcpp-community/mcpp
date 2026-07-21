@@ -17,6 +17,13 @@ set -e
 # Resolved before any cd: the script changes directory below.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Portable in-place edit. This test lost its `# requires: gcc` gate in #257,
+# so it now runs on macOS too, where BSD sed reads `-i`'s next argument as a
+# backup suffix and swallows the script.
+subst() {  # subst <sed-expr> <file>
+    sed "$1" "$2" > "$2.tmp" && mv "$2.tmp" "$2"
+}
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
@@ -51,7 +58,7 @@ EOF
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == "41" ]] || { echo "unexpected initial output: $out"; exit 1; }
 
-sed -i 's/41/42/' src/vals.inc
+subst 's/41/42/' src/vals.inc
 
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == "42" ]] || {
@@ -83,7 +90,7 @@ EOF
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == "42 100" ]] || { echo "unexpected output before header edit: $out"; exit 1; }
 
-sed -i 's/100/200/' src/helper.h
+subst 's/100/200/' src/helper.h
 
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == "42 200" ]] || {
@@ -130,7 +137,7 @@ EOF
     out="$("$MCPP" run 2>&1 | tail -1)"
     [[ "$out" == "41" ]] || { echo "clang: unexpected initial output: $out"; exit 1; }
 
-    sed -i 's/41/42/' src/vals.inc
+    subst 's/41/42/' src/vals.inc
 
     out="$("$MCPP" run 2>&1 | tail -1)"
     [[ "$out" == "42" ]] || {
@@ -158,7 +165,7 @@ EOF
     out="$("$MCPP" run 2>&1 | tail -1)"
     [[ "$out" == "42 100" ]] || { echo "clang: unexpected output before header edit: $out"; exit 1; }
 
-    sed -i 's/100/200/' src/helper.h
+    subst 's/100/200/' src/helper.h
 
     out="$("$MCPP" run 2>&1 | tail -1)"
     [[ "$out" == "42 200" ]] || {

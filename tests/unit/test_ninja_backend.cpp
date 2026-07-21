@@ -637,13 +637,24 @@ TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) 
 
         EXPECT_NE(body.find("@$out.rsp"), std::string::npos) << body;
         EXPECT_NE(body.find("rspfile = $out.rsp"), std::string::npos) << body;
-        EXPECT_NE(body.find("rspfile_content = $local_includes"),
+        // ONLY $local_includes may live in the response file: its content
+        // is tokenized GNU-style (backslash = escape), and those are the
+        // only paths this file forward-slashes itself. $cxxflags carries
+        // native-separated paths from flags.cppm and must stay inline —
+        // routing it through the rsp ate the separators of the std.pcm path
+        // and broke every `import std;` on Windows.
+        EXPECT_NE(body.find("rspfile_content = $local_includes\n"),
                   std::string::npos) << body;
         // The payload must not ALSO remain inline, or the ceiling stands.
         auto cmdStart = body.find("command = ");
         auto cmdEnd = body.find('\n', cmdStart);
         auto cmd = body.substr(cmdStart, cmdEnd - cmdStart);
         EXPECT_EQ(cmd.find("$local_includes"), std::string::npos) << cmd;
+        // ...and the flags that must NOT move off the command line stay there.
+        if (rule != "rule c_object\n")
+            EXPECT_NE(cmd.find("$cxxflags"), std::string::npos) << cmd;
+        else
+            EXPECT_NE(cmd.find("$cflags"), std::string::npos) << cmd;
     }
 }
 
