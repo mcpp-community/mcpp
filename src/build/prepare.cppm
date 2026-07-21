@@ -10,6 +10,7 @@ module;
 export module mcpp.build.prepare;
 
 import std;
+import mcpp.diag;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
@@ -722,7 +723,7 @@ prepare_build(bool print_fingerprint,
     // feature/platform schema checks below.
     for (auto const& w : m->schemaWarnings) {
         if (overrides.strict) return std::unexpected(w);
-        std::println(stderr, "warning: {}", w);
+        mcpp::diag::warning("manifest/schema", w);
     }
 
     // ─── Toolchain resolution (docs/21) ────────────────────────────────
@@ -804,7 +805,7 @@ prepare_build(bool print_fingerprint,
                 "[package] platforms contains unknown platform '{}' "
                 "(expected: linux | macos | windows)", pf);
             if (overrides.strict) return std::unexpected(msg);
-            std::println(stderr, "warning: {}", msg);
+            mcpp::diag::warning("manifest/platforms", msg);
         }
     }
 
@@ -2298,7 +2299,7 @@ prepare_build(bool print_fingerprint,
                     "'{}/{}') which is not declared in [dependencies] or "
                     "[feature-deps]", f, parentName, depKey, depKey, depFeat);
                 if (overrides.strict) return std::unexpected(msg);
-                std::println(stderr, "warning: {}", msg);
+                mcpp::diag::warning("features/forwarding", msg);
             }
         }
         return {};
@@ -3025,7 +3026,7 @@ prepare_build(bool print_fingerprint,
                 auto msg = std::format(
                     "--features requests '{}' which [features] does not declare", *bad);
                 if (overrides.strict) return std::unexpected(msg);
-                std::println(stderr, "warning: {}", msg);
+                mcpp::diag::warning("features/request", msg);
             }
             apply(packages[0], rootReq);
             for (auto& f : activate(*m, rootReq)) activeRootFeatures.insert(f);
@@ -3063,7 +3064,7 @@ prepare_build(bool print_fingerprint,
                         "dependency '{}' does not declare requested feature '{}' "
                         "in its [features] table", pname, f);
                     if (overrides.strict) return std::unexpected(msg);
-                    std::println(stderr, "warning: {}", msg);
+                    mcpp::diag::warning("features/request", msg);
                 }
             }
             // Always apply: even with no requested/default feature, a dep with
@@ -3365,13 +3366,14 @@ prepare_build(bool print_fingerprint,
         return std::unexpected(msg);
     }
     for (auto& w : scan.warnings) {
-        std::println(stderr, "warning: {}", w.format());
+        mcpp::diag::warning("modgraph/scan", w.format());
     }
 
     auto report = mcpp::modgraph::validate(scan.graph, *m, *root);
     for (auto& w : report.warnings) {
-        if (w.path.empty()) std::println(stderr, "warning: {}", w.message);
-        else std::println(stderr, "warning: {}: {}", w.path.string(), w.message);
+        if (w.path.empty()) mcpp::diag::warning("modgraph/validate", w.message);
+        else mcpp::diag::warning("modgraph/validate",
+                                 std::format("{}: {}", w.path.string(), w.message));
     }
     if (!report.ok()) {
         std::string msg = "validation errors:\n";
