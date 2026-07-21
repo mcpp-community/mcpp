@@ -150,6 +150,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     static constexpr std::string_view kAllowedArraysOfTables[] = {
         "build.flags",
         "features.*.flags",   // #253 — the middle segment is the feature name
+        "target.*.build.flags",  // #258 — middle segment is the cfg predicate
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
@@ -980,10 +981,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         for (auto& v : f->second.as_array())
                             if (v.is_string()) out.push_back(v.as_string());
                 };
+                auto read_paths = [&](const char* key,
+                                      std::vector<std::filesystem::path>& out) {
+                    if (auto f = bt.find(key); f != bt.end() && f->second.is_array())
+                        for (auto& v : f->second.as_array())
+                            if (v.is_string()) out.emplace_back(v.as_string());
+                };
                 read_list("cflags",   cc.inputs.cflags);
                 read_list("cxxflags", cc.inputs.cxxflags);
                 read_list("ldflags",  cc.inputs.ldflags);
                 read_list("sources",  cc.inputs.sources);
+                // #258: per-glob flags and include dirs, through the SAME entry
+                // grammar `[build].flags` uses — a conditional section is just
+                // a set of build inputs, so it reads the same way.
+                read_paths("include_dirs",       cc.inputs.includeDirs);
+                read_paths("include_dirs_after", cc.inputs.includeDirsAfter);
+                if (auto f = bt.find("flags"); f != bt.end()) {
+                    if (auto err = parse_glob_flags_value(
+                            f->second,
+                            std::format("[target.{}.build].flags", triple),
+                            cc.inputs.globFlags))
+                        return std::unexpected(error(origin, *err));
+                }
             }
             // [target.<predicate>.{dependencies,dev-dependencies,build-dependencies}]
             // parsed via the shared table-based loader (same selectors/namespaces

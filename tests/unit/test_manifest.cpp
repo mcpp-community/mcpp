@@ -2400,3 +2400,114 @@ linux = "gcc@15.1.0"
     EXPECT_NE(m.error().message.find("array-of-tables"), std::string::npos)
         << m.error().message;
 }
+
+// #258: `[target.'cfg(<os>)'.build]` accepts the same per-glob `flags` array
+// `[build]` does. Before this, the conditional reader knew exactly four keys
+// and dropped everything else silently, so a per-OS flag table was
+// inexpressible in mcpp.toml while the xpkg descriptor's mcpp.<os> sections
+// supported it — manifest-built packages were second-class.
+TEST(Manifest, ConditionalSectionCarriesPerGlobFlags) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_cond_flags";
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    {
+        std::ofstream os(path);
+        os << R"(
+[package]
+name = "condflags"
+version = "0.1.0"
+
+[build]
+flags = [{ glob = "src/zlib/**", defines = ["HAVE_UNISTD_H=1"] }]
+
+[target.'cfg(windows)'.build]
+cflags = ["-DWIN32"]
+include_dirs = ["vendor/win/include"]
+flags = [
+  { glob = "src/zlib/**", defines = ["NO_FSEEKO"], cflags = ["-UHAVE_UNISTD_H"] },
+]
+)";
+    }
+    auto m = mcpp::manifest::load(path);
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+
+    // Base table is unconditional.
+    ASSERT_EQ(m->buildConfig.globFlags.size(), 1u);
+    EXPECT_EQ(m->buildConfig.globFlags[0].glob, "src/zlib/**");
+
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    auto& cc = m->conditionalConfigs[0];
+    EXPECT_EQ(cc.predicate, "cfg(windows)");
+    ASSERT_EQ(cc.inputs.globFlags.size(), 1u);
+    EXPECT_EQ(cc.inputs.globFlags[0].glob, "src/zlib/**");
+    EXPECT_EQ(cc.inputs.globFlags[0].defines,
+              (std::vector<std::string>{"NO_FSEEKO"}));
+    // The removal case: a windows-only -U that must land AFTER the base -D.
+    EXPECT_EQ(cc.inputs.globFlags[0].cflags,
+              (std::vector<std::string>{"-UHAVE_UNISTD_H"}));
+    ASSERT_EQ(cc.inputs.includeDirs.size(), 1u);
+    EXPECT_EQ(cc.inputs.includeDirs[0], std::filesystem::path("vendor/win/include"));
+    std::filesystem::remove_all(tmp);
+}
+
+// The array-of-tables spelling must reach the same place, and must be
+// allowlisted by the #227 closed-grammar guard.
+TEST(Manifest, ConditionalPerGlobFlagsAcceptArrayOfTablesSpelling) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_cond_flags_aot";
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    {
+        std::ofstream os(path);
+        os << R"(
+[package]
+name = "condflagsaot"
+version = "0.1.0"
+
+[[target.'cfg(linux)'.build.flags]]
+glob = "src/**"
+defines = ["ON_LINUX=1"]
+)";
+    }
+    auto m = mcpp::manifest::load(path);
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    ASSERT_EQ(m->conditionalConfigs[0].inputs.globFlags.size(), 1u);
+    EXPECT_EQ(m->conditionalConfigs[0].inputs.globFlags[0].defines,
+              (std::vector<std::string>{"ON_LINUX=1"}));
+    std::filesystem::remove_all(tmp);
+}
+
+// Parity: the xpkg descriptor's target_cfg gets the same key, and its
+// unknown-key policy stays a HARD ERROR. Sharing a parser must not be read
+// as licence to relax a grammar that was already closed (#263 tracks making
+// the policies consistent across sections; this test pins that #258 did not
+// quietly change one).
+TEST(Manifest, XpkgTargetCfgCarriesPerGlobFlagsAndStillRejectsUnknownKeys) {
+    // Custom delimiter: the descriptor contains `)"` inside ["cfg(windows)"],
+    // which would terminate a plain R"( ... )".
+    const char* lua = R"LUA(
+mcpp = {
+    sources = { "src/**" },
+    target_cfg = {
+        ["cfg(windows)"] = {
+            cflags = { "-DWIN32" },
+            flags = { { glob = "src/z/**", defines = { "NO_FSEEKO" } } },
+        },
+    },
+}
+)LUA";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(lua, "p", "1.0.0");
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    ASSERT_EQ(m->conditionalConfigs[0].inputs.globFlags.size(), 1u);
+    EXPECT_EQ(m->conditionalConfigs[0].inputs.globFlags[0].glob, "src/z/**");
+
+    const char* bad = R"LUA(
+mcpp = {
+    sources = { "src/**" },
+    target_cfg = { ["cfg(windows)"] = { linkage = { "static" } } },
+}
+)LUA";
+    auto bm = mcpp::manifest::synthesize_from_xpkg_lua(bad, "p", "1.0.0");
+    EXPECT_FALSE(bm) << "unknown target_cfg key must stay a hard error";
+}

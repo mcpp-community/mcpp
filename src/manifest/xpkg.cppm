@@ -1070,16 +1070,43 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 while (!cur.eof() && cur.peek() != '}') {
                     auto sub = cur.read_key();
                     if (sub.empty()) break;
+                    // #258: per-glob flags reach conditional sections through
+                    // the same entry grammar `flags` uses at the top level.
+                    if (sub == "flags") {
+                        if (!cur.consume('=')) {
+                            return std::unexpected(ManifestError{
+                                std::format("expected `=` after target_cfg '{}'.flags",
+                                            pred),
+                                m.sourcePath, 0, 0});
+                        }
+                        if (auto err = parse_glob_flags_array(
+                                cur, m.sourcePath,
+                                std::format("target_cfg.{}.flags", pred),
+                                cc.inputs.globFlags)) {
+                            return std::unexpected(std::move(*err));
+                        }
+                        cur.skip_ws_and_comments();
+                        continue;
+                    }
                     std::vector<std::string>* dst =
                           sub == "cflags"   ? &cc.inputs.cflags
                         : sub == "cxxflags" ? &cc.inputs.cxxflags
                         : sub == "ldflags"  ? &cc.inputs.ldflags
                         : sub == "sources"  ? &cc.inputs.sources
                         : nullptr;
-                    if (!dst) {
+                    // Unknown sub-keys stay a HARD ERROR here. The shared
+                    // BuildInputs parser must not be read as licence to relax
+                    // a grammar that was already closed (mcpp.toml's own
+                    // unknown-key policy is a separate question — #263).
+                    std::vector<std::filesystem::path>* pathDst =
+                          sub == "include_dirs"       ? &cc.inputs.includeDirs
+                        : sub == "include_dirs_after" ? &cc.inputs.includeDirsAfter
+                        : nullptr;
+                    if (!dst && !pathDst) {
                         return std::unexpected(ManifestError{
                             std::format("unknown target_cfg key '{}' (expected "
-                                        "cflags/cxxflags/ldflags/sources)", sub),
+                                        "cflags/cxxflags/ldflags/sources/flags/"
+                                        "include_dirs/include_dirs_after)", sub),
                             m.sourcePath, 0, 0});
                     }
                     if (!cur.consume('=') || !cur.consume('{')) {
@@ -1091,7 +1118,10 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     cur.skip_ws_and_comments();
                     while (!cur.eof() && cur.peek() != '}') {
                         auto s = cur.read_string();
-                        if (!s.empty()) dst->push_back(std::move(s));
+                        if (!s.empty()) {
+                            if (dst) dst->push_back(std::move(s));
+                            else     pathDst->emplace_back(std::move(s));
+                        }
                         cur.skip_ws_and_comments();
                     }
                     cur.consume('}');
@@ -1100,7 +1130,9 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 cur.consume('}');
                 if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
                     || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
-                    )
+                    || !cc.inputs.globFlags.empty()
+                    || !cc.inputs.includeDirs.empty()
+                    || !cc.inputs.includeDirsAfter.empty())
                     m.conditionalConfigs.push_back(std::move(cc));
                 cur.skip_ws_and_comments();
             }
