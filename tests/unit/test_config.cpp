@@ -250,3 +250,64 @@ TEST(ConfigIndexMigration, CanonicalizeRespectsExplicitGitSourceAndCustomArtifac
     EXPECT_EQ(cfg.indexRepos[1].artifact, "https://example.com/my-mirror");
     EXPECT_TRUE(cfg.indexRepos[2].artifact.empty());        // foreign repo untouched
 }
+
+TEST(ConfigIndexMigration, XlingsJsonHealsPrettyLegacyEntry) {
+    auto dir = make_tempdir("mcpp-migrate-xj");
+    auto p = dir / ".xlings.json";
+    {
+        std::ofstream os(p);
+        os << "{\n  \"index_repos\": [\n"
+              "    { \"name\": \"mcpplibs\", \"url\": "
+              "\"https://github.com/mcpp-community/mcpp-index.git\" }\n"
+              "  ],\n  \"subos\": \"default\",\n  \"mirror\": \"auto\"\n}\n";
+    }
+    EXPECT_TRUE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    auto text = read_all(p);
+    EXPECT_NE(text.find(
+        "\"url\": \"https://github.com/mcpplibs/mcpp-index.git\", "
+        "\"artifact\": \"https://github.com/xlings-res/mcpp-index\""),
+        std::string::npos) << text;
+    EXPECT_NE(text.find("\"subos\": \"default\""), std::string::npos);
+    EXPECT_EQ(text.find("mcpp-community/mcpp-index"), std::string::npos);
+    EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));  // idempotent
+    EXPECT_EQ(read_all(p), text);
+    std::filesystem::remove_all(dir);
+}
+
+TEST(ConfigIndexMigration, XlingsJsonHealsCompactLegacyNameAndUrl) {
+    auto dir = make_tempdir("mcpp-migrate-xjc");
+    auto p = dir / ".xlings.json";
+    {
+        std::ofstream os(p);
+        os << "{\"index_repos\":[{\"name\":\"mcpp-index\","
+              "\"url\":\"https://github.com/mcpp-community/mcpp-index.git\"}],"
+              "\"mirror\":\"auto\"}";
+    }
+    EXPECT_TRUE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    auto text = read_all(p);
+    EXPECT_NE(text.find("\"name\":\"mcpplibs\""), std::string::npos);
+    EXPECT_NE(text.find(
+        "\"url\":\"https://github.com/mcpplibs/mcpp-index.git\", "
+        "\"artifact\": \"https://github.com/xlings-res/mcpp-index\""),
+        std::string::npos) << text;
+    EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    std::filesystem::remove_all(dir);
+}
+
+TEST(ConfigIndexMigration, XlingsJsonSkipsInjectionWhenArtifactPresent) {
+    auto dir = make_tempdir("mcpp-migrate-xja");
+    auto p = dir / ".xlings.json";
+    std::string body =
+        "{\n  \"index_repos\": [\n"
+        "    { \"name\": \"mcpplibs\", \"url\": "
+        "\"https://github.com/mcpplibs/mcpp-index.git\", "
+        "\"artifact\": \"https://github.com/xlings-res/mcpp-index\" }\n"
+        "  ]\n}\n";
+    {
+        std::ofstream os(p);
+        os << body;
+    }
+    EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    EXPECT_EQ(read_all(p), body);
+    std::filesystem::remove_all(dir);
+}
