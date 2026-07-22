@@ -197,7 +197,36 @@ FAILED_TESTS=()
 TIMED_OUT_TESTS=()
 TIMINGS=()   # "<ms> <name>" per executed test, for the slowest-first report
 
+# ---------------------------------------------------------------------------
+# Optional sharding:  E2E_SHARD="<index>/<total>"  (1-based)
+# ---------------------------------------------------------------------------
+# Splits the suite across parallel CI runners. Round-robin over the sorted
+# file list rather than contiguous ranges: durations are wildly uneven (the
+# timing report below exists precisely because of that), and interleaving
+# spreads the long poles instead of stacking them in one shard.
+#
+# The slice is computed on the FULL file list, before capability filtering,
+# so a shard's membership does not depend on what the host can run.
+SHARD_IDX=1
+SHARD_TOTAL=1
+if [[ -n "${E2E_SHARD:-}" ]]; then
+    SHARD_IDX="${E2E_SHARD%%/*}"
+    SHARD_TOTAL="${E2E_SHARD##*/}"
+    if ! [[ "$SHARD_IDX" =~ ^[0-9]+$ && "$SHARD_TOTAL" =~ ^[0-9]+$ ]] \
+       || (( SHARD_TOTAL < 1 || SHARD_IDX < 1 || SHARD_IDX > SHARD_TOTAL )); then
+        echo "FATAL: bad E2E_SHARD='$E2E_SHARD' (want <index>/<total>, 1-based)"
+        exit 1
+    fi
+    echo "Shard: ${SHARD_IDX}/${SHARD_TOTAL} (round-robin over the suite)"
+fi
+SHARD_POS=0
+
 for test in "$HERE"/[0-9]*.sh; do
+    if (( SHARD_TOTAL > 1 )); then
+        _mine=$(( (SHARD_POS % SHARD_TOTAL) + 1 ))
+        SHARD_POS=$(( SHARD_POS + 1 ))
+        (( _mine == SHARD_IDX )) || continue
+    fi
     name="$(basename "$test")"
     echo
     missing_cap="$(check_requires "$test")"

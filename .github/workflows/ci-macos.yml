@@ -2,6 +2,9 @@ name: ci-macos
 
 # macOS CI for mcpp — validates LLVM/Clang as the default macOS toolchain.
 # Tests the full xlings → LLVM → C++23 import std pipeline on macOS ARM64.
+#
+# The e2e suite runs in PARALLEL in ci-macos-e2e.yml (same setup via
+# .github/actions/setup-macos-llvm), not tacked onto this job.
 
 on:
   push:
@@ -19,9 +22,8 @@ jobs:
     name: macOS ARM64 — xlings LLVM end-to-end
     runs-on: macos-15
     timeout-minutes: 30
-    # NOTE: no MCPP_VERBOSE here — this job runs the e2e suite, which includes
-    # tests asserting mcpp's default quiet output (48/53). Verbose is forced only
-    # in the fresh-install workflows.
+    # NOTE: no MCPP_VERBOSE here — keep this job's output shape identical to
+    # ci-macos-e2e.yml, which asserts mcpp's default quiet output (48/53).
     steps:
       - uses: actions/checkout@v4
 
@@ -32,43 +34,7 @@ jobs:
           xcrun --show-sdk-path
           echo "SDK: $(xcrun --show-sdk-version)"
 
-      - name: Cache xlings
-        uses: actions/cache@v4
-        with:
-          path: ~/.xlings
-          key: xlings-macos15-arm64-v3-${{ hashFiles('.xlings.json') }}
-          restore-keys: |
-            xlings-macos15-arm64-v3-
-
-      - name: Bootstrap xlings
-        env:
-          XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.30'
-        run: |
-          WORK=$(mktemp -d)
-          tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
-          curl -fsSL -o "${WORK}/${tarball}" \
-            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
-          tar -xzf "${WORK}/${tarball}" -C "${WORK}"
-          XLINGS_DIR="${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64"
-          "$XLINGS_DIR/subos/default/bin/xlings" self install
-          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
-          xlings --version
-          echo "PATH=$HOME/.xlings/subos/default/bin:$PATH" >> "$GITHUB_ENV"
-
-      - name: Install LLVM via xlings
-        run: |
-          # latest-first: test binaries now link the toolchain's own libc++
-          # (A1 root fix in flags.cppm), so new llvm releases are
-          # self-consistent — this job is the proof for each new default.
-          xlings install llvm -y || xlings install llvm@20.1.7 -y
-          # Verify clang++ is available
-          LLVM_ROOT=$(find "$HOME/.xlings" -path "*/xpkgs/xim-x-llvm/*/bin/clang++" | head -1 | xargs dirname | xargs dirname)
-          echo "LLVM_ROOT=$LLVM_ROOT"
-          ls "$LLVM_ROOT/bin/clang++"
-          "$LLVM_ROOT/bin/clang++" --version
-          echo "LLVM_ROOT=$LLVM_ROOT" >> "$GITHUB_ENV"
-          echo "CXX=$LLVM_ROOT/bin/clang++" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-macos-llvm
 
       - name: Inspect LLVM package structure
         run: |
@@ -274,57 +240,6 @@ jobs:
             *)              echo "FAIL: unexpected platform"; exit 1 ;;
           esac
 
-      - name: Bootstrap mcpp via xlings
-        run: |
-          # Same pattern as Linux CI: xlings install mcpp
-          xlings install mcpp -y
-          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
-          test -x "$MCPP"
-          "$MCPP" --version
-          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
-          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
-
-      - name: Configure dev mcpp sandbox to reuse xlings LLVM
-        run: |
-          # Use EXACTLY the LLVM the install step resolved (env LLVM_ROOT) —
-          # a version-glob pick chose a stale cached 20.1.7 next to the
-          # freshly installed 22.1.8 and silently tested the wrong toolchain.
-          LLVM_PKG="$LLVM_ROOT"
-          test -d "$LLVM_PKG"
-          LLVM_VER=$(basename "$LLVM_PKG")
-          echo "MCPP_LLVM_VER=$LLVM_VER" >> "$GITHUB_ENV"
-          MCPP_LLVM_LINK="$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm/$LLVM_VER"
-          printf '1\n' > "$LLVM_PKG/.mcpp_ok"
-
-          mkdir -p "$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm"
-          rm -rf "$MCPP_LLVM_LINK"
-          ln -s "$LLVM_PKG" "$MCPP_LLVM_LINK"
-
-          mkdir -p "$HOME/.mcpp"
-          cat > "$HOME/.mcpp/config.toml" <<EOF
-          # mcpp global config for CI. Dev binaries under target/.../bin/mcpp
-          # fall back to ~/.mcpp; keep its registry isolated while reusing
-          # the LLVM package already installed by `xlings install llvm`.
-          [xlings]
-          binary = "$HOME/.xlings/subos/default/bin/xlings"
-
-          [index]
-          default = "mcpplibs"
-
-          [index.repos."mcpplibs"]
-          url = "https://github.com/mcpp-community/mcpp-index.git"
-
-          [cache]
-          search_ttl_seconds = 3600
-
-          [build]
-          default_jobs    = 0
-          default_backend = "ninja"
-          EOF
-
-          cat "$HOME/.mcpp/config.toml"
-          ls "$MCPP_LLVM_LINK/bin/clang++"
-
       - name: Build mcpp from source (self-host)
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
@@ -373,24 +288,6 @@ jobs:
           else
             echo "none"
           fi
-
-      - name: E2E suite
-        # See ci-linux.yml — fail-fast on hung tests instead of burning the
-        # whole job budget. Per-test 600s timeout lives in run_all.sh.
-        timeout-minutes: 25
-        run: |
-          MCPP=$(find target -path "*/bin/mcpp" | head -1)
-          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
-          test -x "$MCPP"
-          export MCPP
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          test -x "$MCPP_VENDORED_XLINGS"
-          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
-          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
-          "$MCPP" self config
-          # macOS default toolchain is LLVM
-          "$MCPP" toolchain default "llvm@${MCPP_LLVM_VER}"
-          bash tests/e2e/run_all.sh
 
       - name: "Toolchain: LLVM — build mcpp (self-host)"
         run: |

@@ -5,10 +5,17 @@ name: ci-linux
 # workflow no longer depends on a previous-release tarball — the
 # chicken-and-egg now lives upstream in the xlings index.
 #
-# This job covers build + unit/integration tests + the toolchain matrix +
-# the xlings integration build. The ~18 min e2e suite is a SEPARATE workflow
-# (ci-linux-e2e.yml) that runs in parallel on the same warm caches, so the
-# per-PR critical path is max(this, e2e) instead of their sum.
+# SHAPE: four INDEPENDENT jobs, no `needs:` between them. Each restores the
+# same cache lineage (see .github/actions/bootstrap-mcpp) and pays one warm
+# `mcpp build` (~2.5 min) to get the PR's own binary, then does its own leg.
+# That warm rebuild is far cheaper than serialising the legs behind a shared
+# artifact would be:
+#
+#   before: build → unit → gcc → musl → llvm → xlings   ≈ 18 min (one job)
+#   after:  max(build+unit, gcc, musl+llvm, xlings)     ≈ 7-8 min
+#
+# The ~18 min e2e suite is a SEPARATE workflow (ci-linux-e2e.yml, sharded)
+# that runs in parallel on the same caches.
 #
 # Paired workflows: ci-linux-e2e.yml, ci-macos.yml, ci-windows.yml.
 
@@ -23,83 +30,23 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # MCPP_HOME pinned so the cache keys below restore into the same path
+  # mcpp resolves at runtime.
+  MCPP_HOME: /home/runner/.mcpp
+  # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm).
+  # Safe here: this workflow no longer runs the e2e suite, which is what
+  # asserts mcpp's default quiet output (tests 48/53).
+  MCPP_VERBOSE: "1"
+
 jobs:
-  build-and-test:
-    name: build + test (linux x86_64, self-host)
+  build-test:
+    name: build + unit tests (linux x86_64, self-host)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      # MCPP_HOME pinned so the cache key below restores into the
-      # same path mcpp resolves at runtime.
-      MCPP_HOME: /home/runner/.mcpp
-      # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm).
-      MCPP_VERBOSE: "1"
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
-      # Cache mcpp's sandbox: the toolchain (musl-gcc + binutils +
-      # glibc + linux-headers + patchelf + ninja) takes minutes to
-      # install on a cold runner. Key on the workspace manifest so a
-      # toolchain change in mcpp.toml refreshes the cache; restore-keys
-      # provide a layered fallback so near-misses still skip the slow
-      # toolchain installs.
-      - name: Cache mcpp sandbox
-        uses: actions/cache@v4
-        with:
-          path: ~/.mcpp
-          # NOTE: the "-ci-" segment keeps this lineage disjoint from
-          # release.yml's "-release-" caches. A bare "mcpp-sandbox-<os>-"
-          # restore prefix used to match the release sandbox too, silently
-          # swapping in a differently-populated registry (issue #120).
-          key: mcpp-sandbox-${{ runner.os }}-ci-${{ hashFiles('mcpp.toml', '.xlings.json') }}
-          restore-keys: |
-            mcpp-sandbox-${{ runner.os }}-ci-
-
-      # Cache xlings + its locally installed packages (xim:mcpp etc.).
-      # Saves the xlings bootstrap roundtrip + the mcpp xpkg download
-      # on hot runs.
-      - name: Cache xlings
-        uses: actions/cache@v4
-        with:
-          path: ~/.xlings
-          key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
-          restore-keys: |
-            xlings-${{ runner.os }}-v2-
-
-      - name: Bootstrap mcpp via xlings
-        env:
-          XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.30'
-        run: |
-          # Always install the pinned version — cache may hold an older
-          # xlings whose sysroot/packages are incompatible.
-          tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
-          curl -fsSL -o "/tmp/${tarball}" \
-            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
-          tar -xzf "/tmp/${tarball}" -C /tmp
-          "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
-          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
-          xlings --version
-          # xim:mcpp — `xlings install` is idempotent so cache hits skip
-          # the download.
-          xlings install mcpp -y
-          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
-          test -x "$MCPP"
-          "$MCPP" --version
-          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
-          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
-
-      # Cache the build directory: precise key on src/ + manifest
-      # so a no-source-change run lands on a full hit. Layered
-      # restore-keys let mid-run partial hits keep BMI/dyndep state
-      # for proper incremental builds.
-      - name: Cache target/ (build artifacts + BMIs)
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: mcpp-target-${{ runner.os }}-${{ hashFiles('src/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
-          restore-keys: |
-            mcpp-target-${{ runner.os }}-
+      - uses: ./.github/actions/bootstrap-mcpp
 
       - name: Configure mirror + Build mcpp from source (self-host)
         run: |
@@ -116,25 +63,55 @@ jobs:
           "$MCPP_FRESH" self config --mirror GLOBAL
           "$MCPP_FRESH" test
 
-      # NOTE: the e2e suite (tests/e2e/run_all.sh) moved to ci-linux-e2e.yml
-      # so it runs in parallel with this job. The toolchain matrix below no
-      # longer relies on e2e's toolchain warm-ups: the GCC build uses the
-      # mcpp.toml-pinned default (gcc@16.1.0, already in the sandbox from the
-      # self-host build above), and the musl `--target` build auto-installs
-      # gcc@16.1.0-musl on demand (cached across runs).
+  # A cold, from-scratch self-host build with the manifest-pinned GCC: the
+  # property `build-test` cannot cover, because it builds incrementally on a
+  # restored target/. `mcpp test` is deliberately NOT repeated here — it would
+  # be the same suite, same toolchain, same driver binary as `build-test`,
+  # differing only in incremental state.
+  toolchain-gcc:
+    name: "toolchain: gcc (cold self-host)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
 
-      - name: Save freshly-built mcpp for toolchain tests
+      - name: Build mcpp from source (self-host)
         run: |
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
-          cp "$MCPP" /tmp/mcpp-fresh
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+          MCPP_FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          cp "$MCPP_FRESH" /tmp/mcpp-fresh
           echo "MCPP=/tmp/mcpp-fresh" >> "$GITHUB_ENV"
 
-      - name: "Toolchain: GCC — build mcpp + test"
+      - name: "Toolchain: GCC — cold rebuild with the PR binary"
         run: |
           "$MCPP" clean
           "$MCPP" build 2>&1 | tee build.log; grep -q "Resolved gcc@16.1.0" build.log
-          "$MCPP" test
 
+  # The two cheap legs share one runner: each is ~1 min after the warm build,
+  # so a runner apiece would cost more in setup than it saves in wall-clock.
+  toolchain-cross:
+    name: "toolchain: musl + llvm"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+          MCPP_FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          cp "$MCPP_FRESH" /tmp/mcpp-fresh
+          echo "MCPP=/tmp/mcpp-fresh" >> "$GITHUB_ENV"
+
+      # Auto-installs gcc@16.1.0-musl on demand (cached across runs).
       - name: "Toolchain: musl-gcc — build mcpp (--target)"
         run: |
           "$MCPP" clean
@@ -150,16 +127,33 @@ jobs:
           # Restore
           sed -i 's/^default = "llvm@20.1.7"/default = "gcc@16.1.0"/' mcpp.toml
 
-      # Integration: the mcpp built from THIS PR's source (the self-host binary,
-      # $MCPP = /tmp/mcpp-fresh) builds & runs a real external C++ project —
-      # xlings (openxlings/xlings ships its own mcpp.toml). MCPP_VENDORED_XLINGS
-      # only supplies the xlings package backend that mcpp resolves deps through.
-      - name: "Integration: mcpp builds & runs xlings (openxlings/xlings)"
-        env:
-          XLINGS_NON_INTERACTIVE: '1'
+  # Integration: the mcpp built from THIS PR's source builds & runs a real
+  # external C++ project — xlings (openxlings/xlings ships its own mcpp.toml).
+  # MCPP_VENDORED_XLINGS only supplies the xlings package backend that mcpp
+  # resolves deps through.
+  integration-xlings:
+    name: "integration: mcpp builds & runs xlings"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      XLINGS_NON_INTERACTIVE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host)
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          # $MCPP is the freshly self-hosted binary built from this PR.
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+          MCPP_FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          cp "$MCPP_FRESH" /tmp/mcpp-fresh
+          echo "MCPP=/tmp/mcpp-fresh" >> "$GITHUB_ENV"
+
+      - name: "Integration: mcpp builds & runs xlings (openxlings/xlings)"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           git clone --depth 1 --recurse-submodules \
             https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src

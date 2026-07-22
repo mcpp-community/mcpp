@@ -1,0 +1,113 @@
+name: bootstrap-mcpp
+description: >
+  Restore the shared CI cache lineage (mcpp sandbox + xlings + target/) and
+  bootstrap a released mcpp via xlings. Exports MCPP and XLINGS_BIN.
+
+  Extracted so the split CI jobs (build / toolchain legs / e2e shards /
+  integration) share ONE definition instead of copy-pasting a 40-line
+  preamble per job. Every job that uses it lands on the same cache keys,
+  which is what makes splitting cheap: each job restores a warm sandbox
+  and only pays one incremental `mcpp build`.
+
+inputs:
+  xlings-version:
+    description: xlings release to bootstrap from
+    required: false
+    default: '0.4.30'
+  cache-target:
+    description: also restore/save target/ (build artifacts + BMIs)
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    # NOTE: the "-ci-" segment keeps this lineage disjoint from release.yml's
+    # "-release-" caches. A bare "mcpp-sandbox-<os>-" restore prefix used to
+    # match the release sandbox too, silently swapping in a differently
+    # populated registry (issue #120).
+    - name: Cache mcpp sandbox
+      uses: actions/cache@v4
+      with:
+        path: ~/.mcpp
+        key: mcpp-sandbox-${{ runner.os }}-ci-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+        restore-keys: |
+          mcpp-sandbox-${{ runner.os }}-ci-
+
+    - name: Cache xlings
+      uses: actions/cache@v4
+      with:
+        path: ~/.xlings
+        key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
+        restore-keys: |
+          xlings-${{ runner.os }}-v2-
+
+    - name: Bootstrap mcpp via xlings (unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        XLINGS_NON_INTERACTIVE: '1'
+        XLINGS_VERSION: ${{ inputs.xlings-version }}
+      run: |
+        # Always install the pinned version — the cache may hold an older
+        # xlings whose sysroot/packages are incompatible.
+        case "$(uname -s)" in
+          Darwin) tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz" ;;
+          *)      tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz" ;;
+        esac
+        WORK=$(mktemp -d)
+        curl -fsSL -o "${WORK}/${tarball}" \
+          "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+        tar -xzf "${WORK}/${tarball}" -C "${WORK}"
+        "${WORK}/${tarball%.tar.gz}/subos/default/bin/xlings" self install
+        export PATH="$HOME/.xlings/subos/default/bin:$PATH"
+        echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+        xlings --version
+        # xim:mcpp — `xlings install` is idempotent, so cache hits skip the
+        # download.
+        xlings install mcpp -y
+        MCPP="$HOME/.xlings/subos/default/bin/mcpp"
+        test -x "$MCPP"
+        "$MCPP" --version
+        echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+        echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
+
+    - name: Bootstrap mcpp via xlings (windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      env:
+        XLINGS_NON_INTERACTIVE: '1'
+        XLINGS_VERSION: ${{ inputs.xlings-version }}
+      run: |
+        WORK=$(mktemp -d)
+        zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
+        curl -fsSL -o "${WORK}/${zipfile}" \
+          "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${zipfile}"
+        cd "${WORK}"
+        unzip -q "${zipfile}"
+        "$WORK/xlings-${XLINGS_VERSION}-windows-x86_64/subos/default/bin/xlings.exe" self install
+        export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
+        echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
+        xlings.exe --version
+        xlings.exe install mcpp -y
+        MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp.exe" -path "*/bin/*" 2>/dev/null | head -1)
+        if [ -z "$MCPP" ]; then
+          MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp" -path "*/bin/*" 2>/dev/null | head -1)
+        fi
+        test -n "$MCPP" || { echo "FAIL: mcpp not found after xlings install"; exit 1; }
+        "$MCPP" --version
+        echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+        echo "XLINGS_BIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")" >> "$GITHUB_ENV"
+
+    # Precise key on src/ + manifest so a no-source-change run lands on a full
+    # hit; layered restore-keys let partial hits keep BMI/dyndep state for a
+    # proper incremental build.
+    - name: Cache target/ (build artifacts + BMIs)
+      if: inputs.cache-target == 'true'
+      uses: actions/cache@v4
+      with:
+        path: target
+        key: mcpp-target-${{ runner.os }}-${{ github.job }}-${{ hashFiles('src/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
+        restore-keys: |
+          mcpp-target-${{ runner.os }}-${{ github.job }}-
+          mcpp-target-${{ runner.os }}-

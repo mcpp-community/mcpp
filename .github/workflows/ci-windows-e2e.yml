@@ -1,0 +1,64 @@
+name: ci-windows-e2e
+
+# The e2e suite on Windows, split out of ci-windows.yml (where it was 9.7 of
+# the job's 20.4 min) and sharded across two runners — same shape as
+# ci-linux-e2e.yml. Shares the cache lineage in .github/actions/bootstrap-mcpp,
+# so each shard restores a warm sandbox and pays one incremental `mcpp build`.
+#
+# Paired workflows: ci-windows.yml (build + unit + package, toolchains +
+# regressions), ci-linux-e2e.yml, ci-macos-e2e.yml.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e ${{ matrix.shard }}/2 (windows x64, self-host)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      MCPP_HOME: C:\Users\runneradmin\.mcpp
+      # Round-robin slice of tests/e2e (see run_all.sh).
+      E2E_SHARD: ${{ matrix.shard }}/2
+      # NOTE: do NOT force MCPP_VERBOSE here. The e2e suite includes tests that
+      # assert mcpp's DEFAULT (quiet) output — e.g. 48_build_error_output and
+      # 53_namespaced_cache_label — which forced verbose would break.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
+          MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
+          "$MCPP_SELF" --version
+          echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
+
+      - name: E2E suite
+        shell: bash
+        # Fail-fast on hung tests instead of burning the whole job budget.
+        # Per-test 600s timeout lives in run_all.sh.
+        timeout-minutes: 25
+        run: |
+          export MCPP="$MCPP_SELF"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP_SELF" self config --mirror GLOBAL
+          "$MCPP_SELF" toolchain default llvm@20.1.7
+          bash tests/e2e/run_all.sh

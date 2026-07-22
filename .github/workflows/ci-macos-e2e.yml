@@ -1,0 +1,55 @@
+name: ci-macos-e2e
+
+# The e2e suite on macOS ARM64, split out of ci-macos.yml (where it was 3.4 of
+# the job's 8.4 min) so it runs in parallel with the toolchain/integration
+# work — same shape as ci-linux-e2e.yml / ci-windows-e2e.yml.
+#
+# Not sharded: the macOS runners finish the suite in ~3.5 min, which is under
+# this workflow's setup+build floor, so a second runner would buy nothing.
+#
+# Paired workflows: ci-macos.yml, ci-linux-e2e.yml, ci-windows-e2e.yml.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e suite (macOS ARM64, self-host)
+    runs-on: macos-15
+    timeout-minutes: 30
+    # NOTE: no MCPP_VERBOSE — the e2e suite asserts mcpp's default quiet
+    # output (tests 48/53).
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-llvm
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+
+      - name: E2E suite
+        # Fail-fast on hung tests instead of burning the whole job budget.
+        # Per-test 600s timeout lives in run_all.sh.
+        timeout-minutes: 25
+        run: |
+          MCPP=$(find target -path "*/bin/mcpp" | head -1)
+          MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
+          test -x "$MCPP"
+          export MCPP
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          test -x "$MCPP_VENDORED_XLINGS"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
+          "$MCPP" self config
+          # macOS default toolchain is LLVM
+          "$MCPP" toolchain default "llvm@${MCPP_LLVM_VER}"
+          bash tests/e2e/run_all.sh

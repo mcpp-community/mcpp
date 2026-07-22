@@ -1,14 +1,14 @@
 name: ci-linux-e2e
 
-# The e2e suite (tests/e2e/run_all.sh, ~18 min) split out of ci-linux.yml so it
-# runs in PARALLEL with the build/unit/toolchain-matrix job instead of tacked on
-# after it. Both workflows share the same cache lineage (mcpp sandbox + xlings +
-# target/), so this job restores a warm build and the only added wall-clock vs.
-# the inline version is one extra warm `mcpp build`. Net per-PR critical path
-# drops from "build + … + e2e" to max(build+matrix, build+e2e).
+# The e2e suite (tests/e2e/run_all.sh) split out of ci-linux.yml so it runs in
+# PARALLEL with the build/unit/toolchain jobs instead of tacked on after them,
+# and SHARDED across two runners on top of that. Both workflows share the same
+# cache lineage (mcpp sandbox + xlings + target/), so each shard restores a warm
+# build and the only added wall-clock vs. the inline version is one extra warm
+# `mcpp build` per runner.
 #
-# Paired workflows: ci-linux.yml (build + unit + toolchain matrix + integration),
-# ci-macos.yml, ci-windows.yml.
+# Paired workflows: ci-linux.yml (build + unit + toolchain legs + integration),
+# ci-macos.yml / ci-macos-e2e.yml, ci-windows.yml / ci-windows-e2e.yml.
 
 on:
   push:
@@ -23,10 +23,18 @@ concurrency:
 
 jobs:
   e2e:
-    name: e2e suite (linux x86_64, self-host)
+    name: e2e ${{ matrix.shard }}/2 (linux x86_64, self-host)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
+      # Round-robin slice of tests/e2e (see run_all.sh). Two shards halve the
+      # suite's wall-clock; the split is computed on the full file list, so a
+      # test's shard does not move when host capabilities differ.
+      E2E_SHARD: ${{ matrix.shard }}/2
       MCPP_HOME: /home/runner/.mcpp
       # NOTE: do NOT force MCPP_VERBOSE here. The e2e suite includes tests that
       # assert mcpp's DEFAULT (quiet) output — e.g. 48_build_error_output and
@@ -37,51 +45,8 @@ jobs:
       - uses: actions/checkout@v4
 
       # Same cache lineage as ci-linux.yml so this job lands on a warm
-      # toolchain/sandbox instead of re-installing it. Both workflows read
-      # (and may save) the same keys; actions/cache tolerates concurrent
-      # "already exists" saves.
-      - name: Cache mcpp sandbox
-        uses: actions/cache@v4
-        with:
-          path: ~/.mcpp
-          key: mcpp-sandbox-${{ runner.os }}-ci-${{ hashFiles('mcpp.toml', '.xlings.json') }}
-          restore-keys: |
-            mcpp-sandbox-${{ runner.os }}-ci-
-
-      - name: Cache xlings
-        uses: actions/cache@v4
-        with:
-          path: ~/.xlings
-          key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
-          restore-keys: |
-            xlings-${{ runner.os }}-v2-
-
-      - name: Bootstrap mcpp via xlings
-        env:
-          XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.30'
-        run: |
-          tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
-          curl -fsSL -o "/tmp/${tarball}" \
-            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
-          tar -xzf "/tmp/${tarball}" -C /tmp
-          "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
-          export PATH="$HOME/.xlings/subos/default/bin:$PATH"
-          xlings --version
-          xlings install mcpp -y
-          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
-          test -x "$MCPP"
-          "$MCPP" --version
-          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
-          echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
-
-      - name: Cache target/ (build artifacts + BMIs)
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: mcpp-target-${{ runner.os }}-${{ hashFiles('src/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
-          restore-keys: |
-            mcpp-target-${{ runner.os }}-
+      # toolchain/sandbox instead of re-installing it.
+      - uses: ./.github/actions/bootstrap-mcpp
 
       - name: Configure mirror + Build mcpp from source (self-host)
         run: |
