@@ -31,6 +31,17 @@ concurrency:
   group: ci-fresh-install
   cancel-in-progress: false # use false to test in PRs, true to only test released mcpp
 
+# Version under test. Bare `xlings install mcpp` resolves "newest in the
+# runner's index copy", which is NOT the same source the wait-index job
+# polls (raw.githubusercontent.com) — on 2026-07-21 the guard reported
+# "index tracks 0.0.102" and the jobs still installed 0.0.100 ten seconds
+# later, which then met an index whose floor was 0.0.101 (#265). Pinning
+# makes the version explicit: if the index cannot serve it yet, the job
+# fails with `version not found` instead of silently testing an older
+# binary. Bump together with the .xlings.json workspace pin at release.
+env:
+  MCPP_PIN: '0.0.102'
+
 jobs:
   # ──────────────────────────────────────────────────────────────────
   # Linux: gcc@16.1.0, musl-gcc@16.1.0, llvm@20.1.7
@@ -86,10 +97,9 @@ jobs:
       - name: Install mcpp and config mirror
         run: |
           # The release tarball bundles a pkgindex snapshot frozen at
-          # build time; refresh it so the workspace pin in .xlings.json
-          # (latest mcpp) resolves.
+          # build time; refresh it so the pinned mcpp resolves.
           xlings update
-          xlings install mcpp -y -g  # install to global
+          xlings install "mcpp@${MCPP_PIN}" -y -g  # install to global
           mcpp --version
           mcpp self config --mirror GLOBAL
 
@@ -230,7 +240,7 @@ jobs:
         run: |
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
           xlings update
-          xlings install mcpp -y -g
+          xlings install "mcpp@${MCPP_PIN}" -y -g
           mcpp --version
           mcpp self config --mirror GLOBAL
 
@@ -283,10 +293,9 @@ jobs:
 
       - name: Install mcpp and config mirror
         run: |
-          # Refresh the bundled pkgindex snapshot so the workspace pin
-          # in .xlings.json (latest mcpp) resolves.
+          # Refresh the bundled pkgindex snapshot so the pinned mcpp resolves.
           xlings update
-          xlings install mcpp -y -g  # install to global
+          xlings install "mcpp@${MCPP_PIN}" -y -g  # install to global
           mcpp --version
           mcpp self config --mirror GLOBAL
 
@@ -342,10 +351,9 @@ jobs:
       - name: Install mcpp and config mirror
         shell: pwsh
         run: |
-          # Refresh the bundled pkgindex snapshot so the workspace pin
-          # in .xlings.json (latest mcpp) resolves.
+          # Refresh the bundled pkgindex snapshot so the pinned mcpp resolves.
           xlings update
-          xlings install mcpp -y -g --verbose
+          xlings install "mcpp@$env:MCPP_PIN" -y -g --verbose
 
           cat "$env:USERPROFILE\.xlings\.xlings.json"
           mcpp --version
