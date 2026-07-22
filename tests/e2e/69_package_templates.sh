@@ -133,4 +133,31 @@ grep -qi "not found in the index" out5.log || { cat out5.log; echo "missing inde
 "$MCPP" new app6 --template gui > out6.log 2>&1 || { cat out6.log; echo "gui builtin broke"; exit 1; }
 grep -qi "deprecated" out6.log || { cat out6.log; echo "missing gui deprecation"; exit 1; }
 
+# 7. Form B (mcpp = { ... }) compat package → skipped, "not found in the index".
+mkdir -p "$MCPP_HOME/registry/data/mcpplibs/pkgs/c"
+cat > "$MCPP_HOME/registry/data/mcpplibs/pkgs/c/compat.tpl-repro.lua" <<'EOF'
+package = {
+    spec      = "1",
+    namespace = "compat",
+    name      = "compat.tpl-repro",
+    type      = "package",
+    xpm = {
+        linux   = { ["0.1.0"] = { url = "https://example.invalid/x.tar.gz", sha256 = "0" } },
+        macosx  = { ["0.1.0"] = { url = "https://example.invalid/x.tar.gz", sha256 = "0" } },
+        windows = { ["0.1.0"] = { url = "https://example.invalid/x.tar.gz", sha256 = "0" } },
+    },
+    mcpp = {
+        language     = "c++23",
+        include_dirs = {"*"},
+        sources      = {"*.cpp"},
+        targets      = { tpl_repro = { kind = "lib" } },
+    },
+}
+EOF
+mkdir -p "$MCPP_HOME/registry/data/xpkgs/compat-x-compat.tpl-repro/0.1.0"
+if "$MCPP" new app7 --template tpl-repro > out7.log 2>&1; then
+    cat out7.log; echo "L7: Form B template must fail"; exit 1
+fi
+grep -qi "not found in the index" out7.log || { cat out7.log; echo "L7: wrong error for Form B skip"; exit 1; }
+
 echo "OK"

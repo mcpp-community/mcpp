@@ -44,6 +44,12 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
     std::optional<std::string> lua;
     for (std::string cand : {std::string{}, std::string{"compat"}}) {
         if (auto l = fetcher.read_xpkg_lua(cand, spec.pkg)) {
+            // Form B packages (mcpp = { ... }) are build recipes without
+            // a source tree — no physical mcpp.toml or templates/.
+            auto field = mcpp::manifest::extract_mcpp_field(*l);
+            if (field.kind == mcpp::manifest::McppField::TableBody) {
+                continue;
+            }
             lua = std::move(*l);
             break;
         }
