@@ -18,9 +18,18 @@ struct IndexSpec {
     std::string              tag;       // git tag
     std::string              branch;    // git branch
     std::filesystem::path    path;      // local path (takes priority over url)
+    std::string              artifact;  // optional artifact source base (xlings >= 0.4.68, #269)
+    std::string              source;    // optional "auto" | "artifact" | "git"
 
     bool is_local()   const { return !path.empty(); }
     bool is_pinned()  const { return !rev.empty(); }
+    // The artifact channel only tracks the latest published pointer; any
+    // rev/tag/branch pin (and local path) therefore forces git and the
+    // artifact declaration is ignored (with a warning at seed time).
+    bool artifact_applicable() const {
+        return !artifact.empty() && rev.empty() && tag.empty()
+            && branch.empty() && path.empty();
+    }
     // R6: `name == "mcpplibs"` alone used to mean "builtin" unconditionally,
     // which was correct while the only way to reach that name was the
     // literal `[indices] mcpplibs = { url = ..., rev = ... }` pin form (still

@@ -2601,3 +2601,30 @@ mcpp = {
     EXPECT_EQ(host->modules.sources, nativeTarget->modules.sources);
     EXPECT_EQ(host->buildConfig.cxxflags, nativeTarget->buildConfig.cxxflags);
 }
+
+TEST(Manifest, IndicesArtifactAndSourceParsedAndPinSuppresses) {
+    // #269: [indices] entries may declare an xlings >= 0.4.68 artifact
+    // source. rev/tag/branch pins force git (the artifact channel only
+    // tracks the latest pointer), which artifact_applicable() encodes.
+    constexpr auto src = R"(
+[package]
+name = "hello"
+version = "0.1.0"
+[language]
+standard = "c++23"
+[modules]
+sources = ["src/**/*.cppm"]
+[indices]
+fast   = { url = "https://example.com/i.git", artifact = "https://example.com/res/i", source = "auto" }
+pinned = { url = "https://example.com/i.git", artifact = "https://example.com/res/i", rev = "abc123" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto& fast = m->indices.at("fast");
+    EXPECT_EQ(fast.artifact, "https://example.com/res/i");
+    EXPECT_EQ(fast.source, "auto");
+    EXPECT_TRUE(fast.artifact_applicable());
+    auto& pinned = m->indices.at("pinned");
+    EXPECT_EQ(pinned.artifact, "https://example.com/res/i");
+    EXPECT_FALSE(pinned.artifact_applicable());
+}

@@ -1146,6 +1146,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (auto it = sub.find("tag");    it != sub.end() && it->second.is_string()) spec.tag    = it->second.as_string();
                 if (auto it = sub.find("branch"); it != sub.end() && it->second.is_string()) spec.branch = it->second.as_string();
                 if (auto it = sub.find("path");   it != sub.end() && it->second.is_string()) spec.path   = it->second.as_string();
+                if (auto it = sub.find("artifact"); it != sub.end() && it->second.is_string()) spec.artifact = it->second.as_string();
+                if (auto it = sub.find("source");   it != sub.end() && it->second.is_string()) spec.source   = it->second.as_string();
                 if (spec.url.empty() && spec.path.empty()) {
                     return std::unexpected(error(origin, std::format(
                         "[indices].{} must specify 'url' or 'path'", k)));

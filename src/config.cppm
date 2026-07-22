@@ -596,6 +596,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
                 if (auto it = sub.find("tag");    it != sub.end() && it->second.is_string()) spec.tag    = it->second.as_string();
                 if (auto it = sub.find("branch"); it != sub.end() && it->second.is_string()) spec.branch = it->second.as_string();
                 if (auto it = sub.find("path");   it != sub.end() && it->second.is_string()) spec.path   = it->second.as_string();
+                if (auto it = sub.find("artifact"); it != sub.end() && it->second.is_string()) spec.artifact = it->second.as_string();
+                if (auto it = sub.find("source");   it != sub.end() && it->second.is_string()) spec.source   = it->second.as_string();
             }
             if (!spec.url.empty() || !spec.path.empty())
                 cfg.indices[k] = std::move(spec);
@@ -731,7 +733,18 @@ bool ensure_project_index_dir(
             customRepos.push_back({ name, source.generic_string(), "", "" });
             continue;
         }
-        customRepos.push_back({ name, spec.url, "", "" });
+        // #269: pass a declared artifact source through to xlings unless a
+        // rev/tag/branch pin forces git (the artifact channel only tracks
+        // the latest published pointer).
+        mcpp::xlings::SeedRepo repo{ name, spec.url, "", "" };
+        if (spec.artifact_applicable()) {
+            repo.artifact = spec.artifact;
+            repo.source   = spec.source;
+        } else if (!spec.artifact.empty()) {
+            std::println("warning: [indices].{}: artifact source ignored "
+                         "(rev/tag/branch/path pins force git)", name);
+        }
+        customRepos.push_back(std::move(repo));
     }
 
     // NOTE: the official global `xim` index is deliberately NOT injected into
