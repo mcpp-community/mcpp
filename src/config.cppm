@@ -36,6 +36,8 @@ inline constexpr std::string_view kXlingsPinnedVersion = mcpp::xlings::pinned::k
 struct IndexRepo {
     std::string name;
     std::string url;
+    std::string artifact;   // optional artifact source base (xlings >= 0.4.68, #269)
+    std::string source;     // optional "auto" | "artifact" | "git" ("" = xlings default auto)
 };
 
 // Canonical mcpplibs index coordinates. The index repository moved from the
@@ -375,7 +377,9 @@ home   = ""
 default = "mcpplibs"
 
 [index.repos."mcpplibs"]
-url = "https://github.com/mcpplibs/mcpp-index.git"
+url      = "https://github.com/mcpplibs/mcpp-index.git"
+artifact = "https://github.com/xlings-res/mcpp-index"
+# source = "auto"  # default: artifact first, git fallback; set "git" to force git
 # xlings auto-adds xim / awesome / scode / d2x as defaults.
 
 [cache]
@@ -393,10 +397,11 @@ bool write_default_xlings_json(const std::filesystem::path& path,
                                const std::vector<IndexRepo>& repos,
                                std::string_view mirror_override = {})
 {
-    // Delegate to xlings module. Convert IndexRepo vec to pair span.
-    std::vector<std::pair<std::string,std::string>> pairs;
+    // Delegate to xlings module. Convert IndexRepo vec to SeedRepo span.
+    std::vector<mcpp::xlings::SeedRepo> pairs;
     pairs.reserve(repos.size());
-    for (auto& r : repos) pairs.emplace_back(r.name, r.url);
+    for (auto& r : repos)
+        pairs.push_back({ r.name, r.url, r.artifact, r.source });
     // seed_xlings_json writes to env.home / ".xlings.json", so we
     // construct a temporary Env with home = path.parent_path().
     mcpp::xlings::Env env;
@@ -469,6 +474,12 @@ void canonicalize_legacy_index_names(GlobalConfig& cfg) {
         // repo that happens to be named "mcpp-index" untouched.
         if (r.name == "mcpp-index" && r.url == kMcpplibsIndexUrl)
             r.name = "mcpplibs";
+        // ③ In-memory artifact default for the official index (#269): heals
+        // configs written by pre-artifact templates on every load without
+        // text surgery on user-editable config.toml. `source = "git"` is the
+        // explicit opt-out; a user-set artifact base always wins.
+        if (r.url == kMcpplibsIndexUrl && r.artifact.empty() && r.source != "git")
+            r.artifact = std::string(kMcpplibsIndexArtifact);
         bool duplicate = std::any_of(normalized.begin(), normalized.end(),
             [&](const IndexRepo& existing) {
                 return existing.name == r.name && existing.url == r.url;
@@ -562,7 +573,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             auto& tt = val.as_table();
             auto it = tt.find("url");
             if (it == tt.end() || !it->second.is_string()) continue;
-            cfg.indexRepos.push_back({ name, it->second.as_string() });
+            IndexRepo r{ name, it->second.as_string() };
+            if (auto a = tt.find("artifact"); a != tt.end() && a->second.is_string())
+                r.artifact = a->second.as_string();
+            if (auto s = tt.find("source"); s != tt.end() && s->second.is_string())
+                r.source = s->second.as_string();
+            cfg.indexRepos.push_back(std::move(r));
         }
     }
     // [indices] — new-schema custom index repositories.
@@ -592,11 +608,13 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // them ourselves can cause cross-index name conflicts during
     // dependency resolution (e.g. linux-headers existing in both
     // scode and xim). See docs/21 §VII.
-    auto add_default = [&](std::string_view name, std::string_view url) {
+    auto add_default = [&](std::string_view name, std::string_view url,
+                           std::string_view artifact = {}) {
         for (auto& r : cfg.indexRepos) if (r.name == name) return;
-        cfg.indexRepos.push_back({ std::string(name), std::string(url) });
+        cfg.indexRepos.push_back({ std::string(name), std::string(url),
+                                   std::string(artifact), std::string() });
     };
-    add_default("mcpplibs", kMcpplibsIndexUrl);
+    add_default("mcpplibs", kMcpplibsIndexUrl, kMcpplibsIndexArtifact);
     canonicalize_legacy_index_names(cfg);
 
     // 5. Seed registry/.xlings.json if missing; migrate legacy cached
@@ -687,8 +705,10 @@ void print_env(const GlobalConfig& cfg) {
     std::println("Index repos:");
     for (auto& r : cfg.indexRepos) {
         bool isDefault = (r.name == cfg.defaultIndex);
-        std::println("  {} {}{}",
-                     r.name, r.url, isDefault ? "  (default)" : "");
+        std::println("  {} {}{}{}",
+                     r.name, r.url,
+                     r.artifact.empty() ? "" : "  [artifact]",
+                     isDefault ? "  (default)" : "");
     }
 }
 
@@ -701,17 +721,17 @@ bool ensure_project_index_dir(
     // Collect custom non-builtin indices that need xlings project-scope data.
     // Local path indices are also seeded so xlings can create its own
     // project-local repo link and install packages from that index.
-    std::vector<std::pair<std::string,std::string>> customRepos;
+    std::vector<mcpp::xlings::SeedRepo> customRepos;
     for (auto& [name, spec] : indices) {
         if (spec.is_builtin()) continue;
         if (spec.is_local()) {
             auto source = resolve_project_index_path(projectDir, spec);
             std::error_code ec;
             std::filesystem::remove(source / ".xlings-index-cache.json", ec);
-            customRepos.emplace_back(name, source.generic_string());
+            customRepos.push_back({ name, source.generic_string(), "", "" });
             continue;
         }
-        customRepos.emplace_back(name, spec.url);
+        customRepos.push_back({ name, spec.url, "", "" });
     }
 
     // NOTE: the official global `xim` index is deliberately NOT injected into

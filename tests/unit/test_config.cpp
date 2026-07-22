@@ -223,3 +223,30 @@ TEST(ConfigIndexMigration, MigrateConfigTomlRewritesOrgUrlIdempotently) {
     EXPECT_EQ(read_all(p), text);
     std::filesystem::remove_all(dir);
 }
+
+TEST(ConfigIndexMigration, CanonicalizeFillsDefaultArtifactForOfficialRepo) {
+    mcpp::config::GlobalConfig cfg;
+    cfg.indexRepos.push_back({ "mcpplibs",
+        std::string(mcpp::config::kMcpplibsIndexUrlLegacy) });
+    mcpp::config::canonicalize_legacy_index_names(cfg);
+    ASSERT_EQ(cfg.indexRepos.size(), 1u);
+    EXPECT_EQ(cfg.indexRepos[0].artifact, mcpp::config::kMcpplibsIndexArtifact);
+}
+
+TEST(ConfigIndexMigration, CanonicalizeRespectsExplicitGitSourceAndCustomArtifact) {
+    mcpp::config::GlobalConfig cfg;
+    mcpp::config::IndexRepo git{ "mcpplibs",
+        std::string(mcpp::config::kMcpplibsIndexUrl) };
+    git.source = "git";
+    cfg.indexRepos.push_back(git);
+    mcpp::config::IndexRepo custom{ "mirror",
+        std::string(mcpp::config::kMcpplibsIndexUrl) };
+    custom.artifact = "https://example.com/my-mirror";
+    cfg.indexRepos.push_back(custom);
+    cfg.indexRepos.push_back({ "other", "https://example.com/other-index.git" });
+    mcpp::config::canonicalize_legacy_index_names(cfg);
+    ASSERT_EQ(cfg.indexRepos.size(), 3u);
+    EXPECT_TRUE(cfg.indexRepos[0].artifact.empty());        // explicit git opt-out
+    EXPECT_EQ(cfg.indexRepos[1].artifact, "https://example.com/my-mirror");
+    EXPECT_TRUE(cfg.indexRepos[2].artifact.empty());        // foreign repo untouched
+}

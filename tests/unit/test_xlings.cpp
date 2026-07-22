@@ -408,3 +408,49 @@ TEST(XlingsHomeTool, FindsPayloadUnderNonXimPrefix) {
 
     std::filesystem::remove_all(tmp);
 }
+
+// ─── seed_xlings_json — per-repo artifact/source emission (#269) ──────
+
+namespace {
+
+std::string read_seeded(const std::filesystem::path& home) {
+    std::stringstream ss;
+    ss << std::ifstream(home / ".xlings.json").rdbuf();
+    return ss.str();
+}
+
+}  // namespace
+
+TEST(XlingsSeed, PlainRepoEmissionIsByteStable) {
+    // Zero-diff gate: repos without artifact/source must serialize exactly
+    // as before the SeedRepo extension.
+    auto dir = make_tempdir("mcpp-seed-plain");
+    mcpp::xlings::Env env;
+    env.home = dir;
+    std::vector<mcpp::xlings::SeedRepo> repos{
+        { "mcpplibs", "https://x.git", "", "" } };
+    mcpp::xlings::seed_xlings_json(env, repos);
+    auto text = read_seeded(dir);
+    EXPECT_NE(text.find(
+        "    { \"name\": \"mcpplibs\", \"url\": \"https://x.git\" }\n"),
+        std::string::npos) << text;
+    EXPECT_EQ(text.find("artifact"), std::string::npos);
+    EXPECT_EQ(text.find("source"), std::string::npos);
+    std::filesystem::remove_all(dir);
+}
+
+TEST(XlingsSeed, ArtifactAndSourceEmittedWhenSet) {
+    auto dir = make_tempdir("mcpp-seed-art");
+    mcpp::xlings::Env env;
+    env.home = dir;
+    std::vector<mcpp::xlings::SeedRepo> repos{
+        { "mcpplibs", "https://x.git",
+          "https://github.com/xlings-res/mcpp-index", "auto" } };
+    mcpp::xlings::seed_xlings_json(env, repos);
+    auto text = read_seeded(dir);
+    EXPECT_NE(text.find(
+        "\"url\": \"https://x.git\", \"artifact\": "
+        "\"https://github.com/xlings-res/mcpp-index\", \"source\": \"auto\""),
+        std::string::npos) << text;
+    std::filesystem::remove_all(dir);
+}
