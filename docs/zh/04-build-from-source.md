@@ -100,5 +100,5 @@ mcpp 处于早期迭代阶段,接口可能调整,提交 PR 前请注意:
 
 - [社区论坛](https://forum.d2learn.org/category/20)
 - 交流群 QQ: 1067245099
-- [mcpp-index](https://github.com/mcpp-community/mcpp-index) — 默认包索引
+- [mcpp-index](https://github.com/mcpplibs/mcpp-index) — 默认包索引
 - [mcpplibs](https://github.com/mcpplibs) — 配套的模块化 C++ 库集合

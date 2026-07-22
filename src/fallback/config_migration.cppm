@@ -62,6 +62,9 @@ bool migrate_config_toml_index_names(const std::filesystem::path& path) {
 
     replace_all(updated, "default = \"mcpp-index\"", "default = \"mcpplibs\"");
     replace_all(updated, "[index.repos.\"mcpp-index\"]", "[index.repos.\"mcpplibs\"]");
+    // Org migration (#267): the index repo moved to the mcpplibs org.
+    replace_all(updated, "https://github.com/mcpp-community/mcpp-index.git",
+                         "https://github.com/mcpplibs/mcpp-index.git");
 
     return write_text_if_changed(path, original, updated);
 }
@@ -76,6 +79,9 @@ bool migrate_xlings_json_index_names(const std::filesystem::path& path) {
 
     replace_all(updated, "\"name\": \"mcpp-index\"", "\"name\": \"mcpplibs\"");
     replace_all(updated, "\"name\":\"mcpp-index\"", "\"name\":\"mcpplibs\"");
+    // Org migration (#267): the index repo moved to the mcpplibs org.
+    replace_all(updated, "https://github.com/mcpp-community/mcpp-index.git",
+                         "https://github.com/mcpplibs/mcpp-index.git");
 
     return write_text_if_changed(path, original, updated);
 }

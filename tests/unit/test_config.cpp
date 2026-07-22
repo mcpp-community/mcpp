@@ -5,6 +5,7 @@
 
 import std;
 import mcpp.config;
+import mcpp.fallback.config_migration;
 import mcpp.pm.index_spec;
 
 namespace {
@@ -161,4 +162,64 @@ TEST(Config, ProjectLocalIndexStaleCacheIsRemoved) {
     EXPECT_FALSE(std::filesystem::exists(localIndex / ".xlings-index-cache.json"));
 
     std::filesystem::remove_all(project);
+}
+
+// ── #267-A/#269: index org migration + artifact adoption ────────────────────
+
+namespace {
+
+std::string read_all(const std::filesystem::path& p) {
+    std::stringstream ss;
+    ss << std::ifstream(p).rdbuf();
+    return ss.str();
+}
+
+}  // namespace
+
+TEST(ConfigIndexMigration, CanonicalizeRewritesOrgAndName) {
+    mcpp::config::GlobalConfig cfg;
+    cfg.defaultIndex = "mcpp-index";
+    cfg.indexRepos.push_back({ "mcpp-index",
+        std::string(mcpp::config::kMcpplibsIndexUrlLegacy) });
+    mcpp::config::canonicalize_legacy_index_names(cfg);
+    ASSERT_EQ(cfg.indexRepos.size(), 1u);
+    EXPECT_EQ(cfg.defaultIndex, "mcpplibs");
+    EXPECT_EQ(cfg.indexRepos[0].name, "mcpplibs");
+    EXPECT_EQ(cfg.indexRepos[0].url,  mcpp::config::kMcpplibsIndexUrl);
+}
+
+TEST(ConfigIndexMigration, CanonicalizeFoldsLegacyAndDefaultEntries) {
+    mcpp::config::GlobalConfig cfg;
+    cfg.indexRepos.push_back({ "mcpplibs",
+        std::string(mcpp::config::kMcpplibsIndexUrlLegacy) });
+    cfg.indexRepos.push_back({ "mcpplibs",
+        std::string(mcpp::config::kMcpplibsIndexUrl) });
+    mcpp::config::canonicalize_legacy_index_names(cfg);
+    EXPECT_EQ(cfg.indexRepos.size(), 1u);
+}
+
+TEST(ConfigIndexMigration, CanonicalizeLeavesForeignReposAlone) {
+    mcpp::config::GlobalConfig cfg;
+    cfg.indexRepos.push_back({ "other", "https://example.com/other-index.git" });
+    mcpp::config::canonicalize_legacy_index_names(cfg);
+    ASSERT_EQ(cfg.indexRepos.size(), 1u);
+    EXPECT_EQ(cfg.indexRepos[0].name, "other");
+    EXPECT_EQ(cfg.indexRepos[0].url, "https://example.com/other-index.git");
+}
+
+TEST(ConfigIndexMigration, MigrateConfigTomlRewritesOrgUrlIdempotently) {
+    auto dir = make_tempdir("mcpp-migrate-toml");
+    auto p = dir / "config.toml";
+    {
+        std::ofstream os(p);
+        os << "[index]\ndefault = \"mcpplibs\"\n\n[index.repos.\"mcpplibs\"]\n"
+              "url = \"https://github.com/mcpp-community/mcpp-index.git\"\n";
+    }
+    EXPECT_TRUE(mcpp::fallback::migrate_config_toml_index_names(p));
+    auto text = read_all(p);
+    EXPECT_NE(text.find("github.com/mcpplibs/mcpp-index.git"), std::string::npos);
+    EXPECT_EQ(text.find("mcpp-community/mcpp-index"), std::string::npos);
+    EXPECT_FALSE(mcpp::fallback::migrate_config_toml_index_names(p));  // idempotent
+    EXPECT_EQ(read_all(p), text);
+    std::filesystem::remove_all(dir);
 }

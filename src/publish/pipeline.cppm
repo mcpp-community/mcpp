@@ -155,7 +155,7 @@ export int publish_package(bool dry_run, bool allow_dirty) {
     std::println("       Attach: {}", tarball.string());
     std::println("");
     std::println("  3. Open a PR to mcpp-index:");
-    std::println("       Fork:  https://github.com/mcpp-community/mcpp-index");
+    std::println("       Fork:  https://github.com/mcpplibs/mcpp-index");
     std::println("       Add:   pkgs/{}/{}.lua", first, pkg.name);
     std::println("       (file content is in {})", xpkgPath.string());
     std::println("");

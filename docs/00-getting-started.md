@@ -95,7 +95,7 @@ Declare dependencies in `mcpp.toml`:
 ```
 
 `mcpp build` automatically resolves SemVer constraints against the
-[mcpp-index](https://github.com/mcpp-community/mcpp-index), fetches the source,
+[mcpp-index](https://github.com/mcpplibs/mcpp-index), fetches the source,
 and adds it to the build graph. For a complete example, see `02-with-deps` in
 [01 — Examples](01-examples.md).
 

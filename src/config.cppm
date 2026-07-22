@@ -38,6 +38,18 @@ struct IndexRepo {
     std::string url;
 };
 
+// Canonical mcpplibs index coordinates. The index repository moved from the
+// mcpp-community org to the mcpplibs org (#267) — the legacy URL only works
+// through GitHub's repo redirect, which breaks silently if the old name is
+// ever re-taken. The artifact base is the release mirror consumed by
+// xlings >= 0.4.68 per-repo artifact sync (#269); older xlings ignores it.
+inline constexpr std::string_view kMcpplibsIndexUrl =
+    "https://github.com/mcpplibs/mcpp-index.git";
+inline constexpr std::string_view kMcpplibsIndexUrlLegacy =
+    "https://github.com/mcpp-community/mcpp-index.git";
+inline constexpr std::string_view kMcpplibsIndexArtifact =
+    "https://github.com/xlings-res/mcpp-index";
+
 struct GlobalConfig {
     // Resolved paths
     std::filesystem::path           mcppHome;            // ~/.mcpp/
@@ -251,6 +263,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 // Pretty-print resolved config for `mcpp env` command.
 void print_env(const GlobalConfig& cfg);
 
+// Normalize legacy index naming in a loaded config (exported for tests):
+// org migration mcpp-community/mcpp-index -> mcpplibs/mcpp-index, index name
+// mcpp-index -> mcpplibs, then name+url dedup. Order matters: URL first, so
+// old-config name entries still match and legacy/default entries fold.
+void canonicalize_legacy_index_names(GlobalConfig& cfg);
+
 // M5.5: persist [toolchain].default to config.toml.
 std::expected<void, ConfigError>
 write_default_toolchain(const GlobalConfig& cfg, std::string_view spec);
@@ -357,7 +375,7 @@ home   = ""
 default = "mcpplibs"
 
 [index.repos."mcpplibs"]
-url = "https://github.com/mcpp-community/mcpp-index.git"
+url = "https://github.com/mcpplibs/mcpp-index.git"
 # xlings auto-adds xim / awesome / scode / d2x as defaults.
 
 [cache]
@@ -396,25 +414,8 @@ bool write_default_xlings_json(const std::filesystem::path& path,
 }
 
 // Migration helpers delegated to mcpp.fallback.config_migration.
-
-void canonicalize_legacy_index_names(GlobalConfig& cfg) {
-    if (cfg.defaultIndex == "mcpp-index")
-        cfg.defaultIndex = "mcpplibs";
-
-    std::vector<IndexRepo> normalized;
-    for (auto r : cfg.indexRepos) {
-        if (r.name == "mcpp-index"
-            && r.url == "https://github.com/mcpp-community/mcpp-index.git") {
-            r.name = "mcpplibs";
-        }
-        bool duplicate = std::any_of(normalized.begin(), normalized.end(),
-            [&](const IndexRepo& existing) {
-                return existing.name == r.name && existing.url == r.url;
-            });
-        if (!duplicate) normalized.push_back(std::move(r));
-    }
-    cfg.indexRepos = std::move(normalized);
-}
+// canonicalize_legacy_index_names is exported (declared above, defined after
+// this helper namespace) so its ordering rules stay under unit test.
 
 // Xlings binary acquisition delegated to mcpp.fallback.xlings_binary.
 
@@ -453,6 +454,29 @@ void ensure_sandbox_patchelf(const GlobalConfig& cfg, bool quiet,
 }
 
 } // namespace
+
+void canonicalize_legacy_index_names(GlobalConfig& cfg) {
+    if (cfg.defaultIndex == "mcpp-index")
+        cfg.defaultIndex = "mcpplibs";
+
+    std::vector<IndexRepo> normalized;
+    for (auto r : cfg.indexRepos) {
+        // ① Org migration first — later steps (name match, dedup) key on the
+        // canonical URL, so legacy entries fold instead of surviving as dupes.
+        if (r.url == kMcpplibsIndexUrlLegacy)
+            r.url = std::string(kMcpplibsIndexUrl);
+        // ② Legacy index name. The URL condition keeps a user's unrelated
+        // repo that happens to be named "mcpp-index" untouched.
+        if (r.name == "mcpp-index" && r.url == kMcpplibsIndexUrl)
+            r.name = "mcpplibs";
+        bool duplicate = std::any_of(normalized.begin(), normalized.end(),
+            [&](const IndexRepo& existing) {
+                return existing.name == r.name && existing.url == r.url;
+            });
+        if (!duplicate) normalized.push_back(std::move(r));
+    }
+    cfg.indexRepos = std::move(normalized);
+}
 
 std::expected<GlobalConfig, ConfigError> load_or_init(
     bool quiet,
@@ -572,7 +596,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         for (auto& r : cfg.indexRepos) if (r.name == name) return;
         cfg.indexRepos.push_back({ std::string(name), std::string(url) });
     };
-    add_default("mcpplibs", "https://github.com/mcpp-community/mcpp-index.git");
+    add_default("mcpplibs", kMcpplibsIndexUrl);
     canonicalize_legacy_index_names(cfg);
 
     // 5. Seed registry/.xlings.json if missing; migrate legacy cached

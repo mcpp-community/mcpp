@@ -96,7 +96,7 @@ mcpp test               # 编译并运行 tests/**/*.cpp(gtest 风格)
 ```
 
 `mcpp build` 将自动从
-[mcpp-index](https://github.com/mcpp-community/mcpp-index) 解析 SemVer
+[mcpp-index](https://github.com/mcpplibs/mcpp-index) 解析 SemVer
 约束、拉取源码并加入编译图。完整示例参见
 [01 — 示例项目](01-examples.md) 中的 `02-with-deps`。
 

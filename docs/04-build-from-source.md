@@ -93,5 +93,5 @@ mcpp is in early iteration and its interfaces may change. Before submitting a PR
 
 - [Community forum](https://forum.d2learn.org/category/20)
 - Chat group QQ: 1067245099
-- [mcpp-index](https://github.com/mcpp-community/mcpp-index) — the default package index
+- [mcpp-index](https://github.com/mcpplibs/mcpp-index) — the default package index
 - [mcpplibs](https://github.com/mcpplibs) — the companion collection of modular C++ libraries
