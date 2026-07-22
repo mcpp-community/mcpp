@@ -33,7 +33,10 @@ struct Env {
 namespace pinned {
     inline constexpr std::string_view kPatchelfVersion = "0.18.0";
     inline constexpr std::string_view kNinjaVersion    = "1.12.1";
-    inline constexpr std::string_view kXlingsVersion   = "0.4.51";
+    // Keep in lock-step with the XLINGS_VERSION pins in release.yml /
+    // cross-build-test.yml / ci-linux-e2e.yml (the xlings actually bundled
+    // into releases). Printed by `mcpp self env`.
+    inline constexpr std::string_view kXlingsVersion   = "0.4.68";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

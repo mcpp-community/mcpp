@@ -695,6 +695,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 void print_env(const GlobalConfig& cfg) {
     std::println("MCPP_HOME           = {}", cfg.mcppHome.string());
     std::println("xlings binary       = {}", cfg.xlingsBinary.string());
+    std::println("xlings pinned       = {}", kXlingsPinnedVersion);
     std::println("xlings home         = {}", cfg.xlingsHome().string());
     std::println("config              = {}", cfg.configFile.string());
     std::println("BMI cache           = {}", cfg.bmiCacheDir.string());

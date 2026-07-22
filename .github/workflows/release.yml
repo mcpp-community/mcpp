@@ -96,7 +96,7 @@ jobs:
           # Pin xlings to a known-good version. The upstream install
           # script always grabs `latest` (no version override), so we
           # download + self-install manually to avoid broken releases.
-          XLINGS_VERSION: '0.4.67'
+          XLINGS_VERSION: '0.4.68'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
@@ -278,10 +278,10 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION"    >> "$GITHUB_OUTPUT"
 
-      - name: Bootstrap mcpp via xlings (latest 0.4.67)
+      - name: Bootstrap mcpp via xlings (latest 0.4.68)
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.67'
+          XLINGS_VERSION: '0.4.68'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -336,13 +336,13 @@ jobs:
           exec "$(dirname "$0")/bin/mcpp" "$@"
           LAUNCHER
           chmod +x "$STAGING/$WRAPPER/mcpp"
-          # Bundle the aarch64 xlings (0.4.67) so install.sh consumers on aarch64
+          # Bundle the aarch64 xlings (0.4.68) so install.sh consumers on aarch64
           # get an aarch64 xlings, not the x86_64 bootstrap one.
-          XLA="xlings-0.4.67-linux-aarch64.tar.gz"
+          XLA="xlings-0.4.68-linux-aarch64.tar.gz"
           if curl -fsSL -o "/tmp/$XLA" \
-               "https://github.com/openxlings/xlings/releases/download/v0.4.67/$XLA"; then
+               "https://github.com/openxlings/xlings/releases/download/v0.4.68/$XLA"; then
             tar -xzf "/tmp/$XLA" -C /tmp
-            XLBIN=$(find /tmp/xlings-0.4.67-linux-aarch64 -path '*/bin/xlings' -type f | head -1)
+            XLBIN=$(find /tmp/xlings-0.4.68-linux-aarch64 -path '*/bin/xlings' -type f | head -1)
             if [ -n "$XLBIN" ]; then
               mkdir -p "$STAGING/$WRAPPER/registry/bin"
               cp "$XLBIN" "$STAGING/$WRAPPER/registry/bin/xlings"
@@ -417,7 +417,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.67'
+          XLINGS_VERSION: '0.4.68'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             WORK=$(mktemp -d)
@@ -599,7 +599,7 @@ jobs:
         shell: bash
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.67'
+          XLINGS_VERSION: '0.4.68'
         run: |
           WORK=$(mktemp -d)
           zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
