@@ -253,3 +253,25 @@ TEST(PmPackageFetcher, ReadSeededIndexReposParsesXlingsJson) {
 
     std::filesystem::remove_all(project);
 }
+
+TEST(PmPackageFetcher, ReadSeededIndexReposToleratesArtifactFields) {
+    // #269: entries seeded with per-repo artifact/source keys (xlings >=
+    // 0.4.68) must still yield name+url — regression lock for the hand-
+    // rolled index_repos reader.
+    auto project = make_tempdir("mcpp-269-artifact-fields");
+    auto xjson = project / ".xlings.json";
+    write_file(xjson, R"({
+  "index_repos": [
+    { "name": "mcpplibs", "url": "https://github.com/mcpplibs/mcpp-index.git", "artifact": "https://github.com/xlings-res/mcpp-index", "source": "auto" }
+  ],
+  "lang": "en"
+})");
+
+    auto repos = mcpp::pm::read_seeded_index_repos(xjson);
+    ASSERT_EQ(repos.size(), 1u);
+    EXPECT_NE(repos[0].find("mcpplibs"), std::string::npos);
+    EXPECT_NE(repos[0].find("https://github.com/mcpplibs/mcpp-index.git"),
+              std::string::npos);
+
+    std::filesystem::remove_all(project);
+}
