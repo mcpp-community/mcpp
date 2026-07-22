@@ -3,6 +3,25 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.103] — 2026-07-22
+
+> #267/#269:索引侧健壮化一批——mcpplibs 索引 URL 组织迁移(不再依赖 GitHub 重定向)+ 采纳 xlings 0.4.68 per-repo artifact 来源(索引同步不再硬依赖可用的 git)。设计见 `.agents/docs/2026-07-22-issue267-269-index-artifact-and-org-migration-design.md`。
+
+### 修复
+
+- **mcpplibs 索引 URL 仍指向已迁移的旧组织**(#267-A):索引仓已迁 `mcpplibs/mcpp-index`,mcpp 4 处硬编码旧 `mcpp-community` URL 全靠 GitHub 仓库重定向才能工作——旧名一旦被再次占用即静默指向错误内容。新/旧 URL 与 artifact base 收敛为 `mcpp::config` 三常量;`canonicalize_legacy_index_names` 导出并承担"URL 归一→名字迁移→artifact 填充→去重"单循环(**URL 归一先行**,老配置的名字迁移仍命中、新旧条目在去重处折叠);存量安装经既有文本迁移钩子治愈(config.toml 与 registry `.xlings.json` 的 URL 就地替换),publish Fork 提示与 docs 链接同步。
+
+### 新增
+
+- **采纳 xlings 0.4.68 per-repo artifact 来源**(#269,#267-B):默认 `mcpplibs` 条目(config.toml 模板 + 内存级默认)声明 `artifact = xlings-res/mcpp-index`,`source = "git"` 为显式退出口;seed 管线由 `(name,url)` pair 升级为 `SeedRepo{name,url,artifact,source}`,非空才发射——无 artifact 的仓输出逐字节不变(测试锁定)。存量 registry `.xlings.json` 唯一治愈通道是文本迁移:URL 归一后就地注入 artifact 字段,幂等闸=res base 已出现即跳过,双间距变体覆盖 mcpp/xlings 两个写者,`subos`/版本绑定等无关状态逐字节保留(**不整文件重生成**)。旧 xlings(<0.4.68)安全忽略新字段,发布端 `xlings-res/mcpp-index` 布局实测零改动。
+- **项目级 `[indices]` artifact/source**(#269 可选项):`IndexSpec` 增两字段,mcpp.toml 与 config.toml `[indices]` 长格式同步解析,经项目 seed 透传;`artifact_applicable()` 编码设计规则——**rev/tag/branch pin(及本地 path)强制 git**(artifact 通道只跟 latest pointer),声明了 artifact 但不适用时告警而非静默同步错误版本。
+- **捆绑 xlings pin 0.4.67 → 0.4.68**(release/cross-build/e2e 三 workflow):0.4.68 携 openxlings/xlings#377(自定义 index artifact)/#380(shim env 去重)。陈旧无消费的 `kXlingsVersion`(0.4.51)对齐至 0.4.68 并由 `mcpp self env` 打印,常量不再能静默漂移。
+
+### 备注
+
+- e2e 新增 151:fresh init 播种新 URL + artifact;老 org URL/无 artifact 的存量 config.toml 与 `.xlings.json`(pretty/compact 双间距)就地治愈且幂等,无关 `.xlings.json` 状态保留。
+- CN region 对象形态(`{"GLOBAL":..,"CN":..}`)待 gitcode 侧 `xlings-res/mcpp-index` 镜像仓真实部署后再扩(设计文档 P5),避免声明 404 base 白付探测。
+
 ## [0.0.102] — 2026-07-22
 
 > 四条 issue 一个批次:#261 windows 命令行长度、#257 clang 依赖跟踪缺口、#258 条件段表达力、#254 host/target 双轴不自洽。贯穿主线是**同一决策不许两处推导**,以及本批次新立的第二条不变量**失败必须响,不许静默降级**。设计见 `.agents/docs/2026-07-22-v0.0.102-batch-254-261-design.md`,issue 裁决见 `.agents/docs/2026-07-22-issue-triage-254-261.md`。
