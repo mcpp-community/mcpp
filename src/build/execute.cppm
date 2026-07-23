@@ -766,41 +766,74 @@ export int run_tests(std::span<const std::string> passthrough,
         }
     }
 
-    // 5. Build everything.
+    // 5. Two-phase build. Phase A: package-level artifacts (everything that
+    //    is not a test binary — libs, deps). A failure here is the PACKAGE's
+    //    fault, not any single test's: report it as a build error, never as
+    //    N red tests. Phase B (below): each test is built as its own ninja
+    //    goal, so a compile failure is attributed to exactly that test and
+    //    the rest still build and run.
+    struct TestResult {
+        std::string name;
+        enum class St { Pass, CompileFail, RunFail } status;
+        int         exitCode = 0;
+        std::string compileOutput;
+        std::string runOutput;
+    };
+    std::vector<TestResult> results;
+
     auto backend = mcpp::build::make_ninja_backend();
-    mcpp::build::BuildOptions opts;
-    auto buildResult = backend->build(ctx->plan, opts);
-    if (!buildResult) {
-        std::fflush(stdout);
-        mcpp::ui::error(buildResult.error().message);
-        // Surface the compiler/linker stderr (parity with run_build_plan) —
-        // otherwise `mcpp test` failures show only "build failed" with no
-        // diagnostic, which is undebuggable (notably on CI).
-        if (!buildResult.error().diagnosticOutput.empty()) {
-            std::fputs(buildResult.error().diagnosticOutput.c_str(), stderr);
-            if (buildResult.error().diagnosticOutput.back() != '\n')
-                std::fputc('\n', stderr);
+
+    // Phase A goal set: every shared prerequisite — all package/dep compile
+    // units EXCEPT the tests' own main TUs, plus any non-test link outputs.
+    // In test mode the lib link unit is skipped entirely (plan.cppm), so the
+    // package's module objects are the only place shared breakage can show
+    // up; building them here is what keeps a broken src/ module a PACKAGE
+    // error instead of N identical per-test compile failures.
+    std::set<std::filesystem::path> testMains;
+    for (auto& lu : ctx->plan.linkUnits)
+        if (lu.kind == mcpp::build::LinkUnit::TestBinary && lu.entryMain)
+            testMains.insert(*lu.entryMain);
+    std::vector<std::string> pkgTargets;
+    for (auto& cu : ctx->plan.compileUnits)
+        if (!testMains.contains(cu.source))
+            pkgTargets.push_back(cu.object.generic_string());
+    for (auto& lu : ctx->plan.linkUnits)
+        if (lu.kind != mcpp::build::LinkUnit::TestBinary)
+            pkgTargets.push_back(lu.output.generic_string());
+    if (!pkgTargets.empty()) {
+        mcpp::build::BuildOptions aOpts;
+        aOpts.ninjaTargets = pkgTargets;
+        auto a = backend->build(ctx->plan, aOpts);
+        if (!a) {
+            std::fflush(stdout);
+            mcpp::ui::error(a.error().message);
+            // Surface the compiler/linker stderr (parity with run_build_plan) —
+            // otherwise `mcpp test` failures show only "build failed" with no
+            // diagnostic, which is undebuggable (notably on CI).
+            if (!a.error().diagnosticOutput.empty()) {
+                std::fputs(a.error().diagnosticOutput.c_str(), stderr);
+                if (a.error().diagnosticOutput.back() != '\n')
+                    std::fputc('\n', stderr);
+            }
+            return 1;
         }
-        return 1;
+
+        // M3.2: populate BMI cache for deps that did NOT hit cache — deps
+        // are package-level artifacts, so this belongs right after Phase A.
+        for (auto& task : ctx->depsToPopulate) {
+            auto pr = mcpp::bmi_cache::populate_from(task.key, ctx->outputDir, task.artifacts);
+            if (!pr) {
+                mcpp::ui::warning(std::format(
+                    "bmi cache populate failed for {}@{}: {}",
+                    task.key.packageName, task.key.version, pr.error()));
+            }
+        }
+
+        mcpp::ui::finished("test", a->elapsed);
     }
 
-    // M3.2: populate BMI cache for deps that did NOT hit cache.
-    for (auto& task : ctx->depsToPopulate) {
-        auto pr = mcpp::bmi_cache::populate_from(task.key, ctx->outputDir, task.artifacts);
-        if (!pr) {
-            mcpp::ui::warning(std::format(
-                "bmi cache populate failed for {}@{}: {}",
-                task.key.packageName, task.key.version, pr.error()));
-        }
-    }
-
-    mcpp::ui::finished("test", buildResult->elapsed);
-
-    // 6. Run each test binary in sequence; collect pass/fail.
+    // 6. Phase B: build + run each test in sequence; collect results.
     auto t0 = std::chrono::steady_clock::now();
-    int passed = 0;
-    int failed = 0;
-    std::vector<std::string> failures;
 
     auto runtimeEnvKey = mcpp::platform::env::runtime_library_path_key();
     auto runtimeEnvValue = mcpp::platform::env::prepend_path_list(
@@ -808,6 +841,17 @@ export int run_tests(std::span<const std::string> passthrough,
 
     for (auto& lu : ctx->plan.linkUnits) {
         if (lu.kind != mcpp::build::LinkUnit::TestBinary) continue;
+
+        mcpp::build::BuildOptions bOpts;
+        bOpts.ninjaTargets = {lu.output.generic_string()};
+        auto b = backend->build(ctx->plan, bOpts);
+        if (!b) {
+            std::println("{} ... FAIL (compile)", lu.targetName);
+            results.push_back({lu.targetName, TestResult::St::CompileFail, 0,
+                               b.error().diagnosticOutput, {}});
+            continue;
+        }
+
         auto exe = ctx->outputDir / lu.output;
         mcpp::ui::status("Running", std::format("bin/{}", lu.targetName));
 
@@ -839,17 +883,24 @@ export int run_tests(std::span<const std::string> passthrough,
 
         if (exitCode == 0) {
             std::println("{} ... ok", lu.targetName);
-            ++passed;
+            results.push_back({lu.targetName, TestResult::St::Pass, 0, {}, {}});
         } else {
             std::println("{} ... FAIL (exit {})", lu.targetName, exitCode);
-            ++failed;
-            failures.push_back(lu.targetName);
+            results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {}, {}});
         }
     }
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0);
 
     // 7. Summary.
+    int passed = 0;
+    int failed = 0;
+    std::vector<std::string> failures;
+    for (auto& r : results) {
+        if (r.status == TestResult::St::Pass) ++passed;
+        else { ++failed; failures.push_back(r.name); }
+    }
+
     std::println("");
     if (failed == 0) {
         mcpp::ui::status("test result",
@@ -863,6 +914,13 @@ export int run_tests(std::span<const std::string> passthrough,
     std::println("");
     std::println("failures:");
     for (auto& n : failures) std::println("    {}", n);
+    // Compile diagnostics per failed test, on stderr, after the summary —
+    // grouped so a learner scrolls to exactly their test's errors.
+    for (auto& r : results) {
+        if (r.status != TestResult::St::CompileFail || r.compileOutput.empty()) continue;
+        std::println(stderr, "\n--- {} (compile) ---", r.name);
+        std::fputs(r.compileOutput.c_str(), stderr);
+    }
     return 1;
 }
 
