@@ -328,7 +328,7 @@ qux = ">=1.0, <2.0" # Range combination
 gtest = "1.15.2"
 ```
 
-`mcpp build` ignores these; `mcpp test` resolves and uses them. `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries.
+`mcpp build` ignores these; `mcpp test` resolves and uses them. `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries. Tests are named by their `tests/`-relative path (`tests/00-a/0.cpp` → `00-a/0`), each test compiles in isolation (a broken test fails alone; package/dep breakage is reported as a build error instead), and `mcpp test <pattern>` / `--message-format json` filter and machine-format the run.
 
 ### 2.7 `[toolchain]` — Toolchain Configuration
 

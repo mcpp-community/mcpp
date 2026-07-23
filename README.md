@@ -221,7 +221,7 @@ import mcpplibs.cmdline;
 
 - `mcpp new` — create a modular project; `--template <pkg>[@ver][:<tmpl>]` uses a **library-provided template** (e.g. `--template imgui`); `--list-templates <pkg>` lists them
 - `mcpp run [-- args]` — build and run
-- `mcpp test [-- args]` — auto-discover and run tests
+- `mcpp test [pattern] [-- args]` — auto-discover and run tests (optionally filtered by name; `--message-format json` for tooling)
 - `mcpp search` — search package indices
 - `mcpp add / remove / update` — dependency management
 - `mcpp explain E0001` — detailed error-code explanations

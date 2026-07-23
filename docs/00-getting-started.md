@@ -83,6 +83,7 @@ showing progress and speed along the way. Once downloaded, all mcpp projects sha
 mcpp build              # incremental build
 mcpp clean              # clean target/
 mcpp test               # compile and run tests/**/*.cpp (gtest style)
+mcpp test <pattern>     # only tests whose name contains <pattern>
 ```
 
 ## Adding Dependencies
