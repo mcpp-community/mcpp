@@ -672,15 +672,45 @@ export int build_run_target(const std::optional<std::string>& targetName,
     return mcpp::platform::process::run_exec(argv, childEnv) == 0 ? 0 : 1;
 }
 
+export enum class TestMessageFormat { Human, Json };
+
 export struct TestOptions {
-    std::string filter;   // substring match on the path-based test name; empty = all
+    std::string        filter;   // substring match on the path-based test name; empty = all
+    TestMessageFormat  format = TestMessageFormat::Human;
 };
+
+// Minimal JSON string escaping for the --message-format json records. Same
+// shape as json_escape in cmd_xpkg.cppm — kept local (15 lines) rather than
+// shared across the cli/build module boundary.
+static std::string test_json_escape(std::string_view s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20)
+                    out += std::format("\\u{:04x}", static_cast<unsigned char>(c));
+                else out += c;
+        }
+    }
+    return out;
+}
 
 // `mcpp test` driver: discover tests/**/*.cpp, synthesize targets, build
 // with dev-deps, run each test binary, summarize.
 export int run_tests(std::span<const std::string> passthrough,
                      BuildOverrides overrides = {},
                      TestOptions testOpts = {}) {
+    const bool json = (testOpts.format == TestMessageFormat::Json);
+    // JSON mode: stdout carries NDJSON only. All ui::status/info lines print
+    // to stdout, so silence them wholesale; errors already go to stderr.
+    if (json) mcpp::ui::set_quiet(true);
+
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
         mcpp::ui::error("no mcpp.toml found in current directory or any parent");
@@ -751,6 +781,9 @@ export int run_tests(std::span<const std::string> passthrough,
         for (auto& lu : ctx->plan.linkUnits)
             if (filter_match(lu)) { any = true; break; }
         if (!any) {
+            if (json)
+                std::println("{{\"error\":\"no-tests-matched\",\"filter\":\"{}\"}}",
+                             test_json_escape(testOpts.filter));
             mcpp::ui::error(std::format("no tests match '{}'", testOpts.filter));
             return 2;
         }
@@ -805,6 +838,23 @@ export int run_tests(std::span<const std::string> passthrough,
     };
     std::vector<TestResult> results;
 
+    // Streaming NDJSON: one record per test, emitted as it finishes — a
+    // consumer (e.g. the d2x provider) sees progress live, and a crash
+    // mid-run still leaves the completed records on stdout.
+    auto emit_json = [&](const TestResult& r) {
+        if (!json) return;
+        const char* st = r.status == TestResult::St::Pass ? "pass"
+                       : r.status == TestResult::St::CompileFail ? "compile_fail"
+                                                                 : "run_fail";
+        std::string signal = (r.exitCode > 128 && r.exitCode < 128 + 65)
+            ? std::to_string(r.exitCode - 128) : "null";
+        std::println("{{\"test\":\"{}\",\"status\":\"{}\",\"exit_code\":{},\"signal\":{},"
+                     "\"compile_output\":\"{}\",\"run_output\":\"{}\"}}",
+                     test_json_escape(r.name), st, r.exitCode, signal,
+                     test_json_escape(r.compileOutput), test_json_escape(r.runOutput));
+        std::fflush(stdout);
+    };
+
     auto backend = mcpp::build::make_ninja_backend();
 
     // Phase A goal set: every shared prerequisite — all package/dep compile
@@ -830,6 +880,9 @@ export int run_tests(std::span<const std::string> passthrough,
         auto a = backend->build(ctx->plan, aOpts);
         if (!a) {
             std::fflush(stdout);
+            if (json)
+                std::println("{{\"error\":\"package\",\"compile_output\":\"{}\"}}",
+                             test_json_escape(a.error().diagnosticOutput));
             mcpp::ui::error(a.error().message);
             // Surface the compiler/linker stderr (parity with run_build_plan) —
             // otherwise `mcpp test` failures show only "build failed" with no
@@ -870,9 +923,10 @@ export int run_tests(std::span<const std::string> passthrough,
         bOpts.ninjaTargets = {lu.output.generic_string()};
         auto b = backend->build(ctx->plan, bOpts);
         if (!b) {
-            std::println("{} ... FAIL (compile)", lu.targetName);
+            if (!json) std::println("{} ... FAIL (compile)", lu.targetName);
             results.push_back({lu.targetName, TestResult::St::CompileFail, 0,
                                b.error().diagnosticOutput, {}});
+            emit_json(results.back());
             continue;
         }
 
@@ -903,15 +957,28 @@ export int run_tests(std::span<const std::string> passthrough,
             }
         }
 
-        int exitCode = mcpp::platform::process::run_exec(argv, childEnv);
+        // JSON mode captures the test's combined stdout+stderr into the
+        // record; human mode streams it to the terminal as before.
+        int exitCode;
+        std::string runOutput;
+        if (json) {
+            auto rr = mcpp::platform::process::capture_exec(argv, childEnv);
+            exitCode  = rr.exit_code;
+            runOutput = std::move(rr.output);
+        } else {
+            exitCode = mcpp::platform::process::run_exec(argv, childEnv);
+        }
 
         if (exitCode == 0) {
-            std::println("{} ... ok", lu.targetName);
-            results.push_back({lu.targetName, TestResult::St::Pass, 0, {}, {}});
+            if (!json) std::println("{} ... ok", lu.targetName);
+            results.push_back({lu.targetName, TestResult::St::Pass, 0, {},
+                               std::move(runOutput)});
         } else {
-            std::println("{} ... FAIL (exit {})", lu.targetName, exitCode);
-            results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {}, {}});
+            if (!json) std::println("{} ... FAIL (exit {})", lu.targetName, exitCode);
+            results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {},
+                               std::move(runOutput)});
         }
+        emit_json(results.back());
     }
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0);
@@ -923,6 +990,13 @@ export int run_tests(std::span<const std::string> passthrough,
     for (auto& r : results) {
         if (r.status == TestResult::St::Pass) ++passed;
         else { ++failed; failures.push_back(r.name); }
+    }
+
+    if (json) {
+        std::println("{{\"summary\":{{\"passed\":{},\"failed\":{},\"elapsed_ms\":{}}}}}",
+                     passed, failed, elapsed.count());
+        std::fflush(stdout);
+        return failed == 0 ? 0 : 1;
     }
 
     std::println("");

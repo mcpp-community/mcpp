@@ -127,6 +127,13 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
 
     mcpp::build::TestOptions to;
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
+    if (auto mf = parsed.value("message-format")) {
+        if (*mf == "json")       to.format = mcpp::build::TestMessageFormat::Json;
+        else if (*mf != "human") {
+            mcpp::ui::error(std::format("unknown --message-format '{}' (human|json)", *mf));
+            return 2;
+        }
+    }
 
     // Workspace fan-out: test every member through run_tests (which scopes its
     // discovery to the member). Continue-on-failure + per-member summary so one
