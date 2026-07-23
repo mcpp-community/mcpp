@@ -34,6 +34,11 @@ module;
 #include <unistd.h>    // pipe, dup2, close, read
 #include <sys/wait.h>  // waitpid
 #include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_* (incl. addchdir_np)
+#include <signal.h>    // kill, SIGKILL (deadline runners)
+#include <cerrno>      // errno, EINTR (deadline wait loop)
+#include <poll.h>      // poll (deadline capture)
+#include <fcntl.h>     // fcntl O_NONBLOCK (deadline capture)
+#include <time.h>      // nanosleep (deadline wait loop)
 #if defined(__APPLE__)
 #include <crt_externs.h>  // _NSGetEnviron — direct `environ` is only linkable
                           // from executables on Apple, not from dylibs
@@ -87,6 +92,21 @@ RunResult capture_exec(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
     std::string_view cwd = {});
+
+// Deadline variants (POSIX): kill the child with SIGKILL once `deadline`
+// elapses and set *timed_out. A zero deadline means no limit. On Windows the
+// deadline is currently ignored (no supported kill-by-handle path in the
+// residual shell launcher) — callers must treat the timeout as best-effort.
+int run_exec_deadline(const std::vector<std::string>& argv,
+                      const std::vector<std::pair<std::string, std::string>>& extraEnv,
+                      std::chrono::milliseconds deadline,
+                      bool* timed_out);
+
+RunResult capture_exec_deadline(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& extraEnv,
+    std::chrono::milliseconds deadline,
+    bool* timed_out);
 
 // Run `command` silently (discard stdout/stderr).
 // On POSIX, stdin is automatically redirected from /dev/null.
@@ -448,6 +468,119 @@ RunResult capture_exec(
 #endif
     }
     return capture_with_env(cmd, extraEnv);
+#endif
+}
+
+int run_exec_deadline(const std::vector<std::string>& argv,
+                      const std::vector<std::pair<std::string, std::string>>& extraEnv,
+                      std::chrono::milliseconds deadline,
+                      bool* timed_out)
+{
+    if (timed_out) *timed_out = false;
+    if (deadline.count() <= 0) return run_exec(argv, extraEnv);
+    if (argv.empty()) return 127;
+#if defined(__linux__) || defined(__APPLE__)
+    auto envStore = merged_environ(extraEnv);
+    std::vector<char*> envp;
+    for (auto& s : envStore) envp.push_back(s.data());
+    envp.push_back(nullptr);
+    std::vector<char*> cargv;
+    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+    cargv.push_back(nullptr);
+
+    pid_t pid = 0;
+    if (::posix_spawnp(&pid, cargv[0], nullptr, nullptr, cargv.data(), envp.data()) != 0)
+        return 127;
+
+    auto until = std::chrono::steady_clock::now() + deadline;
+    int status = 0;
+    for (;;) {
+        pid_t r = ::waitpid(pid, &status, WNOHANG);
+        if (r == pid) return normalize_exit_code(status);
+        if (r < 0 && errno != EINTR) return 127;
+        if (std::chrono::steady_clock::now() >= until) {
+            ::kill(pid, SIGKILL);
+            while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
+            if (timed_out) *timed_out = true;
+            return normalize_exit_code(status);
+        }
+        struct timespec ts{0, 20'000'000};   // 20ms
+        ::nanosleep(&ts, nullptr);
+    }
+#else
+    // Windows: the residual shell launcher has no kill-by-handle path yet —
+    // run untimed (documented best-effort semantics).
+    return run_exec(argv, extraEnv);
+#endif
+}
+
+RunResult capture_exec_deadline(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& extraEnv,
+    std::chrono::milliseconds deadline,
+    bool* timed_out)
+{
+    if (timed_out) *timed_out = false;
+    if (deadline.count() <= 0) return capture_exec(argv, extraEnv);
+    RunResult result;
+    if (argv.empty()) { result.exit_code = 127; return result; }
+#if defined(__linux__) || defined(__APPLE__)
+    int fds[2];
+    if (::pipe(fds) != 0) { result.exit_code = 127; return result; }
+
+    auto envStore = merged_environ(extraEnv);
+    std::vector<char*> envp;
+    for (auto& s : envStore) envp.push_back(s.data());
+    envp.push_back(nullptr);
+    std::vector<char*> cargv;
+    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+    cargv.push_back(nullptr);
+
+    posix_spawn_file_actions_t fa;
+    ::posix_spawn_file_actions_init(&fa);
+    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);
+    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);
+    ::posix_spawn_file_actions_addclose(&fa, fds[0]);
+    ::posix_spawn_file_actions_addclose(&fa, fds[1]);
+
+    pid_t pid = 0;
+    int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
+    ::posix_spawn_file_actions_destroy(&fa);
+    ::close(fds[1]);
+    if (sp != 0) { ::close(fds[0]); result.exit_code = 127; return result; }
+
+    ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+
+    auto until = std::chrono::steady_clock::now() + deadline;
+    bool killed = false;
+    std::array<char, 4096> buf{};
+    for (;;) {
+        struct pollfd pfd{fds[0], POLLIN, 0};
+        ::poll(&pfd, 1, 50);
+        for (;;) {
+            ssize_t n = ::read(fds[0], buf.data(), buf.size());
+            if (n > 0) { result.output.append(buf.data(), static_cast<size_t>(n)); continue; }
+            break;
+        }
+        int status = 0;
+        pid_t r = ::waitpid(pid, &status, WNOHANG);
+        if (r == pid) {
+            // Drain whatever is left in the pipe after exit.
+            ssize_t n;
+            while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
+                result.output.append(buf.data(), static_cast<size_t>(n));
+            ::close(fds[0]);
+            result.exit_code = normalize_exit_code(status);
+            if (timed_out) *timed_out = killed;
+            return result;
+        }
+        if (!killed && std::chrono::steady_clock::now() >= until) {
+            ::kill(pid, SIGKILL);
+            killed = true;
+        }
+    }
+#else
+    return capture_exec(argv, extraEnv);
 #endif
 }
 

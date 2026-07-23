@@ -257,6 +257,8 @@ int run(int argc, char** argv) {
                 .help("Output format: human (default) | json (NDJSON, one record per test)"))
             .option(cl::Option("list")
                 .help("List (filtered) tests without building or running them"))
+            .option(cl::Option("timeout").takes_value().value_name("SECS")
+                .help("Kill a test still running after SECS seconds (reported as a timeout failure)"))
             .option(cl::Option("profile").takes_value().value_name("NAME")
                 .help("Build profile for the test build: release (default) | dev | dist | <[profile.*] name>"))
             .option(cl::Option("features").takes_value().value_name("LIST")

@@ -128,6 +128,15 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     mcpp::build::TestOptions to;
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
     to.list = parsed.is_flag_set("list");
+    if (auto ts = parsed.value("timeout")) {
+        int secs = 0;
+        auto [p, ec] = std::from_chars(ts->data(), ts->data() + ts->size(), secs);
+        if (ec != std::errc{} || p != ts->data() + ts->size() || secs < 0) {
+            mcpp::ui::error(std::format("invalid --timeout '{}' (whole seconds >= 0)", *ts));
+            return 2;
+        }
+        to.timeoutSecs = secs;
+    }
     if (auto mf = parsed.value("message-format")) {
         if (*mf == "json")       to.format = mcpp::build::TestMessageFormat::Json;
         else if (*mf != "human") {

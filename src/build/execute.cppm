@@ -678,6 +678,7 @@ export struct TestOptions {
     std::string        filter;   // substring match on the path-based test name; empty = all
     TestMessageFormat  format = TestMessageFormat::Human;
     bool               list = false;   // enumerate only, no build/run
+    int                timeoutSecs = 0;   // per-test run deadline; 0 = unlimited
 };
 
 // Minimal JSON string escaping for the --message-format json records. Same
@@ -881,6 +882,7 @@ export int run_tests(std::span<const std::string> passthrough,
         std::string compileOutput;
         std::string runOutput;
         long long   durationMs = 0;    // build+run wall time for THIS test
+        bool        timedOut = false;  // killed by --timeout
     };
     std::vector<TestResult> results;
 
@@ -895,9 +897,10 @@ export int run_tests(std::span<const std::string> passthrough,
         std::string signal = (r.exitCode > 128 && r.exitCode < 128 + 65)
             ? std::to_string(r.exitCode - 128) : "null";
         std::println("{{\"test\":\"{}\",\"status\":\"{}\",\"exit_code\":{},\"signal\":{},"
-                     "\"duration_ms\":{},"
+                     "\"duration_ms\":{},\"timed_out\":{},"
                      "\"compile_output\":\"{}\",\"run_output\":\"{}\"}}",
                      test_json_escape(r.name), st, r.exitCode, signal, r.durationMs,
+                     r.timedOut ? "true" : "false",
                      test_json_escape(r.compileOutput), test_json_escape(r.runOutput));
         std::fflush(stdout);
     };
@@ -1043,17 +1046,27 @@ export int run_tests(std::span<const std::string> passthrough,
 
         // JSON mode captures the test's combined stdout+stderr into the
         // record; human mode streams it to the terminal as before.
+        auto deadline = std::chrono::milliseconds(
+            static_cast<long long>(testOpts.timeoutSecs) * 1000);
+        bool timedOut = false;
         int exitCode;
         std::string runOutput;
         if (json) {
-            auto rr = mcpp::platform::process::capture_exec(argv, childEnv);
+            auto rr = mcpp::platform::process::capture_exec_deadline(
+                argv, childEnv, deadline, &timedOut);
             exitCode  = rr.exit_code;
             runOutput = std::move(rr.output);
         } else {
-            exitCode = mcpp::platform::process::run_exec(argv, childEnv);
+            exitCode = mcpp::platform::process::run_exec_deadline(
+                argv, childEnv, deadline, &timedOut);
         }
 
-        if (exitCode == 0) {
+        if (timedOut) {
+            if (!json) std::println("{} ... FAIL (timeout after {}s)",
+                                    lu.targetName, testOpts.timeoutSecs);
+            results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {},
+                               std::move(runOutput), test_ms(), true});
+        } else if (exitCode == 0) {
             if (!json) std::println("{} ... ok", lu.targetName);
             results.push_back({lu.targetName, TestResult::St::Pass, 0, {},
                                std::move(runOutput), test_ms()});
