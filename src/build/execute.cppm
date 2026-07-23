@@ -855,6 +855,7 @@ export int run_tests(std::span<const std::string> passthrough,
         int         exitCode = 0;
         std::string compileOutput;
         std::string runOutput;
+        long long   durationMs = 0;    // build+run wall time for THIS test
     };
     std::vector<TestResult> results;
 
@@ -869,8 +870,9 @@ export int run_tests(std::span<const std::string> passthrough,
         std::string signal = (r.exitCode > 128 && r.exitCode < 128 + 65)
             ? std::to_string(r.exitCode - 128) : "null";
         std::println("{{\"test\":\"{}\",\"status\":\"{}\",\"exit_code\":{},\"signal\":{},"
+                     "\"duration_ms\":{},"
                      "\"compile_output\":\"{}\",\"run_output\":\"{}\"}}",
-                     test_json_escape(r.name), st, r.exitCode, signal,
+                     test_json_escape(r.name), st, r.exitCode, signal, r.durationMs,
                      test_json_escape(r.compileOutput), test_json_escape(r.runOutput));
         std::fflush(stdout);
     };
@@ -957,6 +959,12 @@ export int run_tests(std::span<const std::string> passthrough,
     for (auto& lu : ctx->plan.linkUnits) {
         if (!filter_match(lu)) continue;
 
+        auto tTest = std::chrono::steady_clock::now();
+        auto test_ms = [&tTest] {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - tTest).count();
+        };
+
         mcpp::ui::status("Compiling", std::format("{} (test)", lu.targetName));
 
         mcpp::build::BuildOptions bOpts;
@@ -976,7 +984,7 @@ export int run_tests(std::span<const std::string> passthrough,
                 }
             }
             results.push_back({lu.targetName, TestResult::St::CompileFail, 0,
-                               b.error().diagnosticOutput, {}});
+                               b.error().diagnosticOutput, {}, test_ms()});
             emit_json(results.back());
             continue;
         }
@@ -1023,11 +1031,11 @@ export int run_tests(std::span<const std::string> passthrough,
         if (exitCode == 0) {
             if (!json) std::println("{} ... ok", lu.targetName);
             results.push_back({lu.targetName, TestResult::St::Pass, 0, {},
-                               std::move(runOutput)});
+                               std::move(runOutput), test_ms()});
         } else {
             if (!json) std::println("{} ... FAIL (exit {})", lu.targetName, exitCode);
             results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {},
-                               std::move(runOutput)});
+                               std::move(runOutput), test_ms()});
         }
         emit_json(results.back());
     }

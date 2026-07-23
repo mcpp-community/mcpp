@@ -137,6 +137,12 @@ int normalize_exit_code(int rc) {
 #else
     if (WIFEXITED(rc))
         return WEXITSTATUS(rc);
+    // Shell convention for signaled children: 128 + signal number. The raw
+    // wait-status word only *happens* to look right when the core-dump bit
+    // is set (SIGSEGV+core → 0x8B = 139); without it a SIGTERM death would
+    // surface as "exit 15" and be indistinguishable from a normal exit code.
+    if (WIFSIGNALED(rc))
+        return 128 + WTERMSIG(rc);
     return rc;
 #endif
 }
