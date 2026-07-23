@@ -153,6 +153,32 @@ char** host_environ() {
 #endif
 }
 
+// An outer `mcpp run`/`mcpp test` points LD_LIBRARY_PATH at mcpp's private
+// glibc payload so ITS child (a sandbox-linked user binary) can load. When
+// that child spawns mcpp again (e.g. a course provider driving `mcpp test`),
+// the same value would flow on into the inner mcpp's own children — and the
+// sandbox ninja/gcc (host-glibc binaries) then resolve a MISMATCHED libc and
+// segfault inside the dynamic linker before main (trace signature: a bare
+// `__vdso_time` line). Strip exactly the private-glibc payload entries from
+// inherited loader paths: user-supplied entries survive, and an `extra`
+// override (the correct per-child value) always wins over the inherited var.
+std::string strip_private_glibc(std::string_view paths) {
+    std::string cleaned;
+    std::size_t start = 0;
+    while (start <= paths.size()) {
+        auto end = paths.find(':', start);
+        if (end == std::string_view::npos) end = paths.size();
+        auto item = paths.substr(start, end - start);
+        if (!item.empty() && item.find("/xim-x-glibc/") == std::string_view::npos) {
+            if (!cleaned.empty()) cleaned += ':';
+            cleaned += item;
+        }
+        if (end == paths.size()) break;
+        start = end + 1;
+    }
+    return cleaned;
+}
+
 // Build a child environment block = the current environ with `extra` overrides
 // applied. Returned vector owns the strings; the caller derives a NUL-terminated
 // char* array from it. Built in the PARENT so the child env never requires a
@@ -167,7 +193,14 @@ std::vector<std::string> merged_environ(
         std::string_view entry(*e);
         auto eq = entry.find('=');
         std::string key(eq == std::string_view::npos ? entry : entry.substr(0, eq));
-        if (!overridden.contains(key)) out.emplace_back(entry);
+        if (overridden.contains(key)) continue;
+        if (eq != std::string_view::npos
+            && (key == "LD_LIBRARY_PATH" || key == "DYLD_LIBRARY_PATH")) {
+            auto cleaned = strip_private_glibc(entry.substr(eq + 1));
+            if (!cleaned.empty()) out.push_back(key + "=" + cleaned);
+            continue;   // nothing legitimate left → drop the var entirely
+        }
+        out.emplace_back(entry);
     }
     return out;
 }
