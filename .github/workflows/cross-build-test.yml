@@ -205,11 +205,29 @@ jobs:
           restore-keys: |
             xlings-${{ runner.os }}-v2-
 
+      # wine 的包集固定不变 —— 缓存整个 .deb 依赖闭包,命中时跳过 apt update
+      # 与下载(每轮省 ~1-2min)。镜像月度更新可能改变依赖缺口,dpkg -i 失败时
+      # 由 apt-get -f 兜底并重新回填缓存。
+      - name: Cache wine debs
+        uses: actions/cache@v4
+        with:
+          path: ~/wine-debs
+          key: wine-debs-${{ runner.os }}-ubuntu24.04-v1
+
       - name: Install wine
         run: |
           sudo dpkg --add-architecture i386 || true
-          sudo apt-get update -qq
-          sudo apt-get install -y wine64 wine || sudo apt-get install -y wine
+          if ls ~/wine-debs/*.deb >/dev/null 2>&1; then
+            sudo dpkg -i ~/wine-debs/*.deb 2>/dev/null \
+              || { sudo apt-get update -qq; sudo apt-get install -f -y; }
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y --download-only wine64 wine \
+              || sudo apt-get install -y --download-only wine
+            mkdir -p ~/wine-debs
+            cp /var/cache/apt/archives/*.deb ~/wine-debs/ 2>/dev/null || true
+            sudo apt-get install -y wine64 wine || sudo apt-get install -y wine
+          fi
           wine --version
 
       - name: Bootstrap mcpp via xlings

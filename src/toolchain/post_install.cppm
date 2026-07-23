@@ -23,6 +23,43 @@ import mcpp.xlings;
 
 namespace mcpp::toolchain {
 
+// ── #273 sandbox containment ─────────────────────────────────────────────
+// patchelf_walk once escaped its sandbox through a symlinked payload
+// directory (an e2e sandbox seeded `registry/data/xpkgs/xim-x-gcc` from the
+// user's real ~/.xlings via `ln -s`) and rewrote PT_INTERP/RUNPATH of the
+// REAL installation against loader paths inside a soon-deleted mktemp dir.
+//
+// Containment rule: every rewrite in this module is fenced by ONE explicit
+// trust root — the owning sandbox's registry (`cfg.registryDir`), resolved
+// once at the entry point via `containment_root` and threaded down as a
+// parameter. The root is a first-class fact of the system; it is never
+// re-derived from the payload path (canonicalizing the payload first would
+// resolve the malicious symlink and collapse the fence into a tautology).
+export std::filesystem::path
+containment_root(const std::filesystem::path& registryDir) {
+    std::error_code ec;
+    auto canon = std::filesystem::weakly_canonical(registryDir, ec);
+    if (ec) return {};   // empty root → escapes_containment fails closed
+    return canon;
+}
+
+// True when `file`'s physical (symlink-resolved) location falls outside
+// `rootCanon`. Fails CLOSED: an empty root or an unresolvable path counts
+// as escaping — never patch what cannot be proven contained. Comparison is
+// per path component (a `registry-evil` sibling sharing the string prefix
+// is outside).
+export bool escapes_containment(const std::filesystem::path& file,
+                                const std::filesystem::path& rootCanon) {
+    if (rootCanon.empty()) return true;
+    std::error_code ec;
+    auto real = std::filesystem::weakly_canonical(file, ec);
+    if (ec) return true;
+    auto r = rootCanon.generic_string();
+    auto f = real.generic_string();
+    if (f == r) return false;
+    return !(f.size() > r.size() && f.starts_with(r) && f[r.size()] == '/');
+}
+
 // Run patchelf on every dynamic ELF in `dir` (recursively):
 //   - Set PT_INTERP to `loader` (the sandbox-local glibc loader).
 //   - Set RUNPATH to `rpath` (colon-separated list of sandbox lib dirs).
@@ -36,7 +73,8 @@ namespace mcpp::toolchain {
 export void patchelf_walk(const std::filesystem::path& dir,
                    const std::filesystem::path& loader,
                    const std::string& rpath,
-                   const std::filesystem::path& patchelfBin)
+                   const std::filesystem::path& patchelfBin,
+                   const std::filesystem::path& fenceRoot)
 {
     if (!std::filesystem::exists(dir) || !std::filesystem::exists(patchelfBin))
         return;
@@ -54,6 +92,14 @@ export void patchelf_walk(const std::filesystem::path& dir,
         if (!is || m[0] != 0x7f || m[1] != 'E' || m[2] != 'L' || m[3] != 'F')
             continue;
         is.close();
+        // #273 fence: never rewrite files that physically live outside the
+        // sandbox (payload reached through a symlink → foreign installation).
+        if (escapes_containment(path, fenceRoot)) {
+            mcpp::log::verbose("toolchain", std::format(
+                "patchelf_walk: skip (outside sandbox, #273 fence): {}",
+                path.string()));
+            continue;
+        }
         // Probe PT_INTERP — skip static binaries (no interp).
         auto probe = std::format("{} --print-interpreter {} 2>/dev/null",
                                  mcpp::platform::shell::quote(patchelfBin.string()),
@@ -152,8 +198,16 @@ export std::string detect_baked_loader(const std::string& specsContent) {
 
 void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
                      const std::filesystem::path& glibcLibDir,
-                     const std::filesystem::path& gccLibDir)
+                     const std::filesystem::path& gccLibDir,
+                     const std::filesystem::path& fenceRoot)
 {
+    // #273 fence: a payload reached through a symlink is a foreign
+    // installation — its specs file must not be rewritten either.
+    if (escapes_containment(gccPkgRoot, fenceRoot)) {
+        mcpp::log::verbose("toolchain",
+            "fixup_gcc_specs: skip (payload outside sandbox, #273 fence)");
+        return;
+    }
     std::filesystem::path specsParent;
     std::error_code ec;
     for (auto it = std::filesystem::directory_iterator(gccPkgRoot / "lib" / "gcc", ec);
@@ -215,7 +269,14 @@ void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
 //   C++ only: -nostdinc++ -stdlib=libc++ + payload libc++ headers/libs
 // On macOS the C library comes from the SDK: --sysroot=<sdk> + libc++ headers.
 export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
-                     const std::filesystem::path& glibcLibDir) {
+                     const std::filesystem::path& glibcLibDir,
+                     const std::filesystem::path& fenceRoot) {
+    // #273 fence — same rule as fixup_gcc_specs above.
+    if (escapes_containment(payloadRoot, fenceRoot)) {
+        mcpp::log::verbose("toolchain",
+            "fixup_clang_cfg: skip (payload outside sandbox, #273 fence)");
+        return;
+    }
     auto binDir = payloadRoot / "bin";
     if (!std::filesystem::exists(binDir)) return;
 
@@ -344,15 +405,20 @@ void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 
         mcpp::log::verbose("toolchain", std::format(
             "gcc fixup: patchelf_walk rpath='{}'", rpath));
+        // Single trust root for every walk below — including the binutils
+        // SIBLING payloads, which the entry-point ownership guard does not
+        // cover (it only vets the gcc payload itself).
+        auto fence = containment_root(cfg.registryDir);
         auto binutilsRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "binutils");
         if (std::filesystem::exists(binutilsRoot)) {
             for (auto& v : std::filesystem::directory_iterator(binutilsRoot))
-                patchelf_walk(v.path(), loader, rpath, patchelfBin);
+                patchelf_walk(v.path(), loader, rpath, patchelfBin, fence);
         }
-        patchelf_walk(payloadRoot, loader, rpath, patchelfBin);
+        patchelf_walk(payloadRoot, loader, rpath, patchelfBin, fence);
 
         mcpp::log::verbose("toolchain", "gcc fixup: fixup_gcc_specs");
-        fixup_gcc_specs(payloadRoot, glibcLibDir, gccLibDir);
+        fixup_gcc_specs(payloadRoot, glibcLibDir, gccLibDir,
+                        containment_root(cfg.registryDir));
     } else {
         mcpp::ui::warning(
             "could not locate sandbox glibc/gcc/patchelf paths; "
@@ -385,10 +451,11 @@ void llvm_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
         rpath += llvmLib.string() + ":" + glibcLibDir.string();
         mcpp::log::verbose("toolchain", std::format(
             "llvm fixup: patchelf_walk lib/ rpath='{}'", rpath));
-        patchelf_walk(llvmLib, loader, rpath, patchelfBin);
+        patchelf_walk(llvmLib, loader, rpath, patchelfBin,
+                      containment_root(cfg.registryDir));
     }
     mcpp::log::verbose("toolchain", "llvm fixup: fixup_clang_cfg");
-    fixup_clang_cfg(payloadRoot, glibcLibDir);
+    fixup_clang_cfg(payloadRoot, glibcLibDir, containment_root(cfg.registryDir));
 }
 
 // ── the single fixup pipeline entry ──────────────────────────────────────
@@ -416,17 +483,17 @@ export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
     // are not ours to patch — their owner already ran the fixup, and patching
     // through the symlink would rewrite the canonical files against OUR
     // (possibly ephemeral) paths, bricking the owner's toolchain.
-    {
-        std::error_code ec;
-        auto canonicalRoot = std::filesystem::weakly_canonical(payloadRoot, ec);
-        auto homeRegistry  = std::filesystem::weakly_canonical(cfg.registryDir, ec);
-        if (!ec && !canonicalRoot.string().starts_with(homeRegistry.string())) {
-            mcpp::log::verbose("toolchain", std::format(
-                "skip {} fixup: payload '{}' resolves outside this home ('{}') — "
-                "inherited payload, owner is responsible for its fixup",
-                kind, payloadRoot.string(), canonicalRoot.string()));
-            return;
-        }
+    // Rewritten on the shared containment predicate (#273): the old inline
+    // check reused one error_code across both canonicalizations (the second
+    // success cleared the first failure) and compared raw strings without a
+    // component boundary (a `registry-evil` sibling passed). The predicate
+    // fails closed on any resolution error.
+    if (escapes_containment(payloadRoot, containment_root(cfg.registryDir))) {
+        mcpp::log::verbose("toolchain", std::format(
+            "skip {} fixup: payload '{}' resolves outside this home — "
+            "inherited payload, owner is responsible for its fixup",
+            kind, payloadRoot.string()));
+        return;
     }
 
     auto xlEnv = mcpp::config::make_xlings_env(cfg);

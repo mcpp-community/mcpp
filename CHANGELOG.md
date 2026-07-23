@@ -25,6 +25,7 @@
 
 ### 修复
 
+- **#273 沙盒围栏**:post_install 的所有改写者(`patchelf_walk`/`fixup_gcc_specs`/`fixup_clang_cfg`)以显式信任根(`cfg.registryDir` canonical 化一次后穿透)逐文件设防——物理位置(符号链接解析后)在根外的一律拒绝改写并 fail-closed。修复既有入口 guard 的三处残余缺口:error_code 复用导致的错误掩蔽、裸字符串前缀无组件边界(`registry-evil` 可穿过)、binutils 兄弟目录 walk 不在 guard 覆盖内。`13_toolchain_pin.sh` 的 symlink 种子保留为金丝雀。单测 test_post_install_containment 覆盖事故拓扑。
 - **嵌套 mcpp 的 `LD_LIBRARY_PATH` 段错误**:外层 `mcpp run` 为其子进程指向私有 glibc payload 的 loader 路径,子进程再 spawn mcpp 时(如课程 Provider 驱动 `mcpp test`),毒化值继续流入内层 mcpp 的工具子进程——sandbox ninja/gcc 加载错配 libc 后在动态链接器里段错误(残片签名 `__vdso_time`)。现在 `merged_environ` 从继承的 `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` 里**只剥离** `xim-x-glibc` payload 条目:用户自己的条目保留,per-child 显式 override 一如既往优先。下游(d2x `platform.cppm`、d2mcpp `runner.cppm`)的 `unsetenv` workaround 可随本版删除。
 
 ### 备注
@@ -33,6 +34,7 @@
 - 首个下游消费者已完成端到端接入:d2mcpp「练习即测试」迁移(104 练习 zh/en 52/52 全绿)+ d2x checker 引导链路,全程使用本分支 musl 静态二进制。
 - docs 措辞修正:"(gtest style)" → 框架无关表述;记录合成测试名含 `/` 的命名豁免(zh+en)。
 - `BuildOptions::ninjaTargets`(构建计划子集)为支撑性通用接口,空 = 原行为。
+- cross-build CI 的 wine 安装改为缓存 .deb 依赖闭包(首跑回填,命中免 apt update/下载)。
 - musl 静态构建(`--target x86_64-linux-musl`)已验证:五个新 e2e 全绿;静态 mcpp 本体对 loader 毒化免疫,与上述修复共同覆盖嵌套链路的两端。
 
 ## [0.0.103] — 2026-07-22

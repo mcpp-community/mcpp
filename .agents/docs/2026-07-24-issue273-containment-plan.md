@@ -4,13 +4,13 @@
 
 **Goal:** 修复 #273（patchelf_walk 经符号链接逃逸沙盒、损坏真实 `~/.xlings` payload）+ cross-build CI 的 wine 安装缓存;单 PR → CI 全绿 → bypass squash 合入 → 与批次二一起作为 0.0.104 release → xlings 生态验证。
 
-**Architecture:** 围栏语义 =「只允许改写物理位置（符号链接解析后）位于该 payload 所属 mcpp home 之内的文件」。home 从 walk 根的**拼写路径**向上取 `registry` 组件的父目录并 canonical 化——不能 canonical 化 walk 根本身（issue 场景里它恰好会解析进 `~/.xlings`，围栏就失效了）。判定谓词独立导出,用单测覆盖(不依赖 patchelf/真实 ELF);`13_toolchain_pin.sh` 保留 symlink 种子作为真实环境金丝雀(guard 落地后该路径已无害)。
+**Architecture:**（实现中依整体评估修正为非启发式设计）信任根 = `cfg.registryDir` 这一**系统一等事实**,入口 `containment_root()` canonical 化一次后作为显式参数穿透到所有改写者(`patchelf_walk`/`fixup_gcc_specs`/`fixup_clang_cfg`),绝不从 payload 路径反推(先 canonical 化 payload 会把恶意符号链接解析掉,围栏沦为恒真式)。评估中发现入口层其实**已有** ownership guard 与内容指纹 marker(#109 起),本批次修复其三处残余缺口:①guard 复用 error_code(第二次成功清掉第一次失败)、②裸字符串前缀比较无组件边界(`registry-evil` 能穿过)、③binutils 兄弟目录的 walk 完全在 guard 之外。判定谓词独立导出并单测覆盖;`13_toolchain_pin.sh` 保留 symlink 种子作为真实环境金丝雀。
 
 ## Global Constraints
 
 - 既有 e2e(含 152–160)与单测全绿;walker 的「补丁副本+原子 rename」行为不变。
 - guard 覆盖三个写入者:`patchelf_walk`、`fixup_gcc_specs`、`fixup_clang_cfg`。
-- 找不到 `registry` 组件时**不启用围栏**(维持旧行为——所有现有调用点均含 registry,该分支只为不破坏未知用法)。
+- 信任根解析失败时**fail-closed**(空根 → 一切视为逃逸,拒绝改写)。
 - 跳过逃逸文件时 verbose 日志留痕。
 - PR body 带 `Fixes #273`;合入后 issue 自动关闭。
 

@@ -15,6 +15,12 @@ trap "rm -rf $TMP" EXIT
 
 SANDBOX_HOME="$TMP/mcpp-home"
 mkdir -p "$SANDBOX_HOME/registry/data/xpkgs"
+# #273: this symlink seed was once the incident vector — post-install fixup
+# walked through it and rewrote the REAL ~/.xlings gcc against the throwaway
+# sandbox's loader paths. Every rewrite is now fenced by the containment
+# predicate (physical location must resolve inside cfg.registryDir), so the
+# seed is deliberately KEPT: it doubles as a live canary — if the fence ever
+# regresses, the machine's gcc breaks loudly and immediately.
 if [[ -d "$HOME/.xlings/data/xpkgs/xim-x-gcc/16.1.0" ]]; then
     ln -s "$HOME/.xlings/data/xpkgs/xim-x-gcc" \
           "$SANDBOX_HOME/registry/data/xpkgs/xim-x-gcc"
