@@ -703,14 +703,18 @@ export int run_tests(std::span<const std::string> passthrough,
     }
 
     // 2. Synthesize a Target for each test file.
-    //    Name = file stem; collisions → error.
+    //    Name = path relative to tests/, extension dropped, '/' separators —
+    //    so tests/00-a/0.cpp and tests/01-b/0.cpp coexist as '00-a/0' and
+    //    '01-b/0' (stems alone would collide). Flat layouts keep their old
+    //    names ('tests/smoke.cpp' → 'smoke').
     std::vector<mcpp::manifest::Target> testTargets;
     std::set<std::string> seenNames;
     for (auto& f : testFiles) {
-        auto name = f.stem().string();
+        auto rel  = std::filesystem::relative(f, testRoot / "tests");
+        auto name = rel.replace_extension("").generic_string();
         if (!seenNames.insert(name).second) {
             mcpp::ui::error(std::format(
-                "duplicate test name '{}' (two .cpp files share the same stem)", name));
+                "duplicate test name '{}' (two test files map to the same name)", name));
             return 2;
         }
         mcpp::manifest::Target t;
