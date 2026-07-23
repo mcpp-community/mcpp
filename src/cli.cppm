@@ -251,6 +251,8 @@ int run(int argc, char** argv) {
             })))
         .subcommand(cl::App("test")
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
+            .arg(cl::Arg("pattern")
+                .help("Run only tests whose name contains PATTERN (optional)"))
             .option(cl::Option("profile").takes_value().value_name("NAME")
                 .help("Build profile for the test build: release (default) | dev | dist | <[profile.*] name>"))
             .option(cl::Option("features").takes_value().value_name("LIST")

@@ -125,6 +125,9 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     ov.strict = parsed.is_flag_set("strict");
     if (auto p = parsed.value("package")) ov.package_filter = *p;
 
+    mcpp::build::TestOptions to;
+    if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
+
     // Workspace fan-out: test every member through run_tests (which scopes its
     // discovery to the member). Continue-on-failure + per-member summary so one
     // red member never hides the rest.
@@ -136,7 +139,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             mcpp::build::BuildOverrides mo = ov;
             mo.package_filter = mp;
             mcpp::ui::status("Workspace", std::format("testing member '{}'", mp));
-            int r = mcpp::build::run_tests(passthrough, mo);
+            int r = mcpp::build::run_tests(passthrough, mo, to);
             if (r != 0) { rc = r; failed.push_back(mp); }
         }
         if (failed.empty())
@@ -149,7 +152,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                     return s; }()));
         return rc;
     }
-    return mcpp::build::run_tests(passthrough, ov);
+    return mcpp::build::run_tests(passthrough, ov, to);
 }
 
 export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {

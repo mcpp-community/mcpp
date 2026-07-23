@@ -672,10 +672,15 @@ export int build_run_target(const std::optional<std::string>& targetName,
     return mcpp::platform::process::run_exec(argv, childEnv) == 0 ? 0 : 1;
 }
 
+export struct TestOptions {
+    std::string filter;   // substring match on the path-based test name; empty = all
+};
+
 // `mcpp test` driver: discover tests/**/*.cpp, synthesize targets, build
 // with dev-deps, run each test binary, summarize.
 export int run_tests(std::span<const std::string> passthrough,
-                     BuildOverrides overrides = {}) {
+                     BuildOverrides overrides = {},
+                     TestOptions testOpts = {}) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
         mcpp::ui::error("no mcpp.toml found in current directory or any parent");
@@ -732,6 +737,25 @@ export int run_tests(std::span<const std::string> passthrough,
                              std::move(overrides));
     if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
 
+    // Filter guard. The filter selects at the build/run stage ONLY — the plan
+    // above always contains every test, so build.ninja and
+    // compile_commands.json stay complete (clangd depends on the latter; a
+    // filtered run must not clobber it down to one entry).
+    auto filter_match = [&](const mcpp::build::LinkUnit& lu) {
+        return lu.kind == mcpp::build::LinkUnit::TestBinary
+            && (testOpts.filter.empty()
+                || lu.targetName.find(testOpts.filter) != std::string::npos);
+    };
+    if (!testOpts.filter.empty()) {
+        bool any = false;
+        for (auto& lu : ctx->plan.linkUnits)
+            if (filter_match(lu)) { any = true; break; }
+        if (!any) {
+            mcpp::ui::error(std::format("no tests match '{}'", testOpts.filter));
+            return 2;
+        }
+    }
+
     // 4. "Compiling test_X (test)" lines for the test binaries.
     std::set<std::string> cachedNames;
     for (auto& label : ctx->cachedDepLabels) {
@@ -760,7 +784,7 @@ export int run_tests(std::span<const std::string> passthrough,
     }
     // List test binaries.
     for (auto& lu : ctx->plan.linkUnits) {
-        if (lu.kind == mcpp::build::LinkUnit::TestBinary) {
+        if (filter_match(lu)) {
             mcpp::ui::status("Compiling",
                 std::format("{} (test)", lu.targetName));
         }
@@ -840,7 +864,7 @@ export int run_tests(std::span<const std::string> passthrough,
         runtimeEnvKey, ctx->plan.runtimeLibraryDirs);
 
     for (auto& lu : ctx->plan.linkUnits) {
-        if (lu.kind != mcpp::build::LinkUnit::TestBinary) continue;
+        if (!filter_match(lu)) continue;
 
         mcpp::build::BuildOptions bOpts;
         bOpts.ninjaTargets = {lu.output.generic_string()};
