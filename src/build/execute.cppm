@@ -737,6 +737,23 @@ export int run_tests(std::span<const std::string> passthrough,
         return 0;
     }
 
+    // [build].flags globs also cover tests: a glob names files — whether they
+    // are scanned sources or test TUs is orthogonal. Matched entries ride the
+    // per-target flag channel (issue #131) on the synthesized test target.
+    // (Feature-folded entries are prepare-time state; tests take the base
+    // [build].flags — sufficient for per-test compile options.)
+    struct TestGlobFlags {
+        mcpp::manifest::GlobFlags       gf;
+        std::set<std::filesystem::path> files;
+    };
+    std::vector<TestGlobFlags> testGlobFlags;
+    if (auto mm = mcpp::manifest::load(testRoot / "mcpp.toml")) {
+        for (auto const& gf : mm->buildConfig.globFlags) {
+            auto hits = mcpp::modgraph::expand_glob(testRoot, gf.glob);
+            testGlobFlags.push_back({gf, {hits.begin(), hits.end()}});
+        }
+    }
+
     // 2. Synthesize a Target for each test file.
     //    Name = path relative to tests/, extension dropped, '/' separators —
     //    so tests/00-a/0.cpp and tests/01-b/0.cpp coexist as '00-a/0' and
@@ -757,6 +774,12 @@ export int run_tests(std::span<const std::string> passthrough,
         t.kind = mcpp::manifest::Target::TestBinary;
         // Relative to the member/package root prepare_build will operate on.
         t.main = std::filesystem::relative(f, testRoot).string();
+        for (auto const& tgf : testGlobFlags) {
+            if (!tgf.files.contains(f)) continue;
+            for (auto const& d  : tgf.gf.defines)  t.defines.push_back(d);
+            for (auto const& fl : tgf.gf.cflags)   t.cflags.push_back(fl);
+            for (auto const& fl : tgf.gf.cxxflags) t.cxxflags.push_back(fl);
+        }
         testTargets.push_back(std::move(t));
     }
 

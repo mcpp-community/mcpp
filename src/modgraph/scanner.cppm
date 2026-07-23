@@ -932,6 +932,15 @@ void scan_one_into(ScanResult& result,
     }
     for (std::size_t i = 0; i < globFlagHits.size(); ++i) {
         if (globFlagHits[i] == 0) {
+            // Zero scanned-source hits is not yet a dead glob: the entry may
+            // target files that are real but not scanned sources — notably
+            // tests/ TUs, which `mcpp test` flag-matches itself. Only a glob
+            // that matches NOTHING on disk is a typo worth warning about.
+            bool onDisk = false;
+            for (auto const& branch : globFlagBranches[i]) {
+                if (!expand_glob(root, branch).empty()) { onDisk = true; break; }
+            }
+            if (onDisk) continue;
             // #253: a feature-folded entry only exists when its feature is
             // active, so a zero hit here is a REAL dead glob either way —
             // name the owning feature so the author knows which table to fix.
