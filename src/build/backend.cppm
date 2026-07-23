@@ -16,6 +16,9 @@ struct BuildOptions {
     // Explicit ninja goal targets (LinkUnit::output paths, relative to the
     // plan's outputDir). Empty = build the full plan (default behavior).
     std::vector<std::string>    ninjaTargets;
+    // Keep building unaffected goals after a failure (ninja -k 0). Used by
+    // `mcpp test` to pre-build all test goals in one parallel pass.
+    bool                        keepGoing = false;
 };
 
 struct BuildResult {

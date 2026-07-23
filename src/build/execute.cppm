@@ -931,7 +931,23 @@ export int run_tests(std::span<const std::string> passthrough,
         // failures read as a contradiction; the final summary carries timing.
     }
 
-    // 6. Phase B: build + run each test in sequence; collect results.
+    // 6. Phase B. First a single keep-going bulk build over every selected
+    //    test goal — ninja parallelizes across tests and a failing test does
+    //    not stop the rest (-k 0). The result is deliberately ignored: the
+    //    per-test loop below re-drives each goal, where successes are cache
+    //    hits (near no-ops) and failures re-fail fast, yielding cleanly
+    //    attributed per-test diagnostics without sacrificing parallelism.
+    {
+        mcpp::build::BuildOptions bulk;
+        bulk.keepGoing = true;
+        for (auto& lu : ctx->plan.linkUnits)
+            if (filter_match(lu))
+                bulk.ninjaTargets.push_back(lu.output.generic_string());
+        if (!bulk.ninjaTargets.empty())
+            (void)backend->build(ctx->plan, bulk);
+    }
+
+    //    Then build + run each test in sequence; collect results.
     auto t0 = std::chrono::steady_clock::now();
 
     auto runtimeEnvKey = mcpp::platform::env::runtime_library_path_key();

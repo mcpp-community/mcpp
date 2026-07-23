@@ -1195,6 +1195,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (opts.parallelJobs)
         nargv.push_back(std::format("-j{}", opts.parallelJobs));
 
+    if (opts.keepGoing) {
+        nargv.push_back("-k");
+        nargv.push_back("0");
+    }
+
     // Explicit goal targets: ninja builds only these outputs (and their
     // prerequisites). Used by `mcpp test` to isolate per-test compiles.
     for (auto& t : opts.ninjaTargets)
