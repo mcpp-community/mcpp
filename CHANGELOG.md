@@ -29,7 +29,7 @@
 
 ### 备注
 
-- e2e 新增 118(子目录命名)/119(隔离与包级归因)/120(过滤器)/121(JSON)/122(嵌套 loader 路径免疫)/123(测试 TU 吃 glob flags + 死 glob 判定)/124(信号退出码+duration)/125(--list)/126(--timeout)。
+- e2e 新增 152(子目录命名)/153(隔离与包级归因)/154(过滤器)/155(JSON)/156(嵌套 loader 路径免疫)/157(测试 TU 吃 glob flags + 死 glob 判定)/158(信号退出码+duration)/159(--list)/160(--timeout)。
 - 首个下游消费者已完成端到端接入:d2mcpp「练习即测试」迁移(104 练习 zh/en 52/52 全绿)+ d2x checker 引导链路,全程使用本分支 musl 静态二进制。
 - docs 措辞修正:"(gtest style)" → 框架无关表述;记录合成测试名含 `/` 的命名豁免(zh+en)。
 - `BuildOptions::ninjaTargets`(构建计划子集)为支撑性通用接口,空 = 原行为。

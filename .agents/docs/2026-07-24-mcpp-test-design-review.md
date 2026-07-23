@@ -195,7 +195,7 @@
 
 | # | 事项 | 层 | 验收标准 |
 |---|---|---|---|
-| P1 | Phase B 改 keep-going 预构建 + 存在性归因 + 失败者逐个取诊断 | runner | e2e 118–123 不变全绿；多测试全绿工程 `mcpp test` 构建墙钟时间恢复到与旧单次构建同量级 |
+| P1 | Phase B 改 keep-going 预构建 + 存在性归因 + 失败者逐个取诊断 | runner | e2e 152–157 不变全绿；多测试全绿工程 `mcpp test` 构建墙钟时间恢复到与旧单次构建同量级 |
 | P2 | `mcpp test --list [--message-format json]` | runner | 输出测试名+主文件；d2mcpp Provider 枚举可切换为消费该输出 |
 | P3 | JSON 记录增加 `duration_ms`；`signal` 改从 wait status 直读（POSIX） | runner | schema 向后兼容（只增字段） |
 | P4 | 每测试超时 `--timeout <s>`（挂死测试 → run_fail + 标注） | runner | 睡死测试不拖垮整轮 |
