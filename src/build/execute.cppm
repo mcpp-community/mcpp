@@ -677,6 +677,7 @@ export enum class TestMessageFormat { Human, Json };
 export struct TestOptions {
     std::string        filter;   // substring match on the path-based test name; empty = all
     TestMessageFormat  format = TestMessageFormat::Human;
+    bool               list = false;   // enumerate only, no build/run
 };
 
 // Minimal JSON string escaping for the --message-format json records. Same
@@ -781,6 +782,30 @@ export int run_tests(std::span<const std::string> passthrough,
             for (auto const& fl : tgf.gf.cxxflags) t.cxxflags.push_back(fl);
         }
         testTargets.push_back(std::move(t));
+    }
+
+    // --list: enumerate (filtered) tests and stop — no toolchain resolution,
+    // no build. Names/paths come straight from discovery, so this also works
+    // on tests that do not currently compile.
+    if (testOpts.list) {
+        std::size_t total = 0;
+        for (auto& t : testTargets) {
+            if (!testOpts.filter.empty()
+                && t.name.find(testOpts.filter) == std::string::npos) continue;
+            ++total;
+            auto abs = std::filesystem::absolute(testRoot / t.main)
+                           .lexically_normal().generic_string();
+            if (json)
+                std::println("{{\"test\":\"{}\",\"main\":\"{}\"}}",
+                             test_json_escape(t.name), test_json_escape(abs));
+            else
+                std::println("{}", t.name);
+        }
+        if (json) {
+            std::println("{{\"summary\":{{\"total\":{}}}}}", total);
+            std::fflush(stdout);
+        }
+        return 0;
     }
 
     // 3. prepare_build with dev-deps enabled + synthetic targets.
