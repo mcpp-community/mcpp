@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires:
+# requires: unix-shell
 # `mcpp test --timeout <secs>`: a hung test is killed and reported as a
 # timeout failure; the rest of the suite still runs.
 set -e

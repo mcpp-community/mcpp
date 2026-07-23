@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires:
+# requires: unix-shell
 # Signaled tests report shell-convention exit codes (128+sig) with the signal
 # number in JSON, and every JSON test record carries duration_ms.
 set -e
