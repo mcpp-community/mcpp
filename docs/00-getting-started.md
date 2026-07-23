@@ -82,8 +82,11 @@ showing progress and speed along the way. Once downloaded, all mcpp projects sha
 ```bash
 mcpp build              # incremental build
 mcpp clean              # clean target/
-mcpp test               # compile and run tests/**/*.cpp (gtest style)
+mcpp test               # compile and run tests/**/*.cpp — one binary per file,
+                        # framework-agnostic (bare main, or gtest via [dev-dependencies])
 mcpp test <pattern>     # only tests whose name contains <pattern>
+mcpp test --list        # enumerate tests without building
+mcpp test --timeout 30  # kill a test still running after 30s
 ```
 
 ## Adding Dependencies

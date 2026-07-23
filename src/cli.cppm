@@ -53,7 +53,7 @@ void print_usage() {
     std::println("  mcpp new <name>                      Create a new package skeleton");
     std::println("  mcpp build [options]                 Build the current package");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
-    std::println("  mcpp test [-- args...]               Build + run all tests/**/*.cpp");
+    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --message-format json)");
     std::println("  mcpp clean [--bmi-cache]             Remove target/ (and optionally BMI cache)");
     std::println("  mcpp add <pkg>[@<ver>]               Add a dependency to mcpp.toml");
     std::println("  mcpp remove <pkg>                    Remove a dependency from mcpp.toml");

@@ -83,7 +83,11 @@ mcpp run
 ```bash
 mcpp build              # 增量构建
 mcpp clean              # 清理 target/
-mcpp test               # 编译并运行 tests/**/*.cpp(gtest 风格)
+mcpp test               # 编译并运行 tests/**/*.cpp —— 每文件一个独立二进制,
+                        # 框架无关(裸 main,或经 [dev-dependencies] 使用 gtest)
+mcpp test <pattern>     # 只运行名字包含 <pattern> 的测试
+mcpp test --list        # 只枚举测试,不构建
+mcpp test --timeout 30  # 运行超过 30s 的测试将被终止并计为失败
 ```
 
 ## 添加依赖

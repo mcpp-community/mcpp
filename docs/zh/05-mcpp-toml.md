@@ -300,7 +300,7 @@ qux = ">=1.0, <2.0" # 范围组合
 gtest = "1.15.2"
 ```
 
-`mcpp build` 忽略这些;`mcpp test` 解析并使用。`mcpp test` 会自动发现 `tests/**/*.cpp` 并编译为测试二进制。
+`mcpp build` 忽略这些;`mcpp test` 解析并使用。`mcpp test` 会自动发现 `tests/**/*.cpp` 并编译为测试二进制。运行器与断言框架无关:每个文件是一个以退出码判定的独立二进制——裸 `main`、gtest(经 `[dev-dependencies]` + `gtest_main`)或其他框架均等价,`-- args` 会透传给每个测试二进制(例如 `-- --gtest_filter=...`)。注意:合成的测试 target 名可含 `/`(`tests/00-a/0.cpp` → `00-a/0`),与 `[targets.*]` 的命名文法不同——两套命名空间刻意分离(测试 target 不进清单、不参与发布)。
 
 ### 2.7 `[toolchain]` — 工具链配置
 
