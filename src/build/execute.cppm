@@ -839,12 +839,9 @@ export int run_tests(std::span<const std::string> passthrough,
             std::format("{} {} (dev)", name, ver));
     }
     // List test binaries.
-    for (auto& lu : ctx->plan.linkUnits) {
-        if (filter_match(lu)) {
-            mcpp::ui::status("Compiling",
-                std::format("{} (test)", lu.targetName));
-        }
-    }
+    // (Per-test "Compiling" lines print in Phase B, interleaved with each
+    // test's own result — announcing them all up front separated the three
+    // pieces of one test's story across the whole output.)
 
     // 5. Two-phase build. Phase A: package-level artifacts (everything that
     //    is not a test binary — libs, deps). A failure here is the PACKAGE's
@@ -929,7 +926,9 @@ export int run_tests(std::span<const std::string> passthrough,
             }
         }
 
-        mcpp::ui::finished("test", a->elapsed);
+        // No "Finished test" line here: Phase A only built the shared
+        // prerequisites. Printing a success banner right before per-test
+        // failures read as a contradiction; the final summary carries timing.
     }
 
     // 6. Phase B: build + run each test in sequence; collect results.
@@ -942,11 +941,24 @@ export int run_tests(std::span<const std::string> passthrough,
     for (auto& lu : ctx->plan.linkUnits) {
         if (!filter_match(lu)) continue;
 
+        mcpp::ui::status("Compiling", std::format("{} (test)", lu.targetName));
+
         mcpp::build::BuildOptions bOpts;
         bOpts.ninjaTargets = {lu.output.generic_string()};
         auto b = backend->build(ctx->plan, bOpts);
         if (!b) {
-            if (!json) std::println("{} ... FAIL (compile)", lu.targetName);
+            if (!json) {
+                // The test's own diagnostics, right under its FAIL line — a
+                // reader fixes one test with one contiguous block of output.
+                std::println("{} ... FAIL (compile)", lu.targetName);
+                std::fflush(stdout);
+                if (!b.error().diagnosticOutput.empty()) {
+                    std::fputs(b.error().diagnosticOutput.c_str(), stderr);
+                    if (b.error().diagnosticOutput.back() != '\n')
+                        std::fputc('\n', stderr);
+                    std::fflush(stderr);
+                }
+            }
             results.push_back({lu.targetName, TestResult::St::CompileFail, 0,
                                b.error().diagnosticOutput, {}});
             emit_json(results.back());
@@ -1035,13 +1047,8 @@ export int run_tests(std::span<const std::string> passthrough,
     std::println("");
     std::println("failures:");
     for (auto& n : failures) std::println("    {}", n);
-    // Compile diagnostics per failed test, on stderr, after the summary —
-    // grouped so a learner scrolls to exactly their test's errors.
-    for (auto& r : results) {
-        if (r.status != TestResult::St::CompileFail || r.compileOutput.empty()) continue;
-        std::println(stderr, "\n--- {} (compile) ---", r.name);
-        std::fputs(r.compileOutput.c_str(), stderr);
-    }
+    // (Each compile failure's diagnostics already printed inline under its
+    // FAIL line in Phase B — the summary stays a compact name list.)
     return 1;
 }
 
