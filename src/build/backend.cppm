@@ -13,6 +13,9 @@ struct BuildOptions {
     bool                        verbose       = false;
     bool                        dryRun       = false;
     std::size_t                 parallelJobs = 0;
+    // Explicit ninja goal targets (LinkUnit::output paths, relative to the
+    // plan's outputDir). Empty = build the full plan (default behavior).
+    std::vector<std::string>    ninjaTargets;
 };
 
 struct BuildResult {

@@ -1195,6 +1195,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (opts.parallelJobs)
         nargv.push_back(std::format("-j{}", opts.parallelJobs));
 
+    // Explicit goal targets: ninja builds only these outputs (and their
+    // prerequisites). Used by `mcpp test` to isolate per-test compiles.
+    for (auto& t : opts.ninjaTargets)
+        nargv.push_back(t);
+
     // Real env pairs for THIS run (the "@env" cache encoding above is only
     // for the fast path's later re-creation of the same environment).
     std::vector<std::pair<std::string, std::string>> nenv;
@@ -1214,7 +1219,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (ok) {
         if (opts.verbose && !out.empty())
             std::fputs(out.c_str(), stdout);
+        std::set<std::string> want(opts.ninjaTargets.begin(), opts.ninjaTargets.end());
         for (auto& lu : plan.linkUnits) {
+            if (!want.empty() && !want.contains(lu.output.generic_string())) continue;
             r.producedArtifacts.push_back(plan.outputDir / lu.output);
             for (auto const& alias : lu.runtimeAliases) {
                 r.producedArtifacts.push_back(plan.outputDir / alias);
