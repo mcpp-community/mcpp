@@ -13,6 +13,7 @@
 - **测试按 `tests/` 相对路径命名**:`tests/00-a/0.cpp` → `00-a/0`,子目录下同名 stem 不再冲突(此前直接 `duplicate test name` 硬错);平铺布局名字不变。
 - **`mcpp test <pattern>`**:按路径名子串过滤要构建/运行的测试。过滤只作用于构建/运行阶段——计划始终含全部测试,`compile_commands.json` 保持完整(clangd 依赖)。无匹配时报错退出码 2。
 - **`mcpp test --message-format json`**:NDJSON 输出,逐测试一条记录流式发射(`test`/`status`=`pass|compile_fail|run_fail`/`exit_code`/`signal`/`compile_output`/`run_output`),包级失败单独 `{"error":"package",...}` 记录,末行 `{"summary":...}`;stdout 纯协议流,人读输出全部静默。供 CI/IDE/d2x Provider 消费。
+- **`[build].flags` glob 覆盖测试 TU**:glob 指名文件,是 source 还是 test 是正交的——匹配的条目经既有 per-target flag 通道(#131)挂到合成测试 target 上,per-test 编译选项从此有 toml 承载。配套:死 glob 警告改为「磁盘上无文件匹配」才触发(此前只数被扫描的 source,指向 tests/ 的合法 glob 会被误警)。
 
 ### 修复
 
@@ -20,7 +21,8 @@
 
 ### 备注
 
-- e2e 新增 118(子目录命名)/119(隔离与包级归因)/120(过滤器)/121(JSON)/122(嵌套 loader 路径免疫)。
+- e2e 新增 118(子目录命名)/119(隔离与包级归因)/120(过滤器)/121(JSON)/122(嵌套 loader 路径免疫)/123(测试 TU 吃 glob flags + 死 glob 判定)。
+- 首个下游消费者已完成端到端接入:d2mcpp「练习即测试」迁移(104 练习 zh/en 52/52 全绿)+ d2x checker 闯关链路,全程使用本分支 musl 静态二进制。
 - `BuildOptions::ninjaTargets`(构建计划子集)为支撑性通用接口,空 = 原行为。
 - musl 静态构建(`--target x86_64-linux-musl`)已验证:五个新 e2e 全绿;静态 mcpp 本体对 loader 毒化免疫,与上述修复共同覆盖嵌套链路的两端。
 
