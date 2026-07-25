@@ -727,6 +727,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             for (auto targetIndex : targetsIt->second) {
                 auto const& dep = sharedDepTargets[targetIndex];
                 lu.implicitInputs.push_back(dep.output);
+                // The SONAME alias is a prerequisite too, not a by-product: the
+                // library is written as bin/libX11.so but records SONAME
+                // libX11.so.6, so both the linker (resolving a transitive
+                // NEEDED) and the loader look for the alias, never for the
+                // plain name. Hanging it off the consumer keeps it correct
+                // under explicit ninja goals — `mcpp test` names the test
+                // binaries, and an alias edge that nothing depends on is
+                // reachable only through `default`, so it was silently skipped
+                // (0.0.104-0.0.106). The failure surfaced far away, as
+                // `libX11.so: undefined reference to xcb_connect` or a test
+                // exiting 127.
+                for (auto const& alias : runtime_aliases_for_target(dep.target))
+                    lu.implicitInputs.push_back(alias);
                 auto flags = shared_library_link_flags(dep.target);
                 lu.linkFlags.insert(lu.linkFlags.end(), flags.begin(), flags.end());
             }

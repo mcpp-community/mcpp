@@ -3,6 +3,16 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.107] — 2026-07-25
+
+### 修复
+
+- **`mcpp test` 不再漏建共享库的 SONAME 别名(0.0.104 起的回归)。** 声明了 `soname` 的共享库产物写作 `bin/libX11.so`,但记录的 SONAME 是 `libX11.so.6`,链接器解析传递 `NEEDED`、加载器启动程序时找的都是后者 —— 别名不是附属产物,而是**任何链接该库的目标的前置条件**。此前别名是一条无人依赖的独立 ninja 边,只能经 `default` 到达;0.0.104 的 test 能力批次([#274](https://github.com/mcpp-community/mcpp/pull/274))让 `mcpp test` 改为显式指定 ninja 目标以隔离逐测试编译,于是这条边被静默跳过。
+
+  症状离根因很远,这也是它潜伏三个版本的原因:消费者链接期报 `libX11.so: undefined reference to xcb_connect`(伴 `libxcb.so.1 ... not found`),或测试二进制以 `exit 127` 退出。`mcpp build` / `mcpp run` 走 `default`,一直正常,所以只有以 `mcpp test` 驱动的工程会中招 —— mcpp-index 的 CI 正是如此,`gui-stack` / `imgui-module` / `imgui-window` 三个成员自 0.0.104 起持续失败。
+
+  修法是把别名挂到消费者的隐式输入上(`plan.cppm` 的 `append_direct_shared_deps`),与被链接的 `.so` 并列。无论 ninja 的目标是 `default` 还是某个测试二进制都会生成,且不会多编译任何东西。e2e 64 补了 `mcpp test` 一段覆盖此路径 —— 它此前只覆盖 `build` + `run`,正是缺口所在。
+
 ## [0.0.106] — 2026-07-25
 
 > 落地 **SPEC-001**(`docs/spec/package-identity.md`)—— 包身份的规范形态。0.0.105 为修 #278 引入的「`name` 必须写成完全限定名」是**编码约束而非设计规则**:它的唯一成因是 mcpp 构造安装目标时丢弃了已读到的字面 `name`、改用 `<ns>.<短名>` 重新渲染一遍。本版本改为直接使用字面值,规范形态回归 **`namespace` 承载层级、`name` 是单一原子段**。配套 xlings 0.4.69([#381](https://github.com/openxlings/xlings/issues/381),索引改按 `(namespace, name)` 建键)。

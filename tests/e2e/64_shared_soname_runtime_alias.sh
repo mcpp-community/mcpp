@@ -95,4 +95,34 @@ readelf -d "$so" | grep -q 'Library soname: \[libdepShared.so.1\]' || {
     exit 1
 }
 
+# ── `mcpp test` must produce the alias too ──────────────────────────
+# The alias edge is reachable through ninja's `default`, which is what build
+# and run use. `mcpp test` names its goals explicitly (to isolate per-test
+# compiles), and from 0.0.104 to 0.0.106 that skipped the alias: a test binary
+# linked against libdepShared.so records NEEDED libdepShared.so.1 and then
+# exits 127 because the loader cannot find it. Start from a clean target dir so
+# only the test path can create it.
+mkdir -p tests
+cat > tests/linked_test.cpp <<'EOF'
+extern "C" int dep_shared_answer();
+
+int main() {
+    return dep_shared_answer() == 42 ? 0 : 1;
+}
+EOF
+
+rm -rf target
+"$MCPP" test > test.log 2>&1 || {
+    cat test.log
+    echo "mcpp test failed — the SONAME alias is a prerequisite of anything that links the library, not a by-product of the default target"
+    exit 1
+}
+
+alias_from_test="$(find target -name 'libdepShared.so.1' | head -1)"
+[ -n "$alias_from_test" ] || {
+    cat test.log
+    echo "mcpp test did not produce the ABI soname alias"
+    exit 1
+}
+
 echo "OK"
