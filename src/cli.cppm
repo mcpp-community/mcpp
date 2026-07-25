@@ -329,7 +329,11 @@ int run(int argc, char** argv) {
                 .option(cl::Option("version").short_name('V').takes_value().value_name("VER")
                     .help("Override package version"))
                 .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
-                    .help("Write to file instead of stdout")))
+                    .help("Write to file instead of stdout"))
+                .option(cl::Option("namespace").takes_value().value_name("NS")
+                    .help("Package namespace for the emitted descriptor "
+                          "(overrides [package] namespace). Emits both "
+                          "`namespace` and the fully-qualified `name`")))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("emit", p, {{"xpkg", cmd_emit_xpkg}});
             })))
@@ -344,7 +348,12 @@ int run(int argc, char** argv) {
                     .help("Downgrade unknown mcpp-segment keys from error to warning"))
                 .option(cl::Option("all-os")
                     .help("Validate every per-OS section (linux/macosx/windows), "
-                          "not just the running host's")))
+                          "not just the running host's"))
+                .option(cl::Option("allow-split-name")
+                    .help("Skip the INV-NAME check (package.name must be the "
+                          "fully-qualified <namespace>.<short>). For "
+                          "xlings-native indices, where package.namespace is an "
+                          "install-dir category rather than a package namespace")))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("xpkg", p, {{"parse", cmd_xpkg_parse}});
             })))

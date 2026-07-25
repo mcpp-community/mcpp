@@ -1453,13 +1453,24 @@ prepare_build(bool print_fingerprint,
         return nullptr;
     };
 
-    // Identity-first candidate probe. A candidate is located by the DECLARED
-    // (namespace, name) of whatever descriptor the index holds — never by whether
-    // a canonically-named file `<ns>.<short>.lua` happens to exist on disk. It
-    // routes through the same identity-verified readers the load path uses
-    // (`read_xpkg_lua*`, which gate every hit on the descriptor's declared
+    // Identity-first candidate probe. A candidate is DISAMBIGUATED by the
+    // DECLARED (namespace, name) of whatever descriptor the index holds — never
+    // by whether a canonically-named file `<ns>.<short>.lua` happens to exist on
+    // disk. It routes through the same identity-verified readers the load path
+    // uses (`read_xpkg_lua*`, which gate every hit on the descriptor's declared
     // identity and already cover non-canonical filenames), so candidate selection
     // and loading can never disagree about what a candidate resolves to.
+    //
+    // SCOPE (#278, do not over-read the paragraph above): identity governs which
+    // hits are ACCEPTED, not which files are REACHED. Discovery is still bounded
+    // by the candidate-filename list from `compat::xpkg_lua_candidates` — there
+    // is no index-wide scan of `pkgs/*/*.lua` anywhere in mcpp, so a descriptor
+    // whose filename matches none of the candidates is simply not found. The
+    // `IdentityIndex` that would lift that bound was deferred with §5 of the
+    // 2026-06-26 design and is deliberately NOT being added: see
+    // .agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md
+    // §3.2/§4.2 for why bare-name discovery across arbitrary namespaces is a
+    // reproducibility hazard rather than a convenience.
     //
     // Before this, selection probed the canonical filename only, so a descriptor
     // filed under a non-canonical name (e.g. `aimol.tensorvia-cpu` declared in the
@@ -1524,14 +1535,107 @@ prepare_build(bool print_fingerprint,
         }
 
         auto selected = candidates.front();
+        bool matched  = false;
         if (spec.isVersion() && candidates.size() > 1) {
             for (auto& candidate : candidates) {
                 auto lua = readStrictLuaForCandidate(candidate);
-                if (lua && xpkgLuaMatchesCandidate(
+                if (!lua || !xpkgLuaMatchesCandidate(
                         candidate, *lua, /*allowLegacyBareDefault=*/false)) {
-                    selected = candidate;
-                    break;
+                    continue;
                 }
+
+                // INV-RESOLVE (#278) — the discovery rung `(∅, name)` is the
+                // "upstream package that declares no namespace" rung, NOT a
+                // cross-namespace wildcard. The identity gate is intentionally
+                // permissive here (`ns.empty() → name match is enough`, because
+                // `mcpp new --template X` legitimately discovers by short name),
+                // so the narrowing lives at THIS call site rather than in the
+                // gate — tightening the gate would break template discovery.
+                //
+                // Rejecting the hit keeps a third-party-namespaced package from
+                // being reachable by a bare name: resolution must not depend on
+                // which indices happen to be present, or adding an index could
+                // silently retarget an existing dependency (design §3.2).
+                auto declaredNs =
+                    mcpp::manifest::extract_xpkg_namespace(*lua);
+                if (candidate.namespace_.empty() && !declaredNs.empty()) {
+                    continue;
+                }
+
+                // P3 (#278) — resolve the discovery rung to a REAL identity
+                // before anything downstream sees it. `selected.namespace_`
+                // used to be the CANDIDATE's namespace, so a discovery hit
+                // wrote an empty namespace into the spec and on into the
+                // lockfile and install layer. Read the DECLARED one instead.
+                //
+                // An empty `declaredNs` is a legal identity here, not a hole to
+                // fill: an upstream package with no `namespace` (xim `opencv`,
+                // `musl-gcc`) is keyed by its bare name, and the derived
+                // fqname == shortName is exactly right for it. Attributing such
+                // a descriptor to its owning index (`xim-pkgindex → xim`) is
+                // §4.1 of the 2026-06-26 design and is still unimplemented.
+                selected = candidate;
+                if (selected.namespace_.empty()) selected.namespace_ = declaredNs;
+                matched = true;
+                break;
+            }
+
+            // T9 (#278) — no candidate resolved. This used to fall through to
+            // `candidates.front()` SILENTLY, so mcpp carried on with a namespace
+            // it had invented, and the user met the failure much later (during
+            // download/install) wrapped around that invented name. Fail here,
+            // and say exactly which identities were tried.
+            if (!matched) {
+                std::string tried;
+                for (auto& c : candidates) {
+                    if (!tried.empty()) tried += ", ";
+                    tried += c.namespace_.empty()
+                        ? std::format("(no namespace, {})", c.shortName)
+                        : std::format("({}, {})", c.namespace_, c.shortName);
+                }
+
+                // T12 — did-you-mean. DIAGNOSTIC ONLY: the scan runs solely on
+                // this already-failed path and its result never leaves the
+                // error string (see Fetcher::scan_fqns_with_short_name).
+                std::string hint;
+                if (auto cfg = get_cfg()) {
+                    mcpp::fetcher::Fetcher fetcher(**cfg);
+                    auto roots = fetcher.builtin_index_roots();
+                    for (auto& [idxName, idxSpec] : m->indices) {
+                        if (idxSpec.is_local()) {
+                            roots.push_back(
+                                mcpp::config::resolve_project_index_path(
+                                    *root, idxSpec));
+                        }
+                    }
+                    auto fqns = mcpp::fetcher::Fetcher::scan_fqns_with_short_name(
+                        roots, candidates.front().shortName);
+                    if (!fqns.empty()) {
+                        hint += "\n  a package with this name exists under "
+                                "another namespace:";
+                        for (auto& fqn : fqns) hint += "\n    " + fqn;
+                        hint += std::format(
+                            "\n  bare names only resolve to the `{}` / `{}` "
+                            "namespaces. write it out:"
+                            "\n    [dependencies]"
+                            "\n    \"{}\" = \"{}\""
+                            "\n  or:"
+                            "\n    [dependencies.{}]"
+                            "\n    {} = \"{}\"",
+                            mcpp::pm::kDefaultNamespace,
+                            mcpp::pm::kCompatNamespace,
+                            fqns.front(), spec.version.empty() ? "<version>"
+                                                              : spec.version,
+                            fqns.front().substr(0, fqns.front().rfind('.')),
+                            fqns.front().substr(fqns.front().rfind('.') + 1),
+                            spec.version.empty() ? "<version>" : spec.version);
+                    }
+                }
+
+                return std::unexpected(std::format(
+                    "dependency '{}': no package found under the namespaces "
+                    "mcpp searched\n  tried: {}{}",
+                    depName, tried, hint));
             }
         }
 
@@ -1651,6 +1755,22 @@ prepare_build(bool print_fingerprint,
         // as stale/incomplete on this active resolve path and reinstalled.
         std::optional<std::filesystem::path> installed = findCompleteInstalled();
 
+        // #278 masking guard. The hard INV-NAME check lives on the install path
+        // below, so a machine that already has the package from an older index
+        // snapshot keeps building. That asymmetry is exactly the trap the issue
+        // names — local green, clean CI red — so make it visible here instead of
+        // letting it stay silent.
+        if (installed && luaContent) {
+            if (auto violation = mcpp::manifest::
+                    xpkg_name_form_violation_from_lua(*luaContent)) {
+                mcpp::ui::warning(std::format(
+                    "dependency '{}': {}\n"
+                    "       resolving from the already-installed copy; a clean "
+                    "environment (CI) will fail here",
+                    depName, *violation));
+            }
+        }
+
         if (!installed) {
             if (luaContent) {
                 auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
@@ -1713,8 +1833,27 @@ prepare_build(bool print_fingerprint,
             // xlings resolves packages by the full qualified name (ns.shortName)
             // as it appears in the index's name field. Use fqname, not the
             // map key (which may be a bare short name for default-ns deps).
+            //
+            // #278: that sentence used to be a prose contract with no assertion
+            // behind it — a descriptor written in split form (`namespace="a"`,
+            // `name="b"`) satisfies mcpp's identity gate but is keyed by the
+            // index as `b`, so this derived `a.b` could never resolve and the
+            // user got an opaque E_NOT_FOUND after a full three-platform CI run.
+            // The contract is now checked against the descriptor mcpp already
+            // holds (`luaContent`, read above — zero extra I/O), with the SAME
+            // predicate `mcpp xpkg parse` uses, so lint and runtime cannot drift.
             auto fqname = ns.empty() ? shortName
                 : std::format("{}.{}", ns, shortName);
+            if (luaContent) {
+                if (auto violation = mcpp::manifest::
+                        xpkg_name_form_violation_from_lua(*luaContent)) {
+                    return std::unexpected(std::format(
+                        "dependency '{}': {}\n"
+                        "       (mcpp addresses it as '{}', but the index keys "
+                        "it by the literal package.name)",
+                        depName, *violation, fqname));
+                }
+            }
             mcpp::ui::info("Downloading", std::format("{} v{}", fqname, version));
 
             // #238: retain whatever error/warn text the child DID emit so we

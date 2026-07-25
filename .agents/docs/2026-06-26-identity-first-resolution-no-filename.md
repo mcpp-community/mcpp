@@ -2,7 +2,14 @@
 
 **Date:** 2026-06-26
 **Status:** Step 0 landed in v0.0.67 (candidate selection is now identity-first);
-§5 `PackageLocator` / `IdentityIndex` choke-point consolidation remains follow-up
+§5 `PackageLocator` / `IdentityIndex` choke-point consolidation remains follow-up.
+**Partly superseded by #278 (v0.0.105):** §4.5's emit half landed (`mcpp emit xpkg`
+now writes both `namespace` and the FQN `name`); its "catalog keys on canonical
+(ns,name)" half is **unachievable as written** — the catalog belongs to xlings, is
+keyed by the literal `package.name` with exact `find()`, and mcpp's normalization
+has no authority over it, so the split/FQN equivalence is instead resolved by
+constraining the wire key's spelling (INV-NAME). §4.6(c)'s discovery rung is
+narrowed — see the SUPERSEDED note at that row.
 **Extends:** [`2026-06-20-package-resolution-architecture.md`](2026-06-20-package-resolution-architecture.md)
 (realizes its deferred §5 `PackageLocator` / identity-indexed slow path),
 [`2026-05-11-namespace-field-design.md`](2026-05-11-namespace-field-design.md),
@@ -389,7 +396,30 @@ declared `(∅, a.b.c)` in the `a.b`-owned index. The user's point, encoded.
 | candidate kind | rule | matches `(aimol, tensorvia-cpu)`? |
 |---|---|---|
 | qualified, ns non-empty | **exact tuple equality** `cand == declared` | `(aimol, tensorvia-cpu)` ✅ · `(mcpplibs.aimol, …)` ❌ · `(mcpplibs, …)` ❌ |
-| discovery, ns = `∅` | match by `name` alone across the precedence path; **resolve to the declared `(ns, name)`** before returning | `(∅, tensorvia-cpu)` ✅ → resolves to `(aimol, tensorvia-cpu)` |
+| discovery, ns = `∅` | ~~match by `name` alone across the precedence path~~ **SUPERSEDED — see the note below**; **resolve to the declared `(ns, name)`** before returning | ~~`(∅, tensorvia-cpu)` ✅ → resolves to `(aimol, tensorvia-cpu)`~~ |
+
+> **SUPERSEDED by #278 (mcpp 0.0.105).** The discovery rung is **not** a
+> cross-namespace wildcard. It is the "upstream package that declares no
+> `namespace`" rung, and a hit whose descriptor declares a non-empty namespace is
+> now REJECTED at the dependency-resolution call site (`selectDependencyCandidate`
+> in `prepare.cppm`; the gate itself is unchanged, because `mcpp new --template X`
+> still discovers by short name). A bare `[dependencies]` key therefore resolves in
+> exactly three places: `mcpplibs`, `compat`, and no-namespace upstream packages.
+>
+> Why the reversal: "match by name alone across the precedence path" makes
+> resolution depend on which indices happen to be present. Two namespaces owning
+> the same short name would be settled by an index ordering that has **no total
+> order** across user-added `[indices]`, and adding an index could silently
+> retarget an existing dependency. Reproducibility beats the convenience.
+>
+> The **P3 half of this row still stands and is now actually implemented**: a
+> discovery hit writes back the namespace the DESCRIPTOR declares, not the
+> candidate's empty one. Caveat: an empty declared namespace is a legal identity
+> for upstream bare packages, not a hole to fill — the "no empty namespace ever
+> reaches the install layer" claim in §4.4 presumes §4.1 index-owned namespace
+> attribution, which remains unimplemented.
+>
+> See `.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md` §3.2.
 
 **Selection** = first candidate (in the §(a) order) that finds a declared identity by
 rule §(c). Crucially, "finds" means **an entry with that declared identity exists in

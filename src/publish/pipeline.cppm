@@ -18,8 +18,9 @@ import mcpp.ui;
 
 namespace mcpp::publish {
 
-// `mcpp emit xpkg [-V version] [-o output]`.
-export int emit_xpkg_to(std::string version, const std::filesystem::path& output) {
+// `mcpp emit xpkg [-V version] [-o output] [--namespace NS]`.
+export int emit_xpkg_to(std::string version, const std::filesystem::path& output,
+                        std::string namespaceOverride = {}) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
         std::println(stderr, "error: no mcpp.toml found");
@@ -34,6 +35,22 @@ export int emit_xpkg_to(std::string version, const std::filesystem::path& output
     }
 
     if (version.empty()) version = m->package.version;
+
+    // #278: `--namespace` lets a one-off archival run supply the namespace
+    // without editing mcpp.toml. Without a namespace from either source the
+    // emitted descriptor is namespace-less, and hand-adding one afterwards is
+    // precisely what produces an uninstallable split-form descriptor — so say
+    // so, loudly, at the moment of generation.
+    if (!namespaceOverride.empty()) m->package.namespace_ = namespaceOverride;
+    if (m->package.namespace_.empty()) {
+        mcpp::ui::warning(std::format(
+            "emitted descriptor declares no `namespace`. If you file this into a "
+            "namespaced index, do NOT hand-add `namespace = \"<org>\"` — that "
+            "makes `name` a split form the index can never resolve (mcpp#278). "
+            "Declare `[package] namespace` in mcpp.toml or pass "
+            "`--namespace <org>`, so both fields are emitted together."));
+    }
+
     auto release = mcpp::publish::placeholder_release(version);
     auto lua = mcpp::publish::emit_xpkg(*m, scan.graph, release);
 

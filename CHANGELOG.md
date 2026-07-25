@@ -3,6 +3,30 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.105] — 2026-07-25
+
+> 包身份口径双侧收敛(#278)。事故:mcpp-index 把 `chriskohlhoff.asio` 的 `name` 从 `"chriskohlhoff.asio"` 改成 `"asio"`(namespace 不变),lint 全绿,三个平台的 workspace job 跑满 20~58 分钟后全挂 `E_NOT_FOUND` —— 描述符能解析、能过 mcpp 的身份闸门,却没有任何消费写法能装上。根因是身份归一化(容忍三种拼写)与安装目标构造(只支持一种)口径断层,契约只写在注释里、无人执行。设计见 `.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`。
+
+### ⚠️ 破坏性变更
+
+- **裸依赖名不再解析到第三方命名空间的包。** 命名空间缺省时,`[dependencies]` 里的裸名**只**解析三类:`mcpplibs`(默认)、`compat`(包装)、无 `namespace` 声明的上游包。此前裸名会跨命名空间命中(例如裸 `tensorvia-cpu` 能装上 `aimol` 下的包),现在必须写全:`"aimol.tensorvia-cpu" = "…"` 或 `[dependencies.aimol] tensorvia-cpu = "…"`。
+  取舍理由:全域按名发现的便捷性换来三条稳定性损失——同名包的裁决依赖索引优先级(而用户 `[indices]` 添加的索引之间**无全序**)、**新增一个索引可能悄悄改变既有依赖解析到的包**(供应链隐患)、同一份 `mcpp.toml` 在不同机器上可能解析到不同包。依赖解析的可复现性优先于书写便捷性。
+  迁移无需查文档:失败时 mcpp 会扫描索引并直接给出应当改写成的那两行(见下)。
+
+### 新增
+
+- **INV-NAME 校验(`mcpp xpkg parse`)**:描述符声明了非空 `package.namespace` 时,`package.name` 必须是完全限定名(以 `<namespace>.` 开头),否则报错退出。索引是以 `package.name` **字面值**为键的扁平空间,而 mcpp 按 `<ns>.<short>` 寻址,两者不相交即永久不可安装。诊断直接给出应写的字面量(`fix: name = "chriskohlhoff.asio"`),`--json` 同步 `error` 字段供索引 CI 机读。mcpp-index 的 CI 本就跑 `mcpp xpkg parse pkgs/*/*.lua`,免费获得秒级防护。
+- **`mcpp xpkg parse --allow-split-name`**:跳过 INV-NAME 检查。xlings 原生索引(xim-pkgindex、-scode)里 `package.namespace` 是**安装目录分类**(`config`/`scode`/`awesome`)而非包命名空间,索引按裸 `package.name` 建键,split 形式在那个世界里是正确的——这些树用此开关 lint。
+- **运行期 fail-fast**:`mcpp build` 在构造安装目标**之前**用同一个谓词校验手上已有的描述符(零额外 I/O),把"三平台一小时后的 E_NOT_FOUND"变成秒级自解释失败。lint 与运行期共用一份判定,不会再各自推导。已装旧快照的路径降级为 warning,让"本机绿、干净 CI 红"的遮蔽陷阱可见。
+- **依赖解析失败的 did-you-mean**:候选全部落空时(且**仅**在此时)扫描索引,若该短名存在于其他命名空间,直接列出 FQN 与两种可直接抄写的正确写法。该扫描是**纯诊断**——结果只进错误文案,绝不回灌解析、lockfile 或安装层(否则就退化成被否决的全域模糊匹配)。
+- **`mcpp emit xpkg --namespace <NS>`**:为归档场景提供命名空间,无需改 `mcpp.toml`。
+
+### 修复
+
+- **`mcpp emit xpkg` 不再生成破损雏形**:此前只写裸 `name`、完全不输出 `namespace`,维护者归档进命名空间索引时手补一行 `namespace = "<org>"`,那一刻描述符就变成无法安装的 split 形式(`aimol.tensorvia-cpu` 正是这么来的,文件头还留着"AUTO-GENERATED, do not edit by hand")。现在 `[package] namespace` 非空时同时输出 `namespace` 与 FQN `name`;为空时给出明确警告,说明不要事后手补。此修复在 2026-06-26 设计 §4.5 里就已写明,一直未落地。
+- **依赖候选全部落空时不再静默回退**:此前会退到第一个候选并把 mcpp **自己编造的**命名空间当作结论继续跑,失败被推迟到下载/安装阶段,错误文本里还带着用户从未写过的命名空间。现在当场失败并列出试过的每一个身份。
+- **discovery 档不再泄漏空命名空间(P3)**:`(∅, name)` 命中后写回的是**描述符声明的**命名空间,而非候选的空值——空命名空间此前会流进 lockfile 与安装层。无 `namespace` 声明的上游包(`opencv`/`musl-gcc`)保持空命名空间,那是它们的合法身份。
+
 ## [0.0.104] — 2026-07-24
 
 > `mcpp test` 能力批次(两轮):逐测试编译隔离、子目录路径命名、过滤器、JSON 输出——四项均为通用能力(cargo/ctest 同形),首个下游消费者是 d2mcpp「练习即测试」重设计(见 d2mcpp 仓 `.agents/docs/2026-07-23-exercises-as-tests-design.md` §4,验收标准即出自该文档)。实施计划见 `.agents/docs/2026-07-23-test-isolation-json-plan.md`。

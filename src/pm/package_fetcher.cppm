@@ -134,6 +134,31 @@ public:
                                        std::string_view shortName,
                                        std::string_view version);
 
+    // ─── did-you-mean scan (#278) — DIAGNOSTIC ONLY ────────────────
+    //
+    // Enumerate every descriptor under the given index roots and return the
+    // fully-qualified names of those whose canonical SHORT name equals
+    // `shortName`. This is the only index-wide scan in mcpp, and it exists so a
+    // failed bare-name lookup can tell the user the exact line to write instead
+    // of leaving them to guess a namespace.
+    //
+    // THREE CONSTRAINTS — this must never grow into an `IdentityIndex`:
+    //   1. Call it ONLY on an already-failed path. Successful resolution must
+    //      not pay for a directory walk.
+    //   2. Its result feeds ERROR TEXT ONLY. It must never be written back into
+    //      a DependencySpec, the lockfile, or the install layer — bare names
+    //      resolving across arbitrary namespaces is precisely the
+    //      reproducibility hazard this design rejects (design §3.2/§4.2).
+    //   3. An empty result is not an error. It downgrades the message, never
+    //      the exit code.
+    static std::vector<std::string>
+        scan_fqns_with_short_name(const std::vector<std::filesystem::path>& indexRoots,
+                                  std::string_view shortName);
+
+    // The index roots a plain `mcpp build` would consult (global registry data
+    // dirs). Used to feed `scan_fqns_with_short_name` on the failure path.
+    std::vector<std::filesystem::path> builtin_index_roots() const;
+
     // ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────
     //
     // Accept a raw package name string and infer namespace from it.
@@ -739,6 +764,58 @@ Fetcher::install_path_from_project_data(const std::filesystem::path& projectDir,
     }
 
     return std::nullopt;
+}
+
+// ─── did-you-mean scan (#278) — DIAGNOSTIC ONLY ─────────────────────
+//
+// See the declaration for the three constraints that keep this from becoming a
+// resolution path. Deliberately tolerant: unreadable files are skipped, not
+// reported — a diagnostic helper must never turn into a second failure mode.
+
+std::vector<std::string>
+Fetcher::scan_fqns_with_short_name(
+    const std::vector<std::filesystem::path>& indexRoots,
+    std::string_view shortName)
+{
+    std::vector<std::string> hits;
+    if (shortName.empty()) return hits;
+
+    std::error_code ec;
+    for (auto& root : indexRoots) {
+        auto pkgsDir = root / "pkgs";
+        if (!std::filesystem::exists(pkgsDir, ec)) continue;
+        for (auto& letterDir : std::filesystem::directory_iterator(pkgsDir, ec)) {
+            if (!letterDir.is_directory(ec)) continue;
+            for (auto& entry :
+                     std::filesystem::directory_iterator(letterDir.path(), ec)) {
+                if (entry.path().extension() != ".lua") continue;
+                std::ifstream is(entry.path());
+                if (!is) continue;
+                std::stringstream ss; ss << is.rdbuf();
+                auto content = ss.str();
+
+                auto id = mcpp::manifest::canonical_xpkg_identity_from_lua(content);
+                if (id.name != shortName) continue;
+                if (id.ns.empty()) continue;   // bare upstream: already reachable
+                hits.push_back(id.ns + "." + id.name);
+            }
+        }
+    }
+
+    std::sort(hits.begin(), hits.end());
+    hits.erase(std::unique(hits.begin(), hits.end()), hits.end());
+    return hits;
+}
+
+std::vector<std::filesystem::path>
+Fetcher::builtin_index_roots() const
+{
+    std::vector<std::filesystem::path> roots;
+    auto data = cfg_.xlingsHome() / "data";
+    std::error_code ec;
+    if (!std::filesystem::exists(data, ec)) return roots;
+    for (auto& dir : sorted_index_dirs(data)) roots.push_back(dir);
+    return roots;
 }
 
 // ─── Legacy read_xpkg_lua (COMPAT, remove in 1.0.0) ─────────────────

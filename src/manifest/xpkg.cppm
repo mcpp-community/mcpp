@@ -80,6 +80,39 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
                                std::string_view shortName,
                                bool allowLegacyBareDefault = true,
                                std::string_view indexDefaultNs = {});
+// INV-NAME (#278) — a descriptor's `package.name` literal IS its fully-qualified
+// name. When `package.namespace` is declared non-empty, `name` MUST start with
+// `<namespace>.` and carry a non-empty short segment after it.
+//
+// This is not a style convention, it is structurally forced. The package index
+// is a FLAT key space keyed by the literal `package.name`
+// (libxpkg `xpkg-loader.cppm`: `key = <indexNs>-x-<pkg.name>`, looked up with
+// exact `entries.find(name)` — zero normalization). The index prefix
+// distinguishes INDICES, not package namespaces, so the namespace distinction
+// has to be carried by the name itself; otherwise `mcpplibs`'s `zlib` and
+// `compat`'s `zlib` collide on one key. mcpp derives the install target as
+// `ns + "." + shortName`, which is correct-by-construction under INV-NAME and
+// wrong for any other spelling — a split-form descriptor (`namespace="a"`,
+// `name="b"`) parses, passes the identity gate, and can never be installed.
+//
+// DELIBERATELY NARROW: the check fires only when a non-empty namespace is
+// DECLARED. It must NOT be written as the general comparison
+// "literal name != derived fqname" — that would flag the working compat-alias
+// path (a bare `gtest` request reads `compat.gtest.lua`, whose literal name
+// `compat.gtest` differs from the derived `gtest`, yet resolves fine via the
+// `compat.<short>` retry in prepare.cppm). Cases that return nullopt:
+//   • no `name`            → cannot verify (matches the gate's lenient stance)
+//   • no `namespace`       → xim upstream bare packages are legal
+//   • `name` starts with `<namespace>.` → conforming
+//
+// Returns a ready-to-display diagnostic body on violation, nullopt otherwise.
+std::optional<std::string>
+xpkg_name_form_violation(std::string_view declaredNs,
+                         std::string_view declaredName);
+// Convenience: read `package.{namespace,name}` from a descriptor and apply
+// `xpkg_name_form_violation`.
+std::optional<std::string>
+xpkg_name_form_violation_from_lua(std::string_view luaContent);
 // Resolve the lib-root path for a manifest:
 //   1. `[lib].path` if explicitly set (cargo-style override),
 //   2. otherwise the convention `src/<package-tail>.cppm`, where
@@ -713,6 +746,43 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
     // exact namespace equality. Cross-namespace collisions are structurally
     // impossible — a foreign `(xim, zlib)` never equals `(compat, zlib)`.
     return id.ns == ns;
+}
+
+std::optional<std::string>
+xpkg_name_form_violation(std::string_view declaredNs,
+                         std::string_view declaredName)
+{
+    if (declaredName.empty()) return std::nullopt;   // cannot verify → lenient
+    if (declaredNs.empty())   return std::nullopt;   // bare upstream package
+
+    std::string prefix = std::string(declaredNs) + ".";
+    if (declaredName.starts_with(prefix) &&
+        declaredName.size() > prefix.size()) {
+        return std::nullopt;                         // conforming FQN
+    }
+
+    // The expected spelling: the declared name is the SHORT segment when it
+    // carries no namespace prefix at all; when it carries a *different* prefix
+    // we still suggest `<ns>.<declaredName>` rather than guessing which half
+    // the author meant — the namespace field is the authority here.
+    return std::format(
+        "package.name must be the fully-qualified name when package.namespace "
+        "is declared\n"
+        "         namespace = \"{}\"\n"
+        "         name      = \"{}\"          <-- expected \"{}{}\"\n"
+        "       The index is a flat key space keyed by the LITERAL package.name,\n"
+        "       while mcpp addresses the package as <namespace>.<short>. They\n"
+        "       never meet, so this descriptor parses but can never be installed\n"
+        "       (E_NOT_FOUND). See mcpp#278.\n"
+        "       fix: name = \"{}{}\"",
+        declaredNs, declaredName, prefix, declaredName, prefix, declaredName);
+}
+
+std::optional<std::string>
+xpkg_name_form_violation_from_lua(std::string_view luaContent)
+{
+    return xpkg_name_form_violation(extract_xpkg_namespace(luaContent),
+                                    extract_xpkg_name(luaContent));
 }
 
 std::vector<std::string>

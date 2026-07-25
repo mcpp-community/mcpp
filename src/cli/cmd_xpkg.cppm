@@ -69,9 +69,10 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     std::string lua{std::istreambuf_iterator<char>(is), {}};
 
-    const bool asJson       = parsed.is_flag_set("json");
-    const bool allowUnknown = parsed.is_flag_set("allow-unknown");
-    const bool allOs        = parsed.is_flag_set("all-os");
+    const bool asJson         = parsed.is_flag_set("json");
+    const bool allowUnknown   = parsed.is_flag_set("allow-unknown");
+    const bool allOs          = parsed.is_flag_set("all-os");
+    const bool allowSplitName = parsed.is_flag_set("allow-split-name");
     if (allOs && asJson) {
         mcpp::ui::error("--all-os and --json are mutually exclusive");
         return 2;
@@ -85,6 +86,34 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 1;
     }
     std::string fqn = id.ns.empty() ? id.name : id.ns + "." + id.name;
+
+    // INV-NAME (#278) — the descriptor's `package.name` literal must BE the FQN.
+    // This is the primary defense: index CI runs `mcpp xpkg parse`, so a
+    // split-form descriptor is rejected in seconds instead of burning a
+    // three-platform workspace job for an hour on an opaque E_NOT_FOUND.
+    // The very same predicate guards the install path (prepare.cppm), so lint
+    // and runtime can never drift apart.
+    //
+    // `--allow-split-name` exists because `package.namespace` carries a SECOND,
+    // unrelated meaning in xlings-native indices (xim-pkgindex, -scode): there
+    // it is an install-directory category (`config`, `scode`, `awesome`) and the
+    // index is keyed by the bare `package.name`, so the split spelling is
+    // correct in that world. mcpp's own indices (mcpplibs, anything carrying an
+    // `index.toml` contract) use it as a package namespace, where INV-NAME
+    // holds. Lints over an xlings-native tree should pass this flag.
+    if (auto violation = allowSplitName
+            ? std::nullopt
+            : mcpp::manifest::xpkg_name_form_violation_from_lua(lua)) {
+        if (asJson) {
+            std::println("{{\"namespace\":\"{}\",\"name\":\"{}\","
+                         "\"error\":\"{}\"}}",
+                         json_escape(id.ns), json_escape(id.name),
+                         json_escape(*violation));
+        } else {
+            mcpp::ui::error(std::format("{}: {}", file, *violation));
+        }
+        return 1;
+    }
 
     // Versions per platform (xpm table).
     static constexpr std::string_view kPlatforms[] = {"linux", "macosx", "windows"};

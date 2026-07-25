@@ -21,7 +21,8 @@ namespace mcpp::cli {
 export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
     return mcpp::publish::emit_xpkg_to(
         parsed.option_or_empty("version").value(),
-        std::filesystem::path{parsed.option_or_empty("output").value()});
+        std::filesystem::path{parsed.option_or_empty("output").value()},
+        parsed.option_or_empty("namespace").value());
 }
 
 export int cmd_publish(const mcpplibs::cmdline::ParsedArgs& parsed) {

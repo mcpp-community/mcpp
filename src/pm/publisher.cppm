@@ -130,7 +130,27 @@ std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
     out += std::format("-- Source: mcpp.toml @ v{}\n", release.version);
     out += "package = {\n";
     out += "    spec = \"1\",\n";
-    out += std::format("    name = {},\n", lua_escape(manifest.package.name));
+    // #278 — emit BOTH `namespace` and the fully-qualified `name` (INV-NAME).
+    //
+    // This used to write only the bare project name and no `namespace` at all.
+    // A namespaced index requires the namespace, so maintainers hand-added a
+    // `namespace = "<org>"` line when filing the package — and that edit turned
+    // the descriptor into the split form, which parses fine but can never be
+    // installed. `aimol.tensorvia-cpu` was born exactly this way (the file still
+    // carries the "AUTO-GENERATED … do not edit by hand" banner). Emitting the
+    // FQN here closes the generator half of that loop; `mcpp xpkg parse` closes
+    // the lint half. Design: 2026-06-26 §4.5 prescribed this and it never landed.
+    if (!manifest.package.namespace_.empty()) {
+        auto prefix = manifest.package.namespace_ + ".";
+        auto fqn = manifest.package.name.starts_with(prefix)
+            ? manifest.package.name
+            : prefix + manifest.package.name;
+        out += std::format("    namespace = {},\n",
+                           lua_escape(manifest.package.namespace_));
+        out += std::format("    name = {},\n", lua_escape(fqn));
+    } else {
+        out += std::format("    name = {},\n", lua_escape(manifest.package.name));
+    }
     if (!manifest.package.description.empty())
         out += std::format("    description = {},\n", lua_escape(manifest.package.description));
     if (!manifest.package.license.empty())

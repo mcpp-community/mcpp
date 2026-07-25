@@ -1888,6 +1888,70 @@ TEST(XpkgIdentity, DefaultNamespaceRequestMatchesCompatAlias) {
         compatGtest, "mcpplibs", "zlib"));
 }
 
+// ─── INV-NAME: xpkg_name_form_violation (#278) ──────────────────────
+//
+// `package.name` must BE the fully-qualified name. The index is a flat key
+// space keyed by the literal name, while mcpp addresses packages as
+// `ns + "." + shortName` — a split-form descriptor (namespace="a", name="b")
+// parses, passes the identity gate, and can never be installed.
+
+TEST(XpkgNameForm, SplitFormNameIsAViolation) {
+    auto v = mcpp::manifest::xpkg_name_form_violation("chriskohlhoff", "asio");
+    ASSERT_TRUE(v.has_value());
+    // The message must carry the exact spelling the author should write.
+    EXPECT_NE(v->find("chriskohlhoff.asio"), std::string::npos) << *v;
+}
+
+TEST(XpkgNameForm, FqnFormIsClean) {
+    EXPECT_FALSE(mcpp::manifest::xpkg_name_form_violation(
+        "chriskohlhoff", "chriskohlhoff.asio").has_value());
+}
+
+TEST(XpkgNameForm, NoNamespaceIsClean) {
+    // xim upstream packages declare no namespace and are keyed by the bare
+    // name — legal, and outside INV-NAME's scope.
+    EXPECT_FALSE(mcpp::manifest::xpkg_name_form_violation("", "opencv")
+                     .has_value());
+}
+
+TEST(XpkgNameForm, NoNameIsClean) {
+    // Cannot verify → lenient, matching the identity gate's stance.
+    EXPECT_FALSE(mcpp::manifest::xpkg_name_form_violation("compat", "")
+                     .has_value());
+}
+
+TEST(XpkgNameForm, CompatAliasIsClean) {
+    // REGRESSION LOCK. The predicate must stay narrow ("declared ns non-empty
+    // AND name lacks the `<ns>.` prefix"). Written as the general comparison
+    // "literal name != derived fqname" it would flag this descriptor — a bare
+    // `gtest` request derives fqname `gtest` while the literal is `compat.gtest`
+    // — and break the working compat-alias path for every bare dependency.
+    EXPECT_FALSE(mcpp::manifest::xpkg_name_form_violation("compat", "compat.gtest")
+                     .has_value());
+}
+
+TEST(XpkgNameForm, NestedNamespaceIsClean) {
+    EXPECT_FALSE(mcpp::manifest::xpkg_name_form_violation(
+        "mcpplibs.capi", "mcpplibs.capi.lua").has_value());
+}
+
+TEST(XpkgNameForm, PrefixWithoutShortSegmentIsAViolation) {
+    // `name` equal to the namespace itself carries no short segment.
+    EXPECT_TRUE(mcpp::manifest::xpkg_name_form_violation("compat", "compat.")
+                    .has_value());
+}
+
+TEST(XpkgNameForm, FromLuaReadsBothFields) {
+    constexpr std::string_view splitLua =
+        R"(package = { namespace = "aimol", name = "tensorvia-cpu" })";
+    constexpr std::string_view fqnLua =
+        R"(package = { namespace = "aimol", name = "aimol.tensorvia-cpu" })";
+    EXPECT_TRUE(
+        mcpp::manifest::xpkg_name_form_violation_from_lua(splitLua).has_value());
+    EXPECT_FALSE(
+        mcpp::manifest::xpkg_name_form_violation_from_lua(fqnLua).has_value());
+}
+
 // ─── canonical_xpkg_identity — the unified (ns, name) model (§4.2) ───
 //
 // Identity is a 2-tuple: ns is a hierarchical namespace path, name is a single

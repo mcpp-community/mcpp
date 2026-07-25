@@ -321,6 +321,61 @@ baz = "=1.2.3"      # Exact match
 qux = ">=1.0, <2.0" # Range combination
 ```
 
+#### Namespace resolution rules
+
+Every package has a two-part identity: a **namespace** and a **name**. How you write
+a dependency key decides which namespaces mcpp will look in.
+
+**A bare name resolves in exactly three places**, in order:
+
+| # | Namespace | Example |
+|---|---|---|
+| 1 | `mcpplibs` — the default namespace | `cmdline = "0.0.2"` |
+| 2 | `compat` — the wrapper namespace for third-party C/C++ libraries | `gtest = "1.15.2"` → `compat.gtest` |
+| 3 | upstream packages that declare no namespace at all | `opencv = "4.10.0"` |
+
+**Any other namespace must be written out in full.** There is no fuzzy, index-wide
+search by short name:
+
+```toml
+# ✅ Correct — dotted selector
+[dependencies]
+"chriskohlhoff.asio" = "1.38.1"
+
+# ✅ Correct — namespace sub-table (preferred when you have several from one org)
+[dependencies.chriskohlhoff]
+asio = "1.38.1"
+
+# ❌ Wrong — a bare name never reaches the `chriskohlhoff` namespace
+[dependencies]
+asio = "1.38.1"
+```
+
+The third form fails with an error that lists the namespaces that were searched and,
+when a package with that short name exists elsewhere, the exact line to write instead.
+
+**Why not resolve bare names across every namespace?** Because dependency resolution
+has to be reproducible. A global short-name search would mean that (a) two namespaces
+owning the same short name are settled by index ordering, and (b) **adding an index
+could silently change which package an existing dependency resolves to**. Requiring
+the namespace keeps a `mcpp.toml` resolving to the same packages on every machine.
+
+**For xpkg authors:** in an index descriptor, `package.name` must be the *fully
+qualified* name — it has to start with `package.namespace` followed by a dot:
+
+```lua
+package = {
+    namespace = "chriskohlhoff",
+    name      = "chriskohlhoff.asio",   -- NOT "asio"
+    ...
+}
+```
+
+The package index is a flat key space keyed by the literal `package.name`, so the
+namespace has to be carried in the name itself — otherwise `mcpplibs`'s `zlib` and
+`compat`'s `zlib` would collide. A descriptor that gets this wrong parses fine but can
+never be installed. `mcpp xpkg parse` checks it, so run it in your index CI.
+
 ### 2.6 `[dev-dependencies]` — Test Dependencies
 
 ```toml
