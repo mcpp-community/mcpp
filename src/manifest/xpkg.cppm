@@ -80,30 +80,31 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
                                std::string_view shortName,
                                bool allowLegacyBareDefault = true,
                                std::string_view indexDefaultNs = {});
-// INV-NAME (#278) — a descriptor's `package.name` literal IS its fully-qualified
-// name. When `package.namespace` is declared non-empty, `name` MUST start with
-// `<namespace>.` and carry a non-empty short segment after it.
+// INV-NAME (SPEC-001 §3.2) — `package.name` is a SINGLE ATOMIC SEGMENT. All
+// hierarchy belongs in `package.namespace`, which is the dotted path.
 //
-// This is not a style convention, it is structurally forced. The package index
-// is a FLAT key space keyed by the literal `package.name`
-// (libxpkg `xpkg-loader.cppm`: `key = <indexNs>-x-<pkg.name>`, looked up with
-// exact `entries.find(name)` — zero normalization). The index prefix
-// distinguishes INDICES, not package namespaces, so the namespace distinction
-// has to be carried by the name itself; otherwise `mcpplibs`'s `zlib` and
-// `compat`'s `zlib` collide on one key. mcpp derives the install target as
-// `ns + "." + shortName`, which is correct-by-construction under INV-NAME and
-// wrong for any other spelling — a split-form descriptor (`namespace="a"`,
-// `name="b"`) parses, passes the identity gate, and can never be installed.
+//     ✅ namespace = "chriskohlhoff", name = "asio"
+//     ✅ namespace = "mcpplibs.capi", name = "lua"
+//     ❌ namespace = "mcpplibs",      name = "capi.lua"   (short name has a dot)
 //
-// DELIBERATELY NARROW: the check fires only when a non-empty namespace is
-// DECLARED. It must NOT be written as the general comparison
-// "literal name != derived fqname" — that would flag the working compat-alias
-// path (a bare `gtest` request reads `compat.gtest.lua`, whose literal name
-// `compat.gtest` differs from the derived `gtest`, yet resolves fine via the
-// `compat.<short>` retry in prepare.cppm). Cases that return nullopt:
-//   • no `name`            → cannot verify (matches the gate's lenient stance)
-//   • no `namespace`       → xim upstream bare packages are legal
-//   • `name` starts with `<namespace>.` → conforming
+// Why it matters: identity is the pair (namespace, name), and xlings addresses
+// packages as `<effectiveNamespace>:<package.name>` with the LITERAL name. A
+// `name` carrying dots the namespace does not account for describes a package
+// whose namespace nobody declared — mcpp refuses to guess where the split
+// belongs rather than silently inventing one (which the old
+// split-on-last-dot normalization did).
+//
+// ACCEPTED, NOT A VIOLATION — the legacy fully-qualified spelling:
+//
+//     namespace = "compat", name = "compat.zlib"     → short name "zlib"
+//
+// Descriptors written before SPEC-001 repeat the namespace inside `name`. They
+// stay installable (the literal name is what the index is keyed by either way),
+// so the check strips that prefix before judging. Only what remains has to be
+// atomic. Cases that return nullopt:
+//   • no `name`                          → cannot verify (gate's lenient stance)
+//   • short name has no '.'              → conforming
+//   • legacy `<ns>.<atomic>` spelling     → conforming (compat)
 //
 // Returns a ready-to-display diagnostic body on violation, nullopt otherwise.
 std::optional<std::string>
@@ -682,26 +683,33 @@ std::string extract_xpkg_name(std::string_view luaContent) {
 XpkgIdentity canonical_xpkg_identity(std::string_view declaredNs,
                                      std::string_view declaredName,
                                      std::string_view indexDefaultNs) {
-    // Step 1 — owning-index namespace: a descriptor that declares no namespace
-    // inherits the namespace of the index it lives in.
+    // Step 1 — effective namespace: a descriptor that declares no namespace
+    // inherits the namespace of the index it lives in. Matches xlings'
+    // `effectiveNamespace` (its issue-381 design §2.2), so mcpp and xlings
+    // agree on what a descriptor's namespace IS.
     std::string ns(declaredNs.empty() ? indexDefaultNs : declaredNs);
     std::string name(declaredName);
 
-    // Step 2 — fully-qualified name. A declared name already prefixed with the
-    // namespace IS the FQN; otherwise the namespace is prepended. With no
-    // namespace at all, the declared name stands alone.
-    std::string fqn;
-    if (ns.empty()) {
-        fqn = name;
-    } else {
+    // Step 2 — the short name. `namespace` owns the hierarchy and `name` is a
+    // single atomic segment (SPEC-001 §2), so the identity is simply the two
+    // declared fields. The only transformation is stripping a legacy
+    // fully-qualified spelling: descriptors written before SPEC-001 repeat the
+    // namespace inside `name` (`namespace="compat", name="compat.zlib"`), and
+    // that prefix is not part of the short name.
+    //
+    // NOTE — this deliberately no longer splits on the LAST dot. That old rule
+    // inferred a namespace the descriptor never declared: `namespace="a"` with
+    // `name="a.b.c"` silently became `(a.b, c)`. Identity is now exactly what
+    // the descriptor says; a `name` that still carries dots after the legacy
+    // prefix is rejected by `xpkg_name_form_violation` instead of being
+    // reinterpreted here.
+    if (!ns.empty()) {
         std::string prefix = ns + ".";
-        fqn = name.starts_with(prefix) ? name : ns + "." + name;
+        if (name.starts_with(prefix) && name.size() > prefix.size()) {
+            name = name.substr(prefix.size());
+        }
     }
-
-    // Step 3 — split the FQN on its LAST dot: prefix → ns, final segment → name.
-    auto pos = fqn.rfind('.');
-    if (pos == std::string::npos) return XpkgIdentity{ /*ns=*/{}, /*name=*/fqn };
-    return XpkgIdentity{ fqn.substr(0, pos), fqn.substr(pos + 1) };
+    return XpkgIdentity{ std::move(ns), std::move(name) };
 }
 
 XpkgIdentity canonical_xpkg_identity_from_lua(std::string_view luaContent,
@@ -753,29 +761,43 @@ xpkg_name_form_violation(std::string_view declaredNs,
                          std::string_view declaredName)
 {
     if (declaredName.empty()) return std::nullopt;   // cannot verify → lenient
-    if (declaredNs.empty())   return std::nullopt;   // bare upstream package
 
-    std::string prefix = std::string(declaredNs) + ".";
-    if (declaredName.starts_with(prefix) &&
-        declaredName.size() > prefix.size()) {
-        return std::nullopt;                         // conforming FQN
+    // Legacy fully-qualified spelling: `namespace="compat", name="compat.zlib"`.
+    // Descriptors written before SPEC-001 look like this and remain installable
+    // (the literal name is what the index is keyed by, either way), so accept
+    // them — but only when the remainder is a single atomic segment.
+    std::string_view shortName = declaredName;
+    if (!declaredNs.empty()) {
+        std::string prefix = std::string(declaredNs) + ".";
+        if (declaredName.starts_with(prefix) &&
+            declaredName.size() > prefix.size()) {
+            shortName = declaredName.substr(prefix.size());
+        }
     }
 
-    // The expected spelling: the declared name is the SHORT segment when it
-    // carries no namespace prefix at all; when it carries a *different* prefix
-    // we still suggest `<ns>.<declaredName>` rather than guessing which half
-    // the author meant — the namespace field is the authority here.
+    if (shortName.find('.') == std::string_view::npos) return std::nullopt;
+
+    // What's left carries dots that `namespace` does not account for. Identity
+    // is (namespace, name) where `namespace` is the dotted path and `name` is
+    // ONE segment (SPEC-001 §2/§3.2), so the hierarchy has to move into
+    // `namespace` — mcpp will not guess where the split belongs.
+    auto lastDot = shortName.rfind('.');
+    auto suggestedNsTail = shortName.substr(0, lastDot);
+    auto suggestedShort  = shortName.substr(lastDot + 1);
+    std::string suggestedNs = declaredNs.empty()
+        ? std::string(suggestedNsTail)
+        : std::string(declaredNs) + "." + std::string(suggestedNsTail);
+
     return std::format(
-        "package.name must be the fully-qualified name when package.namespace "
-        "is declared\n"
+        "package.name must be a single atomic segment — the hierarchy belongs "
+        "in package.namespace\n"
         "         namespace = \"{}\"\n"
-        "         name      = \"{}\"          <-- expected \"{}{}\"\n"
-        "       The index is a flat key space keyed by the LITERAL package.name,\n"
-        "       while mcpp addresses the package as <namespace>.<short>. They\n"
-        "       never meet, so this descriptor parses but can never be installed\n"
-        "       (E_NOT_FOUND). See mcpp#278.\n"
-        "       fix: name = \"{}{}\"",
-        declaredNs, declaredName, prefix, declaredName, prefix, declaredName);
+        "         name      = \"{}\"          <-- short name \"{}\" still carries a '.'\n"
+        "       Identity is (namespace, name): `namespace` is the dotted path,\n"
+        "       `name` is ONE segment. Move the depth into the namespace:\n"
+        "         namespace = \"{}\"\n"
+        "         name      = \"{}\"",
+        declaredNs, declaredName, shortName, suggestedNs, suggestedShort);
 }
 
 std::optional<std::string>

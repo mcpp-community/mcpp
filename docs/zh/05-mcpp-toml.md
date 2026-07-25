@@ -325,95 +325,23 @@ asio = "1.38.1"
 
 **为什么不让裸名跨所有命名空间去找?** 因为依赖解析必须可复现。全域短名搜索意味着:(a) 两个命名空间拥有同名包时,胜负由索引顺序决定;(b) **新增一个索引可能悄悄改变某个既有依赖解析到的包**。要求写出命名空间,才能让同一份 `mcpp.toml` 在每台机器上解析到相同的包。
 
-**给 xpkg 作者:** 索引描述符里的 `package.name` 必须是**完全限定名** —— 以 `package.namespace` 加一个点开头:
+**给 xpkg 作者:** 索引描述符里,身份是 `(package.namespace, package.name)` 二元组。命名空间是点分路径,**`name` 是单一原子段**:
 
 ```lua
 package = {
     namespace = "chriskohlhoff",
-    name      = "chriskohlhoff.asio",   -- 不是 "asio"
-    ...
+    name      = "asio",                 -- 单一段;不是 "chriskohlhoff.asio"
+}
+
+package = {
+    namespace = "mcpplibs.capi",        -- 层级放这里
+    name      = "lua",
 }
 ```
 
-包索引是以 `package.name` 字面值为键的**扁平键空间**,命名空间的区分度必须由名字本身携带 —— 否则 `mcpplibs` 的 `zlib` 与 `compat` 的 `zlib` 会撞键。写错的描述符能被正常解析,却永远装不上。`mcpp xpkg parse` 会校验这一点,请在索引 CI 里跑它。
+文件名只是提示 —— 描述符按声明的身份被发现,所以 `pkgs/c/chriskohlhoff.asio.lua` 与 `pkgs/z/anything.lua` 解析结果完全相同。推荐 `<name>.lua` 或 `<namespace>.<name>.lua`(命中 mcpp 的快路径),但不强制。
 
-### 2.6 `[dev-dependencies]` — 测试依赖
-
-```toml
-[dev-dependencies]
-gtest = "1.15.2"
-```
-
-`mcpp build` 忽略这些;`mcpp test` 解析并使用。`mcpp test` 会自动发现 `tests/**/*.cpp` 并编译为测试二进制。运行器与断言框架无关:每个文件是一个以退出码判定的独立二进制——裸 `main`、gtest(经 `[dev-dependencies]` + `gtest_main`)或其他框架均等价,`-- args` 会透传给每个测试二进制(例如 `-- --gtest_filter=...`)。注意:合成的测试 target 名可含 `/`(`tests/00-a/0.cpp` → `00-a/0`),与 `[targets.*]` 的命名文法不同——两套命名空间刻意分离(测试 target 不进清单、不参与发布)。
-
-### 2.7 `[toolchain]` — 工具链配置
-
-```toml
-[toolchain]
-default = "gcc@16.1.0"
-
-# 跨编译目标覆盖
-[target.x86_64-linux-musl]
-toolchain = "gcc@15.1.0-musl"
-linkage   = "static"
-```
-
-### 2.7.1 `[target.*]` — 平台条件依赖与编译旗标
-
-用 `[target.<sel>]` 表把依赖和编译旗标限定到某平台。选择子 `<sel>` 有三种形式:
-
-| 选择子 | 含义 | 例子 |
-|---|---|---|
-| **裸 OS 别名** | 单个 OS / 家族——简洁、最常用 | `[target.windows]`、`[target.unix]` |
-| **`cfg(...)` 谓词** | 复合条件(arch / env / 组合子) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
-| **精确三元组** | 某个具体目标(还承载 `toolchain` / `linkage`) | `[target.x86_64-linux-musl]` |
-
-任一选择子下都可放平台条件的**依赖**与**编译旗标**:
-
-```toml
-# 简洁的裸别名形式——仅在 Windows 上拉取并链接 OpenBLAS。
-[target.windows.dependencies.compat]
-openblas = "0.3.33"
-[target.windows.build]
-ldflags = ["-Llib", "-llibopenblas"]
-
-# 复合谓词用 cfg(...)(语法:all/any/not 作用在 os/arch/family/env 上,
-# 外加裸别名 windows/unix/linux/macos)。
-[target.'cfg(all(linux, not(arch = "aarch64")))'.build]
-cxxflags = ["-march=x86-64-v2"]
-```
-
-`[target.windows]` 与 `[target.'cfg(windows)']` 完全等价——裸别名
-`windows` / `linux` / `macos` / `unix` 永远不是合法的目标三元组,故无歧义。单个
-OS/家族用裸形式;需要 arch/env 条件或组合子时用 `cfg(...)`。
-
-- **可放的键**:`dependencies` / `dev-dependencies` / `build-dependencies`,以及
-  `build` 下的 `cflags` / `cxxflags` / `ldflags` / `sources`(mcpp 0.0.95+——
-  条件源 glob,如把 `src/x86/**/*.asm` 门控在 `cfg(arch = "x86_64")` 之后;
-  `!` 排除 glob 同样可用)。
-- **按解析后的目标求值**——交叉构建时是 `--target` 三元组,否则是 host。所以原生
-  Linux 构建**根本不会下载** `[target.windows]` 的依赖。
-- **优先级**:精确三元组表压过 `cfg`/别名表;多个命中的谓词表,其旗标会拼接。
-- **`toolchain` / `linkage` 仅限精确三元组**——它们描述某个具体交叉目标,故应放在
-  `[target.<triple>]`(见上)下,而非裸别名或 `cfg(...)` 下。
-
-### 2.8 `[features]` — 特性(Cargo 式,加性)
-
-```toml
-[features]
-default = ["base"]        # 默认激活集
-base    = []
-docking = ["extra"]       # 激活 docking 时隐含激活 extra(传递闭包)
-extra   = []
-```
-
-- 激活来源:包自身 `default` 集 ∪ 显式请求(根包 `mcpp build --features a,b`;
-  依赖经长式 dep spec `features = [...]` / `backend = "..."` 糖)。
-- 每个激活的 feature 在该包的编译中得到宏 `-DMCPP_FEATURE_<NAME>`
-  (名字转大写,非字母数字转 `_`,如 `backend-a` → `MCPP_FEATURE_BACKEND_A`)。
-- **strict 校验**:目标包声明了 `[features]` 表时,请求未声明的 feature 给出
-  warning;`--strict` 下报错。未声明 `[features]` 的包接受任意请求(纯宏用法)。
-
+旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。需要 mcpp >= 0.0.106 与 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
 #### 表形式 —— 让 feature 贡献的不止是隐含 feature
 
 `[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature

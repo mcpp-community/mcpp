@@ -350,10 +350,10 @@ int run(int argc, char** argv) {
                     .help("Validate every per-OS section (linux/macosx/windows), "
                           "not just the running host's"))
                 .option(cl::Option("allow-split-name")
-                    .help("Skip the INV-NAME check (package.name must be the "
-                          "fully-qualified <namespace>.<short>). For "
-                          "xlings-native indices, where package.namespace is an "
-                          "install-dir category rather than a package namespace")))
+                    .help("OBSOLETE (kept accepted so 0.0.105-era index CI keeps "
+                          "working): skip the package.name form check. Since "
+                          "0.0.106 the canonical form IS the short name, so "
+                          "xlings-native descriptors pass without this flag")))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("xpkg", p, {{"parse", cmd_xpkg_parse}});
             })))

@@ -360,21 +360,31 @@ owning the same short name are settled by index ordering, and (b) **adding an in
 could silently change which package an existing dependency resolves to**. Requiring
 the namespace keeps a `mcpp.toml` resolving to the same packages on every machine.
 
-**For xpkg authors:** in an index descriptor, `package.name` must be the *fully
-qualified* name — it has to start with `package.namespace` followed by a dot:
+**For xpkg authors:** in an index descriptor, identity is the pair
+`(package.namespace, package.name)`. The namespace is the dotted path; **`name` is
+a single atomic segment**:
 
 ```lua
 package = {
     namespace = "chriskohlhoff",
-    name      = "chriskohlhoff.asio",   -- NOT "asio"
-    ...
+    name      = "asio",                 -- one segment; NOT "chriskohlhoff.asio"
+}
+
+package = {
+    namespace = "mcpplibs.capi",        -- depth belongs here
+    name      = "lua",
 }
 ```
 
-The package index is a flat key space keyed by the literal `package.name`, so the
-namespace has to be carried in the name itself — otherwise `mcpplibs`'s `zlib` and
-`compat`'s `zlib` would collide. A descriptor that gets this wrong parses fine but can
-never be installed. `mcpp xpkg parse` checks it, so run it in your index CI.
+The filename is only a hint — a descriptor is found by its declared identity, so
+`pkgs/c/chriskohlhoff.asio.lua` and `pkgs/z/anything.lua` resolve identically.
+`<name>.lua` or `<namespace>.<name>.lua` are recommended (they hit mcpp's fast
+path) but not required.
+
+The older fully-qualified spelling (`name = "chriskohlhoff.asio"`) is still
+accepted, so already-published descriptors keep working. `mcpp xpkg parse`
+enforces the rule — run it in your index CI. Requires mcpp >= 0.0.106 and
+xlings >= 0.4.69; full normative text in `docs/spec/package-identity.md`.
 
 ### 2.6 `[dev-dependencies]` — Test Dependencies
 

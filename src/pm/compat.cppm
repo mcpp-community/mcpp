@@ -224,8 +224,18 @@ inline std::vector<std::string> install_dir_candidates(std::string_view ns,
     auto fqname = ns.empty() ? std::string(shortName)
                              : std::format("{}.{}", ns, shortName);
 
-    // Canonical: <ns>-x-<ns>.<shortName> (xlings current layout)
+    // xlings names an xpkg directory `{package.namespace}-x-{package.name}` —
+    // whatever `name` literally says (SPEC-001 §6, verified against all
+    // installed packages). mcpp does not know the literal here, so it offers
+    // the two spellings a descriptor can legally use, BOTH canonical:
+    //
+    //   <ns>-x-<shortName>      SPEC-001 form   (name = "zlib")
+    //   <ns>-x-<ns>.<shortName> legacy FQN form (name = "compat.zlib")
+    //
+    // Short-name first: it is the form new descriptors use, and the one an
+    // ambiguous hit should resolve toward.
     if (!ns.empty()) {
+        candidates.push_back(std::format("{}-x-{}", ns, shortName));
         candidates.push_back(std::format("{}-x-{}", ns, fqname));
     }
 
@@ -238,11 +248,10 @@ inline std::vector<std::string> install_dir_candidates(std::string_view ns,
     // such as bare `gtest = "1.15.2"`.
     if (ns.empty() || ns == mcpp::pm::kDefaultNamespace) {
         candidates.push_back(std::format("compat-x-compat.{}", shortName));
+        candidates.push_back(std::format("compat-x-{}", shortName));
     }
 
-    // Bare short name variants
     if (!ns.empty()) {
-        candidates.push_back(std::format("{}-x-{}", ns, shortName));
         candidates.push_back(std::format("{}-x-{}", indexName, shortName));
     }
 

@@ -1890,16 +1890,16 @@ TEST(XpkgIdentity, DefaultNamespaceRequestMatchesCompatAlias) {
 
 // ─── INV-NAME: xpkg_name_form_violation (#278) ──────────────────────
 //
-// `package.name` must BE the fully-qualified name. The index is a flat key
-// space keyed by the literal name, while mcpp addresses packages as
-// `ns + "." + shortName` — a split-form descriptor (namespace="a", name="b")
-// parses, passes the identity gate, and can never be installed.
+// `package.name` is a SINGLE ATOMIC SEGMENT; all hierarchy lives in
+// `package.namespace` (SPEC-001 §3.2). The legacy fully-qualified spelling
+// (`namespace="compat", name="compat.zlib"`) stays accepted for compatibility.
 
-TEST(XpkgNameForm, SplitFormNameIsAViolation) {
-    auto v = mcpp::manifest::xpkg_name_form_violation("chriskohlhoff", "asio");
-    ASSERT_TRUE(v.has_value());
-    // The message must carry the exact spelling the author should write.
-    EXPECT_NE(v->find("chriskohlhoff.asio"), std::string::npos) << *v;
+TEST(XpkgNameForm, ShortNameIsCanonical) {
+    // SPEC-001 form: namespace carries the path, name is one segment.
+    EXPECT_FALSE(mcpp::manifest::xpkg_name_form_violation("chriskohlhoff", "asio")
+                     .has_value());
+    EXPECT_FALSE(mcpp::manifest::xpkg_name_form_violation("mcpplibs.capi", "lua")
+                     .has_value());
 }
 
 TEST(XpkgNameForm, FqnFormIsClean) {
@@ -1941,15 +1941,22 @@ TEST(XpkgNameForm, PrefixWithoutShortSegmentIsAViolation) {
                     .has_value());
 }
 
-TEST(XpkgNameForm, FromLuaReadsBothFields) {
-    constexpr std::string_view splitLua =
+TEST(XpkgNameForm, FromLuaAcceptsBothCanonicalAndLegacy) {
+    constexpr std::string_view shortLua =
         R"(package = { namespace = "aimol", name = "tensorvia-cpu" })";
-    constexpr std::string_view fqnLua =
+    constexpr std::string_view legacyFqnLua =
         R"(package = { namespace = "aimol", name = "aimol.tensorvia-cpu" })";
-    EXPECT_TRUE(
-        mcpp::manifest::xpkg_name_form_violation_from_lua(splitLua).has_value());
+    // Canonical short-name form and the legacy FQN spelling both resolve to
+    // the same identity, so both are accepted.
     EXPECT_FALSE(
-        mcpp::manifest::xpkg_name_form_violation_from_lua(fqnLua).has_value());
+        mcpp::manifest::xpkg_name_form_violation_from_lua(shortLua).has_value());
+    EXPECT_FALSE(
+        mcpp::manifest::xpkg_name_form_violation_from_lua(legacyFqnLua).has_value());
+    // But a short name that still carries a dot is rejected.
+    constexpr std::string_view nonAtomic =
+        R"(package = { namespace = "mcpplibs", name = "capi.lua" })";
+    EXPECT_TRUE(
+        mcpp::manifest::xpkg_name_form_violation_from_lua(nonAtomic).has_value());
 }
 
 // ─── canonical_xpkg_identity — the unified (ns, name) model (§4.2) ───
@@ -1991,20 +1998,29 @@ TEST(CanonicalIdentity, DeclaredNamespaceWinsOverIndexDefault) {
     EXPECT_EQ(id("compat", "compat.zlib", "xim"), want("compat", "zlib"));
 }
 
-TEST(CanonicalIdentity, DottedNameWithNoNamespaceSplitsOnLastDot) {
-    // ns=∅, name=a.b  →  (a, b)
-    EXPECT_EQ(id("", "a.b"), want("a", "b"));
-    EXPECT_EQ(id("", "x.y.z"), want("x.y", "z"));
+TEST(CanonicalIdentity, DottedNameWithNoNamespaceIsNotReinterpreted) {
+    // SPEC-001: identity is exactly what the descriptor declares. A dotted
+    // `name` with no namespace is NOT silently split into one — that inferred
+    // a namespace nobody wrote. It stays literal here and is rejected by
+    // xpkg_name_form_violation instead.
+    EXPECT_EQ(id("", "a.b"), want("", "a.b"));
+    EXPECT_EQ(id("", "x.y.z"), want("", "x.y.z"));
+    EXPECT_TRUE(mcpp::manifest::xpkg_name_form_violation("", "a.b").has_value());
 }
 
 TEST(CanonicalIdentity, HierarchicalNamespaceIsSupported) {
     // ns=a.b, name=c  →  (a.b, c) ; name is the single trailing segment.
     EXPECT_EQ(id("a.b", "c"), want("a.b", "c"));
     EXPECT_EQ(id("mcpplibs.capi", "lua"), want("mcpplibs.capi", "lua"));
-    // Nested + prefix-embedded forms both land on the same tuple.
-    EXPECT_EQ(id("mcpplibs", "mcpplibs.capi.lua"), want("mcpplibs.capi", "lua"));
+    // Legacy FQN spelling under the SAME namespace strips the prefix.
     EXPECT_EQ(id("mcpplibs.capi", "mcpplibs.capi.lua"),
               want("mcpplibs.capi", "lua"));
+    // But a shorter declared namespace no longer "absorbs" the extra segment:
+    // the descriptor said mcpplibs, so the identity is mcpplibs — the leftover
+    // dot makes it a form violation rather than a silent (mcpplibs.capi, lua).
+    EXPECT_EQ(id("mcpplibs", "mcpplibs.capi.lua"), want("mcpplibs", "capi.lua"));
+    EXPECT_TRUE(mcpp::manifest::xpkg_name_form_violation(
+        "mcpplibs", "mcpplibs.capi.lua").has_value());
 }
 
 TEST(CanonicalIdentity, BareNameNoNamespaceNoIndexStaysRootless) {

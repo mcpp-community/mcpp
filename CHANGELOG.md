@@ -3,6 +3,27 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.106] — 2026-07-25
+
+> 落地 **SPEC-001**(`docs/spec/package-identity.md`)—— 包身份的规范形态。0.0.105 为修 #278 引入的「`name` 必须写成完全限定名」是**编码约束而非设计规则**:它的唯一成因是 mcpp 构造安装目标时丢弃了已读到的字面 `name`、改用 `<ns>.<短名>` 重新渲染一遍。本版本改为直接使用字面值,规范形态回归 **`namespace` 承载层级、`name` 是单一原子段**。配套 xlings 0.4.69([#381](https://github.com/openxlings/xlings/issues/381),索引改按 `(namespace, name)` 建键)。
+
+### 新增
+
+- **规范文档目录 `docs/spec/`**:存放规范性文档(语义、约束、匹配机制),每条规则标注实现状态,与使用文档 `docs/*.md`、设计文档 `.agents/docs/*.md` 分工明确。首篇 **SPEC-001** 覆盖 `package.namespace`/`package.name` 形态、`[dependencies]` 四种书写文法及其候选阶梯、完整匹配流程、派生量公式与端到端示例。
+- **描述符文件名自由**:描述符按**声明的身份**被发现,文件叫什么都行。推荐文件名仍作为**快路径**优先探测,全部落空时才回落到按身份扫描 `pkgs/**/*.lua` —— 符合推荐命名的索引**零扫描开销**。这补齐了 identity-first 解析长期只兑现「验证」半边、「发现」半边受固定候选文件名约束的缺口。
+- **同一索引内同短名不同命名空间的包各自可寻址**:`(alpha, widget)` 与 `(beta, widget)` 共存于一个索引,分别安装到 `alpha-x-widget` / `beta-x-widget`。需要 xlings >= 0.4.69。
+
+### 变更
+
+- **`package.name` 规范形态改为单一原子段**,层级一律放 `namespace`:`namespace = "chriskohlhoff", name = "asio"`。**已发布的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受**,前缀会被剥离后再判定 —— 现网全部描述符无需改动即可继续工作。反过来,`namespace = "mcpplibs", name = "capi.lua"` 这类**短名仍带点**的写法被拒绝,因为它描述的是一个没人声明过的命名空间。
+- **安装目标改为 `<namespace>:<字面 name>@<版本>`**。冒号前缀是包的命名空间(xlings 的 *effective namespace*),不是索引名 —— 这正是同索引同短名得以消歧的原因;无命名空间的上游包用裸字面名。
+- **身份归一化不再 split-on-last-dot**:身份就是描述符声明的两个字段。旧规则会从 `name` 反推命名空间(`ns="a"` + `name="a.b.c"` 静默变成 `(a.b, c)`),现在改为拒绝而非猜测。
+- **xlings 依赖升到 0.4.69**(`kXlingsVersion` 与 release/CI 的 `XLINGS_VERSION` 同步)。
+
+### 修复
+
+- `mcpp xpkg parse` 与安装路径的 `name` 形态校验语义随规范反转,共用同一谓词,lint 与运行期不会漂移。
+
 ## [0.0.105] — 2026-07-25
 
 > 包身份口径双侧收敛(#278)。事故:mcpp-index 把 `chriskohlhoff.asio` 的 `name` 从 `"chriskohlhoff.asio"` 改成 `"asio"`(namespace 不变),lint 全绿,三个平台的 workspace job 跑满 20~58 分钟后全挂 `E_NOT_FOUND` —— 描述符能解析、能过 mcpp 的身份闸门,却没有任何消费写法能装上。根因是身份归一化(容忍三种拼写)与安装目标构造(只支持一种)口径断层,契约只写在注释里、无人执行。设计见 `.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`。

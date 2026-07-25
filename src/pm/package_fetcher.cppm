@@ -640,6 +640,46 @@ read_identity_verified_xpkg_lua(const std::filesystem::path& pkgsDir,
         // Filename matched but the descriptor is a different package — keep
         // scanning the remaining candidates / index dirs.
     }
+
+    // ── Identity-first fallback: the filename is only a hint ────────
+    //
+    // SPEC-001 §3.4 — a descriptor's identity is its declared
+    // `package.{namespace,name}`; the file may be called anything. The
+    // candidate-filename probes above are a fast path for the RECOMMENDED
+    // names (`<name>.lua` / `<namespace>.<name>.lua`), not a constraint: a
+    // package filed under any other name must still resolve.
+    //
+    // This closes the "discovery half" of identity-first resolution — until now only
+    // the VERIFY half was implemented (every hit re-checked against declared
+    // identity), while discovery silently could not see a descriptor whose
+    // filename matched no candidate.
+    //
+    // Cost: runs ONLY after every candidate missed, so a conforming index pays
+    // nothing. Every hit goes through the same identity gate, so a scan can
+    // never accept a package the filename path would have rejected.
+    auto scan_dir = [&](const std::filesystem::path& dir)
+        -> std::optional<std::string>
+    {
+        for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (entry.path().extension() != ".lua") continue;
+            std::ifstream is(entry.path());
+            if (!is) continue;
+            std::stringstream ss; ss << is.rdbuf();
+            auto content = ss.str();
+            if (mcpp::manifest::xpkg_lua_identity_matches(
+                    content, ns, shortName, /*allowLegacyBareDefault=*/true,
+                    indexDefaultNs)) {
+                return content;
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (auto hit = scan_dir(pkgsDir)) return hit;   // descriptors sitting flat
+    for (auto& letterDir : std::filesystem::directory_iterator(pkgsDir, ec)) {
+        if (!letterDir.is_directory(ec)) continue;
+        if (auto hit = scan_dir(letterDir.path())) return hit;
+    }
     return std::nullopt;
 }
 

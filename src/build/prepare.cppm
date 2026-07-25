@@ -1846,31 +1846,41 @@ prepare_build(bool print_fingerprint,
                 }
             }
 
-            // xlings resolves packages by the full qualified name (ns.shortName)
-            // as it appears in the index's name field. Use fqname, not the
-            // map key (which may be a bare short name for default-ns deps).
+            // The package name xlings is asked for is the descriptor's LITERAL
+            // `package.name` — never a value mcpp re-derives (SPEC-001 §6).
             //
-            // #278: that sentence used to be a prose contract with no assertion
-            // behind it — a descriptor written in split form (`namespace="a"`,
-            // `name="b"`) satisfies mcpp's identity gate but is keyed by the
-            // index as `b`, so this derived `a.b` could never resolve and the
-            // user got an opaque E_NOT_FOUND after a full three-platform CI run.
-            // The contract is now checked against the descriptor mcpp already
-            // holds (`luaContent`, read above — zero extra I/O), with the SAME
-            // predicate `mcpp xpkg parse` uses, so lint and runtime cannot drift.
-            auto fqname = ns.empty() ? shortName
-                : std::format("{}.{}", ns, shortName);
+            // xlings keys its index by that literal and addresses packages as
+            // `<effectiveNamespace>:<package.name>`. mcpp already holds the
+            // descriptor here (`luaContent`, read above), so it can hand over
+            // the exact string instead of reconstructing one that only happens
+            // to match when the descriptor spells `name` as `<ns>.<short>`.
+            // Re-deriving it is what made split-form descriptors uninstallable
+            // (#278) and what forced every index descriptor into the redundant
+            // fully-qualified spelling.
+            //
+            // Fallback: when the descriptor could not be read (network index
+            // not synced yet), keep the historical derivation so the failure
+            // stays where it was rather than moving earlier.
+            auto wireName = luaContent
+                ? mcpp::manifest::extract_xpkg_name(*luaContent)
+                : std::string{};
+            if (wireName.empty()) {
+                wireName = ns.empty() ? shortName
+                                      : std::format("{}.{}", ns, shortName);
+            }
             if (luaContent) {
                 if (auto violation = mcpp::manifest::
                         xpkg_name_form_violation_from_lua(*luaContent)) {
                     return std::unexpected(std::format(
-                        "dependency '{}': {}\n"
-                        "       (mcpp addresses it as '{}', but the index keys "
-                        "it by the literal package.name)",
-                        depName, *violation, fqname));
+                        "dependency '{}': {}", depName, *violation));
                 }
             }
-            mcpp::ui::info("Downloading", std::format("{} v{}", fqname, version));
+            // Human-facing name stays the resolved identity `<ns>.<short>` —
+            // that is what the user wrote in [dependencies], so it is what the
+            // progress line and errors should echo back.
+            auto displayName = ns.empty() ? shortName
+                : std::format("{}.{}", ns, shortName);
+            mcpp::ui::info("Downloading", std::format("{} v{}", displayName, version));
 
             // #238: retain whatever error/warn text the child DID emit so we
             // can fold it into a diagnostic if install_packages exits non-zero.
@@ -1903,13 +1913,21 @@ prepare_build(bool print_fingerprint,
                 capturedChildError = progress.captured_error();
                 return r;
             };
-            auto target = std::format("{}@{}", fqname, version);
-            // For custom indices, use indexName:fullPackageName@version so
-            // xlings resolves the package by the descriptor's name field while
-            // still selecting the project-added index.
-            if (useProjectEnv) {
-                target = std::format("{}:{}@{}", idxSpec->name, fqname, version);
-            }
+            // Target = `<namespace>:<literal name>@<version>` (SPEC-001 §6).
+            //
+            // The colon prefix is xlings' *effective namespace*, matched against
+            // the descriptor's own `package.namespace` (xlings issue-381 design
+            // §2.2) — NOT the index name. mcpp's `[indices] <ns> = {...}` keys
+            // ARE namespaces, so the two coincided historically; spelling it
+            // from `ns` makes that intentional rather than accidental, and is
+            // what disambiguates two same-short-name packages living in one
+            // index (xlings >= 0.4.69).
+            //
+            // A namespace-less upstream package (xim `opencv`) is addressed by
+            // its bare literal name, with no prefix.
+            auto target = ns.empty()
+                ? std::format("{}@{}", wireName, version)
+                : std::format("{}:{}@{}", ns, wireName, version);
             auto r = install_one(target);
             if (r && r->exitCode != 0 &&
                 (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {

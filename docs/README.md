@@ -11,3 +11,11 @@
 - [06 - Workspaces](06-workspace.md)
 - [07 - build.mcpp Build Program](07-build-mcpp.md)
 - [08 - Toolchain Internals](08-toolchain-internals.md)
+
+## Specifications
+
+Normative documents — semantics, constraints and matching rules, each rule tagged
+with its implementation status. For index authors, contributors and downstream tooling.
+
+- [spec/](spec/README.md) — index of all specs
+  - [SPEC-001 — Package identity, `[dependencies]` selectors and matching](spec/package-identity.md)

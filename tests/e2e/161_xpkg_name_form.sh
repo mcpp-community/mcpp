@@ -1,73 +1,88 @@
 #!/usr/bin/env bash
 # requires:
-# 161_xpkg_name_form.sh — INV-NAME (#278): `package.name` must BE the
-# fully-qualified name whenever `package.namespace` is declared.
+# 161_xpkg_name_form.sh — SPEC-001 §3.2: `package.name` is a SINGLE ATOMIC
+# SEGMENT; all hierarchy belongs in `package.namespace`.
 #
-# Why this matters: the package index is a FLAT key space keyed by the literal
-# `package.name`, while mcpp addresses a dependency as `ns + "." + shortName`.
-# A split-form descriptor (namespace="a", name="b") satisfies mcpp's identity
-# gate and prints fine from `xpkg parse`, but the two never meet — the package
-# is uninstallable on every platform, and before this check the user found out
-# an hour into a three-platform CI run via an opaque E_NOT_FOUND.
+#     ✅ namespace = "chriskohlhoff", name = "asio"
+#     ✅ namespace = "mcpplibs.capi", name = "lua"
+#     ✅ namespace = "compat",        name = "compat.zlib"   (legacy FQN, kept working)
+#     ❌ namespace = "mcpplibs",      name = "capi.lua"       (short name has a dot)
 #
-# Covered here: the lint gate (`mcpp xpkg parse`), its `--json` shape, the
-# `--allow-split-name` escape for xlings-native indices, and the runtime
-# fail-fast that catches descriptors which never passed through index CI.
+# Why the last one is rejected rather than reinterpreted: identity is the pair
+# (namespace, name). A `name` carrying dots the namespace does not account for
+# describes a package whose namespace nobody declared. mcpp used to split such a
+# name on its LAST dot and silently invent `(mcpplibs.capi, lua)` — a namespace
+# absent from the descriptor. It now refuses to guess.
+#
+# This test was the inverse before mcpp 0.0.106 (it asserted that the short form
+# was the violation). See docs/spec/package-identity.md §3.2 and mcpp#278.
 set -e
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
-# ── 1. split form is rejected by the lint, and says how to fix it ────
-cat > split.lua <<'EOF'
+mk() {  # mk <file> <namespace> <name>
+    cat > "$1" <<EOF
 package = {
-    spec = "1", namespace = "chriskohlhoff", name = "asio",
-    xpm = { linux = { ["1.38.1"] = { url = "u", sha256 = "h" } } },
+    spec = "1", namespace = "$2", name = "$3",
+    xpm = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
     mcpp = { schema = "0.1", sources = { "*.cpp" } },
 }
 EOF
+}
 
-if "$MCPP" xpkg parse split.lua > /dev/null 2>&1; then
-    echo "FAIL: split-form descriptor must be rejected"; exit 1
+# ── 1. canonical short-name form is accepted ────────────────────────
+mk short.lua "chriskohlhoff" "asio"
+"$MCPP" xpkg parse short.lua > /dev/null
+
+# ── 2. hierarchical namespace with an atomic short name ─────────────
+mk nested.lua "mcpplibs.capi" "lua"
+"$MCPP" xpkg parse nested.lua > /dev/null
+
+# ── 3. legacy fully-qualified spelling still accepted ───────────────
+# Descriptors written before SPEC-001 repeat the namespace inside `name`.
+# They resolve to the same identity and stay installable, so they must not
+# become errors — that would break every currently published package.
+mk legacy.lua "compat" "compat.zlib"
+"$MCPP" xpkg parse legacy.lua > /dev/null
+
+# ── 4. non-atomic short name is rejected, with the fix spelled out ──
+mk bad.lua "mcpplibs" "capi.lua"
+if "$MCPP" xpkg parse bad.lua > /dev/null 2>&1; then
+    echo "FAIL: a short name containing '.' must be rejected"; exit 1
 fi
-"$MCPP" xpkg parse split.lua 2>&1 | tee split.err
-grep -q "fully-qualified" split.err
-# The diagnostic must carry the exact spelling to write — a bare "invalid"
-# would leave the author guessing which half of the identity to change.
-grep -q 'chriskohlhoff.asio' split.err
+"$MCPP" xpkg parse bad.lua 2>&1 | tee bad.err
+grep -q "single atomic segment" bad.err
+# The diagnostic must name BOTH corrected fields, not just complain.
+grep -q 'mcpplibs.capi' bad.err
+grep -q '"lua"' bad.err
 
-# ── 2. the FQN form passes ───────────────────────────────────────────
-sed 's/name = "asio"/name = "chriskohlhoff.asio"/' split.lua > fqn.lua
-"$MCPP" xpkg parse fqn.lua > /dev/null
+# ── 5. dotted name with no namespace at all is rejected ─────────────
+# It would resolve into a namespace written down nowhere.
+mk nons.lua "" "mcpplibs.capi.lua"
+if "$MCPP" xpkg parse nons.lua > /dev/null 2>&1; then
+    echo "FAIL: dotted name without a namespace must be rejected"; exit 1
+fi
 
-# ── 3. --json carries the violation machine-readably (index CI) ──────
-if "$MCPP" xpkg parse --json split.lua > split.json 2>/dev/null; then
+# ── 6. --json carries the violation machine-readably (index CI) ─────
+if "$MCPP" xpkg parse --json bad.lua > bad.json 2>/dev/null; then
     echo "FAIL: --json must still exit non-zero on violation"; exit 1
 fi
 python3 - <<'PY'
 import json
-j = json.load(open("split.json"))
+j = json.load(open("bad.json"))
 assert "error" in j, j
-assert "chriskohlhoff.asio" in j["error"], j
-assert j["namespace"] == "chriskohlhoff" and j["name"] == "asio", j
-print("json ok")
+assert "atomic" in j["error"], j
 PY
 
-# ── 4. --allow-split-name opts out (xlings-native indices) ───────────
-# In xim-pkgindex / -scode, `package.namespace` is an install-dir CATEGORY
-# ("config", "scode") and the index is keyed by the bare name, so the split
-# spelling is correct there. Those trees lint with this flag.
-"$MCPP" xpkg parse --allow-split-name split.lua > /dev/null
-
-# ── 5. runtime fail-fast: a descriptor that skipped index CI ─────────
-# A `[indices]` path index is the transport that bypasses lint entirely, so
-# the same predicate has to guard the install path. It must fire BEFORE any
-# download, from the descriptor mcpp already holds in memory.
+# ── 7. runtime fail-fast: a descriptor that skipped index CI ────────
+# A `[indices]` path index bypasses lint entirely, so the same predicate has
+# to guard the install path — and must fire BEFORE any download.
 mkdir -p idx/pkgs/d
-cat > idx/pkgs/d/demo.thing.lua <<'EOF'
+cat > idx/pkgs/d/thing.lua <<'EOF'
 package = {
-    spec = "1", namespace = "demo", name = "thing",
+    spec = "1", namespace = "demo", name = "sub.thing",
     xpm = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } },
             macosx = { ["1.0.0"] = { url = "u", sha256 = "h" } },
             windows = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
@@ -85,16 +100,14 @@ version = "0.1.0"
 demo = { path = "../idx" }
 
 [dependencies.demo]
-thing = "1.0.0"
+"sub.thing" = "1.0.0"
 EOF
 echo 'int main() { return 0; }' > src/main.cpp
 
 if "$MCPP" build > build.out 2>&1; then
-    echo "FAIL: split-form descriptor must not build"; cat build.out; exit 1
+    echo "FAIL: non-atomic short name must not build"; cat build.out; exit 1
 fi
-grep -q "fully-qualified" build.out || { cat build.out; exit 1; }
-grep -q "demo.thing" build.out || { cat build.out; exit 1; }
-# It must fail at resolve time, never after fetching the (nonexistent) asset.
+grep -q "single atomic segment" build.out || { cat build.out; exit 1; }
 if grep -q "Downloading" build.out; then
     echo "FAIL: must fail before any download"; cat build.out; exit 1
 fi
