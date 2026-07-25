@@ -19,41 +19,41 @@
 
 ### C1 索引侧谓词与两个调用点
 
-- [ ] **T1** `xpkg_name_form_violation(declaredNs, declaredName)` + `_from_lua` 导出(`src/manifest/xpkg.cppm`)
-- [ ] **T2** `mcpp xpkg parse` 接入谓词,违规 exit 1;`--json` 输出 `error` 字段(`src/cli/cmd_xpkg.cppm`)
-- [ ] **T3** `loadVersionDep` install 分支 fail-fast;已解析到安装物的路径 `ui::warn`(`src/build/prepare.cppm`)
+- [x] **T1** `xpkg_name_form_violation(declaredNs, declaredName)` + `_from_lua` 导出(`src/manifest/xpkg.cppm`)
+- [x] **T2** `mcpp xpkg parse` 接入谓词,违规 exit 1;`--json` 输出 `error` 字段(`src/cli/cmd_xpkg.cppm`)
+- [x] **T3** `loadVersionDep` install 分支 fail-fast;已解析到安装物的路径 `ui::warn`(`src/build/prepare.cppm`)
 
 ### C2 生成源
 
-- [ ] **T4** `emit_xpkg` 输出 `namespace` + FQN `name`;无 namespace 时 stderr 提示;`--namespace` 覆盖开关(`src/pm/publisher.cppm` + emit CLI)
+- [x] **T4** `emit_xpkg` 输出 `namespace` + FQN `name`;无 namespace 时 stderr 提示;`--namespace` 覆盖开关(`src/pm/publisher.cppm` + emit CLI)
 
 ### C3 依赖侧收敛
 
-- [ ] **T9** `selectDependencyCandidate` 全候选落空 → 明确失败(`prepare.cppm:1516-1541`)
-- [ ] **T10** discovery 档命中后 `extract_xpkg_namespace(*lua)` 回填真实 ns(声明为空则保持空)
-- [ ] **T11** discovery 档拒绝声明了非空 `namespace` 的描述符
-- [ ] **T12** did-you-mean:仅失败路径的全索引扫描,三约束写进实现注释
+- [x] **T9** `selectDependencyCandidate` 全候选落空 → 明确失败(`prepare.cppm:1516-1541`)
+- [x] **T10** discovery 档命中后 `extract_xpkg_namespace(*lua)` 回填真实 ns(声明为空则保持空)
+- [x] **T11** discovery 档拒绝声明了非空 `namespace` 的描述符
+- [x] **T12** did-you-mean:仅失败路径的全索引扫描,三约束写进实现注释
 
 ### C4 测试
 
-- [ ] **T5a** 单测:谓词 6 例(含 `CompatAliasIsClean` 回归锁)
-- [ ] **T5b** 单测:依赖侧解析(三档成功 / 第三方 ns 裸名失败 / P3 空 ns 锁)
-- [ ] **T5c** e2e:split 描述符 → 秒级自解释失败;改 FQN → 通过
-- [ ] **T5d** e2e:裸名请求第三方 ns 包 → 失败 + did-you-mean;改写后通过
+- [x] **T5a** 单测:谓词 6 例(含 `CompatAliasIsClean` 回归锁)
+- [x] **T5b** 单测:依赖侧解析(三档成功 / 第三方 ns 裸名失败 / P3 空 ns 锁)
+- [x] **T5c** e2e:split 描述符 → 秒级自解释失败;改 FQN → 通过
+- [x] **T5d** e2e:裸名请求第三方 ns 包 → 失败 + did-you-mean;改写后通过
 
 ### C5 文档与版本
 
 - [x] **T13** 用户文档 §2.5(`docs/05-mcpp-toml.md` + `docs/zh/05-mcpp-toml.md`)
-- [ ] **T14** CHANGELOG 0.0.105 段(含 breaking:裸名不再解析第三方命名空间包)
-- [ ] **T15** `mcpp.toml` version → 0.0.105
-- [ ] **T11b** 修订 `2026-06-26 §4.4/§4.6(a)` 表述;更新 `prepare.cppm:1456-1459` 注释
+- [x] **T14** CHANGELOG 0.0.105 段(含 breaking:裸名不再解析第三方命名空间包)
+- [x] **T15** `mcpp.toml` version → 0.0.105
+- [x] **T11b** 修订 `2026-06-26 §4.4/§4.6(a)` 表述;更新 `prepare.cppm:1456-1459` 注释
 
 ### C6 验收与合入
 
-- [ ] **T6** 全索引 `mcpp xpkg parse` 回归(期望恰好 2 报错),结果贴 PR
+- [x] **T6** 全索引 `mcpp xpkg parse` 回归,结果贴 PR。**实测 49/49 mcpplibs 描述符全过、0 违规**(非设计预期的 2 —— 上游 mcpp-index 已先行修好两例);完整 registry(200+)另见 §2.1b 的 xlings-native 修正
 - [ ] **T7** 单 PR(`Fixes #278`)→ CI 全绿 → `gh pr merge --squash --admin`
 
 ### C7 生态
 
 - [ ] **T16** release 0.0.105 四平台 + 镜像 xlings-res 双端 + xim-pkgindex PR + `xlings install mcpp` 真装验证
-- [ ] **T8** mcpp-index:`chriskohlhoff.asio` / `tensorvia-cpu` 改 FQN;lint job 改调 `mcpp xpkg parse`
+- [x] **T8** mcpp-index:**上游已完成** —— `chriskohlhoff.asio` / `tensorvia-cpu` 均已是 FQN,#116 的 `tests/check_package_name.lua` 已合入。该 Lua 守卫现与 `mcpp xpkg parse` 冗余但无害,可留作保险(其 CI 本就跑 `mcpp xpkg parse pkgs/*/*.lua`,升级 MCPP_VERSION 到 0.0.105 后自动获得引擎侧防护)
