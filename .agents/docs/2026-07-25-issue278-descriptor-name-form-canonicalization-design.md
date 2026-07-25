@@ -336,7 +336,26 @@ error: dependency 'asio': no package found in the default namespace search path
 1. 构造 split 形式描述符的本地 path index + 消费工程 → `mcpp build` **秒级**失败,stderr 含期望名与 `#278`;改为 FQN 后同一命令通过。(锁 T1 + T2)
 2. 索引含 `thirdparty.foo`,消费端裸写 `foo` → 失败且提示 `"thirdparty.foo"` 与子表两种写法;改写后通过。(锁 T9 + T11 + T12)
 
-**手工验收**:`mcpp xpkg parse` 对现网全部 62 个描述符跑一遍 —— 期望**恰好 2 个**报错(§2.1 两例),其余全过。这是"不误伤"的最强证据,须在 PR 描述中贴出。
+**手工验收**:`mcpp xpkg parse` 对现网描述符全量跑一遍。这是"不误伤"的最强证据,须在 PR 描述中贴出。
+
+---
+
+### 6.1 实测结果(0.0.105 实现后)
+
+| 项 | 结果 |
+|---|---|
+| 单测 `XpkgNameForm` | **8/8 过**(设计写 6 例,实现补了 `PrefixWithoutShortSegmentIsAViolation` 与 `FromLuaReadsBothFields`) |
+| 单测总体 | **37/37 测试二进制全绿**,含 `test_manifest` 119 例 |
+| e2e 161 `xpkg_name_form` | 过 —— lint 拒绝 + 修法字面量 + `--json` + `--allow-split-name` + 运行期 fail-fast(**断言"未发生 Downloading"**) |
+| e2e 162 `bare_name_namespace_scope` | 过 —— 裸名硬失败 + did-you-mean + 两种正确写法均解析 + compat 别名回归锁 |
+| **mcpplibs 索引全量** | **49/49 parse OK,0 违规**(上游已先修好两例,故非设计预期的 2) |
+| 本地 e2e 全套 | **165 过 / 1 败**,唯一失败是 `22_doctor_cache_publish.sh`,根因本机 `~/.xlings/subos/current/bin/g++` shim 自引用损坏(环境性,属既有基线 13/22/26/54/62) |
+| 活体验证 | 裸 `gtest` 正常构建;`"chriskohlhoff.asio"` 真实下载 + 编译通过 |
+
+**实现期新增的两项修正**(设计未预见):
+
+1. **`--allow-split-name`**(§2.1b):全 registry 回归发现 30 个 split,28 个是 xlings 原生索引的合法用法。
+2. **lazy git 索引不参与硬失败**:自定义 **git** 索引由 xlings 在安装期惰性 clone,选择期其描述符可能尚未落盘,"找不到"不是结论性的。故 `selectDependencyCandidate` 在候选命名空间路由到非 builtin、非 local 索引时保留历史 fall-through;builtin 与 local path 索引在选择期均可读,继续走严格规则。e2e 42/43/44 覆盖。
 
 ---
 
