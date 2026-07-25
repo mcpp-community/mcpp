@@ -86,7 +86,26 @@ mkapp app3 acme ../idx3 acme widget
     cat app3/out.txt; exit 1; }
 
 # ── 4. two namespaces, one short name, ONE index ────────────────────
-# Needs xlings >= 0.4.69. Both must be independently addressable.
+# Needs xlings >= 0.4.69 (openxlings/xlings#381): before it, one index repo
+# keyed its table by the bare `package.name`, so the second package was
+# unreachable even with an explicit namespace.
+#
+# The sandbox xlings comes from bootstrapping the PREVIOUS mcpp release, so
+# until 0.0.106 ships (bundling 0.4.69) CI still runs 0.4.68 here. Skip this
+# sub-case rather than assert a capability the sandbox cannot have yet —
+# properties 1-3 above are the ones this change is responsible for.
+XLBIN="${MCPP_HOME:-$HOME/.mcpp}/registry/bin/xlings"
+XLVER=""
+[ -x "$XLBIN" ] && XLVER=$("$XLBIN" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+xl_ge_0469() {
+    [ -n "$XLVER" ] || return 1
+    printf '%s\n0.4.69\n' "$XLVER" | sort -V | head -1 | grep -qx "0.4.69"
+}
+if ! xl_ge_0469; then
+    echo "PASS 163_identity_first_resolution (step 4 skipped: sandbox xlings ${XLVER:-unknown} < 0.4.69)"
+    exit 0
+fi
+
 mkidx idx4 a/alpha.widget.lua alpha widget
 mkidx idx4 b/beta.widget.lua  beta  widget
 

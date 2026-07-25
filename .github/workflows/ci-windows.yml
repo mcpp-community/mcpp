@@ -40,7 +40,14 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" build
-          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          # Pick the NEWEST mcpp.exe, not an arbitrary one: `target/` is
+          # restored from cache and keeps a directory per build fingerprint,
+          # so after a version bump the freshly built binary sits alongside
+          # the previous release's. `find | head -1` returned whichever the
+          # directory walk hit first — which is how a 0.0.106 build ran the
+          # 0.0.105 binary and failed 01_help_and_version.
+          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" -printf "%T@ %p\n" \
+              | sort -rn | head -1 | cut -d" " -f2-)
           test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
           MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
           "$MCPP_SELF" --version
@@ -59,8 +66,14 @@ jobs:
           VERSION=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
           WRAPPER="mcpp-${VERSION}-windows-x86_64"
           ZIPNAME="${WRAPPER}.zip"
-
-          MCPP_BIN=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          # Pick the NEWEST mcpp.exe, not an arbitrary one: `target/` is
+          # restored from cache and keeps a directory per build fingerprint,
+          # so after a version bump the freshly built binary sits alongside
+          # the previous release's. `find | head -1` returned whichever the
+          # directory walk hit first — which is how a 0.0.106 build ran the
+          # 0.0.105 binary and failed 01_help_and_version.
+          MCPP_BIN=$(find target -name "mcpp.exe" -path "*/bin/*" -printf "%T@ %p\n" \
+              | sort -rn | head -1 | cut -d" " -f2-)
           test -n "$MCPP_BIN" || { echo "FAIL: no mcpp.exe in target/"; exit 1; }
 
           STAGING=$(mktemp -d)
@@ -116,7 +129,14 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" build
-          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" | head -1)
+          # Pick the NEWEST mcpp.exe, not an arbitrary one: `target/` is
+          # restored from cache and keeps a directory per build fingerprint,
+          # so after a version bump the freshly built binary sits alongside
+          # the previous release's. `find | head -1` returned whichever the
+          # directory walk hit first — which is how a 0.0.106 build ran the
+          # 0.0.105 binary and failed 01_help_and_version.
+          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" -printf "%T@ %p\n" \
+              | sort -rn | head -1 | cut -d" " -f2-)
           test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
           MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
           echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
