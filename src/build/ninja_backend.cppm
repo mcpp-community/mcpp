@@ -1101,6 +1101,38 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     return out;
 }
 
+// Name of the phony edge that aggregates an explicit goal set. Not a path —
+// ninja resolves it in the build dir, and no rule produces a file by this name.
+constexpr std::string_view kGoalPhony = "mcpp-requested-goals";
+
+// Explicit goals go into the MANIFEST, not onto ninja's command line.
+//
+// `mcpp test` names every shared prerequisite as a goal so a broken package
+// source fails once, as a package error, rather than N times as identical
+// per-test compile failures (see execute.cppm phase A). For a large package
+// that is thousands of object paths: FFmpeg's 2281 translation units produced
+// a 50,781-character argv. Windows joins argv into a single command string for
+// cmd.exe, which truncates at 8191 characters — the command never ran, and the
+// bare 127 came back with no output at all, from cmd.exe rather than from
+// ninja or mcpp.
+//
+// A phony edge expresses exactly the same goal set with a one-word command
+// line. The manifest has no length limit, and ninja still builds the whole set
+// in one invocation, so parallelism is unchanged.
+//
+// Returns the goal to put on the command line, or empty for "build default".
+std::string append_goal_phony(std::string& manifest,
+                              const std::vector<std::string>& goals) {
+    if (goals.empty()) return {};
+    manifest += std::format("\nbuild {} : phony", kGoalPhony);
+    for (auto const& g : goals) {
+        manifest += ' ';
+        manifest += escape_ninja_path(g);
+    }
+    manifest += '\n';
+    return std::string(kGoalPhony);
+}
+
 std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan,
                                                            const BuildOptions& opts) {
     auto t0 = std::chrono::steady_clock::now();
@@ -1113,7 +1145,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                           plan.outputDir});
 
     auto ninja_path = plan.outputDir / "build.ninja";
-    write_file(ninja_path, emit_ninja_string(plan));
+    auto manifest = emit_ninja_string(plan);
+    auto goalArg = append_goal_phony(manifest, opts.ninjaTargets);
+    write_file(ninja_path, manifest);
 
     // compile_commands.json — via the dedicated module.
     auto flags = compute_flags(plan);
@@ -1201,9 +1235,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     }
 
     // Explicit goal targets: ninja builds only these outputs (and their
-    // prerequisites). Used by `mcpp test` to isolate per-test compiles.
-    for (auto& t : opts.ninjaTargets)
-        nargv.push_back(t);
+    // prerequisites). Used by `mcpp test` to isolate per-test compiles. The set
+    // travels through the manifest as a phony edge (append_goal_phony), so the
+    // command line stays one word no matter how many goals there are.
+    if (!goalArg.empty())
+        nargv.push_back(goalArg);
 
     // Real env pairs for THIS run (the "@env" cache encoding above is only
     // for the fast path's later re-creation of the same environment).

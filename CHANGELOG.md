@@ -3,6 +3,18 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.108] — 2026-07-26
+
+### 修复
+
+- **Windows:显式 ninja 目标集不再撑爆命令行(0.0.104 起的回归)。** `mcpp test` 会把每一个共享前置(除测试自身 main 外的全部编译单元 + 非测试链接产物)列为 ninja 目标,好让包内源码出错时报**一次**包级错误,而不是 N 次雷同的逐测试编译失败。对大包来说这就是几千个对象路径 —— FFmpeg 的 2281 个编译单元拼出 **50,781 字符**的 argv。Windows 把 argv 合并成单条命令串交给 cmd.exe,而后者上限 **8191 字符**,于是命令**根本没有执行**:返回的是 cmd.exe 的裸 127,ninja 和 mcpp 都没有机会打印任何东西。
+
+  症状因此极难归因:mcpp-index 的 Windows CI 自 0.0.104 起在 `ffmpeg` 成员上失败,日志里最后一行是无关的下载进度条,既没有 `build failed` 诊断,`target/.build_cache` 也没写出。它是全仓唯一大到能触发的成员,`mcpp build` / `mcpp run` 走 `default`(不带目标参数)则始终正常。
+
+  修法是把目标集合写进 build.ninja 的一条 phony 聚合边,命令行只留一个词。清单文件没有长度限制,ninja 仍在**一次调用**内构建整个集合,并行度不变。e2e 164 锁住该机制。
+
+  与 0.0.107 修掉的 soname 别名回归**同源**:都来自 0.0.104 引入的"显式 ninja 目标"([#274](https://github.com/mcpp-community/mcpp/pull/274))—— 一处设计改动,两个只在特定条件下现形的症状。
+
 ## [0.0.107] — 2026-07-25
 
 ### 修复
