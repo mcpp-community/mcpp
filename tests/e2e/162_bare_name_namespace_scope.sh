@@ -90,10 +90,17 @@ fi
 # `gtest` is a bare request served by the `compat.gtest` descriptor. This is
 # the regression lock for the compat alias: narrowing the discovery rung must
 # not touch the mcpplibs/compat search path.
+#
+# Asserted on RESOLUTION, not on a successful build: whether the asset actually
+# downloads depends on network/cache state, but "did the bare name reach the
+# compat descriptor" does not. Keeping the assertion at the resolution layer is
+# both the property under test and what makes this test hermetic.
 write_manifest '[dependencies]
 gtest = "1.15.2"'
-"$MCPP" build > compat.out 2>&1 || { cat compat.out; exit 1; }
-grep -q "no package found under the namespaces" compat.out && {
-    echo "FAIL: bare gtest must still resolve via compat"; cat compat.out; exit 1; }
+"$MCPP" build > compat.out 2>&1 || true
+if grep -q "no package found under the namespaces" compat.out; then
+    echo "FAIL: bare gtest must still resolve via the compat search path"
+    cat compat.out; exit 1
+fi
 
 echo "PASS 162_bare_name_namespace_scope"
