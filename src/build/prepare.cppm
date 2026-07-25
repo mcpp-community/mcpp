@@ -1580,12 +1580,28 @@ prepare_build(bool print_fingerprint,
                 break;
             }
 
+            // A custom GIT index is cloned lazily by xlings during install, so
+            // at selection time its descriptors may legitimately not be on disk
+            // yet. "Not found" is therefore not conclusive for those namespaces
+            // — keep the historical fall-through rather than hard-failing on a
+            // package that would have materialized a moment later. Local path
+            // indices and the builtin index are both readable here, so they stay
+            // under the strict rule below.
+            bool anyLazyGitIndex = false;
+            for (auto& c : candidates) {
+                auto* idx = findIndexForNs(c.namespace_);
+                if (idx && !idx->is_builtin() && !idx->is_local()) {
+                    anyLazyGitIndex = true;
+                    break;
+                }
+            }
+
             // T9 (#278) — no candidate resolved. This used to fall through to
             // `candidates.front()` SILENTLY, so mcpp carried on with a namespace
             // it had invented, and the user met the failure much later (during
             // download/install) wrapped around that invented name. Fail here,
             // and say exactly which identities were tried.
-            if (!matched) {
+            if (!matched && !anyLazyGitIndex) {
                 std::string tried;
                 for (auto& c : candidates) {
                     if (!tried.empty()) tried += ", ";
