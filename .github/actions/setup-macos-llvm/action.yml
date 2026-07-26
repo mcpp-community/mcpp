@@ -61,45 +61,10 @@ runs:
     - name: Bootstrap mcpp via xlings
       shell: bash
       run: |
-        # Pinned to .xlings.json, same as .github/actions/bootstrap-mcpp.
-        # A bare `xlings install mcpp` takes "newest in whatever index copy
-        # this runner happens to have", which on a cold cache resolved 0.0.105
-        # — below the index's own floor (0.0.108). The bootstrap then could not
-        # read ANY descriptor (the floor check makes the read return nothing),
-        # so every dependency fell back to its legacy derived address and the
-        # build died on `mcpplibs.cmdline@0.0.1`.
-        MCPP_PIN=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' "$GITHUB_WORKSPACE/.xlings.json" \
-                   | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        test -n "$MCPP_PIN" || { echo "FAIL: no mcpp pin in .xlings.json"; exit 1; }
-        echo "bootstrap pin: mcpp@${MCPP_PIN}"
-        find_pinned_mcpp() {
-          local d r
-          for d in "$HOME/.xlings/data/xpkgs/xim-x-mcpp/${MCPP_PIN}" \
-                   "$HOME/.xlings/subos/default/data/xpkgs/xim-x-mcpp/${MCPP_PIN}"; do
-            [ -d "$d" ] || continue
-            r=$(find "$d" -type f -name mcpp 2>/dev/null | head -1)
-            [ -n "$r" ] && { echo "$r"; return 0; }
-          done
-          find "$HOME/.xlings" -type d -path "*xim-x-mcpp/${MCPP_PIN}" \
-               -exec find {} -type f -name mcpp ';' 2>/dev/null | head -1
-        }
-        xlings install "mcpp@${MCPP_PIN}" -y || true
-        MCPP=$(find_pinned_mcpp)
-        if [ -z "$MCPP" ]; then
-          echo "pinned install did not land; refreshing the index and retrying"
-          xlings update || true
-          xlings install "mcpp@${MCPP_PIN}" -y || true
-          MCPP=$(find_pinned_mcpp)
-        fi
-        test -n "$MCPP" || {
-          echo "FAIL: no mcpp binary under xim-x-mcpp/${MCPP_PIN}"
-          ls -d "$HOME"/.xlings/data/xpkgs/xim-x-mcpp/* 2>/dev/null
-          exit 1; }
-        "$MCPP" --version
-        MCPP_GOT=$("$MCPP" --version 2>/dev/null | head -1 \
-                   | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        [ "$MCPP_GOT" = "$MCPP_PIN" ] || {
-          echo "FAIL: mcpp at $MCPP reports '$MCPP_GOT', pin is '$MCPP_PIN'"; exit 1; }
+        # Pinned to .xlings.json, shared implementation. A bare
+        # `xlings install mcpp` resolved 0.0.105 here on a cold cache — below
+        # the index floor, which makes every descriptor read return nothing.
+        MCPP=$(bash "$GITHUB_WORKSPACE/.github/tools/install_pinned_mcpp.sh" "$GITHUB_WORKSPACE")
         echo "MCPP=$MCPP" >> "$GITHUB_ENV"
         echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 

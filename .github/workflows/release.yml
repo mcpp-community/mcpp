@@ -107,10 +107,10 @@ jobs:
           fi
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
-          xlings install mcpp -y
-          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
-          test -x "$MCPP"
-          "$MCPP" --version
+          # Pinned to .xlings.json — a bare `xlings install mcpp` resolves
+          # "newest in this runner's index copy" and put 0.0.105 (below the
+          # index floor) into this job. See .github/tools/install_pinned_mcpp.sh.
+          MCPP=$(bash "$GITHUB_WORKSPACE/.github/tools/install_pinned_mcpp.sh" "$GITHUB_WORKSPACE")
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
           echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 
@@ -296,18 +296,22 @@ jobs:
         run: |
           xlings config --mirror GLOBAL 2>/dev/null || true
           xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
-          xlings install mcpp -y
-          mcpp --version
+          MCPP=$(bash "$GITHUB_WORKSPACE/.github/tools/install_pinned_mcpp.sh" "$GITHUB_WORKSPACE")
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          "$MCPP" --version
 
       - name: Cross-build mcpp -> aarch64-linux-musl (this release's source)
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          mcpp self config --mirror GLOBAL 2>/dev/null || true
+          # "$MCPP", not a bare `mcpp`: the bare form runs the PATH shim, which
+          # resolves to whatever version xvm has selected — so pinning the
+          # bootstrap would have looked correct and changed nothing here.
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
           # The published bootstrap mcpp predates aarch64 cross-build support
           # (the feature landed after the last release), so it resolves the
           # x86_64 host musl-gcc for an aarch64 target. Two-stage instead: build
           # THIS release's x86_64 mcpp first, then cross-build aarch64 with it.
-          mcpp build --target x86_64-linux-musl
+          "$MCPP" build --target x86_64-linux-musl
           FRESH=$(find target/x86_64-linux-musl -type f -name mcpp | head -1)
           test -n "$FRESH"
           "$FRESH" build --target aarch64-linux-musl
@@ -429,10 +433,10 @@ jobs:
           fi
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
           xlings --version
-          xlings install mcpp -y
-          MCPP="$HOME/.xlings/subos/default/bin/mcpp"
-          test -x "$MCPP"
-          "$MCPP" --version
+          # Pinned to .xlings.json — a bare `xlings install mcpp` resolves
+          # "newest in this runner's index copy" and put 0.0.105 (below the
+          # index floor) into this job. See .github/tools/install_pinned_mcpp.sh.
+          MCPP=$(bash "$GITHUB_WORKSPACE/.github/tools/install_pinned_mcpp.sh" "$GITHUB_WORKSPACE")
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
           echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 
@@ -601,6 +605,10 @@ jobs:
           XLINGS_NON_INTERACTIVE: '1'
           XLINGS_VERSION: '0.4.69'
         run: |
+          # Captured before the `cd` below, in POSIX form: this step never
+          # returns to the workspace, and GITHUB_WORKSPACE is a backslash
+          # Windows path that git-bash tools mangle.
+          REPO_DIR="$(pwd)"
           WORK=$(mktemp -d)
           zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
           curl -fsSL -o "${WORK}/${zipfile}" \
@@ -611,13 +619,9 @@ jobs:
           export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
           echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
           xlings.exe --version
-          xlings.exe install mcpp -y
-          MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp.exe" -path "*/bin/*" 2>/dev/null | head -1)
-          if [ -z "$MCPP" ]; then
-            MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp" -path "*/bin/*" 2>/dev/null | head -1)
-          fi
-          test -n "$MCPP" || { echo "FAIL: mcpp not found after xlings install"; exit 1; }
-          "$MCPP" --version
+          # Pinned + version-scoped lookup. The old `find | head -1` returned
+          # whichever version the directory walk reached first.
+          MCPP=$(bash "$REPO_DIR/.github/tools/install_pinned_mcpp.sh" "$REPO_DIR")
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
           XLINGS_BIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
           echo "XLINGS_BIN=$XLINGS_BIN" >> "$GITHUB_ENV"

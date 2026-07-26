@@ -120,9 +120,15 @@ jobs:
           find "$HOME/.xlings" -name '.xlings-index-cache.json' -delete 2>/dev/null || true
           xlings config --mirror GLOBAL 2>/dev/null || true
           xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
-          xlings install mcpp -y
+          # MCPP_BOOT is what actually runs the bootstrap build below, so it —
+          # not just MCPP — has to be the pinned binary. It used to be the shim
+          # in subos/default/bin, which resolves to whatever version xvm has
+          # selected; pinning only MCPP would have looked right and changed
+          # nothing.
+          MCPP_BOOT=$(bash "$GITHUB_WORKSPACE/.github/tools/install_pinned_mcpp.sh" "$GITHUB_WORKSPACE")
+          echo "MCPP=$MCPP_BOOT" >> "$GITHUB_ENV"
           echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
-          echo "MCPP_BOOT=$HOME/.xlings/subos/default/bin/mcpp" >> "$GITHUB_ENV"
+          echo "MCPP_BOOT=$MCPP_BOOT" >> "$GITHUB_ENV"
 
       - name: Self-host build (bootstrap mcpp -> fresh host mcpp)
         run: |
@@ -247,9 +253,15 @@ jobs:
           find "$HOME/.xlings" -name '.xlings-index-cache.json' -delete 2>/dev/null || true
           xlings config --mirror GLOBAL 2>/dev/null || true
           xlings update -y 2>/dev/null || xlings update 2>/dev/null || true
-          xlings install mcpp -y
+          # MCPP_BOOT is what actually runs the bootstrap build below, so it —
+          # not just MCPP — has to be the pinned binary. It used to be the shim
+          # in subos/default/bin, which resolves to whatever version xvm has
+          # selected; pinning only MCPP would have looked right and changed
+          # nothing.
+          MCPP_BOOT=$(bash "$GITHUB_WORKSPACE/.github/tools/install_pinned_mcpp.sh" "$GITHUB_WORKSPACE")
+          echo "MCPP=$MCPP_BOOT" >> "$GITHUB_ENV"
           echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
-          echo "MCPP_BOOT=$HOME/.xlings/subos/default/bin/mcpp" >> "$GITHUB_ENV"
+          echo "MCPP_BOOT=$MCPP_BOOT" >> "$GITHUB_ENV"
 
       - name: Self-host build (fresh host mcpp)
         run: |
