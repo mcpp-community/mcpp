@@ -69,29 +69,6 @@
 - [x] **C9** xlings 版本进入**缓存血统**而非仅 key：`restore-keys` 是前缀匹配，
       只放进 key 的话 0.4.69 的 bootstrap 仍会恢复 0.4.30 的沙箱。代价=一次冷启动。
 
-### P3c — 全仓 bootstrap 收敛（release 失败后追加）
-
-0.0.109 的 release 在 `build + upload (linux/x86_64)` 挂掉,同一个症状:裸
-`xlings install mcpp` 拿到 **0.0.105** < 索引 floor 0.0.108 → 描述符全读不到 →
-依赖回落 legacy 地址 → 死在 `mcpplibs.cmdline@0.0.1`。P3 只修了两个 composite
-action,`release.yml` 自己还有 4 处内联 bootstrap。
-
-- [x] **C10** 全仓盘点:裸 `xlings install mcpp` 共 **6+ 处**(release.yml ×4、
-      cross-build-test.yml ×2、两个 action、ci-aarch64-fresh-install、ci-linux-e2e),
-      各自还有细微漂移(Windows 那处用 `find | head -1` 取到任意版本)。
-- [x] **C11** 抽 `.github/tools/install_pinned_mcpp.sh` 作为**唯一实现**:读 pin →
-      装 → 按版本目录定位 → 精确版本断言 → stdout 只输出路径、诊断走 stderr。
-      六处调用它,而不是写第七份拷贝。
-- [x] **C12** 修 `set -eo pipefail` 下的雷:`find ~/.xlings ... 2>/dev/null` 遇到
-      不可读目录返回非零(`2>/dev/null` 只藏消息不藏状态)→ 整条管道非零 → 脚本
-      在能报出任何有用信息之前就被 errexit 杀掉。全部 `|| true` + 显式 `return 0`。
-      **这个雷在 P3 写进两个 action 的版本里同样存在**,只是循环提前 return 才没炸。
-- [x] **C13** Windows release leg 同样在 `cd "$WORK"` 后不回仓库 → 用 cd 前捕获的
-      `REPO_DIR="$(pwd)"`,不用 `GITHUB_WORKSPACE`(git-bash 下是反斜杠路径)。
-- [ ] **C14**(follow-up,不在本次)`ci-aarch64-fresh-install` 的裸安装是**故意的**
-      (验证用户 fresh-install 路径);`ci-linux-e2e` 的 hermetic job 目前是绿的,
-      连跑六轮后为风格一致去动绿 job 是坏判断。两处单独评估。
-
 ### P4 — 版本 + 收口
 
 - [x] **D1** 版本 0.0.108 → 0.0.109，两处同步。
@@ -118,3 +95,32 @@ action,`release.yml` 自己还有 4 处内联 bootstrap。
 | 改动波及 8 个 mcpplibs 包 | 单测显式锁 `mcpplibs:cmdline` 不变；e2e 全量兜底 |
 | CI 热 cache 掩盖 C1 效果 | C2 的版本断言让漂移立刻可见 |
 | 索引侧假绿复发 | A5 是 hermetic 的，不依赖远端索引内容 |
+
+## P6 — 发布运维中发现、不在本批次修的问题
+
+- [ ] **F1 沙箱 xlings 永不刷新(用户侧静默中招)** — `xlings_binary.cppm` 首行
+      `if (exists(destBin)) return destBin;`,mcpp 把 xlings vendor 进
+      `~/.mcpp/registry/bin` **只在 self init 一次**,之后永不重访;而**沙箱那份才是
+      真正解析依赖的**。索引短名迁移后同一 repo 有两个 `name="lua"`,0.4.69 前 xlings
+      按裸 name 建表 → 随机一个包 not found,**换机器报错的包还不一样**,且无任何
+      "你的 xlings 太旧"提示。**影响面**:发布 tarball 自带 0.4.69,所以全新安装不
+      中招;只有"已有旧沙箱 + 原地升级"的用户会。**建议只做诊断**(检测版本不足时
+      明确报错并指向 `mcpp self init --force`),不自动改写用户沙箱。
+
+- [ ] **F2 `gtc` 错误信息明文泄露 access_token** — 上传失败时打出
+      `...obs_callback?access_token=<真token>`,会进 CI 日志。
+
+- [ ] **F3 `gtc` 退出码在 obs_callback 路径不可信** — macosx 包上报
+      `failed: ... obs_callback code:400 err:EOF`,但**对象存储上传已完成、文件正常
+      服务**。判断成败必须靠真实 GET + 字节比对,不能靠工具自报。
+
+- [ ] **F4 gitcode 上传 180s 上限对整批失效** — 本次**四个 tarball 全部超时**,
+      连 3.9MB 的都超。不是体积问题,是跨境链路整体卡住 → 需要本地补传兜底流程
+      (或把 gitcode leg 改成异步/重试策略)。
+
+- [ ] **F5 索引 artifact 传播滞后于 git** — `raw.githubusercontent` 上已有 0.0.109,
+      指针 JSON 也已指向新 commit,但客户端(GLOBAL 经 `ghfast.top` 代理)仍解析到
+      上一个 artifact。**轮询 raw 是误导信号**,要轮询客户端实际解析结果。
+
+- [ ] **F6 索引 URL 两种拼写** — `mcpp-community/mcpp-index.git`(4 处)与
+      `mcpplibs/mcpp-index.git`(6 处),靠 GitHub 改名重定向存活;#267 org 迁移残留。
