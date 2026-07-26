@@ -160,4 +160,37 @@ if "$MCPP" new app7 --template tpl-repro > out7.log 2>&1; then
 fi
 grep -qi "not found in the index" out7.log || { cat out7.log; echo "L7: wrong error for Form B skip"; exit 1; }
 
+# ── L8: the wire address when the package is NOT already installed ──────
+#
+# Every case above runs off a pre-seeded install cache, so `mcpp new` never
+# reaches the install path — which is how that path came to build its xlings
+# target as `<ns>.<short>` (a re-derived FQN) unnoticed. That spelling only
+# resolved while every descriptor repeated its namespace inside `package.name`;
+# the SPEC-001 short-name migration killed it, exactly as it killed the
+# dependency path (see e2e 165).
+#
+# Drop the seeded install and assert on the address that goes out. The xpm url
+# is example.invalid, so the install is EXPECTED to fail — the address is the
+# thing under test, and checking it separately keeps this honest without
+# needing a real payload.
+# Assert on the `"targets":[...]` payload specifically, NOT on the log as a
+# whole: the human-facing "Downloading …" and "fetch '…' failed" lines carry the
+# resolved identity `mcpplibs.tpl-demo`, which is correct there and would make a
+# looser grep match no matter what went on the wire.
+rm -rf "$MCPP_HOME/registry/data/xpkgs/mcpplibs-x-tpl-demo/1.0.0"
+MCPP_VERBOSE=1 "$MCPP" new app8 --template tpl-demo@1.0.0:starter > out8.log 2>&1 || true
+# Un-escape first — Windows spells the interface args with backslash-escaped
+# quotes; see e2e 165.
+sed 's/\\"/"/g' out8.log | grep -oE '"targets":\["[^"]*"\]' > targets8.txt || true
+test -s targets8.txt || { echo "L8: no install target was emitted at all"; cat out8.log; exit 1; }
+if grep -q '"mcpplibs\.tpl-demo@1\.0\.0"' targets8.txt; then
+    echo "L8: install target re-derived the FQN (mcpplibs.tpl-demo) instead of"
+    echo "    addressing the descriptor's literal name as mcpplibs:tpl-demo"
+    cat targets8.txt
+    exit 1
+fi
+grep -q '"mcpplibs:tpl-demo@1\.0\.0"' targets8.txt || {
+    echo "L8: expected the wire address mcpplibs:tpl-demo@1.0.0"
+    cat targets8.txt; exit 1; }
+
 echo "OK"

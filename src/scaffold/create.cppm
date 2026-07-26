@@ -84,10 +84,17 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
 
     auto installed = fetcher.install_path(ns, shortName, version);
     if (!installed) {
+        // Human-facing name is the resolved identity; the WIRE address is the
+        // descriptor's own `<namespace>:<literal name>` (SPEC-001 §6). Deriving
+        // it as `<ns>.<short>` only matched while every descriptor spelled
+        // `name` fully-qualified — the short-name migration killed that, the
+        // same way it killed the dependency path.
         auto fq = ns.empty() ? shortName : std::format("{}.{}", ns, shortName);
+        auto wireAddr = mcpp::manifest::xpkg_wire_address(*lua, ns, shortName);
         mcpp::ui::info("Downloading", std::format("{} v{}", fq, version));
         mcpp::fetcher::InstallProgressHandler progress;
-        std::vector<std::string> targets{ std::format("{}@{}", fq, version) };
+        std::vector<std::string> targets{
+            std::format("{}@{}", wireAddr.target, version) };
         auto r = fetcher.install(targets, &progress);
         if (!r) return std::unexpected(std::format(
             "fetch '{}@{}': {}", fq, version, r.error().message));

@@ -114,6 +114,42 @@ xpkg_name_form_violation(std::string_view declaredNs,
 // `xpkg_name_form_violation`.
 std::optional<std::string>
 xpkg_name_form_violation_from_lua(std::string_view luaContent);
+// The address xlings is asked to install (SPEC-001 §6):
+// `<effectiveNamespace>:<literal package.name>`, or the bare literal name for a
+// namespace-less package.
+//
+// WHY THIS IS ONE FUNCTION — the rule it enforces is "the descriptor the
+// identity gate accepted supplies BOTH halves of the address". Deriving the
+// name from the descriptor while taking the namespace from the request is what
+// made every bare-name dependency served by a `compat` descriptor
+// uninstallable the moment the index migrated to short names: the gate
+// accepted `(compat, gtest)` (a bare request resolves against the default
+// namespace AND `compat`, see `xpkg_lua_identity_matches`), but the wire target
+// went out as `mcpplibs:gtest`, which no index is keyed by. The old spelling
+// only ever worked because the literal `name` happened to read `compat.gtest`,
+// so a hardcoded `compat.<short>` retry caught it.
+//
+// `requestNs` is the coordinate the caller resolved the dependency to. It is
+// used in exactly two places: as the `indexDefaultNs` a descriptor that
+// declares no namespace inherits, and as the whole address when there is no
+// descriptor to read.
+//
+//   luaContent declares a namespace  → ns = descriptor's effective namespace
+//   luaContent declares none         → ns = requestNs (index-default inheritance)
+//   no luaContent / no `name`        → historical derivation, byte-for-byte:
+//                                      name = requestNs.empty()
+//                                           ? shortName : "<requestNs>.<shortName>"
+//                                      so a descriptor that could not be read
+//                                      fails exactly where it used to.
+struct XpkgWireAddress {
+    std::string ns;       // effective namespace ("" = namespace-less package)
+    std::string name;     // LITERAL package.name — the index's wire key
+    std::string target;   // "<ns>:<name>", or "<name>" when ns is empty
+    bool operator==(const XpkgWireAddress&) const = default;
+};
+XpkgWireAddress xpkg_wire_address(std::string_view luaContent,
+                                  std::string_view requestNs,
+                                  std::string_view shortName);
 // Resolve the lib-root path for a manifest:
 //   1. `[lib].path` if explicitly set (cargo-style override),
 //   2. otherwise the convention `src/<package-tail>.cppm`, where
@@ -754,6 +790,37 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
     // exact namespace equality. Cross-namespace collisions are structurally
     // impossible — a foreign `(xim, zlib)` never equals `(compat, zlib)`.
     return id.ns == ns;
+}
+
+XpkgWireAddress xpkg_wire_address(std::string_view luaContent,
+                                  std::string_view requestNs,
+                                  std::string_view shortName)
+{
+    XpkgWireAddress addr;
+
+    // The literal `name` is the wire key — never a value mcpp re-derives.
+    auto literal = luaContent.empty() ? std::string{}
+                                      : extract_xpkg_name(luaContent);
+    if (!literal.empty()) {
+        addr.name = std::move(literal);
+        // A descriptor that declares no namespace inherits the one owned by the
+        // index it was found in, which at this seam is the request coordinate —
+        // the same rule `xpkg_lua_identity_matches` used to accept it.
+        addr.ns = extract_xpkg_namespace(luaContent);
+        if (addr.ns.empty()) addr.ns = std::string(requestNs);
+    } else {
+        // No descriptor (index not synced yet): keep the historical derivation
+        // so the failure stays where it was rather than moving earlier.
+        addr.ns   = std::string(requestNs);
+        addr.name = requestNs.empty()
+            ? std::string(shortName)
+            : std::format("{}.{}", requestNs, shortName);
+    }
+
+    addr.target = addr.ns.empty()
+        ? addr.name
+        : std::format("{}:{}", addr.ns, addr.name);
+    return addr;
 }
 
 std::optional<std::string>

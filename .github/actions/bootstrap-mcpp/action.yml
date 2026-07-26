@@ -13,7 +13,14 @@ inputs:
   xlings-version:
     description: xlings release to bootstrap from
     required: false
-    default: '0.4.30'
+    # 0.4.69 is the floor the CURRENT index needs, not a routine bump. Its
+    # SPEC-001 short-name migration put two packages named `lua` in one repo
+    # (`compat:lua` and `mcpplibs.capi:lua`, both pulled in transitively by
+    # mcpplibs.xpkg). Before 0.4.69 (openxlings/xlings#381) a repo keyed its
+    # table by the bare `package.name`, so one of the two was simply
+    # unreachable — and which one depended on the machine, which is why CI
+    # failed on `compat:lua` on Windows and `mcpplibs.capi:lua` on Linux.
+    default: '0.4.69'
   cache-target:
     description: also restore/save target/ (build artifacts + BMIs)
     required: false
@@ -30,17 +37,23 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.mcpp
-        key: mcpp-sandbox-${{ runner.os }}-ci-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+        # The xlings version is part of the LINEAGE, not just the key: mcpp
+        # vendors xlings into ~/.mcpp/registry/bin once at `self init` and
+        # never revisits it (acquire_xlings_binary returns early when the file
+        # exists). With the version only in the key, restore-keys would hand a
+        # 0.4.30 sandbox to a 0.4.69 bootstrap and the sandbox — which is what
+        # actually resolves dependencies — would silently stay behind.
+        key: mcpp-sandbox-${{ runner.os }}-ci-xl${{ inputs.xlings-version }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
         restore-keys: |
-          mcpp-sandbox-${{ runner.os }}-ci-
+          mcpp-sandbox-${{ runner.os }}-ci-xl${{ inputs.xlings-version }}-
 
     - name: Cache xlings
       uses: actions/cache@v4
       with:
         path: ~/.xlings
-        key: xlings-${{ runner.os }}-v2-${{ hashFiles('.xlings.json') }}
+        key: xlings-${{ runner.os }}-v2-xl${{ inputs.xlings-version }}-${{ hashFiles('.xlings.json') }}
         restore-keys: |
-          xlings-${{ runner.os }}-v2-
+          xlings-${{ runner.os }}-v2-xl${{ inputs.xlings-version }}-
 
     - name: Bootstrap mcpp via xlings (unix)
       if: runner.os != 'Windows'
@@ -49,6 +62,7 @@ runs:
         XLINGS_NON_INTERACTIVE: '1'
         XLINGS_VERSION: ${{ inputs.xlings-version }}
       run: |
+        REPO_DIR="$(pwd)"
         # Always install the pinned version — the cache may hold an older
         # xlings whose sysroot/packages are incompatible.
         case "$(uname -s)" in
@@ -63,12 +77,82 @@ runs:
         export PATH="$HOME/.xlings/subos/default/bin:$PATH"
         echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
         xlings --version
-        # xim:mcpp — `xlings install` is idempotent, so cache hits skip the
-        # download.
-        xlings install mcpp -y
-        MCPP="$HOME/.xlings/subos/default/bin/mcpp"
-        test -x "$MCPP"
+        # xim:mcpp — pinned, NOT bare `xlings install mcpp`.
+        #
+        # A bare install is idempotent, so on a cache hit it keeps whatever
+        # version the cache already holds. `.xlings.json` only fed the cache
+        # KEY, and `restore-keys` prefix-matches, so a stale sandbox got
+        # restored and the pin was never applied: jobs ran 0.0.107 and 0.0.102
+        # against an index whose floor was 0.0.108 (E0006). Warm caches hid it
+        # — a cold one would have been a hard failure.
+        # Absolute, POSIX-form path captured before any `cd`: the Windows leg
+        # cds into the unpack dir and never returns, so a relative
+        # `.xlings.json` resolves to nothing there — and GITHUB_WORKSPACE is a
+        # backslash Windows path that git-bash tools mangle.
+        XJSON="$REPO_DIR/.xlings.json"
+        MCPP_PIN=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' "$XJSON" \
+                   | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        test -n "$MCPP_PIN" || { echo "FAIL: no mcpp pin in $XJSON"; exit 1; }
+        echo "bootstrap pin: mcpp@${MCPP_PIN}"
+        # Address the pinned version through ITS OWN version directory rather
+        # than the shim in subos/default/bin (which is a symlink to xlings and
+        # resolves to whatever version is currently selected — exactly the
+        # drift this pin exists to prevent).
+        #
+        # Locate it by searching inside `xim-x-mcpp/<pin>/` instead of assuming
+        # the layout underneath: it is `<ver>/mcpp` on Linux and `<ver>/bin/
+        # mcpp.exe` on Windows, and the roots differ too. Anything found under
+        # that directory IS the pinned version, so this keeps the guarantee
+        # without hardcoding a shape that varies per platform.
+        find_pinned_mcpp() {
+          local d r
+          for d in "$HOME/.xlings/data/xpkgs/xim-x-mcpp/${MCPP_PIN}" \
+                   "$HOME/.xlings/subos/default/data/xpkgs/xim-x-mcpp/${MCPP_PIN}"; do
+            [ -d "$d" ] || continue
+            r=$(find "$d" -type f -name mcpp 2>/dev/null | head -1)
+            [ -n "$r" ] && { echo "$r"; return 0; }
+          done
+          # Last resort: the roots above are the two layouts seen in practice,
+          # but the VERSION DIRECTORY is the actual contract — find it wherever
+          # xlings put it rather than fail on a layout we have not met yet.
+          find "$HOME/.xlings" -type d -path "*xim-x-mcpp/${MCPP_PIN}" \
+               -exec find {} -type f -name mcpp ';' 2>/dev/null | head -1
+        }
+        xlings install "mcpp@${MCPP_PIN}" -y || true
+        MCPP=$(find_pinned_mcpp)
+        if [ -z "$MCPP" ]; then
+          # A restored ~/.xlings can carry a xim-pkgindex clone that predates
+          # this release, and the refresh marker can read fresh while the clone
+          # is behind. Refresh once and retry before calling it a failure.
+          echo "pinned install did not land; refreshing the index and retrying"
+          xlings update || true
+          xlings install "mcpp@${MCPP_PIN}" -y || true
+          MCPP=$(find_pinned_mcpp)
+        fi
+        test -n "$MCPP" || {
+          echo "FAIL: no mcpp binary under xim-x-mcpp/${MCPP_PIN}"
+          ls -d "$HOME"/.xlings/data/xpkgs/xim-x-mcpp/* \
+                "$HOME"/.xlings/subos/default/data/xpkgs/xim-x-mcpp/* 2>/dev/null
+          exit 1; }
         "$MCPP" --version
+        # Compare the parsed version exactly: a substring match would let pin
+        # 0.0.10 be satisfied by a 0.0.109 binary.
+        MCPP_GOT=$("$MCPP" --version 2>/dev/null | head -1 \
+                   | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        [ "$MCPP_GOT" = "$MCPP_PIN" ] || {
+          echo "FAIL: mcpp at $MCPP reports '$MCPP_GOT', pin is '$MCPP_PIN'"; exit 1; }
+        # The SANDBOX xlings is a separate copy: mcpp vendors it into
+        # ~/.mcpp/registry/bin at `self init` and never revisits it
+        # (acquire_xlings_binary returns early when the file exists), while
+        # ~/.mcpp is restored from cache by prefix. So it can lag the system
+        # one by a lot, and it — not the system binary — is what resolves
+        # dependencies. Print both; a mismatch is worth seeing in the log.
+        echo "system  xlings: $(xlings --version 2>/dev/null | head -1)"
+        if [ -x "$HOME/.mcpp/registry/bin/xlings" ]; then
+          echo "sandbox xlings: $("$HOME/.mcpp/registry/bin/xlings" --version 2>/dev/null | head -1)"
+        else
+          echo "sandbox xlings: (not initialised yet)"
+        fi
         echo "MCPP=$MCPP" >> "$GITHUB_ENV"
         echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 
@@ -79,6 +163,7 @@ runs:
         XLINGS_NON_INTERACTIVE: '1'
         XLINGS_VERSION: ${{ inputs.xlings-version }}
       run: |
+        REPO_DIR="$(pwd)"
         WORK=$(mktemp -d)
         zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
         curl -fsSL -o "${WORK}/${zipfile}" \
@@ -89,13 +174,57 @@ runs:
         export PATH="$USERPROFILE/.xlings/subos/default/bin:$PATH"
         echo "$USERPROFILE/.xlings/subos/default/bin" >> "$GITHUB_PATH"
         xlings.exe --version
-        xlings.exe install mcpp -y
-        MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp.exe" -path "*/bin/*" 2>/dev/null | head -1)
+        # Pinned install — see the unix leg for why a bare `install mcpp` let
+        # the version drift behind the index floor unnoticed. The old `find |
+        # head -1` here made it worse: with several versions in the sandbox it
+        # returned whichever the directory walk hit first.
+        # Absolute, POSIX-form path captured before any `cd`: the Windows leg
+        # cds into the unpack dir and never returns, so a relative
+        # `.xlings.json` resolves to nothing there — and GITHUB_WORKSPACE is a
+        # backslash Windows path that git-bash tools mangle.
+        XJSON="$REPO_DIR/.xlings.json"
+        MCPP_PIN=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' "$XJSON" \
+                   | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        test -n "$MCPP_PIN" || { echo "FAIL: no mcpp pin in $XJSON"; exit 1; }
+        echo "bootstrap pin: mcpp@${MCPP_PIN}"
+        # Search inside the pinned version's own directory rather than assuming
+        # the layout under it — see the unix leg.
+        find_pinned_mcpp() {
+          local d r
+          for d in "$USERPROFILE/.xlings/subos/default/data/xpkgs/xim-x-mcpp/${MCPP_PIN}" \
+                   "$USERPROFILE/.xlings/data/xpkgs/xim-x-mcpp/${MCPP_PIN}"; do
+            [ -d "$d" ] || continue
+            r=$(find "$d" -type f -name "mcpp.exe" 2>/dev/null | head -1)
+            [ -n "$r" ] && { echo "$r"; return 0; }
+          done
+          find "$USERPROFILE/.xlings" -type d -path "*xim-x-mcpp/${MCPP_PIN}" \
+               -exec find {} -type f -name "mcpp.exe" ';' 2>/dev/null | head -1
+        }
+        xlings.exe install "mcpp@${MCPP_PIN}" -y || true
+        MCPP=$(find_pinned_mcpp)
         if [ -z "$MCPP" ]; then
-          MCPP=$(find "$USERPROFILE/.xlings" -name "mcpp" -path "*/bin/*" 2>/dev/null | head -1)
+          echo "pinned install did not land; refreshing the index and retrying"
+          xlings.exe update || true
+          xlings.exe install "mcpp@${MCPP_PIN}" -y || true
+          MCPP=$(find_pinned_mcpp)
         fi
-        test -n "$MCPP" || { echo "FAIL: mcpp not found after xlings install"; exit 1; }
+        test -n "$MCPP" || {
+          echo "FAIL: no mcpp.exe under xim-x-mcpp/${MCPP_PIN}"
+          ls -d "$USERPROFILE"/.xlings/subos/default/data/xpkgs/xim-x-mcpp/* \
+                "$USERPROFILE"/.xlings/data/xpkgs/xim-x-mcpp/* 2>/dev/null
+          exit 1; }
         "$MCPP" --version
+        MCPP_GOT=$("$MCPP" --version 2>/dev/null | head -1 \
+                   | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        [ "$MCPP_GOT" = "$MCPP_PIN" ] || {
+          echo "FAIL: mcpp at $MCPP reports '$MCPP_GOT', pin is '$MCPP_PIN'"; exit 1; }
+        # See the unix leg: the sandbox keeps its own vendored xlings copy.
+        echo "system  xlings: $(xlings.exe --version 2>/dev/null | head -1)"
+        if [ -x "$USERPROFILE/.mcpp/registry/bin/xlings.exe" ]; then
+          echo "sandbox xlings: $("$USERPROFILE/.mcpp/registry/bin/xlings.exe" --version 2>/dev/null | head -1)"
+        else
+          echo "sandbox xlings: (not initialised yet)"
+        fi
         echo "MCPP=$MCPP" >> "$GITHUB_ENV"
         echo "XLINGS_BIN=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")" >> "$GITHUB_ENV"
 

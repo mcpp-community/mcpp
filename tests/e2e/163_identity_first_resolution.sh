@@ -39,9 +39,23 @@ fi
 
 mkidx() {  # mkidx <dir> <relpath> <namespace> <name>
     mkdir -p "$1/pkgs/$(dirname "$2")"
-    sed -e "s/namespace   = \"chriskohlhoff\"/namespace   = \"$3\"/" \
-        -e "s/name        = \"chriskohlhoff.asio\"/name        = \"$4\"/" \
+    # Rewrite the identity fields by SHAPE, never by their current values. The
+    # first version of this matched the literal `name = "chriskohlhoff.asio"`,
+    # which silently stopped matching the day mcpp-index migrated that
+    # descriptor to its SPEC-001 short name. The fixture then carried the WRONG
+    # identity and this test failed on three platforms for a reason that had
+    # nothing to do with what it asserts.
+    sed -e "s/^\( *namespace *= *\)\"[^\"]*\"/\1\"$3\"/" \
+        -e "s/^\( *name *= *\)\"[^\"]*\"/\1\"$4\"/" \
         "$SRC" > "$1/pkgs/$2"
+    # Fail loudly rather than go on to test a fixture that isn't what we asked
+    # for — a missed rewrite must never masquerade as a resolution bug.
+    grep -qE "^ *namespace *= *\"$3\"" "$1/pkgs/$2" || {
+        echo "FAIL: fixture namespace rewrite missed (upstream descriptor shape changed?)"
+        exit 1; }
+    grep -qE "^ *name *= *\"$4\"" "$1/pkgs/$2" || {
+        echo "FAIL: fixture name rewrite missed (upstream descriptor shape changed?)"
+        exit 1; }
 }
 
 mkapp() {  # mkapp <dir> <indexname> <indexpath> <ns> <short>

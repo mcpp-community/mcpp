@@ -1846,28 +1846,14 @@ prepare_build(bool print_fingerprint,
                 }
             }
 
-            // The package name xlings is asked for is the descriptor's LITERAL
-            // `package.name` — never a value mcpp re-derives (SPEC-001 §6).
-            //
-            // xlings keys its index by that literal and addresses packages as
-            // `<effectiveNamespace>:<package.name>`. mcpp already holds the
-            // descriptor here (`luaContent`, read above), so it can hand over
-            // the exact string instead of reconstructing one that only happens
-            // to match when the descriptor spells `name` as `<ns>.<short>`.
-            // Re-deriving it is what made split-form descriptors uninstallable
-            // (#278) and what forced every index descriptor into the redundant
-            // fully-qualified spelling.
-            //
-            // Fallback: when the descriptor could not be read (network index
-            // not synced yet), keep the historical derivation so the failure
-            // stays where it was rather than moving earlier.
-            auto wireName = luaContent
-                ? mcpp::manifest::extract_xpkg_name(*luaContent)
-                : std::string{};
-            if (wireName.empty()) {
-                wireName = ns.empty() ? shortName
-                                      : std::format("{}.{}", ns, shortName);
-            }
+            // The address xlings is asked for is `<effectiveNamespace>:<literal
+            // package.name>` (SPEC-001 §6), and BOTH halves come from the
+            // descriptor the identity gate accepted — see
+            // `mcpp::manifest::xpkg_wire_address` for why splitting the two
+            // sources is the bug it is.
+            auto wireAddr = mcpp::manifest::xpkg_wire_address(
+                luaContent ? std::string_view(*luaContent) : std::string_view{},
+                ns, shortName);
             if (luaContent) {
                 if (auto violation = mcpp::manifest::
                         xpkg_name_form_violation_from_lua(*luaContent)) {
@@ -1918,24 +1904,37 @@ prepare_build(bool print_fingerprint,
             // The colon prefix is xlings' *effective namespace*, matched against
             // the descriptor's own `package.namespace` (xlings issue-381 design
             // §2.2) — NOT the index name. mcpp's `[indices] <ns> = {...}` keys
-            // ARE namespaces, so the two coincided historically; spelling it
-            // from `ns` makes that intentional rather than accidental, and is
-            // what disambiguates two same-short-name packages living in one
-            // index (xlings >= 0.4.69).
+            // ARE namespaces, so the two coincide for a qualified request; for a
+            // bare one they do NOT, which is exactly why the namespace has to be
+            // read off the descriptor rather than off `ns`.
             //
             // A namespace-less upstream package (xim `opencv`) is addressed by
             // its bare literal name, with no prefix.
-            auto target = ns.empty()
-                ? std::format("{}@{}", wireName, version)
-                : std::format("{}:{}@{}", ns, wireName, version);
+            auto target = std::format("{}@{}", wireAddr.target, version);
+            // Keep every address we actually put on the wire. Diagnosing the
+            // 2026-07-25 breakage needed MCPP_VERBOSE=1 to discover that mcpp
+            // had asked for `mcpplibs:gtest` — the error itself only named the
+            // dependency, which is the one thing nobody doubts.
+            std::vector<std::string> attempted{ target };
             auto r = install_one(target);
             if (r && r->exitCode != 0 &&
                 (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {
-                auto compatTarget = std::format("compat.{}@{}", shortName, version);
-                if (compatTarget != target) {
+                // Compat retry for a bare/default-namespace request whose
+                // descriptor could not be read (no `wireAddr` to trust): the
+                // package may still be a `compat` one. Try BOTH spellings — a
+                // SPEC-001 index keys it `compat:<short>`, a pre-SPEC-001 index
+                // keys it by the literal `compat.<short>`. Sending only the
+                // latter is what left the retry pointing at a name the migrated
+                // index no longer has.
+                for (auto&& compatTarget : {
+                         std::format("compat:{}@{}", shortName, version),
+                         std::format("compat.{}@{}", shortName, version) }) {
+                    if (compatTarget == target) continue;
                     mcpp::ui::info("Downloading", std::format("{} v{}",
-                                     std::format("compat.{}", shortName), version));
+                        compatTarget.substr(0, compatTarget.rfind('@')), version));
+                    attempted.push_back(compatTarget);
                     r = install_one(compatTarget);
+                    if (!r || r->exitCode == 0) break;
                 }
             }
             if (!r) return std::unexpected(std::format(
@@ -1959,9 +1958,16 @@ prepare_build(bool print_fingerprint,
                     childErr += r->error->message;
                 }
                 auto target = std::format("{}@{}", depName, version);
-                return std::unexpected(
-                    mcpp::pm::format_install_failure_diagnostic(
-                        target, r->exitCode, indexRepos, childErr));
+                auto diag = mcpp::pm::format_install_failure_diagnostic(
+                    target, r->exitCode, indexRepos, childErr);
+                std::string tried;
+                for (auto& a : attempted) {
+                    if (!tried.empty()) tried += ", ";
+                    tried += a;
+                }
+                diag += std::format("\n  wire address{} tried: {}",
+                                    attempted.size() == 1 ? "" : "es", tried);
+                return std::unexpected(std::move(diag));
             }
             // After install, check project data first for custom index packages.
             installed = findRawInstalled();

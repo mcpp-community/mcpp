@@ -14,7 +14,9 @@ jobs:
     timeout-minutes: 30
     env:
       XLINGS_NON_INTERACTIVE: '1'
-      XLINGS_VERSION: '0.4.30'
+      # Dormant (workflow_dispatch only), but kept in step with the rest: the
+      # index needs 0.4.69 to resolve two packages that share a short name.
+      XLINGS_VERSION: '0.4.69'
     steps:
       - uses: actions/checkout@v4
 

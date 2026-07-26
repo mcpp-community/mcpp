@@ -1888,6 +1888,100 @@ TEST(XpkgIdentity, DefaultNamespaceRequestMatchesCompatAlias) {
         compatGtest, "mcpplibs", "zlib"));
 }
 
+// ─── xpkg_wire_address — the address xlings is asked to install ─────
+//
+// REGRESSION LOCK for the 2026-07-25 CI break (6 of 7 workflows red on main).
+// The identity gate accepts a `compat` descriptor for a bare/default-namespace
+// request (`gtest = "1.15.2"` must resolve to compat.gtest). The wire address
+// then has to come from THAT descriptor — both halves. Taking the name from the
+// descriptor and the namespace from the request emitted `mcpplibs:gtest`, which
+// no index is keyed by; it only ever worked because the literal name used to
+// read `compat.gtest`, so a hardcoded `compat.<short>` retry caught it. The
+// index's SPEC-001 short-name migration removed that coincidence.
+
+TEST(XpkgWireAddress, CompatDescriptorUnderBareRequestAddressesCompat) {
+    // THE BUG. Bare `gtest` request, served by a short-name compat descriptor.
+    constexpr std::string_view compatGtest =
+        R"(package = { namespace = "compat", name = "gtest", version = "1.15.2" })";
+    auto addr = mcpp::manifest::xpkg_wire_address(compatGtest, "mcpplibs", "gtest");
+    EXPECT_EQ(addr.ns, "compat");
+    EXPECT_EQ(addr.name, "gtest");
+    EXPECT_EQ(addr.target, "compat:gtest");   // NOT "mcpplibs:gtest"
+}
+
+TEST(XpkgWireAddress, DefaultNamespaceDescriptorIsUnchanged) {
+    // The 8 mcpplibs descriptors in the live index must address exactly as
+    // before — this fix moves only the packages that were already broken.
+    constexpr std::string_view cmdline =
+        R"(package = { namespace = "mcpplibs", name = "cmdline", version = "0.0.1" })";
+    auto addr = mcpp::manifest::xpkg_wire_address(cmdline, "mcpplibs", "cmdline");
+    EXPECT_EQ(addr.target, "mcpplibs:cmdline");
+}
+
+TEST(XpkgWireAddress, LegacyFqnDescriptorKeepsItsLiteralName) {
+    // Pre-SPEC-001 spelling. The literal `name` IS the index's key, so it goes
+    // out verbatim — only the namespace half is corrected.
+    constexpr std::string_view legacy =
+        R"(package = { namespace = "compat", name = "compat.zlib", version = "1.3.2" })";
+    auto addr = mcpp::manifest::xpkg_wire_address(legacy, "mcpplibs", "zlib");
+    EXPECT_EQ(addr.ns, "compat");
+    EXPECT_EQ(addr.name, "compat.zlib");
+    EXPECT_EQ(addr.target, "compat:compat.zlib");
+}
+
+TEST(XpkgWireAddress, QualifiedRequestIsUnchanged) {
+    // `[dependencies.compat] gtest = ...` already worked (this is the spelling
+    // every mcpp-index example uses, which is why the index CI stayed green).
+    constexpr std::string_view compatGtest =
+        R"(package = { namespace = "compat", name = "gtest", version = "1.15.2" })";
+    auto addr = mcpp::manifest::xpkg_wire_address(compatGtest, "compat", "gtest");
+    EXPECT_EQ(addr.target, "compat:gtest");
+}
+
+TEST(XpkgWireAddress, NestedNamespaceIsUnchanged) {
+    constexpr std::string_view capiLua =
+        R"(package = { namespace = "mcpplibs.capi", name = "lua", version = "5.4.7" })";
+    auto addr = mcpp::manifest::xpkg_wire_address(capiLua, "mcpplibs.capi", "lua");
+    EXPECT_EQ(addr.target, "mcpplibs.capi:lua");
+}
+
+TEST(XpkgWireAddress, DescriptorWithoutNamespaceInheritsTheRequest) {
+    // A no-namespace descriptor inherits the namespace owned by the index it
+    // was found in — at this seam, the request coordinate. Same rule the
+    // identity gate used to accept it.
+    constexpr std::string_view bare = R"(package = { name = "cmdline" })";
+    auto addr = mcpp::manifest::xpkg_wire_address(bare, "mcpplibs", "cmdline");
+    EXPECT_EQ(addr.ns, "mcpplibs");
+    EXPECT_EQ(addr.target, "mcpplibs:cmdline");
+}
+
+TEST(XpkgWireAddress, NamespacelessRequestAddressesTheBareLiteral) {
+    // xim upstream packages (`opencv`) have no namespace on either side.
+    constexpr std::string_view opencv = R"(package = { name = "opencv" })";
+    auto addr = mcpp::manifest::xpkg_wire_address(opencv, "", "opencv");
+    EXPECT_EQ(addr.ns, "");
+    EXPECT_EQ(addr.target, "opencv");
+}
+
+TEST(XpkgWireAddress, NoDescriptorKeepsTheHistoricalDerivation) {
+    // Index not synced yet: mcpp has nothing to read, so it must NOT invent a
+    // new address — the failure has to stay exactly where it was.
+    auto addr = mcpp::manifest::xpkg_wire_address("", "mcpplibs", "gtest");
+    EXPECT_EQ(addr.name, "mcpplibs.gtest");
+    EXPECT_EQ(addr.target, "mcpplibs:mcpplibs.gtest");
+
+    auto bare = mcpp::manifest::xpkg_wire_address("", "", "opencv");
+    EXPECT_EQ(bare.target, "opencv");
+}
+
+TEST(XpkgWireAddress, DescriptorWithoutNameFallsBackToDerivation) {
+    // A descriptor that declares no `name` cannot supply a wire key (the
+    // identity gate accepts it leniently, so it can reach here).
+    constexpr std::string_view noName = R"(package = { version = "1.0.0" })";
+    auto addr = mcpp::manifest::xpkg_wire_address(noName, "mcpplibs", "gtest");
+    EXPECT_EQ(addr.target, "mcpplibs:mcpplibs.gtest");
+}
+
 // ─── INV-NAME: xpkg_name_form_violation (#278) ──────────────────────
 //
 // `package.name` is a SINGLE ATOMIC SEGMENT; all hierarchy lives in
