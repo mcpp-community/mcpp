@@ -136,6 +136,7 @@ c_standard   = "c11"              # C 源文件的标准(默认 c11)
 cflags       = ["-DFOO=1"]        # 额外 C 编译参数
 cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数(不要放 -std=...)
 ldflags      = ["-lfoo"]          # 额外链接参数
+defines      = ["BIZ=1", "QUX"]   # 作用于每个 TU 的预处理宏(脱糖为 -D;会进入模块扫描)
 static_stdlib = true               # 静态链接 libstdc++(默认 true)
 macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
 ```
@@ -165,6 +166,8 @@ cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftP
 产物在任何 macOS ≥ 14 上开箱即用。设 `static_stdlib = false` 退回动态
 系统 libc++(产物只保证在构建机同版本及以上运行)。更低 floor(11–13)
 需自建 libc++ 归档(已验证可行,数据级切换,按需提供)。
+
+`defines` 把每个条目脱糖为 `-D<x>`,同时作用于 C 和 C++ 编译通道,并覆盖包内每个 TU(包括模块接口单元),因此会影响 P1689 模块扫描。若只想让某个二进制入口源读到宏,请改用 `[targets.<name>].defines`。
 
 C++ 标准不要通过 `build.cxxflags = ["-std=..."]` 配置。请使用:
 

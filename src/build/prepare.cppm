@@ -442,6 +442,19 @@ void merge_conditional_build_inputs(mcpp::manifest::Manifest& m,
     }
 }
 
+// Desugar `[build].defines` into `-D<x>` on both C and C++ flag channels.
+// This must run AFTER conditional `[target.'cfg(...)'.build]` sections are
+// merged (so conditional defines land too) and BEFORE the manifest is
+// snapshotted into packages[] / fingerprinted. Idempotent: clearing the
+// `defines` vector after folding makes repeated calls harmless.
+void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
+    for (auto const& d : bc.defines) {
+        bc.cflags.push_back("-D" + d);
+        bc.cxxflags.push_back("-D" + d);
+    }
+    bc.defines.clear();
+}
+
 // Feature-activation closure — THE single implementation (build.mcpp env
 // contract, Stage 2a feature-deps, and the main feature pass all call this):
 // seed = [features].default ∪ requested, expanded transitively over implies;
@@ -943,6 +956,10 @@ prepare_build(bool print_fingerprint,
             m->buildDependencies.insert(cc.buildDependencies.begin(), cc.buildDependencies.end());
         }
     }
+    // `[build].defines` must reach the scanner (P1689) and the compile edge,
+    // and must participate in the fingerprint. Fold before dependency
+    // resolution / fingerprinting.
+    fold_build_defines_into_flags(m->buildConfig);
 
     // msvc@system: a *system* toolchain — located on the machine, never
     // resolved through xim packages. mcpp does not install MSVC.
@@ -2073,6 +2090,7 @@ prepare_build(bool print_fingerprint,
                                     cfgpred::context_for(overrides.target_triple),
                                     overrides.target_triple);
         }
+        fold_build_defines_into_flags(manifest->buildConfig);
 
         return std::pair{effRoot, std::move(*manifest)};
     };
@@ -2964,6 +2982,7 @@ prepare_build(bool print_fingerprint,
                     cfgpred::context_for(overrides.target_triple),
                     overrides.target_triple);
             }
+            fold_build_defines_into_flags(dep_manifest->buildConfig);
         } else {
             auto loaded = loadVersionDep(name, key.ns, key.shortName, spec.version);
             if (!loaded) return std::unexpected(loaded.error());

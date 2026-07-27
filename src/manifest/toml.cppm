@@ -841,6 +841,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_bool("build.allow_host_libs")) m.buildConfig.allowHostLibs = *v;
     if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
+    if (auto v = doc->get_string_array("build.defines"))  m.buildConfig.defines  = *v;
     // Module-graph-global dialect flags (issue #210) — see types.cppm
     // dialect_flags(); this key is the explicit escape hatch for flags the
     // known-list doesn't recognize yet.
