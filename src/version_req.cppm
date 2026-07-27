@@ -9,8 +9,14 @@
 //   "*"            → any
 //   ""             → any (treated as *)
 //
-// Versions: major.minor.patch with all parts ≥ 0; missing parts default to 0
-// (e.g. "1.2" == "1.2.0", "1" == "1.0.0").
+// Versions: major.minor.patch[.revision] with all parts ≥ 0; missing parts
+// default to 0 (e.g. "1.2" == "1.2.0", "1" == "1.0.0").
+//
+// The fourth segment exists for mcpp's own date-based scheme (YYYY.M.D.N,
+// e.g. "2026.7.27.1"). Without it the parser silently truncated, making every
+// release of a given day compare EQUAL — which quietly disabled the E0006
+// index-floor check. Ordinary three-segment SemVer is unaffected: the fourth
+// component is 0 on both sides, so ^ / ~ / = behave exactly as before.
 //
 // Pre-release / build metadata are NOT supported in M4 V1 — versions
 // containing '-' or '+' are still parsed by stripping after first such
@@ -23,11 +29,35 @@ import std;
 export namespace mcpp::version_req {
 
 struct Version {
-    int major = 0, minor = 0, patch = 0;
-    auto operator<=>(const Version&) const = default;
+    int major = 0, minor = 0, patch = 0, revision = 0;
+    // How many segments the source string actually wrote. Only str() reads
+    // it — it must NOT take part in ordering, or "1.2" and "1.2.0" would
+    // compare unequal.
+    int components = 0;
 
+    // Explicit, not `= default`: the defaulted <=> would compare
+    // `components` too. Order is the four numbers, nothing else.
+    std::strong_ordering operator<=>(const Version& o) const {
+        if (auto c = major    <=> o.major;    c != 0) return c;
+        if (auto c = minor    <=> o.minor;    c != 0) return c;
+        if (auto c = patch    <=> o.patch;    c != 0) return c;
+        return revision <=> o.revision;
+    }
+    bool operator==(const Version& o) const { return (*this <=> o) == 0; }
+
+    // Three segments are the floor, so every version that parsed before this
+    // field existed still renders byte-identically ("1.2" → "1.2.0"). The
+    // fourth is appended only when the source actually wrote it.
+    //
+    // Load-bearing: pm/resolver.cppm returns str() as the RESOLVED dependency
+    // version, which flows into the lock file and the xlings wire address —
+    // so this has to reproduce the index's literal version key. In particular
+    // a date version ending in ".0" (mcpp's formal-release convention) must
+    // stay four segments; collapsing it to "2026.8.1" would address a key
+    // that does not exist.
     std::string str() const {
-        return std::format("{}.{}.{}", major, minor, patch);
+        auto base = std::format("{}.{}.{}", major, minor, patch);
+        return components >= 4 ? std::format("{}.{}", base, revision) : base;
     }
 };
 
@@ -64,10 +94,10 @@ std::expected<Version, std::string> parse_version(std::string_view s) {
         s = s.substr(0, dash);
     }
     Version v;
-    int* parts[3] = { &v.major, &v.minor, &v.patch };
+    int* parts[4] = { &v.major, &v.minor, &v.patch, &v.revision };
     int idx = 0;
     std::size_t i = 0;
-    while (idx < 3 && i <= s.size()) {
+    while (idx < 4 && i <= s.size()) {
         std::size_t start = i;
         while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
         if (start == i) {
@@ -81,6 +111,7 @@ std::expected<Version, std::string> parse_version(std::string_view s) {
         if (i < s.size() && s[i] == '.') ++i;
         else break;
     }
+    v.components = idx;
     return v;
 }
 
@@ -144,7 +175,12 @@ bool matches(const Requirement& r, const Version& v) {
             case Op::Caret: {
                 // ^X.Y.Z = >=X.Y.Z, <(X+1).0.0   (leftmost-nonzero rule)
                 // For simplicity here: bump major; if major==0 bump minor; if both 0 bump patch.
+                // Every branch must also zero `revision`, or the upper bound
+                // inherits the constraint's own fourth segment and wrongly
+                // excludes releases below it (^2026.7.27.3 would cut off
+                // 2027.0.0.0..2).
                 Version upper = c.v;
+                upper.revision = 0;
                 if (c.v.major != 0)      { ++upper.major; upper.minor = 0; upper.patch = 0; }
                 else if (c.v.minor != 0) { ++upper.minor; upper.patch = 0; }
                 else                      { ++upper.patch; }
@@ -154,7 +190,7 @@ bool matches(const Requirement& r, const Version& v) {
             case Op::Tilde: {
                 // ~X.Y.Z = >=X.Y.Z, <X.(Y+1).0
                 Version upper = c.v;
-                ++upper.minor;  upper.patch = 0;
+                ++upper.minor;  upper.patch = 0;  upper.revision = 0;
                 if (!(v >= c.v && v < upper)) return false;
                 break;
             }

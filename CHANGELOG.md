@@ -3,6 +3,30 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.7.27.1] — 2026-07-27
+
+### 变更
+
+- **版本号改为日期格式 `YYYY.M.D.N`。** 与 xlings 生态对齐(xlings 于同日从 `0.4.70` 迁入)。月/日不补零。
+
+  第 4 段的约定:**`.0` 保留给正式版本 / 稳定版本,日常迭代默认从 `.1` 开始** —— 一天内可以有若干次常规发布,`.0` 这个槽位只在该版本被认定为正式 release 或稳定版时使用。
+
+  跨方案的序是单调的:`0.0.109` < `2026.7.27.1`,第一段由 `0` 变 `2026`,不存在回退。
+
+### 修复
+
+- **4 段版本号在比较时被静默截断,致 E0006 索引底线检查失效。** `version_req::Version` 原本是严格三段,`parse_version("2026.7.27.1")` 解析出 `{2026, 7, 27}` 后**丢弃第 4 段且不报错** —— 同一天内的所有版本互相比较相等。
+
+  后果落在 `pm/index_contract.cppm`:索引写 `min_mcpp = "2026.7.27.5"`、用户跑 `2026.7.27.1`,两者比较相等,`have >= need` 成立,**底线检查放行**。用户拿着不够新的 mcpp 去读新索引,得到的是描述符读取返回空这类难以归因的次生故障 —— 而挡住这种情况正是该检查存在的唯一理由。
+
+  修法是把 `Version` 扩到 4 段,并新增 `components` 记录源串实际写了几段。两条约束:比较**只看 4 个数字**(`components` 若参与比较,`"1.2"` 就不再等于 `"1.2.0"`);`str()` 必须能回写第 4 段 —— 它是**载荷性的**,`pm/resolver.cppm` 用它重建已解析的依赖版本串,该串会流向 lock 文件与 xlings wire 地址,而 `.0` 结尾的版本一旦塌成三段就会指向一个不存在的索引 key。既有三段依赖的解析逐字节不变。
+
+### 维护
+
+- **所有 xlings pin 升至 `2026.7.27.2`,并加机器校验。** `src/xlings.cppm` 的 `pinned::kXlingsVersion` 现为唯一真源,`.github/tools/check_version_pins.sh` 强制 `.github/` 下全部 16 个 pin 点与之一致,并同时校验 mcpp 自身版本在四处的一致性。
+
+  此前靠常量上方一句「keep in lock-step with release.yml / cross-build-test.yml / ci-linux-e2e.yml」的注释人工同步,而**那个清单本身就是不全的** —— 漏掉了两个 composite action,CI 沙箱因此在 0.4.30 上静默跑了数周。落实检查时又找出三处从未被记录的 pin(`release.yml` 里硬编码的 aarch64 xlings tarball 字面量)和三处落后的 bootstrap pin(`ci-fresh-install.yml` 的 `v0.4.38`×2 / `v0.4.51`)。
+
 ## [0.0.108] — 2026-07-26
 
 ### 修复

@@ -92,8 +92,11 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          # 0.4.69 (current) — kept in lock-step with the xlings the release
-          # is built/bundled against (release.yml). 0.4.67 carried the
+          # Must equal `pinned::kXlingsVersion` (src/xlings.cppm) and the
+          # xlings the release bundles — enforced by
+          # .github/tools/check_version_pins.sh.
+          #
+          # Floors worth remembering. 0.4.67 carried the
           # multi-index_repo install fix (openxlings/xlings#374); 0.4.68 adds
           # per-repo index artifact sources (openxlings/xlings#377) so the
           # mcpplibs index syncs via artifact with git as fallback (mcpp#269);
@@ -105,7 +108,7 @@ jobs:
           # release assets were uploaded in a broken state (records present,
           # blobs missing → 404 on GET); re-uploaded clean. The stale-INDEX
           # half is handled by the marker-clear below.
-          XLINGS_VERSION: '0.4.69'
+          XLINGS_VERSION: '2026.7.27.2'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -242,7 +245,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.69'
+          XLINGS_VERSION: '2026.7.27.2'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \

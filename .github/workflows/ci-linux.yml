@@ -46,6 +46,15 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      # Before the bootstrap, not after: this needs no toolchain and no mcpp,
+      # takes under a second, and the drift it catches (a stale xlings pin)
+      # would otherwise surface minutes later as an unrelated-looking
+      # dependency-resolution failure. Pure text extraction on purpose — it
+      # has to work when the build is broken.
+      - name: Check version / xlings pin consistency
+        run: bash .github/tools/check_version_pins.sh
+
       - uses: ./.github/actions/bootstrap-mcpp
 
       - name: Configure mirror + Build mcpp from source (self-host)

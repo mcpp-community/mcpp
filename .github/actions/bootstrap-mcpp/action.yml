@@ -13,14 +13,19 @@ inputs:
   xlings-version:
     description: xlings release to bootstrap from
     required: false
-    # 0.4.69 is the floor the CURRENT index needs, not a routine bump. Its
-    # SPEC-001 short-name migration put two packages named `lua` in one repo
-    # (`compat:lua` and `mcpplibs.capi:lua`, both pulled in transitively by
-    # mcpplibs.xpkg). Before 0.4.69 (openxlings/xlings#381) a repo keyed its
-    # table by the bare `package.name`, so one of the two was simply
-    # unreachable — and which one depended on the machine, which is why CI
-    # failed on `compat:lua` on Windows and `mcpplibs.capi:lua` on Linux.
-    default: '0.4.69'
+    # Must equal `pinned::kXlingsVersion` in src/xlings.cppm — enforced by
+    # .github/tools/check_version_pins.sh, not by this comment. (The previous
+    # comment here listed the files to keep in lock-step, and that list was
+    # already incomplete; that is why the check exists.)
+    #
+    # Hard floor: 0.4.69. The index's SPEC-001 short-name migration put two
+    # packages named `lua` in one repo (`compat:lua` and `mcpplibs.capi:lua`,
+    # both pulled in transitively by mcpplibs.xpkg). Before 0.4.69
+    # (openxlings/xlings#381) a repo keyed its table by the bare
+    # `package.name`, so one of the two was simply unreachable — and which one
+    # depended on the machine, which is why CI failed on `compat:lua` on
+    # Windows and `mcpplibs.capi:lua` on Linux. Never pin below that.
+    default: '2026.7.27.2'
   cache-target:
     description: also restore/save target/ (build artifacts + BMIs)
     required: false
@@ -41,8 +46,10 @@ runs:
         # vendors xlings into ~/.mcpp/registry/bin once at `self init` and
         # never revisits it (acquire_xlings_binary returns early when the file
         # exists). With the version only in the key, restore-keys would hand a
-        # 0.4.30 sandbox to a 0.4.69 bootstrap and the sandbox — which is what
-        # actually resolves dependencies — would silently stay behind.
+        # sandbox built by an OLDER xlings to a newer bootstrap, and the
+        # sandbox — which is what actually resolves dependencies — would
+        # silently stay behind (observed: a 0.4.30 sandbox surviving under a
+        # 0.4.69 bootstrap for weeks).
         key: mcpp-sandbox-${{ runner.os }}-ci-xl${{ inputs.xlings-version }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
         restore-keys: |
           mcpp-sandbox-${{ runner.os }}-ci-xl${{ inputs.xlings-version }}-

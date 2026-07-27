@@ -96,7 +96,7 @@ jobs:
           # Pin xlings to a known-good version. The upstream install
           # script always grabs `latest` (no version override), so we
           # download + self-install manually to avoid broken releases.
-          XLINGS_VERSION: '0.4.69'
+          XLINGS_VERSION: '2026.7.27.2'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
@@ -278,10 +278,10 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION"    >> "$GITHUB_OUTPUT"
 
-      - name: Bootstrap mcpp via xlings (latest 0.4.69)
+      - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.69'
+          XLINGS_VERSION: '2026.7.27.2'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -340,13 +340,16 @@ jobs:
           exec "$(dirname "$0")/bin/mcpp" "$@"
           LAUNCHER
           chmod +x "$STAGING/$WRAPPER/mcpp"
-          # Bundle the aarch64 xlings (0.4.69) so install.sh consumers on aarch64
-          # get an aarch64 xlings, not the x86_64 bootstrap one.
-          XLA="xlings-0.4.69-linux-aarch64.tar.gz"
+          # Bundle the aarch64 xlings so install.sh consumers on aarch64 get an
+          # aarch64 xlings, not the x86_64 bootstrap one. The three literals
+          # below are pinned to the same version as XLINGS_VERSION; they are
+          # NOT interpolated from it, so check_version_pins.sh scans for them
+          # explicitly (they were absent from the old lock-step comment).
+          XLA="xlings-2026.7.27.2-linux-aarch64.tar.gz"
           if curl -fsSL -o "/tmp/$XLA" \
-               "https://github.com/openxlings/xlings/releases/download/v0.4.69/$XLA"; then
+               "https://github.com/openxlings/xlings/releases/download/v2026.7.27.2/$XLA"; then
             tar -xzf "/tmp/$XLA" -C /tmp
-            XLBIN=$(find /tmp/xlings-0.4.69-linux-aarch64 -path '*/bin/xlings' -type f | head -1)
+            XLBIN=$(find /tmp/xlings-2026.7.27.2-linux-aarch64 -path '*/bin/xlings' -type f | head -1)
             if [ -n "$XLBIN" ]; then
               mkdir -p "$STAGING/$WRAPPER/registry/bin"
               cp "$XLBIN" "$STAGING/$WRAPPER/registry/bin/xlings"
@@ -421,7 +424,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.69'
+          XLINGS_VERSION: '2026.7.27.2'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             WORK=$(mktemp -d)
@@ -603,7 +606,7 @@ jobs:
         shell: bash
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '0.4.69'
+          XLINGS_VERSION: '2026.7.27.2'
         run: |
           # Captured before the `cd` below, in POSIX form: this step never
           # returns to the workspace, and GITHUB_WORKSPACE is a backslash

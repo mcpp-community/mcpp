@@ -78,10 +78,16 @@ MCPP="$XL_HOME/.xlings/subos/default/bin/mcpp${EXE}"
 # CI would get a bare non-zero and no diagnostic, exactly the failure mode this
 # whole change is meant to stop. A miss has to reach the check below, which can
 # name what it expected and what it found.
+#
+# Three OR four segments: mcpp's version scheme is the date form YYYY.M.D.N
+# (e.g. 2026.7.27.1). A three-segment-only pattern still MATCHES such a version
+# — it just silently truncates it to "2026.7.27" on both sides, so the
+# comparison below would accept any release of that day and this guard would
+# quietly stop guarding.
 PIN=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' "$REPO_DIR/.xlings.json" \
-      | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
 GOT=$("$MCPP" --version 2>/dev/null | head -1 \
-      | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
 # Exact comparison: a substring match would let a pin of 0.0.10 be satisfied by
 # a 0.0.109 binary.
 [ -n "$PIN" ] && [ "$GOT" = "$PIN" ] || {

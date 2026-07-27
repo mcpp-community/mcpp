@@ -33,10 +33,16 @@ struct Env {
 namespace pinned {
     inline constexpr std::string_view kPatchelfVersion = "0.18.0";
     inline constexpr std::string_view kNinjaVersion    = "1.12.1";
-    // Keep in lock-step with the XLINGS_VERSION pins in release.yml /
-    // cross-build-test.yml / ci-linux-e2e.yml (the xlings actually bundled
-    // into releases). Printed by `mcpp self env`.
-    inline constexpr std::string_view kXlingsVersion   = "0.4.69";
+    // The xlings a release bundles at <install>/registry/bin/xlings, and the
+    // version `mcpp self env` reports.
+    //
+    // This is the SOURCE OF TRUTH for every xlings pin in .github/, and
+    // `.github/tools/check_version_pins.sh` enforces that — CI fails if any
+    // pin disagrees. This comment used to instead name three files to keep
+    // in lock-step by hand; that list was already missing both composite
+    // actions, which is how CI's sandbox sat on 0.4.30 unnoticed while
+    // everything else had moved on. Don't reintroduce a hand-maintained list.
+    inline constexpr std::string_view kXlingsVersion   = "2026.7.27.2";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

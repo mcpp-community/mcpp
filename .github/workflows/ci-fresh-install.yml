@@ -40,7 +40,7 @@ concurrency:
 # fails with `version not found` instead of silently testing an older
 # binary. Bump together with the .xlings.json workspace pin at release.
 env:
-  MCPP_PIN: '0.0.109'
+  MCPP_PIN: '2026.7.27.1'
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ jobs:
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.38
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.7.27.2
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror
@@ -227,7 +227,7 @@ jobs:
 
       - name: Install xlings + mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.38
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.7.27.2
           # Deliberately NOT writing to $GITHUB_PATH here. On container
           # images that declare no PATH in their config (opensuse/
           # tumbleweed), appending a single dir to GITHUB_PATH makes the
@@ -284,11 +284,14 @@ jobs:
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
-          # v0.4.50+: first xlings release whose macosx binary runs on
-          # macOS 14 (older ones carry minos=15 and refuse to start).
-          # v0.4.51: in-process sha256 — required on this image, which
-          # has no sha256sum binary (pinned fetches failed before).
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v0.4.51
+          # Pinned to kXlingsVersion like every other bootstrap (see
+          # .github/tools/check_version_pins.sh). Two floors this image needs,
+          # both long satisfied — do not pin below them:
+          #   v0.4.50+: first xlings whose macosx binary runs on macOS 14
+          #             (older ones carry minos=15 and refuse to start).
+          #   v0.4.51+: in-process sha256 — this image has no sha256sum
+          #             binary, so pinned fetches failed before it.
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.7.27.2
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror
