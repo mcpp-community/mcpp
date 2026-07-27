@@ -230,6 +230,11 @@ std::vector<std::string> merged_environ(
     }
     return out;
 }
+
+std::string spawn_failure(std::string_view program, int error) {
+    return std::format("posix_spawnp('{}') failed (error {}): {}\n",
+                       program, error, std::generic_category().message(error));
+}
 #else
 // Build a shell command line from an argv vector (Windows + residual non-POSIX
 // fallback only; Linux/macOS exec directly, #248). The first token (program)
@@ -444,7 +449,12 @@ RunResult capture_exec(
     int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
     ::posix_spawn_file_actions_destroy(&fa);
     ::close(fds[1]);
-    if (sp != 0) { ::close(fds[0]); result.exit_code = 127; return result; }
+    if (sp != 0) {
+        ::close(fds[0]);
+        result.exit_code = 127;
+        result.output = spawn_failure(argv.front(), sp);
+        return result;
+    }
 
     std::array<char, 4096> buf{};
     ssize_t n;
@@ -547,7 +557,12 @@ RunResult capture_exec_deadline(
     int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
     ::posix_spawn_file_actions_destroy(&fa);
     ::close(fds[1]);
-    if (sp != 0) { ::close(fds[0]); result.exit_code = 127; return result; }
+    if (sp != 0) {
+        ::close(fds[0]);
+        result.exit_code = 127;
+        result.output = spawn_failure(argv.front(), sp);
+        return result;
+    }
 
     ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL) | O_NONBLOCK);
 

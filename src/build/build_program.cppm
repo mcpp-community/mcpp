@@ -585,8 +585,14 @@ std::expected<void, std::string> run_build_program(
     auto childEnv = contract_env(root, outDir, env);
     std::string ctxHash = contract_hash(childEnv);
 
+    const bool staticHostHelper = mcpp::platform::supports_full_static
+                               && mcpp::toolchain::is_musl_target(tc);
+    std::string compilerIdentity = hostCompiler.string();
+    compilerIdentity += staticHostHelper
+                      ? "\nbuild-program-link=musl-static-v1"
+                      : "\nbuild-program-link=default-v1";
     std::string programHash  = mcpp::toolchain::hash_file(src);
-    std::string compilerHash = mcpp::toolchain::hash_string(hostCompiler.string());
+    std::string compilerHash = mcpp::toolchain::hash_string(compilerIdentity);
 
     // Fast path: declared inputs + contract unchanged → reapply cached
     // directives, no run.
@@ -641,6 +647,11 @@ std::expected<void, std::string> run_build_program(
         compileArgv.push_back("-x"); compileArgv.push_back("none");
         compileArgv.push_back((bdir / "mcpp.o").string());
     }
+    // A dynamic musl helper requires /lib/ld-musl-<arch>.so.1 on the host,
+    // which glibc distributions do not provide. Keep the host build program in
+    // the musl toolchain's documented static world. This is link-only: `base`
+    // also feeds the bundled module's compile/precompile commands above.
+    if (staticHostHelper) compileArgv.push_back("-static");
     compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
     mcpp::ui::info("build.mcpp", "compiling");
     // GCC resolves `import mcpp;` via gcm.cache/ relative to the compile cwd, so

@@ -16,10 +16,20 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 6 * * 1'   # weekly Mon 06:00 UTC
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/build/build_program.cppm'
+      - 'src/platform/process.cppm'
+      - 'tests/e2e/167_build_mcpp_musl_host_static.sh'
+      - '.github/workflows/ci-aarch64-fresh-install.yml'
   push:
     branches: [ main ]
     paths:
       - '.github/workflows/ci-aarch64-fresh-install.yml'
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -34,6 +44,10 @@ jobs:
       # Verbose every mcpp invocation — cold bootstrap path (src/cli.cppm).
       MCPP_VERBOSE: "1"
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: System info
         run: |
           uname -a
@@ -70,14 +84,38 @@ jobs:
           git clone --depth 1 https://github.com/openxlings/xim-pkgindex "$idx"
           grep -n "skipping relocation\|os.isfile(path.join(bindir" "$idx/pkgs/m/musl-gcc.lua" | head -2 || true
 
+      - name: Build current mcpp source for native regression tests
+        run: |
+          mcpp build --target aarch64-linux-musl
+          self=$(find target/aarch64-linux-musl -type f -name mcpp | head -1)
+          test -x "$self"
+          self=$(realpath "$self")
+          "$self" --version
+          echo "MCPP_SELF=$self" >> "$GITHUB_ENV"
+
       - name: Native build + run an `import std` program
         run: |
           work=$(mktemp -d); cd "$work"
-          mcpp new hello
+          "$MCPP_SELF" new hello
           cd hello
+          cat > build.mcpp <<'EOF'
+          #include <cstdio>
+          int main() {
+              FILE* marker = std::fopen("helper-ran", "w");
+              if (!marker) return 2;
+              std::fputs("ok\n", marker);
+              std::fclose(marker);
+              return 0;
+          }
+          EOF
           # default src uses import std (C++23)
-          mcpp build
-          out=$(mcpp run 2>/dev/null || true)
+          "$MCPP_SELF" build
+          test -f helper-ran
+          helper=target/.build-mcpp/build.mcpp.bin
+          file "$helper"
+          file "$helper" | grep -q 'statically linked'
+          ! readelf -lW "$helper" | grep -q 'Requesting program interpreter'
+          out=$("$MCPP_SELF" run 2>/dev/null)
           echo "program output: $out"
           bin=$(find target -type f -name hello | head -1)
           file "$bin"

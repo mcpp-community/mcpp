@@ -44,6 +44,14 @@ TEST(RunExec, ReturnsErrorWhenProgramMissing) {
     EXPECT_NE(process::run_exec({"/no/such/program/mcpp-xyz"}), 0);
 }
 
+TEST(CaptureExec, MissingProgramReportsSpawnFailure) {
+    constexpr std::string_view missing = "/no/such/program/mcpp-capture-xyz";
+    auto r = process::capture_exec({std::string(missing)});
+    EXPECT_EQ(r.exit_code, 127);
+    EXPECT_NE(r.output.find(missing), std::string::npos) << r.output;
+    EXPECT_NE(r.output.find("error 2"), std::string::npos) << r.output;
+}
+
 TEST(CaptureExec, CapturesStdoutWithoutShell) {
     auto r = process::capture_exec({"/bin/echo", "hello world"});
     EXPECT_EQ(r.exit_code, 0);
