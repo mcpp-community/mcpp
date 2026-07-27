@@ -141,6 +141,7 @@ c_standard   = "c11"              # Standard for C source files (default c11)
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
+defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU (desugars to -D; reaches module scans)
 static_stdlib = true               # Statically link libstdc++ (default true)
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
                                    # (≙ cargo build.target; e.g. "ship fully-static")
@@ -181,6 +182,8 @@ the default build's artifacts work out of the box on any macOS ≥ 14. Set
 then only guaranteed to run on the build machine's version and above). A lower
 floor (11–13) requires a self-built libc++ archive (already verified to work, a
 data-level switch, available on request).
+
+`defines` desugars each entry to `-D<x>` on both the C and C++ compile channels and reaches every TU in the package — including module interface units — so it affects the P1689 module scan. For macros that should only affect a single binary's entry source, use `[targets.<name>].defines` instead.
 
 Do not configure the C++ standard via `build.cxxflags = ["-std=..."]`. Instead use:
 

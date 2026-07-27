@@ -203,6 +203,13 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
 // is read in ~150 places, and a BuildConfig genuinely IS a set of build
 // inputs plus the selection axis and resolved policy scalars.
 struct BuildConfig : BuildInputs {
+    // Package-level preprocessor defines. Unlike per-target `defines` (which
+    // only affect the binary's entry TU), these reach every TU in this
+    // package — including module interface units — so they participate in
+    // the P1689 module scan. Desugared to `-D<x>` on both C and C++ compiles
+    // before the manifest is snapshot into BuildPlan / fingerprint.
+    std::vector<std::string>           defines;
+
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a

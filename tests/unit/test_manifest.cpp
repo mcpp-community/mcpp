@@ -341,6 +341,24 @@ kind = "lib"
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
 }
 
+// [build].defines is sugar for `-D<x>` on both C and C++ channels; it must
+// parse into buildConfig.defines so prepare_build can fold it into flags
+// before the P1689 scan and fingerprint.
+TEST(Manifest, BuildDefinesParsesIntoSeparateVector) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+defines = ["TEST_USE_MODULES", "VALUE=42"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.defines.size(), 2u);
+    EXPECT_EQ(m->buildConfig.defines[0], "TEST_USE_MODULES");
+    EXPECT_EQ(m->buildConfig.defines[1], "VALUE=42");
+}
+
 // #249: `[build] include_dirs_after` parses into buildConfig.includeDirsAfter
 // — the -idirafter channel (searched AFTER the toolchain's system dirs), so
 // an extracted-tarball root containing a file named like a standard header
