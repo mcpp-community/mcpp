@@ -15,6 +15,18 @@
 
 ### 修复
 
+- **[#291](https://github.com/mcpp-community/mcpp/issues/291) 私有 glibc payload 不再无条件出现在运行目标的 `LD_LIBRARY_PATH` 里。** 该变量会被**整棵进程子树**继承。当运行目标是个会 shell out 的程序(例如课程 provider 调 `popen("mcpp test ...")`)时,`/bin/sh` 是**宿主二进制** —— 它的 `PT_INTERP` 烙死在文件里,装载它的永远是**宿主 ld.so**,而这个变量却把 **payload 的 `libc.so.6`** 递给它。
+
+  glibc 的 libc 与 ld.so 之间通过 `GLIBC_PRIVATE` 版本锁定(实测:payload `libc.so.6` 对 `ld-linux-x86-64.so.2` 有 `GLIBC_PRIVATE` 依赖),二者必须同一次构建。于是**只要宿主 glibc 与 payload 不同版本**,shell 就在 `main` 之前死于装载器内的 SIGSEGV —— stdout 全空,没有任何诊断。报告者是 Ubuntu 22.04(glibc 2.35)对 payload 2.39。
+
+  注意这**不是**「构建机不同导致 ABI 不兼容」:它是纯粹的版本错配,任何宿主 glibc ≠ payload 的用户都会中招。也正因为版本相同就不复现,它一直没被发现。
+
+  payload 目录是 `LD_LIBRARY_PATH` 里**唯一不同时出现在可执行文件 RUNPATH 中**的一项(`flags.cppm` 刻意把它排除,以保持静态/musl 链接干净)。它存在的唯一理由是:被 `dlopen()` 的库其自身的 DT_NEEDED 闭包**不会**查主程序的 RUNPATH。因此现在只在构建确实存在这类依赖库时才注入(`depRuntimeLibraryDirs` 非空)——真实的 host-GL 透传场景走 `compat.glx-runtime` 的 `[runtime] library_dirs`,正好落在这个条件内,行为不变;而零依赖的二进制不再拿到它。
+
+  `process.cppm` 的 `strip_private_glibc` 早已保护 mcpp **自己的**子进程,但它够不到再外一层:变量是 mcpp 有意设给目标的,目标之后再 fork 什么已超出 mcpp 的控制 —— 能控制的是**不必要时就不发**。
+
+  e2e 166 双向锁住(零依赖工程必须拿不到、有 `[runtime] library_dirs` 的工程必须拿得到)。它断言的是**发出的环境变量**而非「shell 是否崩溃」:后者在宿主与 payload 版本相同的机器上会因为错误的理由通过,那正是这个 bug 长期存活的原因。
+
 - **4 段版本号在比较时被静默截断,致 E0006 索引底线检查失效。** `version_req::Version` 原本是严格三段,`parse_version("2026.7.27.1")` 解析出 `{2026, 7, 27}` 后**丢弃第 4 段且不报错** —— 同一天内的所有版本互相比较相等。
 
   后果落在 `pm/index_contract.cppm`:索引写 `min_mcpp = "2026.7.27.5"`、用户跑 `2026.7.27.1`,两者比较相等,`have >= need` 成立,**底线检查放行**。用户拿着不够新的 mcpp 去读新索引,得到的是描述符读取返回空这类难以归因的次生故障 —— 而挡住这种情况正是该检查存在的唯一理由。

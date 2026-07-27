@@ -460,7 +460,28 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     for (auto const& dir : tc.linkRuntimeDirs) {
         append_unique_path(plan.runtimeLibraryDirs, dir);
     }
-    if (tc.payloadPaths) {
+    // The private glibc payload is the ONE entry that is not also in the
+    // executable's RUNPATH (flags.cppm excludes it deliberately, so static and
+    // musl links stay clean). It is here purely so a dlopen()'d library — whose
+    // own DT_NEEDED closure never consults the main executable's RUNPATH — can
+    // still resolve the same libc the executable was linked against.
+    //
+    // So add it ONLY when this build actually has such a library. mcpp#291:
+    // LD_LIBRARY_PATH is inherited by the whole process subtree, and a child
+    // that is a HOST binary (/bin/sh, reached via a provider's popen()) loads
+    // the HOST loader — PT_INTERP is baked into the executable and no
+    // environment variable can override it — while this variable hands it the
+    // payload libc.so.6. libc and ld.so are version-locked to each other
+    // through GLIBC_PRIVATE, so on any host whose glibc differs from the
+    // payload's the shell dies of SIGSEGV inside the dynamic linker, before
+    // main, with empty stdout and no diagnostic. (It does NOT reproduce when
+    // host and payload glibc happen to match, which is why this survived.)
+    //
+    // process.cppm's strip_private_glibc already removes this entry from
+    // mcpp's OWN children. It cannot help one hop further out: mcpp sets the
+    // variable for the target deliberately, and what the target then spawns is
+    // beyond mcpp's reach. Not emitting it unless it is needed is.
+    if (tc.payloadPaths && !plan.depRuntimeLibraryDirs.empty()) {
         append_unique_path(plan.runtimeLibraryDirs, tc.payloadPaths->glibcLib);
     }
 

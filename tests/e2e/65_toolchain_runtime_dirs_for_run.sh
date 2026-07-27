@@ -3,6 +3,17 @@
 # dlopen() providers such as GLX drivers do not use the main executable's
 # RUNPATH for their own DT_NEEDED closure. mcpp run must therefore expose the
 # toolchain runtime directories in LD_LIBRARY_PATH as well.
+#
+# Scope note (mcpp#291): this fixture has NO dependencies, so it no longer
+# asserts the private glibc payload dir. That entry is not a toolchain runtime
+# dir — flags.cppm deliberately keeps it out of RUNPATH — and it is now emitted
+# only when the build actually has a dlopen-reachable dependency library, i.e.
+# when depRuntimeLibraryDirs is non-empty. The real case this test's headline
+# describes (host-GL passthrough) reaches mcpp through compat.glx-runtime's
+# `[runtime] library_dirs`, which populates exactly that vector, so it still
+# gets the payload dir; a zero-dependency binary like the one below does not.
+# Emitting it unconditionally is what poisoned every descendant process and
+# segfaulted host shells reached via popen(). See tests/e2e/166.
 set -e
 
 OS="$(uname -s)"
@@ -49,7 +60,6 @@ int main() {
 
     std::string path(value);
     if (path.find("@LLVM_LIB_SUBSTR@") == std::string::npos) return 11;
-    if (path.find("xim-x-glibc/2.39/lib64") == std::string::npos) return 12;
     return 0;
 }
 EOF

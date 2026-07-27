@@ -107,18 +107,41 @@ v_xl=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' .xlings.json \
 v_pin=$(grep -oE "MCPP_PIN:[[:space:]]*'[^']+'" .github/workflows/ci-fresh-install.yml \
         | grep -oE "'[^']+'" | tr -d "'" | head -1)
 
-note "mcpp version: mcpp.toml=$v_toml fingerprint=$v_src .xlings.json=$v_xl MCPP_PIN=$v_pin"
+note "mcpp version: building=$v_toml (fingerprint=$v_src)  bootstrap pin=$v_xl (MCPP_PIN=$v_pin)"
 
-for pair in "mcpp.toml:$v_toml" \
-            "src/toolchain/fingerprint.cppm:$v_src" \
-            ".xlings.json:$v_xl" \
-            ".github/workflows/ci-fresh-install.yml (MCPP_PIN):$v_pin"; do
-  where="${pair%:*}"; val="${pair##*:}"
-  [ -n "$val" ] || { bad "$where — could not read the mcpp version"; continue; }
-  [ "$val" = "$v_toml" ] || bad "$where has '$val' but mcpp.toml has '$v_toml'"
+for n in "mcpp.toml:$v_toml" "src/toolchain/fingerprint.cppm:$v_src" \
+         ".xlings.json:$v_xl" "ci-fresh-install.yml MCPP_PIN:$v_pin"; do
+  [ -n "${n##*:}" ] || bad "${n%:*} — could not read the mcpp version"
 done
 
+# (a) The version being BUILT: mcpp.toml and the compiled-in constant are the
+#     same number by definition — release.yml derives the tag from the former
+#     and the smoke test greps the latter out of `mcpp --version`.
+[ -z "$v_src" ] || [ "$v_src" = "$v_toml" ] \
+  || bad "src/toolchain/fingerprint.cppm has '$v_src' but mcpp.toml has '$v_toml'"
+
+# (b) The version BOOTSTRAPPED FROM: both sites name a mcpp that is already
+#     published, so they must agree with each other — but they are NOT required
+#     to equal the version being built. They deliberately lag, and are bumped in
+#     a separate commit AFTER the release exists in xim-pkgindex (see the
+#     MCPP_PIN comment in ci-fresh-install.yml). Requiring equality here is what
+#     an earlier revision of this script got wrong: it sent CI to install a
+#     version that did not exist yet, and every job died with
+#     `package 'mcpp@<unreleased>' not found`.
+[ -z "$v_xl" ] || [ -z "$v_pin" ] || [ "$v_xl" = "$v_pin" ] \
+  || bad ".xlings.json pins '$v_xl' but ci-fresh-install.yml MCPP_PIN is '$v_pin' — both bootstrap the same released mcpp"
+
+# (c) …and the bootstrap pin must never run AHEAD of the version being built.
+#     Four-key numeric sort, so the date scheme orders correctly (a plain
+#     sort would put 2026.7.27.10 below 2026.7.27.9).
+if [ -n "$v_xl" ] && [ -n "$v_toml" ] && [ "$v_xl" != "$v_toml" ]; then
+  newest=$(printf '%s\n%s\n' "$v_xl" "$v_toml" \
+           | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1)
+  [ "$newest" = "$v_toml" ] \
+    || bad "bootstrap pin '$v_xl' is NEWER than the version being built ('$v_toml') — CI would try to install an unreleased mcpp"
+fi
+
 if [ "$fail" = 0 ]; then
-  echo "OK: xlings pins all at $XLINGS_EXPECTED; mcpp version $v_toml consistent in 4 places" >&2
+  echo "OK: xlings pins all at $XLINGS_EXPECTED; building mcpp $v_toml, bootstrapping from $v_xl" >&2
 fi
 exit "$fail"
