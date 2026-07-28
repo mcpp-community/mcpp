@@ -171,6 +171,17 @@ struct BuildInputs {
     std::vector<std::string>           cflags;
     std::vector<std::string>           cxxflags;
     std::vector<std::string>           ldflags;
+    // #296: package-level preprocessor macros. Unlike per-target `defines`
+    // (which only reach the binary's own entry TU), these reach EVERY TU in
+    // the package — module interface units included — so they participate in
+    // the P1689 module scan, which is what makes a macro-guarded `import`
+    // resolvable. Desugared to `-D<x>` on both the C and C++ channels
+    // (fold_build_defines_into_flags in prepare.cppm) after the conditional
+    // merge and before the manifest is snapshotted into packages[] /
+    // fingerprinted. A member HERE rather than on BuildConfig so the cfg axis
+    // can carry it: `[target.'cfg(windows)'.build] defines = [...]` must work,
+    // and membership of this type is what guarantees it (see above).
+    std::vector<std::string>           defines;
     std::vector<GlobFlags>             globFlags;      // flags = [...] (ordered)
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     // #249: emitted as -idirafter (searched after the toolchain's system dirs)
@@ -185,6 +196,7 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
     dst.cflags.insert(dst.cflags.end(), src.cflags.begin(), src.cflags.end());
     dst.cxxflags.insert(dst.cxxflags.end(), src.cxxflags.begin(), src.cxxflags.end());
     dst.ldflags.insert(dst.ldflags.end(), src.ldflags.begin(), src.ldflags.end());
+    dst.defines.insert(dst.defines.end(), src.defines.begin(), src.defines.end());
     dst.globFlags.insert(dst.globFlags.end(),
                          src.globFlags.begin(), src.globFlags.end());
     dst.includeDirs.insert(dst.includeDirs.end(),
@@ -203,13 +215,6 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
 // is read in ~150 places, and a BuildConfig genuinely IS a set of build
 // inputs plus the selection axis and resolved policy scalars.
 struct BuildConfig : BuildInputs {
-    // Package-level preprocessor defines. Unlike per-target `defines` (which
-    // only affect the binary's entry TU), these reach every TU in this
-    // package — including module interface units — so they participate in
-    // the P1689 module scan. Desugared to `-D<x>` on both C and C++ compiles
-    // before the manifest is snapshot into BuildPlan / fingerprint.
-    std::vector<std::string>           defines;
-
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a

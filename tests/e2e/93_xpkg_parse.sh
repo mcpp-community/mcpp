@@ -22,6 +22,12 @@ package = {
     mcpp = {
         schema  = "0.1",
         sources = { [[mcpp_generated/gen.cc]] },
+        -- mcpp#296: `defines` is a real descriptor key (package-level bare
+        -- macros), not a did-you-mean redirect to `flags`. The two manifest
+        -- surfaces are two spellings of one schema, so a key accepted in an
+        -- mcpp.toml must not be an unknown-key error here. The strict parse
+        -- below plus the `unknown_keys == []` assertion are the guard.
+        defines = { [[XPKG_DEFINE]], [[N=1]] },
         generated_files = {
             ["mcpp_generated/gen.cc"] = [==[
 export module gen;

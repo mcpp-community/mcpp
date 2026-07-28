@@ -889,6 +889,38 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (val.is_string()) m.xlings.envs[k] = val.as_string();
     if (auto v = doc->get_string("build.macos_deployment_target"))
         m.buildConfig.macosDeploymentTarget = *v;
+
+    // Surface unsupported [build] keys instead of silently dropping them.
+    // #296 is #131's footgun one section over: `[build] defines` on an mcpp
+    // that did not know the key simply vanished, and the build then failed
+    // much later with a module-graph divergence naming neither the key nor
+    // the manifest. An unknown key in a section this central is always a typo
+    // or a version mismatch, never an intentional no-op — so say so. Same
+    // policy as [targets.<name>] above: a warning, an error under --strict.
+    //
+    // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
+    static constexpr std::string_view kKnownBuildKeys[] = {
+        "allow_host_libs", "c_standard", "cflags", "cxxflags",
+        "default-profile", "defines", "dialect_cxxflags", "flags",
+        "include_dirs", "include_dirs_after", "ldflags",
+        "macos_deployment_target", "profile", "sources", "static_stdlib",
+        "target",
+    };
+    if (auto* bt = doc->get_table("build")) {
+        for (auto& [key, _] : *bt) {
+            bool known = false;
+            for (auto k : kKnownBuildKeys) if (key == k) { known = true; break; }
+            if (!known) {
+                m.schemaWarnings.push_back(std::format(
+                    "[build] has unsupported key '{}' (ignored). Supported keys: "
+                    "sources, cflags, cxxflags, ldflags, defines, flags, "
+                    "include_dirs, include_dirs_after, dialect_cxxflags, "
+                    "c_standard, target, static_stdlib, allow_host_libs, "
+                    "profile, macos_deployment_target.", key));
+            }
+        }
+    }
+
     for (auto const& flag : m.buildConfig.cxxflags) {
         if (starts_with_std_flag(flag)) {
             return std::unexpected(error(origin,
@@ -992,6 +1024,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_list("cxxflags", cc.inputs.cxxflags);
                 read_list("ldflags",  cc.inputs.ldflags);
                 read_list("sources",  cc.inputs.sources);
+                // #296: package-level macros are a build input like any other,
+                // so the cfg axis carries them too — a platform-only macro
+                // (`[target.'cfg(windows)'.build] defines = ["USE_WIN32"]`)
+                // must reach the scan and the compile exactly like an
+                // unconditional one.
+                read_list("defines",  cc.inputs.defines);
                 // #258: per-glob flags and include dirs, through the SAME entry
                 // grammar `[build].flags` uses — a conditional section is just
                 // a set of build inputs, so it reads the same way.
@@ -1003,6 +1041,31 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                             std::format("[target.{}.build].flags", triple),
                             cc.inputs.globFlags))
                         return std::unexpected(error(origin, *err));
+                }
+                // The conditional axis carries BuildInputs and nothing else, so
+                // its vocabulary is exactly that struct's members — a key
+                // outside it (`static_stdlib`, `target`, a profile knob) is not
+                // conditionable and would otherwise vanish without a word, the
+                // #296 failure mode. MUST stay in sync with the reads above and
+                // with types.cppm's BuildInputs.
+                static constexpr std::string_view kKnownConditionalBuildKeys[] = {
+                    "cflags", "cxxflags", "defines", "flags",
+                    "include_dirs", "include_dirs_after", "ldflags", "sources",
+                };
+                for (auto& [key, _] : bt) {
+                    bool known = false;
+                    for (auto k : kKnownConditionalBuildKeys)
+                        if (key == k) { known = true; break; }
+                    if (!known) {
+                        m.schemaWarnings.push_back(std::format(
+                            "[target.{}.build] has unsupported key '{}' (ignored). "
+                            "A conditional section may only contribute build INPUTS: "
+                            "sources, cflags, cxxflags, ldflags, defines, flags, "
+                            "include_dirs, include_dirs_after. Selection knobs "
+                            "(target, linkage, static_stdlib) and profile settings "
+                            "are resolved before the predicate is evaluated and "
+                            "cannot be conditioned.", triple, key));
+                    }
                 }
             }
             // [target.<predicate>.{dependencies,dev-dependencies,build-dependencies}]
@@ -1020,6 +1083,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());
             if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
                 || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
+                || !cc.inputs.defines.empty()
                 || !cc.inputs.globFlags.empty() || !cc.inputs.includeDirs.empty()
                 || !cc.inputs.includeDirsAfter.empty()
                 || !cc.dependencies.empty() || !cc.devDependencies.empty()

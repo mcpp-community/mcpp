@@ -183,7 +183,33 @@ then only guaranteed to run on the build machine's version and above). A lower
 floor (11–13) requires a self-built libc++ archive (already verified to work, a
 data-level switch, available on request).
 
-`defines` desugars each entry to `-D<x>` on both the C and C++ compile channels and reaches every TU in the package — including module interface units — so it affects the P1689 module scan. For macros that should only affect a single binary's entry source, use `[targets.<name>].defines` instead.
+`defines` takes **bare** macro names (no `-D`) and desugars each entry to `-D<x>` on
+both the C and C++ compile channels. It reaches every TU in the package — module
+interface units included — so it also reaches the P1689 module scan, which is what
+makes a macro-guarded `import` resolvable. Assembly units pick it up too. It is a
+build input like any other, so `[target.'cfg(...)'.build]` can carry it:
+
+```toml
+[build]
+defines = ["APP_NAME=\"demo\""]
+
+[target.'cfg(windows)'.build]
+defines = ["USE_WIN32", "WINVER=0x0A00"]
+```
+
+Picking the right axis:
+
+| You want the macro on… | Use |
+|---|---|
+| every TU of this package | `[build].defines` (here) |
+| one binary's own entry source only | `[targets.<name>].defines` |
+| a specific set of files | `[build].flags` with a `glob` + `defines` |
+| every TU **and** every consumer's TUs | `[features.<name>].defines` (an interface contribution) |
+
+`[build].defines` is private to the package: it does not propagate to consumers.
+
+Unsupported keys under `[build]` are reported as a warning (an error under
+`--strict`) rather than silently ignored.
 
 Do not configure the C++ standard via `build.cxxflags = ["-std=..."]`. Instead use:
 

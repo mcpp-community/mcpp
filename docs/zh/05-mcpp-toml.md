@@ -167,7 +167,31 @@ cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftP
 系统 libc++(产物只保证在构建机同版本及以上运行)。更低 floor(11–13)
 需自建 libc++ 归档(已验证可行,数据级切换,按需提供)。
 
-`defines` 把每个条目脱糖为 `-D<x>`,同时作用于 C 和 C++ 编译通道,并覆盖包内每个 TU(包括模块接口单元),因此会影响 P1689 模块扫描。若只想让某个二进制入口源读到宏,请改用 `[targets.<name>].defines`。
+`defines` 接受**裸**宏名(不带 `-D`),把每个条目脱糖为 `-D<x>`,同时作用于 C 和
+C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入 P1689 模块扫描
+—— 这正是被宏保护的 `import` 能被解析的前提。汇编单元同样能拿到。它是普通的构建
+输入,所以 `[target.'cfg(...)'.build]` 也能承载它:
+
+```toml
+[build]
+defines = ["APP_NAME=\"demo\""]
+
+[target.'cfg(windows)'.build]
+defines = ["USE_WIN32", "WINVER=0x0A00"]
+```
+
+选择合适的轴:
+
+| 想让宏作用于… | 用 |
+|---|---|
+| 本包的每个 TU | `[build].defines`(本节) |
+| 仅某个二进制自己的入口源 | `[targets.<name>].defines` |
+| 指定的一批文件 | `[build].flags` 配 `glob` + `defines` |
+| 本包每个 TU **以及**消费者的 TU | `[features.<name>].defines`(接口贡献) |
+
+`[build].defines` 是包私有的:不会传播给消费者。
+
+`[build]` 下不支持的键会作为警告报出(`--strict` 下为错误),而不是被静默忽略。
 
 C++ 标准不要通过 `build.cxxflags = ["-std=..."]` 配置。请使用:
 

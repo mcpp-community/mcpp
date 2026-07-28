@@ -443,10 +443,19 @@ void merge_conditional_build_inputs(mcpp::manifest::Manifest& m,
 }
 
 // Desugar `[build].defines` into `-D<x>` on both C and C++ flag channels.
-// This must run AFTER conditional `[target.'cfg(...)'.build]` sections are
-// merged (so conditional defines land too) and BEFORE the manifest is
-// snapshotted into packages[] / fingerprinted. Idempotent: clearing the
-// `defines` vector after folding makes repeated calls harmless.
+//
+// ORDER (both halves are load-bearing): this must run AFTER
+// merge_conditional_build_inputs — `defines` is a BuildInputs member, so a
+// matching `[target.'cfg(...)'.build] defines` has been appended by then and
+// folds in the same pass, landing after the unconditional entries so GNU
+// last-wins gives the conditional rule precedence — and BEFORE the manifest is
+// snapshotted into packages[] / fingerprinted, because that snapshot (not the
+// manifest) is what the P1689 scan, the compile edges and compute_fingerprint
+// actually read.
+//
+// Idempotent: clearing the vector after folding makes repeated calls harmless.
+// Both `cflags` and `cxxflags` get the macro; assembly units pick it up for
+// free via the -D/-U/-I subset the ninja backend filters out of packageCflags.
 void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
     for (auto const& d : bc.defines) {
         bc.cflags.push_back("-D" + d);

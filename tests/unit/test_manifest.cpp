@@ -341,9 +341,10 @@ kind = "lib"
     EXPECT_EQ(m->buildConfig.cStandard, "c11");
 }
 
-// [build].defines is sugar for `-D<x>` on both C and C++ channels; it must
-// parse into buildConfig.defines so prepare_build can fold it into flags
-// before the P1689 scan and fingerprint.
+// #296: [build].defines is sugar for `-D<x>` on both C and C++ channels; it
+// must parse into buildConfig.defines so prepare_build can fold it into flags
+// before the P1689 scan and fingerprint. Order is preserved because the fold
+// appends in declaration order and "last flag wins" is the override semantics.
 TEST(Manifest, BuildDefinesParsesIntoSeparateVector) {
     constexpr auto src = R"(
 [package]
@@ -357,6 +358,162 @@ defines = ["TEST_USE_MODULES", "VALUE=42"]
     ASSERT_EQ(m->buildConfig.defines.size(), 2u);
     EXPECT_EQ(m->buildConfig.defines[0], "TEST_USE_MODULES");
     EXPECT_EQ(m->buildConfig.defines[1], "VALUE=42");
+    // A well-formed [build] must not warn — the unknown-key guard below is
+    // only allowed to fire on keys the parser genuinely does not read.
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
+}
+
+// #296: `defines` is a BuildInputs member, NOT a BuildConfig-only field — so
+// the cfg axis carries it like any other build input. This is the regression
+// that matters: a platform-only macro must be expressible, because a key that
+// parses unconditionally but vanishes under `[target.'cfg(...)'.build]` is the
+// exact silent-drop failure #296 was filed for, just one section over.
+TEST(Manifest, ConditionalBuildDefinesAreCarriedByTheCfgAxis) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+defines = ["BASE"]
+[target.'cfg(windows)'.build]
+defines = ["USE_WIN32", "WINVER=0x0A00"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    EXPECT_EQ(m->conditionalConfigs[0].predicate, "cfg(windows)");
+    ASSERT_EQ(m->conditionalConfigs[0].inputs.defines.size(), 2u);
+    EXPECT_EQ(m->conditionalConfigs[0].inputs.defines[0], "USE_WIN32");
+    EXPECT_EQ(m->conditionalConfigs[0].inputs.defines[1], "WINVER=0x0A00");
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
+}
+
+// A conditional section carrying ONLY `defines` must still be recorded — the
+// emptiness gate that decides whether to push a ConditionalConfig has to know
+// about every BuildInputs member, or the section is dropped before it is ever
+// evaluated.
+TEST(Manifest, ConditionalSectionWithOnlyDefinesIsRecorded) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.'cfg(linux)'.build]
+defines = ["ONLY_DEFINE"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    ASSERT_EQ(m->conditionalConfigs[0].inputs.defines.size(), 1u);
+    EXPECT_EQ(m->conditionalConfigs[0].inputs.defines[0], "ONLY_DEFINE");
+}
+
+// The single additive merge must carry `defines` too — merge_conditional_
+// build_inputs routes the cfg axis through append(), so a member missing here
+// is a member that silently never reaches the build.
+TEST(Manifest, AppendBuildInputsMergesDefines) {
+    mcpp::manifest::BuildInputs dst, src;
+    dst.defines = {"BASE"};
+    src.defines = {"COND"};
+    mcpp::manifest::append(dst, src);
+    ASSERT_EQ(dst.defines.size(), 2u);
+    EXPECT_EQ(dst.defines[0], "BASE");
+    // Conditional entries land AFTER the base ones so GNU last-wins gives the
+    // conditional rule precedence (an off-OS `-U` after the base `-D`).
+    EXPECT_EQ(dst.defines[1], "COND");
+}
+
+// #296 root cause: an unknown [build] key used to vanish without a word, and
+// the build then failed much later with a module-graph divergence naming
+// neither the key nor the manifest. Same policy as [targets.<name>]: a schema
+// warning (an error under --strict).
+TEST(Manifest, UnknownBuildKeyIsReportedNotSilentlyDropped) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+cxxflags = ["-Wall"]
+defnes   = ["TYPO"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("defnes"), std::string::npos)
+        << m->schemaWarnings[0];
+    EXPECT_NE(m->schemaWarnings[0].find("[build]"), std::string::npos)
+        << m->schemaWarnings[0];
+    // The key is still ignored — this is a warning, not a parse failure.
+    EXPECT_EQ(m->buildConfig.cxxflags.size(), 1u);
+}
+
+// The conditional axis may only contribute build INPUTS, so a selection knob
+// under it is inexpressible by construction. Say so rather than dropping it.
+TEST(Manifest, UnknownConditionalBuildKeyIsReported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.'cfg(windows)'.build]
+cxxflags      = ["-DOK"]
+static_stdlib = false
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("static_stdlib"), std::string::npos)
+        << m->schemaWarnings[0];
+    EXPECT_NE(m->schemaWarnings[0].find("cfg(windows)"), std::string::npos)
+        << m->schemaWarnings[0];
+}
+
+// Every key the [build] parser actually reads must be absent from the
+// unknown-key warning — a guard that fires on a supported key is worse than
+// no guard, because --strict turns it into a build failure.
+TEST(Manifest, EverySupportedBuildKeyPassesTheUnknownKeyGuard) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+sources                 = ["src/**/*.cpp"]
+cflags                  = ["-O2"]
+cxxflags                = ["-Wall"]
+ldflags                 = ["-lm"]
+defines                 = ["A"]
+flags                   = [{ glob = "src/*.c", defines = ["B"] }]
+include_dirs            = ["include"]
+include_dirs_after      = ["vendor"]
+dialect_cxxflags        = ["-fcontracts"]
+c_standard              = "c11"
+target                  = "x86_64-linux-musl"
+static_stdlib           = true
+allow_host_libs         = false
+profile                 = "dev"
+macos_deployment_target = "14.0"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
+}
+
+// `default-profile` is the canonical spelling of the `profile` alias; both
+// must clear the guard.
+TEST(Manifest, BuildDefaultProfileSpellingPassesTheUnknownKeyGuard) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+default-profile = "dev"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->buildConfig.defaultProfile, "dev");
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
 }
 
 // #249: `[build] include_dirs_after` parses into buildConfig.includeDirsAfter

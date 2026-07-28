@@ -202,7 +202,7 @@ namespace mcpp::manifest {
 // Kept as one array so the did-you-mean suggester speaks the same vocabulary
 // the parser accepts.
 inline constexpr std::string_view kKnownXpkgKeys[] = {
-    "cflags", "c_standard", "cxxflags", "deps", "features", "flags",
+    "cflags", "c_standard", "cxxflags", "defines", "deps", "features", "flags",
     "generated_files", "import_std", "include_dirs", "include_dirs_after",
     "language", "ldflags",
     "linux", "macosx", "modules", "provides", "runtime", "scan_overrides",
@@ -215,8 +215,10 @@ inline constexpr std::pair<std::string_view, std::string_view> kXpkgKeyAliases[]
     { "dependencies", "deps" },
     { "dependency",   "deps" },
     { "requires",     "deps" },   // cargo muscle memory
-    { "define",       "flags" },
-    { "defines",      "flags" },
+    // #296: `defines` is a real key now (package-level bare macros). Only the
+    // singular misspelling needs redirecting, and it points at `defines` — the
+    // old redirect to `flags` predates the key existing.
+    { "define",       "defines" },
     { "feature",      "features" },
     { "source",       "sources" },
     { "target",       "targets" },
@@ -1261,6 +1263,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         : sub == "cxxflags" ? &cc.inputs.cxxflags
                         : sub == "ldflags"  ? &cc.inputs.ldflags
                         : sub == "sources"  ? &cc.inputs.sources
+                        : sub == "defines"  ? &cc.inputs.defines
                         : nullptr;
                     // Unknown sub-keys stay a HARD ERROR here. The shared
                     // BuildInputs parser must not be read as licence to relax
@@ -1273,8 +1276,8 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     if (!dst && !pathDst) {
                         return std::unexpected(ManifestError{
                             std::format("unknown target_cfg key '{}' (expected "
-                                        "cflags/cxxflags/ldflags/sources/flags/"
-                                        "include_dirs/include_dirs_after)", sub),
+                                        "cflags/cxxflags/ldflags/sources/defines/"
+                                        "flags/include_dirs/include_dirs_after)", sub),
                             m.sourcePath, 0, 0});
                     }
                     if (!cur.consume('=') || !cur.consume('{')) {
@@ -1298,6 +1301,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 cur.consume('}');
                 if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
                     || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
+                    || !cc.inputs.defines.empty()
                     || !cc.inputs.globFlags.empty()
                     || !cc.inputs.includeDirs.empty()
                     || !cc.inputs.includeDirsAfter.empty())
@@ -1517,19 +1521,28 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.consume('}');
         }
-        else if (key == "cflags" || key == "cxxflags" || key == "ldflags") {
+        else if (key == "cflags" || key == "cxxflags" || key == "ldflags"
+                 || key == "defines") {
             // `{ "-Dfoo", "-Wall", ... }` — appended to the per-rule baseline
             // by ninja_backend. cflags goes to the C rule (.c files), cxxflags
             // to C++ rule (.cpp/.cc/.cxx/.cppm), ldflags to link commands.
+            //
+            // #296: `defines` carries BARE macro names (`{ "USE_FOO", "N=1" }`,
+            // no `-D`) and desugars onto BOTH compile channels at prepare time,
+            // which is what lets it reach the P1689 scan. Same key, same
+            // meaning as `[build].defines` in an mcpp.toml — the two manifest
+            // surfaces are two spellings of one schema, so a key that exists in
+            // one must not be a did-you-mean error in the other.
             if (!cur.consume('{')) {
                 return std::unexpected(ManifestError{
                     std::format("expected '{{' after `{} =`", key),
                     m.sourcePath, 0, 0});
             }
             cur.skip_ws_and_comments();
-            auto& target = (key == "cflags")
-                ? m.buildConfig.cflags
-                : (key == "cxxflags" ? m.buildConfig.cxxflags : m.buildConfig.ldflags);
+            auto& target = (key == "cflags")   ? m.buildConfig.cflags
+                         : (key == "cxxflags") ? m.buildConfig.cxxflags
+                         : (key == "defines")  ? m.buildConfig.defines
+                         :                       m.buildConfig.ldflags;
             while (!cur.eof() && cur.peek() != '}') {
                 auto s = cur.read_string();
                 if (key == "cxxflags" && starts_with_std_flag(s)) {
