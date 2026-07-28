@@ -177,6 +177,7 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
     // pipeline regenerates the cfg deterministically anyway.
     if (mcpp::toolchain::is_clang(tc)) {
         if constexpr (!mcpp::platform::is_linux) return f;
+        f.push_back("-static");
         const auto dm = mcpp::toolchain::resolve_clang_driver(tc);
         if (dm.hasCfg) {
             f.push_back("--no-default-config");
@@ -186,33 +187,25 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
             f.push_back("-fuse-ld=lld");
             f.push_back("--rtlib=compiler-rt");
             f.push_back("--unwindlib=libunwind");
-            for (auto& d : dm.libDirs) {
+            for (auto& d : dm.libDirs)
                 f.push_back("-L" + d.string());
-                f.push_back("-Wl,-rpath," + d.string());
-            }
         }
         if (lm.mode == mcpp::toolchain::CLibMode::Sysroot) {
             f.push_back("--sysroot=" + lm.sysroot.string());
         } else if (lm.mode == mcpp::toolchain::CLibMode::PayloadFirst) {
             for (auto& inc : lm.systemIncludes) f.push_back("-isystem" + inc.string());
             f.push_back("-B" + lm.crtDir.string());   // Scrt1.o/crti.o discovery
-            for (auto& d : lm.libDirs) {
+            for (auto& d : lm.libDirs)
                 f.push_back("-L" + d.string());
-                f.push_back("-Wl,-rpath," + d.string());
-            }
-            if (!lm.loader.empty())
-                f.push_back("-Wl,--dynamic-linker=" + lm.loader.string());
         }
-        // Runtime lib dirs so the produced program can load private libs in-tree.
-        for (auto& d : tc.linkRuntimeDirs) {
+        for (auto& d : tc.linkRuntimeDirs)
             f.push_back("-L" + d.string());
-            f.push_back("-Wl,-rpath," + d.string());
-        }
         return f;
     }
 
     // GCC: a fresh sandbox g++ needs --sysroot to find the C library + the
     // include-fixed headers; without a sysroot, wire the glibc payload directly.
+    f.push_back("-static");
     if (lm.mode == mcpp::toolchain::CLibMode::Sysroot) {
         f.push_back("--sysroot=" + lm.sysroot.string());
     } else if (lm.mode == mcpp::toolchain::CLibMode::PayloadFirst) {
@@ -227,11 +220,8 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
         auto ar = mcpp::toolchain::archive_tool(tc);
         if (!ar.empty()) f.push_back("-B" + ar.parent_path().string());
     }
-    // Runtime lib dirs so the produced program can load private libs in-tree.
-    for (auto& d : tc.linkRuntimeDirs) {
+    for (auto& d : tc.linkRuntimeDirs)
         f.push_back("-L" + d.string());
-        f.push_back("-Wl,-rpath," + d.string());
-    }
     return f;
 }
 
