@@ -18,7 +18,7 @@ import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
-import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target
+import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target/is_mingw_target
 import mcpp.toolchain.registry;      // archive_tool
 import mcpp.toolchain.triple;        // host_triple (MCPP_HOST contract value)
 import mcpp.ui;
@@ -160,8 +160,10 @@ std::string env_value(const std::string& name) {
 
 // The host subset of flags.cppm's sysroot/runtime handling — enough to compile +
 // link a freestanding host program on a fresh sandbox (where bare `g++ file -o x`
-// can't find crt/libc). build.mcpp is host-only (skipped under cross), so we need
-// only the native cases; these are passed as separate argv tokens (no shell).
+// can't find crt/libc). `tc` is always a HOST-targeting toolchain: under a cross
+// --target, prepare.cppm resolves the spec a second time without the target axis
+// (host_tc_for_build_program) and passes that here, so the native cases are the
+// only ones needed. Passed as separate argv tokens (no shell).
 std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
     std::vector<std::string> f;
     const auto lm = mcpp::toolchain::resolve_link_model(tc);
@@ -228,9 +230,14 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
         if (!ar.empty()) f.push_back("-B" + ar.parent_path().string());
     }
     // Runtime lib dirs so the produced program can load private libs in-tree.
+    // -L is link-time and wanted everywhere; rpath is an ELF-only concept —
+    // this is the one host_base_flags branch a PE target reaches, where the
+    // flag is inert and the self-containment answer is the static link in
+    // run_build_program instead (#299).
     for (auto& d : tc.linkRuntimeDirs) {
         f.push_back("-L" + d.string());
-        f.push_back("-Wl,-rpath," + d.string());
+        if constexpr (mcpp::platform::supports_rpath)
+            f.push_back("-Wl,-rpath," + d.string());
     }
     return f;
 }
@@ -585,12 +592,35 @@ std::expected<void, std::string> run_build_program(
     auto childEnv = contract_env(root, outDir, env);
     std::string ctxHash = contract_hash(childEnv);
 
-    const bool staticHostHelper = mcpp::platform::supports_full_static
-                               && mcpp::toolchain::is_musl_target(tc);
+    // ── Helper self-containment (the single decision point) ─────────────────
+    // The compiled helper is exec'd by the host OS, outside anything mcpp
+    // controls — no wrapper, no injected LD_LIBRARY_PATH, no PATH guarantee.
+    // Making it runnable is a per-platform mechanism, and only two of the four
+    // need a static link:
+    //   Linux + glibc payload — host_base_flags bakes absolute payload paths
+    //     into -Wl,-rpath; that already closes it, so leave it dynamic.
+    //   Linux + musl (#295)   — rpath cannot reach PT_INTERP, an absolute
+    //     /lib/ld-musl-<arch>.so.1 that no payload installs and glibc distros
+    //     do not ship. Only a static link removes the interpreter entirely.
+    //   Windows PE (#299)     — PE has no rpath, so a dynamic helper resolves
+    //     libstdc++-6 / libgcc_s / libwinpthread through the process PATH and
+    //     dies with STATUS_DLL_NOT_FOUND unless the user put the toolchain bin
+    //     there by hand. A static link is the only PATH-independent answer.
+    //   macOS                 — the system libc++ is always present.
+    // Keep this the ONLY place that decides; the flag is appended to the final
+    // link argv further down, never to `base`.
+    const bool muslStaticHelper  = mcpp::platform::supports_full_static
+                                && mcpp::toolchain::is_musl_target(tc);
+    const bool mingwStaticHelper = mcpp::toolchain::is_mingw_target(tc);
+    const bool staticHostHelper  = muslStaticHelper || mingwStaticHelper;
+
+    // Fold the policy into the compiler identity: a helper produced under an
+    // older link policy must be rebuilt, not reused from the cache.
     std::string compilerIdentity = hostCompiler.string();
-    compilerIdentity += staticHostHelper
-                      ? "\nbuild-program-link=musl-static-v1"
-                      : "\nbuild-program-link=default-v1";
+    compilerIdentity += "\nbuild-program-link=";
+    compilerIdentity += muslStaticHelper  ? "musl-static-v1"
+                      : mingwStaticHelper ? "mingw-static-v1"
+                                          : "default-v1";
     std::string programHash  = mcpp::toolchain::hash_file(src);
     std::string compilerHash = mcpp::toolchain::hash_string(compilerIdentity);
 
@@ -647,10 +677,10 @@ std::expected<void, std::string> run_build_program(
         compileArgv.push_back("-x"); compileArgv.push_back("none");
         compileArgv.push_back((bdir / "mcpp.o").string());
     }
-    // A dynamic musl helper requires /lib/ld-musl-<arch>.so.1 on the host,
-    // which glibc distributions do not provide. Keep the host build program in
-    // the musl toolchain's documented static world. This is link-only: `base`
-    // also feeds the bundled module's compile/precompile commands above.
+    // Self-contained helper link — see the staticHostHelper doctrine above.
+    // Deliberately NOT in `base`: that also feeds the bundled module's
+    // compile/precompile commands, where a link flag has no business (and for
+    // Clang would perturb the default PIC/PIE codegen of mcpp.o).
     if (staticHostHelper) compileArgv.push_back("-static");
     compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
     mcpp::ui::info("build.mcpp", "compiling");

@@ -21,7 +21,7 @@ on:
     paths:
       - 'src/build/build_program.cppm'
       - 'src/platform/process.cppm'
-      - 'tests/e2e/167_build_mcpp_musl_host_static.sh'
+      - 'tests/e2e/168_build_mcpp_musl_host_static.sh'
       - '.github/workflows/ci-aarch64-fresh-install.yml'
   push:
     branches: [ main ]
@@ -44,10 +44,8 @@ jobs:
       # Verbose every mcpp invocation — cold bootstrap path (src/cli.cppm).
       MCPP_VERBOSE: "1"
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
+      # NB: the checkout deliberately comes LAST, after every fresh-install
+      # step below — see the comment above it.
       - name: System info
         run: |
           uname -a
@@ -84,40 +82,16 @@ jobs:
           git clone --depth 1 https://github.com/openxlings/xim-pkgindex "$idx"
           grep -n "skipping relocation\|os.isfile(path.join(bindir" "$idx/pkgs/m/musl-gcc.lua" | head -2 || true
 
-      - name: Build current mcpp source for native regression tests
-        run: |
-          mcpp build --target aarch64-linux-musl
-          self=$(find target/aarch64-linux-musl -type f -name mcpp | head -1)
-          test -x "$self"
-          self=$(realpath "$self")
-          "$self" --version
-          echo "MCPP_SELF=$self" >> "$GITHUB_ENV"
-
       - name: Native build + run an `import std` program
         run: |
           work=$(mktemp -d); cd "$work"
-          "$MCPP_SELF" new hello
+          mcpp new hello
           cd hello
-          cat > build.mcpp <<'EOF'
-          #include <cstdio>
-          int main() {
-              FILE* marker = std::fopen("helper-ran", "w");
-              if (!marker) return 2;
-              std::fputs("ok\n", marker);
-              std::fclose(marker);
-              return 0;
-          }
-          EOF
           # default src uses import std (C++23)
-          "$MCPP_SELF" build
-          test -f helper-ran
-          helper=target/.build-mcpp/build.mcpp.bin
-          file "$helper"
-          file "$helper" | grep -q 'statically linked'
-          ! readelf -lW "$helper" | grep -q 'Requesting program interpreter'
-          out=$("$MCPP_SELF" run 2>/dev/null)
+          mcpp build
+          out=$(mcpp run 2>/dev/null || true)
           echo "program output: $out"
-          bin=$(find target -type f -name hello | head -1)
+          bin=$(find target -type f -path '*/bin/hello' | head -1)
           file "$bin"
           file "$bin" | grep -q "ARM aarch64" || { echo "expected aarch64 ELF"; exit 1; }
 
@@ -127,14 +101,41 @@ jobs:
           # musl-static target is the published path, so build with --target.
           git clone --depth 1 https://github.com/mcpp-community/mcpp /tmp/mcpp-src
           cd /tmp/mcpp-src
-          "$MCPP_SELF" self config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP_SELF" build --target aarch64-linux-musl
-          m=$(find target/aarch64-linux-musl -type f -name mcpp | head -1)
+          mcpp self config --mirror GLOBAL 2>/dev/null || true
+          mcpp build --target aarch64-linux-musl
+          m=$(find target/aarch64-linux-musl -type f -path '*/bin/mcpp' | head -1)
           file "$m" | grep -q "ARM aarch64" || { echo "expected aarch64 mcpp"; exit 1; }
           "$m" --version
           git clone --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src
-          "$MCPP_SELF" build --target aarch64-linux-musl
-          x=$(find target/aarch64-linux-musl -type f -name xlings | head -1)
+          mcpp build --target aarch64-linux-musl
+          x=$(find target/aarch64-linux-musl -type f -path '*/bin/xlings' | head -1)
           file "$x" | grep -q "ARM aarch64" || { echo "expected aarch64 xlings"; exit 1; }
           "$x" --version
+
+      # ── PR regression gate ────────────────────────────────────────────────
+      # Everything above is the fresh-install charter: it must run exactly as a
+      # new user's machine does. Check out only NOW — this repo's .xlings.json
+      # declares an `mcpp` WORKSPACE pin, so with the checkout present in
+      # $GITHUB_WORKSPACE `xlings install mcpp` installs workspace-scoped
+      # instead of globally: the steps above would silently validate the pinned
+      # version rather than the freshly published one, and bare `mcpp` stops
+      # resolving anywhere outside the workspace.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The PR's own source, then the musl host-helper regression against it.
+      # This is the only runner where a musl toolchain is the NATIVE one, so it
+      # is the only place #295 can actually be reproduced.
+      - name: Build current mcpp source for native regression tests
+        run: |
+          mcpp build --target aarch64-linux-musl
+          self=$(find target/aarch64-linux-musl -type f -path '*/bin/mcpp' | head -1)
+          test -x "$self"
+          self=$(realpath "$self")
+          "$self" --version
+          echo "MCPP_SELF=$self" >> "$GITHUB_ENV"
+
+      - name: "Regression: build.mcpp host helper is self-contained (#295)"
+        run: MCPP="$MCPP_SELF" bash tests/e2e/168_build_mcpp_musl_host_static.sh
