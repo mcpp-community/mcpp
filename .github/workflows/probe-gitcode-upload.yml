@@ -2,26 +2,34 @@ name: probe-gitcode-upload
 
 # TEMPORARY diagnostic workflow — delete with this branch.
 #
-# WHY. `publish-ecosystem`'s GitCode leg has now blown its 180s per-asset cap
-# on four separate releases (0.0.94 / 0.0.97 / 0.0.105 / 2026.7.28.2), each
-# time on the two biggest tarballs, each time costing ~5min of manual
-# re-upload. Every previous fix was a guess about WHY it is slow (raise the
-# cap, skip-don't-retry, batch verify). This workflow measures instead.
+# ROUND 1 (run 30374882109) already settled the "why":
 #
-# Each job isolates ONE hypothesis, and they run in parallel so a single push
-# answers all of them:
+#   US-East runner -> file.gitcode.com upload is a FLAT ~0.012 MB/s (12 KB/s),
+#   independent of file size AND of transport:
+#     urllib  1MB  88.8s | 4MB failed | 16MB 1529.9s   (0.010-0.011 MB/s)
+#     curl    1MB  83.1s | 4MB 330.7s | 16MB 1218.4s   (0.012-0.013 MB/s)
+#     4x8MB serial: 672/650/675/599s, wall 2618s
+#   Controls from the SAME runner:
+#     download from gitcode.com   3.87 MB/s   (~320x the upload rate)
+#     upload   to   github.com   16    MB/s
+#   Control from a mainland-CN host: 1.84 MB/s (~150x the runner's rate).
 #
-#   baseline     Is it the network, the direction, or GitCode specifically?
-#                Down/up control against GitHub from the same runner.
-#   sizes-urllib Does throughput collapse with size, or is it ~constant?
-#                (constant MB/s => a pure bandwidth wall, not a stall.)
-#   sizes-curl   Is Python's read-it-all-then-PUT the bottleneck, or the wire?
-#   concurrency  Is bandwidth per-connection or per-host? If per-connection,
-#                uploading assets in parallel is the whole fix — mirror_res.sh
-#                currently uploads them SERIALLY within a host leg.
+#   So it is neither the Python client (curl matches it) nor cross-border
+#   bandwidth in general (the same runner downloads from the same host at
+#   3.87 MB/s). It is inbound-upload rate limiting on file.gitcode.com for
+#   this egress. At 12 KB/s the 34.8MB asset needs ~48 MINUTES; the 180s cap
+#   never had a chance, which is why "raise/loosen the cap" failed four times.
 #
-# Every job writes NDJSON to the step summary so results are comparable
-# without opening logs.
+# ROUND 2 (this file) answers the one question that decides the FIX, which
+# round 1 ran out of wall-clock before reaching: is the 12 KB/s budget
+# PER-CONNECTION or PER-HOST?
+#   per-connection -> N parallel uploads give ~N x aggregate, and
+#                     parallelising mirror_res.sh's serial per-asset loop is
+#                     a real (if partial) fix.
+#   per-host       -> parallelism buys nothing and the mirror must move off
+#                     GitHub-hosted runners entirely.
+# `scaling` measures exactly that. `variance` bounds how much the rate moves
+# over time, which decides whether ANY fixed timeout can be safe.
 
 on:
   push:
@@ -37,174 +45,125 @@ concurrency:
 
 env:
   GTC_REPO: xlings-res/mcpp
-  # A real, already-mirrored asset used as the download reference (34.8MB).
-  REF_ASSET: mcpp-2026.7.28.2-linux-x86_64.tar.gz
-  REF_TAG: 2026.7.28.2
 
 jobs:
-  # ── H0: characterise the pipe itself, both directions, both hosts ────────
-  baseline:
-    name: baseline — network + GitHub control
+  # ── THE decisive test: does concurrency multiply the budget? ─────────────
+  scaling:
+    name: scaling — 1 vs 4 vs 8 concurrent 1MB uploads
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 50
     env:
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-      GH_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
+      TAG: probe-${{ github.run_id }}-scale
     steps:
       - uses: actions/checkout@v4
-      - name: Runner egress identity
-        run: |
-          echo "runner public IP / region:"
-          curl -s --max-time 20 https://ipinfo.io/json || echo "(ipinfo unavailable)"
+      - name: Create probe release
+        run: python3 .github/tools/gtc release create "$GTC_REPO" --tag "$TAG" --name "$TAG"
 
-      - name: Connect/TLS timing to each host
+      - name: Inspect the upload_url contract (multipart/resumable available?)
         run: |
-          fmt='  dns=%{time_namelookup}s connect=%{time_connect}s tls=%{time_appconnect}s ttfb=%{time_starttransfer}s total=%{time_total}s code=%{http_code}\n'
-          for h in https://api.gitcode.com https://gitcode.com https://api.github.com https://github.com; do
-            echo "$h"
-            curl -sS -o /dev/null --max-time 60 -w "$fmt" "$h" || echo "  (failed)"
-          done
+          # If the response carries multipart/part-size fields, a resumable
+          # chunked upload is possible and a stalled transfer could be resumed
+          # instead of restarted from byte zero.
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.parse
+          repo, tag = os.environ["GTC_REPO"], os.environ["TAG"]
+          url = (f"https://api.gitcode.com/api/v5/repos/{repo}/releases/{tag}"
+                 f"/upload_url?file_name=probe-contract.bin")
+          req = urllib.request.Request(url, headers={
+              "PRIVATE-TOKEN": os.environ["GITCODE_TOKEN"], "Accept": "application/json"})
+          info = json.loads(urllib.request.urlopen(req, timeout=60).read())
+          # Redact the signature so the log stays shareable.
+          u = urllib.parse.urlparse(info["url"])
+          print("keys:        ", sorted(info.keys()))
+          print("obs host:    ", u.netloc)
+          print("obs path:    ", u.path)
+          print("query params:", sorted(urllib.parse.parse_qs(u.query).keys()))
+          print("headers:     ", {k: ("<redacted>" if "auth" in k.lower() else v)
+                                  for k, v in (info.get("headers") or {}).items()})
+          PY
 
-      - name: Download throughput — gitcode vs github (same 34.8MB asset)
+      - name: N=1 (baseline for this run)
         run: |
-          fmt='  code=%{http_code} bytes=%{size_download} speed=%{speed_download} B/s total=%{time_total}s\n'
-          echo "gitcode.com:"
-          curl -sSL -o /dev/null --max-time 900 -w "$fmt" \
-            "https://gitcode.com/${GTC_REPO}/releases/download/${REF_TAG}/${REF_ASSET}" || true
-          echo "github.com:"
-          curl -sSL -o /dev/null --max-time 900 -w "$fmt" \
-            "https://github.com/${GTC_REPO}/releases/download/${REF_TAG}/${REF_ASSET}" || true
-
-      - name: Upload control — 32MB to GitHub from this same runner
-        run: |
-          set -x
-          head -c 33554432 /dev/urandom > probe-github-32m.bin
-          gh release view "probe-${{ github.run_id }}" -R "$GTC_REPO" >/dev/null 2>&1 \
-            || gh release create "probe-${{ github.run_id }}" -R "$GTC_REPO" \
-                 --title "probe ${{ github.run_id }}" --notes "temporary upload probe; safe to delete"
+          head -c 1048576 /dev/urandom > s1-1.bin
           start=$SECONDS
-          gh release upload "probe-${{ github.run_id }}" probe-github-32m.bin -R "$GTC_REPO" --clobber
-          echo "GITHUB_UPLOAD_32MB_SECONDS=$((SECONDS - start))"
+          python3 .github/tools/probe_gtc_upload.py --repo "$GTC_REPO" --tag "$TAG" \
+            --file s1-1.bin --method curl --label "n1" >> results.ndjson
+          echo "N1_WALL=$((SECONDS - start))" | tee -a wall.txt
 
-  # ── H1: is throughput size-dependent (stall) or flat (bandwidth wall)? ───
-  sizes-urllib:
-    name: sizes — current urllib transport
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-      TAG: probe-${{ github.run_id }}-urllib
-    steps:
-      - uses: actions/checkout@v4
-      - name: Create probe release
-        run: python3 .github/tools/gtc release create "$GTC_REPO" --tag "$TAG" --name "$TAG"
-      - name: Upload 1 / 4 / 16 / 32 / 32 MB (serial)
+      - name: N=4 concurrent
         run: |
-          # 32MB twice: run-to-run variance matters as much as the mean when
-          # deciding whether a fixed 180s cap can ever be safe.
-          for spec in 1 4 16 32 32; do
-            f="probe-urllib-${spec}m-$RANDOM.bin"
-            head -c $((spec * 1048576)) /dev/urandom > "$f"
-            python3 .github/tools/probe_gtc_upload.py \
-              --repo "$GTC_REPO" --tag "$TAG" --file "$f" \
-              --method urllib --label "urllib-${spec}MB" >> results.ndjson
-            rm -f "$f"
-          done
-      - name: Summary
-        if: always()
-        run: |
-          { echo '### sizes — urllib'; echo '```json'; cat results.ndjson; echo '```'; } \
-            >> "$GITHUB_STEP_SUMMARY"
-
-  # ── H2: is the Python client the bottleneck, or the wire? ────────────────
-  sizes-curl:
-    name: sizes — curl streaming transport
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-      TAG: probe-${{ github.run_id }}-curl
-    steps:
-      - uses: actions/checkout@v4
-      - name: Create probe release
-        run: python3 .github/tools/gtc release create "$GTC_REPO" --tag "$TAG" --name "$TAG"
-      - name: Upload 1 / 4 / 16 / 32 / 32 MB (serial)
-        run: |
-          for spec in 1 4 16 32 32; do
-            f="probe-curl-${spec}m-$RANDOM.bin"
-            head -c $((spec * 1048576)) /dev/urandom > "$f"
-            python3 .github/tools/probe_gtc_upload.py \
-              --repo "$GTC_REPO" --tag "$TAG" --file "$f" \
-              --method curl --label "curl-${spec}MB" >> results.ndjson
-            rm -f "$f"
-          done
-      - name: Summary
-        if: always()
-        run: |
-          { echo '### sizes — curl'; echo '```json'; cat results.ndjson; echo '```'; } \
-            >> "$GITHUB_STEP_SUMMARY"
-
-  # ── H3: per-connection cap or per-host cap? This decides whether simply
-  #        parallelising mirror_res.sh's serial per-asset loop is the fix. ──
-  concurrency:
-    name: concurrency — 4x8MB serial vs parallel
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-      TAG: probe-${{ github.run_id }}-conc
-    steps:
-      - uses: actions/checkout@v4
-      - name: Create probe release
-        run: python3 .github/tools/gtc release create "$GTC_REPO" --tag "$TAG" --name "$TAG"
-      - name: Serial 4x8MB
-        run: |
-          for i in 1 2 3 4; do head -c 8388608 /dev/urandom > "ser-$i.bin"; done
+          for i in 1 2 3 4; do head -c 1048576 /dev/urandom > "s4-$i.bin"; done
           start=$SECONDS
           for i in 1 2 3 4; do
             python3 .github/tools/probe_gtc_upload.py --repo "$GTC_REPO" --tag "$TAG" \
-              --file "ser-$i.bin" --method curl --label "serial-$i" >> results.ndjson
-          done
-          echo "SERIAL_WALL_SECONDS=$((SECONDS - start))" | tee -a wall.txt
-      - name: Parallel 4x8MB
-        run: |
-          for i in 1 2 3 4; do head -c 8388608 /dev/urandom > "par-$i.bin"; done
-          start=$SECONDS
-          for i in 1 2 3 4; do
-            python3 .github/tools/probe_gtc_upload.py --repo "$GTC_REPO" --tag "$TAG" \
-              --file "par-$i.bin" --method curl --label "parallel-$i" >> "par-$i.json" &
+              --file "s4-$i.bin" --method curl --label "n4-$i" > "s4-$i.json" &
           done
           wait
-          echo "PARALLEL_WALL_SECONDS=$((SECONDS - start))" | tee -a wall.txt
-          cat par-*.json >> results.ndjson
+          echo "N4_WALL=$((SECONDS - start))" | tee -a wall.txt
+          cat s4-*.json >> results.ndjson
+
+      - name: N=8 concurrent
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do head -c 1048576 /dev/urandom > "s8-$i.bin"; done
+          start=$SECONDS
+          for i in 1 2 3 4 5 6 7 8; do
+            python3 .github/tools/probe_gtc_upload.py --repo "$GTC_REPO" --tag "$TAG" \
+              --file "s8-$i.bin" --method curl --label "n8-$i" > "s8-$i.json" &
+          done
+          wait
+          echo "N8_WALL=$((SECONDS - start))" | tee -a wall.txt
+          cat s8-*.json >> results.ndjson
+
+      - name: Verdict
+        if: always()
+        run: |
+          # N4_WALL ~= N1_WALL  -> per-connection budget: parallelism is the fix.
+          # N4_WALL ~= 4*N1_WALL -> per-host budget: parallelism buys nothing.
+          { echo '### scaling'; echo '```'; cat wall.txt; echo '```';
+            echo '```json'; cat results.ndjson; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cat wall.txt
+
+  # ── Can ANY fixed timeout be safe? Depends on the spread, not the mean. ──
+  variance:
+    name: variance — 8 sequential 1MB uploads
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+      TAG: probe-${{ github.run_id }}-var
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create probe release
+        run: python3 .github/tools/gtc release create "$GTC_REPO" --tag "$TAG" --name "$TAG"
+      - name: 8 sequential 1MB uploads
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            head -c 1048576 /dev/urandom > "v-$i.bin"
+            python3 .github/tools/probe_gtc_upload.py --repo "$GTC_REPO" --tag "$TAG" \
+              --file "v-$i.bin" --method curl --label "v$i" >> results.ndjson
+            rm -f "v-$i.bin"
+          done
       - name: Summary
         if: always()
         run: |
-          { echo '### concurrency'; echo '```'; cat wall.txt; echo '```';
-            echo '```json'; cat results.ndjson; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '### variance'; echo '```json'; cat results.ndjson; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Leave no garbage on the resource repo ───────────────────────────────
   cleanup:
     name: cleanup probe tags
-    needs: [baseline, sizes-urllib, sizes-curl, concurrency]
+    needs: [scaling, variance]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-      GH_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
     steps:
       - name: Delete GitCode probe tags (deleting the tag deletes the release)
         run: |
-          for t in "probe-${{ github.run_id }}-urllib" \
-                   "probe-${{ github.run_id }}-curl" \
-                   "probe-${{ github.run_id }}-conc"; do
+          for t in "probe-${{ github.run_id }}-scale" "probe-${{ github.run_id }}-var"; do
             code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
               -H "PRIVATE-TOKEN: $GITCODE_TOKEN" \
               "https://api.gitcode.com/api/v5/repos/${GTC_REPO}/tags/${t}" || echo ERR)
             echo "delete $t -> $code"
           done
-      - name: Delete GitHub probe release
-        run: |
-          gh release delete "probe-${{ github.run_id }}" -R "$GTC_REPO" --yes --cleanup-tag \
-            || echo "(nothing to delete)"
