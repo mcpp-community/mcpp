@@ -42,24 +42,39 @@ read -r -a ASSETS <<< "${ASSETS:-$DEFAULT_ASSETS}"
 
 info() { echo "[mirror] $*"; }
 
-# Per-asset upload cap. Exceeding it WARNs and abandons that asset (no retry,
-# no delete) so one slow cross-border PUT can't eat the whole job budget — the
-# v0.0.94 release lost `publish-ecosystem` to a 30min job timeout with zero
-# per-asset visibility, and the two biggest linux tarballs had to be pushed by
-# hand afterwards.
+# ── Budget: one deadline per HOST LEG, not per asset ────────────────────────
+# The old per-asset cap (180s, abandon-on-expiry) failed four releases in a row
+# — 0.0.94 / 0.0.97 / 0.0.105 / 2026.7.28.2 — and was tuned three times without
+# anyone measuring what it was capping. Measured (probe PR #301):
 #
-# CAUTION (v0.0.90 postmortem, still binding): a cap that kills a
-# slow-but-PROGRESSING upload and then RETRIES it is strictly worse than no cap
-# — every restart resumes from byte zero and the mirror never converges. This
-# cap is safe only because a capped asset is SKIPPED, never re-uploaded. The
-# completeness gate at the bottom is still the pass/fail, so a skipped asset
-# fails the release loudly instead of silently shipping a half mirror.
+#   GitHub US runner -> file.gitcode.com  0.012 MB/s   <- the failing path
+#   same runner      <- file.gitcode.com  3.87  MB/s
+#   same runner      -> github.com       16     MB/s
+#   mainland-CN host -> file.gitcode.com  1.84  MB/s
 #
-# Sizing: mcpp's largest asset is ~30MB (no package exceeds 100MB). 180s is a
-# generous ceiling for that — an upload still running at 3min is not "slow", it
-# is stuck, and the right move is to stop paying CI for it and push that one
-# asset by hand (the gate below prints the exact command).
-: "${MIRROR_UPLOAD_TIMEOUT:=180}"
+# file.gitcode.com is a single Huawei Cloud origin in Beijing; it is the
+# inbound-to-CN direction that is shaped, not the host and not the client
+# (curl and urllib measure identically). At 0.012 MB/s a 34.8MB asset needs
+# ~45 MINUTES, so no per-asset value in the 180s neighbourhood was ever going
+# to work. The rate also varies ~4.6x run to run (0.011-0.051 MB/s), which
+# rules out ANY fixed per-asset cap being simultaneously safe and useful.
+#
+# So: bound the LEG, and let each upload have whatever is left of it. A leg
+# that overruns fails the completeness gate exactly as before.
+#
+# The v0.0.90 rule still binds: never kill a slow-but-PROGRESSING upload and
+# then retry it — a restart resumes from byte zero (the presigned OBS PUT has
+# no multipart/resume; see #301). Here nothing is killed and retried within a
+# round: the deadline ends the leg.
+: "${MIRROR_LEG_DEADLINE_GH:=600}"     # github is fast; 10min is already absurd
+: "${MIRROR_LEG_DEADLINE_GTC:=2400}"   # gitcode: shaped inbound, needs headroom
+
+# Assets are uploaded CONCURRENTLY within a leg. Measured on the same probe:
+# the shaping is per-CONNECTION, so concurrency scales almost linearly —
+# 1/4/8 concurrent 1MB uploads took 76s/80s/93s wall (0.013/0.050/0.086 MB/s
+# aggregate, 6.6x at N=8). Concurrency does raise the error rate (one 502 in
+# the N=4 round), which the existing probe-then-reupload rounds absorb.
+: "${MIRROR_MAX_PARALLEL:=8}"
 
 DL="$(mktemp -d)"; trap 'rm -rf "$DL"' EXIT
 
@@ -70,24 +85,34 @@ human_size() { # path → e.g. 31.9MB
 
 host_label() { [[ "$1" == gh ]] && echo github || echo gitcode; }
 
-# Upload one asset under the cap, timing it. 0 = the command returned within
-# the cap (NOT proof it landed — gtc's exit code lies both ways, so the probe /
-# gate remains the only source of truth); 1 = the cap fired, asset abandoned.
-upload_asset() { # kind(gh|gtc) asset → 0 returned / 1 capped
-  local kind="$1" a="$2" start elapsed rc=0 sz host
+# Upload one asset with whatever is left of the leg deadline, timing it.
+# 0 = the command returned inside the budget (NOT proof it landed — gtc's exit
+# code lies both ways, so the probe / gate remains the only source of truth);
+# 1 = the leg deadline fired.
+#
+# Runs in a SUBSHELL under the parallel launcher, so it must not rely on any
+# state surviving the call; everything it produces goes to stdout/stderr, which
+# the launcher collects per asset and replays in order.
+upload_asset() { # kind(gh|gtc) asset deadline_epoch → 0 returned / 1 out of budget
+  local kind="$1" a="$2" deadline="$3" start elapsed rc=0 sz host budget
   sz=$(human_size "$DL/$a")
   host=$(host_label "$kind")
+  budget=$(( deadline - SECONDS ))
+  if (( budget <= 0 )); then
+    info "WARN: $host $a ($sz) not attempted — leg deadline already spent"
+    return 1
+  fi
   start=$SECONDS
   if [[ "$kind" == gh ]]; then
-    GH_TOKEN="${XLINGS_RES_TOKEN:-}" timeout "$MIRROR_UPLOAD_TIMEOUT" \
+    GH_TOKEN="${XLINGS_RES_TOKEN:-}" timeout "$budget" \
       gh release upload "$VER" "$DL/$a" -R "$GH_DST" --clobber >/dev/null 2>&1 || rc=$?
   else
-    timeout "$MIRROR_UPLOAD_TIMEOUT" gtc release upload "$GTC_DST" "$DL/$a" --tag "$VER" \
+    timeout "$budget" gtc release upload "$GTC_DST" "$DL/$a" --tag "$VER" \
       >/dev/null 2>&1 || rc=$?
   fi
   elapsed=$((SECONDS - start))
   if [[ $rc == 124 || $rc == 137 ]]; then
-    info "WARN: $host $a ($sz) exceeded the ${MIRROR_UPLOAD_TIMEOUT}s cap after ${elapsed}s — skipping (not retried; the verify gate below decides the release)"
+    info "WARN: $host $a ($sz) hit the leg deadline after ${elapsed}s — abandoning (the verify gate below decides the release)"
     return 1
   fi
   info "$host $a ($sz) uploaded in ${elapsed}s"
@@ -146,39 +171,73 @@ verify_batch() { # base_url asset... → prints assets still not serving
 #  - NEVER kill a slow-but-progressing upload AND RETRY IT. v0.0.90 wrapped
 #    uploads in `timeout 300`, so every cross-border PUT >5min was SIGKILLed
 #    at 60%% and restarted from byte zero — the 20min job ceiling fell to
-#    this. MIRROR_UPLOAD_TIMEOUT keeps a cap but ABANDONS the asset instead of
-#    retrying it, which is what makes the cap safe; the gate then fails the
-#    release loudly rather than thrashing until the job is killed.
+#    this. Nothing is killed-and-retried inside a round now: an upload gets
+#    the remaining LEG budget, and exhausting it ends the leg.
 #  - gtc's exit code lies both ways (obs_callback flakiness); the download
-#    probe is the only source of truth.
-mirror_host() { # kind(gh|gtc) base_url
-  local kind="$1" base="$2" try a
+#    probe is the only source of truth. Measured mechanism (#301): the
+#    presigned PUT carries an `x-obs-callback` header pointing at
+#    api.gitcode.com; OBS stores the object and THEN calls back, so a failed
+#    callback reports `code:400 ... EOF` for an upload that did land.
+#
+# Assets within a leg upload CONCURRENTLY (the shaping is per-connection —
+# see the deadline block at the top). Each upload runs in its own subshell
+# writing to its own log, which is replayed in asset order after the wait, so
+# concurrent progress lines don't interleave into unreadable soup.
+mirror_host() { # kind(gh|gtc) base_url deadline_seconds
+  local kind="$1" base="$2" budget="$3" try a
   local pending failed
-  local -A capped=()
+  local -A lost=()
   local host_start=$SECONDS
+  local deadline=$((SECONDS + budget))
   local host; host=$(host_label "$kind")
+  local wdir; wdir=$(mktemp -d)
+  info "$host leg budget ${budget}s, up to ${MIRROR_MAX_PARALLEL} concurrent uploads"
   for try in 1 2 3; do
-    pending=()
+    # Step 1: probe first — anything already serving is mirrored and must
+    # never be re-uploaded.
+    local todo=()
     for a in "${ASSETS[@]}"; do
-      # A capped asset is never re-attempted (see MIRROR_UPLOAD_TIMEOUT).
-      [[ -n "${capped[$a]:-}" ]] && continue
-      # Step 1: already serving? then it's mirrored — never re-upload it.
+      [[ -n "${lost[$a]:-}" ]] && continue
       if probe "${base}/${a}"; then
         [[ $try == 1 ]] && info "$host $a already mirrored, skipping"
         continue
       fi
-      if upload_asset "$kind" "$a"; then
+      todo+=("$a")
+    done
+    [[ ${#todo[@]} == 0 ]] && break
+
+    # Step 2: upload the missing ones concurrently, bounded by a live count of
+    # running children (not a hand-kept counter — that mis-books as soon as one
+    # finishes early). `if/else` around upload_asset so the subshell's own
+    # errexit can't swallow the rc file.
+    local i=0
+    for a in "${todo[@]}"; do
+      while (( $(jobs -rp | wc -l) >= MIRROR_MAX_PARALLEL )); do sleep 1; done
+      ( if upload_asset "$kind" "$a" "$deadline" >"$wdir/$i.log" 2>&1
+        then echo 0; else echo 1; fi >"$wdir/$i.rc" ) &
+      i=$((i + 1))
+    done
+    wait
+
+    pending=()
+    for i in "${!todo[@]}"; do
+      a="${todo[$i]}"
+      cat "$wdir/$i.log" 2>/dev/null || true
+      if [[ "$(cat "$wdir/$i.rc" 2>/dev/null || echo 1)" == 0 ]]; then
         pending+=("$a")
       else
-        capped[$a]=1
+        lost[$a]=1
       fi
+      rm -f "$wdir/$i.log" "$wdir/$i.rc"
     done
+
     [[ ${#pending[@]} == 0 ]] && break
     failed=$(verify_batch "$base" "${pending[@]}")
     [[ -z "$failed" ]] && break
     info "$host not serving after patience (try $try): $failed — re-uploading (no delete)"
   done
-  ((${#capped[@]})) && info "WARN: $host abandoned ${#capped[@]} asset(s) at the ${MIRROR_UPLOAD_TIMEOUT}s cap: ${!capped[*]}"
+  rm -rf "$wdir"
+  ((${#lost[@]})) && info "WARN: $host abandoned ${#lost[@]} asset(s) at the ${budget}s leg deadline: ${!lost[*]}"
   info "$host mirror leg finished in $((SECONDS - host_start))s"
   return 0  # the completeness gate below is the real pass/fail
 }
@@ -205,11 +264,11 @@ fi
 
 GH_PID=""; GTC_PID=""
 if [[ "$GH_ENABLED" == 1 ]]; then
-  mirror_host gh  "https://github.com/${GH_DST}/releases/download/${VER}" &
+  mirror_host gh  "https://github.com/${GH_DST}/releases/download/${VER}" "$MIRROR_LEG_DEADLINE_GH" &
   GH_PID=$!
 fi
 if [[ "$GTC_ENABLED" == 1 ]]; then
-  mirror_host gtc "https://gitcode.com/${GTC_DST}/releases/download/${VER}" &
+  mirror_host gtc "https://gitcode.com/${GTC_DST}/releases/download/${VER}" "$MIRROR_LEG_DEADLINE_GTC" &
   GTC_PID=$!
 fi
 [[ -n "$GH_PID"  ]] && wait "$GH_PID"
@@ -232,7 +291,7 @@ for host in "${hosts[@]}"; do
   done
 done
 if [[ $rc != 0 ]]; then
-  echo "[mirror] hint: if the asset above was WARNed as capped at ${MIRROR_UPLOAD_TIMEOUT}s, either raise MIRROR_UPLOAD_TIMEOUT for this run or push it by hand:" >&2
+  echo "[mirror] hint: if the asset above was WARNed at a leg deadline, raise MIRROR_LEG_DEADLINE_GH/GTC for this run, or push it by hand:" >&2
   echo "[mirror]       gh release download v$VER -R $SRC_REPO -p '<asset>' && gtc release upload $GTC_DST '<asset>' --tag $VER" >&2
 fi
 [[ $rc == 0 ]] && info "all assets mirrored + verified on ${#hosts[@]} host(s) in ${SECONDS}s"

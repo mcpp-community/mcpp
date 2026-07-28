@@ -132,8 +132,11 @@ jobs:
           ARTIFACT=$(find target/x86_64-linux-musl -type f -name mcpp | head -1)
           test -n "$ARTIFACT"
           file "$ARTIFACT" | grep -q 'statically linked'
-          # Strip — debug info on a static ELF balloons it ~7×.
-          strip "$ARTIFACT"
+          # NB: stripping here is pointless — `mcpp pack` below rebuilds the
+          # binary and overwrites it, which is why every release up to and
+          # including 2026.7.28.2 shipped an UNSTRIPPED bin/mcpp despite the
+          # strip that used to live on this line. The payload is slimmed after
+          # packing instead, in the inject step below.
 
           # Pack with the freshly-built mcpp (not the bootstrap) so any
           # fixes to the pack code path are exercised in the same release
@@ -156,6 +159,10 @@ jobs:
           mkdir -p "$INJECT/$WRAPPER/registry/bin"
           cp "$XLINGS_BIN" "$INJECT/$WRAPPER/registry/bin/xlings"
           chmod +x "$INJECT/$WRAPPER/registry/bin/xlings"
+          # Slim AFTER pack (pack rebuilds bin/mcpp) and BEFORE tar. Asserts
+          # the result, so a strip that silently stops working fails the
+          # release instead of quietly shipping a 34.8MB tarball again.
+          bash .github/tools/slim_linux_payload.sh "$INJECT/$WRAPPER"
           (cd "$INJECT" && tar -czf "$GITHUB_WORKSPACE/${TARBALL}" "$WRAPPER")
           rm -rf "$INJECT"
 
@@ -330,9 +337,15 @@ jobs:
           STAGING=$(mktemp -d)
           mkdir -p "$STAGING/$WRAPPER/bin"
           cp "$MCPP_AARCH64" "$STAGING/$WRAPPER/bin/mcpp"
-          # Strip with the cross toolchain's strip if present (binary is aarch64).
+          # The binary is aarch64, so the host x86_64 `strip` cannot touch it —
+          # resolve a cross-capable one. Required, not best-effort: the old
+          # `|| true` here meant a missing tool silently shipped a fat tarball.
+          # (slim_linux_payload.sh runs after xlings is staged, below.)
           STRIP=$(find "$HOME/.mcpp" -name 'aarch64-linux-musl-strip' -type f 2>/dev/null | head -1)
-          [ -n "$STRIP" ] && "$STRIP" "$STAGING/$WRAPPER/bin/mcpp" 2>/dev/null || true
+          [ -n "$STRIP" ] || STRIP=$(command -v llvm-strip 2>/dev/null || true)
+          [ -n "$STRIP" ] || STRIP=$(command -v aarch64-linux-gnu-strip 2>/dev/null || true)
+          [ -n "$STRIP" ] || { echo "no aarch64-capable strip found"; exit 1; }
+          echo "aarch64 strip: $STRIP"
           cp LICENSE "$STAGING/$WRAPPER/" 2>/dev/null || true
           cp README.md "$STAGING/$WRAPPER/" 2>/dev/null || true
           cat > "$STAGING/$WRAPPER/mcpp" << 'LAUNCHER'
@@ -356,6 +369,9 @@ jobs:
               chmod +x "$STAGING/$WRAPPER/registry/bin/xlings"
             fi
           fi
+          # Slim both shipped ELFs with the cross strip resolved above, and
+          # assert the result (the vendored xlings was 86.9MB unstripped here).
+          bash .github/tools/slim_linux_payload.sh "$STAGING/$WRAPPER" "$STRIP"
           mkdir -p dist
           (cd "$STAGING" && tar -czf "$GITHUB_WORKSPACE/dist/${TARBALL_NAME}" "$WRAPPER")
           cp "dist/${TARBALL_NAME}" "dist/mcpp-linux-aarch64.tar.gz"
