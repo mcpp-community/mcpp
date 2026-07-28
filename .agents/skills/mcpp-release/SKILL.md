@@ -89,13 +89,18 @@ Tag push 会自动触发 `release.yml` workflow。
 
 ### 4. 监控 Release CI
 
-Release workflow 包含三个平台的构建：
+Release workflow 包含**四个平台**的构建，外加一个生态发布 job：
 
 | Job | 平台 | 产物 | 依赖 |
 |-----|------|------|------|
 | `build-release` | Linux x86_64 | `mcpp-X.Y.Z-linux-x86_64.tar.gz` | 无（先执行） |
+| `build-linux-aarch64` | Linux aarch64（交叉） | `mcpp-X.Y.Z-linux-aarch64.tar.gz` | 等 Linux x86_64 完成 |
 | `build-macos` | macOS ARM64 | `mcpp-X.Y.Z-macosx-arm64.tar.gz` | 等 Linux 完成 |
 | `build-windows` | Windows x86_64 | `mcpp-X.Y.Z-windows-x86_64.zip` | 等 Linux 完成 |
+| `publish-ecosystem` | — | 镜像到 xlings-res 双端 + 开索引 bump PR | 等**全部四个**构建完成 |
+
+`build-linux-aarch64` 是两段式的（bootstrap 先构出本 release 的 x86_64 mcpp，再用它交叉构建
+aarch64），因为 bootstrap 装的是**上一个已发布版本**，可能不认新特性。
 
 ```bash
 # 监控 release workflow
@@ -118,12 +123,17 @@ gh release view "v$NEW_VERSION"
 
 确认以下产物全部存在：
 - `mcpp-X.Y.Z-linux-x86_64.tar.gz` + `.sha256`
+- `mcpp-X.Y.Z-linux-aarch64.tar.gz` + `.sha256`
 - `mcpp-X.Y.Z-macosx-arm64.tar.gz` + `.sha256`
 - `mcpp-X.Y.Z-windows-x86_64.zip` + `.sha256`
+- 上述四个的**无版本号别名**（`mcpp-linux-x86_64.tar.gz` 等）+ `.sha256`
 - `mcpp-X.Y.Z.tar.gz`（源码包）
 - `mcpp.lua`（xpkg 描述）
 - `install.sh`
 - `SHA256SUMS`
+
+**顺带核对体积**（2026.7.29.1 起，见下方"载荷瘦身"）：linux 两个 tarball 应在
+**5MB 上下**。如果又回到 30MB 量级，说明 strip 断言被绕过了，先查再发。
 
 ## Release CI 详解
 
@@ -138,14 +148,73 @@ gh release view "v$NEW_VERSION"
 5. Linux: `mcpp self env` 中 MCPP_HOME 正确解析
 6. xlings 二进制已捆绑
 
+### 载荷瘦身（2026.7.29.1 起）
+
+每个 linux 平台在**打包后、打 tar 前**调用 `.github/tools/slim_linux_payload.sh`，
+strip `bin/mcpp` 与 `registry/bin/xlings` 并**断言结果**（`file` 不得再含
+`not stripped`）。
+
+为什么必须断言：在此之前，vendored 的 xlings 从来没被 strip 过（97.3MB，带
+`debug_info`），而 x86_64 那句 `strip` 跑在 `mcpp pack` **之前** —— pack 会重建
+二进制把它覆盖掉，于是直到 2026.7.28.2 发布的 `bin/mcpp` 一直是未 strip 的。
+一个不校验效果的 `strip` 等于注释。修完 linux-x86_64 tarball 从 **34.81MB 降到
+4.62MB（7.5×）**。
+
+macOS / Windows **故意不做**：载荷本来就 6.1MB / 4.2MB，且 strip Mach-O 会让
+ad-hoc 签名失效。
+
+### publish-ecosystem：镜像 + 索引（发布的后半程）
+
+四个构建 job 全绿后自动执行，做两件事：
+
+1. **镜像到 `xlings-res/mcpp` 双端**（GitHub + GitCode），由
+   `.github/tools/mirror_res.sh` 完成 —— 单 leg 内资产**并发上传**
+   （`MIRROR_MAX_PARALLEL`，默认 8），预算是**整条 leg 的 deadline**
+   （`MIRROR_LEG_DEADLINE_GH` 600s / `_GTC` 2400s），不是 per-asset cap。
+2. **向 `openxlings/xim-pkgindex` 开 bump PR**（带每平台 sha256）。
+
+**为什么不是 per-asset cap**：实测（探针 PR #301）GitHub US runner 上传到
+`file.gitcode.com`（单 IP 华为云北京）只有 **0.012 MB/s** —— 而同一台 runner
+从同一个 IP **下载**有 3.87 MB/s、传 GitHub 有 16 MB/s、大陆本机传它有
+1.84 MB/s。被限的是**国际入境方向**，且速率有 ~4.6× 抖动，所以任何固定
+per-asset 值都不可能既安全又有用。限速是 **per-connection** 的（1/4/8 并发
+= 76/80/93s 墙钟），所以并发能叠加；但预签名是 OBS **单次 PUT** 签名，无
+multipart/无断点续传，**单文件拆不开** —— 这正是必须先把载荷 strip 小的原因。
+
+**`gtc` 的退出码两个方向都会撒谎**：PUT 头里的 `x-obs-callback` 让 OBS 存完对象
+再回调 GitCode API，回调失败就返回 `code:400 ... EOF`，而**对象其实已落盘**。
+判定上传成功**只能靠回探下载 URL**，脚本就是这么做的。
+
+### 发布后的收尾（必须做完，否则用户装不到）
+
+```bash
+# 1) 索引 PR：CI 绿后合入，合入即自动发布索引 artifact
+gh pr merge <n> --repo openxlings/xim-pkgindex --squash --admin
+
+# 2) 真实验证（注意：不带 @版本 不会升级已装的旧版）
+xlings update && xlings install mcpp@$NEW_VERSION -y
+
+# 3) bootstrap pin 收尾，直推 main
+#    .xlings.json 的 workspace.mcpp 与 ci-fresh-install.yml 的 MCPP_PIN
+bash .github/tools/check_version_pins.sh
+git commit -m "ci: workspace mcpp bootstrap pin -> $NEW_VERSION (released, mirrored, indexed)"
+```
+
+**索引传播有滞后**：索引 artifact 发布后，`latest` tag 上的指针文件在 GitHub
+资产 CDN 上可能还要几分钟才更新。紧接着跑的 CI 可能仍拿到旧索引并报
+`package 'mcpp@X.Y.Z' not found` —— 这不是 release 坏了，等指针稳定后重跑即可。
+
 ### 常见失败原因
 
 | 症状 | 原因 | 修复 |
 |------|------|------|
 | `mcpp X.Y.Z-1` 但 tag 是 `vX.Y.Z` | `fingerprint.cppm` 版本未更新 | 更新 `MCPP_VERSION`，重新打 tag |
 | Smoke test 输出旧版本 | CI 缓存了旧的 sandbox/target | 删除 GitHub Actions cache 后重跑 |
-| xlings bootstrap 失败 | xlings 版本不兼容 | 更新 `XLINGS_VERSION` |
+| e2e `01_help_and_version.sh` 挂 | 只改了 `mcpp.toml` 没改 `fingerprint.cppm`（它把两者交叉比对） | 同步四处版本；注意这个 e2e 只在部分分片里跑，可能表现为"只有某个平台红" |
+| xlings bootstrap 失败 | xlings 版本不兼容 | 改 `src/xlings.cppm::kXlingsVersion`（**唯一真源**）后跑 `check_version_pins.sh` 找出其余 15 个 pin 点 |
 | macOS/Windows 构建失败 | 需要等 Linux job 先完成 | 检查 Linux job 是否成功 |
+| `slim: FAIL: ... still not stripped` | strip 工具没生效／被 pack 覆盖 | 别绕过断言——它就是为了拦住 34.8MB 的 tarball 再次发出去 |
+| mirror leg 报 `missing/unverified` | 资产没传上去或还没传播 | 先 GET 核验（**必须 GET，`curl -I` 会骗你**），gitcode 用 `gitcode.com` 直链而非 `api.` 主机；确认缺件后本地补传再 `gh run rerun --failed`（脚本幂等，已验证的资产会跳过） |
 
 ### 缓存管理
 
@@ -191,8 +260,20 @@ gh workflow run release.yml --ref "v$NEW_VERSION"
 
 | 文件 | 版本相关内容 |
 |------|-------------|
-| `mcpp.toml` | `version = "X.Y.Z"` — 项目版本 |
+| `mcpp.toml` | `version = "X.Y.Z"` — 项目版本，release.yml 由它推导 tag |
 | `src/toolchain/fingerprint.cppm` | `MCPP_VERSION = "X.Y.Z"` — 编译期版本常量 |
-| `.github/workflows/release.yml` | Release workflow 定义 |
+| `.xlings.json` | `workspace.mcpp` — CI bootstrap 装哪个 mcpp（发布**后**才 bump） |
+| `.github/workflows/ci-fresh-install.yml` | `MCPP_PIN` — 全新安装验证目标（发布**后**才 bump） |
+| `src/xlings.cppm` | `kXlingsVersion` — xlings pin 的**唯一真源**（其余 15 处由脚本校验） |
+| `.github/tools/check_version_pins.sh` | 机器校验上述两组不变量，别靠肉眼 |
+| `.github/tools/slim_linux_payload.sh` | linux 载荷 strip + 断言 |
+| `.github/tools/mirror_res.sh` | 双端镜像（并发上传 + leg deadline + 完整性 gate） |
+| `.github/tools/gtc` | GitCode CLI（release create/upload、PR） |
+| `.github/workflows/release.yml` | Release workflow 定义（四平台 + publish-ecosystem） |
 | `install.sh` | 安装脚本（随 release 发布） |
 | `CHANGELOG.md` | Release notes 来源（按 `## [X.Y.Z]` 提取） |
+
+> **注意版本 bump 的两个阶段**：`mcpp.toml` + `fingerprint.cppm` 在发版**前**改
+> （它们定义要发什么）；`.xlings.json` + `MCPP_PIN` 在发版**成功后**改（它们指向
+> bootstrap 用哪个已发布版本）。`check_version_pins.sh` 认得这个差异，不会因为
+> bootstrap pin 落后一版就报错。

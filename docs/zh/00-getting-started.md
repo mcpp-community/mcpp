@@ -28,7 +28,7 @@ curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/insta
 
 ```bash
 mcpp --version
-# mcpp 0.0.1
+# mcpp 2026.7.29.1
 ```
 
 > [!TIP]
