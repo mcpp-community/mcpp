@@ -14,6 +14,9 @@
 export module mcpp.pm.commands;
 
 import std;
+import mcpp.config;
+import mcpp.fetcher;
+import mcpp.fetcher.progress;
 import mcpp.manifest;            // kDefaultNamespace alias
 import mcpp.lockfile;             // load / write (still via shim)
 import mcpp.project;              // shared find_manifest_root
@@ -66,6 +69,24 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
             "package version required: `mcpp add {}@<version>` (M2 supports exact-version only)",
             spec));
         return 2;
+    }
+
+    // Validate package existence against the configured index before mutating
+    // mcpp.toml. A missing package is a hard error: we don't want to write an
+    // invalid dependency that only fails later during build.
+    {
+        auto cfg = mcpp::config::load_or_init(
+            /*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
+        if (!cfg) {
+            mcpp::ui::error(cfg.error().message);
+            return 4;
+        }
+        mcpp::fetcher::Fetcher f(*cfg);
+        if (!f.read_xpkg_lua(ns, shortName)) {
+            mcpp::ui::error(std::format(
+                "package '{}' not found in any configured index", shortName));
+            return 2;
+        }
     }
 
     std::ifstream in(manifestPath);

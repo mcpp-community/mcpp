@@ -11,12 +11,14 @@ cd "$TMP"
 "$MCPP" new myapp >/dev/null
 cd myapp
 
-"$MCPP" add foo@1.0.0 >/dev/null
-"$MCPP" add bar@2.0.0 >/dev/null
-# Default-namespace deps land as unquoted bare keys after the namespace
-# refactor; accept either form so this stays robust across versions.
-grep -qE '^("foo"|foo) = "1\.0\.0"' mcpp.toml || { cat mcpp.toml; echo "foo not added"; exit 1; }
-grep -qE '^("bar"|bar) = "2\.0\.0"' mcpp.toml || { cat mcpp.toml; echo "bar not added"; exit 1; }
+# Seed dependencies directly in mcpp.toml (not via `mcpp add`) so this test
+# exercises remove/update in isolation regardless of package-index state.
+cat >> mcpp.toml <<'EOF'
+
+[dependencies]
+foo = "1.0.0"
+bar = "2.0.0"
+EOF
 
 # remove foo
 "$MCPP" remove foo > /tmp/_r.log 2>&1
