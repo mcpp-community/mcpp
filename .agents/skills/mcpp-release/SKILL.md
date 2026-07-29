@@ -24,15 +24,33 @@ description: Use when releasing a new version of mcpp — bumps version, creates
 
 ## Overview
 
-mcpp 的版本号存在于 **四个位置**，发布时必须同步更新：
+mcpp 的版本号存在于 **四个位置**，但它们分属**两组，在发布流程的两个不同时刻更新**。
+把四处一起 bump 是一个会让全部 CI 变红的经典错误 —— 见下面第二组的解释。
+
+**第一组：正在构建的版本**（发布时改，走 bump PR）
 
 1. `mcpp.toml` → `[package].version` — 构建系统读取的项目版本，release.yml 由它推导 tag
 2. `src/toolchain/fingerprint.cppm` → `MCPP_VERSION` — 编译期硬编码常量（`--version` 输出、BMI 指纹、E0006 索引底线比较）
+
+这两处必须**在同一个 commit 里**一起改：`tests/e2e/01_help_and_version.sh` 交叉比对
+`mcpp.toml` 与 `mcpp --version`，只改一处 CI 立刻红。
+
+**第二组：bootstrap pin —— CI 用哪个 mcpp 来自举**（发布并进索引之后才改）
+
 3. `.xlings.json` → `workspace.mcpp` — CI bootstrap 装哪个 mcpp
 4. `.github/workflows/ci-fresh-install.yml` → `MCPP_PIN` — 全新安装验证的目标版本
 
-**不一致会导致 release smoke test 失败**（CI 检查 `mcpp --version` 是否匹配 tag）。
-后两处历史上多次漂移（`MCPP_PIN` 曾落后五个版本），所以现在有机器校验：
+这两处指向的是一个**已经发布、且已经进了索引**的版本。在 bump PR 里把它们一起挪到新版，
+等于让每一个 CI job 去 `xlings install` 一个还不存在的 mcpp —— 全线红。
+所以它们在 bump PR 里保持**上一个已发布版本**不动，直到发布收尾那一步才前移
+（见「发布后的收尾」第 3 步）。`check_version_pins.sh` 正是按这个语义校验的：它只要求
+两处 pin **彼此相等**、且**不得新于**正在构建的版本，并不要求等于它。
+
+对照最近一次发布：`fd27314`（bump 到 2026.7.29.1）只动了第一组两个文件，第二组仍停在
+2026.7.28.2；`fde3b70` 才在发布、镜像、进索引之后把 pin 推到 2026.7.29.1。
+
+**版本不一致会导致 release smoke test 失败**（CI 检查 `mcpp --version` 是否匹配 tag）。
+第二组历史上多次漂移（`MCPP_PIN` 曾落后五个版本），所以现在有机器校验：
 
 ```bash
 bash .github/tools/check_version_pins.sh
@@ -55,27 +73,31 @@ gh run list --branch main --limit 3
 
 所有 CI（ci / ci-macos / ci-windows）必须为 `success`。不要在 CI 红的时候发版。
 
-### 2. 同步更新四处版本号（单个 commit）
+### 2. bump 版本号（第一组两处，单个 commit，走 PR）
 
-**关键：在同一个 commit 中更新全部四个文件，避免版本不一致。**
+**只改第一组的两个文件**，并且在同一个 commit 里。bootstrap pin（`.xlings.json`、
+`MCPP_PIN`）**不要动** —— 它们指向上一个已发布版本，见 Overview。
 
 ```bash
 # 日期版本：当天序号从 .1 起；.0 仅用于正式/稳定版
 NEW_VERSION="2026.7.27.1"
 
+git checkout -b "chore/bump-$NEW_VERSION"
+
 sed -i "s/^version.*=.*/version     = \"$NEW_VERSION\"/" mcpp.toml
 sed -i "s/MCPP_VERSION = \".*\"/MCPP_VERSION = \"$NEW_VERSION\"/" src/toolchain/fingerprint.cppm
-sed -i "s/\"mcpp\": \"[^\"]*\"/\"mcpp\": \"$NEW_VERSION\"/" .xlings.json
-sed -i "s/MCPP_PIN: '[^']*'/MCPP_PIN: '$NEW_VERSION'/" .github/workflows/ci-fresh-install.yml
 
-# 机器校验四处一致（同时校验 xlings pin），别靠肉眼
+# 机器校验（building 是新版、bootstrap pin 仍是旧版，是预期状态）
 bash .github/tools/check_version_pins.sh
 
-# 单个 commit 提交
-git add mcpp.toml src/toolchain/fingerprint.cppm .xlings.json \
-        .github/workflows/ci-fresh-install.yml
-git commit -m "chore: bump version to $NEW_VERSION"
-git push origin main
+# 自查：构建产物真的报新版本。注意 target/ 目录名带指纹哈希，
+# 版本一变就是新目录 —— 用 `ls -dt` 取最新的那个，`head -1` 会拿到旧二进制。
+mcpp build && "$(ls -dt target/*/*/bin/mcpp | head -1)" --version
+
+git commit -am "chore: bump version to $NEW_VERSION"
+git push -u origin "chore/bump-$NEW_VERSION"
+gh pr create --title "chore: bump version to $NEW_VERSION" --body "..."
+# CI 绿后合入；版本 bump 同样禁止直推 main（见 mcpp-contributing）
 ```
 
 ### 3. 创建并推送 tag
@@ -194,11 +216,16 @@ gh pr merge <n> --repo openxlings/xim-pkgindex --squash --admin
 # 2) 真实验证（注意：不带 @版本 不会升级已装的旧版）
 xlings update && xlings install mcpp@$NEW_VERSION -y
 
-# 3) bootstrap pin 收尾，直推 main
-#    .xlings.json 的 workspace.mcpp 与 ci-fresh-install.yml 的 MCPP_PIN
+# 3) bootstrap pin 收尾 —— 第二组两处，到这一步才前移
+#    新版此时已发布、已镜像、已进索引，CI 装得到，pin 才可以指向它
+sed -i "s/\"mcpp\": \"[^\"]*\"/\"mcpp\": \"$NEW_VERSION\"/" .xlings.json
+sed -i "s/MCPP_PIN: '[^']*'/MCPP_PIN: '$NEW_VERSION'/" .github/workflows/ci-fresh-install.yml
 bash .github/tools/check_version_pins.sh
-git commit -m "ci: workspace mcpp bootstrap pin -> $NEW_VERSION (released, mirrored, indexed)"
+git commit -am "ci: workspace mcpp bootstrap pin -> $NEW_VERSION (released, mirrored, indexed)"
 ```
+
+**顺序不能反**：pin 一旦领先于"索引里真实存在的版本"，每个 CI job 的 bootstrap 都会
+`package 'mcpp@X.Y.Z' not found`。这就是 bump PR 里不许碰这两处的原因。
 
 **索引传播有滞后**：索引 artifact 发布后，`latest` tag 上的指针文件在 GitHub
 资产 CDN 上可能还要几分钟才更新。紧接着跑的 CI 可能仍拿到旧索引并报
@@ -209,6 +236,8 @@ git commit -m "ci: workspace mcpp bootstrap pin -> $NEW_VERSION (released, mirro
 | 症状 | 原因 | 修复 |
 |------|------|------|
 | `mcpp X.Y.Z-1` 但 tag 是 `vX.Y.Z` | `fingerprint.cppm` 版本未更新 | 更新 `MCPP_VERSION`，重新打 tag |
+| bump PR 里**所有** CI job 都红在 bootstrap，报 `package 'mcpp@X.Y.Z' not found` | 把第二组的 bootstrap pin 也一起 bump 了，CI 去装一个还没发布的版本 | 把 `.xlings.json` / `MCPP_PIN` 回退到上一个已发布版本，发布收尾时再前移 |
+| 自查 `--version` 显示旧版本，但源码已改 | `target/<triple>/<指纹>/` 的指纹随版本变，`ls \| head -1` 取到了上一次构建的目录 | 用 `ls -dt … \| head -1` 取最新构建 |
 | Smoke test 输出旧版本 | CI 缓存了旧的 sandbox/target | 删除 GitHub Actions cache 后重跑 |
 | e2e `01_help_and_version.sh` 挂 | 只改了 `mcpp.toml` 没改 `fingerprint.cppm`（它把两者交叉比对） | 同步四处版本；注意这个 e2e 只在部分分片里跑，可能表现为"只有某个平台红" |
 | xlings bootstrap 失败 | xlings 版本不兼容 | 改 `src/xlings.cppm::kXlingsVersion`（**唯一真源**）后跑 `check_version_pins.sh` 找出其余 15 个 pin 点 |
