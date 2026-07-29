@@ -7,21 +7,67 @@
 // into the pm subsystem so `cli.cppm` is responsible only for the
 // global CLI framework + non-pm commands.
 //
-// Strict zero-behavior-change move: every line below is identical to
-// what previously lived in `cli.cppm`, only the surrounding namespace
-// has changed.
+// The bodies started life as a strict zero-behavior-change move out of
+// `cli.cppm`; `cmd_add` has since grown the index existence gate (#305).
 
 export module mcpp.pm.commands;
 
 import std;
 import mcpp.config;
-import mcpp.fetcher;
-import mcpp.fetcher.progress;
-import mcpp.manifest;            // kDefaultNamespace alias
+import mcpp.fetcher.progress;      // bootstrap progress for load_or_init
+import mcpp.manifest;             // kDefaultNamespace alias
 import mcpp.lockfile;             // load / write (still via shim)
+import mcpp.platform.axis;        // HostPlatform for the published-version check
+import mcpp.pm.dep_spec;          // DependencyCoordinate
+import mcpp.pm.dependency_selector; // same candidates the manifest parser derives
+import mcpp.pm.index_route;       // shared index routing (with mcpp.build.prepare)
+import mcpp.pm.resolver;          // is_version_constraint
 import mcpp.project;              // shared find_manifest_root
 import mcpp.ui;
+import mcpp.xlings;               // index freshness
 import mcpplibs.cmdline;
+
+namespace mcpp::pm::commands::detail {
+
+// Render candidate coordinates the way prepare's resolution error does, so a
+// rejected `mcpp add` and a failed `mcpp build` name the same identities.
+inline std::string format_tried(
+    const std::vector<mcpp::pm::DependencyCoordinate>& candidates) {
+    std::string tried;
+    for (auto& c : candidates) {
+        if (!tried.empty()) tried += ", ";
+        tried += c.namespace_.empty()
+            ? std::format("(no namespace, {})", c.shortName)
+            : std::format("({}, {})", c.namespace_, c.shortName);
+    }
+    return tried;
+}
+
+// A version the descriptor does not publish is worth flagging but not worth
+// refusing over: version tables are per-OS, so "absent for this host" is not
+// "absent". Say what IS published and let the user decide — the alternative is
+// a hard failure on a dependency that resolves fine on the platform it was
+// added for.
+inline void warn_unpublished_version(std::string_view lua,
+                                     std::string_view display,
+                                     const std::string& version) {
+    if (mcpp::pm::is_version_constraint(version)) return;
+    auto versions = mcpp::manifest::list_xpkg_versions(
+        lua, mcpp::platform::HostPlatform::current());
+    if (versions.empty()) return;
+    if (std::ranges::find(versions, version) != versions.end()) return;
+
+    std::string avail;
+    for (auto& v : versions) {
+        if (!avail.empty()) avail += ", ";
+        avail += v;
+    }
+    mcpp::ui::warning(std::format(
+        "'{}' has no version {} published for this platform — available: {}",
+        display, version, avail));
+}
+
+} // namespace mcpp::pm::commands::detail
 
 export namespace mcpp::pm::commands {
 
@@ -71,21 +117,90 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
 
-    // Validate package existence against the configured index before mutating
-    // mcpp.toml. A missing package is a hard error: we don't want to write an
-    // invalid dependency that only fails later during build.
+    // ── Existence gate (#305) ──────────────────────────────────────────
+    // Refuse to write a dependency no index can serve, so a typo fails here
+    // instead of halfway into the next `mcpp build`. Two rules keep the gate
+    // from refusing packages that are perfectly real:
+    //
+    //   • It probes the SAME candidates the manifest parser will derive from
+    //     the key about to be written. A dotted selector is a namespace path,
+    //     not a name: `capi.lua` means `(mcpplibs.capi, lua)` then
+    //     `(capi, lua)`, and a literal `(mcpplibs, "capi.lua")` probe can
+    //     never match one — `package.name` is a single atomic segment
+    //     (SPEC-001 §3.2), so nothing in any index is named "capi.lua".
+    //   • It reads through mcpp.pm.index_route, the same routing
+    //     `mcpp.build.prepare` resolves dependencies with. A package served by
+    //     a project `[indices]` entry therefore counts as present, and a
+    //     namespace no readable index can speak for is reported as unverified
+    //     rather than rejected: refusing an add is only correct when absence
+    //     was actually proven.
     {
+        auto selector = explicitNamespace
+            ? mcpp::pm::make_direct_dependency_selector(ns, shortName, nameSpec)
+            : mcpp::pm::resolve_dependency_selector(
+                  nameSpec,
+                  mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+
         auto cfg = mcpp::config::load_or_init(
             /*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
         if (!cfg) {
             mcpp::ui::error(cfg.error().message);
             return 4;
         }
-        mcpp::fetcher::Fetcher f(*cfg);
-        if (!f.read_xpkg_lua(ns, shortName)) {
+
+        auto indices = mcpp::pm::effective_indices(*root);
+        mcpp::pm::IndexRoute route{ &indices, *root, &*cfg };
+        auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+
+        // Does the shared registry answer for any identity we tried? It is the
+        // only index a refresh can do anything about — a project
+        // `[indices] path = …` is whatever the user has on disk.
+        const bool registryInvolved = std::ranges::any_of(selector.candidates,
+            [&](const mcpp::pm::DependencyCoordinate& c) {
+                auto* idx = route.find_for_ns(c.namespace_);
+                return !idx || idx->is_builtin();
+            });
+
+        // Only pay for a refresh when the answer was "no" and the registry
+        // that would have answered is stale — a package that is already on
+        // disk costs zero network round-trips.
+        if (!found.hit && found.conclusive && registryInvolved) {
+            auto xlEnv = mcpp::config::make_xlings_env(*cfg);
+            if (!mcpp::xlings::is_index_fresh(xlEnv, cfg->searchTtlSeconds)) {
+                mcpp::ui::status("Updating", "package index (auto-refresh)");
+                mcpp::xlings::ensure_index_fresh(
+                    xlEnv, cfg->searchTtlSeconds, /*quiet=*/true);
+                found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+            }
+        }
+
+        if (!found.hit && found.conclusive) {
+            std::string hint;
+            if (!selector.candidates.empty()) {
+                for (auto& fqn : mcpp::pm::cross_namespace_matches(
+                         route, selector.candidates.front().shortName)) {
+                    hint += "\n    " + fqn;
+                }
+            }
+            if (!hint.empty()) {
+                hint = "\n  a package with this name exists under another "
+                       "namespace:" + hint;
+            }
+            if (registryInvolved) {
+                hint += "\n  hint: `mcpp index update` if it was published "
+                        "recently";
+            }
             mcpp::ui::error(std::format(
-                "package '{}' not found in any configured index", shortName));
+                "package '{}' not found in any configured index\n  tried: {}{}",
+                nameSpec, detail::format_tried(selector.candidates), hint));
             return 2;
+        }
+        if (!found.hit) {
+            mcpp::ui::warning(std::format(
+                "'{}' could not be verified — no readable index covers that "
+                "namespace yet; adding it unchecked", nameSpec));
+        } else {
+            detail::warn_unpublished_version(found.hit->lua, nameSpec, version);
         }
     }
 

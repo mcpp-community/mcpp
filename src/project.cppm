@@ -101,6 +101,27 @@ export void merge_workspace_deps(mcpp::manifest::Manifest& member,
     merge_map(member.buildDependencies);
 }
 
+// Inherit the workspace root's `[indices]` when the member declares none.
+// A relative `[indices].path` was written at the WORKSPACE ROOT, so it must
+// resolve against `wsRoot` and not the member directory — otherwise every
+// member needs its own `../`-prefixed copy of the same declaration (#224).
+//
+// Shared so every reader of `[indices]` sees the same effective map: the build
+// path resolves dependencies through it, and `mcpp add` decides whether a
+// package exists through it. Two copies of this rule is how the two ended up
+// disagreeing about which packages are real.
+export void inherit_workspace_indices(mcpp::manifest::Manifest& member,
+                                      const mcpp::manifest::Manifest& workspace,
+                                      const std::filesystem::path& wsRoot) {
+    if (!member.indices.empty() || workspace.indices.empty()) return;
+    member.indices = workspace.indices;
+    for (auto& [_, idx] : member.indices) {
+        if (idx.is_local() && idx.path.is_relative()) {
+            idx.path = std::filesystem::weakly_canonical(wsRoot / idx.path);
+        }
+    }
+}
+
 // Resolve which member directory a workspace command acts on, for the
 // single-member case. Shares the match rule (basename OR member path) with
 // prepare_build's member switch, so `build -p X` and `test -p X` agree.

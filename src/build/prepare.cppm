@@ -39,6 +39,7 @@ import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
+import mcpp.pm.index_route;
 import mcpp.pm.mangle;
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
@@ -694,20 +695,10 @@ prepare_build(bool print_fingerprint,
                     m->targetOverrides[triple] = entry;
                 }
             }
-            // Inherit workspace indices if member doesn't define any. A
-            // relative `[indices].path` was declared at the WORKSPACE root,
-            // so it must resolve against `*root` (still the workspace root
-            // here), not the member directory — otherwise every member
-            // needs its own `../`-prefixed copy of the same declaration
-            // (#224).
-            if (m->indices.empty() && !wsManifest->indices.empty()) {
-                m->indices = wsManifest->indices;
-                for (auto& [_, idx] : m->indices) {
-                    if (idx.is_local() && idx.path.is_relative()) {
-                        idx.path = std::filesystem::weakly_canonical(*root / idx.path);
-                    }
-                }
-            }
+            // Inherit workspace indices if member doesn't define any. `*root`
+            // is still the workspace root here, which is what a relative
+            // `[indices].path` was written against (#224).
+            mcpp::project::inherit_workspace_indices(*m, *wsManifest, *root);
 
             mcpp::ui::status("Workspace", std::format("building member '{}'", targetMember));
             root = memberDir;
@@ -730,14 +721,7 @@ prepare_build(bool print_fingerprint,
                     }
                 }
                 // Inherit workspace indices if member doesn't define any
-                if (m->indices.empty() && !wsm->indices.empty()) {
-                    m->indices = wsm->indices;
-                    for (auto& [_, idx] : m->indices) {
-                        if (idx.is_local() && idx.path.is_relative()) {
-                            idx.path = std::filesystem::weakly_canonical(wsRoot / idx.path);
-                        }
-                    }
-                }
+                mcpp::project::inherit_workspace_indices(*m, *wsm, wsRoot);
             }
         }
     }
@@ -1455,28 +1439,19 @@ prepare_build(bool print_fingerprint,
     // different version is needed. Returns the dep's effective root (where
     // mcpp.toml lives) and a fully loaded manifest.
     using LoadedDep = std::pair<std::filesystem::path, mcpp::manifest::Manifest>;
-    // Helper: find the IndexSpec for a namespace from the manifest's [indices].
-    // Returns nullptr if the namespace maps to the default/builtin index.
+    // Index routing — WHICH index answers for a namespace and how its
+    // descriptors are read — lives in mcpp.pm.index_route, shared with the
+    // `mcpp add` existence gate so the two cannot disagree about which
+    // packages are real (#305/#307). `cfg` is filled in per call: the route is
+    // rebuilt on demand because `root` moves when a workspace member is
+    // selected above.
+    auto index_route = [&](mcpp::config::GlobalConfig* cfg = nullptr) {
+        return mcpp::pm::IndexRoute{ &m->indices, *root, cfg };
+    };
     auto findIndexForNs = [&](const std::string& ns)
         -> const mcpp::pm::IndexSpec*
     {
-        if (ns.empty() || ns == std::string(mcpp::pm::kDefaultNamespace)) {
-            // R6: `[indices] default = {...}` (normalized to
-            // kDefaultNamespace by toml.cppm) redirects the default
-            // namespace — return it when present instead of unconditionally
-            // falling back to the builtin index.
-            auto it = m->indices.find(std::string(mcpp::pm::kDefaultNamespace));
-            return it == m->indices.end() ? nullptr : &it->second;
-        }
-        if (auto it = m->indices.find(ns); it != m->indices.end()) {
-            return &it->second;
-        }
-        auto root = ns.substr(0, ns.find('.'));
-        for (auto& [idxName, spec] : m->indices) {
-            if (idxName == ns) return &spec;
-            if (idxName == root) return &spec;
-        }
-        return nullptr;
+        return index_route().find_for_ns(ns);
     };
 
     // Identity-first candidate probe. A candidate is DISAMBIGUATED by the
@@ -1510,19 +1485,7 @@ prepare_build(bool print_fingerprint,
     {
         auto cfg = get_cfg();
         if (!cfg) return std::nullopt;
-
-        auto* idxSpec = findIndexForNs(coord.namespace_);
-        if (idxSpec && idxSpec->is_local()) {
-            auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
-            return mcpp::fetcher::Fetcher::read_xpkg_lua_from_path(
-                indexPath, coord.namespace_, coord.shortName);
-        }
-        if (idxSpec && !idxSpec->is_builtin()) {
-            return mcpp::fetcher::Fetcher::read_xpkg_lua_from_project_data(
-                *root, coord.namespace_, coord.shortName);
-        }
-        mcpp::fetcher::Fetcher fetcher(**cfg);
-        return fetcher.read_xpkg_lua(coord.namespace_, coord.shortName);
+        return index_route(*cfg).read(coord);
     };
 
     auto xpkgLuaMatchesCandidate =
@@ -1613,14 +1576,10 @@ prepare_build(bool print_fingerprint,
             // package that would have materialized a moment later. Local path
             // indices and the builtin index are both readable here, so they stay
             // under the strict rule below.
-            bool anyLazyGitIndex = false;
-            for (auto& c : candidates) {
-                auto* idx = findIndexForNs(c.namespace_);
-                if (idx && !idx->is_builtin() && !idx->is_local()) {
-                    anyLazyGitIndex = true;
-                    break;
-                }
-            }
+            bool anyLazyGitIndex = std::ranges::any_of(candidates,
+                [&](const mcpp::pm::DependencyCoordinate& c) {
+                    return index_route().lazy_git(c.namespace_);
+                });
 
             // T9 (#278) — no candidate resolved. This used to fall through to
             // `candidates.front()` SILENTLY, so mcpp carried on with a namespace
@@ -1641,17 +1600,8 @@ prepare_build(bool print_fingerprint,
                 // error string (see Fetcher::scan_fqns_with_short_name).
                 std::string hint;
                 if (auto cfg = get_cfg()) {
-                    mcpp::fetcher::Fetcher fetcher(**cfg);
-                    auto roots = fetcher.builtin_index_roots();
-                    for (auto& [idxName, idxSpec] : m->indices) {
-                        if (idxSpec.is_local()) {
-                            roots.push_back(
-                                mcpp::config::resolve_project_index_path(
-                                    *root, idxSpec));
-                        }
-                    }
-                    auto fqns = mcpp::fetcher::Fetcher::scan_fqns_with_short_name(
-                        roots, candidates.front().shortName);
+                    auto fqns = mcpp::pm::cross_namespace_matches(
+                        index_route(*cfg), candidates.front().shortName);
                     if (!fqns.empty()) {
                         hint += "\n  a package with this name exists under "
                                 "another namespace:";
