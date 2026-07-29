@@ -2,9 +2,15 @@
 // using the package's xpkg lua descriptor as the version inventory.
 //
 // Part of the package-management subsystem refactor (PR-R4 in
-// `.agents/docs/2026-05-08-pm-subsystem-architecture.md`). Strictly
-// pulled out of `cli.cppm` with no behavior change; the same
-// signatures, the same error strings, the same platform key picking.
+// `.agents/docs/2026-05-08-pm-subsystem-architecture.md`), originally
+// pulled out of `cli.cppm` verbatim.
+//
+// The descriptor is reached through `mcpp.pm.index_route`, never through a
+// bare `Fetcher`. A `Fetcher` only ever reads the shared registry, so while
+// these functions took one, a dependency served by a project
+// `[indices]` entry resolved fine as an exact version and then failed the
+// moment the same dependency carried a SemVer constraint — candidate
+// selection could see the package, version resolution could not (#308).
 //
 // Implementation note: `resolve_semver` is **not** declared inline on
 // purpose. Inlining it across modules makes every importer
@@ -20,7 +26,8 @@ import mcpp.manifest;
 import mcpp.platform;
 import mcpp.platform.axis;
 import mcpp.pm.compat;
-import mcpp.pm.package_fetcher;
+import mcpp.pm.dep_spec;
+import mcpp.pm.index_route;
 import mcpp.version_req;
 
 export namespace mcpp::pm {
@@ -45,7 +52,7 @@ bool is_version_constraint(std::string_view v);
 std::expected<std::string, std::string>
 resolve_semver(std::string_view ns, std::string_view shortName,
                std::string_view constraint,
-               mcpp::pm::Fetcher& fetcher,
+               const mcpp::pm::IndexRoute& route,
                const mcpp::platform::PlatformKey& platform);
 
 // Try to AND-merge two version constraints and resolve to a single
@@ -54,7 +61,7 @@ std::expected<std::string, std::string>
 try_merge_semver(std::string_view ns, std::string_view shortName,
                  std::string_view a,
                  std::string_view b,
-                 mcpp::pm::Fetcher& fetcher,
+                 const mcpp::pm::IndexRoute& route,
                  const mcpp::platform::PlatformKey& platform);
 
 // ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────────────
@@ -62,13 +69,13 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
 std::expected<std::string, std::string>
 resolve_semver(std::string_view name,
                std::string_view constraint,
-               mcpp::pm::Fetcher& fetcher);
+               const mcpp::pm::IndexRoute& route);
 
 std::expected<std::string, std::string>
 try_merge_semver(std::string_view name,
                  std::string_view a,
                  std::string_view b,
-                 mcpp::pm::Fetcher& fetcher);
+                 const mcpp::pm::IndexRoute& route);
 
 } // namespace mcpp::pm
 
@@ -88,18 +95,26 @@ bool is_version_constraint(std::string_view v) {
 std::expected<std::string, std::string>
 resolve_semver(std::string_view ns, std::string_view shortName,
                std::string_view constraint,
-               mcpp::pm::Fetcher& fetcher,
+               const mcpp::pm::IndexRoute& route,
                const mcpp::platform::PlatformKey& platform)
 {
     namespace vr = mcpp::version_req;
     auto qname = mcpp::pm::compat::qualified_name(ns, shortName);
 
-    auto luaContent = fetcher.read_xpkg_lua(ns, shortName);
+    auto luaContent = route.read(mcpp::pm::DependencyCoordinate{
+        .namespace_ = std::string(ns), .shortName = std::string(shortName) });
     if (!luaContent) {
+        // `mcpp index update` is only advice worth giving when the shared
+        // registry (or a not-yet-cloned git index) is what would have answered.
+        // A project `[indices] path = …` is whatever the user has on disk, and
+        // telling them to refresh it sends them nowhere.
+        auto* idx = route.find_for_ns(ns);
+        const bool refreshable = !idx || idx->is_builtin() || !idx->is_local();
         return std::unexpected(std::format(
-            "dependency '{}' has SemVer constraint '{}' but the index entry "
-            "isn't cloned locally yet — run `mcpp index update` first",
-            qname, constraint));
+            "dependency '{}' has SemVer constraint '{}' but no readable index "
+            "entry for it{}",
+            qname, constraint,
+            refreshable ? " — run `mcpp index update` first" : ""));
     }
 
     auto req = vr::parse_req(constraint);
@@ -145,7 +160,7 @@ std::expected<std::string, std::string>
 try_merge_semver(std::string_view ns, std::string_view shortName,
                  std::string_view a,
                  std::string_view b,
-                 mcpp::pm::Fetcher& fetcher,
+                 const mcpp::pm::IndexRoute& route,
                  const mcpp::platform::PlatformKey& platform)
 {
     auto canon = [](std::string_view v) -> std::string {
@@ -162,7 +177,7 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
     else if (!cb.empty())            merged = cb;
     else                              merged = "*";
 
-    return resolve_semver(ns, shortName, merged, fetcher, platform);
+    return resolve_semver(ns, shortName, merged, route, platform);
 }
 
 // ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────────────
@@ -170,13 +185,13 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
 std::expected<std::string, std::string>
 resolve_semver(std::string_view name,
                std::string_view constraint,
-               mcpp::pm::Fetcher& fetcher)
+               const mcpp::pm::IndexRoute& route)
 {
     auto resolved = mcpp::pm::compat::resolve_package_name(name, "");
     // Legacy overload: no target is threaded through it, so it names the host
     // axis explicitly rather than inheriting a silent default (#254).
     return resolve_semver(resolved.namespace_, resolved.shortName,
-                          constraint, fetcher,
+                          constraint, route,
                           mcpp::platform::HostPlatform::current());
 }
 
@@ -184,12 +199,12 @@ std::expected<std::string, std::string>
 try_merge_semver(std::string_view name,
                  std::string_view a,
                  std::string_view b,
-                 mcpp::pm::Fetcher& fetcher)
+                 const mcpp::pm::IndexRoute& route)
 {
     auto resolved = mcpp::pm::compat::resolve_package_name(name, "");
     // Legacy overload — see the resolve_semver note above.
     return try_merge_semver(resolved.namespace_, resolved.shortName,
-                            a, b, fetcher,
+                            a, b, route,
                             mcpp::platform::HostPlatform::current());
 }
 

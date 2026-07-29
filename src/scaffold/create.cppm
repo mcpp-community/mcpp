@@ -14,6 +14,7 @@ import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.manifest;
 import mcpp.pm.compat;
+import mcpp.pm.index_route;
 import mcpp.platform.axis;
 import mcpp.pm.resolver;
 import mcpp.scaffold;
@@ -76,7 +77,10 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
     if (version.empty()) {
         // `mcpp add` has no target concept — the axis it means is the host,
         // named explicitly rather than inherited from a default (#254).
-        auto v = mcpp::pm::resolve_semver(ns, shortName, "*", fetcher,
+        // A template package is always a registry package — `mcpp new` has no
+        // project yet, so there are no `[indices]` to route through.
+        mcpp::pm::IndexRoute registryOnly{ nullptr, {}, &*cfg };
+        auto v = mcpp::pm::resolve_semver(ns, shortName, "*", registryOnly,
                                           mcpp::platform::HostPlatform::current());
         if (!v) return std::unexpected(v.error());
         version = *v;

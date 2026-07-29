@@ -1411,34 +1411,6 @@ prepare_build(bool print_fingerprint,
     };
     std::deque<WorkItem> worklist;
 
-    // SemVer constraint resolver, shared across the worklist so transitive
-    // deps with caret/range constraints (`^1.0`) also get pinned to a
-    // concrete version before fetch.
-    auto resolveSemver = [&](mcpp::manifest::DependencySpec& s,
-                              const std::string& depName)
-        -> std::expected<void, std::string>
-    {
-        if (s.isPath() || s.isGit()) return {};
-        if (!mcpp::pm::is_version_constraint(s.version)) return {};
-        auto cfg = get_cfg();
-        if (!cfg) return std::unexpected(cfg.error());
-        mcpp::fetcher::Fetcher fetcher(**cfg);
-        // 0.0.10+: use structured namespace from DependencySpec.
-        auto resolved = mcpp::pm::resolve_semver(
-            s.namespace_, s.shortName.empty() ? depName : s.shortName,
-            s.version, fetcher, targetPlatform);
-        if (!resolved) return std::unexpected(resolved.error());
-        mcpp::ui::info("Resolved",
-            std::format("{} {} → v{}", depName, s.version, *resolved));
-        s.version = std::move(*resolved);
-        return {};
-    };
-
-    // Acquire a version-source dep at a specific pinned version. Used both
-    // by the first-time walk and by the SemVer merger when a re-fetch at a
-    // different version is needed. Returns the dep's effective root (where
-    // mcpp.toml lives) and a fully loaded manifest.
-    using LoadedDep = std::pair<std::filesystem::path, mcpp::manifest::Manifest>;
     // Index routing — WHICH index answers for a namespace and how its
     // descriptors are read — lives in mcpp.pm.index_route, shared with the
     // `mcpp add` existence gate so the two cannot disagree about which
@@ -1454,6 +1426,35 @@ prepare_build(bool print_fingerprint,
         return index_route().find_for_ns(ns);
     };
 
+    // SemVer constraint resolver, shared across the worklist so transitive
+    // deps with caret/range constraints (`^1.0`) also get pinned to a
+    // concrete version before fetch.
+    auto resolveSemver = [&](mcpp::manifest::DependencySpec& s,
+                              const std::string& depName)
+        -> std::expected<void, std::string>
+    {
+        if (s.isPath() || s.isGit()) return {};
+        if (!mcpp::pm::is_version_constraint(s.version)) return {};
+        auto cfg = get_cfg();
+        if (!cfg) return std::unexpected(cfg.error());
+        // 0.0.10+: use structured namespace from DependencySpec. The route (not
+        // a bare Fetcher) is what reaches a descriptor served by a project
+        // `[indices]` entry — see #308.
+        auto resolved = mcpp::pm::resolve_semver(
+            s.namespace_, s.shortName.empty() ? depName : s.shortName,
+            s.version, index_route(*cfg), targetPlatform);
+        if (!resolved) return std::unexpected(resolved.error());
+        mcpp::ui::info("Resolved",
+            std::format("{} {} → v{}", depName, s.version, *resolved));
+        s.version = std::move(*resolved);
+        return {};
+    };
+
+    // Acquire a version-source dep at a specific pinned version. Used both
+    // by the first-time walk and by the SemVer merger when a re-fetch at a
+    // different version is needed. Returns the dep's effective root (where
+    // mcpp.toml lives) and a fully loaded manifest.
+    using LoadedDep = std::pair<std::filesystem::path, mcpp::manifest::Manifest>;
     // Identity-first candidate probe. A candidate is DISAMBIGUATED by the
     // DECLARED (namespace, name) of whatever descriptor the index holds — never
     // by whether a canonically-named file `<ns>.<short>.lua` happens to exist on
@@ -2568,13 +2569,12 @@ prepare_build(bool print_fingerprint,
                 // PR adds multi-version mangling as a Level-1 fallback).
                 auto cfg = get_cfg();
                 if (!cfg) return std::unexpected(cfg.error());
-                mcpp::fetcher::Fetcher fetcher(**cfg);
 
                 auto merged = mcpp::pm::try_merge_semver(
                     key.ns, key.shortName,
                     it->second.constraint,
                     item.originalConstraint,
-                    fetcher, targetPlatform);
+                    index_route(*cfg), targetPlatform);
                 if (!merged) {
                     // Level 1 fallback: multi-version mangling. Two
                     // versions can't be reconciled by SemVer, but they
