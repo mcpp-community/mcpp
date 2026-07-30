@@ -807,7 +807,7 @@ TEST(NinjaBackend, StageRuleRunsThroughMcppWithRestat) {
     auto ninja = emit_ninja_string(plan);
 
     EXPECT_NE(ninja.find("rule stage_file\n"), std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("  command = $mcpp stage --output $out $in\n"),
+    EXPECT_NE(ninja.find("  command = $mcpp stage $verify --output $out $in\n"),
               std::string::npos) << ninja;
     // restat is what keeps a skipped (already-equivalent) stage from dirtying
     // every importer of the staged BMI.
@@ -876,10 +876,15 @@ TEST(NinjaBackend, StdArtifactsAndRuntimeDllsUseTheStageRule) {
 
     auto ninja = emit_ninja_string(plan);
 
+    // The std artifacts are fingerprint-scoped, so they carry the size-only
+    // check: it needs no OPEN of the destination, which is what lets staging
+    // survive a holder that denies reads (Windows FileShare.None).
     EXPECT_NE(ninja.find("build pcm.cache/std.pcm : stage_file "
-                         "/cache/bmi/fp/pcm.cache/std.pcm"),
+                         "/cache/bmi/fp/pcm.cache/std.pcm\n"
+                         "  verify = --verify size\n"),
               std::string::npos) << ninja;
-    EXPECT_NE(ninja.find("build obj/std.o : stage_file /cache/bmi/fp/std.o"),
+    EXPECT_NE(ninja.find("build obj/std.o : stage_file /cache/bmi/fp/std.o\n"
+                         "  verify = --verify size\n"),
               std::string::npos) << ninja;
     // std.compat keeps its order-only dependency on the staged std BMI.
     EXPECT_NE(ninja.find("build pcm.cache/std.compat.pcm : stage_file "
@@ -887,8 +892,12 @@ TEST(NinjaBackend, StdArtifactsAndRuntimeDllsUseTheStageRule) {
               std::string::npos) << ninja;
     // Windows DLL deployment shares the rule — and therefore the
     // skip-if-equivalent behaviour that keeps a loaded DLL from failing a build.
-    EXPECT_NE(ninja.find("build bin/libfoo.dll : stage_file /pkg/lib/libfoo.dll"),
-              std::string::npos) << ninja;
+    // But NOT the size-only shortcut: a rebuilt DLL keeps its size (PE sections
+    // are page-padded), so this edge must compare content.
+    auto dllEdge = ninja.find("build bin/libfoo.dll : stage_file /pkg/lib/libfoo.dll\n");
+    ASSERT_NE(dllEdge, std::string::npos) << ninja;
+    auto afterDll = ninja.substr(dllEdge, ninja.find('\n', dllEdge + 1) - dllEdge + 1);
+    EXPECT_EQ(afterDll.find("verify"), std::string::npos) << afterDll;
 }
 
 // ── #311: staging failures must stay readable through the output filter ──

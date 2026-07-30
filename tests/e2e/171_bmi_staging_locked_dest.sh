@@ -14,6 +14,13 @@
 # through a sentinel file, so a PowerShell that never started fails the test
 # instead of letting it pass for the wrong reason.
 #
+# Note the holder is STRICTER than clangd: CreateFromFile(path, FileMode.Open)
+# takes FileShare.None, so the destination cannot even be OPENED — content
+# comparison is impossible. Surviving that is why the std staging edges verify
+# by SIZE (fingerprint-scoped ⇒ equal size is equivalence, and size comes from
+# directory metadata, which needs no open). Passing here therefore implies the
+# real clangd case, which only denies writes.
+#
 # The load-bearing assertion is platform-neutral and root-proof: an equivalent
 # destination must not be written AT ALL (same inode, same mtime, same size).
 # Permissions alone would not do — root ignores them, and the container e2e job
@@ -100,7 +107,7 @@ if [[ $rc -ne 0 ]]; then
     echo "FAIL: staging an already-equivalent BMI failed while the destination was held"
     exit 1
 fi
-grep -q "stage --output" build2.log || {
+grep -qE "stage .*--output" build2.log || {
     cat build2.log; echo "FAIL: the staging edge did not run"; exit 1; }
 
 # The real assertion: nothing was written. Not "the write succeeded anyway".

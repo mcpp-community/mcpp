@@ -229,6 +229,20 @@ staged,理由是 fp 判据;但同一条 rule 还搬 **DLL**(`runtimeDeployFiles`
 的是正确性。`--verify size` / `MCPP_STAGE_VERIFY=size` 保留给「调用方确知源是 fp 作用域」的
 快路径。选逐字节比较而不是 hash:同样的 I/O 成本,但没有碰撞面,且能提前退出。
 
+**但 verify 档位是 per-edge 的,不是全局一档**(这一条也是 Windows CI 逼出来的)。判等要读目标
+就必须**打开**它,而持有者可以连读都不给:e2e 171 的 PowerShell 用 `FileShare.None` 映射,
+`same_content` 连 open 都失败 → 判不出等价 → 去写 → `ERROR_SHARING_VIOLATION(32)` → 构建挂。
+而 **size 来自目录元数据,不需要 open**,所以:
+
+| edge | verify | 理由 |
+|---|---|---|
+| std BMI / std.o / std.compat.* | `--verify size` | fp 作用域 ⇒ 等长即等价;且能在「连读都被拒」的持有下照样跳过 |
+| Windows DLL 部署 / `runtime_alias` | 内容(默认) | 源不是 fp 作用域,PE 节对齐让等长-不同内容很常见 |
+
+也就是说 #311 那条真正的路径(clangd 映射 std BMI)现在**连排他锁都能扛**,而可能过期的
+DLL 仍然逐字节把关。ninja 里用一个 per-edge 变量 `$verify` 承载(注意 ninja 会裁掉变量值的
+尾部空白,所以空格必须留在 rule 的 command 串里)。
+
 **为什么步 2 连时间戳都不碰**（这一条实测修正过一次）：
 
 | 做法 | 下游是否被级联 | 之后 edge 状态 |

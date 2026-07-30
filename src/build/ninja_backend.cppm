@@ -440,8 +440,21 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // that clangd had memory-mapped failed the whole build with error 1224.
     // `restat = 1` is what makes the no-write path actually pay off — a skipped
     // stage must not dirty every importer of the staged BMI.
+    // $verify is per-edge: empty (⇒ content comparison, the safe default) for
+    // payloads whose bytes can change under an unchanged name — a rebuilt DLL
+    // keeps its size, PE sections are page-padded — and `--verify size` for the
+    // std artifacts, which are fingerprint-scoped: the cache dir and this build
+    // dir share the fp that covers compiler identity, target triple, stdlib,
+    // std source hash and the dialect flags, so equal size IS equivalence.
+    //
+    // That distinction is not a micro-optimization: reading the destination
+    // needs to OPEN it, and a holder may deny even that (Windows CI: a
+    // MemoryMappedFile opened with FileShare.None → ERROR_SHARING_VIOLATION on
+    // open, so content can't be compared and staging fails). Size comes from
+    // directory metadata, which stays readable — so the fingerprint-scoped
+    // edges survive a lock that would otherwise be unsurvivable.
     append("rule stage_file\n");
-    append("  command = $mcpp stage --output $out $in\n");
+    append("  command = $mcpp stage $verify --output $out $in\n");
     append("  description = STAGE $out\n");
     append("  restat = 1\n\n");
 
@@ -821,6 +834,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     // Stage prebuilt std artifacts into the compiler-specific BMI cache.
+    // These four are fingerprint-scoped (see the stage_file rule comment), so
+    // they carry the size-only equivalence check.
+    // (ninja trims trailing whitespace in variable values, hence the space
+//  lives in the rule's command string, not here)
+    static constexpr std::string_view kFpScopedVerify = "  verify = --verify size\n";
     auto std_bmi_dst = mcpp::toolchain::staged_std_bmi_path(plan.toolchain, {});
     auto std_o_dst = std::filesystem::path("obj")
                    / std::format("std{}", dial.objExt);
@@ -829,8 +847,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     if (has_std_artifacts) {
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_bmi_dst),
                            escape_ninja_path(plan.stdBmiPath)));
-        append(std::format("build {} : stage_file {}\n\n", escape_ninja_path(std_o_dst),
+        append(std::string(kFpScopedVerify));
+        append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_o_dst),
                            escape_ninja_path(plan.stdObjectPath)));
+        append(std::string(kFpScopedVerify));
+        append("\n");
     }
 
     bool has_std_compat = !plan.stdCompatBmiPath.empty() && !plan.stdCompatObjectPath.empty();
@@ -844,8 +865,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append(std::format("build {} : stage_file {} | {}\n", escape_ninja_path(compat_bmi_dst),
                            escape_ninja_path(plan.stdCompatBmiPath),
                            escape_ninja_path(std_bmi_dst)));
-        append(std::format("build {} : stage_file {}\n\n", escape_ninja_path(compat_o_dst),
+        append(std::string(kFpScopedVerify));
+        append(std::format("build {} : stage_file {}\n", escape_ninja_path(compat_o_dst),
                            escape_ninja_path(plan.stdCompatObjectPath)));
+        append(std::string(kFpScopedVerify));
+        append("\n");
     }
 
     auto bmi_path = [&traits](std::string_view name) {

@@ -71,7 +71,7 @@ done
 touch "$SRC"
 "$MCPP" build -v > build2.log 2>&1 || { cat build2.log; echo "FAIL: rebuild after re-stage"; exit 1; }
 
-grep -q "stage --output" build2.log || {
+grep -qE "stage .*--output" build2.log || {
     cat build2.log; echo "FAIL: the staging edge did not re-run at all"; exit 1; }
 if grep -qE '(-c|/c) .*main\.cpp' build2.log; then
     cat build2.log

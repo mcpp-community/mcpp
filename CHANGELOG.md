@@ -15,6 +15,8 @@
 
   「已等价」由**逐字节比较**判定 —— 无条件正确:内容相同就是不需要写。这个判断只在 ninja 已经认定 edge 脏了才会跑,所以代价可以忽略。(`--verify size` 保留给确知源是 fingerprint 作用域的调用方:build dir 与缓存目录共享同一个 fp,而 fp 已覆盖编译器身份/target triple/stdlib/std 源哈希/标准与方言 flag。但它**不是默认** —— 同一条 rule 还搬 DLL,而 PE 的节对齐让「真的重建了、大小却一样」十分常见。)dep BMI 缓存一直就是「已存在就不动」的(`bmi_cache.cppm`: *"Existing project outputs are left untouched"*)—— std staging 是全仓库唯一强制覆写的那一处,这个不对称本身就是缺陷。
 
+  **verify 档位是 per-edge 的**:std BMI / `std.o` / `std.compat.*` 走 `--verify size`,Windows DLL 部署与 `runtime_alias` 走默认的逐字节比较。原因是判等要读目标就必须 open 它,而持有者可以连读都不给(Windows `FileShare.None` 映射 → open 即 `ERROR_SHARING_VIOLATION`);size 来自目录元数据、不需要 open。于是 #311 那条真实路径(clangd 映射 std BMI)**连排他锁都扛得住**,而可能过期的 DLL 仍逐字节把关 —— 前者靠 fingerprint 作用域保证等长即等价,后者没有这个保证。
+
   同一条 rule 也用于 **Windows 运行期 DLL 部署**,以及 Windows 上的 `runtime_alias`(PE 没有 soname 符号链接,别名就是刚建出来的 DLL 的副本),因此「往上一次 `mcpp run` 还加载着的 DLL 上覆写」这个同类失败一并治好。POSIX 的 `runtime_alias` 保持符号链接不变 —— 那里符号链接是语义,不只是写法。
 
 - **重新 stage 一个未变的 std BMI 不再重编整张模块图。** staged BMI 是每个 importer 的 implicit input,而 staging rule 既不保留 mtime 也没有 `restat`,于是缓存侧 BMI 只要 mtime 变新(在下面那个缓存根缺陷下,**换个 cwd 跑就会发生**),所有 `import std` 的 TU 全部重编 —— 即使字节完全相同。
