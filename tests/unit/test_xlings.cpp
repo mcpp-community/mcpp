@@ -454,3 +454,70 @@ TEST(XlingsSeed, ArtifactAndSourceEmittedWhenSet) {
         std::string::npos) << text;
     std::filesystem::remove_all(dir);
 }
+
+// ─── Index identity + clock-skew hardening (#315) ────────────────────────
+
+TEST(XlingsIndexFreshness, FutureMarkerIsStaleNotEternallyFresh) {
+    auto home = make_tempdir("mcpp-xlings-index-future");
+    auto dir  = home / "data" / "mcpplibs";
+    std::filesystem::create_directories(dir / "pkgs");
+    auto marker = dir / ".mcpp-index-updated";
+    std::ofstream(marker) << "ok\n";
+    // Clock skew in a container, a tar that preserved mtimes, a restored CI
+    // cache: a marker in the future used to yield a negative age, which read as
+    // "fresh" and stayed that way until the wall clock caught up.
+    std::error_code ec;
+    std::filesystem::last_write_time(
+        marker, std::filesystem::file_time_type::clock::now() + std::chrono::hours{72}, ec);
+
+    mcpp::xlings::Env env{.home = home};
+    auto st = mcpp::xlings::default_index_status(env, 3600);
+
+    EXPECT_FALSE(st.fresh);
+    EXPECT_EQ(st.ageSeconds, -1);   // unusable timestamp reports as unknown
+
+    std::filesystem::remove_all(home);
+}
+
+TEST(XlingsIndexRevision, ReadsTrimmedValueAndDegradesToNullopt) {
+    auto home = make_tempdir("mcpp-xlings-index-rev");
+    auto dir  = home / "data" / "mcpplibs";
+    std::filesystem::create_directories(dir / "pkgs");
+
+    // Absent: a local `path` index has no such file — must not be an error.
+    EXPECT_FALSE(mcpp::xlings::index_revision(dir).has_value());
+
+    // Present. The observed files carry no trailing newline, but a writer that
+    // added one (or a \r from Windows) must not change the value, or every run
+    // would look like the index had changed.
+    std::ofstream(dir / ".xlings-index-version") << "  8d67478\r\n";
+    auto rev = mcpp::xlings::index_revision(dir);
+    ASSERT_TRUE(rev.has_value());
+    EXPECT_EQ(*rev, "8d67478");
+
+    // Blank is not an identity.
+    std::ofstream(dir / ".xlings-index-version", std::ios::trunc) << "\n";
+    EXPECT_FALSE(mcpp::xlings::index_revision(dir).has_value());
+
+    // The value is OPAQUE: sub-indexes carry a date version, not a sha.
+    std::ofstream(dir / ".xlings-index-version", std::ios::trunc) << "2026.7.30.1";
+    EXPECT_EQ(mcpp::xlings::index_revision(dir).value(), "2026.7.30.1");
+
+    std::filesystem::remove_all(home);
+}
+
+TEST(XlingsIndexRevision, StatusCarriesTheRevision) {
+    auto home = make_tempdir("mcpp-xlings-index-rev-status");
+    auto dir  = home / "data" / "mcpplibs";
+    std::filesystem::create_directories(dir / "pkgs");
+    std::ofstream(dir / ".mcpp-index-updated") << "ok\n";
+    std::ofstream(dir / ".xlings-index-version") << "abc1234";
+
+    mcpp::xlings::Env env{.home = home};
+    auto st = mcpp::xlings::default_index_status(env, 3600);
+
+    ASSERT_TRUE(st.rev.has_value());
+    EXPECT_EQ(*st.rev, "abc1234");
+
+    std::filesystem::remove_all(home);
+}

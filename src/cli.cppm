@@ -28,6 +28,7 @@ import mcpp.cli.cmd_self;
 import mcpp.cli.cmd_toolchain;
 import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
+import mcpp.platform.env;            // --offline → MCPP_OFFLINE
 import mcpp.ui;
 import mcpp.log;
 
@@ -84,6 +85,7 @@ void print_usage() {
     std::println("  --cache <MODE>                       Dependency cache: global (default) | local | off");
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
+    std::println("  --offline                            Never touch the network (also: MCPP_OFFLINE=1)");
     std::println("");
     std::println("Docs: https://github.com/mcpp-community/mcpp/tree/main/docs");
 }
@@ -103,6 +105,12 @@ int run(int argc, char** argv) {
         if      (a == "--quiet" || a == "-q") mcpp::ui::set_quiet(true);
         else if (a == "--no-color")           mcpp::ui::disable_color();
         else if (a == "--verbose" || a == "-v") mcpp::log::set_verbose(true);
+        // --offline is published as the env var rather than plumbed through
+        // BuildOverrides: its consumers are index refresh, package install and
+        // toolchain auto-install, which sit in three subsystems and would each
+        // need a parameter threaded down. Same shape as MCPP_VERBOSE above, and
+        // it makes `MCPP_OFFLINE=1` and `--offline` literally the same switch.
+        else if (a == "--offline") mcpp::platform::env::set("MCPP_OFFLINE", "1");
     }
     // Env override (observability, esp. CI): MCPP_VERBOSE=<non-empty, not "0">
     // turns on verbose logging for EVERY mcpp invocation — including the ones
@@ -203,6 +211,9 @@ int run(int argc, char** argv) {
             .help("Show detailed progress on stderr").global())
         .option(cl::Option("no-color")
             .help("Disable colored output").global())
+        .option(cl::Option("offline")
+            .help("Never touch the network (index refresh, downloads, toolchain install)")
+            .global())
 
         // ─── project commands ──────────────────────────────────────────
         .subcommand(cl::App("new")

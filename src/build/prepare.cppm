@@ -42,6 +42,7 @@ import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
 import mcpp.pm.index_route;
+import mcpp.pm.index_refresh;
 import mcpp.pm.mangle;
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
@@ -1146,27 +1147,39 @@ prepare_build(bool print_fingerprint,
                     mcpp::fetcher::make_path_ctx(&**get_cfg(), *root))));
     } else if (tcSpec.has_value() && *tcSpec == "system") {
         // Explicit user opt-in to system PATH compiler — kept as escape hatch.
-    } else if (auto* opt = std::getenv("MCPP_NO_AUTO_INSTALL"); opt && *opt && *opt != '0') {
+    } else if (mcpp::platform::env::offline_mode()
+               || mcpp::platform::env::no_auto_install()) {
         // CI / offline / test opt-out: hard-error instead of silently
         // pulling ~800 MB of toolchain. Preserves the original M5.5
         // contract for environments that need it.
+        //
+        // `--offline` / MCPP_OFFLINE subsumes MCPP_NO_AUTO_INSTALL: the older
+        // name only ever covered this one gate, which made "don't use the
+        // network" three separate concepts with three spellings. The old var is
+        // kept working (it predates offline mode and CI still exports it).
         namespace pins = mcpp::toolchain::triple::pins;
+        // Name the knob that actually fired, not a fixed one: telling a user
+        // who passed `--offline` to unset MCPP_NO_AUTO_INSTALL sends them
+        // looking for a variable they never set.
+        std::string_view release = mcpp::platform::env::offline_mode()
+            ? "or drop --offline / unset MCPP_OFFLINE to let mcpp auto-install."
+            : "or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.";
         if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
             return std::unexpected(std::format(
                 "no toolchain configured.\n"
                 "       run one of:\n"
                 "         mcpp toolchain install {}\n"
                 "         mcpp toolchain default {}\n"
-                "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.",
-                pins::kSuggestLlvm, pins::kFirstRunMacWin));
+                "       {}",
+                pins::kSuggestLlvm, pins::kFirstRunMacWin, release));
         } else {
             return std::unexpected(std::format(
                 "no toolchain configured.\n"
                 "       run one of:\n"
                 "         mcpp toolchain install {}\n"
                 "         mcpp toolchain default {}\n"
-                "       or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.",
-                pins::kSuggestGccMusl, pins::kFirstRunLinuxOther));
+                "       {}",
+                pins::kSuggestGccMusl, pins::kFirstRunLinuxOther, release));
         }
     } else {
         // First-run UX: no project-level [toolchain], no global default,
@@ -1388,48 +1401,43 @@ prepare_build(bool print_fingerprint,
     // two different exact versions is an error — mcpp prints both
     // requesting parents and asks the user to align them.
 
-    // Auto-refresh the builtin package index only when a version dependency
-    // is actually routed there. Local/remote project indices are handled by
-    // the project-scoped setup below; refreshing the global index for those
-    // packages is both unnecessary and can make offline/local-index builds
-    // block on unrelated remote repositories.
+    // Refresh the builtin package index only when a dependency cannot be
+    // resolved from the local copy (#315).
+    //
+    // This used to fire whenever the refresh marker was older than an hour,
+    // whether or not anything was actually missing — so every build with a
+    // registry dependency paid a multi-repo network sync once an hour, which is
+    // minutes on a slow or blocked network for data it already had. The policy
+    // now lives in mcpp.pm.index_refresh and is shared with `mcpp add` and the
+    // xim install gate, which had each derived their own (and disagreed).
+    //
+    // Nothing here decides anything itself — in particular the "a miss proves
+    // nothing for this namespace" rule must not be re-derived; see that module.
     if (!m->dependencies.empty()) {
-        auto usesBuiltinIndex = [&](const mcpp::manifest::DependencySpec& spec) {
-            if (spec.isPath() || spec.isGit()) return false;
-
-            auto ns = spec.namespace_.empty()
-                ? std::string(mcpp::pm::kDefaultNamespace)
-                : spec.namespace_;
-            if (ns == mcpp::pm::kDefaultNamespace) {
-                // R6: `[indices] default = {...}` (normalized to
-                // kDefaultNamespace by toml.cppm) redirects the default
-                // namespace away from the builtin registry — consult it
-                // before assuming builtin, same as any named namespace.
-                auto it = m->indices.find(std::string(mcpp::pm::kDefaultNamespace));
-                return it == m->indices.end() || it->second.is_builtin();
-            }
-
-            auto it = m->indices.find(ns);
-            if (it == m->indices.end()) return true;
-            return it->second.is_builtin();
-        };
-
-        bool needsBuiltinIndexRefresh = false;
-        for (auto& [_, spec] : m->dependencies) {
-            if (usesBuiltinIndex(spec)) {
-                needsBuiltinIndexRefresh = true;
-                break;
-            }
-        }
-        if (needsBuiltinIndexRefresh) {
-            auto cfg2 = get_cfg();
-            if (cfg2) {
-                auto xlEnv = mcpp::config::make_xlings_env(**cfg2);
-                if (!mcpp::xlings::is_index_fresh(xlEnv, (*cfg2)->searchTtlSeconds)) {
-                    mcpp::ui::status("Updating", "package index (auto-refresh)");
-                    mcpp::xlings::ensure_index_fresh(
-                        xlEnv, (*cfg2)->searchTtlSeconds, /*quiet=*/true);
+        if (auto cfg2 = get_cfg()) {
+            auto xlEnv  = mcpp::config::make_xlings_env(**cfg2);
+            auto policy = mcpp::pm::policy_for(**cfg2);
+            // Same routing the dependency walk below uses (the `index_route`
+            // lambda is declared further down; this is the identical value).
+            mcpp::pm::IndexRoute route{ &m->indices, *root, *cfg2 };
+            for (auto& [depName, spec] : m->dependencies) {
+                auto decision = mcpp::pm::decide_for_dependency(
+                    route, depName, spec, xlEnv, targetPlatform, policy);
+                if (!decision.shouldRefresh) {
+                    mcpp::log::verbose("index", std::format(
+                        "{}: {}", decision.subject,
+                        mcpp::pm::reason_text(decision.reason)));
+                    continue;
                 }
+                // A failed refresh is not a failed build: the dependency walk
+                // below may still resolve everything from what is on disk, and
+                // if it cannot, it reports the actual missing package with the
+                // index's age attached. Failing here instead would turn a
+                // transient network blip into a hard stop for a build that
+                // needed no network at all.
+                if (auto r = mcpp::pm::apply(decision, xlEnv); !r)
+                    mcpp::ui::warning(r.error());
+                break;   // one sync covers every dependency
             }
         }
     }
@@ -1753,6 +1761,17 @@ prepare_build(bool print_fingerprint,
                     }
                 }
 
+                // Advisory, never a gate (#315): now that a build only refreshes
+                // the index on a miss, "not found" and "your copy of the index
+                // is from last month" are easy to confuse. State which index
+                // answered and how old it is, so the next step is obvious
+                // instead of guessed at.
+                if (auto cfgA = get_cfg()) {
+                    hint += std::format("\n  index: {}\n  hint: `mcpp index update` "
+                                        "if it was published recently",
+                        mcpp::pm::staleness_note(
+                            mcpp::config::make_xlings_env(**cfgA)));
+                }
                 return std::unexpected(std::format(
                     "dependency '{}': no package found under the namespaces "
                     "mcpp searched\n  tried: {}{}",
@@ -1971,6 +1990,22 @@ prepare_build(bool print_fingerprint,
             // progress line and errors should echo back.
             auto displayName = ns.empty() ? shortName
                 : std::format("{}.{}", ns, shortName);
+
+            // Offline (#315). Checked HERE, at the point of download, and not
+            // any earlier: everything above this line — reading descriptors,
+            // resolving versions, reusing an already-installed package — is
+            // local, and an offline build that has its dependencies must
+            // succeed. Only the download itself is refused, and it names the
+            // package rather than surfacing a socket error from three layers
+            // down. (The toolchain payload path has its own gate; this is the
+            // dependency path, which does not go through resolve_xpkg_path.)
+            if (mcpp::platform::env::offline_mode()) {
+                return std::unexpected(std::format(
+                    "offline mode: dependency '{}' v{} is not installed and "
+                    "cannot be downloaded\n"
+                    "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
+                    displayName, version));
+            }
             mcpp::ui::info("Downloading", std::format("{} v{}", displayName, version));
 
             // #238: retain whatever error/warn text the child DID emit so we

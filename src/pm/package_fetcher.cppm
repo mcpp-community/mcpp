@@ -15,6 +15,7 @@ export module mcpp.pm.package_fetcher;
 import std;
 import mcpp.config;
 import mcpp.log;
+import mcpp.platform;         // env::offline_mode
 import mcpp.manifest;        // xpkg_lua_identity_matches — descriptor identity gate
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
@@ -1004,6 +1005,17 @@ Fetcher::resolve_xpkg_path(std::string_view target,
 
     // 3. Install via xlings (primary path).
     if (autoInstall) {
+        // Offline is checked HERE, after the "already installed" fast paths
+        // above: a build whose packages are all present must stay fully
+        // functional offline — that is the whole point. Only an actual
+        // download attempt is refused, and it names the package so the user
+        // knows what to fetch rather than seeing a generic network error.
+        if (mcpp::platform::env::offline_mode()) {
+            return std::unexpected(CallError{ std::format(
+                "offline mode: `{}@{}` is not installed and cannot be downloaded\n"
+                "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
+                parsed.packageName, parsed.version) });
+        }
         if (parsed.indexName == "xim") {
             mcpp::xlings::Env xlEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
             // quiet=false: this only ever prints when a dependency is missing

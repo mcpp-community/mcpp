@@ -78,7 +78,19 @@ struct GlobalConfig {
     std::map<std::string, mcpp::pm::IndexSpec> indices;
 
     // From config.toml [cache]
+    // NOTE (#315): this is no longer a gate on the build path. It bounds
+    // `mcpp search` (which exists to ask upstream) and dates the status line.
+    // Whether a build refreshes is decided by mcpp.pm.index_refresh from local
+    // resolvability, not from a clock.
     std::int64_t                    searchTtlSeconds = 3600;
+
+    // From config.toml [index] auto_refresh
+    // Machine-level opt-out from the automatic on-miss index refresh. Distinct
+    // from offline mode: this only silences the index axis, package downloads
+    // still happen. Policy lives in the global config, never in mcpp.toml — it
+    // describes the machine's network, and a project that carried it would stop
+    // being portable between a corporate LAN, a laptop and CI.
+    bool                            indexAutoRefresh = true;
 
     // From config.toml [build]
     std::int64_t                    defaultJobs = 0;
@@ -325,6 +337,10 @@ home   = ""
 
 [index]
 default = "mcpplibs"
+# auto_refresh: refresh the package index automatically when a dependency
+# cannot be resolved from the local copy (never merely because time passed).
+# Set false to require an explicit `mcpp index update`.
+auto_refresh = true
 
 [index.repos."mcpplibs"]
 url      = "https://github.com/mcpplibs/mcpp-index.git"
@@ -333,6 +349,8 @@ artifact = "https://github.com/xlings-res/mcpp-index"
 # xlings auto-adds xim / awesome / scode / d2x as defaults.
 
 [cache]
+# Bounds `mcpp search` and the age shown by `mcpp index status`. It is NOT
+# what decides whether a build refreshes the index — see [index] auto_refresh.
 search_ttl_seconds = 3600
 
 [build]
@@ -494,6 +512,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     if (auto h = doc->get_string("xlings.home"); h && !h->empty())
         cfg.xlingsHomeOverride = *h;
     cfg.defaultIndex   = doc->get_string("index.default").value_or("mcpplibs");
+    cfg.indexAutoRefresh = doc->get_bool("index.auto_refresh").value_or(true);
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
     cfg.defaultBackend = doc->get_string("build.default_backend").value_or("ninja");

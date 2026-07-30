@@ -307,6 +307,15 @@ std::optional<std::filesystem::path> find_sandbox_nasm(const Env& env);
 
 // ─── Index freshness ────────────────────────────────────────────────
 
+// How long a just-completed index sync suppresses the next one.
+//
+// Re-running a multi-repo sync because a SECOND package is also missing cannot
+// help: the first sync already fetched everything upstream had, so a package
+// still absent afterwards is absent upstream. Lives here, in the leaf module,
+// because both users need it and the policy layer (mcpp.pm.index_refresh)
+// imports this module — the reverse would be a cycle.
+inline constexpr std::int64_t kIndexRefreshDebounceSeconds = 120;
+
 // Check whether the default mcpplibs index data exists and is fresh
 // (within ttlSeconds).
 // Returns true if index is present and fresh, false otherwise.
@@ -346,13 +355,25 @@ void ensure_official_package_index_fresh(const Env& env,
 // Snapshot of a local index directory — computed without touching the
 // network, for `mcpp index status`.
 struct IndexStatus {
-    std::filesystem::path dir;        // on-disk index directory
-    bool                  present;    // pkgs/ tree exists locally
-    bool                  fresh;      // refreshed within ttlSeconds
-    std::int64_t          ageSeconds; // since last refresh marker, -1 if unknown
+    std::filesystem::path      dir;        // on-disk index directory
+    bool                       present;    // pkgs/ tree exists locally
+    bool                       fresh;      // refreshed within ttlSeconds
+    std::int64_t               ageSeconds; // since last refresh marker, -1 if unknown
+    std::optional<std::string> rev;        // index CONTENT identity, nullopt if absent
 };
 IndexStatus default_index_status(const Env& env, std::int64_t ttlSeconds);
 IndexStatus official_index_status(const Env& env, std::int64_t ttlSeconds);
+
+// The index's own content identity, as written by xlings into
+// `<indexDir>/.xlings-index-version` when it materializes the tree.
+//
+// OPAQUE BY CONTRACT. Observed values are a 7-char short sha for the artifact-
+// distributed indexes (`mcpp-index-8d67478.tar.gz` → `8d67478`) but a DATE
+// VERSION for the sub-indexes (`xim-index-awesome-2026.7.30.1.tar.gz` →
+// `2026.7.30.1`). Never parse it, never assume a length — only compare it for
+// equality and print it. Returns nullopt when the file is missing (a local
+// `path` index has none) or blank; callers must degrade, never hard-fail.
+std::optional<std::string> index_revision(const std::filesystem::path& indexDir);
 
 // ─── run_capture utility ────────────────────────────────────────────
 
@@ -392,6 +413,10 @@ std::filesystem::path index_pkgs_dir(const std::filesystem::path& indexDir) {
 
 std::filesystem::path index_refresh_marker(const std::filesystem::path& indexDir) {
     return indexDir / ".mcpp-index-updated";
+}
+
+std::filesystem::path index_version_file(const std::filesystem::path& indexDir) {
+    return indexDir / ".xlings-index-version";
 }
 
 std::filesystem::path official_package_file(const Env& env, std::string_view packageName) {
@@ -442,7 +467,12 @@ void mark_index_refreshed(const std::filesystem::path& indexDir) {
 }
 
 void mark_known_indexes_refreshed(const Env& env) {
-    if (!env.projectDir.empty()) return;
+    // Project-scoped envs used to return early here, which left the global
+    // indexes unmarked whenever a project with custom `[indices]` triggered the
+    // sync — so `mcpp index status` reported "unknown" forever on exactly the
+    // machines that refresh most. The marker is advisory (it debounces and it
+    // dates the status line; it is NOT what decides whether a refresh is
+    // needed), so marking it from either env is both safe and more accurate.
     mark_index_refreshed(default_index_dir(env));
     mark_index_refreshed(official_index_dir(env));
 }
@@ -459,6 +489,12 @@ bool is_index_dir_fresh(const std::filesystem::path& indexDir, std::int64_t ttlS
 
     auto now = std::filesystem::file_time_type::clock::now();
     auto age = std::chrono::duration_cast<std::chrono::seconds>(now - newest);
+    // A marker stamped in the FUTURE yields a negative age, which the plain
+    // `age < ttl` test read as "fresh" — and stayed fresh until the wall clock
+    // caught up, potentially for years. Future timestamps are routine: clock
+    // skew in containers/VMs, a tar that preserved mtimes, a restored CI cache.
+    // An unusable timestamp means "unknown", and unknown must mean stale.
+    if (age.count() < 0) return false;
     return age.count() < ttlSeconds;
 }
 
@@ -470,7 +506,27 @@ std::int64_t index_age_seconds(const std::filesystem::path& indexDir) {
     auto newest = std::filesystem::last_write_time(marker, ec);
     if (ec) return -1;
     auto now = std::filesystem::file_time_type::clock::now();
-    return std::chrono::duration_cast<std::chrono::seconds>(now - newest).count();
+    auto age = std::chrono::duration_cast<std::chrono::seconds>(now - newest).count();
+    return age < 0 ? -1 : age;   // future stamp → "unknown", same rule as above
+}
+
+// Defined inside the anonymous namespace so `index_status_for` (also here) can
+// use it; the exported `index_revision` below forwards to it.
+std::optional<std::string> read_index_revision(const std::filesystem::path& indexDir) {
+    std::ifstream is(index_version_file(indexDir), std::ios::binary);
+    if (!is) return std::nullopt;
+    std::string body((std::istreambuf_iterator<char>(is)), {});
+    // The observed files carry no trailing newline, but trim anyway: this value
+    // is compared for equality and printed, and a stray \r from a Windows-side
+    // writer would otherwise turn "same rev" into "changed rev" every run.
+    auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+    while (!body.empty() && isSpace(static_cast<unsigned char>(body.back())))
+        body.pop_back();
+    std::size_t b = 0;
+    while (b < body.size() && isSpace(static_cast<unsigned char>(body[b]))) ++b;
+    body.erase(0, b);
+    if (body.empty()) return std::nullopt;
+    return body;
 }
 
 IndexStatus index_status_for(const std::filesystem::path& indexDir,
@@ -482,6 +538,7 @@ IndexStatus index_status_for(const std::filesystem::path& indexDir,
         .present    = present,
         .fresh      = is_index_dir_fresh(indexDir, ttlSeconds),
         .ageSeconds = index_age_seconds(indexDir),
+        .rev        = read_index_revision(indexDir),
     };
 }
 
@@ -557,6 +614,12 @@ struct LineScan {
 };
 
 } // anonymous namespace
+
+// ─── Index identity ─────────────────────────────────────────────────
+
+std::optional<std::string> index_revision(const std::filesystem::path& indexDir) {
+    return read_index_revision(indexDir);
+}
 
 // ─── run_capture ────────────────────────────────────────────────────
 
@@ -1356,6 +1419,33 @@ bool is_official_package_index_fresh(const Env& env,
 }
 
 int update_index(const Env& env, bool quiet) {
+    // Offline is absolute: no caller gets to reach the network by going around
+    // the decision layer. Reported as success so a build that can still resolve
+    // everything locally proceeds — the caller that genuinely needed the data
+    // fails on its own missing answer, with a message that says so.
+    if (mcpp::platform::env::offline_mode()) {
+        mcpp::log::verbose("index", "offline mode: skipping index update");
+        return 0;
+    }
+
+    // Cross-process mutex. The sync rewrites a tree several concurrent mcpp
+    // processes read (parallel CI jobs on one MCPP_HOME, two terminals, a
+    // workspace fan-out), and it also writes the refresh markers. The BMI cache
+    // has had this guard for a while; the index never did.
+    //
+    // NON-BLOCKING BY DESIGN: whoever holds the lock is already doing the exact
+    // work we wanted, so waiting buys nothing and a queue of stalled builds is
+    // precisely the symptom this whole change exists to remove. Skipping is
+    // also why this must not be reported as failure.
+    std::error_code lockEc;
+    std::filesystem::create_directories(paths::index_data(env), lockEc);
+    auto lock = mcpp::platform::fs::FileLock::try_acquire(paths::index_data(env));
+    if (!lock) {
+        mcpp::log::verbose("index",
+            "another process is refreshing the index — skipping this one");
+        return 0;
+    }
+
     std::string cmd = build_command_prefix(env) + " update 2>&1";
     // The index sync is a network git operation; a single transient blip (DNS,
     // TLS reset, a mirror hiccup) otherwise fails a cold `mcpp self env` /
@@ -1420,8 +1510,7 @@ void ensure_official_package_index_fresh(const Env& env,
     // `xlings update` per package: if the index was refreshed moments ago and
     // the package is STILL missing, upstream simply lacks it; re-pulling won't
     // help. (A package added upstream before this run lands in that one pull.)
-    constexpr std::int64_t kJustRefreshedSeconds = 120;
-    if (is_official_index_fresh(env, kJustRefreshedSeconds)) return;
+    if (is_official_index_fresh(env, kIndexRefreshDebounceSeconds)) return;
 
     if (!quiet)
         print_status("Refreshing",

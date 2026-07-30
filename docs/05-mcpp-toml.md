@@ -416,6 +416,38 @@ accepted, so already-published descriptors keep working. `mcpp xpkg parse`
 enforces the rule — run it in your index CI. Requires mcpp >= 0.0.106 and
 xlings >= 0.4.69; full normative text in `docs/spec/package-identity.md`.
 
+#### When mcpp refreshes the package index
+
+`mcpp build` / `run` / `test` refresh the package index **only when a dependency
+cannot be resolved from the local copy** — never merely because time has passed.
+Concretely, a refresh happens when there is no local index at all, when a
+dependency's descriptor is missing from it, or when a SemVer constraint matches
+none of the versions it knows. A build whose dependencies all resolve locally
+makes no network request, however old the local index is.
+
+The consequence worth knowing: a constraint like `^1.2` resolves against the
+**versions your local index knows**. If `1.3.0` was published upstream after
+your last refresh, you will not see it until you ask:
+
+```bash
+mcpp index update     # sync the index
+mcpp update           # sync, then re-resolve dependencies
+mcpp index status     # what you have locally: state, age and revision
+```
+
+Controls, in order of precedence:
+
+| Control | Effect |
+|---|---|
+| `--offline` (any command) | Never touch the network — no index refresh, no downloads, no toolchain auto-install. Anything already installed still builds |
+| `MCPP_OFFLINE=1` | Same, for a whole shell session or CI job |
+| `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh the index automatically; downloads still work |
+
+`MCPP_NO_AUTO_INSTALL=1` remains accepted as the older, narrower spelling of
+`--offline` (it gates only toolchain auto-install).
+
+Run any command with `-v` to see the decision for each dependency and why.
+
 ### 2.6 `[dev-dependencies]` — Test Dependencies
 
 ```toml

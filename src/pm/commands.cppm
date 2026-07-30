@@ -21,6 +21,7 @@ import mcpp.platform.axis;        // HostPlatform for the published-version chec
 import mcpp.pm.dep_spec;          // DependencyCoordinate
 import mcpp.pm.dependency_selector; // same candidates the manifest parser derives
 import mcpp.pm.index_route;       // shared index routing (with mcpp.build.prepare)
+import mcpp.pm.index_refresh;     // shared refresh policy (with mcpp.build.prepare)
 import mcpp.pm.resolver;          // is_version_constraint
 import mcpp.project;              // shared find_manifest_root
 import mcpp.ui;
@@ -161,17 +162,19 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 return !idx || idx->is_builtin();
             });
 
-        // Only pay for a refresh when the answer was "no" and the registry
-        // that would have answered is stale — a package that is already on
-        // disk costs zero network round-trips.
+        // Only pay for a refresh when the answer was "no" and the registry is
+        // the thing that would have answered — a package already on disk costs
+        // zero network round-trips. This site had the right shape before #315;
+        // it now shares the decision with `mcpp build` instead of re-deriving
+        // it, so the two cannot drift on debounce, offline or opt-out.
         if (!found.hit && found.conclusive && registryInvolved) {
             auto xlEnv = mcpp::config::make_xlings_env(*cfg);
-            if (!mcpp::xlings::is_index_fresh(xlEnv, cfg->searchTtlSeconds)) {
-                mcpp::ui::status("Updating", "package index (auto-refresh)");
-                mcpp::xlings::ensure_index_fresh(
-                    xlEnv, cfg->searchTtlSeconds, /*quiet=*/true);
+            auto d = mcpp::pm::decide_for_miss(
+                mcpp::pm::policy_for(*cfg), xlEnv, nameSpec);
+            if (auto r = mcpp::pm::apply(d, xlEnv); !r)
+                mcpp::ui::warning(r.error());
+            if (d.shouldRefresh)
                 found = mcpp::pm::lookup_descriptor(route, selector.candidates);
-            }
         }
 
         if (!found.hit && found.conclusive) {
@@ -406,6 +409,42 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) { mcpp::ui::error("no mcpp.toml in current dir or parents"); return 2; }
+
+    // Refresh the index FIRST (#315/D6).
+    //
+    // This command used to only drop lock entries and tell the user to run
+    // `mcpp build` — but the build path never reads mcpp.lock (prepare writes
+    // it and nothing on that path loads it), so the whole command was a no-op:
+    // it changed no behaviour whatsoever. It is also the only command whose
+    // stated purpose is "get me newer dependencies", which since #315 is
+    // exactly what an index refresh is for. Explicit intent, so no debounce and
+    // no TTL — but still refused when offline, loudly, rather than silently
+    // doing nothing again.
+    // Skipped when nothing in the project is served by the shared registry:
+    // syncing it does nothing for path deps, git deps or a project `[indices]`
+    // entry, and paying a multi-repo network round-trip to achieve nothing is
+    // the exact behaviour #315 is about.
+    if (auto cfg = mcpp::config::load_or_init(
+            /*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback())) {
+        auto m = mcpp::manifest::load(*root / "mcpp.toml");
+        bool registryInvolved = false;
+        if (m) {
+            auto indices = mcpp::pm::effective_indices(*root);
+            mcpp::pm::IndexRoute route{ &indices, *root, &*cfg };
+            for (auto& [_, spec] : m->dependencies)
+                if (mcpp::pm::routes_to_builtin(route, spec)) { registryInvolved = true; break; }
+        }
+        if (registryInvolved) {
+            auto xlEnv = mcpp::config::make_xlings_env(*cfg);
+            if (auto r = mcpp::pm::force_refresh(xlEnv); !r) {
+                mcpp::ui::error(r.error());
+                return 1;
+            }
+        }
+    } else {
+        mcpp::ui::warning(cfg.error().message);
+    }
+
     auto lockPath = *root / "mcpp.lock";
     if (only) {
         // Targeted update — drop just that lock entry; next build will refetch.

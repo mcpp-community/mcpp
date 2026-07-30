@@ -3,6 +3,42 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.7.30.3] — 2026-07-30
+
+### 变更
+
+- **索引刷新从「时间驱动」改为「解析驱动」(#315)。** `mcpp build/run/test` 此前只要刷新 marker 超过 1 小时,就无条件跑一次 `xlings update`(同步**全部**索引仓库,失败还带 3 次 2s/4s 退避重试)——不管有没有东西真的缺失。网络差时这就是「每小时一次、为已经在本地的数据等几分钟」。
+
+  这不是「功能缺失」:offline-first 的策略**早就在仓库里**了(`xlings.cppm` 的 xim 安装门,注释里甚至点名了 Termux 上的 build hang),但 `prepare.cppm` 那道 TTL 门先开火,把它变成了不可达代码。同一个决策此前在 **5 处各推导一遍**,其中两处互相矛盾。
+
+  现在只有一个真源 `mcpp.pm.index_refresh`:`mcpp build` / `mcpp add` / xim 安装门 / 安装失败重试全部走它。刷新只在三种情况发生 —— 本地没有索引、描述符不在本地、SemVer 约束在本地版本集内无解。**依赖全部能在本地解析的构建零网络请求,无论本地索引多旧。**
+
+  **判据换轴的理由**:「索引够不够新」不可判定,而 mtime 是它的坏代理(CI 缓存恢复、时钟回拨、tar 保留时间戳都会让 marker 两个方向说谎)。可判定的问题是「解析器能不能用磁盘上的东西干活」——而**所有**解析输入都在磁盘上(描述符是文件,`resolve_semver` 解析本地 xpkg.lua)。marker 因此降级为纯去抖计时器。
+
+  **最危险的一条判据**(`SuppressedInconclusive`):「本地查不到」单独不能推出「需要刷新」。xim 描述符不写 `namespace`,`(xim, x)` 永远匹配不上身份门 —— 把这种 miss 当真,任何带 xim 依赖的工程会**每次构建都刷**,比被删掉的 TTL 更糟。判据复用 `IndexRoute::authoritative_for`(#307),单测 + e2e 双闸锁住。
+
+  语义变化:`^1.2` 对**本地索引已知的版本**求解。上游新发的 1.3.0 需要 `mcpp index update` 或 `mcpp update` 才可见 —— 这正是那两个命令存在的意义,已写进 `docs/05-mcpp-toml.md`。
+
+- **`mcpp update` 不再是空操作。** 它此前只删 mcpp.lock 条目、然后叫用户去跑 `mcpp build` —— 而构建路径**从不读 mcpp.lock**(`prepare` 只写不读),所以删了等于没删,行为影响为零。它现在先强制刷新索引(显式意图 ⇒ 不看 TTL、不看去抖),并报告索引 rev 的变化;工程里没有任何走共享 registry 的依赖时跳过(刷了也没用)。
+
+- **新增 `--offline` / `MCPP_OFFLINE=1`。** 一次调用内完全不碰网络:不刷索引、不下载包、不自动装工具链。已安装的东西照常构建 —— 检查点都放在「真要下载」的那一刻,而不是更早。`MCPP_NO_AUTO_INSTALL` 作为它的旧式窄化拼写保留(只管工具链),文档标注 deprecated:同一个概念此前有三个名字。
+
+- **新增 `[index] auto_refresh`(全局 `config.toml`)。** 机器级关闭自动刷新,下载仍可用。刻意做成布尔而**不**保留旧 TTL 模式:为模拟一个正在删除的策略而留第二条代码路径,正是本次要还的那笔债。策略归全局配置而非 `mcpp.toml` —— 它描述机器的网络环境,写进工程清单会让工程在内网/家里/CI 之间不可移植。
+
+### 修复
+
+- **未来时间戳的索引 marker 被判为「永远新鲜」。** `age < ttl` 对负数恒真,所以时钟回拨、容器时间、`tar` 保留 mtime、CI 缓存恢复产生的未来 marker 会让索引一直「新鲜」到墙钟追上为止。不可用的时间戳现在一律读作 unknown,而 unknown 必须是 stale。
+
+- **索引刷新此前没有任何并发保护。** BMI 缓存早就用着 `platform/fs.cppm` 的跨平台 flock/LockFileEx,索引一个锁都没有 —— 并行 CI job 共享 `MCPP_HOME`、多个终端同时构建,就会并发重写同一棵树并并发写 marker。改为非阻塞互斥:**拿不到锁就跳过,不排队、不报错**(持锁者正在做的就是我们想要的事,排队只会把本 issue 要消除的症状原样复制一遍)。
+
+- **项目级 env 下刷新永不打标。** `mark_known_indexes_refreshed` 在 `projectDir` 非空时整段早退,于是带自定义 `[indices]` 的工程刷新完全局索引却不留痕,`mcpp index status` 对这些机器永远显示 unknown。
+
+### 新增
+
+- **`mcpp index status` 增加 revision 列。** 索引自带内容身份 `.xlings-index-version`(artifact 分发把 rev 打进文件名:`mcpp-index-8d67478.tar.gz` → `8d67478`),mcpp 此前**零引用**。它是唯一能回答「两台机器/CI 缓存与本地是不是同一份索引」的信号,age 永远回答不了。按**不透明字符串**处理:子索引的值是日期版本号(`2026.7.30.1`)而不是 sha,探针实测,绝不解析。
+
+- 依赖解析失败时附带索引身份与年龄(`index: local index 8d67478 (refreshed 12d ago)`)+ `mcpp index update` 建议 —— 变懒之后,「没这个包」和「你的索引是上个月的」必须能被区分开。
+
 ## [2026.7.30.2] — 2026-07-30
 
 ### 修复

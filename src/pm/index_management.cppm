@@ -14,6 +14,7 @@ import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.lockfile;
 import mcpp.manifest;
+import mcpp.platform;
 import mcpp.project;
 import mcpp.ui;
 import mcpp.xlings;
@@ -25,6 +26,16 @@ export int search_packages(const std::string& keyword) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
+    // THE ONLY TIME-DRIVEN REFRESH LEFT IN MCPP, and deliberately so.
+    //
+    // Everywhere else the question is "can the resolver work with what is on
+    // disk", which is answerable offline and therefore what #315 made the gate.
+    // Search has no such local answer to check: the user is asking what EXISTS
+    // upstream, so a stale index gives a confidently wrong answer ("no matches"
+    // for a package published last week) rather than a slow one. A TTL is the
+    // right instrument here — do not "unify" this with mcpp.pm.index_refresh.
+    // Offline is still honoured: update_index() returns without touching the
+    // network, and search reports whatever the local copy holds.
     auto xlEnv = mcpp::config::make_xlings_env(*cfg);
     if (!mcpp::xlings::is_index_fresh(xlEnv, cfg->searchTtlSeconds)) {
         mcpp::ui::status("Updating", "package index (auto-refresh)");
@@ -113,9 +124,23 @@ export int index_remove(const std::string& name) {
 }
 
 // `mcpp index update [name]` — empty filterName updates everything.
+//
+// NOTE on `name`: it only filters the PROJECT-level custom indices below. The
+// global repos are always synced wholesale because `xlings update` has no
+// per-index mode to call. Tracked as a follow-up; the help text says "if given,
+// update only this index", which is not what happens for the global set.
 export int index_update(const std::string& filterName) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
+
+    // Explicit command: offline must refuse audibly rather than no-op. Left to
+    // this layer because update_index() itself is a silent skip by design (it
+    // is called from paths where proceeding locally is the right answer).
+    if (mcpp::platform::env::offline_mode()) {
+        mcpp::ui::error("offline mode is on — cannot update the package index "
+                        "(unset MCPP_OFFLINE or drop --offline)");
+        return 1;
+    }
 
     // Update global index repos.
     mcpp::ui::status("Updating", "all index repos");
@@ -173,15 +198,20 @@ export int index_status() {
         std::string state = !st.present ? "missing"
                           :  st.fresh   ? "fresh"
                           :              "stale";
-        std::println("  {:<10} {:<8} {:<12} {}",
-                     label, state, fmt_age(st.ageSeconds), st.dir.string());
+        // The revision is the index's CONTENT identity (see index_revision):
+        // it is what actually tells you whether two machines — or a CI cache
+        // and a laptop — hold the same index, which the age never could.
+        std::println("  {:<10} {:<8} {:<12} {:<12} {}",
+                     label, state, fmt_age(st.ageSeconds),
+                     st.rev.value_or("-"), st.dir.string());
     };
 
     auto official = mcpp::xlings::official_index_status(xlEnv, cfg->searchTtlSeconds);
     auto deflt    = mcpp::xlings::default_index_status(xlEnv, cfg->searchTtlSeconds);
 
     std::println("");
-    std::println("  {:<10} {:<8} {:<12} {}", "index", "state", "refreshed", "path");
+    std::println("  {:<10} {:<8} {:<12} {:<12} {}",
+                 "index", "state", "refreshed", "revision", "path");
     show("xim", official);
     show("mcpplibs", deflt);
     std::println("");

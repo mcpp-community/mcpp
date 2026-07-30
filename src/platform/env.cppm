@@ -23,6 +23,27 @@ std::optional<std::string> get(std::string_view key);
 // Set an environment variable in the current process.
 void set(const std::string& key, const std::string& value);
 
+// ── Network policy: offline mode ──────────────────────────────────────────
+//
+// One process-wide knob answering "may mcpp reach the network at all?", read
+// at each point of use rather than threaded through a dozen signatures — the
+// same idiom the older MCPP_NO_AUTO_INSTALL gate already uses.
+//
+// It lives HERE, in a leaf module, on purpose: the consumers span pm (index
+// refresh, package install) and build (toolchain auto-install), and any home
+// inside one of those subsystems would make the other import it across a layer
+// boundary — mcpp.pm.index_route already imports mcpp.fetcher, so a pm-owned
+// helper could not be read from the fetcher without a module cycle.
+//
+// Set by `--offline` (cli pre-scan writes the env var) or by the user exporting
+// MCPP_OFFLINE. "0" and the empty string mean off, matching MCPP_VERBOSE.
+bool offline_mode();
+
+// The older, narrower spelling: MCPP_NO_AUTO_INSTALL gates ONLY the toolchain
+// auto-install, nothing else. Kept working (CI and existing setups export it)
+// and kept next to offline_mode() so the two network knobs cannot drift apart.
+bool no_auto_install();
+
 // Temporarily set or unset an env var, restoring the prior value on scope exit.
 class ScopedEnv {
 public:
@@ -73,6 +94,18 @@ std::string build_env_prefix(
 // ─── Implementation ──────────────────────────────────────────────────────
 
 namespace mcpp::platform::env {
+
+bool offline_mode() {
+    // Not cached: `mcpp test` runs nested mcpp invocations in-process in some
+    // paths, and a test that flips the var must see the change.
+    auto* v = std::getenv("MCPP_OFFLINE");
+    return v && *v && std::string_view(v) != "0";
+}
+
+bool no_auto_install() {
+    auto* v = std::getenv("MCPP_NO_AUTO_INSTALL");
+    return v && *v && std::string_view(v) != "0";
+}
 
 std::optional<std::string> get(std::string_view key) {
     std::string k(key);
