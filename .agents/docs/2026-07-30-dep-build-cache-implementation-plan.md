@@ -383,6 +383,29 @@ e2e（新文件 `tests/e2e/1NN_build_cache_crossproject.sh`）——**本设计�
 
 **未实施项的处置**：S8 与零拷贝均记在设计文档 §7 的后续批次里，不在本批 CHANGELOG 中承诺。
 
+### 顺带发现、本批**未**处理的一个同类隐患（记录待办）
+
+fast path 重放 `build.ninja` 的前提是「本次请求会生成同一张图」。本批把 **profile** 与
+**cache mode** 两个轴记进了 `.build_cache` 并要求匹配，但**图形状还受若干环境变量影响，
+它们都不在任何记录里**：
+
+| 输入 | fast path 是否能发现变化 |
+|---|---|
+| `--profile` / `--dev` / `--release` | ✅ 记录 + 匹配（本批） |
+| `--cache` / `[build] cache` / `MCPP_BUILD_CACHE` | ✅ 记录 + 匹配（本批） |
+| `--target` / `-p` / `--features` / `--cap` / `--static` / `--strict` | ✅ 显式 flag 直接绕过 fast path |
+| 改 `mcpp.toml` | ✅ mtime 比 `build.ninja` 新 |
+| `MACOSX_DEPLOYMENT_TARGET` | ❌ 进 fingerprint，但 fast path 只校验「记录的 fp 与目录名自洽」，不重算 fp |
+| `MCPP_VERIFY_MODGRAPH` / `MCPP_SCANNER` | ❌ 改变 scan/dyndep 边的形状 |
+
+这三个都是**本批之前就存在**的（fast path 从来没有校验过它们），且都需要「重算一次 fp 才能
+比对」——那与 fast path 存在的意义（不跑 prepare_build）直接冲突。正解是给 fast path 一个
+**廉价的图身份**：把这些输入（以及 profile/cache mode）折进一个短哈希写进 `.build_cache`，
+匹配即重放。那是一次独立的收敛，不该塞进本批。
+
+判据同本批：`.build_cache` 的条目必须自证「我是在什么条件下生成的」，否则「条件变了」与
+「条件没变」在读取端不可区分 —— 这正是 profile 那个 0.00s 假成功的成因。
+
 ## 已知坑（来自本仓库既有教训，实现时逐条对照）
 
 | 坑 | 规避 |
