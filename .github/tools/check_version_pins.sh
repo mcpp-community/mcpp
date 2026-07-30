@@ -104,15 +104,28 @@ v_src=$(grep -oE 'MCPP_VERSION[[:space:]]*=[[:space:]]*"[^"]+"' src/toolchain/fi
         | grep -oE '"[^"]+"' | tr -d '"' | head -1)
 v_xl=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' .xlings.json \
        | grep -oE '"[^"]+"$' | tr -d '"' | head -1)
-v_pin=$(grep -oE "MCPP_PIN:[[:space:]]*'[^']+'" .github/workflows/ci-fresh-install.yml \
-        | grep -oE "'[^']+'" | tr -d "'" | head -1)
-
-note "mcpp version: building=$v_toml (fingerprint=$v_src)  bootstrap pin=$v_xl (MCPP_PIN=$v_pin)"
+note "mcpp version: building=$v_toml (fingerprint=$v_src)  bootstrap pin=$v_xl"
 
 for n in "mcpp.toml:$v_toml" "src/toolchain/fingerprint.cppm:$v_src" \
-         ".xlings.json:$v_xl" "ci-fresh-install.yml MCPP_PIN:$v_pin"; do
+         ".xlings.json:$v_xl"; do
   [ -n "${n##*:}" ] || bad "${n%:*} — could not read the mcpp version"
 done
+
+# ci-fresh-install.yml used to carry a SECOND hand-edited copy of the bootstrap
+# pin (MCPP_PIN), and this script enforced that the two stayed equal. They are
+# not the same thing and never were: MCPP_PIN is the version UNDER TEST (always
+# the newest published release), while .xlings.json is the version BOOTSTRAPPED
+# FROM (any released mcpp that can build the current tree). Keeping them equal
+# forced a manual edit on every release for a value the workflow could derive —
+# and the workflow's own index guard was already deriving it from the releases
+# API and discarding it. MCPP_PIN is now that derived value, so there is no
+# second site left to agree with. Guard against a silent regression to a
+# literal:
+if grep -qE "MCPP_PIN:[[:space:]]*['\"]?[0-9]" .github/workflows/ci-fresh-install.yml; then
+  bad "ci-fresh-install.yml hardcodes MCPP_PIN again — it must stay derived from
+       wait-index's releases-API lookup, or the index guard and the install jobs
+       can once more disagree about which version is under test (#265)"
+fi
 
 # (a) The version being BUILT: mcpp.toml and the compiled-in constant are the
 #     same number by definition — release.yml derives the tag from the former
@@ -120,16 +133,13 @@ done
 [ -z "$v_src" ] || [ "$v_src" = "$v_toml" ] \
   || bad "src/toolchain/fingerprint.cppm has '$v_src' but mcpp.toml has '$v_toml'"
 
-# (b) The version BOOTSTRAPPED FROM: both sites name a mcpp that is already
-#     published, so they must agree with each other — but they are NOT required
-#     to equal the version being built. They deliberately lag, and are bumped in
-#     a separate commit AFTER the release exists in xim-pkgindex (see the
-#     MCPP_PIN comment in ci-fresh-install.yml). Requiring equality here is what
-#     an earlier revision of this script got wrong: it sent CI to install a
+# (b) The version BOOTSTRAPPED FROM (.xlings.json) names a mcpp that is already
+#     published, and is NOT required to equal the version being built. It
+#     deliberately lags, and is bumped in a separate commit AFTER the release
+#     exists in xim-pkgindex (see docs/09-release.md). Requiring equality here is
+#     what an earlier revision of this script got wrong: it sent CI to install a
 #     version that did not exist yet, and every job died with
 #     `package 'mcpp@<unreleased>' not found`.
-[ -z "$v_xl" ] || [ -z "$v_pin" ] || [ "$v_xl" = "$v_pin" ] \
-  || bad ".xlings.json pins '$v_xl' but ci-fresh-install.yml MCPP_PIN is '$v_pin' — both bootstrap the same released mcpp"
 
 # (c) …and the bootstrap pin must never run AHEAD of the version being built.
 #     Four-key numeric sort, so the date scheme orders correctly (a plain

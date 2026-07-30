@@ -31,16 +31,31 @@ concurrency:
   group: ci-fresh-install
   cancel-in-progress: false # use false to test in PRs, true to only test released mcpp
 
-# Version under test. Bare `xlings install mcpp` resolves "newest in the
-# runner's index copy", which is NOT the same source the wait-index job
-# polls (raw.githubusercontent.com) — on 2026-07-21 the guard reported
-# "index tracks 0.0.102" and the jobs still installed 0.0.100 ten seconds
-# later, which then met an index whose floor was 0.0.101 (#265). Pinning
-# makes the version explicit: if the index cannot serve it yet, the job
-# fails with `version not found` instead of silently testing an older
-# binary. Bump together with the .xlings.json workspace pin at release.
-env:
-  MCPP_PIN: '2026.7.30.3'
+# The version under test is DERIVED, once, by the resolve-version job below,
+# and every install job consumes that one value.
+#
+# Two things had to hold, and a hardcoded pin only bought the first:
+#
+#  1. It must be an explicit version string. Bare `xlings install mcpp`
+#     resolves "newest in the runner's index copy", so a runner whose copy
+#     lags silently tests an OLDER binary and reports green. Naming the
+#     version makes a lagging index fail loudly with `version not found`.
+#
+#  2. The version the index guard waits for must be the version the jobs
+#     install. On 2026-07-21 they disagreed: the guard reported "index tracks
+#     0.0.102" and the jobs installed 0.0.100 ten seconds later, which then met
+#     an index whose floor was 0.0.101 (#265). The guard already derived the
+#     real answer from the releases API and threw it away.
+#
+# Deriving once and feeding both satisfies (1) and makes (2) structurally
+# impossible, instead of relying on a human to keep two hand-edited numbers in
+# step with a third that moves on its own. `xlings install mcpp@<derived>` is
+# every bit as explicit as `mcpp@<literal>`.
+#
+# NOT to be confused with the .xlings.json workspace pin, which this used to be
+# kept equal to. That one is the BOOTSTRAP compiler for the self-host builds and
+# has a different requirement — it must be a released mcpp that can build the
+# CURRENT source tree — so it stays hand-maintained. See docs/09-release.md.
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
@@ -56,11 +71,31 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     timeout-minutes: 20
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
     steps:
+      # Derive on EVERY trigger, not just post-release. "The newest published
+      # release" is the version under test whether we got here from the release
+      # pipeline, from cron, or by hand — only the WAIT below is specific to a
+      # post-release run, because only then can the index legitimately lag.
+      - name: Resolve the version under test (newest published release)
+        id: resolve
+        run: |
+          VER=$(curl -fsSL "https://api.github.com/repos/mcpp-community/mcpp/releases/latest" \
+                | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
+          # A blank version would silently degrade `mcpp@$VER` into bare `mcpp`,
+          # i.e. straight back to "newest in the runner's index copy" — the exact
+          # failure this job exists to prevent. Refuse instead.
+          case "$VER" in
+            ''|*[!0-9.]*) echo "::error::could not resolve a version from the releases API (got '$VER')"; exit 1 ;;
+          esac
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "version under test: $VER"
       - name: Wait for xim-pkgindex to track the released mcpp
         if: ${{ github.event_name == 'workflow_run' }}
+        env:
+          VER: ${{ steps.resolve.outputs.version }}
         run: |
-          VER=$(curl -fsSL "https://api.github.com/repos/mcpp-community/mcpp/releases/latest" | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
           echo "released: $VER — waiting for index..."
           for i in $(seq 1 30); do
             if curl -fsSL "https://raw.githubusercontent.com/openxlings/xim-pkgindex/main/pkgs/m/mcpp.lua" | grep -q "\"$VER\""; then
@@ -81,6 +116,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
+      # The one derived value (see the header comment): every install job names
+      # the SAME version the index guard waited for, so the two cannot disagree.
+      MCPP_PIN: ${{ needs.wait-index.outputs.version }}
       # Verbose every mcpp invocation — fresh-install is the cold index/sandbox
       # bootstrap path, exactly where extra diagnostics matter (src/cli.cppm).
       MCPP_VERBOSE: "1"
@@ -217,6 +255,9 @@ jobs:
             image: debian:11
             setup: apt-get update && apt-get -y install curl bash tar gzip xz-utils git ca-certificates binutils findutils file
     env:
+      # The one derived value (see the header comment): every install job names
+      # the SAME version the index guard waited for, so the two cannot disagree.
+      MCPP_PIN: ${{ needs.wait-index.outputs.version }}
       XLINGS_NON_INTERACTIVE: '1'
       HOME: /root
     steps:
@@ -277,6 +318,10 @@ jobs:
     # independence (this image has no sha256sum; macos-15 does).
     runs-on: macos-14
     timeout-minutes: 30
+    env:
+      # The one derived value (see the header comment): every install job names
+      # the SAME version the index guard waited for, so the two cannot disagree.
+      MCPP_PIN: ${{ needs.wait-index.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -337,6 +382,10 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      # The one derived value (see the header comment): every install job names
+      # the SAME version the index guard waited for, so the two cannot disagree.
+      MCPP_PIN: ${{ needs.wait-index.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 

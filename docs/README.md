@@ -11,6 +11,7 @@
 - [06 - Workspaces](06-workspace.md)
 - [07 - build.mcpp Build Program](07-build-mcpp.md)
 - [08 - Toolchain Internals](08-toolchain-internals.md)
+- [09 - Releasing mcpp](09-release.md)
 
 ## Specifications
 
