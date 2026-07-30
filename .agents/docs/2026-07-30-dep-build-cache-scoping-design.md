@@ -223,7 +223,55 @@ dep  TU : gcc ... -std=c11         -O0 -g --sysroot=... -B... -D_GNU_SOURCE -inc
 只有：工具链身份、target triple、C++/C standard 与方言（含 `c++fly`）、macOS deployment
 target、**profile**、该包自身激活的 features。这些全部必须进键，且都是**应该**影响的。
 
-### E8 — 顺带发现的两处小问题
+### E8 — profile 不进指纹的**第二个**受害者：fast path 直接交付错 profile 的产物
+
+不只是缓存条目串号。`.build_cache` 的条目**只按 `targetTriple` 去重**
+（`execute.cppm:143-145`：`erase_if(e.targetTriple == targetTriple)`），profile 不在键里；
+而 fast path 的准入条件里 `ov.profile.empty()`（`cmd_build.cppm:81-83`）只挡显式
+`--profile/--dev/--release`，**挡不住裸 `mcpp build`**。于是：
+
+```
+$ mcpp build                       # 默认 dev
+   obj/main.o → DW_AT_producer: GNU C++23 16.1.0 ... -g -O0 -std=c++23 -fmodules   ✔ dev
+
+$ mcpp build --release             # 同一个目录 9900f2252da562b2（fp 不变）
+   obj/main.o → 无 debug info                                                       ✔ release
+
+$ mcpp build                       # 应当回到 dev
+    Finished release [optimized] in 0.00s
+   obj/main.o → 无 debug info                                                       ✘ 仍是 release
+$ grep -oE '\-O[0-9s]' build.ninja  →  -O2                                          ✘ build.ninja 里就是 -O2
+```
+
+⇒ **今天 `mcpp build --release` 之后，裸 `mcpp build` 会 0.00s "成功"并交付 release 产物。**
+这是一个独立于缓存的现存 bug，与 C3 同根（profile 不是失效轴），修 C3 时必须一起修，否则
+把 fp 分家只是把"同一个目录里内容是错的"换成"指向另一个 profile 的目录"。
+
+### E9 — GCC 把被导入模块的 BMI CRC 烙进导入者的 BMI（决定 §4 S1 的 F 轴形态）
+
+手工三组对照（`g++ 16.1.0 -std=c++23 -fmodules`，`A` 导入 `B`，只重编 `B`、保留旧 `A.gcm`）：
+
+| 改动 | 结果 |
+|---|---|
+| 只改 `bfn()` **函数体**（接口逐字节不变） | 旧 `A.gcm` + 新 `B.gcm` **编译通过** |
+| 改 `bfn()` 返回类型 + 新增导出类型（**接口**变） | **硬失败**（下方输出） |
+| `-DWIDE` 改变导出结构体布局（**ABI** 变，源码字节不变） | **硬失败**（同下） |
+
+```
+B: error: module 'B' CRC mismatch
+B: error: failed to read compiled module: Bad file data
+A: error: failed to read compiled module: Bad import dependency
+A: fatal error: returning to the gate for a mechanical issue
+```
+
+两个推论：
+
+1. `A` 的 BMI 与它当初读到的那一份 `B` 的 BMI 是**硬绑定**的 —— 所以 `A` 的缓存键必须包含
+   「`B` 的 BMI 身份」，而不是「`B` 的 public 接口的某个枚举摘要」。
+2. **失败模态不对称**：BMI 轴上键取窄了 ⇒ GCC CRC 硬报错（吵、但不出错产物）；
+   `.o` 轴上键取窄了 ⇒ **静默错对象**（无任何校验）。设计必须按后者取保守侧。
+
+### E10 — 顺带发现的两处小问题
 
 - `mcpp cache prune --older-than` 用 `last_write_time(entry.dir)`，而 `stage_into` 命中时
   **不更新缓存目录的时间**（只写消费者 build dir）。所以它是 "last **populated**"，不是 LRU：
@@ -239,7 +287,8 @@ target、**profile**、该包自身激活的 features。这些全部必须进键
 |---|---|---|---|
 | **C1** | 命中的依赖产物 ninja 一律重编（`command line not found in log`），全局缓存净收益为零，且 UI 谎报 `Cached` | 构建后端 | E1 |
 | **C2** | 缓存键 = 全工程指纹（含 root 包名/版本、全图 flags）⇒ 跨工程零共享、改自己版本号即全失效 | 键 | E2 E3 |
-| **C3** | profile（`-O`/`-g`/lto/strip）不进指纹 ⇒ dev/release/dist 共用缓存条目 | 正确性 | E5 |
+| **C3** | profile（`-O`/`-g`/lto/strip）不进指纹 ⇒ dev/release/dist 共用同一个 build dir 与同一条缓存条目 | 正确性 | E5 |
+| **C3b** | `.build_cache` 条目只按 `targetTriple` 去重，fast path 的准入只挡显式 `--profile/--dev/--release` ⇒ `--release` 之后裸 `mcpp build` 0.00s "成功"并交付 release 产物。**这是今天就在生效的 bug**，与 C3 同根 | 正确性（独立于缓存） | E8 |
 | **C4** | 传递 path/git 依赖被写进全局缓存，且源码变更不改键 | 正确性 | E6 |
 | **C5** | 缓存条目无自描述元数据（只有 `manifest.txt` 文件清单），`is_cached` 是"存在即命中"，无法校验、无法审计 | 键 | 代码 |
 | **C6** | 依赖对象里烙进消费者 build dir 路径（`DW_AT_comp_dir`）⇒ 无法内容寻址去重、debug 信息指向别的工程 | 可复现性 | E4 |
@@ -274,9 +323,30 @@ C3/C4 与 C1 的关系是硬约束：**C1 修好之前它们是无害的浪费�
 **不含**：root 包名/版本、root 的 `[build]` flags（E7 已证不下发）、图里无关的兄弟依赖、
 消费者的 build dir 路径。
 
-F 轴用递归键而不是「上游的 public include dirs + defines」，理由：上游 flag 变化会改变它
-导出的接口（宏、生成文件、ABI），逐项枚举必然漏。递归键是保守且完备的上界；代价是上游
-换 profile 会级联下游全部 key —— 这是正确的（profile 本来就是全图轴）。
+**F 轴为什么必须是递归键，而不是「枚举上游的 public include dirs + interface defines」：**
+
+1. **BMI 是硬绑定的，不是"接口等价即可"。** E9 实测：GCC 把被导入模块 BMI 的 CRC 写进导入者
+   的 BMI，接口或 ABI 一变就 `module 'B' CRC mismatch` + `Bad import dependency`。所以
+   `A` 的键需要的是「`B` 的 BMI 身份」本身，而 `B` 的 BMI 身份 = `B` 的完整键。
+2. **可枚举清单必然漏项。** 要枚举的是 `B` 的 public include dirs 的**内容**、interface
+   defines、`generated_files`、以及 `B` **re-export** 出去的传递模块接口 —— 最后这项从 `B`
+   的 manifest 里根本看不出来（它是 `R` 的接口，经 `B` 转出）。少一项 = 命中一条 BMI
+   加载不了的条目。
+3. **失败模态不对称（E9 的第二个推论）**：BMI 轴取窄 ⇒ CRC 硬报错（吵）；`.o` 轴取窄 ⇒
+   静默错对象（哑，`.o` 没有任何自校验）。设计必须按后者取保守侧。
+
+递归的真实代价**不是**「上游换 profile 级联下游」—— profile 是 C 轴，它本来就在**每一个**
+包的键里，有没有 F 轴都会让全图 key 变。递归的真实代价是：**上游的私有输入变化会级联下游**
+（例如 `B` 给自己加一个 `-DB_INTERNAL_LOG=1`，或改一个不提供模块的私有源文件，`B` 的接口
+逐字节没变，但 `A` 的键跟着变、`A` 白重编一次）。
+
+而这个代价在真正吃缓存的人群里 ≈ 0：**index 包的描述符按版本冻结**，`B` 的 buildConfig 不
+可能不 bump 版本就变（仓库里 #253 的注释依赖的正是这条不变量），所以 `B` 的键只能因
+「版本 bump」或「全图轴（工具链/standard/profile）」而变 —— 而版本 bump 本来就该让 `A`
+失效（`A` 要链接 `B` 的对象）。唯一能不改版本就动 `B` 私有 flag 的是 path/git 包，而它们
+已被 S9 整体排除出缓存。
+
+⇒ 递归是唯一可靠的形态，且在目标人群里几乎不付代价。
 
 拓扑序已由 `report.topoOrder`（`prepare.cppm:3561`）给出，自底向上一次遍历即可算完全图键。
 
@@ -457,7 +527,15 @@ issue311（2026.7.30.1，已设计）
       optLevel/debug/lto/strip（4 行），让现有 fp.hex 立刻区分 dev/release/dist。
       阶段 2 把它作为 S1 的 C 轴迁到每包键上；两处不是重复实现，是同一语义的迁移。
       副作用（可接受、须写 CHANGELOG）：三个 profile 从此各占一个 target/<triple>/<fp>/
-      目录，互不覆盖 —— 这本来就是 cargo 的行为。
+      目录，互不覆盖 —— 这本来就是 cargo 的行为。代价是磁盘 ×profile 数（每个 build dir
+      带一份 staged std BMI，本机 std.gcm = 31,466,112 字节）。
+  P2  C3b：.build_cache 条目按 (targetTriple, **resolved profile**) 去重，profile 不匹配
+      即当 miss 走 prepare_build。**只做 P1 不做 P2 是不够的**：fp 分家只会把"同一个目录
+      里内容是错的"换成"fast path 指向另一个 profile 的目录"，E8 的洞照旧。
+      顺手修 run_build_plan 里硬编码的 ui::finished("release", ...)——它在 dev 构建下
+      也打印 "Finished release [optimized]"，是 E8 里最误导人的一行。
+  P3  fingerprint changed (X → Y), full rebuild 警告（execute.cppm:310-324）会在每次切
+      profile 时触发。改成能区分"仅 profile 变"的文案，否则它从有用信号退化成噪音。
   S9  本地来源包（含传递 path/git、workspace 成员）排除出缓存 + indexName 回落修正
   S2  entry.json 自描述 + 命中时逐字段校验（取代"存在即命中"）
   e2e 负例：dev 构建后 --release，必须重编而不是复用；改 path dep 源码不改版本号，必须重编
