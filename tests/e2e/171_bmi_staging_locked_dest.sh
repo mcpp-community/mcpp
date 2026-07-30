@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # requires:
 # 171_bmi_staging_locked_dest.sh — mcpp#311: staging must survive a destination
-# that another process is holding, and must fail LOUDLY when it genuinely can't.
+# another process is holding, and must fail LOUDLY when it genuinely can't.
 #
 # The reported failure: mcpp writes the staged std BMI path into
 # compile_commands.json so clangd can resolve `import std;`, clangd
@@ -9,11 +9,15 @@
 # to overwrite it in place → Windows error 1224 (a file with a user-mapped
 # section open cannot be replaced) → the whole build reported "build failed".
 #
-# Windows: reproduce it exactly, WITHOUT needing clangd — a background
-# PowerShell holds a MemoryMappedFile on the staged BMI.
-# POSIX: the closest analogue an ordinary test can create is an unwritable
-# destination (chmod 444); the old `cp -f` silently unlinked and rewrote it,
-# the new path must not need to write at all.
+# Windows: reproduce that exactly and WITHOUT clangd — a background PowerShell
+# holds a MemoryMappedFile on the staged BMI. The holder signals readiness
+# through a sentinel file, so a PowerShell that never started fails the test
+# instead of letting it pass for the wrong reason.
+#
+# The load-bearing assertion is platform-neutral and root-proof: an equivalent
+# destination must not be written AT ALL (same inode, same mtime, same size).
+# Permissions alone would not do — root ignores them, and the container e2e job
+# runs as root.
 set -e
 
 TMP=$(mktemp -d)
@@ -41,6 +45,9 @@ DST="$(dirname "$NINJA")/$(echo "$EDGE" | awk '{print $2}')"
 SRC=$(echo "$EDGE" | awk '{print $NF}')
 [[ -f "$DST" ]] || { echo "FAIL: staged BMI missing at $DST"; exit 1; }
 
+identity() { stat -c '%i %Y %s' "$1"; }
+BEFORE=$(identity "$DST")
+
 # Dirty the staging edge without touching the shared cache's CONTENT.
 touch "$SRC"
 
@@ -48,11 +55,17 @@ HOLDER=""
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
         WINDST="$(cygpath -w "$DST")"
+        READY="$TMP/mapped.flag"
+        WINREADY="$(cygpath -w "$READY")"
         powershell -NoProfile -Command \
-            "\$mm = [System.IO.MemoryMappedFiles.MemoryMappedFile]::CreateFromFile('$WINDST', [System.IO.FileMode]::Open); Start-Sleep -Seconds 90" &
+            "\$mm = [System.IO.MemoryMappedFiles.MemoryMappedFile]::CreateFromFile('$WINDST', [System.IO.FileMode]::Open); \
+             Set-Content -Path '$WINREADY' -Value 'mapped'; Start-Sleep -Seconds 120" &
         HOLDER=$!
-        # Give the mapping time to exist before the build races it.
-        sleep 3
+        for _ in $(seq 1 40); do [[ -f "$READY" ]] && break; sleep 1; done
+        [[ -f "$READY" ]] || {
+            kill "$HOLDER" 2>/dev/null || true
+            echo "FAIL: could not map the staged BMI — the test would not have proven anything"
+            exit 1; }
         echo "holding a user-mapped section on $WINDST (pid $HOLDER)"
         ;;
     *)
@@ -75,6 +88,12 @@ if [[ $rc -ne 0 ]]; then
 fi
 grep -q "stage --output" build2.log || {
     cat build2.log; echo "FAIL: the staging edge did not run"; exit 1; }
+
+# The real assertion: nothing was written. Not "the write succeeded anyway".
+AFTER=$(identity "$DST")
+[[ "$BEFORE" == "$AFTER" ]] || {
+    echo "FAIL: an equivalent destination was rewritten (was '$BEFORE', now '$AFTER')"
+    exit 1; }
 cmp "$SRC" "$DST" || { echo "FAIL: held destination no longer matches the cache"; exit 1; }
 
 cd "$TMP"
