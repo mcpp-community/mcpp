@@ -349,6 +349,9 @@ std::string filter_ninja_output(std::string_view output,
                 if (auto close = target.find(']'); close != std::string::npos)
                     target = ltrim_copy(target.substr(close + 1));
             }
+            while (!target.empty()
+                   && std::isspace(static_cast<unsigned char>(target.back())))
+                target.pop_back();
             if (target.empty()) continue;
             filtered += "failed: ";
             filtered += target;

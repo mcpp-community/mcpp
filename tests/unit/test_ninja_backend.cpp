@@ -876,7 +876,7 @@ TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
     std::string raw =
         "ninja: Entering directory `target/x86_64-linux-gnu/fp'\n"
         "[1/3] STAGE pcm.cache/std.pcm\n"
-        "FAILED: [code=1] pcm.cache/std.pcm\n"
+        "FAILED: [code=1] pcm.cache/std.pcm \n"
         "/opt/mcpp/bin/mcpp stage --output pcm.cache/std.pcm /cache/std.pcm\n"
         "error: cannot stage file into the build directory\n"
         "hint: another process has this file memory-mapped, loaded or open.\n"
@@ -885,7 +885,9 @@ TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
     auto filtered = filter_ninja_output(raw, prefixes);
 
     // Which output failed is now preserved (it used to be dropped entirely).
-    EXPECT_NE(filtered.find("failed: pcm.cache/std.pcm"), std::string::npos) << filtered;
+    // ninja pads the target list with a trailing space; the normalized line
+    // must not inherit it.
+    EXPECT_NE(filtered.find("failed: pcm.cache/std.pcm\n"), std::string::npos) << filtered;
     EXPECT_EQ(filtered.find("[code=1]"), std::string::npos) << filtered;
     // The diagnostic survives; the echoed command line does not.
     EXPECT_NE(filtered.find("error: cannot stage file"), std::string::npos) << filtered;

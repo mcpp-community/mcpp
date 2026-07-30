@@ -124,6 +124,11 @@ std::error_code write_once(const std::filesystem::path& src,
 std::string failure_message(const std::filesystem::path& src,
                             const std::filesystem::path& dst,
                             const std::error_code& ec) {
+    // ninja runs staging with cwd = the build directory, so `$out` is relative.
+    // Print it absolute: the reader has to go find (or unlock) this file.
+    std::error_code aec;
+    auto shown = std::filesystem::absolute(dst, aec);
+    if (aec) shown = dst;
     return std::format(
         "cannot stage file into the build directory\n"
         "  file:  {}\n"
@@ -135,7 +140,7 @@ std::string failure_message(const std::filesystem::path& src,
         "      editor/IDE indexer, antivirus, or — for a .dll — a still-running\n"
         "      program from a previous `mcpp run`. Close it or restart clangd,\n"
         "      then re-run the build.",
-        dst.string(), src.string(), ec.value(), ec.message());
+        shown.string(), src.string(), ec.value(), ec.message());
 }
 
 } // namespace
