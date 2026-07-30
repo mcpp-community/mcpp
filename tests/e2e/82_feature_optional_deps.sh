@@ -46,15 +46,22 @@ EOF
 
 cd app
 
-# 1. Feature inactive → widget is NOT pulled (never resolved/compiled).
+# Both directions match EITHER verb. A dependency that is in the graph announces
+# itself as `Compiling` or, when the global build cache supplies its objects, as
+# `Cached` — so "Compiling" alone is too narrow for the positive AND too weak for
+# the negative: a wrongly-pulled dependency whose objects happened to be cached
+# would print `Cached widget` and slip past a `Compiling`-only check.
+pulled() { grep -qE '(Compiling|Cached) widget' "$1"; }
+
+# 1. Feature inactive → widget is NOT pulled (never resolved, never built).
 "$MCPP" build > b1.log 2>&1 || { cat b1.log; echo "FAIL: baseline build failed"; exit 1; }
-if grep -q 'Compiling widget' b1.log; then
+if pulled b1.log; then
     cat b1.log; echo "FAIL: widget must NOT be pulled when feature inactive"; exit 1
 fi
 
-# 2. Feature active → widget IS pulled and compiled like a normal dependency.
+# 2. Feature active → widget IS pulled and built like a normal dependency.
 rm -rf target
 "$MCPP" build --features extra > b2.log 2>&1 || { cat b2.log; echo "FAIL: feature build failed (widget not pulled?)"; exit 1; }
-grep -q 'Compiling widget' b2.log || { cat b2.log; echo "FAIL: widget was not pulled/compiled when feature active"; exit 1; }
+pulled b2.log || { cat b2.log; echo "FAIL: widget was not pulled when feature active"; exit 1; }
 
 echo "OK"

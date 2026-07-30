@@ -78,7 +78,16 @@ EOF
 mkidx idx1 a/acme.widget.lua acme widget
 mkapp app1 acme ../idx1 acme widget
 (cd app1 && "$MCPP" build > out.txt 2>&1) || { cat app1/out.txt; exit 1; }
-grep -q "Compiling acme.widget" app1/out.txt || { cat app1/out.txt; exit 1; }
+# Either verb: what this test is about is that the descriptor was found BY
+# IDENTITY and the package became part of the build. Whether its objects were
+# compiled here or served from the global build cache is a different subsystem's
+# business — and now that the cache actually works, a sibling app dir under the
+# same MCPP_HOME (or a restored CI sandbox) can legitimately supply them.
+grep -qE "(Compiling|Cached) acme\.widget" app1/out.txt || {
+    cat app1/out.txt
+    echo "FAIL: acme.widget was neither compiled nor served from cache"
+    exit 1
+}
 # xlings names the dir {namespace}-x-{literal name} — short name → acme-x-widget
 test -d "app1/.mcpp/.xlings/data/xpkgs/acme-x-widget" \
     || { echo "FAIL: expected store dir acme-x-widget"; ls -R app1/.mcpp/.xlings/data/xpkgs 2>/dev/null; exit 1; }
