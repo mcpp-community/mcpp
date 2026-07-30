@@ -9,7 +9,7 @@
 #      carried no `restat`, so every importer of `import std` rebuilt whenever
 #      the cache-side BMI got a newer mtime (which happens on any cwd change
 #      before the cache-root fix below).
-#   2. The staging SOURCE must live under $MCPP_HOME/build-cache/v1/std. That cache
+#   2. The staging SOURCE must live under the cache root mcpp itself reports. That cache
 #      used to resolve its root through a private copy of the home logic that
 #      knew neither %USERPROFILE% nor self-contained installs, so on Windows it
 #      parked the cache in the current working directory as `.mcpp-bmi/`.
@@ -56,12 +56,22 @@ DST=$(unescape_ninja "$(echo "$EDGE" | awk '{print $2}')")
 SRC=$(unescape_ninja "$(echo "$EDGE" | awk '{print $NF}')")
 echo "staging: $SRC -> $DST"
 
-# ── invariant 2: the cache root is $MCPP_HOME/build-cache/v1/std, never a cwd-local
-# dir (and never the pre-v1 $MCPP_HOME/bmi tree, which nothing reads now) ──
-HOME_ROOT=$(norm_path "${MCPP_HOME:-$HOME/.mcpp}")
+# ── invariant 2: the staging SOURCE lives under the tool's OWN cache root, and
+# never in a cwd-local directory (nor in the pre-v1 bmi/ tree, which nothing
+# reads now) ──
+#
+# The root is read from `mcpp cache dir` rather than re-derived here as
+# ${MCPP_HOME:-$HOME/.mcpp}/build-cache/v1. That re-derivation is wrong for a
+# SELF-CONTAINED install, where the unpacked tree itself is the home — which is
+# the shape of every release tarball and every `xlings install mcpp`. Re-deriving
+# it made this test fail against a released binary while the binary was right,
+# and "where is the cache" having two answers in two places is the exact defect
+# #311 spent a module (mcpp.home) removing.
+CACHE_ROOT=$(norm_path "$("$MCPP" cache dir | head -1)")
+[[ -n "$CACHE_ROOT" ]] || { echo "FAIL: mcpp cache dir printed nothing"; exit 1; }
 case "$(norm_path "$SRC")" in
-    "$HOME_ROOT"/build-cache/v1/std/*) ;;
-    *) echo "FAIL: std BMI cache is '$SRC', expected under '$HOME_ROOT/build-cache/v1/std'"
+    "$CACHE_ROOT"/std/*) ;;
+    *) echo "FAIL: std BMI cache is '$SRC', expected under '$CACHE_ROOT/std'"
        exit 1 ;;
 esac
 for leftover in "$TMP/.mcpp-bmi" "$TMP/app/.mcpp-bmi"; do
