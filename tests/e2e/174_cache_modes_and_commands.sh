@@ -280,6 +280,30 @@ rc=0
 "$MCPP" cache gc > gcnoargs.log 2>&1 || rc=$?
 [[ "$rc" -ne 0 ]] || { echo "FAIL: gc with no budget succeeded"; cat gcnoargs.log; exit 1; }
 
+# gc --max-size evicts package entries to hit a budget, and leaves std entries
+# alone: a std BMI is shared by every project on the machine and costs ~30 s to
+# rebuild, so trading it for a little disk is the wrong trade. The summary must
+# therefore talk about PACKAGE entries — reporting it as "cache now 0 B" would
+# read as an empty cache while tens of MB of std BMIs sit next to it.
+[[ "$(entry_count)" -eq 1 ]] || { echo "FAIL: expected one package entry before gc"; exit 1; }
+[[ -d "$MCPP_HOME/build-cache/v1/std" ]] || { echo "FAIL: no std entries to protect"; exit 1; }
+"$MCPP" cache gc --max-size 1B > gcsize.log 2>&1 || { cat gcsize.log; exit 1; }
+[[ "$(entry_count)" -eq 0 ]] || { echo "FAIL: gc --max-size kept package entries"; cat gcsize.log; exit 1; }
+[[ -d "$MCPP_HOME/build-cache/v1/std" ]] || {
+    echo "FAIL: gc --max-size evicted std entries"
+    cat gcsize.log
+    exit 1
+}
+grep -q 'package entries now' gcsize.log || {
+    cat gcsize.log
+    echo "FAIL: gc summary must scope its figure to package entries"
+    exit 1
+}
+
+# Refill for the clean tests below.
+rm -rf target
+"$MCPP" build > refill2.log 2>&1 || { cat refill2.log; exit 1; }
+
 # ── clean --std / --all / --legacy ─────────────────────────────────────────
 [[ -d "$MCPP_HOME/build-cache/v1/std" ]] || { echo "FAIL: no std cache dir"; exit 1; }
 "$MCPP" cache clean --std > cleanstd.log 2>&1

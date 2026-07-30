@@ -460,7 +460,11 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
                         e.label, human_bytes(e.size), format_age(e.accessed)));
     }
     std::println("");
-    std::println("Collected {} entries, freed {} (cache now {})",
+    // "package entries", not "cache": `live` only ever counted package entries,
+    // because std entries are deliberately out of scope here. Reporting it as
+    // the cache size would read as "the cache is now empty" while tens of MB of
+    // std BMIs sit right next to it.
+    std::println("Collected {} entries, freed {} (package entries now {})",
                  removed, human_bytes(freed), human_bytes(live));
     if (maxSize && live > *maxSize) {
         // Say it rather than silently under-delivering: a size target that
