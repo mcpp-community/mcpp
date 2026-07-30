@@ -84,7 +84,7 @@ std::expected<StageResult, StageError> stage_file(
    hint 必须点名 clangd 与 `compile_commands.json` 的因果）。
 8. 每次退出前清理残留 `dst.tmp.<pid>`。
 
-`Verify::Content` 由 `MCPP_STAGE_VERIFY=content` 或 `--verify content` 打开；实现是分块
+`Verify::Content` 是**默认**；`--verify size` / `MCPP_STAGE_VERIFY=size` 才退回只比 size。实现是分块
 逐字节比较（同 I/O 成本、无碰撞面、可提前退出），不引入 hash 依赖。
 
 **CLI 接线**（照 `dyndep` 的形状）：

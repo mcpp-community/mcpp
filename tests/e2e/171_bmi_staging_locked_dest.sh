@@ -20,6 +20,14 @@
 # runs as root.
 set -e
 
+# build.ninja node names are ninja-ESCAPED: on Windows a drive letter arrives as
+# `C$:/Users/...`. Unescape before touching the filesystem (the Windows job
+# failed on exactly this).
+unescape_ninja() { printf '%s' "$1" | sed 's/\$:/:/g; s/\$\$/$/g'; }
+# Compare paths across the Windows fork: MCPP_HOME is `C:\Users\...` while ninja
+# writes forward slashes.
+norm_path() { printf '%s' "$1" | tr '\\' '/'; }
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
@@ -41,11 +49,14 @@ cd app
 NINJA=$(find target -name build.ninja | head -1)
 EDGE=$(grep -E '^build [^ ]+ : stage_file ' "$NINJA" | head -1)
 [[ -n "$EDGE" ]] || { echo "FAIL: no stage_file edge for the std BMI"; exit 1; }
-DST="$(dirname "$NINJA")/$(echo "$EDGE" | awk '{print $2}')"
-SRC=$(echo "$EDGE" | awk '{print $NF}')
+DST="$(dirname "$NINJA")/$(unescape_ninja "$(echo "$EDGE" | awk '{print $2}')")"
+SRC=$(unescape_ninja "$(echo "$EDGE" | awk '{print $NF}')")
 [[ -f "$DST" ]] || { echo "FAIL: staged BMI missing at $DST"; exit 1; }
 
-identity() { stat -c '%i %Y %s' "$1"; }
+# GNU stat vs BSD/macOS stat (the macOS job failed on `stat -c`).
+identity() {
+    stat -c '%i %Y %s' "$1" 2>/dev/null || stat -f '%i %m %z' "$1"
+}
 BEFORE=$(identity "$DST")
 
 # Dirty the staging edge without touching the shared cache's CONTENT.

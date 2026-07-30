@@ -17,6 +17,14 @@
 # Toolchain-neutral: only needs a package that says `import std;`.
 set -e
 
+# build.ninja node names are ninja-ESCAPED: on Windows a drive letter arrives as
+# `C$:/Users/...`. Unescape before touching the filesystem (the Windows job
+# failed on exactly this).
+unescape_ninja() { printf '%s' "$1" | sed 's/\$:/:/g; s/\$\$/$/g'; }
+# Compare paths across the Windows fork: MCPP_HOME is `C:\Users\...` while ninja
+# writes forward slashes.
+norm_path() { printf '%s' "$1" | tr '\\' '/'; }
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
@@ -44,13 +52,13 @@ EDGE=$(grep -E '^build [^ ]+ : stage_file ' "$NINJA" | head -1)
 [[ -n "$EDGE" ]] || {
     grep -n "std" "$NINJA" | head -20
     echo "FAIL: no stage_file edge for the std BMI (did import std resolve?)"; exit 1; }
-DST=$(echo "$EDGE" | awk '{print $2}')
-SRC=$(echo "$EDGE" | awk '{print $NF}')
+DST=$(unescape_ninja "$(echo "$EDGE" | awk '{print $2}')")
+SRC=$(unescape_ninja "$(echo "$EDGE" | awk '{print $NF}')")
 echo "staging: $SRC -> $DST"
 
 # ── invariant 2: the cache root is $MCPP_HOME/bmi, never a cwd-local dir ──
-HOME_ROOT="${MCPP_HOME:-$HOME/.mcpp}"
-case "$SRC" in
+HOME_ROOT=$(norm_path "${MCPP_HOME:-$HOME/.mcpp}")
+case "$(norm_path "$SRC")" in
     "$HOME_ROOT"/bmi/*) ;;
     *) echo "FAIL: std BMI cache is '$SRC', expected under '$HOME_ROOT/bmi'"; exit 1 ;;
 esac

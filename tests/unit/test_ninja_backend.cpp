@@ -817,10 +817,32 @@ TEST(NinjaBackend, StageRuleRunsThroughMcppWithRestat) {
     ASSERT_NE(restatPos, std::string::npos) << ninja;
     EXPECT_LT(restatPos, nextRulePos) << ninja;
 
-    // The old per-platform in-place copies are gone for good.
+    // The old per-platform in-place copies are gone for good — including the
+    // second one, in runtime_alias, which the Windows job caught still
+    // shelling out to PowerShell.
     EXPECT_EQ(ninja.find("Copy-Item"), std::string::npos) << ninja;
     EXPECT_EQ(ninja.find("cp -f $in $out"), std::string::npos) << ninja;
     EXPECT_EQ(ninja.find("cp_bmi"), std::string::npos) << ninja;
+}
+
+TEST(NinjaBackend, RuntimeAliasCopiesThroughStageOnWindowsAndSymlinksElsewhere) {
+    auto plan = minimal_plan();
+    auto ninja = emit_ninja_string(plan);
+    auto rulePos = ninja.find("rule runtime_alias\n");
+    ASSERT_NE(rulePos, std::string::npos) << ninja;
+    auto body = ninja.substr(rulePos, ninja.find("\nrule ", rulePos + 1) - rulePos);
+
+    if constexpr (mcpp::platform::is_windows) {
+        // PE has no soname symlink: the alias is a copy of a freshly built DLL,
+        // the same hazard class as BMI staging.
+        EXPECT_NE(body.find("$mcpp stage --output $out $in"), std::string::npos) << body;
+        EXPECT_NE(body.find("restat = 1"), std::string::npos) << body;
+    } else {
+        // POSIX must keep the SYMLINK — turning it into a copy would change
+        // what gets packaged, not just how it is written.
+        EXPECT_NE(body.find("ln -s"), std::string::npos) << body;
+        EXPECT_EQ(body.find("stage --output"), std::string::npos) << body;
+    }
 }
 
 TEST(NinjaBackend, McppBinaryIsBoundEvenWithoutDyndep) {

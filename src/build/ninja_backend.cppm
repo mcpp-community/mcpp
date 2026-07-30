@@ -757,11 +757,21 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     append("rule runtime_alias\n");
     if constexpr (mcpp::platform::is_windows) {
-        append("  command = powershell -NoProfile -Command \"Copy-Item -Force '$in' -Destination '$out'\"\n");
+        // PE has no soname symlink, so the alias is a copy — and a copy of a
+        // just-rebuilt DLL is exactly the hazard #311 is about (a program still
+        // running from a previous `mcpp run` holds the old one). Route it
+        // through the same staging primitive rather than a second in-place
+        // PowerShell copy. Content-verified, so a same-size rebuild still
+        // refreshes the alias.
+        append("  command = $mcpp stage --output $out $in\n");
     } else {
         append("  command = mkdir -p $$(dirname $out) && rm -f $out && ln -s $$(basename $in) $out\n");
     }
-    append("  description = ALIAS $out\n\n");
+    append("  description = ALIAS $out\n");
+    if constexpr (mcpp::platform::is_windows) {
+        append("  restat = 1\n");
+    }
+    append("\n");
 
     if (dyndep) {
         // Scan rule: produce P1689 .ddi for one TU.

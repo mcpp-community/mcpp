@@ -16,14 +16,17 @@
 //
 // The rules this module implements:
 //
-//   1. Never write bytes we don't have to. The destination and the source live
-//      under the SAME build fingerprint (target/<triple>/<fp> vs
-//      $MCPP_HOME/bmi/<fp>), and the fingerprint already covers compiler
-//      identity, target triple, stdlib, std module source hash and the
-//      standard/dialect flags. Same fingerprint + same size ⇒ equivalent ⇒
-//      the file is already staged. This mirrors what the dep BMI cache has
-//      always done (bmi_cache.cppm: "Existing project outputs are left
-//      untouched").
+//   1. Never write bytes that are already there. Equivalence is decided by
+//      COMPARING CONTENT, which is unconditionally correct — a destination
+//      identical to the source needs no write, whatever the reason. Size alone
+//      is only a heuristic and is available as `--verify size` for the paths
+//      where the caller knows better (a std BMI is fingerprint-scoped: the
+//      cache dir and the build dir share the fp that covers compiler identity,
+//      target triple, stdlib, std source hash and the dialect flags). It is
+//      NOT the default, because staging also carries .dll payloads whose PE
+//      section padding makes "same size, different bytes" ordinary.
+//      Skipping mirrors what the dep BMI cache has always done
+//      (bmi_cache.cppm: "Existing project outputs are left untouched").
 //   2. When we do write, write out of place and rename — atomic for readers,
 //      and it survives a transient sharing violation (antivirus, indexer)
 //      that an in-place overwrite would lose to.
@@ -49,12 +52,12 @@ export namespace mcpp::build::stage {
 
 // How hard to look before declaring the destination already-staged.
 enum class Verify {
-    Size,       // default: size match under an identical build fingerprint
-    Content,    // byte-for-byte compare (MCPP_STAGE_VERIFY=content / --verify content)
+    Content,    // default: byte-for-byte compare — always correct
+    Size,       // size match only (MCPP_STAGE_VERIFY=size / --verify size)
 };
 
 struct StageOptions {
-    Verify                    verify  = Verify::Size;
+    Verify                    verify  = Verify::Content;
     int                       retries = 3;                 // attempts after the first
     std::chrono::milliseconds backoff{100};                // ×3 per retry: 100/300/900ms
 };
@@ -76,7 +79,8 @@ std::expected<StageOutcome, StageError> stage_file(const std::filesystem::path& 
 // unreadable or the sizes differ.
 bool same_content(const std::filesystem::path& a, const std::filesystem::path& b);
 
-// Parse a --verify / MCPP_STAGE_VERIFY value. Unknown values fall back to Size.
+// Parse a --verify / MCPP_STAGE_VERIFY value. Unknown values fall back to the
+// safe default (Content).
 Verify parse_verify(std::string_view value);
 
 } // namespace mcpp::build::stage
@@ -171,7 +175,7 @@ bool same_content(const std::filesystem::path& a, const std::filesystem::path& b
 }
 
 Verify parse_verify(std::string_view value) {
-    return value == "content" ? Verify::Content : Verify::Size;
+    return value == "size" ? Verify::Size : Verify::Content;
 }
 
 std::expected<StageOutcome, StageError> stage_file(const std::filesystem::path& src,
@@ -193,7 +197,8 @@ std::expected<StageOutcome, StageError> stage_file(const std::filesystem::path& 
         }
     }
 
-    // Already staged? (see module comment for why size is a sound default)
+    // Already staged? Content by default — size is the caller-opt-in shortcut
+    // (see module comment).
     std::error_code sec;
     if (std::filesystem::is_regular_file(dst, sec)) {
         std::error_code se1, se2;

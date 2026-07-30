@@ -35,7 +35,7 @@ std::string read_file(const std::filesystem::path& p) {
 
 // Retries would only slow the failure tests down; the behaviour under test is
 // the decision, not the backoff.
-StageOptions no_retry(Verify v = Verify::Size) {
+StageOptions no_retry(Verify v = Verify::Content) {
     return StageOptions{.verify = v, .retries = 0, .backoff = std::chrono::milliseconds{0}};
 }
 
@@ -75,9 +75,24 @@ TEST(BuildStage, EquivalentDestinationIsNotTouched) {
     EXPECT_EQ(std::filesystem::last_write_time(dst), recorded);
 }
 
-// Same size, different bytes: the size-only default deliberately treats this as
-// already-staged (destination and source share a build fingerprint, which
-// covers compiler identity, stdlib and std source hash).
+// Same size, different bytes must be copied by DEFAULT. Staging also carries
+// .dll payloads, where PE section padding makes equal sizes across a real
+// rebuild ordinary — so size-only equivalence cannot be the default.
+TEST(BuildStage, SameSizeDifferentBytesIsCopiedByDefault) {
+    Tmp tmp;
+    auto src = tmp.path / "src.bin";
+    auto dst = tmp.path / "dst.bin";
+    write_file(src, "AAAA");
+    write_file(dst, "BBBB");
+
+    auto r = stage_file(src, dst, no_retry());
+    ASSERT_TRUE(r.has_value());
+    EXPECT_TRUE(r->copied);
+    EXPECT_EQ(read_file(dst), "AAAA");
+}
+
+// `--verify size` is the opt-in shortcut for callers that know the source is
+// fingerprint-scoped; it accepts the same-size destination as already staged.
 TEST(BuildStage, SameSizeDifferentBytesIsSkippedUnderSizeVerify) {
     Tmp tmp;
     auto src = tmp.path / "src.bin";
@@ -89,19 +104,6 @@ TEST(BuildStage, SameSizeDifferentBytesIsSkippedUnderSizeVerify) {
     ASSERT_TRUE(r.has_value());
     EXPECT_FALSE(r->copied);
     EXPECT_EQ(read_file(dst), "BBBB");
-}
-
-TEST(BuildStage, SameSizeDifferentBytesIsCopiedUnderContentVerify) {
-    Tmp tmp;
-    auto src = tmp.path / "src.bin";
-    auto dst = tmp.path / "dst.bin";
-    write_file(src, "AAAA");
-    write_file(dst, "BBBB");
-
-    auto r = stage_file(src, dst, no_retry(Verify::Content));
-    ASSERT_TRUE(r.has_value());
-    EXPECT_TRUE(r->copied);
-    EXPECT_EQ(read_file(dst), "AAAA");
 }
 
 TEST(BuildStage, DifferentSizeIsAlwaysCopied) {
@@ -124,10 +126,12 @@ TEST(BuildStage, MissingSourceIsAnError) {
     EXPECT_NE(r.error().message.find("nope.bin"), std::string::npos);
 }
 
-// A read-only destination is the closest POSIX analogue of the Windows holder:
-// an in-place overwrite cannot open it, so staging must go through the
-// temp-file + rename path.
-TEST(BuildStage, ReadOnlyDestinationIsReplacedViaRename) {
+// A read-only destination that must actually be replaced: POSIX can do it
+// (the directory entry is what gets rewritten, so temp-file + rename wins),
+// Windows cannot (replacing a read-only file is denied however you spell it) —
+// and there the contract is the loud failure, not a silent skip. Asserted per
+// platform rather than skipped, so neither side can rot unnoticed.
+TEST(BuildStage, ReadOnlyDestinationOutcomeIsPlatformDefined) {
     Tmp tmp;
     auto src = tmp.path / "src.bin";
     auto dst = tmp.path / "dst.bin";
@@ -136,9 +140,15 @@ TEST(BuildStage, ReadOnlyDestinationIsReplacedViaRename) {
     std::filesystem::permissions(dst, std::filesystem::perms::owner_read);
 
     auto r = stage_file(src, dst, no_retry());
+#if defined(_WIN32)
+    ASSERT_FALSE(r.has_value());
+    EXPECT_NE(r.error().message.find("hint:"), std::string::npos);
+    EXPECT_EQ(read_file(dst), "old");
+#else
     ASSERT_TRUE(r.has_value()) << r.error().message;
     EXPECT_TRUE(r->copied);
     EXPECT_EQ(read_file(dst), "new-content");
+#endif
 }
 
 // When staging genuinely cannot proceed, the failure must name the file and
@@ -176,6 +186,7 @@ TEST(BuildStage, SameContentComparesBytesNotJustSize) {
 TEST(BuildStage, VerifyModeParsing) {
     EXPECT_EQ(parse_verify("content"), Verify::Content);
     EXPECT_EQ(parse_verify("size"), Verify::Size);
-    EXPECT_EQ(parse_verify("nonsense"), Verify::Size);
-    EXPECT_EQ(parse_verify(""), Verify::Size);
+    // Anything unrecognized must land on the SAFE mode, not the fast one.
+    EXPECT_EQ(parse_verify("nonsense"), Verify::Content);
+    EXPECT_EQ(parse_verify(""), Verify::Content);
 }

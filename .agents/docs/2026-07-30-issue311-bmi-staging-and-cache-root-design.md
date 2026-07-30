@@ -195,7 +195,7 @@ mcpp stage --output <dst> <src>
 | 步 | 条件 | 行为 |
 |---|---|---|
 | 1 | `src` 不存在 | 报错退出 1（这是真 bug，不容忍） |
-| 2 | `dst` 存在 且 `size(dst) == size(src)` 且（`--verify content` 时字节亦相等） | **一个字节都不写，也不动任何时间戳**；退出 0 |
+| 2 | `dst` 存在 且 `size(dst) == size(src)` 且**内容逐字节相等**(默认;`--verify size` 时只比 size) | **一个字节都不写,也不动任何时间戳**;退出 0 |
 | 3 | 否则 | 写 `dst.tmp.<pid>`（同目录）→ `rename` 覆盖 `dst` |
 | 4 | 步 3 失败 | 退化为原地覆写（`copy_file` overwrite）——赢下"可写但不可删"的持有者形态 |
 | 5 | 步 3+4 都失败 | 退避重试 3 次（100/300/900 ms）后仍失败 → 结构化诊断 + 退出 1 |
@@ -220,9 +220,14 @@ mcpp stage --output <dst> <src>
 也就是说：**std staging 是全仓库唯一强制覆写的那一处**，这个不对称本身就是缺陷。
 S1 把它拉回一致。
 
-内容校验默认关闭（只比 size）：上面的 fp 判据已经足够强，逐字节比较要多读两遍 31 MB。
-留开关是为了排障（`--verify content` / `MCPP_STAGE_VERIFY=content`）。选逐字节比较而不是
-hash：同样的 I/O 成本，但没有碰撞面，且能提前退出。
+**内容校验是默认,不是开关**(这一条被 Windows CI 纠正过一次)。初稿让 size 相等即视为已
+staged,理由是 fp 判据;但同一条 rule 还搬 **DLL**(`runtimeDeployFiles`、以及 Windows 上的
+`runtime_alias`),而 PE 的节对齐让「真的重建了、大小却一模一样」十分常见 —— size-only 会把
+一个过期的 DLL 留在 build dir 里。逐字节比较则**无条件正确**:内容相同就是不需要写。
+
+成本可接受,因为这个判断只在 ninja 已经认定 edge 脏了才会跑(罕见),此时多读两遍 31 MB 换
+的是正确性。`--verify size` / `MCPP_STAGE_VERIFY=size` 保留给「调用方确知源是 fp 作用域」的
+快路径。选逐字节比较而不是 hash:同样的 I/O 成本,但没有碰撞面,且能提前退出。
 
 **为什么步 2 连时间戳都不碰**（这一条实测修正过一次）：
 
@@ -297,6 +302,12 @@ staging rule 加 `restat = 1`。这是 S1 步 2"不写字节"能真正省掉级�
 部署复用的是同一条 rule（`ninja_backend.cppm:1077-1083`）。**DLL 部署是同一类失败的第二个
 受害者**（往正在运行的进程/调试器已加载的 DLL 上 `Copy-Item -Force` 同样失败），S1 一并治好。
 
+还有**第三个**:`rule runtime_alias`(`ninja_backend.cppm:758-764`)在 Windows 上也是一条
+`Copy-Item -Force` —— PE 没有 soname 符号链接,别名就是刚建出来的 DLL 的副本,同一危险类。
+Windows 分支一并改走 `$mcpp stage`(+ `restat`),**POSIX 分支保持 `ln -s` 不变**:那里符号
+链接是语义而不只是写法(改成拷贝会改变打包产物)。这一处是 Windows CI 抓出来的 —— 初稿的
+「`Copy-Item` 归零」自查项在本地(Linux)恒为真,永远不会失败。
+
 另有一处必改：`mcpp = <exe>` 这个 ninja 变量目前只在 `if (dyndep)` 里绑定
 （`ninja_backend.cppm:403-409`）。新 rule 在**所有**配置下都要用它，必须把绑定提到该
 条件之外，否则 GCC 非 dyndep 路径会生成 `$mcpp` 为空的命令。
@@ -335,7 +346,7 @@ staging rule 加 `restat = 1`。这是 S1 步 2"不写字节"能真正省掉级�
 
 | 风险 | 缓解 |
 |---|---|
-| size 相等但内容不同（S1 步 2 误跳过） | fp 判据 + `--verify=hash` 开关；e2e 用"改一个字节但保持长度"的负例锁住 hash 模式 |
+| size 相等但内容不同(S1 步 2 误跳过) | **默认逐字节比较**,单测双向锁住(默认必拷贝 / `--verify size` 才跳过) |
 | `restat = 1` 引入意外的"永不重建" | 单测锁 rule 文本；e2e 正例：改 std 源/换 toolchain ⇒ fp 变 ⇒ 新 build dir，不受影响 |
 | 收敛缓存根导致老用户一次性重编 std | 只影响 self-contained 与 Windows 两种形态；一次 10–60 s；CHANGELOG 写明，doctor 提示遗留目录 |
 | `mcpp` 变量提取出 `if (dyndep)` 后 ninja 文本变化 | `tests/unit/test_ninja_backend.cpp` 断言两种配置（dyndep on/off）下都绑定 |
