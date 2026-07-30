@@ -1040,3 +1040,29 @@ TEST(NinjaBackend, CachedUnitWithoutCachedObjectPathIsStillCompiled) {
     EXPECT_EQ(ninja.find("stage_file \n"), std::string::npos) << ninja;
     EXPECT_EQ(ninja.find("build obj/main.o : stage_file"), std::string::npos) << ninja;
 }
+
+// A cache-served unit keeps its compile_commands.json entry. The units stay in
+// the plan (only their EDGE changes shape) precisely so clangd does not lose the
+// dependency's sources — a cache that silently degraded IDE navigation would be
+// a bad trade for build time.
+TEST(NinjaBackend, CachedUnitsStillAppearInCompileCommands) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/dep.c",
+        .object = "obj/dep.o",
+        .packageName = "dep",
+        .servedFromCache = true,
+        .cachedObject = "/bc/v1/pkg/idx/dep@1.0.0/key/obj/dep.o",
+    });
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto flags = compute_flags(plan);
+    auto cdb = emit_compile_commands(plan, flags);
+
+    EXPECT_NE(cdb.find("/store/dep/src/dep.c"), std::string::npos) << cdb;
+    EXPECT_NE(cdb.find("src/main.cpp"), std::string::npos) << cdb;
+}

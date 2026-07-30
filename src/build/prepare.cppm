@@ -3902,6 +3902,19 @@ prepare_build(bool print_fingerprint,
                                               nlohmann::json::object());
         std::vector<int>            keyState(packages.size(), 0); // 0 new/1 busy/2 done
         std::string                 keyCycleError;
+        // Does this package's own transitive upstream contain anything that is
+        // not an immutable index payload? If so it cannot be cached either, even
+        // when the package itself is an index package.
+        //
+        // A key covers an upstream package by folding in that package's KEY, and
+        // a local package's key covers its file list but not its file CONTENTS —
+        // nothing could, without hashing a tree that may change between the hash
+        // and the compile. So editing a local upstream's source would leave a
+        // downstream entry looking valid. No index descriptor can declare a path
+        // dependency today, which makes this shape unreachable in practice; it is
+        // enforced structurally anyway, because "unreachable today" is how the
+        // transitive path-dep leak got in.
+        std::vector<char>           localTaint(packages.size(), 0);
         auto compute_key = [&](auto&& self, std::size_t idx) -> const std::string& {
             static const std::string kEmpty;
             if (keyState[idx] == 2) return pkgKeys[idx];
@@ -3933,10 +3946,15 @@ prepare_build(bool print_fingerprint,
             if (pa.version.empty()) pa.version = packages[idx].manifest.package.version;
             ck::fill_package_config(pa, packages[idx], storeRoot);
             pa.sources = pkgSources[idx];
+            const bool selfIsIndex = idx > 0
+                && idx - 1 < dep_cache_identities.size()
+                && dep_cache_identities[idx - 1].sourceKind == "version";
+            if (!selfIsIndex) localTaint[idx] = 1;
             for (auto& e : dependencyEdges) {
                 if (e.consumerPackageIndex != idx) continue;
                 auto& up = self(self, e.dependencyPackageIndex);
                 if (!up.empty()) pa.upstreamKeys.push_back(up);
+                if (localTaint[e.dependencyPackageIndex]) localTaint[idx] = 1;
                 for (auto& f : e.requestedFeatures) pa.features.push_back(f);
             }
             std::ranges::sort(pa.upstreamKeys);
@@ -3979,6 +3997,8 @@ prepare_build(bool print_fingerprint,
             // xpkgs store stays out, because the failure mode here is a
             // silently wrong object rather than a rejected command.
             if (!depIdent || depIdent->sourceKind != "version") continue;
+            // ...and neither may anything it was built against be local.
+            if (localTaint[i]) continue;
 
             const auto& depName = depIdent->packageName;
             const auto& depVer  = depIdent->version.empty()
