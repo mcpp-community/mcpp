@@ -12,13 +12,21 @@ module;
 //   clang++ -std=c++23 pcm.cache/std.pcm -c -o std.o
 //
 // We invoke the compiler in a dedicated cache directory so the produced
-// BMI is owned by mcpp and reused across all builds with the same fingerprint.
+// BMI is owned by mcpp and reused across every build with the same std identity.
 //
 // Output layout:
-//   <cache_root>/<fingerprint>/
+//   <cache_root>/std/<std_identity_key>/
 //      gcm.cache/std.gcm        ← GCC BMI
 //      pcm.cache/std.pcm        ← Clang BMI
 //      std.o                    ← linked into final binaries
+//
+// The directory used to be named by the WHOLE-PROJECT fingerprint, which folds
+// in the root package's name, version and flags — none of which reach the std
+// module's compile commands. The metadata written next to the artifacts
+// (metadata_for below) has always been the correct identity and has always been
+// what validates a hit; only the directory name was wrong. On one machine that
+// cost 1014 directories holding 15 distinct identities: 16.1 GB where ~0.5 GB
+// was needed, and a `mcpp version bump` re-precompiled std from scratch.
 
 export module mcpp.toolchain.stdmod;
 
@@ -36,7 +44,7 @@ import mcpp.toolchain.msvc;
 export namespace mcpp::toolchain {
 
 struct StdModule {
-    std::filesystem::path           cacheDir;            // <cache_root>/<fp>/
+    std::filesystem::path           cacheDir;            // <cache_root>/std/<key>/
     std::filesystem::path           bmiPath;             // <cacheDir>/gcm.cache/std.gcm
     std::filesystem::path           objectPath;          // <cacheDir>/std.o
     std::filesystem::path           compatBmiPath;       // <cacheDir>/pcm.cache/std.compat.pcm
@@ -54,7 +62,6 @@ std::filesystem::path default_cache_root();
 // arm64-apple-macosxNN triple than the code importing it.
 std::expected<StdModule, StdModError> ensure_built(
     const Toolchain&                  tc,
-    std::string_view                  fingerprint_hex,
     std::string_view                  cpp_standard,
     std::string_view                  cpp_standard_flag,
     std::string_view                  macos_deployment_target = {},
@@ -84,6 +91,24 @@ std::expected<std::string, StdModError> run_capture_command(
 
 std::filesystem::path metadata_path(const std::filesystem::path& cacheDir) {
     return cacheDir / "std-module.json";
+}
+
+// The directory segment used while deriving the identity, so the build commands
+// folded into it do not contain the identity they are about to produce.
+constexpr std::string_view kStdKeyPlaceholder = "@std-key@";
+
+// The std module's cache directory name. Derived from the metadata that already
+// defines std identity (metadata_for below: compiler, version, driver identity,
+// target triple, stdlib, standard + flag, source hashes, build commands) — the
+// same object metadata_matches validates a hit against. Naming the directory
+// after the whole-project fingerprint instead is what let 15 real identities
+// occupy 1014 directories.
+//
+// Format compatibility is carried by the `build-cache/v1` path segment above
+// one, not by an epoch field: a std BMI's validity depends on the toolchain,
+// never on mcpp's cache bookkeeping.
+std::string std_identity_key(const nlohmann::json& normalized) {
+    return hash_string("mcpp-std-key-v1\x1f" + normalized.dump());
 }
 
 nlohmann::json metadata_for(const Toolchain& tc,
@@ -182,12 +207,11 @@ std::filesystem::path default_cache_root() {
     // resolution that predated Windows' USERPROFILE branch and self-contained
     // installs, so the std BMI cache could land in the *current working
     // directory* (`.mcpp-bmi/`) while dep BMIs went to $MCPP_HOME/bmi.
-    return mcpp::home::bmi_root();
+    return mcpp::home::cache_root();
 }
 
 std::expected<StdModule, StdModError> ensure_built(
     const Toolchain&                  tc,
-    std::string_view                  fingerprint_hex,
     std::string_view                  cpp_standard,
     std::string_view                  cpp_standard_flag,
     std::string_view                  macos_deployment_target,
@@ -200,12 +224,6 @@ std::expected<StdModule, StdModError> ensure_built(
 
     const bool isMsvc = tc.compiler == CompilerId::MSVC;
     StdModule sm;
-    sm.cacheDir   = cache_root / std::string(fingerprint_hex);
-    sm.bmiPath    = isMsvc ? mcpp::toolchain::msvc::std_bmi_path(sm.cacheDir)
-                 : is_clang(tc)
-                  ? mcpp::toolchain::clang::std_bmi_path(sm.cacheDir)
-                  : mcpp::toolchain::gcc::std_bmi_path(sm.cacheDir);
-    sm.objectPath = sm.cacheDir / (isMsvc ? "std.obj" : "std.o");
 
     // Build sysroot + include flags for std module precompilation, derived
     // from the shared toolchain link model (same resolver as flags.cppm —
@@ -236,26 +254,62 @@ std::expected<StdModule, StdModError> ensure_built(
 
     // All three providers expose the same command-sequence shape (A5 backend
     // surface normalization) — no per-compiler arity branching here.
-    std::vector<std::string> stdCommands =
-        isMsvc ? mcpp::toolchain::msvc::std_module_build_commands(
-                     tc, sm.cacheDir, cpp_standard_flag)
-      : is_clang(tc)
-        ? mcpp::toolchain::clang::std_module_build_commands(
-              tc, sm.cacheDir, sm.bmiPath, sysroot_flag, cpp_standard_flag)
-        : mcpp::toolchain::gcc::std_module_build_commands(
-              tc, sm.cacheDir, sysroot_flag, cpp_standard_flag);
-    std::vector<std::string> compatCommands;
-    if (!tc.stdCompatSource.empty()) {
-        if (isMsvc) {
-            compatCommands = mcpp::toolchain::msvc::std_compat_build_commands(
-                tc, sm.cacheDir, cpp_standard_flag);
-        } else if (is_clang(tc)) {
-            auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
-            compatCommands = mcpp::toolchain::clang::std_compat_build_commands(
-                tc, sm.cacheDir, compatBmi, sm.bmiPath, sysroot_flag, cpp_standard_flag);
+    //
+    // Everything downstream of the cache directory is derived here, because the
+    // directory NAME is derived from the metadata and the metadata contains the
+    // build commands, which contain the directory. Resolving that circularity
+    // by hand: run this once against a placeholder directory to obtain the
+    // identity (that is what "normalized" means — the commands then name a
+    // literal placeholder segment instead of a key-specific path), hash it,
+    // then run it again against the real directory to get what goes on disk.
+    struct Derived {
+        std::filesystem::path bmiPath;
+        std::filesystem::path objectPath;
+        std::vector<std::string> stdCommands;
+        std::vector<std::string> compatCommands;
+        nlohmann::json metadata;
+    };
+    auto derive = [&](const std::filesystem::path& cacheDir) {
+        Derived d;
+        d.bmiPath = isMsvc ? mcpp::toolchain::msvc::std_bmi_path(cacheDir)
+                  : is_clang(tc)
+                    ? mcpp::toolchain::clang::std_bmi_path(cacheDir)
+                    : mcpp::toolchain::gcc::std_bmi_path(cacheDir);
+        d.objectPath = cacheDir / (isMsvc ? "std.obj" : "std.o");
+        d.stdCommands =
+            isMsvc ? mcpp::toolchain::msvc::std_module_build_commands(
+                         tc, cacheDir, cpp_standard_flag)
+          : is_clang(tc)
+            ? mcpp::toolchain::clang::std_module_build_commands(
+                  tc, cacheDir, d.bmiPath, sysroot_flag, cpp_standard_flag)
+            : mcpp::toolchain::gcc::std_module_build_commands(
+                  tc, cacheDir, sysroot_flag, cpp_standard_flag);
+        if (!tc.stdCompatSource.empty()) {
+            if (isMsvc) {
+                d.compatCommands = mcpp::toolchain::msvc::std_compat_build_commands(
+                    tc, cacheDir, cpp_standard_flag);
+            } else if (is_clang(tc)) {
+                auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(cacheDir);
+                d.compatCommands = mcpp::toolchain::clang::std_compat_build_commands(
+                    tc, cacheDir, compatBmi, d.bmiPath, sysroot_flag, cpp_standard_flag);
+            }
         }
-    }
-    auto metadata = metadata_for(tc, cpp_standard, cpp_standard_flag, stdCommands, compatCommands);
+        d.metadata = metadata_for(tc, cpp_standard, cpp_standard_flag,
+                                  d.stdCommands, d.compatCommands);
+        return d;
+    };
+
+    const auto stdRoot = cache_root / "std";
+    auto normalized = derive(stdRoot / kStdKeyPlaceholder).metadata;
+    auto identity   = std_identity_key(normalized);
+    sm.cacheDir = stdRoot / identity;
+
+    auto derived = derive(sm.cacheDir);
+    sm.bmiPath    = derived.bmiPath;
+    sm.objectPath = derived.objectPath;
+    const auto& stdCommands    = derived.stdCommands;
+    const auto& compatCommands = derived.compatCommands;
+    const auto& metadata       = derived.metadata;
     auto metaPath = metadata_path(sm.cacheDir);
     bool std_cached = std::filesystem::exists(sm.bmiPath)
                    && std::filesystem::exists(sm.objectPath)

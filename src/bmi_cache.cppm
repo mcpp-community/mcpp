@@ -1,85 +1,123 @@
-// mcpp.bmi_cache — cross-project persistent BMI cache (M3.2).
+// mcpp.bmi_cache — cross-project persistent cache of dependency build outputs.
 //
-// Layout (per docs/26-bmi-cache.md):
-//   $MCPP_HOME/bmi/<fingerprint>/deps/<indexName>/<pkgName>@<version>/
-//     {gcm,pcm}.cache/<module>.{gcm,pcm}
-//     obj/<file>.m.o + <file>.o
-//     manifest.txt    (sentinel + file list)
+// Layout:
+//   <cache root>/pkg/<index>/<pkg>@<version>/<key16>/
+//   (the cache root is $MCPP_HOME/build-cache/v1 — see mcpp.home::cache_root)
+//     entry.json                       sentinel + self-description + file list
+//     bmi/<module>.{gcm,pcm}
+//     obj/<relative>.o
 //
-// fingerprint already covers compiler / flags / stdlib / mcpp version /
-// dep-lock hash etc. (docs/06), so different fingerprints get independent
-// cache directories — no risk of stale-BMI cross-contamination.
+// <key16> comes from mcpp.build.cache_key: a per-package Merkle key over the
+// toolchain, the language/dialect settings, the resolved profile, the package's
+// own identity and build config, and — recursively — the keys of its direct
+// dependencies. See that module's header for why each axis is there.
 //
-// M4 #9: populate is wrapped in an advisory exclusive flock(2) on
-// <cacheDir>/.lock so two concurrent mcpp builds can race to the same
-// dep cache without trashing manifest.txt (docs/26 §5.4 V2).
+// Two properties this layout has and the previous one did not:
+//
+//  1. The directory name is derived only from things that actually reach the
+//     package's compiler command lines. The old key was the whole-project
+//     fingerprint, so a consumer's own name and version were part of every
+//     dependency's cache path: `mcpp version bump` invalidated the entire cache
+//     and no two projects ever shared an entry.
+//
+//  2. An entry describes itself. `is_cached` compares the recorded inputs
+//     field by field against the inputs computed for this build, so a hit is
+//     evidence rather than the mere existence of a directory. The std module
+//     path has validated hits this way since it was written
+//     (mcpp.toolchain.stdmod's metadata_matches); the dependency path carried
+//     only a file list, which is why nothing could be audited when a wrong
+//     entry was suspected.
+//
+// populate_from holds an advisory exclusive lock on the entry directory so two
+// concurrent builds racing to fill the same entry cannot interleave writes, and
+// writes entry.json last so a crash mid-populate leaves a miss, not a
+// half-populated hit.
 
 module;
 
 export module mcpp.bmi_cache;
 
 import std;
+import mcpp.libs.json;
 import mcpp.platform;
 
 export namespace mcpp::bmi_cache {
 
+// Schema of entry.json. Bumped only if the file's own shape changes;
+// cache-content compatibility is carried by cache_key::kCacheEpoch, which
+// travels inside `inputs`.
+inline constexpr int kEntrySchema = 1;
+
 struct CacheKey {
-    std::filesystem::path mcppHome;
-    std::string fingerprint;
-    std::string indexName;       // "mcpplibs" / "xim" / ...
-    std::string packageName;     // "mcpplibs.cmdline"
-    std::string version;         // "0.0.1"
-    std::string bmiDirName   = "gcm.cache"; // "gcm.cache" | "pcm.cache"
+    // The resolved cache root (mcpp::home::cache_root()). Passed in rather than
+    // recomputed here: the layout root must have exactly ONE definition, and a
+    // second copy of "<home>/build-cache/v1" in this file is precisely the kind
+    // of cross-file invariant a comment cannot enforce. Tests supply a temp
+    // directory the same way.
+    std::filesystem::path cacheRoot;
+    std::string indexName;       // "mcpplibs" / "compat" / ...
+    std::string packageName;     // "compat.zlib"
+    std::string version;         // "1.3.2"
+    std::string keyHex;          // cache_key::key_hex(...)
+    // The full key inputs, recorded in entry.json and compared field by field
+    // on a hit. Never trust equal hashes alone.
+    nlohmann::json inputs;
+    std::string bmiDirName   = "gcm.cache"; // consumer-side directory name
     std::string manifestTag  = "gcm";       // "gcm" | "pcm"
 
     std::filesystem::path dir() const {
-        return mcppHome / "bmi" / fingerprint / "deps"
-             / indexName / std::format("{}@{}", packageName, version);
+        return cacheRoot / "pkg" / indexName
+             / std::format("{}@{}", packageName, version) / keyHex;
     }
 
-    std::filesystem::path manifestFile() const { return dir() / "manifest.txt"; }
-    std::filesystem::path bmiDir()      const { return dir() / bmiDirName; }
-    std::filesystem::path objDir()      const { return dir() / "obj"; }
+    std::filesystem::path entryFile() const { return dir() / "entry.json"; }
+    std::filesystem::path bmiDir()    const { return dir() / "bmi"; }
+    std::filesystem::path objDir()    const { return dir() / "obj"; }
 };
 
-// File names (basename only) that belong to one dep package's cache entry.
+// File names (basenames for BMIs, output-relative paths for objects) belonging
+// to one package's cache entry.
 struct DepArtifacts {
-    std::vector<std::string> bmiFiles;   // basenames in bmiDir/
-    std::vector<std::string> objFiles;   // basenames in obj/
+    std::vector<std::string> bmiFiles;
+    std::vector<std::string> objFiles;
 };
 
-// Cache hit if manifest.txt exists AND every listed file is present.
+// True when entry.json exists, its schema matches, its recorded inputs equal
+// `key.inputs` field for field, and every listed file is present on disk.
 bool is_cached(const CacheKey& key);
 
-// Read manifest.txt → DepArtifacts.
-std::expected<DepArtifacts, std::string>
-read_manifest(const CacheKey& key);
+// The artifact list of a validated entry. Does NOT copy anything: the ninja
+// backend stages cached files through its own `stage_file` edges, so that a
+// staged file is the output of an edge ninja has a command-line record for.
+// Copying them behind ninja's back — which this module used to do — left every
+// staged output with no entry in .ninja_log, and ninja treats that as dirty
+// ("command line not found in log"), so every cached dependency was recompiled
+// anyway while the CLI reported it as cached.
+std::expected<DepArtifacts, std::string> resolve_cached(const CacheKey& key);
 
-// Copy missing cached files into projectTarget/{bmiDirName,obj}. Existing
-// project outputs are left untouched: BMIs may differ byte-for-byte between
-// equivalent builds, and overwriting them would dirty downstream modules.
-std::expected<DepArtifacts, std::string>
-stage_into(const CacheKey& key,
-           const std::filesystem::path& projectTargetDir);
+// Refresh the entry's `accessed` stamp. Rewrites entry.json only — never the
+// artifacts, whose mtimes must stay put (ninja's restat handling compares them).
+// This is what makes `mcpp cache gc` a real LRU: pruning used to read the
+// directory's mtime, which only ever recorded when the entry was WRITTEN, so a
+// dependency that hit on every build looked stale.
+void touch_accessed(const CacheKey& key);
 
-// Copy fresh build outputs from projectTarget/{bmiDirName,obj} → cache dir
-// and write manifest.txt last (atomic-ish sentinel).
+// Copy fresh build outputs from projectTarget/{bmiDirName,obj} into the entry,
+// then write entry.json last as the sentinel.
 std::expected<void, std::string>
 populate_from(const CacheKey& key,
               const std::filesystem::path& projectTargetDir,
               const DepArtifacts& artifacts);
+
+// Absolute paths of an entry's artifacts, for the stage edges.
+std::filesystem::path cached_bmi_path(const CacheKey& key, std::string_view basename);
+std::filesystem::path cached_obj_path(const CacheKey& key, std::string_view rel);
 
 } // namespace mcpp::bmi_cache
 
 namespace mcpp::bmi_cache {
 
 namespace {
-
-void touch_now(const std::filesystem::path& p) {
-    std::error_code ec;
-    auto t = std::chrono::file_clock::now() + std::chrono::seconds(1);
-    std::filesystem::last_write_time(p, t, ec);
-}
 
 bool copy_one(const std::filesystem::path& from,
               const std::filesystem::path& to,
@@ -91,97 +129,106 @@ bool copy_one(const std::filesystem::path& from,
     return !ec;
 }
 
-std::string serialize_manifest(std::string_view tag, const DepArtifacts& a) {
-    std::string out = "# Auto-generated by mcpp bmi_cache. Do not edit.\n";
-    for (auto& g : a.bmiFiles) out += std::format("{}: {}\n", tag, g);
-    for (auto& o : a.objFiles) out += std::format("obj: {}\n", o);
-    return out;
+std::optional<nlohmann::json> read_entry(const std::filesystem::path& p) {
+    std::ifstream is(p);
+    if (!is) return std::nullopt;
+    nlohmann::json j;
+    try { is >> j; } catch (...) { return std::nullopt; }
+    return j;
 }
 
-std::expected<DepArtifacts, std::string>
-parse_manifest(const std::filesystem::path& p) {
-    std::ifstream is(p);
-    if (!is) return std::unexpected(std::format("cannot open '{}'", p.string()));
+DepArtifacts artifacts_from(const nlohmann::json& j) {
     DepArtifacts a;
-    std::string line;
-    while (std::getline(is, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        if (line.empty() || line[0] == '#') continue;
-        if (line.starts_with("gcm: "))      a.bmiFiles.push_back(line.substr(5));
-        else if (line.starts_with("pcm: ")) a.bmiFiles.push_back(line.substr(5));
-        else if (line.starts_with("obj: ")) a.objFiles.push_back(line.substr(5));
-    }
+    if (auto it = j.find("bmi"); it != j.end() && it->is_array())
+        for (auto& v : *it) if (v.is_string()) a.bmiFiles.push_back(v.get<std::string>());
+    if (auto it = j.find("obj"); it != j.end() && it->is_array())
+        for (auto& v : *it) if (v.is_string()) a.objFiles.push_back(v.get<std::string>());
     return a;
 }
 
-} // namespace
-
-bool is_cached(const CacheKey& key) {
-    auto mf = key.manifestFile();
-    if (!std::filesystem::exists(mf)) return false;
-    auto arts = parse_manifest(mf);
-    if (!arts) return false;
-    // Verify every listed file actually exists on disk.
-    for (auto& g : arts->bmiFiles) {
-        if (!std::filesystem::exists(key.bmiDir() / g)) return false;
-    }
-    for (auto& o : arts->objFiles) {
-        if (!std::filesystem::exists(key.objDir() / o)) return false;
+// Field-by-field, not `==` on the whole object: an entry written by an older
+// mcpp may legitimately carry extra keys, but every key the CURRENT build cares
+// about has to be present and equal. A missing key is a mismatch, never a pass.
+bool inputs_match(const nlohmann::json& recorded, const nlohmann::json& expected) {
+    if (!recorded.is_object() || !expected.is_object()) return false;
+    for (auto it = expected.begin(); it != expected.end(); ++it) {
+        auto found = recorded.find(it.key());
+        if (found == recorded.end()) return false;
+        if (*found != it.value()) return false;
     }
     return true;
 }
 
-std::expected<DepArtifacts, std::string>
-read_manifest(const CacheKey& key) {
-    return parse_manifest(key.manifestFile());
+std::string now_iso8601() {
+    // No <chrono> zoned formatting: libstdc++'s `import std` support for
+    // std::format on chrono types is partial (see fingerprint.cppm's
+    // hand-rolled hex for the same reason). Seconds since epoch is monotonic
+    // enough for an LRU stamp and needs no formatting support at all.
+    auto now = std::chrono::system_clock::now();
+    auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+        now.time_since_epoch()).count();
+    return std::to_string(secs);
 }
 
-std::expected<DepArtifacts, std::string>
-stage_into(const CacheKey& key,
-           const std::filesystem::path& projectTargetDir)
-{
-    auto arts = parse_manifest(key.manifestFile());
-    if (!arts) return std::unexpected(arts.error());
-
-    auto projectBmi = projectTargetDir / key.bmiDirName;
-    auto projectObj = projectTargetDir / "obj";
+std::expected<void, std::string>
+write_entry(const std::filesystem::path& path, const nlohmann::json& j) {
+    auto tmp = path;
+    tmp += ".tmp";
+    {
+        std::ofstream os(tmp, std::ios::binary);
+        if (!os) return std::unexpected(std::format(
+            "cannot write cache entry '{}'", tmp.string()));
+        os << j.dump(2) << "\n";
+        if (!os) return std::unexpected(std::format(
+            "failed while writing cache entry '{}'", tmp.string()));
+    }
     std::error_code ec;
-    std::filesystem::create_directories(projectBmi, ec);
-    std::filesystem::create_directories(projectObj, ec);
-
-    for (auto& g : arts->bmiFiles) {
-        auto from = key.bmiDir() / g;
-        auto to   = projectBmi   / g;
-        if (std::filesystem::exists(to, ec)) {
-            ec.clear();
-            continue;
-        }
-        ec.clear();
-        if (!copy_one(from, to, ec)) {
-            return std::unexpected(std::format(
-                "stage bmi '{}': {}", g, ec.message()));
-        }
-        touch_now(to);
-    }
-    for (auto& o : arts->objFiles) {
-        auto from = key.objDir() / o;
-        auto to   = projectObj   / o;
-        if (std::filesystem::exists(to, ec)) {
-            ec.clear();
-            continue;
-        }
-        ec.clear();
-        if (!copy_one(from, to, ec)) {
-            return std::unexpected(std::format(
-                "stage obj '{}': {}", o, ec.message()));
-        }
-        touch_now(to);
-    }
-    return arts;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) return std::unexpected(std::format(
+        "cache entry rename: {}", ec.message()));
+    return {};
 }
 
-namespace {
 } // namespace
+
+std::filesystem::path cached_bmi_path(const CacheKey& key, std::string_view basename) {
+    return key.bmiDir() / std::string(basename);
+}
+
+std::filesystem::path cached_obj_path(const CacheKey& key, std::string_view rel) {
+    return key.objDir() / std::filesystem::path(std::string(rel));
+}
+
+bool is_cached(const CacheKey& key) {
+    auto j = read_entry(key.entryFile());
+    if (!j) return false;
+    if (j->value("schema", 0) != kEntrySchema) return false;
+    if (j->value("key", std::string{}) != key.keyHex) return false;
+    auto it = j->find("inputs");
+    if (it == j->end() || !inputs_match(*it, key.inputs)) return false;
+
+    auto arts = artifacts_from(*j);
+    std::error_code ec;
+    for (auto& g : arts.bmiFiles)
+        if (!std::filesystem::exists(cached_bmi_path(key, g), ec)) return false;
+    for (auto& o : arts.objFiles)
+        if (!std::filesystem::exists(cached_obj_path(key, o), ec)) return false;
+    return true;
+}
+
+std::expected<DepArtifacts, std::string> resolve_cached(const CacheKey& key) {
+    auto j = read_entry(key.entryFile());
+    if (!j) return std::unexpected(std::format(
+        "cannot read cache entry '{}'", key.entryFile().string()));
+    return artifacts_from(*j);
+}
+
+void touch_accessed(const CacheKey& key) {
+    auto j = read_entry(key.entryFile());
+    if (!j) return;
+    (*j)["accessed"] = now_iso8601();
+    (void)write_entry(key.entryFile(), *j);
+}
 
 std::expected<void, std::string>
 populate_from(const CacheKey& key,
@@ -189,15 +236,16 @@ populate_from(const CacheKey& key,
               const DepArtifacts& arts)
 {
     auto cacheDir = key.dir();
+    std::error_code ec;
+    std::filesystem::create_directories(cacheDir, ec);
     auto lock = mcpp::platform::fs::FileLock::try_acquire(cacheDir);
     if (!lock) {
-        // Another writer holds the lock; treat as success (they'll do it).
+        // Another writer holds the lock; it will finish the entry.
         return {};
     }
 
     auto cacheBmi = key.bmiDir();
     auto cacheObj = key.objDir();
-    std::error_code ec;
     std::filesystem::create_directories(cacheBmi, ec);
     std::filesystem::create_directories(cacheObj, ec);
 
@@ -206,43 +254,44 @@ populate_from(const CacheKey& key,
 
     for (auto& g : arts.bmiFiles) {
         auto from = projectBmi / g;
-        auto to   = cacheBmi   / g;
         if (!std::filesystem::exists(from)) {
             return std::unexpected(std::format(
                 "expected build output missing: {}", from.string()));
         }
-        if (!copy_one(from, to, ec)) {
+        if (!copy_one(from, cacheBmi / g, ec)) {
             return std::unexpected(std::format(
                 "populate bmi '{}': {}", g, ec.message()));
         }
     }
     for (auto& o : arts.objFiles) {
         auto from = projectObj / o;
-        auto to   = cacheObj   / o;
         if (!std::filesystem::exists(from)) {
             return std::unexpected(std::format(
                 "expected build output missing: {}", from.string()));
         }
-        if (!copy_one(from, to, ec)) {
+        if (!copy_one(from, cached_obj_path(key, o), ec)) {
             return std::unexpected(std::format(
                 "populate obj '{}': {}", o, ec.message()));
         }
     }
-    // Write manifest.txt LAST as the sentinel — atomic via temp + rename.
-    {
-        auto tmp = key.manifestFile();
-        tmp += ".tmp";
-        {
-            std::ofstream os(tmp);
-            os << serialize_manifest(key.manifestTag, arts);
-        }
-        std::filesystem::rename(tmp, key.manifestFile(), ec);
-        if (ec) {
-            return std::unexpected(std::format(
-                "populate manifest rename: {}", ec.message()));
-        }
-    }
-    return {};
+
+    // entry.json LAST — it is the sentinel. Preserve `created` when refilling an
+    // existing entry so gc's age reporting stays meaningful.
+    nlohmann::json j;
+    if (auto prev = read_entry(key.entryFile()); prev && prev->contains("created"))
+        j["created"] = (*prev)["created"];
+    else
+        j["created"] = now_iso8601();
+    j["schema"]   = kEntrySchema;
+    j["key"]      = key.keyHex;
+    j["package"]  = std::format("{}/{}@{}", key.indexName, key.packageName, key.version);
+    j["bmi_dir"]  = key.bmiDirName;
+    j["tag"]      = key.manifestTag;
+    j["inputs"]   = key.inputs;
+    j["bmi"]      = arts.bmiFiles;
+    j["obj"]      = arts.objFiles;
+    j["accessed"] = now_iso8601();
+    return write_entry(key.entryFile(), j);
 }
 
 } // namespace mcpp::bmi_cache

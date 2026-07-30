@@ -43,13 +43,30 @@ private:
 TEST(Home, ExplicitMcppHomeWins) {
     ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test");
     EXPECT_EQ(mcpp::home::root(), std::filesystem::path("/tmp/mcpp-home-test"));
-    EXPECT_EQ(mcpp::home::bmi_root(),
-              std::filesystem::path("/tmp/mcpp-home-test") / "bmi");
+    EXPECT_EQ(mcpp::home::cache_root(),
+              std::filesystem::path("/tmp/mcpp-home-test") / "build-cache" / "v1");
 }
 
-TEST(Home, BmiRootIsAlwaysRootSlashBmi) {
+TEST(Home, CacheRootIsAlwaysRootSlashBuildCacheV1) {
     ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test-2");
-    EXPECT_EQ(mcpp::home::bmi_root(), mcpp::home::root() / "bmi");
+    EXPECT_EQ(mcpp::home::cache_root(), mcpp::home::root() / "build-cache" / "v1");
+}
+
+// The layout version has to be a path segment, not an implicit convention:
+// replacing the layout must never require migrating or deleting the old tree.
+TEST(Home, CacheRootCarriesTheLayoutVersion) {
+    ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test-2b");
+    EXPECT_EQ(mcpp::home::cache_root().filename(), std::filesystem::path("v1"));
+    EXPECT_EQ(mcpp::home::cache_root().parent_path().filename(),
+              std::filesystem::path("build-cache"));
+    // Must NOT nest inside <home>/cache: GlobalConfig's index metadata cache
+    // owns that name and its reset path removes the whole directory.
+    EXPECT_NE(mcpp::home::cache_root().parent_path().filename(),
+              std::filesystem::path("cache"));
+    // The pre-v1 root must stay resolvable and must be a DIFFERENT tree, so
+    // `doctor` can report it and `cache clean --legacy` can reclaim it.
+    EXPECT_EQ(mcpp::home::legacy_bmi_root(), mcpp::home::root() / "bmi");
+    EXPECT_NE(mcpp::home::legacy_bmi_root(), mcpp::home::cache_root());
 }
 
 // The user-home fallback must land on `.mcpp`, never on the legacy flat
@@ -63,21 +80,21 @@ TEST(Home, FallbackUsesDotMcppNotLegacyFlatDir) {
 #endif
     auto root = mcpp::home::root();
     EXPECT_EQ(root.filename(), std::filesystem::path(".mcpp"));
-    EXPECT_EQ(mcpp::home::bmi_root().filename(), std::filesystem::path("bmi"));
-    EXPECT_NE(mcpp::home::bmi_root().filename(), std::filesystem::path(".mcpp-bmi"));
+    EXPECT_NE(mcpp::home::cache_root().filename(),
+              std::filesystem::path(".mcpp-bmi"));
 }
 
-// #311's D2 regression gate: the std module cache and the dep BMI cache must
+// #311's D2 regression gate: the std module cache and the dep cache must
 // resolve to ONE root. `default_cache_root()` used to be a private copy of the
 // home resolution that drifted (no USERPROFILE, no self-contained detection),
 // so on Windows the std BMI landed in the current working directory.
-TEST(Home, StdModuleCacheRootEqualsHomeBmiRoot) {
+TEST(Home, StdModuleCacheRootEqualsHomeCacheRoot) {
     {
         ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test-3");
-        EXPECT_EQ(mcpp::toolchain::default_cache_root(), mcpp::home::bmi_root());
+        EXPECT_EQ(mcpp::toolchain::default_cache_root(), mcpp::home::cache_root());
     }
     {
         ScopedEnv mcppHome("MCPP_HOME", nullptr);
-        EXPECT_EQ(mcpp::toolchain::default_cache_root(), mcpp::home::bmi_root());
+        EXPECT_EQ(mcpp::toolchain::default_cache_root(), mcpp::home::cache_root());
     }
 }

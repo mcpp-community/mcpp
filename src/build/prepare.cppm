@@ -31,6 +31,7 @@ import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
+import mcpp.build.cache_key;
 import mcpp.build.build_program;
 import mcpp.lockfile;
 import mcpp.config;
@@ -207,7 +208,10 @@ export std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
 
 
 // Compose a stable canonical compile-flags string for fingerprinting.
-std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
+// Exported so the "every build-variant knob is in here" invariant is machine-
+// checkable: the profile knobs were absent for a long time precisely because
+// nothing could assert on this string.
+export std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     std::string s;
     s += "-std="; s += m.package.standard;
     s += " -fmodules";
@@ -262,6 +266,18 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
         for (auto const& f : gf.asmflags) { s += " gas:"; s += f; }
         for (auto const& f : gf.defines)  { s += " gd:";  s += f; }
     }
+    // The resolved [profile] knobs. These are NOT in cflags/cxxflags: the
+    // profile block (see the profile resolution below) lands them in
+    // buildConfig.optLevel/debug/lto/strip and flags.cppm turns them into
+    // -O<n>/-g/-flto at command-construction time. Leaving them out made
+    // `--dev`, `--release` and `--profile dist` share ONE fingerprint, hence
+    // one target/<triple>/<fp>/ directory AND one global cache entry — so a
+    // release build could be served -O0 -g dependency objects. They are
+    // build-variant by definition; they belong here.
+    s += " opt=";   s += m.buildConfig.optLevel;
+    s += " debug="; s += m.buildConfig.debug ? "1" : "0";
+    s += " lto=";   s += m.buildConfig.lto   ? "1" : "0";
+    s += " strip="; s += m.buildConfig.strip ? "1" : "0";
     return s;
 }
 
@@ -570,6 +586,35 @@ bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
     return false;
 }
 
+// How this invocation may use the global dependency cache.
+//
+//   Global  read + write  (default)
+//   Local   neither — every dependency is compiled inside this project's
+//           target/, which is what every build did before the cache worked
+//   Off     neither, and this build's target/<triple>/<fp>/ directory is
+//           cleared first (a full cold rebuild). Sibling build dirs — other
+//           profiles, other targets — are left alone.
+//
+// `--no-cache` used to be the only switch and it meant "clear the build dir",
+// which says nothing about a cache (and its help text claimed all of target/);
+// it stays as a deprecated alias for Off.
+export enum class CacheMode { Global, Local, Off };
+
+export std::optional<CacheMode> parse_cache_mode(std::string_view v) {
+    if (v == "global") return CacheMode::Global;
+    if (v == "local")  return CacheMode::Local;
+    if (v == "off" || v == "none") return CacheMode::Off;
+    return std::nullopt;
+}
+
+export std::string_view cache_mode_name(CacheMode m) {
+    switch (m) {
+        case CacheMode::Local: return "local";
+        case CacheMode::Off:   return "off";
+        default:               return "global";
+    }
+}
+
 export struct BuildContext {
     // --strict: degradations reported through mcpp::diag become errors.
     // Carried on the context because the build's degradations are discovered
@@ -584,6 +629,14 @@ export struct BuildContext {
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
     mcpp::build::BuildPlan          plan;
+    // Resolved profile name (resolve_profile_name). Carried so run_build_plan
+    // can record it in .build_cache — without it the fast path cannot tell
+    // whether a cached build.ninja was generated for the profile being asked
+    // for — and so `Finished <profile>` stops being a hardcoded "release".
+    std::string                     profile;
+    // Resolved global-cache mode. Read side is honored in prepare_build; write
+    // side in run_build_plan.
+    CacheMode                       cacheMode = CacheMode::Global;
 
     // M3.2 BMI cache: deps that did NOT hit cache and therefore need
     // populate_from(...) AFTER backend.build succeeds.
@@ -593,9 +646,34 @@ export struct BuildContext {
     };
     std::vector<CacheTask>          depsToPopulate;
 
-    // Names of deps that DID hit cache (for ui status output).
-    std::vector<std::string>        cachedDepLabels;     // "mcpplibs.cmdline v0.0.1"
+    // Deps that DID hit the global cache, and how many compile units each one
+    // spared. run_build_plan reports the count so the "Cached" line cannot be
+    // true-looking and empty at the same time.
+    struct CachedDep {
+        std::string name;
+        std::string version;
+        std::size_t units = 0;
+    };
+    std::vector<CachedDep>          cachedDeps;
 };
+
+// The ONE profile-name resolver. Shared with execute.cppm's fast paths:
+// they deliberately skip prepare_build, so before this existed they had no
+// idea which profile the request meant — and `.build_cache` keyed entries by
+// target triple alone. Net effect: `mcpp build --release` followed by a bare
+// `mcpp build` reported success in 0.00s and left the RELEASE artifacts in
+// place. The rule is pure (manifest + one override string), so both sides can
+// evaluate it without resolving a toolchain or scanning the module graph.
+//
+// Precedence: --profile/--release/--dev > [build].default-profile > "dev".
+// The global default is "dev" (-O0 -g) per the dominant convention
+// (Cargo/Meson/CMake/Zig/Bazel/MSBuild all default to debug).
+export std::string resolve_profile_name(const mcpp::manifest::Manifest& m,
+                                        std::string_view override_name) {
+    if (!override_name.empty())                 return std::string(override_name);
+    if (!m.buildConfig.defaultProfile.empty())  return m.buildConfig.defaultProfile;
+    return "dev";
+}
 
 // Command-level overrides (--target / --static).
 // Empty defaults preserve pre-existing behaviour exactly.
@@ -607,6 +685,7 @@ export struct BuildOverrides {
     std::string features;            // --features a,b,c (root package activation)
     bool        strict = false;      // --strict: schema warnings become errors
     std::string capabilities;        // --cap blas=openblas,lapack=mkl (provider pins)
+    std::string cache_mode;          // --cache global|local|off ("" = unset)
 };
 
 // `prepare_build` builds the BuildContext for any verb that compiles.
@@ -738,6 +817,31 @@ prepare_build(bool print_fingerprint,
         mcpp::diag::warning("manifest/schema", w);
     }
 
+    // Global-cache mode: --cache > MCPP_BUILD_CACHE > [build] cache > global.
+    // An unparseable value is a warning (error under --strict) and falls
+    // through to the next source rather than silently meaning "global" — a typo
+    // that quietly re-enabled the cache would be the hardest kind of surprise
+    // to attribute.
+    CacheMode cacheMode = CacheMode::Global;
+    {
+        std::string cacheModeError;
+        auto try_source = [&](std::string_view value, std::string_view origin) {
+            if (value.empty()) return false;
+            if (auto parsed = parse_cache_mode(value)) { cacheMode = *parsed; return true; }
+            auto msg = std::format(
+                "{} has unknown cache mode '{}' (expected: global | local | off)",
+                origin, value);
+            if (overrides.strict) { cacheModeError = msg; return true; }
+            mcpp::diag::warning("build/cache-mode", msg);
+            return false;
+        };
+        const char* envMode = std::getenv("MCPP_BUILD_CACHE");
+        if (!try_source(overrides.cache_mode, "--cache"))
+            if (!try_source(envMode ? envMode : "", "MCPP_BUILD_CACHE"))
+                (void)try_source(m->buildConfig.cacheMode, "[build] cache");
+        if (!cacheModeError.empty()) return std::unexpected(cacheModeError);
+    }
+
     // ─── Toolchain resolution (docs/21) ────────────────────────────────
     // Priority chain:
     //   1. mcpp.toml [toolchain].<platform>      → resolve_xpkg_path → abs path
@@ -780,16 +884,13 @@ prepare_build(bool print_fingerprint,
     std::string effectiveProfile;
     {
         auto& pname = effectiveProfile;
-        // Precedence: --profile / --release / --dev flag (overrides.profile) >
-        // [build].default-profile (project default) > "dev" (global default).
-        // The global default is "dev" (-O0 -g) to follow the dominant convention
-        // (Cargo/Meson/CMake/Zig/Bazel/MSBuild all default to debug); release is
-        // opt-in via --release / --profile release. A project that wants its
-        // plain `mcpp build` optimized sets [build].default-profile = "release"
-        // (mcpp's own mcpp.toml does this, so the released binary stays -O2).
-        pname = !overrides.profile.empty()             ? overrides.profile
-              : !m->buildConfig.defaultProfile.empty() ? m->buildConfig.defaultProfile
-              :                                          "dev";
+        // Precedence lives in resolve_profile_name (above) so execute.cppm's
+        // fast paths settle it identically without running prepare_build.
+        // Release is opt-in via --release / --profile release; a project that
+        // wants its plain `mcpp build` optimized sets
+        // [build].default-profile = "release" (mcpp's own mcpp.toml does this,
+        // so the released binary stays -O2).
+        pname = resolve_profile_name(*m, overrides.profile);
         mcpp::manifest::Profile pr;
         if (pname == "dev" || pname == "debug") { pr.optLevel = "0"; pr.debug = true; }
         else if (pname == "dist")               { pr.optLevel = "3"; pr.strip = true; }
@@ -1376,6 +1477,11 @@ prepare_build(bool print_fingerprint,
         std::string indexName;
         std::string packageName;
         std::string version;
+        // "version" | "path" | "git". Only "version" is cacheable: an index
+        // package's payload lives in the immutable xpkgs store under a
+        // version-keyed directory, so name@version identifies its sources.
+        // Path and git checkouts can change under an unchanged identity.
+        std::string sourceKind;
     };
     std::vector<DepCacheIdentity> dep_cache_identities;
     struct GitLockIdentity {
@@ -2685,6 +2791,7 @@ prepare_build(bool print_fingerprint,
                         .indexName   = cache_index_name(key.ns),
                         .packageName = mangled,
                         .version     = spec.version,
+                        .sourceKind  = "version",
                     });
                     const auto depPackageIndex = packages.size();
                     packages.push_back(makePackageRoot(secStage, *dep_manifests.back()));
@@ -2982,6 +3089,7 @@ prepare_build(bool print_fingerprint,
             .version     = sourceKind == "version"
                 ? spec.version
                 : dep_manifests.back()->package.version,
+            .sourceKind  = sourceKind,
         });
         const auto depPackageIndex = packages.size();
         packages.push_back(makePackageRoot(dep_root, *dep_manifests.back()));
@@ -3605,7 +3713,7 @@ prepare_build(bool print_fingerprint,
         // pieces were already in the fingerprint; this fixes the COMMAND
         // construction the fingerprint promised (stdFlagAndDialect above).
         auto sm = mcpp::toolchain::ensure_built(
-            *tc, fp.hex, m->package.standard, stdFlagAndDialect,
+            *tc, m->package.standard, stdFlagAndDialect,
             mcpp::platform::macos::deployment_target(
                 m->buildConfig.macosDeploymentTarget));
         if (!sm) return std::unexpected(sm.error().message);
@@ -3628,6 +3736,8 @@ prepare_build(bool print_fingerprint,
     ctx.manifest    = *m;
     ctx.tc          = *tc;
     ctx.fp          = fp;
+    ctx.profile     = effectiveProfile;
+    ctx.cacheMode   = cacheMode;
     ctx.projectRoot= *root;
     ctx.outputDir  = target_dir(*tc, fp, *root);
     ctx.stdBmi     = stdBmiPath;
@@ -3717,16 +3827,20 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    // ─── M3.2: BMI cache stage / populate-task collection ─────────────
-    // For each version-based dep package (i.e. fetched from a registry,
-    // not a path dep), check the global BMI cache. If cached → stage into
-    // the project's target dir so ninja sees those outputs as up-to-date
-    // and skips them. If not → record a populate task for AFTER build.
+    // ─── Global dependency cache: per-package keys, hit → stage edges ──
     //
-    // Path deps don't go through the cache: their sources can change at
-    // any time outside fingerprint awareness.
+    // Every index package gets a key over the axes that actually reach its
+    // compiler command lines (mcpp.build.cache_key), computed bottom-up so a
+    // package's key includes its direct dependencies' keys. A hit marks that
+    // package's compile units `servedFromCache`, and the ninja backend emits
+    // `stage_file` edges instead of compile edges for them — which is the only
+    // way ninja will accept a cached artifact. A miss records a populate task
+    // for after the build.
+    //
+    // `--cache=local|off` skips this block entirely: nothing is read and, in
+    // run_build_plan, nothing is written.
     auto cfg2 = get_cfg();
-    if (cfg2) {
+    if (cfg2 && ctx.cacheMode == CacheMode::Global) {
         std::error_code mkEc;
         std::filesystem::create_directories(ctx.outputDir, mkEc);
         auto usable_object_rel = [](const std::filesystem::path& rel)
@@ -3750,52 +3864,147 @@ prepare_build(bool print_fingerprint,
             }
             return objectPath.filename().generic_string();
         };
+
+        // ── Per-package keys, bottom-up ──────────────────────────────────
+        // Axes A/B/C are whole-graph, so they are computed once. Axes D/E are
+        // per package. Axis F is each direct dependency's key, which forces a
+        // bottom-up order: `dependencyEdges` is a DAG (the modgraph validator
+        // rejects cycles), so a simple memoized recursion suffices — with an
+        // explicit in-progress guard so a cycle that slipped past validation
+        // fails loudly instead of recursing until the stack dies.
+        namespace ck = mcpp::build::cache_key;
+        const auto storeRoot = (*cfg2)->xlingsHome() / "data" / "xpkgs";
+        auto axes = ck::build_axes(
+            *tc, *m, stdFlagAndDialect,
+            mcpp::toolchain::cppfly::effective_dialect_flags(
+                *tc, m->cppStandard.experimental,
+                mcpp::manifest::dialect_flags(m->buildConfig)),
+            mcpp::platform::macos::deployment_target(
+                m->buildConfig.macosDeploymentTarget));
+
+        // Sources belonging to each package, package-root-relative and sorted.
+        std::vector<std::vector<std::string>> pkgSources(packages.size());
+        for (auto& cu : ctx.plan.compileUnits) {
+            for (std::size_t p = 0; p < packages.size(); ++p) {
+                std::error_code ec;
+                auto rel = std::filesystem::relative(cu.source, packages[p].root, ec);
+                if (ec || rel.empty()) continue;
+                auto rels = rel.generic_string();
+                if (rels.starts_with("..")) continue;
+                pkgSources[p].push_back(rels);
+                break;
+            }
+        }
+        for (auto& v : pkgSources) std::ranges::sort(v);
+
+        std::vector<std::string>    pkgKeys(packages.size());
+        std::vector<nlohmann::json> pkgInputs(packages.size(),
+                                              nlohmann::json::object());
+        std::vector<int>            keyState(packages.size(), 0); // 0 new/1 busy/2 done
+        std::string                 keyCycleError;
+        auto compute_key = [&](auto&& self, std::size_t idx) -> const std::string& {
+            static const std::string kEmpty;
+            if (keyState[idx] == 2) return pkgKeys[idx];
+            if (keyState[idx] == 1) {
+                if (keyCycleError.empty()) {
+                    keyCycleError = std::format(
+                        "dependency cycle through package '{}' while computing "
+                        "its build-cache key", packages[idx].manifest.package.name);
+                }
+                return kEmpty;
+            }
+            keyState[idx] = 1;
+
+            ck::PackageAxes pa;
+            if (idx > 0 && idx - 1 < dep_cache_identities.size()) {
+                pa.indexName   = dep_cache_identities[idx - 1].indexName;
+                pa.packageName = dep_cache_identities[idx - 1].packageName;
+                pa.version     = dep_cache_identities[idx - 1].version;
+            }
+            if (pa.packageName.empty()) {
+                // The root package, or a package with no resolution identity.
+                // It is never cached, but its key still has to exist because
+                // downstream packages fold it in via axis F.
+                pa.packageName = packages[idx].manifest.package.namespace_.empty()
+                    ? packages[idx].manifest.package.name
+                    : std::format("{}.{}", packages[idx].manifest.package.namespace_,
+                                  packages[idx].manifest.package.name);
+            }
+            if (pa.version.empty()) pa.version = packages[idx].manifest.package.version;
+            ck::fill_package_config(pa, packages[idx], storeRoot);
+            pa.sources = pkgSources[idx];
+            for (auto& e : dependencyEdges) {
+                if (e.consumerPackageIndex != idx) continue;
+                auto& up = self(self, e.dependencyPackageIndex);
+                if (!up.empty()) pa.upstreamKeys.push_back(up);
+                for (auto& f : e.requestedFeatures) pa.features.push_back(f);
+            }
+            std::ranges::sort(pa.upstreamKeys);
+            pa.upstreamKeys.erase(std::unique(pa.upstreamKeys.begin(),
+                                              pa.upstreamKeys.end()),
+                                  pa.upstreamKeys.end());
+            std::ranges::sort(pa.features);
+            pa.features.erase(std::unique(pa.features.begin(), pa.features.end()),
+                              pa.features.end());
+
+            pkgKeys[idx]     = ck::key_hex(axes, pa);
+            pkgInputs[idx]   = ck::to_json(axes, pa);
+            keyState[idx]    = 2;
+            return pkgKeys[idx];
+        };
+        for (std::size_t i = 0; i < packages.size(); ++i)
+            (void)compute_key(compute_key, i);
+        if (!keyCycleError.empty()) return std::unexpected(keyCycleError);
+
         for (std::size_t i = 1; i < packages.size(); ++i) {  // skip [0] = main
             const auto& pkgRoot   = packages[i];
             const auto* depIdent  = i - 1 < dep_cache_identities.size()
                 ? &dep_cache_identities[i - 1]
                 : nullptr;
-            const auto fallbackName = pkgRoot.manifest.package.namespace_.empty()
-                ? pkgRoot.manifest.package.name
-                : std::format("{}.{}", pkgRoot.manifest.package.namespace_,
-                              pkgRoot.manifest.package.name);
-            const auto& depName   = depIdent ? depIdent->packageName : fallbackName;
-            const auto& depVer    = depIdent && !depIdent->version.empty()
-                ? depIdent->version
-                : pkgRoot.manifest.package.version;
+            // Only index ("version") packages are cacheable, and the identity
+            // recorded at resolution time is the ONLY admissible evidence.
+            //
+            // The predicate this replaces looked the package up in the ROOT
+            // manifest's dependencies/dev-dependencies and skipped it when the
+            // spec was path/git. A transitively-reached package is in neither
+            // map, so `specIt == end()` left skipCache false and local sources
+            // were cached — with `indexName` falling back to defaultIndex, so a
+            // workspace member `B` landed on disk as `mcpplibs/B@0.1.0`. Its
+            // sources can then change without changing name@version, i.e. the
+            // cache key cannot see the change.
+            //
+            // Note the direction of the judgment: `mcpp add`'s existence gate
+            // admits anything it cannot disprove. A build cache must do the
+            // opposite — anything it cannot prove came from the immutable
+            // xpkgs store stays out, because the failure mode here is a
+            // silently wrong object rather than a rejected command.
+            if (!depIdent || depIdent->sourceKind != "version") continue;
 
-            // Find this dep's spec from the consumer manifest to know
-            // if it's path-based or version-based.
-            auto specIt = m->dependencies.find(depName);
-            // Path AND git deps bypass the BMI cache: their sources can
-            // change outside the fingerprint's awareness.
-            bool skipCache = (specIt != m->dependencies.end() &&
-                              (specIt->second.isPath() || specIt->second.isGit()));
-            if (specIt == m->dependencies.end()) {
-                auto devIt = m->devDependencies.find(depName);
-                if (devIt != m->devDependencies.end()) {
-                    skipCache = devIt->second.isPath() || devIt->second.isGit();
-                }
-            }
-            if (skipCache) continue;
+            const auto& depName = depIdent->packageName;
+            const auto& depVer  = depIdent->version.empty()
+                ? pkgRoot.manifest.package.version
+                : depIdent->version;
 
             auto bmiT = mcpp::toolchain::bmi_traits(*tc);
             mcpp::bmi_cache::CacheKey key {
-                .mcppHome    = (*cfg2)->mcppHome,
-                .fingerprint = fp.hex,
-                .indexName   = depIdent
-                    ? depIdent->indexName
-                    : (*cfg2)->defaultIndex,
+                .cacheRoot   = mcpp::home::cache_root(),
+                .indexName   = depIdent->indexName,
                 .packageName = depName,
                 .version     = depVer,
+                .keyHex      = pkgKeys[i],
+                .inputs      = pkgInputs[i],
                 .bmiDirName  = std::string(bmiT.bmiDir),
                 .manifestTag = std::string(bmiT.manifestPrefix),
             };
 
-            // Compute the artifacts list from the build plan: every
-            // CompileUnit whose source lies under this dep's root contributes.
+            // The artifacts this package contributes, and the compile units
+            // that produce them. Collected together so a hit can mark exactly
+            // those units — the artifact list alone would not say which edges
+            // must stop being compile edges.
             mcpp::bmi_cache::DepArtifacts arts;
-            for (auto& cu : ctx.plan.compileUnits) {
+            std::vector<std::size_t> unitIdx;
+            for (std::size_t u = 0; u < ctx.plan.compileUnits.size(); ++u) {
+                auto& cu = ctx.plan.compileUnits[u];
                 std::error_code ec;
                 auto rel = std::filesystem::relative(cu.source, pkgRoot.root, ec);
                 if (ec || rel.empty()) continue;
@@ -3810,16 +4019,32 @@ prepare_build(bool print_fingerprint,
                     arts.bmiFiles.push_back(std::move(bmi));
                 }
                 arts.objFiles.push_back(object_cache_path(cu.object));
+                unitIdx.push_back(u);
             }
 
             if (mcpp::bmi_cache::is_cached(key)) {
-                auto staged = mcpp::bmi_cache::stage_into(key, ctx.outputDir);
-                if (staged) {
-                    ctx.cachedDepLabels.push_back(
-                        std::format("{} v{}", depName, depVer));
-                    continue;       // skip populate task; it's already cached
+                // Mark the units. The backend turns each into a stage_file
+                // edge; nothing is copied here. Copying behind ninja's back is
+                // exactly what made the old cache a no-op: the staged file was
+                // still declared as a compile edge's output, and an output with
+                // no .ninja_log command-line record is dirty, so every unit was
+                // recompiled while the CLI printed "Cached".
+                for (auto u : unitIdx) {
+                    auto& cu = ctx.plan.compileUnits[u];
+                    cu.servedFromCache = true;
+                    cu.cachedObject = mcpp::bmi_cache::cached_obj_path(
+                        key, object_cache_path(cu.object));
+                    if (cu.providesModule) {
+                        std::string bmi;
+                        for (char c : *cu.providesModule)
+                            bmi.push_back(c == ':' ? '-' : c);
+                        bmi += std::string(bmiT.bmiExt);
+                        cu.cachedBmi = mcpp::bmi_cache::cached_bmi_path(key, bmi);
+                    }
                 }
-                // stage failed — fall through to recompile + repopulate
+                mcpp::bmi_cache::touch_accessed(key);
+                ctx.cachedDeps.push_back({depName, depVer, unitIdx.size()});
+                continue;       // no populate task; it is already cached
             }
             ctx.depsToPopulate.push_back({ std::move(key), std::move(arts) });
         }

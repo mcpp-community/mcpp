@@ -33,6 +33,14 @@ struct CompileUnit {
     // Unit came from a scan_overrides declaration — plan-vs-ddi
     // verification is mandatory for it (ninja_backend emits --expect-*).
     bool                            scanOverridden = false;
+    // This unit's outputs are already in the global cache: the backend emits
+    // `stage_file` edges from the cache instead of a compile edge (and skips
+    // the P1689 scan for it entirely). The unit itself stays in the plan so
+    // compile_commands.json keeps an entry for it and clangd does not lose the
+    // dependency's sources.
+    bool                            servedFromCache = false;
+    std::filesystem::path           cachedObject;   // absolute, inside the cache
+    std::filesystem::path           cachedBmi;      // absolute; empty if no module
 };
 
 struct LinkUnit {

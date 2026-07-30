@@ -29,7 +29,11 @@ namespace mcpp::build {
 // ─── P0: build cache for fast-path rebuilds ─────────────────────────
 
 constexpr std::string_view kBuildCacheFile = "target/.build_cache";
-constexpr int kBuildCacheMaxEntries = 4;   // P3: LRU capacity
+// P3: LRU capacity. Entries are keyed by (target triple, profile), so the
+// working set is now targets × profiles rather than targets alone — 4 was
+// enough for one profile, not for a dev/release/dist rotation across a host
+// and a cross target.
+constexpr int kBuildCacheMaxEntries = 8;
 
 // P3: one entry per (target, fingerprint) pair.
 struct BuildCacheEntry {
@@ -55,6 +59,14 @@ struct BuildCacheEntry {
     // plan.runtimeLibraryDirs is empty.
     std::string runEnvKey;
     std::string runEnvValue;
+    // The resolved profile this entry was built for. Entries used to be keyed
+    // by target triple alone, and the fast paths only refuse to run when an
+    // EXPLICIT --profile/--dev/--release is passed — so a bare `mcpp build`
+    // after `mcpp build --release` took the fast path against the release
+    // build.ninja and reported success without ever rebuilding at -O0 -g.
+    // Empty means "cache predates this field" and is treated as a miss (a
+    // bare rebuild once, never a wrong artifact).
+    std::string profile;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -120,6 +132,13 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             std::getline(f, e.runEnvValue);
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Optional profile line. Same back-compat contract as the two blocks
+        // above: absent ⇒ e.profile stays empty ⇒ every fast path treats the
+        // entry as a miss and falls through to prepare_build.
+        if (haveNextLine && line.starts_with("profile=")) {
+            e.profile = line.substr(8);
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -135,19 +154,23 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::string& runtimeEnvValue = "",
                        std::vector<std::pair<std::string, std::string>> runTargets = {},
                        const std::string& runEnvKey = "",
-                       const std::string& runEnvValue = "") {
+                       const std::string& runEnvValue = "",
+                       const std::string& profile = "") {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
-    // Remove existing entry for this target (will be re-added at front).
+    // Remove the existing entry for this (target, profile) pair. Keying on the
+    // triple alone made a release build evict the dev entry and vice versa, so
+    // switching profiles back and forth could never be incremental AND the
+    // surviving entry pointed at the other profile's build dir.
     std::erase_if(entries, [&](const BuildCacheEntry& e) {
-        return e.targetTriple == targetTriple;
+        return e.targetTriple == targetTriple && e.profile == profile;
     });
 
     // Insert at front (MRU).
     BuildCacheEntry newEntry{targetTriple, outputDir.string(), ninjaProgram, fingerprintHex,
                              runtimeEnvKey, runtimeEnvValue, std::move(runTargets),
-                             runEnvKey, runEnvValue};
+                             runEnvKey, runEnvValue, profile};
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -175,6 +198,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
         for (auto& [name, exe] : e.runTargets) f << name << '\t' << exe << '\n';
         f << "runEnv=" << e.runEnvKey << '\n';
         f << e.runEnvValue << '\n';
+        f << "profile=" << e.profile << '\n';
     }
 }
 
@@ -255,7 +279,10 @@ compute_run_env(const mcpp::build::BuildPlan& plan) {
 // resolution banner).
 export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                    std::string_view targetOverride = "") {
-    if (no_cache) {
+    // `--cache=off` means a cold build: no global cache, and target/ cleared —
+    // which is exactly what `--no-cache` has always done, hence the alias.
+    const bool coldBuild = no_cache || ctx.cacheMode == CacheMode::Off;
+    if (coldBuild) {
         std::error_code ec;
         std::filesystem::remove_all(ctx.outputDir, ec);
     }
@@ -267,13 +294,14 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         mcpp::ui::status("Inferred", note);
     }
 
-    // Announce the package being built (and any deps).
-    // Deps that hit the BMI cache get "Cached" instead of "Compiling".
-    std::set<std::string> cachedNames;
-    for (auto& label : ctx.cachedDepLabels) {
-        auto sp = label.find(' ');
-        cachedNames.insert(sp == std::string::npos ? label : label.substr(0, sp));
-    }
+    // Announce the package being built (and any deps). A dep served from the
+    // global cache says "Cached" and HOW MANY translation units that saved. The
+    // count is the point: the bare word "Cached" was printed for three months
+    // while ninja recompiled every one of those units behind it, and no output
+    // contradicted it. A number that has to match the edges ninja actually skips
+    // cannot be quietly wrong in the same way.
+    std::map<std::string, std::size_t> cachedUnits;
+    for (auto& dep : ctx.cachedDeps) cachedUnits[dep.name] = dep.units;
     std::set<std::string> announced;
     announced.insert(ctx.manifest.package.name);
     mcpp::ui::status("Compiling",
@@ -283,8 +311,13 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         if (announced.contains(name)) continue;
         announced.insert(name);
         std::string ver = spec.isPath() ? "(path)" : std::string("v") + spec.version;
-        const char* verb = cachedNames.contains(name) ? "Cached" : "Compiling";
-        mcpp::ui::status(verb, std::format("{} {}", name, ver));
+        auto it = cachedUnits.find(name);
+        if (it == cachedUnits.end()) {
+            mcpp::ui::status("Compiling", std::format("{} {}", name, ver));
+        } else {
+            mcpp::ui::status("Cached", std::format("{} {} ({} unit{})",
+                name, ver, it->second, it->second == 1 ? "" : "s"));
+        }
     }
 
     mcpp::build::BuildOptions opts;
@@ -301,7 +334,11 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         return 1;
     }
 
-    // M3.2: populate BMI cache for deps that did NOT hit cache.
+    // Populate the global cache for deps that did NOT hit. prepare_build leaves
+    // depsToPopulate empty under --cache=local|off, so the mode gate is already
+    // enforced there; asserting it again here keeps the write side legible on
+    // its own terms rather than as a consequence of something in prepare.
+    if (ctx.cacheMode != CacheMode::Global) ctx.depsToPopulate.clear();
     for (auto& task : ctx.depsToPopulate) {
         auto pr = mcpp::bmi_cache::populate_from(task.key, ctx.outputDir, task.artifacts);
         if (!pr) {
@@ -312,10 +349,16 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     }
 
     // P1.5: warn if fingerprint changed from last build (explains full rebuild).
+    // Compared against the entry for the SAME profile: the profile is now a
+    // fingerprint input, so a dev↔release switch always changes the fp. That is
+    // exactly what the user asked for, and warning about it turns a useful
+    // signal ("something you didn't expect invalidated your build dir") into
+    // noise on every profile switch.
     {
         auto entries = read_build_cache(ctx.projectRoot);
         for (auto& e : entries) {
-            if (e.targetTriple == targetOverride && !e.fingerprint.empty()) {
+            if (e.targetTriple == targetOverride && e.profile == ctx.profile
+                && !e.fingerprint.empty()) {
                 auto newFp = ctx.outputDir.filename().string();
                 if (e.fingerprint != newFp) {
                     mcpp::ui::warning(std::format(
@@ -328,7 +371,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     }
 
     // P0: save build cache for fast-path on next invocation.
-    if (!no_cache && !r->ninjaProgram.empty()) {
+    if (!coldBuild && !r->ninjaProgram.empty()) {
         auto fpHex = ctx.outputDir.filename().string();
         auto runTargets = compute_run_targets(ctx.plan);
         auto [runEnvKey, runEnvValue] = compute_run_env(ctx.plan);
@@ -336,7 +379,8 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           std::string(targetOverride), fpHex,
                           r->runtimeEnvKey.empty() ? "-" : r->runtimeEnvKey,
                           r->runtimeEnvValue,
-                          std::move(runTargets), runEnvKey, runEnvValue);
+                          std::move(runTargets), runEnvKey, runEnvValue,
+                          ctx.profile);
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -347,7 +391,17 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     // exact failure mode it exists to prevent.
     if (!mcpp::diag::flush(ctx.strict)) return 1;
 
-    mcpp::ui::finished("release", r->elapsed);
+    // The descriptor comes from the knobs this build actually resolved, so it
+    // cannot disagree with the compiler flags the way the old hardcoded
+    // "release [optimized]" did.
+    {
+        const auto& bc = ctx.manifest.buildConfig;
+        std::string descriptor =
+            (bc.optLevel.empty() || bc.optLevel == "0") ? "unoptimized" : "optimized";
+        if (bc.debug) descriptor += " + debuginfo";
+        if (bc.lto)   descriptor += " + lto";
+        mcpp::ui::finished(ctx.profile, r->elapsed, descriptor);
+    }
     return 0;
 }
 
@@ -461,6 +515,22 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     return 0;
 }
 
+// Which profile does this invocation mean? The fast paths exist precisely to
+// avoid prepare_build, where the profile is normally settled — so they settle
+// it here from the same pure rule (resolve_profile_name), which needs nothing
+// but the manifest. nullopt = manifest unreadable ⇒ no fast path.
+//
+// Without this, an entry matched on target triple alone could have been built
+// for a different profile, and the fast path would run ninja against that
+// profile's build.ninja: `mcpp build --release` then a bare `mcpp build`
+// reported success in 0.00s and left -O2 artifacts where -O0 -g was asked for.
+std::optional<std::string> fast_path_profile(const std::filesystem::path& projectRoot,
+                                             std::string_view profileOverride = "") {
+    auto m = mcpp::manifest::load(projectRoot / "mcpp.toml");
+    if (!m) return std::nullopt;
+    return mcpp::build::resolve_profile_name(*m, profileOverride);
+}
+
 // Try to fast-path: if build.ninja is newer than all inputs, just run ninja.
 // Returns exit code on fast-path, or nullopt if full rebuild needed.
 export std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
@@ -468,11 +538,19 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
                                   std::string_view currentTarget = "") {
     if (no_cache) return std::nullopt;
 
-    // P3: read multi-entry cache and find entry matching currentTarget.
+    auto wantProfile = fast_path_profile(projectRoot);
+    if (!wantProfile) return std::nullopt;
+
+    // P3: read multi-entry cache and find the entry matching this
+    // (target, profile) pair. Matching on the triple alone served the wrong
+    // profile's artifacts (see fast_path_profile).
     auto entries = read_build_cache(projectRoot);
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries) {
-        if (e.targetTriple == currentTarget) { match = &e; break; }
+        if (e.targetTriple == currentTarget && e.profile == *wantProfile) {
+            match = &e;
+            break;
+        }
     }
     if (!match) return std::nullopt;
 
@@ -521,7 +599,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     if (!rc) return std::nullopt;
     if (*rc != 0) return rc;
 
-    mcpp::ui::finished("release", elapsed);
+    mcpp::ui::finished(*wantProfile, elapsed);
     return 0;
 }
 
@@ -536,10 +614,16 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
 std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                                 const std::optional<std::string>& targetName,
                                 std::span<const std::string> passthrough) {
+    auto wantProfile = fast_path_profile(projectRoot);
+    if (!wantProfile) return std::nullopt;
+
     auto entries = read_build_cache(projectRoot);
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries) {
-        if (e.targetTriple.empty()) { match = &e; break; }
+        if (e.targetTriple.empty() && e.profile == *wantProfile) {
+            match = &e;
+            break;
+        }
     }
     if (!match || match->runTargets.empty()) return std::nullopt;
 
@@ -615,7 +699,9 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
 // rule mcpp::project::resolve_member_dir documents for build/test).
 export int build_run_target(const std::optional<std::string>& targetName,
                             std::span<const std::string> passthrough,
-                            const std::string& package_filter = {}) {
+                            const std::string& package_filter = {},
+                            const std::string& cache_mode = {},
+                            bool no_cache = false) {
     // mcpp#225 (E2): reuse the resolved build cache when it's still fresh,
     // skipping prepare_build's toolchain resolution + modgraph scan
     // entirely — mirrors cmd_build's try_fast_build fast path. The cached
@@ -623,7 +709,10 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // last time; a `-p` filter always needs prepare_build's member switch,
     // so skip the fast path in that case (mirrors cmd_build's fast-path
     // bypass whenever ov.package_filter is set).
-    if (package_filter.empty()) {
+    // A --cache/--no-cache override also bypasses the fast path, for the same
+    // reason --profile does: the cached build.ninja was generated under the
+    // previous mode, so reusing it would silently ignore the flag.
+    if (package_filter.empty() && cache_mode.empty() && !no_cache) {
         if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path())) {
             if (auto rc = try_fast_run(*root, targetName, passthrough)) {
                 return *rc;
@@ -635,10 +724,11 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // the binary, so we don't re-resolve the toolchain or re-scan modgraph.
     mcpp::build::BuildOverrides ov;
     ov.package_filter = package_filter;
+    ov.cache_mode     = cache_mode;
     auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
-    if (auto rc = run_build_plan(*ctx, /*verbose=*/false, /*no_cache=*/false); rc != 0)
+    if (auto rc = run_build_plan(*ctx, /*verbose=*/false, no_cache); rc != 0)
         return rc;
 
     // Find binary target
@@ -843,11 +933,22 @@ export int run_tests(std::span<const std::string> passthrough,
     }
 
     // 4. "Compiling test_X (test)" lines for the test binaries.
-    std::set<std::string> cachedNames;
-    for (auto& label : ctx->cachedDepLabels) {
-        auto sp = label.find(' ');
-        cachedNames.insert(sp == std::string::npos ? label : label.substr(0, sp));
-    }
+    std::map<std::string, std::size_t> cachedUnits;
+    for (auto& dep : ctx->cachedDeps) cachedUnits[dep.name] = dep.units;
+    auto announce = [&](const std::string& name,
+                        const mcpp::manifest::DependencySpec& spec,
+                        std::string_view suffix) {
+        std::string ver = spec.isPath() ? "(path)" : std::string("v") + spec.version;
+        auto it = cachedUnits.find(name);
+        if (it == cachedUnits.end()) {
+            mcpp::ui::status("Compiling",
+                std::format("{} {}{}", name, ver, suffix));
+        } else {
+            mcpp::ui::status("Cached",
+                std::format("{} {} ({} unit{}){}", name, ver, it->second,
+                            it->second == 1 ? "" : "s", suffix));
+        }
+    };
     std::set<std::string> announced;
     announced.insert(ctx->manifest.package.name);
     mcpp::ui::status("Compiling",
@@ -856,17 +957,12 @@ export int run_tests(std::span<const std::string> passthrough,
     for (auto& [name, spec] : ctx->manifest.dependencies) {
         if (announced.contains(name)) continue;
         announced.insert(name);
-        std::string ver = spec.isPath() ? "(path)" : std::string("v") + spec.version;
-        const char* verb = cachedNames.contains(name) ? "Cached" : "Compiling";
-        mcpp::ui::status(verb, std::format("{} {}", name, ver));
+        announce(name, spec, "");
     }
     for (auto& [name, spec] : ctx->manifest.devDependencies) {
         if (announced.contains(name)) continue;
         announced.insert(name);
-        std::string ver = spec.isPath() ? "(path)" : std::string("v") + spec.version;
-        const char* verb = cachedNames.contains(name) ? "Cached" : "Compiling";
-        mcpp::ui::status(verb,
-            std::format("{} {} (dev)", name, ver));
+        announce(name, spec, " (dev)");
     }
     // List test binaries.
     // (Per-test "Compiling" lines print in Phase B, interleaved with each
@@ -1131,9 +1227,11 @@ export int clean_project(bool wipe_bmi) {
     std::println("Cleaned: {}", (*root / "target").string());
 
     if (wipe_bmi) {
-        auto bmi = mcpp::toolchain::default_cache_root();
-        std::filesystem::remove_all(bmi, ec);
-        std::println("Cleaned BMI cache: {}", bmi.string());
+        auto cache = mcpp::toolchain::default_cache_root();
+        std::filesystem::remove_all(cache, ec);
+        std::println("Cleaned build cache: {}", cache.string());
+        std::println("  (`mcpp cache clean --legacy` also removes the unused "
+                     "pre-v1 cache, if any)");
     }
     return 0;
 }

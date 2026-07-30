@@ -71,7 +71,7 @@ if grep -q -- "-std=c++23" compile_commands.json; then
     exit 1
 fi
 
-metadata="$(find "$MCPP_HOME/bmi" -name std-module.json | head -1)"
+metadata="$(find "$MCPP_HOME/build-cache/v1/std" -name std-module.json | head -1)"
 [[ -n "$metadata" ]] || { echo "FAIL: std module metadata missing"; exit 1; }
 grep -q '"cpp_standard": "c++26"' "$metadata" || {
     echo "FAIL: std module metadata missing C++26 standard"

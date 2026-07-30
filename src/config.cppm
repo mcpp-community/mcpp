@@ -59,7 +59,7 @@ struct GlobalConfig {
     std::filesystem::path           binDir;              // mcppHome/bin
     std::filesystem::path           xlingsBinary;        // mcppHome/registry/bin/xlings
     std::filesystem::path           registryDir;         // mcppHome/registry
-    std::filesystem::path           bmiCacheDir;         // mcppHome/bmi
+    std::filesystem::path           bmiCacheDir;         // mcppHome/build-cache/v1
     std::filesystem::path           metaCacheDir;        // mcppHome/cache
     std::filesystem::path           logDir;              // mcppHome/log
     std::filesystem::path           configFile;          // mcppHome/config.toml
@@ -456,7 +456,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // making ensure_sandbox_xlings_binary() a no-op.
     cfg.xlingsBinary  = cfg.registryDir / "bin" /
         (std::string("xlings") + std::string(mcpp::platform::exe_suffix));
-    cfg.bmiCacheDir   = mcpp::home::bmi_root();
+    cfg.bmiCacheDir   = mcpp::home::cache_root();
     cfg.metaCacheDir  = cfg.mcppHome / "cache";
     cfg.logDir        = cfg.mcppHome / "log";
     cfg.configFile    = cfg.mcppHome / "config.toml";
@@ -647,7 +647,7 @@ void print_env(const GlobalConfig& cfg) {
     std::println("xlings pinned       = {}", kXlingsPinnedVersion);
     std::println("xlings home         = {}", cfg.xlingsHome().string());
     std::println("config              = {}", cfg.configFile.string());
-    std::println("BMI cache           = {}", cfg.bmiCacheDir.string());
+    std::println("build cache         = {}", cfg.bmiCacheDir.string());
     std::println("meta cache          = {}", cfg.metaCacheDir.string());
     if (!cfg.defaultToolchain.empty())
         std::println("default toolchain   = {}", cfg.defaultToolchain);

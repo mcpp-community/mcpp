@@ -25,10 +25,25 @@ export namespace mcpp::home {
 // $MCPP_HOME. See root() below for the resolution order.
 std::filesystem::path root();
 
-// The cross-project BMI cache root ($MCPP_HOME/bmi). Both the std module
-// cache (toolchain/stdmod.cppm) and the dep BMI cache (bmi_cache.cppm, via
-// GlobalConfig::bmiCacheDir) live here — they MUST agree.
-std::filesystem::path bmi_root();
+// The cross-project build cache root ($MCPP_HOME/build-cache/v1). Holds both
+// the std module cache (toolchain/stdmod.cppm, under std/) and the per-package
+// dependency cache (bmi_cache.cppm, under pkg/) — they MUST agree.
+//
+// NOT `$MCPP_HOME/cache`: that name is already taken by GlobalConfig's index
+// metadata cache, which config.cppm's reset path deletes wholesale. Nesting
+// compiled artifacts inside a directory something else clears is a trap that
+// would surface as "the build cache empties itself sometimes".
+//
+// The `v1` segment is the layout version. It exists so replacing the layout
+// never has to migrate or delete anything: a new layout is a new segment, and
+// the old tree becomes inert until `mcpp cache clean --legacy` collects it.
+std::filesystem::path cache_root();
+
+// The pre-v1 cache root ($MCPP_HOME/bmi), keyed by whole-project fingerprint.
+// Nothing reads or writes it any more; `mcpp doctor` reports it and
+// `mcpp cache clean --legacy` removes it. Kept resolvable rather than
+// hardcoded at the call sites so "where is the old cache" has one answer too.
+std::filesystem::path legacy_bmi_root();
 
 } // namespace mcpp::home
 
@@ -90,7 +105,11 @@ std::filesystem::path root() {
     return default_home();
 }
 
-std::filesystem::path bmi_root() {
+std::filesystem::path cache_root() {
+    return root() / "build-cache" / "v1";
+}
+
+std::filesystem::path legacy_bmi_root() {
     return root() / "bmi";
 }
 

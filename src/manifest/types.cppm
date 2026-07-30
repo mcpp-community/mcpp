@@ -290,6 +290,12 @@ struct BuildConfig : BuildInputs {
     // footgun): a project that defaults to dev should pass `--profile release`
     // when producing a distributable (a pack-time release guard is a follow-up).
     std::string                         defaultProfile;
+    // `[build] cache` — "global" (default) | "local" | "off". Project-level
+    // default for the global dependency cache; --cache and MCPP_BUILD_CACHE
+    // both override it. Validated in prepare_build (unknown value: warning, or
+    // error under --strict) rather than here, so parsing a manifest never
+    // depends on the build-mode vocabulary.
+    std::string                         cacheMode;
 };
 
 // `[runtime]` — requirements needed when launching built binaries.

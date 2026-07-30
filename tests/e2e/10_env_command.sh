@@ -14,7 +14,7 @@ out=$("$MCPP" self env 2>&1)
 # Verify directory tree
 [[ -d "$MCPP_HOME/bin" ]]      || { echo "missing bin/"; exit 1; }
 [[ -d "$MCPP_HOME/registry" ]] || { echo "missing registry/"; exit 1; }
-[[ -d "$MCPP_HOME/bmi" ]]      || { echo "missing bmi/"; exit 1; }
+[[ -d "$MCPP_HOME/build-cache/v1" ]] || { echo "missing build-cache/v1/"; exit 1; }
 [[ -d "$MCPP_HOME/cache" ]]    || { echo "missing cache/"; exit 1; }
 [[ -f "$MCPP_HOME/config.toml" ]]            || { echo "missing config.toml"; exit 1; }
 [[ -f "$MCPP_HOME/registry/.xlings.json" ]]  || { echo "missing seeded .xlings.json"; exit 1; }

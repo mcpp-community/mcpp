@@ -46,6 +46,11 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::build::BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
     if (auto p = parsed.value("package")) ov.package_filter = *p;
+    // --cache global|local|off. --no-cache is the deprecated alias for off; the
+    // old flag only ever cleared target/, which says nothing about a cache, so
+    // it is expressed in terms of the new one rather than kept as a second axis.
+    if (auto c = parsed.value("cache")) ov.cache_mode = *c;
+    else if (no_cache)                  ov.cache_mode = "off";
     // Profile selection precedence: --profile NAME > --release / --dev > the
     // project default ([build].default-profile) > "release", resolved in
     // prepare_build. --release/--dev are shorthands only.
@@ -81,7 +86,8 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // the fast path would silently ignore the flags.
     if (!print_fp && ov.target_triple.empty() && !ov.force_static
         && ov.profile.empty() && ov.features.empty() && !ov.strict
-        && ov.capabilities.empty() && ov.package_filter.empty()) {
+        && ov.capabilities.empty() && ov.package_filter.empty()
+        && ov.cache_mode.empty()) {
         auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
         if (root) {
             if (auto rc = mcpp::build::try_fast_build(*root, verbose, no_cache)) {
@@ -109,7 +115,12 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     // `mcpp run` is single-member only — no `--workspace` fan-out.
     std::string package_filter;
     if (auto p = parsed.value("package")) package_filter = *p;
-    return mcpp::build::build_run_target(targetName, passthrough, package_filter);
+    std::string cache_mode;
+    bool no_cache = parsed.is_flag_set("no-cache");
+    if (auto c = parsed.value("cache")) cache_mode = *c;
+    else if (no_cache)                  cache_mode = "off";
+    return mcpp::build::build_run_target(targetName, passthrough, package_filter,
+                                         cache_mode, no_cache);
 }
 
 export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
@@ -125,6 +136,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto cp = parsed.value("cap")) ov.capabilities = *cp;
     ov.strict = parsed.is_flag_set("strict");
     if (auto p = parsed.value("package")) ov.package_filter = *p;
+    if (auto c = parsed.value("cache")) ov.cache_mode = *c;
+    else if (parsed.is_flag_set("no-cache")) ov.cache_mode = "off";
 
     mcpp::build::TestOptions to;
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);

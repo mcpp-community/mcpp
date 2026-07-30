@@ -139,6 +139,7 @@ ldflags      = ["-lfoo"]          # 额外链接参数
 defines      = ["BIZ=1", "QUX"]   # 作用于每个 TU 的预处理宏(脱糖为 -D;会进入模块扫描)
 static_stdlib = true               # 静态链接 libstdc++(默认 true)
 macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
+cache        = "global"           # 依赖的全局构建缓存:global(默认)| local | off(见 §2.10)
 ```
 
 `include_dirs_after`(#249)列出**排在工具链系统目录之后**搜索的头文件目录
@@ -506,8 +507,49 @@ ldflags  = []
   (默认 dev 的项目在产出可分发物时应显式 `--release`。)
 - 内置档案:`release`(-O2)/ `dev`、`debug`(-O0 -g)/ `dist`(-O3 + strip;
   **不默认开 lto**)。`[profile.<内置名>]` 可整体覆盖内置定义。
+- **每个 profile 各占一个构建目录。** 解析后的 profile 开关参与指纹,所以
+  `target/<triple>/` 下每个 profile 一个哈希目录,来回切换是增量而不是全量重编;
+  代价是磁盘占用随实际使用的 profile 数量增长。
 
-### 2.10 `[runtime]` — 主机运行时能力
+### 2.10 `[build] cache` — 依赖的全局构建缓存
+
+从索引获取的依赖,其编译产物按包缓存在 `$MCPP_HOME/build-cache/v1/` 下,跨工程共享。
+依赖的产物与"谁在消费它"无关,所以工具链、profile、依赖版本相同的两个工程复用同一条目。
+
+```toml
+[build]
+cache = "global"   # "global"(默认)| "local" | "off"
+```
+
+| 模式 | 读缓存 | 写缓存 | 先清构建目录 |
+|---|---|---|---|
+| `global`(默认) | 是 | 是 | 否 |
+| `local` | 否 | 否 | 否 |
+| `off` | 否 | 否 | 是 |
+
+`local` 把所有依赖都编在本工程 `target/` 内 —— 排障时一次性排除"是不是缓存的问题",
+也给 CI 一个无共享的可复现基线。`off` 额外清掉本次的 `target/<triple>/<fp>/` 做冷构建;
+`--no-cache` 是它的兼容别名。
+
+优先级:`--cache <mode>` **>** `MCPP_BUILD_CACHE` **>** `[build] cache` **>** `global`。
+无法识别的值会被报出来(`--strict` 下为错误),而不是静默回落到 `global`。
+
+**不进缓存的**:`path` 与 `git` 依赖(任意深度)以及 workspace 成员。它们的源码可以在
+`name@version` 不变的情况下改变,任何基于该身份的键都看不见这种变化。
+
+查看与回收:
+
+```
+mcpp cache dir                      # 缓存在哪
+mcpp cache list [--json]            # 条目、体积、最后使用时间
+mcpp cache info <pkg>@<ver>         # 单条目详情,含它是用什么键输入编出来的
+mcpp cache verify                   # 逐条目校验清单与磁盘
+mcpp cache gc --max-size 5GiB       # 按 LRU 收到容量预算内
+mcpp cache gc --older-than 30d      # 或按"多久没用过"回收
+mcpp cache clean [--deps|--std|--all|--legacy]
+```
+
+### 2.11 `[runtime]` — 主机运行时能力
 
 ```toml
 [runtime]
@@ -529,7 +571,7 @@ provider = "compat.glx-runtime"
 - 能力命名约定:分层小写 `domain.sub.role`(如 `opengl.glx.driver`、
   `x11.display`)与前缀类 `abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
 
-### 2.11 `[package] platforms` — 平台声明
+### 2.12 `[package] platforms` — 平台声明
 
 ```toml
 [package]
@@ -540,7 +582,7 @@ platforms = ["linux", "macos", "windows"]
 (它拥有 target/triple 体系):`linux | macos | windows`;未知值 warning,
 `--strict` 下报错。
 
-### 2.12 `[xlings]` — 构建环境
+### 2.13 `[xlings]` — 构建环境
 
 ```toml
 [xlings]

@@ -146,6 +146,7 @@ static_stdlib = true               # Statically link libstdc++ (default true)
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
                                    # (≙ cargo build.target; e.g. "ship fully-static")
 macos_deployment_target = "14.0"   # Minimum supported OS version for macOS artifacts (macOS only)
+cache        = "global"           # Global dependency cache: global (default) | local | off (§2.10)
 ```
 
 `include_dirs_after` (#249) lists header directories that are searched **after**
@@ -717,8 +718,56 @@ ldflags  = []
 - Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
   **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
   built-in definition wholesale.
+- **Each profile owns its own build directory.** The resolved profile knobs
+  participate in the fingerprint, so `target/<triple>/` holds one hash directory
+  per profile and switching between them is incremental instead of a full
+  rebuild. It also means the disk cost scales with the number of profiles you
+  actually use.
 
-### 2.10 `[runtime]` — Host Runtime Capabilities
+### 2.10 `[build] cache` — The Global Dependency Cache
+
+Compiled artifacts for dependencies fetched from an index are cached across
+projects under `$MCPP_HOME/build-cache/v1/`. A dependency's artifacts do not
+depend on who consumes them, so two projects with the same toolchain, profile and
+dependency versions reuse one entry.
+
+```toml
+[build]
+cache = "global"   # "global" (default) | "local" | "off"
+```
+
+| Mode | Reads the cache | Writes the cache | Clears the build dir first |
+|---|---|---|---|
+| `global` (default) | yes | yes | no |
+| `local` | no | no | no |
+| `off` | no | no | yes |
+
+`local` builds every dependency inside this project's `target/` — useful to rule
+the cache out while diagnosing something, and to give CI a no-sharing baseline.
+`off` additionally clears this build's `target/<triple>/<fp>/` for a cold
+rebuild; `--no-cache` is a deprecated alias for it.
+
+Precedence: `--cache <mode>` **>** `MCPP_BUILD_CACHE` **>** `[build] cache` **>**
+`global`. An unrecognized value is reported (an error under `--strict`) rather
+than silently falling back to `global`.
+
+What is **not** cached: `path` and `git` dependencies, at any depth, and
+workspace members. Their sources can change without their `name@version`
+changing, so no key over that identity could notice the change.
+
+Inspection and reclamation:
+
+```
+mcpp cache dir                      # where the cache lives
+mcpp cache list [--json]            # entries, sizes, last use
+mcpp cache info <pkg>@<ver>         # one entry, including the key inputs it was built with
+mcpp cache verify                   # every entry's file list against the disk
+mcpp cache gc --max-size 5GiB       # LRU-collect package entries to a budget
+mcpp cache gc --older-than 30d      # ...or by how long since they were last used
+mcpp cache clean [--deps|--std|--all|--legacy]
+```
+
+### 2.11 `[runtime]` — Host Runtime Capabilities
 
 ```toml
 [runtime]
@@ -744,7 +793,7 @@ provider = "compat.glx-runtime"
   `opengl.glx.driver`, `x11.display`) and prefix-style `abi:<name>` (e.g. `abi:glibc`,
   which participates in toolchain ABI enforcement).
 
-### 2.11 `[package] platforms` — Platform Declaration
+### 2.12 `[package] platforms` — Platform Declaration
 
 ```toml
 [package]
@@ -756,7 +805,7 @@ The vocabulary is fixed by mcpp (which owns the target/triple system):
 `linux | macos | windows`; unknown values produce a warning, and an error under
 `--strict`.
 
-### 2.12 `[xlings]` — Build Environment
+### 2.13 `[xlings]` — Build Environment
 
 ```toml
 [xlings]

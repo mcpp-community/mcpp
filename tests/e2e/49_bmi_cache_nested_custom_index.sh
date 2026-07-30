@@ -93,26 +93,52 @@ if grep -q "bmi cache populate failed" build.log; then
     exit 1
 fi
 
-manifest="$(find "$MCPP_HOME/bmi" -path "*/deps/local-dev/*collision-lib@1.0.0/manifest.txt" | head -1)"
-[[ -n "$manifest" ]] || {
-    echo "FAIL: missing custom-index BMI manifest"
-    find "$MCPP_HOME/bmi" -maxdepth 6 -type f | sort
+entry="$(find "$MCPP_HOME/build-cache/v1/pkg/local-dev" -name entry.json | head -1)"
+[[ -n "$entry" ]] || {
+    echo "FAIL: missing custom-index cache entry"
+    find "$MCPP_HOME/build-cache/v1" -maxdepth 6 -type f | sort
     cat build.log
     exit 1
 }
 
-grep -Eq '^obj: .+/foo\.m\.o$' "$manifest" || {
-    echo "FAIL: manifest did not preserve nested object path"
-    cat "$manifest"
-    exit 1
-}
+# Read the structured entry instead of grepping a log: entry.json exists so the
+# cache describes itself, and every object it lists must be on disk under obj/.
+python3 - "$entry" > entrycheck.log 2>&1 <<'PYEOF' || { cat entrycheck.log; exit 1; }
+import json, os, sys
+entry = sys.argv[1]
+d = json.load(open(entry))
+objs = d.get("obj", [])
+if not [o for o in objs if "/" in o and o.endswith("foo.m.o")]:
+    sys.exit(f"FAIL: entry did not preserve a nested object path: {objs}")
+root = os.path.dirname(entry)
+for o in objs:
+    p = os.path.join(root, "obj", o)
+    if not os.path.exists(p):
+        sys.exit(f"FAIL: listed object missing on disk: {p}")
+PYEOF
 
 rm -rf target
 "$MCPP" build > build2.log 2>&1 || { cat build2.log; exit 1; }
 
 grep -q "Cached local-dev.collision-lib v1.0.0" build2.log || {
-    echo "FAIL: second cold build did not reuse BMI cache"
+    echo "FAIL: second cold build did not reuse the build cache"
     cat build2.log
+    exit 1
+}
+
+# A reused dependency must not be recompiled — that was the whole defect. Its
+# outputs are declared by stage_file edges now, so there is no compile edge for
+# its sources at all.
+NINJA="$(find target -name build.ninja | head -1)"
+[[ -n "$NINJA" ]] || { echo "FAIL: no build.ninja"; exit 1; }
+if grep -qE ': (cxx_module|cxx_object) .*collision-lib' "$NINJA"; then
+    echo "FAIL: cached dependency still has compile edges"
+    grep -nE ': (cxx_module|cxx_object) .*collision-lib' "$NINJA"
+    exit 1
+fi
+grep -qE '^build .* : stage_file .*collision-lib' "$NINJA" || {
+    echo "FAIL: cached dependency has no stage_file edge"
+    grep -n 'stage_file' "$NINJA" | head
     exit 1
 }
 

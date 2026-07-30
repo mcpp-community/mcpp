@@ -104,7 +104,7 @@ out=$("$binary")
 }
 
 # The std BMI prebuild carries the same dialect (scan/prebuild/compile agree).
-metadata="$(find "$MCPP_HOME/bmi" -name std-module.json | head -1)"
+metadata="$(find "$MCPP_HOME/build-cache/v1/std" -name std-module.json | head -1)"
 grep -q '"std_flag": "-std=c++26 -freflection' "$metadata" || {
     cat "$metadata"
     echo "FAIL: std-module.json std_flag lacks -std=c++26 -freflection"

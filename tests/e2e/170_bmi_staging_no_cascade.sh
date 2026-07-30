@@ -9,7 +9,7 @@
 #      carried no `restat`, so every importer of `import std` rebuilt whenever
 #      the cache-side BMI got a newer mtime (which happens on any cwd change
 #      before the cache-root fix below).
-#   2. The staging SOURCE must live under $MCPP_HOME/bmi. The std module cache
+#   2. The staging SOURCE must live under $MCPP_HOME/build-cache/v1/std. That cache
 #      used to resolve its root through a private copy of the home logic that
 #      knew neither %USERPROFILE% nor self-contained installs, so on Windows it
 #      parked the cache in the current working directory as `.mcpp-bmi/`.
@@ -56,11 +56,13 @@ DST=$(unescape_ninja "$(echo "$EDGE" | awk '{print $2}')")
 SRC=$(unescape_ninja "$(echo "$EDGE" | awk '{print $NF}')")
 echo "staging: $SRC -> $DST"
 
-# ── invariant 2: the cache root is $MCPP_HOME/bmi, never a cwd-local dir ──
+# ── invariant 2: the cache root is $MCPP_HOME/build-cache/v1/std, never a cwd-local
+# dir (and never the pre-v1 $MCPP_HOME/bmi tree, which nothing reads now) ──
 HOME_ROOT=$(norm_path "${MCPP_HOME:-$HOME/.mcpp}")
 case "$(norm_path "$SRC")" in
-    "$HOME_ROOT"/bmi/*) ;;
-    *) echo "FAIL: std BMI cache is '$SRC', expected under '$HOME_ROOT/bmi'"; exit 1 ;;
+    "$HOME_ROOT"/build-cache/v1/std/*) ;;
+    *) echo "FAIL: std BMI cache is '$SRC', expected under '$HOME_ROOT/build-cache/v1/std'"
+       exit 1 ;;
 esac
 for leftover in "$TMP/.mcpp-bmi" "$TMP/app/.mcpp-bmi"; do
     [[ -d "$leftover" ]] && { echo "FAIL: legacy cache dir created at $leftover"; exit 1; }

@@ -66,7 +66,7 @@ void print_usage() {
     std::println("");
     std::println("Resource management:");
     std::println("  mcpp toolchain install|list|default  Manage mcpp's private toolchains");
-    std::println("  mcpp cache list|prune|clean|info     Inspect/manage the global BMI cache");
+    std::println("  mcpp cache dir|list|info|gc|...      Inspect/manage the global build cache");
     std::println("  mcpp index list|add|remove|update    Manage package registries");
     std::println("");
     std::println("About mcpp itself:");
@@ -81,7 +81,8 @@ void print_usage() {
     std::println("  --verbose, -v                        Verbose compiler output");
     std::println("  --quiet, -q                          Suppress status output");
     std::println("  --print-fingerprint                  Show toolchain fingerprint and 10 inputs");
-    std::println("  --no-cache                           Force-clear target/ before building");
+    std::println("  --cache <MODE>                       Dependency cache: global (default) | local | off");
+    std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
     std::println("");
     std::println("Docs: https://github.com/mcpp-community/mcpp/tree/main/docs");
@@ -218,8 +219,10 @@ int run(int argc, char** argv) {
             .description("Build the current package")
             .option(cl::Option("print-fingerprint")
                 .help("Show toolchain fingerprint and 10 inputs"))
+            .option(cl::Option("cache").takes_value().value_name("MODE")
+                .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
-                .help("Force-clear target/ before building"))
+                .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("target").takes_value().help(
                 "Build for <triple> (e.g. x86_64-linux-musl); looks up [target.<triple>] in mcpp.toml"))
             .option(cl::Option("static").help(
@@ -246,6 +249,10 @@ int run(int argc, char** argv) {
             .arg(cl::Arg("target").help("Binary name (optional)"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Run only the named workspace member (single-member; no --workspace fan-out)"))
+            .option(cl::Option("cache").takes_value().value_name("MODE")
+                .help("Global dependency cache: global (default) | local | off"))
+            .option(cl::Option("no-cache")
+                .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))
@@ -269,6 +276,10 @@ int run(int argc, char** argv) {
                 .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Run tests only for the named workspace member"))
+            .option(cl::Option("cache").takes_value().value_name("MODE")
+                .help("Global dependency cache: global (default) | local | off"))
+            .option(cl::Option("no-cache")
+                .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("workspace")
                 .help("Run tests for all workspace members"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
@@ -389,24 +400,43 @@ int run(int argc, char** argv) {
                     "Remove the payload for <triple> instead of the host one")))
             .action(wrap_rc(cmd_toolchain)))
         .subcommand(cl::App("cache")
-            .description("Inspect and manage the global BMI cache")
+            .description("Inspect and manage the global build cache")
+            .subcommand(cl::App("dir")
+                .description("Print the cache root (and any pre-v1 cache)"))
             .subcommand(cl::App("list")
-                .description("List cache entries with size + last-access"))
+                .description("List cache entries with size + last-use")
+                .option(cl::Option("json").help("Emit machine-readable JSON")))
             .subcommand(cl::App("info")
-                .description("Show details for a cached package")
+                .description("Show details (incl. key inputs) for a cached package")
                 .arg(cl::Arg("pkg").help("<pkg>@<ver>").required()))
             .subcommand(cl::App("prune")
-                .description("Drop entries older than a threshold")
+                .description("Drop entries not used within a threshold")
                 .option(cl::Option("older-than").takes_value().value_name("N{s|m|h|d}")
                     .help("Age threshold (e.g. 30d)")))
+            .subcommand(cl::App("gc")
+                .description("LRU-collect package entries to a size and/or age budget")
+                .option(cl::Option("max-size").takes_value().value_name("N{MiB|GiB}")
+                    .help("Keep the package cache under this size (e.g. 5GiB)"))
+                .option(cl::Option("older-than").takes_value().value_name("N{s|m|h|d}")
+                    .help("Also drop entries unused for longer than this")))
             .subcommand(cl::App("clean")
-                .description("Drop all dep cache entries (preserves std.gcm)"))
+                .description("Drop cache entries (default: package entries only)")
+                .option(cl::Option("deps").help("Drop package entries (default)"))
+                .option(cl::Option("std").help("Drop std module entries"))
+                .option(cl::Option("all").help("Drop both"))
+                .option(cl::Option("legacy")
+                    .help("Remove the unused pre-v1 cache at $MCPP_HOME/bmi")))
+            .subcommand(cl::App("verify")
+                .description("Check every entry's manifest against the files on disk"))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("cache", p, {
-                    {"list",  cmd_cache_list},
-                    {"info",  cmd_cache_info},
-                    {"prune", cmd_cache_prune},
-                    {"clean", cmd_cache_clean},
+                    {"dir",    cmd_cache_dir},
+                    {"list",   cmd_cache_list},
+                    {"info",   cmd_cache_info},
+                    {"prune",  cmd_cache_prune},
+                    {"gc",     cmd_cache_gc},
+                    {"clean",  cmd_cache_clean},
+                    {"verify", cmd_cache_verify},
                 });
             })))
         .subcommand(cl::App("index")

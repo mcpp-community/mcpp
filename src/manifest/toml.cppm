@@ -877,6 +877,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("build.target"))         m.buildConfig.target = *v;
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
     else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
+    if (auto v = doc->get_string("build.cache"))          m.buildConfig.cacheMode = *v;
 
     // [xlings] — build environment (L-1). Subsections mirror .xlings.json 1:1.
     if (auto v = doc->get_string_array("xlings.deps"))  m.xlings.deps = *v;
@@ -900,7 +901,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     //
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
     static constexpr std::string_view kKnownBuildKeys[] = {
-        "allow_host_libs", "c_standard", "cflags", "cxxflags",
+        "allow_host_libs", "c_standard", "cache", "cflags", "cxxflags",
         "default-profile", "defines", "dialect_cxxflags", "flags",
         "include_dirs", "include_dirs_after", "ldflags",
         "macos_deployment_target", "profile", "sources", "static_stdlib",
@@ -915,7 +916,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     "[build] has unsupported key '{}' (ignored). Supported keys: "
                     "sources, cflags, cxxflags, ldflags, defines, flags, "
                     "include_dirs, include_dirs_after, dialect_cxxflags, "
-                    "c_standard, target, static_stdlib, allow_host_libs, "
+                    "c_standard, target, static_stdlib, allow_host_libs, cache, "
                     "profile, macos_deployment_target.", key));
             }
         }

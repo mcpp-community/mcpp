@@ -31,7 +31,11 @@ void status(std::string_view verb, std::string_view message);
 void info(std::string_view verb, std::string_view message);
 
 // Bold green Finished line.
-void finished(std::string_view profile, std::chrono::milliseconds elapsed);
+// `descriptor` annotates the profile's actual effect (e.g. "optimized",
+// "unoptimized + debuginfo"). Empty = print the profile name alone; callers
+// that never resolved the profile knobs must not invent one.
+void finished(std::string_view profile, std::chrono::milliseconds elapsed,
+              std::string_view descriptor = {});
 
 // "warning:" / "error:" prefix lines (yellow / red).
 void warning(std::string_view message);
@@ -245,12 +249,20 @@ void info(std::string_view verb, std::string_view message) {
     }
 }
 
-void finished(std::string_view profile, std::chrono::milliseconds elapsed) {
+void finished(std::string_view profile, std::chrono::milliseconds elapsed,
+              std::string_view descriptor) {
     if (g_quiet) return;
     init();
     auto v = verb_padded("Finished");
     auto secs = static_cast<double>(elapsed.count()) / 1000.0;
-    auto msg  = std::format("{} [optimized] in {:.2f}s", profile, secs);
+    // `[optimized]` used to be hardcoded here alongside a hardcoded "release"
+    // at the only call site, so every build — including `--dev` at -O0 -g —
+    // announced "Finished release [optimized]". The descriptor is now supplied
+    // by whoever actually resolved the profile knobs, and omitted by callers
+    // (the fast path) that never resolved them: no caller has to guess.
+    auto msg = descriptor.empty()
+        ? std::format("{} in {:.2f}s", profile, secs)
+        : std::format("{} [{}] in {:.2f}s", profile, descriptor, secs);
     if (g_color) {
         std::println("{}{}{}{} {}",
                      kBold, kBrightGreen, v, kReset, msg);

@@ -3,6 +3,72 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.7.30.2] — 2026-07-30
+
+### 修复
+
+- **依赖的全局缓存此前净收益为零 —— 命中也全量重编。** 命中的依赖产物由 `prepare_build` 直接拷进 build dir,而这些路径在 `build.ninja` 里仍然是 **compile edge 的输出**;ninja 对「输出存在但 `.ninja_log` 里没有该输出的命令行记录」一律判脏,而新 build dir 天然没有 `.ninja_log`。ninja 自己的话:
+
+  ```
+  $ ninja -C target/x86_64-linux-gnu/<fp> -d explain -n
+  ninja explain: command line not found in log for obj/zutil.o
+  ninja explain: obj/zutil.o is dirty
+  ```
+
+  于是每一个「命中」的 TU 都被重编一遍,而 CLI 照旧打印 `Cached <pkg>` —— 缓存只在「同一个 build dir 已经有 `.ninja_log`」时"生效",而那时本地产物本来就在。
+
+  修法不是加 `restat`(log entry 根本不存在,restat 只在有 entry 时改写 mtime 判定),也不是给 compile edge 打 `generator = 1`(那会把「命令行变了要重编」整条规则关掉,用错误换性能)。命中的依赖**改发 `stage_file` 边、不发 compile 边、不发 scan/dyndep 边**:产物落在 compile edge 本来会产生的同一个路径上,所以链接行、消费者 TU 的 BMI implicit input、运行期部署边全都不变,变的只是「这些文件由谁产生」—— 而 ninja 从此有了可比对的命令行记录。
+
+  状态行同时带上省下的 TU 数(`Cached compat.zlib v1.3.2 (15 units)`):光秃秃一个 `Cached` 能骗人三个月,一个必须与 ninja 实际跳过的边数吻合的数字骗不了。
+
+- **`mcpp build --release` 之后裸 `mcpp build` 会 0.00s「成功」并交付 release 产物。** 与缓存无关的独立缺陷,同根于下面的 profile 轴:`.build_cache` 的条目**只按 target triple 去重**,而 fast path 的准入条件只挡显式 `--profile/--dev/--release`,挡不住裸 `mcpp build`(那恰恰是「我要默认 profile」的意思)。于是 fast path 拿着 release 的 `build.ninja` 跑,`build.ninja` 里写着 `-O2`,产物无 debug info。
+
+  条目改按 `(target triple, resolved profile)` 去重,fast path 先用同一条纯规则(新的 `resolve_profile_name`,manifest 之外无输入)算出本次请求的 profile 再匹配;不匹配即当 miss 走完整 `prepare_build`。旧条目没有该字段 ⇒ 读成空 ⇒ 任何 profile 都不匹配 ⇒ 自愈,无需迁移。
+
+- **`Finished release [optimized]` 是硬编码的。** 唯一调用点传字面量 `"release"`,`ui::finished` 又硬编码 `[optimized]`,所以 `--dev`(`-O0 -g`)也自称优化过的 release 构建。现在 profile 名来自本次真正解析出的 profile,描述符来自本次真正解析出的开关(`unoptimized + debuginfo` 等),没有调用方需要猜。
+
+- **传递的 `path` / `git` 依赖被写进全局缓存。** 排除谓词在 **root manifest** 的 `dependencies`/`dev-dependencies` 里查该包并在 spec 为 path/git 时跳过 —— 但传递到达的包两个表里都没有,于是 `specIt == end()` 让谓词返回「不跳过」,本地源码被缓存,且 `indexName` 回落到默认索引(一个 workspace 成员 `B` 于是以 `mcpplibs/B@0.1.0` 的身份落在磁盘上)。它的源码可以在 `name@version` 不变的情况下改变,缓存键看不见这种变化。
+
+  唯一可采信的证据改为**解析期记录的来源**(`DepCacheIdentity::sourceKind`,两个 push 点都在作用域内拿得到):非 `"version"` 一律不进缓存。判据方向与 `mcpp add` 的存在性门**相反** —— 那里「不可证伪就放行」,缓存这里「不能证明来自不可变的 xpkgs store 就不缓存」,因为这里的错误代价是静默的错误对象,不是被拒绝的命令。
+
+  此前这个缺陷被上面第一条掩盖着(ninja 反正会重编);修好第一条之后它就是静默错误产物,所以两者必须同批。
+
+### 变更
+
+- **依赖缓存键:全工程指纹 → 每包 Merkle 键。** 旧键是整个工程的 fingerprint,而它的 flags 字段序列化了图里**每一个包,含 root** —— root 的包名、版本、`[build]` flags 都在里面。后果:改自己的版本号(`0.1.0` → `0.1.1`,实测 `3b8a8ae4fc217233` → `2138d7ce160e1154`)就让 std BMI 与**全部**依赖缓存整体失效;两个工程只要包名不同,即使依赖集与工具链完全一致,也一条都不共享。本机实测:26 GB / 1198 个指纹目录,`compat.zlib@1.3.2` 存了 162 份,`compat.x11@1.8.13` 73 份共 1.49 GB。
+
+  新模块 `mcpp.build.cache_key` 按七个轴逐包成键:工具链身份 / 语言与方言 / **profile** / 包身份 / 该包自身的构建配置(含 features 折叠后的结果)/ **每个直接依赖的键(递归,Merkle)** / cache epoch。不含 root 的身份与 flags —— 实测 root 的 `[build] cflags/cxxflags` **不会**下发到依赖 TU,这正是跨工程共享成立的机制依据。
+
+  F 轴之所以递归而不是「枚举上游的 public 接口」:GCC 把被导入模块 BMI 的 CRC 烙进导入者的 BMI,上游接口或 ABI 一变,旧的导入者 BMI 就 `module 'B' CRC mismatch` + `Bad import dependency`(手工三组对照实测:只改函数体通过,改签名/`-D` 改布局都硬失败)。可枚举清单必然漏项(上游 re-export 出去的传递模块接口在上游自己的 manifest 里根本看不出来),而失败模态是不对称的 —— BMI 轴取窄是编译器硬报错,`.o` 轴取窄是静默错对象。
+
+  递归的代价是上游的**私有**变化会级联下游;对真正吃这个缓存的人群 ≈ 0:index 包的描述符按版本冻结,`B` 的键只能因版本 bump(那本就该让消费者失效 —— 它链接 `B` 的对象)或全图轴而变,而唯一能不改版本就动私有 flag 的 path/git 包整体不进缓存。
+
+- **std 模块缓存键:全工程指纹 → std 自己的身份。** `stdmod.cppm` 写在产物旁边的 15 字段 metadata 一直就是正确完整的 std 身份,`metadata_matches` 一直在按它校验命中 —— 唯一错的是**目录名用的不是它**。本机实测代价:1014 个目录里只有 **15 个真身份**,16.10 GB(需要 ~0.5 GB),且 `mcpp version bump` 会重新 precompile 一次 std(几十 MB、十几秒)。(实现上有个自指要解:build commands 里含 cacheDir,而 cacheDir 由含它的 metadata 算出 —— 先用占位段生成一份规范化 metadata 算键,再用真目录生成落盘的那份。)
+
+- **缓存布局迁到 `$MCPP_HOME/build-cache/v1/`,条目自描述。** `pkg/<index>/<pkg>@<ver>/<key16>/` 与 `std/<identity>/`。刻意不放 `$MCPP_HOME/cache` —— 那个名字已经归 `GlobalConfig` 的索引元数据缓存所有,而它的 reset 路径会整目录删除;把编译产物塞进别人会清空的目录里,会以「构建缓存有时会自己空掉」的形态浮现。`v1` 是布局版本段,所以换布局永远不需要迁移或删除旧树。
+
+  每条目写 `entry.json`,记下**键的全部输入**;命中判定从「目录存在 + 文件齐」升级为「schema 匹配 ∧ 键匹配 ∧ 记录的输入与本次算出的输入**逐字段相等** ∧ 清单文件齐」。这是把 std 侧一直做对的事搬到依赖侧:此前依赖条目只有一份文件清单,所以怀疑命中错了的时候什么都审计不了。缺字段视为不匹配,**永不**因为 hash 相等就放行。
+
+  旧的 `$MCPP_HOME/bmi/`(按全工程指纹分目录)**不读不写不自动删**:`mcpp doctor` 报出它的体积,`mcpp cache clean --legacy` 回收。它从来没产生过收益(见上面第一条),但删几十 GB 必须是用户的显式动作。
+
+- **profile 成为失效轴。** `[profile.<name>]` 把开关落在 `buildConfig.optLevel/debug/lto/strip`,由 flags.cppm 变成 `-O<n>`/`-g`/`-flto`,而 `canonical_compile_flags` 只序列化 cflags/cxxflags/ldflags —— 于是 `--dev`、`--release`、`--profile dist` 三者**同一个 fingerprint**、同一个 `target/<triple>/<fp>/`、同一条缓存条目。
+
+  **可感知的行为变化**:`target/<triple>/` 下从此每个 profile 一个哈希目录。好处是 dev↔release 来回切从「每次全量」变成增量,两个 profile 的二进制可以并存;代价是磁盘随实际使用的 profile 数增长(每个 build dir 带一份 staged std BMI,本机 `std.gcm` = 31,466,112 字节)。
+
+- **缓存失效不再挂在 mcpp 版本号上。** 缓存键的兼容轴改用独立的 `kCacheEpoch`,只在缓存布局/键算法/staging 契约真的不兼容时递增。`fingerprint.cppm` 的 `MCPP_VERSION` 保持在 fingerprint 里(build dir 命名与本地增量归它管,宁可保守),但每次发版把整个缓存作废对纯 C 目标文件是过度失效。
+
+### 新增
+
+- **`--cache <mode>`:三种构建模式。** `global`(默认,读+写全局缓存)/ `local`(不读不写,所有依赖在本工程 `target/` 内编 —— 排障时一次性排除「是不是缓存的问题」,也给 CI 一个无共享的可复现基线)/ `off`(不读不写,并先清掉本次的 `target/<triple>/<fp>/` 做冷构建)。优先级 `--cache` > `MCPP_BUILD_CACHE` > `[build] cache` > `global`;无法识别的值会被报出来(`--strict` 下为错误),而不是静默回落到 `global`。
+
+  `--no-cache` 保留为 `off` 的兼容别名。它的旧 help 文案「Force-clear target/ before building」两处不准:它清的是**构建目录**(`target/<triple>/<fp>/`)而不是整个 `target/`,而且名字与缓存无关。`mcpp run` / `mcpp test` 一并补上这两个 flag(此前它们连 `--no-cache` 都没有)。
+
+- **`mcpp cache` 补齐到可运维。** `cache dir`(缓存到底在哪 —— 此前 `cache *`/`doctor`/`clean --bmi-cache` 各自解析根目录,而 config 的 reset 路径用 `GlobalConfig::bmiCacheDir`,两者可能不是同一个目录)、`cache gc --max-size <N>{MiB,GiB} / --older-than <N>{s,m,h,d}`(**真 LRU**)、`cache clean --deps|--std|--all|--legacy`、`cache list --json`、`cache verify`(逐条目校验清单与磁盘,残缺条目非零退出)。`cache info` 现在打印该条目的键输入 —— 怀疑命中错了时第一件想看的东西。
+
+  `prune` 此前按**目录 mtime** 排序,而那只记录条目被**写入**的时间:一个每次构建都命中的热包,和一个一个月没人碰过的冷包一样「陈旧」。`entry.json` 的 `accessed` 由每次命中刷新(只重写 `entry.json`,**不动产物 mtime** —— 那些 mtime 参与 ninja 的 restat 判定),`gc` 按它排序。`cache clean` 开头那句 `remove_all(<root>/"deps")` 指向一个从不存在的路径(dep 条目在 `<root>/<fp>/deps`),是死代码。
+
+  `gc` 刻意**不动 std 条目**:一份 std BMI 全机共享、重建要几十秒,为了腾一点磁盘赶走它是拿很多时间换很少空间。达不到容量预算时会明确说出来,而不是静默少删。
+
 ## [2026.7.30.1] — 2026-07-30
 
 ### 修复

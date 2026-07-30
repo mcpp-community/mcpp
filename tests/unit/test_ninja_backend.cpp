@@ -926,3 +926,117 @@ TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
     EXPECT_EQ(filtered.find("stage --output"), std::string::npos) << filtered;
     EXPECT_EQ(filtered.find("ninja: Entering directory"), std::string::npos) << filtered;
 }
+
+// ── Cache-served units: stage edges, not compile edges ──────────────────────
+//
+// The global dependency cache used to copy artifacts into the build dir from
+// inside prepare_build, while those same paths stayed declared as the outputs of
+// compile edges. Ninja treats an output it has no command line for in
+// .ninja_log as dirty ("command line not found in log"), so on a fresh build dir
+// every "cached" unit was recompiled — the cache saved nothing and the CLI still
+// printed "Cached". Staging has to be an edge for ninja to have a record.
+
+TEST(NinjaBackend, CachedUnitEmitsStageEdgeAndNoCompileEdge) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/dep.cppm",
+        .object = "obj/dep.m.o",
+        .packageName = "dep",
+        .providesModule = "dep",
+        .servedFromCache = true,
+        .cachedObject = "/bc/v1/pkg/idx/dep@1.0.0/key/obj/dep.m.o",
+        .cachedBmi = "/bc/v1/pkg/idx/dep@1.0.0/key/bmi/dep.gcm",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    EXPECT_NE(ninja.find("build obj/dep.m.o : stage_file "
+                         "/bc/v1/pkg/idx/dep@1.0.0/key/obj/dep.m.o"),
+              std::string::npos) << ninja;
+    // The BMI is staged too, at the path a compile edge would have produced.
+    EXPECT_NE(ninja.find("stage_file /bc/v1/pkg/idx/dep@1.0.0/key/bmi/dep.gcm"),
+              std::string::npos) << ninja;
+    // No compile edge, and no scan edge, for this unit.
+    EXPECT_EQ(ninja.find("cxx_module /store/dep/src/dep.cppm"), std::string::npos)
+        << ninja;
+    EXPECT_EQ(ninja.find("cxx_object /store/dep/src/dep.cppm"), std::string::npos)
+        << ninja;
+    EXPECT_EQ(ninja.find("dep.cppm.ddi"), std::string::npos) << ninja;
+}
+
+// `--verify size` for the same reason the std artifacts use it: the entry
+// directory is named by a key covering the toolchain, dialect, profile, the
+// package's own config and its dependencies' keys, so under one key equal size
+// IS equivalence — and size comes from directory metadata, which stays readable
+// even when a holder denies opening the file.
+TEST(NinjaBackend, CachedStageEdgesUseSizeVerification) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/a.c",
+        .object = "obj/a.o",
+        .packageName = "dep",
+        .servedFromCache = true,
+        .cachedObject = "/cache/obj/a.o",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    auto at = ninja.find("build obj/a.o : stage_file /cache/obj/a.o");
+    ASSERT_NE(at, std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("verify = --verify size", at), std::string::npos) << ninja;
+}
+
+// A cached unit sits next to uncached ones; only the cached one changes shape.
+TEST(NinjaBackend, UncachedUnitsStillCompileAlongsideCachedOnes) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/dep.c",
+        .object = "obj/dep.o",
+        .packageName = "dep",
+        .servedFromCache = true,
+        .cachedObject = "/cache/obj/dep.o",
+    });
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_NE(ninja.find("build obj/dep.o : stage_file /cache/obj/dep.o"),
+              std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("build obj/main.o : cxx_object src/main.cpp"),
+              std::string::npos) << ninja;
+}
+
+// The default path must be byte-identical to what it was: `servedFromCache` is
+// false everywhere unless a cache hit set it.
+TEST(NinjaBackend, NoStageEdgesWithoutCachedUnits) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_EQ(ninja.find("build obj/main.o : stage_file"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("build obj/main.o : cxx_object src/main.cpp"),
+              std::string::npos) << ninja;
+}
+
+// A cached unit whose cachedObject was never filled in is a bug upstream, not a
+// reason to emit a stage edge with an empty input — it must fall back to being
+// compiled rather than producing an unbuildable graph.
+TEST(NinjaBackend, CachedUnitWithoutCachedObjectPathIsStillCompiled) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+        .servedFromCache = true,
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_EQ(ninja.find("stage_file \n"), std::string::npos) << ninja;
+    EXPECT_EQ(ninja.find("build obj/main.o : stage_file"), std::string::npos) << ninja;
+}

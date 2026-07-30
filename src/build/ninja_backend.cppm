@@ -896,6 +896,46 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         return "cxx_object";
     };
 
+    // ── Cache-served units: stage edges instead of compile edges ────────
+    //
+    // A unit whose outputs are already in the global cache gets one stage_file
+    // edge per artifact and is then skipped by every loop below — no scan edge,
+    // no dyndep edge, no compile edge. Its outputs land at exactly the paths a
+    // compile edge would have produced, so the link edges, the BMI implicit
+    // inputs of consuming TUs and the runtime deployment edges are unchanged.
+    //
+    // This indirection is the whole point. The cache used to copy artifacts
+    // into the build dir from inside prepare, leaving them declared as compile
+    // edge outputs — and ninja treats an output with no command line in
+    // .ninja_log as dirty ("command line not found in log"), so a fresh build
+    // dir recompiled every one of them while the CLI printed "Cached". Making
+    // the staging an edge is what gives ninja a record to compare against.
+    //
+    // `--verify size` for the same reason the std artifacts use it: the entry
+    // directory is named by a key covering the toolchain, dialect, profile,
+    // this package's own config and its dependencies' keys, so for a given key
+    // equal size IS equivalence — and size comes from directory metadata, which
+    // stays readable even when a holder denies opening the file.
+    {
+        bool any = false;
+        for (auto& cu : plan.compileUnits) {
+            if (!cu.servedFromCache) continue;
+            if (cu.cachedObject.empty()) continue;
+            any = true;
+            append(std::format("build {} : stage_file {}\n",
+                               escape_ninja_path(cu.object),
+                               escape_ninja_path(cu.cachedObject)));
+            append("  verify = --verify size\n");
+            if (cu.providesModule && !cu.cachedBmi.empty()) {
+                append(std::format("build {} : stage_file {}\n",
+                                   bmi_path(*cu.providesModule),
+                                   escape_ninja_path(cu.cachedBmi)));
+                append("  verify = --verify size\n");
+            }
+        }
+        if (any) append("\n");
+    }
+
     if (dyndep) {
         // ── Phase 1: scan edges (one .ddi per TU). ──────────────────────
         // .ddi is placed beside the object so multi-version mangling can
@@ -910,6 +950,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::vector<std::string> ddi_paths;
         ddi_paths.reserve(plan.compileUnits.size());
         for (auto& cu : plan.compileUnits) {
+            if (cu.servedFromCache) continue;   // staged, never scanned
             if (is_scan_exempt(cu.source))
                 continue;
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
@@ -941,6 +982,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         }();
         std::map<std::string, std::string> ddi_expect;
         for (auto& cu : plan.compileUnits) {
+            if (cu.servedFromCache) continue;
             if (is_scan_exempt(cu.source)) continue;
             if (!cu.scanOverridden && !verifyAll) continue;
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
@@ -972,6 +1014,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // Each compile edge references its OWN .dd file instead of a global one.
         // P2: module compile edges get a $bmi_out variable for BMI preservation.
         for (auto& cu : plan.compileUnits) {
+            if (cu.servedFromCache) continue;   // a stage_file edge owns these outputs
             std::string rule = pick_rule(cu.source);
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
@@ -1014,6 +1057,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     } else {
         // ── Static-deps mode (M3.2 and earlier). ────────────────────────
         for (auto& cu : plan.compileUnits) {
+            if (cu.servedFromCache) continue;   // a stage_file edge owns these outputs
             std::string rule = pick_rule(cu.source);
 
             std::string implicit;
