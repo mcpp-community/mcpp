@@ -60,22 +60,45 @@ int main() {
 }
 EOF
 
-# First build — should compile the dependency
-out1=$("$MCPP" build --no-cache 2>&1)
+# First build — populates the cache. Deliberately NOT `--no-cache`: that is now
+# an alias for `--cache=off`, which means neither read NOR write, so a build that
+# used it would leave nothing for the second build to reuse. MCPP_HOME is fresh
+# here, so this build is already cold.
+out1=$("$MCPP" build 2>&1)
 echo "$out1" | grep -q "Compiling.*mcpplibs.cmdline" || {
-    # It's OK if it says "Cached" because global cache may exist
-    echo "$out1" | grep -q "Cached.*mcpplibs.cmdline" || {
-        echo "FAIL: mcpplibs.cmdline not mentioned in first build: $out1"
-        exit 1
-    }
+    echo "FAIL: mcpplibs.cmdline not compiled in the first (cold) build: $out1"
+    exit 1
 }
 
-# Second build (clean target, keep BMI cache) — dependency should be cached
+# Second build, clean target dir, cache kept — the dependency must be reused.
 rm -rf target
 out2=$("$MCPP" build 2>&1)
 echo "$out2" | grep -q "Cached.*mcpplibs.cmdline" || {
     echo "FAIL: mcpplibs.cmdline not cached on second build: $out2"
     exit 1
 }
+
+# ...and reuse must mean "not recompiled". The status line alone used to be
+# printed while ninja rebuilt every unit behind it, so assert on the graph.
+NINJA="$(find target -name build.ninja | head -1)"
+[[ -n "$NINJA" ]] || { echo "FAIL: no build.ninja"; exit 1; }
+if grep -qE ': (cxx_module|cxx_object|cxx_scan) .*mcpplibs' "$NINJA"; then
+    echo "FAIL: cached dependency still has compile edges"
+    grep -nE ': (cxx_module|cxx_object|cxx_scan) .*mcpplibs' "$NINJA" | head
+    exit 1
+fi
+
+# Clang + module partitions: mcpplibs.cmdline has a `:options` partition, which a
+# consumer never imports directly. Its stage edge must be sequenced before the
+# consumer's compile, or clang fails with `failed to find module file for module
+# 'mcpplibs.cmdline:options'` — a race Linux won and macOS lost.
+grep -q '_mcpp_staged_cache' "$NINJA" || {
+    echo "FAIL: staged artifacts are not sequenced before compilation"
+    exit 1
+}
+
+# And the whole thing must actually link and run.
+out3=$("$MCPP" run 2>&1) || { echo "FAIL: run: $out3"; exit 1; }
+echo "$out3" | grep -q 'cache test ok' || { echo "FAIL: run output: $out3"; exit 1; }
 
 echo "OK"

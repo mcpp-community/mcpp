@@ -872,6 +872,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("\n");
     }
 
+    // Aggregate target for everything staged out of the global cache. Named
+    // with a leading underscore so it cannot collide with a module or target
+    // name (both of which are identifiers or paths).
+    constexpr std::string_view kStagedCachePhony = "_mcpp_staged_cache";
+
     auto bmi_path = [&traits](std::string_view name) {
         std::string s(traits.bmiDir);
         s += '/';
@@ -916,24 +921,55 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // this package's own config and its dependencies' keys, so for a given key
     // equal size IS equivalence — and size comes from directory metadata, which
     // stays readable even when a holder denies opening the file.
+    //
+    // ORDERING. Replacing a package's compile edges with stage edges also
+    // removes the ordering those compile edges carried. A module partition is
+    // the case that breaks: a consumer imports `pkg`, so its dyndep declares
+    // `pkg`'s BMI and nothing else — the partition BMI `pkg:part` was reached
+    // only because `pkg`'s own compile edge depended on it. With independent
+    // stage edges, ninja may finish staging `pkg` and start the consumer while
+    // `pkg:part` is still unstaged, and Clang then fails with
+    // `failed to find module file for module 'pkg:part'`. (Observed on macOS
+    // CI; Linux happened to win the race, which is exactly why this is stated
+    // as an invariant rather than left to scheduling.)
+    //
+    // So every staged artifact becomes an ORDER-ONLY prerequisite of every edge
+    // that is not itself staged. Order-only (`||`) is the right strength: the
+    // real content dependencies are still declared where they always were (a
+    // dyndep-supplied implicit input, or the static-mode implicit list), so a
+    // changed BMI still invalidates its consumers — this adds sequencing, not
+    // dirtiness. The cost is that a handful of copies finish before compilation
+    // starts, which is what used to happen anyway when those units were built.
+    std::string stagedOrderOnly;
     {
-        bool any = false;
+        std::vector<std::string> staged;
         for (auto& cu : plan.compileUnits) {
             if (!cu.servedFromCache) continue;
             if (cu.cachedObject.empty()) continue;
-            any = true;
-            append(std::format("build {} : stage_file {}\n",
-                               escape_ninja_path(cu.object),
+            auto obj = escape_ninja_path(cu.object);
+            append(std::format("build {} : stage_file {}\n", obj,
                                escape_ninja_path(cu.cachedObject)));
             append("  verify = --verify size\n");
+            staged.push_back(obj);
             if (cu.providesModule && !cu.cachedBmi.empty()) {
-                append(std::format("build {} : stage_file {}\n",
-                                   bmi_path(*cu.providesModule),
+                auto bmi = bmi_path(*cu.providesModule);
+                append(std::format("build {} : stage_file {}\n", bmi,
                                    escape_ninja_path(cu.cachedBmi)));
                 append("  verify = --verify size\n");
+                staged.push_back(bmi);
             }
         }
-        if (any) append("\n");
+        if (!staged.empty()) {
+            append("\n");
+            // One phony aggregates them so each consuming edge names a single
+            // prerequisite instead of repeating the whole list (mcpp#274: long
+            // ninja lines are how a 50781-character command line blew past
+            // cmd.exe's 8191 limit on Windows).
+            append("build " + std::string(kStagedCachePhony) + " : phony");
+            for (auto& s2 : staged) append(" " + s2);
+            append("\n\n");
+            stagedOrderOnly = " || " + std::string(kStagedCachePhony);
+        }
     }
 
     if (dyndep) {
@@ -955,8 +991,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 continue;
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             ddi_paths.push_back(ddi);
-            append(std::format("build {} : cxx_scan {}\n", escape_ninja_path(ddi),
-                               escape_ninja_path(cu.source)));
+            append(std::format("build {} : cxx_scan {}{}\n", escape_ninja_path(ddi),
+                               escape_ninja_path(cu.source), stagedOrderOnly));
             append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
             if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
@@ -1027,6 +1063,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 auto it = ddi_to_dd.find(ddi);
                 if (it != ddi_to_dd.end()) {
                     out_line += " | " + it->second;
+                    out_line += stagedOrderOnly;
                     out_line += "\n  dyndep = " + it->second;
                     // P2: set bmi_out for the copy_if_different logic in cxx_module.
                     if (cu.providesModule) {
@@ -1034,10 +1071,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     }
                     out_line += "\n";
                 } else {
-                    out_line += "\n";
+                    out_line += stagedOrderOnly + "\n";
                 }
             } else {
-                out_line += "\n";
+                out_line += stagedOrderOnly + "\n";
             }
             if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
@@ -1089,6 +1126,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!implicit.empty())
                 out_line += " |" + implicit;
+            out_line += stagedOrderOnly;
             out_line += "\n";
             if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";

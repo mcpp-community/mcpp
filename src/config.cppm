@@ -6,7 +6,8 @@
 //     registry/                 XLINGS_HOME for mcpp's xlings
 //       bin/xlings              vendored xlings binary (= <XLINGS_HOME>/bin/xlings)
 //       .xlings.json            seeded with index_repos = [mcpplibs]
-//     bmi/<fp>/                 BMI cache (existing)
+//     build-cache/v1/           cross-project build cache (pkg/ + std/)
+//     bmi/                      pre-v1 build cache; unused, `cache clean --legacy`
 //     cache/                    metadata caches
 //     config.toml               this module's input
 //

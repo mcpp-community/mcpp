@@ -104,10 +104,12 @@ out=$("$binary")
 }
 
 # The std BMI prebuild carries the same dialect (scan/prebuild/compile agree).
-metadata="$(find "$MCPP_HOME/build-cache/v1/std" -name std-module.json | head -1)"
-grep -q '"std_flag": "-std=c++26 -freflection' "$metadata" || {
-    cat "$metadata"
-    echo "FAIL: std-module.json std_flag lacks -std=c++26 -freflection"
+# Recursive grep, not `find | head -1`: one MCPP_HOME can hold several std
+# identities now, so "the first one" is arbitrary.
+grep -rl '"std_flag": "-std=c++26 -freflection' "$MCPP_HOME/build-cache/v1/std" >/dev/null 2>&1 || {
+    find "$MCPP_HOME/build-cache/v1/std" -name std-module.json \
+        -exec grep -H '"std_flag"' {} \; 2>/dev/null
+    echo "FAIL: no std-module.json records std_flag -std=c++26 -freflection"
     exit 1
 }
 

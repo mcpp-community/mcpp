@@ -54,7 +54,7 @@ void print_usage() {
     std::println("  mcpp build [options]                 Build the current package");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
     std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --message-format json)");
-    std::println("  mcpp clean [--bmi-cache]             Remove target/ (and optionally BMI cache)");
+    std::println("  mcpp clean [--bmi-cache]             Remove target/ (and optionally the build cache)");
     std::println("  mcpp add <pkg>[@<ver>]               Add a dependency to mcpp.toml");
     std::println("  mcpp remove <pkg>                    Remove a dependency from mcpp.toml");
     std::println("  mcpp update [pkg]                    Re-resolve deps and rewrite mcpp.lock");
@@ -286,8 +286,8 @@ int run(int argc, char** argv) {
                 return cmd_test(p, std::span<const std::string>(passthrough));
             })))
         .subcommand(cl::App("clean")
-            .description("Remove target/ (and optionally the global BMI cache)")
-            .option(cl::Option("bmi-cache").help("Also wipe the global BMI cache"))
+            .description("Remove target/ (and optionally the global build cache)")
+            .option(cl::Option("bmi-cache").help("Also wipe the global build cache (see `mcpp cache clean`)"))
             .action(wrap_rc(cmd_clean)))
         .subcommand(cl::App("why")
             .description("Explain how the toolchain / runtime / deps were resolved")

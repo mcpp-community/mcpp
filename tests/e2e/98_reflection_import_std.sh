@@ -80,7 +80,15 @@ out=$("$MCPP" run 2>&1) || { echo "FAIL: build/run: $out"; exit 1; }
 [[ "$out" == *"dep-ok"* ]] || { echo "FAIL: dep module output: $out"; exit 1; }
 
 # The std BMI build command must carry the dialect flag.
-grep -rl '"std_flag": "[^"]*-freflection' "${MCPP_HOME:-$HOME/.mcpp}/bmi/" >/dev/null \
-    || { echo "FAIL: std-module.json lacks -freflection in std_flag"; exit 1; }
+# Recursive grep across every std entry, not `find | head -1`: one MCPP_HOME can
+# now hold several std identities (they are keyed by std identity rather than by
+# whole-project fingerprint), so "the first one" is arbitrary. Asserting that SOME
+# entry records the flag is the claim that matters.
+STD_ROOT="${MCPP_HOME:-$HOME/.mcpp}/build-cache/v1/std"
+grep -rl '"std_flag": "[^"]*-freflection' "$STD_ROOT" >/dev/null 2>&1 || {
+    echo "FAIL: no std-module.json records -freflection in std_flag"
+    find "$STD_ROOT" -name std-module.json -exec grep -H '"std_flag"' {} \; 2>/dev/null
+    exit 1
+}
 
 echo "PASS: dialect flags reach std BMI + whole module graph (issue #210)"

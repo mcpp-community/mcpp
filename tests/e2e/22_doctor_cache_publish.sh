@@ -11,6 +11,14 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 
+# 0) cache list on a genuinely empty cache: friendly message.
+#    This has to come BEFORE doctor — doctor resolves a build plan, which
+#    precompiles the std module, and `cache list` now reports std entries too.
+#    Hiding them is how 16 GB of duplicated std BMIs went unnoticed, so listing
+#    them is the fix, not a regression.
+out=$("$MCPP" cache list 2>&1)
+[[ "$out" == *"empty"* ]] || { echo "cache list on empty cache: '$out'"; exit 1; }
+
 # 1) doctor: should always run, exit 0 or 1 (warn ok), never 2
 rc=0
 "$MCPP" self doctor > doctor.log 2>&1 || rc=$?
@@ -21,9 +29,24 @@ grep -q 'Checking registry'       doctor.log || { cat doctor.log; echo "no regis
 grep -q 'Checking cache health'   doctor.log || { cat doctor.log; echo "no cache check"; exit 1; }
 grep -q 'Doctor result'             doctor.log || { cat doctor.log; echo "no result line"; exit 1; }
 
-# 2) cache list (empty): friendly message
+# 2) after doctor, the std module it precompiled must be VISIBLE. std entries
+#    dominate the cache's size, and `cache list` used to walk only dep entries.
 out=$("$MCPP" cache list 2>&1)
-[[ "$out" == *"empty"* ]] || { echo "cache list empty: '$out'"; exit 1; }
+[[ "$out" == *"std"* ]] || { echo "cache list omits the std entry: '$out'"; exit 1; }
+# The age column must be plausible: file_time_type's epoch is not the Unix
+# epoch, and reading it as if it were printed ages like "74509d ago".
+if [[ "$out" =~ ([0-9]+)d\ ago ]] && (( BASH_REMATCH[1] > 3650 )); then
+    echo "cache list reports an implausible age (clock epoch bug): '$out'"
+    exit 1
+fi
+
+# 2b) cache dir must point at the cache the rest of the tool uses.
+out=$("$MCPP" cache dir 2>&1)
+[[ "$out" == "$MCPP_HOME/build-cache/v1"* ]] || {
+    echo "cache dir '$out' != '$MCPP_HOME/build-cache/v1'"; exit 1; }
+
+# 2c) verify must pass on a healthy cache.
+"$MCPP" cache verify > /tmp/_v.log 2>&1 || { cat /tmp/_v.log; echo "verify failed"; exit 1; }
 
 # 3) publish dry-run on a fresh package. Publish uses `git archive` for the
 #    source tarball, so we git-init + commit first. We also need a non-empty

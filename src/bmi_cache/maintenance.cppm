@@ -128,14 +128,20 @@ std::int64_t stamp_of(const nlohmann::json& j, const char* field) {
     return 0;
 }
 
-// mtime fallback for entries whose stamp is missing (written by an mcpp that
-// predates `accessed`). Reported as such rather than silently treated as fresh.
+// mtime fallback for entries with no `accessed` stamp (std entries, and package
+// entries written by an mcpp that predates the field).
+//
+// file_time_type is std::chrono::file_clock, whose epoch is NOT the Unix epoch —
+// on libstdc++ it is 1970 shifted, so reading time_since_epoch() and comparing
+// it against system_clock produced ages like "74509d ago". Convert through the
+// clock rather than assuming a shared epoch.
 std::int64_t dir_mtime_seconds(const std::filesystem::path& p) {
     std::error_code ec;
     auto t = std::filesystem::last_write_time(p, ec);
     if (ec) return 0;
+    auto sys = std::chrono::clock_cast<std::chrono::system_clock>(t);
     return std::chrono::duration_cast<std::chrono::seconds>(
-        t.time_since_epoch()).count();
+        sys.time_since_epoch()).count();
 }
 
 void measure(Entry& e) {

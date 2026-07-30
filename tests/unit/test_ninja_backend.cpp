@@ -1066,3 +1066,80 @@ TEST(NinjaBackend, CachedUnitsStillAppearInCompileCommands) {
     EXPECT_NE(cdb.find("/store/dep/src/dep.c"), std::string::npos) << cdb;
     EXPECT_NE(cdb.find("src/main.cpp"), std::string::npos) << cdb;
 }
+
+// Replacing a package's compile edges with stage edges also removes the ordering
+// those compile edges carried. A module PARTITION is the case that breaks: a
+// consumer imports `pkg`, so its dyndep declares `pkg`'s BMI and nothing else —
+// the partition BMI `pkg:part` was reached only because `pkg`'s own compile edge
+// depended on it. With independent stage edges ninja may start the consumer while
+// the partition is still unstaged, and Clang fails with `failed to find module
+// file for module 'pkg:part'`. Observed on macOS CI while Linux won the race,
+// which is why it is pinned here rather than left to scheduling.
+TEST(NinjaBackend, NonCachedEdgesOrderAfterEveryStagedArtifact) {
+    auto plan = minimal_plan();
+    // A cached package with a primary interface and a partition.
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/dep.cppm",
+        .object = "obj/dep.m.o",
+        .packageName = "dep",
+        .providesModule = "dep",
+        .servedFromCache = true,
+        .cachedObject = "/bc/obj/dep.m.o",
+        .cachedBmi = "/bc/bmi/dep.gcm",
+    });
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/part.cppm",
+        .object = "obj/part.m.o",
+        .packageName = "dep",
+        .providesModule = "dep:part",
+        .servedFromCache = true,
+        .cachedObject = "/bc/obj/part.m.o",
+        .cachedBmi = "/bc/bmi/dep-part.gcm",
+    });
+    // The consumer, which imports only the primary module.
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+        .imports = {"dep"},
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    // One phony aggregating every staged artifact — a per-edge list would repeat
+    // it and grow ninja lines without bound (mcpp#274).
+    auto phony = ninja.find("build _mcpp_staged_cache : phony");
+    ASSERT_NE(phony, std::string::npos) << ninja;
+    auto phonyLine = ninja.substr(phony, ninja.find('\n', phony) - phony);
+    for (auto* art : {"obj/dep.m.o", "obj/part.m.o",
+                      "gcm.cache/dep.gcm", "gcm.cache/dep-part.gcm"}) {
+        EXPECT_NE(phonyLine.find(art), std::string::npos)
+            << art << " missing from: " << phonyLine;
+    }
+
+    // The consumer's edge orders after it...
+    auto consumer = ninja.find("build obj/main.o");
+    ASSERT_NE(consumer, std::string::npos) << ninja;
+    auto consumerLine = ninja.substr(consumer, ninja.find('\n', consumer) - consumer);
+    EXPECT_NE(consumerLine.find("|| _mcpp_staged_cache"), std::string::npos)
+        << consumerLine;
+
+    // ...as an ORDER-ONLY dependency, not an implicit one: the real content
+    // dependency is still declared where it always was, so this must add
+    // sequencing without making a staged BMI dirty its consumers.
+    auto bar = consumerLine.find("|| _mcpp_staged_cache");
+    EXPECT_EQ(consumerLine.find("| _mcpp_staged_cache"), bar + 1)
+        << "staged phony must appear only after ||, never as an implicit input: "
+        << consumerLine;
+}
+
+TEST(NinjaBackend, NoStagedPhonyWhenNothingIsCached) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+    });
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_EQ(ninja.find("_mcpp_staged_cache"), std::string::npos) << ninja;
+}

@@ -63,6 +63,8 @@
 
   `--no-cache` 保留为 `off` 的兼容别名。它的旧 help 文案「Force-clear target/ before building」两处不准:它清的是**构建目录**(`target/<triple>/<fp>/`)而不是整个 `target/`,而且名字与缓存无关。`mcpp run` / `mcpp test` 一并补上这两个 flag(此前它们连 `--no-cache` 都没有)。
 
+  ⚠️ **`--no-cache` 的语义有一处收紧**:此前它只清构建目录、**仍然会回填全局缓存**;现在它等于 `off`,即**不读也不写**。想要「从零重编但仍然刷新缓存」的,用 `mcpp clean` 或 `rm -rf target` 后正常构建。这个收紧是为了让三个模式正交:一个叫 `off` 的模式还偷偷写缓存是说不通的。
+
 - **`mcpp cache` 补齐到可运维。** `cache dir`(缓存到底在哪 —— 此前 `cache *`/`doctor`/`clean --bmi-cache` 各自解析根目录,而 config 的 reset 路径用 `GlobalConfig::bmiCacheDir`,两者可能不是同一个目录)、`cache gc --max-size <N>{MiB,GiB} / --older-than <N>{s,m,h,d}`(**真 LRU**)、`cache clean --deps|--std|--all|--legacy`、`cache list --json`、`cache verify`(逐条目校验清单与磁盘,残缺条目非零退出)。`cache info` 现在打印该条目的键输入 —— 怀疑命中错了时第一件想看的东西。
 
   `prune` 此前按**目录 mtime** 排序,而那只记录条目被**写入**的时间:一个每次构建都命中的热包,和一个一个月没人碰过的冷包一样「陈旧」。`entry.json` 的 `accessed` 由每次命中刷新(只重写 `entry.json`,**不动产物 mtime** —— 那些 mtime 参与 ninja 的 restat 判定),`gc` 按它排序。`cache clean` 开头那句 `remove_all(<root>/"deps")` 指向一个从不存在的路径(dep 条目在 `<root>/<fp>/deps`),是死代码。

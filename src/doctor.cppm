@@ -461,10 +461,11 @@ export int explain_code(std::string_view code) {
          "The [toolchain] pin in mcpp.toml does not match the detected toolchain.\n"
          "Either install the pinned toolchain (xlings install ...) or relax the\n"
          "pin (e.g. \"gcc@>=15\" instead of \"gcc@15.1.0\")."},
-        {"E0005", "BMI cache corruption",
-         "A cached BMI file referenced by manifest.txt is missing on disk. Run\n"
-         "`mcpp cache prune --older-than 0d` to drop stale entries; the next build\n"
-         "will repopulate."},
+        {"E0005", "build cache corruption",
+         "A file listed in a cache entry's entry.json is missing on disk. Such an\n"
+         "entry is treated as a miss and rebuilt, so this is never wrong output —\n"
+         "only wasted space. `mcpp cache verify` lists every affected entry and\n"
+         "`mcpp cache gc --older-than 0s` reclaims them."},
         {"E0006", "index requires a newer mcpp",
          "The package index declares (index.toml [index].min_mcpp) that its\n"
          "descriptors need a newer mcpp than this binary — parsing them would\n"
