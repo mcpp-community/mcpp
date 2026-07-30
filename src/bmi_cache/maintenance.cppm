@@ -132,16 +132,20 @@ std::int64_t stamp_of(const nlohmann::json& j, const char* field) {
 // entries written by an mcpp that predates the field).
 //
 // file_time_type is std::chrono::file_clock, whose epoch is NOT the Unix epoch —
-// on libstdc++ it is 1970 shifted, so reading time_since_epoch() and comparing
-// it against system_clock produced ages like "74509d ago". Convert through the
-// clock rather than assuming a shared epoch.
+// reading time_since_epoch() and comparing it against system_clock produced ages
+// like "74509d ago". `clock_cast` would be the standard answer but libc++ does
+// not provide it, so measure the mtime as an OFFSET FROM NOW in the file clock
+// and apply that offset to the system clock. That needs no shared epoch and no
+// conversion trait — and "how long ago" is all any caller wants anyway.
 std::int64_t dir_mtime_seconds(const std::filesystem::path& p) {
     std::error_code ec;
     auto t = std::filesystem::last_write_time(p, ec);
     if (ec) return 0;
-    auto sys = std::chrono::clock_cast<std::chrono::system_clock>(t);
-    return std::chrono::duration_cast<std::chrono::seconds>(
-        sys.time_since_epoch()).count();
+    auto age = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::file_clock::now() - t);
+    auto nowSys = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch());
+    return (nowSys - age).count();
 }
 
 void measure(Entry& e) {
