@@ -41,6 +41,24 @@ private:
 std::string path_list_separator();
 std::string runtime_library_path_key();
 std::string host_tool_runtime_library_path_key();
+
+// Drop mcpp's private-glibc payload entries from a loader search path.
+//
+// An outer `mcpp run`/`mcpp test` points LD_LIBRARY_PATH at the payload so ITS
+// child (a sandbox-linked binary) can load. Anything further down the process
+// tree that is a HOST binary — /bin/sh, or a payload tool patched against a
+// DIFFERENT payload version — then resolves a mismatched libc.so.6 against the
+// host ld.so and dies inside the dynamic linker before main (signature: a bare
+// `__vdso_time` line, then SIGSEGV). libc and ld.so are version-locked through
+// GLIBC_PRIVATE, so this never reproduces when the two happen to match.
+//
+// Lives here, next to path-list composition, because BOTH consumers need the
+// same predicate: process.cppm sanitizes the INHERITED variable for every child,
+// and prepend_path_list sanitizes the inherited TAIL it carries into a composed
+// override (dirs the caller passed explicitly are always kept — that is the
+// entry the sandbox binary actually needs).
+std::string strip_private_glibc(std::string_view paths);
+
 std::string prepend_path_list(std::string_view key,
                               std::span<const std::filesystem::path> dirs);
 
@@ -134,6 +152,25 @@ std::string host_tool_runtime_library_path_key() {
 #endif
 }
 
+std::string strip_private_glibc(std::string_view paths) {
+    auto sep = path_list_separator();
+    std::string cleaned;
+    std::size_t start = 0;
+    while (start <= paths.size()) {
+        auto end = paths.find(sep, start);
+        if (end == std::string_view::npos) end = paths.size();
+        auto item = paths.substr(start, end - start);
+        if (!item.empty() && item.find("/xim-x-glibc/") == std::string_view::npos
+                          && item.find("\\xim-x-glibc\\") == std::string_view::npos) {
+            if (!cleaned.empty()) cleaned += sep;
+            cleaned += item;
+        }
+        if (end == paths.size()) break;
+        start = end + sep.size();
+    }
+    return cleaned;
+}
+
 std::string prepend_path_list(std::string_view key,
                               std::span<const std::filesystem::path> dirs) {
     if (key.empty() || dirs.empty()) return "";
@@ -149,8 +186,19 @@ std::string prepend_path_list(std::string_view key,
 
     std::string k(key);
     if (auto* existing = std::getenv(k.c_str()); existing && *existing) {
-        value += sep;
-        value += existing;
+        // Loader paths only: the inherited value may carry an OUTER mcpp's
+        // private-glibc entry, and the composed string becomes an EXPLICIT
+        // override — which process.cppm's merged_environ takes verbatim,
+        // skipping the sanitation it applies to inherited variables. Without
+        // this the strip is defeated exactly when it matters (a nested
+        // `mcpp run` → `mcpp test` chain), and the child tool segfaults in the
+        // dynamic linker whenever the payload versions differ.
+        std::string tail = (k == "LD_LIBRARY_PATH" || k == "DYLD_LIBRARY_PATH")
+            ? strip_private_glibc(existing) : std::string(existing);
+        if (!tail.empty()) {
+            value += sep;
+            value += tail;
+        }
     }
     return value;
 }

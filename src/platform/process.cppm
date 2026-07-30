@@ -188,22 +188,12 @@ char** host_environ() {
 // `__vdso_time` line). Strip exactly the private-glibc payload entries from
 // inherited loader paths: user-supplied entries survive, and an `extra`
 // override (the correct per-child value) always wins over the inherited var.
-std::string strip_private_glibc(std::string_view paths) {
-    std::string cleaned;
-    std::size_t start = 0;
-    while (start <= paths.size()) {
-        auto end = paths.find(':', start);
-        if (end == std::string_view::npos) end = paths.size();
-        auto item = paths.substr(start, end - start);
-        if (!item.empty() && item.find("/xim-x-glibc/") == std::string_view::npos) {
-            if (!cleaned.empty()) cleaned += ':';
-            cleaned += item;
-        }
-        if (end == paths.size()) break;
-        start = end + 1;
-    }
-    return cleaned;
-}
+//
+// The predicate itself lives in mcpp.platform.env, because the OTHER half of
+// this guarantee is there: a composed override (dirs + inherited tail) arrives
+// here as `extra` and therefore bypasses the sanitation below, so
+// prepend_path_list has to sanitize the tail it carries.
+using mcpp::platform::env::strip_private_glibc;
 
 // Build a child environment block = the current environ with `extra` overrides
 // applied. Returned vector owns the strings; the caller derives a NUL-terminated

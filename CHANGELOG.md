@@ -23,6 +23,13 @@
 
   一条记录在案的实现约束:**跳过时对 mtime 的任何触碰(包括对齐到 src 的 mtime)都会让 restat 失效并重新引发级联** —— ninja 的 restat 只把「mtime 未被命令改变」的输出视为从未需要构建。所以跳过路径不动任何时间戳。
 
+- **私有 glibc 的 strip 不再被「组合出的显式覆盖」绕过。** `process.cppm::merged_environ` 会把继承来的 `LD_LIBRARY_PATH` 里的私有 glibc payload 条目剥掉,但**显式 `extra` 覆盖是原样采用的**;而 `env::prepend_path_list` 组合该覆盖时,把继承值(含毒)整段追加了进去 —— 于是 strip 恰好在它唯一有用的场景下失效:嵌套的 `mcpp run` → `mcpp test` 链里,子工具拿到一个**版本不匹配**的 libc.so.6,在动态链接器里 main 之前 SIGSEGV(签名:一行裸 `__vdso_time`)。
+
+  修法是把判据下沉到 `mcpp.platform.env`(路径列表组合的所在地),并让 `prepend_path_list` 只清洗**继承来的尾部**:调用方显式传入的 payload 目录必须保留 —— 那正是沙箱二进制需要的那一条。PATH 不受影响。
+
+  这个缺陷与 #311 无关,是排查 e2e 156 在本 PR 上失败时找出来的:两次 CI 恢复了**不同的 sandbox 缓存**(`…-01baa227…` vs `…-0e74cc64…`),payload 版本集不同,于是同一个潜伏缺陷只在一侧显形。本改动前该测试的绿灯取决于「毒化的 payload 版本恰好与工具期望的一致」。
+
+
 ### 变更
 
 - **BMI 缓存根统一为 `$MCPP_HOME/bmi`。** `toolchain/stdmod.cppm` 的 `default_cache_root()` 是 home 解析逻辑的一份私有拷贝,自 v0.0.1 起一字未改:**没有 Windows 的 `USERPROFILE` 分支,也没有 self-contained 安装探测**。后果是 Windows PowerShell(不设 `HOME`)下 std BMI 缓存落进**当前工作目录**的 `.mcpp-bmi/`,而 dep BMI 缓存在 `%USERPROFILE%\.mcpp\bmi` —— 一个缓存两个根,其中一个还随 cwd 漂移(从子目录跑就重编一次 std);release tarball 形态的安装在 Linux 上同样分家。
