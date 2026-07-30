@@ -3885,15 +3885,28 @@ prepare_build(bool print_fingerprint,
         // Sources belonging to each package, package-root-relative and sorted.
         std::vector<std::vector<std::string>> pkgSources(packages.size());
         for (auto& cu : ctx.plan.compileUnits) {
+            // Longest matching root wins. Package roots can nest — a workspace
+            // member lives under the workspace root — and taking the first match
+            // would file the member's sources under the outer package, putting
+            // them in the wrong key. (Index payloads live in the xpkgs store and
+            // cannot be shadowed this way, so no cached entry is affected today;
+            // resolving it by specificity rather than by iteration order is what
+            // keeps that true if roots ever move.)
+            std::size_t best = packages.size();
+            std::size_t bestLen = 0;
+            std::string bestRel;
             for (std::size_t p = 0; p < packages.size(); ++p) {
                 std::error_code ec;
                 auto rel = std::filesystem::relative(cu.source, packages[p].root, ec);
                 if (ec || rel.empty()) continue;
                 auto rels = rel.generic_string();
                 if (rels.starts_with("..")) continue;
-                pkgSources[p].push_back(rels);
-                break;
+                auto len = packages[p].root.generic_string().size();
+                if (best == packages.size() || len > bestLen) {
+                    best = p; bestLen = len; bestRel = std::move(rels);
+                }
             }
+            if (best != packages.size()) pkgSources[best].push_back(std::move(bestRel));
         }
         for (auto& v : pkgSources) std::ranges::sort(v);
 
