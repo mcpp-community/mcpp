@@ -352,8 +352,13 @@ C3/C4 与 C1 的关系是硬约束：**C1 修好之前它们是无害的浪费�
 
 ### S2 — 缓存布局与自描述条目（治 C5）
 
+> **实施时的修正**：根目录不是 `$MCPP_HOME/cache/v1` 而是
+> **`$MCPP_HOME/build-cache/v1`** —— `cache` 这个名字已归 `GlobalConfig::metaCacheDir`
+> （索引元数据）所有，而它的 reset 路径 `remove_all` 整个目录。其余布局如下不变。
+> 完整偏差清单见实施计划的「实施结果与计划的偏差」。
+
 ```
-$MCPP_HOME/cache/v1/
+$MCPP_HOME/build-cache/v1/
   pkg/<index>/<pkg>@<ver>/<key16>/
       entry.json          ← 自描述：键的全部输入 + 文件清单 + created/accessed
       bmi/<module>.{gcm,pcm}
