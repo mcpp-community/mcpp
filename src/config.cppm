@@ -20,6 +20,7 @@ module;
 export module mcpp.config;
 
 import std;
+import mcpp.home;
 import mcpp.libs.toml;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
@@ -287,15 +288,6 @@ namespace t = mcpp::libs::toml;
 
 namespace {
 
-// Resolve MCPP_HOME, in priority order:
-//   1. $MCPP_HOME env var (explicit override — used by CI / dev / multi-instance)
-//   2. <binary-dir>/.. — self-contained mode, when mcpp lives at
-//      <root>/bin/mcpp. Release tarballs and `xlings install mcpp`
-//      use this layout; the unpacked tree IS the home. Dev builds
-//      live under target/<triple>/<fp>/bin/mcpp, which is the same
-//      "in a bin/ dir" shape — so we additionally exclude any path
-//      with a "target" ancestor as mcpp's own dev convention.
-//   3. fallback to $HOME/.mcpp.
 // Right-pad a verb to 12 columns, matching mcpp::ui::verb_padded so the
 // bootstrap status lines line up under the cyan "Downloading …" lines
 // produced via the BootstrapProgressCallback. We can't import mcpp.ui
@@ -308,49 +300,6 @@ void print_status(std::string_view verb, std::string_view msg) {
     } else {
         std::println("{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
     }
-}
-
-std::filesystem::path default_mcpp_home() {
-    // Windows: %USERPROFILE%\.mcpp   POSIX: $HOME/.mcpp
-    if constexpr (mcpp::platform::is_windows) {
-        if (auto* e = std::getenv("USERPROFILE"); e && *e)
-            return std::filesystem::path(e) / ".mcpp";
-    }
-    if (auto* e = std::getenv("HOME"); e && *e)
-        return std::filesystem::path(e) / ".mcpp";
-    return std::filesystem::current_path() / ".mcpp";
-}
-
-std::filesystem::path home_dir() {
-    // 1. Explicit $MCPP_HOME takes priority (CI, advanced users).
-    if (auto* e = std::getenv("MCPP_HOME"); e && *e)
-        return std::filesystem::path(e);
-
-    auto exe = mcpp::platform::fs::self_exe_path();
-    if (exe.has_parent_path() && exe.parent_path().filename() == "bin") {
-        auto candidate = exe.parent_path().parent_path();
-
-        // Disqualify self-contained mode for two cases:
-        //   a) Dev builds: .../target/<triple>/<fp>/bin/<exe>
-        //   b) xlings packages: .../data/xpkgs/xim-x-mcpp/<ver>/bin/mcpp
-        //      Creating a nested xlings sandbox inside the xpkgs directory
-        //      breaks toolchain installation (nested XLINGS_HOME) and loses
-        //      installed toolchains when the mcpp package version is upgraded.
-        bool disqualified = false;
-        for (auto p = candidate;
-             p.has_parent_path() && p != p.root_path();
-             p = p.parent_path()) {
-            if (p.filename() == "target") { disqualified = true; break; }
-            if (p.filename() == "xpkgs") {
-                auto parent = p.parent_path().filename().string();
-                if (parent == "data") { disqualified = true; break; }
-            }
-        }
-        if (!disqualified)
-            return candidate;
-    }
-
-    return default_mcpp_home();
 }
 
 std::expected<std::string, std::string> run_capture(const std::string& cmd) {
@@ -496,8 +445,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 {
     GlobalConfig cfg;
 
-    // 1. Resolve paths
-    cfg.mcppHome      = home_dir();
+    // 1. Resolve paths (mcpp.home is the single resolver — #311)
+    cfg.mcppHome      = mcpp::home::root();
     cfg.binDir        = cfg.mcppHome / "bin";
     cfg.registryDir   = cfg.mcppHome / "registry";
     // xlings lives under registry/, not bin/ — it's a registry tool,
@@ -507,7 +456,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // making ensure_sandbox_xlings_binary() a no-op.
     cfg.xlingsBinary  = cfg.registryDir / "bin" /
         (std::string("xlings") + std::string(mcpp::platform::exe_suffix));
-    cfg.bmiCacheDir   = cfg.mcppHome / "bmi";
+    cfg.bmiCacheDir   = mcpp::home::bmi_root();
     cfg.metaCacheDir  = cfg.mcppHome / "cache";
     cfg.logDir        = cfg.mcppHome / "log";
     cfg.configFile    = cfg.mcppHome / "config.toml";

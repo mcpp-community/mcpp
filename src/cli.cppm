@@ -509,6 +509,13 @@ int run(int argc, char** argv) {
             .option(cl::Option("expect-none")
                 .help("(verification) planner assumed no provides/imports"))
             .action(wrap_rc(cmd_dyndep)))
+        .subcommand(cl::App("stage")
+            .description("(internal: invoked by ninja) Stage a cached artifact into the build dir")
+            .option(cl::Option("output").short_name('o').takes_value().value_name("PATH")
+                .help("Destination path inside the build directory"))
+            .option(cl::Option("verify").takes_value().value_name("MODE")
+                .help("Already-staged check: size (default) | content"))
+            .action(wrap_rc(cmd_stage)))
     ;
 
     // The bareword `mcpp help` and `mcpp` (no args) both print the
@@ -544,11 +551,11 @@ int run(int argc, char** argv) {
     {
         std::string_view first = argv[1];
         if (!first.starts_with('-')) {
-            static constexpr std::array<std::string_view, 22> known = {
+            static constexpr std::array<std::string_view, 23> known = {
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep", "why", "resolve",
+                "version", "dyndep", "why", "resolve", "stage",
             };
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }

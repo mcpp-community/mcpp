@@ -16,6 +16,7 @@ import mcpp.build.plan;
 import mcpp.config;
 import mcpp.fallback.install_integrity;
 import mcpp.fetcher.progress;
+import mcpp.home;
 import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.toolchain.detect;
@@ -131,10 +132,7 @@ export int doctor_report() {
 
         mcpp::ui::status("Checking", "mingw (xim:mingw-gcc)");
         {
-            auto pkgs = std::filesystem::path(
-                std::getenv("MCPP_HOME") ? std::getenv("MCPP_HOME")
-                                         : (std::string(std::getenv("USERPROFILE")
-                                               ? std::getenv("USERPROFILE") : "") + "\\.mcpp"))
+            auto pkgs = mcpp::home::root()
                 / "registry" / "data" / "xpkgs" / "xim-x-mingw-gcc";
             std::error_code ec;
             bool any = false;
@@ -196,6 +194,17 @@ export int doctor_report() {
                          mcpp::bmi_cache::human_bytes(sz)));
     } else {
         ok(std::format("BMI cache size = {}", mcpp::bmi_cache::human_bytes(sz)));
+    }
+    // Pre-#311 builds could park the std BMI cache in the current working
+    // directory (`.mcpp-bmi/`) whenever neither MCPP_HOME nor HOME resolved —
+    // the common case on Windows PowerShell. Point at leftovers; never delete.
+    {
+        std::error_code lec;
+        auto legacy = std::filesystem::current_path(lec) / ".mcpp-bmi";
+        if (!lec && std::filesystem::is_directory(legacy, lec)) {
+            warn(std::format("legacy BMI cache at '{}' — no longer used, safe to delete",
+                             legacy.string()));
+        }
     }
 
     mcpp::ui::status("Checking", "runtime capabilities");
@@ -470,18 +479,10 @@ export int self_init(bool force) {
         // Preserves: bin/mcpp (self-contained mode), config.toml, log/.
         mcpp::ui::info("Resetting", "mcpp sandbox (registry, caches)");
 
-        // Resolve MCPP_HOME without running bootstrap (which may fail).
-        std::filesystem::path home;
-        if (auto* e = std::getenv("MCPP_HOME"); e && *e)
-            home = e;
-        else {
-            const char* userHome = nullptr;
-#if defined(_WIN32)
-            userHome = std::getenv("USERPROFILE");
-#endif
-            if (!userHome) userHome = std::getenv("HOME");
-            if (userHome) home = std::filesystem::path(userHome) / ".mcpp";
-        }
+        // Resolve MCPP_HOME without running bootstrap (which may fail). The
+        // shared resolver also covers self-contained installs — the local copy
+        // this replaced would have wiped ~/.mcpp for a `<root>/bin/mcpp` tree.
+        std::filesystem::path home = mcpp::home::root();
         if (!home.empty()) {
             std::error_code ec;
             std::filesystem::remove_all(home / "registry", ec);

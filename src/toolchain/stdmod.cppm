@@ -23,6 +23,7 @@ module;
 export module mcpp.toolchain.stdmod;
 
 import std;
+import mcpp.home;
 import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.toolchain.clang;
@@ -177,13 +178,11 @@ std::expected<std::string, StdModError> run_commands(
 } // namespace
 
 std::filesystem::path default_cache_root() {
-    if (auto* e = std::getenv("MCPP_HOME"); e && *e) {
-        return std::filesystem::path(e) / "bmi";
-    }
-    if (auto* e = std::getenv("HOME"); e && *e) {
-        return std::filesystem::path(e) / ".mcpp" / "bmi";
-    }
-    return std::filesystem::current_path() / ".mcpp-bmi";
+    // Single resolver (#311). This used to be a private copy of the home
+    // resolution that predated Windows' USERPROFILE branch and self-contained
+    // installs, so the std BMI cache could land in the *current working
+    // directory* (`.mcpp-bmi/`) while dep BMIs went to $MCPP_HOME/bmi.
+    return mcpp::home::bmi_root();
 }
 
 std::expected<StdModule, StdModError> ensure_built(

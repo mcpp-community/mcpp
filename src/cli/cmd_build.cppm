@@ -1,6 +1,6 @@
 // mcpp.cli.cmd_build — CLI parsing + routing for build / run / test /
-// clean / dyndep. Implementations live in mcpp.build.prepare,
-// mcpp.build.execute and mcpp.dyndep.
+// clean / dyndep / stage. Implementations live in mcpp.build.prepare,
+// mcpp.build.execute, mcpp.dyndep and mcpp.build.stage.
 
 module;
 #include <cstdio>
@@ -12,6 +12,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
+import mcpp.build.stage;
 import mcpp.dyndep;
 import mcpp.log;
 import mcpp.project;
@@ -253,6 +254,41 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::ofstream os(outPath);
     os << *body;
     return os ? 0 : 1;
+}
+
+// Invoked by ninja during build (stage_file rule):
+//   mcpp stage --output <dst> <src>
+//
+// Publishes a cache-owned artifact (std BMI, std.o, runtime DLL) into the
+// build directory. See mcpp.build.stage for the semantics — in particular why
+// an already-equivalent destination is left untouched (#311).
+export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    std::filesystem::path outPath = parsed.option_or_empty("output").value();
+    if (outPath.empty()) {
+        std::println(stderr, "error: --output <path> required");
+        return 2;
+    }
+    if (parsed.positional_count() != 1) {
+        std::println(stderr, "error: stage requires exactly one source path");
+        return 2;
+    }
+
+    mcpp::build::stage::StageOptions opts;
+    std::string verify = parsed.option_or_empty("verify").value();
+    if (verify.empty()) {
+        if (const char* e = std::getenv("MCPP_STAGE_VERIFY"); e && *e)
+            verify = e;
+    }
+    if (!verify.empty())
+        opts.verify = mcpp::build::stage::parse_verify(verify);
+
+    auto r = mcpp::build::stage::stage_file(
+        std::filesystem::path{parsed.positional(0)}, outPath, opts);
+    if (!r) {
+        std::println(stderr, "error: {}", r.error().message);
+        return 1;
+    }
+    return 0;
 }
 
 } // namespace mcpp::cli

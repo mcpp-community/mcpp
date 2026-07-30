@@ -190,7 +190,11 @@ std::vector<std::string> read_ninja_command_prefixes(const std::filesystem::path
         auto key = line.substr(0, eq);
         while (!key.empty() && std::isspace(static_cast<unsigned char>(key.back())))
             key.pop_back();
-        if (key != "cxx" && key != "cc" && key != "ar" && key != "scan_deps")
+        // `mcpp` drives the dyndep + stage_file rules; treating it as a command
+        // prefix filters the echoed command line while keeping the diagnostic
+        // mcpp itself printed (#311).
+        if (key != "cxx" && key != "cc" && key != "ar" && key != "scan_deps"
+            && key != "mcpp")
             continue;
 
         std::string value = line.substr(eq + 1);

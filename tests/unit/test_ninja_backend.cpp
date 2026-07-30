@@ -799,3 +799,97 @@ TEST(NinjaBackend, LowercaseAsmHasNoDepfileAndItsOwnRule) {
     EXPECT_NE(ninja.find("build obj/lower.o : asm_object_raw src/lower.s"),
               std::string::npos) << ninja;
 }
+
+// ── #311: staging goes through `mcpp stage`, never an in-place shell copy ──
+
+TEST(NinjaBackend, StageRuleRunsThroughMcppWithRestat) {
+    auto plan = minimal_plan();
+    auto ninja = emit_ninja_string(plan);
+
+    EXPECT_NE(ninja.find("rule stage_file\n"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("  command = $mcpp stage --output $out $in\n"),
+              std::string::npos) << ninja;
+    // restat is what keeps a skipped (already-equivalent) stage from dirtying
+    // every importer of the staged BMI.
+    auto rulePos = ninja.find("rule stage_file\n");
+    auto restatPos = ninja.find("  restat = 1\n", rulePos);
+    auto nextRulePos = ninja.find("\nrule ", rulePos + 1);
+    ASSERT_NE(restatPos, std::string::npos) << ninja;
+    EXPECT_LT(restatPos, nextRulePos) << ninja;
+
+    // The old per-platform in-place copies are gone for good.
+    EXPECT_EQ(ninja.find("Copy-Item"), std::string::npos) << ninja;
+    EXPECT_EQ(ninja.find("cp -f $in $out"), std::string::npos) << ninja;
+    EXPECT_EQ(ninja.find("cp_bmi"), std::string::npos) << ninja;
+}
+
+TEST(NinjaBackend, McppBinaryIsBoundEvenWithoutDyndep) {
+    // dyndep off ⇒ no scan/collect rules, but stage_file still needs $mcpp.
+#if defined(_WIN32)
+    ::_putenv_s("MCPP_NINJA_DYNDEP", "0");
+#else
+    ::setenv("MCPP_NINJA_DYNDEP", "0", 1);
+#endif
+    auto plan = minimal_plan();
+    auto ninja = emit_ninja_string(plan);
+#if defined(_WIN32)
+    ::_putenv_s("MCPP_NINJA_DYNDEP", "");
+#else
+    ::unsetenv("MCPP_NINJA_DYNDEP");
+#endif
+
+    EXPECT_EQ(ninja.find("rule cxx_scan"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("\nmcpp      = "), std::string::npos) << ninja;
+}
+
+TEST(NinjaBackend, StdArtifactsAndRuntimeDllsUseTheStageRule) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    plan.toolchain.binaryPath = "/usr/bin/clang++";
+    plan.stdBmiPath = "/cache/bmi/fp/pcm.cache/std.pcm";
+    plan.stdObjectPath = "/cache/bmi/fp/std.o";
+    plan.stdCompatBmiPath = "/cache/bmi/fp/pcm.cache/std.compat.pcm";
+    plan.stdCompatObjectPath = "/cache/bmi/fp/std.compat.o";
+    plan.runtimeDeployFiles.push_back({"/pkg/lib/libfoo.dll", "bin/libfoo.dll"});
+
+    auto ninja = emit_ninja_string(plan);
+
+    EXPECT_NE(ninja.find("build pcm.cache/std.pcm : stage_file "
+                         "/cache/bmi/fp/pcm.cache/std.pcm"),
+              std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("build obj/std.o : stage_file /cache/bmi/fp/std.o"),
+              std::string::npos) << ninja;
+    // std.compat keeps its order-only dependency on the staged std BMI.
+    EXPECT_NE(ninja.find("build pcm.cache/std.compat.pcm : stage_file "
+                         "/cache/bmi/fp/pcm.cache/std.compat.pcm | pcm.cache/std.pcm"),
+              std::string::npos) << ninja;
+    // Windows DLL deployment shares the rule — and therefore the
+    // skip-if-equivalent behaviour that keeps a loaded DLL from failing a build.
+    EXPECT_NE(ninja.find("build bin/libfoo.dll : stage_file /pkg/lib/libfoo.dll"),
+              std::string::npos) << ninja;
+}
+
+// ── #311: staging failures must stay readable through the output filter ──
+
+TEST(NinjaBackend, FilterKeepsStagingDiagnosticsAndFailedTarget) {
+    std::vector<std::string> prefixes = {"/usr/bin/g++", "/opt/mcpp/bin/mcpp"};
+    std::string raw =
+        "ninja: Entering directory `target/x86_64-linux-gnu/fp'\n"
+        "[1/3] STAGE pcm.cache/std.pcm\n"
+        "FAILED: [code=1] pcm.cache/std.pcm\n"
+        "/opt/mcpp/bin/mcpp stage --output pcm.cache/std.pcm /cache/std.pcm\n"
+        "error: cannot stage file into the build directory\n"
+        "hint: another process has this file memory-mapped, loaded or open.\n"
+        "ninja: build stopped: subcommand failed.\n";
+
+    auto filtered = filter_ninja_output(raw, prefixes);
+
+    // Which output failed is now preserved (it used to be dropped entirely).
+    EXPECT_NE(filtered.find("failed: pcm.cache/std.pcm"), std::string::npos) << filtered;
+    EXPECT_EQ(filtered.find("[code=1]"), std::string::npos) << filtered;
+    // The diagnostic survives; the echoed command line does not.
+    EXPECT_NE(filtered.find("error: cannot stage file"), std::string::npos) << filtered;
+    EXPECT_NE(filtered.find("hint:"), std::string::npos) << filtered;
+    EXPECT_EQ(filtered.find("stage --output"), std::string::npos) << filtered;
+    EXPECT_EQ(filtered.find("ninja: Entering directory"), std::string::npos) << filtered;
+}

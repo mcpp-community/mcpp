@@ -11,6 +11,7 @@ export module mcpp.build.prepare;
 
 import std;
 import mcpp.diag;
+import mcpp.home;
 import mcpp.platform.axis;
 import mcpp.libs.json;
 import mcpp.log;
@@ -2823,13 +2824,7 @@ prepare_build(bool print_fingerprint,
             // them to a commit before forming the cache key; this lets
             // `mcpp update <dep>` pick up a moved branch without deleting
             // unrelated git caches.
-            auto mcppHome = [] {
-                if (auto* e = std::getenv("MCPP_HOME"); e && *e)
-                    return std::filesystem::path(e);
-                if (auto* e = std::getenv("HOME"); e && *e)
-                    return std::filesystem::path(e) / ".mcpp";
-                return std::filesystem::current_path() / ".mcpp";
-            }();
+            auto mcppHome = mcpp::home::root();   // single resolver (#311)
             std::string resolvedGitRev = spec.gitRev;
             if (spec.gitRefKind == "branch") {
                 auto ref = std::format("refs/heads/{}", spec.gitRev);

@@ -288,7 +288,9 @@ int main() {
     // .gitignore
     {
         std::ofstream os(root / ".gitignore");
-        os << "target/\n";
+        // `.mcpp/` is the per-project xlings sandbox (and, when no MCPP_HOME
+        // can be resolved, the local BMI cache) — build state, never sources.
+        os << "target/\n.mcpp/\n";
     }
 
     std::println("Created {} package '{}' at {}", gui ? "gui" : "bin", name, root.string());
