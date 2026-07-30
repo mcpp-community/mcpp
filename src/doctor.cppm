@@ -19,6 +19,7 @@ import mcpp.fetcher.progress;
 import mcpp.home;
 import mcpp.platform;
 import mcpp.platform.process;
+import mcpp.pm.index_refresh;   // staleness_note for `mcpp why deps`
 import mcpp.toolchain.detect;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
@@ -417,6 +418,14 @@ export int why_report(const std::string& topic) {
         }
     }
     if (all || topic == "deps") {
+        // Which index answered, and how stale it is. Since #315 a build only
+        // refreshes on a resolution miss, so "why did I get this version"
+        // frequently has "because that is the newest one your local index
+        // knows" as its answer — which is unguessable without this line.
+        if (auto cfgW = mcpp::config::load_or_init(/*quiet=*/true)) {
+            std::println("package index: {}",
+                mcpp::pm::staleness_note(mcpp::config::make_xlings_env(*cfgW)));
+        }
         std::println("dependencies (mcpp.lock):");
         std::ifstream in(ctx->projectRoot / "mcpp.lock");
         if (!in) {
