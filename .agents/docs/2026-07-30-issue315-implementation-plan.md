@@ -5,6 +5,7 @@
 关联：#315
 目标版本：**2026.7.30.3**（基线 `d79ab00` / 2026.7.30.2）
 形态：**单 PR**，内部按 A–F 六段推进，每段自带验收。
+状态：**已完成**（PR #320）。实施中偏离计划的地方记在 §G。
 
 ---
 
@@ -135,6 +136,19 @@ std::string_view reason_text(RefreshReason);
   真装验证 → bootstrap pin bump（独立 commit）。
 
 ---
+
+## G. 实施中相对本计划的偏离（都是实现时才看清的约束）
+
+| 计划 | 实际 | 原因 |
+|---|---|---|
+| `--offline` 走 `BuildOverrides` 透传 | CLI 全局 flag → **写 `MCPP_OFFLINE` 环境变量**，各处按需读 | 消费者横跨 pm（索引/包）与 build（工具链），透传要改三个子系统的签名；env 又恰好让 `--offline` 与 `MCPP_OFFLINE=1` 成为字面上的同一个开关 |
+| `offline_mode()` 放 `mcpp.pm.index_refresh` | 放 **`mcpp.platform.env`**（叶子模块） | `mcpp.pm.index_route` 已 import `mcpp.fetcher`，pm 里的 helper 会让 fetcher 反向依赖 pm ⇒ **模块环** |
+| 判据顺序：offline 最先短路 | **本地分析在前，opt-out 在后** | 先短路会把「解析得好好的依赖」也报成 `offline mode`，而那恰恰是 offline 用户要确认的事。多出的成本只是本地文件读 |
+| `decide_for_miss(policy, subject)` | 加 `env` 参数，**同样吃去抖** | 连着两次 `mcpp add` 打错字不该换来两次多仓库同步，理由与构建路径完全一致 |
+| `mcpp update` 无条件强制刷新 | 工程里**没有走共享 registry 的依赖时跳过** | 纯 path/git 依赖的工程刷全局索引毫无意义；顺带让 e2e 23/24 不必平白联网 |
+| `index_revision` 直接定义在实现区 | 拆成匿名命名空间里的 `read_index_revision` + 外层转发 | 实现区那一大段在**匿名命名空间**内，直接定义会得到内部链接 ⇒ 导出声明未定义（link 期才暴露） |
+| P1 单列一期 | **全部并入 P0** | advisory、`index status` rev 列、S4 打标、docs 都只有几十行，分期反而让「变懒」上线时缺少配套的可观测性 |
+| 计划未列 | 追加 `mcpp why deps` 的 `package index: <rev> (<age>)` 行 | 刷新变懒后，「为什么解析到这个版本」的答案常常是「因为它是你本地索引已知的最新版」 |
 
 ## 风险与回退
 
