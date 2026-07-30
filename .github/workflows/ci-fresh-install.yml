@@ -40,7 +40,7 @@ concurrency:
 # fails with `version not found` instead of silently testing an older
 # binary. Bump together with the .xlings.json workspace pin at release.
 env:
-  MCPP_PIN: '2026.7.29.2'
+  MCPP_PIN: '2026.7.30.2'
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
