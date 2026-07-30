@@ -3,6 +3,38 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.7.30.1] — 2026-07-30
+
+### 修复
+
+- **[#311](https://github.com/mcpp-community/mcpp/issues/311) Windows 上 clangd 映射住 std BMI 会让整个构建报 `build failed`。** mcpp 把 staged std BMI 的路径写进 `compile_commands.json`,好让 clangd 解析 `import std;` —— clangd 于是把这个几十 MB 的文件 mmap 住;而 staging 步骤(`rule cp_bmi`)用 `powershell Copy-Item -Force` **原地覆写同一个文件**,Windows 拒绝替换带 user-mapped section 的文件(error 1224)。也就是说,mcpp 一边把这个路径交给别人读,一边在原地重写它。
+
+  POSIX 侧看不见:GNU `cp -f` 在目标打不开时会 unlink 重建,POSIX 本身也允许覆写被 mmap 的文件 —— 所以 CI 一直全绿,只有 Windows 用户中招。
+
+  staging 改为走 mcpp 自己的内部子命令 `mcpp stage`(形态对齐既有的 `mcpp dyndep`):**目标已等价就一个字节都不写**,否则先写同目录临时文件再 rename,再退化为原地覆写,失败按退避重试,最终失败时给出点名文件与可能持有者(clangd / 编辑器索引 / 杀软 / 上一次 `mcpp run` 还在跑的程序)的诊断。**绝不降级为 warning** —— staged BMI 过期或缺失会变成难以归因的 `module 'std' not found`,或者更糟:旧 BMI 配新 `std.o` 静默链接。
+
+  「已等价就不写」的判据是 fingerprint:build dir(`target/<triple>/<fp>`)与缓存目录(`$MCPP_HOME/bmi/<fp>`)共享同一个 fp,而 fp 已覆盖编译器身份/target triple/stdlib/std 源哈希/标准与方言 flag。dep BMI 缓存一直就是这么做的(`bmi_cache.cppm`: *"Existing project outputs are left untouched"*)—— std staging 是全仓库唯一强制覆写的那一处,这个不对称本身就是缺陷。
+
+  同一条 rule 也用于 **Windows 运行期 DLL 部署**,因此「往上一次 `mcpp run` 还加载着的 DLL 上覆写」这个同类失败一并治好。
+
+- **重新 stage 一个未变的 std BMI 不再重编整张模块图。** staged BMI 是每个 importer 的 implicit input,而 staging rule 既不保留 mtime 也没有 `restat`,于是缓存侧 BMI 只要 mtime 变新(在下面那个缓存根缺陷下,**换个 cwd 跑就会发生**),所有 `import std` 的 TU 全部重编 —— 即使字节完全相同。
+
+  修法是「不写字节」+ `restat = 1`。实测:`touch` 缓存侧 BMI 后,只有 staging edge 重跑,`main.cpp` 不再重编,下一次构建回到 `no work to do`。
+
+  一条记录在案的实现约束:**跳过时对 mtime 的任何触碰(包括对齐到 src 的 mtime)都会让 restat 失效并重新引发级联** —— ninja 的 restat 只把「mtime 未被命令改变」的输出视为从未需要构建。所以跳过路径不动任何时间戳。
+
+### 变更
+
+- **BMI 缓存根统一为 `$MCPP_HOME/bmi`。** `toolchain/stdmod.cppm` 的 `default_cache_root()` 是 home 解析逻辑的一份私有拷贝,自 v0.0.1 起一字未改:**没有 Windows 的 `USERPROFILE` 分支,也没有 self-contained 安装探测**。后果是 Windows PowerShell(不设 `HOME`)下 std BMI 缓存落进**当前工作目录**的 `.mcpp-bmi/`,而 dep BMI 缓存在 `%USERPROFILE%\.mcpp\bmi` —— 一个缓存两个根,其中一个还随 cwd 漂移(从子目录跑就重编一次 std);release tarball 形态的安装在 Linux 上同样分家。
+
+  新增叶模块 `mcpp.home` 作为唯一解析器,`config` / `stdmod` / `prepare` 的 git 缓存,以及 `doctor` 里另外两份拷贝(其中 `self init --force` 那份在 self-contained 安装下会去删错的树)全部收敛过来。单测锁死 `default_cache_root() == mcpp::home::bmi_root()`。
+
+  **升级影响**:Windows 用户与 self-contained 安装的用户首次构建会重新编一次 std 模块(10–60 s);遗留的 `.mcpp-bmi/` 不再使用,`mcpp doctor` 会指出它,可手动删除。
+
+- **`FAILED: <target>` 不再被输出过滤器整行丢掉**,归一成 `failed: <target>` 保留。#311 的报告读不出「失败的是 BMI staging 而不是编译」,一半原因就是这行被丢了。同时把 mcpp 自身的可执行路径纳入命令行前缀集合,于是被回显的命令行被过滤、mcpp 打印的诊断保留。
+
+- **`mcpp new` 生成的 `.gitignore` 加上 `.mcpp/`**(per-project xlings sandbox,以及解析不出 MCPP_HOME 时的本地 BMI 缓存)。
+
 ## [2026.7.27.1] — 2026-07-27
 
 ### 变更
