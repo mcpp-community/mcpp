@@ -89,7 +89,10 @@ set +e
 "$MCPP" build -v > build2.log 2>&1
 rc=$?
 set -e
-[[ -n "$HOLDER" ]] && { kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null; }
+# `wait` on a job we just killed returns 143, and under `set -e` that would
+# abort the script right here — with the build's own result never asserted.
+# (Exactly how this test failed on Windows the first time it got that far.)
+[[ -n "$HOLDER" ]] && { kill "$HOLDER" 2>/dev/null || true; wait "$HOLDER" 2>/dev/null || true; }
 chmod 644 "$DST" 2>/dev/null || true
 
 if [[ $rc -ne 0 ]]; then
