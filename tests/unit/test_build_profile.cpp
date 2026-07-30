@@ -132,3 +132,41 @@ TEST(BuildProfile, CacheModeNameRoundTrips) {
     for (auto m : {CacheMode::Global, CacheMode::Local, CacheMode::Off})
         EXPECT_EQ(mcpp::build::parse_cache_mode(mcpp::build::cache_mode_name(m)), m);
 }
+
+// ── cache-mode resolution ───────────────────────────────────────────────────
+// Same shape as resolve_profile_name and for the same reason: the fast paths
+// skip prepare_build, so they must settle the mode from one shared pure rule.
+// Without that, a graph generated under `global` (which contains stage_file
+// edges reading the cache) got replayed for a request that asked for `local` —
+// and ruling the cache out is `local`'s entire purpose.
+
+TEST(BuildProfile, CacheModeOverrideBeatsManifest) {
+    auto m = base();
+    m.buildConfig.cacheMode = "local";
+    EXPECT_EQ(mcpp::build::resolve_cache_mode(m, "global"),
+              mcpp::build::CacheMode::Global);
+}
+
+TEST(BuildProfile, CacheModeManifestBeatsDefault) {
+    auto m = base();
+    m.buildConfig.cacheMode = "off";
+    EXPECT_EQ(mcpp::build::resolve_cache_mode(m, ""), mcpp::build::CacheMode::Off);
+}
+
+TEST(BuildProfile, CacheModeDefaultsToGlobal) {
+    EXPECT_EQ(mcpp::build::resolve_cache_mode(base(), ""),
+              mcpp::build::CacheMode::Global);
+}
+
+// An unparseable value must not silently mean "global" at THIS level either: it
+// falls through to the next source, and prepare_build reports it separately.
+TEST(BuildProfile, UnknownManifestCacheModeFallsThroughToDefault) {
+    auto m = base();
+    m.buildConfig.cacheMode = "bogus";
+    EXPECT_EQ(mcpp::build::resolve_cache_mode(m, ""),
+              mcpp::build::CacheMode::Global);
+    // ...and an unparseable override does not shadow a valid manifest value.
+    m.buildConfig.cacheMode = "local";
+    EXPECT_EQ(mcpp::build::resolve_cache_mode(m, "bogus"),
+              mcpp::build::CacheMode::Local);
+}

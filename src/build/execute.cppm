@@ -67,6 +67,12 @@ struct BuildCacheEntry {
     // Empty means "cache predates this field" and is treated as a miss (a
     // bare rebuild once, never a wrong artifact).
     std::string profile;
+    // The global-cache mode this build.ninja was generated under. A graph built
+    // under `global` contains stage_file edges reading the cache; replaying it
+    // for a request that asked for `local` would use the cache the manifest just
+    // said not to use — and ruling the cache out is `local`'s entire purpose.
+    // Same back-compat contract as `profile`: empty ⇒ miss.
+    std::string cacheMode;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -139,6 +145,10 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             e.profile = line.substr(8);
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        if (haveNextLine && line.starts_with("cacheMode=")) {
+            e.cacheMode = line.substr(10);
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -155,7 +165,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        std::vector<std::pair<std::string, std::string>> runTargets = {},
                        const std::string& runEnvKey = "",
                        const std::string& runEnvValue = "",
-                       const std::string& profile = "") {
+                       const std::string& profile = "",
+                       const std::string& cacheMode = "") {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -170,7 +181,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     // Insert at front (MRU).
     BuildCacheEntry newEntry{targetTriple, outputDir.string(), ninjaProgram, fingerprintHex,
                              runtimeEnvKey, runtimeEnvValue, std::move(runTargets),
-                             runEnvKey, runEnvValue, profile};
+                             runEnvKey, runEnvValue, profile, cacheMode};
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -199,6 +210,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
         f << "runEnv=" << e.runEnvKey << '\n';
         f << e.runEnvValue << '\n';
         f << "profile=" << e.profile << '\n';
+        f << "cacheMode=" << e.cacheMode << '\n';
     }
 }
 
@@ -358,6 +370,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         auto entries = read_build_cache(ctx.projectRoot);
         for (auto& e : entries) {
             if (e.targetTriple == targetOverride && e.profile == ctx.profile
+                && e.cacheMode == cache_mode_name(ctx.cacheMode)
                 && !e.fingerprint.empty()) {
                 auto newFp = ctx.outputDir.filename().string();
                 if (e.fingerprint != newFp) {
@@ -380,7 +393,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           r->runtimeEnvKey.empty() ? "-" : r->runtimeEnvKey,
                           r->runtimeEnvValue,
                           std::move(runTargets), runEnvKey, runEnvValue,
-                          ctx.profile);
+                          ctx.profile, std::string(cache_mode_name(ctx.cacheMode)));
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -524,11 +537,21 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
 // for a different profile, and the fast path would run ninja against that
 // profile's build.ninja: `mcpp build --release` then a bare `mcpp build`
 // reported success in 0.00s and left -O2 artifacts where -O0 -g was asked for.
-std::optional<std::string> fast_path_profile(const std::filesystem::path& projectRoot,
-                                             std::string_view profileOverride = "") {
+struct FastPathIdentity {
+    std::string profile;
+    std::string cacheMode;
+};
+
+std::optional<FastPathIdentity>
+fast_path_identity(const std::filesystem::path& projectRoot,
+                   std::string_view profileOverride = "") {
     auto m = mcpp::manifest::load(projectRoot / "mcpp.toml");
     if (!m) return std::nullopt;
-    return mcpp::build::resolve_profile_name(*m, profileOverride);
+    return FastPathIdentity{
+        mcpp::build::resolve_profile_name(*m, profileOverride),
+        std::string(mcpp::build::cache_mode_name(
+            mcpp::build::resolve_cache_mode(*m, ""))),
+    };
 }
 
 // Try to fast-path: if build.ninja is newer than all inputs, just run ninja.
@@ -538,16 +561,18 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
                                   std::string_view currentTarget = "") {
     if (no_cache) return std::nullopt;
 
-    auto wantProfile = fast_path_profile(projectRoot);
-    if (!wantProfile) return std::nullopt;
+    auto want = fast_path_identity(projectRoot);
+    if (!want) return std::nullopt;
 
     // P3: read multi-entry cache and find the entry matching this
-    // (target, profile) pair. Matching on the triple alone served the wrong
-    // profile's artifacts (see fast_path_profile).
+    // (target, profile, cache mode) triple. Matching on the target alone served
+    // the wrong profile's artifacts, and ignoring the cache mode replayed a
+    // cache-reading graph for a request that asked not to read the cache.
     auto entries = read_build_cache(projectRoot);
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries) {
-        if (e.targetTriple == currentTarget && e.profile == *wantProfile) {
+        if (e.targetTriple == currentTarget && e.profile == want->profile
+            && e.cacheMode == want->cacheMode) {
             match = &e;
             break;
         }
@@ -599,7 +624,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     if (!rc) return std::nullopt;
     if (*rc != 0) return rc;
 
-    mcpp::ui::finished(*wantProfile, elapsed);
+    mcpp::ui::finished(want->profile, elapsed);
     return 0;
 }
 
@@ -614,13 +639,14 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
 std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                                 const std::optional<std::string>& targetName,
                                 std::span<const std::string> passthrough) {
-    auto wantProfile = fast_path_profile(projectRoot);
-    if (!wantProfile) return std::nullopt;
+    auto want = fast_path_identity(projectRoot);
+    if (!want) return std::nullopt;
 
     auto entries = read_build_cache(projectRoot);
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries) {
-        if (e.targetTriple.empty() && e.profile == *wantProfile) {
+        if (e.targetTriple.empty() && e.profile == want->profile
+            && e.cacheMode == want->cacheMode) {
             match = &e;
             break;
         }

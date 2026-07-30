@@ -246,6 +246,60 @@ if grep -q '^cache' mcpp.toml; then
     exit 1
 fi
 
+# ── the fast path must honour the declared mode ─────────────────────────────
+# A build.ninja generated under `global` contains stage_file edges reading the
+# cache. Replaying it for a request that asked for `local` would use the cache the
+# manifest just said not to use — and ruling the cache out is `local`'s whole
+# purpose. .build_cache therefore records the mode, exactly as it records the
+# profile, and a mismatch is a miss.
+cat >> mcpp.toml <<'EOF'
+
+[build]
+cache = "local"
+EOF
+rm -rf target
+"$MCPP" build --cache=global > modeglobal.log 2>&1 || { cat modeglobal.log; exit 1; }
+NINJA="$(find target -name build.ninja | head -1)"
+staged_before=$(grep -c ': stage_file .*mode-lib' "$NINJA" || true)
+[[ "$staged_before" -gt 0 ]] || {
+    echo "FAIL: --cache=global did not produce stage edges (cache should be warm here)"
+    cat modeglobal.log
+    exit 1
+}
+# Bare build: the manifest says local, and the fast path must NOT replay the
+# global graph. Note mcpp.toml is untouched between these two builds, so its
+# mtime cannot be what saves us — only the recorded mode can.
+"$MCPP" build > modebare.log 2>&1 || { cat modebare.log; exit 1; }
+NINJA="$(find target -name build.ninja | head -1)"
+staged_after=$(grep -c ': stage_file .*mode-lib' "$NINJA" || true)
+[[ "$staged_after" -eq 0 ]] || {
+    echo "FAIL: bare build replayed the global-mode graph ($staged_after stage edges)"
+    echo "      [build] cache = local was bypassed by the fast path"
+    cat modebare.log
+    exit 1
+}
+grep -qE ': (cxx_module|cxx_object) .*mode-lib' "$NINJA" || {
+    echo "FAIL: local mode did not compile the dependency"
+    exit 1
+}
+# Strip the override again for the sections below.
+python3 - mcpp.toml <<'PYEOF'
+import sys
+p = sys.argv[1]
+out, skip = [], False
+for ln in open(p).read().splitlines(keepends=True):
+    if ln.strip() == "[build]":
+        skip = True
+        continue
+    if skip and ln.strip().startswith("cache"):
+        skip = False
+        continue
+    out.append(ln)
+open(p, "w").write("".join(out))
+PYEOF
+rm -rf target
+"$MCPP" build > moderestore.log 2>&1 || { cat moderestore.log; exit 1; }
+
 # ── gc: LRU by last USE, not by when the entry was written ─────────────────
 # Backdate the entry's accessed stamp, then confirm an age-bounded gc collects it
 # — and that a build afterwards refreshes the stamp so it would survive next time.

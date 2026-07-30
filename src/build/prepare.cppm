@@ -657,6 +657,26 @@ export struct BuildContext {
     std::vector<CachedDep>          cachedDeps;
 };
 
+// The ONE cache-mode resolver, for the same reason resolve_profile_name exists:
+// execute.cppm's fast paths deliberately skip prepare_build, so they need to
+// settle the mode from the same rule. Pure in (manifest, override, environment).
+//
+// `--cache` on the command line already bypasses the fast path, so the override
+// argument is empty there; it is threaded anyway so there is exactly one place
+// where precedence is written down.
+//
+// Precedence: --cache > MCPP_BUILD_CACHE > [build] cache > global. An
+// unparseable value falls through to the next source rather than silently
+// meaning "global" — see prepare_build, which also reports it.
+export CacheMode resolve_cache_mode(const mcpp::manifest::Manifest& m,
+                                    std::string_view override_mode) {
+    if (auto v = parse_cache_mode(override_mode)) return *v;
+    if (const char* e = std::getenv("MCPP_BUILD_CACHE"); e && *e)
+        if (auto v = parse_cache_mode(e)) return *v;
+    if (auto v = parse_cache_mode(m.buildConfig.cacheMode)) return *v;
+    return CacheMode::Global;
+}
+
 // The ONE profile-name resolver. Shared with execute.cppm's fast paths:
 // they deliberately skip prepare_build, so before this existed they had no
 // idea which profile the request meant — and `.build_cache` keyed entries by
@@ -822,24 +842,25 @@ prepare_build(bool print_fingerprint,
     // through to the next source rather than silently meaning "global" — a typo
     // that quietly re-enabled the cache would be the hardest kind of surprise
     // to attribute.
-    CacheMode cacheMode = CacheMode::Global;
+    // Selection lives in resolve_cache_mode (above) so the fast paths settle it
+    // identically. This block only adds the diagnostics, which the fast paths
+    // have no business emitting: an unparseable value must be reported once, by
+    // the invocation that actually resolves the build.
+    const CacheMode cacheMode = resolve_cache_mode(*m, overrides.cache_mode);
     {
-        std::string cacheModeError;
-        auto try_source = [&](std::string_view value, std::string_view origin) {
-            if (value.empty()) return false;
-            if (auto parsed = parse_cache_mode(value)) { cacheMode = *parsed; return true; }
+        const char* envMode = std::getenv("MCPP_BUILD_CACHE");
+        for (auto [value, origin] : std::initializer_list<
+                 std::pair<std::string_view, std::string_view>>{
+                 {overrides.cache_mode,        "--cache"},
+                 {envMode ? envMode : "",      "MCPP_BUILD_CACHE"},
+                 {m->buildConfig.cacheMode,    "[build] cache"}}) {
+            if (value.empty() || parse_cache_mode(value)) continue;
             auto msg = std::format(
                 "{} has unknown cache mode '{}' (expected: global | local | off)",
                 origin, value);
-            if (overrides.strict) { cacheModeError = msg; return true; }
+            if (overrides.strict) return std::unexpected(msg);
             mcpp::diag::warning("build/cache-mode", msg);
-            return false;
-        };
-        const char* envMode = std::getenv("MCPP_BUILD_CACHE");
-        if (!try_source(overrides.cache_mode, "--cache"))
-            if (!try_source(envMode ? envMode : "", "MCPP_BUILD_CACHE"))
-                (void)try_source(m->buildConfig.cacheMode, "[build] cache");
-        if (!cacheModeError.empty()) return std::unexpected(cacheModeError);
+        }
     }
 
     // ─── Toolchain resolution (docs/21) ────────────────────────────────
