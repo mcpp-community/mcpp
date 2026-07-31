@@ -1,11 +1,9 @@
 // mcpp — Modular C++ Package Manager & Build Tool
 // Entry point — delegates to mcpp.cli command dispatch.
 
-module;
-#include <cstdio>      // setvbuf, stdout, _IOLBF
-
 import std;
 import mcpp.cli;
+import mcpp.ui;
 
 int main(int argc, char* argv[]) {
     // Line-buffer stdout even when it is not a TTY.
@@ -21,9 +19,11 @@ int main(int argc, char* argv[]) {
     // mcpp's. When that run was then killed by the job timeout, the whole buffer
     // went with it — a 45-minute step with no attributable output at all.
     //
+    // Lives in mcpp.ui because a non-module TU may not open a global module
+    // fragment for <cstdio> (Clang rejects `module;` here; GCC accepted it).
     // ui::flush() covers the same ground for the ui layer on Windows, where
     // MSVCRT silently treats _IOLBF as _IOFBF.
-    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    mcpp::ui::set_line_buffered();
 
     int rc;
     try {

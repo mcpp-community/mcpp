@@ -81,6 +81,13 @@ void plain(std::string_view message);
 // when its last lines matter most.
 void flush();
 
+// Make stdout line-buffered. Call once, before any output. See main() for why
+// this is not left to the libc default: the default block size is a different
+// number on every platform (musl 1024, Apple libc st_blksize = 65536 on a pipe,
+// MSVCRT 4096), so identical output becomes visible at wildly different times —
+// and not at all if the process is killed before its buffer fills.
+void set_line_buffered();
+
 // --- progress bar (single-line, \r-rewritten) ---
 class ProgressBar {
 public:
@@ -236,6 +243,8 @@ void set_quiet(bool q) { g_quiet = q; }
 bool is_quiet()        { return g_quiet; }
 
 void flush() { std::fflush(stdout); }
+
+void set_line_buffered() { std::setvbuf(stdout, nullptr, _IOLBF, 0); }
 
 void status(std::string_view verb, std::string_view message) {
     if (g_quiet) return;
