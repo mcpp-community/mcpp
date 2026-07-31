@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# requires: unix-shell
 # 178_test_observability.sh — `mcpp test` is streamed, timed and bounded.
 #
 # Four properties, each of which used to be absent and each of which cost a real
@@ -16,9 +17,15 @@
 #   4. `--build-timeout` bounds a hung compile/link — the half `--timeout`
 #      never covered, and the one that actually fires in practice.
 #
-# See .agents/docs/2026-07-31-test-workspace-observability-analysis.md.
+# The `# requires:` line above must stay on line 2 — run_all.sh reads it with
+# `sed -n '2p'`, so a requires buried in this block is silently inert (which is
+# how an earlier revision of this file ran on Windows and failed there).
+# unix-shell, not gcc: macOS is the platform this whole file exists for, and it
+# has no GCC. Windows is excluded on purpose — the deadline runner has no
+# kill-by-handle path there (mcpp.platform.process), so --timeout and
+# --build-timeout are documented POSIX-only and cannot be asserted.
 #
-# requires: gcc unix-shell
+# See .agents/docs/2026-07-31-test-workspace-observability-analysis.md.
 set -uo pipefail
 
 TMP=$(mktemp -d)
@@ -40,8 +47,9 @@ cat > fast/tests/quick.cpp <<'EOF'
 int main() { return 0; }
 EOF
 cat > slow/tests/hang.cpp <<'EOF'
-#include <unistd.h>
-int main() { sleep(30); return 0; }
+#include <chrono>
+#include <thread>
+int main() { std::this_thread::sleep_for(std::chrono::seconds(30)); return 0; }
 EOF
 
 # ── 1. streaming: output arrives while the process is still running ───────

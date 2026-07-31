@@ -87,15 +87,22 @@ mcpp test               # compile and run tests/**/*.cpp — one binary per file
 mcpp test <pattern>     # only tests whose name contains <pattern>
 mcpp test --list        # enumerate tests without building
 mcpp test --timeout 30  # kill a test still RUNNING after 30s (default 300; 0 = no limit)
-mcpp test --build-timeout 120   # kill a compile/link still running after 120s (default 900)
+mcpp test --build-timeout 120   # kill a compile/link still running after 120s (off by default)
 ```
 
-`mcpp test` is bounded by default so an unattended CI run cannot be consumed by a
-single hung test. The two deadlines cover different halves and neither implies the
-other: `--timeout` bounds the test *process*, `--build-timeout` bounds one ninja
-drive (the package build, the bulk test build, and each per-test build are timed
-separately). A link that never returns is a `--build-timeout` case, not a
-`--timeout` one. `--build-timeout` is POSIX-only — the deadline runner has no
+The *run* half is bounded by default so an unattended CI job cannot be consumed by
+a single hung test. The two deadlines cover different halves and neither implies
+the other: `--timeout` bounds the test *process*, `--build-timeout` bounds one
+ninja drive (the package build, the bulk test build, and each per-test build are
+timed separately). **A link that never returns is a `--build-timeout` case; no
+`--timeout` value stops it.**
+
+`--build-timeout` is off by default, and the asymmetry is measured rather than
+stylistic: a test binary running over five minutes is unusual, a cold dependency
+build running over fifteen is ordinary (one mcpp-index member builds OpenCV from
+source in 1019s on Linux and 1289s on Windows). A default ceiling would turn
+slow-but-correct builds red. How long a build may take is a property of the
+project, so the project says it. POSIX-only — the deadline runner has no
 kill-by-handle path on Windows, where the value is ignored.
 
 ## Adding Dependencies

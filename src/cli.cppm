@@ -278,7 +278,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("timeout").takes_value().value_name("SECS")
                 .help("Kill a test still RUNNING after SECS seconds (default 300; 0 = no limit)"))
             .option(cl::Option("build-timeout").takes_value().value_name("SECS")
-                .help("Kill a compile/link drive still running after SECS seconds (default 900; 0 = no limit; POSIX only)"))
+                .help("Kill a compile/link drive still running after SECS seconds (default 0 = no limit; POSIX only)"))
             .option(cl::Option("workspace-timeout").takes_value().value_name("SECS")
                 .help("Stop the --workspace fan-out after SECS seconds and report what did run (default 0 = no limit)"))
             .option(cl::Option("profile").takes_value().value_name("NAME")

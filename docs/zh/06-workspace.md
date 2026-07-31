@@ -216,7 +216,7 @@ test_paths ... ok (0.31s)
 
 ```bash
 mcpp test --workspace --timeout 60        # 单测试**运行**期限(默认 300)
-mcpp test --workspace --build-timeout 300 # 单次 ninja 驱动期限(默认 900)
+mcpp test --workspace --build-timeout 300 # 单次 ninja 驱动期限(默认 0 = 不限)
 mcpp test --workspace --workspace-timeout 1800   # 整条扇出(默认 0 = 不限)
 ```
 

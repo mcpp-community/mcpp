@@ -88,14 +88,19 @@ mcpp test               # 编译并运行 tests/**/*.cpp —— 每文件一个�
 mcpp test <pattern>     # 只运行名字包含 <pattern> 的测试
 mcpp test --list        # 只枚举测试,不构建
 mcpp test --timeout 30  # 单个测试**运行**超过 30s 被终止(默认 300;0 = 不限)
-mcpp test --build-timeout 120   # 单次编译/链接超过 120s 被终止(默认 900)
+mcpp test --build-timeout 120   # 单次编译/链接超过 120s 被终止(默认关闭)
 ```
 
-`mcpp test` 默认是**有界**操作 —— 无人值守的 CI 不该被一个挂住的测试吃掉整个 job。
-两个期限覆盖的是不同的一半,互不蕴含:`--timeout` 约束测试**进程的运行**,
-`--build-timeout` 约束**单次 ninja 驱动**(包级构建、批量测试构建、每个测试各自
-独立计时)。**链接卡死属于 `--build-timeout`,`--timeout` 设多大都无效。**
-`--build-timeout` 仅 POSIX 有效 —— Windows 上没有 kill-by-handle 路径,该值被忽略。
+**运行**那一半默认有界 —— 无人值守的 CI 不该被一个挂住的测试吃掉整个 job。两个期限
+覆盖的是不同的一半,互不蕴含:`--timeout` 约束测试**进程的运行**,`--build-timeout`
+约束**单次 ninja 驱动**(包级构建、批量测试构建、每个测试各自独立计时)。
+**链接卡死属于 `--build-timeout`,`--timeout` 设多大都无效。**
+
+`--build-timeout` 默认关闭,这个不对称是**实测**出来的而非风格选择:单个测试跑过 5 分钟
+不寻常,而冷依赖构建跑过 15 分钟很平常(mcpp-index 有一个成员要从源码建 OpenCV,
+linux 1019s、windows 1289s)。给它一个默认上限会把「慢但正确」的构建判红。构建可以跑多久
+是工程自身的性质,所以由工程来说。仅 POSIX 有效 —— Windows 上没有 kill-by-handle 路径,
+该值被忽略。
 
 ## 添加依赖
 

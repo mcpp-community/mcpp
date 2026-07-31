@@ -6,17 +6,26 @@ import mcpp.build.execute;
 
 using namespace mcpp::build;
 
-// `mcpp test` has to be a BOUNDED operation. It was not: the per-test deadline
-// defaulted to 0 (no limit) and no deadline existed for the build drives at all,
-// so a single hung test or link could consume an entire unattended CI job with
-// nothing to show for it. These defaults are the contract; asserting them here
-// means "make it unbounded again" cannot happen by an unnoticed edit.
-TEST(TestOptions, DefaultsAreBounded) {
+// `mcpp test` has to be BOUNDABLE, and its run half bounded by default. It was
+// neither: the per-test deadline defaulted to 0 (no limit) and no deadline
+// existed for the build drives at all, so a single hung test or link could
+// consume an entire unattended CI job with nothing to show for it. These
+// defaults are the contract; asserting them here means neither half can drift
+// back by an unnoticed edit.
+TEST(TestOptions, RunIsBoundedByDefault) {
     TestOptions to;
     EXPECT_GT(to.timeoutSecs, 0) << "per-test run deadline must default to a limit";
-    EXPECT_GT(to.buildTimeoutSecs, 0) << "per-build-drive deadline must default to a limit";
     EXPECT_EQ(to.timeoutSecs, 300);
-    EXPECT_EQ(to.buildTimeoutSecs, 900);
+}
+
+// The build deadline deliberately does NOT default on, and the asymmetry is
+// measured: a test binary running over five minutes is unusual, a cold
+// dependency build running over fifteen is ordinary (one mcpp-index member
+// builds OpenCV from source in 1019s on Linux, 1289s on Windows). A default
+// ceiling would turn slow-but-correct builds red and blame mcpp for it.
+TEST(TestOptions, BuildDeadlineIsOptIn) {
+    TestOptions to;
+    EXPECT_EQ(to.buildTimeoutSecs, 0) << "a default build ceiling would fail legitimate cold builds";
 }
 
 // 0 is still reachable — "no limit" did not disappear, it just has to be asked

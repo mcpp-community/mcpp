@@ -14,7 +14,7 @@
 
 **做法(两条腿,因为 setvbuf 在 Windows 上不成立)**:
 
-1. `main.cpp` 入口 `std::setvbuf(stdout, nullptr, _IOLBF, 0)` —— 覆盖 POSIX,兜住所有不走 ui 的直接输出。
+1. `mcpp::ui::set_line_buffered()`(POSIX 上 `setvbuf(_IOLBF)`),由 `main()` 调用 —— 兜住所有不走 ui 的直接输出。**不能放 `main.cpp` 里**:非模块 TU 不允许开 global module fragment 引 `<cstdio>`(Clang 直接拒绝,GCC 静默接受)。**Windows 上不调用**:UCRT 的 `size` 合法范围是 `2..INT_MAX`,0 会走 invalid-parameter handler 直接 abort(0xC0000409 → git-bash 报 exit 127),而 MSVCRT 本来就把 `_IOLBF` 当 `_IOFBF`,靠 `ui::flush()` 即可。
 2. `mcpp::ui` 新增 `flush()`,并在 **每个写 stdout 的 ui 函数**末尾调用(`status` / `info` / `finished` / `plain` / `diagnostic` 的 stdout 分支)。这条在 Windows 上也确定有效,不依赖 `_IOLBF` 语义。
 3. `execute.cppm` 中 `mcpp test` 的裸 `std::println` 结果行(`... ok` / `FAIL (...)`)改走 `ui::plain`,从而继承 flush。
 
@@ -37,10 +37,12 @@
 **问题**:`--timeout` 只包住测试进程的**运行**。三处 `backend->build()`(`execute.cppm:1056` Phase A / `:1103` bulk / `:1126` per-test)全无期限。macOS 上 `modules/jsc` 卡在 14 次可执行链接上,`--timeout` 设多少都无效。
 
 **做法**:
-- `BuildOptions` 加 `buildTimeoutSecs`(0 = 不限,默认 **900**)。
+- `BuildOptions` 加 `buildTimeoutSecs`(0 = 不限,**默认 0 —— 见下**)。
 - `ninja_backend` 把 `capture_exec` 换成 `capture_exec_deadline`,超时返回 `BuildError{"build timed out after Ns", ...}`。
 - `run_tests` 三处 build 各自独立计时;超时报成**该成员的构建失败**,扇出继续下一个成员。
 - **平台限制如实写明**:`capture_exec_deadline` 在 Windows 上忽略 deadline(`process.cppm:96-99`),因此 `--build-timeout` 目前是 POSIX-only。文档标注,不假装跨平台。
+
+**默认为什么是关的**(与 `--timeout` 不对称,实测而非风格):单个测试跑过 5 分钟不寻常,冷依赖构建跑过 15 分钟很平常 —— mcpp-index 有成员要从源码建 OpenCV,linux 1019s / windows 1289s。默认上限会把「慢但正确」的构建判红。构建能跑多久是工程的性质,由工程来说。
 
 **验收**:e2e —— 一个故意慢的编译边在 `--build-timeout 1` 下被判超时且信息里带成员名。
 
@@ -101,4 +103,4 @@
 
 S1 → S2 → S4 → S5 → S7 → S3 → S6 → S8,每步自带测试。
 
-版本:`2026.7.31.2`(`2026.7.31.1` 已发布)。真源 `src/toolchain/fingerprint.cppm::MCPP_VERSION` + `mcpp.toml`,由 `.github/tools/check_version_pins.sh` 机器校验。
+版本:`2026.8.1.1`(`2026.7.31.1` 已发布)。真源 `src/toolchain/fingerprint.cppm::MCPP_VERSION` + `mcpp.toml`,由 `.github/tools/check_version_pins.sh` 机器校验。

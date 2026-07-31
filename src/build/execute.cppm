@@ -806,7 +806,16 @@ export struct TestOptions {
     // Per-ninja-invocation deadline (Phase A, the bulk pass, and each per-test
     // drive are timed separately). Covers the half `--timeout` never could:
     // a compile or link that never returns. POSIX only — see BuildOptions.
-    int                buildTimeoutSecs = 900;
+    //
+    // Unlike timeoutSecs this defaults to OFF, and the asymmetry is measured,
+    // not stylistic. A single test binary running longer than five minutes is
+    // unusual; a cold dependency build taking longer than fifteen is ordinary —
+    // one mcpp-index member (OpenCV from source) measures 1019s on Linux and
+    // 1289s on Windows. A default ceiling would turn those slow-but-correct
+    // builds red and blame mcpp for it. "How long may a build take" is a
+    // property of the project, so the project says it; mcpp only has to make
+    // saying it possible, which is what was missing.
+    int                buildTimeoutSecs = 0;
 };
 
 // What one member's `run_tests` actually did. `--workspace` fans out over

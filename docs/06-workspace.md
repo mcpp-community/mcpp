@@ -221,7 +221,7 @@ moment two members both have a `smoke`.
 
 ```bash
 mcpp test --workspace --timeout 60        # per-test RUN deadline (default 300)
-mcpp test --workspace --build-timeout 300 # per-ninja-drive deadline (default 900)
+mcpp test --workspace --build-timeout 300 # per-ninja-drive deadline (default 0 = no limit)
 mcpp test --workspace --workspace-timeout 1800   # whole fan-out (default 0 = no limit)
 ```
 
