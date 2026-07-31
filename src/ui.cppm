@@ -244,7 +244,24 @@ bool is_quiet()        { return g_quiet; }
 
 void flush() { std::fflush(stdout); }
 
-void set_line_buffered() { std::setvbuf(stdout, nullptr, _IOLBF, 0); }
+void set_line_buffered() {
+#if defined(_WIN32)
+    // Not on Windows, and not as a preference. The UCRT documents setvbuf's
+    // size as `2 <= size <= INT_MAX`, and a zero goes through the
+    // invalid-parameter handler, whose default action terminates the process:
+    // 0xC0000409, which git-bash reports as a bare exit 127. The freshly built
+    // mcpp.exe died on `--version` before printing anything.
+    //
+    // Passing a real size instead would buy nothing: MSVCRT has no line
+    // buffering at all — it accepts _IOLBF and treats it as _IOFBF. Windows
+    // gets the same guarantee from ui::flush(), which every stdout-writing
+    // function here calls, so the platform that cannot do this cheaply is also
+    // the one that does not need it: its 4096-byte block is the smallest of the
+    // three anyway, and `mcpp test` routes its result lines through ui::plain.
+#else
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+#endif
+}
 
 void status(std::string_view verb, std::string_view message) {
     if (g_quiet) return;
