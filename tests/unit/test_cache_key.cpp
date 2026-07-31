@@ -101,6 +101,10 @@ TEST(CacheKey, LanguageAndDialectChangeTheKey) {
     { auto b = axes(); b.cppStandard     = "c++26";  EXPECT_NE(ck::key_hex(b, pkg()), base); }
     { auto b = axes(); b.cppStandardFlag = "-std=c++2c";
                                                      EXPECT_NE(ck::key_hex(b, pkg()), base); }
+    // A dependency built at c++20 must never be handed to a c++23 graph: BMIs
+    // are not compatible across levels (GCC: "language dialect differs").
+    { auto b = axes(); b.cppStandard     = "c++20";
+      b.cppStandardFlag = "-std=c++20";               EXPECT_NE(ck::key_hex(b, pkg()), base); }
     { auto b = axes(); b.dialectFlags    = {"-freflection"};
                                                      EXPECT_NE(ck::key_hex(b, pkg()), base); }
     { auto b = axes(); b.cStandard       = "c17";    EXPECT_NE(ck::key_hex(b, pkg()), base); }

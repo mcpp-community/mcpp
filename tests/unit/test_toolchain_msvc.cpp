@@ -102,3 +102,30 @@ TEST(MsvcModel, BmiTraitsUseIfc) {
     EXPECT_TRUE(t.needsExplicitModuleOutput);
     EXPECT_FALSE(t.scanNeedsFModules);
 }
+
+// ─── std module minimum standard level ───────────────────────────────────
+//
+// microsoft/STL#3945 ("Supporting `import std;` in C++20") was fixed by
+// STL#3977, first shipping in VS 2022 17.8 = cl 19.38. Older STLs still block
+// C++20 and would fail inside std.ixx; they answer 23 so the build layer can
+// refuse with an actionable message instead.
+// See .agents/docs/2026-07-31-cpp20-standard-support-design.md §2.3.
+
+TEST(MsvcStdModule, MinLevelFollowsStlUnblockVersion) {
+    auto tc_of = [](std::string ver) {
+        Toolchain tc;
+        tc.compiler = CompilerId::MSVC;
+        tc.version = std::move(ver);
+        return tc;
+    };
+    // VS 2022 17.8 and newer: C++20 is allowed.
+    EXPECT_EQ(msvc::std_module_min_level(tc_of("19.38.33130")), 20);
+    EXPECT_EQ(msvc::std_module_min_level(tc_of("19.44.35211")), 20);
+    EXPECT_EQ(msvc::std_module_min_level(tc_of("20.0")), 20);
+    // Older toolsets keep the C++23 floor.
+    EXPECT_EQ(msvc::std_module_min_level(tc_of("19.37.32825")), 23);
+    EXPECT_EQ(msvc::std_module_min_level(tc_of("19.29.30153")), 23);
+    // Unparseable banner version: stay strict rather than guess.
+    EXPECT_EQ(msvc::std_module_min_level(tc_of("")), 23);
+    EXPECT_EQ(msvc::std_module_min_level(tc_of("unknown")), 23);
+}

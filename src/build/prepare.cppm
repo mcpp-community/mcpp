@@ -3476,7 +3476,7 @@ prepare_build(bool print_fingerprint,
             const auto ldN = bcDep.ldflags.size();
             if (auto r = mcpp::build::run_build_program(
                     pkg.manifest, pkg.root, host->first, host->second,
-                    pkg.manifest.cppStandard.canonical, bpEnv);
+                    pkg.manifest.cppStandard, bpEnv);
                 !r) {
                 return std::unexpected(std::format(
                     "dependency '{}': {}", pkg.manifest.package.name, r.error()));
@@ -3603,7 +3603,7 @@ prepare_build(bool print_fingerprint,
                    rmodN = m->modules.sources.size();
         if (auto bp = mcpp::build::run_build_program(
                 *m, *root, host->first, host->second,
-                m->cppStandard.canonical, bpEnv);
+                m->cppStandard, bpEnv);
             !bp) {
             return std::unexpected(bp.error());
         }
@@ -3737,6 +3737,21 @@ prepare_build(bool print_fingerprint,
         return std::unexpected(std::format(
             "source imports std but toolchain '{}' provides no std module source",
             tc->label()));
+    }
+    // `import std` availability is two-dimensional once C++20 is a legal level:
+    // having a std module source is not the same as being able to build it at
+    // the project's level. Every toolchain mcpp ships answers 20; only an MSVC
+    // STL older than microsoft/STL#3977 answers 23, and those users would
+    // otherwise get an error from inside std.ixx.
+    if (needsStdModule && tc->importStdMinLevel > 0
+        && m->cppStandard.level < tc->importStdMinLevel) {
+        return std::unexpected(std::format(
+            "source imports std but toolchain '{}' provides the std module only "
+            "from {} up, while [package].standard resolves to '{}'; raise the "
+            "standard or drop `import std;`",
+            tc->label(),
+            mcpp::manifest::cpp_standard_level_name(tc->importStdMinLevel),
+            m->package.standard));
     }
 
     // Compute fingerprint (no lockfile in M1 → empty hash)

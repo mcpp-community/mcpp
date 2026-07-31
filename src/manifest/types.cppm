@@ -537,6 +537,11 @@ struct ManifestError {
 
 std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string_view raw);
 
+// A CppStandardConfig::level back as the value users write ("c++23"). The
+// inverse of the whitelist above, so it lives next to it instead of becoming a
+// second table somewhere in the build layer.
+std::string cpp_standard_level_name(int level);
+
 // The module-graph-global dialect flag set: explicit [build] dialect_cxxflags
 // plus KNOWN dialect-class flags auto-promoted out of [build] cxxflags
 // (they also stay per-unit there — duplication is harmless and keeps the
@@ -632,6 +637,26 @@ std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string
     for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
     CppStandardConfig out;
+    // C++20 is the floor: named modules are a C++20 feature, so mcpp's whole
+    // build model does not exist below it. `import std;` still works here on
+    // every toolchain mcpp ships (GCC >= 15, Clang >= 17 + libc++, MSVC STL
+    // since STL#3977) — it is a C++23 *library* feature that all three
+    // implementations also provide in C++20 mode. See
+    // .agents/docs/2026-07-31-cpp20-standard-support-design.md.
+    if (s == "c++20" || s == "c++2a") {
+        out.canonical = "c++20";
+        out.flag = "-std=c++20";
+        out.level = 20;
+        out.gnuDialect = false;
+        return out;
+    }
+    if (s == "gnu++20" || s == "gnu++2a") {
+        out.canonical = "gnu++20";
+        out.flag = "-std=gnu++20";
+        out.level = 20;
+        out.gnuDialect = true;
+        return out;
+    }
     if (s.empty() || s == "c++23" || s == "c++2b") {
         out.canonical = "c++23";
         out.flag = "-std=c++23";
@@ -677,8 +702,20 @@ std::expected<CppStandardConfig, std::string> normalize_cpp_standard(std::string
     }
 
     return std::unexpected(std::format(
-        "unsupported C++ standard '{}'; expected c++23, c++26, c++2c, gnu++23, gnu++26, c++latest, or c++fly",
+        "unsupported C++ standard '{}'; expected c++20, c++23, c++26, c++2a, c++2c, "
+        "gnu++20, gnu++23, gnu++26, c++latest, or c++fly",
         raw));
+}
+
+std::string cpp_standard_level_name(int level) {
+    switch (level) {
+        case 20: return "c++20";
+        case 23: return "c++23";
+        case 26: return "c++26";
+        case 999: return "c++latest";
+        case 1000: return "c++fly";
+        default: return std::format("c++{}", level);
+    }
 }
 
 bool has_lib_target(const Manifest& manifest) {

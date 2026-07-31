@@ -41,7 +41,7 @@ lib-root 约定:主模块接口默认在 `src/mylib.cppm`(包名的最后一段)
 [package]
 name        = "myapp"              # 包名(必填)
 version     = "0.1.0"              # 语义化版本(必填)
-standard    = "c++23"              # C++ 标准(默认 c++23; 可设 c++26)
+standard    = "c++23"              # C++ 标准(默认 c++23; 可设 c++20 / c++26)
 description = "My awesome app"     # 简介(可选)
 license     = "MIT"                # 许可证(可选)
 authors     = ["Alice", "Bob"]     # 作者列表(可选)
@@ -51,10 +51,24 @@ repo        = "https://github.com/user/myapp"  # 仓库地址(可选)
 `standard` 是 C++ 语言标准的一等配置。推荐值:
 
 - `c++23`：默认值，适合当前模块化默认模板。
+- `c++20`：mcpp 接受的最低档位——命名模块本身是 C++20 特性，再往下这套构建模型就不存在了。当外部约束(公司内规、只到 C++20 的第三方 API)必须压低档位时使用。**`import std;` 在这一档依然可用**：它虽然是 C++23 的*库*特性，但 GCC(≥ 15)、Clang + libc++(≥ 17)与 MSVC STL 都在 C++20 模式下提供 `std` 模块。代价是 C++23 库设施(`std::print`、`std::expected` 等)不可用——包括 `mcpp new` 生成的模板代码。
 - `c++26`：需要 C++26 语言特性时使用。
-- `c++2c`：兼容别名，解析后归一为 `c++26`。
-- `gnu++23` / `gnu++26`：需要 GNU dialect 时使用，会进入 fingerprint 和 std BMI cache key。
+- `c++2a` / `c++2c`：兼容别名，解析后分别归一为 `c++20` / `c++26`。
+- `gnu++20` / `gnu++23` / `gnu++26`：需要 GNU dialect 时使用，会进入 fingerprint 和 std BMI cache key。
 - `c++latest`：跟随当前 mcpp 支持的最新标准，适合本地试验，不推荐要求可复现的发布包使用。
+- `c++fly`：`c++latest` **再加上该工具链能开启的全部实验性标准特性**(语言 + 标准库)。GCC ≥ 16 上会打开 C++26 反射(`-freflection`)与契约；Clang/libc++ 上追加 `-fexperimental-library`；不支持的门会跳过并打印 summary。刻意是工具链相关的——最前沿的试验场模式，永远不要用于发布包。
+
+两条需要知道的性质：
+
+- **标准是模块图全局的。** 根包的 `standard` 作用于本次构建的每一个 TU，依赖也不例外——
+  依赖自己 manifest 里的 `standard` 在它作为依赖被构建时不生效。这不是简化：BMI 跨档位
+  不兼容(GCC 直接报 `language dialect differs`)，同一张图物理上不可能存在两个档位。
+- **档位之间从不共用缓存。** 标准同时进入 fingerprint、`import std` 的 BMI 身份和依赖构建
+  缓存键，所以在 `c++20` 与 `c++23` 之间切换只会各自拿到独立的产物目录和独立的 std BMI，
+  不会出现错误命中。
+
+如果源码在某个档位上 `import std;` 而解析出的工具链在该档位不提供 `std` 模块，
+mcpp 会在编译前失败，并同时报出工具链与工程档位。
 
 ### 2.2 `[targets.<name>]` — 构建目标
 
@@ -779,7 +793,7 @@ mcpp build --target x86_64-linux-musl
 | 源文件 | `src/**/*.{cppm,cpp,cc,c,S,s,asm}` | 自动递归扫描 |
 | 入口 | `src/main.cpp` | 有这个文件就推断为 `bin` 目标 |
 | 库根 | `src/<pkg-tail>.cppm` | 可用 `[lib].path` 覆盖 |
-| C++ 标准 | `c++23` | 用 `[package].standard` 配置; 支持 `c++26` / `c++2c` |
+| C++ 标准 | `c++23` | 用 `[package].standard` 配置; 支持 `c++20` / `c++26` / `c++2a` / `c++2c` / `gnu++NN` / `c++latest` / `c++fly`(实验试验场) |
 | C 标准 | `c11` | `.c` 文件自动走 C 编译器 |
 | 静态 stdlib | `true` | 便携二进制 |
 | 头文件 | `include/`(如果存在） | 自动加到 `-I` |

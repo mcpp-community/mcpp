@@ -45,6 +45,14 @@ struct Toolchain {
     // member added to this exported class: "failed to load pendings".)
     std::vector<EnvVar> envOverrides;
     bool                                hasImportStd = false;
+    // Lowest -std= level this toolchain can build the std module at. 0 = the
+    // provider did not say, callers fall back to the plain hasImportStd
+    // question. Filled next to hasImportStd by each provider, because "which
+    // std module does this compiler ship" is provider-local knowledge — a
+    // central table would derive the same decision in a second place.
+    // GCC/libc++ answer 20; MSVC answers 20 from cl 19.38 (VS 2022 17.8,
+    // microsoft/STL#3977) and 23 below that.
+    int                                 importStdMinLevel = 0;
 
     std::string label() const {
         return std::format("{} {} ({})", compiler_name(), version, targetTriple);

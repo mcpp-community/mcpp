@@ -110,7 +110,12 @@ TEST(StdFlagFor, PerDialectSpelling) {
     const auto& msvc = dialect_for(make_tc(CompilerId::MSVC));
     EXPECT_EQ(std_flag_for(gnu, "c++26", 26), "-std=c++26");
     EXPECT_EQ(std_flag_for(gnu, "gnu++23", 23), "-std=gnu++23");
+    EXPECT_EQ(std_flag_for(gnu, "c++20", 20), "-std=c++20");
+    EXPECT_EQ(std_flag_for(gnu, "gnu++20", 20), "-std=gnu++20");
+    // The `level <= 20` row: unreachable until c++20 entered the allow-list,
+    // because 23 was the lowest level a manifest could produce.
     EXPECT_EQ(std_flag_for(msvc, "c++20", 20), "/std:c++20");
+    EXPECT_EQ(std_flag_for(msvc, "gnu++20", 20), "/std:c++20");   // no MSVC gnu dialect
     EXPECT_EQ(std_flag_for(msvc, "c++23", 23), "/std:c++latest");
     EXPECT_EQ(std_flag_for(msvc, "c++26", 26), "/std:c++latest");
 }

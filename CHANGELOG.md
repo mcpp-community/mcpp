@@ -3,6 +3,24 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.7.31.1] — 2026-07-31
+
+### 新增
+
+- **`standard = "c++20"` 成为一等档位(默认仍是 `c++23`)。** 白名单新增 `c++20` / `c++2a` / `gnu++20` / `gnu++2a`。C++20 是这个白名单的地板 —— 命名模块本身就是 C++20 特性,再往下 mcpp 的构建模型不存在。
+
+  **`import std;` 在 c++20 依然可用。** 它虽然是 C++23 的*库*特性,但三家实现都在 C++20 模式下提供 `std` 模块:libstdc++ 的 `bits/std.cc` 与 libc++ 的 `std.cppm` 都没有 `__cplusplus` 守卫,MSVC STL 在 [microsoft/STL#3977](https://github.com/microsoft/STL/pull/3977) 解禁(修复 [#3945](https://github.com/microsoft/STL/issues/3945),原话:C++20 的封锁"是纯策略选择,没有技术原因")。本次实机验证了 gcc 15.1.0 / 16.1.0 × glibc / musl / mingw-cross 与 clang 22.1.8 + libc++(含 `std.compat`):在 `-std=c++20` 下建 std 模块、编译消费者、链接、运行全部通过(musl 与 mingw 分别以 `-static` 在本机与 wine 跑通)。
+
+  **不改默认、不改模板**:未声明 `standard` 的工程指纹逐字节不变,`mcpp new` 与所有示例继续用 C++23。C++20 是给外部约束(公司内规、只到 C++20 的第三方 API)准备的逃生舱,不是新推荐值 —— 它意味着放弃 `std::print` / `std::expected` 等 C++23 库设施。
+
+  缓存零改动:标准早已进入指纹、`import std` 的 BMI 身份与依赖构建缓存键,所以 c++20 与 c++23 各自拥有产物目录与 std BMI。这一点由编译器本身兜底 —— 跨档位复用 BMI 会被直接拒绝(`language dialect differs 'C++20', expected 'C++23'`)。
+
+- **`import std` 的可用性判定从「有没有」升级为「从哪一档起」。** `Toolchain::importStdMinLevel` 由各 provider 自己填(GCC / libc++ 答 20;MSVC 按 cl banner 版本答 20 或 23)。STL#3977 之前的 MSVC 仍然封锁 C++20,那些机器上 `import std;` + `/std:c++20` 现在得到一句指名工具链与工程档位的可行动错误,而不是 `std.ixx` 内部的报错。
+
+### 修复
+
+- **`build.mcpp` 在 `standard = "c++fly"` / `"c++latest"` 下拼出非法的 `-std=` 旗标。** 它此前用 `"-std=" + canonical` 直接拼接,而这两个值的 canonical 不是合法的 `-std=` 拼写,宿主编译因未知方言失败。现在与主构建走同一个方言层(`cppfly::std_flag`),按真正执行编译的宿主工具链解析。
+
 ## [2026.7.30.3] — 2026-07-30
 
 ### 变更

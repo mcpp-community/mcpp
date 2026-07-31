@@ -132,6 +132,10 @@ void enrich_toolchain(Toolchain& tc) {
     if (auto p = find_std_module_source(tc.binaryPath, tc.version)) {
         tc.stdModuleSource = *p;
         tc.hasImportStd    = true;
+        // libstdc++'s bits/std.cc carries no __cplusplus guard: any GCC that
+        // ships it builds the std module at C++20 too. Verified on gcc 15.1.0
+        // and 16.1.0 across glibc / musl / mingw-cross targets (design §2.2).
+        tc.importStdMinLevel = 20;
     }
 }
 

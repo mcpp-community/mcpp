@@ -101,6 +101,12 @@ TEST(CppFly, StdFlagResolvesLatestAndFly) {
     EXPECT_EQ(cppfly::std_flag(tc_of(CompilerId::Clang, "22.1.8"), "c++fly", 1000), "-std=c++2c");
     EXPECT_EQ(cppfly::std_flag(tc_of(CompilerId::MSVC, "19.44"), "c++fly", 1000), "/std:c++latest");
     EXPECT_EQ(cppfly::std_flag(tc_of(CompilerId::MSVC, "19.44"), "c++latest", 999), "/std:c++latest");
+    // A plain level is passed through untouched — c++20 must NOT be lifted to
+    // the family latest by the >= 999 branch.
+    EXPECT_EQ(cppfly::std_flag(gcc16, "c++20", 20), "-std=c++20");
+    EXPECT_EQ(cppfly::std_flag(gcc16, "gnu++20", 20), "-std=gnu++20");
+    EXPECT_EQ(cppfly::std_flag(tc_of(CompilerId::Clang, "22.1.8"), "c++20", 20), "-std=c++20");
+    EXPECT_EQ(cppfly::std_flag(tc_of(CompilerId::MSVC, "19.44"), "c++20", 20), "/std:c++20");
 }
 
 TEST(CppFly, EffectiveDialectFlagsDedup) {

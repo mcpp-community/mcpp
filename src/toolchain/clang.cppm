@@ -145,6 +145,10 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
     if (auto p = find_libcxx_std_module_source(tc.binaryPath, envPrefix)) {
         tc.stdModuleSource = *p;
         tc.hasImportStd    = true;
+        // libc++ documents the std module for C++20 and later, and its
+        // std.cppm carries no __cplusplus guard. Verified on clang 22.1.8 +
+        // libc++ (std and std.compat) at -std=c++20 (design §2.2).
+        tc.importStdMinLevel = 20;
     }
 
 #if defined(_WIN32)
@@ -154,6 +158,10 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
         if (auto p = mcpp::toolchain::msvc::find_std_module_source()) {
             tc.stdModuleSource = *p;
             tc.hasImportStd    = true;
+            // This is MSVC STL's std.ixx — the STL's own C++20 policy applies,
+            // not libc++'s. tc.version is clang's here, so it cannot answer the
+            // cl-banner question; stay strict (the STL is the binding side).
+            tc.importStdMinLevel = 23;
         }
     }
 #endif

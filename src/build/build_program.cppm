@@ -16,6 +16,7 @@ import std;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.platform.process;
+import mcpp.toolchain.cppfly;        // std_flag (dialect- and c++fly-aware -std= spelling)
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
 import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target/is_mingw_target
@@ -60,7 +61,7 @@ std::expected<void, std::string> run_build_program(
     const std::filesystem::path& root,
     const std::filesystem::path& hostCompiler,
     const mcpp::toolchain::Toolchain& tc,
-    std::string_view cppStandard,
+    const mcpp::manifest::CppStandardConfig& cppStandard,
     const BuildProgramEnv& env);
 
 } // namespace mcpp::build
@@ -580,7 +581,7 @@ std::expected<void, std::string> run_build_program(
     const fs::path& root,
     const fs::path& hostCompiler,
     const mcpp::toolchain::Toolchain& tc,
-    std::string_view cppStandard,
+    const mcpp::manifest::CppStandardConfig& cppStandard,
     const BuildProgramEnv& env) {
 
     fs::path src = root / "build.mcpp";
@@ -644,7 +645,15 @@ std::expected<void, std::string> run_build_program(
                                ? "build.mcpp.exe" : "build.mcpp.bin");
 
     // ── Compile build.mcpp with the host toolchain ──────────────────────────
-    std::string std_flag = "-std=" + std::string(cppStandard.empty() ? "c++23" : cppStandard);
+    // Spelled by the dialect layer, not concatenated here: the canonical of
+    // `standard = "c++fly"` / `"c++latest"` is not a valid -std= spelling, so
+    // the old `"-std=" + canonical` produced `-std=c++fly` and the host compile
+    // died on an unknown dialect. cppfly::std_flag resolves those against the
+    // toolchain that will actually run the compile — the host one, here.
+    std::string std_flag = mcpp::toolchain::cppfly::std_flag(
+        tc, cppStandard.canonical.empty() ? std::string_view("c++23")
+                                          : std::string_view(cppStandard.canonical),
+        cppStandard.level);
     auto base = host_base_flags(tc);
 
     // Only wire the bundled `mcpp` module when build.mcpp actually imports it —

@@ -36,6 +36,17 @@ std::optional<std::filesystem::path> find_std_module_source();
 // Find cl.exe (for future MSVC toolchain support).
 std::optional<std::filesystem::path> find_cl();
 
+// Lowest -std= level MSVC STL builds the `std` module at, for a toolchain
+// whose `version` is a cl banner version ("19.44.35211").
+//
+// microsoft/STL#3945 ("Supporting `import std;` in C++20") was fixed by
+// STL#3977 (merged 2023-08-31) — the C++20 block was a policy choice with no
+// technical reason behind it. That first ships in VS 2022 17.8, i.e. cl 19.38;
+// older STLs still refuse and would fail inside std.ixx, so they answer 23 and
+// get an actionable diagnostic from the caller instead. This is also what keeps
+// the level gate reachable: every other provider answers 20.
+int std_module_min_level(const Toolchain& tc);
+
 // ─── System-toolchain detection (msvc@system) ────────────────────────────
 //
 // mcpp treats MSVC as a *system* toolchain: it locates and identifies an
@@ -503,6 +514,30 @@ std::string cl_stage_command(const Toolchain& tc,
 
 } // namespace
 
+int std_module_min_level(const Toolchain& tc) {
+    // Two-segment compare: cppfly::compiler_major only reads the leading
+    // integer, which is 19 for every MSVC ever shipped. Keep that function's
+    // meaning intact (it has other consumers) and do the version knowledge
+    // here, where the rest of the cl banner handling already lives.
+    int major = 0, minor = 0;
+    auto it = tc.version.begin();
+    const auto end = tc.version.end();
+    auto read = [&](int& out) {
+        bool any = false;
+        while (it != end && *it >= '0' && *it <= '9') {
+            out = out * 10 + (*it - '0');
+            ++it;
+            any = true;
+        }
+        return any;
+    };
+    if (!read(major)) return 23;            // unparseable banner: stay strict
+    if (it != end && *it == '.') ++it;
+    read(minor);
+    const bool atLeast_19_38 = major > 19 || (major == 19 && minor >= 38);
+    return atLeast_19_38 ? 20 : 23;
+}
+
 std::vector<std::string> std_module_build_commands(
     const Toolchain& tc, const std::filesystem::path& cacheDir,
     std::string_view cppStandardFlag) {
@@ -550,6 +585,9 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     } else if (auto found = find_std_module_source()) {
         tc.stdModuleSource = *found;
         tc.hasImportStd    = true;
+    }
+    if (tc.hasImportStd) {
+        tc.importStdMinLevel = std_module_min_level(tc);
     }
     if (auto compat = toolsDir / "modules" / "std.compat.ixx";
         std::filesystem::exists(compat, ec)) {

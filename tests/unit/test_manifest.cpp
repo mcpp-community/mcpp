@@ -20,6 +20,44 @@ TEST(Manifest, CppFlyStandard) {
     EXPECT_NE(bad.error().find("c++fly"), std::string::npos);  // listed in the allow-list message
 }
 
+TEST(Manifest, Cpp20Standard) {
+    // C++20 is the floor of the allow-list: named modules are a C++20 feature,
+    // so nothing below it exists for this build model
+    // (.agents/docs/2026-07-31-cpp20-standard-support-design.md).
+    auto cfg = mcpp::manifest::normalize_cpp_standard("c++20");
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->canonical, "c++20");
+    EXPECT_EQ(cfg->flag, "-std=c++20");
+    EXPECT_EQ(cfg->level, 20);
+    EXPECT_FALSE(cfg->gnuDialect);
+    EXPECT_FALSE(cfg->experimental);
+
+    // Aliases, symmetric with the existing c++2b / c++2c handling.
+    auto alias = mcpp::manifest::normalize_cpp_standard("C++2a");   // also case-folded
+    ASSERT_TRUE(alias.has_value());
+    EXPECT_EQ(alias->canonical, "c++20");
+    EXPECT_EQ(alias->level, 20);
+
+    auto gnu = mcpp::manifest::normalize_cpp_standard("gnu++20");
+    ASSERT_TRUE(gnu.has_value());
+    EXPECT_EQ(gnu->canonical, "gnu++20");
+    EXPECT_EQ(gnu->flag, "-std=gnu++20");
+    EXPECT_EQ(gnu->level, 20);
+    EXPECT_TRUE(gnu->gnuDialect);
+    EXPECT_EQ(mcpp::manifest::normalize_cpp_standard("gnu++2a")->canonical, "gnu++20");
+
+    // Below the floor stays rejected, and the message advertises the floor.
+    auto bad = mcpp::manifest::normalize_cpp_standard("c++17");
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_NE(bad.error().find("c++20"), std::string::npos) << bad.error();
+}
+
+TEST(Manifest, CppStandardLevelName) {
+    EXPECT_EQ(mcpp::manifest::cpp_standard_level_name(20), "c++20");
+    EXPECT_EQ(mcpp::manifest::cpp_standard_level_name(23), "c++23");
+    EXPECT_EQ(mcpp::manifest::cpp_standard_level_name(26), "c++26");
+}
+
 TEST(Manifest, MinimalValid) {
     constexpr auto src = R"(
 [package]
@@ -147,7 +185,13 @@ main = "src/main.cpp"
     EXPECT_NE(m.error().message.find("package.version"), std::string::npos);
 }
 
-TEST(Manifest, RejectImportStdWithoutCpp23) {
+TEST(Manifest, AcceptsCpp20WithImportStd) {
+    // Was RejectImportStdWithoutCpp23: it asserted this manifest is rejected,
+    // but the only thing rejecting it was the standard allow-list (there has
+    // never been an import_std-specific rule) — so the test's name described
+    // coverage it did not have. C++20 is legal now, and `import std;` is
+    // available there on every toolchain mcpp ships, so the same manifest must
+    // parse, with the legacy [language] section still mirroring to the new home.
     auto m = mcpp::manifest::parse_string(R"(
 [package]
 name = "x"
@@ -161,13 +205,26 @@ sources = ["src/**/*.cppm"]
 kind = "bin"
 main = "src/main.cpp"
 )");
+    ASSERT_TRUE(m.has_value()) << m.error().message;
+    EXPECT_EQ(m->package.standard, "c++20");     // canonical, mirrored from [language]
+    EXPECT_EQ(m->language.standard, "c++20");
+    EXPECT_EQ(m->cppStandard.level, 20);
+    EXPECT_EQ(m->cppStandard.flag, "-std=c++20");
+}
+
+TEST(Manifest, RejectsStandardBelowCpp20) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "x"
+version = "0.1.0"
+standard = "c++17"
+[targets.x]
+kind = "bin"
+main = "src/main.cpp"
+)");
     ASSERT_FALSE(m.has_value());
-    // M5.0: validator now bails on c++20 first ("MVP only supports c++23"),
-    // before reaching an import_std-specific check. Either signal is fine.
-    auto& msg = m.error().message;
-    EXPECT_TRUE(msg.find("import_std") != std::string::npos
-             || msg.find("c++23")      != std::string::npos)
-        << "actual: " << msg;
+    EXPECT_NE(m.error().message.find("c++17"), std::string::npos)
+        << m.error().message;
 }
 
 TEST(Manifest, RejectModulesFalse) {

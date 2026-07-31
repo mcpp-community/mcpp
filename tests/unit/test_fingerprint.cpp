@@ -57,6 +57,9 @@ TEST(Fingerprint, AllTenFieldsAffectHash) {
     EXPECT_DIFFERENT(in.toolchain.targetTriple   = "aarch64-linux-gnu");
     EXPECT_DIFFERENT(in.toolchain.stdlibId       = "libc++");
     EXPECT_DIFFERENT(in.cppStandard              = "c++26");
+    // c++20 gets its own target dir for the same reason c++26 does — cross-level
+    // BMI reuse is rejected by the compiler itself.
+    EXPECT_DIFFERENT(in.cppStandard              = "c++20");
     EXPECT_DIFFERENT(in.compileFlags             = "-O3");
     // mcpp version is hardcoded inside compute_fingerprint, can't mutate from here.
     EXPECT_DIFFERENT(in.dependencyLockHash      = "");
