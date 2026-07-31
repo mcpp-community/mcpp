@@ -231,6 +231,24 @@ git commit -am "ci: workspace mcpp bootstrap pin -> $NEW_VERSION (released, mirr
 资产 CDN 上可能还要几分钟才更新。紧接着跑的 CI 可能仍拿到旧索引并报
 `package 'mcpp@X.Y.Z' not found` —— 这不是 release 坏了，等指针稳定后重跑即可。
 
+### 下游分发渠道（都是自动的，只需核验）
+
+两条渠道都挂在 `release` workflow 的 `workflow_run: completed` 上，不需要人工推：
+
+| 渠道 | workflow | 核验 |
+|------|----------|------|
+| AUR (`mcpp-bin` / `mcpp-m`) | `.github/workflows/aur-publish.yml` | `gh run list --workflow aur-publish.yml --limit 1` |
+| Homebrew tap (`mcpp-m`) | `.github/workflows/homebrew-publish.yml` → ping [`mcpp-community/homebrew-mcpp`](https://github.com/mcpp-community/homebrew-mcpp) | `gh api repos/mcpp-community/homebrew-mcpp/contents/Formula/mcpp-m.rb --jq .content \| base64 -d \| grep '^  version'` |
+
+Homebrew 那条**不写公式**，只发一个 `repository_dispatch`；公式重写由 tap 仓库自己的
+`bump-formula.yml` 完成（它读 release 的 `.sha256` 边车）。这条 ping 依赖仓库 secret
+`HOMEBREW_TAP_TOKEN`；**没配也不会让发布失败** —— tap 有每日 schedule 兜底，24h 内自己跟上。
+想立刻跟上就手动触发一次：
+
+```bash
+gh workflow run bump-formula.yml -R mcpp-community/homebrew-mcpp
+```
+
 ### 常见失败原因
 
 | 症状 | 原因 | 修复 |

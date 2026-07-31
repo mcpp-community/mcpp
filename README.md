@@ -81,7 +81,23 @@ Installs into `~/.mcpp/` and adds it to your shell PATH. Deleting `~/.mcpp` unin
 </details>
 
 <details>
-<summary><b>Option 2</b> — Arch Linux (AUR)</summary>
+<summary><b>Option 2</b> — Homebrew (macOS / Linux)</summary>
+
+```bash
+brew install mcpp-community/mcpp/mcpp-m
+```
+
+One command — it taps [`mcpp-community/homebrew-mcpp`](https://github.com/mcpp-community/homebrew-mcpp)
+and installs the same prebuilt release binary. macOS needs Apple silicon +
+macOS 14; per-user data lives in `~/.mcpp/`.
+
+Homebrew's `mcpp` is an unrelated C preprocessor, hence the `mcpp-m` formula
+name — the command it installs is still `mcpp`.
+
+</details>
+
+<details>
+<summary><b>Option 3</b> — Arch Linux (AUR)</summary>
 
 ```bash
 yay -S mcpp-bin      # prebuilt release binary
@@ -95,7 +111,7 @@ On Arch the name `mcpp` is an unrelated C preprocessor, so the packages are
 </details>
 
 <details>
-<summary><b>Option 3</b> — let an AI assistant install it for you</summary>
+<summary><b>Option 4</b> — let an AI assistant install it for you</summary>
 
 Copy the following prompt to your AI coding assistant (Claude Code / Cursor / Copilot, etc.):
 

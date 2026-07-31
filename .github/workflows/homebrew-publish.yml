@@ -1,0 +1,83 @@
+name: homebrew-publish
+
+# Tell the Homebrew tap (mcpp-community/homebrew-mcpp) that a release is out.
+#
+# The tap owns the formula rewrite — it reads the .sha256 sidecars from the
+# release and commits the new url/version itself. All this workflow does is
+# fire the starting gun, so nothing here needs to know what a formula is.
+#
+# Triggers on COMPLETION of the `release` workflow rather than on
+# `release: published`, for the same reason aur-publish.yml does: release.yml
+# creates the GitHub Release in its first job but uploads the macOS / aarch64
+# assets in later jobs, and the tap needs every sidecar to exist.
+#
+# Requires one repository secret:
+#   HOMEBREW_TAP_TOKEN — fine-grained PAT scoped to mcpp-community/homebrew-mcpp
+#                        with "Contents: read and write" (repository_dispatch
+#                        is a write-level API).
+#
+# The secret is OPTIONAL. Without it this workflow logs a notice and exits 0;
+# the tap runs the same bump on a daily schedule, so a missing token costs
+# freshness (up to 24h), not correctness. That keeps a release from failing
+# over a credential the release itself doesn't need.
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (default: [package].version in mcpp.toml)"
+        required: false
+
+concurrency:
+  group: homebrew-publish
+  cancel-in-progress: false
+
+jobs:
+  notify-tap:
+    runs-on: ubuntu-latest
+    # On the workflow_run trigger, only proceed if the release actually
+    # succeeded (skip failed/cancelled release runs).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Checkout released commit
+        uses: actions/checkout@v4
+        with:
+          # workflow_run: the exact commit the release was built from.
+          # workflow_dispatch: default ref (HEAD of the branch).
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Resolve version
+        id: resolve
+        run: |
+          VER="${{ github.event.inputs.version }}"
+          if [ -z "$VER" ]; then
+            # mcpp.toml at the released commit carries the right version.
+            VER=$(grep -m1 -E '^\s*version\s*=' mcpp.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          fi
+          [ -n "$VER" ] || { echo "cannot resolve version"; exit 1; }
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo ":: version $VER"
+
+      - name: Ping the tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VER: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -eu
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN is not configured; skipping the ping. mcpp-community/homebrew-mcpp bumps itself on a daily schedule, so ${VER} reaches the tap within 24h."
+            exit 0
+          fi
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${TAP_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/mcpp-community/homebrew-mcpp/dispatches \
+            -d "{\"event_type\":\"mcpp-release\",\"client_payload\":{\"version\":\"${VER}\"}}"
+          echo ":: dispatched mcpp-release ${VER} to mcpp-community/homebrew-mcpp"
+          echo "Pinged the Homebrew tap for **${VER}**." >> "$GITHUB_STEP_SUMMARY"

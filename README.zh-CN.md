@@ -81,7 +81,23 @@ curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/insta
 </details>
 
 <details>
-<summary><b>方式 2</b> — Arch Linux（AUR）</summary>
+<summary><b>方式 2</b> — Homebrew（macOS / Linux）</summary>
+
+```bash
+brew install mcpp-community/mcpp/mcpp-m
+```
+
+一条命令即可，会自动 tap [`mcpp-community/homebrew-mcpp`](https://github.com/mcpp-community/homebrew-mcpp)
+并安装同一份预编译 release 二进制。macOS 需要 Apple 芯片 + macOS 14；
+每个用户的数据仍在各自的 `~/.mcpp/`。
+
+Homebrew 上 `mcpp` 属于一个无关的 C 预处理器，所以公式名是 `mcpp-m`，
+装出来的命令仍然是 `mcpp`。
+
+</details>
+
+<details>
+<summary><b>方式 3</b> — Arch Linux（AUR）</summary>
 
 ```bash
 yay -S mcpp-bin      # 预编译 release 二进制
@@ -95,7 +111,7 @@ Arch 上 `mcpp` 这个名字属于一个无关的 C 预处理器，所以包名�
 </details>
 
 <details>
-<summary><b>方式 3</b> — 让 AI 助手帮你安装</summary>
+<summary><b>方式 4</b> — 让 AI 助手帮你安装</summary>
 
 将以下提示词复制给你的 AI 编码助手（Claude Code / Cursor / Copilot 等）：
 
