@@ -71,6 +71,16 @@ void diagnostic(const Diagnostic& d);
 // Plain output (no verb), respecting -q flag.
 void plain(std::string_view message);
 
+// Flush stdout. Every stdout-writing function above already calls this, so
+// callers only need it when they wrote to stdout directly (std::println) and
+// want that line visible now rather than whenever the libc buffer happens to
+// fill. main() also sets stdout line-buffered, which covers the POSIX
+// platforms; this is what makes the guarantee hold on Windows too, where
+// MSVCRT treats _IOLBF as _IOFBF. Progress-driven output must be visible while
+// the process is still running: a build that is killed mid-flight is exactly
+// when its last lines matter most.
+void flush();
+
 // --- progress bar (single-line, \r-rewritten) ---
 class ProgressBar {
 public:
@@ -225,6 +235,8 @@ bool is_color_enabled() { return g_color; }
 void set_quiet(bool q) { g_quiet = q; }
 bool is_quiet()        { return g_quiet; }
 
+void flush() { std::fflush(stdout); }
+
 void status(std::string_view verb, std::string_view message) {
     if (g_quiet) return;
     init();
@@ -235,6 +247,7 @@ void status(std::string_view verb, std::string_view message) {
     } else {
         std::println("{} {}", v, message);
     }
+    flush();
 }
 
 void info(std::string_view verb, std::string_view message) {
@@ -247,6 +260,7 @@ void info(std::string_view verb, std::string_view message) {
     } else {
         std::println("{} {}", v, message);
     }
+    flush();
 }
 
 void finished(std::string_view profile, std::chrono::milliseconds elapsed,
@@ -269,6 +283,7 @@ void finished(std::string_view profile, std::chrono::milliseconds elapsed,
     } else {
         std::println("{} {}", v, msg);
     }
+    flush();
 }
 
 void warning(std::string_view message) {
@@ -292,6 +307,7 @@ void error(std::string_view message) {
 void plain(std::string_view message) {
     if (g_quiet) return;
     std::println("{}", message);
+    flush();
 }
 
 void diagnostic(const Diagnostic& d) {

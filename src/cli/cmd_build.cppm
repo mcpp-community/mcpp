@@ -142,15 +142,25 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     mcpp::build::TestOptions to;
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
     to.list = parsed.is_flag_set("list");
-    if (auto ts = parsed.value("timeout")) {
+    // The three deadlines share one parser: they differ only in what they
+    // bound, not in how they are spelled. 0 always means "no limit" — for
+    // --timeout that now has to be asked for rather than being the default.
+    int workspaceTimeoutSecs = 0;
+    auto read_secs = [&parsed](std::string_view flag, int& out) -> bool {
+        auto ts = parsed.value(std::string{flag});
+        if (!ts) return true;
         int secs = 0;
         auto [p, ec] = std::from_chars(ts->data(), ts->data() + ts->size(), secs);
         if (ec != std::errc{} || p != ts->data() + ts->size() || secs < 0) {
-            mcpp::ui::error(std::format("invalid --timeout '{}' (whole seconds >= 0)", *ts));
-            return 2;
+            mcpp::ui::error(std::format("invalid --{} '{}' (whole seconds >= 0)", flag, *ts));
+            return false;
         }
-        to.timeoutSecs = secs;
-    }
+        out = secs;
+        return true;
+    };
+    if (!read_secs("timeout", to.timeoutSecs)) return 2;
+    if (!read_secs("build-timeout", to.buildTimeoutSecs)) return 2;
+    if (!read_secs("workspace-timeout", workspaceTimeoutSecs)) return 2;
     if (auto mf = parsed.value("message-format")) {
         if (*mf == "json")       to.format = mcpp::build::TestMessageFormat::Json;
         else if (*mf != "human") {
@@ -164,23 +174,125 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // red member never hides the rest.
     if (auto members = workspace_fanout_members(parsed.is_flag_set("workspace"),
                                                 ov.package_filter)) {
+        const bool json = (to.format == mcpp::build::TestMessageFormat::Json);
+        // Silence the ui BEFORE the first member, not inside run_tests. The
+        // quiet flag used to be set by run_tests itself, so the fan-out's own
+        // "testing member" line escaped for member #1 and was suppressed from
+        // #2 on — one stdout stream, two behaviors, and the stray line broke
+        // NDJSON for any consumer that parsed it strictly.
+        if (json) mcpp::ui::set_quiet(true);
+
         int rc = 0;
         std::vector<std::string> failed;
+        std::vector<std::string> notRun;
+        std::vector<std::pair<std::string, long long>> memberTimes;
+        int totalPassed = 0, totalFailed = 0;
+        auto tWs = std::chrono::steady_clock::now();
+        auto ws_ms = [&tWs] {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - tWs).count();
+        };
+        const long long wsDeadlineMs =
+            static_cast<long long>(workspaceTimeoutSecs) * 1000;
+
+        std::size_t idx = 0;
         for (auto& mp : *members) {
+            ++idx;
+            // Checked BEFORE starting a member rather than after: stopping
+            // mid-member would leave a half-built member reported as neither
+            // run nor skipped.
+            if (wsDeadlineMs > 0 && ws_ms() >= wsDeadlineMs) {
+                notRun.push_back(mp);
+                continue;
+            }
             mcpp::build::BuildOverrides mo = ov;
             mo.package_filter = mp;
-            mcpp::ui::status("Workspace", std::format("testing member '{}'", mp));
-            int r = mcpp::build::run_tests(passthrough, mo, to);
-            if (r != 0) { rc = r; failed.push_back(mp); }
-        }
-        if (failed.empty())
             mcpp::ui::status("Workspace",
-                std::format("all {} member(s) passed", members->size()));
+                std::format("testing member '{}' ({}/{})", mp, idx, members->size()));
+            mcpp::build::TestRunSummary sum;
+            int r = mcpp::build::run_tests(passthrough, mo, to, &sum);
+            totalPassed += sum.passed;
+            totalFailed += sum.failed;
+            memberTimes.emplace_back(mp, sum.elapsedMs);
+            auto secs = static_cast<double>(sum.elapsedMs) / 1000.0;
+            if (r != 0) {
+                rc = r;
+                failed.push_back(mp);
+                mcpp::ui::status("Workspace",
+                    std::format("member '{}' ({}/{}) FAILED — {} passed, {} failed in {:.2f}s",
+                                mp, idx, members->size(), sum.passed, sum.failed, secs));
+            } else {
+                mcpp::ui::status("Workspace",
+                    std::format("member '{}' ({}/{}) ok — {} passed in {:.2f}s",
+                                mp, idx, members->size(), sum.passed, secs));
+            }
+        }
+
+        auto wsElapsed = ws_ms();
+        if (!notRun.empty()) rc = rc ? rc : 1;
+
+        if (json) {
+            // Member paths are manifest-authored strings, so escape rather
+            // than assume: one backslash in a member path would otherwise emit
+            // a stream that is not JSON at all.
+            auto join = [](const std::vector<std::string>& v) {
+                std::string s;
+                for (auto& x : v) {
+                    if (!s.empty()) s += ',';
+                    s += '"';
+                    for (char c : x) {
+                        if (c == '"' || c == '\\') s += '\\';
+                        s += c;
+                    }
+                    s += '"';
+                }
+                return s;
+            };
+            std::println("{{\"workspace_summary\":{{\"members\":{},\"passed\":{},\"failed\":{},"
+                         "\"failed_members\":[{}],\"not_run\":[{}],\"elapsed_ms\":{}}}}}",
+                         members->size(), totalPassed, totalFailed,
+                         join(failed), join(notRun), wsElapsed);
+            std::fflush(stdout);
+            return rc;
+        }
+
+        // Slowest members, printed unconditionally rather than only on failure:
+        // "which member ate the wall clock" is the question a green-but-slow CI
+        // run raises, and answering it used to mean reverse-engineering log
+        // timestamps.
+        std::ranges::sort(memberTimes, [](auto& a, auto& b) { return a.second > b.second; });
+        std::string slowest;
+        for (std::size_t i = 0; i < memberTimes.size() && i < 3; ++i) {
+            if (memberTimes[i].second < 1000) break;
+            if (!slowest.empty()) slowest += ", ";
+            slowest += std::format("{} {:.1f}s", memberTimes[i].first,
+                                   static_cast<double>(memberTimes[i].second) / 1000.0);
+        }
+
+        auto join_names = [](const std::vector<std::string>& v) {
+            std::string s;
+            for (auto& f : v) { if (!s.empty()) s += ", "; s += f; }
+            return s;
+        };
+        if (failed.empty() && notRun.empty())
+            mcpp::ui::status("workspace result",
+                std::format("ok. {} member(s); {} passed; 0 failed; finished in {:.2f}s",
+                            members->size(), totalPassed,
+                            static_cast<double>(wsElapsed) / 1000.0));
         else
-            mcpp::ui::error(std::format("workspace test: {}/{} member(s) failed: {}",
-                failed.size(), members->size(), [&]{
-                    std::string s; for (auto& f : failed) { if (!s.empty()) s += ", "; s += f; }
-                    return s; }()));
+            mcpp::ui::error(std::format(
+                "workspace test: {}/{} member(s) failed; {} passed; {} failed; "
+                "finished in {:.2f}s",
+                failed.size(), members->size(), totalPassed, totalFailed,
+                static_cast<double>(wsElapsed) / 1000.0));
+        if (!failed.empty())
+            mcpp::ui::plain(std::format("    failed members: {}", join_names(failed)));
+        if (!notRun.empty())
+            mcpp::ui::plain(std::format(
+                "    not run (--workspace-timeout {}s reached): {}",
+                workspaceTimeoutSecs, join_names(notRun)));
+        if (!slowest.empty())
+            mcpp::ui::plain(std::format("    slowest: {}", slowest));
         return rc;
     }
     return mcpp::build::run_tests(passthrough, ov, to);

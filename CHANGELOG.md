@@ -3,6 +3,45 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.1.1] — 2026-08-01
+
+### 修复
+
+- **`mcpp` 的进度输出在非 TTY 下不再被 libc 缓冲区吞掉。** 全部状态行此前都是裸 `std::println` 且**无一处 flush**,仓库里也没有 `setvbuf` —— 于是「什么时候能看见」完全由各平台 libc 的缓冲区大小决定,而这个数字三个平台都不一样:musl(Linux 发行版的链接方式)写死 `BUFSIZ = 1024` 且忽略 `st_blksize`,Apple libc 取 `st_blksize`(管道上是 65536),MSVCRT 用 4096 且**不支持行缓冲**。
+
+  实测同一个 97 成员工作空间的同一段 ~13 KB 状态输出:Linux 冲了 13 次,macOS **0 次**。macOS 的 CI 日志因此只有测试二进制自己的输出(它们是独立进程,各自退出时 flush),mcpp 自己的**一行都没有**;等这一步被 job timeout 杀掉时,整个缓冲区连同那 13 KB 一起没了 —— 一个 45 分钟、零可归因输出的步骤。
+
+  现在 `main()` 把 stdout 设为行缓冲,`mcpp::ui` 的每个写 stdout 的函数额外显式 flush(Windows 上 MSVCRT 会把 `_IOLBF` 当 `_IOFBF`,所以两条腿都要有)。实测:同一条命令从 3 次块写变成 391 次逐行写。
+
+- **`mcpp test` 的 `finished in` 不再漏算构建时间。** 计时起点此前在包级构建与批量测试构建**之后**,只覆盖逐测试循环。实测一个成员打印 `finished in 6.53s`,真实墙钟 **93.5s** —— 14 倍的低报,而且**恰好在构建最重、最需要这个数字的成员上最不准**。现在起点移到 Phase A 之前,并拆成 `finished in 93.5s (build 87.0s + run 6.5s)`:测试只要几毫秒、链接要 90 秒的成员,在合并数字里和「测试套件很慢」长得一样,拆开才分得出。
+
+- **`--message-format json` 的 stdout 不再被非 JSON 行污染,且污染是不对称的。** 静音标志此前由 `run_tests` 自己设置,而 `--workspace` 的 `Workspace testing member` 表头由扇出层在调用**之前**打 —— 第一个成员的表头漏进 NDJSON 流,第二个起被静音。现在扇出层在第一个成员之前就静音。
+
+### 新增
+
+- **`mcpp test` 默认有界。** `--timeout` 的默认值从 `0`(不限)改为 **300 秒**;`--timeout 0` 仍然表示不限,只是现在要显式要求。无人值守的 CI 不该被一个挂住的测试吃掉整个 job,而「不限」作为默认值恰恰保证了它可以。
+
+- **`--build-timeout`(默认 900 秒)—— `--timeout` 覆盖不到的另一半。** 此前 `--timeout` 只包住测试**进程的运行**,而 `mcpp test` 的三次 ninja 驱动(包级构建、批量测试构建、逐测试构建)**全都没有期限**。实测一个 macOS lane 卡在某成员的 14 次可执行链接上超过 44 分钟,`--timeout` 设多大都无效。现在每次驱动各自独立计时,超时报成该成员的构建失败并继续下一个成员,失败行明确写「build timeout」而非笼统的 compile 失败。
+
+  平台限制如实说明:deadline 执行器在 Windows 上没有 kill-by-handle 路径,该值被忽略(POSIX only)。
+
+- **`--workspace-timeout`(默认 0 = 不限)。** 扇出是串行的,一个没有上界的成员会拖住它后面的所有成员。超时后停止扇出、**如实汇总已跑完的成员并列出未运行的**,而不是把进程留给 CI 去 kill(那会把它想说的话一并丢掉)。
+
+- **`mcpp test --workspace` 有了进度与计时。** 逐成员 `M/N` 进度、逐测试耗时(`t1 ... ok (0.31s)`)、逐成员耗时,以及 workspace 级汇总 + `slowest:` 榜:
+
+  ```
+   workspace result ok. 97 member(s); 412 passed; 0 failed; finished in 355.20s
+      slowest: libs/jsc 93.5s, libs/install 32.2s, libs/http 24.1s
+  ```
+
+  此前扇出只打 `all N member(s) passed` —— 定位「哪个成员吃掉了墙钟」只能靠反解 CI 日志时间戳。
+
+- **JSON 记录带成员限定。** 每条 test 记录新增 `"member"`,`summary` 新增 `"member"` / `"build_ms"` / `"run_ms"`,流末尾新增一条 `workspace_summary`(含 `failed_members` / `not_run`)。一旦两个成员都有名为 `smoke` 的测试,裸测试名就不再可归因。
+
+- **macOS 上不注入运行期库路径这件事,现在会说出来。** `runtime_library_path_key()` 在 macOS 返回空串(理由正确:`DYLD_LIBRARY_PATH` 会波及 ninja 启动的每个可执行文件,可能让系统框架加载到私有 libc++)。后果是依赖 `[runtime] library_dirs` 的测试在 Linux/Windows 通过、在 macOS 以 dyld 错误失败,而这条差异此前**零诊断**。现在当计划里确有 `runtimeLibraryDirs` 时给一条点名平台与 rpath 兜底的警告。
+
+分析与实施计划见 `.agents/docs/2026-07-31-test-workspace-observability-analysis.md` 与 `.agents/docs/2026-07-31-test-observability-implementation-plan.md`。
+
 ## [2026.7.31.1] — 2026-07-31
 
 ### 新增

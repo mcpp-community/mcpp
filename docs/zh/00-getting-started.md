@@ -87,8 +87,15 @@ mcpp test               # 编译并运行 tests/**/*.cpp —— 每文件一个�
                         # 框架无关(裸 main,或经 [dev-dependencies] 使用 gtest)
 mcpp test <pattern>     # 只运行名字包含 <pattern> 的测试
 mcpp test --list        # 只枚举测试,不构建
-mcpp test --timeout 30  # 运行超过 30s 的测试将被终止并计为失败
+mcpp test --timeout 30  # 单个测试**运行**超过 30s 被终止(默认 300;0 = 不限)
+mcpp test --build-timeout 120   # 单次编译/链接超过 120s 被终止(默认 900)
 ```
+
+`mcpp test` 默认是**有界**操作 —— 无人值守的 CI 不该被一个挂住的测试吃掉整个 job。
+两个期限覆盖的是不同的一半,互不蕴含:`--timeout` 约束测试**进程的运行**,
+`--build-timeout` 约束**单次 ninja 驱动**(包级构建、批量测试构建、每个测试各自
+独立计时)。**链接卡死属于 `--build-timeout`,`--timeout` 设多大都无效。**
+`--build-timeout` 仅 POSIX 有效 —— Windows 上没有 kill-by-handle 路径,该值被忽略。
 
 ## 添加依赖
 

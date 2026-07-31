@@ -192,6 +192,38 @@ mcpp run -p server -- --port 8080
 `mcpp test --workspace` 逐成员独立汇报、遇失败继续,只要有任一成员失败即非零退出——
 非常适合作为「一个测试众多库的工作空间」的单条、无 shell 的 CI 步骤。
 
+#### 扇出汇报什么
+
+```
+   Workspace testing member 'libs/core' (3/97)
+test_paths ... ok (0.31s)
+ test result ok. 7 passed; 0 failed; finished in 9.50s (build 8.90s + run 0.60s)
+   Workspace member 'libs/core' (3/97) ok — 7 passed in 9.50s
+...
+ workspace result ok. 97 member(s); 412 passed; 0 failed; finished in 355.20s
+    slowest: libs/jsc 93.5s, libs/install 32.2s, libs/http 24.1s
+```
+
+`M/N` 进度、逐测试耗时,以及**按 build / run 拆开**的成员耗时。拆开才是有用的那部分:
+一个测试只要几毫秒、但链接要 90 秒的成员,在单个合并数字里和「测试套件很慢」长得一模一样,
+而两者里只有一个值得去查。
+
+`--message-format json` 承载同样的数据。每条 test 记录都带 `"member"` 限定,流末尾是一条
+`workspace_summary`,列出失败成员与未运行成员 —— 一旦两个成员都有名为 `smoke` 的测试,
+裸测试名就不再可归因。
+
+#### 给扇出设期限
+
+```bash
+mcpp test --workspace --timeout 60        # 单测试**运行**期限(默认 300)
+mcpp test --workspace --build-timeout 300 # 单次 ninja 驱动期限(默认 900)
+mcpp test --workspace --workspace-timeout 1800   # 整条扇出(默认 0 = 不限)
+```
+
+扇出是串行的,所以一个没有上界的成员会拖住它后面的所有成员。三个期限都是**汇报而非中止**:
+测试超时只判该测试失败、扇出继续;构建超时只判该成员失败;`--workspace-timeout` 停止扇出并
+列出未运行的成员 —— 而不是把进程留给 CI 去 kill(那会把它想说的话一并丢掉)。
+
 ## 6. 目录布局
 
 工作空间推荐的目录布局：

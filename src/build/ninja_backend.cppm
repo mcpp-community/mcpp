@@ -1395,9 +1395,25 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
 
-    auto cap = mcpp::platform::process::capture_exec(nargv, nenv);
+    bool buildTimedOut = false;
+    auto cap = mcpp::platform::process::capture_exec_deadline(
+        nargv, nenv,
+        std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000),
+        &buildTimedOut);
     std::string out = cap.output;
-    bool ok = (cap.exit_code == 0);
+    bool ok = (cap.exit_code == 0) && !buildTimedOut;
+
+    if (buildTimedOut) {
+        // Report as a build failure with the partial ninja output attached —
+        // the last edge ninja printed is the one that hung, which is the whole
+        // point of having a deadline here.
+        r.exitCode = 1;
+        r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0);
+        return std::unexpected(BuildError{
+            std::format("build timed out after {}s", opts.buildTimeoutSecs),
+            plan.outputDir / "build.ninja", out, /*timedOut=*/true});
+    }
 
     r.exitCode = ok ? 0 : 1;
     r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -195,6 +195,42 @@ member. `mcpp test --workspace` reports each member separately and continues pas
 failing member, exiting non-zero if any member failed — ideal as a single,
 shell-free CI step for a workspace that tests many libraries.
 
+#### What the fan-out reports
+
+```
+   Workspace testing member 'libs/core' (3/97)
+test_paths ... ok (0.31s)
+ test result ok. 7 passed; 0 failed; finished in 9.50s (build 8.90s + run 0.60s)
+   Workspace member 'libs/core' (3/97) ok — 7 passed in 9.50s
+...
+ workspace result ok. 97 member(s); 412 passed; 0 failed; finished in 355.20s
+    slowest: libs/jsc 93.5s, libs/install 32.2s, libs/http 24.1s
+```
+
+`M/N` progress, per-test durations, and a per-member time split into **build** vs
+**run**. The split is the useful part: a member whose tests take milliseconds but
+whose link takes 90 seconds looks identical to a slow test suite in a single merged
+number, and only one of those is worth investigating.
+
+`--message-format json` carries the same data as NDJSON. Every test record is
+member-qualified (`"member"`), and the stream ends with a `workspace_summary`
+record naming the failed and not-run members — a bare test name is ambiguous the
+moment two members both have a `smoke`.
+
+#### Bounding the fan-out
+
+```bash
+mcpp test --workspace --timeout 60        # per-test RUN deadline (default 300)
+mcpp test --workspace --build-timeout 300 # per-ninja-drive deadline (default 900)
+mcpp test --workspace --workspace-timeout 1800   # whole fan-out (default 0 = no limit)
+```
+
+The fan-out is serial, so an unbounded member stalls every member after it. All
+three deadlines report rather than abort: a timed-out test fails that test and the
+fan-out continues; a timed-out build fails that member; `--workspace-timeout` stops
+the fan-out and lists what did not run instead of leaving the CI job to kill the
+process (which discards everything it had to say).
+
 ## 6. Directory Layout
 
 The recommended directory layout for a workspace:

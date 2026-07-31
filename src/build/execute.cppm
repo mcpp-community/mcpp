@@ -798,7 +798,27 @@ export struct TestOptions {
     std::string        filter;   // substring match on the path-based test name; empty = all
     TestMessageFormat  format = TestMessageFormat::Human;
     bool               list = false;   // enumerate only, no build/run
-    int                timeoutSecs = 0;   // per-test run deadline; 0 = unlimited
+    // Per-test RUN deadline. The default is deliberately non-zero: `mcpp test`
+    // is something CI runs unattended, and an unbounded default makes a single
+    // hung test able to consume the whole job with nothing to show for it.
+    // `--timeout 0` still means "no limit", it just has to be asked for.
+    int                timeoutSecs = 300;
+    // Per-ninja-invocation deadline (Phase A, the bulk pass, and each per-test
+    // drive are timed separately). Covers the half `--timeout` never could:
+    // a compile or link that never returns. POSIX only — see BuildOptions.
+    int                buildTimeoutSecs = 900;
+};
+
+// What one member's `run_tests` actually did. `--workspace` fans out over
+// members and needs this to report per-member progress and a workspace total;
+// the exit code alone cannot say how many tests ran or where the time went.
+export struct TestRunSummary {
+    int       passed    = 0;
+    int       failed    = 0;
+    long long buildMs   = 0;   // Phase A + bulk pass + per-test drives
+    long long runMs     = 0;   // the test binaries' own execution
+    long long elapsedMs = 0;   // wall clock for the whole member
+    bool      packageError = false;   // Phase A failed: no test ever ran
 };
 
 // Minimal JSON string escaping for the --message-format json records. Same
@@ -827,8 +847,28 @@ static std::string test_json_escape(std::string_view s) {
 // with dev-deps, run each test binary, summarize.
 export int run_tests(std::span<const std::string> passthrough,
                      BuildOverrides overrides = {},
-                     TestOptions testOpts = {}) {
+                     TestOptions testOpts = {},
+                     TestRunSummary* summaryOut = nullptr) {
     const bool json = (testOpts.format == TestMessageFormat::Json);
+    // The member this call is scoped to (empty outside a workspace). Threaded
+    // into every JSON record so a `--workspace` stream can be attributed: a
+    // bare test name is ambiguous the moment two members both have a `smoke`.
+    const std::string memberName = overrides.package_filter;
+    TestRunSummary summary;
+    struct SummaryWriter {
+        TestRunSummary* out; const TestRunSummary* src;
+        ~SummaryWriter() { if (out) *out = *src; }
+    } summaryWriter{summaryOut, &summary};
+    // Wall clock for the WHOLE member, started before Phase A. The old `t0`
+    // sat after Phase A and the bulk pass, so `finished in` reported only the
+    // per-test loop: measured on one member, 6.53s printed against 93.5s
+    // actual — a 14x understatement, and worst exactly on the build-heavy
+    // members where the number matters.
+    auto tMember = std::chrono::steady_clock::now();
+    auto member_ms = [&tMember] {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - tMember).count();
+    };
     // JSON mode: stdout carries NDJSON only. All ui::status/info lines print
     // to stdout, so silence them wholesale; errors already go to stderr.
     if (json) mcpp::ui::set_quiet(true);
@@ -917,7 +957,8 @@ export int run_tests(std::span<const std::string> passthrough,
             auto abs = std::filesystem::absolute(testRoot / t.main)
                            .lexically_normal().generic_string();
             if (json)
-                std::println("{{\"test\":\"{}\",\"main\":\"{}\"}}",
+                std::println("{{\"member\":\"{}\",\"test\":\"{}\",\"main\":\"{}\"}}",
+                             test_json_escape(memberName),
                              test_json_escape(t.name), test_json_escape(abs));
             else
                 std::println("{}", t.name);
@@ -1022,9 +1063,11 @@ export int run_tests(std::span<const std::string> passthrough,
                                                                  : "run_fail";
         std::string signal = (r.exitCode > 128 && r.exitCode < 128 + 65)
             ? std::to_string(r.exitCode - 128) : "null";
-        std::println("{{\"test\":\"{}\",\"status\":\"{}\",\"exit_code\":{},\"signal\":{},"
+        std::println("{{\"member\":\"{}\",\"test\":\"{}\",\"status\":\"{}\","
+                     "\"exit_code\":{},\"signal\":{},"
                      "\"duration_ms\":{},\"timed_out\":{},"
                      "\"compile_output\":\"{}\",\"run_output\":\"{}\"}}",
+                     test_json_escape(memberName),
                      test_json_escape(r.name), st, r.exitCode, signal, r.durationMs,
                      r.timedOut ? "true" : "false",
                      test_json_escape(r.compileOutput), test_json_escape(r.runOutput));
@@ -1053,8 +1096,14 @@ export int run_tests(std::span<const std::string> passthrough,
     if (!pkgTargets.empty()) {
         mcpp::build::BuildOptions aOpts;
         aOpts.ninjaTargets = pkgTargets;
+        aOpts.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
+        auto tPhaseA = std::chrono::steady_clock::now();
         auto a = backend->build(ctx->plan, aOpts);
+        summary.buildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - tPhaseA).count();
         if (!a) {
+            summary.packageError = true;
+            summary.elapsedMs = member_ms();
             std::fflush(stdout);
             if (json)
                 std::println("{{\"error\":\"package\",\"compile_output\":\"{}\"}}",
@@ -1096,19 +1145,39 @@ export int run_tests(std::span<const std::string> passthrough,
     {
         mcpp::build::BuildOptions bulk;
         bulk.keepGoing = true;
+        bulk.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
         for (auto& lu : ctx->plan.linkUnits)
             if (filter_match(lu))
                 bulk.ninjaTargets.push_back(lu.output.generic_string());
-        if (!bulk.ninjaTargets.empty())
+        if (!bulk.ninjaTargets.empty()) {
+            auto tBulk = std::chrono::steady_clock::now();
             (void)backend->build(ctx->plan, bulk);
+            summary.buildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - tBulk).count();
+        }
     }
 
     //    Then build + run each test in sequence; collect results.
-    auto t0 = std::chrono::steady_clock::now();
 
     auto runtimeEnvKey = mcpp::platform::env::runtime_library_path_key();
     auto runtimeEnvValue = mcpp::platform::env::prepend_path_list(
         runtimeEnvKey, ctx->plan.runtimeLibraryDirs);
+
+    // macOS deliberately has no runtime-library-path key (env.cppm): injecting
+    // DYLD_LIBRARY_PATH would reach every executable ninja launches and can
+    // make system frameworks load a private libc++. The consequence is that a
+    // test needing `[runtime] library_dirs` passes on Linux/Windows and fails
+    // here with a dyld error that names neither the cause nor the platform —
+    // so say it out loud rather than leaving the difference silent.
+    if constexpr (mcpp::platform::is_macos) {
+        if (runtimeEnvKey.empty() && !ctx->plan.runtimeLibraryDirs.empty()) {
+            mcpp::diag::warning("test/runtime-path",
+                "macOS does not inject a runtime library path for test binaries "
+                "(DYLD_LIBRARY_PATH is deliberately not set); dependencies must be "
+                "reachable through the binary's rpath. A dyld 'image not found' "
+                "failure below is this difference, not a broken test.");
+        }
+    }
 
     for (auto& lu : ctx->plan.linkUnits) {
         if (!filter_match(lu)) continue;
@@ -1123,12 +1192,22 @@ export int run_tests(std::span<const std::string> passthrough,
 
         mcpp::build::BuildOptions bOpts;
         bOpts.ninjaTargets = {lu.output.generic_string()};
+        bOpts.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
+        auto tBuild = std::chrono::steady_clock::now();
         auto b = backend->build(ctx->plan, bOpts);
+        summary.buildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - tBuild).count();
         if (!b) {
             if (!json) {
                 // The test's own diagnostics, right under its FAIL line — a
                 // reader fixes one test with one contiguous block of output.
-                std::println("{} ... FAIL (compile)", lu.targetName);
+                mcpp::ui::plain(std::format("{} ... FAIL ({}, {:.2f}s)",
+                                            lu.targetName,
+                                            b.error().timedOut
+                                                ? std::format("build timeout after {}s",
+                                                              testOpts.buildTimeoutSecs)
+                                                : std::string{"compile"},
+                                            static_cast<double>(test_ms()) / 1000.0));
                 std::fflush(stdout);
                 if (!b.error().diagnosticOutput.empty()) {
                     std::fputs(b.error().diagnosticOutput.c_str(), stderr);
@@ -1177,6 +1256,7 @@ export int run_tests(std::span<const std::string> passthrough,
         bool timedOut = false;
         int exitCode;
         std::string runOutput;
+        auto tRun = std::chrono::steady_clock::now();
         if (json) {
             auto rr = mcpp::platform::process::capture_exec_deadline(
                 argv, childEnv, deadline, &timedOut);
@@ -1186,25 +1266,29 @@ export int run_tests(std::span<const std::string> passthrough,
             exitCode = mcpp::platform::process::run_exec_deadline(
                 argv, childEnv, deadline, &timedOut);
         }
+        summary.runMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - tRun).count();
 
         if (timedOut) {
-            if (!json) std::println("{} ... FAIL (timeout after {}s)",
-                                    lu.targetName, testOpts.timeoutSecs);
+            if (!json) mcpp::ui::plain(std::format("{} ... FAIL (timeout after {}s)",
+                                                   lu.targetName, testOpts.timeoutSecs));
             results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {},
                                std::move(runOutput), test_ms(), true});
         } else if (exitCode == 0) {
-            if (!json) std::println("{} ... ok", lu.targetName);
+            if (!json) mcpp::ui::plain(std::format("{} ... ok ({:.2f}s)", lu.targetName,
+                                                   static_cast<double>(test_ms()) / 1000.0));
             results.push_back({lu.targetName, TestResult::St::Pass, 0, {},
                                std::move(runOutput), test_ms()});
         } else {
-            if (!json) std::println("{} ... FAIL (exit {})", lu.targetName, exitCode);
+            if (!json) mcpp::ui::plain(std::format("{} ... FAIL (exit {}, {:.2f}s)",
+                                                   lu.targetName, exitCode,
+                                                   static_cast<double>(test_ms()) / 1000.0));
             results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {},
                                std::move(runOutput), test_ms()});
         }
         emit_json(results.back());
     }
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0);
+    summary.elapsedMs = member_ms();
 
     // 7. Summary.
     int passed = 0;
@@ -1215,9 +1299,22 @@ export int run_tests(std::span<const std::string> passthrough,
         else { ++failed; failures.push_back(r.name); }
     }
 
+    summary.passed = passed;
+    summary.failed = failed;
+
+    // "build X + run Y" rather than one merged number: on a member whose tests
+    // are cheap but whose link is not, those two are three orders of magnitude
+    // apart, and only the split says which one to go look at.
+    auto timing = std::format("{:.2f}s (build {:.2f}s + run {:.2f}s)",
+                              static_cast<double>(summary.elapsedMs) / 1000.0,
+                              static_cast<double>(summary.buildMs)   / 1000.0,
+                              static_cast<double>(summary.runMs)     / 1000.0);
+
     if (json) {
-        std::println("{{\"summary\":{{\"passed\":{},\"failed\":{},\"elapsed_ms\":{}}}}}",
-                     passed, failed, elapsed.count());
+        std::println("{{\"summary\":{{\"member\":\"{}\",\"passed\":{},\"failed\":{},"
+                     "\"elapsed_ms\":{},\"build_ms\":{},\"run_ms\":{}}}}}",
+                     test_json_escape(memberName), passed, failed,
+                     summary.elapsedMs, summary.buildMs, summary.runMs);
         std::fflush(stdout);
         return failed == 0 ? 0 : 1;
     }
@@ -1225,13 +1322,12 @@ export int run_tests(std::span<const std::string> passthrough,
     std::println("");
     if (failed == 0) {
         mcpp::ui::status("test result",
-            std::format("ok. {} passed; 0 failed; finished in {:.2f}s",
-                        passed, static_cast<double>(elapsed.count()) / 1000.0));
+            std::format("ok. {} passed; 0 failed; finished in {}", passed, timing));
         return 0;
     }
     mcpp::ui::error(std::format(
-        "test result: FAILED. {} passed; {} failed; finished in {:.2f}s",
-        passed, failed, static_cast<double>(elapsed.count()) / 1000.0));
+        "test result: FAILED. {} passed; {} failed; finished in {}",
+        passed, failed, timing));
     std::println("");
     std::println("failures:");
     for (auto& n : failures) std::println("    {}", n);

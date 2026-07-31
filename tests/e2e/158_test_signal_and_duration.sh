@@ -37,5 +37,6 @@ echo "$out" | grep -q '"test":"ok","status":"pass"' || { echo "ok test missing";
 
 # 人读输出同样用 shell 惯例退出码
 out2=$("$MCPP" test crash 2>&1) || true
-[[ "$out2" == *"crash ... FAIL (exit 139)"* ]] || { echo "human output not 139: $out2"; exit 1; }
+# Prefix match: the line now also carries the test's wall time.
+[[ "$out2" == *"crash ... FAIL (exit 139,"* ]] || { echo "human output not 139: $out2"; exit 1; }
 echo OK

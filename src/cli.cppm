@@ -54,7 +54,7 @@ void print_usage() {
     std::println("  mcpp new <name>                      Create a new package skeleton");
     std::println("  mcpp build [options]                 Build the current package");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
-    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --message-format json)");
+    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --build-timeout, --message-format json)");
     std::println("  mcpp clean [--bmi-cache]             Remove target/ (and optionally the build cache)");
     std::println("  mcpp add <pkg>[@<ver>]               Add a dependency to mcpp.toml");
     std::println("  mcpp remove <pkg>                    Remove a dependency from mcpp.toml");
@@ -276,7 +276,11 @@ int run(int argc, char** argv) {
             .option(cl::Option("list")
                 .help("List (filtered) tests without building or running them"))
             .option(cl::Option("timeout").takes_value().value_name("SECS")
-                .help("Kill a test still running after SECS seconds (reported as a timeout failure)"))
+                .help("Kill a test still RUNNING after SECS seconds (default 300; 0 = no limit)"))
+            .option(cl::Option("build-timeout").takes_value().value_name("SECS")
+                .help("Kill a compile/link drive still running after SECS seconds (default 900; 0 = no limit; POSIX only)"))
+            .option(cl::Option("workspace-timeout").takes_value().value_name("SECS")
+                .help("Stop the --workspace fan-out after SECS seconds and report what did run (default 0 = no limit)"))
             .option(cl::Option("profile").takes_value().value_name("NAME")
                 .help("Build profile for the test build: release (default) | dev | dist | <[profile.*] name>"))
             .option(cl::Option("features").takes_value().value_name("LIST")

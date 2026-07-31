@@ -40,7 +40,11 @@ echo "$out" | grep -q '"exit_code":1'                            || { echo "miss
 echo "$out" | grep -q '"test":"nocompile","status":"compile_fail"' || { echo "missing compile_fail record"; exit 1; }
 echo "$out" | grep -q 'D2X_YOUR_ANSWER'                          || { echo "compile_output missing diagnostics"; exit 1; }
 echo "$out" | grep -q 'hello from ok'                            || { echo "run_output not captured"; exit 1; }
-echo "$out" | grep -q '"summary":{"passed":1,"failed":2'         || { echo "missing summary"; exit 1; }
+# The summary now leads with the member it belongs to (empty outside a
+# workspace) and carries the build/run split, so match the counts, not the
+# whole object prefix.
+echo "$out" | grep -q '"passed":1,"failed":2'                     || { echo "missing summary"; exit 1; }
+echo "$out" | grep -qE '"build_ms":[0-9]+,"run_ms":[0-9]+'        || { echo "summary missing build/run split"; exit 1; }
 
 # Invalid format value → usage error
 set +e

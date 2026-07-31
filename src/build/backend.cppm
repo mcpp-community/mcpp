@@ -19,6 +19,17 @@ struct BuildOptions {
     // Keep building unaffected goals after a failure (ninja -k 0). Used by
     // `mcpp test` to pre-build all test goals in one parallel pass.
     bool                        keepGoing = false;
+    // Wall-clock ceiling for THIS ninja invocation, in seconds. 0 = no limit.
+    //
+    // `mcpp test --timeout` only ever bounded the test binary's *run*; the
+    // three build drives around it had no deadline at all, so a build that
+    // never finishes (measured: 14 executables linking against a prebuilt
+    // JavaScriptCore on macOS, >44 min and still going) could only be stopped
+    // by the CI job timeout — which kills the process and takes its unflushed
+    // output with it. This is the knob that turns that into an attributable
+    // failure. POSIX only: the deadline runner has no kill-by-handle path on
+    // Windows (see mcpp.platform.process), where the value is ignored.
+    unsigned                    buildTimeoutSecs = 0;
 };
 
 struct BuildResult {
@@ -36,6 +47,11 @@ struct BuildError {
     std::string                             message;
     std::optional<std::filesystem::path>    where;
     std::string                             diagnosticOutput;
+    // Set when the drive was killed by buildTimeoutSecs rather than failing to
+    // compile. A flag, not a message prefix: `mcpp test` reports a timed-out
+    // compile differently from a broken one, and matching on prose is how that
+    // distinction silently rots.
+    bool                                    timedOut = false;
 };
 
 struct Backend {

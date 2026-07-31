@@ -86,8 +86,17 @@ mcpp test               # compile and run tests/**/*.cpp — one binary per file
                         # framework-agnostic (bare main, or gtest via [dev-dependencies])
 mcpp test <pattern>     # only tests whose name contains <pattern>
 mcpp test --list        # enumerate tests without building
-mcpp test --timeout 30  # kill a test still running after 30s
+mcpp test --timeout 30  # kill a test still RUNNING after 30s (default 300; 0 = no limit)
+mcpp test --build-timeout 120   # kill a compile/link still running after 120s (default 900)
 ```
+
+`mcpp test` is bounded by default so an unattended CI run cannot be consumed by a
+single hung test. The two deadlines cover different halves and neither implies the
+other: `--timeout` bounds the test *process*, `--build-timeout` bounds one ninja
+drive (the package build, the bulk test build, and each per-test build are timed
+separately). A link that never returns is a `--build-timeout` case, not a
+`--timeout` one. `--build-timeout` is POSIX-only — the deadline runner has no
+kill-by-handle path on Windows, where the value is ignored.
 
 ## Adding Dependencies
 

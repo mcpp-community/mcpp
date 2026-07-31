@@ -64,7 +64,13 @@ set +e
 out=$("$MCPP" test --workspace 2>&1); rc=$?
 set -e
 [ "$rc" -ne 0 ] || { echo "$out"; echo "FAIL: failing member did not fail the run"; exit 1; }
-echo "$out" | grep -qi "member(s) failed: libb" || { echo "$out"; echo "FAIL: no per-member failure summary"; exit 1; }
+# The failure summary now carries counts and wall time as well as the names, so
+# the names moved to their own line (`failed members: libb`) instead of being
+# appended to the header. Assert both halves — the counts are what tell a reader
+# whether "1 member failed" meant one test or four hundred.
+echo "$out" | grep -qiE "workspace test: 1/2 member\(s\) failed" \
+    || { echo "$out"; echo "FAIL: no workspace failure header"; exit 1; }
+echo "$out" | grep -qi "failed members: libb" || { echo "$out"; echo "FAIL: no per-member failure summary"; exit 1; }
 echo "$out" | grep -qi "testing member 'liba'" || { echo "FAIL: did not continue past failure"; exit 1; }
 
 echo "OK"

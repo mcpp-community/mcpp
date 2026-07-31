@@ -31,8 +31,10 @@ code=$?
 set -e
 [[ $code -eq 1 ]] || { echo "expected exit 1, got $code: $out"; exit 1; }
 [[ "$out" == *"ok ... ok"* ]]                 || { echo "passing test did not run: $out"; exit 1; }
-[[ "$out" == *"runfail ... FAIL (exit 1)"* ]] || { echo "runtime failure not reported: $out"; exit 1; }
-[[ "$out" == *"nocompile ... FAIL (compile)"* ]] || { echo "compile failure not isolated: $out"; exit 1; }
+# Per-test lines now carry the test's own wall time — match the prefix, not the
+# whole line, so the duration can be there without pinning its formatting here.
+[[ "$out" == *"runfail ... FAIL (exit 1,"* ]] || { echo "runtime failure not reported: $out"; exit 1; }
+[[ "$out" == *"nocompile ... FAIL (compile,"* ]] || { echo "compile failure not isolated: $out"; exit 1; }
 [[ "$out" == *"1 passed"* && "$out" == *"2 failed"* ]] || { echo "bad summary: $out"; exit 1; }
 
 # Package-level failure stays a hard error: break a src module, all-red is wrong,
@@ -47,5 +49,5 @@ out2=$("$MCPP" test 2>&1)
 code2=$?
 set -e
 [[ $code2 -ne 0 ]] || { echo "package error must fail: $out2"; exit 1; }
-[[ "$out2" != *"nocompile ... FAIL (compile)"* ]] || { echo "package error misattributed to tests: $out2"; exit 1; }
+[[ "$out2" != *"nocompile ... FAIL (compile,"* ]] || { echo "package error misattributed to tests: $out2"; exit 1; }
 echo OK

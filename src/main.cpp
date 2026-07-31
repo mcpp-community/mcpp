@@ -1,10 +1,30 @@
 // mcpp — Modular C++ Package Manager & Build Tool
 // Entry point — delegates to mcpp.cli command dispatch.
 
+module;
+#include <cstdio>      // setvbuf, stdout, _IOLBF
+
 import std;
 import mcpp.cli;
 
 int main(int argc, char* argv[]) {
+    // Line-buffer stdout even when it is not a TTY.
+    //
+    // Without this, progress output is block-buffered and the block SIZE is
+    // whatever the platform's libc picked — which is not the same number
+    // anywhere: musl (the Linux release linkage) hardcodes BUFSIZ = 1024 and
+    // ignores st_blksize, Apple libc takes st_blksize, which for a pipe is
+    // 65536, and MSVCRT uses 4096. Measured on one 97-member workspace: the
+    // same ~13 KB of status output flushed 13 times on Linux and ZERO times on
+    // macOS, so the macOS CI log showed only the test binaries' own output (they
+    // are separate processes and flush at their own exit) and not one line of
+    // mcpp's. When that run was then killed by the job timeout, the whole buffer
+    // went with it — a 45-minute step with no attributable output at all.
+    //
+    // ui::flush() covers the same ground for the ui layer on Windows, where
+    // MSVCRT silently treats _IOLBF as _IOFBF.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+
     int rc;
     try {
         rc = mcpp::cli::run(argc, argv);
