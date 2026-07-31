@@ -67,6 +67,37 @@ irm https://d2learn.org/xlings-install.ps1.txt | iex
 
 </details>
 
+<details>
+<summary>可选 —— 短命令（<code>mp</code>、<code>mbuild</code>、<code>mrun</code> …）</summary>
+
+```bash
+xlings install mcpp-short-cmd -y
+```
+
+装 30 个短命令，`mcpp build` 就是 `mbuild`。命名规则：除最后一个词外每词取首字母，
+最后一个词写全 —— `mcpp self doctor` → `msdoctor`；`mp` 就是裸 `mcpp`。
+它们指向 `mcpp` 这个 shim 而非固定路径，所以 `xlings use mcpp <ver>` 也会一起切换。
+
+| 短命令 | 展开 | 短命令 | 展开 |
+| --- | --- | --- | --- |
+| `mp` | `mcpp` | `mexpkg` | `mcpp emit xpkg` |
+| `mnew` | `mcpp new` | `mxparse` | `mcpp xpkg parse` |
+| `mbuild` | `mcpp build` | `mtinstall` | `mcpp toolchain install` |
+| `mrun` | `mcpp run` | `mtlist` | `mcpp toolchain list` |
+| `mtest` | `mcpp test` | `mtdefault` | `mcpp toolchain default` |
+| `mclean` | `mcpp clean` | `mcdir` | `mcpp cache dir` |
+| `madd` | `mcpp add` | `mclist` | `mcpp cache list` |
+| `mremove` | `mcpp remove` | `mcinfo` | `mcpp cache info` |
+| `mupdate` | `mcpp update` | `mcgc` | `mcpp cache gc` |
+| `msearch` | `mcpp search` | `milist` | `mcpp index list` |
+| `mpublish` | `mcpp publish` | `miadd` | `mcpp index add` |
+| `mpack` | `mcpp pack` | `miremove` | `mcpp index remove` |
+| `msdoctor` | `mcpp self doctor` | `miupdate` | `mcpp index update` |
+| `msenv` | `mcpp self env` | `msconfig` | `mcpp self config` |
+| `msversion` | `mcpp self version` | `msexplain` | `mcpp self explain` |
+
+</details>
+
 **其他方式**
 
 <details>

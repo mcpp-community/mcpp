@@ -67,6 +67,38 @@ irm https://d2learn.org/xlings-install.ps1.txt | iex
 
 </details>
 
+<details>
+<summary>Optional — short commands (<code>mp</code>, <code>mbuild</code>, <code>mrun</code>, …)</summary>
+
+```bash
+xlings install mcpp-short-cmd -y
+```
+
+Registers 30 shims, so `mcpp build` becomes `mbuild`. Naming rule: initial of
+every word but the last, plus the last word in full — `mcpp self doctor` →
+`msdoctor`. `mp` is bare `mcpp`. They alias the `mcpp` shim rather than a fixed
+binary, so `xlings use mcpp <ver>` switches them too.
+
+| Short | Expands to | Short | Expands to |
+| --- | --- | --- | --- |
+| `mp` | `mcpp` | `mexpkg` | `mcpp emit xpkg` |
+| `mnew` | `mcpp new` | `mxparse` | `mcpp xpkg parse` |
+| `mbuild` | `mcpp build` | `mtinstall` | `mcpp toolchain install` |
+| `mrun` | `mcpp run` | `mtlist` | `mcpp toolchain list` |
+| `mtest` | `mcpp test` | `mtdefault` | `mcpp toolchain default` |
+| `mclean` | `mcpp clean` | `mcdir` | `mcpp cache dir` |
+| `madd` | `mcpp add` | `mclist` | `mcpp cache list` |
+| `mremove` | `mcpp remove` | `mcinfo` | `mcpp cache info` |
+| `mupdate` | `mcpp update` | `mcgc` | `mcpp cache gc` |
+| `msearch` | `mcpp search` | `milist` | `mcpp index list` |
+| `mpublish` | `mcpp publish` | `miadd` | `mcpp index add` |
+| `mpack` | `mcpp pack` | `miremove` | `mcpp index remove` |
+| `msdoctor` | `mcpp self doctor` | `miupdate` | `mcpp index update` |
+| `msenv` | `mcpp self env` | `msconfig` | `mcpp self config` |
+| `msversion` | `mcpp self version` | `msexplain` | `mcpp self explain` |
+
+</details>
+
 **Other options**
 
 <details>
