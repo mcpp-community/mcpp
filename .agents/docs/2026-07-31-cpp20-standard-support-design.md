@@ -100,7 +100,8 @@ C++17 及以下**不存在**。所以 `c++20` 是这个白名单的天然下界,
 | gcc 15.1.0 (musl) | `x86_64-linux-musl` | ✅ | ✅ | ✅(`-static` 本机跑通) |
 | gcc 16.1.0 (mingw cross) | `x86_64-w64-mingw32` | ✅ | ✅ | ✅(`-static` + wine 跑通) |
 | clang 22.1.8 + libc++ | `x86_64-unknown-linux-gnu` | ✅(含 `std.compat`) | ✅ | ✅ `hi 1` |
-| MSVC / clang+MSVC STL | Windows | **本机无法验证** → 定案取 20,由 Windows CI 硬断言背书(§5.3) | — | — |
+| MSVC(`cl 19.51.36252`,VS 18 / MSVC 14.51) | `x86_64-windows-msvc` | ✅ **Windows CI 实测**(PR#325,`177_cpp20_msvc.sh`) | ✅ | ✅ `cl20 3` |
+| clang + MSVC STL | Windows | 未单独验证 → 保持 23(`tc.version` 是 clang 的,答不了 cl 的问题) | — | — |
 | llvm 20.1.7(本机 payload) | — | 不适用:该 payload 只有 `bin/ lib/`,**无 `share/libc++/v1/std.cppm`** → `hasImportStd=false`,与档位无关 |
 
 附带抓到的两条硬事实:
@@ -323,7 +324,13 @@ CI 矩阵:`ci-linux-e2e.yml` / `ci-macos-e2e.yml` / `ci-windows-e2e.yml` 已按�
 `run_all.sh`,新增脚本自动进矩阵。musl / mingw 交叉档位由 `cross-build-test.yml`
 覆盖一条 c++20 冒烟即可(§2.2 已实机跑通,CI 只做回归)。
 
-### 5.3 MSVC 的实测义务(定案取 20 的前提)
+### 5.3 MSVC 的实测义务(定案取 20 的前提)—— ✅ 已兑现
+
+**结论(PR#325,2026-07-31):Windows CI 上 `177_cpp20_msvc.sh` 通过。**
+runner 的 `cl 19.51.36252`(VS 18 Enterprise / MSVC 14.51.36231)用 `/std:c++20`
+真实编译并运行了 `import std;`,`compile_commands.json` 里是 `/std:c++20` 而非
+`/std:c++latest`。取 20 的前提成立;19.38 阈值仍只保护更老的 STL。
+
 
 取 20 是**乐观决策**,所以它必须由实测背书,而不是由文档背书 —— 恰恰因为
 微软自己的文档还写着 `/std:c++latest`(#3945 已 fixed 但 Learn 未更新)。
