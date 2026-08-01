@@ -128,11 +128,47 @@ int run_passthrough(std::string_view command,
 // a wait-status word requiring WIFEXITED/WEXITSTATUS unwrapping.
 int extract_exit_code(int raw_status);
 
+// ─── Windows command-line shaping (host-independent, for testing) ─────────
+//
+// `cmd.exe /c <string>` applies a quote rule that silently mangles most
+// command lines (`cmd /?`, /C section): unless the whole string is exactly
+// one quoted executable name, cmd removes the FIRST character and the LAST
+// quote character, then runs the remainder. A correctly quoted line like
+//
+//     "C:\Program Files\gcc\g++.exe" -c "main.cpp"
+//
+// therefore arrives as
+//
+//     C:\Program Files\gcc\g++.exe" -c "main.cpp
+//
+// The fix is to hand cmd an outer pair to consume. These two functions build
+// exactly that shape and are compiled on every platform so the rule can be
+// unit-tested from Linux/macOS — the Windows branch below is otherwise
+// unreachable in every environment mcpp is normally developed on, which is
+// how the unquoted-argv[0] bug survived.
+std::string windows_command_from_argv(const std::vector<std::string>& argv);
+std::string windows_wrap_for_cmd_c(std::string_view cmd);
+
 } // namespace mcpp::platform::process
 
 // ─── Implementation ──────────────────────────────────────────────────────
 
 namespace mcpp::platform::process {
+
+// Host-independent (see the declarations): always the Windows shape.
+std::string windows_command_from_argv(const std::vector<std::string>& argv) {
+    if (argv.empty()) return "";
+    std::string cmd = mcpp::platform::shell::quote_windows(argv[0]);
+    for (std::size_t i = 1; i < argv.size(); ++i) {
+        cmd += ' ';
+        cmd += mcpp::platform::shell::quote_windows(argv[i]);
+    }
+    return cmd;
+}
+
+std::string windows_wrap_for_cmd_c(std::string_view cmd) {
+    return "\"" + std::string(cmd) + "\"";
+}
 
 namespace {
 
@@ -149,6 +185,44 @@ std::string seal_stdin(std::string_view cmd) {
 #else
     return std::string(cmd) + " </dev/null";
 #endif
+}
+
+// Everything that reaches _popen / std::system on Windows is run by
+// `cmd.exe /c <string>`, and cmd applies a quote rule that mangles any
+// command line carrying more than one pair of quotes (`cmd /?`, the /C
+// section): unless the whole string is exactly one quoted executable name,
+// cmd strips the FIRST character and the LAST quote character and runs what
+// is left. So
+//
+//     "C:\Program Files\gcc\g++.exe" -c "main.cpp"
+//
+// becomes
+//
+//     C:\Program Files\gcc\g++.exe" -c "main.cpp
+//
+// which is why command_from_argv used to leave argv[0] unquoted — the
+// program path then survived, at the cost of breaking as soon as it
+// contained a space, which every default install path does
+// (`C:\Program Files\...`, or any user whose account name has a space).
+//
+// The documented fix is to give cmd an outer pair to eat, so the inner
+// quoting arrives intact. Applied at the single point where a command
+// string becomes a child process, so no caller has to remember it, and the
+// redirects appended by seal_stdin / silent_redirect stay inside the wrap
+// where cmd still parses them after stripping.
+std::string wrap_for_cmd_c(std::string_view cmd) {
+#if defined(_WIN32)
+    return windows_wrap_for_cmd_c(cmd);
+#else
+    return std::string(cmd);
+#endif
+}
+
+// Seal stdin AND wrap. Kept separate from wrap_for_cmd_c because run_exec
+// deliberately inherits stdio — `mcpp run` hands the terminal to the program
+// being run, and sealing its stdin would break every interactive one.
+std::string finalize_shell_command(std::string_view cmd) {
+    return wrap_for_cmd_c(seal_stdin(cmd));
 }
 
 int normalize_exit_code(int rc) {
@@ -227,22 +301,27 @@ std::string spawn_failure(std::string_view program, int error) {
 }
 #else
 // Build a shell command line from an argv vector (Windows + residual non-POSIX
-// fallback only; Linux/macOS exec directly, #248). The first token (program)
-// is kept RAW on Windows — quoting it would make cmd.exe's `/c "..."` strip the
-// outer quotes and mangle the path (see platform.shell) — and shell-quoted
-// otherwise. Remaining args are always shell-quoted.
+// fallback only; Linux/macOS exec directly, #248). EVERY token is shell-quoted,
+// including the program — a payload under `C:\Program Files\...` or a home
+// directory with a space in the user name is otherwise cut at the first space
+// and reported as `'C:\Program' is not recognized`.
+//
+// argv[0] used to be left raw here to survive cmd.exe's /c quote stripping.
+// That traded one bug for another; finalize_shell_command now feeds cmd the
+// outer quote pair it insists on eating, so the quoting below arrives intact.
 std::string command_from_argv(const std::vector<std::string>& argv) {
-    if (argv.empty()) return "";
 #if defined(_WIN32)
-    std::string cmd = argv[0];
+    // One derivation: the tested, host-independent shaper above.
+    return windows_command_from_argv(argv);
 #else
+    if (argv.empty()) return "";
     std::string cmd = mcpp::platform::shell::quote(argv[0]);
-#endif
     for (std::size_t i = 1; i < argv.size(); ++i) {
         cmd += ' ';
         cmd += mcpp::platform::shell::quote(argv[i]);
     }
     return cmd;
+#endif
 }
 #endif
 
@@ -253,7 +332,7 @@ int extract_exit_code(int raw_status) {
 }
 
 RunResult capture(std::string_view command) {
-    auto cmd = seal_stdin(command);
+    auto cmd = finalize_shell_command(command);
     RunResult result;
 
     std::FILE* fp = ::popen(cmd.c_str(), "r");
@@ -306,14 +385,14 @@ RunResult capture_with_env(
 }
 
 int run_silent(std::string_view command) {
-    auto cmd = seal_stdin(command);
+    auto cmd = finalize_shell_command(command);
     return normalize_exit_code(std::system(cmd.c_str()));
 }
 
 int run_streaming(std::string_view command,
                   std::function<void(std::string_view line)> on_line)
 {
-    auto cmd = seal_stdin(command);
+    auto cmd = finalize_shell_command(command);
     std::FILE* fp = ::popen(cmd.c_str(), "r");
     if (!fp) return -1;
 
@@ -342,7 +421,7 @@ int run_streaming(std::string_view command,
 }
 
 int run_passthrough(std::string_view command, std::string* output) {
-    auto cmd = seal_stdin(command);
+    auto cmd = finalize_shell_command(command);
     std::FILE* fp = ::popen(cmd.c_str(), "r");
     if (!fp) return -1;
 
@@ -397,7 +476,8 @@ int run_exec(const std::vector<std::string>& argv,
     return normalize_exit_code(status);
 #else
     std::string prefix = mcpp::platform::env::build_env_prefix(extraEnv);
-    std::string cmd = prefix + command_from_argv(argv);
+    // wrap only — run_exec inherits stdio on purpose (see finalize_shell_command).
+    std::string cmd = wrap_for_cmd_c(prefix + command_from_argv(argv));
     return normalize_exit_code(std::system(cmd.c_str()));
 #endif
 }

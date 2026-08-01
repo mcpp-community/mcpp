@@ -226,12 +226,47 @@ TEST(NinjaBackend, MsvcDialectEmitsIncludeDirsAfterAsTrailingSlashI) {
     auto line_end = ninja.find('\n', line_start);
     auto line = ninja.substr(line_start, line_end - line_start);
 
-    auto i_pos = line.find("-I/dep/include");
+    // Both halves take the dialect's prefix. The plain half used to hardcode
+    // `-I` even here — cl.exe accepts it, so it never broke anything, but it
+    // meant local_include_flags derived the prefix twice and only agreed with
+    // the dialect on one of them. Converging both on include_token fixed it.
+    auto i_pos = line.find("/I/dep/include");
     auto after_pos = line.find("/I/dep/tarball-root");
     ASSERT_NE(i_pos, std::string::npos) << line;
     ASSERT_NE(after_pos, std::string::npos) << line;
     EXPECT_LT(i_pos, after_pos) << line;
     EXPECT_EQ(line.find("-idirafter"), std::string::npos) << line;
+    EXPECT_EQ(line.find("-I/dep"), std::string::npos) << line;
+}
+
+// #331: the per-TU include channel applied only ninja's `$` escaping, while
+// the global channel in flags.cppm shell-quoted. Same manifest include_dirs,
+// two derivations — so a directory with a space in it survived one path and
+// split into separate shell words on the other, which is what every Windows
+// user hits the moment a dependency lands under `C:\Program Files`.
+TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .object = "obj/main.o",
+        .packageName = "spaced",
+        .localIncludeDirs = {"/opt/my dep/include"},
+        .localIncludeDirsAfter = {"/opt/my dep/after"},
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    auto line_start = ninja.find("local_includes =");
+    ASSERT_NE(line_start, std::string::npos) << ninja;
+    auto line = ninja.substr(line_start, ninja.find('\n', line_start) - line_start);
+
+    // Two escaping layers, in order: ninja's (`$ ` for a literal space, so
+    // ninja does not treat it as a field separator) and then the shell's
+    // (quotes, so what ninja hands to sh stays one word). The old code had
+    // only the first, which is why the path survived ninja and then split in
+    // the shell. The prefix must be INSIDE the quotes — quoting the path
+    // alone would leave `-I` as its own word and reintroduce the split.
+    EXPECT_NE(line.find("'-I/opt/my$ dep/include'"), std::string::npos) << line;
+    EXPECT_NE(line.find("'-idirafter/opt/my$ dep/after'"), std::string::npos) << line;
 }
 
 // #249 NASM degradation: nasm_object edges share $local_includes, but NASM

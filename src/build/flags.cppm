@@ -82,6 +82,26 @@ std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
 // escaped as `\"`) — cmd.exe/CreateProcess argv convention.
 std::string shell_quote_arg(std::string_view arg);
 
+// One include-directory token, fully prepared for a ninja command line:
+// dialect prefix, ninja `$` escaping, and shell quoting — in that order.
+//
+// #331: the same manifest `[build] include_dirs` reaches the compiler through
+// two channels — the global blob assembled below, and the per-translation-unit
+// `$local_includes` emitted by ninja_backend. Only the first one quoted, so an
+// include dir containing a space (`C:\Program Files\...`, or `/home/my dir` on
+// Linux) survived one path and split into separate shell words on the other.
+// Both channels call this now; adding a third one and forgetting to quote is
+// how the bug happened, and a shared helper is the only fix that also covers
+// the fourth.
+//
+// `prefixOverride` replaces `d.includePrefix` for the callers that need a
+// different flag for the same kind of path (`-idirafter` for #249's
+// after-dirs, plain `-I` for NASM units which would parse `-idirafter<p>` as
+// `-i dirafter<p>`).
+std::string include_token(const mcpp::toolchain::CommandDialect& d,
+                          const std::filesystem::path& dir,
+                          std::string_view prefixOverride = {});
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
@@ -137,6 +157,19 @@ std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
         }
     }
     return {};
+}
+
+std::string include_token(const mcpp::toolchain::CommandDialect& d,
+                          const std::filesystem::path& dir,
+                          std::string_view prefixOverride) {
+    std::string_view prefix =
+        prefixOverride.empty() ? d.includePrefix : prefixOverride;
+    // Prefix first, then escape+quote the whole token: the prefix and the
+    // path are ONE argv word, so quoting them separately would put the
+    // opening quote in the wrong place and re-split exactly what we came to
+    // join.
+    return shell_quote_arg(
+        escape_path(std::filesystem::path(std::string(prefix) + dir.string())));
 }
 
 std::string shell_quote_arg(std::string_view arg) {
@@ -222,7 +255,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::vector<std::string> includeTokens;
     for (auto& inc : plan.manifest.buildConfig.includeDirs) {
         std::filesystem::path p = inc.has_root_path() ? inc : (plan.projectRoot / inc);
-        includeTokens.push_back(std::string(d.includePrefix) + p.string());
+        includeTokens.push_back(include_token(d, p));
     }
     // #249: `[build] include_dirs_after` — searched AFTER the toolchain's
     // system dirs via -idirafter (gcc+clang), so entries can't shadow
@@ -233,12 +266,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     for (auto& inc : plan.manifest.buildConfig.includeDirsAfter) {
         std::filesystem::path ip(inc);
         std::filesystem::path p = ip.has_root_path() ? ip : (plan.projectRoot / ip);
-        includeTokens.push_back((msvcInclude ? "/I" : "-idirafter") + p.string());
+        includeTokens.push_back(
+            include_token(d, p, msvcInclude ? "/I" : "-idirafter"));
     }
     std::string include_flags;
     for (auto& t : includeTokens) {
         include_flags += ' ';
-        include_flags += shell_quote_arg(escape_path(std::filesystem::path(t)));
+        include_flags += t;   // already prefixed, escaped and quoted
     }
 
     // Sysroot / payload paths — resolved ONCE by the toolchain link model

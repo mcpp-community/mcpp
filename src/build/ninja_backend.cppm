@@ -105,12 +105,20 @@ bool is_nasm_source(const std::filesystem::path& src) {
     return src.extension() == ".asm";
 }
 
-std::string local_include_flags(const CompileUnit& cu, bool msvcDialect) {
-    const bool nasmUnit = is_nasm_source(cu.source);
+std::string local_include_flags(const CompileUnit& cu,
+                                const mcpp::toolchain::CommandDialect& d) {
+    const bool nasmUnit    = is_nasm_source(cu.source);
+    const bool msvcDialect = d.includePrefix == std::string_view("/I");
     std::string flags;
     for (auto const& inc : cu.localIncludeDirs) {
-        flags += " -I";
-        flags += escape_flag_path(inc);
+        // #331: this used to hardcode `-I` and apply only ninja's `$`
+        // escaping — no shell quoting — while the global channel in
+        // flags.cppm quoted properly. Same manifest include_dirs, two
+        // derivations, and a directory with a space in it split into
+        // separate shell words on this path only. Both channels now go
+        // through mcpp::build::include_token.
+        flags += ' ';
+        flags += mcpp::build::include_token(d, inc);
     }
     // #249: after-dirs are searched AFTER the toolchain's system dirs
     // (-idirafter, gcc+clang), so a dep source root that contains a file
@@ -126,8 +134,10 @@ std::string local_include_flags(const CompileUnit& cu, bool msvcDialect) {
     //     `-idirafter<p>` as its `-i` option with value `dirafter<p>` —
     //     a silently wrong search dir — so nasm units get plain -I.
     for (auto const& inc : cu.localIncludeDirsAfter) {
-        flags += nasmUnit ? " -I" : (msvcDialect ? " /I" : " -idirafter");
-        flags += escape_flag_path(inc);
+        std::string_view pfx =
+            nasmUnit ? "-I" : (msvcDialect ? "/I" : "-idirafter");
+        flags += ' ';
+        flags += mcpp::build::include_token(d, inc, pfx);
     }
     return flags;
 }
@@ -994,7 +1004,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             append(std::format("build {} : cxx_scan {}{}\n", escape_ninja_path(ddi),
                                escape_ninja_path(cu.source), stagedOrderOnly));
             append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
-            if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
+            if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
             if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
                 append(std::format("  unit_cxxflags ={}\n", flags));
@@ -1076,7 +1086,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             } else {
                 out_line += stagedOrderOnly + "\n";
             }
-            if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
+            if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
             if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
                 if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
@@ -1128,7 +1138,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 out_line += " |" + implicit;
             out_line += stagedOrderOnly;
             out_line += "\n";
-            if (auto includes = local_include_flags(cu, msvcDeps); !includes.empty())
+            if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
             if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
                 if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
