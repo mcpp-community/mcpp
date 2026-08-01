@@ -110,6 +110,21 @@ and `planned` targets that are registered but not yet shipped.
 
 ## Windows PE via MinGW-w64 (`x86_64-windows-gnu`, no Visual Studio required)
 
+**This is the Windows default when no Visual Studio is present.** Windows ships
+the UCRT runtime DLLs but not the MSVC STL or the Windows SDK — those come with
+Visual Studio's "Desktop development with C++" workload. Since llvm on Windows
+targets the MSVC ABI and needs both, mcpp checks for a usable MSVC (STL **and**
+SDK — half of one is the trap) on first run and falls back here when it finds
+none, persisting the choice so later builds are silent. Nothing to install or
+configure.
+
+The same check also repairs an existing setup: if a `[toolchain] default` mcpp
+chose earlier can no longer work on this machine, it is revised in place, with
+a line saying so. An explicit `[toolchain]` in `mcpp.toml` (or a
+`[target.X].toolchain`) is never overruled — a project that needs the MSVC ABI
+to link vcpkg-built `.lib` files gets an error naming the alternative, not a
+silent ABI swap.
+
 "MinGW" in mcpp is a **target**, not a toolchain name: `x86_64-windows-gnu`
 — GCC producing Windows PE with the GNU CRT. The same identity works from
 both hosts; which self-contained payload serves it is resolved automatically
@@ -126,7 +141,14 @@ mcpp toolchain default gcc@16 --target x86_64-windows-gnu
 It uses the regular GCC module pipeline (`gcm.cache`, `import std` via
 libstdc++'s `bits/std.cc`). The target's default linkage is **static** —
 the produced `.exe` is fully self-contained (no `libstdc++-6.dll` to ship,
-runs directly under wine); `[build] linkage = "dynamic"` opts out.
+runs directly under wine). To opt out, set it on the target section —
+`linkage` is exact-triple only (§2.7 of [mcpp.toml](05-mcpp-toml.md)), and a
+`[build] linkage` key does not exist and is silently ignored:
+
+```toml
+[target.x86_64-windows-gnu]
+linkage = "dynamic"
+```
 
 In a manifest:
 
@@ -180,7 +202,9 @@ INCLUDE/LIB environment from the detected VC tools + Windows SDK (no
 `vcvarsall` involved), stages `std.ixx`/`std.compat.ixx` as `.ifc` BMIs,
 compiles `.cppm` module units via `/interface /TP /ifcOutput`, scans with
 `/scanDependencies`, and links with `link.exe`/`lib.exe` through response
-files. `[build] linkage = "static"` selects the `/MT` CRT. A missing Windows
+files. `[target.x86_64-windows-msvc] linkage = "static"` (or `mcpp build
+--static`) selects the `/MT` CRT — not `[build] linkage`, which is not a key.
+A missing Windows
 SDK fails the build with installation guidance (`mcpp self doctor` reports
 SDK status).
 

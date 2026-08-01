@@ -1579,7 +1579,8 @@ prepare_build(bool print_fingerprint,
     // dynamic-musl binaries depend on a system /lib/ld-musl-x86_64.so.1
     // that most distros don't ship. Default linkage to "static" when
     // the resolved toolchain is musl, unless the user has already opted
-    // out via [build].linkage / [target.<triple>].linkage.
+    // out via `--static` or [target.<triple>].linkage. (There is no
+    // [build].linkage — the parser only reads it under a target section.)
     if (isMuslTc && m->buildConfig.linkage.empty()) {
         m->buildConfig.linkage = "static";
     }

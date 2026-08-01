@@ -69,7 +69,7 @@ interface and belongs in the declarative manifest/descriptor
 ## Typed API: `import mcpp;` (recommended)
 
 Instead of printing raw strings you can write `build.mcpp` **modules-first** —
-`import mcpp;`, no `#include`, no `import std;`. The `mcpp` module is bundled in the
+`import mcpp;`, no `#include` needed. The `mcpp` module is bundled in the
 mcpp binary (so it always matches your mcpp's protocol) and is compiled on demand;
 its functions just emit the directives above:
 
@@ -98,10 +98,39 @@ int main() {
 | `mcpp::include_dir(d)` / `mcpp::include_dir_after(d)` | `mcpp:include-dir=` / `mcpp:include-dir-after=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
 
-If your `build.mcpp` also needs to *write* a generated file, mix in a textual
-`#include <fstream>` — that's fine; only `import std;` is unnecessary. The raw
-stdout protocol above remains the low-level substrate; `import mcpp;` is the typed
-layer over it.
+The raw stdout protocol above remains the low-level substrate; `import mcpp;`
+is the typed layer over it.
+
+### `import std;` (mcpp 2026.8.2.1+)
+
+A `build.mcpp` may `import std;` (and `import std.compat;`), alone or together
+with `import mcpp;`:
+
+```cpp
+// build.mcpp
+import std;
+import mcpp;
+
+int main() {
+    for (auto const& f : std::vector<std::string>{"FOO", "BAR"})
+        mcpp::define(f.c_str());
+}
+```
+
+mcpp stages the **same** std module its own build uses, keyed on
+(toolchain × standard × dialect) — so for an ordinary build this costs
+nothing, the artifact is already there. A cross build (`--target …`) pays for
+one extra std module, because `build.mcpp` compiles and runs on the *host*
+while the project targets something else.
+
+`#include` still works and stays the right choice for a program that only
+needs `std::fopen`; there is no requirement to modularize a build script.
+
+> **Not yet under MSVC.** Named modules with `cl.exe` go through `.ifc` +
+> `/reference`, a pipeline mcpp has not wired up. A `build.mcpp` using
+> `import mcpp;` or `import std;` under a native MSVC toolchain fails with an
+> explicit message telling you to use `#include` or a GCC/Clang toolchain —
+> `#include`-based programs are fully supported there.
 
 ## Environment contract (mcpp 0.0.95+)
 

@@ -86,6 +86,14 @@ case "$OS" in
                 -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
                 -property installationPath 2>/dev/null | grep -q .; then
             CAPS+=(msvc)
+        else
+            # no-msvc: the bare-Windows shape — a machine with no usable
+            # Visual Studio. Declared as its own capability rather than
+            # inferred from "not msvc" because a test needs to REQUIRE it:
+            # 182 verifies the fallback path, and running it on a box that
+            # does have MSVC would exercise the ordinary path and pass while
+            # proving nothing. The CI job that masks Visual Studio lands here.
+            CAPS+=(no-msvc)
         fi
         # NOTE: Windows runners may have g++.exe (MinGW/Strawberry) in PATH
         # but it's not a proper mcpp-compatible GCC. Don't add gcc capability.

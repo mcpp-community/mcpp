@@ -291,8 +291,8 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 | `x86_64-linux-gnu`    | gcc(*Linux 默认*)或 llvm | ✅ |
 | `x86_64-linux-musl`   | gcc 16,全静态 | ✅ |
 | `aarch64-linux-musl`  | gcc 16,全静态——x86_64 交叉(qemu 实测)或原生 | ✅ |
-| `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine 实测) | ✅ |
-| `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*Windows 默认*) | ✅ |
+| `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine 实测)(*无 Visual Studio 时的 Windows 默认*) | ✅ |
+| `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*有 Visual Studio 时的 Windows 默认*) | ✅ |
 | `aarch64-macos`       | llvm(*macOS 默认*) | ✅ |
 | `riscv64-linux-musl`  | — | 🔄 |
 | `aarch64-linux-gnu`   | — | 🔄 |
@@ -304,9 +304,12 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 > 旧拼写——`x86_64-w64-mingw32`、`gcc@16.1.0-musl`、`mingw-cross@…`、`musl-gcc@…`——
 > 作为别名**永久接受**,归一到上表的 canonical 形式。
 >
-> ¹ Windows 上 llvm 依赖已安装的 **MSVC BuildTools 或 Visual Studio**(UCRT、Windows
-> SDK、MSVC STL)。MinGW 路线(`--target x86_64-windows-gnu`,或
-> `mcpp toolchain default gcc@16 --target x86_64-windows-gnu`)完全不需要 Visual Studio。
+> ¹ Windows 上 llvm 打的是 MSVC ABI,因此依赖已安装的 **MSVC BuildTools 或
+> Visual Studio**(UCRT、Windows SDK、MSVC STL)。这件事你不需要自己安排:mcpp 首跑会
+> 探测是否有可用的 MSVC,探不到就默认走 `x86_64-windows-gnu`(winlibs MinGW-w64)——
+> 完全自包含、不需要 Visual Studio、`import std` 可用。无需安装或配置,裸 Windows 上
+> `mcpp new && mcpp build` 直接可用。而 `mcpp.toml` 里显式写的 `[toolchain]` 永远按你
+> 写的执行——mcpp 只修正自己选的默认值,不改你的。
 
 ## 文档
 

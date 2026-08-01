@@ -374,14 +374,26 @@ jobs:
           mcpp run
 
   # ──────────────────────────────────────────────────────────────────
-  # Windows: llvm@20.1.7 + MSVC STL
+  # Windows WITH Visual Studio: llvm@20.1.7 + MSVC STL
+  #
+  # Two images, because the OS version is a real variable for a tool that
+  # touches the UCRT, the Windows SDK and long paths. GitHub publishes no
+  # Windows 10/11 CLIENT image, so these Server builds are the closest
+  # available stand-ins: windows-2022 is the Win10 21H2 kernel generation,
+  # windows-2025 the Win11 24H2 one. What they cannot cover is genuinely
+  # client-only behaviour — UAC prompts, Defender real-time scanning, the
+  # long-path policy default — which needs a self-hosted runner.
   # ──────────────────────────────────────────────────────────────────
   windows-fresh:
     needs: [wait-index]
-    name: Windows fresh install
+    name: Windows fresh install (${{ matrix.image }})
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
-    runs-on: windows-latest
+    runs-on: ${{ matrix.image }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
     env:
       # The one derived value (see the header comment): every install job names
       # the SAME version the index guard waited for, so the two cannot disagree.
@@ -437,3 +449,77 @@ jobs:
         run: |
           mcpp clean
           mcpp run
+
+  # ──────────────────────────────────────────────────────────────────
+  # Windows WITHOUT Visual Studio — the shape of an ordinary user's machine
+  #
+  # A stock Windows install ships the UCRT runtime DLLs and nothing else: the
+  # MSVC STL and the Windows SDK arrive only with Visual Studio's "Desktop
+  # development with C++" workload. mcpp's Windows default targeted the MSVC
+  # ABI, so `mcpp new && mcpp build` failed on every such box — and no CI job
+  # could see it, because every GitHub Windows image ships Visual Studio.
+  #
+  # There is no VS-free runner, so the image is masked instead. The risk with
+  # masking is a false green: miss one of msvc.cppm's three discovery
+  # strategies (vswhere, environment, well-known paths) and mcpp still finds
+  # MSVC, takes the ordinary path, and the job passes while proving nothing.
+  # e2e 182 opens by asserting `mcpp toolchain default msvc` FAILS, which
+  # turns exactly that into a hard failure.
+  # ──────────────────────────────────────────────────────────────────
+  windows-nomsvc-fresh:
+    needs: [wait-index]
+    name: Windows fresh install (no Visual Studio)
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      MCPP_PIN: ${{ needs.wait-index.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mask Visual Studio
+        shell: pwsh
+        run: |
+          # All three discovery strategies at once. The runner is disposable,
+          # so renaming in place is fine and is closer to "absent" than any
+          # env-only trick would be.
+          $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) { Rename-Item $vswhere "vswhere.exe.masked" }
+
+          Get-ChildItem "C:\Program Files*\Microsoft Visual Studio" -Directory `
+              -ErrorAction SilentlyContinue | ForEach-Object {
+            $masked = "$($_.FullName).masked"
+            if (-not (Test-Path $masked)) { Rename-Item $_.FullName $masked }
+          }
+
+          foreach ($v in @('VSINSTALLDIR','VCINSTALLDIR','VCToolsInstallDir',
+                           'VS170COMNTOOLS','VS160COMNTOOLS','VS150COMNTOOLS')) {
+            "$v=" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          }
+
+      - name: Install xlings
+        shell: pwsh
+        env:
+          XLINGS_NON_INTERACTIVE: '1'
+        run: |
+          irm https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.ps1 | iex
+
+          $xlingsbin = "$env:USERPROFILE\.xlings\subos\current\bin"
+          $env:PATH = "$xlingsbin;$env:PATH"
+          $xlingsbin | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      - name: Install mcpp and config mirror
+        shell: pwsh
+        run: |
+          xlings update
+          xlings install "mcpp@$env:MCPP_PIN" -y -g --verbose
+          mcpp --version
+          mcpp self config --mirror GLOBAL
+
+      # The self-check, the fallback, persistence, a self-contained exe, and
+      # the refusal to overrule an explicit [toolchain] — all in e2e 182, so
+      # the assertions live with the tests rather than in workflow YAML.
+      - name: "No Visual Studio: fallback to winlibs GCC (e2e 182)"
+        shell: bash
+        run: |
+          MCPP="$(command -v mcpp)" bash tests/e2e/182_windows_no_msvc_fallback.sh

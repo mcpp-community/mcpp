@@ -115,6 +115,19 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
 
 ## Windows PE 之 MinGW-w64(`x86_64-windows-gnu`,无需 Visual Studio)
 
+**没装 Visual Studio 时,这就是 Windows 上的默认值。** Windows 自带的只有
+UCRT 运行时 DLL,MSVC STL 与 Windows SDK 都只随 Visual Studio 的
+"Desktop development with C++" 负载安装。而 llvm 在 Windows 上打的是 MSVC ABI,
+两者都需要,所以 mcpp 首跑时会探测机器上是否有可用的 MSVC(STL **与** SDK
+两件齐——只有一半才是真正的坑),探不到就落到这里,并把选择持久化,之后的
+构建不再重复提示。无需任何安装或配置。
+
+同一道检查也会修复既有配置:如果 mcpp 早先自己选定的 `[toolchain] default`
+在这台机器上已经不可用,它会被就地改写,并打印一行说明。但**用户在
+`mcpp.toml` 里显式写下的** `[toolchain]`(或 `[target.X].toolchain`)永远不会
+被推翻——一个需要 MSVC ABI 去链接 vcpkg 预编译 `.lib` 的工程,得到的是一条
+指明替代方案的错误,而不是被静默换掉 ABI。
+
 mcpp 里 "MinGW" 是一个 **target**,不是工具链名:`x86_64-windows-gnu`
 ——GCC 产出 Windows PE(GNU CRT)。两种宿主用同一个身份、同一条命令;
 由哪个自包含 payload 来承接是自动分流的(Windows 宿主 → winlibs UCRT
@@ -130,7 +143,13 @@ mcpp toolchain default gcc@16 --target x86_64-windows-gnu
 它走常规的 GCC 模块管线(`gcm.cache`、经 libstdc++ `bits/std.cc` 的
 `import std`)。该 target 默认 linkage 为 **static**——产出的 `.exe`
 完全自包含(无需随包分发 `libstdc++-6.dll`,可直接在 wine 下运行);
-`[build] linkage = "dynamic"` 可退出。
+要退出请写在 target 段上——`linkage` 只认精确 triple(见
+[mcpp.toml](05-mcpp-toml.md) §2.7),`[build] linkage` 这个键并不存在,写了会被静默忽略:
+
+```toml
+[target.x86_64-windows-gnu]
+linkage = "dynamic"
+```
 
 manifest 中:
 

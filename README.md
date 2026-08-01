@@ -294,8 +294,8 @@ the right toolchain payload is resolved and installed automatically.
 | `x86_64-linux-gnu`    | gcc *(Linux default)* or llvm | ✅ |
 | `x86_64-linux-musl`   | gcc 16, fully static | ✅ |
 | `aarch64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu-verified) or native | ✅ |
-| `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) | ✅ |
-| `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default)* | ✅ |
+| `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) *(Windows default without Visual Studio)* | ✅ |
+| `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | ✅ |
 | `aarch64-macos`       | llvm *(macOS default)* | ✅ |
 | `riscv64-linux-musl`  | — | 🔄 |
 | `aarch64-linux-gnu`   | — | 🔄 |
@@ -308,10 +308,14 @@ the right toolchain payload is resolved and installed automatically.
 > `musl-gcc@…` — stay permanently accepted as aliases and normalize to the
 > canonical forms above.
 >
-> ¹ On Windows, llvm requires an existing **MSVC BuildTools or Visual Studio**
-> (UCRT, Windows SDK, MSVC STL). The MinGW route (`--target x86_64-windows-gnu`,
-> or `mcpp toolchain default gcc@16 --target x86_64-windows-gnu`) needs no
-> Visual Studio at all.
+> ¹ On Windows, llvm targets the MSVC ABI and therefore requires an existing
+> **MSVC BuildTools or Visual Studio** (UCRT, Windows SDK, MSVC STL). You do
+> not have to arrange this: on first run mcpp checks for a usable MSVC and,
+> finding none, defaults to `x86_64-windows-gnu` (winlibs MinGW-w64) — fully
+> self-contained, no Visual Studio, `import std` included. Nothing to install
+> or configure; `mcpp new && mcpp build` just works on a stock Windows box.
+> An explicit `[toolchain]` in `mcpp.toml` is always respected as written —
+> mcpp revises its own default, never yours.
 
 ## Documentation
 

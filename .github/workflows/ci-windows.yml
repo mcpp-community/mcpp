@@ -292,6 +292,12 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           MCPP="$MCPP_SELF" bash tests/e2e/99_msvc_native_build.sh
 
+          # build.mcpp under cl.exe. `MSVC x build.mcpp` was an empty cell in
+          # this matrix and the feature was correspondingly at zero — the ten
+          # build.mcpp e2e all run under clang, whose payload path has no
+          # spaces in it either. Both gaps closed here.
+          MCPP="$MCPP_SELF" bash tests/e2e/180_msvc_build_mcpp.sh
+
           # restore the LLVM default for the remaining steps
           "$MCPP_SELF" toolchain default llvm@20.1.7
 

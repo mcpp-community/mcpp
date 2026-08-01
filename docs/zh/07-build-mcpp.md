@@ -62,8 +62,8 @@ manifest/描述符里(`[build] include_dirs`),而不是构建期程序里。
 
 ## 类型化 API:`import mcpp;`(推荐)
 
-除了打印裸字符串,你还可以把 `build.mcpp` 写成**模块优先**——`import mcpp;`,无
-`#include`、无 `import std;`。`mcpp` 模块**内置在 mcpp 二进制里**(因此永远和你这版 mcpp
+除了打印裸字符串,你还可以把 `build.mcpp` 写成**模块优先**——`import mcpp;`,不需要
+`#include`。`mcpp` 模块**内置在 mcpp 二进制里**(因此永远和你这版 mcpp
 的协议匹配),按需编译;它的函数只是 emit 上面那些指令:
 
 ```cpp
@@ -91,9 +91,36 @@ int main() {
 | `mcpp::include_dir(d)` / `mcpp::include_dir_after(d)` | `mcpp:include-dir=` / `mcpp:include-dir-after=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
 
-如果 `build.mcpp` 还需要*写*生成文件,混入一个文本 `#include <fstream>` 即可——这没问题,
-只有 `import std;` 是不必要的。上面的裸 stdout 协议仍是底层基底;`import mcpp;` 是其上的
-类型化层。
+上面的裸 stdout 协议仍是底层基底;`import mcpp;` 是其上的类型化层。
+
+### `import std;`(mcpp 2026.8.2.1+)
+
+`build.mcpp` 可以 `import std;`(以及 `import std.compat;`),单用或与
+`import mcpp;` 并用皆可:
+
+```cpp
+// build.mcpp
+import std;
+import mcpp;
+
+int main() {
+    for (auto const& f : std::vector<std::string>{"FOO", "BAR"})
+        mcpp::define(f.c_str());
+}
+```
+
+mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存键是
+(工具链 × 标准 × 方言)——所以普通构建下这是零成本,产物本来就在。只有交叉构建
+(`--target …`)才会多编一份:`build.mcpp` 在**宿主**上编译并运行,而工程的目标
+是别的平台。
+
+`#include` 依然有效,对只需要 `std::fopen` 的程序也依然是更合适的选择——构建脚本
+没有必须模块化的要求。
+
+> **MSVC 下尚不支持。** `cl.exe` 的具名模块走 `.ifc` + `/reference`,这条管线 mcpp
+> 还没接。在原生 MSVC 工具链下使用 `import mcpp;` 或 `import std;` 的 `build.mcpp`
+> 会得到一条明确的报错,告诉你改用 `#include` 或换 GCC/Clang 工具链——基于
+> `#include` 的程序在那里是完全支持的。
 
 ## 环境契约(mcpp 0.0.95+)
 
