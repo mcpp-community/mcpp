@@ -781,14 +781,28 @@ std::expected<void, std::string> run_build_program(
                 "       Use #include in build.mcpp, or switch to a toolchain "
                 "that provides one.", tc.label()));
         }
-        auto sm = mcpp::toolchain::ensure_built(
-            tc, cppStandard.canonical, std_flag,
+        const std::string macosDeploymentTarget =
             mcpp::platform::macos::deployment_target(
-                m.buildConfig.macosDeploymentTarget));
+                m.buildConfig.macosDeploymentTarget);
+        auto sm = mcpp::toolchain::ensure_built(
+            tc, cppStandard.canonical, std_flag, macosDeploymentTarget);
         if (!sm) {
             return std::unexpected(std::format(
                 "build.mcpp uses `import std;` but the std module could not be "
                 "built for the host toolchain: {}", sm.error().message));
+        }
+
+        // The std BMI was built FOR a deployment target, and clang refuses to
+        // load a module built for a different one ("compiled for the target
+        // 'arm64-apple-macosx14.0.0' but the current translation unit is
+        // being compiled for …"). The main build makes the value explicit on
+        // every TU for exactly this reason (flags.cppm); the build.mcpp
+        // compile has to say the same thing or the BMI it just asked for is
+        // rejected. host_base_flags contributes nothing here — on macOS it
+        // trusts the clang cfg and returns empty.
+        if constexpr (mcpp::platform::is_macos) {
+            if (!macosDeploymentTarget.empty())
+                stdFlags.push_back("-mmacosx-version-min=" + macosDeploymentTarget);
         }
 
         auto traits = mcpp::toolchain::bmi_traits(tc);

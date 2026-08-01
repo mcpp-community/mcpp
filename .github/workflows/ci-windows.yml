@@ -130,26 +130,36 @@ jobs:
   # ordinary path.
   no-msvc-fallback:
     name: "bare Windows: no Visual Studio (windows x64)"
+    # Takes the binary build-test already produced instead of building here.
+    # Building in this job means compiling with clang, which reads the MSVC
+    # STL — the open handles that leaves make the VS directories unrenamable,
+    # so the masking below silently did nothing.
+    needs: build-test
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/bootstrap-mcpp
 
-      - name: Build mcpp from source (self-host, VS still present)
+      - name: Fetch the PR's mcpp.exe
+        uses: actions/download-artifact@v4
+        with:
+          name: mcpp-windows-x86_64
+          path: dist
+
+      - name: Unpack it
         shell: bash
         run: |
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP" build
-          # Newest by mtime — target/ is cache-restored and keeps a directory
-          # per build fingerprint, so `find | head -1` can hand back the
-          # PREVIOUS release's binary after a version bump.
-          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" -printf "%T@ %p\n" \
-              | sort -rn | head -1 | cut -d" " -f2-)
-          test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
+          ZIP=$(ls dist/*.zip | head -1)
+          test -n "$ZIP" || { echo "FAIL: no zip artifact"; exit 1; }
+          unzip -q "$ZIP" -d unpacked
+          MCPP_SELF=$(find unpacked -name "mcpp.exe" | head -1)
+          test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe in $ZIP"; exit 1; }
           MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
+          "$MCPP_SELF" --version
           echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
 
+      # Masked before anything else touches Visual Studio, so no process of
+      # ours is holding a handle into it.
       - name: Mask Visual Studio
         shell: pwsh
         run: |
@@ -166,9 +176,17 @@ jobs:
           $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
           if (Test-Path $vswhere) { Rename-Item $vswhere "vswhere.exe.masked" }
 
-          Get-ChildItem "C:\Program Files*\Microsoft Visual Studio\*\*\VC" `
-              -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-            Rename-Item $_.FullName "$($_.Name).masked" -ErrorAction SilentlyContinue
+          # -Path with a trailing wildcard segment lists the CONTENTS of the
+          # matches, not the matches themselves, so `…\*\*\VC` would hand back
+          # VC's children. Resolve-Path returns the directories themselves.
+          # Errors are reported, not swallowed: a silent failure here is how
+          # the first attempt "masked" nothing and still looked fine.
+          Resolve-Path "C:\Program Files*\Microsoft Visual Studio\*\*\VC" `
+              -ErrorAction SilentlyContinue | ForEach-Object {
+            $p = $_.Path
+            Write-Host "masking $p"
+            try { Rename-Item -LiteralPath $p -NewName "VC.masked" -ErrorAction Stop }
+            catch { Write-Host "  rename failed: $($_.Exception.Message)" }
           }
 
           foreach ($v in @('VSINSTALLDIR','VCINSTALLDIR','VCToolsInstallDir',

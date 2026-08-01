@@ -411,17 +411,32 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // /reference//ifcSearchDir).
     auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     std::string module_flag{traits.compileModulesFlag};
+    // A BMI flag and its path are ONE shell word, so the quotes have to wrap
+    // both — a build under `/Users/me/my work dir/…` otherwise hands the
+    // shell `-fmodule-file=std=/Users/me/my`, `work`, `dir/…` and the compile
+    // dies on "no such file or directory: 'work'" with nothing naming the
+    // flag that split. The BmiTraits prefixes carry a leading space for this
+    // string channel, and MSVC's is itself two words (`/reference std=`), so
+    // split at the LAST space: everything before it stays outside the quotes.
+    auto bmi_flag = [](std::string_view prefix, const std::filesystem::path& p) {
+        auto sp = prefix.find_last_of(' ');
+        std::string_view lead = sp == std::string_view::npos
+                              ? std::string_view{} : prefix.substr(0, sp + 1);
+        std::string_view body = sp == std::string_view::npos
+                              ? prefix : prefix.substr(sp + 1);
+        return std::string(lead)
+             + shell_quote_arg(escape_ninja_chars(std::string(body) + p.string()));
+    };
     std::string std_module_flag;
     if (!traits.stdBmiUsePrefix.empty() && !plan.stdBmiPath.empty()) {
-        std_module_flag = std::string(traits.stdBmiUsePrefix)
-                        + escape_path(staged_std_bmi_path(plan));
+        std_module_flag = bmi_flag(traits.stdBmiUsePrefix,
+                                   staged_std_bmi_path(plan));
     }
     std::string std_compat_module_flag;
     if (!traits.stdCompatBmiUsePrefix.empty() && !plan.stdCompatBmiPath.empty()) {
         auto compatDst = mcpp::toolchain::staged_std_compat_bmi_path(
             plan.toolchain, plan.outputDir);
-        std_compat_module_flag = std::string(traits.stdCompatBmiUsePrefix)
-                               + escape_path(compatDst);
+        std_compat_module_flag = bmi_flag(traits.stdCompatBmiUsePrefix, compatDst);
     }
     std::string prebuilt_module_flag;
     if (traits.needsPrebuiltModulePath) {
@@ -434,8 +449,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // resolution fails with `module 'X' not found`. The other
         // `-fmodule-file=` flags in this block are already escape_path'd
         // (absolute) for the same reason — this one was a leftover.
-        prebuilt_module_flag = std::string(traits.bmiSearchPrefix)
-                             + escape_path(plan.outputDir / traits.bmiDir);
+        prebuilt_module_flag = bmi_flag(traits.bmiSearchPrefix,
+                                        plan.outputDir / traits.bmiDir);
     }
     std::string cxx_std_flag =
         plan.cppStandardFlag.empty()
