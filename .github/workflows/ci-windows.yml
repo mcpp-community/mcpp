@@ -206,6 +206,12 @@ jobs:
           }
           Write-Host "Visual Studio masked: no VC\Tools\MSVC remains."
 
+      # After masking, so nothing this action does can be holding Visual
+      # Studio open. It installs xlings (which mcpp resolves the winlibs
+      # toolchain through) and a released mcpp; neither needs a C++ compiler,
+      # so a masked VS is irrelevant to it.
+      - uses: ./.github/actions/bootstrap-mcpp
+
       - name: "No Visual Studio: fallback to winlibs GCC (e2e 182)"
         shell: bash
         env:

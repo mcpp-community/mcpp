@@ -184,8 +184,23 @@ std::string env_value(const std::string& name) {
 // --target, prepare.cppm resolves the spec a second time without the target axis
 // (host_tc_for_build_program) and passes that here, so the native cases are the
 // only ones needed. Passed as separate argv tokens (no shell).
-std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
+std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc,
+                                         std::string_view macosDeploymentTarget) {
     std::vector<std::string> f;
+
+    // macOS deployment target, FIRST and unconditionally, because clang
+    // refuses to load a module built for a different one and this function's
+    // result feeds every compile in this file: the bundled `mcpp` module's
+    // precompile, its object step, and the build.mcpp compile itself. Putting
+    // it anywhere narrower produced the mismatch in whichever direction was
+    // left out — first the std BMI (built for 14.0) against a compile with no
+    // version-min, then mcpp.pcm (built at the host default 15.0) against a
+    // compile that had just been given 14.0.
+    if constexpr (mcpp::platform::is_macos) {
+        if (!macosDeploymentTarget.empty())
+            f.push_back(std::string("-mmacosx-version-min=")
+                        + std::string(macosDeploymentTarget));
+    }
 
     // MSVC carries none of this on the command line: cl.exe and link.exe find
     // headers and import libraries through INCLUDE / LIB, which detection
@@ -712,7 +727,13 @@ std::expected<void, std::string> run_build_program(
         tc, cppStandard.canonical.empty() ? std::string_view("c++23")
                                           : std::string_view(cppStandard.canonical),
         cppStandard.level);
-    auto base = host_base_flags(tc);
+    // One resolution of the deployment target, used by every compile below
+    // and by the std module it asks stdmod to build — they must agree or
+    // clang rejects the BMI.
+    const std::string macosDeploymentTarget =
+        mcpp::platform::macos::deployment_target(
+            m.buildConfig.macosDeploymentTarget);
+    auto base = host_base_flags(tc, macosDeploymentTarget);
 
     // The host compile has always been spelled in GNU driver syntax with no
     // dialect branch at all — `grep -i msvc` over this file used to hit only
@@ -781,28 +802,12 @@ std::expected<void, std::string> run_build_program(
                 "       Use #include in build.mcpp, or switch to a toolchain "
                 "that provides one.", tc.label()));
         }
-        const std::string macosDeploymentTarget =
-            mcpp::platform::macos::deployment_target(
-                m.buildConfig.macosDeploymentTarget);
         auto sm = mcpp::toolchain::ensure_built(
             tc, cppStandard.canonical, std_flag, macosDeploymentTarget);
         if (!sm) {
             return std::unexpected(std::format(
                 "build.mcpp uses `import std;` but the std module could not be "
                 "built for the host toolchain: {}", sm.error().message));
-        }
-
-        // The std BMI was built FOR a deployment target, and clang refuses to
-        // load a module built for a different one ("compiled for the target
-        // 'arm64-apple-macosx14.0.0' but the current translation unit is
-        // being compiled for …"). The main build makes the value explicit on
-        // every TU for exactly this reason (flags.cppm); the build.mcpp
-        // compile has to say the same thing or the BMI it just asked for is
-        // rejected. host_base_flags contributes nothing here — on macOS it
-        // trusts the clang cfg and returns empty.
-        if constexpr (mcpp::platform::is_macos) {
-            if (!macosDeploymentTarget.empty())
-                stdFlags.push_back("-mmacosx-version-min=" + macosDeploymentTarget);
         }
 
         auto traits = mcpp::toolchain::bmi_traits(tc);
