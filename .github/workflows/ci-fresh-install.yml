@@ -480,22 +480,37 @@ jobs:
       - name: Mask Visual Studio
         shell: pwsh
         run: |
-          # All three discovery strategies at once. The runner is disposable,
-          # so renaming in place is fine and is closer to "absent" than any
-          # env-only trick would be.
+          $ErrorActionPreference = 'Continue'
+
+          # All three of msvc.cppm's discovery strategies converge on
+          # <vsRoot>\VC\Tools\MSVC, so mask the VC directory rather than the
+          # Visual Studio root: the root is held open on the runner and
+          # renaming it is denied, while VC one level down renames fine.
+          # The runner is disposable, so this is both safe and closer to
+          # "absent" than any env-only trick would be.
           $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
           if (Test-Path $vswhere) { Rename-Item $vswhere "vswhere.exe.masked" }
 
-          Get-ChildItem "C:\Program Files*\Microsoft Visual Studio" -Directory `
-              -ErrorAction SilentlyContinue | ForEach-Object {
-            $masked = "$($_.FullName).masked"
-            if (-not (Test-Path $masked)) { Rename-Item $_.FullName $masked }
+          Get-ChildItem "C:\Program Files*\Microsoft Visual Studio\*\*\VC" `
+              -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            Rename-Item $_.FullName "$($_.Name).masked" -ErrorAction SilentlyContinue
           }
 
           foreach ($v in @('VSINSTALLDIR','VCINSTALLDIR','VCToolsInstallDir',
                            'VS170COMNTOOLS','VS160COMNTOOLS','VS150COMNTOOLS')) {
             "$v=" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           }
+
+          # Check the mask's own postcondition here, where the cause is
+          # obvious, rather than letting it surface later as a confusing pass.
+          $left = Get-ChildItem "C:\Program Files*\Microsoft Visual Studio\*\*\VC\Tools\MSVC" `
+              -Directory -ErrorAction SilentlyContinue
+          if ($left) {
+            Write-Host "FAIL: VC tools still present after masking:"
+            $left | ForEach-Object { Write-Host "  $($_.FullName)" }
+            exit 1
+          }
+          Write-Host "Visual Studio masked: no VC\Tools\MSVC remains."
 
       - name: Install xlings
         shell: pwsh

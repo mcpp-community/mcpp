@@ -98,9 +98,22 @@ std::string shell_quote_arg(std::string_view arg);
 // different flag for the same kind of path (`-idirafter` for #249's
 // after-dirs, plain `-I` for NASM units which would parse `-idirafter<p>` as
 // `-i dirafter<p>`).
+//
+// `form` picks the separator, and the two channels genuinely need different
+// ones (#261): tokens that stay on the command line keep native separators,
+// while tokens ninja copies into a RESPONSE FILE must be forward-slashed,
+// because the drivers tokenize response files GNU-style — there a backslash
+// is an ESCAPE character and `C:\src\inc` loses its separators. Quoting
+// alone does not save it; the escape happens inside quotes too.
+enum class PathForm {
+    Native,   // command line — a backslash is just a character
+    Generic,  // response file — forward slashes, see above
+};
+
 std::string include_token(const mcpp::toolchain::CommandDialect& d,
                           const std::filesystem::path& dir,
-                          std::string_view prefixOverride = {});
+                          std::string_view prefixOverride = {},
+                          PathForm form = PathForm::Native);
 
 }  // namespace mcpp::build
 
@@ -112,9 +125,11 @@ std::filesystem::path staged_std_bmi_path(const BuildPlan& plan) {
     return mcpp::toolchain::staged_std_bmi_path(plan.toolchain, plan.outputDir);
 }
 
-// Escape a path for embedding in ninja rule strings.
-std::string escape_path(const std::filesystem::path& p) {
-    auto s = p.string();
+// Escape a string for embedding in ninja rule strings. Takes the text, not a
+// path: round-tripping through std::filesystem::path would re-normalize the
+// separators on Windows, which silently undoes a caller that deliberately
+// chose generic_string() for a response-file token (#261).
+std::string escape_ninja_chars(std::string_view s) {
     std::string out;
     out.reserve(s.size());
     for (char c : s) {
@@ -123,6 +138,11 @@ std::string escape_path(const std::filesystem::path& p) {
         out.push_back(c);
     }
     return out;
+}
+
+// Escape a path for embedding in ninja rule strings (native separators).
+std::string escape_path(const std::filesystem::path& p) {
+    return escape_ninja_chars(p.string());
 }
 
 std::string normalize_ldflag(const std::filesystem::path& root, const std::string& flag) {
@@ -161,15 +181,18 @@ std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
 
 std::string include_token(const mcpp::toolchain::CommandDialect& d,
                           const std::filesystem::path& dir,
-                          std::string_view prefixOverride) {
+                          std::string_view prefixOverride,
+                          PathForm form) {
     std::string_view prefix =
         prefixOverride.empty() ? d.includePrefix : prefixOverride;
+    std::string path = form == PathForm::Generic ? dir.generic_string()
+                                                 : dir.string();
     // Prefix first, then escape+quote the whole token: the prefix and the
     // path are ONE argv word, so quoting them separately would put the
     // opening quote in the wrong place and re-split exactly what we came to
-    // join.
-    return shell_quote_arg(
-        escape_path(std::filesystem::path(std::string(prefix) + dir.string())));
+    // join. `escape_path` only adds ninja's `$` escapes and never touches
+    // separators, so the form chosen above survives it.
+    return shell_quote_arg(escape_ninja_chars(std::string(prefix) + path));
 }
 
 std::string shell_quote_arg(std::string_view arg) {

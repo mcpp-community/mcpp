@@ -6,6 +6,7 @@ import mcpp.build.flags;
 import mcpp.build.ninja;
 import mcpp.build.plan;
 import mcpp.manifest;
+import mcpp.toolchain.dialect;
 import mcpp.toolchain.model;
 import mcpp.platform;
 
@@ -267,6 +268,41 @@ TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
     // alone would leave `-I` as its own word and reintroduce the split.
     EXPECT_NE(line.find("'-I/opt/my$ dep/include'"), std::string::npos) << line;
     EXPECT_NE(line.find("'-idirafter/opt/my$ dep/after'"), std::string::npos) << line;
+}
+
+// #261: on Windows $local_includes is copied into a RESPONSE FILE, which the
+// drivers tokenize GNU-style — a backslash is an escape character there, and
+// quoting does not exempt it. A native-separator token like C:\src\inc loses
+// its separators and every dependency header goes missing, with nothing in
+// the error pointing at the include flag.
+//
+// The separator distinction is real only on Windows: POSIX treats '\' as an
+// ordinary filename character, so generic_string() leaves it alone and this
+// assertion cannot be made from a Linux host. Guarded rather than weakened —
+// a test that passes for the wrong reason everywhere is worse than one that
+// says where it applies. Windows CI is the enforcement point.
+TEST(NinjaBackend, LocalIncludeTokensUseGenericSeparators) {
+    const auto& gnu = mcpp::toolchain::gnu_dialect();
+    auto sub = std::filesystem::path("src") / "inc";
+    auto tok = mcpp::build::include_token(gnu, sub, {},
+                                          mcpp::build::PathForm::Generic);
+    // True on every host: the generic form never uses the native separator.
+    EXPECT_NE(tok.find("src/inc"), std::string::npos) << tok;
+
+    if constexpr (mcpp::platform::is_windows) {
+        auto abs = mcpp::build::include_token(
+            gnu, std::filesystem::path("C:\\src\\inc"), {},
+            mcpp::build::PathForm::Generic);
+        EXPECT_EQ(abs.find('\\'), std::string::npos) << abs;
+
+        // The command-line channel keeps native separators — a backslash is
+        // just a character there, and rewriting those paths would be a change
+        // nobody asked for.
+        auto native = mcpp::build::include_token(
+            gnu, std::filesystem::path("C:\\src\\inc"), {},
+            mcpp::build::PathForm::Native);
+        EXPECT_NE(native.find('\\'), std::string::npos) << native;
+    }
 }
 
 // #249 NASM degradation: nasm_object edges share $local_includes, but NASM

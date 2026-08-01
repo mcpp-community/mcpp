@@ -117,8 +117,15 @@ std::string local_include_flags(const CompileUnit& cu,
         // derivations, and a directory with a space in it split into
         // separate shell words on this path only. Both channels now go
         // through mcpp::build::include_token.
+        //
+        // Generic form is REQUIRED here and only here: on Windows ninja
+        // copies $local_includes into a response file (#261), which the
+        // drivers tokenize GNU-style — a backslash there is an escape
+        // character, inside quotes as well, so `C:\src\inc` would lose its
+        // separators and every dependency header would go missing.
         flags += ' ';
-        flags += mcpp::build::include_token(d, inc);
+        flags += mcpp::build::include_token(d, inc, {},
+                                            mcpp::build::PathForm::Generic);
     }
     // #249: after-dirs are searched AFTER the toolchain's system dirs
     // (-idirafter, gcc+clang), so a dep source root that contains a file
@@ -137,7 +144,8 @@ std::string local_include_flags(const CompileUnit& cu,
         std::string_view pfx =
             nasmUnit ? "-I" : (msvcDialect ? "/I" : "-idirafter");
         flags += ' ';
-        flags += mcpp::build::include_token(d, inc, pfx);
+        flags += mcpp::build::include_token(d, inc, pfx,
+                                            mcpp::build::PathForm::Generic);
     }
     return flags;
 }
