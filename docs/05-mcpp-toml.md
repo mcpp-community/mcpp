@@ -339,9 +339,10 @@ glfw = "3.4"                    # Explicit namespace, skips the mcpplibs-first c
 [dependencies]
 mylib = { path = "../mylib" }
 
-# Git dependency
+# Git dependency — pick exactly one of tag / branch / rev
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
+applib = { git = "https://github.com/user/applib.git", branch = "develop" }
 
 # Long-form dep spec: features and backend knobs
 [dependencies]
@@ -355,6 +356,25 @@ knob should declare a `backend-*` family in its own `[features]`). If the target
 package declares `[features]` but does not include the requested feature (including
 the result of backend desugaring), a warning is issued by default, and an error
 under `mcpp build --strict`.
+
+**Git dependencies and `mcpp.lock`**: a `tag` or `rev` already names a fixed point
+in history, but a `branch` moves. The first build resolves the branch to a commit
+and records it in `mcpp.lock`, and every later build rebuilds **that** commit — the
+lock is authoritative, not a cache hint, so deleting `~/.mcpp/git` or moving to
+another machine cannot quietly put you on a newer tip. Ask for the newer tip
+explicitly:
+
+```bash
+mcpp update mylib     # drop the recorded commit; the next build re-resolves it
+mcpp update           # same, for every dependency
+```
+
+Because the recorded commit is enough to decide what to build, a rebuild with the
+clone already in `~/.mcpp/git` makes no network request at all and works under
+`--offline`. Only two things need the network: resolving a branch that has no
+commit in the lock, and cloning a commit that is not cached yet. A `git =` value
+that names a local directory (or a `file://` URL) needs neither, so it is never
+refused offline.
 
 **SemVer constraints**:
 
@@ -454,7 +474,7 @@ Controls, in order of precedence:
 
 | Control | Effect |
 |---|---|
-| `--offline` (any command) | Never touch the network — no index refresh, no downloads, no toolchain auto-install. Anything already installed still builds |
+| `--offline` (any command) | Never touch the network — no index refresh, no downloads, no toolchain auto-install, no `git ls-remote`/`clone`. Anything already installed still builds, including git deps whose commit is in `mcpp.lock` and whose clone is cached |
 | `MCPP_OFFLINE=1` | Same, for a whole shell session or CI job |
 | `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh the index automatically; downloads still work |
 

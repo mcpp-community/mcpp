@@ -310,9 +310,10 @@ glfw = "3.4"                    # 显式 namespace, 不走 mcpplibs 优先候选
 [dependencies]
 mylib = { path = "../mylib" }
 
-# Git 依赖
+# Git 依赖 —— tag / branch / rev 三选一
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
+applib = { git = "https://github.com/user/applib.git", branch = "develop" }
 
 # 长式 dep spec:features 与 backend 旋钮
 [dependencies]
@@ -324,6 +325,21 @@ widget = { version = "1.0", backend = "glfw_opengl3" }  # 糖:= features=["backe
 feature(库若支持该旋钮,应在自己的 `[features]` 中声明 `backend-*` 系列)。
 若目标包声明了 `[features]` 但不含所请求的 feature(含 backend 脱糖结果),
 默认给出 warning,`mcpp build --strict` 下报错。
+
+**Git 依赖与 `mcpp.lock`**:`tag` 和 `rev` 本身就指向历史中的固定点,而 `branch`
+是会动的。首次构建把分支解析成一个 commit 并写进 `mcpp.lock`,此后每次构建都重建
+**那个** commit —— lock 是权威而不是缓存提示,所以删掉 `~/.mcpp/git` 或换一台机器
+都不会悄悄把你挪到更新的分支头上。要新的分支头,得显式要:
+
+```bash
+mcpp update mylib     # 丢掉记录的 commit,下次构建重新解析
+mcpp update           # 同上,对所有依赖
+```
+
+既然记录的 commit 已经足以决定构建什么,那么在 `~/.mcpp/git` 里已有克隆的情况下,
+重新构建完全不发网络请求,`--offline` 下照常工作。只有两件事需要网络:解析一个在
+lock 里没有 commit 的分支,以及克隆一个尚未缓存的 commit。`git =` 若指向本地目录
+(或 `file://` URL),这两件事都不需要网络,因此离线下也绝不会被拒绝。
 
 **SemVer 约束**:
 
@@ -443,7 +459,7 @@ mcpp index status     # 看本地现状:状态、年龄、修订号
 
 | 开关 | 作用 |
 |---|---|
-| `--offline`(任意命令) | 完全不碰网络——不刷索引、不下载、不自动装工具链。已安装的东西照常构建 |
+| `--offline`(任意命令) | 完全不碰网络——不刷索引、不下载、不自动装工具链,也不发 `git ls-remote`/`clone`。已安装的东西照常构建,包括 commit 已在 `mcpp.lock`、克隆已在缓存里的 git 依赖 |
 | `MCPP_OFFLINE=1` | 同上,作用于整个 shell 会话或 CI job |
 | `~/.mcpp/config.toml` 里 `[index] auto_refresh = false` | 永不自动刷新索引,但下载仍然可用 |
 

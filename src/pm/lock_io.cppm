@@ -38,8 +38,10 @@ struct LockedPackage {
 //   git+https://host/repo#branch=develop@5848943...
 //   git+https://host/repo#tag=v1.0.0
 //   git+https://host/repo#rev=5848943...
-// The resolvedCommit field is optional because old lock entries or
-// tag/rev sources may not carry a resolved commit.
+// Only `branch` carries `@<commit>`: a tag or rev already names a fixed point
+// in history, whereas a branch is floating and the recorded commit is what
+// pins it. `resolvedCommit` is therefore empty for tag/rev, and also for a
+// branch entry written before the commit was known.
 struct LockedGitSource {
     std::string url;
     std::string refKind;                       // "branch", "tag", or "rev"
@@ -196,17 +198,20 @@ std::optional<LockedGitSource> parse_git_source(std::string_view source) {
         return std::nullopt;
 
     auto refPart = fragment.substr(eqPos + 1);
-    // Split on the LAST `@` so branch names containing `@` (e.g. "feat@v2")
-    // match the write format in prepare.cppm (`ref + "@" + commit`).
-    auto atPos = refPart.rfind('@');
-    if (atPos == std::string_view::npos) {
-        out.ref = std::string(refPart);
-    } else {
-        out.ref = std::string(refPart.substr(0, atPos));
-        out.resolvedCommit = std::string(refPart.substr(atPos + 1));
-        // A bare `branch=foo@` would otherwise yield an empty commit and
-        // confuse the offline anchor into reporting "locked to commit ".
-        if (out.resolvedCommit->empty()) out.resolvedCommit.reset();
+    out.ref = std::string(refPart);
+    // Only branch entries carry `@<commit>` — see the writer in prepare.cppm,
+    // which appends it for `branch` and nothing else. Splitting unconditionally
+    // would read a tag legitimately named `v1@rc` as ref `v1` plus commit `rc`.
+    // Within branch entries, split on the LAST `@` so a branch name that
+    // contains one ("feat@v2") still round-trips.
+    if (out.refKind == "branch") {
+        if (auto atPos = refPart.rfind('@'); atPos != std::string_view::npos) {
+            out.ref = std::string(refPart.substr(0, atPos));
+            // A bare `branch=foo@` records no commit; leaving an empty string
+            // behind would make the anchor claim a pin it does not have.
+            if (auto commit = refPart.substr(atPos + 1); !commit.empty())
+                out.resolvedCommit = std::string(commit);
+        }
     }
 
     if (out.ref.empty()) return std::nullopt;

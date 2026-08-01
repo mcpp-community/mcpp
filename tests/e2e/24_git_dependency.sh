@@ -153,17 +153,24 @@ out=$(${triple}${fp_dir}/bin/branchapp)
     echo "FAIL: branch dep v1 not invoked: $out"
     cat branch-v1.log; exit 1; }
 
-# Second build with the lock in place must resolve the branch dep from the
-# lock commit rather than calling `git ls-remote`. A bare `mcpp build` here
-# would take the prepare_build fast-path (build.ninja is fresh → just run
-# ninja → "Finished" only), so prepare_build never runs and neither the lock
-# anchor path nor `ls-remote` is exercised — leaving the assertion vacuous
-# (the original main-branch test passed identically). `mcpp clean` wipes only
-# `target/`, so mcpp.lock and the git cache (~/.mcpp/git) survive; the next
-# build must re-prepare, hit the anchor, and skip both ls-remote and clone.
+# A rebuild with the lock in place must resolve the branch dep from the
+# recorded commit rather than calling `git ls-remote`.
+#
+# `mcpp clean` first: a bare `mcpp build` here would take the fast path in
+# cmd_build (build.ninja is newer than every input → just run ninja), so
+# prepare_build never runs and neither the anchor nor `ls-remote` would be
+# exercised — the assertion would pass identically without the feature. clean
+# wipes only `target/`, so mcpp.lock and the git cache both survive.
+#
+# Run under MCPP_OFFLINE as well: with the commit in the lock and the clone on
+# disk there is nothing left to fetch, so this must hold with the network
+# refused. It also pins the local-remote rule — this fixture's `git =` is a
+# directory path, which costs no network and must never be refused offline.
 "$MCPP" clean >/dev/null
-build2=$("$MCPP" build 2>&1)
-echo "$build2" | grep -q 'from lock' || { echo "FAIL: branch dep not resolved from lock on rebuild"; echo "--- build2 ---"; cat <<<"$build2"; exit 1; }
+build2=$(MCPP_OFFLINE=1 "$MCPP" build 2>&1) || {
+    echo "FAIL: offline rebuild with lock + cache present failed"
+    echo "--- build2 ---"; cat <<<"$build2"; exit 1; }
+echo "$build2" | grep -q 'from mcpp.lock' || { echo "FAIL: branch dep not resolved from mcpp.lock on rebuild"; echo "--- build2 ---"; cat <<<"$build2"; exit 1; }
 echo "$build2" | grep -q 'Cloning' && { echo "FAIL: branch dep re-cloned on rebuild"; exit 1; } || true
 
 grep -q 'source  = "git+' mcpp.lock || {
@@ -186,6 +193,25 @@ git add -A >/dev/null
 git commit --quiet -m "v2"
 
 cd "$TMP/branchapp"
+
+# mcpp.lock is authoritative, not a hint the cache has to confirm. The branch
+# now points at v2 and the git cache is gone, so the only surviving record of
+# what this project builds is the commit in mcpp.lock — and the build must
+# still produce v1 from it. If the lock were merely an optimisation over the
+# cache, evicting ~/.mcpp/git would silently advance the build to v2.
+rm -rf "$MCPP_HOME/git"
+"$MCPP" clean >/dev/null
+"$MCPP" build > branch-evicted.log 2>&1 || {
+    echo "FAIL: rebuild after git-cache eviction"
+    cat branch-evicted.log; exit 1; }
+triple=$(ls -d target/*/ | head -1)
+fp_dir=$(ls "$triple")
+out=$(${triple}${fp_dir}/bin/branchapp)
+[[ "$out" == *"branch dep v1"* ]] || {
+    echo "FAIL: git-cache eviction silently advanced the locked branch: $out"
+    echo "--- branch-evicted.log ---"; cat branch-evicted.log
+    echo "--- mcpp.lock ---"; cat mcpp.lock; exit 1; }
+
 "$MCPP" update branchlib >/dev/null
 "$MCPP" clean >/dev/null
 "$MCPP" build > branch-v2.log 2>&1

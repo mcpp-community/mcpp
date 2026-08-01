@@ -710,6 +710,50 @@ export struct BuildOverrides {
     std::string cache_mode;          // --cache global|local|off ("" = unset)
 };
 
+// ── git dependency helpers ──────────────────────────────────────────────────
+
+// Is this git remote reachable without a network round-trip?
+//
+// `--offline` means "never touch the network" (docs/05-mcpp-toml.md), and its
+// standing promise is that anything already on disk still builds. A remote that
+// names a local directory — or a file:// URL — is served by plain filesystem
+// reads, so refusing it would break that promise without buying any isolation.
+// The dependency-download gate further down draws the same line.
+//
+// Recognising a scheme (`https://`, `ssh://`, `git://`) or scp-like syntax
+// (`git@host:path`) as remote first keeps a Windows drive letter (`C:\repo`,
+// which contains a colon but no `@`) on the local side.
+bool is_local_git_remote(std::string_view url) {
+    if (url.starts_with("file://"))                     return true;
+    if (url.contains("://"))                            return false;
+    if (url.contains('@') && url.contains(':'))         return false;
+    std::error_code ec;
+    return std::filesystem::exists(std::filesystem::path(url), ec);
+}
+
+// The commit a cached clone is actually parked on, or "" if it cannot be read.
+//
+// Used to detect a clone that was interrupted between `git clone` and
+// `git checkout` — the directory exists and looks like a repository, but sits
+// on the wrong commit. Only meaningful when the expected revision is a sha,
+// i.e. for branch deps after resolution.
+//
+// stderr is folded in so a git warning cannot leak to the user's terminal;
+// the last line is taken so such a warning cannot corrupt the sha either.
+std::string git_cache_head(const std::filesystem::path& gitRoot) {
+    auto r = mcpp::platform::process::capture(std::format(
+        "git -C {} rev-parse HEAD 2>&1",
+        mcpp::platform::shell::quote(gitRoot.string())));
+    if (r.exit_code != 0) return {};
+    std::string out = r.output;
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r'
+                            || out.back() == ' '  || out.back() == '\t'))
+        out.pop_back();
+    if (auto nl = out.find_last_of("\r\n"); nl != std::string::npos)
+        out.erase(0, nl + 1);
+    return out;
+}
+
 // `prepare_build` builds the BuildContext for any verb that compiles.
 //   includeDevDeps: when true, dev-dependencies are also fetched + scanned
 //                   into the modgraph. mcpp test passes true; build/run pass false.
@@ -839,22 +883,28 @@ prepare_build(bool print_fingerprint,
         mcpp::diag::warning("manifest/schema", w);
     }
 
-    // Load mcpp.lock once. Git-based deps can use it as an offline anchor:
-    // if a branch is already resolved to a commit and the local cache matches,
-    // no network round-trip is needed.
+    // Load mcpp.lock once, up front: it is a resolution input for git deps
+    // (#329), which decide the commit to build long before anything is
+    // fetched. Keyed by package name — the same key the writer at the end of
+    // this function emits, both taken from the root manifest's [dependencies].
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
     {
         auto lockPath = *root / "mcpp.lock";
         if (std::filesystem::exists(lockPath)) {
-            if (auto lock = mcpp::lockfile::load(lockPath); lock) {
-                for (auto const& p : lock->packages) {
-                    if (auto parsed = mcpp::pm::parse_git_source(p.source); parsed) {
+            if (auto lock = mcpp::pm::load(lockPath); lock) {
+                for (auto const& p : lock->packages)
+                    if (auto parsed = mcpp::pm::parse_git_source(p.source); parsed)
                         gitLockAnchors.emplace(p.name, std::move(*parsed));
-                    }
-                }
             } else {
-                mcpp::diag::warning("lockfile",
-                    std::format("ignoring mcpp.lock: {}", lock.error().message));
+                // Degraded, not a plain warning: the engine silently does less
+                // than asked — every git branch dep falls back to `ls-remote`
+                // and may advance past the commit the lock recorded.
+                mcpp::diag::degraded("lockfile",
+                    std::format("mcpp.lock could not be read: {}",
+                                lock.error().message),
+                    "git branch dependencies are re-resolved over the network "
+                    "and may move onto a newer commit than the one recorded",
+                    "delete mcpp.lock and rebuild to regenerate it");
             }
         }
     }
@@ -3004,151 +3054,147 @@ prepare_build(bool print_fingerprint,
             dep_root = std::filesystem::weakly_canonical(dep_root);
         } else if (spec.isGit()) {
             // Git-based (M4 #5): clone into ~/.mcpp/git/<hash>/ and treat
-            // as a path dep from there. Branch refs are floating, so resolve
-            // them to a commit before forming the cache key; this lets
-            // `mcpp update <dep>` pick up a moved branch without deleting
-            // unrelated git caches.
+            // as a path dep from there.
             //
-            // mcpp.lock acts as an offline anchor: if a branch is already
-            // resolved to a commit and the local cache still matches it,
-            // we skip the network round-trip entirely.
+            // Two independent questions, each answered by at most one network
+            // operation and therefore guarded by exactly one --offline gate:
+            //
+            //   1. WHICH COMMIT?  `tag`/`rev` name one outright. A `branch` is
+            //      floating: mcpp.lock answers it, else `git ls-remote` does.
+            //   2. IS IT ON DISK? The commit selects the cache directory, so a
+            //      miss — or a clone parked on the wrong commit — is a clone.
+            //
+            // mcpp.lock is authoritative for (1), not a hint that (2) has to
+            // confirm: a recorded commit is used whether or not the clone
+            // survived, so evicting ~/.mcpp/git can never quietly move a build
+            // onto a newer branch tip. `mcpp update <dep>` drops the entry and
+            // stays the one way a branch advances.
             auto mcppHome = mcpp::home::root();   // single resolver (#311)
+
+            const bool remoteIsLocal = is_local_git_remote(spec.git);
+            auto refuse_offline = [&](std::string_view need,
+                                      std::string_view why,
+                                      std::string_view verb) {
+                return std::unexpected(std::format(
+                    "offline mode: git dependency '{}' needs {} of '{}'\n"
+                    "       {}\n"
+                    "       run without --offline (or unset MCPP_OFFLINE) to {} it",
+                    name, need, spec.git, why, verb));
+            };
+            const bool offline =
+                !remoteIsLocal && mcpp::platform::env::offline_mode();
+
+            // ── 1. which commit ──
             std::string resolvedGitRev = spec.gitRev;
-            bool skipLsRemote = false;
-
-            // Look up an offline anchor for this git dep.
-            std::optional<std::string> lockedCommit;
-            if (auto it = gitLockAnchors.find(name); it != gitLockAnchors.end()) {
-                auto const& anchor = it->second;
-                if (anchor.refKind == spec.gitRefKind
-                    && anchor.ref == spec.gitRev
-                    && anchor.url == spec.git) {
-                    lockedCommit = anchor.resolvedCommit;
-                }
-            }
-
-            auto computeGitRoot = [&](const std::string& rev) {
-                std::hash<std::string> H;
-                auto urlHash = std::format("{:016x}",
-                    H(spec.git + "|" + spec.gitRefKind + "|" + spec.gitRev
-                      + "|" + rev));
-                return mcppHome / "git" / urlHash;
-            };
-
-            auto readCacheHead = [&](const std::filesystem::path& gitRoot)
-                -> std::string
-            {
-                auto cmd = std::format("git -C {} rev-parse HEAD 2>&1",
-                    mcpp::platform::shell::quote(gitRoot.string()));
-                auto r = mcpp::platform::process::capture(cmd);
-                if (r.exit_code != 0) return {};
-                std::string head = r.output;
-                head.erase(head.find_last_not_of(" \r\n\t") + 1);
-                return head;
-            };
-
+            bool fromLock = false;
             if (spec.gitRefKind == "branch") {
-                auto ref = std::format("refs/heads/{}", spec.gitRev);
-                if (lockedCommit && !lockedCommit->empty()) {
-                    resolvedGitRev = *lockedCommit;
-                    auto gitRoot = computeGitRoot(resolvedGitRev);
-                    if (std::filesystem::exists(gitRoot / ".git") &&
-                        readCacheHead(gitRoot) == resolvedGitRev) {
-                        skipLsRemote = true;
-                        mcpp::ui::info("Resolved",
-                            std::format("{} ({} = {}) from lock",
-                                spec.git, spec.gitRefKind, spec.gitRev));
-                    }
-                }
-                if (!skipLsRemote) {
-                    if (mcpp::platform::env::offline_mode()) {
-                        if (lockedCommit) {
-                            return std::unexpected(std::format(
-                                "git dep '{}' locked to commit {} but its local cache is missing or stale; "
-                                "run without --offline to refresh.",
-                                name, *lockedCommit));
-                        } else {
-                            return std::unexpected(std::format(
-                                "git dep '{}' uses branch '{}' and mcpp.lock has no commit; "
-                                "cannot resolve offline. Run without --offline.",
-                                name, spec.gitRev));
-                        }
-                    }
-                    auto cmd = std::format(
+                auto it = gitLockAnchors.find(name);
+                if (it != gitLockAnchors.end()
+                    && it->second.url     == spec.git
+                    && it->second.refKind == spec.gitRefKind
+                    && it->second.ref     == spec.gitRev
+                    && it->second.resolvedCommit) {
+                    resolvedGitRev = *it->second.resolvedCommit;
+                    fromLock = true;
+                } else {
+                    if (offline)
+                        return refuse_offline("`git ls-remote`",
+                            std::format("mcpp.lock records no commit for branch "
+                                        "'{}'", spec.gitRev),
+                            "resolve");
+                    auto r = mcpp::platform::process::capture(std::format(
                         "git ls-remote {} {} 2>&1",
                         mcpp::platform::shell::quote(spec.git),
-                        mcpp::platform::shell::quote(ref));
-                    auto r = mcpp::platform::process::capture(cmd);
-                    if (r.exit_code != 0) {
+                        mcpp::platform::shell::quote(
+                            std::format("refs/heads/{}", spec.gitRev))));
+                    if (r.exit_code != 0)
                         return std::unexpected(std::format(
-                            "git ls-remote of '{}' failed:\n{}", spec.git, r.output));
-                    }
+                            "git ls-remote of '{}' failed:\n{}",
+                            spec.git, r.output));
+                    // Cleared first: `operator>>` leaves the target untouched
+                    // when the stream is already at EOF, which would otherwise
+                    // let the declared branch name pass the emptiness check.
+                    resolvedGitRev.clear();
                     std::istringstream is(r.output);
                     is >> resolvedGitRev;
-                    if (resolvedGitRev.empty()) {
+                    if (resolvedGitRev.empty())
                         return std::unexpected(std::format(
-                            "git branch '{}' not found in '{}'", spec.gitRev, spec.git));
-                    }
-                }
-            } else {
-                // tag/rev: the declared ref is already a stable identity.
-                // If the lock already recorded this dep and the clone is present,
-                // we still use it; otherwise fall through to clone.
-                auto gitRoot = computeGitRoot(resolvedGitRev);
-                if (std::filesystem::exists(gitRoot / ".git")) {
-                    mcpp::ui::info("Resolved",
-                        std::format("{} ({} = {}) from cache",
-                            spec.git, spec.gitRefKind, spec.gitRev));
-                }
-                if (!std::filesystem::exists(gitRoot / ".git") &&
-                    mcpp::platform::env::offline_mode()) {
-                    return std::unexpected(std::format(
-                        "git dep '{}' is locked but its local cache is missing; "
-                        "run without --offline to clone.",
-                        name));
+                            "git branch '{}' not found in '{}'",
+                            spec.gitRev, spec.git));
                 }
             }
 
+            // ── 2. is it on disk ──
             // Cache key: hash(url + refkind + declared ref + resolved commit).
             // For fixed rev/tag deps the declared ref is also the resolved ref.
-            auto gitRoot = computeGitRoot(resolvedGitRev);
+            std::hash<std::string> H;
+            auto gitRoot = mcppHome / "git" / std::format("{:016x}",
+                H(spec.git + "|" + spec.gitRefKind + "|" + spec.gitRev
+                  + "|" + resolvedGitRev));
             std::error_code ec;
             std::filesystem::create_directories(gitRoot.parent_path(), ec);
-            if (!std::filesystem::exists(gitRoot / ".git")) {
+
+            // A branch's resolved rev is always a sha by now, so the clone can
+            // be checked against it — catching one killed between `git clone`
+            // and `git checkout`, which would otherwise serve the wrong commit
+            // from a correctly-named directory forever. tag/rev keep their ref
+            // name as the identity, so there is nothing to compare.
+            bool cachePresent = std::filesystem::exists(gitRoot / ".git");
+            if (cachePresent && spec.gitRefKind == "branch"
+                && git_cache_head(gitRoot) != resolvedGitRev) {
+                std::filesystem::remove_all(gitRoot, ec);
+                cachePresent = false;
+            }
+
+            // Reported before the clone, not instead of it: when the cache is
+            // gone this line is the whole explanation for why the build is on
+            // an older commit than the branch now points at.
+            if (fromLock)
+                mcpp::ui::info("Resolved",
+                    std::format("{} (branch = {}) from mcpp.lock",
+                        spec.git, spec.gitRev));
+
+            if (!cachePresent) {
+                if (offline)
+                    return refuse_offline("a clone",
+                        std::format("no cached clone at {}", gitRoot.string()),
+                        "fetch");
                 mcpp::ui::info("Cloning",
                     std::format("{} ({} = {})", spec.git, spec.gitRefKind, spec.gitRev));
-                std::string cloneCmd;
-                if (spec.gitRefKind == "branch") {
-                    cloneCmd = std::format(
-                        "git clone --depth 1 --branch {} {} {} && cd {} && git checkout --quiet {} 2>&1",
+                // A commit taken from the lock may sit behind the branch tip,
+                // and a tag/rev may sit anywhere in history — both need full
+                // history before the checkout. Only a tip just read from
+                // ls-remote is guaranteed present in a depth-1 clone.
+                //
+                // `git -C` rather than `cd <dir> &&`: on Windows `cd` does not
+                // change drive without /d, and the cache root routinely lives
+                // on a different one than the project.
+                auto cloneCmd = (spec.gitRefKind == "branch" && !fromLock)
+                    ? std::format(
+                        "git clone --depth 1 --branch {} {} {} && "
+                        "git -C {} checkout --quiet {} 2>&1",
                         mcpp::platform::shell::quote(spec.gitRev),
                         mcpp::platform::shell::quote(spec.git),
                         mcpp::platform::shell::quote(gitRoot.string()),
                         mcpp::platform::shell::quote(gitRoot.string()),
-                        mcpp::platform::shell::quote(resolvedGitRev));
-                } else {
-                    // For tag/rev: full clone, then checkout (depth-1 may miss the rev).
-                    cloneCmd = std::format(
-                        "git clone {} {} && cd {} && git checkout --quiet {} 2>&1",
+                        mcpp::platform::shell::quote(resolvedGitRev))
+                    : std::format(
+                        "git clone {} {} && git -C {} checkout --quiet {} 2>&1",
                         mcpp::platform::shell::quote(spec.git),
                         mcpp::platform::shell::quote(gitRoot.string()),
                         mcpp::platform::shell::quote(gitRoot.string()),
-                        mcpp::platform::shell::quote(spec.gitRev));
-                }
-                std::string out;
-                {
-                    auto r = mcpp::platform::process::capture(cloneCmd);
-                    out = r.output;
-                    int rc = r.exit_code;
-                    if (rc != 0) {
-                        std::filesystem::remove_all(gitRoot, ec);
-                        return std::unexpected(std::format(
-                            "git clone of '{}' failed:\n{}", spec.git, out));
-                    }
+                        mcpp::platform::shell::quote(resolvedGitRev));
+                auto r = mcpp::platform::process::capture(cloneCmd);
+                if (r.exit_code != 0) {
+                    std::filesystem::remove_all(gitRoot, ec);
+                    return std::unexpected(std::format(
+                        "git clone of '{}' failed:\n{}", spec.git, r.output));
                 }
             }
             if (item.consumerDepIndex == kMainConsumer) {
-                std::hash<std::string> H;
+                // Only root deps are locked: the writer below walks the root
+                // manifest's [dependencies], so a transitive git branch dep
+                // has no anchor and still resolves over the network.
                 auto source = std::format("git+{}#{}={}",
                     spec.git, spec.gitRefKind, spec.gitRev);
                 if (spec.gitRefKind == "branch") source += "@" + resolvedGitRev;

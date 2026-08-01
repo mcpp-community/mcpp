@@ -3,6 +3,28 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.1.2] — 2026-08-01
+
+### 新增
+
+- **`mcpp.lock` 成为 git 依赖的解析输入,而且是权威的那一份。** 在此之前 lock 只写不读:`branch = "develop"` 这类依赖每次进 `prepare_build` 都要打一次 `git ls-remote`,而写进 lock 的那个 commit 从来没有人看过。现在**先读 lock**——分支已经解析过就直接用记录的 commit,不再有网络往返。
+
+  「权威」是这里的关键词,不是「缓存的提示」。一个只在本地克隆恰好还在时才生效的 lock,等于把「构建哪个 commit」这个决定交给了缓存目录的存活状况:清一次 `~/.mcpp/git`、或者换一台机器 clone 同一个工程,构建就会静默滑到分支的新头上,并把 lock 改写成新值——**而 `mcpp new` 生成的 `.gitignore` 并不忽略 `mcpp.lock`,它本来就是要提交的**。实测(见 e2e 24 新增断言):分支移到 v2、缓存删除后,旧行为构建出 v2,新行为构建出 lock 里记的 v1。要新的分支头依然只有一条路——`mcpp update <dep>`,它丢掉 lock 条目,下次构建重新解析。
+
+  连带把这块的结构收敛成两个各自独立的问题,各带**恰好一个** `--offline` 闸:**(1) 是哪个 commit** —— `tag`/`rev` 自带答案,`branch` 由 lock 回答、否则 `ls-remote`;**(2) 它在不在盘上** —— commit 选定缓存目录,miss 就 clone。原来 tag/rev 有一条自己的分支腿、打一行每次构建都出现的 `from cache` 噪声,并且在 dep 根本没进 lock 时报「is locked but its local cache is missing」;这条腿现在整个不需要了。
+
+### 修复
+
+- **`--offline` 不再拒绝本地 git 远端。** `docs/05-mcpp-toml.md` 写明 `--offline` 的语义是「完全不碰网络……已安装的东西照常构建」,`prepare.cppm` 里依赖下载闸的注释也把线画在同一处:「这条线以上全是本地操作,一个依赖齐备的离线构建必须成功」。但 `git = "../sibling-repo"` 这种指向本地目录的远端,`ls-remote`/`clone` 都只是文件系统读取,拒绝它买不到任何隔离性。现在按远端形态判定——`file://`、以及不带 scheme 也不是 `git@host:path` 的存在路径,算本地(Windows 盘符 `C:\repo` 含冒号但不含 `@`,因此仍归本地)。
+
+- **克隆被中途杀掉后不再永久提供错误的 commit。** 缓存目录以 commit 命名,但内容是 `git clone` 之后再 `git checkout` 两步做出来的;进程死在两步之间,目录名和 HEAD 就对不上了,而后续构建只检查目录存不存在。现在分支依赖会比对 `git rev-parse HEAD`,不符即删除重克隆(tag/rev 以 ref 名为身份,无可比之物)。
+
+- **git 克隆在 Windows 上不再依赖 `cd` 跨盘。** 克隆命令用的是 `git clone … && cd <dir> && git checkout`,而 cmd.exe 的 `cd` 不带 `/d` 是不换盘的——缓存根(`MCPP_HOME`)与工程不同盘是常态。仓库里其它跨盘位置(`process.cppm`、`msvc.cppm`)都写了 `cd /d`,这里漏了。改用 `git -C <dir>`,连 shell 都不需要。
+
+- **`mcpp.lock` 读取失败改用 degraded 通道。** 按 `src/diag.cppm` 的划分,「引擎做得比要求的少」属于 Degraded 且必须给出 impact——lock 读不出来,每个 git 分支依赖都会退回网络解析、并可能越过记录的 commit。原来记的是普通 warning,`--strict` 提升不到它。
+
+- **`parse_git_source` 不再切开名字里带 `@` 的 tag/rev。** 写侧只对 `branch` 追加 `@<commit>`,解析侧却无条件按最后一个 `@` 切分,于是一个叫 `v1.0@rc1` 的 tag 会被读成 ref `v1.0` + commit `rc1`。现在只有 branch 走这条切分(且仍按最后一个 `@`,以容纳 `feat@v2` 这类分支名)。
+
 ## [2026.8.1.1] — 2026-08-01
 
 ### 修复
