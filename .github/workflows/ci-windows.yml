@@ -116,6 +116,68 @@ jobs:
   # Windows-specific behavioural regressions. Kept on one runner: each leg is
   # seconds-to-2-minutes, so per-leg runners would cost more setup than they
   # save.
+  # A Windows machine WITHOUT Visual Studio — the shape of an ordinary user's
+  # box, and the one shape no GitHub image provides. Every runner ships VS, so
+  # a bare-Windows regression was structurally invisible here; the fresh-install
+  # workflow now covers it too, but that one only runs post-release, which is
+  # far too late to learn that `mcpp new && mcpp build` no longer works on a
+  # stock machine.
+  #
+  # Order matters: mcpp is built while Visual Studio is still present (the
+  # self-host build uses llvm, which targets the MSVC ABI and needs it), and
+  # only then is VS masked. e2e 182 opens by asserting that MSVC detection
+  # FAILS, so an incomplete mask fails the job instead of quietly testing the
+  # ordinary path.
+  no-msvc-fallback:
+    name: "bare Windows: no Visual Studio (windows x64)"
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host, VS still present)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+          # Newest by mtime — target/ is cache-restored and keeps a directory
+          # per build fingerprint, so `find | head -1` can hand back the
+          # PREVIOUS release's binary after a version bump.
+          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" -printf "%T@ %p\n" \
+              | sort -rn | head -1 | cut -d" " -f2-)
+          test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
+          MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
+          echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
+
+      - name: Mask Visual Studio
+        shell: pwsh
+        run: |
+          # All three of msvc.cppm's discovery strategies at once: vswhere,
+          # the install roots, and the environment. The runner is disposable,
+          # so renaming in place is both safe and closer to "absent" than any
+          # env-only trick.
+          $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) { Rename-Item $vswhere "vswhere.exe.masked" }
+
+          Get-ChildItem "C:\Program Files*\Microsoft Visual Studio" -Directory `
+              -ErrorAction SilentlyContinue | ForEach-Object {
+            $masked = "$($_.FullName).masked"
+            if (-not (Test-Path $masked)) { Rename-Item $_.FullName $masked }
+          }
+
+          foreach ($v in @('VSINSTALLDIR','VCINSTALLDIR','VCToolsInstallDir',
+                           'VS170COMNTOOLS','VS160COMNTOOLS','VS150COMNTOOLS')) {
+            "$v=" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          }
+
+      - name: "No Visual Studio: fallback to winlibs GCC (e2e 182)"
+        shell: bash
+        env:
+          MCPP_VENDORED_XLINGS: ${{ env.XLINGS_BIN }}
+        run: |
+          MCPP="$MCPP_SELF" bash tests/e2e/182_windows_no_msvc_fallback.sh
+
   toolchains:
     name: "toolchains + regressions (windows x64)"
     runs-on: windows-latest
