@@ -1014,6 +1014,18 @@ token 走 `~/.config/gitcode-tool/config.json` 而非环境变量;沙箱 wrapper
 | **`[build] linkage` 根本不被解析** | `toml.cppm:995` 只在 `[target.<triple>]` 下读。文档三处 + `prepare.cppm` 一处注释都在教一个静默失效的键,已改 |
 | **`no-msvc` 需要是一个显式能力** | 不能由「非 msvc」推出:e2e 182 必须 REQUIRE 它,否则在有 MSVC 的机器上会走普通路径并通过,证明不了任何事 |
 
+## CI 才暴露的问题(本机全绿也发现不了)
+
+| 发现 | 影响 |
+|---|---|
+| **`$local_includes` 进 response file,rsp 按 GNU 分词、反斜杠是转义符** | 收敛两条通道时连路径形态也一起收敛了,而它们**必须不同**:命令行保留原生分隔符,rsp 必须正斜杠。`include_token` 因此带 `PathForm` 形参;`escape_ninja_chars` 收字符串而非 path,否则 `fs::path` 往返会在 Windows 上把分隔符归一化、悄悄撤销 `generic_string()` |
+| **clang 22 + modules:未被调用的 `split_ws` 误编译了邻居函数** | 见 `memory/clang-modules-unused-fn-miscompile.md`。修法=方言表直接存 `span<string_view>` token,不再运行时切分(本来也更干净) |
+| **BMI flag 与其路径是一个 shell 词** | `-fmodule-file=std=<path>` 只做了 ninja 转义。GCC 永远看不到(它的 BmiTraits 这几项为空),macOS/clang 上含空格路径直接裂开 |
+| **deployment target 必须进 `base`** | 它同时喂内置 `mcpp` 模块的预编译、其 object 步骤、以及 build.mcpp 编译。只加在 std 那一路,不匹配就换个模块继续报——clang 两个方向都拒 |
+| **持久化 `default_target` 会盖过工程显式 `[toolchain]`** | 词表 pin 挂在 target 上。回退一旦持久化了 target,后续每个工程都继承它,于是 mcpp 自己记住的默认推翻了用户写下的选择——正是回退承诺的反面。判据:**记住的** target 不压过用户显式的 toolchain,**请求的**(`--target`)照旧 |
+| **断言不能写死引号字符** | `shell_quote_arg` POSIX 单引号、cmd.exe 双引号。写死 `'` 在 Linux 通过、在 Windows 因为一个**正确**的差异而红 |
+| **VS 遮蔽:同 job 里先用 clang 构建会让 VS 目录改不动** | clang 读 MSVC STL 留下句柄。改为独立 job + 取 build-test 的 artifact。另两个坑:`-Path` 末段带通配符列的是目录**内容**不是目录本身;`-ErrorAction SilentlyContinue` 会把 rename 失败吞掉,让"遮蔽了个寂寞"看起来正常 |
+
 ## Self-Review
 
 **Spec coverage**
