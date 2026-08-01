@@ -1000,6 +1000,20 @@ token 走 `~/.config/gitcode-tool/config.json` 而非环境变量;沙箱 wrapper
 
 ---
 
+## 实施记录(执行中发现、计划里没写的东西)
+
+| 发现 | 影响 |
+|---|---|
+| **`command_from_argv` 的裸 argv[0] 是故意的** —— 注释写明引号会被 `cmd /c` 剥掉 | 真修法不在 `command_from_argv` 一处:要按 cmd.exe `/c` 的文档规则给整条命令**再包一层外引号**,让 cmd 吃掉它,内层引号才能抵达。`run_exec` 必须只包不封 stdin(`mcpp run` 要交互) |
+| **`command_from_argv` 只在非 Linux/macOS 分支编译** | Linux 上测不到。把 Windows 的字符串成形抽成宿主无关的 `windows_command_from_argv` / `windows_wrap_for_cmd_c`,Linux CI 也能守住这条规则 —— 这个分支在开发平台上根本不编译,正是裸 argv[0] 活这么久的原因 |
+| **`local_include_flags` 的 `msvcDialect` 形参只用于 after-dirs** | 普通 include 硬编码 `-I`。收敛到 `include_token` 后 MSVC 方言下变成 `/I`,`test_ninja_backend.cpp` 里有一条断言编码的正是这个 bug,已更新 |
+| **两层转义,顺序固定** | ninja 的 `$ ` 在内、shell 引号在外。写断言时必须知道文件里是 `'-I/opt/my$ dep/include'`,单测和 e2e 各踩了一次 |
+| **`ensure_built` 的 `tc` 已经是宿主工具链** | `prepare.cppm` 调 `run_build_program(*m, *root, host->first, host->second, ...)`,host≠target 在调用点就闭合了,组件 D 无需自己解析 |
+| **`Directives` 会被序列化进 build.mcpp 缓存** | 计划里的「产出中立字段」会改缓存格式。改为在 parse 时按方言翻译 —— 缓存键已含 `compiler <hash>`,换工具链自动失效,所以安全且零格式变更 |
+| **`mcpp toolchain default msvc` 也写 `config.toml`** | 与 mcpp 自己持久化的默认同源,会被误判成可改写。收紧:`tc->compiler == MSVC` 一律视为用户显式 —— mcpp 从不自选 msvc@system |
+| **`[build] linkage` 根本不被解析** | `toml.cppm:995` 只在 `[target.<triple>]` 下读。文档三处 + `prepare.cppm` 一处注释都在教一个静默失效的键,已改 |
+| **`no-msvc` 需要是一个显式能力** | 不能由「非 msvc」推出:e2e 182 必须 REQUIRE 它,否则在有 MSVC 的机器上会走普通路径并通过,证明不了任何事 |
+
 ## Self-Review
 
 **Spec coverage**

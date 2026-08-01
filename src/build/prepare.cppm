@@ -1473,7 +1473,7 @@ prepare_build(bool print_fingerprint,
     if (windowsGnuFirstRun && tcSpec.has_value()) {
         mcpp::ui::info("First run",
             std::format("no toolchain configured and no Visual Studio found — "
-                        "installing {} for {} (MinGW-w64, self-contained)",
+                        "using {} for {} (MinGW-w64, self-contained)",
                         *tcSpec, overrides.target_triple));
         if (auto cfgW = get_cfg(); cfgW) {
             if (mcpp::config::write_default_toolchain(**cfgW, *tcSpec))
@@ -1503,8 +1503,24 @@ prepare_build(bool print_fingerprint,
         tc->compiler == mcpp::toolchain::CompilerId::MSVC
         || mcpp::toolchain::is_msvc_target(*tc);
     if (targetsMsvcAbi && !mcpp::toolchain::msvc::has_usable_msvc()) {
+        // Native cl.exe is ALWAYS a deliberate choice: mcpp never selects
+        // msvc@system on its own — it cannot install one — so the only way it
+        // reaches config.toml is a user typing `mcpp toolchain default msvc`.
+        // Without this, that user (who evidently wants MSVC and is probably
+        // just missing the SDK component) would be silently moved to MinGW
+        // instead of being told which component to install.
+        //
+        // The residual imprecision is deliberate and bounded: a *global*
+        // default of llvm@20.1.7 is indistinguishable from the one mcpp used
+        // to write itself, so an explicitly-typed one gets repaired too. The
+        // value is identical either way and the machine cannot build with it;
+        // a user who wants that failure can pin it in mcpp.toml, which is
+        // honoured exactly.
+        const bool userChoseMsvcItself =
+            tc->compiler == mcpp::toolchain::CompilerId::MSVC;
         const bool mayRepair =
             !tc_origin_is_user_explicit(tcOrigin)
+            && !userChoseMsvcItself
             && !mcpp::platform::env::offline_mode()
             && !mcpp::platform::env::no_auto_install()
             && mcpp::platform::is_windows;
