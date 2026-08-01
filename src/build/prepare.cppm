@@ -1120,9 +1120,14 @@ prepare_build(bool print_fingerprint,
     // [toolchain] default_target (global config) > host.
     if (overrides.target_triple.empty() && !m->buildConfig.target.empty())
         overrides.target_triple = m->buildConfig.target;
+    // Remembered, not requested: this one came out of the global config, so
+    // it must not outrank anything the user wrote down (see the pin below).
+    bool targetFromGlobalDefault = false;
     if (overrides.target_triple.empty()) {
-        if (auto cfg = get_cfg(); cfg && !(*cfg)->defaultTarget.empty())
+        if (auto cfg = get_cfg(); cfg && !(*cfg)->defaultTarget.empty()) {
             overrides.target_triple = (*cfg)->defaultTarget;
+            targetFromGlobalDefault = true;
+        }
     }
     // Normalize the triple (alias spellings → canonical), validate against
     // the known-target vocabulary, then apply the manifest [target.<triple>]
@@ -1186,10 +1191,22 @@ prepare_build(bool print_fingerprint,
         // mapping, not here) and its default linkage. GCC 16 pin rationale:
         // GCC 15 drops module template instantiations at link (remediation
         // doc A2; packages shipped 2026-07-08/09, GitHub+GitCode).
-        if (known && !hasToolchainOverride && !known->pin.empty()) {
+        // A convention, not an instruction: on the Windows-GNU first-run path
+        // this is what turns the seeded target into `gcc@16.1.0`.
+        //
+        // It must not fire when a REMEMBERED target would overrule a
+        // toolchain the user wrote down. Once the no-Visual-Studio fallback
+        // persists `default_target = x86_64-windows-gnu`, every later project
+        // inherits that target — and the pin attached to it would then
+        // silently replace an explicit `[toolchain] windows = "llvm@…"`,
+        // which is exactly the promise the fallback is built on ("mcpp
+        // revises its own defaults, never yours"). A target the user asked
+        // for (--target, or [build] target) still wins, as it always has.
+        const bool pinWouldOverruleUser =
+            targetFromGlobalDefault && tc_origin_is_user_explicit(tcOrigin);
+        if (known && !hasToolchainOverride && !known->pin.empty()
+            && !pinWouldOverruleUser) {
             tcSpec = std::string(known->pin);
-            // A convention, not an instruction: on the Windows-GNU first-run
-            // path this is what turns the seeded target into `gcc@16.1.0`.
             if (!tc_origin_is_user_explicit(tcOrigin))
                 tcOrigin = TcOrigin::TargetPin;
         }
