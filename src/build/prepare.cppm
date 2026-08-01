@@ -3020,7 +3020,9 @@ prepare_build(bool print_fingerprint,
             std::optional<std::string> lockedCommit;
             if (auto it = gitLockAnchors.find(name); it != gitLockAnchors.end()) {
                 auto const& anchor = it->second;
-                if (anchor.refKind == spec.gitRefKind && anchor.ref == spec.gitRev) {
+                if (anchor.refKind == spec.gitRefKind
+                    && anchor.ref == spec.gitRev
+                    && anchor.url == spec.git) {
                     lockedCommit = anchor.resolvedCommit;
                 }
             }
@@ -3063,13 +3065,13 @@ prepare_build(bool print_fingerprint,
                         if (lockedCommit) {
                             return std::unexpected(std::format(
                                 "git dep '{}' locked to commit {} but its local cache is missing or stale; "
-                                "run without --offline to refresh, or `mcpp update {}` to re-resolve",
-                                name, *lockedCommit, name));
+                                "run without --offline to refresh.",
+                                name, *lockedCommit));
                         } else {
                             return std::unexpected(std::format(
                                 "git dep '{}' uses branch '{}' and mcpp.lock has no commit; "
-                                "cannot resolve offline. Run `mcpp update {}` or build without --offline.",
-                                name, spec.gitRev, name));
+                                "cannot resolve offline. Run without --offline.",
+                                name, spec.gitRev));
                         }
                     }
                     auto cmd = std::format(
@@ -3102,18 +3104,14 @@ prepare_build(bool print_fingerprint,
                     mcpp::platform::env::offline_mode()) {
                     return std::unexpected(std::format(
                         "git dep '{}' is locked but its local cache is missing; "
-                        "run without --offline to clone, or `mcpp update {}` to re-resolve.",
-                        name, name));
+                        "run without --offline to clone.",
+                        name));
                 }
             }
 
             // Cache key: hash(url + refkind + declared ref + resolved commit).
             // For fixed rev/tag deps the declared ref is also the resolved ref.
-            std::hash<std::string> H;
-            auto urlHash = std::format("{:016x}",
-                H(spec.git + "|" + spec.gitRefKind + "|" + spec.gitRev
-                  + "|" + resolvedGitRev));
-            auto gitRoot = mcppHome / "git" / urlHash;
+            auto gitRoot = computeGitRoot(resolvedGitRev);
             std::error_code ec;
             std::filesystem::create_directories(gitRoot.parent_path(), ec);
             if (!std::filesystem::exists(gitRoot / ".git")) {
@@ -3150,6 +3148,7 @@ prepare_build(bool print_fingerprint,
                 }
             }
             if (item.consumerDepIndex == kMainConsumer) {
+                std::hash<std::string> H;
                 auto source = std::format("git+{}#{}={}",
                     spec.git, spec.gitRefKind, spec.gitRev);
                 if (spec.gitRefKind == "branch") source += "@" + resolvedGitRev;

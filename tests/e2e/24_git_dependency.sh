@@ -155,7 +155,7 @@ out=$(${triple}${fp_dir}/bin/branchapp)
 
 # Second build with the lock in place must not hit the network for ls-remote.
 build2=$("$MCPP" build 2>&1)
-echo "$build2" | grep -q 'ls-remote' && { echo "FAIL: branch dep re-ls-remoted on rebuild"; exit 1; } || true
+echo "$build2" | grep -q 'from lock' || { echo "FAIL: branch dep not resolved from lock on rebuild"; cat <<<"$build2"; exit 1; }
 echo "$build2" | grep -q 'Cloning' && { echo "FAIL: branch dep re-cloned on rebuild"; exit 1; } || true
 
 grep -q 'source  = "git+' mcpp.lock || {

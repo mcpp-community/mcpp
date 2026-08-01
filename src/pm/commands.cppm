@@ -412,14 +412,15 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     // Refresh the index FIRST (#315/D6).
     //
-    // This command used to only drop lock entries and tell the user to run
-    // `mcpp build` — but the build path never reads mcpp.lock (prepare writes
-    // it and nothing on that path loads it), so the whole command was a no-op:
-    // it changed no behaviour whatsoever. It is also the only command whose
-    // stated purpose is "get me newer dependencies", which since #315 is
-    // exactly what an index refresh is for. Explicit intent, so no debounce and
-    // no TTL — but still refused when offline, loudly, rather than silently
-    // doing nothing again.
+    // Since #330 the build path reads mcpp.lock to short-circuit `git
+    // ls-remote` for branch deps that are already resolved to a commit
+    // with a matching local cache. `mcpp update <dep>` therefore no
+    // longer "refreshes" a git branch dep — it only drops the lock
+    // entry, which forces the next build to call `ls-remote` again.
+    // The index refresh below is unrelated: it covers the registry-served
+    // version deps only. Skipped when offline — loudly, not silently —
+    // since #315 is exactly about not paying a network round-trip to
+    // achieve nothing.
     // Skipped when nothing in the project is served by the shared registry:
     // syncing it does nothing for path deps, git deps or a project `[indices]`
     // entry, and paying a multi-repo network round-trip to achieve nothing is

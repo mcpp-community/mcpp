@@ -196,12 +196,17 @@ std::optional<LockedGitSource> parse_git_source(std::string_view source) {
         return std::nullopt;
 
     auto refPart = fragment.substr(eqPos + 1);
-    auto atPos = refPart.find('@');
+    // Split on the LAST `@` so branch names containing `@` (e.g. "feat@v2")
+    // match the write format in prepare.cppm (`ref + "@" + commit`).
+    auto atPos = refPart.rfind('@');
     if (atPos == std::string_view::npos) {
         out.ref = std::string(refPart);
     } else {
         out.ref = std::string(refPart.substr(0, atPos));
         out.resolvedCommit = std::string(refPart.substr(atPos + 1));
+        // A bare `branch=foo@` would otherwise yield an empty commit and
+        // confuse the offline anchor into reporting "locked to commit ".
+        if (out.resolvedCommit->empty()) out.resolvedCommit.reset();
     }
 
     if (out.ref.empty()) return std::nullopt;
