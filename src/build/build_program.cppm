@@ -17,6 +17,7 @@ import mcpp.manifest;
 import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.toolchain.cppfly;        // std_flag (dialect- and c++fly-aware -std= spelling)
+import mcpp.toolchain.dialect;       // CommandDialect — gnu vs cl.exe spellings
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
 import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target/is_mingw_target
@@ -78,8 +79,10 @@ namespace fs = std::filesystem;
 struct Directives {
     std::vector<std::string> cxxflags;      // -> buildConfig.cxxflags
     std::vector<std::string> cflags;        // -> buildConfig.cflags
-    std::vector<std::string> ldflags;       // -> buildConfig.ldflags (already -l/-L)
-    std::vector<std::string> defines;       // cfg=  -> -D, into BOTH c/cxx flags
+    // -> buildConfig.ldflags, already spelled for the host dialect
+    // (-l/-L for GNU, name.lib//LIBPATH: for cl.exe) — see parse_line.
+    std::vector<std::string> ldflags;
+    std::vector<std::string> defines;       // cfg= -> define prefix, into BOTH c/cxx flags
     std::vector<std::string> generated;     // relative source paths
     // source= — select a PRE-EXISTING file (tarball payload / vendored tree)
     // into the compile set. Downstream identical to generated=; the semantic
@@ -101,6 +104,22 @@ struct Directives {
     std::vector<std::string> rerunEnv;      // declared env-var inputs
 };
 
+// Split a whitespace-separated flag string into argv tokens. The dialect
+// table stores some entries as multi-token strings ("-x c++",
+// "/nologo /EHsc /utf-8") because their other consumer is a ninja command
+// line, where a single string is what's wanted; an argv vector is not.
+std::vector<std::string> split_ws(std::string_view s) {
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+        std::size_t b = i;
+        while (i < s.size() && s[i] != ' ' && s[i] != '\t') ++i;
+        if (i > b) out.emplace_back(s.substr(b, i - b));
+    }
+    return out;
+}
+
 std::string trim(std::string_view s) {
     std::size_t b = 0, e = s.size();
     while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r')) ++b;
@@ -119,7 +138,17 @@ std::string abs_against_root(const fs::path& root, std::string_view p) {
 
 // Parse one stdout line. Returns true if it was a recognized (or unknown-but-
 // `mcpp:`) directive; false for ordinary program chatter.
-bool parse_line(const fs::path& root, std::string_view raw, Directives& d) {
+// `dial` decides how `link-lib` / `link-search` are spelled. The `mcpp:`
+// protocol itself is declarative — a build program says WHICH library it
+// needs, never how the local compiler driver names one — so the translation
+// belongs here at the boundary, not in the program.
+//
+// Storing the translated form in Directives (and therefore in the build.mcpp
+// cache) is safe because the cache key already hashes the compiler: switching
+// toolchains invalidates the entry before any spelling from the old dialect
+// could be replayed under the new one.
+bool parse_line(const fs::path& root, const mcpp::toolchain::CommandDialect& dial,
+                std::string_view raw, Directives& d) {
     std::string line = trim(raw);
     constexpr std::string_view kPfx = "mcpp:";
     if (!line.starts_with(kPfx)) return false;
@@ -130,9 +159,13 @@ bool parse_line(const fs::path& root, std::string_view raw, Directives& d) {
 
     if (key == "cxxflag")            d.cxxflags.push_back(val);
     else if (key == "cflag")         d.cflags.push_back(val);
-    else if (key == "link-lib")      d.ldflags.push_back("-l" + val);
-    else if (key == "link-search")   d.ldflags.push_back("-L" + abs_against_root(root, val));
-    else if (key == "cfg")           d.defines.push_back("-D" + val);
+    else if (key == "link-lib")      d.ldflags.push_back(
+                                         mcpp::toolchain::lib_flag_for(dial, val));
+    else if (key == "link-search")   d.ldflags.push_back(
+                                         std::string(dial.libSearchPrefix)
+                                         + abs_against_root(root, val));
+    else if (key == "cfg")           d.defines.push_back(
+                                         std::string(dial.definePrefix) + val);
     else if (key == "generated")     d.generated.push_back(val);
     else if (key == "source")        d.sources.push_back(val);
     else if (key == "include-dir")   d.includeDirs.push_back(abs_against_root(root, val));
@@ -144,12 +177,13 @@ bool parse_line(const fs::path& root, std::string_view raw, Directives& d) {
     return true;
 }
 
-void parse_output(const fs::path& root, std::string_view out, Directives& d) {
+void parse_output(const fs::path& root, const mcpp::toolchain::CommandDialect& dial,
+                  std::string_view out, Directives& d) {
     std::size_t pos = 0;
     while (pos <= out.size()) {
         std::size_t nl = out.find('\n', pos);
         std::string_view ln = out.substr(pos, nl == std::string_view::npos ? std::string_view::npos : nl - pos);
-        parse_line(root, ln, d);
+        parse_line(root, dial, ln, d);
         if (nl == std::string_view::npos) break;
         pos = nl + 1;
     }
@@ -168,6 +202,14 @@ std::string env_value(const std::string& name) {
 // only ones needed. Passed as separate argv tokens (no shell).
 std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
     std::vector<std::string> f;
+
+    // MSVC carries none of this on the command line: cl.exe and link.exe find
+    // headers and import libraries through INCLUDE / LIB, which detection
+    // synthesized into tc.envOverrides. Emitting the GNU shapes below would
+    // produce a string of unknown options and then LNK1181. The environment
+    // is passed to capture_exec instead — that is the whole MSVC "base".
+    if (tc.compiler == mcpp::toolchain::CompilerId::MSVC) return f;
+
     const auto lm = mcpp::toolchain::resolve_link_model(tc);
 
     // Clang with a bundled cfg on LINUX: bypass it (--no-default-config) and
@@ -688,6 +730,14 @@ std::expected<void, std::string> run_build_program(
         cppStandard.level);
     auto base = host_base_flags(tc);
 
+    // The host compile has always been spelled in GNU driver syntax with no
+    // dialect branch at all — `grep -i msvc` over this file used to hit only
+    // comments. Under cl.exe every one of `-O0` / `-x c++` / `-static` / `-o`
+    // is wrong, so the whole build.mcpp path was unusable on a native MSVC
+    // toolchain regardless of what else was fixed.
+    const auto& dial = mcpp::toolchain::dialect_for(tc);
+    const bool msvcHost = dial.id == std::string_view("msvc");
+
     // Only wire the bundled `mcpp` module when build.mcpp actually imports it —
     // so the common `#include`-based program compiles exactly as before (no
     // -fmodules, cwd = project root). When it does `import mcpp;`, compile the
@@ -698,6 +748,18 @@ std::expected<void, std::string> run_build_program(
     bool usesModule    = srcText.find("import mcpp") != std::string::npos;
     bool usesStdCompat = imports_module(srcText, "std.compat");
     bool usesStd       = usesStdCompat || imports_module(srcText, "std");
+
+    // Named modules under cl.exe go through .ifc + /reference, a different
+    // pipeline from GCC's gcm.cache and Clang's -fmodule-file. That work is
+    // not done, so say so plainly — one gate for both module kinds, because
+    // they fail for exactly the same reason and two conditions would drift.
+    if (msvcHost && (usesModule || usesStd)) {
+        return std::unexpected(std::string(
+            "build.mcpp: `import mcpp;` / `import std;` are not yet supported "
+            "under MSVC.\n"
+            "       Use #include in build.mcpp, or build with a GCC/Clang "
+            "toolchain."));
+    }
 
     std::vector<std::string> moduleFlags;
     if (usesModule) {
@@ -793,15 +855,28 @@ std::expected<void, std::string> run_build_program(
 
     // `-x c++` is required: the `.mcpp` extension is unknown to the compiler, so
     // without it the driver hands build.mcpp to the linker as a linker script.
-    std::vector<std::string> compileArgv = { hostCompiler.string(), std_flag, "-O0" };
+    std::vector<std::string> compileArgv = { hostCompiler.string() };
+    if (msvcHost) {
+        // /nologo /EHsc /utf-8 — cl.exe needs these to behave like the other
+        // two drivers do by default (quiet, exceptions on, UTF-8 sources).
+        for (auto& f : split_ws(dial.alwaysFlags)) compileArgv.push_back(f);
+    }
+    compileArgv.push_back(std_flag);
+    // No optimization: this program runs once per build and its compile time
+    // is on the critical path. MSVC spells "off" /Od, not /O0.
+    compileArgv.push_back(msvcHost ? std::string("/Od")
+                                   : std::string(dial.optPrefix) + "0");
     for (auto& bf : base)        compileArgv.push_back(bf);
     for (auto& mf : moduleFlags) compileArgv.push_back(mf);
     for (auto& sf : stdFlags)    compileArgv.push_back(sf);
-    compileArgv.push_back("-x"); compileArgv.push_back("c++");
+    // The `.mcpp` extension is unknown to every driver, so without this the
+    // file is handed to the linker as a linker script.
+    for (auto& f : split_ws(dial.forceCxxLang)) compileArgv.push_back(f);
     compileArgv.push_back(src.string());
     if (usesModule || !stdObjects.empty()) {
-        // Link the module objects (reset the input language first so the .o
-        // isn't treated as C++ source).
+        // Link the module objects (GNU: reset the input language first so the
+        // .o isn't treated as C++ source; cl.exe infers by extension and is
+        // unreachable here anyway, gated above).
         compileArgv.push_back("-x"); compileArgv.push_back("none");
         if (usesModule) compileArgv.push_back((bdir / "mcpp.o").string());
         for (auto& so : stdObjects) compileArgv.push_back(so);
@@ -810,8 +885,13 @@ std::expected<void, std::string> run_build_program(
     // Deliberately NOT in `base`: that also feeds the bundled module's
     // compile/precompile commands, where a link flag has no business (and for
     // Clang would perturb the default PIC/PIE codegen of mcpp.o).
-    if (staticHostHelper) compileArgv.push_back("-static");
-    compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
+    if (staticHostHelper) compileArgv.push_back(std::string(dial.staticRuntime));
+    if (msvcHost) {
+        // /Fe: takes its value attached, not as a separate argv token.
+        compileArgv.push_back(std::string(dial.outputExePrefix) + bin.string());
+    } else {
+        compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
+    }
     mcpp::ui::info("build.mcpp", "compiling");
     // GCC resolves imported BMIs via gcm.cache/ relative to the compile cwd, so
     // any compile that imports a module — `mcpp`, `std`, or both — has to run
@@ -820,7 +900,16 @@ std::expected<void, std::string> run_build_program(
     // only mcpp. Otherwise the project root is fine.
     const bool needsBmiCwd = usesModule || stdStagedInBdir;
     std::string compileCwd = needsBmiCwd ? bdir.string() : root.string();
-    auto cres = mcpp::platform::process::capture_exec(compileArgv, {}, compileCwd);
+    // The toolchain's own environment (MSVC's INCLUDE / LIB / VSLANG, which
+    // detection synthesized from the located VC tools + Windows SDK). Only
+    // ninja_backend consumed these before, so a build.mcpp compile under
+    // cl.exe could not find <cstdio> no matter how correct its argv was —
+    // the third and last layer of #331's first finding.
+    std::vector<std::pair<std::string, std::string>> compileEnv;
+    for (auto const& ev : tc.envOverrides)
+        compileEnv.emplace_back(ev.key, ev.value);
+    auto cres = mcpp::platform::process::capture_exec(compileArgv, compileEnv,
+                                                     compileCwd);
     if (cres.exit_code != 0) {
         return std::unexpected(std::format(
             "build.mcpp failed to compile (exit {}):\n{}", cres.exit_code, cres.output));
@@ -838,7 +927,7 @@ std::expected<void, std::string> run_build_program(
     }
 
     Directives d;
-    parse_output(root, rres.output, d);
+    parse_output(root, dial, rres.output, d);
 
     // Dependency mode (genBase set): relative `generated=` paths resolve
     // against OUT_DIR-style genBase, not the (possibly read-only, shared)

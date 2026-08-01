@@ -33,6 +33,22 @@ struct CommandDialect {
     std::string_view debugFlags;       // "-g"     | "/Zi /FS"
     std::string_view alwaysFlags;      // ""       | "/nologo /EHsc /utf-8"
 
+    // Link and language-selection spellings.
+    //
+    // `libFlag` is a FORMAT, not a prefix: GNU names a library by prefixing
+    // (`-lz`) while MSVC names it by suffixing (`z.lib`), and no single
+    // prefix string can express both. Use lib_flag_for().
+    std::string_view libFlag;          // "-l{}"   | "{}.lib"
+    std::string_view libSearchPrefix;  // "-L"     | "/LIBPATH:"
+    // The `.mcpp` extension is unknown to every compiler driver, so the
+    // language has to be forced or the driver hands the file to the linker.
+    std::string_view forceCxxLang;     // "-x c++" | "/TP"
+    // Static CRT / runtime. On MSVC this is a compile-time CRT model, not a
+    // link mode — there is no /MT equivalent of `-static` for the whole image.
+    std::string_view staticRuntime;    // "-static"| "/MT"
+    // Output an executable (linking driver step).
+    std::string_view outputExePrefix;  // "-o "    | "/Fe:"
+
     // Artifact naming.
     std::string_view objExt;           // ".o"     | ".obj"
 
@@ -55,6 +71,16 @@ struct CommandDialect {
 
 // Dialect lookup. GCC / Clang / MinGW → gnu; MSVC → msvc.
 const CommandDialect& dialect_for(const Toolchain& tc);
+
+// The two dialect rows, reachable without a Toolchain. Exposed so the MSVC
+// row — which no build reaches until the cl.exe backend lands — can still be
+// unit-tested, and so callers that already know the shape they want (the
+// build.mcpp host compile) need not synthesize a Toolchain to ask.
+const CommandDialect& gnu_dialect();
+const CommandDialect& msvc_dialect();
+
+// Name a library the way this dialect does: `-lz` vs `z.lib`.
+std::string lib_flag_for(const CommandDialect& d, std::string_view name);
 
 // The full -std=/-/std: flag for a normalized standard (canonical like
 // "c++26"/"gnu++23", numeric level). MSVC: /std:c++20 exists; everything
@@ -79,6 +105,11 @@ constexpr CommandDialect kGnuDialect{
     .optPrefix       = "-O",
     .debugFlags      = "-g",
     .alwaysFlags     = "",
+    .libFlag         = "-l{}",
+    .libSearchPrefix = "-L",
+    .forceCxxLang    = "-x c++",
+    .staticRuntime   = "-static",
+    .outputExePrefix = "-o ",
     .objExt          = ".o",
     .ninjaDepsMode   = "",
     .rspfileLink     = false,
@@ -99,6 +130,11 @@ constexpr CommandDialect kMsvcDialect{
     .optPrefix       = "/O",
     .debugFlags      = "/Zi /FS",
     .alwaysFlags     = "/nologo /EHsc /utf-8",
+    .libFlag         = "{}.lib",
+    .libSearchPrefix = "/LIBPATH:",
+    .forceCxxLang    = "/TP",
+    .staticRuntime   = "/MT",
+    .outputExePrefix = "/Fe:",
     .objExt          = ".obj",
     .ninjaDepsMode   = "msvc",
     .rspfileLink     = true,
@@ -111,6 +147,18 @@ constexpr CommandDialect kMsvcDialect{
 const CommandDialect& dialect_for(const Toolchain& tc) {
     if (tc.compiler == CompilerId::MSVC) return kMsvcDialect;
     return kGnuDialect;
+}
+
+const CommandDialect& gnu_dialect()  { return kGnuDialect; }
+const CommandDialect& msvc_dialect() { return kMsvcDialect; }
+
+std::string lib_flag_for(const CommandDialect& d, std::string_view name) {
+    // Two shapes, one table entry: `{}` marks where the name goes, which is
+    // a prefix position for GNU and a suffix position for MSVC.
+    std::string out(d.libFlag);
+    if (auto p = out.find("{}"); p != std::string::npos)
+        out.replace(p, 2, name);
+    return out;
 }
 
 std::string std_flag_for(const CommandDialect& d,
