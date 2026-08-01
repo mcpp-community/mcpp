@@ -153,6 +153,11 @@ out=$(${triple}${fp_dir}/bin/branchapp)
     echo "FAIL: branch dep v1 not invoked: $out"
     cat branch-v1.log; exit 1; }
 
+# Second build with the lock in place must not hit the network for ls-remote.
+build2=$("$MCPP" build 2>&1)
+echo "$build2" | grep -q 'ls-remote' && { echo "FAIL: branch dep re-ls-remoted on rebuild"; exit 1; } || true
+echo "$build2" | grep -q 'Cloning' && { echo "FAIL: branch dep re-cloned on rebuild"; exit 1; } || true
+
 grep -q 'source  = "git+' mcpp.lock || {
     echo "FAIL: git dep lock source is not marked as git"
     cat mcpp.lock; exit 1; }
