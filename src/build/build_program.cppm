@@ -21,6 +21,7 @@ import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
 import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target/is_mingw_target
 import mcpp.toolchain.registry;      // archive_tool
+import mcpp.toolchain.stdmod;        // ensure_built — the SAME std BMI the main build uses
 import mcpp.toolchain.triple;        // host_triple (MCPP_HOST contract value)
 import mcpp.ui;
 
@@ -243,10 +244,13 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc) {
     return f;
 }
 
-// The bundled `mcpp` build module — a typed API over the stdout wire protocol so
-// build.mcpp can `import mcpp;` (no `#include`, no `import std;`). I/O uses
-// C-level primitives in the global module fragment, so the module needs no std
-// module BMI. The functions mirror the directive set 1:1; they just print the
+// The bundled `mcpp` build module — a typed API over the stdout wire protocol
+// so build.mcpp can `import mcpp;` instead of `#include`. Its own I/O uses
+// C-level primitives in the global module fragment, so the module itself
+// needs no std BMI and stays buildable before one exists. (That was once also
+// a limit on build.mcpp; it no longer is — a build.mcpp may `import std;` and
+// the engine stages the same std module the main build uses.)
+// The functions mirror the directive set 1:1; they just print the
 // `mcpp:` lines the engine already parses. Embedded in the binary (not shipped as
 // a file) so it always matches this mcpp's protocol.
 // NOTE: the module declaration line uses a `@MODULE@` placeholder (substituted
@@ -311,6 +315,34 @@ inline const char* dep_dir(const char* name) {
 //   GCC   : -fmodules → gcm.cache/mcpp.gcm + mcpp.o; build.mcpp compiles from
 //           `bdir` (cwd) so GCC finds gcm.cache/mcpp.gcm.
 //   Clang : --precompile → mcpp.pcm, then -c → mcpp.o; pass -fmodule-file=mcpp=<pcm>.
+// Does the source contain `import <name>;`?
+//
+// A plain substring search is not enough here: "import std" is a prefix of
+// "import std.compat", so the naive test reports both for a program that
+// only imports the latter, and mcpp would build a std BMI nobody asked for.
+// Match the whole module name and require the terminating `;`, tolerating
+// the whitespace the grammar allows. Occurrences inside comments or string
+// literals still match — over-detection costs one cached BMI lookup, never
+// a wrong build, and that is the same trade the `import mcpp` check has
+// always made.
+bool imports_module(std::string_view src, std::string_view name) {
+    constexpr std::string_view kImport = "import";
+    std::size_t pos = 0;
+    while ((pos = src.find(kImport, pos)) != std::string_view::npos) {
+        std::size_t i = pos + kImport.size();
+        // `importfoo` is not an import.
+        if (i >= src.size() || (src[i] != ' ' && src[i] != '\t')) { ++pos; continue; }
+        while (i < src.size() && (src[i] == ' ' || src[i] == '\t')) ++i;
+        if (src.compare(i, name.size(), name) == 0) {
+            std::size_t j = i + name.size();
+            while (j < src.size() && (src[j] == ' ' || src[j] == '\t')) ++j;
+            if (j < src.size() && src[j] == ';') return true;
+        }
+        ++pos;
+    }
+    return false;
+}
+
 std::expected<std::vector<std::string>, std::string>
 build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
                   const std::vector<std::string>& base, const std::string& stdFlag,
@@ -663,7 +695,9 @@ std::expected<void, std::string> run_build_program(
     // finds gcm.cache/mcpp.gcm.
     std::string srcText;
     { std::ifstream is(src); std::ostringstream ss; ss << is.rdbuf(); srcText = ss.str(); }
-    bool usesModule = srcText.find("import mcpp") != std::string::npos;
+    bool usesModule    = srcText.find("import mcpp") != std::string::npos;
+    bool usesStdCompat = imports_module(srcText, "std.compat");
+    bool usesStd       = usesStdCompat || imports_module(srcText, "std");
 
     std::vector<std::string> moduleFlags;
     if (usesModule) {
@@ -673,18 +707,104 @@ std::expected<void, std::string> run_build_program(
         moduleFlags = std::move(*mf);
     }
 
+    // ── `import std;` in build.mcpp ─────────────────────────────────────────
+    //
+    // mcpp asks projects to `import std;` everywhere and then made their build
+    // script fall back to `#include` — the bundled `mcpp` module even says so
+    // in its own header comment. The std module the main build already uses is
+    // reusable verbatim: stdmod::ensure_built caches on
+    // (toolchain × standard × dialect), so for a native build this is a cache
+    // HIT on the very artifact the project's own TUs import. Only a cross
+    // build pays for a second one, which is unavoidable — see below.
+    //
+    // `tc` here is the HOST toolchain: prepare.cppm's
+    // host_tc_for_build_program() resolves the spec WITHOUT the --target axis
+    // and hands it in. That is load-bearing. build.mcpp is compiled AND run on
+    // the machine doing the build, so a std BMI built for the target would
+    // produce a helper that cannot execute — the same host≠target mistake the
+    // mingw-cross work had to fix in four separate places.
+    std::vector<std::string> stdFlags;
+    std::vector<std::string> stdObjects;
+    // GCC finds staged BMIs by cwd; Clang/MSVC get an explicit path flag.
+    bool stdStagedInBdir = false;
+    if (usesStd) {
+        if (!tc.hasImportStd) {
+            return std::unexpected(std::format(
+                "build.mcpp uses `import std;` but the host toolchain ({}) "
+                "ships no std module.\n"
+                "       Use #include in build.mcpp, or switch to a toolchain "
+                "that provides one.", tc.label()));
+        }
+        auto sm = mcpp::toolchain::ensure_built(
+            tc, cppStandard.canonical, std_flag,
+            mcpp::platform::macos::deployment_target(
+                m.buildConfig.macosDeploymentTarget));
+        if (!sm) {
+            return std::unexpected(std::format(
+                "build.mcpp uses `import std;` but the std module could not be "
+                "built for the host toolchain: {}", sm.error().message));
+        }
+
+        auto traits = mcpp::toolchain::bmi_traits(tc);
+        if (traits.stdBmiUsePrefix.empty()) {
+            // GCC: BMIs are found implicitly under <cwd>/gcm.cache, so stage
+            // the cached ones where the compile will look. Copy rather than
+            // symlink — this mirrors the main build's staging edge, and a
+            // stale copy is caught by ensure_built's own cache key.
+            std::error_code ec;
+            fs::path gcmDir = bdir / traits.bmiDir;
+            fs::create_directories(gcmDir, ec);
+            auto stage = [&](const fs::path& from, std::string_view name)
+                -> std::expected<void, std::string> {
+                if (from.empty() || !fs::exists(from)) return {};
+                fs::path to = gcmDir / std::format("{}{}", name, traits.bmiExt);
+                fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
+                if (ec) return std::unexpected(std::format(
+                    "staging {} for build.mcpp failed: {}", name, ec.message()));
+                return {};
+            };
+            if (auto r = stage(sm->bmiPath, "std"); !r)
+                return std::unexpected(r.error());
+            if (usesStdCompat) {
+                if (auto r = stage(sm->compatBmiPath, "std.compat"); !r)
+                    return std::unexpected(r.error());
+            }
+            // -fmodules may already be present from the `mcpp` module path;
+            // GCC tolerates the repeat, but keep the argv honest.
+            if (!usesModule) stdFlags.push_back("-fmodules");
+            stdStagedInBdir = true;
+        } else {
+            stdFlags.push_back(std::string(traits.stdBmiUsePrefix)
+                               + sm->bmiPath.string());
+            if (usesStdCompat && !sm->compatBmiPath.empty())
+                stdFlags.push_back(std::string(traits.stdCompatBmiUsePrefix)
+                                   + sm->compatBmiPath.string());
+            // The prefixes carry a leading space for the ninja string channel;
+            // an argv element must not.
+            for (auto& f : stdFlags)
+                if (!f.empty() && f.front() == ' ') f.erase(0, 1);
+        }
+        if (!sm->objectPath.empty() && fs::exists(sm->objectPath))
+            stdObjects.push_back(sm->objectPath.string());
+        if (usesStdCompat && !sm->compatObjectPath.empty()
+            && fs::exists(sm->compatObjectPath))
+            stdObjects.push_back(sm->compatObjectPath.string());
+    }
+
     // `-x c++` is required: the `.mcpp` extension is unknown to the compiler, so
     // without it the driver hands build.mcpp to the linker as a linker script.
     std::vector<std::string> compileArgv = { hostCompiler.string(), std_flag, "-O0" };
     for (auto& bf : base)        compileArgv.push_back(bf);
     for (auto& mf : moduleFlags) compileArgv.push_back(mf);
+    for (auto& sf : stdFlags)    compileArgv.push_back(sf);
     compileArgv.push_back("-x"); compileArgv.push_back("c++");
     compileArgv.push_back(src.string());
-    if (usesModule) {
-        // Link the module object (reset the input language first so the .o isn't
-        // treated as C++ source).
+    if (usesModule || !stdObjects.empty()) {
+        // Link the module objects (reset the input language first so the .o
+        // isn't treated as C++ source).
         compileArgv.push_back("-x"); compileArgv.push_back("none");
-        compileArgv.push_back((bdir / "mcpp.o").string());
+        if (usesModule) compileArgv.push_back((bdir / "mcpp.o").string());
+        for (auto& so : stdObjects) compileArgv.push_back(so);
     }
     // Self-contained helper link — see the staticHostHelper doctrine above.
     // Deliberately NOT in `base`: that also feeds the bundled module's
@@ -693,9 +813,13 @@ std::expected<void, std::string> run_build_program(
     if (staticHostHelper) compileArgv.push_back("-static");
     compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
     mcpp::ui::info("build.mcpp", "compiling");
-    // GCC resolves `import mcpp;` via gcm.cache/ relative to the compile cwd, so
-    // run the module-using compile from bdir; otherwise the project root is fine.
-    std::string compileCwd = usesModule ? bdir.string() : root.string();
+    // GCC resolves imported BMIs via gcm.cache/ relative to the compile cwd, so
+    // any compile that imports a module — `mcpp`, `std`, or both — has to run
+    // from bdir, where they were staged. One condition, not two: a build.mcpp
+    // that imports only std needs exactly the same cwd as one that imports
+    // only mcpp. Otherwise the project root is fine.
+    const bool needsBmiCwd = usesModule || stdStagedInBdir;
+    std::string compileCwd = needsBmiCwd ? bdir.string() : root.string();
     auto cres = mcpp::platform::process::capture_exec(compileArgv, {}, compileCwd);
     if (cres.exit_code != 0) {
         return std::unexpected(std::format(

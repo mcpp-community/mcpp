@@ -60,4 +60,34 @@ if command -v wine &>/dev/null; then
         echo "unexpected wine output: $out"; exit 1; }
 fi
 
+# ── host≠target for `import std;` in build.mcpp ────────────────────────────
+# The std module staged for a build.mcpp must be the HOST one. Feeding it the
+# target's would produce a helper that cannot execute here, and the failure is
+# silent until exec time — the same class of mistake the mingw-cross work had
+# to fix in four separate places. A cross build is the only configuration
+# where host and target BMIs differ, so this is the one place it can be
+# caught.
+cat > build.mcpp <<'EOF'
+import std;
+int main() {
+    std::ofstream f("src/cross_gen.cpp");
+    f << "extern \"C\" const char* bp_target() { return \""
+      << (std::getenv("MCPP_TARGET") ? std::getenv("MCPP_TARGET") : "<unset>")
+      << "\"; }\n";
+    if (!f) return 1;
+    std::println("mcpp:generated=src/cross_gen.cpp");
+    return 0;
+}
+EOF
+
+rm -f src/cross_gen.cpp
+"$MCPP" build --target x86_64-windows-gnu > build-std.log 2>&1 || {
+    cat build-std.log; echo "cross build with import std in build.mcpp failed"; exit 1; }
+# The helper actually RAN on the host — proven by the file it was asked to
+# write, not by the compiler's exit code.
+[[ -f src/cross_gen.cpp ]] || {
+    cat build-std.log; echo "import-std build.mcpp did not run on the host"; exit 1; }
+grep -q 'x86_64-windows-gnu' src/cross_gen.cpp || {
+    cat src/cross_gen.cpp; echo "MCPP_TARGET wrong under import std"; exit 1; }
+
 echo "OK"
