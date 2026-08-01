@@ -153,9 +153,17 @@ out=$(${triple}${fp_dir}/bin/branchapp)
     echo "FAIL: branch dep v1 not invoked: $out"
     cat branch-v1.log; exit 1; }
 
-# Second build with the lock in place must not hit the network for ls-remote.
+# Second build with the lock in place must resolve the branch dep from the
+# lock commit rather than calling `git ls-remote`. A bare `mcpp build` here
+# would take the prepare_build fast-path (build.ninja is fresh → just run
+# ninja → "Finished" only), so prepare_build never runs and neither the lock
+# anchor path nor `ls-remote` is exercised — leaving the assertion vacuous
+# (the original main-branch test passed identically). `mcpp clean` wipes only
+# `target/`, so mcpp.lock and the git cache (~/.mcpp/git) survive; the next
+# build must re-prepare, hit the anchor, and skip both ls-remote and clone.
+"$MCPP" clean >/dev/null
 build2=$("$MCPP" build 2>&1)
-echo "$build2" | grep -q 'from lock' || { echo "FAIL: branch dep not resolved from lock on rebuild"; cat <<<"$build2"; exit 1; }
+echo "$build2" | grep -q 'from lock' || { echo "FAIL: branch dep not resolved from lock on rebuild"; echo "--- build2 ---"; cat <<<"$build2"; exit 1; }
 echo "$build2" | grep -q 'Cloning' && { echo "FAIL: branch dep re-cloned on rebuild"; exit 1; } || true
 
 grep -q 'source  = "git+' mcpp.lock || {
