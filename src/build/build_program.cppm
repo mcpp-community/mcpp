@@ -104,22 +104,6 @@ struct Directives {
     std::vector<std::string> rerunEnv;      // declared env-var inputs
 };
 
-// Split a whitespace-separated flag string into argv tokens. The dialect
-// table stores some entries as multi-token strings ("-x c++",
-// "/nologo /EHsc /utf-8") because their other consumer is a ninja command
-// line, where a single string is what's wanted; an argv vector is not.
-std::vector<std::string> split_ws(std::string_view s) {
-    std::vector<std::string> out;
-    std::size_t i = 0;
-    while (i < s.size()) {
-        while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
-        std::size_t b = i;
-        while (i < s.size() && s[i] != ' ' && s[i] != '\t') ++i;
-        if (i > b) out.emplace_back(s.substr(b, i - b));
-    }
-    return out;
-}
-
 std::string trim(std::string_view s) {
     std::size_t b = 0, e = s.size();
     while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r')) ++b;
@@ -859,7 +843,7 @@ std::expected<void, std::string> run_build_program(
     if (msvcHost) {
         // /nologo /EHsc /utf-8 — cl.exe needs these to behave like the other
         // two drivers do by default (quiet, exceptions on, UTF-8 sources).
-        for (auto& f : split_ws(dial.alwaysFlags)) compileArgv.push_back(f);
+        for (auto f : dial.alwaysFlagsArgv) compileArgv.emplace_back(f);
     }
     compileArgv.push_back(std_flag);
     // No optimization: this program runs once per build and its compile time
@@ -871,7 +855,7 @@ std::expected<void, std::string> run_build_program(
     for (auto& sf : stdFlags)    compileArgv.push_back(sf);
     // The `.mcpp` extension is unknown to every driver, so without this the
     // file is handed to the linker as a linker script.
-    for (auto& f : split_ws(dial.forceCxxLang)) compileArgv.push_back(f);
+    for (auto f : dial.forceCxxLangArgv) compileArgv.emplace_back(f);
     compileArgv.push_back(src.string());
     if (usesModule || !stdObjects.empty()) {
         // Link the module objects (GNU: reset the input language first so the

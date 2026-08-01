@@ -32,6 +32,9 @@ struct CommandDialect {
     std::string_view optPrefix;        // "-O"     | "/O"
     std::string_view debugFlags;       // "-g"     | "/Zi /FS"
     std::string_view alwaysFlags;      // ""       | "/nologo /EHsc /utf-8"
+    // Same rationale as forceCxxLangArgv: the argv consumer gets tokens, not
+    // a string it has to split. Both spans point at static arrays below.
+    std::span<const std::string_view> alwaysFlagsArgv;
 
     // Link and language-selection spellings.
     //
@@ -42,7 +45,15 @@ struct CommandDialect {
     std::string_view libSearchPrefix;  // "-L"     | "/LIBPATH:"
     // The `.mcpp` extension is unknown to every compiler driver, so the
     // language has to be forced or the driver hands the file to the linker.
+    //
+    // Two forms of the same thing, because the two consumers need different
+    // shapes and neither should re-derive the other's: a ninja command line
+    // wants one string, an argv vector wants tokens. Storing both keeps the
+    // spelling in one row — splitting the string at the call site would put
+    // the token boundary in a second place, and cost a helper this file is
+    // better off without (see the note on `alwaysFlagsArgv`).
     std::string_view forceCxxLang;     // "-x c++" | "/TP"
+    std::span<const std::string_view> forceCxxLangArgv;
     // Static CRT / runtime. On MSVC this is a compile-time CRT model, not a
     // link mode — there is no /MT equivalent of `-static` for the whole image.
     std::string_view staticRuntime;    // "-static"| "/MT"
@@ -95,6 +106,12 @@ namespace mcpp::toolchain {
 
 namespace {
 
+// Token forms of the multi-token rows. Static arrays so the spans above are
+// constexpr-initializable and no consumer has to split a string at runtime.
+constexpr std::string_view kGnuForceCxxArgv[]  = {"-x", "c++"};
+constexpr std::string_view kMsvcForceCxxArgv[] = {"/TP"};
+constexpr std::string_view kMsvcAlwaysArgv[]   = {"/nologo", "/EHsc", "/utf-8"};
+
 constexpr CommandDialect kGnuDialect{
     .id              = "gnu",
     .includePrefix   = "-I",
@@ -105,9 +122,11 @@ constexpr CommandDialect kGnuDialect{
     .optPrefix       = "-O",
     .debugFlags      = "-g",
     .alwaysFlags     = "",
+    .alwaysFlagsArgv = {},
     .libFlag         = "-l{}",
     .libSearchPrefix = "-L",
     .forceCxxLang    = "-x c++",
+    .forceCxxLangArgv = kGnuForceCxxArgv,
     .staticRuntime   = "-static",
     .outputExePrefix = "-o ",
     .objExt          = ".o",
@@ -130,9 +149,11 @@ constexpr CommandDialect kMsvcDialect{
     .optPrefix       = "/O",
     .debugFlags      = "/Zi /FS",
     .alwaysFlags     = "/nologo /EHsc /utf-8",
+    .alwaysFlagsArgv = kMsvcAlwaysArgv,
     .libFlag         = "{}.lib",
     .libSearchPrefix = "/LIBPATH:",
     .forceCxxLang    = "/TP",
+    .forceCxxLangArgv = kMsvcForceCxxArgv,
     .staticRuntime   = "/MT",
     .outputExePrefix = "/Fe:",
     .objExt          = ".obj",
