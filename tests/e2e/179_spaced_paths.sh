@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# requires: unix-shell
 # 179_spaced_paths.sh — a project whose paths contain spaces still builds
 #
 # #331: two independent places assumed no path ever contains a space. On
@@ -79,7 +78,11 @@ grep -q "vendor" "$ninja_file" || {
 # the shell quoting wraps the whole token (so what ninja hands to sh stays one
 # word). The old code had only the first, which is exactly why the path
 # survived ninja and then split in the shell.
-grep -qE "'-I[^']*vendor\\\$ inc" "$ninja_file" || {
+# The quote character is the host shell's — POSIX sh single, cmd.exe double —
+# so accept either rather than pinning whichever platform this happens to run
+# on. (An earlier version hardcoded `'` and failed on Windows for a difference
+# that was correct.)
+grep -qE "['\"]-I[^'\"]*vendor\\\$ inc" "$ninja_file" || {
     echo "FAIL: include dir not shell-quoted with its prefix:"
     grep -oE "[^ ]*vendor[^ ]*( inc[^ ]*)?" "$ninja_file" | head -3
     exit 1; }

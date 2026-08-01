@@ -266,8 +266,13 @@ TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
     // only the first, which is why the path survived ninja and then split in
     // the shell. The prefix must be INSIDE the quotes — quoting the path
     // alone would leave `-I` as its own word and reintroduce the split.
-    EXPECT_NE(line.find("'-I/opt/my$ dep/include'"), std::string::npos) << line;
-    EXPECT_NE(line.find("'-idirafter/opt/my$ dep/after'"), std::string::npos) << line;
+    //
+    // The quote character is the host shell's, not a fixed one: POSIX sh
+    // wants single quotes, cmd.exe double. Hardcoding `'` passed on Linux
+    // and failed on the Windows runner for a difference that is correct.
+    const std::string q = mcpp::platform::is_windows ? "\"" : "'";
+    EXPECT_NE(line.find(q + "-I/opt/my$ dep/include" + q), std::string::npos) << line;
+    EXPECT_NE(line.find(q + "-idirafter/opt/my$ dep/after" + q), std::string::npos) << line;
 }
 
 // #261: on Windows $local_includes is copied into a RESPONSE FILE, which the
