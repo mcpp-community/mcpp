@@ -101,6 +101,19 @@ struct WindowsSdk {
 // Locate the Windows 10/11 SDK (highest version with ucrt headers).
 std::optional<WindowsSdk> find_windows_sdk();
 
+// True only when BOTH halves of a usable MSVC C++ setup are present: the
+// STL's std module source AND the Windows SDK.
+//
+// Either half alone is a half-installed state — Visual Studio with only the
+// .NET workload, or VC tools without the SDK — that a cheaper
+// `find_vs_install_path()` probe would happily call "MSVC is here", only for
+// the build to fail later inside the compiler. Selecting a toolchain on a
+// weaker signal than the one the build actually needs is the bug this
+// predicate exists to prevent, so it deliberately asks for both.
+//
+// Always false off Windows: the whole discovery chain is Win32-only.
+bool has_usable_msvc();
+
 // Synthesize the environment cl.exe/link.exe need — what vcvars would set,
 // derived directly from the located VC tools + SDK (no vcvarsall.bat run):
 //   INCLUDE = <tools>\include; <sdk>\Include\<v>\{ucrt,um,shared,winrt}
@@ -432,6 +445,17 @@ std::optional<WindowsSdk> find_windows_sdk() {
     }
 #endif
     return std::nullopt;
+}
+
+bool has_usable_msvc() {
+#if defined(_WIN32)
+    // Both, deliberately — see the declaration for why either half alone is
+    // a trap. Order matters only for cost: the STL probe short-circuits the
+    // SDK directory scan on machines with no Visual Studio at all.
+    return find_std_module_source().has_value() && find_windows_sdk().has_value();
+#else
+    return false;
+#endif
 }
 
 std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,

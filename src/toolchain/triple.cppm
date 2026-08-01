@@ -145,12 +145,32 @@ inline Triple host_triple() {
 // README platform table (drawn from kKnownTargets above).
 namespace pins {
     // First-run auto-install defaults (prepare.cppm), per host platform/arch.
-    inline constexpr std::string_view kFirstRunMacWin      = "llvm@20.1.7";
-    inline constexpr std::string_view kFirstRunLinuxX86_64 = "gcc@16.1.0";
-    inline constexpr std::string_view kFirstRunLinuxOther  = "gcc@15.1.0-musl";
+    //
+    // macOS and Windows shared ONE pin until 2026.8.2.1. They must not:
+    // Apple ships no GCC, so upstream LLVM with bundled libc++ is the only
+    // self-contained choice there — but on Windows clang targets the MSVC
+    // ABI (host triple env=msvc) and therefore uses the MSVC STL, which only
+    // arrives with Visual Studio's "Desktop development with C++" workload.
+    // A bare Windows box got a default it could never build with, and no
+    // diagnostic. The Windows pin is now chosen by detection, not by
+    // sharing macOS's answer.
+    inline constexpr std::string_view kFirstRunMac          = "llvm@20.1.7";
+    // Windows WITH a usable MSVC (STL + SDK, see msvc::has_usable_msvc()):
+    // unchanged behavior. The MSVC ABI is what lets a project link vcpkg /
+    // third-party .lib artifacts, so it stays the answer when it can work.
+    inline constexpr std::string_view kFirstRunWinMsvc      = "llvm@20.1.7";
+    // Windows WITHOUT one: winlibs GCC targeting PE/GNU. Fully self-contained
+    // (static libstdc++/libgcc, its own UCRT), zero Visual Studio dependency,
+    // `import std` works. Must stay equal to the x86_64-windows-gnu row's
+    // `pin` in kKnownTargets above — test_windows_defaults.cpp enforces it.
+    inline constexpr std::string_view kFirstRunWinGnu       = "gcc@16.1.0";
+    inline constexpr std::string_view kFirstRunWinGnuTarget = "x86_64-windows-gnu";
+    inline constexpr std::string_view kFirstRunLinuxX86_64  = "gcc@16.1.0";
+    inline constexpr std::string_view kFirstRunLinuxOther   = "gcc@15.1.0-musl";
     // Suggested install spellings used by help / MCPP_NO_AUTO_INSTALL errors.
-    inline constexpr std::string_view kSuggestLlvm         = "llvm 20.1.7";
-    inline constexpr std::string_view kSuggestGccMusl      = "gcc 15.1.0-musl";
+    inline constexpr std::string_view kSuggestLlvm          = "llvm 20.1.7";
+    inline constexpr std::string_view kSuggestGccMusl       = "gcc 15.1.0-musl";
+    inline constexpr std::string_view kSuggestGccMingw      = "gcc 16.1.0";
 } // namespace pins
 
 } // namespace mcpp::toolchain::triple

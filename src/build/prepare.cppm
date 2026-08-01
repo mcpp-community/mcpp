@@ -600,6 +600,65 @@ bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
 // `--no-cache` used to be the only switch and it meant "clear the build dir",
 // which says nothing about a cache (and its help text claimed all of target/);
 // it stays as a deprecated alias for Off.
+// Where the resolved toolchain spec came from.
+//
+// This exists so mcpp can tell its own guesses apart from the user's
+// instructions. When a resolved toolchain turns out to be unusable on this
+// machine (the motivating case: a Windows default that targets the MSVC ABI
+// on a box with no Visual Studio), mcpp may quietly revise a default it
+// picked itself — but a spec the user wrote into mcpp.toml must produce an
+// error instead. A project that needs the MSVC ABI to link vcpkg-built .lib
+// files is worse off with a silent ABI swap than with a failed build.
+//
+// Deliberately derived from the two config layers that already exist rather
+// than persisted: no new field, nothing to keep in sync on disk.
+export enum class TcOrigin {
+    None,               // nothing resolved yet
+    ManifestToolchain,  // mcpp.toml [toolchain]           — user explicit
+    TargetSection,      // mcpp.toml [target.X].toolchain  — user explicit
+    GlobalDefault,      // config.toml [toolchain] default — mcpp's own default
+    TargetPin,          // triple.cppm vocabulary convention
+    FirstRun,           // chosen and persisted by this very invocation
+};
+
+export inline bool tc_origin_is_user_explicit(TcOrigin o) {
+    return o == TcOrigin::ManifestToolchain || o == TcOrigin::TargetSection;
+}
+
+// What to tell a user whose build targets the MSVC ABI on a machine that
+// cannot serve it. Two shapes, because the two states need different fixes:
+//
+//   • cl.exe was found but the Windows SDK was not — a half-installed VS.
+//     Point at the missing SDK component; switching toolchains would be an
+//     over-correction for someone who clearly wants MSVC.
+//   • nothing usable at all — the bare-Windows case. Lead with the MinGW-w64
+//     route, which needs no Visual Studio and is already a verified target,
+//     and keep the "install the C++ workload" option second.
+export std::string msvc_unavailable_guidance(const mcpp::toolchain::Toolchain& tc) {
+    namespace pins = mcpp::toolchain::triple::pins;
+    const bool haveVcTools = tc.compiler == mcpp::toolchain::CompilerId::MSVC;
+    if (haveVcTools && mcpp::toolchain::msvc::find_msvc_tools_dir()) {
+        return std::format(
+            "msvc {} was detected at {}, but no Windows SDK was found —\n"
+            "       cl.exe cannot compile without the UCRT/SDK headers.\n"
+            "       Install the 'Windows 11 SDK' component via the Visual Studio\n"
+            "       Installer (it is part of the Desktop development with C++\n"
+            "       workload), then retry.",
+            tc.version, tc.binaryPath.string());
+    }
+    return std::format(
+        "this build targets the MSVC ABI, which needs Visual Studio /\n"
+        "       Build Tools (MSVC STL + Windows SDK) — neither was found.\n"
+        "\n"
+        "       No Visual Studio? Use the self-contained MinGW-w64 toolchain\n"
+        "       (no Visual Studio required, `import std` works):\n"
+        "         mcpp toolchain default {} --target {}\n"
+        "\n"
+        "       Have Visual Studio? Install the 'Desktop development with C++'\n"
+        "       workload — it provides the MSVC STL and the Windows SDK.",
+        pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget);
+}
+
 export enum class CacheMode { Global, Local, Off };
 
 export std::optional<CacheMode> parse_cache_mode(std::string_view v) {
@@ -1016,10 +1075,42 @@ prepare_build(bool print_fingerprint,
     }
 
     auto tcSpec = m->toolchain.for_platform(kCurrentPlatform);
+    // Where the spec came from decides whether mcpp may later revise it.
+    // See TcOrigin: mcpp can rewrite a default it chose itself, but must not
+    // silently overrule one the user wrote down.
+    auto tcOrigin = tcSpec.has_value() ? TcOrigin::ManifestToolchain
+                                       : TcOrigin::None;
     if (!tcSpec.has_value()) {
         auto cfg = get_cfg();
         if (cfg && !(*cfg)->defaultToolchain.empty()) {
-            tcSpec = (*cfg)->defaultToolchain;
+            tcSpec   = (*cfg)->defaultToolchain;
+            tcOrigin = TcOrigin::GlobalDefault;
+        }
+    }
+
+    // ─── Windows first run without Visual Studio ────────────────────────
+    // The host triple on Windows is MSVC-ABI, so the historical default
+    // (llvm) resolves to clang targeting MSVC — which uses the MSVC STL and
+    // the Windows SDK. Neither ships with Windows; both arrive only with
+    // Visual Studio's "Desktop development with C++" workload. On a bare box
+    // that default installs fine and then fails at compile time with no
+    // actionable message.
+    //
+    // Seed only the TARGET axis and let the block right below derive the
+    // rest: the vocabulary table already maps x86_64-windows-gnu to its pin
+    // (winlibs GCC) and to static linkage, so the toolchain answer stays a
+    // single derivation instead of being spelled out a second time here.
+    bool windowsGnuFirstRun = false;
+    if constexpr (mcpp::platform::is_windows) {
+        if (!tcSpec.has_value() && overrides.target_triple.empty()
+            && m->buildConfig.target.empty()
+            && !mcpp::toolchain::msvc::has_usable_msvc()) {
+            auto cfgW = get_cfg();
+            if (!cfgW || (*cfgW)->defaultTarget.empty()) {
+                overrides.target_triple =
+                    std::string(mcpp::toolchain::triple::pins::kFirstRunWinGnuTarget);
+                windowsGnuFirstRun = true;
+            }
         }
     }
 
@@ -1083,7 +1174,10 @@ prepare_build(bool print_fingerprint,
         if (parsed) overrides.target_triple = parsed->str();
 
         if (hasExplicitSection) {
-            if (!it->second.toolchain.empty()) tcSpec = it->second.toolchain;
+            if (!it->second.toolchain.empty()) {
+                tcSpec   = it->second.toolchain;
+                tcOrigin = TcOrigin::TargetSection;
+            }
             if (!it->second.linkage.empty())   m->buildConfig.linkage = it->second.linkage;
         }
         // Convention from the vocabulary table (triple.cppm): the target's
@@ -1092,8 +1186,13 @@ prepare_build(bool print_fingerprint,
         // mapping, not here) and its default linkage. GCC 16 pin rationale:
         // GCC 15 drops module template instantiations at link (remediation
         // doc A2; packages shipped 2026-07-08/09, GitHub+GitCode).
-        if (known && !hasToolchainOverride && !known->pin.empty())
+        if (known && !hasToolchainOverride && !known->pin.empty()) {
             tcSpec = std::string(known->pin);
+            // A convention, not an instruction: on the Windows-GNU first-run
+            // path this is what turns the seeded target into `gcc@16.1.0`.
+            if (!tc_origin_is_user_explicit(tcOrigin))
+                tcOrigin = TcOrigin::TargetPin;
+        }
         if (known && known->defaultStatic && m->buildConfig.linkage.empty())
             m->buildConfig.linkage = "static";
     }
@@ -1235,6 +1334,21 @@ prepare_build(bool print_fingerprint,
         std::string_view release = mcpp::platform::env::offline_mode()
             ? "or drop --offline / unset MCPP_OFFLINE to let mcpp auto-install."
             : "or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.";
+        // Windows without a usable MSVC must not be told to install llvm:
+        // that default resolves to clang targeting the MSVC ABI, which is
+        // exactly what this machine cannot build. Name the toolchain that
+        // will actually work there instead.
+        if (mcpp::platform::is_windows
+            && !mcpp::toolchain::msvc::has_usable_msvc()) {
+            return std::unexpected(std::format(
+                "no toolchain configured (and no Visual Studio found).\n"
+                "       run one of:\n"
+                "         mcpp toolchain install {} --target {}\n"
+                "         mcpp toolchain default {} --target {}\n"
+                "       {}",
+                pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget,
+                pins::kFirstRunWinGnu,  pins::kFirstRunWinGnuTarget, release));
+        }
         if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
             return std::unexpected(std::format(
                 "no toolchain configured.\n"
@@ -1242,7 +1356,7 @@ prepare_build(bool print_fingerprint,
                 "         mcpp toolchain install {}\n"
                 "         mcpp toolchain default {}\n"
                 "       {}",
-                pins::kSuggestLlvm, pins::kFirstRunMacWin, release));
+                pins::kSuggestLlvm, pins::kFirstRunMac, release));
         } else {
             return std::unexpected(std::format(
                 "no toolchain configured.\n"
@@ -1277,8 +1391,13 @@ prepare_build(bool print_fingerprint,
         //            toolchain, addable later for native-ABI aarch64 builds.
         namespace pins = mcpp::toolchain::triple::pins;
         std::string defaultSpec;
-        if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
-            defaultSpec = std::string(pins::kFirstRunMacWin);
+        if constexpr (mcpp::platform::is_macos) {
+            defaultSpec = std::string(pins::kFirstRunMac);
+        } else if constexpr (mcpp::platform::is_windows) {
+            // Reaching here means has_usable_msvc() was true — the seed above
+            // diverts the no-Visual-Studio case onto the windows-gnu target
+            // before the target block runs, so it never gets this far.
+            defaultSpec = std::string(pins::kFirstRunWinMsvc);
         } else if (mcpp::platform::host_arch == std::string_view("x86_64")) {
             defaultSpec = std::string(pins::kFirstRunLinuxX86_64);
         } else {
@@ -1342,24 +1461,113 @@ prepare_build(bool print_fingerprint,
             mcpp::ui::status("Default", std::format("set to {}", defaultSpec));
         } // best-effort: a failed config write only loses the persistence,
           // not the running build.
-        tcSpec = defaultSpec;
+        tcSpec   = defaultSpec;
+        tcOrigin = TcOrigin::FirstRun;
+    }
+
+    // Windows first run that got diverted to winlibs GCC: announce it and
+    // persist BOTH axes, so the next invocation is silent and
+    // `mcpp toolchain list` shows the same pair the build actually used.
+    // Persisting only the target would leave the toolchain axis implicit
+    // (derived from the vocabulary pin) and the two views would disagree.
+    if (windowsGnuFirstRun && tcSpec.has_value()) {
+        mcpp::ui::info("First run",
+            std::format("no toolchain configured and no Visual Studio found — "
+                        "installing {} for {} (MinGW-w64, self-contained)",
+                        *tcSpec, overrides.target_triple));
+        if (auto cfgW = get_cfg(); cfgW) {
+            if (mcpp::config::write_default_toolchain(**cfgW, *tcSpec))
+                (*cfgW)->defaultToolchain = *tcSpec;
+            if (mcpp::config::write_default_target(**cfgW, overrides.target_triple))
+                (*cfgW)->defaultTarget = overrides.target_triple;
+            mcpp::ui::status("Default",
+                std::format("set to {} → {}", *tcSpec, overrides.target_triple));
+        }
+        tcOrigin = TcOrigin::FirstRun;
     }
 
     auto tc = mcpp::toolchain::detect(explicit_compiler);
     if (!tc) return std::unexpected(tc.error().message);
 
-    // Native MSVC builds need the synthesized INCLUDE/LIB env — absent when
-    // detection found VC tools but no Windows SDK. Fail here with guidance
-    // instead of cl.exe's later "cannot open include file: 'corecrt.h'".
-    if (tc->compiler == mcpp::toolchain::CompilerId::MSVC
-        && tc->envOverrides.empty()) {
-        return std::unexpected(std::format(
-            "msvc {} was detected at {}, but no Windows SDK was found —\n"
-            "       cl.exe cannot compile without the UCRT/SDK headers.\n"
-            "       Install the 'Windows 11 SDK' component via the Visual Studio\n"
-            "       Installer (it is part of the Desktop development with C++\n"
-            "       workload), then retry.",
-            tc->version, tc->binaryPath.string()));
+    // ── Targeting the MSVC ABI without a usable MSVC ─────────────────────
+    //
+    // One judgement, one place. This used to be two separate concerns and
+    // only one of them was implemented: `msvc@system` with no Windows SDK
+    // was caught here, while clang-targeting-MSVC on a machine with no
+    // Visual Studio at all — the default on every bare Windows box — fell
+    // straight through to clang's own "'vector' file not found", from which
+    // no user could infer that a working alternative was one flag away.
+    // Deriving the same judgement in two places is how the second case went
+    // unnoticed, so they are now one condition with two outcomes.
+    const bool targetsMsvcAbi =
+        tc->compiler == mcpp::toolchain::CompilerId::MSVC
+        || mcpp::toolchain::is_msvc_target(*tc);
+    if (targetsMsvcAbi && !mcpp::toolchain::msvc::has_usable_msvc()) {
+        const bool mayRepair =
+            !tc_origin_is_user_explicit(tcOrigin)
+            && !mcpp::platform::env::offline_mode()
+            && !mcpp::platform::env::no_auto_install()
+            && mcpp::platform::is_windows;
+        if (!mayRepair) {
+            return std::unexpected(msvc_unavailable_guidance(*tc));
+        }
+        // mcpp chose this default itself and it cannot work on this machine.
+        // Revise it — including for users who already have `llvm@20.1.7`
+        // persisted by an older mcpp: the first-run branch never fires again
+        // for them, so this gate (which runs on EVERY build) is what repairs
+        // them without a single manual command.
+        namespace pins = mcpp::toolchain::triple::pins;
+        mcpp::ui::info("Toolchain",
+            std::format("{} targets the MSVC ABI but no Visual Studio "
+                        "(MSVC STL + Windows SDK) was found — switching to {} → {}",
+                        tcSpec.value_or("the configured default"),
+                        pins::kFirstRunWinGnu, pins::kFirstRunWinGnuTarget));
+
+        overrides.target_triple = std::string(pins::kFirstRunWinGnuTarget);
+        // The x86_64-windows-gnu row is defaultStatic; the target block that
+        // normally applies that already ran, so mirror just this one field.
+        if (m->buildConfig.linkage.empty()) m->buildConfig.linkage = "static";
+
+        auto gnuSpec = mcpp::toolchain::parse_toolchain_spec(
+            std::string(pins::kFirstRunWinGnu));
+        if (!gnuSpec) return std::unexpected(gnuSpec.error());
+        if (auto t = mcpp::toolchain::triple::parse(overrides.target_triple))
+            gnuSpec->target = *t;
+        auto gnuPkg = mcpp::toolchain::to_xim_package(*gnuSpec);
+
+        auto cfgR = get_cfg();
+        if (!cfgR) return std::unexpected(cfgR.error());
+        mcpp::fetcher::Fetcher fetcherR(**cfgR);
+        mcpp::fetcher::InstallProgressHandler progressR;
+        auto payloadR = fetcherR.resolve_xpkg_path(gnuPkg.target(),
+                            /*autoInstall=*/true, &progressR);
+        if (!payloadR) {
+            return std::unexpected(std::format(
+                "switching to the MinGW-w64 toolchain ({}) failed: {}\n"
+                "       install it manually with:\n"
+                "         mcpp toolchain install {} --target {}",
+                pins::kFirstRunWinGnu, payloadR.error().message,
+                pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget));
+        }
+        explicit_compiler =
+            mcpp::toolchain::toolchain_frontend(payloadR->binDir, gnuPkg);
+        if (!std::filesystem::exists(explicit_compiler)) {
+            return std::unexpected(std::format(
+                "MinGW-w64 payload {} has no known C++ frontend in {}",
+                gnuPkg.target(), payloadR->binDir.string()));
+        }
+        mcpp::toolchain::ensure_post_install_fixup(**cfgR, payloadR->root, gnuPkg);
+
+        // Persist both axes so the repair happens once, not on every build.
+        if (mcpp::config::write_default_toolchain(**cfgR, pins::kFirstRunWinGnu))
+            (*cfgR)->defaultToolchain = std::string(pins::kFirstRunWinGnu);
+        if (mcpp::config::write_default_target(**cfgR, overrides.target_triple))
+            (*cfgR)->defaultTarget = overrides.target_triple;
+
+        tcSpec   = std::string(pins::kFirstRunWinGnu);
+        tcOrigin = TcOrigin::FirstRun;
+        tc = mcpp::toolchain::detect(explicit_compiler);
+        if (!tc) return std::unexpected(tc.error().message);
     }
 
     // For musl-gcc the toolchain is fully self-contained
