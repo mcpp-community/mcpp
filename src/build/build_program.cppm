@@ -628,15 +628,19 @@ std::expected<void, std::string> run_build_program(
             if (!usesModule) stdFlags.push_back("-fmodules");
             stdStagedInBdir = true;
         } else {
-            stdFlags.push_back(std::string(traits.stdBmiUsePrefix)
-                               + sm->bmiPath.string());
+            // Through bmi_reference_tokens, not string concatenation: the
+            // traits spell these for the ninja STRING channel, where
+            // `-fmodule-file=std=<p>` (one word) and `/reference std=<p>`
+            // (two) are indistinguishable. Concatenating produced a single
+            // argv element with a space inside it, and cl answered
+            // "C2230: could not find module 'std'".
+            for (auto& t : mcpp::toolchain::bmi_reference_tokens(
+                     traits.stdBmiUsePrefix, sm->bmiPath))
+                stdFlags.push_back(t);
             if (usesStdCompat && !sm->compatBmiPath.empty())
-                stdFlags.push_back(std::string(traits.stdCompatBmiUsePrefix)
-                                   + sm->compatBmiPath.string());
-            // The prefixes carry a leading space for the ninja string channel;
-            // an argv element must not.
-            for (auto& f : stdFlags)
-                if (!f.empty() && f.front() == ' ') f.erase(0, 1);
+                for (auto& t : mcpp::toolchain::bmi_reference_tokens(
+                         traits.stdCompatBmiUsePrefix, sm->compatBmiPath))
+                    stdFlags.push_back(t);
         }
         if (!sm->objectPath.empty() && fs::exists(sm->objectPath))
             stdObjects.push_back(sm->objectPath.string());

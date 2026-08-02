@@ -146,6 +146,40 @@ TEST(HostFlags, BmiReferenceSplitsOnlyWhenTheSpellingHasASpace) {
     EXPECT_EQ(msvc[1], "std=/tmp/std.ifc");
 }
 
+// The general invariant, checked for every family: an argv element must never
+// contain a space. This bug has now appeared three times in the same shape —
+// `-x c++`, the mcpp module reference, the std reference — each time because
+// a table entry written for the ninja STRING channel was concatenated into an
+// argv element. cl.exe answers with "could not find module 'std'", which
+// names neither the flag nor the reason.
+TEST(HostFlags, BmiReferencesNeverProduceATokenWithASpace) {
+    for (auto id : kFamilies) {
+        auto tc = tc_for(id);
+        auto t = mcpp::toolchain::bmi_traits(tc);
+        for (auto prefix : { t.stdBmiUsePrefix, t.stdCompatBmiUsePrefix }) {
+            for (auto const& tok : mcpp::toolchain::bmi_reference_tokens(
+                     prefix, std::filesystem::path("/tmp/x.bmi"))) {
+                EXPECT_EQ(tok.find(' '), std::string::npos)
+                    << "family " << mcpp::toolchain::dialect_for(tc).id
+                    << " token: " << tok;
+            }
+        }
+    }
+}
+
+// Same invariant for the language-force spelling, which has both a positional
+// and a per-file form.
+TEST(HostFlags, LanguageForceTokensNeverContainASpace) {
+    for (auto const* d : { &mcpp::toolchain::gnu_dialect(),
+                           &mcpp::toolchain::msvc_dialect() }) {
+        for (auto f : d->forceCxxLangArgv)
+            EXPECT_EQ(f.find(' '), std::string_view::npos) << d->id << ": " << f;
+        for (auto f : d->alwaysFlagsArgv)
+            EXPECT_EQ(f.find(' '), std::string_view::npos) << d->id << ": " << f;
+        EXPECT_EQ(d->perFileCxxPrefix.find(' '), std::string_view::npos) << d->id;
+    }
+}
+
 TEST(HostFlags, BmiReferenceIsEmptyForAToolchainThatNamesNothing) {
     // GCC finds BMIs implicitly under <cwd>/gcm.cache — its prefix is empty
     // and must not produce a stray token.
