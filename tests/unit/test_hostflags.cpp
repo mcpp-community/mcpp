@@ -79,6 +79,56 @@ TEST(HostFlags, ProducerAnswersForEveryFamily) {
     }
 }
 
+// ── The rendered string must not move ───────────────────────────────────────
+//
+// stdmod folds its compile command into `std_build_commands`, and the std
+// cache DIRECTORY NAME is derived from the metadata containing it. Reordering
+// a flag therefore invalidates every user's std BMIs for no behavioural gain
+// — so the exact spelling is a compatibility surface, not an implementation
+// detail. This pins it; the first attempt at this refactor moved
+// `-stdlib=libc++` after the include flags and would have shipped exactly
+// that invalidation.
+TEST(HostFlags, ClangCfgBypassStringIsStable) {
+    mcpp::toolchain::ClangDriverModel dm;
+    dm.hasCfg = true;
+    dm.cxxIncludes = { "/llvm/include/c++/v1", "/llvm/include/tgt/c++/v1" };
+
+    EXPECT_EQ(dm.compile_flags(mcpp::toolchain::no_escape),
+              " --no-default-config -nostdinc++"
+              " -isystem/llvm/include/c++/v1"
+              " -isystem/llvm/include/tgt/c++/v1");
+
+    // With the stdlib selection the std module has always asked for, it lands
+    // immediately after -nostdinc++ — not at the end.
+    EXPECT_EQ(mcpp::toolchain::render_tokens(
+                  dm.compile_tokens(mcpp::toolchain::no_escape, true)),
+              " --no-default-config -nostdinc++ -stdlib=libc++"
+              " -isystem/llvm/include/c++/v1"
+              " -isystem/llvm/include/tgt/c++/v1");
+}
+
+TEST(HostFlags, LinkModelStringsAreStable) {
+    mcpp::toolchain::ToolchainLinkModel lm;
+    lm.mode = mcpp::toolchain::CLibMode::PayloadFirst;
+    lm.clangDriver = true;
+    lm.crtDir = "/glibc/lib";
+    lm.libDirs = { "/glibc/lib" };
+    lm.loader = "/glibc/lib/ld.so";
+    lm.systemIncludes = { "/glibc/include" };
+
+    EXPECT_EQ(lm.compile_flags(mcpp::toolchain::no_escape),
+              " -isystem/glibc/include");
+    EXPECT_EQ(lm.link_flags(mcpp::toolchain::no_escape),
+              " -B/glibc/lib -L/glibc/lib -Wl,-rpath,/glibc/lib"
+              " -Wl,--dynamic-linker=/glibc/lib/ld.so");
+
+    // GCC takes -idirafter so libstdc++'s #include_next wrappers can still
+    // reach libc.
+    lm.clangDriver = false;
+    EXPECT_EQ(lm.compile_flags(mcpp::toolchain::no_escape),
+              " -idirafter/glibc/include");
+}
+
 // ── bmi_reference_tokens ────────────────────────────────────────────────────
 //
 // The traits store these for the ninja STRING channel, where one word vs two
