@@ -126,19 +126,28 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
                       || mcpp::platform::is_linux);
 
+    // Trusting the cfg means contributing no include paths, stdlib selection
+    // or runtime choices — it already carries them. It does NOT mean
+    // contributing nothing: the deployment target still has to be stated (see
+    // below), which is why this suppresses the two blocks rather than
+    // returning early.
+    const bool trustCfg = !bypassCfg && dm.hasCfg;
+
     if (bypassCfg) {
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
-    } else if (dm.hasCfg) {
-        // Trusting the cfg means adding nothing at all: it already carries
-        // the include paths, the stdlib selection and the runtime choices.
-        return out;
     }
 
+    // Unconditional on macOS, cfg or no cfg. clang refuses to load a module
+    // built for a different deployment target, and this result feeds every
+    // compile that touches one — the bundled mcpp module's precompile, its
+    // object step, and the build.mcpp compile. Skipping it on the trust-cfg
+    // path is exactly the mismatch e2e 181 catches: the std BMI is built for
+    // 14.0 while the TU importing it is not.
     if (mcpp::platform::is_macos && !opt.macosDeploymentTarget.empty())
         out.push_back("-mmacosx-version-min=" + opt.macosDeploymentTarget);
 
-    if (bypassCfg || lm.mode != CLibMode::None)
+    if (!trustCfg && (bypassCfg || lm.mode != CLibMode::None))
         for (auto& t : lm.compile_tokens(esc)) out.push_back(t);
 
     return out;

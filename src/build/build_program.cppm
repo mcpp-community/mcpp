@@ -666,10 +666,13 @@ std::expected<void, std::string> run_build_program(
     for (auto f : dial.forceCxxLangArgv) compileArgv.emplace_back(f);
     compileArgv.push_back(src.string());
     if (usesModule || !stdObjects.empty()) {
-        // Link the module objects (GNU: reset the input language first so the
-        // .o isn't treated as C++ source; cl.exe infers by extension and is
-        // unreachable here anyway, gated above).
-        compileArgv.push_back("-x"); compileArgv.push_back("none");
+        // Link the module objects. GNU drivers need the input language reset
+        // first, or the .o that follows `-x c++` is handed to the frontend as
+        // C++ source; cl.exe has no `-x` at all and infers from the extension.
+        // This used to be unconditional and was only harmless while MSVC could
+        // not reach it — removing that gate made the dead branch live, and cl
+        // answered with `D9002: ignoring unknown option '-x'`.
+        if (!msvcHost) { compileArgv.push_back("-x"); compileArgv.push_back("none"); }
         if (usesModule) compileArgv.push_back(mcppModuleObject.string());
         for (auto& so : stdObjects) compileArgv.push_back(so);
     }
