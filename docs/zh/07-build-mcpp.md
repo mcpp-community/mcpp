@@ -117,10 +117,9 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 `#include` 依然有效,对只需要 `std::fopen` 的程序也依然是更合适的选择——构建脚本
 没有必须模块化的要求。
 
-> **MSVC 下尚不支持。** `cl.exe` 的具名模块走 `.ifc` + `/reference`,这条管线 mcpp
-> 还没接。在原生 MSVC 工具链下使用 `import mcpp;` 或 `import std;` 的 `build.mcpp`
-> 会得到一条明确的报错,告诉你改用 `#include` 或换 GCC/Clang 工具链——基于
-> `#include` 的程序在那里是完全支持的。
+凡是 mcpp 能用来构建宿主程序的工具链,都能构建 `build.mcpp`,原生 MSVC 也不例外
+——模块处理读的是主构建同一批表,所以 `cl.exe` 的 `.ifc` + `/reference` 不需要
+单独支持。
 
 ## 环境契约(mcpp 0.0.95+)
 

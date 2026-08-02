@@ -98,24 +98,42 @@ run_out=$("$MCPP" run 2>&1) || { echo "FAIL: run (link-lib): $run_out"; exit 1; 
 [[ "$run_out" == *"msvc-link-lib-ok"* ]] \
     || { echo "FAIL: run output (link-lib): $run_out"; exit 1; }
 
-# 3) Named modules under cl.exe (.ifc + /reference) are not implemented. That
-#    must be an explicit refusal, not an obscure compiler error — the whole
-#    point of the gate is that the user learns what to do instead.
+# 3) Named modules under cl.exe. build.mcpp is "one host C++ program", and the
+#    main build has compiled those with modules under cl.exe for a while
+#    (e2e 99 produces real .ifc artifacts) — so build.mcpp must too. It used to
+#    refuse, because it hand-rolled its own compile path instead of reading the
+#    shared BmiTraits/CommandDialect rows.
 cat > build.mcpp <<'EOF'
 import std;
+import mcpp;
 int main() {
-    std::println("mcpp:cfg=SHOULD_NOT_GET_HERE");
+    std::string tag = std::format("MSVC_MODULES_{}", 1 + 1);
+    mcpp::define(tag.c_str());
+    mcpp::rerun_if_changed("build.mcpp");
     return 0;
 }
 EOF
 
-set +e
-mod_out=$("$MCPP" build 2>&1)
-mod_rc=$?
-set -e
-[[ $mod_rc -ne 0 ]] || {
-    echo "FAIL: import std in build.mcpp unexpectedly succeeded under MSVC"; exit 1; }
-echo "$mod_out" | grep -qi "not yet supported under MSVC" || {
-    echo "FAIL: no explicit unsupported diagnostic:"; echo "$mod_out"; exit 1; }
+cat > src/main.cpp <<'EOF'
+import std;
+int main() {
+#ifdef MSVC_MODULES_2
+    std::println("msvc-modules-ok");
+    return 0;
+#else
+    std::println("define missing");
+    return 1;
+#endif
+}
+EOF
 
-echo "PASS: MSVC build.mcpp — include path, link-lib translation, module refusal"
+out=$("$MCPP" build 2>&1) || { echo "FAIL: msvc build.mcpp with modules: $out"; exit 1; }
+run_out=$("$MCPP" run 2>&1) || { echo "FAIL: run (modules): $run_out"; exit 1; }
+[[ "$run_out" == *"msvc-modules-ok"* ]] \
+    || { echo "FAIL: run output (modules): $run_out"; exit 1; }
+
+# The .ifc really came from the msvc module pipeline, not a silent fallback.
+find target/.build-mcpp -name "*.ifc" | grep -q . \
+    || { echo "FAIL: no .ifc produced for the bundled mcpp module"; exit 1; }
+
+echo "PASS: MSVC build.mcpp — include path, link-lib translation, named modules"

@@ -126,11 +126,9 @@ while the project targets something else.
 `#include` still works and stays the right choice for a program that only
 needs `std::fopen`; there is no requirement to modularize a build script.
 
-> **Not yet under MSVC.** Named modules with `cl.exe` go through `.ifc` +
-> `/reference`, a pipeline mcpp has not wired up. A `build.mcpp` using
-> `import mcpp;` or `import std;` under a native MSVC toolchain fails with an
-> explicit message telling you to use `#include` or a GCC/Clang toolchain —
-> `#include`-based programs are fully supported there.
+Every toolchain mcpp can build a host program with can build a `build.mcpp`,
+including native MSVC — the module handling reads the same tables the main
+build does, so `cl.exe`'s `.ifc` + `/reference` needs no separate support.
 
 ## Environment contract (mcpp 0.0.95+)
 

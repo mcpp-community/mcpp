@@ -93,6 +93,17 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
                                           const HostFlagOptions& opt,
                                           const PathEscape& esc);
 
+// A "use this BMI" flag as argv tokens.
+//
+// BmiTraits stores these for the ninja string channel, where the shape does
+// not matter: `-fmodule-file=std=<p>` is one word but `/reference std=<p>` is
+// two, and a string consumer never has to know. An argv consumer does — one
+// element containing a space is a single argument with a space in it, which
+// cl.exe rejects. Split at the prefix's last space, the same rule the ninja
+// side's quoting uses.
+std::vector<std::string> bmi_reference_tokens(std::string_view usePrefix,
+                                              const std::filesystem::path& bmi);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -131,6 +142,18 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
         for (auto& t : lm.compile_tokens(esc)) out.push_back(t);
 
     return out;
+}
+
+std::vector<std::string> bmi_reference_tokens(std::string_view usePrefix,
+                                              const std::filesystem::path& bmi) {
+    std::string_view p = usePrefix;
+    while (!p.empty() && p.front() == ' ') p.remove_prefix(1);
+    if (p.empty()) return {};
+    auto sp = p.find_last_of(' ');
+    if (sp == std::string_view::npos)
+        return { std::string(p) + bmi.string() };
+    return { std::string(p.substr(0, sp)),
+             std::string(p.substr(sp + 1)) + bmi.string() };
 }
 
 std::vector<std::string> host_link_tokens(const Toolchain& tc,

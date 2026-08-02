@@ -314,10 +314,17 @@ bool imports_module(std::string_view src, std::string_view name) {
     return false;
 }
 
-std::expected<std::vector<std::string>, std::string>
+// What the bundled `mcpp` module contributes to the build.mcpp compile.
+struct McppModule {
+    std::vector<std::string> useFlags;   // how the consumer names the BMI
+    fs::path                 object;     // linked alongside build.mcpp
+};
+
+std::expected<McppModule, std::string>
 build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
                   const std::vector<std::string>& base, const std::string& stdFlag,
-                  bool isClang) {
+                  const mcpp::toolchain::Toolchain& tc,
+                  const std::vector<std::pair<std::string, std::string>>& env) {
     std::error_code ec;
     fs::path cppm = bdir / "mcpp.cppm";
     std::string moduleSrc(kMcppModuleSource);
@@ -329,7 +336,7 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
 
     auto run = [&](std::vector<std::string> argv, const char* what)
         -> std::expected<void, std::string> {
-        auto r = mcpp::platform::process::capture_exec(argv, {}, bdir.string());
+        auto r = mcpp::platform::process::capture_exec(argv, env, bdir.string());
         if (r.exit_code != 0)
             return std::unexpected(std::format("mcpp module {} failed (exit {}):\n{}",
                                                what, r.exit_code, r.output));
@@ -340,22 +347,54 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
         return head;
     };
 
-    std::vector<std::string> extra;
-    if (isClang) {
+    // Dispatch on the SAME module table the main build uses (BmiTraits +
+    // CommandDialect), not on a local is_clang/else. That is what makes a
+    // toolchain family work here as soon as it works there — adding cl.exe
+    // needed no new pipeline, only this row.
+    const auto traits = mcpp::toolchain::bmi_traits(tc);
+    const auto& dial  = mcpp::toolchain::dialect_for(tc);
+    McppModule out;
+
+    if (tc.compiler == mcpp::toolchain::CompilerId::MSVC) {
+        // cl produces the .ifc and the .obj in one step.
+        fs::path ifc = bdir / ("mcpp" + std::string(traits.bmiExt));
+        out.object = bdir / ("mcpp" + std::string(dial.objExt));
+        std::vector<std::string> argv{compiler.string()};
+        for (auto f : dial.alwaysFlagsArgv) argv.emplace_back(f);
+        argv.push_back(stdFlag);
+        argv.push_back("/interface");
+        for (auto f : dial.forceCxxLangArgv) argv.emplace_back(f);
+        argv.push_back(dial.compileOnly == std::string_view("/c") ? "/c" : "-c");
+        argv.push_back("mcpp.cppm");
+        argv.push_back("/ifcOutput"); argv.push_back(ifc.string());
+        argv.push_back(std::string(dial.outputObjPrefix) + out.object.string());
+        if (auto r = run(with_base(std::move(argv)), "compile"); !r)
+            return std::unexpected(r.error());
+        out.useFlags = mcpp::toolchain::bmi_reference_tokens(" /reference mcpp=", ifc);
+        return out;
+    }
+
+    out.object = bdir / ("mcpp" + std::string(dial.objExt));
+    if (mcpp::toolchain::is_clang(tc)) {
+        fs::path pcm = bdir / ("mcpp" + std::string(traits.bmiExt));
         if (auto r = run(with_base({compiler.string(), stdFlag, "--precompile",
-                                    "mcpp.cppm", "-o", "mcpp.pcm"}), "precompile"); !r)
+                                    "mcpp.cppm", "-o", pcm.string()}), "precompile"); !r)
             return std::unexpected(r.error());
         if (auto r = run(with_base({compiler.string(), stdFlag, "-c",
-                                    "mcpp.pcm", "-o", "mcpp.o"}), "object"); !r)
+                                    pcm.string(), "-o", out.object.string()}), "object"); !r)
             return std::unexpected(r.error());
-        extra.push_back("-fmodule-file=mcpp=" + (bdir / "mcpp.pcm").string());
-    } else {
-        if (auto r = run(with_base({compiler.string(), stdFlag, "-fmodules", "-c",
-                                    "mcpp.cppm", "-o", "mcpp.o"}), "compile"); !r)
-            return std::unexpected(r.error());
-        extra.push_back("-fmodules");
+        out.useFlags = mcpp::toolchain::bmi_reference_tokens("-fmodule-file=mcpp=", pcm);
+        return out;
     }
-    return extra;
+
+    // GCC: BMIs are implicit under <cwd>/gcm.cache, so nothing to name.
+    if (auto r = run(with_base({compiler.string(), stdFlag,
+                                std::string(mcpp::toolchain::bmi_traits(tc).compileModulesFlag).empty()
+                                    ? "-fmodules" : "-fmodules",
+                                "-c", "mcpp.cppm", "-o", out.object.string()}), "compile"); !r)
+        return std::unexpected(r.error());
+    out.useFlags = {"-fmodules"};
+    return out;
 }
 
 // ── Cache (line-based; one record per line, internal format) ───────────────
@@ -684,24 +723,25 @@ std::expected<void, std::string> run_build_program(
     bool usesStdCompat = imports_module(srcText, "std.compat");
     bool usesStd       = usesStdCompat || imports_module(srcText, "std");
 
-    // Named modules under cl.exe go through .ifc + /reference, a different
-    // pipeline from GCC's gcm.cache and Clang's -fmodule-file. That work is
-    // not done, so say so plainly — one gate for both module kinds, because
-    // they fail for exactly the same reason and two conditions would drift.
-    if (msvcHost && (usesModule || usesStd)) {
-        return std::unexpected(std::string(
-            "build.mcpp: `import mcpp;` / `import std;` are not yet supported "
-            "under MSVC.\n"
-            "       Use #include in build.mcpp, or build with a GCC/Clang "
-            "toolchain."));
-    }
+    // The toolchain's own environment (MSVC's INCLUDE / LIB / VSLANG, which
+    // detection synthesized from the located VC tools + Windows SDK). Needed
+    // by every compile below, the module precompile included.
+    std::vector<std::pair<std::string, std::string>> compileEnv;
+    for (auto const& ev : tc.envOverrides)
+        compileEnv.emplace_back(ev.key, ev.value);
 
+    // Named modules dispatch on the same BmiTraits/CommandDialect rows the
+    // main build uses, so there is no per-family gate here: cl.exe's
+    // .ifc + /reference works because the table already describes it, not
+    // because build.mcpp grew a second implementation of it.
     std::vector<std::string> moduleFlags;
+    fs::path mcppModuleObject;
     if (usesModule) {
-        auto mf = build_mcpp_module(bdir, hostCompiler, base, std_flag,
-                                    mcpp::toolchain::is_clang(tc));
+        auto mf = build_mcpp_module(bdir, hostCompiler, base, std_flag, tc,
+                                    compileEnv);
         if (!mf) return std::unexpected(mf.error());
-        moduleFlags = std::move(*mf);
+        moduleFlags = std::move(mf->useFlags);
+        mcppModuleObject = std::move(mf->object);
     }
 
     // ── `import std;` in build.mcpp ─────────────────────────────────────────
@@ -811,7 +851,7 @@ std::expected<void, std::string> run_build_program(
         // .o isn't treated as C++ source; cl.exe infers by extension and is
         // unreachable here anyway, gated above).
         compileArgv.push_back("-x"); compileArgv.push_back("none");
-        if (usesModule) compileArgv.push_back((bdir / "mcpp.o").string());
+        if (usesModule) compileArgv.push_back(mcppModuleObject.string());
         for (auto& so : stdObjects) compileArgv.push_back(so);
     }
     // Self-contained helper link — see the staticHostHelper doctrine above.
@@ -833,14 +873,6 @@ std::expected<void, std::string> run_build_program(
     // only mcpp. Otherwise the project root is fine.
     const bool needsBmiCwd = usesModule || stdStagedInBdir;
     std::string compileCwd = needsBmiCwd ? bdir.string() : root.string();
-    // The toolchain's own environment (MSVC's INCLUDE / LIB / VSLANG, which
-    // detection synthesized from the located VC tools + Windows SDK). Only
-    // ninja_backend consumed these before, so a build.mcpp compile under
-    // cl.exe could not find <cstdio> no matter how correct its argv was —
-    // the third and last layer of #331's first finding.
-    std::vector<std::pair<std::string, std::string>> compileEnv;
-    for (auto const& ev : tc.envOverrides)
-        compileEnv.emplace_back(ev.key, ev.value);
     auto cres = mcpp::platform::process::capture_exec(compileArgv, compileEnv,
                                                      compileCwd);
     if (cres.exit_code != 0) {
