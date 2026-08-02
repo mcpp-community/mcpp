@@ -54,6 +54,14 @@ struct CommandDialect {
     // better off without (see the note on `alwaysFlagsArgv`).
     std::string_view forceCxxLang;     // "-x c++" | "/TP"
     std::span<const std::string_view> forceCxxLangArgv;
+    // Per-FILE language force, for a command line that also carries object
+    // files. The two drivers differ structurally, not just in spelling: GNU's
+    // `-x c++` is positional and stays in effect until `-x none`, while
+    // cl.exe's `/TP` applies to EVERY input — so an object listed after it is
+    // fed to the C++ frontend and dies with C2018. cl's per-file form is
+    // `/Tp<file>`; GNU has none, and uses the positional pair plus a reset.
+    // Empty means "no per-file form — use forceCxxLangArgv and reset after".
+    std::string_view perFileCxxPrefix; // ""       | "/Tp"
     // Static CRT / runtime. On MSVC this is a compile-time CRT model, not a
     // link mode — there is no /MT equivalent of `-static` for the whole image.
     std::string_view staticRuntime;    // "-static"| "/MT"
@@ -127,6 +135,7 @@ constexpr CommandDialect kGnuDialect{
     .libSearchPrefix = "-L",
     .forceCxxLang    = "-x c++",
     .forceCxxLangArgv = kGnuForceCxxArgv,
+    .perFileCxxPrefix = "",
     .staticRuntime   = "-static",
     .outputExePrefix = "-o ",
     .objExt          = ".o",
@@ -154,6 +163,7 @@ constexpr CommandDialect kMsvcDialect{
     .libSearchPrefix = "/LIBPATH:",
     .forceCxxLang    = "/TP",
     .forceCxxLangArgv = kMsvcForceCxxArgv,
+    .perFileCxxPrefix = "/Tp",
     .staticRuntime   = "/MT",
     .outputExePrefix = "/Fe:",
     .objExt          = ".obj",

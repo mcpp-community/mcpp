@@ -219,6 +219,16 @@ diff /tmp/stdcmd-base.txt /tmp/stdcmd-after.txt                            # 必
 
 ---
 
+## 实施记录(只有 CI 能发现的)
+
+| 发现 | 教训 |
+|---|---|
+| **扩大 `build_program.cppm` 的匿名 ns 同样触发 clang 误编译** | 把 `build_mcpp_module` 在原地改写加大 → macOS 全部 build.mcpp e2e 段错误,和 PR#332 一模一样。约束不是「别加新函数」,是**「别再往那个 ns 加代码」**。修法=整块搬到 `src/build/hostprogram.cppm` |
+| **「扫缓存比对字节等价」是假验证** | std 缓存共享且累积,两次快照都含**陈旧条目**,diff 恒为空 —— 我因此放过了一次真实的字符串改动(`-stdlib=libc++` 位置)。**把主张写成测试**:用合成的 `ClangDriverModel`/`ToolchainLinkModel` 直接断言渲染出的字面串 |
+| **`-stdlib=libc++` 的位置是兼容面** | 它进 `std_build_commands` → 进 metadata → **决定 std 缓存目录名**。挪一个 flag = 让每个用户的 std BMI 全量失效 |
+| **「信任 cfg」不等于「什么都不发」** | 生产者在 trust-cfg 分支提前 `return`,把 deployment target 也跳过了;而 macOS 上 build.mcpp 走的正是这条分支 → std BMI 配置不匹配。旧的手写实现把它放在**最前、无条件**,注释还专门写了 "FIRST and unconditionally" —— 重构时要读懂那句话为什么在 |
+| **删掉能力门 = 死代码变活代码** | `-x none` 常年无条件发出,只因 MSVC 到不了那里才无害。门一删,cl 立刻 `D9002: ignoring unknown option '-x'`。**删门时要把门后所有「反正到不了」的分支重新审一遍** |
+
 ## Self-Review
 
 **设计覆盖**:§4.1 token 生产者 → Task 2/3;§4.2 三种渲染 → Task 4;

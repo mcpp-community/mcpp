@@ -663,8 +663,15 @@ std::expected<void, std::string> run_build_program(
     for (auto& sf : stdFlags)    compileArgv.push_back(sf);
     // The `.mcpp` extension is unknown to every driver, so without this the
     // file is handed to the linker as a linker script.
-    for (auto f : dial.forceCxxLangArgv) compileArgv.emplace_back(f);
-    compileArgv.push_back(src.string());
+    // Per-file where the driver has that form (cl's /Tp), positional
+    // otherwise. Object files follow on this same command line, and cl's
+    // global /TP would compile them as C++ source.
+    if (!dial.perFileCxxPrefix.empty()) {
+        compileArgv.push_back(std::string(dial.perFileCxxPrefix) + src.string());
+    } else {
+        for (auto f : dial.forceCxxLangArgv) compileArgv.emplace_back(f);
+        compileArgv.push_back(src.string());
+    }
     if (usesModule || !stdObjects.empty()) {
         // Link the module objects. GNU drivers need the input language reset
         // first, or the .o that follows `-x c++` is handed to the frontend as
