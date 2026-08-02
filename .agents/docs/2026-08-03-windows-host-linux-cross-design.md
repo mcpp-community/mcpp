@@ -631,6 +631,36 @@ package = {
 
 ---
 
+## 6.5 B3 —— 同一类问题的第三例(本期发现,**未修**,登记 follow-up)
+
+CI 首次真正跑通交叉构建时暴露的:产物叫 `mcpp.exe`,而它是个 **ELF**。
+
+`plan.cppm:200-213` 的 `target_output()`:
+
+```cpp
+return std::filesystem::path("bin") /
+       std::format("{}{}", t.name, mcpp::platform::exe_suffix);   // ← host 常量
+```
+
+`exe_suffix` / `lib_prefix` / `static_lib_ext` / `shared_lib_ext` **四个都是 host 常量**
+(`platform/common.cppm:18-29`),却用来命名 **target** 产物。与 B2 完全同构,而且**对称地错**:
+
+| 方向 | 现状 | 应当 |
+|---|---|---|
+| Windows → linux-musl | `mcpp.exe`(却是 ELF) | `mcpp` |
+| Linux → windows-gnu | `mcpp`(却是 PE) | `mcpp.exe` |
+
+**为什么本期不修**:改产物命名是行为变更,会同时动到 `tests/e2e/102_mingw_cross_wine.sh`、
+release 打包路径和任何用户脚本;而两个方向的现状都**不致命**(扩展名在 Linux 上无意义,
+Windows 命令行也能跑无扩展名的 PE)。把一个有回归面的重命名塞进本 PR,违背了 §1.3 定下的
+「单 PR 但提交分层、失败可归因」的初衷。
+
+**修的时候要一起改的四个常量**,并且要注意 `runtime_aliases_for_target()`(`plan.cppm:215`)
+依赖 `target_output()` 的结果去比对 soname —— 见 [[soname-alias-explicit-ninja-goals]],
+那条边曾经因为类似改动漏生成过。
+
+---
+
 ## 7. 边界:本方案不做什么
 
 - **不碰 clang cross 轴**。`cross-build-test.yml:38-40` 记着 "mcpp does not yet inject `-target <triple>` +

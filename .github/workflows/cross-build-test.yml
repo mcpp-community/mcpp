@@ -340,9 +340,25 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP_SELF" build --target x86_64-linux-musl
-          OUT=$(find target -name "mcpp" -type f -path "*/bin/*" -printf "%T@ %p\n" \
+          # Scope the search to the TARGET's output tree — target/ also holds the
+          # host build from the previous step, and both are named "mcpp*".
+          #
+          # The artefact carries a `.exe` suffix even though it is an ELF:
+          # plan.cppm's target_output() spells the suffix from
+          # mcpp::platform::exe_suffix, a HOST constant. That is the same
+          # host-decides-target confusion as B2, and it is symmetric — a
+          # Linux→Windows cross produces a PE with no `.exe` today. Renaming the
+          # output is a behaviour change that would touch the mingw e2e and any
+          # user script, so it is filed as follow-up rather than folded in here;
+          # match both spellings so this job is correct either way.
+          OUT=$(find target/x86_64-linux-musl -type f -path "*/bin/*" \
+                     \( -name "mcpp" -o -name "mcpp.exe" \) -printf "%T@ %p\n" \
               | sort -rn | head -1 | cut -d" " -f2-)
-          test -n "$OUT" || { echo "FAIL: no cross artefact produced"; exit 1; }
+          if [ -z "$OUT" ]; then
+            echo "FAIL: no cross artefact produced; tree was:"
+            find target/x86_64-linux-musl -type f -path "*/bin/*" | head -20
+            exit 1
+          fi
           cp "$OUT" mcpp-linux-musl
           ls -la mcpp-linux-musl
 
