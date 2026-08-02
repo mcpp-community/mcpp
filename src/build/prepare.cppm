@@ -1184,6 +1184,11 @@ prepare_build(bool print_fingerprint,
                 tcOrigin = TcOrigin::TargetSection;
             }
             if (!it->second.linkage.empty())   m->buildConfig.linkage = it->second.linkage;
+            // #336: a per-target C++ runtime contract overrides the project
+            // default, so "self-contained everywhere except this triple" is
+            // expressible without touching the cfg() input channel.
+            if (!it->second.cxxRuntime.empty())
+                m->buildConfig.cxxRuntime = it->second.cxxRuntime;
         }
         // Convention from the vocabulary table (triple.cppm): the target's
         // pinned toolchain (host-awareness — native musl-gcc vs triple-named

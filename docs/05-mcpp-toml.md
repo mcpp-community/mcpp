@@ -157,7 +157,7 @@ cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
 defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU (desugars to -D; reaches module scans)
-static_stdlib = true               # Statically link libstdc++ (default true)
+cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
                                    # (≙ cargo build.target; e.g. "ship fully-static")
 macos_deployment_target = "14.0"   # Minimum supported OS version for macOS artifacts (macOS only)
@@ -188,16 +188,66 @@ baseline, and 14.0 is the floor of LLVM's official static libraries themselves).
 This value enters the BMI fingerprint, so switching targets automatically rebuilds
 the module cache.
 
-**Static runtime by default (portable by default)**: when `static_stdlib = true`
-(the default), macOS linking statically links in LLVM's bundled libc++/libc++abi —
-the system libc++ would otherwise pin the actual runnable version to the build
-machine's OS (older systems lack newer symbols, e.g. the support symbols behind
-`std::print`), and only static linking can truly deliver the floor. As a result,
-the default build's artifacts work out of the box on any macOS ≥ 14. Set
-`static_stdlib = false` to fall back to the dynamic system libc++ (the artifact is
-then only guaranteed to run on the build machine's version and above). A lower
-floor (11–13) requires a self-built libc++ archive (already verified to work, a
-data-level switch, available on request).
+### The C++ runtime contract (`cxx_runtime`)
+
+`cxx_runtime` states what the produced artifact promises about the machine that
+runs it. It is a **distribution** property, not a build one — it describes the
+runtime dependency set, and the flags that deliver it differ per platform.
+
+```toml
+[build]
+cxx_runtime = "self-contained"          # applies to every target (the default)
+
+# or, per role:
+[build.cxx_runtime]
+default = "self-contained"              # binaries and shared libraries
+tests   = "host-coupled"                # test binaries never leave this machine
+
+# or, per target triple — beside `linkage`, which is the same axis:
+[target.x86_64-linux-gnu]
+cxx_runtime = "host-coupled"            # e.g. this build is for a distro package
+```
+
+| value | the artifact needs, at run time | typical use |
+|---|---|---|
+| `self-contained` (default) | no C++ runtime outside itself | shipping a binary |
+| `toolchain-coupled` | the C++ runtime of the toolchain mcpp installed | local iteration |
+| `host-coupled` | whatever the driver resolves by default (the system runtime) | distro packaging, `dlopen` plugins that must share a runtime with their host |
+
+**Self-contained by default (portable by default)**: on macOS this statically
+links LLVM's bundled libc++/libc++abi — the system libc++ would otherwise pin the
+runnable version to the build machine's OS (older systems lack newer symbols, e.g.
+the support symbols behind `std::print`), and only static linking can truly deliver
+the `macos_deployment_target` floor. On Linux/MinGW it is `-static-libstdc++` (GCC)
+or the whole-link `-static` (MinGW); on a Linux clang/libc++ toolchain it links
+libc++.a/libc++abi.a/libunwind.a explicitly. A lower macOS floor (11–13) requires a
+self-built libc++ archive (already verified to work, a data-level switch, available
+on request).
+
+`static_stdlib` is the older spelling and still works: `true` means
+`self-contained`, `false` means `host-coupled`. An explicit `cxx_runtime` wins.
+
+**A contract that cannot be honored is reported, never silently downgraded.** If a
+toolchain ships no `libc++.a`, or a contract has no mechanism on that platform
+(`self-contained` under the MSVC runtime would need `/MT`, which mcpp does not emit
+yet), the build prints what it fell back to instead of quietly producing a
+different artifact than the manifest asked for.
+
+**Scope.** The contract governs the C++ runtime only. Static **libc** is a separate
+axis (`linkage = "static"` / `--static`, e.g. a musl target), and the deployment
+floor is a third (`macos_deployment_target`). Also, `host-coupled` means mcpp adds
+nothing to embed a C++ runtime; it does not strip the toolchain rpath the link
+carries for other reasons, so on ELF such an artifact may still find the
+toolchain's libraries first.
+
+> **macOS + `self-contained` and static initialization order.** Mach-O has no
+> priority-ordered initializer section and libc++'s `<iostream>` carries no
+> `ios_base::Init` guard of its own (unlike libstdc++ and the MSVC STL), so a
+> stream initializer pulled out of `libc++.a` would otherwise run *after* the
+> program's own global constructors — a global whose constructor touches
+> `std::cout` would read an unconstructed stream and crash at process start. mcpp
+> links a tiny generated object first to force the streams up; nothing is required
+> of your code. See mcpp-community/mcpp#336.
 
 `defines` takes **bare** macro names (no `-D`) and desugars each entry to `-D<x>` on
 both the C and C++ compile channels. It reaches every TU in the package — module

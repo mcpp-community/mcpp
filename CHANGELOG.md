@@ -3,6 +3,32 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.3.1] — 2026-08-03
+
+### 修复
+
+- **`[build] static_stdlib = false` 对测试二进制静默失效(#336)。** #124 在 0.0.52 明确写下这个 opt-out,`docs/05-mcpp-toml.md` 至今也还这么写;但 #202(0.0.86)把测试二进制改成与分发目标相同的静态 `-load_hidden` libc++ 时,新增的那条推导**没有带上 `staticStdlib` 门**。结果是约一年时间里 macOS 上的 `mcpp test` 没有任何办法回到动态 libc++,而文档一直在承诺它可以。
+
+- **macOS 上全局对象在静态初始化期访问 `std::cout` 必崩(#336)。** Mach-O 没有按优先级排序的初始化段(`init_priority` 只在单个 TU 内有效),归档成员的初始化器按链接顺序排在最后;而 libc++ 的 `<iostream>` 不像 libstdc++ / MSVC STL 那样自带 `ios_base::Init` 守卫,流的构造只存在于库内对象里。两件事叠起来的后果是:默认配置下,任何在构造函数里碰 `std::cout` 的全局对象都会读到 vptr 为零的流,进程启动即 SIGSEGV —— 而且**包侧无法修复**,因为 `std::ios_base::Init` 在 libc++ 的头文件里只有前向声明(`ios:70`),标准为静态初始化次序提供的官方解药在 libc++ 上用户根本写不出来。
+
+  修法是让静态链接恢复动态链接本来就有的保证:macOS + 自包含时,mcpp 生成一个极小的 C 翻译单元并把它的对象排在链接行**最前**,由它先把流顶上去。它对 `ios_base::Init::Init()` 的引用是 **weak** 的 —— 换一份不这么拼这个 ABI 符号的工具链,链接与今天完全一样,shim 退化为空操作。
+
+### 新增
+
+- **C++ 运行时分发契约 `[build] cxx_runtime`。** 三档:`self-contained`(默认)/ `toolchain-coupled` / `host-coupled`,可按角色(`{ default = ..., tests = ... }`)也可按目标三元组(`[target.<triple>] cxx_runtime`,与 `linkage` 并列 —— 它们本就是同一根轴)。`static_stdlib` 保留为忠实别名(`true`↔`self-contained`,`false`↔`host-coupled`)。
+
+  这个字段替换的旧字段名描述的是**手段**("静态链接 stdlib"),而它承载的其实是**意图**(产物能在哪些机器上跑)—— 这正是同一个 `true` 在四种配置上展开成四种不同结果的原因,其中一种是**静默空转**:Linux + clang/libc++ 工具链上 `static_stdlib = true` 一个 flag 都不发,交付的是工具链耦合的产物,而 manifest、文档和 `--version` 都说它是自包含的。
+
+- **Linux + libc++ 工具链现在真的能自包含**:显式链入 `libc++.a` / `libc++abi.a` / `libunwind.a`(缺 libunwind.a 时产物仍会拉 `libunwind.so.1`,所以它是机制的一部分而不是可选项)。实测 `NEEDED` 只剩 libc / libm / loader。
+
+- **兑现不了的契约一定会被报出来。** 工具链不带 `libc++.a`、macOS 没有 deployment floor、MSVC 运行时没有 `/MT` 机制、macOS 上没有可用的 `toolchain-coupled` 形态(LLVM 的 libc++abi/libunwind dylib 向上链 `/usr/lib/libc++`,会把第二份 libc++ 载进进程)—— 这些格子现在都会打印实际退到了哪一档。
+
+### 变更
+
+- **五处独立推导收敛成一处。** "这个产物自带 C++ 运行时吗"过去在 `flags.cppm` 的 `ldStdlibDefault` / `ldStdlibTest` / `-static-libstdc++` / MinGW `-static` 四处,加上 `ninja_backend.cppm` 里那个按 `LinkUnit::TestBinary` 的二分派,各推一遍 —— 这正是新语义只落到其中一处的成因。现在是 `src/build/distribution.cppm` 里的三层模型:角色(由链接单元内在决定)→ 契约(按角色取默认,可覆盖)→ 机制(唯一放 flag 的地方,且是**总函数**)。
+
+- 相应地,C++ 运行时相关的链接 flag 从全局 `ldflags` 移到了**每个链接单元**的 `unit_ldflags` —— 两个角色在同一次构建里可以持有不同契约,这一点全局通道表达不了。它们都是驱动级 flag,相对库的位置无意义,Linux/Windows 的链接语义不变。
+
 ## [2026.8.1.2] — 2026-08-01
 
 ### 新增

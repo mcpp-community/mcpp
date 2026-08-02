@@ -151,7 +151,7 @@ cflags       = ["-DFOO=1"]        # 额外 C 编译参数
 cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数(不要放 -std=...)
 ldflags      = ["-lfoo"]          # 额外链接参数
 defines      = ["BIZ=1", "QUX"]   # 作用于每个 TU 的预处理宏(脱糖为 -D;会进入模块扫描)
-static_stdlib = true               # 静态链接 libstdc++(默认 true)
+cxx_runtime  = "self-contained"   # C++ 运行时契约(见下节);static_stdlib 是旧拼写
 macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
 cache        = "global"           # 依赖的全局构建缓存:global(默认)| local | off(见 §2.10)
 ```
@@ -174,13 +174,59 @@ cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftP
 14.0 即 LLVM 官方静态库自身的下限)。该值会进入 BMI 指纹——切换 target
 会自动重建模块缓存。
 
-**默认即静态运行时(portable by default)**:`static_stdlib = true`
-(默认)时,macOS 链接会静态链入 LLVM 自带的 libc++/libc++abi ——
-系统 libc++ 会把实际可运行版本钉死在构建机的 OS(老系统缺新符号,
-如 `std::print` 的支撑符号),静态化才能真正兑现 floor。因此默认构建的
-产物在任何 macOS ≥ 14 上开箱即用。设 `static_stdlib = false` 退回动态
-系统 libc++(产物只保证在构建机同版本及以上运行)。更低 floor(11–13)
-需自建 libc++ 归档(已验证可行,数据级切换,按需提供)。
+### C++ 运行时契约(`cxx_runtime`)
+
+`cxx_runtime` 声明的是**产物对运行它的机器做出的承诺**。它是**分发**属性而非
+构建属性 —— 它描述的是运行期依赖集,而兑现它的 flag 逐平台不同。
+
+```toml
+[build]
+cxx_runtime = "self-contained"          # 作用于所有目标(默认值)
+
+# 或者按角色分别指定:
+[build.cxx_runtime]
+default = "self-contained"              # 可执行文件与共享库
+tests   = "host-coupled"                # 测试二进制从不离开本机
+
+# 或者按目标三元组 —— 与 `linkage` 并列,因为它们是同一根轴:
+[target.x86_64-linux-gnu]
+cxx_runtime = "host-coupled"            # 例如这次构建是为发行版打包
+```
+
+| 取值 | 产物运行时需要 | 典型场景 |
+|---|---|---|
+| `self-contained`(默认) | 自身之外不需要任何 C++ 运行时 | 分发二进制 |
+| `toolchain-coupled` | mcpp 装的那份工具链的 C++ 运行时 | 本地迭代 |
+| `host-coupled` | 驱动默认解析到的那份(通常是系统运行时) | 发行版打包;必须与宿主共用同一份运行时的 `dlopen` 插件 |
+
+**默认即自包含(portable by default)**:macOS 上这会静态链入 LLVM 自带的
+libc++/libc++abi —— 系统 libc++ 会把实际可运行版本钉死在构建机的 OS(老系统
+缺新符号,如 `std::print` 的支撑符号),只有静态化才能真正兑现
+`macos_deployment_target` 的 floor。Linux/MinGW 上它是 `-static-libstdc++`
+(GCC)或整条链的 `-static`(MinGW);Linux 上的 clang/libc++ 工具链则显式链入
+libc++.a/libc++abi.a/libunwind.a。更低的 macOS floor(11–13)需自建 libc++
+归档(已验证可行,数据级切换,按需提供)。
+
+`static_stdlib` 是旧拼写,仍然有效:`true` 等价于 `self-contained`,`false`
+等价于 `host-coupled`。显式写了 `cxx_runtime` 时以后者为准。
+
+**兑现不了的契约会被报出来,绝不静默降级。** 若工具链不带 `libc++.a`,或某个
+契约在该平台上没有对应机制(MSVC 运行时的 `self-contained` 需要 `/MT`,mcpp
+目前不发射),构建会打印实际退到了哪一档,而不是悄悄交付一个与 manifest 所述
+不同的产物。
+
+**边界。** 该契约只管 C++ 运行时。静态 **libc** 是另一根轴(`linkage = "static"`
+/ `--static`,如 musl 目标),部署下限是第三根轴(`macos_deployment_target`)。
+另外,`host-coupled` 只承诺 mcpp 不做任何"把 C++ 运行时打进产物"的动作,它不会
+去掉链接因其它原因已经携带的工具链 rpath —— 所以在 ELF 上这类产物仍可能优先
+找到工具链的库。
+
+> **macOS + `self-contained` 与静态初始化次序。** Mach-O 没有按优先级排序的
+> 初始化段,而 libc++ 的 `<iostream>` 也不像 libstdc++ / MSVC STL 那样自带
+> `ios_base::Init` 守卫 —— 于是从 `libc++.a` 里拉出来的流初始化器本来会排在
+> 程序自己的全局构造函数**之后**:一个在构造函数里碰 `std::cout` 的全局对象会
+> 读到尚未构造的流,进程启动即崩。mcpp 会把一个极小的生成对象排在链接最前面
+> 把流顶上去,你的代码不需要做任何事。详见 mcpp-community/mcpp#336。
 
 `defines` 接受**裸**宏名(不带 `-D`),把每个条目脱糖为 `-D<x>`,同时作用于 C 和
 C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入 P1689 模块扫描

@@ -19,6 +19,7 @@ export module mcpp.build.ninja;
 
 import std;
 import mcpp.build.backend;
+import mcpp.build.distribution;
 import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.build.hermetic;
@@ -31,6 +32,7 @@ import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.xlings;
 import mcpp.platform;
+import mcpp.ui;
 
 export namespace mcpp::build {
 
@@ -408,12 +410,15 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         else if (is_nasm_source(cu.source)) need_nasm_rule = true;
     }
 
+    // The macOS initializer-ordering shim (#336) is a C translation unit, so
+    // it needs the C driver bindings even in a project with no .c sources.
+    const bool need_ios_init_shim = flags.needsStreamInitShim;
     append(std::format("cxx       = {}\n", escape_ninja_path(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
-    if (need_c_rule || need_asm_rule) {   // asm_object drives the C compiler too
+    if (need_c_rule || need_asm_rule || need_ios_init_shim) {  // asm_object drives the C compiler too
         append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
     }
-    if (need_c_rule) {
+    if (need_c_rule || need_ios_init_shim) {
         append(std::format("cflags    = {}\n", flags.cc));
     }
     if (need_asm_rule) {
@@ -786,6 +791,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         }
     }
 
+    // #336: one extra object, compiled from a generated C TU, whose only job
+    // is to run first. Its own rule rather than the C rule above because it
+    // has no includes (so no depfile machinery) and must not be perturbed by
+    // whatever that rule grows next.
+    if (need_ios_init_shim) {
+        append("rule ios_init_object\n");
+        append("  command = $cc $cflags -c $in -o $out\n");
+        append("  description = CC $out\n\n");
+    }
+
     append("rule runtime_alias\n");
     if constexpr (mcpp::platform::is_windows) {
         // PE has no soname symlink, so the alias is a copy — and a copy of a
@@ -860,6 +875,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     auto std_bmi_dst = mcpp::toolchain::staged_std_bmi_path(plan.toolchain, {});
     auto std_o_dst = std::filesystem::path("obj")
                    / std::format("std{}", dial.objExt);
+
+    // #336 shim: source is written next to build.ninja by NinjaBackend::build.
+    auto ios_init_src = std::filesystem::path("obj") / "mcpp_ios_init.c";
+    auto ios_init_obj = std::filesystem::path("obj")
+                      / std::format("mcpp_ios_init{}", dial.objExt);
+    if (need_ios_init_shim) {
+        append(std::format("build {} : ios_init_object {}\n",
+                           escape_ninja_path(ios_init_obj),
+                           escape_ninja_path(ios_init_src)));
+        append("\n");
+    }
 
     bool has_std_artifacts = !plan.stdBmiPath.empty() && !plan.stdObjectPath.empty();
     if (has_std_artifacts) {
@@ -1170,6 +1196,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // Link units
     for (auto& lu : plan.linkUnits) {
         std::string ins;
+        // FIRST, before every other object. Mach-O runs __init_offsets in
+        // LINK order and has no priority-ordered init section, so "runs
+        // before the user's global constructors" is spelled "is the first
+        // input" — nothing else about this edge achieves it (#336).
+        if (need_ios_init_shim && lu.kind != LinkUnit::StaticLibrary)
+            ins += " " + escape_ninja_path(ios_init_obj);
         for (auto& o : lu.objects) {
             ins += " " + escape_ninja_path(o);
         }
@@ -1214,13 +1246,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         if (auto flag = shared_soname_flag(lu); !flag.empty())
             out_line += "  soname_flag = " + flag + "\n";
         {
-            // Per-unit C++ stdlib link (macOS; empty elsewhere): test
-            // binaries run on the build host and use the system -lc++,
-            // distributable targets get the static LLVM libc++. See
-            // CompileFlags::ldStdlibDefault/ldStdlibTest.
+            // Per-unit C++ runtime link, by ROLE. The kind→role map is the
+            // only place that knows a TestBinary runs on the build machine
+            // while everything else leaves it; which flags that implies is
+            // the contract table's business, not this emitter's (#336 —
+            // before, this switch WAS the policy, and `static_stdlib = false`
+            // could not reach the test side of it).
             std::string unit = join_flags(lu.linkFlags);
-            unit += (lu.kind == mcpp::build::LinkUnit::TestBinary)
-                ? flags.ldStdlibTest : flags.ldStdlibDefault;
+            unit += flags.ldStdlibFor(role_of(lu.kind));
             if (!unit.empty())
                 out_line += "  unit_ldflags =" + unit + "\n";
         }
@@ -1316,6 +1349,22 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // compile_commands.json — via the dedicated module.
     auto flags = compute_flags(plan);
     write_compile_commands(plan, flags);
+
+    // A distribution contract that could not be honored is reported, never
+    // silently downgraded — the whole point of the model (INV-1/INV-4 in
+    // .agents/docs/2026-08-02-issue336-pr142-analysis.md). Emitted here rather
+    // than inside compute_flags, which runs twice per build.
+    for (auto const& d : flags.diagnostics)
+        mcpp::ui::warning(std::format("cxx_runtime: {}", d));
+
+    // #336: the generated initializer-ordering TU. Written before ninja runs,
+    // since the link edge lists its object as an input.
+    if (flags.needsStreamInitShim) {
+        std::error_code sec;
+        std::filesystem::create_directories(plan.outputDir / "obj", sec);
+        write_file(plan.outputDir / "obj" / "mcpp_ios_init.c",
+                   mcpp::build::dist::stream_init_shim_source());
+    }
 
     if (opts.dryRun) {
         BuildResult r;

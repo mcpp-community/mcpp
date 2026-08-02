@@ -241,6 +241,24 @@ struct BuildConfig : BuildInputs {
     std::map<std::string, std::vector<GlobFlags>> featureFlags;
     std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
     bool                                staticStdlib = true;
+    // #336 — the C++ runtime DISTRIBUTION contract: what the artifact promises
+    // about the machine that runs it ("self-contained" | "toolchain-coupled" |
+    // "host-coupled"). Empty = unset, in which case `staticStdlib` supplies it
+    // (true → self-contained, false → host-coupled), which is exactly what that
+    // flag has always been documented to mean.
+    //
+    // Why a separate field rather than widening the bool: the bool spells a
+    // MECHANISM ("statically link the stdlib") and expanded into three
+    // different per-platform meanings — including a silent no-op on
+    // Linux/libc++, where it produced a toolchain-coupled artifact while
+    // claiming to be static. The contract spells the INTENT, and
+    // build/distribution.cppm maps intent to mechanism in one total function.
+    std::string                         cxxRuntime;
+    // Per-role override for test binaries. Empty = follow `cxxRuntime`.
+    // Tests are the one role whose contract legitimately diverges: they never
+    // leave the build machine, so "link the host's runtime" is a defensible
+    // choice there and an indefensible one for a shipped artifact.
+    std::string                         cxxRuntimeTests;
     // "" (default = dynamic), "static", "dynamic" — chosen at resolve
     // time from --static / --target / [target.<triple>].linkage. Wired
     // through to ninja backend as the `-static` link flag.
@@ -335,6 +353,15 @@ struct XlingsConfig {
 struct TargetEntry {
     std::string                         toolchain;     // e.g. "gcc@15.1.0-musl"; empty = inherit [toolchain]
     std::string                         linkage;       // "static" | "dynamic" | "" (= auto by libc)
+    // #336 — per-target C++ runtime contract, same vocabulary as
+    // [build].cxx_runtime and overriding it for this triple. It lives HERE,
+    // beside `linkage`, rather than in the `cfg(...)` conditional channel:
+    // both describe what the produced artifact depends on at run time, both
+    // are resolved before the build inputs are merged, and the conditional
+    // channel deliberately carries build INPUTS and nothing else
+    // (ConditionalConfig). One axis, one scoping rule.
+    std::string                         cxxRuntime;
+    std::string                         cxxRuntimeTests;
 };
 
 // `[target.'cfg(...)'.build]` — platform-conditional build flags (L1). The

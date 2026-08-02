@@ -12,6 +12,7 @@ module;
 export module mcpp.build.flags;
 
 import std;
+import mcpp.build.distribution;
 import mcpp.build.plan;
 import mcpp.modgraph.scanner;
 import mcpp.platform;
@@ -39,19 +40,43 @@ struct CompileFlags {
     std::string bFlag;                // -B<binutils> (for ninja ldflags)
     bool staticStdlib = true;
     std::string linkage;  // "static" or ""
-    // macOS per-unit C++ stdlib link (appended via unit_ldflags):
-    // distributable targets get the static LLVM libc++ (portable across
-    // macOS versions); TestBinary targets get the toolchain's own libc++
-    // DYNAMICALLY (-L + -lc++ + rpath into the toolchain) — host-only
-    // binaries, so the rpath is fine, and it keeps headers and dylib the
-    // same version (the system -lc++ they used before was a version split
-    // that broke on libc++ 22's out-of-line __hash_memory). Empty on other
-    // platforms (stdlib handled by their existing paths).
-    std::string ldStdlibDefault;
-    std::string ldStdlibTest;
+    // Per-link-unit C++ runtime flags, indexed by dist::Role. EVERY platform
+    // routes through here now (`-static-libstdc++`, MinGW's `-static`, macOS's
+    // `-load_hidden` archives): the channel has to be per-unit because two
+    // roles in one build may hold different contracts, which is precisely what
+    // `static_stdlib = false` could not express for test binaries before #336.
+    // Produced by exactly one call to `dist::resolve` per role.
+    std::array<std::string, 3> ldStdlibByRole{};
+    // The contract each role actually got (after any degradation).
+    std::array<mcpp::build::dist::Contract, 3> contractByRole{};
+    // macOS + self-contained: link units need the initializer-ordering shim
+    // object prepended to their inputs (issue #336).
+    bool needsStreamInitShim = false;
+    // Non-empty when a requested contract could not be honored. The caller
+    // MUST surface these — a silent downgrade is the failure mode this whole
+    // model exists to prevent. Emitted once by the backend, not here, because
+    // compute_flags runs twice per build (ninja + compile_commands).
+    std::vector<std::string> diagnostics;
+
+    const std::string& ldStdlibFor(mcpp::build::dist::Role r) const {
+        return ldStdlibByRole[static_cast<std::size_t>(r)];
+    }
 };
 
 CompileFlags compute_flags(const BuildPlan& plan);
+
+// The kind → role map. One line of policy, in one place: a test binary runs on
+// the build machine and is then thrown away; an archive embeds no runtime at
+// all; everything else leaves this machine. Backends ask this, never the kind.
+constexpr mcpp::build::dist::Role role_of(LinkUnit::Kind k) {
+    switch (k) {
+        case LinkUnit::TestBinary:    return mcpp::build::dist::Role::Test;
+        case LinkUnit::StaticLibrary: return mcpp::build::dist::Role::Intermediate;
+        case LinkUnit::Binary:
+        case LinkUnit::SharedLibrary: break;
+    }
+    return mcpp::build::dist::Role::Distributable;
+}
 
 // Return the linker flag that pulls in libatomic, or "" when it should be
 // omitted. libatomic carries the out-of-line __atomic_* libcalls that
@@ -512,16 +537,100 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;
     f.linkage = plan.manifest.buildConfig.linkage;
     std::string full_static = (mcpp::platform::supports_full_static && f.linkage == "static") ? " -static" : "";
-    // Static C++ stdlib: a libstdc++ (GCC/MinGW) concern. On Windows a MinGW
-    // toolchain also statically links libgcc, so produced binaries don't
-    // depend on libstdc++-6.dll / libgcc_s DLLs from the toolchain dir
-    // (portable-by-default, same spirit as the macOS static-libc++ path).
-    std::string static_stdlib;
-    if (f.staticStdlib && caps.stdlib_id == "libstdc++") {
-        static_stdlib = " -static-libstdc++";
-        if constexpr (mcpp::platform::is_windows)
-            static_stdlib += " -static-libgcc";
+
+    // ---- C++ runtime distribution contract (issue #336) -------------------
+    //
+    // THE single derivation of "does this artifact carry its own C++ runtime",
+    // for every role and every platform. `-static-libstdc++`, MinGW's
+    // `-static` and macOS's `-load_hidden` archives all come out of here now;
+    // nothing below re-decides it. The flags land in the PER-UNIT channel
+    // (`unit_ldflags`) rather than the global one because two roles in the
+    // same build may hold different contracts.
+    {
+        namespace dist = mcpp::build::dist;
+        auto const& bc = plan.manifest.buildConfig;
+
+        // `static_stdlib` is a faithful alias of the two ends of the contract:
+        // its documented meaning has always been exactly self-contained vs the
+        // dynamic system runtime. An explicit `cxx_runtime` wins.
+        const dist::Contract base =
+            dist::parse_contract(bc.cxxRuntime).value_or(
+                bc.staticStdlib ? dist::Contract::SelfContained
+                                : dist::Contract::HostCoupled);
+        const dist::Contract testsContract =
+            dist::parse_contract(bc.cxxRuntimeTests).value_or(base);
+
+        // Archive lookup. LLVM lays these out either directly under lib/ (the
+        // macOS packages) or under lib/<llvm-triple>/ (the Linux ones), so try
+        // both rather than hard-coding one layout. Sorted so the choice cannot
+        // depend on directory iteration order.
+        auto find_archive = [&](std::string_view name) -> std::string {
+            if (llvmRootForStdlib.empty()) return {};
+            std::error_code ec;
+            auto libDir = llvmRootForStdlib / "lib";
+            auto direct = libDir / name;
+            if (std::filesystem::exists(direct, ec)) return escape_path(direct);
+            std::vector<std::filesystem::path> hits;
+            for (auto& e : std::filesystem::directory_iterator(libDir, ec)) {
+                std::error_code de;
+                if (!e.is_directory(de)) continue;
+                auto p = e.path() / name;
+                if (std::filesystem::exists(p, de)) hits.push_back(p);
+            }
+            std::ranges::sort(hits);
+            return hits.empty() ? std::string{} : escape_path(hits.front());
+        };
+
+        dist::MechanismInput mi;
+        mi.stdlibId       = caps.stdlib_id;
+        mi.hostIsWindows  = mcpp::platform::is_windows;
+        mi.fullStaticLibc = (f.linkage == "static");
+        mi.mingw          = isMingwTc;
+        mi.macosFloor     = !macosDeploymentTarget.empty();
+        if constexpr (mcpp::platform::needs_explicit_libcxx) {
+            mi.format = dist::Format::MachO;
+        } else if constexpr (mcpp::platform::is_windows) {
+            mi.format = dist::Format::Pe;
+        }
+        // Target-keyed, not host-keyed: a Linux-hosted MinGW cross build
+        // produces a PE and must take the PE mechanism.
+        if (isMingwTc) mi.format = dist::Format::Pe;
+
+        const bool wantsArchives =
+            (base == dist::Contract::SelfContained
+             || testsContract == dist::Contract::SelfContained)
+            && caps.stdlib_id == "libc++";
+        if (wantsArchives) {
+            mi.libcxxArchive    = find_archive("libc++.a");
+            mi.libcxxAbiArchive = find_archive("libc++abi.a");
+            // ELF only: without it the "self-contained" binary still pulls
+            // libunwind.so.1. Mach-O's libc++abi.a carries its own unwinder.
+            if (mi.format == dist::Format::Elf)
+                mi.libunwindArchive = find_archive("libunwind.a");
+        }
+
+        for (auto [role, requested] : {
+                 std::pair{dist::Role::Distributable, base},
+                 std::pair{dist::Role::Test,          testsContract},
+                 std::pair{dist::Role::Intermediate,  base}}) {
+            mi.role      = role;
+            mi.requested = requested;
+            auto r = dist::resolve(mi);
+            auto i = static_cast<std::size_t>(role);
+            f.ldStdlibByRole[i] = r.unitFlags;
+            f.contractByRole[i] = r.effective;
+            if (r.streamInitShim) f.needsStreamInitShim = true;
+            if (!r.diagnostic.empty())
+                f.diagnostics.push_back(std::format(
+                    "{} target: {}", dist::to_string(role), r.diagnostic));
+        }
+        // Two roles usually share a contract, so they usually share a
+        // complaint; report each distinct one once.
+        std::ranges::sort(f.diagnostics);
+        f.diagnostics.erase(std::ranges::unique(f.diagnostics).begin(),
+                            f.diagnostics.end());
     }
+
     std::string runtime_dirs;
     if constexpr (mcpp::platform::supports_rpath) {
         // Toolchain runtime dirs (glibc/gcc) as before...
@@ -559,18 +668,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // + libstdc++exp (std::print's __open_terminal/__write_to_terminal live in
     // libstdc++exp.a, not plain libstdc++). Self-contained binutils → no -B.
     if (isMingwTc) {
-        std::string mingw_static;
+        // `-static` / `-static-libstdc++` now come from the contract table via
+        // unit_ldflags (dist::Format::Pe) — the whole-link `-static` is what
+        // "self-contained" means here, since the piecemeal recipe still leaves
+        // libwinpthread-1.dll behind.
         std::string mingw_stdexp;
-        if (caps.stdlib_id == "libstdc++") {
-            // `-static` for the whole link — MinGW's standalone-exe convention
-            // (the piecemeal -static-libstdc++ recipe still pulls
-            // libwinpthread-1.dll). Opt out via [build] static_stdlib=false.
-            if (f.staticStdlib || f.linkage == "static")
-                mingw_static = " -static";
+        if (caps.stdlib_id == "libstdc++")
             mingw_stdexp = " -lstdc++exp";
-        }
-        f.ld = std::format("{}{}{}{}{}", mingw_static, static_stdlib,
-                           user_ldflags, mingw_stdexp, link_extra);
+        f.ld = std::format("{}{}{}", user_ldflags, mingw_stdexp, link_extra);
         return f;
     }
 
@@ -590,96 +695,30 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // PE link, MSVC-ABI Clang (native MinGW is handled by the target-keyed
         // branch above and has already returned): no rpath/loader/payload —
         // MSVC STL/SDK come via the driver, nothing extra needed.
-        f.ld = std::format("{}{}{}", static_stdlib, user_ldflags, link_extra);
+        f.ld = std::format("{}{}", user_ldflags, link_extra);
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
-        // macOS. Two min-version concerns (see xlings
-        // .agents/docs/2026-06-05-macos-min-version-support.md):
+        // macOS. The C++ runtime itself is decided by the contract table above
+        // (dist::Format::MachO) and rides unit_ldflags; what is left here is
+        // the rest of the macOS link:
         //
-        // 1. stdlib linkage — `-lc++` resolves to the SYSTEM
-        //    /usr/lib/libc++.1.dylib, which caps the deployment floor at
-        //    the build host's OS: e.g. std::print's __is_posix_terminal
-        //    support symbol only exists in macOS 15's libc++, so a
-        //    minos-14 binary dies at launch on 14 (dyld missing-symbol
-        //    abort; verified on macos-14 CI). With staticStdlib (the
-        //    manifest default — previously silently ignored on the clang
-        //    route), link LLVM's own libc++.a/libc++abi.a instead:
-        //    runtime deps shrink to libSystem and the floor drops to
-        //    14.0 — the floor of the official LLVM static archives;
-        //    lower needs a custom libc++ build. Falls back to -lc++ when the
-        //    archives are absent.
-        // 2. deployment target — mirror MACOSX_DEPLOYMENT_TARGET onto the
-        //    link command line so it doesn't depend on env propagation.
-        // 3. linker — use LLVM's own lld (same as the Linux clang path)
+        // 1. deployment target — mirror MACOSX_DEPLOYMENT_TARGET onto the
+        //    link command line so it doesn't depend on env propagation. The
+        //    static-libc++ mechanism exists to make this floor REAL: `-lc++`
+        //    resolves to the SYSTEM /usr/lib/libc++.1.dylib, which caps the
+        //    runnable version at the build host's OS (std::print's
+        //    __is_posix_terminal support symbol only exists in macOS 15's
+        //    libc++, so a minos-14 binary died at launch on macos-14 CI).
+        // 2. linker — use LLVM's own lld (same as the Linux clang path)
         //    instead of Xcode's ld: the system ld's version floats with
         //    the host Xcode (observed: Xcode 15.4's ld aborting at launch
         //    on macos-14 CI when its libc++ resolution was diverted), and
         //    lld ships with the exact toolchain doing the compile.
-        f.ldStdlibDefault = " -lc++";
-        f.ldStdlibTest    = " -lc++";
-        // Static libc++ + the deployment floor are the DEFAULT (rust-style
-        // "portable by default"): the resolver always yields a floor on
-        // macOS (built-in 14.0 unless env/manifest override), and the
-        // static LLVM libc++ is what makes that floor real — the system
-        // libc++ caps binaries at the build host's OS (a fresh user's
-        // std::println hello on macOS 14 died at dyld against the system
-        // libc++ before this). Opt-out: [build] static_stdlib = false
-        // (host-coupled dynamic libc++, the pre-0.0.52 no-declaration
-        // behavior). The two blockers that deferred this default are
-        // resolved: (1) mixed C/C++ split-brain SIGSEGV — fixed by
-        // -load_hidden (PR #117 forensics), (2) std-module staging /
-        // fingerprint drift — fixed by the single resolver (PR #119).
+        //
         // TODO(macos-floor-11): the official LLVM archives are built for
         // macOS 14; supporting 11-13 needs a custom libc++ build shipped
         // via xlings-res (data-only change — swap the archive source).
         // Tracked in xlings
         // .agents/docs/2026-06-05-macos-min-version-support.md §5.
-        if (f.staticStdlib && !macosDeploymentTarget.empty()
-            && !llvmRootForStdlib.empty()) {
-            auto libDir     = llvmRootForStdlib / "lib";
-            auto libcxxA    = libDir / "libc++.a";
-            auto libcxxAbiA = libDir / "libc++abi.a";
-            if (std::filesystem::exists(libcxxA)
-                && std::filesystem::exists(libcxxAbiA)) {
-                // Link the archives via -Wl,-load_hidden,<path>: forces
-                // the ARCHIVE (never a sibling dylib) and gives its
-                // symbols hidden visibility. Both properties matter:
-                //  - plain BY-PATH linking leaves default-visibility
-                //    symbols that dyld then unifies with the system
-                //    libc++ pulled in via the shared cache — a
-                //    split-brain libc++ where ostream<<int crosses into
-                //    the system copy's locale machinery and SIGSEGVs
-                //    (CI forensics m1/m3 vs m6/m7).
-                //  - -Wl,-hidden-l resolves like a plain -l under lld
-                //    and picks the sibling DYLIB (load failure).
-                f.ldStdlibDefault = " -nostdlib++"
-                    " -Wl,-load_hidden," + escape_path(libcxxA)
-                  + " -Wl,-load_hidden," + escape_path(libcxxAbiA);
-            }
-        }
-        // TestBinary: SAME static -load_hidden libc++ as distributables.
-        // Tests previously took the SYSTEM -lc++ while compiling against the
-        // toolchain's libc++ HEADERS — a header/dylib version split that
-        // detonated when libc++ 22 moved string hashing out of line
-        // (undefined __hash_memory, 2026-07-08). The dynamic alternative
-        // (toolchain libc++.dylib + rpath) is a dead end with this
-        // distribution: its abi/unwind dylibs upward-link /usr/lib/libc++,
-        // so the SYSTEM libc++ still loads next to the toolchain's and
-        // gtest's initializers freed across the two copies
-        // (BUG_IN_CLIENT_OF_LIBMALLOC, CI crash forensics rounds 5-6).
-        // Static hidden archives keep exactly ONE libc++, inside the
-        // binary — the same already-proven shape mcpp/xlings ship with.
-        // Design: .agents/docs/2026-07-08-root-cause-remediation-design.md A1.
-        if (!llvmRootForStdlib.empty()) {
-            auto libDir     = llvmRootForStdlib / "lib";
-            auto libcxxA    = libDir / "libc++.a";
-            auto libcxxAbiA = libDir / "libc++abi.a";
-            if (std::filesystem::exists(libcxxA)
-                && std::filesystem::exists(libcxxAbiA)) {
-                f.ldStdlibTest = " -nostdlib++"
-                    " -Wl,-load_hidden," + escape_path(libcxxA)
-                  + " -Wl,-load_hidden," + escape_path(libcxxAbiA);
-            }
-        }
         std::string version_min;
         if (!macosDeploymentTarget.empty()) {
             version_min = " -mmacosx-version-min=" + macosDeploymentTarget;
@@ -695,7 +734,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string macos_sdk;
         if (auto sdk = mcpp::platform::macos::sdk_path())
             macos_sdk = " -isysroot " + escape_path(*sdk);
-        f.ld = std::format("{}{}{}{} -fuse-ld=lld{}{}{}", full_static, static_stdlib,
+        f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}", full_static,
                            b_flag, macos_sdk, version_min, user_ldflags, link_extra);
     } else {
         // libatomic: 16-byte / oversized std::atomic needs the out-of-line
@@ -705,7 +744,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // actually being present (see atomic_link_flag).
         std::string atomic_ld = atomic_link_flag(plan.toolchain.linkRuntimeDirs,
                                                  !full_static.empty());
-        f.ld = std::format("{}{}{}{}{}{}{}{}{}", full_static, static_stdlib, link_toolchain_flags, b_flag,
+        f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, link_toolchain_flags, b_flag,
                            runtime_dirs, atomic_ld, payload_ld, user_ldflags, link_extra);
     }
 

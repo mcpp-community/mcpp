@@ -838,6 +838,48 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 
     // [build] — backend tunables
     if (auto v = doc->get_bool("build.static_stdlib")) m.buildConfig.staticStdlib = *v;
+    // #336 — [build] cxx_runtime. Two spellings for one field, cargo-style:
+    //   cxx_runtime = "host-coupled"                       (all roles)
+    //   cxx_runtime = { default = "...", tests = "..." }   (per role)
+    // Rejecting an unknown value here is what lets flags.cppm parse it later
+    // with `value_or` and no second validation path.
+    {
+        auto check = [&](std::string_view where, const std::string& v)
+            -> std::optional<ManifestError>
+        {
+            static constexpr std::string_view kOk[] = {
+                "self-contained", "toolchain-coupled", "host-coupled" };
+            for (auto k : kOk) if (v == k) return std::nullopt;
+            return error(origin, std::format(
+                "{} = '{}' is invalid; expected one of \"self-contained\", "
+                "\"toolchain-coupled\", \"host-coupled\"", where, v));
+        };
+        if (auto* val = doc->get("build.cxx_runtime")) {
+            if (val->is_string()) {
+                auto s = val->as_string();
+                if (auto e = check("[build].cxx_runtime", s)) return std::unexpected(*e);
+                m.buildConfig.cxxRuntime = s;
+            } else if (val->is_table()) {
+                for (auto& [key, v] : val->as_table()) {
+                    if (key != "default" && key != "tests")
+                        return std::unexpected(error(origin, std::format(
+                            "[build].cxx_runtime has unsupported key '{}'; "
+                            "expected 'default' or 'tests'", key)));
+                    if (!v.is_string())
+                        return std::unexpected(error(origin, std::format(
+                            "[build].cxx_runtime.{} must be a string", key)));
+                    auto s = v.as_string();
+                    if (auto e = check(std::format("[build].cxx_runtime.{}", key), s))
+                        return std::unexpected(*e);
+                    (key == "tests" ? m.buildConfig.cxxRuntimeTests
+                                    : m.buildConfig.cxxRuntime) = s;
+                }
+            } else {
+                return std::unexpected(error(origin,
+                    "[build].cxx_runtime must be a string or a table"));
+            }
+        }
+    }
     if (auto v = doc->get_bool("build.allow_host_libs")) m.buildConfig.allowHostLibs = *v;
     if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
@@ -1000,6 +1042,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         triple, e.linkage)));
                 }
             }
+            // #336 — the C++ runtime contract, same axis as `linkage` (both
+            // describe the produced artifact's run-time dependencies) and so
+            // the same scoping. Only the scalar form here: a per-target,
+            // per-role matrix is a surface nobody has asked for, and
+            // [build].cxx_runtime already covers the role split.
+            if (auto it = body.find("cxx_runtime"); it != body.end() && it->second.is_string()) {
+                e.cxxRuntime = it->second.as_string();
+                if (e.cxxRuntime != "self-contained"
+                    && e.cxxRuntime != "toolchain-coupled"
+                    && e.cxxRuntime != "host-coupled") {
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].cxx_runtime = '{}' is invalid; expected one of "
+                        "\"self-contained\", \"toolchain-coupled\", \"host-coupled\"",
+                        triple, e.cxxRuntime)));
+                }
+            }
             m.targetOverrides[canon_triple(triple)] = std::move(e);
 
             // [target.<predicate>.{build,dependencies,...}] — platform-conditional
@@ -1063,9 +1121,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                             "A conditional section may only contribute build INPUTS: "
                             "sources, cflags, cxxflags, ldflags, defines, flags, "
                             "include_dirs, include_dirs_after. Selection knobs "
-                            "(target, linkage, static_stdlib) and profile settings "
-                            "are resolved before the predicate is evaluated and "
-                            "cannot be conditioned.", triple, key));
+                            "(target, linkage) and profile settings are resolved "
+                            "before the predicate is evaluated and cannot be "
+                            "conditioned; the C++ runtime contract IS "
+                            "per-target, but it is spelled "
+                            "[target.<triple>].cxx_runtime, beside `linkage`.",
+                            triple, key));
                     }
                 }
             }
