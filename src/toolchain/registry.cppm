@@ -113,6 +113,18 @@ bool spec_matches_payload(const ToolchainSpec& def,
 // (`[toolchain] … = "system"`) is a separate, older mechanism.
 bool is_system_toolchain(const ToolchainSpec& spec);
 
+// Can THIS host serve that target — is there an installable payload for the
+// (host, target) pair? Empty target = host target, always serviceable.
+//
+// THE single derivation of that question. It used to be worked out twice and
+// independently: here, when picking the xim payload, and again in
+// lifecycle.cppm when deciding whether `toolchain list` may show a target as
+// `available`. Two derivations of one decision is how adding a target turns
+// into a build failure instead of a missing row — the pair had already drifted
+// once (the payload side would happily resolve a windows-hosted musl package
+// that the availability side declared impossible).
+bool host_can_serve(const triple::Triple& target);
+
 // xim index names to query for the Available section, with the family each
 // one contributes versions to. Host-conditional: a host only lists payloads
 // it can install.
@@ -225,7 +237,19 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
         bool native = mcpp::platform::is_linux
                    && t.arch == mcpp::platform::host_arch;
         pkg.ximName = native ? "musl-gcc" : t.str() + "-gcc";
-        pkg.frontendCandidates = { t.str() + "-g++", "g++" };
+        // Frontend candidates are resolved with filesystem::exists, so on a
+        // Windows host the bare name never matches — the file on disk is
+        // `<triple>-g++.exe`. The mingw branch below has carried the `.exe`
+        // spelling since it shipped; this one had not, which made a
+        // windows-hosted musl payload install fine and then be unusable.
+        // `.exe` first: on a case-insensitive filesystem both would match, and
+        // the executable is the one we want.
+        if constexpr (mcpp::platform::is_windows) {
+            pkg.frontendCandidates = { t.str() + "-g++.exe", t.str() + "-g++",
+                                       "g++.exe", "g++" };
+        } else {
+            pkg.frontendCandidates = { t.str() + "-g++", "g++" };
+        }
         return pkg;
     }
 
@@ -299,6 +323,32 @@ bool is_system_toolchain(const ToolchainSpec& spec) {
     return spec.family == Family::Msvc;
 }
 
+bool host_can_serve(const triple::Triple& target) {
+    if (target.empty()) return true;              // host target
+
+    if (target.os == "linux") {
+        if constexpr (mcpp::platform::is_linux) {
+            // musl payloads are self-contained, so any arch is reachable; a
+            // glibc target additionally needs the host-native sysroot payloads
+            // (xim:glibc / xim:linux-headers), which only exist for this arch.
+            return target.is_musl() || target.arch == mcpp::platform::host_arch;
+        }
+        // Non-Linux host: only the self-contained musl payloads can work at
+        // all (nothing else would find a C library). Today exactly one such
+        // payload exists — the windows-hosted canadian cross, built per host
+        // arch — so an arch-crossing combination stays unserviceable until one
+        // is published. macOS has no Linux-targeting payload at all.
+        return mcpp::platform::is_windows
+            && target.is_musl()
+            && target.arch == mcpp::platform::host_arch;
+    }
+    if (target.is_windows_gnu())
+        return mcpp::platform::is_linux || mcpp::platform::is_windows;
+    if (target.os == "windows") return bool(mcpp::platform::is_windows);
+    if (target.os == "macos")   return bool(mcpp::platform::is_macos);
+    return false;
+}
+
 std::vector<AvailableIndex> available_toolchain_indexes() {
     std::vector<AvailableIndex> out{
         { "gcc",      Family::Gcc },
@@ -307,10 +357,16 @@ std::vector<AvailableIndex> available_toolchain_indexes() {
     };
     // The Windows-PE gcc payload is host-split at the distribution layer
     // (§4.3); each host lists the package it would actually install.
-    if constexpr (mcpp::platform::is_windows)
+    if constexpr (mcpp::platform::is_windows) {
         out.push_back({ "mingw-gcc", Family::Gcc });
-    else if constexpr (mcpp::platform::is_linux)
+        // The windows-hosted canadian cross to Linux. Named by triple, exactly
+        // as to_xim_package() derives it (`<triple>-gcc`), so the Available
+        // listing and the install path cannot disagree about the package name.
+        out.push_back({ std::string(mcpp::platform::host_arch) + "-linux-musl-gcc",
+                        Family::Gcc });
+    } else if constexpr (mcpp::platform::is_linux) {
         out.push_back({ "mingw-cross-gcc", Family::Gcc });
+    }
     return out;
 }
 
@@ -354,7 +410,15 @@ std::filesystem::path archive_tool(const Toolchain& tc) {
     std::string arName = !tc.targetTriple.empty()
         ? tc.targetTriple + "-ar"
         : "x86_64-linux-musl-ar";
-    auto muslAr = tc.binaryPath.parent_path() / arName;
+    auto dir = tc.binaryPath.parent_path();
+    // Same `.exe` reasoning as the frontend candidates above: a windows-hosted
+    // musl cross payload ships `<triple>-ar.exe`. Try it first, then the bare
+    // name (which is what every ELF host has).
+    if constexpr (mcpp::platform::is_windows) {
+        auto muslArExe = dir / (arName + ".exe");
+        if (std::filesystem::exists(muslArExe)) return muslArExe;
+    }
+    auto muslAr = dir / arName;
     if (std::filesystem::exists(muslAr)) return muslAr;
     return {};
 }

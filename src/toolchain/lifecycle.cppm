@@ -368,15 +368,12 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
 
     // Vocabulary rows not covered by an installed payload. Only list a
     // verified target as "available" when this host can actually install it.
+    //
+    // The predicate lives in registry.cppm next to the payload resolution it
+    // must agree with — this used to be a second, independent derivation of
+    // the same question and the two had already drifted apart.
     auto installable_here = [&](const mcpp::toolchain::triple::Triple& t) {
-        if (t.os == "linux")
-            return mcpp::platform::is_linux
-                && (t.is_musl() || t.arch == hostT.arch);
-        if (t.is_windows_gnu())
-            return mcpp::platform::is_linux || mcpp::platform::is_windows;
-        if (t.os == "windows") return bool(mcpp::platform::is_windows);
-        if (t.os == "macos")   return bool(mcpp::platform::is_macos);
-        return false;
+        return mcpp::toolchain::host_can_serve(t);
     };
     for (auto& info : mcpp::toolchain::triple::known_targets()) {
         bool covered = std::any_of(targetRows.begin(), targetRows.end(),
