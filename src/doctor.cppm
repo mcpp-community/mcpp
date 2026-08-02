@@ -147,6 +147,31 @@ export int doctor_report() {
             if (!any)
                 ok("mingw not installed (optional — `mcpp toolchain install mingw 16.1.0`)");
         }
+
+        // The other direction: a windows-hosted cross toolchain that produces
+        // Linux ELF. Same shape as the mingw probe above; the package is named
+        // by triple, matching to_xim_package()'s `<triple>-gcc`.
+        {
+            auto triple = std::string(mcpp::platform::host_arch) + "-linux-musl";
+            auto label  = std::format("linux cross (xim:{}-gcc)", triple);
+            mcpp::ui::status("Checking", label);
+            auto pkgs = mcpp::home::root() / "registry" / "data" / "xpkgs"
+                      / std::format("xim-x-{}-gcc", triple);
+            std::error_code ec;
+            bool any = false;
+            if (std::filesystem::exists(pkgs, ec)) {
+                for (auto& v : std::filesystem::directory_iterator(pkgs, ec)) {
+                    if (!v.is_directory(ec)) continue;
+                    ok(std::format("{} {} installed",
+                                   triple, v.path().filename().string()));
+                    any = true;
+                }
+            }
+            if (!any)
+                ok(std::format("{} not installed (optional — "
+                               "`mcpp toolchain install gcc 16.1.0 --target {}`)",
+                               triple, triple));
+        }
     }
 
     mcpp::ui::status("Checking", "std module");

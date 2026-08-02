@@ -158,6 +158,41 @@ windows = "gcc@16"            # gcc family on Windows = MinGW-w64
 # legacy value "mingw@16.1.0" keeps working
 ```
 
+## Linux ELF from Windows (`x86_64-linux-musl`, no WSL required)
+
+The mirror of the section above: a Windows machine producing a **fully static
+Linux binary**, with no WSL, no container, and nothing installed system-wide.
+
+```bash
+mcpp build --target x86_64-linux-musl        # from Windows OR Linux
+```
+
+The command is spelled *identically* on both hosts, because "cross" is not a
+name in mcpp — it is just the relation `host ≠ target`. Which payload serves
+the target is resolved automatically: a Linux x86_64 host installs the native
+`musl-gcc`; a Windows host installs a **canadian-cross** GCC
+(built `x86_64-linux-gnu` → runs on `x86_64-w64-mingw32` → emits
+`x86_64-linux-musl`). Both are GCC 16.1.0 and both ship `bits/std.cc`, so
+`import std` works the same either way.
+
+The output is a fully static ELF with no `PT_INTERP` — it runs on any Linux
+distribution regardless of its libc, which is exactly why musl is the target
+that got wired up first:
+
+```console
+$ file mcpp
+mcpp: ELF 64-bit LSB executable, x86-64, statically linked, stripped
+```
+
+`x86_64-linux-gnu` from Windows is **not** supported: a glibc target needs the
+`xim:glibc` and `xim:linux-headers` sysroot payloads, which are published for
+Linux hosts only. The musl target is self-contained and needs neither.
+
+Cross-arch from Windows (e.g. `aarch64-linux-musl`) is not available either —
+the canadian-cross payload is built per host arch. `mcpp toolchain list` shows
+only what the current host can actually install, so if a target is missing from
+the Targets block, that host genuinely cannot serve it.
+
 ## MSVC (System Toolchain, Windows)
 
 MSVC is different from every other toolchain mcpp manages: it is a **system
