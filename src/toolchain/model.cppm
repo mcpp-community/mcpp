@@ -143,10 +143,28 @@ bool is_mingw_target(const Toolchain& tc) {
 }
 
 bool target_supports_full_static(std::string_view targetTriple, bool hostCapability) {
-    // STUB — deliberately reproduces the pre-fix behaviour so the regression
-    // test added alongside it goes red. Replaced in the next commit.
-    (void)targetTriple;
-    return hostCapability;
+    // Empty triple means "build for this machine" — target IS host, so the
+    // host answer is the correct one. This is the only case where the host
+    // capability legitimately decides.
+    if (targetTriple.empty()) return hostCapability;
+
+    auto t = triple::parse(targetTriple);
+    // Outside the triple language we have nothing to reason from. Fall back
+    // to the host answer rather than guessing from a substring — a wrong
+    // `true` here would emit `-static` at a target that cannot honour it.
+    if (!t) return hostCapability;
+
+    // PE targets get their `-static` from the C++ runtime distribution
+    // contract (dist::Format::Pe in flags.cppm), never from here. Returning
+    // false is what keeps the two mechanisms from both emitting the flag.
+    if (t->is_pe()) return false;
+
+    // macOS cannot fully static-link: libSystem must stay dynamic.
+    if (t->os == "macos") return false;
+
+    // Linux ELF — glibc or musl, native or cross. This is the line that was
+    // previously gated on the HOST being Linux.
+    return t->os == "linux";
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {

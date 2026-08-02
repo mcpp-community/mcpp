@@ -21,6 +21,7 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
+import mcpp.toolchain.model;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 
@@ -536,7 +537,15 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Link flags
     f.staticStdlib = plan.manifest.buildConfig.staticStdlib;
     f.linkage = plan.manifest.buildConfig.linkage;
-    std::string full_static = (mcpp::platform::supports_full_static && f.linkage == "static") ? " -static" : "";
+    // Whether the ARTIFACT can be fully static is a property of the target,
+    // not of this machine. Reading the host constant directly here dropped
+    // `-static` from every Windows→Linux cross build, silently turning the
+    // musl targets into something they are not. The host constant is still
+    // the right answer for a host-target build, so it is threaded in as the
+    // fallback rather than discarded.
+    const bool full_static_ok = mcpp::toolchain::target_supports_full_static(
+        plan.toolchain.targetTriple, mcpp::platform::supports_full_static);
+    std::string full_static = (full_static_ok && f.linkage == "static") ? " -static" : "";
 
     // ---- C++ runtime distribution contract (issue #336) -------------------
     //
