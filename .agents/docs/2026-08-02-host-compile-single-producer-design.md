@@ -277,12 +277,17 @@ clang/libc++ 的 mcpp,崩得和真 bug 一样。每轮验证:
 |---|---|
 | build.mcpp 走 ninja / 生成第二张图 | §3:排序约束 + 一个 TU 无增量收益 |
 | 把 build.mcpp 塞进主构建图 | §3:循环依赖 |
-| 顺手统一**链接**侧 | 主构建链接的是 target 产物、build.mcpp 链接的是宿主 helper,策略本就不同(`staticHostHelper`)。本方案只统一**编译**侧;链接侧留作独立评估 |
+| 统一**主构建的**链接侧 | 主构建链接的是 target 产物、build.mcpp 链接的是宿主 helper,策略本就不同(`staticHostHelper`)。`flags.cppm` 的链接装配保持原样 |
 | 给 build.mcpp 加多源文件 / C / 汇编支持 | 它是单 TU 程序,这是 L3 的设计选择,不在本方案范围 |
 
 ---
 
-## 8. 实施顺序
+## 7.5 实施中相对本设计的两处偏差(已落地)
+
+| 偏差 | 原因 |
+|---|---|
+| **补了 `host_link_tokens`**(§7 原写「链接侧不做」) | `build.mcpp` 是**一次驱动调用同时编译和链接**,`host_base_flags` 里本就含 `-fuse-ld=lld` / `--rtlib` / `-L` / `-rpath` / `--dynamic-linker`。不覆盖链接侧就根本迁不动它。§7 的排除项因此收窄为「不动**主构建的**链接装配」——`flags.cppm` 的链接侧确实一行没改 |
+| **`stdmod` 的 deployment target 仍由它自己追加** | 三处的 flag **顺序**不同:`flags.cppm` 是 dm→deployment→lm,`stdmod` 是 dm→lm→deployment。让生产者统一顺序会改变 `std_build_commands` 字符串 → 按 §6.1 会让每个用户的 std BMI 全量失效。取舍:共享**装配**(手写的 dm 块已删除),只把这一个 flag 的**位置**留在本地并写明原因。位置统一留作后续 —— 届时应与一次本就会改变 std 身份的变更搭车 |
 
 | 序 | 内容 | 规模 | 验收 |
 |---|---|---|---|

@@ -127,8 +127,8 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
                       || mcpp::platform::is_linux);
 
     if (bypassCfg) {
-        for (auto& t : dm.compile_tokens(esc)) out.push_back(t);
-        if (opt.clangStdlibSelect) out.push_back("-stdlib=libc++");
+        for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
+            out.push_back(t);
     } else if (dm.hasCfg) {
         // Trusting the cfg means adding nothing at all: it already carries
         // the include paths, the stdlib selection and the runtime choices.

@@ -138,8 +138,14 @@ struct ClangDriverModel {
     // "--no-default-config" "-nostdinc++" "-isystem<...>" (compile side), as
     // argv tokens. -stdlib=libc++ is deliberately left to callers: compile
     // commands for C files must not carry it.
-    std::vector<std::string> compile_tokens(const PathEscape& esc) const {
+    // `stdlibSelect` inserts `-stdlib=libc++` immediately after `-nostdinc++`,
+    // where the std module build has always put it. Position is not free
+    // here: the rendered string is part of the std cache identity, so moving
+    // the flag would invalidate every user's std BMIs for no behavioural gain.
+    std::vector<std::string> compile_tokens(const PathEscape& esc,
+                                            bool stdlibSelect = false) const {
         std::vector<std::string> out{"--no-default-config", "-nostdinc++"};
+        if (stdlibSelect) out.push_back("-stdlib=libc++");
         for (auto& inc : cxxIncludes) out.push_back("-isystem" + esc(inc));
         return out;
     }
