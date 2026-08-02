@@ -217,8 +217,9 @@ TEST(Distribution, MingwParity) {
 // success; now it names the gap.
 TEST(Distribution, MsvcSelfContainedIsAnHonestGap) {
     dist::MechanismInput in;
-    in.format   = dist::Format::Pe;
-    in.stdlibId = "msvc";
+    in.format          = dist::Format::Pe;
+    in.stdlibId        = "msvc";
+    in.explicitRequest = true;
     auto m = dist::resolve(in);
     EXPECT_EQ(m.effective, dist::Contract::HostCoupled);
     EXPECT_TRUE(m.degraded);
@@ -227,6 +228,16 @@ TEST(Distribution, MsvcSelfContainedIsAnHonestGap) {
 
     in.requested = dist::Contract::HostCoupled;
     EXPECT_FALSE(dist::resolve(in).degraded);
+
+    // ...but the DEFAULT must be quiet. mcpp never promised a self-contained
+    // MSVC artifact — it emits no /MT at all — so warning on every Windows
+    // build would be unactionable noise. A diagnostic is for a broken
+    // promise, not for a platform limit nobody asked about.
+    in.requested       = dist::Contract::SelfContained;
+    in.explicitRequest = false;
+    auto quiet = dist::resolve(in);
+    EXPECT_FALSE(quiet.degraded);
+    EXPECT_TRUE(quiet.diagnostic.empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -249,11 +260,13 @@ TEST(Distribution, TableIsTotalAndEveryDowngradeExplainsItself) {
     for (auto role : roles)
     for (bool archives : {false, true}) {
         dist::MechanismInput in;
-        in.requested = c;
-        in.format    = fmt;
-        in.stdlibId  = sl;
-        in.role      = role;
-        in.macosFloor = true;
+        in.requested       = c;
+        in.format          = fmt;
+        in.stdlibId        = sl;
+        in.role            = role;
+        in.macosFloor      = true;
+        in.explicitRequest = true;   // the question is "what if you ASK for it"
+
         if (archives) {
             in.libcxxArchive    = "/a.a";
             in.libcxxAbiArchive = "/b.a";

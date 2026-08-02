@@ -134,6 +134,17 @@ Contract default_contract(Role r) {
 struct MechanismInput {
     Contract         requested = Contract::SelfContained;
     Role             role      = Role::Distributable;
+    // Did a human write this contract down, or is it just our default?
+    //
+    // The distinction decides whether a cell with no mechanism SPEAKS. A
+    // diagnostic is for a BROKEN PROMISE: mcpp said the artifact would be
+    // self-contained and it is not. Under the MSVC runtime mcpp never made
+    // that promise — there is no /MT emission at all — so warning on every
+    // Windows build would be noise nobody can act on. Write
+    // `cxx_runtime = "self-contained"` there and you get told, once, that it
+    // is not implemented. Cells where mcpp DOES promise something (a missing
+    // libc++.a under the default, say) report regardless.
+    bool             explicitRequest = false;
     // Toolchain capability id: "libstdc++", "libc++", or an MSVC STL spelling.
     std::string_view stdlibId;
     Format           format = Format::Elf;
@@ -205,7 +216,7 @@ Mechanism resolve(const MechanismInput& in) {
             // Mach-O without libc++ is not a configuration mcpp produces.
             m.effective = Contract::HostCoupled;
             m.unitFlags = " -lc++";
-            if (in.requested != Contract::HostCoupled) {
+            if (in.requested != Contract::HostCoupled && in.explicitRequest) {
                 m.degraded = true;
                 m.diagnostic = std::format(
                     "cxx_runtime = \"{}\" is not available for stdlib '{}' on "
@@ -266,12 +277,14 @@ Mechanism resolve(const MechanismInput& in) {
             // producing the same bytes and reporting success.
             m.effective = Contract::HostCoupled;
             if (in.requested == Contract::SelfContained) {
-                m.degraded = true;
-                m.diagnostic =
-                    "cxx_runtime = \"self-contained\" is not implemented for the "
-                    "MSVC runtime yet (it would need the /MT runtime); using "
-                    "host-coupled — the artifact needs the VC++ redistributable";
+                m.degraded   = in.explicitRequest;
+                m.diagnostic = in.explicitRequest
+                    ? "cxx_runtime = \"self-contained\" is not implemented for the "
+                      "MSVC runtime yet (it would need the /MT runtime); using "
+                      "host-coupled — the artifact needs the VC++ redistributable"
+                    : "";
             } else if (in.requested == Contract::ToolchainCoupled) {
+                // Only reachable from an explicit request: it is never a default.
                 m.degraded = true;
                 m.diagnostic =
                     "cxx_runtime = \"toolchain-coupled\" has no meaning for the "
@@ -338,7 +351,7 @@ Mechanism resolve(const MechanismInput& in) {
         // Unknown stdlib on ELF: emit nothing rather than guess, but say so
         // when something was actually asked for.
         m.effective = Contract::HostCoupled;
-        if (in.requested != Contract::HostCoupled) {
+        if (in.requested != Contract::HostCoupled && in.explicitRequest) {
             m.degraded = true;
             m.diagnostic = std::format(
                 "cxx_runtime = \"{}\" has no mechanism for stdlib '{}'; "

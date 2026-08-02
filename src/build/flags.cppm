@@ -609,12 +609,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                 mi.libunwindArchive = find_archive("libunwind.a");
         }
 
-        for (auto [role, requested] : {
-                 std::pair{dist::Role::Distributable, base},
-                 std::pair{dist::Role::Test,          testsContract},
-                 std::pair{dist::Role::Intermediate,  base}}) {
-            mi.role      = role;
-            mi.requested = requested;
+        // "Explicit" = a human wrote it down. `static_stdlib = false` counts:
+        // nobody sets a flag to its default to get non-default behavior.
+        const bool explicitBase  = !bc.cxxRuntime.empty() || !bc.staticStdlib;
+        const bool explicitTests = explicitBase || !bc.cxxRuntimeTests.empty();
+
+        for (auto [role, requested, wasAsked] : {
+                 std::tuple{dist::Role::Distributable, base,          explicitBase},
+                 std::tuple{dist::Role::Test,          testsContract, explicitTests},
+                 std::tuple{dist::Role::Intermediate,  base,          explicitBase}}) {
+            mi.role            = role;
+            mi.requested       = requested;
+            mi.explicitRequest = wasAsked;
             auto r = dist::resolve(mi);
             auto i = static_cast<std::size_t>(role);
             f.ldStdlibByRole[i] = r.unitFlags;
