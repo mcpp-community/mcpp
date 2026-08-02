@@ -22,6 +22,7 @@ dist::MechanismInput macos_input() {
     in.macosFloor       = true;
     in.libcxxArchive    = "/tc/lib/libc++.a";
     in.libcxxAbiArchive = "/tc/lib/libc++abi.a";
+    in.streamInitSymbolPresent = true;
     return in;
 }
 
@@ -271,6 +272,7 @@ TEST(Distribution, TableIsTotalAndEveryDowngradeExplainsItself) {
             in.libcxxArchive    = "/a.a";
             in.libcxxAbiArchive = "/b.a";
             in.libunwindArchive = "/c.a";
+            in.streamInitSymbolPresent = true;
         }
         auto m = dist::resolve(in);
         auto where = std::format("contract={} format={} stdlib={} role={} archives={}",
@@ -298,16 +300,35 @@ TEST(Distribution, TableIsTotalAndEveryDowngradeExplainsItself) {
 // differently). See issue #336 for the disassembly this rests on.
 TEST(Distribution, StreamInitShimKeepsItsThreeLoadBearingProperties) {
     auto src = std::string(dist::stream_init_shim_source());
-    // 1. weak — a toolchain without this ABI symbol must still link.
-    EXPECT_NE(src.find("__attribute__((weak))"), std::string::npos);
+    // 1. weak_import — Mach-O's weak-UNDEFINED form. Plain `weak` is not it;
+    //    the first CI round proved that by failing every macOS link.
+    EXPECT_NE(src.find("__attribute__((weak_import))"), std::string::npos);
     // 2. ios_base::Init::Init, NOT DoIOSInit::DoIOSInit — the former is
     //    guarded by __cxa_guard, so libc++'s own initializer later becomes a
     //    no-op instead of placement-new'ing over live streams.
-    EXPECT_NE(src.find("_ZNSt3__18ios_base4InitC1Ev"), std::string::npos);
+    //    ...spelled with TWO leading underscores: an __asm__ label is used
+    //    verbatim, so Mach-O's global `_` prefix has to be written out.
+    EXPECT_NE(src.find("\"__ZNSt3__18ios_base4InitC1Ev\""), std::string::npos);
     EXPECT_EQ(src.find("DoIOSInit"), std::string::npos);
     // 3. a constructor, and it must be guarded by the weak null check.
     EXPECT_NE(src.find("__attribute__((constructor))"), std::string::npos);
     EXPECT_NE(src.find("if (mcpp_libcxx_ios_init)"), std::string::npos);
     // C, not C++: no standard library, no module flags, no ABI of its own.
     EXPECT_EQ(src.find("#include"), std::string::npos);
+}
+
+// The shim binds a libc++ INTERNAL symbol. If that symbol is not in the
+// archive, mcpp must NOT generate the reference — an undefined symbol fails
+// the link outright (ld64.lld does not treat a weak declaration as an
+// optional undefined). The absence is reported instead, because the startup
+// hazard is still there.
+TEST(Distribution, ShimIsNotGeneratedWhenTheSymbolIsAbsent) {
+    auto in = macos_input();
+    in.streamInitSymbolPresent = false;
+    auto m = dist::resolve(in);
+    EXPECT_FALSE(m.streamInitShim);
+    EXPECT_FALSE(m.diagnostic.empty());
+    // The contract itself is still honored — only the ordering aid is gone.
+    EXPECT_EQ(m.effective, dist::Contract::SelfContained);
+    EXPECT_NE(m.unitFlags.find("-load_hidden"), std::string::npos);
 }

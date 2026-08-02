@@ -164,6 +164,11 @@ struct MechanismInput {
     std::string      libcxxArchive;
     std::string      libcxxAbiArchive;
     std::string      libunwindArchive;
+    // macOS only: the libc++ archive actually defines the ABI symbol the
+    // initializer-ordering shim binds to. Checked against the archive rather
+    // than assumed, so an unexpected spelling disables the shim instead of
+    // producing an undefined reference at link time.
+    bool             streamInitSymbolPresent = false;
     // macOS only: a deployment floor was resolved. The static-libc++
     // mechanism exists to make that floor real, so without one there is
     // nothing to make real.
@@ -259,7 +264,21 @@ Mechanism resolve(const MechanismInput& in) {
             m.unitFlags = " -nostdlib++"
                           " -Wl,-load_hidden," + in.libcxxArchive +
                           " -Wl,-load_hidden," + in.libcxxAbiArchive;
-            m.streamInitShim = true;
+            // The ordering shim binds a libc++ INTERNAL ABI symbol, so its
+            // presence is verified against the archive instead of assumed.
+            // Getting this wrong must not break the link — hence a check
+            // here rather than a weak reference in the shim: Mach-O's
+            // weak-undefined form is `weak_import` and applies to dylib
+            // symbols, so a plain weak declaration would NOT have saved a
+            // missing archive symbol (it did not: ld64.lld errored outright).
+            m.streamInitShim = in.streamInitSymbolPresent;
+            if (!m.streamInitShim) {
+                m.diagnostic =
+                    "this libc++ does not export the stream initializer mcpp "
+                    "orders first on macOS; a global object whose constructor "
+                    "uses std::cout may crash at startup (mcpp#336). Use "
+                    "cxx_runtime = \"host-coupled\" if you hit it";
+            }
             return m;
         }
         // HostCoupled
@@ -367,12 +386,22 @@ Mechanism resolve(const MechanismInput& in) {
 // WHY C: it needs no standard library, no module flags and no C++ ABI of its
 // own — it only has to run before everything else and poke one symbol.
 //
-// WHY WEAK: `_ZNSt3__18ios_base4InitC1Ev` is a libc++ ABI symbol
-// (_LIBCPP_EXPORTED_FROM_ABI), stable for many years but not ours. A weak
-// undefined reference means a toolchain that spells it differently links
-// exactly as it does today and the shim is a no-op, instead of failing the
-// link. It also means the shim does not itself drag iostream.cpp.o out of the
-// archive: if the program never touches a stream there is nothing to order.
+// WHY THE NAME IS SPELLED WITH TWO UNDERSCORES: an `__asm__` label is used
+// VERBATIM — clang does not add Mach-O's global `_` prefix to it. The C++
+// symbol `_ZNSt3__18ios_base4InitC1Ev` therefore has to be written
+// `__ZNSt3__18ios_base4InitC1Ev` here. Getting this wrong is not a silent
+// no-op: ld64.lld reports `undefined symbol: ZNSt3__18ios_base4InitC1Ev` and
+// every link fails, which is exactly what the first CI round did.
+//
+// WHY `weak_import` AND a presence check: Mach-O's weak-undefined form is
+// `weak_import` (plain `weak` on a declaration does NOT make an undefined
+// reference optional there). Even so, the real safety net is upstream — the
+// backend only generates this TU when the archive actually defines the
+// symbol, so an unexpected libc++ spelling disables the shim rather than
+// breaking the link. The attribute is the second line of defence.
+//
+// The reference does not itself drag iostream.cpp.o out of the archive: if the
+// program never touches a stream, there is nothing to order.
 //
 // WHY IT WORKS: libc++'s `ios_base::Init::Init()` is not empty — it is a
 // guarded function-local static that calls `DoIOSInit::DoIOSInit()`, and THAT
@@ -396,7 +425,8 @@ std::string_view stream_init_shim_source() {
         " * Weak: a toolchain without this exact ABI symbol links as before.\n"
         " */\n"
         "extern void mcpp_libcxx_ios_init(void *)\n"
-        "    __attribute__((weak)) __asm__(\"_ZNSt3__18ios_base4InitC1Ev\");\n"
+        "    __attribute__((weak_import))\n"
+        "    __asm__(\"__ZNSt3__18ios_base4InitC1Ev\");\n"
         "\n"
         "static char mcpp_libcxx_ios_init_storage[8];\n"
         "\n"

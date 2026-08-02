@@ -564,12 +564,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // macOS packages) or under lib/<llvm-triple>/ (the Linux ones), so try
         // both rather than hard-coding one layout. Sorted so the choice cannot
         // depend on directory iteration order.
-        auto find_archive = [&](std::string_view name) -> std::string {
+        auto find_archive = [&](std::string_view name) -> std::filesystem::path {
             if (llvmRootForStdlib.empty()) return {};
             std::error_code ec;
             auto libDir = llvmRootForStdlib / "lib";
             auto direct = libDir / name;
-            if (std::filesystem::exists(direct, ec)) return escape_path(direct);
+            if (std::filesystem::exists(direct, ec)) return direct;
             std::vector<std::filesystem::path> hits;
             for (auto& e : std::filesystem::directory_iterator(libDir, ec)) {
                 std::error_code de;
@@ -578,7 +578,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                 if (std::filesystem::exists(p, de)) hits.push_back(p);
             }
             std::ranges::sort(hits);
-            return hits.empty() ? std::string{} : escape_path(hits.front());
+            return hits.empty() ? std::filesystem::path{} : hits.front();
+        };
+
+        // Does this archive define a given symbol? Answered by scanning the
+        // ranlib symbol index, which a BSD/Mach-O archive keeps in its FIRST
+        // member — so a bounded read of the head is enough and no toolchain
+        // subprocess is involved. Used for exactly one thing: refusing to
+        // generate the macOS ordering shim against a libc++ that does not
+        // export the symbol it binds. That failure mode is not hypothetical —
+        // the first CI round of #336 turned every macOS link into `undefined
+        // symbol` — and a check here cannot fail the build the way a bad
+        // reference in the generated TU can.
+        auto archive_defines = [](const std::filesystem::path& p,
+                                  std::string_view sym) -> bool {
+            if (p.empty()) return false;
+            std::ifstream is(p, std::ios::binary);
+            if (!is) return false;
+            constexpr std::streamsize kHead = 8 << 20;
+            std::string head(static_cast<std::size_t>(kHead), '\0');
+            is.read(head.data(), kHead);
+            head.resize(static_cast<std::size_t>(is.gcount()));
+            return head.find(sym) != std::string::npos;
         };
 
         dist::MechanismInput mi;
@@ -601,12 +622,21 @@ CompileFlags compute_flags(const BuildPlan& plan) {
              || testsContract == dist::Contract::SelfContained)
             && caps.stdlib_id == "libc++";
         if (wantsArchives) {
-            mi.libcxxArchive    = find_archive("libc++.a");
-            mi.libcxxAbiArchive = find_archive("libc++abi.a");
+            auto libcxxA    = find_archive("libc++.a");
+            auto libcxxAbiA = find_archive("libc++abi.a");
+            mi.libcxxArchive    = libcxxA.empty()    ? std::string{} : escape_path(libcxxA);
+            mi.libcxxAbiArchive = libcxxAbiA.empty() ? std::string{} : escape_path(libcxxAbiA);
             // ELF only: without it the "self-contained" binary still pulls
             // libunwind.so.1. Mach-O's libc++abi.a carries its own unwinder.
-            if (mi.format == dist::Format::Elf)
-                mi.libunwindArchive = find_archive("libunwind.a");
+            if (mi.format == dist::Format::Elf) {
+                auto unwindA = find_archive("libunwind.a");
+                if (!unwindA.empty()) mi.libunwindArchive = escape_path(unwindA);
+            } else {
+                // Searched without the leading underscore so the same needle
+                // matches the ELF (`_ZN...`) and Mach-O (`__ZN...`) spellings.
+                mi.streamInitSymbolPresent =
+                    archive_defines(libcxxA, "ZNSt3__18ios_base4InitC1Ev");
+            }
         }
 
         // "Explicit" = a human wrote it down. `static_stdlib = false` counts:
