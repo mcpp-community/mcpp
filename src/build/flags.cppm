@@ -18,6 +18,7 @@ import mcpp.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
+import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
@@ -317,24 +318,31 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // path below to locate libc++.a/libc++abi.a for staticStdlib.
     std::filesystem::path llvmRootForStdlib;
 
+    // Compile side: the shared producer (mcpp.toolchain.hostflags), which the
+    // std module build and the build.mcpp host compile also use. It emits
+    // clang-cfg bypass → macOS deployment target → C library headers, the
+    // order this function has always used.
+    //
+    // The macOS deployment target is on the command line rather than left to
+    // the environment so (a) the ninja commands don't depend on env
+    // propagation and (b) the value participates in the BMI fingerprint via
+    // canonical flags — mixing targets in one sandbox otherwise reuses a
+    // std.pcm built for a different arm64-apple-macosxNN triple and dies with
+    // a config mismatch (observed on macos CI). The link side is added to
+    // f.ld below (the macOS link path doesn't consume link_toolchain_flags).
+    //
+    // binutilsPrefix / runtimeLibDirs stay off here: this function computes
+    // -B separately into f.bFlag, and routes runtime dirs through
+    // depRuntimeLibraryDirs.
+    {
+        mcpp::toolchain::HostFlagOptions hopt;
+        hopt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
+        hopt.macosDeploymentTarget = macosDeploymentTarget;
+        compile_toolchain_flags = mcpp::toolchain::render_tokens(
+            mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
+    }
     if (isClangWithCfg) {
-        // --no-default-config -nostdinc++ + libc++ headers.
-        compile_toolchain_flags = dm.compile_flags(ninjaEsc);
-        // macOS deployment target: make the resolved value explicit on
-        // the command line so (a) the ninja commands don't depend on env
-        // propagation and (b) the value participates in the BMI
-        // fingerprint via canonical flags — mixing targets in one sandbox
-        // otherwise reuses a std.pcm built for a different
-        // arm64-apple-macosxNN triple and dies with a config mismatch
-        // (observed on macos CI). The link side is added to f.ld below
-        // (the macOS link path doesn't consume link_toolchain_flags).
-        if (mcpp::platform::is_macos && !macosDeploymentTarget.empty()) {
-            compile_toolchain_flags +=
-                " -mmacosx-version-min=" + macosDeploymentTarget;
-        }
         llvmRootForStdlib = dm.llvmRoot;
-        // C library headers (payload -isystem, or --sysroot fallback).
-        compile_toolchain_flags += lm.compile_flags(ninjaEsc);
         // Linker flags that cfg normally provides. The payload C-runtime
         // flags (-B/-L/loader) are appended via payload_ld below.
         link_toolchain_flags = " --no-default-config";
@@ -346,7 +354,6 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     } else if (lm.mode != mcpp::toolchain::CLibMode::None) {
         // GCC (or Clang without cfg): --sysroot from probe, or the payload
         // headers + C runtime (-B for crt discovery, -L for -lc/-lm).
-        compile_toolchain_flags = lm.compile_flags(ninjaEsc);
         link_toolchain_flags = lm.link_flags(ninjaEsc);
         f.sysroot = link_toolchain_flags;
     }

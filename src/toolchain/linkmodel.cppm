@@ -35,6 +35,26 @@ enum class CLibMode {
 // (identity) is only safe for paths already known to be quote-free.
 using PathEscape = std::function<std::string(const std::filesystem::path&)>;
 
+// Identity escape — for the argv consumers, which hand tokens straight to
+// exec and must NOT carry ninja `$` escapes or shell quotes.
+inline std::string no_escape(const std::filesystem::path& p) { return p.string(); }
+
+// Render argv tokens as the leading-space-separated string the ninja and
+// shell channels want.
+//
+// Tokens are the source of truth and the string is derived, not the other way
+// round. Historically only the string form existed, so the one consumer that
+// needs argv (build.mcpp, which execs directly with no shell) could not use
+// this seam at all and hand-wrote the whole assembly a second time — the
+// duplication that 2026-08-02-host-compile-single-producer-design.md exists to
+// remove. Splitting a rendered string back into tokens is not a substitute:
+// it cannot tell a space *inside* a token from a separator.
+inline std::string render_tokens(const std::vector<std::string>& tokens) {
+    std::string out;
+    for (auto const& t : tokens) { out += ' '; out += t; }
+    return out;
+}
+
 struct ToolchainLinkModel {
     CLibMode mode = CLibMode::None;
 
@@ -56,42 +76,52 @@ struct ToolchainLinkModel {
                                  // gcc:   -idirafter (…#include_next), -B/-L only
     bool clangWithCfg  = false;  // sibling <driver>.cfg exists (bundled LLVM)
 
-    // Render the compile-side flags (leading-space separated, matching the
-    // historical assembly style of flags.cppm/stdmod.cppm).
-    std::string compile_flags(const PathEscape& esc) const {
-        std::string out;
+    // Compile-side flags as argv tokens. Each entry is ONE argv word.
+    std::vector<std::string> compile_tokens(const PathEscape& esc) const {
+        std::vector<std::string> out;
         if (mode == CLibMode::Sysroot)
-            out += " --sysroot=" + esc(sysroot);
+            out.push_back("--sysroot=" + esc(sysroot));
         // PayloadFirst headers: clang takes -isystem; GCC needs -idirafter so
         // libstdc++'s #include_next wrappers (which only search *after* the
         // current dir, and GCC's built-ins are last) can still reach libc.
         // A Sysroot-mode supplement (kernel headers missing from the sysroot)
         // is -isystem for both: the libc headers come from the sysroot there.
         const char* incFlag = (mode == CLibMode::Sysroot || clangDriver)
-                            ? " -isystem" : " -idirafter";
+                            ? "-isystem" : "-idirafter";
         for (auto& inc : systemIncludes)
-            out += incFlag + esc(inc);
+            out.push_back(incFlag + esc(inc));
         return out;
     }
 
-    // Render the link-side flags. `-B` is the CRT-discovery fix for #195:
+    // The string channel, derived from the tokens above (leading-space
+    // separated, matching the historical assembly style of
+    // flags.cppm/stdmod.cppm byte for byte).
+    std::string compile_flags(const PathEscape& esc) const {
+        return render_tokens(compile_tokens(esc));
+    }
+
+    // Link-side flags as argv tokens. `-B` is the CRT-discovery fix for #195:
     // the driver resolves crt objects through -B prefixes and sysroot paths,
     // never through -L.
-    std::string link_flags(const PathEscape& esc) const {
-        std::string out;
+    std::vector<std::string> link_tokens(const PathEscape& esc) const {
+        std::vector<std::string> out;
         if (mode == CLibMode::Sysroot) {
-            out += " --sysroot=" + esc(sysroot);
+            out.push_back("--sysroot=" + esc(sysroot));
             return out;
         }
         if (mode != CLibMode::PayloadFirst) return out;
-        if (!crtDir.empty()) out += " -B" + esc(crtDir);
+        if (!crtDir.empty()) out.push_back("-B" + esc(crtDir));
         for (auto& dir : libDirs) {
-            out += " -L" + esc(dir);
-            if (clangDriver) out += " -Wl,-rpath," + esc(dir);
+            out.push_back("-L" + esc(dir));
+            if (clangDriver) out.push_back("-Wl,-rpath," + esc(dir));
         }
         if (clangDriver && !loader.empty())
-            out += " -Wl,--dynamic-linker=" + esc(loader);
+            out.push_back("-Wl,--dynamic-linker=" + esc(loader));
         return out;
+    }
+
+    std::string link_flags(const PathEscape& esc) const {
+        return render_tokens(link_tokens(esc));
     }
 };
 
@@ -105,18 +135,37 @@ struct ClangDriverModel {
     std::vector<std::filesystem::path> cxxIncludes;  // libc++ header dirs
     std::vector<std::filesystem::path> libDirs;      // libc++/compiler-rt libs
 
-    // " --no-default-config -nostdinc++ -isystem<...>" (compile side).
-    // -stdlib=libc++ is deliberately left to callers: compile commands for
-    // C files must not carry it.
-    std::string compile_flags(const PathEscape& esc) const {
-        std::string out = " --no-default-config -nostdinc++";
-        for (auto& inc : cxxIncludes) out += " -isystem" + esc(inc);
+    // "--no-default-config" "-nostdinc++" "-isystem<...>" (compile side), as
+    // argv tokens. -stdlib=libc++ is deliberately left to callers: compile
+    // commands for C files must not carry it.
+    std::vector<std::string> compile_tokens(const PathEscape& esc) const {
+        std::vector<std::string> out{"--no-default-config", "-nostdinc++"};
+        for (auto& inc : cxxIncludes) out.push_back("-isystem" + esc(inc));
         return out;
+    }
+
+    std::string compile_flags(const PathEscape& esc) const {
+        return render_tokens(compile_tokens(esc));
     }
 
     // Link-side driver selection, matching the cfg xlings generates.
     static constexpr std::string_view kLinkDriverFlags =
         " -stdlib=libc++ -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
+
+    // Same, as argv tokens, WITHOUT `-stdlib=libc++`: a driver invocation that
+    // both compiles and links (build.mcpp) already carries it on the compile
+    // side via HostFlagOptions::clangStdlibSelect, and repeating it is noise.
+    // Plus the libc++/compiler-rt library dirs, which a self-contained host
+    // helper needs to both link against and find at run time.
+    std::vector<std::string> link_tokens(const PathEscape& esc) const {
+        std::vector<std::string> out{"-fuse-ld=lld", "--rtlib=compiler-rt",
+                                     "--unwindlib=libunwind"};
+        for (auto& d : libDirs) {
+            out.push_back("-L" + esc(d));
+            out.push_back("-Wl,-rpath," + esc(d));
+        }
+        return out;
+    }
 };
 
 // ── loader resolution: data over hardcodes ───────────────────────────────

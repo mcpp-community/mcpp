@@ -38,6 +38,7 @@ import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.gcc;
+import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.msvc;
 
@@ -230,23 +231,27 @@ std::expected<StdModule, StdModError> ensure_built(
     // identical flags also keep the std_build_commands cache key honest).
     // Std module precompilation only needs compile flags (no linker flags),
     // so --no-default-config is safe here on all platforms.
-    const auto dm = resolve_clang_driver(tc);
-    const auto lm = resolve_link_model(tc);
     const PathEscape shellEsc = [](const std::filesystem::path& p) {
         return std::format("'{}'", p.string());
     };
-    std::string sysroot_flag;
-    if (dm.hasCfg) {
-        sysroot_flag = " --no-default-config -nostdinc++ -stdlib=libc++";
-        for (auto& inc : dm.cxxIncludes)
-            sysroot_flag += " -isystem" + shellEsc(inc);
-        sysroot_flag += lm.compile_flags(shellEsc);
-    } else {
-        sysroot_flag = lm.compile_flags(shellEsc);
-    }
+    // The shared producer (mcpp.toolchain.hostflags) — the same assembly
+    // flags.cppm and the build.mcpp host compile use. This block used to
+    // hand-write the clang cfg bypass, which is how it could drift from the
+    // other two.
+    HostFlagOptions hopt;
+    hopt.cfgBypass = HostFlagOptions::CfgBypass::Always;
+    hopt.clangStdlibSelect = true;
+    std::string sysroot_flag =
+        render_tokens(host_compile_tokens(tc, hopt, shellEsc));
 
-    // Deployment target must mirror what flags.cppm emits for normal TUs
-    // (single resolver: platform::macos::deployment_target).
+    // Deployment target appended here rather than passed to the producer
+    // ONLY to keep this command string byte-identical to what earlier
+    // releases emitted: the string is part of the std cache identity
+    // (std_build_commands feeds the cache directory name), so reordering a
+    // flag would invalidate every user's std BMIs for no behavioural gain.
+    // The VALUE still comes from the one resolver
+    // (platform::macos::deployment_target) that flags.cppm and
+    // build_program.cppm read — only its position is local.
     if (!macos_deployment_target.empty()) {
         sysroot_flag += std::format(" -mmacosx-version-min={}",
                                     macos_deployment_target);

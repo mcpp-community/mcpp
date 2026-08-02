@@ -19,6 +19,7 @@ import mcpp.platform.process;
 import mcpp.toolchain.cppfly;        // std_flag (dialect- and c++fly-aware -std= spelling)
 import mcpp.toolchain.dialect;       // CommandDialect — gnu vs cl.exe spellings
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
+import mcpp.toolchain.hostflags;     // the shared host-compile flag producer
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
 import mcpp.toolchain.model;         // Toolchain, PayloadPaths, is_clang/is_musl_target/is_mingw_target
 import mcpp.toolchain.registry;      // archive_tool
@@ -186,102 +187,31 @@ std::string env_value(const std::string& name) {
 // only ones needed. Passed as separate argv tokens (no shell).
 std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc,
                                          std::string_view macosDeploymentTarget) {
-    std::vector<std::string> f;
+    // One driver invocation compiles AND links build.mcpp, so it needs both
+    // sides. Both come from mcpp.toolchain.hostflags — the same producer
+    // flags.cppm and the std module build use. This function used to hand-write
+    // the whole assembly, which is how it kept missing what the main build
+    // already knew (quoting, the macOS deployment target, the MSVC dialect);
+    // see 2026-08-02-host-compile-single-producer-design.md.
+    mcpp::toolchain::HostFlagOptions opt;
+    // The host helper keeps TRUSTING clang's cfg on macOS/Windows: the macOS
+    // link needs the libc++abi/unwind handling the main build's
+    // needs_explicit_libcxx path owns, and duplicating it here produced
+    // undefined __cxa_* / __gxx_personality_v0.
+    opt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::LinuxOnly;
+    opt.clangStdlibSelect = true;
+    // binutils -B so the driver finds ld/as (GCC; musl and MinGW ship their own).
+    opt.binutilsPrefix = !mcpp::toolchain::is_musl_target(tc)
+                      && !mcpp::toolchain::is_mingw_target(tc);
+    // The helper is exec'd outside anything mcpp controls, so it must be able
+    // to find the toolchain's private runtime libs itself.
+    opt.runtimeLibDirs = true;
+    opt.macosDeploymentTarget = std::string(macosDeploymentTarget);
 
-    // macOS deployment target, FIRST and unconditionally, because clang
-    // refuses to load a module built for a different one and this function's
-    // result feeds every compile in this file: the bundled `mcpp` module's
-    // precompile, its object step, and the build.mcpp compile itself. Putting
-    // it anywhere narrower produced the mismatch in whichever direction was
-    // left out — first the std BMI (built for 14.0) against a compile with no
-    // version-min, then mcpp.pcm (built at the host default 15.0) against a
-    // compile that had just been given 14.0.
-    if constexpr (mcpp::platform::is_macos) {
-        if (!macosDeploymentTarget.empty())
-            f.push_back(std::string("-mmacosx-version-min=")
-                        + std::string(macosDeploymentTarget));
-    }
-
-    // MSVC carries none of this on the command line: cl.exe and link.exe find
-    // headers and import libraries through INCLUDE / LIB, which detection
-    // synthesized into tc.envOverrides. Emitting the GNU shapes below would
-    // produce a string of unknown options and then LNK1181. The environment
-    // is passed to capture_exec instead — that is the whole MSVC "base".
-    if (tc.compiler == mcpp::toolchain::CompilerId::MSVC) return f;
-
-    const auto lm = mcpp::toolchain::resolve_link_model(tc);
-
-    // Clang with a bundled cfg on LINUX: bypass it (--no-default-config) and
-    // provide everything explicitly, same as the main build — the cfg is an
-    // install-time-generated artifact, so trusting it here while bypassing
-    // it in the main build meant two different toolchains for one project.
-    // On macOS/Windows keep trusting the cfg: the macOS link additionally
-    // needs the platform's libc++abi/unwind handling that the main build's
-    // needs_explicit_libcxx path owns (duplicating it for a host compile
-    // produced undefined __cxa_*/__gxx_personality_v0), and the fixup
-    // pipeline regenerates the cfg deterministically anyway.
-    if (mcpp::toolchain::is_clang(tc)) {
-        if constexpr (!mcpp::platform::is_linux) return f;
-        const auto dm = mcpp::toolchain::resolve_clang_driver(tc);
-        if (dm.hasCfg) {
-            f.push_back("--no-default-config");
-            f.push_back("-nostdinc++");
-            f.push_back("-stdlib=libc++");
-            for (auto& inc : dm.cxxIncludes) f.push_back("-isystem" + inc.string());
-            f.push_back("-fuse-ld=lld");
-            f.push_back("--rtlib=compiler-rt");
-            f.push_back("--unwindlib=libunwind");
-            for (auto& d : dm.libDirs) {
-                f.push_back("-L" + d.string());
-                f.push_back("-Wl,-rpath," + d.string());
-            }
-        }
-        if (lm.mode == mcpp::toolchain::CLibMode::Sysroot) {
-            f.push_back("--sysroot=" + lm.sysroot.string());
-        } else if (lm.mode == mcpp::toolchain::CLibMode::PayloadFirst) {
-            for (auto& inc : lm.systemIncludes) f.push_back("-isystem" + inc.string());
-            f.push_back("-B" + lm.crtDir.string());   // Scrt1.o/crti.o discovery
-            for (auto& d : lm.libDirs) {
-                f.push_back("-L" + d.string());
-                f.push_back("-Wl,-rpath," + d.string());
-            }
-            if (!lm.loader.empty())
-                f.push_back("-Wl,--dynamic-linker=" + lm.loader.string());
-        }
-        // Runtime lib dirs so the produced program can load private libs in-tree.
-        for (auto& d : tc.linkRuntimeDirs) {
-            f.push_back("-L" + d.string());
-            f.push_back("-Wl,-rpath," + d.string());
-        }
-        return f;
-    }
-
-    // GCC: a fresh sandbox g++ needs --sysroot to find the C library + the
-    // include-fixed headers; without a sysroot, wire the glibc payload directly.
-    if (lm.mode == mcpp::toolchain::CLibMode::Sysroot) {
-        f.push_back("--sysroot=" + lm.sysroot.string());
-    } else if (lm.mode == mcpp::toolchain::CLibMode::PayloadFirst) {
-        for (auto& inc : lm.systemIncludes) {
-            f.push_back("-idirafter"); f.push_back(inc.string());
-        }
-        f.push_back("-B" + lm.crtDir.string());          // crt1.o/crti.o discovery
-        for (auto& d : lm.libDirs) f.push_back("-L" + d.string());  // -lc/-lm
-    }
-    // binutils -B so the driver finds ld/as (GCC, non-musl; musl ships its own).
-    if (!mcpp::toolchain::is_musl_target(tc)) {
-        auto ar = mcpp::toolchain::archive_tool(tc);
-        if (!ar.empty()) f.push_back("-B" + ar.parent_path().string());
-    }
-    // Runtime lib dirs so the produced program can load private libs in-tree.
-    // -L is link-time and wanted everywhere; rpath is an ELF-only concept —
-    // this is the one host_base_flags branch a PE target reaches, where the
-    // flag is inert and the self-containment answer is the static link in
-    // run_build_program instead (#299).
-    for (auto& d : tc.linkRuntimeDirs) {
-        f.push_back("-L" + d.string());
-        if constexpr (mcpp::platform::supports_rpath)
-            f.push_back("-Wl,-rpath," + d.string());
-    }
+    const mcpp::toolchain::PathEscape plain = mcpp::toolchain::no_escape;
+    auto f = mcpp::toolchain::host_compile_tokens(tc, opt, plain);
+    for (auto& t : mcpp::toolchain::host_link_tokens(tc, opt, plain))
+        f.push_back(t);
     return f;
 }
 
