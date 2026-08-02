@@ -259,16 +259,89 @@ endif
 手工三段(旧路线 3)**短期最可控但长期最差** —— 不可重复、每次升 GCC 都要手工拼装、无法自动化,
 会变成一个只有作者能重建的黑盒。既然选长期最合适,就不能选它。
 
-#### config.mak(spike 起点)
+#### config.mak(实测可用)
 
 ```make
 GCC_VER    = 16.1.0
-MUSL_VER   = 1.2.5
 BINUTILS_VER = 2.44
+MUSL_VER   = 1.2.5
+GMP_VER = 6.3.0
+MPC_VER = 1.3.1
+MPFR_VER = 4.2.2
+LINUX_VER = headers-4.19.88-2
+
 TARGET     = x86_64-linux-musl
 HOST       = x86_64-w64-mingw32          # ← canadian:产出的编译器跑在 Windows
-COMMON_CONFIG += CFLAGS="-g0 -Os" CXXFLAGS="-g0 -Os"   # strip,见 §4.1
+
+COMMON_CONFIG += CFLAGS="-g0 -Os" CXXFLAGS="-g0 -Os -fno-declone-ctor-dtor" LDFLAGS="-s"
+#                                                    ^^^^^^^^^^^^^^^^^^^^^^ 硬约束,见下
 ```
+
+#### ⚠️ `-Os` 在 mingw host 上必须配 `-fno-declone-ctor-dtor`(实测,踩过)
+
+**这是本期最贵的一个坑 —— 症状离根因隔了三层,值得单独记。**
+
+症状:GCC 编到最后链接 `gcov-dump.exe` 时炸,报 `std::string` 的**移动构造函数** undefined:
+
+```
+ld: libcommon.a(paths-output.o): undefined reference to
+    `std::__cxx11::basic_string<...>::basic_string(std::__cxx11::basic_string<...>&&)'
+```
+
+第一反应「mingw-cross-gcc payload 的 libstdc++ 坏了」——**错的**。`nm` 显示符号在
+`libstdc++.a` 里明明是 `T`(defined)。真相在 **mangled name**,demangle 后完全看不出来:
+
+| 侧 | mangled | 含义 |
+|---|---|---|
+| 引用 | `…basic_string…C**4**EOS4_` | C4 = 统一构造函数(未 clone) |
+| 定义 | `…C**1**EOS4_` / `…C**2**EOS4_` | C1/C2 = complete / base |
+
+`-Os` **自动开启** `-fdeclone-ctor-dtor`,令调用方引用 C4;而 libstdc++.a 只显式实例化了
+C1/C2。ELF 平台用符号别名把 C4 接到 C1/C2 上,**COFF 没有别名机制** —— 所以这个失配
+只在 mingw 上暴露,且只打在 `#include <string>` 且移动构造 `std::string` 的 host TU 上。
+
+四行最小复现(任何人都能在 30 秒内自证):
+
+```
+$ x86_64-w64-mingw32-g++      mv.cc   # LINK OK
+$ x86_64-w64-mingw32-g++ -O2  mv.cc   # LINK OK
+$ x86_64-w64-mingw32-g++ -Os  mv.cc   # LINK FAIL   ← -Os 是唯一变量
+$ x86_64-w64-mingw32-g++ -Os -fno-declone-ctor-dtor mv.cc   # LINK OK
+```
+
+> **为什么 aarch64 那期没踩到**:`aarch64-musl-gcc-canadian-cross-rebuild.md` 用的同样是
+> `CFLAGS="-g0 -Os"`,但那次 HOST 是 **aarch64-linux-musl(ELF)**,符号别名把问题吃掉了。
+> 「同一份 config 换个 HOST 就炸」正是本条必须写进文档的原因。
+>
+> `CXXFLAGS` 只作用于 host 侧(target 库走 `CXXFLAGS_FOR_TARGET`),因此这个 flag
+> **不影响产物 ABI**,可以放心加。
+
+#### ⚠️ 必须 `--disable-libstdcxx-pch`(实测,踩过)
+
+过了上一个坑之后,构建会在 **target libstdc++** 再炸一次:
+
+```
+libstdc++-v3/include/atomic:259:7: error: 'constexpr' constructor does not have
+  empty body [-Wtemplate-body]
+make: *** [x86_64-linux-musl/bits/stdc++.h.gch/O2ggnu++0x.gch] Error 1
+```
+
+libstdc++ 会为 `-std=gnu++0x`(C++11)额外生成一份预编译头。GCC 16 的 `<atomic>` 里
+那个 `constexpr` 构造函数带非空 body(C++14 起才合法),上游用
+`#pragma GCC diagnostic ignored "-Wc++14-extensions"` 抑制过 —— 但 **GCC 15 新增的
+`-Wtemplate-body`** 让诊断在模板*定义*处就触发,pragma 的作用域没覆盖到,于是变成硬 error。
+
+**定位方法值得记**:不要去猜,直接看已发布的 `xim:musl-gcc@16.1.0` payload——
+
+```bash
+$ find <payload> -name '*.gch' | wc -l
+0
+```
+
+**零个 PCH**。已发布的 payload 本来就是 `--disable-libstdcxx-pch` 构建的。所以这不是
+"canadian 特有的新问题",而是**两个 payload 的构建配置必须对齐**。加上它,与生态既有产物一致。
+
+mcpp 走 modules,PCH 对它零价值,没有任何损失。
 
 前置:`x86_64-w64-mingw32-g++` 必须在 PATH —— 即 §3.2 的自举闭环,来自 mcpp 已发布的 `mingw-cross-gcc@16.1.0`。
 
@@ -281,20 +354,37 @@ COMMON_CONFIG += CFLAGS="-g0 -Os" CXXFLAGS="-g0 -Os"   # strip,见 §4.1
 走 GCC 的 in-tree 依赖构建 —— 因此它们**天然继承 `--host=`**,不需要任何 `--with-gmp=` 干预。
 这很可能就是 issue #55 提问者卡住的地方(他大概率试图分别预编译这些库)。
 
-**2. `SYSROOT = /` 的布局 —— 是 NATIVE 布局,且 mcpp 恰好已兼容。**
-canadian 分支下 target 库不装进 `<prefix>/<triple>/`,而是直接装在 prefix 根:
+**2. `SYSROOT = /` 只影响 C 库,C++ 头仍走交叉布局 —— 别被 `-print-sysroot` 骗了。**
+
+canadian 分支设 `SYSROOT = /`,于是 **musl libc / kernel headers** 装进 prefix 根
+(`<prefix>/{include,lib}`),`-print-sysroot` 也确实回答 `<prefix>/`。**但 C++ 头不在那里**:
+GCC 作为交叉编译器,`GPLUSPLUS_INCLUDE_DIR` 始终是 `<prefix>/<target-triple>/include/c++/<ver>`。
+
+实测踩过:按 `-print-sysroot` 的字面意思把 libstdc++ 放进 `<prefix>/include/c++/`,编译报
+`fatal error: iostream: No such file or directory`,而文件明明在。真相在 `-v` 的
+`ignoring nonexistent directory` 列表里:
+
+```
+ignoring nonexistent directory ".../x86_64-linux-musl/include/c++/16.1.0"
+                                  ^^^^^^^^^^^^^^^^^^ 它要的是这里
+```
+
+最终布局(**两种布局混用**,这正是反直觉之处):
 
 ```
 output-x86_64-w64-mingw32/
-├── bin/       (PE: x86_64-linux-musl-g++.exe …)         ← host 侧
-├── include/   (musl headers, include/c++/16.1.0/…)      ← target 侧
-├── lib/       (musl libc.a / libstdc++.a)               ← target 侧
-└── libexec/gcc/x86_64-linux-musl/16.1.0/ (PE: cc1plus)  ← host 侧
+├── bin/                       (PE: x86_64-linux-musl-g++.exe …)      ← host
+├── libexec/gcc/…/cc1plus.exe  (PE)                                    ← host
+├── include/                   (musl + kernel headers)                 ← target, sysroot=/
+├── lib/                       (musl libc.a, crt*.o)                   ← target, sysroot=/
+├── lib/gcc/x86_64-linux-musl/16.1.0/  (libgcc.a, crtbegin.o …)        ← target
+└── x86_64-linux-musl/                                                 ← target, 交叉布局
+    ├── include/c++/16.1.0/bits/std.cc
+    └── lib/libstdc++.a
 ```
 
-**关键**:`bits/std.cc` 落在 `include/c++/16.1.0/bits/std.cc`,正是 `gcc.cppm:71` 的**第一候选**
-(`root/include/c++/<ver>/bits/std.cc`)—— 比 §1.1 预期的交叉布局候选更早命中。`import std` 零改可用。
-§2 的 asset layout 已按此更正。
+**对 mcpp 无影响**:`bits/std.cc` 落在 `<prefix>/<triple>/include/c++/<ver>/`,正是
+`gcc.cppm:75-90` 已实现的交叉候选。§1.1 的原判断成立,`import std` 零改可用。
 
 #### 实施前置(实测确认,必须两者同时在 PATH)
 
@@ -317,6 +407,75 @@ libstdc++,module 相关产物会与 driver 不匹配 —— 这是最隐蔽的�
 且**一旦动用必须在文档里标注为技术债**,后续补回 musl-cross-make 路径。
 
 ### 3.4 spike 的成功判据
+
+#### ⚠️ target libstdc++ 不要重建 —— 从同版本 payload 复用(实测,撞了四次)
+
+`make install` 会一路撞在 **target libstdc++** 上,连撞四种不同的错:
+
+| # | 症状 | 处理 |
+|---|---|---|
+| 1 | `stdc++.h.gch` — `constexpr` ctor 非空 body | `--disable-libstdcxx-pch` |
+| 2 | `futex.lo` / `future.lo` — 同上,`-std=gnu++11` | `CXXFLAGS_FOR_TARGET += -Wno-template-body` |
+| 3 | `string-inst.cc` — duplicate explicit instantiation | `-fpermissive` |
+| 4 | `format.lo` — instantiating erroneous template | 还有下一个… |
+
+打到第四个就该停下来问:**为什么要用已发布的 GCC 16.1.0 去重新编译 GCC 16.1.0 自己的 libstdc++?**
+
+canadian 构建的职责是产出 **host 侧二进制**。target 库是纯 target 代码,**与谁编译它无关**;
+而 `xim:musl-gcc@16.1.0` payload 里那一份是同版本(实测 `BASE-VER` 与 `DATESTAMP` 都是
+16.1.0 / 20260430)、经完整 CI 验证的权威副本。canadian 模式设 `SYSROOT = /` 本就假设 target
+树已存在 —— 复用它才是**顺着设计走**,不是绕过困难。
+
+于是构建收敛为三步(实测可复现):
+
+```bash
+# 1) host 侧:driver / cc1plus / binutils → PE
+cd <build>/x86_64-w64-mingw32/x86_64-linux-musl/obj_gcc
+make DESTDIR=$OUT install-gcc            # bin/*.exe, libexec/**/cc1plus.exe
+make DESTDIR=$OUT install-target-libgcc  # lib/gcc/<triple>/16.1.0/{libgcc.a,crt*.o}
+# musl libc 已由前面的 `make install` 装进 $OUT/{include,lib}
+
+# 2) target 侧 C++:从权威 payload 复用(注意是交叉布局,见上文待解点 2)
+cp -a $PAYLOAD/x86_64-linux-musl/include $OUT/x86_64-linux-musl/
+cp -a $PAYLOAD/x86_64-linux-musl/lib/.   $OUT/x86_64-linux-musl/lib/
+
+# 3) DLL 部署,见下
+```
+
+#### ⚠️ `libwinpthread-1.dll` 要部署到**每个**含 .exe 的目录
+
+PE 没有 RPATH,DLL 只从 exe 同目录 / PATH 解析。产出的 host 二进制唯一的非系统依赖就是它
+(其余 `KERNEL32/ADVAPI32/msvcrt/WS2_32` 都是 Windows 自带)。漏了就是启动即
+`STATUS_DLL_NOT_FOUND`,而且**不止 `bin/`**:
+
+```
+bin/                                    x86_64-linux-musl-g++.exe …
+libexec/gcc/x86_64-linux-musl/16.1.0/   cc1.exe, cc1plus.exe
+x86_64-linux-musl/bin/                  as.exe, ld.exe      ← 最容易漏的一个
+```
+
+实测就是漏了第三个:g++ 能跑、`--version` 正常,一编译就在汇编阶段炸 `as.exe`。
+
+```bash
+for d in $(find "$OUT" -name "*.exe" -printf "%h\n" | sort -u); do cp -n "$DLL" "$d/"; done
+```
+
+> **更优但更贵的替代**:给 host 侧加 `LDFLAGS=-static` 彻底消除 DLL 依赖(winlibs 就这么做)。
+> 需要重新 configure + 重链接,本期未做;登记为 follow-up。
+
+---
+
+> **P0 已完成(2026-08-03),六条全绿。** 实测记录见下。验证在本机用 **wine** 驱动 PE 编译器
+> 完成 —— 不需要 Windows 机器就能跑完判据 1–6,这条对后续维护很省事。
+>
+> ```
+> 判据 1  bin/x86_64-linux-musl-g++.exe: PE32+ executable (console) x86-64, for MS Windows  ✅
+> 判据 2  wine …g++.exe --version → x86_64-linux-musl-g++.exe (GCC) 16.1.0                  ✅
+> 判据 3  x86_64-linux-musl/include/c++/16.1.0/bits/std.cc 存在                              ✅
+> 判据 4  hello → ELF 64-bit LSB executable, x86-64, statically linked                       ✅
+> 判据 5  本机(真 Linux)执行 → "windows builds linux";readelf 无 PT_INTERP               ✅
+> 判据 6  import std 编译 + 链接 + 执行 → "import std works"                                ✅
+> ```
 
 必须**全部**满足才算 P0 出口 —— 逐条断言,不要只看「编译通过」:
 

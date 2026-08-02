@@ -8,14 +8,24 @@ name: cross-build-test
 # each target triple, arch-checked, and smoke-run under qemu-user.
 #
 # ── Supported cross matrix (built + verified below) ────────────────────────
-#   target                | toolchain                       | host→target   | run
-#   ----------------------|---------------------------------|---------------|-----
-#   aarch64-linux-musl    | aarch64-linux-musl-gcc@16.1.0   | x86_64→arm64  | qemu
+#   target                | toolchain                        | host→target   | run
+#   ----------------------|----------------------------------|---------------|-----
+#   aarch64-linux-musl    | aarch64-linux-musl-gcc@16.1.0    | x86_64→arm64  | qemu
 #   x86_64-w64-mingw32    | mingw-cross-gcc@16.1.0 (MSVCRT)  | linux→windows | wine
+#   x86_64-linux-musl     | x86_64-linux-musl-gcc@16.1.0     | windows→linux | linux job
 #
 # The mingw row is OS-cross (same arch, different OS/ABI: ELF→PE), so it lives
 # in its own job below with wine verification instead of the qemu arch matrix.
 # See .agents/docs/2026-07-15-mingw-linux-cross-windows-design.md.
+#
+# The windows→linux row is the MIRROR of that one, and its verification has no
+# wine-equivalent: a Windows runner cannot execute the ELF it just produced.
+# So it is split across TWO jobs — build on windows-latest, upload the artefact,
+# then download and really run it on ubuntu. Static assertions alone would not
+# do: "it linked" has never implied "it runs" (see the elfpatch incident in
+# .agents/docs/, and 2026-08-03-windows-host-linux-cross-design.md §6.1).
+# The artefact is a fully static musl ELF (no PT_INTERP), so the consumer job
+# needs neither qemu nor a matching loader.
 #
 # mcpp resolves a cross `--target <triple>-musl` build to the triple-named cross
 # gcc musl toolchain from the xlings ecosystem (xim:<triple>-gcc, see
@@ -285,3 +295,98 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/102_mingw_cross_wine.sh
+
+  # ── windows → linux ───────────────────────────────────────────────────────
+  # The mirror of mingw-cross-wine. Two jobs because a Windows runner cannot
+  # execute the ELF it produces; the artefact is handed to a Linux job and
+  # really run there.
+  windows-host-linux-cross:
+    name: windows→linux cross-build (windows host)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+          # Newest, not first: target/ is cache-restored and keeps a directory
+          # per build fingerprint, so `find | head -1` can hand back the
+          # PREVIOUS release's binary (that is how a 0.0.106 build ran 0.0.105).
+          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" -printf "%T@ %p\n" \
+              | sort -rn | head -1 | cut -d" " -f2-)
+          test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
+          MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
+          "$MCPP_SELF" --version
+          echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
+
+      - name: Install the linux-musl cross toolchain (windows-hosted canadian)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP_SELF" toolchain install gcc 16.1.0 --target x86_64-linux-musl
+          # The target row must now be visible on a Windows host — this is the
+          # host gate from design §1.2 having been lifted, asserted rather than
+          # eyeballed.
+          "$MCPP_SELF" toolchain list | tee /tmp/tclist.txt
+          grep -q "x86_64-linux-musl" /tmp/tclist.txt \
+            || { echo "FAIL: linux-musl target not listed on windows host"; exit 1; }
+
+      - name: "Cross-build mcpp -> x86_64-linux-musl"
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP_SELF" build --target x86_64-linux-musl
+          OUT=$(find target -name "mcpp" -type f -path "*/bin/*" -printf "%T@ %p\n" \
+              | sort -rn | head -1 | cut -d" " -f2-)
+          test -n "$OUT" || { echo "FAIL: no cross artefact produced"; exit 1; }
+          cp "$OUT" mcpp-linux-musl
+          ls -la mcpp-linux-musl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcpp-x86_64-linux-musl-from-windows
+          path: mcpp-linux-musl
+          retention-days: 1
+
+  windows-host-linux-cross-run:
+    name: windows→linux artefact really runs (linux)
+    needs: windows-host-linux-cross
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpp-x86_64-linux-musl-from-windows
+
+      - name: Assert it is a static ELF, then run it
+        run: |
+          set -euo pipefail
+          chmod +x mcpp-linux-musl
+          file mcpp-linux-musl
+
+          # B2 regression gate (design §1.3): before the fix, `-static` was
+          # decided by a HOST constant (`supports_full_static = is_linux`), so
+          # a Windows host emitted a NON-static binary here. Written as a
+          # positive `grep -q` on purpose: `! cmd | grep` is exempt from
+          # errexit and can never fail (see build-mcpp-helper-self-containment).
+          file mcpp-linux-musl | grep -q "ELF 64-bit LSB"
+          file mcpp-linux-musl | grep -q "x86-64"
+          file mcpp-linux-musl | grep -q "statically linked"
+
+          # A static musl ELF has no PT_INTERP at all — the stronger form of
+          # the same claim, and independent of `file`'s wording.
+          readelf -l mcpp-linux-musl > hdrs.txt
+          if grep -q "INTERP" hdrs.txt; then
+            echo "FAIL: artefact has a PT_INTERP segment — not statically linked"
+            grep -A2 "INTERP" hdrs.txt
+            exit 1
+          fi
+
+          # Linked ≠ runs. This is the whole point of the second job.
+          ./mcpp-linux-musl --version
+          ./mcpp-linux-musl --help > /dev/null
+          echo "OK: windows-built linux artefact executes natively"
