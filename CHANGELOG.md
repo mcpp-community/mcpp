@@ -3,6 +3,32 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.3.2] — 2026-08-03
+
+### 新增
+
+- **在 Windows 上构建 Linux 程序(`--target x86_64-linux-musl`)。** 补上 `host ≠ target` 最后一个空象限:一台 Windows 机器直接产出**完全静态的 Linux ELF**,不需要 WSL、不需要容器、不往系统里装任何东西。
+
+  ```bash
+  mcpp build --target x86_64-linux-musl        # 在 Windows 与 Linux 上拼写完全相同
+  ```
+
+  命令两边一字不差,因为「cross」在 mcpp 里从来不是一个名字,只是 `host ≠ target` 这个关系的取值。由谁来服务这个目标是自动解析的:Linux x86_64 主机装原生 `musl-gcc`,Windows 主机装 **canadian cross**(build=`x86_64-linux-gnu` / host=`x86_64-w64-mingw32` / target=`x86_64-linux-musl`)。两者都是 GCC 16.1.0,都带 `bits/std.cc`,所以 `import std` 在哪边都一样能用。产物无 `PT_INTERP`,任何 Linux 发行版上都能跑,与它的 libc 无关。
+
+  不支持的两种组合是明确拒绝而非碰运气:Windows → `linux-gnu`(glibc 需要 `xim:glibc` / `xim:linux-headers` 两个 sysroot 载荷,只为 Linux 主机发布),以及 Windows → 跨架构(canadian cross 载荷按主机架构构建)。`mcpp toolchain list` 只列当前主机真能装的目标,所以某个目标没出现在 Targets 块里,就是这台机器确实服务不了它。
+
+### 修复
+
+- **`-static` 由构建主机而非目标决定,导致 Windows→Linux 交叉产物根本不是静态的。** `supports_full_static` 是一个**主机**常量(`is_linux`),描述的是「这台机器自己的二进制能否全静态」;`flags.cppm` 却拿它来决定**产物**要不要 `-static`。在 Linux 主机上这两个问题对所有 Linux 目标恰好同解,所以它一直没被发现 —— 只有当非 Linux 主机交叉编译到 Linux 时才会现形:`-static` 被静默丢弃,而 `x86_64-linux-musl` 这个目标存在的全部理由就是产出可移植的静态 ELF。没有报错,没有警告,那个 flag 就是不在。
+
+  判据改读解析后的 triple:空 triple(目标即主机)沿用主机答案;PE 目标返回 false,它们的 `-static` 来自 C++ 运行时分发契约,在这里也答 true 会让两套机制都发一遍;macOS 返回 false(libSystem 必须动态);Linux 返回 true。今天所有能工作的路径逐位不变。
+
+- **Windows 主机上交叉工具链的前端永远找不到。** 候选名是 `{ "<triple>-g++", "g++" }`,用 `filesystem::exists` 解析,而 Windows 上的文件叫 `<triple>-g++.exe` —— 载荷装得好好的,然后不可用。`archive_tool` 的 musl 分支(`<triple>-ar`)有同样的遗漏。
+
+### 改进
+
+- **「这台主机能否服务这个目标」收敛为单一判据 `host_can_serve`。** 它此前在两处独立推导:`registry.cppm` 选载荷时一次,`lifecycle.cppm` 决定 `toolchain list` 能否把目标标为 `available` 时又一次 —— 而且两者**已经漂移**:载荷侧会解析出一个可用性侧宣称不可能存在的 windows-hosted musl 包。现在判据只有一份,就放在它必须与之一致的载荷解析旁边。
+
 ## [2026.8.3.1] — 2026-08-03
 
 ### 修复
