@@ -76,6 +76,22 @@ bool is_musl_target(const Toolchain& tc);
 bool is_msvc_target(const Toolchain& tc);
 bool is_mingw_target(const Toolchain& tc);
 
+// Can the artifact we are building be fully statically linked (`-static`)?
+//
+// This is a property of the TARGET, not of the machine doing the build —
+// a Windows host cross-compiling to x86_64-linux-musl still produces a fully
+// static ELF. `mcpp::platform::supports_full_static` answers a DIFFERENT
+// question ("can THIS machine's own binaries be static"), and using it here
+// silently dropped `-static` from every Windows→Linux cross build.
+//
+// `hostCapability` is threaded in explicitly rather than read from
+// mcpp::platform so the decision is testable on any host: passing false
+// models a Windows/macOS host. It is only consulted for the host target
+// (empty triple), where target *is* host. Callers pass
+// mcpp::platform::supports_full_static — keeping that dependency at the call
+// site leaves this module free of any platform import.
+bool target_supports_full_static(std::string_view targetTriple, bool hostCapability);
+
 struct BmiTraits {
     std::string_view bmiDir;     // "gcm.cache" | "pcm.cache" | "ifc.cache"
     std::string_view bmiExt;     // ".gcm"      | ".pcm"      | ".ifc"
@@ -124,6 +140,13 @@ bool is_mingw_target(const Toolchain& tc) {
     if (auto t = triple::parse(tc.targetTriple)) return t->is_windows_gnu();
     // "x86_64-w64-mingw32" (mingw-w64) / legacy "*-pc-mingw32".
     return tc.targetTriple.find("mingw32") != std::string::npos;
+}
+
+bool target_supports_full_static(std::string_view targetTriple, bool hostCapability) {
+    // STUB — deliberately reproduces the pre-fix behaviour so the regression
+    // test added alongside it goes red. Replaced in the next commit.
+    (void)targetTriple;
+    return hostCapability;
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {
