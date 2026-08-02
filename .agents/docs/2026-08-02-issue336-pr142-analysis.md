@@ -341,6 +341,36 @@ Rust/Go 的静态自包含之所以顺,是因为它们的运行时没有跨 TU �
 
 ---
 
+## 9. 实施记录(2026.8.3.1 / PR #337)
+
+落地形态与 §8 的设计一致,但有两处**在实现中被证据修正**的地方,记在这里比记在 PR 里更耐久。
+
+**契约收敛成两个 API 决定**
+
+- `src/build/distribution.cppm` = 角色 / 契约 / 机制表(总函数)。`flags.cppm` 只调用它,`ninja_backend.cppm` 只问 `role_of(kind)`。原来的五处推导归零。
+- C++ 运行时 flag 从全局 `ldflags` 移到**每个链接单元**的 `unit_ldflags`。必须如此:两个角色在同一次构建里可以持不同契约,全局通道表达不了。移动的都是驱动级 flag(`-static-libstdc++` / `-static-libgcc` / MinGW `-static`),相对库的位置无意义。
+
+**修正 1:诊断的判据不是"降级",是"违约"。**
+初版让"契约兑现不了就必报"。结果是 MSVC 运行时**每一次 Windows 构建**都会打印一条 `self-contained 未实现` —— 而 mcpp 从来没有为 MSVC 承诺过自包含(它压根不发 `/MT`)。这不是违约,是平台边界,且用户无从行动。改成:**只有显式写下的契约兑现不了才报**(`static_stdlib = false` 也算显式 —— 没人会把开关设成默认值来求非默认行为);而 mcpp 确实做了承诺的格子(默认档下缺 `libc++.a`)照报不误。
+
+**修正 2:shim 不能有能力弄坏链接。**
+初版靠 `__attribute__((weak))` 兜底"符号不存在就退化成空操作"。首轮 macOS CI 全红,教了两件 Mach-O 的事:
+
+1. **`__asm__` label 是逐字使用的,clang 不会替它补 Mach-O 的全局 `_` 前缀。** C++ 符号 `_ZNSt3__18ios_base4InitC1Ev` 在这里必须写成 `__ZNSt3__18ios_base4InitC1Ev`。写错不是静默失效,是 `ld64.lld: error: undefined symbol: ZNSt3__18ios_base4InitC1Ev`,每一条 macOS 链接都挂。
+2. **声明上的 `weak` 不是 Mach-O 的 weak-undefined 形态**(那是 `weak_import`),所以它根本没有兜住那个坏引用。
+
+两条都修了,但真正的安全网挪到了**上游**:后端只在归档确实定义该符号时才生成 shim TU —— 扫归档第一个成员里的 ranlib 符号索引,不起子进程。**一个在引用之前的检查,不可能像引用本身那样弄坏链接**;符号拼写变了就是"少一个次序修复 + 一条诊断",不是构建失败。
+
+**本次没做,理由已在 §6.4 写清**
+
+- INV-2 跨链接边的契约传播硬错误:单次构建内所有单元共用一个工程级契约,在构建内近乎空转;真正的风险是 macOS `.dylib` 嵌一份 hidden libc++ 而宿主嵌另一份(`ninja_backend.cppm:1222` 的二分派让 `SharedLibrary` 走分发档)。留作下一项,不做半个。
+- ELF 上 `host-coupled` 去掉工具链 rpath:属打包轴,文档已明确写出这条边界。
+- MSVC 的 `/MT`:表里点名承认缺口。
+
+**顺带落地的能力**:Linux + clang/libc++ 的自包含从"静默空转"变成真的(显式链 `libc++.a` / `libc++abi.a` / `libunwind.a`,实测 `NEEDED` 只剩 libc/libm/loader)。
+
+---
+
 ## 附:本地可复现的取证命令
 
 ```bash
