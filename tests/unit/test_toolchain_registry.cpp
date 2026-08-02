@@ -18,6 +18,15 @@ static std::string expected_musl_xim() {
     else                                    return host_musl() + "-gcc";
 }
 
+// Frontend candidates are host-aware for the same reason the mingw ones are:
+// they are resolved with filesystem::exists, and on a Windows host the file on
+// disk is `<triple>-g++.exe`. The .exe spelling comes first so it wins on a
+// case-insensitive filesystem where both would match.
+static std::string expected_musl_frontend(const std::string& triple) {
+    if constexpr (mcpp::platform::is_windows) return triple + "-g++.exe";
+    else                                      return triple + "-g++";
+}
+
 // ── canonical two-axis identity ──────────────────────────────────────────────
 
 TEST(ToolchainRegistry, MapsGccSpecToGccPackage) {
@@ -57,7 +66,7 @@ TEST(ToolchainRegistry, LegacyMuslSuffixNormalizesToMuslTarget) {
     EXPECT_EQ(pkg.ximName, expected_musl_xim());
     EXPECT_EQ(pkg.ximVersion, "15.1.0");
     ASSERT_FALSE(pkg.frontendCandidates.empty());
-    EXPECT_EQ(pkg.frontendCandidates.front(), host_musl() + "-g++");
+    EXPECT_EQ(pkg.frontendCandidates.front(), expected_musl_frontend(host_musl()));
     EXPECT_FALSE(pkg.needsGccPostInstallFixup);
 }
 
@@ -73,7 +82,7 @@ TEST(ToolchainRegistry, CrossArchMuslTargetPicksTripleNamedPackage) {
     auto pkg = to_xim_package(spec);
     EXPECT_EQ(pkg.ximName, spec.target.str() + "-gcc");
     ASSERT_FALSE(pkg.frontendCandidates.empty());
-    EXPECT_EQ(pkg.frontendCandidates.front(), spec.target.str() + "-g++");
+    EXPECT_EQ(pkg.frontendCandidates.front(), expected_musl_frontend(spec.target.str()));
     EXPECT_FALSE(pkg.needsGccPostInstallFixup);
 }
 
