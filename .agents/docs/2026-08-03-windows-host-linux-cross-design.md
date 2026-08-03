@@ -643,21 +643,36 @@ return std::filesystem::path("bin") /
 ```
 
 `exe_suffix` / `lib_prefix` / `static_lib_ext` / `shared_lib_ext` **四个都是 host 常量**
-(`platform/common.cppm:18-29`),却用来命名 **target** 产物。与 B2 完全同构,而且**对称地错**:
+(`platform/common.cppm:18-33`),却用来命名 **target** 产物。与 B2 同构。
 
-| 方向 | 现状 | 应当 |
-|---|---|---|
-| Windows → linux-musl | `mcpp.exe`(却是 ELF) | `mcpp` |
-| Linux → windows-gnu | `mcpp`(却是 PE) | `mcpp.exe` |
+> ### ⚠️ 本节初版的判断有误,已在专项文档中更正
+>
+> 初版写的是「对称地错:Linux→Windows 产出 `mcpp` 却是 PE」。**后半句是错的** ——
+> 实测 Linux 主机交叉到 `x86_64-windows-gnu`,产物就是 `b3probe.exe`(PE32+),
+> 因为 **mingw 的 GCC driver 自己会补 `.exe`**,mcpp 从未参与这个决定。
+>
+> 真正的症状是另一件事,而且更实际:**ninja 声明的输出是 `bin/foo`,GCC 写出 `bin/foo.exe`,
+> 声明的那个文件从来不存在 ⇒ 每次 `mcpp build` 都重跑链接边**。实测连续两次构建
+> 产物 mtime 会变。也就是说 Linux→Windows 是**功能缺陷(增量构建失效)**,
+> Windows→Linux 才只是「ELF 顶着 `.exe`」的观感问题。
 
-**为什么本期不修**:改产物命名是行为变更,会同时动到 `tests/e2e/102_mingw_cross_wine.sh`、
-release 打包路径和任何用户脚本;而两个方向的现状都**不致命**(扩展名在 Linux 上无意义,
-Windows 命令行也能跑无扩展名的 PE)。把一个有回归面的重命名塞进本 PR,违背了 §1.3 定下的
-「单 PR 但提交分层、失败可归因」的初衷。
+**完整分析、修复方案与验证判据见专项文档:**
+`2026-08-03-b3-target-aware-artifact-naming.md`
 
-**修的时候要一起改的四个常量**,并且要注意 `runtime_aliases_for_target()`(`plan.cppm:215`)
-依赖 `target_output()` 的结果去比对 soname —— 见 [[soname-alias-explicit-ninja-goals]],
-那条边曾经因为类似改动漏生成过。
+要点摘录:
+- 改动面只有 `src/build/plan.cppm` 一个文件;其余 15 处 `exe_suffix` 引用都是找主机上的
+  `ninja`/`xlings`/`clang++` 等,**是正确的 host 语义,不要动**
+- 正确的命名是 **(os, env) 二元函数**:`windows-gnu` 用 GNU 约定(`libfoo.a`),
+  `windows-msvc` 才是 `foo.lib` —— 现行 `_WIN32` 分支写死后者,**Windows 主机上用 mingw
+  构建静态库今天就已经命名错了**,与交叉无关的存量缺陷
+- e2e/CI 基本不用改(与本节初版的担心相反):`102_mingw_cross_wine.sh` 找的是真实产物
+  而非 ninja 声明,改前改后都匹配
+- `runtime_aliases_for_target()`(`plan.cppm:215`)依赖 `target_output()` 比对 soname,
+  必须一起改并补断言 —— 见 [[soname-alias-explicit-ninja-goals]]
+
+**为什么当期没修**:发现时 #339 已进入 CI 验证阶段,把一个尚未查清真实形态的改动塞进去,
+会毁掉 §1.3 定下的「提交分层、失败可归因」。事后看这个决定是对的 —— 初版对症状的描述
+本身就是错的,当场改只会改错方向。
 
 ---
 
