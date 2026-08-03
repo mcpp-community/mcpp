@@ -570,12 +570,23 @@ TEST(NinjaBackend, RawMultiTokenFlagIsNotQuoted) {
               std::string::npos) << ninja;
 }
 
-// mcpp#247: driver-style (gnu dialect) link/archive/shared rules must route
-// the object list through a response file on Windows — every command spawns
-// via CreateProcess (32 KiB command-line ceiling), and ffmpeg/opencv-class
-// source packages link thousands of objects, so an inlined $in overflows it.
-// POSIX keeps the inline form byte-identical (ARG_MAX is ample).
-TEST(NinjaBackend, DriverStyleLinkRulesUseRspfileOnWindowsOnly) {
+// mcpp#247 + #344: link/archive/shared route the object list through a response
+// file on EVERY platform. The number of objects on one link edge is unbounded —
+// an ffmpeg/opencv-class source package contributes thousands — and every way of
+// spawning a command has a ceiling:
+//
+//   Windows  CreateProcess, 32 KiB command line
+//   POSIX    ninja runs `sh -c "<whole command>"`, so the command is a SINGLE
+//            argv entry and hits MAX_ARG_STRLEN (32 pages, 128 KiB) long before
+//            the 2 MiB ARG_MAX anyone would think to check
+//
+// This test used to assert the OPPOSITE for POSIX ("ARG_MAX is ample"), pinning
+// an assumption that was both about the wrong limit and false: mcpp-index's
+// opencv-module link line was already 56 840 bytes inline, and #344's per-package
+// object directories took it to 161 687 — at which point ninja dies with
+// `posix_spawn: Argument list too long`, naming no edge and no cause. A ceiling
+// nothing watches is not a ceiling anyone can stay under, so there isn't one now.
+TEST(NinjaBackend, DriverStyleLinkRulesAlwaysUseRspfile) {
     auto plan = minimal_plan();  // GCC → gnu dialect → driver-style branch
 
     auto ninja = emit_ninja_string(plan);
@@ -587,14 +598,12 @@ TEST(NinjaBackend, DriverStyleLinkRulesUseRspfileOnWindowsOnly) {
         auto end = ninja.find("\n\n", start);
         ASSERT_NE(end, std::string::npos) << ninja;
         auto body = ninja.substr(start, end - start);
-        if constexpr (mcpp::platform::is_windows) {
-            EXPECT_NE(body.find("@$out.rsp"), std::string::npos) << body;
-            EXPECT_NE(body.find("rspfile = $out.rsp"), std::string::npos) << body;
-            EXPECT_NE(body.find("rspfile_content = $in"), std::string::npos) << body;
-        } else {
-            EXPECT_EQ(body.find("rspfile"), std::string::npos) << body;
-            EXPECT_NE(body.find("$in"), std::string::npos) << body;
-        }
+        EXPECT_NE(body.find("@$out.rsp"), std::string::npos) << body;
+        EXPECT_NE(body.find("rspfile = $out.rsp"), std::string::npos) << body;
+        EXPECT_NE(body.find("rspfile_content = $in"), std::string::npos) << body;
+        // And the object list must no longer be inlined into the command: that
+        // is the whole point, so `$in` may appear only as rspfile_content.
+        EXPECT_EQ(count_occurrences(body, "$in"), 1u) << body;
     }
 }
 

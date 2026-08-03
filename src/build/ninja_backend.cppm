@@ -749,15 +749,33 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // link/archive command; revisit the first-match replace if a dialect
     // ever grows another).
     //
-    // rsp is used when the command spawns through CreateProcess (32 KiB
-    // command-line ceiling): always for the separate-linker msvc dialect,
-    // and on Windows for driver-style too (#247 — ffmpeg/opencv-class
-    // packages link thousands of objects; clang/gcc drivers and GNU/llvm ar
-    // all accept @rspfile). POSIX driver-style keeps the inline form
-    // byte-identical: ARG_MAX is ample and the plain command is easier to
-    // reproduce by hand.
+    // rsp is used ALWAYS, on every platform and every dialect. The objects of
+    // one link edge are unbounded — an ecosystem package like opencv or ffmpeg
+    // contributes thousands — and every way of spawning a command has a ceiling:
+    //
+    //   Windows   CreateProcess, 32 KiB command line (#247)
+    //   POSIX     ninja spawns `sh -c "<whole command>"`, so the command is a
+    //             SINGLE argv entry and hits MAX_ARG_STRLEN — 32 pages, 128 KiB
+    //             — long before the 2 MiB ARG_MAX anyone would think to check.
+    //
+    // This used to read "POSIX keeps the inline form; ARG_MAX is ample and the
+    // plain command is easier to reproduce by hand". Both halves were wrong.
+    // ARG_MAX is the wrong limit, and it was never ample: measured on
+    // mcpp-index's opencv-module, the inline link line was already 56 840 bytes
+    // — 43% of a ceiling nothing was watching. mcpp#344 lengthened dependency
+    // object paths (they now carry a per-package directory) and the same edge
+    // reached 161 687 bytes, at which point ninja dies with
+    //
+    //     ninja: fatal: posix_spawn: Argument list too long
+    //
+    // naming no edge, no file and no cause. A build system may not have a
+    // maximum project size that it discovers by crashing, and "how long is this
+    // command" must not be a thing anyone has to keep in their head when
+    // choosing an object path. clang/gcc drivers, link.exe, GNU ar and llvm-ar
+    // all accept @rspfile, so there is one rule shape everywhere; the response
+    // file sits next to the output and `cat`ing it beats reading a 160 KB line.
     {
-        const bool useRsp = separateLinker || mcpp::platform::is_windows;
+        constexpr bool useRsp = true;
         auto link_rule = [&](std::string_view name, std::string cmd,
                              std::string_view desc) {
             append(std::format("rule {}\n", name));
