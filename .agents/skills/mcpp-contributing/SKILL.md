@@ -11,8 +11,8 @@ mcpp 项目的贡献流程：先创建 Issue → 切分支 → 实现改动 → 
 
 - 仓库：https://github.com/mcpp-community/mcpp
 - 构建：`mcpp build`（C++23 模块自举）
-- 测试：`tests/e2e/` 下的 bash 脚本
-- CI：GitHub Actions，base 为 `main` 的 PR 自动触发
+- 测试：`mcpp test` 覆盖 `tests/**/*.cpp`，`tests/e2e/` 提供真实二进制的端到端脚本
+- CI：GitHub Actions，base 为 `main` 的 PR 触发分平台构建、测试与 E2E 检查
 
 ## 核心原则
 
@@ -126,19 +126,27 @@ git checkout -b <type>/<short-description>
 **构建验证**
 
 ```bash
-# 找到 mcpp 二进制
-ls target/x86_64-linux-gnu/*/bin/mcpp
-# 构建
-<mcpp-binary> build
+# 用现有 bootstrap mcpp 自举构建
+mcpp build
+# 选择刚生成的 target/**/bin/mcpp（Windows 为 mcpp.exe），不要硬编码宿主 triple
+<fresh-mcpp-binary> --version
 ```
 
 **测试**
 
 ```bash
-bash tests/e2e/01_help_and_version.sh    # 基础测试
-bash tests/e2e/<relevant-test>.sh        # 相关测试
-# 新功能应创建对应 E2E 测试
+# C++ 单元/集成测试：由刚构建的二进制发现 tests/**/*.cpp
+<fresh-mcpp-binary> test
+# 端到端测试：显式把刚构建的二进制交给脚本
+# 路径必须是刚构建产物的绝对路径；Windows 使用 mcpp.exe。
+MCPP=<absolute-path-to-fresh-mcpp-or-mcpp.exe> bash tests/e2e/01_help_and_version.sh
+MCPP=<absolute-path-to-fresh-mcpp-or-mcpp.exe> bash tests/e2e/<relevant-test>.sh
+# 新功能按变更契约补充 focused unit/integration 和/或 E2E 覆盖
 ```
+
+E2E 并不保证完全离线：部分脚本需要工具链、索引或 capability provider。
+按 CI 等价方式设置 `MCPP_HOME`、镜像和其他 capability 后再运行；不要让缓存命中
+或空 workspace 选择冒充行为覆盖。
 
 ### 4. 提交 PR
 
@@ -154,8 +162,9 @@ gh pr create \
 Closes #<issue>
 
 ## Test plan
-- [ ] mcpp build 通过
-- [ ] E2E 测试通过"
+- [ ] 文档-only：示例与链接已按当前实现复核，无运行时行为变更
+- [ ] 涉及行为或测试文档时：`mcpp test`（unit/integration）通过
+- [ ] 涉及行为或测试文档时：相关 E2E 脚本使用 fresh `MCPP` 通过"
 ```
 
 **PR 要求**：
@@ -173,14 +182,16 @@ gh pr checks <pr-number>           # 查看状态
 gh run view <run-id> --log-failed  # 查看失败日志
 ```
 
-CI 包含三个平台：
+CI 由分平台的基础构建/单元集成检查与独立 E2E 检查组成：
 | Workflow | 平台 | 内容 |
 |----------|------|------|
-| `ci` | Linux x86_64 | 自举构建 + E2E 测试 |
-| `ci-macos` | macOS ARM64 | 自举构建 + E2E 测试 |
-| `ci-windows` | Windows x86_64 | 自举构建 + E2E 测试 |
+| `ci-linux` / `ci-linux-e2e` | Linux x86_64 | 自举构建、unit/integration / 分片 E2E |
+| `ci-macos` / `ci-macos-e2e` | macOS ARM64 | 自举构建、unit/integration / E2E |
+| `ci-windows` / `ci-windows-e2e` | Windows x86_64 | 自举构建、toolchain 回归 / E2E |
+| `cross-build-test` | Linux/Windows cross targets | 交叉构建、产物运行与 MinGW/Wine 检查 |
+| `ci-aarch64-fresh-install` | Linux ARM64 native | path-filtered fresh install、原生自举与 musl `build.mcpp` host-helper 回归 |
 
-**三个平台全部通过才能合入。** 如果某个平台失败：
+**以 PR 实际 required checks 为准，所有未跳过的 required checks 必须通过。** 如果某个平台失败：
 1. 下载日志分析原因
 2. 修复后 push 到同一分支，CI 自动重跑
 3. 如果是 flaky test，在 PR 中说明
@@ -242,7 +253,7 @@ gh pr merge <pr-number> --merge
 src/
 ├── cli.cppm              ← 命令行入口
 ├── config.cppm           ← 全局配置
-├── manifest.cppm         ← mcpp.toml 解析
+├── manifest/             ← manifest 模型、TOML/xpkg 解析
 ├── platform/             ← 平台抽象层（所有平台相关代码）
 │   ├── platform.cppm     ← 统一外观模块
 │   ├── common.cppm       ← 平台常量与检测
@@ -260,7 +271,8 @@ src/
 ├── modgraph/             ← 模块图扫描验证
 ├── pack/                 ← 打包发布
 └── xlings.cppm           ← xlings 抽象层
-tests/e2e/                ← E2E 测试脚本
+tests/unit/                ← C++ unit/integration tests (`mcpp test`)
+tests/e2e/                 ← E2E 测试脚本 (`MCPP=...` + `run_all.sh`)
 docs/                     ← 用户文档
 .agents/docs/             ← 设计文档
 .agents/skills/           ← Agent 技能文档
@@ -270,6 +282,7 @@ docs/                     ← 用户文档
 
 - C++23 模块项目，修改模块时注意 import 依赖顺序
 - 平台相关代码统一放 `src/platform/`，不在其他模块中直接使用 `#if defined`
-- E2E 测试应独立运行，不依赖网络
+- E2E 测试应声明所需 capability，并使用隔离的 `MCPP_HOME`；需要网络/索引的脚本
+  不得被描述为完全离线
 - 不确定方向时先在 Issue 讨论再动手
 - **永远走 PR 流程，不直接 push main**

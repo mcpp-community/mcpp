@@ -8,24 +8,28 @@ C++23 modules are fairly sensitive to compiler versions, and different releases 
 
 ## Automatic Installation
 
-The first time you run `mcpp build`, if no toolchain is configured yet, mcpp automatically installs the default toolchain for your platform and sets it as the global default:
+The first time you run `mcpp build`, if no toolchain is configured yet, mcpp
+installs and persists a default pair for the current host. The choice is
+host-aware:
 
-```
-First run no toolchain configured — installing gcc@15.1.0-musl (musl, static) as default
-Downloading xim:musl-gcc@15.1.0 [====>      ] 312 MB / 808 MB  3.7 MB/s
-Default set to gcc@15.1.0-musl
-```
+- Linux x86_64 uses `gcc@16.1.0` for the native glibc ABI, so X11, OpenGL, and
+  system libraries work out of the box.
+- Other Linux architectures use `gcc@15.1.0-musl`, a self-contained static
+  toolchain.
+- macOS uses `llvm@20.1.7`.
+- Windows with a usable MSVC installation uses `llvm@20.1.7` for the MSVC ABI.
+  Without usable MSVC, it uses `gcc@16.1.0` with target
+  `x86_64-windows-gnu` (MinGW-w64, static by default).
 
-The first-run default is host-aware: Linux x86_64 → `gcc@16.1.0` (glibc — the
-native ABI, so X11/GL/system libraries link out of the box); other Linux
-arches (aarch64, …) → `gcc@15.1.0-musl` (self-contained, fully static);
-macOS and Windows → `llvm@20.1.7`. Fully-static musl output stays one flag
-away on any Linux host: `mcpp build --target x86_64-linux-musl`.
+Fully static musl output remains one flag away on a Linux host:
+`mcpp build --target x86_64-linux-musl`.
 
 Subsequent builds do not trigger this process again.
 
 > [!TIP]
-> In CI or offline environments, you can disable automatic installation by setting `MCPP_NO_AUTO_INSTALL=1`. With this set, if no toolchain is installed, `mcpp build` fails immediately instead of making any network requests.
+> In CI, set `MCPP_NO_AUTO_INSTALL=1` to disable only automatic toolchain
+> installation. For a fully offline command, use `mcpp --offline` or
+> `MCPP_OFFLINE=1`; these also prevent index refreshes and downloads.
 
 ## The Identity Model: Toolchain × Target
 
@@ -46,7 +50,7 @@ this model with a one-line `note:` hint.
 
 ```bash
 mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
-mcpp toolchain install llvm 20.1.7          # LLVM/Clang, the default on macOS/Windows
+mcpp toolchain install llvm 20.1.7          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
                                             # target's convention pin (gcc@16.1.0)
@@ -250,11 +254,8 @@ If a project needs to pin a specific version rather than rely on the global defa
 ```toml
 [toolchain]
 default = "gcc@16.1.0"
-
-# you can also dispatch by platform
-[toolchain]
-linux = "gcc@15.1.0-musl"
-macos = "llvm@20"
+linux   = "gcc@16.1.0"
+macos   = "llvm@20.1.7"
 ```
 
 A project-level declaration takes precedence over the global default configuration.
@@ -317,8 +318,9 @@ mcpp's runtime behavior can be adjusted with the following environment variables
 |---|---|
 | `MCPP_HOME` | Override the sandbox location (default `~/.mcpp/`); an absolute path takes top priority |
 | `MCPP_NO_AUTO_INSTALL=1` | Disable automatic toolchain installation; useful for CI and offline environments |
+| `MCPP_OFFLINE=1` | Never touch the network; equivalent to global `--offline` |
 | `MCPP_NO_COLOR=1` / `NO_COLOR=1` | Disable colored output |
-| `MCPP_LOG=trace\|debug\|info\|warn\|error` | Log level |
+| `MCPP_LOG_LEVEL=debug\|info\|warn\|error\|off` | Log level |
 
 When `MCPP_HOME` is not set explicitly, mcpp locates the sandbox automatically based on the parent directory of the binary (after a release tarball is extracted to `~/.mcpp/`, `~/.mcpp/` is the home), so the release build runs without any environment variable configuration.
 

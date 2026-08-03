@@ -23,16 +23,20 @@ ToolchainLinkModel (single resolver for the C-library axis)
         ├──► build_program     (build.mcpp host compiles)
         └──► cfg regeneration  (the human-facing clang++.cfg)
         ▼
-hermetic link check (`-###` dry-run)  ← asserts CRT/loader resolve inside the sandbox
+hermetic link check (`-###` dry-run)  ← checks sandbox CRT/loader resolution
 ```
 
 Two principles run through everything:
 
-1. **Sandbox toolchains are self-contained.** A produced binary's CRT startup
-   objects, libc, and dynamic linker come from sandbox payloads — never
-   silently from the host. On a machine with no compiler and no
-   `/usr/lib/**/Scrt1.o` (fresh WSL2, minimal containers), everything still
-   works; on a machine *with* a host toolchain, nothing leaks in.
+1. **Sandbox toolchains are hermetically checked by default.** For the normal
+   payload-first or sysroot path, a produced binary's CRT startup objects,
+   libc, and dynamic linker must resolve under allowed sandbox prefixes. This
+   is not an unconditional containment guarantee: `CLibMode::None` falls back
+   to host defaults, system/PATH compilers are an explicit host-world choice,
+   and `[build] allow_host_libs = true` or `MCPP_ALLOW_HOST_LIBS=1` opt out of
+   the host-library check. On a machine with no compiler and no
+   `/usr/lib/**/Scrt1.o` (fresh WSL2, minimal containers), the normal sandbox
+   path still works.
 2. **Path knowledge has one owner per layer.** What used to be four divergent
    copies of "how to link against the payload glibc" is now one resolver
    (`linkmodel`); what used to be per-entry-path fixup behavior is now one
@@ -82,8 +86,9 @@ CLibMode::PayloadFirst   glibc/linux-headers xpkgs found (the normal bundled-LLV
                                     -L <glibcLib> [+ -rpath + --dynamic-linker for clang]
 CLibMode::Sysroot        a usable --sysroot (GCC include-fixed world, self-contained
                          musl sysroots, the macOS SDK)
-CLibMode::None           nothing usable — host defaults apply and the hermetic
-                         check (§6) reports whatever leaks in
+CLibMode::None           nothing usable — host defaults apply; the hermetic
+                         check (§6) rejects that leakage unless an explicit
+                         host-library exception is in effect
 ```
 
 `ClangDriverModel` is the companion for bundled LLVM: mcpp always passes

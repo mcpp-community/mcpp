@@ -28,7 +28,7 @@
 
 ## Why mcpp
 
-mcpp is built specifically for **C++23 module-first development**. If you want to use `import std`, module interface units (`.cppm`), module partitions, and other modern C++ features in your project, mcpp gives you a smooth, friendly experience on Linux and macOS ARM64:
+mcpp is built specifically for **C++23 module-first development**. If you want to use `import std`, module interface units (`.cppm`), module partitions, and other modern C++ features in your project, mcpp gives you a smooth, friendly experience on Linux, macOS ARM64, and Windows x86_64:
 
 - **Modular by default** — projects created by `mcpp new` use C++23 modules directly; `import std` just works
 - **File-level incremental builds** — three-layer optimization based on P1689 dyndep (front-end dirty check + per-file scanning + BMI restat); only the modules that actually changed get recompiled
@@ -102,13 +102,15 @@ binary, so `xlings use mcpp <ver>` switches them too.
 **Other options**
 
 <details>
-<summary><b>Option 1</b> — one-line install script</summary>
+<summary><b>Option 1</b> — one-line installer (Linux x86_64/aarch64, macOS ARM64)</summary>
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
 ```
 
-Installs into `~/.mcpp/` and adds it to your shell PATH. Deleting `~/.mcpp` uninstalls cleanly.
+This installer does not support Windows; use the PowerShell xlings route above.
+It installs into `~/.mcpp/` and adds it to your shell PATH. Deleting `~/.mcpp`
+uninstalls cleanly.
 
 </details>
 
@@ -171,19 +173,24 @@ mcpp run
 ```
 hello/
 ├── mcpp.toml             ← project manifest
-└── src/
-    └── main.cpp          ← import std; works directly
+├── src/
+│   └── main.cpp          ← import std; works directly
+└── tests/
+    └── test_smoke.cpp    ← discovered by `mcpp test`
 ```
 
 ```toml
 # mcpp.toml
 [package]
-name = "hello"
-
-[targets.hello]
-kind = "bin"
-main = "src/main.cpp"
+name        = "hello"
+version     = "0.1.0"
+description = "A modular C++23 package"
+license     = "Apache-2.0"
 ```
+
+The built-in scaffold relies on convention: it does not write `[targets.hello]`.
+`src/main.cpp` infers the binary target, and `mcpp test` automatically discovers
+`tests/test_smoke.cpp`.
 
 ### Using module libraries
 
@@ -207,7 +214,7 @@ import mcpplibs.cmdline;
 <details>
 <summary><b>Build system</b></summary>
 
-- Native C++20/23 module support (interface units, implementation units, module partitions)
+- Native C++20/23/26 module support (interface units, implementation units, module partitions), plus `c++latest` / `c++fly` experimental modes
 - Fully automatic precompilation and caching of `import std` / `import std.compat`
 - Three-layer incremental optimization: front-end dirty check + per-file P1689 dyndep + BMI copy-if-different restat
 - Fingerprinted BMI cache: hashed by compiler/flags/standard library, shared across projects
@@ -222,7 +229,7 @@ import mcpplibs.cmdline;
 <summary><b>Toolchain management</b></summary>
 
 - Bundled GCC 16.1.0 + LLVM/Clang 20.1.7, one-command install
-- Fully static musl-gcc toolchain (default)
+- Host-aware defaults: native glibc GCC on Linux x86_64, musl GCC on other Linux architectures, LLVM on macOS and on Windows with usable MSVC, MinGW-w64 GCC on bare Windows
 - Multiple versions side by side: `mcpp toolchain install gcc 16` / `mcpp toolchain install llvm 20`
 - Isolated sandbox: all toolchains live in `~/.mcpp/registry/`, leaving the system untouched
 - Per-platform selection: `linux = "gcc@16"`, `macos = "llvm@20"`
@@ -257,8 +264,8 @@ import mcpplibs.cmdline;
 <details>
 <summary><b>Packaging & publishing</b></summary>
 
-- `mcpp pack`: three Linux release modes — static (fully static musl) / bundle-project / bundle-all
-- Fully static musl binaries: single-file distribution, no glibc dependency (Linux x86_64)
+- `mcpp pack`: four Linux release modes — system / vendored (default) / self-contained / static; `bundle-project` and `bundle-all` remain compatibility aliases
+- Fully static musl binaries: single-file distribution, no glibc dependency (matching Linux x86_64 or aarch64 target)
 - `mcpp publish`: generates xpkg.lua + publishes to a package index
 - Automatic RPATH fix-up via patchelf (Linux)
 
@@ -272,6 +279,8 @@ import mcpplibs.cmdline;
 - `mcpp test [pattern] [-- args]` — auto-discover and run tests (filter by name; `--list`, `--timeout <s>`, `--message-format json`)
 - `mcpp search` — search package indices
 - `mcpp add / remove / update` — dependency management
+- `mcpp why [toolchain|runtime|deps]` — explain resolved build decisions
+- `mcpp --offline` / `MCPP_OFFLINE=1` — use only already available local state
 - `mcpp explain E0001` — detailed error-code explanations
 - `mcpp self doctor` — environment self-diagnosis
 
@@ -303,7 +312,8 @@ the right toolchain payload is resolved and installed automatically.
 
 ✅ verified — CI builds **and executes** the artifact end-to-end (qemu/wine included) ｜ 🔄 planned
 
-> Release binaries for Linux are fully static musl builds (`x86_64-linux-musl`).
+> Linux release binaries are fully static musl builds for x86_64 and aarch64
+> (`x86_64-linux-musl` and `aarch64-linux-musl`).
 > Legacy spellings — `x86_64-w64-mingw32`, `gcc@16.1.0-musl`, `mingw-cross@…`,
 > `musl-gcc@…` — stay permanently accepted as aliases and normalize to the
 > canonical forms above.
@@ -359,7 +369,7 @@ Contributions via issues and PRs are welcome. The project accepts contributions 
 **Basic workflow**
 
 1. Open an issue — for bug fixes, new features, or improvements, start a discussion in [issues](https://github.com/mcpp-community/mcpp/issues) first
-2. Implement the change — fork the repo, create a branch, implement and verify (`mcpp build` + E2E tests)
+2. Implement the change — fork the repo, create a branch, and verify according to scope (`mcpp build` plus relevant tests for behavior changes; examples and links for documentation-only changes)
 3. Submit a PR — use `gh pr create` and make sure CI passes
 4. CI must pass — PRs with failing CI will not be merged
 

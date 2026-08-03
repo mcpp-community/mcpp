@@ -17,8 +17,11 @@ cd mcpp
 ```bash
 mcpp build              # compile the current source with the existing mcpp → ./target/.../bin/mcpp
 mcpp run -- --version   # run the artifact you just built
-mcpp test               # run tests/unit and tests/e2e
+mcpp test               # build and run C++ tests discovered under tests/**/*.cpp (including tests/unit)
 ```
+
+`mcpp test` does not run the shell end-to-end suite under `tests/e2e/`; run
+those separately against the freshly built binary.
 
 The first build automatically fetches the default toolchain; see [03 — Toolchain Management](03-toolchains.md) for details.
 
@@ -35,23 +38,30 @@ mcpp build --target x86_64-linux-musl
 src/
 ├── main.cpp              entry point
 ├── cli.cppm              command dispatch and argument parsing
-├── manifest.cppm         mcpp.toml parsing
+├── cli/                  command implementations
+├── manifest/             manifest model, TOML parsing, and xpkg descriptors
 ├── lockfile.cppm         mcpp.lock
 ├── version_req.cppm      SemVer constraints
-├── fetcher.cppm          dependency download (git / index / path)
+├── fetcher.cppm          fetcher façade
+├── fetcher/              package/index download and installation
 ├── config.cppm           ~/.mcpp/config.toml
 ├── bmi_cache.cppm        cross-project BMI cache
+├── bmi_cache/            cache storage and invalidation
 ├── dyndep.cppm           ninja dyndep generation
 ├── ui.cppm               progress bars and output formatting
 ├── build/                build orchestration and ninja backend
+├── fallback/             fallback resolution paths
 ├── modgraph/             P1689 module scanning and dependency graph
+├── pm/                   dependency resolver and package-management commands
+├── platform/             platform and process abstractions
+├── scaffold/             `mcpp new` templates and project creation
 ├── toolchain/            toolchain detection, fingerprinting, and std module
 ├── pack/                 mcpp pack implementation
 ├── publish/              mcpp publish and xpkg generation
 └── libs/                 third-party dependencies (toml parsing, etc.)
 
 tests/
-├── unit/                 gtest unit tests for each .cppm module
+├── unit/                 C++ unit and integration tests, generally grouped by subsystem
 └── e2e/                  end-to-end shell scripts (run_all.sh is the CI entry point)
 ```
 
@@ -59,17 +69,23 @@ tests/
 
 Tests are split into two layers:
 
-- **Unit tests** live in `tests/unit/test_<module>.cpp`, corresponding one-to-one with `src/<module>.cppm` per module.
-- **e2e tests** live in `tests/e2e/NN_<feature>.sh` and cover end-to-end behavior by exercising the real `mcpp` binary; `run_all.sh` is the CI entry point.
+- **Unit and integration tests** are C++ files discovered by `mcpp test` under
+  `tests/**/*.cpp`. They are generally named for the subsystem or module they
+  exercise (for example, `test_pm_lock_io.cpp` and `test_toolchain_triple.cpp`).
+- **E2E tests** live in `tests/e2e/NN_<feature>.sh` and exercise a real `mcpp`
+  binary; `run_all.sh` is the CI entry point.
 
-When changing any `.cppm` module under `src/`, check that the corresponding unit test covers your changes; for new features, prefer adding e2e cases.
+Choose focused unit and/or E2E coverage according to the contract changed. E2E
+scripts may require the same sandbox, mirror, and capability setup used by CI.
 
 Run a single e2e script:
 
 ```bash
-cd tests/e2e
-MCPP=$(realpath ../../target/x86_64-linux-musl/*/bin/mcpp) ./02_new_build_run.sh
+MCPP=<fresh-mcpp-binary> bash tests/e2e/02_new_build_run.sh
 ```
+
+Replace `<fresh-mcpp-binary>` with the absolute path to the binary built in the
+previous step; on Windows that path names `mcpp.exe`.
 
 ## Issue and PR Guidelines
 
@@ -78,7 +94,7 @@ MCPP=$(realpath ../../target/x86_64-linux-musl/*/bin/mcpp) ./02_new_build_run.sh
 File issues at [github.com/mcpp-community/mcpp/issues](https://github.com/mcpp-community/mcpp/issues), ideally including the following:
 
 - The full output of `mcpp self env`
-- The full output of the failing command (`MCPP_LOG=debug` gives more detail)
+- The full output of the failing command (`MCPP_LOG_LEVEL=debug` gives more detail)
 - Your operating system, distribution, and glibc version (check with `ldd --version`)
 
 ### Pull Requests
@@ -87,7 +103,10 @@ mcpp is in early iteration and its interfaces may change. Before submitting a PR
 
 1. For changes touching the CLI or the `mcpp.toml` schema, open an issue first to align on direction.
 2. Keep each PR focused on a single change; write commit titles in English imperative form (`fix: ...` / `feat: ...`).
-3. Confirm that `mcpp test` passes in full before submitting.
+3. For behavior changes or test documentation, run `mcpp test` and the relevant
+   E2E scripts against a fresh binary before submitting. For documentation-only
+   changes, recheck the examples and links; use `gh pr checks <pr-number>` for
+   the PR's actual required checks.
 
 ## Community Resources
 

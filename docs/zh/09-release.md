@@ -6,17 +6,18 @@
 在此之前这套流程只活在 commit message 和 workflow 注释里，其中一条 commit message
 里的诊断是错的，已在 §5 更正。
 
-## 1. 四处版本号 = 两组
+## 1. 三处持久化版本号，加一个运行时推导的 CI 值
 
 | 位置 | 组 | 何时变 |
 |---|---|---|
 | `mcpp.toml` `[package].version` | **正在构建的** | 开始做新版本时 |
 | `src/toolchain/fingerprint.cppm` `MCPP_VERSION` | **正在构建的** | 与上一行同一个 commit（编译进二进制的副本） |
 | `.xlings.json` `[workspace].mcpp` | **自举起点** | 单独地、在某个版本**已可安装之后** |
-| `ci-fresh-install.yml` `MCPP_PIN` | ~~自举起点~~ | **不变 —— 运行时推导**（§4） |
+| `ci-fresh-install.yml` `MCPP_PIN` | **被测版本** | **不变 —— 运行时推导**（§5） |
 
-`.github/tools/check_version_pins.sh` 机器校验剩下的部分：两处"正在构建的"必须相等；
-自举 pin 永远不得**新于**正在构建的版本。
+`.github/tools/check_version_pins.sh` 的预期职责是机器校验剩下的关系：两处"正在构建的"
+必须相等，自举 pin 永远不得**新于**正在构建的版本。当前版本的脚本存在 Bash 语法错误，
+因此暂时不能提供这项校验；在实现修复前请手工核对这些关系。
 
 两组刻意允许不同。把它们一起 bump 正是 pin 校验器早期版本要求过的做法，
 结果是所有 CI 都去装一个还不存在的版本。
@@ -87,8 +88,8 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 
 **唯一的硬约束是方向**：pin 绝不能指向一个尚不可安装的版本。只在发布已完成、
 已镜像、**且已合入 xim-pkgindex 之后**再 bump —— 否则所有 CI 会以
-`package 'mcpp@<unreleased>' not found` 失败。`check_version_pins.sh` 能卡住较弱的
-「不得新于正在构建的版本」；索引那个条件靠你自己把关。
+`package 'mcpp@<unreleased>' not found` 失败。待其语法问题修复后，
+`check_version_pins.sh` 能卡住较弱的「不得新于正在构建的版本」；索引那个条件靠你自己把关。
 
 ## 5. `MCPP_PIN` 改为推导，以及这为什么重要
 
@@ -107,7 +108,8 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
    守卫本来就推导出了正确答案，然后把它扔掉了。让两者吃同一个值，
    使这种不一致在结构上不可能发生。
 
-`check_version_pins.sh` 会在字面量 `MCPP_PIN:` 重新出现时报错。
+预期的 `check_version_pins.sh` 会在字面量 `MCPP_PIN:` 重新出现时报错。在当前语法错误
+修复前也不要重新引入字面量，否则索引守卫与实际安装版本又会发生漂移。
 
 > **更正。** commit `3b1cb6b`（"bootstrap pin -> 2026.7.29.2"）写着
 > *"the index no longer serves .1"* 并引用了 `version '2026.7.29.1' not found`。
@@ -120,7 +122,7 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 ```
 [ ] mcpp.toml + fingerprint.cppm 版本号已 bump（同一个 commit）
 [ ] CHANGELOG 条目
-[ ] bash .github/tools/check_version_pins.sh
+[ ] 手工核对 `mcpp.toml` = `MCPP_VERSION` 且 `.xlings.json` 未领先（当前 `check_version_pins.sh` 有 Bash 语法错误）
 [ ] 合入 main，CI 全绿
 [ ] gh workflow run release.yml --ref main
 [ ] release.yml 全绿（4 个构建 + publish-ecosystem）

@@ -1,9 +1,9 @@
 # 02 — Packaging for Release
 
-> The binary produced by `mcpp build` only runs on the local machine —— both
-> the loader and the RUNPATH point into `~/.mcpp/`. To distribute it to other
-> machines or deploy it to a server, use `mcpp pack` to produce a
-> self-contained tarball.
+> A default dynamically linked binary produced by `mcpp build` normally has a
+> loader and RUNPATH tied to the build sandbox. To distribute it to other
+> machines or deploy it to a server, use `mcpp pack` to produce a release
+> tarball or directory with the appropriate runtime closure.
 
 ## Two axes: target (libc) × mode (bundling depth)
 
@@ -19,7 +19,7 @@ Distribution is two orthogonal choices:
 | `system` | every `.so` (incl. third-party) | smallest | `.deb`/`.rpm`, same-distro fleet (pkg manager declares deps) |
 | `vendored` (default) | libc / libstdc++ / loader | +a few MB | Mainstream distros (Ubuntu 22+, Debian 12+, RHEL 9+) |
 | `self-contained` | nothing | +30–50 MB | Any Linux incl. older glibc; bundles closure + `run.sh` wrapper |
-| `static` | nothing (single file) | +5–10 MB | musl; any Linux x86_64, Docker scratch, Alpine |
+| `static` | nothing (single file) | +5–10 MB | musl; matching Linux x86_64 or aarch64 host, Docker scratch, Alpine |
 
 How to choose:
 
@@ -44,6 +44,7 @@ mcpp pack --mode system
 mcpp pack --mode static
 mcpp pack --mode self-contained        # alias: --mode bundle-all
 mcpp pack --target x86_64-linux-musl   # equivalent to --mode static
+mcpp pack --target aarch64-linux-musl  # ARM64 equivalent
 mcpp pack --format dir                 # output as a directory, no tarball
 mcpp pack -o myapp.tar.gz              # filename only: lands at target/dist/myapp.tar.gz
 mcpp pack -o /abs/path/myapp.tar.gz    # includes a directory: output to the literal path
@@ -73,7 +74,7 @@ target/dist/myapp-0.1.0-x86_64-linux-musl-static.tar.gz
     └── LICENSE
 ```
 
-### Mode `bundle-project` (default)
+### Mode `vendored` (default; alias: `bundle-project`)
 
 ```
 target/dist/myapp-0.1.0-x86_64-linux-gnu.tar.gz
@@ -95,7 +96,7 @@ base libraries such as `libc`, `libm`, `libstdc++`, `libgcc_s`, and
 `ld-linux-*` are assumed to already exist on the target system and are not
 bundled into the tarball.
 
-### Mode `bundle-all`
+### Mode `self-contained` (alias: `bundle-all`)
 
 ```
 target/dist/myapp-0.1.0-x86_64-linux-gnu-bundle-all.tar.gz
@@ -117,12 +118,15 @@ With `-o foo.tar.gz`, the top-level directory name also becomes `foo` (the
 package name and directory name always stay in sync).
 
 The ELF specification forbids `PT_INTERP` from using `$ORIGIN`, so in
-bundle-all mode the loader is invoked by absolute path through `run.sh` (and
+`self-contained` mode the loader is invoked by absolute path through `run.sh` (and
 the top-level wrapper of the same name):
 
 ```sh
 exec "$here/lib/ld-linux-x86-64.so.2" --library-path "$here/lib" "$here/bin/myapp" "$@"
 ```
+
+The layout and wrapper above use an x86_64 example. The packer derives the
+loader name from the target; for aarch64 it is `ld-linux-aarch64.so.1`.
 
 ## Configuration
 
@@ -131,15 +135,21 @@ common fields are:
 
 ```toml
 [pack]
-default_mode = "static"             # default mode when --mode is omitted
+default_mode = "static"             # override the normal vendored default for bare `mcpp pack`
 include      = ["share/**", "config/*.toml"]   # extra files to bundle
 exclude      = ["debug/**"]
 
-# Fine-tune the bundle-project filtering policy
+# Fine-tune the vendored filtering policy. The configuration key keeps its
+# established `bundle-project` spelling.
 [pack.bundle-project]
 also_skip    = ["libcustom.so"]     # libraries assumed to exist on the target system
 force_bundle = ["libfoo.so"]        # bundle even if matched by the PEP 600 list
 ```
+
+`[pack].default_mode` currently accepts the established manifest spellings
+`static`, `bundle-project`, and `bundle-all`; the `system` mode is selected
+explicitly with `mcpp pack --mode system`. CLI input accepts both the canonical
+and compatibility names described above.
 
 The `static` mode additionally requires a musl toolchain configured under
 `[target.<triple>]`; for the full setup, see the `mcpp.toml` in

@@ -28,7 +28,7 @@
 
 ## 为什么选择 mcpp
 
-mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux 和 macOS ARM64 上能为你提供便捷且友好的开发体验：
+mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux、macOS ARM64 和 Windows x86_64 上能为你提供便捷且友好的开发体验：
 
 - **默认模块化** — `mcpp new` 创建的项目模板直接使用 C++23 模块，`import std` 开箱即用
 - **文件级增量构建** — 基于 P1689 dyndep 的三层优化（前端脏检查 + 逐文件扫描 + BMI restat），只重编真正变化的模块
@@ -101,13 +101,14 @@ xlings install mcpp-short-cmd -y
 **其他方式**
 
 <details>
-<summary><b>方式 1</b> — 一键安装脚本</summary>
+<summary><b>方式 1</b> — 一键安装脚本（Linux x86_64/aarch64、macOS ARM64）</summary>
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
 ```
 
-安装到 `~/.mcpp/`，自动加进 shell PATH。删除 `~/.mcpp` 即可干净卸载。
+该脚本不支持 Windows；请使用上方 PowerShell 的 xlings 安装方式。它会安装到
+`~/.mcpp/`，并自动加入 shell PATH。删除 `~/.mcpp` 即可干净卸载。
 
 </details>
 
@@ -170,19 +171,23 @@ mcpp run
 ```
 hello/
 ├── mcpp.toml             ← 工程描述
-└── src/
-    └── main.cpp          ← import std; 直接可用
+├── src/
+│   └── main.cpp          ← import std; 直接可用
+└── tests/
+    └── test_smoke.cpp    ← `mcpp test` 自动发现
 ```
 
 ```toml
 # mcpp.toml
 [package]
-name = "hello"
-
-[targets.hello]
-kind = "bin"
-main = "src/main.cpp"
+name        = "hello"
+version     = "0.1.0"
+description = "A modular C++23 package"
+license     = "Apache-2.0"
 ```
+
+内置脚手架采用约定优于配置，不写 `[targets.hello]`：`src/main.cpp` 会推断出
+binary target，`mcpp test` 会自动发现 `tests/test_smoke.cpp`。
 
 ### 使用模块化库
 
@@ -206,7 +211,7 @@ import mcpplibs.cmdline;
 <details>
 <summary><b>构建系统</b></summary>
 
-- C++20/23 模块原生支持（接口单元、实现单元、模块分区）
+- C++20/23/26 模块原生支持（接口单元、实现单元、模块分区），另有 `c++latest` / `c++fly` 实验模式
 - `import std` / `import std.compat` 全自动预编译与缓存
 - 三层增量优化：前端脏检查 + 逐文件 P1689 dyndep + BMI copy-if-different restat
 - 指纹化 BMI 缓存：按编译器/标志/标准库哈希，跨项目共享
@@ -221,7 +226,7 @@ import mcpplibs.cmdline;
 <summary><b>工具链管理</b></summary>
 
 - 内置 GCC 16.1.0 + LLVM/Clang 20.1.7，一键安装
-- musl-gcc 全静态工具链（默认）
+- 首次运行按宿主选择：Linux x86_64 使用原生 glibc GCC，其他 Linux 架构使用 musl GCC，macOS 与具备可用 MSVC 的 Windows 使用 LLVM，裸 Windows 使用 MinGW-w64 GCC
 - 多版本共存：`mcpp toolchain install gcc 16` / `mcpp toolchain install llvm 20`
 - 隔离沙盒：所有工具链在 `~/.mcpp/registry/`，不影响系统
 - 按平台指定：`linux = "gcc@16"`, `macos = "llvm@20"`
@@ -256,8 +261,8 @@ import mcpplibs.cmdline;
 <details>
 <summary><b>打包与发布</b></summary>
 
-- `mcpp pack`：三种 Linux 发布模式 — static（musl全静态）/ bundle-project / bundle-all
-- musl 全静态二进制：单文件可分发，无 glibc 依赖（Linux x86_64）
+- `mcpp pack`：四种 Linux 发布模式 — system / vendored（默认）/ self-contained / static；`bundle-project` 与 `bundle-all` 仍是兼容别名
+- musl 全静态二进制：单文件可分发，无 glibc 依赖（匹配的 Linux x86_64 或 aarch64 target）
 - `mcpp publish`：生成 xpkg.lua + 发布到包索引
 - 自动 patchelf 修正 RPATH（Linux）
 
@@ -271,6 +276,8 @@ import mcpplibs.cmdline;
 - `mcpp test [pattern] [-- args]` — 自动发现并运行测试(按名字过滤;`--list`、`--timeout <s>`、`--message-format json`)
 - `mcpp search` — 搜索包索引
 - `mcpp add / remove / update` — 依赖管理
+- `mcpp why [toolchain|runtime|deps]` — 解释已解析的构建决策
+- `mcpp --offline` / `MCPP_OFFLINE=1` — 仅使用已存在的本地状态
 - `mcpp explain E0001` — 错误码详细解释
 - `mcpp self doctor` — 环境自诊断
 
@@ -300,7 +307,8 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 
 ✅ 已验证——CI 端到端构建**并真实执行**产物(含 qemu/wine)｜ 🔄 计划中
 
-> Linux release 二进制为 musl 全静态构建(`x86_64-linux-musl`)。
+> Linux release 二进制为 x86_64 与 aarch64 的 musl 全静态构建
+> (`x86_64-linux-musl` 与 `aarch64-linux-musl`)。
 > 旧拼写——`x86_64-w64-mingw32`、`gcc@16.1.0-musl`、`mingw-cross@…`、`musl-gcc@…`——
 > 作为别名**永久接受**,归一到上表的 canonical 形式。
 >
@@ -353,7 +361,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 **基本流程**
 
 1. 创建 Issue — Bug 修复、新功能、优化等，先在 [issues](https://github.com/mcpp-community/mcpp/issues) 创建讨论
-2. 实现改动 — Fork 仓库，创建分支，实现并验证（`mcpp build` + E2E 测试）
+2. 实现改动 — Fork 仓库，创建分支，并按改动范围验证（行为改动运行 `mcpp build` 与相关测试；纯文档改动复核示例和链接）
 3. 提交 PR — 使用 `gh pr create`，确保 CI 通过
 4. CI 必须通过 — CI 不通过的 PR 不会被合入
 

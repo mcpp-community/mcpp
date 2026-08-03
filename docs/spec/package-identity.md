@@ -5,9 +5,9 @@
 | **规范编号** | SPEC-001 |
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
-| **版本** | 1.0 |
-| **最后修改** | 2026-07-25 |
-| **对应实现** | mcpp **0.0.106**(xlings >= 0.4.69) |
+| **版本** | 1.1 |
+| **最后修改** | 2026-08-03 |
+| **最低实现版本** | mcpp **0.0.106**(xlings >= 0.4.69；当前实现为 2026.8.3.2) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
 | **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
@@ -26,11 +26,13 @@
 
 | 标记 | 含义 |
 |---|---|
-| ✅ **已实现** | 0.0.106 的行为与本规范一致 |
+| ✅ **已实现** | 自 mcpp 0.0.106 起的行为与本规范一致 |
 | ⚠️ **部分实现** | 已有实现,但语义或覆盖面与本规范有差异(差异已注明) |
 | ❌ **未实现** | 本规范要求但尚未支持;当前行为已注明 |
 
-> **本规范已在 mcpp 0.0.106 全部实现。** 索引作者按 §3 书写即可。0.0.105 及更早版本要求的过渡形态(`name` 必须写成 `<namespace>.<name>`)仍被接受为**兼容写法**,见 §8。
+> **本规范所需行为自 mcpp 0.0.106 起已全部实现，当前实现继续符合。** 索引作者按 §3
+> 书写即可。0.0.105 及更早版本要求的过渡形态(`name` 必须写成
+> `<namespace>.<name>`)仍被接受为**兼容写法**,见 §8。
 
 ---
 
@@ -213,7 +215,7 @@ error: dependency 'asio': no package found under the namespaces mcpp searched
 有序候选身份列表  [(ns₁,n₁), (ns₂,n₂), …]
    │  逐个尝试
    ▼
-① 发现:在候选所属索引里定位描述符文件        ← 当前受文件名约束(§3.4)
+① 发现:先探测推荐文件名，落空后按声明身份扫描描述符（§3.4）
 ② 校验:xpkg_lua_identity_matches 复核声明身份  ← §5.2
 ③ 收敛:INV-RESOLVE 拒绝裸名命中第三方 ns      ← §4.2
 ④ 回填:用描述符**声明的** namespace 定身份     ← §5.3
@@ -336,7 +338,7 @@ asio = "1.38.1"
   → 校验:声明 (chriskohlhoff, chriskohlhoff.asio)
           归一化 → (chriskohlhoff, asio) == 候选        ✓
   → 身份 (chriskohlhoff, asio)
-  → wire key   chriskohlhoff.asio       (§7.2 后:asio)
+  → wire key   chriskohlhoff.asio
   → target     chriskohlhoff:chriskohlhoff.asio@1.38.1
   → store dir  chriskohlhoff-x-chriskohlhoff.asio  (§7.2 后:chriskohlhoff-x-asio)
 ```
@@ -379,6 +381,7 @@ lua = "0.0.3"
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.1 | 2026-08-03 | 按当前实现复核：澄清文件名发现是快路径加身份回退扫描，修正 legacy `package.name` 的 wire key 示例，并将 0.0.106 明确为最低实现版本 |
 | 0.1 | 2026-07-25 | 首版草案。整合 #278 的双向验证结论:确立「身份 = `(namespace, name)`、层级归 `namespace`、`name` 为原子段」为规范形态,并如实标注 0.0.105 的过渡形态(强制 FQN)与全部待实现项 |
 | 1.0 | 2026-07-25 | **mcpp 0.0.106 全部实现**:身份归一化去 split-on-last-dot、target 用字面 `name`、store 目录、文件名自由(快路径+身份扫描)、`name` 形态校验反转。xlings 0.4.69 修好 #381 后 §3.3 的 `(namespace, name)` 唯一自然成立。状态 草案 → 评审中 |
 | 0.6 | 2026-07-25 | §3.3 改按 **`(namespace, name)` 唯一**表述(与身份数据模型、xlings 寻址模型一致);单仓同名冲突重新定位为 xlings ≤0.4.68 的**实现缺口**(xlings#381 修复中),不再作为规范约束或索引侧 lint 要求 |
@@ -389,5 +392,5 @@ lua = "0.0.3"
 
 ---
 
-> **本规范已在 mcpp 0.0.106 全部实现**,状态为「评审中」。
+> **本规范所需行为自 mcpp 0.0.106 起已全部实现，当前实现仍符合**，状态为「评审中」。
 > 英文版待补(`docs/spec/` 顶层按仓库惯例为英文,本文档先以中文成稿)。

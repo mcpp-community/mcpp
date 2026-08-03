@@ -87,7 +87,7 @@ kind = "lib"
 # Shared library
 [targets.mylib]
 kind = "shared"
-soname = "libmylib.so.1"  # Optional: ELF/Mach-O ABI name; an alias of the same name is generated at runtime
+soname = "libmylib.so.1"  # Optional: Linux/ELF ABI name; an alias of the same name is generated at runtime
 ```
 
 `soname` is the ABI name for a shared library, analogous to `SOVERSION`/`SONAME` in
@@ -96,6 +96,12 @@ generates a `<name> -> lib<target>.so` alias in the output directory, so that
 downstream programs can load the library via its standard ABI name through
 `DT_NEEDED` or `dlopen()`. This field only applies to `kind = "shared"`, and the
 value must be a filename basename.
+
+Shared-library targets are currently supported only for Linux/ELF targets. A
+`kind = "shared"` target for macOS or Windows (including a cross build) is
+rejected before planning because mcpp does not yet model Mach-O install names
+or PE import libraries. Use `kind = "lib"` for a static library on those
+targets, or build the shared library for Linux.
 
 #### Per-target keys
 
@@ -226,6 +232,11 @@ on request).
 
 `static_stdlib` is the older spelling and still works: `true` means
 `self-contained`, `false` means `host-coupled`. An explicit `cxx_runtime` wins.
+
+> **Current implementation limitation.** The parser recognizes `cxx_runtime`,
+> but the current `[build]` unknown-key allowlist omits it. A normal build can
+> therefore emit an unsupported-key warning, and `--strict` rejects the manifest.
+> This is an implementation defect, not a different spelling or contract.
 
 **A contract that cannot be honored is reported, never silently downgraded.** If a
 toolchain ships no `libc++.a`, or a contract has no mechanism on that platform
@@ -550,7 +561,7 @@ default = "gcc@16.1.0"
 
 # Cross-compilation target override
 [target.x86_64-linux-musl]
-toolchain = "gcc@15.1.0-musl"
+toolchain = "gcc@16.1.0"
 linkage   = "static"
 ```
 
@@ -1080,7 +1091,7 @@ version = "1.0.0"
 default = "gcc@16.1.0"
 
 [target.x86_64-linux-musl]
-toolchain = "gcc@15.1.0-musl"
+toolchain = "gcc@16.1.0"
 linkage   = "static"
 ```
 

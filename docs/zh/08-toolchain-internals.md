@@ -22,24 +22,32 @@ ToolchainLinkModel(C 库轴的唯一解析器)
         ├──► build_program     (build.mcpp 宿主编译)
         └──► cfg 再生          (供人类直接使用的 clang++.cfg)
         ▼
-hermetic 链接校验(`-###` 干跑)  ← 断言 CRT/loader 全部解析进沙箱
+hermetic 链接校验(`-###` 干跑)  ← 校验沙箱 CRT/loader 的解析结果
 ```
 
 贯穿一切的两条原则:
 
-1. **沙箱工具链自包含。** 产物的 CRT 启动对象、libc、动态链接器全部来自沙箱
-   payload——绝不静默落到宿主。在没有编译器、没有 `/usr/lib/**/Scrt1.o` 的机器
-   (全新 WSL2、精简容器)上一切照常;在装了宿主工具链的机器上也不会有任何泄漏。
+1. **沙箱工具链默认接受 hermetic 校验。** 在正常的 payload-first 或 sysroot 路径中,
+   产物的 CRT 启动对象、libc、动态链接器必须解析在允许的沙箱前缀内。这不是无条件的
+   隔离保证:`CLibMode::None` 会落到宿主默认,系统/PATH 编译器是显式选择宿主世界,
+   `[build] allow_host_libs = true` 或 `MCPP_ALLOW_HOST_LIBS=1` 会退出宿主库校验。
+   在没有编译器、没有 `/usr/lib/**/Scrt1.o` 的机器(全新 WSL2、精简容器)上,正常的
+   沙箱路径仍可工作。
 2. **每层路径知识只有一个属主。** 过去"如何对 payload glibc 链接"有四份漂移副本,
    现在收敛为一个解析器(`linkmodel`);过去 fixup 行为按入口路径各自为政,现在
    是一条管线。副本间漂移正是一整类 bug 的来源(issue #195)。
 
 ## 2. 工具链解析
 
-工具链 spec(`gcc@16.1.0`、`llvm@22.1.8`、`gcc@15.1.0-musl`)映射为 xim 包
-(`src/toolchain/registry.cppm`:`parse_toolchain_spec` → `to_xim_package`,
-产出含 xim 包名、版本、前端候选的 `XimToolchainPackage`)。payload 经 xlings
-后端解析/自动安装到沙箱
+自 0.0.93 起,身份由两条正交轴构成:`ToolchainSpec` 是
+`(family ∈ gcc|llvm|msvc,version,target Triple)`。`triple.cppm` 负责唯一的
+triple 解析器与封闭的已知 target 词汇表;`compat.cppm` 只处理旧拼写
+(`gcc@15.1.0-musl`、`musl-gcc`、`mingw`、`mingw-cross`、`clang`、
+`<triple>-gcc`),解析时归一化且永久兼容。`to_xim_package` 把
+`(family,target,host)` 映射为含 xim 包名、版本、前端候选的
+`XimToolchainPackage`;这也是 Linux 宿主的 `mingw-cross-gcc` 与 Windows
+宿主的 `mingw-gcc` 等分发层名称存在的位置,它们不是面向用户的写法。payload 经
+xlings 后端解析/自动安装到沙箱
 (`$MCPP_HOME/registry/data/xpkgs/xim-x-<name>/<version>/`)。
 
 `detect`/`probe`(`src/toolchain/detect.cppm`、`probe.cppm`)随后推导:
@@ -68,7 +76,8 @@ CLibMode::PayloadFirst   找到 glibc/linux-headers xpkg(bundled LLVM 与
                                  -L <glibcLib> [clang 另加 -rpath 与 --dynamic-linker]
 CLibMode::Sysroot        可用的 --sysroot(GCC include-fixed 世界、自包含 musl
                          sysroot、macOS SDK)
-CLibMode::None           无可用来源——落宿主默认,由 hermetic 校验(§6)报告泄漏
+CLibMode::None           无可用来源——落宿主默认;除非显式允许宿主库,否则由
+                         hermetic 校验(§6)拒绝该泄漏
 ```
 
 `ClangDriverModel` 服务 bundled LLVM:mcpp 构建永远传 `--no-default-config`

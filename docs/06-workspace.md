@@ -141,14 +141,14 @@ Configuration precedence (highest to lowest):
 default = "gcc@16.1.0"
 
 [target.x86_64-linux-musl]
-toolchain = "gcc@15.1.0-musl"
+toolchain = "gcc@16.1.0"
 linkage   = "static"
 ```
 
 ```toml
 # a member overrides the toolchain
 [toolchain]
-default = "clang@19.0"
+default = "llvm@20.1.7"
 ```
 
 ## 5. Build Commands

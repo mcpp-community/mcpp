@@ -85,7 +85,7 @@ kind = "lib"
 # 共享库
 [targets.mylib]
 kind = "shared"
-soname = "libmylib.so.1"  # 可选: ELF/Mach-O ABI 名称,运行时会生成同名 alias
+soname = "libmylib.so.1"  # 可选: Linux/ELF ABI 名称,运行时会生成同名 alias
 ```
 
 `soname` 用于共享库的 ABI 名称,类似 Autotools/CMake 中的
@@ -93,6 +93,11 @@ soname = "libmylib.so.1"  # 可选: ELF/Mach-O ABI 名称,运行时会生成同�
 `-Wl,-soname,<name>`,并在输出目录生成 `<name> -> lib<target>.so` alias,
 让下游程序可通过标准 ABI 名称 `DT_NEEDED` 或 `dlopen()` 加载该库。
 该字段只对 `kind = "shared"` 有效,值必须是文件名 basename。
+
+当前共享库目标只支持 Linux/ELF。面向 macOS 或 Windows 的
+`kind = "shared"` 目标(包括交叉构建)会在规划阶段直接拒绝,因为 mcpp
+尚未建模 Mach-O install name 或 PE import library。若目标是这些平台,请使用
+`kind = "lib"` 构建静态库,或将共享库目标设为 Linux。
 
 #### 按目标的键(per-target keys)
 
@@ -209,6 +214,10 @@ libc++.a/libc++abi.a/libunwind.a。更低的 macOS floor(11–13)需自建 libc+
 
 `static_stdlib` 是旧拼写,仍然有效:`true` 等价于 `self-contained`,`false`
 等价于 `host-coupled`。显式写了 `cxx_runtime` 时以后者为准。
+
+> **当前实现限制。** 解析器能识别 `cxx_runtime`，但当前 `[build]` 未知键白名单漏了
+> 它。因此普通构建可能输出 unsupported-key warning，`--strict` 会拒绝该 manifest。
+> 这是实现缺陷，不是另一种拼写或不同的运行时契约。
 
 **兑现不了的契约会被报出来,绝不静默降级。** 若工具链不带 `libc++.a`,或某个
 契约在该平台上没有对应机制(MSVC 运行时的 `self-contained` 需要 `/MT`,mcpp
@@ -839,7 +848,7 @@ version = "1.0.0"
 default = "gcc@16.1.0"
 
 [target.x86_64-linux-musl]
-toolchain = "gcc@15.1.0-musl"
+toolchain = "gcc@16.1.0"
 linkage   = "static"
 ```
 

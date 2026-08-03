@@ -141,14 +141,14 @@ mbedtls = "4.0.0"          # 覆盖，不使用 workspace 版本
 default = "gcc@16.1.0"
 
 [target.x86_64-linux-musl]
-toolchain = "gcc@15.1.0-musl"
+toolchain = "gcc@16.1.0"
 linkage   = "static"
 ```
 
 ```toml
 # 某成员覆盖工具链
 [toolchain]
-default = "clang@19.0"
+default = "llvm@20.1.7"
 ```
 
 ## 5. 构建命令

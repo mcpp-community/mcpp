@@ -23,7 +23,7 @@ examples.
 
 | # | Path | Description | Key Concepts |
 |---|---|---|---|
-| 01 | [`examples/01-hello`](../examples/01-hello/) | Minimal single-file project with `import std` | The default output structure of `mcpp new` |
+| 01 | [`examples/01-hello`](../examples/01-hello/) | Minimal single-file project with `import std` | The minimal package shape (`mcpp new` also emits `tests/test_smoke.cpp`) |
 | 02 | [`examples/02-with-deps`](../examples/02-with-deps/) | Adds the `mcpplibs.cmdline` dependency to parse command-line arguments | `[dependencies]`, SemVer, `mcpp.lock` |
 | 03 | [`examples/03-pack-static`](../examples/03-pack-static/) | Produces a fully static release package via `mcpp pack --mode static` | `[target.<triple>]` and `[pack]` configuration |
 
@@ -31,8 +31,9 @@ examples.
 
 We recommend reading them in numerical order:
 
-1. **`01-hello`** shows the minimal skeleton of an mcpp project (`mcpp.toml` and
-   `src/main.cpp`) and demonstrates the basic usage of `import std`.
+1. **`01-hello`** shows the minimal package skeleton (`mcpp.toml` and
+   `src/main.cpp`) and demonstrates the basic usage of `import std`. The current
+   `mcpp new` scaffold also emits `tests/test_smoke.cpp`.
 2. **`02-with-deps`** builds on the previous example by introducing an external
    dependency, covering the lock-file mechanism and how the modular package
    index works.

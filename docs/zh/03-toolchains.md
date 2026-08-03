@@ -12,27 +12,24 @@ C++23 模块对编译器版本较为敏感,不同版本的 GCC / Clang 在模块
 
 ## 自动安装
 
-首次运行 `mcpp build` 时,若尚未配置工具链,mcpp 会自动安装当前平台
-的默认工具链并将其设为全局默认:
+首次运行 `mcpp build` 时,若尚未配置工具链,mcpp 会安装并持久化一对与当前
+宿主匹配的默认值:
 
-```
-First run no toolchain configured — installing gcc@15.1.0-musl (musl, static) as default
-Downloading xim:musl-gcc@15.1.0 [====>      ] 312 MB / 808 MB  3.7 MB/s
-Default set to gcc@15.1.0-musl
-```
+- Linux x86_64 使用面向原生 glibc ABI 的 `gcc@16.1.0`,X11、OpenGL 与系统库
+  可直接链接。
+- 其他 Linux 架构使用 `gcc@15.1.0-musl`,这是自包含的全静态工具链。
+- macOS 使用 `llvm@20.1.7`。
+- Windows 存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@20.1.7`;没有可用 MSVC
+  时使用 `gcc@16.1.0` 和 `x86_64-windows-gnu` target(MinGW-w64,默认 static)。
 
-首跑默认是 host-aware 的:Linux x86_64 → `gcc@16.1.0`(glibc——平台原生
-ABI,X11/GL/系统库开箱即链);其他 Linux arch(aarch64 等)→
-`gcc@15.1.0-musl`(自包含,全静态);macOS 与 Windows → `llvm@20.1.7`。
-任何 Linux 宿主上,全静态 musl 产物始终只差一个参数:
+在 Linux 宿主上,全静态 musl 产物始终只差一个参数:
 `mcpp build --target x86_64-linux-musl`。
 
 后续构建不再触发该流程。
 
 > [!TIP]
-> 在 CI 或离线环境中,可通过设置 `MCPP_NO_AUTO_INSTALL=1` 关闭自动
-> 安装行为。此时若未安装工具链,`mcpp build` 将直接报错而不会发起
-> 网络请求。
+> 在 CI 中可设置 `MCPP_NO_AUTO_INSTALL=1` 只关闭工具链自动安装。需要完整
+> 离线时,使用 `mcpp --offline` 或 `MCPP_OFFLINE=1`;它们还会禁止索引刷新和下载。
 
 ## 身份模型:Toolchain × Target
 
@@ -52,7 +49,7 @@ ABI,X11/GL/系统库开箱即链);其他 Linux arch(aarch64 等)→
 
 ```bash
 mcpp toolchain install gcc 16.1.0           # host target(Linux 上为 GNU libc)
-mcpp toolchain install llvm 20.1.7          # LLVM/Clang,macOS/Windows 默认工具链
+mcpp toolchain install llvm 20.1.7          # LLVM/Clang,macOS 与有可用 MSVC 的 Windows 默认工具链
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target 的链
 mcpp toolchain install --target x86_64-windows-gnu          # 省略 family →
                                             # 取该 target 的约定 pin(gcc@16.1.0)
@@ -166,11 +163,8 @@ windows = "gcc@16"            # Windows 上的 gcc family = MinGW-w64
 ```toml
 [toolchain]
 default = "gcc@16.1.0"
-
-# 也可按平台分发
-[toolchain]
-linux = "gcc@15.1.0-musl"
-macos = "llvm@20"
+linux   = "gcc@16.1.0"
+macos   = "llvm@20.1.7"
 ```
 
 项目级声明优先于全局默认配置。
@@ -230,8 +224,9 @@ mcpp 的运行行为可通过以下环境变量调整:
 |---|---|
 | `MCPP_HOME` | 覆盖沙盒位置(默认 `~/.mcpp/`),绝对路径优先级最高 |
 | `MCPP_NO_AUTO_INSTALL=1` | 禁用工具链自动安装,适用于 CI 与离线环境 |
+| `MCPP_OFFLINE=1` | 完全不访问网络,等价于全局 `--offline` |
 | `MCPP_NO_COLOR=1` / `NO_COLOR=1` | 禁用彩色输出 |
-| `MCPP_LOG=trace\|debug\|info\|warn\|error` | 日志级别 |
+| `MCPP_LOG_LEVEL=debug\|info\|warn\|error\|off` | 日志级别 |
 
 未显式设置 `MCPP_HOME` 时,mcpp 将基于二进制所在目录的上一级路径
 自动定位沙盒位置(release tarball 解压至 `~/.mcpp/` 后,`~/.mcpp/`

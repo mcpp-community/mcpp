@@ -4,9 +4,8 @@
 
 ## Installation
 
-You only need a Linux x86_64 or macOS ARM64 environment — no need to install GCC, xlings, or any other dependencies beforehand.
-On its first run, mcpp installs the default toolchain into an isolated sandbox (`~/.mcpp/`).
-Linux defaults to musl-gcc, while macOS defaults to LLVM/Clang.
+Supported hosts are Linux x86_64 / aarch64, macOS ARM64, and Windows x86_64. You do not need to install GCC, xlings, or any other build dependency beforehand.
+On its first run, mcpp installs a default toolchain into an isolated sandbox (`~/.mcpp/`). The choice is host-aware: Linux x86_64 uses `gcc@16.1.0`; other Linux architectures use `gcc@15.1.0-musl`; macOS uses `llvm@20.1.7`; Windows uses `llvm@20.1.7` when usable MSVC is available and otherwise uses `gcc@16.1.0` for `x86_64-windows-gnu`.
 
 We recommend installing via [xlings](https://xlings.d2learn.org), which keeps mcpp isolated from your system environment:
 
@@ -14,27 +13,35 @@ We recommend installing via [xlings](https://xlings.d2learn.org), which keeps mc
 xlings install mcpp -y
 ```
 
-Alternatively, use the one-line installer script (xlings is bundled, and everything is installed under `~/.mcpp/`):
+Alternatively, on Linux x86_64/aarch64 or macOS ARM64, use the one-line
+installer script (xlings is bundled, and everything is installed under
+`~/.mcpp/`):
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
 ```
 
+The script does not support Windows; install through the PowerShell xlings
+command in the README instead.
+
 For full installation instructions (including xlings install commands, Windows support, and more), see the ["Installation" section of the README](../README.md#install).
 
-Once installation is complete, start a new shell session or run `source ~/.bashrc`, then verify:
+Once installation is complete, start a new shell session, then verify:
 
 ```bash
 mcpp --version
-# mcpp 2026.7.29.1
+# mcpp <installed version>
 ```
 
 > [!TIP]
-> If you get `command not found`, it usually means `~/.mcpp/bin` has not yet
-> been added to the current shell's PATH. Restart your terminal, or run
-> `source ~/.bashrc` (use `~/.zshrc` for zsh, or `exec fish` for fish) to
-> apply the change. You can also invoke mcpp directly via its absolute path
-> `~/.mcpp/bin/mcpp`.
+> If the Unix release installer reports `command not found`, `~/.mcpp/bin` has
+> not yet been added to the current shell's PATH. Restart your terminal, or run
+> `source ~/.bashrc` (use `~/.zshrc` for zsh, or `exec fish` for fish) to apply
+> the change; `~/.mcpp/bin/mcpp` is the direct path for that installer. If you
+> installed through xlings, use the active xlings bin directory instead. On
+> Windows, install through the PowerShell xlings command, restart PowerShell
+> rather than using `source`, and verify the active command with
+> `Get-Command mcpp.exe`.
 
 ## Creating a Project
 
@@ -46,12 +53,14 @@ This generates the following directory structure:
 
 ```
 hello/
-├── mcpp.toml         ← project manifest
-└── src/
-    └── main.cpp
+├── mcpp.toml            ← project manifest
+├── src/
+│   └── main.cpp
+└── tests/
+    └── test_smoke.cpp   ← runs with `mcpp test`
 ```
 
-By default, `src/main.cpp` is a C++23 modular hello world:
+The generated manifest contains only package metadata; mcpp infers a binary target from `src/main.cpp`. By default, that file is a C++23 modular hello world:
 
 ```cpp
 import std;
@@ -67,15 +76,13 @@ int main() {
 ```bash
 mcpp build
 # Compiling hello v0.1.0 (.)
-# Finished release [optimized] in 1.6s
 
 mcpp run
 # Hello from hello!
 # Built with import std + std::println on modular C++23.
 ```
 
-The first build downloads the default toolchain (musl-gcc 15.1 on Linux, LLVM/Clang 20.1 on macOS),
-showing progress and speed along the way. Once downloaded, all mcpp projects share the same sandbox.
+The first build downloads the host-aware default toolchain, showing progress and speed along the way. Once downloaded, all mcpp projects share the same sandbox.
 
 ## Incremental Compilation and Testing
 
@@ -124,12 +131,13 @@ and adds it to the build graph. For a complete example, see `02-with-deps` in
 `mcpp pack` bundles your build artifacts and runtime dependencies into a self-contained tarball that can be distributed independently:
 
 ```bash
-mcpp pack                          # default bundle-project, includes the project's third-party .so files
-mcpp pack --mode static            # fully static (musl)
-mcpp pack --mode bundle-all        # fully self-contained, including libc and ld-linux
+mcpp pack                          # vendored by default: bundle project third-party .so files
+mcpp pack --mode system            # rely on target-system libraries
+mcpp pack --mode static            # fully static musl build
+mcpp pack --mode self-contained    # bundle loader, libc, and dependencies
 ```
 
-For the differences between the three modes and their artifact layouts, see [02 — Packaging and Release](02-pack-and-release.md).
+For the differences between the four modes and their artifact layouts, see [02 — Packaging and Release](02-pack-and-release.md). `bundle-project` and `bundle-all` remain accepted aliases for `vendored` and `self-contained`.
 
 ## Further Reading
 
@@ -145,3 +153,4 @@ For the differences between the three modes and their artifact layouts, see [02 
   run `mcpp new --list-templates imgui` to see all templates the library provides, or use `--template imgui:docking` to select a specific one).
 - Explaining default decisions: `mcpp why [toolchain|runtime|deps]`; host capability checkup: `mcpp self doctor`;
   machine-readable resolution manifest: the build artifact `target/<triple>/<fp>/resolution.json`.
+- Offline operation: `mcpp --offline` or `MCPP_OFFLINE=1` prevents index refreshes, downloads, and toolchain installation.
