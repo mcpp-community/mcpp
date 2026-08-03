@@ -13,6 +13,7 @@ import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.triple;
 import mcpp.platform;
 
 export namespace mcpp::build {
@@ -197,29 +198,52 @@ std::vector<std::string> dependency_name_candidates(
     return out;
 }
 
-std::filesystem::path target_output(const mcpp::manifest::Target& t) {
+// The naming this MACHINE would use for its own binaries. Correct only for a
+// host-target build; passed to artifact_naming() as the fallback for an empty
+// triple, and never consulted directly when a target triple is present.
+mcpp::toolchain::triple::ArtifactNaming host_artifact_naming() {
+    return {
+        .exeSuffix            = mcpp::platform::exe_suffix,
+        .libPrefix            = mcpp::platform::lib_prefix,
+        .staticLibExt         = mcpp::platform::static_lib_ext,
+        .sharedLibExt         = mcpp::platform::shared_lib_ext,
+        .sharedNeedsImportLib = mcpp::platform::is_windows,
+    };
+}
+
+mcpp::toolchain::triple::ArtifactNaming naming_for(const mcpp::toolchain::Toolchain& tc) {
+    auto t = mcpp::toolchain::triple::parse(tc.targetTriple);
+    return mcpp::toolchain::triple::artifact_naming(
+        t ? *t : mcpp::toolchain::triple::Triple{}, host_artifact_naming());
+}
+
+// What the artifact is CALLED — a property of the target, not of this machine.
+// Reading the host constants here made ninja declare an output the compiler
+// never writes (Linux -> PE: declared `bin/foo`, produced `bin/foo.exe`), so
+// the link edge could never be satisfied and reran on every build.
+std::filesystem::path target_output(const mcpp::manifest::Target& t,
+                                    const mcpp::toolchain::triple::ArtifactNaming& n) {
     if (t.kind == mcpp::manifest::Target::Library) {
         return std::filesystem::path("bin") /
-               std::format("{}{}{}", mcpp::platform::lib_prefix, t.name,
-                           mcpp::platform::static_lib_ext);
+               std::format("{}{}{}", n.libPrefix, t.name, n.staticLibExt);
     }
     if (t.kind == mcpp::manifest::Target::SharedLibrary) {
         return std::filesystem::path("bin") /
-               std::format("{}{}{}", mcpp::platform::lib_prefix, t.name,
-                           mcpp::platform::shared_lib_ext);
+               std::format("{}{}{}", n.libPrefix, t.name, n.sharedLibExt);
     }
     return std::filesystem::path("bin") /
-           std::format("{}{}", t.name, mcpp::platform::exe_suffix);
+           std::format("{}{}", t.name, n.exeSuffix);
 }
 
 std::vector<std::filesystem::path> runtime_aliases_for_target(
-    const mcpp::manifest::Target& t) {
+    const mcpp::manifest::Target& t,
+    const mcpp::toolchain::triple::ArtifactNaming& n) {
     std::vector<std::filesystem::path> aliases;
     if (t.kind != mcpp::manifest::Target::SharedLibrary || t.soname.empty()) {
         return aliases;
     }
 
-    auto output = target_output(t);
+    auto output = target_output(t, n);
     if (t.soname != output.filename().string()) {
         aliases.push_back(output.parent_path() / t.soname);
     }
@@ -232,19 +256,30 @@ bool is_implementation_source(const std::filesystem::path& source) {
         || ext == ".S" || ext == ".s" || ext == ".asm";
 }
 
-std::vector<std::string> shared_library_link_flags(const mcpp::manifest::Target& t) {
+// How a CONSUMER links against a shared library. Also a target property: PE has
+// no rpath and wants an import library, Mach-O uses @loader_path, ELF uses
+// $ORIGIN. Keying this on the host pointed it the wrong way under cross builds.
+//
+// NOTE: shared libraries have never been verified end to end on PE or Mach-O —
+// every shared-library e2e declares `# requires: elf`, and that capability is
+// only granted on Linux. The PE branch here (linking the .dll path directly)
+// is therefore unproven: mingw's ld tolerates it, MSVC's link.exe cannot.
+// make_plan() rejects SharedLibrary targets on non-ELF targets rather than
+// emitting something unverifiable — see the guard there.
+std::vector<std::string> shared_library_link_flags(
+    const mcpp::manifest::Target& t,
+    const mcpp::toolchain::triple::ArtifactNaming& n,
+    const mcpp::toolchain::triple::Triple& target) {
     std::vector<std::string> flags;
-    if constexpr (mcpp::platform::is_windows) {
-        flags.push_back(target_output(t).generic_string());
+    const bool pe    = n.sharedNeedsImportLib;
+    const bool macho = target.empty() ? bool(mcpp::platform::is_macos)
+                                      : target.os == "macos";
+    if (pe) {
+        flags.push_back(target_output(t, n).generic_string());
     } else {
-        flags.push_back("-L" + target_output(t).parent_path().generic_string());
-        if constexpr (mcpp::platform::supports_rpath) {
-            if constexpr (mcpp::platform::is_macos) {
-                flags.push_back("-Wl,-rpath,@loader_path");
-            } else {
-                flags.push_back("-Wl,-rpath,'$$ORIGIN'");
-            }
-        }
+        flags.push_back("-L" + target_output(t, n).parent_path().generic_string());
+        flags.push_back(macho ? "-Wl,-rpath,@loader_path"
+                              : "-Wl,-rpath,'$$ORIGIN'");
         flags.push_back("-l" + t.name);
     }
     return flags;
@@ -384,6 +419,45 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.manifest         = manifest;
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
+
+    // Artifact naming and shared-library link shape are properties of the
+    // TARGET. Resolved once here from tc.targetTriple (empty = host target, in
+    // which case the host constants ARE the right answer) and threaded down,
+    // so nothing below reaches for mcpp::platform to describe an output.
+    const auto targetTriple = [&] {
+        auto t = mcpp::toolchain::triple::parse(tc.targetTriple);
+        return t ? *t : mcpp::toolchain::triple::Triple{};
+    }();
+    const auto naming = naming_for(tc);
+
+    // Shared libraries have never been verified end to end on PE or Mach-O:
+    // every shared-library e2e declares `# requires: elf`, and run_all.sh only
+    // grants that capability on Linux. The non-ELF paths through
+    // shared_library_link_flags are therefore unproven — mingw's ld tolerates
+    // linking a .dll directly, MSVC's link.exe cannot, and neither has an
+    // import library to link against because mcpp does not model one.
+    //
+    // Refusing is strictly better than emitting something unverifiable: a
+    // branch that is neither tested nor willing to say no is the hardest kind
+    // of debt, because it can be neither trusted nor deleted.
+    if (!targetTriple.empty() && targetTriple.os != "linux") {
+        for (auto const& t : manifest.targets) {
+            if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
+            return std::unexpected(std::format(
+                "target '{}': shared libraries are only supported for Linux (ELF) "
+                "targets today.\n"
+                "  target '{}' is kind=\"shared\"; build it as kind=\"lib\" "
+                "(static) for this target,\n"
+                "  or build it for a linux target.\n"
+                "  note: PE consumers need an import library and Mach-O needs "
+                "install-name handling;\n"
+                "        neither is modelled yet, so mcpp refuses rather than "
+                "producing an artifact\n"
+                "        nothing has ever verified.",
+                targetTriple.str(), t.name));
+        }
+    }
+
     bool experimentalStd = false;
     if (auto stdCfg = mcpp::manifest::normalize_cpp_standard(manifest.package.standard)) {
         plan.cppStandard = stdCfg->canonical;
@@ -686,7 +760,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 .packageIndex = i,
                 .packageName = qname,
                 .target      = t,
-                .output      = target_output(t),
+                .output      = target_output(t, naming),
             });
             sharedTargetsByPackage[i].push_back(targetIndex);
         }
@@ -767,9 +841,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 // (0.0.104-0.0.106). The failure surfaced far away, as
                 // `libX11.so: undefined reference to xcb_connect` or a test
                 // exiting 127.
-                for (auto const& alias : runtime_aliases_for_target(dep.target))
+                for (auto const& alias : runtime_aliases_for_target(dep.target, naming))
                     lu.implicitInputs.push_back(alias);
-                auto flags = shared_library_link_flags(dep.target);
+                auto flags = shared_library_link_flags(dep.target, naming, targetTriple);
                 lu.linkFlags.insert(lu.linkFlags.end(), flags.begin(), flags.end());
             }
         }
@@ -812,7 +886,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.kind       = LinkUnit::SharedLibrary;
         lu.output     = dep.output;
         lu.soname     = dep.target.soname;
-        lu.runtimeAliases = runtime_aliases_for_target(dep.target);
+        lu.runtimeAliases = runtime_aliases_for_target(dep.target, naming);
         append_package_objects(lu, dep.packageName);
         append_direct_shared_deps(lu, dep.packageIndex);
         plan.linkUnits.push_back(std::move(lu));
@@ -833,19 +907,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.targetName = t.name;
         if (t.kind == mcpp::manifest::Target::Library) {
             lu.kind   = LinkUnit::StaticLibrary;
-            lu.output = target_output(t);
+            lu.output = target_output(t, naming);
         } else if (t.kind == mcpp::manifest::Target::SharedLibrary) {
             lu.kind   = LinkUnit::SharedLibrary;
-            lu.output = target_output(t);
+            lu.output = target_output(t, naming);
             lu.soname = t.soname;
-            lu.runtimeAliases = runtime_aliases_for_target(t);
+            lu.runtimeAliases = runtime_aliases_for_target(t, naming);
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {
             lu.kind   = LinkUnit::TestBinary;
-            lu.output = target_output(t);
+            lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         } else {
             lu.kind   = LinkUnit::Binary;
-            lu.output = target_output(t);
+            lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         }
 
