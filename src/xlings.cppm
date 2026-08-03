@@ -15,6 +15,8 @@ export module mcpp.xlings;
 
 import std;
 import mcpp.pm.compat;
+import mcpp.pm.index_contract;
+import mcpp.pm.index_snapshot;
 import mcpp.platform;
 import mcpp.log;
 
@@ -1418,7 +1420,60 @@ bool is_official_package_index_fresh(const Env& env,
         && official_index_cache_matches_package_file(env, packageName);
 }
 
+namespace {
+// The raw sync. Everything that makes a refresh SAFE lives in the wrapper
+// below; this function's only job is to run `xlings update` and report.
+int update_index_unguarded(const Env& env, bool quiet);
+} // namespace
+
+// Guarded entry point — the ONE place every refresh in this process passes
+// through, which is why the monotonicity guarantee is installed here rather
+// than at the seven call sites.
+//
+//   an index-side change must never take mcpp from "works" to "does not work"
+//
+// A published index can raise its client-version floor (index.toml min_mcpp).
+// `xlings update` rewrites the tree in place, so before this guard existed a
+// floor bump replaced a readable index with an unreadable one and left no way
+// back — the refresh itself was the thing that broke the machine. See
+// mcpp.pm.index_snapshot for why the shape is archive/judge/restore rather
+// than the stage-and-swap the original design assumed.
 int update_index(const Env& env, bool quiet) {
+    namespace snap = mcpp::pm::index_snapshot;
+    const auto dataRoot = paths::index_data(env);
+
+    snap::GuardOutcome out;
+    int rc = snap::guarded_refresh(dataRoot,
+        [&] { return update_index_unguarded(env, quiet); }, out);
+
+    // Report ONLY when the guard had to act. The common path — refresh keeps
+    // the index readable — must stay silent, or the notice becomes noise that
+    // users learn to skip past, which is the same as not printing it.
+    for (auto& dir : out.rolledBack) {
+        print_status("Kept", std::format(
+            "previous index for `{}` — the refreshed one requires a newer mcpp",
+            dir.filename().string()));
+        if (!quiet) {
+            std::println("      Your build continues to work with the packages "
+                         "it already describes.");
+            std::println("      Upgrade to pick up newer packages:  xlings update mcpp");
+        }
+    }
+    for (auto& dir : out.recovered) {
+        print_status("Restored", std::format(
+            "index `{}` from a local snapshot this mcpp can read",
+            dir.filename().string()));
+    }
+    for (auto& dir : out.stillUnusable) {
+        mcpp::log::verbose("index", std::format(
+            "index `{}` requires a newer mcpp and no local snapshot is usable",
+            dir.filename().string()));
+    }
+    return rc;
+}
+
+namespace {
+int update_index_unguarded(const Env& env, bool quiet) {
     // Offline is absolute: no caller gets to reach the network by going around
     // the decision layer. Reported as success so a build that can still resolve
     // everything locally proceeds — the caller that genuinely needed the data
@@ -1472,6 +1527,7 @@ int update_index(const Env& env, bool quiet) {
         "index update failed after {} attempts (rc {})", kMaxAttempts, rc));
     return rc;
 }
+} // namespace
 
 void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
     if (is_index_fresh(env, ttlSeconds)) return;

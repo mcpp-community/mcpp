@@ -378,6 +378,16 @@ format_install_failure_diagnostic(std::string_view target,
         msg += "\n  xlings emitted no structured error; re-run with "
                "MCPP_VERBOSE=1 to see the raw xlings invocation + output.";
     }
+
+    // If an index was too new for this binary, THAT is the cause, and the
+    // not-found above is only its symptom. Without this the last line the user
+    // reads names a wire address and a missing package — pointing at naming or
+    // publication — while the real answer (E0006, printed much earlier and
+    // possibly scrolled away) says "upgrade mcpp". The message that stops the
+    // build has to carry the reason the build stopped.
+    if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty()) {
+        msg += "\n" + hint;
+    }
     return msg;
 }
 

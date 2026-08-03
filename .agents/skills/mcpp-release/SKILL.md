@@ -31,7 +31,7 @@ mcpp 有 **三个持久化版本位置**，以及 `ci-fresh-install` 的一个�
 **第一组：正在构建的版本**（发布时改，走 bump PR）
 
 1. `mcpp.toml` → `[package].version` — 构建系统读取的项目版本，release.yml 由它推导 tag
-2. `src/toolchain/fingerprint.cppm` → `MCPP_VERSION` — 编译期硬编码常量（`--version` 输出、BMI 指纹、E0006 索引底线比较）
+2. `src/version.cppm` → `MCPP_VERSION` — 编译期硬编码常量（`--version` 输出、BMI 指纹、E0006 索引底线比较）
 
 这两处必须**在同一个 commit 里**一起改：`tests/e2e/01_help_and_version.sh` 交叉比对
 `mcpp.toml` 与 `mcpp --version`，只改一处 CI 立刻红。
@@ -89,7 +89,7 @@ NEW_VERSION="2026.7.27.1"
 git checkout -b "chore/bump-$NEW_VERSION"
 
 sed -i "s/^version.*=.*/version     = \"$NEW_VERSION\"/" mcpp.toml
-sed -i "s/MCPP_VERSION = \".*\"/MCPP_VERSION = \"$NEW_VERSION\"/" src/toolchain/fingerprint.cppm
+sed -i "s/MCPP_VERSION = \".*\"/MCPP_VERSION = \"$NEW_VERSION\"/" src/version.cppm
 
 # 校验：mcpp.toml 与 MCPP_VERSION 相等，.xlings.json 不领先于正在构建的版本。
 bash .github/tools/check_version_pins.sh
@@ -309,7 +309,7 @@ gh workflow run release.yml --ref "v$NEW_VERSION"
 | 文件 | 版本相关内容 |
 |------|-------------|
 | `mcpp.toml` | `version = "X.Y.Z"` — 项目版本，release.yml 由它推导 tag |
-| `src/toolchain/fingerprint.cppm` | `MCPP_VERSION = "X.Y.Z"` — 编译期版本常量 |
+| `src/version.cppm` | `MCPP_VERSION = "X.Y.Z"` — 编译期版本常量 |
 | `.xlings.json` | `workspace.mcpp` — CI bootstrap 装哪个 mcpp（发布**后**才 bump） |
 | `.github/workflows/ci-fresh-install.yml` | `MCPP_PIN` — 由 `wait-index` 从最新 release 推导，**从不手工 bump** |
 | `src/xlings.cppm` | `kXlingsVersion` — xlings pin 的**唯一真源** |

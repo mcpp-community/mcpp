@@ -100,13 +100,13 @@ done < <(find .github -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.sh'
 # ── 2. mcpp's own version ─────────────────────────────────────────────────
 
 v_toml=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
-v_src=$(grep -oE 'MCPP_VERSION[[:space:]]*=[[:space:]]*"[^"]+"' src/toolchain/fingerprint.cppm \
+v_src=$(grep -oE 'MCPP_VERSION[[:space:]]*=[[:space:]]*"[^"]+"' src/version.cppm \
         | grep -oE '"[^"]+"' | tr -d '"' | head -1)
 v_xl=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' .xlings.json \
        | grep -oE '"[^"]+"$' | tr -d '"' | head -1)
-note "mcpp version: building=$v_toml (fingerprint=$v_src)  bootstrap pin=$v_xl"
+note "mcpp version: building=$v_toml (src/version.cppm=$v_src)  bootstrap pin=$v_xl"
 
-for n in "mcpp.toml:$v_toml" "src/toolchain/fingerprint.cppm:$v_src" \
+for n in "mcpp.toml:$v_toml" "src/version.cppm:$v_src" \
          ".xlings.json:$v_xl"; do
   [ -n "${n##*:}" ] || bad "${n%:*} — could not read the mcpp version"
 done
@@ -131,7 +131,7 @@ fi
 #     same number by definition — release.yml derives the tag from the former
 #     and the smoke test greps the latter out of `mcpp --version`.
 [ -z "$v_src" ] || [ "$v_src" = "$v_toml" ] \
-  || bad "src/toolchain/fingerprint.cppm has '$v_src' but mcpp.toml has '$v_toml'"
+  || bad "src/version.cppm has '$v_src' but mcpp.toml has '$v_toml'"
 
 # (b) The version BOOTSTRAPPED FROM (.xlings.json) names a mcpp that is already
 #     published, and is NOT required to equal the version being built. It

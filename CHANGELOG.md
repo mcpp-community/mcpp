@@ -3,6 +3,32 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.3.5] — 2026-08-03
+
+### 修复
+
+- **索引侧的改动不再能让 mcpp 从「能用」变成「不能用」。** 一个索引树可以声明客户端版本下限(`index.toml` `min_mcpp`)。此前 `xlings update` 会**原地覆盖**本地索引,一旦上游抬了下限,一台一分钟前还好好的机器就报
+
+  ```
+  error: index requires mcpp >= 2026.8.3.3 but this is mcpp 0.0.109 [E0006]
+  error: ... package 'compat:compat.libarchive@3.8.7' not found
+  ```
+
+  而且**没有退路** —— 旧的、能用的那份树已经被覆盖掉了。**刷新本身就是把机器弄坏的那个动作。**
+
+  刷新现在是**单调**的:判据是「刷新前能用 ⇒ 刷新后必须仍能用」。`mcpp::xlings::update_index`(全进程唯一的刷新入口)在同步前归档每一棵可读的索引树,同步后复核;变得不可读就回滚,并提示可以升级 mcpp 拿新包。2026-07-08 的索引设计里写过这个行为("staged refresh keeps the last compatible snapshot"),**从未被实现** —— 下限只在描述符读取处检查过一次,刷新路径对它一无所知。
+
+- **不再把「这个索引读不了」伪装成「这个包不存在」。** 违反下限会让该树的每次描述符读取返回空,与「包确实不在」不可区分。后果有两层:终止构建的那条错误是 `dependency '...': not found`,**把责任推给包**(指向发布/命名),而真正的答案(升级 mcpp)早已滚出屏幕;同一个无法区分的 miss 还会喂给刷新策略,被读成「本地缺东西,去拉」—— **不可用状态自己在驱动重复刷新**。
+
+  「这个索引不可读」现在是一个可查询的事实:刷新策略据此不再徒劳重试,而每一处终止构建的 not-found 都会带上真正的原因。
+
+### 改进
+
+- **`mcpp cache`/索引之外的一处分层修正:`MCPP_VERSION` 移到叶子模块 `src/version.cppm`。** 它此前住在 `mcpp.toolchain.fingerprint` 里,而后者 `import mcpp.toolchain.detect` → `import mcpp.xlings`,于是「这个二进制是什么版本」这件事**传递依赖了整个工具链探测与包管理子系统**。这不是洁癖:`mcpp.pm.index_contract` 只为一次比较需要这个常量,却因此依赖上 xlings,反过来使得 xlings **不可能**依赖 index_contract —— 而刷新守卫恰恰必须装在那里。**编译器报的那个循环依赖,就是分层在告诉我们常量放错了地方。** 版本号的唯一真源随之移动;`check_version_pins.sh` 与发布文档同步更新。
+
+- **补上了从未存在的端到端覆盖。** 下限行为此前只有纯谓词单测(`floor_violation()`),`tests/e2e/` 里一条都没有 —— 这正是上面两个缺陷能长期存在的原因:谓词是对的,**谓词周围的行为从没被端到端跑过**。新增 `tests/e2e/185_index_floor_degrades.sh`(错误必须点名真正的原因、不可用索引不得波及健康索引、逃生舱仍有效)与 `tests/unit/test_index_snapshot.cpp`(9 条,含「刷新弄坏索引必须回滚」)。
+
+
 ## [2026.8.3.4] — 2026-08-03
 
 ### 修复

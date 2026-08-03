@@ -11,7 +11,7 @@
 | 位置 | 组 | 何时变 |
 |---|---|---|
 | `mcpp.toml` `[package].version` | **正在构建的** | 开始做新版本时 |
-| `src/toolchain/fingerprint.cppm` `MCPP_VERSION` | **正在构建的** | 与上一行同一个 commit（编译进二进制的副本） |
+| `src/version.cppm` `MCPP_VERSION` | **正在构建的** | 与上一行同一个 commit（编译进二进制的副本） |
 | `.xlings.json` `[workspace].mcpp` | **自举起点** | 单独地、在某个版本**已可安装之后** |
 | `ci-fresh-install.yml` `MCPP_PIN` | **被测版本** | **不变 —— 运行时推导**（§5） |
 

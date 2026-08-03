@@ -41,6 +41,7 @@ import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
+import mcpp.pm.index_contract;
 import mcpp.pm.index_route;
 import mcpp.pm.index_refresh;
 import mcpp.pm.mangle;
@@ -819,6 +820,20 @@ std::string git_cache_head(const std::filesystem::path& gitRoot) {
 //   extraTargets:   additional Target entries (e.g. synthetic test targets)
 //                   appended to the manifest before the modgraph runs.
 //   overrides:      --target / --static.
+namespace {
+// A dependency that "cannot be found" while an index is unreadable is almost
+// never missing — it is unreachable, and the two need different actions from
+// the user (publish it vs upgrade mcpp). The floor error is printed when the
+// index is first opened, which can be hundreds of lines earlier; the message
+// that STOPS the build has to carry the cause, because that is the one a user
+// reads. See mcpp::pm::unusable_index_hint.
+std::string with_index_cause(std::string msg) {
+    if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty())
+        msg += "\n" + hint;
+    return msg;
+}
+} // namespace
+
 export std::expected<BuildContext, std::string>
 prepare_build(bool print_fingerprint,
               bool includeDevDeps = false,
@@ -1975,7 +1990,8 @@ prepare_build(bool print_fingerprint,
         auto candidates = dependencyCoordinates(spec, depName);
         if (candidates.empty()) {
             return std::unexpected(
-                std::format("dependency '{}' has no lookup candidates", depName));
+                with_index_cause(std::format(
+                    "dependency '{}' has no lookup candidates", depName)));
         }
 
         auto selected = candidates.front();
@@ -2146,9 +2162,9 @@ prepare_build(bool print_fingerprint,
         auto luaContent = readLuaContent();
         if (idxSpec && idxSpec->is_local() && !luaContent) {
             auto indexPath = mcpp::config::resolve_project_index_path(*root, *idxSpec);
-            return std::unexpected(std::format(
+            return std::unexpected(with_index_cause(std::format(
                 "dependency '{}': not found in local index at '{}'",
-                depName, indexPath.string()));
+                depName, indexPath.string())));
         }
 
         auto findRawInstalled = [&]() -> std::optional<std::filesystem::path> {
@@ -2439,8 +2455,8 @@ prepare_build(bool print_fingerprint,
         if (!luaContent) {
             luaContent = readLuaContent();
         }
-        if (!luaContent) return std::unexpected(std::format(
-            "dependency '{}': index entry not found in local clone", depName));
+        if (!luaContent) return std::unexpected(with_index_cause(std::format(
+            "dependency '{}': index entry not found in local clone", depName)));
         auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
 
         // 0.0.6+: read explicit namespace from xpkg lua if present.

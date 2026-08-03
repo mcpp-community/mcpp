@@ -41,6 +41,7 @@ import mcpp.log;
 import mcpp.platform;
 import mcpp.platform.axis;
 import mcpp.pm.dep_spec;
+import mcpp.pm.index_contract;
 import mcpp.pm.index_route;
 import mcpp.pm.resolver;
 import mcpp.ui;
@@ -60,6 +61,7 @@ enum class RefreshReason {
     SuppressedDisabled,     // [index] auto_refresh = false
     SuppressedDebounce,     // refreshed moments ago; upstream simply lacks it
     SuppressedInconclusive, // a miss here proves nothing (see header)
+    SuppressedIndexUnusable,// the index that would answer is too new to read
 };
 
 struct RefreshPolicy {
@@ -186,6 +188,8 @@ std::string_view reason_text(RefreshReason r) {
         case RefreshReason::SuppressedDisabled:     return "[index] auto_refresh = false";
         case RefreshReason::SuppressedDebounce:     return "index was just refreshed";
         case RefreshReason::SuppressedInconclusive: return "no index can refute this";
+        case RefreshReason::SuppressedIndexUnusable:
+            return "an index requires a newer mcpp — refreshing cannot help";
     }
     return "";
 }
@@ -255,6 +259,18 @@ RefreshDecision decide_for_dependency(const IndexRoute&               route,
 
     if (!d.shouldRefresh) return d;      // nothing to suppress
 
+    // An index this binary cannot READ makes every descriptor lookup in it come
+    // back empty, and that miss is indistinguishable from "the package is not
+    // there" at the call site. Refreshing would fetch the same unreadable tree
+    // again — so the miss would repeat, and the unusable state would drive
+    // repeated refreshes of itself. Stop here and let the E0006 error stand as
+    // the explanation.
+    if (mcpp::pm::any_index_unusable()) {
+        d.shouldRefresh = false;
+        d.reason = RefreshReason::SuppressedIndexUnusable;
+        return d;
+    }
+
     // 7. Opt-outs, in order of authority: the user's flag, the machine's
     //    config, then the "we just did this" guard.
     if (policy.offline)      { d.shouldRefresh = false; d.reason = RefreshReason::SuppressedOffline;  return d; }
@@ -281,6 +297,11 @@ RefreshDecision decide_for_miss(const RefreshPolicy&     policy,
                                 std::string_view         subject) {
     RefreshDecision d;
     d.subject = std::string(subject);
+    // See decide(): a refresh cannot fix an index this binary cannot read.
+    if (mcpp::pm::any_index_unusable()) {
+        d.reason = RefreshReason::SuppressedIndexUnusable;
+        return d;
+    }
     if (policy.offline)      { d.reason = RefreshReason::SuppressedOffline;  return d; }
     if (!policy.autoRefresh) { d.reason = RefreshReason::SuppressedDisabled; return d; }
     // Same debounce as the build path: two `mcpp add` typos in a row should not

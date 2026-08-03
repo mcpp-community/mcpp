@@ -15,10 +15,15 @@ export module mcpp.toolchain.fingerprint;
 
 import std;
 import mcpp.toolchain.detect;
+import mcpp.version;
 
 export namespace mcpp::toolchain {
 
-inline constexpr std::string_view MCPP_VERSION = "2026.8.3.4";
+// The version itself lives in the leaf module mcpp.version — see that file for
+// why. Kept spelled `mcpp::toolchain::MCPP_VERSION` here because that is what
+// every existing reader says, and because the fingerprint genuinely is one of
+// its consumers (field 8 of the 10).
+inline constexpr std::string_view MCPP_VERSION = mcpp::MCPP_VERSION;
 
 struct FingerprintInputs {
     Toolchain                       toolchain;

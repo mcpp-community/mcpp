@@ -22,7 +22,7 @@ export module mcpp.pm.index_contract;
 import std;
 import mcpp.libs.toml;
 import mcpp.version_req;
-import mcpp.toolchain.fingerprint;   // MCPP_VERSION
+import mcpp.version;                 // MCPP_VERSION (leaf — see that module)
 
 export namespace mcpp::pm {
 
@@ -44,12 +44,54 @@ read_index_contract(const std::filesystem::path& indexRoot);
 std::optional<std::string>
 floor_violation(std::string_view minMcpp, std::string_view ownVersion);
 
+// Pure predicate — no reporting, no registration, no dedup. For callers that
+// need to ask "would this tree be usable?" without the side effects of
+// check_index_floor (the refresh guard asks it twice per refresh).
+bool index_usable(const std::filesystem::path& indexRoot);
+
 // Open-time check for an index tree. Combines read + floor + escape
 // hatch + once-per-root deduplication of the (expensive to spam) error.
 // Returns the violation message the FIRST time a too-new tree is opened;
-// nullopt otherwise.
+// nullopt otherwise. Also RECORDS the fact (see below).
 std::optional<std::string>
 check_index_floor(const std::filesystem::path& indexRoot);
+
+// ── "this index is unusable" as a first-class, queryable fact ──────────
+//
+// A floor violation makes every descriptor read from that tree return nothing,
+// which is indistinguishable from "the package genuinely is not in this index"
+// at the call site. Two things downstream need to tell them apart:
+//
+//   * the refresh policy — a miss caused by an unusable index will NOT be
+//     fixed by fetching the same tree again, and treating it as a normal miss
+//     makes the unusable state drive repeated refreshes of itself;
+//   * the final error — "not found" names neither the version nor the floor,
+//     so the message that stops the build has to reach back for the real cause.
+//
+// Process-global on purpose: the fact depends only on (the tree on disk, this
+// binary's version), and neither can change within a process. Recording it is
+// what lets the two consumers above stay honest without threading a tri-state
+// through every read_xpkg_lua entry point and all of their callers.
+struct UnusableIndex {
+    std::filesystem::path root;
+    std::string           message;   // the full E0006 text, ready to print
+};
+
+// True when any index tree opened in this process failed its floor check.
+bool any_index_unusable();
+
+// True when THIS tree failed (exact root match).
+bool index_marked_unusable(const std::filesystem::path& indexRoot);
+
+// Every index that failed, in first-seen order.
+std::vector<UnusableIndex> unusable_indexes();
+
+// One line for appending to an unrelated failure ("… and by the way, an index
+// was unusable, which is probably why"). Empty when nothing was unusable.
+std::string unusable_index_hint();
+
+// Testing only: forget everything recorded so far.
+void reset_unusable_indexes_for_test();
 
 } // namespace mcpp::pm
 
@@ -93,6 +135,51 @@ floor_violation(std::string_view minMcpp, std::string_view ownVersion)
         minMcpp, ownVersion);
 }
 
+bool index_usable(const std::filesystem::path& indexRoot)
+{
+    if (const char* v = std::getenv("MCPP_INDEX_FLOOR");
+        v && std::string_view(v) == "ignore")
+        return true;
+    auto c = read_index_contract(indexRoot);
+    if (!c) return true;                       // no contract → no constraint
+    return !floor_violation(c->minMcpp, mcpp::MCPP_VERSION);
+}
+
+namespace {
+// See the header comment on UnusableIndex for why this is process-global.
+std::vector<UnusableIndex>& unusable_registry() {
+    static std::vector<UnusableIndex> reg;
+    return reg;
+}
+} // namespace
+
+bool any_index_unusable() { return !unusable_registry().empty(); }
+
+bool index_marked_unusable(const std::filesystem::path& indexRoot) {
+    for (auto& u : unusable_registry())
+        if (u.root == indexRoot) return true;
+    return false;
+}
+
+std::vector<UnusableIndex> unusable_indexes() { return unusable_registry(); }
+
+std::string unusable_index_hint() {
+    auto& reg = unusable_registry();
+    if (reg.empty()) return {};
+    // Name the index, not just the fact: with several repos configured, "an
+    // index was too new" leaves the reader guessing which one to act on.
+    std::string s = "note: this resolve ran with an index this mcpp cannot read:\n";
+    for (auto& u : reg) {
+        s += "  " + u.root.string() + "\n";
+    }
+    s += "      Packages served by it were reported as not found. See the "
+         "[E0006] error above,\n"
+         "      or run `mcpp explain E0006`.";
+    return s;
+}
+
+void reset_unusable_indexes_for_test() { unusable_registry().clear(); }
+
 std::optional<std::string>
 check_index_floor(const std::filesystem::path& indexRoot)
 {
@@ -100,14 +187,19 @@ check_index_floor(const std::filesystem::path& indexRoot)
         v && std::string_view(v) == "ignore")
         return std::nullopt;
 
-    // Once per root per process: the same index is opened many times in a
-    // single resolve; report the violation once, stay quiet after.
-    static std::set<std::filesystem::path> reported;
     auto c = read_index_contract(indexRoot);
     if (!c) return std::nullopt;
-    auto violation = floor_violation(c->minMcpp, mcpp::toolchain::MCPP_VERSION);
+    auto violation = floor_violation(c->minMcpp, mcpp::MCPP_VERSION);
     if (!violation) return std::nullopt;
-    if (!reported.insert(indexRoot).second) return std::nullopt;
+
+    // Record BEFORE the dedup return: the fact must be queryable no matter how
+    // many times this root is opened, while the message is printed only once.
+    // Deriving "was anything unusable?" from "did we print?" is what made the
+    // second and later reads indistinguishable from an ordinary miss.
+    if (!index_marked_unusable(indexRoot))
+        unusable_registry().push_back({indexRoot, *violation});
+    else
+        return std::nullopt;          // already reported — stay quiet
     return violation;
 }
 
