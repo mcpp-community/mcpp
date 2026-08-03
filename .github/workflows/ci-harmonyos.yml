@@ -201,9 +201,16 @@ jobs:
           # it from anywhere else would silently reintroduce the skew the
           # LLVM_TAG comment warns about.
           "$MCPP" toolchain install llvm 20.1.7
-          CLANGXX=$(find "$MCPP_HOME/registry/data/xpkgs/xim-x-llvm/20.1.7" \
-                        -type f -name 'clang++' | head -1)
-          test -x "$CLANGXX" || { echo "FAIL: no clang++ in the llvm payload"; exit 1; }
+          # Named directly, NOT discovered with `find`: in the LLVM payload
+          # `clang++` is a symlink chain (clang++ -> clang -> clang-20), so a
+          # `find -type f -name clang++` finds nothing and the step fails one
+          # line after mcpp has just printed "Installed llvm@20.1.7 → …/clang++".
+          CLANGXX="$MCPP_HOME/registry/data/xpkgs/xim-x-llvm/20.1.7/bin/clang++"
+          test -x "$CLANGXX" || {
+            echo "FAIL: no clang++ at $CLANGXX; payload bin/ was:"
+            ls -la "$(dirname "$CLANGXX")" | head -20
+            exit 1
+          }
           echo "OHOS_CLANGXX=$CLANGXX" >> "$GITHUB_ENV"
           echo "OHOS_CLANG=${CLANGXX%++}" >> "$GITHUB_ENV"
           "$CLANGXX" --version | head -1
