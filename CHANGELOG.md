@@ -3,6 +3,37 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.4.1] — 2026-08-04
+
+### 修复
+
+- **`ci-fresh-install` 11 个 job 全红 —— 两个独立缺陷。** 都不是某次发布引入的,而是**每次发布之后必现**;两个各自都能单独把整个矩阵打红。分析见 `.agents/docs/2026-08-04-ci-fresh-install-two-defects.md`。
+
+  **A. 仓库的 workspace pin 伏击了被测版本。** job 第一步就 checkout,于是仓库的 `.xlings.json`(声明**自举** mcpp,手工维护且**故意滞后**)落在工作目录里。它是目录作用域的,在 checkout 内部**压过全局安装**。于是「装的是 `MCPP_PIN`,跑的是自举版本」——而后者根本没装:
+
+  ```
+  ✓ 1 package(s) installed
+  [error] xlings: version '2026.8.3.2' not found for 'mcpp'
+  [error]   available: 2026.8.3.4
+  ```
+
+  `ci-aarch64-fresh-install.yml` 早就遇到过并靠「checkout 放最后」规避,注释写得很完整 —— 但那招在这里用不了:`build mcpp` 步骤要在仓库里跑 `mcpp clean && mcpp run`,checkout 必须在场。所以改为中和那个 pin:这个 workflow 验证的是**已发布**的 mcpp,自举 pin 在这个问题上没有发言权。
+
+  **B. `wait-index` 守的是另一条分发通道。** 它轮询索引的 **git 真源**(`raw.githubusercontent.com/openxlings/xim-pkgindex`),而 job 从**发布出来的 artifact**(`xlings-res/xim-index` → 指针 → tarball)安装。两条通道延迟完全不同:git 在 PR 合入瞬间更新,artifact 还要打包 + 过 CDN。2026.8.3.5 那次实测:守卫报「就绪」,11 个 job 随后全部 `package 'mcpp@2026.8.3.5' not found`。**测量一条没人从那里安装的通道,不叫守卫。** 现在改查 artifact 通道。
+
+  两处修复连同「装了 ≠ 跑的是它」的激活(`-u` + `xlings use`)与**断言**,收敛进一个共享脚本 `.github/tools/install_released_mcpp.sh`(5 处调用点)。断言是唯一能防住**下一个**的部分:它对着 **PATH 解析出来的** `mcpp` 求值 —— 也就是后续步骤真正会执行的那个 —— 于是任何未来的静默重定向(workspace pin、陈旧激活、PATH 意外)都会变成一条点名的失败,而不是一个悄悄测了错二进制却报绿的矩阵。
+
+  > CDN 是**按边缘节点**传播的:轮询的 runner 不是安装的 runner。所以守卫收窄窗口、脚本内的有界重试兜住残差 —— 两层分工,缺一个要么留偶发红、要么让整个矩阵陪跑等待。
+
+### 改进
+
+- **内带 xlings 升级到 `2026.8.4.1`**(自 `2026.7.28.4`)。该版本落地了索引快照的**版本契约与自动路由**(openxlings/xlings#476,由本仓库提出):索引声明它需要的客户端版本,客户端自动路由到自己能用的**最新**快照,版本错配从**硬失败**变成**路由决策**。
+
+  对 mcpp 的直接意义是它**补上了 mcpp 自己做不到的那一半** —— mcpp 不下载索引(`update_index` 就是 shell out 给 `xlings update`),此前无法要求「给我索引版本 X」。新增的 `xlings index list --json` 会把 `requires` 里非 `xlings` 的键**原样透传**给对应消费者,`xlings index use` 提供钉选。mcpp 侧消费这套接口(按 `min_mcpp` 自动路由)是后续工作,需要索引侧先声明 `requires.mcpp`;本次只做版本升级与验证。
+
+  16 个 pin 点由 `check_version_pins.sh` 机器校验并全部更新;已实测 mcpp 在 `2026.8.4.1` 下 `new`/`build`/`run` 正常。
+
+
 ## [2026.8.3.5] — 2026-08-03
 
 ### 修复

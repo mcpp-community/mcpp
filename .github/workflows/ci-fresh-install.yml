@@ -91,19 +91,42 @@ jobs:
           esac
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "version under test: $VER"
-      - name: Wait for xim-pkgindex to track the released mcpp
+      - name: Wait for the PUBLISHED index artifact to track the released mcpp
         if: ${{ github.event_name == 'workflow_run' }}
         env:
           VER: ${{ steps.resolve.outputs.version }}
         run: |
-          echo "released: $VER — waiting for index..."
-          for i in $(seq 1 30); do
-            if curl -fsSL "https://raw.githubusercontent.com/openxlings/xim-pkgindex/main/pkgs/m/mcpp.lua" | grep -q "\"$VER\""; then
-              echo "index tracks $VER (after $((i*30))s)"; exit 0
+          # Poll the ARTIFACT, not the git file.
+          #
+          # This used to curl raw.githubusercontent.com/openxlings/xim-pkgindex
+          # — the index's git source of truth, which updates the instant the
+          # bump PR merges. But the jobs install from the PUBLISHED ARTIFACT
+          # (xlings-res/xim-index → pointer → tarball), and that channel lags
+          # git by however long `Publish Index Artifact` plus release-CDN
+          # propagation takes. Measured on the 2026.8.3.5 release: this guard
+          # reported ready, and all 11 jobs then failed with
+          #     [error] package 'mcpp@2026.8.3.5' not found
+          # A guard that measures a channel nobody installs from is not a guard.
+          #
+          # This narrows the window; it cannot close it, because the CDN
+          # propagates per edge and the runner that polls is not the runner
+          # that installs. install_released_mcpp.sh retries from the consumer
+          # side for exactly that residue — this step exists so the retry is
+          # rarely needed, not so it can be removed.
+          echo "released: $VER — waiting for the published index artifact..."
+          for i in $(seq 1 40); do
+            ptr=$(curl -fsSL "https://github.com/xlings-res/xim-index/releases/download/latest/xim-index-latest.json" 2>/dev/null || true)
+            # One line on purpose: an indented heredoc inside a YAML block
+            # scalar is a trap — unindented content silently ends the block.
+            name=$(printf '%s' "$ptr" | python3 -c 'import json,sys; d=json.load(sys.stdin); n=d.get("indexes",{}).get("xim",d); print(n.get("artifact",{}).get("name",""))' 2>/dev/null || true)
+            if [ -n "$name" ] && curl -fsSL \
+                 "https://github.com/xlings-res/xim-index/releases/download/latest/$name" \
+                 | tar -xzO --wildcards '*pkgs/m/mcpp.lua' 2>/dev/null | grep -q "\"$VER\""; then
+              echo "published index artifact ($name) tracks $VER (after $((i*30))s)"; exit 0
             fi
             sleep 30
           done
-          echo "::error::index never tracked $VER within 15min — merge the bump PR (openxlings/xim-pkgindex) and re-run"
+          echo "::error::the published index artifact never tracked $VER within 20min — check that the xim-pkgindex bump PR merged AND that Publish Index Artifact ran"
           exit 1
       - name: No wait needed (manual/cron trigger)
         if: ${{ github.event_name != 'workflow_run' }}
@@ -129,16 +152,17 @@ jobs:
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.7.28.4
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.4.1
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror
+        shell: bash
         run: |
-          # The release tarball bundles a pkgindex snapshot frozen at
-          # build time; refresh it so the pinned mcpp resolves.
-          xlings update
-          xlings install "mcpp@${MCPP_PIN}" -y -g  # install to global
-          mcpp --version
+          # ONE implementation for "make the released mcpp@X be what `mcpp`
+          # runs, and prove it" — see .github/tools/install_released_mcpp.sh
+          # for the three defects the inline version had (workspace pin, no
+          # activation, and waiting on the wrong index channel).
+          bash .github/tools/install_released_mcpp.sh "${MCPP_PIN}" "$(pwd)"
           mcpp self config --mirror GLOBAL
 
           echo "mcpp debug info:"
@@ -268,7 +292,7 @@ jobs:
 
       - name: Install xlings + mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.7.28.4
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.4.1
           # Deliberately NOT writing to $GITHUB_PATH here. On container
           # images that declare no PATH in their config (opensuse/
           # tumbleweed), appending a single dir to GITHUB_PATH makes the
@@ -278,11 +302,14 @@ jobs:
           # exports PATH itself, so the append is redundant anyway.
 
       - name: Configure mcpp
+        shell: bash
         run: |
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
-          xlings update
-          xlings install "mcpp@${MCPP_PIN}" -y -g
-          mcpp --version
+          # ONE implementation for "make the released mcpp@X be what `mcpp`
+          # runs, and prove it" — see .github/tools/install_released_mcpp.sh
+          # for the three defects the inline version had (workspace pin, no
+          # activation, and waiting on the wrong index channel).
+          bash .github/tools/install_released_mcpp.sh "${MCPP_PIN}" "$(pwd)"
           mcpp self config --mirror GLOBAL
 
       - name: "Regression: new → run (loader env must not crash /bin/sh)"
@@ -336,15 +363,17 @@ jobs:
           #             (older ones carry minos=15 and refuse to start).
           #   v0.4.51+: in-process sha256 — this image has no sha256sum
           #             binary, so pinned fetches failed before it.
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.7.28.4
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.4.1
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror
+        shell: bash
         run: |
-          # Refresh the bundled pkgindex snapshot so the pinned mcpp resolves.
-          xlings update
-          xlings install "mcpp@${MCPP_PIN}" -y -g  # install to global
-          mcpp --version
+          # ONE implementation for "make the released mcpp@X be what `mcpp`
+          # runs, and prove it" — see .github/tools/install_released_mcpp.sh
+          # for the three defects the inline version had (workspace pin, no
+          # activation, and waiting on the wrong index channel).
+          bash .github/tools/install_released_mcpp.sh "${MCPP_PIN}" "$(pwd)"
           mcpp self config --mirror GLOBAL
 
           echo "mcpp debug info:"
@@ -413,15 +442,16 @@ jobs:
           $xlingsbin | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
 
       - name: Install mcpp and config mirror
-        shell: pwsh
+        shell: bash
         run: |
-          # Refresh the bundled pkgindex snapshot so the pinned mcpp resolves.
-          xlings update
-          xlings install "mcpp@$env:MCPP_PIN" -y -g --verbose
-
-          cat "$env:USERPROFILE\.xlings\.xlings.json"
-          mcpp --version
+          # ONE implementation for "make the released mcpp@X be what `mcpp`
+          # runs, and prove it" — see .github/tools/install_released_mcpp.sh
+          # for the three defects the inline version had (workspace pin, no
+          # activation, and waiting on the wrong index channel).
+          bash .github/tools/install_released_mcpp.sh "${MCPP_PIN}" "$(pwd)"
           mcpp self config --mirror GLOBAL
+
+          cat "$USERPROFILE/.xlings/.xlings.json" || true
 
       - name: "LLVM: mcpp new → run"
         shell: pwsh
@@ -524,11 +554,13 @@ jobs:
           $xlingsbin | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
 
       - name: Install mcpp and config mirror
-        shell: pwsh
+        shell: bash
         run: |
-          xlings update
-          xlings install "mcpp@$env:MCPP_PIN" -y -g --verbose
-          mcpp --version
+          # ONE implementation for "make the released mcpp@X be what `mcpp`
+          # runs, and prove it" — see .github/tools/install_released_mcpp.sh
+          # for the three defects the inline version had (workspace pin, no
+          # activation, and waiting on the wrong index channel).
+          bash .github/tools/install_released_mcpp.sh "${MCPP_PIN}" "$(pwd)"
           mcpp self config --mirror GLOBAL
 
       # The self-check, the fallback, persistence, a self-contained exe, and
