@@ -63,7 +63,17 @@ export namespace mcpp::pm::index_snapshot {
 // mcpp index has changed its floor 6 times in its entire life).
 inline constexpr std::size_t kKeepPerIndex = 5;
 
-// <dataRoot>/.index-snapshots/<index-dir-name>/<snapshot-id>/
+// The snapshot store is a SIBLING of the index data root, never inside it:
+//
+//     <dataRoot>/..                 index-snapshots/<index-dir-name>/<snapshot-id>/
+//
+// Everything that enumerates index repos does it by listing directories under
+// `data/` (mcpp's own Fetcher::sorted_index_dirs takes every subdirectory, and
+// xlings walks the same tree). A snapshot store living there would be handed to
+// those scanners as if it were an index. Today that happens to be harmless —
+// the store has no `pkgs/` so lookups miss and move on — but "harmless because
+// of a detail of someone else's loop" is not a property worth depending on,
+// and it costs nothing to put the store where no index scanner can reach it.
 std::filesystem::path snapshots_root(const std::filesystem::path& dataRoot);
 std::filesystem::path snapshot_dir(const std::filesystem::path& dataRoot,
                                    const std::filesystem::path& indexDir);
@@ -187,7 +197,11 @@ std::string sanitize_component(std::string s) {
 } // namespace
 
 std::filesystem::path snapshots_root(const std::filesystem::path& dataRoot) {
-    return dataRoot / ".index-snapshots";
+    auto parent = dataRoot.parent_path();
+    // Degenerate path (relative "data", or a root) — fall back to staying put
+    // rather than climbing out of the home directory.
+    if (parent.empty()) return dataRoot / ".index-snapshots";
+    return parent / "index-snapshots";
 }
 
 std::filesystem::path snapshot_dir(const std::filesystem::path& dataRoot,
@@ -212,7 +226,10 @@ index_dirs(const std::filesystem::path& dataRoot) {
     for (auto& e : std::filesystem::directory_iterator(dataRoot, ec)) {
         if (ec) break;
         if (!e.is_directory()) continue;
-        // The snapshots store lives under the same root; never snapshot it.
+        // The store is a sibling of dataRoot (see snapshots_root), so it
+        // should never appear here. Skipped anyway: this loop decides what
+        // gets archived, and an archive of the archive is the one mistake
+        // that would grow without bound.
         if (e.path().filename() == ".index-snapshots") continue;
         std::error_code pec;
         if (!std::filesystem::is_directory(e.path() / "pkgs", pec)) continue;
