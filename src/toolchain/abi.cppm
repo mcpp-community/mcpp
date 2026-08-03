@@ -76,7 +76,12 @@ inline AbiProfile abi_profile(const Toolchain& tc) {
         p.os   = t->os;
         // libc — the C runtime ABI a C library links against. Windows is
         // msvcrt for BOTH env=msvc and env=gnu (MinGW links the Windows CRT).
-        if      (t->is_musl())        p.libc = "musl";
+        // HarmonyOS first: its libc is a musl fork, so a `t->is_musl()`-shaped
+        // question would be tempting — but an OHOS binary is not link-
+        // compatible with an upstream-musl one, and calling both "musl" would
+        // make `abi:musl` packages resolve onto a target they cannot serve.
+        if      (t->is_ohos())        p.libc = "ohos";
+        else if (t->is_musl())        p.libc = "musl";
         else if (t->os == "macos")    p.libc = "macos";
         else if (t->os == "windows")  p.libc = "msvcrt";
         else if (t->os == "linux")    p.libc = "glibc";   // *-linux-gnu (gcc AND clang+libc++)
@@ -90,7 +95,8 @@ inline AbiProfile abi_profile(const Toolchain& tc) {
     // don't-care where nothing is recognizable).
     const std::string& t = tc.targetTriple;
     auto has = [&](std::string_view s) { return t.find(s) != std::string::npos; };
-    if      (has("musl"))                  p.libc = "musl";
+    if      (has("ohos"))                  p.libc = "ohos";
+    else if (has("musl"))                  p.libc = "musl";
     else if (has("darwin") || has("apple")) p.libc = "macos";
     else if (has("msvc"))                  p.libc = "msvcrt";
     else if (has("windows"))               p.libc = "msvcrt";

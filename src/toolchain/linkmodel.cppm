@@ -135,6 +135,26 @@ struct ClangDriverModel {
     std::vector<std::filesystem::path> cxxIncludes;  // libc++ header dirs
     std::vector<std::filesystem::path> libDirs;      // libc++/compiler-rt libs
 
+    // ── Driver retargeting (Toolchain::crossTarget) ──────────────────────
+    // Non-empty `crossTriple` means every driver invocation carries
+    // `--target=`, and cxxIncludes/libDirs above are the TARGET's, not the
+    // host's. `crossLinkResourceDir` is link-side only (see CrossTarget).
+    std::string crossTriple;
+    std::filesystem::path crossLinkResourceDir;
+
+    bool isCross() const { return !crossTriple.empty(); }
+
+    // `--target=` belongs on BOTH sides and must be the first token on each:
+    // it selects the driver's whole toolchain object, so anything emitted
+    // before it would be interpreted for the host. Its own producer because
+    // three channels emit driver flags (ninja string, std-module command,
+    // build.mcpp argv) and a target that reaches only two of them is a build
+    // that compiles for one machine and links for another.
+    std::vector<std::string> target_tokens() const {
+        if (!isCross()) return {};
+        return { "--target=" + crossTriple };
+    }
+
     // "--no-default-config" "-nostdinc++" "-isystem<...>" (compile side), as
     // argv tokens. -stdlib=libc++ is deliberately left to callers: compile
     // commands for C files must not carry it.
@@ -144,7 +164,9 @@ struct ClangDriverModel {
     // the flag would invalidate every user's std BMIs for no behavioural gain.
     std::vector<std::string> compile_tokens(const PathEscape& esc,
                                             bool stdlibSelect = false) const {
-        std::vector<std::string> out{"--no-default-config", "-nostdinc++"};
+        std::vector<std::string> out = target_tokens();
+        out.push_back("--no-default-config");
+        out.push_back("-nostdinc++");
         if (stdlibSelect) out.push_back("-stdlib=libc++");
         for (auto& inc : cxxIncludes) out.push_back("-isystem" + esc(inc));
         return out;
@@ -164,12 +186,27 @@ struct ClangDriverModel {
     // Plus the libc++/compiler-rt library dirs, which a self-contained host
     // helper needs to both link against and find at run time.
     std::vector<std::string> link_tokens(const PathEscape& esc) const {
-        std::vector<std::string> out{"-fuse-ld=lld", "--rtlib=compiler-rt",
-                                     "--unwindlib=libunwind"};
+        std::vector<std::string> out = cross_link_tokens(esc);
+        for (auto f : {"-fuse-ld=lld", "--rtlib=compiler-rt",
+                       "--unwindlib=libunwind"})
+            out.push_back(f);
         for (auto& d : libDirs) {
             out.push_back("-L" + esc(d));
-            out.push_back("-Wl,-rpath," + esc(d));
+            // rpath is meaningless for a cross target's build-host paths (the
+            // device will not have them) and actively harmful in a static
+            // link; the cross path relies on `-L` + static archives instead.
+            if (!isCross()) out.push_back("-Wl,-rpath," + esc(d));
         }
+        return out;
+    }
+
+    // The retargeting half of the link side, shared with the ninja string
+    // channel in flags.cppm — which assembles its own link flags and would
+    // otherwise have re-derived `--target=`/`-resource-dir=` a second time.
+    std::vector<std::string> cross_link_tokens(const PathEscape& esc) const {
+        std::vector<std::string> out = target_tokens();
+        if (!crossLinkResourceDir.empty())
+            out.push_back("-resource-dir=" + esc(crossLinkResourceDir));
         return out;
     }
 };
@@ -192,7 +229,12 @@ struct ClangDriverModel {
 
 // Loader *file name* for a target triple; empty when the arch is unknown.
 std::string loader_filename(std::string_view targetTriple) {
-    const bool musl = targetTriple.find("musl") != std::string_view::npos;
+    // HarmonyOS ships a musl FORK, and it kept musl's loader naming
+    // (`/lib/ld-musl-aarch64.so.1` — verified from the PT_INTERP of an
+    // NDK-produced binary). So the loader question answers "musl" here even
+    // though the ABI question does not: same file name, different libc.
+    const bool musl = targetTriple.find("musl") != std::string_view::npos
+                   || targetTriple.find("ohos") != std::string_view::npos;
     struct ArchLoader { std::string_view arch, gnuName, muslArch; };
     static constexpr std::array<ArchLoader, 5> kMap{{
         {"x86_64",      "ld-linux-x86-64.so.2",          "x86_64"},
@@ -263,6 +305,26 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
     dm.cfgPath = tc.binaryPath.parent_path()
                / (tc.binaryPath.stem().string() + ".cfg");
     dm.hasCfg = std::filesystem::exists(dm.cfgPath);
+
+    // Retargeted driver: the C++ standard library comes from the CROSS model,
+    // never from the host llvm root. Returning here (before the host libc++
+    // discovery below) is the whole point — an `-isystem <host>/include/c++/v1`
+    // leaking into a cross compile does not fail loudly, it silently compiles
+    // the host's libc++ headers for a foreign target.
+    //
+    // `hasCfg` stays whatever it is: consumers gate the cfg BYPASS on it, and
+    // a retargeted driver must bypass the cfg unconditionally — the cfg is
+    // generated at install time for the HOST triple. Consumers therefore ask
+    // `dm.hasCfg || dm.isCross()`.
+    if (tc.crossTarget) {
+        dm.crossTriple          = tc.crossTarget->triple;
+        dm.crossLinkResourceDir = tc.crossTarget->linkResourceDir;
+        dm.cxxIncludes          = tc.crossTarget->cxxIncludes;
+        dm.libDirs              = tc.crossTarget->libDirs;
+        dm.llvmRoot             = tc.binaryPath.parent_path().parent_path();
+        return dm;
+    }
+
     if (!dm.hasCfg) return dm;
     dm.llvmRoot = tc.binaryPath.parent_path().parent_path();
     auto libcxxInclude = dm.llvmRoot / "include" / "c++" / "v1";
@@ -282,6 +344,17 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     ToolchainLinkModel lm;
     lm.clangDriver  = is_clang(tc);
     lm.clangWithCfg = resolve_clang_driver(tc).hasCfg;
+
+    // Retargeted driver: the target's C library is its sysroot, full stop.
+    // This is checked FIRST so no host-payload branch below can ever be
+    // reached for a cross target — `tc.payloadPaths` describes the HOST's
+    // glibc, and PayloadFirst would hand a foreign target the host's
+    // crt1.o/libc.so and its dynamic loader.
+    if (tc.crossTarget) {
+        lm.mode    = CLibMode::Sysroot;
+        lm.sysroot = tc.crossTarget->sysroot;
+        return lm;
+    }
 
     // PE targets: no ELF loader, no rpath, no glibc payload/sysroot model.
     // MSVC-ABI Clang gets STL+SDK via the driver, MinGW is self-contained —

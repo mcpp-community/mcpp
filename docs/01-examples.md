@@ -26,6 +26,7 @@ examples.
 | 01 | [`examples/01-hello`](../examples/01-hello/) | Minimal single-file project with `import std` | The minimal package shape (`mcpp new` also emits `tests/test_smoke.cpp`) |
 | 02 | [`examples/02-with-deps`](../examples/02-with-deps/) | Adds the `mcpplibs.cmdline` dependency to parse command-line arguments | `[dependencies]`, SemVer, `mcpp.lock` |
 | 03 | [`examples/03-pack-static`](../examples/03-pack-static/) | Produces a fully static release package via `mcpp pack --mode static` | `[target.<triple>]` and `[pack]` configuration |
+| 05 | [`examples/05-harmonyos`](../examples/05-harmonyos/) | Cross-builds a C++23 named-module program for HarmonyOS/OpenHarmony | `--target aarch64-linux-ohos`, consuming an external platform SDK as a sysroot |
 
 ## Suggested Reading Order
 

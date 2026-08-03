@@ -128,6 +128,17 @@ std::expected<void, std::string> verify_hermetic_link(
             allowed.emplace_back(canon.substr(0, pos + 5));
     }
     if (!tc.sysroot.empty()) allowed.push_back(tc.sysroot);
+    // A retargeted driver resolves the target's libc++/compiler-rt out of the
+    // platform SDK, which by construction is NOT under an xpkgs registry —
+    // it is a vendor archive the developer unpacked. That is still hermetic
+    // in the sense this check defends: the inputs are a pinned, declared
+    // sysroot, not whatever the build machine happens to have in /usr/lib.
+    if (tc.crossTarget) {
+        for (auto& d : tc.crossTarget->libDirs)      allowed.push_back(d);
+        for (auto& d : tc.crossTarget->cxxIncludes)  allowed.push_back(d);
+        if (!tc.crossTarget->linkResourceDir.empty())
+            allowed.push_back(tc.crossTarget->linkResourceDir);
+    }
 
     if (const char* e = std::getenv("MCPP_ALLOW_HOST_LIBS"); e && *e && *e != '0')
         allowHostLibs = true;

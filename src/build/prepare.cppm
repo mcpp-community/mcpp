@@ -25,6 +25,7 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.msvc;
+import mcpp.toolchain.ohos;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
@@ -1523,7 +1524,55 @@ prepare_build(bool print_fingerprint,
         tcOrigin = TcOrigin::FirstRun;
     }
 
-    auto tc = mcpp::toolchain::detect(explicit_compiler);
+    // ── HarmonyOS / OpenHarmony: retarget the driver at the platform SDK ──
+    //
+    // config② (2026-07-24-embedded-platform-support-design.md): mcpp brings
+    // the compiler, the platform brings the sysroot. Everywhere else that is
+    // one of two defensible architectures; here it is the only one, because
+    // the SDK's own clang is 15.0.4 (measured on SDK 6.1 / API 23) and GCC has
+    // no `ohos` target at all.
+    //
+    // Resolved AFTER the toolchain payload and BEFORE detect(), because the
+    // cross model has to be applied to the driver as it is being identified —
+    // a second pass that patched a finished Toolchain would leave every probe
+    // in between having already answered for the host.
+    std::optional<mcpp::toolchain::CrossTarget> crossTarget;
+    if (auto tt = mcpp::toolchain::triple::parse(overrides.target_triple);
+        tt && tt->is_ohos()) {
+        auto sdk = mcpp::toolchain::ohos::detect_installation();
+        if (!sdk)
+            return std::unexpected(mcpp::toolchain::ohos::install_guidance());
+        auto cp = mcpp::toolchain::ohos::cross_paths(*sdk, *tt);
+        if (!cp) return std::unexpected(cp.error());
+
+        mcpp::toolchain::CrossTarget ct;
+        ct.triple          = tt->str();
+        ct.sysroot         = cp->sysroot;
+        ct.cxxIncludes     = cp->cxxIncludes;
+        ct.libDirs         = cp->libDirs;
+        ct.linkResourceDir = cp->linkResourceDir;
+        ct.stdModuleSource = cp->stdModuleSource;
+        ct.provider        = cp->provider;
+        crossTarget        = std::move(ct);
+
+        // shorten_path needs a config to know the sandbox prefixes; a build
+        // that has not got one is not a reason to lose the diagnostic, so the
+        // full path is the fallback rather than a dereference of a failed
+        // expected.
+        auto cfgForPaths = get_cfg();
+        mcpp::ui::info("Resolved", std::format("{} → {} (sysroot {})",
+            crossTarget->triple, cp->provider,
+            cfgForPaths ? mcpp::ui::shorten_path(cp->sysroot,
+                              mcpp::fetcher::make_path_ctx(&**cfgForPaths, *root))
+                        : cp->sysroot.string()));
+        if (cp->stdModuleSource.empty())
+            mcpp::ui::info("Note",
+                "this target's libc++ ships no `std` module — `import std;` is "
+                "unavailable here; named modules and #include both work. See "
+                "docs/03-toolchains.md#harmonyos--openharmony.");
+    }
+
+    auto tc = mcpp::toolchain::detect(explicit_compiler, crossTarget);
     if (!tc) return std::unexpected(tc.error().message);
 
     // ── Targeting the MSVC ABI without a usable MSVC ─────────────────────

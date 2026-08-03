@@ -23,6 +23,7 @@ import mcpp.toolchain.gcc;
 import mcpp.toolchain.llvm;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
+import mcpp.toolchain.ohos;
 import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
@@ -325,6 +326,15 @@ bool is_system_toolchain(const ToolchainSpec& spec) {
 
 bool host_can_serve(const triple::Triple& target) {
     if (target.empty()) return true;              // host target
+
+    // HarmonyOS: served by mcpp's own clang plus the platform SDK, so the
+    // question is "is the SDK here", not "does a payload exist for this
+    // host×arch pair". Checked before the linux branch below, which would
+    // otherwise reject aarch64-linux-ohos on an x86_64 host for a reason that
+    // does not apply (no arch-specific payload is involved — one clang serves
+    // every target).
+    if (target.is_ohos())
+        return mcpp::toolchain::ohos::detect_installation().has_value();
 
     if (target.os == "linux") {
         if constexpr (mcpp::platform::is_linux) {

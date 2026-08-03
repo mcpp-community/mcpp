@@ -1,0 +1,271 @@
+name: ci-harmonyos
+
+# mcpp → HarmonyOS / OpenHarmony (aarch64-linux-ohos), verified end to end.
+#
+# ── What this proves, and why it needs its own workflow ────────────────────
+#
+# cross-build-test.yml is the home of "which cross targets does mcpp support",
+# and it carries this comment:
+#
+#     * llvm/clang cross : clang is inherently a cross-compiler, but mcpp does
+#                          not yet inject `-target <triple>` + a cross sysroot
+#                          for a clang toolchain; cross `--target` resolves to
+#                          gcc musl only. Wire the clang cross path first, then
+#                          add a row.
+#
+# HarmonyOS is the target that forces that row to exist: GCC has no `ohos`
+# target at all, so the gcc-musl shape mcpp's other cross rows use cannot be
+# spelled here. This workflow is deliberately SEPARATE from
+# cross-build-test.yml for one reason — it depends on a ~2.5 GB vendor SDK
+# that mcpp does not and cannot ship, so a failure here must never be
+# confusable with a failure of mcpp's own cross matrix.
+#
+# ── The two tiers ─────────────────────────────────────────────────────────
+#
+#   tier          compiler          C++ stdlib                 import std
+#   ------------  ----------------  -------------------------  ----------
+#   stock SDK     mcpp's llvm@20    SDK's libc++ 15.0.4        no
+#   + overlay     mcpp's llvm@20    libc++ built for the       yes
+#                                   target from LLVM sources
+#
+# Both are built and RUN under qemu-aarch64. The second job builds the overlay
+# from source in ~10 minutes, which is expensive — but it is the only way to
+# show that the "no import std" limit is a missing PAYLOAD, not a missing
+# capability, and that distinction is the whole argument of
+# .agents/docs/2026-08-04-harmonyos-target-design.md.
+#
+# ── What is NOT proven here ───────────────────────────────────────────────
+#
+# qemu-user runs the artefact's instructions, not HarmonyOS. It says nothing
+# about the .hnp/.hap packaging path, about linking the platform's own NDK
+# libraries (libace_napi.z.so and friends), or about anything that touches
+# a real device. Those need hardware or the emulator and stay out of scope —
+# see the design doc's "what CI can and cannot show" section. Verification
+# here is the same claim the aarch64-linux-musl row makes: this artefact is
+# for the right machine and it really executes.
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/toolchain/**'
+      - 'src/build/**'
+      - 'tests/e2e/10[34]_harmonyos*'
+      - 'tests/unit/test_ohos_target.cpp'
+      - 'examples/05-harmonyos/**'
+      - '.github/workflows/ci-harmonyos.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Tier 1: stock SDK, named modules ──────────────────────────────────────
+  harmonyos-cross:
+    name: HarmonyOS cross-build + qemu run (stock SDK)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+      MCPP_VERBOSE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # Do NOT restore target/ in a cross job: this job builds twice (host,
+      # then aarch64-linux-ohos) and a restored BMI tree makes the second
+      # build read `std` BMIs that no longer match what the rest was compiled
+      # against — `import 'std' has CRC mismatch`. Same rule as
+      # windows-host-linux-cross in cross-build-test.yml, same reason.
+      - uses: ./.github/actions/bootstrap-mcpp
+        with:
+          cache-target: 'false'
+
+      - name: Install qemu-user-static
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-user-static
+          qemu-aarch64-static --version | head -1
+
+      - name: Setup OpenHarmony SDK
+        id: ohos
+        uses: openharmony-rs/setup-ohos-sdk@v1.0.1
+        with:
+          version: '6.1'
+          components: 'native'
+
+      - name: Point mcpp at the SDK
+        run: |
+          NATIVE="${{ steps.ohos.outputs.ohos_sdk_native }}"
+          test -d "$NATIVE" || { echo "FAIL: action produced no native dir"; exit 1; }
+          # The two files mcpp's own detection requires; asserted here so a
+          # layout change in the action fails with a clear message instead of
+          # inside a compile command 10 minutes later.
+          test -f "$NATIVE/sysroot/usr/include/stdlib.h"
+          test -d "$NATIVE/llvm/lib/aarch64-linux-ohos"
+          echo "OHOS_NDK_HOME=$NATIVE" >> "$GITHUB_ENV"
+          echo "== SDK =="
+          cat "$NATIVE/oh-uni-package.json" || true
+          # Recorded, not used: this is the fact the whole design rests on.
+          # If a future SDK ships a modern clang, this line is where it shows.
+          echo "== the SDK's own clang (mcpp does NOT use it) =="
+          "$NATIVE/llvm/bin/clang++" --version | head -1
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+          # Newest, not first: target/ keeps a directory per build fingerprint,
+          # so `find | head -1` can hand back a previous build's binary.
+          MCPP_SELF=$(find target -type f -name mcpp -path '*/bin/*' \
+              -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          test -x "$MCPP_SELF"
+          MCPP_SELF=$(realpath "$MCPP_SELF")
+          "$MCPP_SELF" --version
+          echo "MCPP=$MCPP_SELF" >> "$GITHUB_ENV"
+
+      - name: "Target is listed as available once the SDK is present"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" toolchain list | tee /tmp/tclist.txt
+          # `available`, not `planned`: host_can_serve() answers this by
+          # probing for the SDK, so this asserts the detection wired up — the
+          # same row reads `planned` on a runner without the SDK.
+          grep -q "aarch64-linux-ohos" /tmp/tclist.txt \
+            || { echo "FAIL: ohos target not listed"; exit 1; }
+
+      - name: "e2e: cross-build + qemu run"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash tests/e2e/103_harmonyos_cross_qemu.sh
+
+      - name: "Example project builds for HarmonyOS"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd examples/05-harmonyos
+          "$MCPP" build --target aarch64-linux-ohos
+          BIN=$(find target/aarch64-linux-ohos -type f -path '*/bin/*' | head -1)
+          file "$BIN"
+          file "$BIN" | grep -q "ARM aarch64"
+          qemu-aarch64-static "$BIN"
+
+  # ── Tier 2: + a libc++ built for the target ⇒ import std ──────────────────
+  harmonyos-import-std:
+    name: HarmonyOS import std (libc++ built for the target)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+      MCPP_VERBOSE: "1"
+      # Must match the LLVM the target pin resolves to
+      # (triple::pins::kOhosLlvm). A libc++ built by one clang and used by
+      # another is a version skew that works until it does not; keeping the
+      # two equal is what makes this job evidence rather than anecdote.
+      LLVM_TAG: llvmorg-20.1.7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+        with:
+          cache-target: 'false'
+
+      - name: Install qemu-user-static + build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-user-static cmake ninja-build
+          qemu-aarch64-static --version | head -1
+
+      - uses: openharmony-rs/setup-ohos-sdk@v1.0.1
+        id: ohos
+        with:
+          version: '6.1'
+          components: 'native'
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          echo "OHOS_NDK_HOME=${{ steps.ohos.outputs.ohos_sdk_native }}" >> "$GITHUB_ENV"
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+          MCPP_SELF=$(find target -type f -name mcpp -path '*/bin/*' \
+              -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          MCPP_SELF=$(realpath "$MCPP_SELF")
+          "$MCPP_SELF" --version
+          echo "MCPP=$MCPP_SELF" >> "$GITHUB_ENV"
+
+      - name: Locate mcpp's LLVM payload
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # Installing it explicitly rather than letting the first ohos build
+          # do it: the runtimes build below needs the same clang, and taking
+          # it from anywhere else would silently reintroduce the skew the
+          # LLVM_TAG comment warns about.
+          "$MCPP" toolchain install llvm 20.1.7
+          CLANGXX=$(find "$MCPP_HOME/registry/data/xpkgs/xim-x-llvm/20.1.7" \
+                        -type f -name 'clang++' | head -1)
+          test -x "$CLANGXX" || { echo "FAIL: no clang++ in the llvm payload"; exit 1; }
+          echo "OHOS_CLANGXX=$CLANGXX" >> "$GITHUB_ENV"
+          echo "OHOS_CLANG=${CLANGXX%++}" >> "$GITHUB_ENV"
+          "$CLANGXX" --version | head -1
+
+      - name: Cache the target libc++
+        id: libcxx-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/ohos-libcxx
+          key: ohos-libcxx-${{ env.LLVM_TAG }}-sdk6.1-v1
+
+      - name: Build libc++/libc++abi for aarch64-linux-ohos
+        if: steps.libcxx-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          NATIVE="${{ steps.ohos.outputs.ohos_sdk_native }}"
+          RES=$(find "$NATIVE/llvm/lib/clang" -maxdepth 1 -mindepth 1 -type d | sort | tail -1)
+          # Sparse: the runtimes build needs cmake/, runtimes/, the three
+          # runtime trees, llvm/cmake and libc/ (libc++'s charconv includes
+          # `shared/fp_bits.h` from it — a missing `libc` fails ~1800 objects
+          # into the build, which is an expensive way to learn that).
+          git clone --depth 1 --branch "$LLVM_TAG" --filter=blob:none --sparse \
+              https://github.com/llvm/llvm-project /tmp/llvm-src
+          git -C /tmp/llvm-src sparse-checkout set \
+              cmake runtimes libcxx libcxxabi libunwind libc llvm/cmake third-party
+
+          cmake -G Ninja -S /tmp/llvm-src/runtimes -B /tmp/build-ohos-libcxx \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$HOME/ohos-libcxx" \
+            -DCMAKE_C_COMPILER="$OHOS_CLANG" \
+            -DCMAKE_CXX_COMPILER="$OHOS_CLANGXX" \
+            -DCMAKE_C_COMPILER_TARGET=aarch64-linux-ohos \
+            -DCMAKE_CXX_COMPILER_TARGET=aarch64-linux-ohos \
+            -DCMAKE_SYSROOT="$NATIVE/sysroot" \
+            -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_C_FLAGS="--no-default-config" \
+            -DCMAKE_CXX_FLAGS="--no-default-config" \
+            -DCMAKE_EXE_LINKER_FLAGS="-resource-dir=$RES -fuse-ld=lld" \
+            -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind" \
+            -DLLVM_INCLUDE_TESTS=OFF -DLIBCXX_INCLUDE_TESTS=OFF \
+            -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXXABI_INCLUDE_TESTS=OFF \
+            -DLIBUNWIND_INCLUDE_TESTS=OFF \
+            -DLIBCXX_CXX_ABI=libcxxabi \
+            -DLIBCXX_HAS_MUSL_LIBC=ON \
+            -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_SHARED=OFF \
+            -DLIBUNWIND_ENABLE_SHARED=OFF \
+            -DLIBCXXABI_USE_LLVM_UNWINDER=ON \
+            -DLIBCXX_INSTALL_MODULES=ON
+          ninja -C /tmp/build-ohos-libcxx install
+
+          # The runtimes build compiles libunwind's .S sources for the HOST
+          # (CMake's ASM language does not inherit CMAKE_CXX_COMPILER_TARGET),
+          # so the installed libunwind.a carries x86_64 objects and lld
+          # rejects it with "incompatible with aarch64linux". The platform's
+          # own unwinder is the right one to use anyway; removing the broken
+          # archive is what makes `-L<overlay> -L<sdk>` resolve to it.
+          rm -f "$HOME/ohos-libcxx/lib/libunwind.a"
+          test -f "$HOME/ohos-libcxx/share/libc++/v1/std.cppm"
+
+      - name: "e2e: import std on HarmonyOS + qemu run"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_OHOS_LIBCXX="$HOME/ohos-libcxx"
+          bash tests/e2e/104_harmonyos_import_std.sh

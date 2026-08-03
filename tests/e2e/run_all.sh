@@ -62,6 +62,33 @@ case "$OS" in
         fi
         # wine: run cross-built Windows PE artifacts on the Linux host.
         command -v wine &>/dev/null && CAPS+=(wine)
+        # ohos-sdk: the OpenHarmony native SDK, which mcpp consumes as a
+        # sysroot only (its bundled clang is 15.0.4 and cannot build modules).
+        # Probed the same way mcpp probes it, and by the same two files
+        # mcpp's own looks_like_native_sdk() requires — a directory that
+        # merely exists must not enable a test that then fails inside a
+        # compile command.
+        for _ohos in "${OHOS_NDK_HOME:-}" "${OHOS_SDK_NATIVE:-}" \
+                     "${OHOS_SDK_HOME:-}/native" "$HOME/ohos-sdk/native" \
+                     /opt/ohos-sdk/native; do
+            [[ -n "$_ohos" ]] || continue
+            if [[ -f "$_ohos/sysroot/usr/include/stdlib.h" && -d "$_ohos/llvm/lib" ]]; then
+                CAPS+=(ohos-sdk); break
+            fi
+        done
+        unset _ohos
+        # ohos-libcxx: a libc++ built FOR the ohos target, which is what makes
+        # `import std` available there (the SDK's own libc++ 15 has no std
+        # module). Separate capability from ohos-sdk because the two tiers
+        # fail differently and only one of them needs this.
+        if [[ -n "${MCPP_OHOS_LIBCXX:-}" \
+              && -f "${MCPP_OHOS_LIBCXX}/share/libc++/v1/std.cppm" ]]; then
+            CAPS+=(ohos-libcxx)
+        fi
+        # qemu-aarch64: run cross-built aarch64 artifacts on an x86_64 host.
+        # Both spellings exist in the wild (qemu-user vs qemu-user-static).
+        { command -v qemu-aarch64 &>/dev/null \
+          || command -v qemu-aarch64-static &>/dev/null; } && CAPS+=(qemu-aarch64)
         # pack capability: ELF + patchelf both required
         if [[ " ${CAPS[*]} " == *" patchelf "* ]]; then
             CAPS+=(pack)

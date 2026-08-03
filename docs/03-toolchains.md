@@ -313,6 +313,117 @@ Combined with `mcpp pack --mode static` this produces a fully static release
 package; for a complete example, see
 [`examples/03-pack-static`](../examples/03-pack-static/).
 
+## HarmonyOS / OpenHarmony
+
+```bash
+export OHOS_NDK_HOME=/path/to/ohos-sdk/linux/native
+mcpp build --target aarch64-linux-ohos
+```
+
+HarmonyOS is the one target where mcpp needs something it cannot ship. Every
+other target is served by a toolchain mcpp downloads; this one additionally
+needs the **platform SDK**, a ~2.5 GB vendor archive under its own licence.
+Point `OHOS_NDK_HOME` at the unpacked `native` directory and everything else
+is the usual `--target` flow.
+
+**mcpp uses the SDK as a sysroot, not as a toolchain.** The compiler stays
+mcpp's own LLVM. That is not a preference — the SDK's bundled clang is
+**15.0.4 even in SDK 6.1 (API 23)**, four major versions below what C++20
+modules need (`-fmodule-output` arrived in clang 16), and it has been that
+version for years. So mcpp retargets its own clang with `--target=` and takes
+the libc, C++ standard library, CRT objects and compiler-rt builtins from the
+SDK. GCC is not an option here at all: it has no `ohos` target.
+
+mcpp finds the SDK through, in order: `$OHOS_NDK_HOME`, `$OHOS_SDK_NATIVE`
+(what `openharmony-rs/setup-ohos-sdk` exports), `$OHOS_SDK_HOME/native`,
+`$OHOS_SDK_HOME/<api>/native`, `$DEVECO_SDK_HOME/…`, then `~/ohos-sdk/native`
+and `/opt/ohos-sdk/native`.
+
+Targets: `aarch64-linux-ohos` (verified), `x86_64-linux-ohos` and
+`arm-linux-ohos` (registered, not yet verified). Default linkage is static —
+the OHOS libc is a musl fork, and as with mcpp's other musl targets a static
+artifact is the one that runs anywhere without a matching loader.
+
+`cfg()` sees HarmonyOS as **`env = "ohos"` on `os = "linux"`**, matching
+upstream LLVM's own model. The kernel really is Linux, so a package that
+gates on `cfg(os = "linux")` or `cfg(family = "unix")` keeps working; only
+code that needs HarmonyOS *specifically* has to say so:
+
+```toml
+[target.'cfg(env = "ohos")'.build]
+defines = ["USE_OHOS_HILOG"]
+```
+
+In C++, the SDK's `__OHOS__` macro is defined by mcpp's clang too.
+
+### `import std` on HarmonyOS
+
+Against a **stock SDK**, named modules work and `import std` does not — the
+SDK ships libc++ 15.0.4, which has no `std` module at all. mcpp says so
+during resolution rather than failing later:
+
+```
+Note this target's libc++ ships no `std` module — `import std;` is
+unavailable here; named modules and #include both work.
+```
+
+This is a missing **payload**, not a missing capability. Build libc++ from
+LLVM sources for the target and `import std` works exactly as it does
+everywhere else:
+
+```bash
+git clone --depth 1 --branch llvmorg-20.1.7 https://github.com/llvm/llvm-project
+CLANGXX=~/.mcpp/registry/data/xpkgs/xim-x-llvm/20.1.7/bin/clang++
+RES=$OHOS_NDK_HOME/llvm/lib/clang/15.0.4
+
+cmake -G Ninja -S llvm-project/runtimes -B build-ohos-libcxx \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=~/ohos-libcxx \
+  -DCMAKE_C_COMPILER="${CLANGXX%++}" -DCMAKE_CXX_COMPILER="$CLANGXX" \
+  -DCMAKE_C_COMPILER_TARGET=aarch64-linux-ohos \
+  -DCMAKE_CXX_COMPILER_TARGET=aarch64-linux-ohos \
+  -DCMAKE_SYSROOT="$OHOS_NDK_HOME/sysroot" \
+  -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+  -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+  -DCMAKE_C_FLAGS="--no-default-config" -DCMAKE_CXX_FLAGS="--no-default-config" \
+  -DCMAKE_EXE_LINKER_FLAGS="-resource-dir=$RES -fuse-ld=lld" \
+  -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind" \
+  -DLIBCXX_CXX_ABI=libcxxabi -DLIBCXX_HAS_MUSL_LIBC=ON \
+  -DLIBCXX_INSTALL_MODULES=ON \
+  -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_SHARED=OFF \
+  -DLIBUNWIND_ENABLE_SHARED=OFF -DLIBCXXABI_USE_LLVM_UNWINDER=ON \
+  -DLLVM_INCLUDE_TESTS=OFF -DLIBCXX_INCLUDE_TESTS=OFF \
+  -DLIBCXX_INCLUDE_BENCHMARKS=OFF
+ninja -C build-ohos-libcxx install
+
+# CMake's ASM language does not inherit CMAKE_CXX_COMPILER_TARGET, so the
+# installed libunwind.a holds HOST objects and lld rejects it. Use the
+# platform's own unwinder — which is what the SDK lib dir provides.
+rm -f ~/ohos-libcxx/lib/libunwind.a
+
+export MCPP_OHOS_LIBCXX=~/ohos-libcxx
+mcpp build --target aarch64-linux-ohos      # import std now works
+```
+
+Build the overlay with the **same** LLVM version the target pin resolves to.
+A libc++ built by one clang and consumed by another is a version skew that
+works right up until it does not.
+
+`MCPP_OHOS_LIBCXX_AARCH64_LINUX_OHOS` (target-suffixed, `-` → `_`, upper
+case) overrides `MCPP_OHOS_LIBCXX` when one machine holds overlays for
+several targets.
+
+### What is verified, and what is not
+
+CI cross-builds both tiers and **runs** the artifacts under `qemu-aarch64`
+(`.github/workflows/ci-harmonyos.yml`, `tests/e2e/103_…` and `104_…`). That
+proves the artifact targets the right machine and really executes — the same
+claim the `aarch64-linux-musl` row makes.
+
+It does **not** cover the `.hnp`/`.hap` packaging path, linking the
+platform's own NDK libraries (`libace_napi.z.so` and friends), or anything
+requiring a device or the emulator. Those remain out of scope; see
+`.agents/docs/2026-08-04-harmonyos-target-design.md`.
+
 ## Uninstalling
 
 ```bash

@@ -306,9 +306,12 @@ the right toolchain payload is resolved and installed automatically.
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) *(Windows default without Visual Studio)* | ✅ |
 | `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | ✅ |
 | `aarch64-macos`       | llvm *(macOS default)* | ✅ |
+| `aarch64-linux-ohos`  | llvm 20 + OpenHarmony SDK sysroot ² — cross from any host (qemu-verified) | ✅ |
 | `riscv64-linux-musl`  | — | 🔄 |
 | `aarch64-linux-gnu`   | — | 🔄 |
 | `x86_64-macos`        | — | 🔄 |
+| `x86_64-linux-ohos`   | llvm 20 + OpenHarmony SDK sysroot ² | 🔄 |
+| `arm-linux-ohos`      | llvm 20 + OpenHarmony SDK sysroot ² | 🔄 |
 
 ✅ verified — CI builds **and executes** the artifact end-to-end (qemu/wine included) ｜ 🔄 planned
 
@@ -326,6 +329,16 @@ the right toolchain payload is resolved and installed automatically.
 > or configure; `mcpp new && mcpp build` just works on a stock Windows box.
 > An explicit `[toolchain]` in `mcpp.toml` is always respected as written —
 > mcpp revises its own default, never yours.
+>
+> ² HarmonyOS / OpenHarmony is the one target where mcpp needs something it
+> cannot ship: the platform SDK. Point `OHOS_NDK_HOME` at the unpacked
+> `native` directory and `mcpp build --target aarch64-linux-ohos` works.
+> mcpp uses the SDK for its **sysroot and runtime libraries only** — the
+> compiler stays mcpp's own LLVM, because the SDK's bundled clang is 15.0.4
+> even in SDK 6.1 (API 23) and cannot build C++20 modules at all. Named
+> modules work against a stock SDK; `import std` additionally needs a libc++
+> built for the target — see
+> [Toolchain Management](docs/03-toolchains.md#harmonyos--openharmony).
 
 ## Documentation
 

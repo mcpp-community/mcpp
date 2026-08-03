@@ -367,13 +367,30 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
     }
-    if (isClangWithCfg) {
+    if (isClangWithCfg || dm.isCross()) {
         llvmRootForStdlib = dm.llvmRoot;
         // Linker flags that cfg normally provides. The payload C-runtime
         // flags (-B/-L/loader) are appended via payload_ld below.
-        link_toolchain_flags = " --no-default-config";
+        //
+        // A retargeted driver additionally needs `--target=` and the target's
+        // compiler-rt resource dir on the LINK line; both come from the same
+        // producer the argv channel uses (dm.cross_link_tokens), so the two
+        // channels cannot drift. `--target=` leads, because it selects the
+        // toolchain object every later flag is interpreted against.
+        link_toolchain_flags =
+            mcpp::toolchain::render_tokens(dm.cross_link_tokens(ninjaEsc));
+        link_toolchain_flags += " --no-default-config";
         if (lm.mode == mcpp::toolchain::CLibMode::Sysroot)
             link_toolchain_flags += lm.link_flags(ninjaEsc);
+        // The target's libc++ / libc++abi / libunwind archives — CROSS ONLY.
+        // On the host path these already arrive through linkRuntimeDirs /
+        // depRuntimeLibraryDirs further down, and adding them here too would
+        // change every existing clang link line. A cross target has no payload
+        // registry to walk, so its lib dirs come from the cross model or from
+        // nowhere.
+        if (dm.isCross())
+            for (auto& d : dm.libDirs)
+                link_toolchain_flags += " -L" + escape_path(d);
         link_toolchain_flags +=
             mcpp::toolchain::ClangDriverModel::kLinkDriverFlags;
         f.sysroot = link_toolchain_flags;
@@ -574,6 +591,21 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // both rather than hard-coding one layout. Sorted so the choice cannot
         // depend on directory iteration order.
         auto find_archive = [&](std::string_view name) -> std::filesystem::path {
+            // Retargeted driver: the archives are the TARGET's, and the ONLY
+            // place they exist is the cross model's lib dirs. Falling through
+            // to the host llvm root below would find a perfectly valid
+            // `libc++.a` — for the wrong architecture — and hand it to the
+            // link line as an absolute path, where `-L` ordering cannot save
+            // it. Ordered: the dirs are tried in the order the provider listed
+            // them, so a purpose-built target libc++ shadows the SDK's.
+            if (dm.isCross()) {
+                std::error_code cec;
+                for (auto& d : dm.libDirs) {
+                    auto p = d / name;
+                    if (std::filesystem::exists(p, cec)) return p;
+                }
+                return {};
+            }
             if (llvmRootForStdlib.empty()) return {};
             std::error_code ec;
             auto libDir = llvmRootForStdlib / "lib";
