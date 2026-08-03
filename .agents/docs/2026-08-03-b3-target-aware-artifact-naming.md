@@ -247,25 +247,152 @@ GCC 决定为 `.exe`,修复只是让 **ninja 的声明** 追上事实;Windows→
 
 ## 8. 分期
 
+**三个 PR,不要合并**(依据见 §9):
+
+#### PR-1 — B3 主体(本文档的 §5)
+
 单 PR,提交分层(与 B2 同款,理由见 [[windows-host-linux-cross-canadian]]):
 
 | commit | 内容 |
 |---|---|
 | 1 | `artifact_naming()` + 判据 1/2 的断言,**实现为返回 host 常量的桩** ⇒ 测试红 |
-| 2 | 实现按 (os, env) 求值 ⇒ 测试绿 |
+| 2 | 实现按 (os, env) 求值 ⇒ 测试绿(含 `windows-gnu` → `libfoo.a`,§9.1) |
 | 3 | `target_output` / `runtime_aliases_for_target` 接受 `ArtifactNaming` |
 | 4 | `shared_library_link_flags` 按 target 求值 |
 | 5 | e2e:判据 3 的「不重链」断言 |
 
+CHANGELOG 必须写出 Windows + mingw 静态库改名这条**对外可见的行为变更**。
+
+#### PR-2 — 非 ELF 目标上的共享库明确拒绝(§9.2 路线 B)
+
+独立小 PR。`make_plan` 入口检查:target 非 ELF 且存在 `SharedLibrary` 目标 ⇒ 返回明确错误,
+指向追踪 issue。附一条 e2e:「PE 目标上声明 SharedLibrary 得到可读的 mcpp 错误,
+而不是一个链接不上的产物」。
+
+**先于 PR-3,也可以先于 PR-1** —— 它不依赖命名改动,且立刻消除一类未定义行为。
+
+#### PR-3 — import lib 完整支持(§9.2 路线 A)
+
+**另开设计文档。** 前置条件是先补齐 PE 与 Mach-O 的共享库 e2e 覆盖,否则又是一批
+无验证代码。不要在没有覆盖的前提下加产物边。
+
 ---
 
-## 9. 未决
+## 9. 两个未决问题的深度分析(2026-08-03 补,基于代码实测)
 
-1. **`windows-gnu` 静态库从 `foo.lib` 改名为 `libfoo.a`** 是唯一一处会改变 **host 构建**
-   产物名的改动(Windows 主机 + mingw 工具链)。它是修正存量缺陷,但确实是行为变更 ——
-   是否要同期做,还是拆一个独立 PR?我倾向同期,因为把「命名由 (os,env) 决定」做成半截
-   反而更难解释。
-2. **PE 的 import lib(`libfoo.dll.a` / `foo.lib`)目前 mcpp 完全没建模**。共享库交叉到
-   Windows 时消费者拿什么链接,现在靠 `shared_library_link_flags` 直接塞产物路径蒙混过去。
-   本方案的 `sharedNeedsImportLib` 只是给它留了个位置,**真正的 import lib 支持不在本期范围**,
-   建议另开。
+---
+
+### 9.1 `windows-gnu` 静态库 `foo.lib` → `libfoo.a`:**同期做,影响面实测为空**
+
+原本的顾虑是「它会改变 host 构建的产物名」。把消费链逐段查完之后,这个顾虑站不住。
+
+#### 谁真正消费一个静态库的名字
+
+| 消费者 | 机制 | 受改名影响? |
+|---|---|---|
+| **mcpp 包间依赖** | **object 级内联** —— `plan.cppm:836` 把依赖包的 `.o` 直接塞进 `lu.objects`,**根本不产生也不读取 `.a`** | ❌ 无影响 |
+| **外部预编译库**(compat.* 等) | 自由形式 `ldflags`(`types.cppm:173`),库名由包描述符写死,mcpp 不参与命名 | ❌ 无影响 |
+| **`[runtime] library_dirs`** | 是**目录**而非库名(`types.cppm:321`);Windows 侧只按 `.dll` 扩展名做运行期部署(`plan.cppm:418-434`) | ❌ 无影响 |
+| **ninja 输出声明** | 来自 `target_output()` 本身 | ✅ 同步改,这正是修复 |
+| **最终用户 / 外部构建系统** | 直接引用产物路径 | ⚠️ 唯一真实影响面 |
+
+**关键结构性事实:mcpp 的静态库不是内部链接单元。** 包依赖走 object 内联,所以 `Library`
+目标产出的 `.a`/`.lib` 只有一个消费者 —— **把产物拿去给 mcpp 之外的世界用的人**。
+这让改名从「牵一发动全身」降级为「改一个对外文件名」。
+
+#### 缓存与 fingerprint:影响为零(实测)
+
+`toolchain/fingerprint.cppm:94-103` 的 8 个 part 里**没有产物名**,但**有 `MCPP_VERSION`**。
+也就是说任何版本 bump 都会换一个 `target/<triple>/<fp>/` 目录 —— 改名后不会出现
+「旧目录里躺着旧名产物、新逻辑找不到」的混合态。**不需要任何缓存迁移或 `cache clean` 提示。**
+
+#### 为什么必须同期做(架构角度)
+
+把「命名由 (os, env) 决定」做成半截,会留下一个**比现状更难解释的状态**:
+`exe_suffix` 按 target 走了,`static_lib_ext` 还按 host —— 下一个读代码的人无从判断
+哪个常量能信。§4 那张表的价值恰恰在于它是**一条完整的规则**,而不是四个独立特例。
+
+而且这不是「顺带做的优化」,它是**存量正确性缺陷**:今天在 Windows 主机上用 mingw 工具链
+构建静态库,产物叫 `foo.lib`,而 mingw 的 `ar` 产出的是 GNU archive —— 一个 MSVC 拿不去用、
+名字又冒充 MSVC 约定的文件。**这个错误与交叉编译无关,今天就在发生。**
+
+#### 结论
+
+**同期做。** 唯一需要的额外动作是在 CHANGELOG 明确写出这条行为变更(Windows + mingw
+静态库产物改名),因为它对外可见 —— 但它影响的是一个**今天就是错的**名字。
+
+---
+
+### 9.2 PE import lib:**先别建模,先把边界画出来**
+
+调研到一个改变问题性质的事实。
+
+#### 共享库在 PE 和 Mach-O 上是零验证覆盖
+
+5 个共享库 e2e **全部**声明 `# requires: elf`:
+
+```
+tests/e2e/08_shared_library.sh:2:            # requires: elf
+tests/e2e/55_dependency_shared_artifact.sh:2:# requires: elf
+tests/e2e/56_transitive_shared_artifact.sh:2:# requires: elf
+tests/e2e/57_static_dep_shared_artifact.sh:2:# requires: elf
+tests/e2e/64_shared_soname_runtime_alias.sh:2:# requires: elf
+```
+
+而 `elf` 这个 capability **只有 Linux 分支会加**(`run_all.sh:46`);
+Darwin 加的是 `macos`,Windows 加的是 `windows`。
+
+**所以 mcpp 的共享库支持是 Linux-only 的既成事实 —— 不只是 PE,连 macOS 的 Mach-O
+也从未被端到端验证过。**
+
+这把问题从「缺一个 import lib 功能」重新定义为:**共享库这条路在非 ELF 平台上从来没走通过,
+而代码里却有看起来能走的分支。**
+
+#### 那些分支是未验证的推测代码
+
+`plan.cppm:236-243`:
+
+```cpp
+if constexpr (mcpp::platform::is_windows) {
+    flags.push_back(target_output(t).generic_string());   // 直接塞 foo.dll 的路径
+} else {
+    flags.push_back("-L" + …);  flags.push_back("-l" + t.name);
+```
+
+- **mingw**:链接器确实容忍直接链 `.dll`(ld 会自动生成 import stub),所以**可能**能工作 ——
+  但没有任何测试证明过。
+- **MSVC**:`link.exe` **无法**链接 `.dll`,它需要 `.lib` import library。这条路径必然失败。
+- 而且这个分支按 **host** 求值(`is_windows`),交叉时连方向都是错的 —— 与 B3 主体同病。
+
+#### 长期架构:三条路,建议第 2 条
+
+| 路线 | 内容 | 评价 |
+|---|---|---|
+| **A. 完整建模 import lib** | `ArtifactNaming` 增加 import lib 产物,ninja 加一条边,链接消费者改用 import lib;mingw 用 `-Wl,--out-implib`,MSVC 用 `link.exe` 自动产出的 `.lib` | 正确但**昂贵**:要同时补 PE 与 Mach-O 的共享库 e2e,否则又是一批无覆盖代码。**不该和 B3 混在一起。** |
+| **B. 先画边界:非 ELF 目标上共享库明确拒绝** ✅ | `SharedLibrary` 目标在 PE / Mach-O 目标上返回一条清晰的 mcpp 错误,指明「共享库目前仅支持 ELF 目标,追踪 issue: …」 | **静默产出不可用的东西,比明确拒绝坏得多。**成本极低,立刻消除一整类未定义行为 |
+| C. 维持现状 | 保留未验证分支 | ❌ 最差:代码看起来支持,实际未知,用户踩坑时离根因隔三层 |
+
+**推荐 B,而且它应该先于 A。** 理由与 [[index-refresh-resolution-driven]] 里那条
+「offline-first 被 TTL 门压成不可达代码」同源:**一段没有测试覆盖、又没有明确拒绝的分支,
+是最难清理的技术债** —— 它既不能被信任,又不能被删除,因为没人知道谁在依赖它。
+
+先把边界写死,`ArtifactNaming::sharedNeedsImportLib` 这个字段就有了明确语义:
+**它当前的唯一用途是驱动那条拒绝**,而不是假装支持。等真要做 A 时,再把它变成产物声明。
+
+#### 与 B3 主体的关系
+
+B3 主体(§5)**不依赖**这个决定:`target_output()` 对 `SharedLibrary` 仍按 (os, env) 给出
+正确的 `foo.dll` / `libfoo.so` / `libfoo.dylib`,该怎么命名怎么命名。路线 B 只是在
+`make_plan` 入口多一条前置检查。
+
+**建议拆分:** B3 主体一个 PR(§8 的五段);路线 B 一个独立小 PR(带一条「PE 目标上声明
+SharedLibrary 得到明确错误」的 e2e);路线 A 另开设计文档。
+
+---
+
+### 9.3 汇总:两个问题的处置
+
+| # | 问题 | 决定 | 依据 |
+|---|---|---|---|
+| 1 | `foo.lib` → `libfoo.a` | **同期做** | 消费链实测无影响(包依赖走 object 内联、外部库走 ldflags、fingerprint 不含产物名);且它是**存量正确性缺陷**,不是顺带优化 |
+| 2 | PE import lib | **本期不建模,改为明确拒绝** | 共享库在 PE/Mach-O 上**零 e2e 覆盖**,现有分支是未验证推测;静默产出不可用产物比明确报错坏得多。完整支持另开设计 |
