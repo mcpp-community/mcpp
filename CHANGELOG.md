@@ -3,6 +3,26 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.3.3] — 2026-08-03
+
+### 修复
+
+- **交叉构建每次都重新链接(增量构建对 PE 目标实际失效)。** `plan.cppm` 的 `target_output()` 用 `mcpp::platform::{exe_suffix,lib_prefix,static_lib_ext,shared_lib_ext}` 拼产物名 —— 这四个是**主机**常量,由 `#if defined(_WIN32)/__APPLE__` 选择。主机构建下「这台机器叫什么」与「产物该叫什么」恰好同解,所以它一直没被发现;`host ≠ target` 时两者分岔。
+
+  后果不是命名难看:Linux 交叉到 PE 时,ninja 被告知产出 `bin/foo`,而 mingw 的 GCC driver 写出的是 `bin/foo.exe` —— **声明的那个文件从来不存在**,ninja 每次都发现输出缺失并重跑链接边。这条路径正是 CI 每天在跑的。
+
+  产物命名现在由 `ArtifactNaming` 决定,每个 plan 从 target triple 求值一次。**它是 (os, env) 二元函数,不是 os 一元**:`x86_64-windows-gnu` 用 GNU 约定(`libfoo.a`),`x86_64-windows-msvc` 才是 `foo.lib`。空 triple 表示「为本机构建」,只有那时主机答案才是对的,因此它作为回退传入而非被直接读取 —— **主机构建逐位不变**。
+
+  同样的处理给了 `shared_library_link_flags`:消费者链接一个共享库时用完整路径(PE)、`@loader_path`(Mach-O)还是 `$ORIGIN`(ELF),是**产物**的属性;按主机求值在交叉时方向就是反的。
+
+- **`windows-gnu` 静态库命名错误(行为变更)。** 在 Windows 主机上用 mingw 工具链构建静态库,产物此前叫 `foo.lib` —— 一个 GNU archive 顶着 MSVC 的名字,MSVC 拿不去用。现在按 GNU 约定命名为 `libfoo.a`。这修正的是一个**今天就是错的**名字,与交叉编译无关。
+
+### 改进
+
+- **非 ELF 目标上声明 `SharedLibrary` 现在明确报错,而不是产出未经验证的东西。** 全部 5 个共享库 e2e 都声明 `# requires: elf`,而这个 capability 只在 Linux 上授予 —— 也就是说共享库在 PE 与 Mach-O 上**从未被端到端验证过**。相关分支是推测代码:mingw 的 ld 容忍直接链 `.dll`,MSVC 的 `link.exe` 不行,而两者都没有 import library 可链,因为 mcpp 还没有建模它。
+
+  一段既没有测试覆盖、又不肯明确拒绝的分支是最难清理的债 —— 它既不能被信任,也不能被删除,因为没人知道谁在依赖它。先把边界写死,等真要支持时再补(前置条件是先有 PE/Mach-O 的共享库覆盖)。
+
 ## [2026.8.3.2] — 2026-08-03
 
 ### 新增
