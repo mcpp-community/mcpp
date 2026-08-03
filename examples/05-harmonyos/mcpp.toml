@@ -1,0 +1,16 @@
+[package]
+name    = "harmonyos-demo"
+version = "0.1.0"
+description = "Demo: cross-build a C++23 named-module program for HarmonyOS/OpenHarmony"
+license = "Apache-2.0"
+
+# mcpp brings the compiler; the OpenHarmony SDK brings the sysroot.
+# The SDK's own clang is 15.0.4 and cannot build C++20 modules, so the
+# toolchain axis is always an LLVM one — see docs/03-toolchains.md#harmonyos.
+#
+# `mcpp build --target aarch64-linux-ohos` picks llvm by convention (the
+# target's pin in src/toolchain/triple.cppm); this section only exists to
+# pin a specific version for reproducibility.
+[target.aarch64-linux-ohos]
+toolchain = "llvm@20.1.7"
+linkage   = "static"

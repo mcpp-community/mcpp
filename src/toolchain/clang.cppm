@@ -135,6 +135,27 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
 }
 
 void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
+    // Retargeted driver: every probe below asks the DRIVER about itself, and
+    // a driver always answers for its own default target. On a cross build
+    // that means the host's libc++ — including the host's `std.cppm`, which
+    // would compile without complaint into a BMI for the wrong platform. The
+    // target's answers come from the provider instead (Toolchain::crossTarget).
+    if (tc.crossTarget) {
+        tc.stdlibId      = "libc++";
+        tc.stdlibVersion = tc.version.empty() ? "unknown" : tc.version;
+        // linkRuntimeDirs describe the HOST payload's private shared libs;
+        // a cross artifact must not carry -L/-rpath into any of them.
+        tc.linkRuntimeDirs.clear();
+        if (!tc.crossTarget->stdModuleSource.empty()) {
+            tc.stdModuleSource   = tc.crossTarget->stdModuleSource;
+            tc.hasImportStd      = true;
+            tc.importStdMinLevel = 20;   // libc++ policy, same as the host path
+            auto compat = tc.stdModuleSource.parent_path() / "std.compat.cppm";
+            if (std::filesystem::exists(compat)) tc.stdCompatSource = compat;
+        }
+        return;
+    }
+
     // Clang targeting MSVC uses MSVC STL, not libc++.
     bool msvTarget = is_msvc_target(tc);
     tc.stdlibId      = msvTarget ? "msvc-stl" : "libc++";

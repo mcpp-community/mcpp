@@ -3,6 +3,43 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased] — RFC:HarmonyOS / OpenHarmony 目标
+
+> **本节对应一个探针 PR,不打算合入。** 引擎改动已实现并端到端验证;
+> 设计与实测数据见 `.agents/docs/2026-08-04-harmonyos-target-design.md`。
+
+### 新增
+
+- **`aarch64-linux-ohos`(HarmonyOS / OpenHarmony)成为一等目标。** 设好
+  `OHOS_NDK_HOME`,`mcpp build --target aarch64-linux-ohos` 产出静态 aarch64
+  鸿蒙 ELF,CI 在 `qemu-aarch64` 下**真的执行**它。C++23 具名模块对着原版 SDK
+  即可用;再配一份为该目标编译的 libc++(`MCPP_OHOS_LIBCXX`),`import std;`
+  也可用 —— 两档都有 e2e。
+
+  **mcpp 只把 SDK 当 sysroot,不当工具链。** 这不是偏好:实测 OpenHarmony SDK
+  **6.1(API 23)自带 clang 仍是 15.0.4**,比 C++20 模块所需的
+  `-fmodule-output`(clang 16)差一代,比 `import std` 差四代。而 GCC 根本没有
+  `ohos` target。所以 `.agents/docs/2026-07-24-embedded-platform-support-design.md`
+  的 config②(mcpp 带编译器 + 消费外部 sysroot)在这里从「两种可行架构之一」
+  变成**唯一解**,并且只能用 clang —— 决策 #8 存档的那条路线被现实提前触发。
+
+- **clang 交叉通道(driver retarget)。** `cross-build-test.yml` 里那条
+  "llvm/clang cross: … Wire the clang cross path first" 的注释现在有实现了:
+  `Toolchain::crossTarget` 让一个 clang driver 带着 `--target=` + 外部 sysroot
+  + 目标 libc++ 工作。**这不是鸿蒙专用的** —— 鸿蒙只是第一个非它不可的消费者,
+  `aarch64-linux-gnu`(树莓派滩头)之后可以走同一条缝。
+
+### 注意
+
+- `ohos` 在 triple 语言里是 **env 而非 os**(`aarch64` + `linux` + `ohos`),
+  与上游 LLVM 一致:内核确实是 Linux,所以已有包里的 `cfg(os = "linux")` /
+  `cfg(family = "unix")` 必须继续匹配。反过来,ABI 维度上 `libc = "ohos"` 自成
+  取值、`is_musl()` 返回 **false** —— OHOS libc 是 musl 的 fork,但与上游 musl
+  产物不可互换,而 mcpp 里 "musl" 处处指的是后者。
+- CI 验证的是「产物面向正确的机器且真的执行」,与 `aarch64-linux-musl` 同级。
+  它**不**覆盖 `.hnp`/`.hap` 打包、链接平台 NDK 库、或任何需要真机/模拟器的
+  行为。
+
 ## [2026.8.4.1] — 2026-08-04
 
 ### 修复

@@ -39,11 +39,17 @@ name: cross-build-test
 #     ci-linux.yml's "Toolchain: musl-gcc" step, and release.yml for the static
 #     release artefact. Keep them there; this file is cross-arch only.
 #
+# ── Related, but deliberately NOT here ────────────────────────────────────
+#   * llvm/clang cross  : WIRED — Toolchain::crossTarget retargets a clang
+#                         driver with `--target=` + an external sysroot. Its
+#                         first consumer is HarmonyOS, and that row lives in
+#                         ci-harmonyos.yml rather than this matrix for one
+#                         reason: it needs a ~2.5 GB vendor SDK mcpp cannot
+#                         ship, and a failure to obtain that SDK must never be
+#                         confusable with a failure of mcpp's own cross matrix.
+#                         See .agents/docs/2026-08-04-harmonyos-target-design.md.
+#
 # ── Planned cross rows (documented; NOT yet wired in mcpp — keep as comments) ─
-#   * llvm/clang cross  : clang is inherently a cross-compiler, but mcpp does not
-#                         yet inject `-target <triple>` + a cross sysroot for a
-#                         clang toolchain; cross `--target` resolves to gcc musl
-#                         only. Wire the clang cross path first, then add a row.
 #   * riscv64-linux-musl: add once xim:riscv64-linux-musl-gcc ships to
 #                         xlings-res + xim-pkgindex.
 

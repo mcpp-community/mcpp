@@ -23,6 +23,56 @@ struct PayloadPaths {
     std::filesystem::path linuxInclude;      // linux kernel headers (linux/, asm/)
 };
 
+// ── Driver-retargeting cross model ───────────────────────────────────────────
+//
+// mcpp's cross story so far has been "a different compiler BINARY per target"
+// (aarch64-linux-musl-g++, x86_64-w64-mingw32-g++), because GCC is not a
+// multi-target compiler. `tc.targetTriple` therefore always came from
+// `-dumpmachine` and was always the truth.
+//
+// Clang is a cross compiler by construction: ONE binary serves every target
+// once you hand it `--target=` plus somewhere to find the target's libc,
+// libc++ and compiler runtime. Nothing in mcpp could express that — which is
+// exactly what .github/workflows/cross-build-test.yml records as the missing
+// "llvm/clang cross" row. This struct is that expression, and it is
+// deliberately NOT HarmonyOS-shaped: HarmonyOS is only the first target that
+// cannot be reached any other way (GCC has no `ohos` target at all).
+//
+// When present, `tc.targetTriple` is the REQUESTED target, not `-dumpmachine`
+// output, and every driver invocation carries `--target=`.
+struct CrossTarget {
+    std::string triple;                  // canonical; also becomes tc.targetTriple
+
+    // Target C library + system headers. Feeds `--sysroot=` (CLibMode::Sysroot).
+    std::filesystem::path sysroot;
+
+    // Target C++ standard library: headers and the archives to link. Kept
+    // separate from the sysroot because on HarmonyOS they live in different
+    // trees (<sdk>/llvm vs <sdk>/sysroot), and because swapping ONLY this
+    // pair is what upgrades a target from "no import std" to "import std".
+    std::vector<std::filesystem::path> cxxIncludes;
+    std::vector<std::filesystem::path> libDirs;
+
+    // The TARGET libc++'s `std.cppm`, when one exists. Supplied by the
+    // provider rather than probed, because the probe
+    // (`-print-library-module-manifest-path`) answers for the driver's OWN
+    // libc++ — on a cross build that is the host's, and building `std` from
+    // it would be a silently wrong BMI rather than an error. Empty means this
+    // target has no std module: `import std` is then refused with a
+    // diagnostic instead of miscompiled.
+    std::filesystem::path stdModuleSource;
+
+    // Clang resource dir holding the TARGET's compiler-rt builtins and
+    // clang_rt.crt{begin,end}.o. Link side only — the compile side must keep
+    // the driver's OWN resource dir, or a clang-22 compile would read
+    // clang-15's intrinsic headers. Empty = the driver's own dir is fine.
+    std::filesystem::path linkResourceDir;
+
+    // Human-facing provenance for `mcpp doctor` / diagnostics
+    // (e.g. "OpenHarmony SDK 6.1.0.31 (API 23)").
+    std::string provider;
+};
+
 struct Toolchain {
     CompilerId                          compiler        = CompilerId::Unknown;
     std::string                         version;            // "15.1.0"
@@ -35,6 +85,10 @@ struct Toolchain {
     std::filesystem::path               stdCompatSource;    // bits/std_compat.cc / std.compat.cppm
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
     std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
+    // Set when this driver is being RETARGETED (clang cross). Mutually
+    // exclusive with payloadPaths by construction: the host glibc payload
+    // must never be offered to a cross target.
+    std::optional<CrossTarget>          crossTarget;
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     // Environment the toolchain's tools need when invoked (set on the ninja

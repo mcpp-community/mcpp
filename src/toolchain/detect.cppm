@@ -15,8 +15,15 @@ export namespace mcpp::toolchain {
 
 // Detect toolchain. If explicit_compiler is given, use that binary path
 // directly. Otherwise fall back to $CXX, then PATH g++.
+//
+// `cross` retargets the driver (clang only): the resolved toolchain then
+// reports the REQUESTED triple rather than `-dumpmachine`, takes its C
+// library from the cross sysroot, and every probe that would have answered
+// for the host is skipped rather than answered wrongly. Building the
+// CrossTarget is the caller's job — this module must not learn platforms.
 std::expected<Toolchain, DetectError>
-detect(const std::filesystem::path& explicit_compiler = {});
+detect(const std::filesystem::path& explicit_compiler = {},
+       const std::optional<CrossTarget>& cross = std::nullopt);
 
 // Compatibility helper for older call sites/tests: GCC std module lookup now
 // lives in the GCC provider.
@@ -33,7 +40,8 @@ std::optional<std::filesystem::path> find_std_module_source(
 }
 
 std::expected<Toolchain, DetectError>
-detect(const std::filesystem::path& explicit_compiler) {
+detect(const std::filesystem::path& explicit_compiler,
+       const std::optional<CrossTarget>& cross) {
     auto bin_r = probe_compiler_binary(explicit_compiler);
     if (!bin_r) return std::unexpected(bin_r.error());
 
@@ -81,6 +89,33 @@ detect(const std::filesystem::path& explicit_compiler) {
         tc.targetTriple = *triple;
     }
 
+    // ── Driver retargeting ────────────────────────────────────────────────
+    // Applied here, between classification and enrichment: everything below
+    // this point reads tc.targetTriple / tc.crossTarget, so the override has
+    // to land before them, and the compiler-identity probes above are the
+    // driver's own business and unaffected by the target.
+    if (cross) {
+        if (tc.compiler != CompilerId::Clang) {
+            return std::unexpected(DetectError{std::format(
+                "target '{}' needs a clang toolchain: only clang can be "
+                "retargeted with --target, and this driver is {} ({}).\n"
+                "       Remove the [target.{}] toolchain override to take the "
+                "target's LLVM convention pin, or point it at an LLVM one:\n"
+                "\n"
+                "         [target.{}]\n"
+                "         toolchain = \"llvm@<version>\"",
+                cross->triple, tc.compiler_name(), tc.binaryPath.string(),
+                cross->triple, cross->triple)});
+        }
+        // `-dumpmachine` said "x86_64-unknown-linux-gnu"; keep it as
+        // provenance (it participates in the BMI fingerprint through
+        // driverIdent, which is right — the same target built by a different
+        // host driver is a different BMI) but let the REQUEST be the truth.
+        tc.driverIdent += "\nretargeted-from: " + tc.targetTriple;
+        tc.targetTriple = cross->triple;
+        tc.crossTarget  = *cross;
+    }
+
 #if defined(_WIN32)
     // On Windows, Clang targeting MSVC auto-detects the MSVC version at
     // compile time and bakes it into the module AST. The -dumpmachine triple
@@ -105,6 +140,19 @@ detect(const std::filesystem::path& explicit_compiler) {
         mcpp::toolchain::gcc::enrich_toolchain(tc);
     } else if (tc.compiler == CompilerId::Clang) {
         mcpp::toolchain::clang::enrich_toolchain(tc, envPrefix);
+    }
+
+    if (cross) {
+        // The target's C library, stated rather than probed. `probe_sysroot`
+        // would ask the driver, and `probe_payload_paths` would find the
+        // HOST's glibc xpkg sitting next to the compiler — either one silently
+        // aims a cross build at the build machine's libc, which is the exact
+        // failure mode CLibMode::PayloadFirst exists to produce on purpose for
+        // host builds. payloadPaths stays empty: linkmodel treats a cross
+        // target as Sysroot mode unconditionally, and leaving a host payload
+        // reachable would only give a future edit something wrong to find.
+        tc.sysroot = cross->sysroot;
+        return tc;
     }
 
     tc.sysroot = probe_sysroot(tc.binaryPath, envPrefix);

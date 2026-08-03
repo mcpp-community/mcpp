@@ -11,8 +11,15 @@
 // abi_profile, model.cppm's is_*_target, registry's musl signals) consumes
 // this module now. Vocabulary: os ∈ {linux, macos, windows} (never "darwin"),
 // arch is the GNU spelling ({x86_64, aarch64, riscv64, …} — never "arm64"),
-// env ∈ {gnu, musl, msvc} (empty on macos). `static` is NOT part of a triple:
-// it is a target's default linkage property, flipped via [build].
+// env ∈ {gnu, musl, msvc, ohos} (empty on macos). `static` is NOT part of a
+// triple: it is a target's default linkage property, flipped via [build].
+//
+// `ohos` (HarmonyOS / OpenHarmony) is an ENV, not an OS — that is upstream
+// LLVM's own model (`llvm::Triple::OpenHOS`), and it is the right one: the
+// kernel is Linux, so `cfg(unix)` / `cfg(os = "linux")` must keep matching,
+// while the libc (a musl FORK with its own soname layout) and the whole
+// runtime ABI differ. Spelling it as a new OS would have silently excluded
+// every `cfg(os = "linux")` block a portable package already ships.
 //
 // The known-target table below is the closed vocabulary `--target` validates
 // against (with an escape hatch for explicit [target.X] manifest sections)
@@ -32,7 +39,7 @@ export namespace mcpp::toolchain::triple {
 struct Triple {
     std::string arch;   // "x86_64" | "aarch64" | "riscv64" | ... (GNU spelling)
     std::string os;     // "linux" | "macos" | "windows"
-    std::string env;    // "gnu" | "musl" | "msvc" | "" (always empty on macos)
+    std::string env;    // "gnu" | "musl" | "msvc" | "ohos" | "" (empty on macos)
 
     bool empty() const { return arch.empty() && os.empty(); }
 
@@ -46,6 +53,13 @@ struct Triple {
 
     bool is_musl() const        { return env == "musl"; }
     bool is_msvc_env() const    { return env == "msvc"; }
+    // HarmonyOS / OpenHarmony. Its libc is a musl FORK, but `is_musl()`
+    // deliberately stays FALSE: mcpp's musl answer everywhere (payload
+    // selection, `ld-musl-<arch>.so.1`, the `abi:musl` capability) means the
+    // upstream musl those payloads were built against, and an OHOS artifact
+    // is not interchangeable with one. Callers that mean "no glibc" must ask
+    // for that, not for musl.
+    bool is_ohos() const        { return env == "ohos"; }
     bool is_windows_gnu() const { return os == "windows" && env == "gnu"; }
     bool is_pe() const          { return os == "windows"; }
 
@@ -106,6 +120,14 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", true  },
     { "x86_64-windows-msvc",   "verified",  "PE",  "",           false },
     { "aarch64-macos",         "verified",  "",    "",           false },
+    // HarmonyOS / OpenHarmony. The pin is an LLVM one and that is structural,
+    // not a preference: GCC has no `ohos` target at all, so config② ("mcpp
+    // brings the compiler, the platform brings the sysroot") can only be
+    // spelled with clang here. Must stay equal to `pins::kOhosLlvm` below —
+    // test_ohos_target.cpp enforces it.
+    { "aarch64-linux-ohos",    "verified",  "",    "llvm@20.1.7", true  },
+    { "x86_64-linux-ohos",     "planned",   "",    "llvm@20.1.7", true  },
+    { "arm-linux-ohos",        "planned",   "",    "llvm@20.1.7", true  },
     { "riscv64-linux-musl",    "planned",   "",    "",           true  },
     { "aarch64-linux-gnu",     "planned",   "",    "",           false },
     { "x86_64-macos",          "planned",   "",    "",           false },
@@ -167,6 +189,13 @@ namespace pins {
     inline constexpr std::string_view kFirstRunWinGnuTarget = "x86_64-windows-gnu";
     inline constexpr std::string_view kFirstRunLinuxX86_64  = "gcc@16.1.0";
     inline constexpr std::string_view kFirstRunLinuxOther   = "gcc@15.1.0-musl";
+    // HarmonyOS/OpenHarmony convention toolchain. LLVM is not a preference
+    // here but the only option: GCC has no `ohos` target, so the compiler
+    // half of config② can only be clang. Must stay equal to the
+    // `*-linux-ohos` rows' `pin` in kKnownTargets above — test_ohos_target.cpp
+    // enforces it. Floor is clang ≥ 17 (`-fmodule-output`); the SDK's own
+    // bundled clang is 15.0.4 even in SDK 6.1 and can never be used.
+    inline constexpr std::string_view kOhosLlvm             = "llvm@20.1.7";
     // Suggested install spellings used by help / MCPP_NO_AUTO_INSTALL errors.
     inline constexpr std::string_view kSuggestLlvm          = "llvm 20.1.7";
     inline constexpr std::string_view kSuggestGccMusl       = "gcc 15.1.0-musl";
@@ -311,6 +340,11 @@ std::optional<Triple> parse(std::string_view s) {
         if (t.os != "macos") {
             if (k == "musl" || starts_with(k, "musleabi")) { t.env = "musl"; continue; }
             if (k == "gnu"  || starts_with(k, "gnueabi"))  { t.env = "gnu";  continue; }
+            // HarmonyOS/OpenHarmony. `ohos` is the canonical spelling and the
+            // one the OHOS NDK's own driver uses ("aarch64-linux-ohos");
+            // "openhos" is upstream LLVM's long form for the same environment.
+            if (k == "ohos" || starts_with(k, "ohoseabi")
+                || k == "openhos")                         { t.env = "ohos"; continue; }
             // starts_with: clang effective triples can carry a version suffix
             // on the env segment ("…-windows-msvc19.44.35211").
             if (starts_with(k, "msvc"))                    { t.env = "msvc"; continue; }

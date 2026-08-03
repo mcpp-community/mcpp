@@ -122,9 +122,13 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     const auto dm = resolve_clang_driver(tc);
     const auto lm = resolve_link_model(tc);
 
+    // A retargeted driver must ALWAYS bypass: the cfg was generated at
+    // install time for the host triple, so trusting it on a cross compile
+    // would inject the host's libc++ include paths under `--target=<other>`.
     const bool bypassCfg =
-        dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
-                      || mcpp::platform::is_linux);
+        dm.isCross()
+        || (dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
+                          || mcpp::platform::is_linux));
 
     // Trusting the cfg means contributing no include paths, stdlib selection
     // or runtime choices — it already carries them. It does NOT mean
@@ -175,8 +179,9 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
     const auto lm = resolve_link_model(tc);
 
     const bool bypassCfg =
-        dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
-                      || mcpp::platform::is_linux);
+        dm.isCross()
+        || (dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
+                          || mcpp::platform::is_linux));
 
     if (bypassCfg) {
         for (auto& t : dm.link_tokens(esc)) out.push_back(t);
