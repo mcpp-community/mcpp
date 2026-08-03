@@ -173,6 +173,74 @@ namespace pins {
     inline constexpr std::string_view kSuggestGccMingw      = "gcc 16.1.0";
 } // namespace pins
 
+// ── Artifact naming conventions ──────────────────────────────────────────────
+//
+// How a built artifact is NAMED is a property of the TARGET, never of the
+// machine doing the build. `mcpp::platform::{exe_suffix,lib_prefix,…}` answer a
+// different question — "what does THIS machine call its own binaries" — and
+// using them to name build outputs is wrong the moment host != target.
+//
+// It is a function of (os, env), not of os alone. The trap:
+//
+//   x86_64-windows-gnu   → libfoo.a    (GNU/mingw convention)
+//   x86_64-windows-msvc  → foo.lib     (MSVC convention)
+//
+// A single `_WIN32` branch cannot express that, which is why building a static
+// library with mingw ON a Windows host produces `foo.lib` today — a GNU archive
+// wearing an MSVC name. That is a pre-existing defect, unrelated to cross
+// compilation.
+//
+// See .agents/docs/2026-08-03-b3-target-aware-artifact-naming.md.
+struct ArtifactNaming {
+    std::string_view exeSuffix;     // ""      | ".exe"
+    std::string_view libPrefix;     // "lib"   | ""
+    std::string_view staticLibExt;  // ".a"    | ".lib"
+    std::string_view sharedLibExt;  // ".so"   | ".dylib" | ".dll"
+    // PE consumers link against an import library, not the .dll itself. mcpp
+    // does not model import libraries yet, so this currently marks "shared
+    // libraries are not supported for this target" rather than describing a
+    // produced artifact. Shared libraries have never been verified end-to-end
+    // on PE or Mach-O — every shared-library e2e declares `# requires: elf`.
+    bool             sharedNeedsImportLib;
+};
+
+// Naming for an explicit target triple. An EMPTY triple means "build for this
+// machine", and only then is the host answer the correct one — so the caller
+// passes it in rather than this module reaching for mcpp::platform, which keeps
+// the decision testable from any host (and keeps this module dependency-free).
+inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hostNaming) {
+    if (t.empty()) return hostNaming;
+
+    if (t.os == "windows") {
+        // PE. The static-library convention splits on env, not on os.
+        const bool msvc = t.is_msvc_env();
+        return ArtifactNaming{
+            .exeSuffix            = ".exe",
+            .libPrefix            = msvc ? "" : "lib",
+            .staticLibExt         = msvc ? ".lib" : ".a",
+            .sharedLibExt         = ".dll",
+            .sharedNeedsImportLib = true,
+        };
+    }
+    if (t.os == "macos") {
+        return ArtifactNaming{
+            .exeSuffix = "", .libPrefix = "lib",
+            .staticLibExt = ".a", .sharedLibExt = ".dylib",
+            .sharedNeedsImportLib = false,
+        };
+    }
+    if (t.os == "linux") {
+        return ArtifactNaming{
+            .exeSuffix = "", .libPrefix = "lib",
+            .staticLibExt = ".a", .sharedLibExt = ".so",
+            .sharedNeedsImportLib = false,
+        };
+    }
+    // Outside the triple language: fall back to the host answer rather than
+    // guessing. A wrong guess here silently misnames every artifact.
+    return hostNaming;
+}
+
 } // namespace mcpp::toolchain::triple
 
 namespace mcpp::toolchain::triple {
