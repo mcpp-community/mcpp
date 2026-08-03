@@ -156,6 +156,98 @@ windows = "gcc@16"            # Windows 上的 gcc family = MinGW-w64
 # 旧值 "mingw@16.1.0" 原样可用
 ```
 
+产物名跟随 **target**;静态库的命名约定分岔点是 triple 的 *env* 段,而不是 OS:
+
+| Target | `kind = "lib"` 产出 |
+|---|---|
+| `x86_64-windows-gnu` | `libfoo.a`(GNU 约定) |
+| `x86_64-windows-msvc` | `foo.lib`(MSVC 约定) |
+
+2026.8.3.3 之前,Windows 宿主上的 mingw 构建产出的是 `foo.lib` —— 一个 GNU
+archive 顶着 MSVC 的名字,MSVC 拿不去用。如果你有脚本按 `*.lib` 去捞
+`windows-gnu` 的产物,现在要改成 `*.a`。
+
+## Windows 上产出 Linux ELF(`x86_64-linux-musl`,无需 WSL)
+
+上一节的镜像:一台 Windows 机器直接产出**完全静态的 Linux 二进制**,
+不需要 WSL、不需要容器,也不往系统里装任何东西。
+
+```bash
+mcpp build --target x86_64-linux-musl        # Windows 或 Linux 上皆可
+```
+
+两种宿主上这条命令**逐字相同**,因为 "交叉" 在 mcpp 里不是一个名字,
+它只是 `host ≠ target` 这个关系。由哪个 payload 承接目标是自动分流的:
+Linux x86_64 宿主装原生 `musl-gcc`;Windows 宿主装一条 **canadian-cross**
+GCC(以 `x86_64-linux-gnu` 构建 → 运行于 `x86_64-w64-mingw32` → 产出
+`x86_64-linux-musl`)。两者都是 GCC 16.1.0,也都带 `bits/std.cc`,
+所以 `import std` 在两边行为一致。
+
+产物是没有 `PT_INTERP` 的全静态 ELF —— 不挑发行版、不挑 libc,
+这正是 musl 成为第一个被打通的 Linux target 的原因:
+
+```console
+$ file mcpp
+mcpp: ELF 64-bit LSB executable, x86-64, statically linked, stripped
+```
+
+Windows 上**不支持** `x86_64-linux-gnu`:glibc target 还需要 `xim:glibc`
+与 `xim:linux-headers` 两个 sysroot payload,而它们只为 Linux 宿主发布。
+musl target 自包含,两者都不需要。
+
+Windows 上也**不支持跨 arch**(如 `aarch64-linux-musl`)—— canadian-cross
+payload 是按宿主 arch 构建的。**macOS 宿主则完全没有面向 Linux 的 payload**,
+任何 Linux target 都不可用。
+
+判据不必靠记:`mcpp toolchain list` 只列出当前宿主真正装得上的 target,
+Targets 一栏里没有的,就是这台机器确实服务不了(实现见
+`toolchain::host_can_serve`)。
+
+## MSVC(系统工具链,Windows)
+
+MSVC 与 mcpp 管理的其它工具链都不同:它是一条**系统工具链**。mcpp 只负责
+定位并识别已安装的 Visual Studio / Build Tools —— **从不**安装、升级或卸载
+MSVC 本身。
+
+```bash
+mcpp toolchain default msvc
+```
+
+在装有 MSVC 的机器上,mcpp 会自动定位(依次尝试 `vswhere.exe`、
+`VSINSTALLDIR`/`VS*COMNTOOLS`、标准安装路径),识别涉及的各个版本,
+并持久化为稳定 spec `msvc@system`:
+
+```
+Detected   msvc 19.44.35211 (VS 2022 BuildTools) (VC tools 14.44.35207)
+           cl: C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\cl.exe
+           import std: available (std.ixx)
+Default    set to msvc@system (was: llvm@20.1.7)
+```
+
+若机器上**没有** MSVC,mcpp 打印安装指引(Visual Studio Installer 勾选
+*Desktop development with C++* 负载,或 `winget install
+Microsoft.VisualStudio.2022.BuildTools`)并以非零码退出 —— 需要你自己装好,
+再重跑该命令。
+
+`mcpp toolchain list` 会把检测到的 MSVC 列在单独的 `System:` 分区,
+`mcpp self doctor` 在 Windows 上会报告它的状态。manifest 里可按平台 pin:
+
+```toml
+[toolchain]
+windows = "msvc@system"
+```
+
+`msvc@<前缀>`(如 `msvc@19.44`)是一个 **pin-verify**:mcpp 仍然使用已安装
+的最新 VC tools,但检测到的版本与前缀不符时报错。
+
+自 0.0.90 起,**原生 cl.exe 构建可用**:mcpp 从检测到的 VC tools + Windows
+SDK 合成 INCLUDE/LIB 环境(不经 `vcvarsall`),把 `std.ixx`/`std.compat.ixx`
+staging 成 `.ifc` BMI,用 `/interface /TP /ifcOutput` 编译 `.cppm` 模块单元,
+用 `/scanDependencies` 扫描,并通过 response file 调 `link.exe`/`lib.exe`
+链接。选择 `/MT` CRT 用 `[target.x86_64-windows-msvc] linkage = "static"`
+(或 `mcpp build --static`)—— 不是 `[build] linkage`,那个键不存在。
+缺 Windows SDK 会让构建失败并给出安装指引(`mcpp self doctor` 会报告 SDK 状态)。
+
 ## 项目级版本锁定
 
 若项目需固定特定版本而不依赖全局默认,可在项目的 `mcpp.toml` 中声明:
@@ -239,3 +331,51 @@ mcpp 的运行行为可通过以下环境变量调整:
 工具链 ABI 不满足任一依赖的 abi 要求时,构建会**尽早失败**并给出修复建议
 (例如 musl-static 工具链遇到 abi:glibc 依赖),取代深层的链接/头文件报错。
 查看:`mcpp why toolchain`。
+
+## 已知工具链风险:模块接口中的运算符模板(Clang 20+)
+
+一个导出**替换性运算符模板**的模块,在 Clang 20 或 22 下会毒化所有导入者
+中该运算符的名字查找:任何 `import` 了这个模块、并用到该运算符的 TU
+——**无论作用在什么类型上**——都会让前端崩溃(SIGSEGV)。GCC 16 与
+Clang 18 不受影响,所以这是 Clang 18 到 20 之间的一处回归。
+
+它正好打在 module-package 这个模式上。包装一个运算符是 `static inline`
+模板的上游头文件,再用一个恒真约束镜像它们的签名(跨 TU 包含关系的标准配方),
+恰恰就是踩中它的写法。
+
+**经验判据:**每个模板形参都应由**第一个**函数实参定死。破坏这一点的形状就是有毒的:
+
+```cpp
+// 有毒 —— `n` 与 `l` 不由第 1 个实参决定
+template<typename T, int m, int n, int l>
+Matx<T, m, n> operator*(const Matx<T, m, l>& a, const Matx<T, l, n>& b);
+
+// 有毒 —— 第二个 typename 只出现在第 2 个实参里
+template<typename T1, typename T2, int n>
+Vec<T1, n>& operator+=(Vec<T1, n>& a, const Vec<T2, n>& b);
+
+// 没问题 —— 每个形参都由第 1 个实参定死
+template<typename T, int m, int n>
+Matx<T, m, n> operator+(const Matx<T, m, n>& a, const Matx<T, m, n>& b);
+```
+
+崩溃是**按名字**触发的:一处被毒化的 `operator*` 声明,会让每个导入者里的
+每一个 `x * y` 都崩,哪怕类型完全无关。函数体本身无关紧要。
+
+**绕法**是整体推导操作数类型再加约束,而不是在形参列表里把它们拆开。
+这样保持调用兼容,跨 TU 语义也仍然成立 —— 上游那个精确匹配的
+`static inline` 更特化,在那边照样胜出:
+
+```cpp
+template<typename MA, typename MB>
+    requires pick<typename MA::value_type>
+          && __is_same(MA, typename MA::mat_type)
+          && __is_same(MB, Matx<typename MB::value_type,
+                               (int)MA::rows, (int)MA::cols>)
+inline MA& operator+=(MA& a, const MB& b);
+```
+
+跟踪于 [mcpp#256](https://github.com/mcpp-community/mcpp/issues/256)。
+`tests/e2e/150_clang_module_operator_template.sh` 是一只跑在内置 LLVM
+工具链上的金丝雀 —— 未来某次 Clang 升级修好(或再次弄坏)这一点时,
+它会显式暴露出来,而不是悄悄改变包能表达的东西。

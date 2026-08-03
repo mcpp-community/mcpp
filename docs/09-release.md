@@ -15,11 +15,19 @@ of those commit messages contains a misdiagnosis that is corrected in §5.
 | `.xlings.json` `[workspace].mcpp` | **bootstrapped from** | separately, *after* a release is installable |
 | `ci-fresh-install.yml` `MCPP_PIN` | **version under test** | **nothing — it is derived at run time** (§5) |
 
-The intended `.github/tools/check_version_pins.sh` guard covers the persistent
-relationships: the two "being built" sites must be equal, and the bootstrap
-pin must never be **newer** than the version being built. At this revision the
-script has a Bash syntax error, so it cannot currently provide that verification;
-check these relationships manually until its implementation is repaired.
+`.github/tools/check_version_pins.sh` machine-checks the persistent
+relationships: the two "being built" sites must be equal, and the bootstrap pin
+must never be **newer** than the version being built.
+
+```bash
+bash .github/tools/check_version_pins.sh
+```
+
+Run it with **bash**, not `sh`. It uses process substitution (`done < <(...)`),
+which POSIX `sh`/dash cannot parse — `sh check_version_pins.sh` fails with
+`Syntax error: redirection unexpected` around line 95. That is the invoking
+shell, not a defect in the script: its shebang is `#!/usr/bin/env bash` and CI
+invokes it as `bash`.
 
 The two groups are deliberately allowed to differ. Bumping them together is what
 an earlier revision of the pin checker required, and it sent every CI job to
@@ -123,8 +131,7 @@ hardcoded literal only bought the first:
    The guard was already deriving the right answer and throwing it away. Feeding
    both from one value makes that disagreement structurally impossible.
 
-The intended `check_version_pins.sh` guard rejects a literal `MCPP_PIN:`. Do
-not reintroduce one while its current syntax error is being repaired: a literal
+`check_version_pins.sh` rejects a literal `MCPP_PIN:`. Do not reintroduce one: a literal
 would again let the index guard and the installed version drift apart.
 
 > **Correction.** Commit `3b1cb6b` ("bootstrap pin -> 2026.7.29.2") states *"the
@@ -139,7 +146,7 @@ would again let the index guard and the installed version drift apart.
 ```
 [ ] version bumped in mcpp.toml + fingerprint.cppm (one commit)
 [ ] CHANGELOG entry
-[ ] manually verify `mcpp.toml` = `MCPP_VERSION` and `.xlings.json` is not newer (the current `check_version_pins.sh` has a Bash syntax error)
+[ ] `bash .github/tools/check_version_pins.sh` passes (verifies `mcpp.toml` = `MCPP_VERSION`, and `.xlings.json` is not newer)
 [ ] merge to main, CI green
 [ ] gh workflow run release.yml --ref main
 [ ] release.yml green (4 builds + publish-ecosystem)

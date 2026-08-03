@@ -7,7 +7,7 @@
 | **状态** | **评审中(Review)** —— 已实现 |
 | **版本** | 1.1 |
 | **最后修改** | 2026-08-03 |
-| **最低实现版本** | mcpp **0.0.106**(xlings >= 0.4.69；当前实现为 2026.8.3.2) |
+| **最低实现版本** | mcpp **0.0.106**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
 | **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |

@@ -162,6 +162,18 @@ windows = "gcc@16"            # gcc family on Windows = MinGW-w64
 # legacy value "mingw@16.1.0" keeps working
 ```
 
+Artifact names follow the **target**, and for static libraries the convention
+splits on the *env* segment, not on the OS:
+
+| Target | `kind = "lib"` produces |
+|---|---|
+| `x86_64-windows-gnu` | `libfoo.a` (GNU convention) |
+| `x86_64-windows-msvc` | `foo.lib` (MSVC convention) |
+
+Before 2026.8.3.3 a mingw build on a Windows host emitted `foo.lib` — a GNU
+archive wearing an MSVC name, which MSVC cannot consume. If you have a script
+that globs `*.lib` out of a `windows-gnu` build, it needs to glob `*.a` now.
+
 ## Linux ELF from Windows (`x86_64-linux-musl`, no WSL required)
 
 The mirror of the section above: a Windows machine producing a **fully static
@@ -193,9 +205,13 @@ mcpp: ELF 64-bit LSB executable, x86-64, statically linked, stripped
 Linux hosts only. The musl target is self-contained and needs neither.
 
 Cross-arch from Windows (e.g. `aarch64-linux-musl`) is not available either —
-the canadian-cross payload is built per host arch. `mcpp toolchain list` shows
-only what the current host can actually install, so if a target is missing from
-the Targets block, that host genuinely cannot serve it.
+the canadian-cross payload is built per host arch. **A macOS host has no
+Linux-targeting payload at all**, so no Linux target is reachable from there.
+
+You do not have to memorize any of this: `mcpp toolchain list` shows only what
+the current host can actually install, so if a target is missing from the
+Targets block, that host genuinely cannot serve it (implemented by
+`toolchain::host_can_serve`).
 
 ## MSVC (System Toolchain, Windows)
 

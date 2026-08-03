@@ -47,10 +47,19 @@ mcpp 有 **三个持久化版本位置**，以及 `ci-fresh-install` 的一个�
 Release 推导一次，所有安装 job 消费同一个输出。绝不能手工编辑或恢复字面量
 `MCPP_PIN`，否则 index guard 和实际安装版本会再次漂移。
 
-`.github/tools/check_version_pins.sh` 的目标是校验版本关系和 xlings pin；但当前版本在
-第 95 行有 Bash 语法错误，不能把它的执行当成有效验证。修复该实现前，手工核对
-`mcpp.toml` 与 `MCPP_VERSION` 相等、`.xlings.json` 不领先于正在构建的版本；也不要
-通过修改文档或 workflow 绕开动态 `MCPP_PIN` 设计。`src/xlings.cppm` 的
+`.github/tools/check_version_pins.sh` 校验版本关系和 xlings pin：
+
+```bash
+bash .github/tools/check_version_pins.sh
+```
+
+**必须用 `bash` 跑，不能用 `sh`。** 脚本用了进程替换（`done < <(...)`），POSIX
+`sh`/dash 解析不了，用 `sh` 调用会在第 95 行附近报 `Syntax error: redirection
+unexpected`。那是调用它的 shell 的问题，不是脚本的缺陷 —— 它的 shebang 是
+`#!/usr/bin/env bash`，CI 也是用 `bash` 调的。别据此把这条 guard 当成坏的而跳过：
+它是唯一能机器化捕捉 pin 漂移的东西。
+
+也不要通过修改文档或 workflow 绕开动态 `MCPP_PIN` 设计。`src/xlings.cppm` 的
 `pinned::kXlingsVersion` 仍是 xlings 版本的唯一真源。
 
 ## 发布步骤
@@ -82,8 +91,8 @@ git checkout -b "chore/bump-$NEW_VERSION"
 sed -i "s/^version.*=.*/version     = \"$NEW_VERSION\"/" mcpp.toml
 sed -i "s/MCPP_VERSION = \".*\"/MCPP_VERSION = \"$NEW_VERSION\"/" src/toolchain/fingerprint.cppm
 
-# 当前 check_version_pins.sh 有 Bash 语法错误；在它修复前手工确认：
-# mcpp.toml 与 MCPP_VERSION 相等，.xlings.json 仍是已发布的 bootstrap 版本。
+# 校验：mcpp.toml 与 MCPP_VERSION 相等，.xlings.json 不领先于正在构建的版本。
+bash .github/tools/check_version_pins.sh
 
 # 自查：构建产物真的报新版本。注意 target/ 目录名带指纹哈希，
 # 版本一变就是新目录 —— 用 `ls -dt` 取最新的那个，`head -1` 会拿到旧二进制。
@@ -212,7 +221,7 @@ xlings update && xlings install mcpp@$NEW_VERSION -y
 # 3) bootstrap pin 收尾 —— 仅 .xlings.json；新版此时已发布、已镜像、已进索引
 sed -i "s/\"mcpp\": \"[^\"]*\"/\"mcpp\": \"$NEW_VERSION\"/" .xlings.json
 # 不编辑 ci-fresh-install.yml 的 MCPP_PIN：它由 wait-index 运行时推导。
-# 当前 check_version_pins.sh 有 Bash 语法错误；手工确认 pin 关系。
+bash .github/tools/check_version_pins.sh   # 复核 pin 关系
 git commit -am "ci: workspace mcpp bootstrap pin -> $NEW_VERSION (released, mirrored, indexed)"
 ```
 
@@ -304,7 +313,7 @@ gh workflow run release.yml --ref "v$NEW_VERSION"
 | `.xlings.json` | `workspace.mcpp` — CI bootstrap 装哪个 mcpp（发布**后**才 bump） |
 | `.github/workflows/ci-fresh-install.yml` | `MCPP_PIN` — 由 `wait-index` 从最新 release 推导，**从不手工 bump** |
 | `src/xlings.cppm` | `kXlingsVersion` — xlings pin 的**唯一真源** |
-| `.github/tools/check_version_pins.sh` | 版本/pin 校验的预期 guard；当前有 Bash 语法错误，修复前须手工核对 |
+| `.github/tools/check_version_pins.sh` | 版本/pin 校验 guard（**用 `bash` 跑，不能用 `sh`**） |
 | `.github/tools/slim_linux_payload.sh` | linux 载荷 strip + 断言 |
 | `.github/tools/mirror_res.sh` | 双端镜像（并发上传 + leg deadline + 完整性 gate） |
 | `.github/tools/gtc` | GitCode CLI（release create/upload、PR） |
@@ -315,5 +324,4 @@ gh workflow run release.yml --ref "v$NEW_VERSION"
 > **注意版本 bump 的两个阶段**：`mcpp.toml` + `fingerprint.cppm` 在发版**前**改
 > （它们定义要发什么）；`.xlings.json` 只在发版成功、镜像并进索引后才可更新
 > （它指定 bootstrap 使用的已发布版本）。`MCPP_PIN` 是被测版本的运行时推导值，
-> 不属于任何手工 bump 阶段。当前 `check_version_pins.sh` 的 Bash 语法错误修复前，
-> 这些关系须手工核对。
+> 不属于任何手工 bump 阶段。这些关系由 `bash .github/tools/check_version_pins.sh` 校验。

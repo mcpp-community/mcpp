@@ -15,9 +15,17 @@
 | `.xlings.json` `[workspace].mcpp` | **自举起点** | 单独地、在某个版本**已可安装之后** |
 | `ci-fresh-install.yml` `MCPP_PIN` | **被测版本** | **不变 —— 运行时推导**（§5） |
 
-`.github/tools/check_version_pins.sh` 的预期职责是机器校验剩下的关系：两处"正在构建的"
-必须相等，自举 pin 永远不得**新于**正在构建的版本。当前版本的脚本存在 Bash 语法错误，
-因此暂时不能提供这项校验；在实现修复前请手工核对这些关系。
+`.github/tools/check_version_pins.sh` 机器校验剩下的关系：两处"正在构建的"
+必须相等，自举 pin 永远不得**新于**正在构建的版本。
+
+```bash
+bash .github/tools/check_version_pins.sh
+```
+
+必须用 **bash** 跑，不能用 `sh`。脚本用了进程替换（`done < <(...)`），
+POSIX `sh`/dash 解析不了 —— `sh check_version_pins.sh` 会在第 95 行附近报
+`Syntax error: redirection unexpected`。那是**调用它的 shell** 的问题，
+不是脚本的缺陷：它的 shebang 是 `#!/usr/bin/env bash`，CI 也是用 `bash` 调的。
 
 两组刻意允许不同。把它们一起 bump 正是 pin 校验器早期版本要求过的做法，
 结果是所有 CI 都去装一个还不存在的版本。
@@ -108,8 +116,8 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
    守卫本来就推导出了正确答案，然后把它扔掉了。让两者吃同一个值，
    使这种不一致在结构上不可能发生。
 
-预期的 `check_version_pins.sh` 会在字面量 `MCPP_PIN:` 重新出现时报错。在当前语法错误
-修复前也不要重新引入字面量，否则索引守卫与实际安装版本又会发生漂移。
+`check_version_pins.sh` 会在字面量 `MCPP_PIN:` 重新出现时报错。不要重新引入字面量，
+否则索引守卫与实际安装版本又会发生漂移。
 
 > **更正。** commit `3b1cb6b`（"bootstrap pin -> 2026.7.29.2"）写着
 > *"the index no longer serves .1"* 并引用了 `version '2026.7.29.1' not found`。
@@ -122,7 +130,7 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 ```
 [ ] mcpp.toml + fingerprint.cppm 版本号已 bump（同一个 commit）
 [ ] CHANGELOG 条目
-[ ] 手工核对 `mcpp.toml` = `MCPP_VERSION` 且 `.xlings.json` 未领先（当前 `check_version_pins.sh` 有 Bash 语法错误）
+[ ] `bash .github/tools/check_version_pins.sh` 通过（校验 `mcpp.toml` = `MCPP_VERSION`，且 `.xlings.json` 未领先）
 [ ] 合入 main，CI 全绿
 [ ] gh workflow run release.yml --ref main
 [ ] release.yml 全绿（4 个构建 + publish-ecosystem）

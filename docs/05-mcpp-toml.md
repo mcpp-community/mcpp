@@ -895,6 +895,14 @@ mcpp cache gc --older-than 30d      # ...or by how long since they were last use
 mcpp cache clean [--deps|--std|--all|--legacy]
 ```
 
+The on-disk entry layout is versioned. An mcpp release that changes it retires
+every older entry at once, so the first build after such an upgrade rebuilds
+its dependencies and repopulates — nothing to clean by hand. 2026.8.3.4 did
+exactly that: an entry's object paths are now addressed relative to the
+*package*, never to the build directory of whichever project happened to
+populate the entry first. `mcpp cache verify` additionally reports any entry
+whose recorded addresses escape it, so a recurrence is auditable offline.
+
 ### 2.11 `[runtime]` — Host Runtime Capabilities
 
 ```toml
