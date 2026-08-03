@@ -64,7 +64,13 @@ export namespace mcpp::build::cache_key {
 // Deliberately NOT the mcpp release number: folding the whole version in
 // orphaned every entry on every release, including plain C object files whose
 // validity has nothing to do with mcpp's version.
-inline constexpr int kCacheEpoch = 1;
+// 2 (mcpp#344): the artifact layout changed. An entry's obj addresses are now
+// package-internal instead of "the first consumer's build-dir path minus
+// `obj/`", so entries written by an older mcpp describe a layout this one does
+// not ask for. They would all miss anyway (probe_cached compares the REQUESTED
+// artifacts), but sharing a directory between two layouts makes `cache gc`'s
+// size accounting and `cache verify`'s output meaningless.
+inline constexpr int kCacheEpoch = 2;
 
 // Axes A/B/C — identical for every package in one build, computed once.
 struct BuildAxes {

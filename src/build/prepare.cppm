@@ -4204,9 +4204,25 @@ prepare_build(bool print_fingerprint,
     ctx.outputDir  = target_dir(*tc, fp, *root);
     ctx.stdBmi     = stdBmiPath;
     ctx.stdObject  = stdObjectPath;
+    // Every directory a package payload may legitimately have been INSTALLED
+    // into. There is more than one: the global registry, plus the two
+    // project-local data roots a custom git index installs into
+    // (`config::project_xlings_data_roots`). make_plan uses these to anchor the
+    // cache address of a dependency source that lives outside its own package
+    // root, and the cacheability gate below uses the same list to decide
+    // whether a package's sources really came from a store. ONE definition,
+    // two uses — deriving the same fact twice is how the object layout and the
+    // cache key drifted apart in the first place (#344).
+    const auto storeRoots = [&]() -> std::vector<std::filesystem::path> {
+        std::vector<std::filesystem::path> roots;
+        if (auto c = get_cfg()) roots.push_back((*c)->xlingsHome() / "data" / "xpkgs");
+        for (auto& d : mcpp::config::project_xlings_data_roots(*root))
+            roots.push_back(d / "xpkgs");
+        return roots;
+    }();
     auto planResult = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
                                              packages, *root, ctx.outputDir,
-                                             stdBmiPath, stdObjectPath);
+                                             stdBmiPath, stdObjectPath, storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
     ctx.plan.stdCompatBmiPath = stdCompatBmiPath;
@@ -4305,27 +4321,15 @@ prepare_build(bool print_fingerprint,
     if (cfg2 && ctx.cacheMode == CacheMode::Global) {
         std::error_code mkEc;
         std::filesystem::create_directories(ctx.outputDir, mkEc);
-        auto usable_object_rel = [](const std::filesystem::path& rel)
-            -> std::optional<std::string>
-        {
-            auto s = rel.generic_string();
-            if (s.empty() || s == "." || s == ".." || s.starts_with("../")) {
-                return std::nullopt;
-            }
-            return s;
-        };
-        auto object_cache_path = [&](const std::filesystem::path& objectPath) {
-            if (objectPath.is_absolute()) {
-                if (auto s = usable_object_rel(
-                        objectPath.lexically_relative(ctx.outputDir / "obj"))) {
-                    return *s;
-                }
-            }
-            if (auto s = usable_object_rel(objectPath.lexically_relative("obj"))) {
-                return *s;
-            }
-            return objectPath.filename().generic_string();
-        };
+
+        // NOTE (mcpp#344): there is deliberately no local "derive the entry
+        // address from the object path" helper here any more. There used to be
+        // one, and it was the SECOND derivation of a fact plan.cppm already
+        // owns — it stripped `obj/` off the consumer's build path, so the entry
+        // layout followed the consumer's package mix while the key did not.
+        // `CompileUnit::packageObjectRel` is now the only answer to "where does
+        // this object live inside a cache entry", and it is computed in exactly
+        // one place. Do not reintroduce a second one.
 
         // ── Per-package keys, bottom-up ──────────────────────────────────
         // Axes A/B/C are whole-graph, so they are computed once. Axes D/E are
@@ -4335,7 +4339,6 @@ prepare_build(bool print_fingerprint,
         // explicit in-progress guard so a cycle that slipped past validation
         // fails loudly instead of recursing until the stack dies.
         namespace ck = mcpp::build::cache_key;
-        const auto storeRoot = (*cfg2)->xlingsHome() / "data" / "xpkgs";
         auto axes = ck::build_axes(
             *tc, *m, stdFlagAndDialect,
             mcpp::toolchain::cppfly::effective_dialect_flags(
@@ -4419,7 +4422,13 @@ prepare_build(bool print_fingerprint,
                                   packages[idx].manifest.package.name);
             }
             if (pa.version.empty()) pa.version = packages[idx].manifest.package.version;
-            ck::fill_package_config(pa, packages[idx], storeRoot);
+            // The GLOBAL registry root — index 0 by construction above. Include
+            // dirs are relativized against it so a key survives a different
+            // MCPP_HOME; a project-local payload falls back to the `<pkg>`
+            // prefix inside fill_package_config and is equally stable.
+            ck::fill_package_config(pa, packages[idx],
+                                    storeRoots.empty() ? std::filesystem::path{}
+                                                       : storeRoots.front());
             pa.sources = pkgSources[idx];
             const bool selfIsIndex = idx > 0
                 && idx - 1 < dep_cache_identities.size()
@@ -4474,6 +4483,36 @@ prepare_build(bool print_fingerprint,
             if (!depIdent || depIdent->sourceKind != "version") continue;
             // ...and neither may anything it was built against be local.
             if (localTaint[i]) continue;
+            // ...and the package's sources must ACTUALLY be in the immutable
+            // store, not merely labelled as coming from it.
+            //
+            // The rule stated three paragraphs up is about provenance on disk;
+            // `sourceKind` is a label recorded at resolution time, which is a
+            // weaker proxy — and there is already a case where the two
+            // disagree. Multi-version mangling re-anchors a consumer package's
+            // root at `<project>/target/.mangled/<pkg>/__self__` and REWRITES
+            // its sources (module/import declarations renamed) while leaving
+            // `sourceKind == "version"` and `localTaint` clear. Nothing about
+            // that copy is immutable or shareable. It stays out of the cache
+            // today only because axis F happens to fold in the mangled
+            // secondary's differing key — one axis away from serving objects
+            // compiled against renamed modules, which is the silent-wrong-`.o`
+            // failure this gate exists to prevent.
+            //
+            // Judge the location, not the label.
+            //
+            // LEXICALLY, not via std::filesystem::relative. `relative()` runs
+            // weakly_canonical on both sides, which RESOLVES SYMLINKS — and a
+            // store whose entries are symlinks into another store is ordinary
+            // (tests/e2e/_inherit_toolchain.sh builds exactly that, and so do
+            // CI caches that link a warm payload tree into a fresh
+            // MCPP_HOME). Canonicalizing turns
+            // `<home>/registry/data/xpkgs/<pkg>` into wherever the link points
+            // and the package stops looking like a store package at all. The
+            // question here is where the payload was INSTALLED, which is a
+            // statement about the path, not about the inode.
+            if (!mcpp::build::path_is_under_any(pkgRoot.root, storeRoots))
+                continue;
 
             const auto& depName = depIdent->packageName;
             const auto& depVer  = depIdent->version.empty()
@@ -4498,6 +4537,7 @@ prepare_build(bool print_fingerprint,
             // must stop being compile edges.
             mcpp::bmi_cache::DepArtifacts arts;
             std::vector<std::size_t> unitIdx;
+            bool addressable = true;
             for (std::size_t u = 0; u < ctx.plan.compileUnits.size(); ++u) {
                 auto& cu = ctx.plan.compileUnits[u];
                 std::error_code ec;
@@ -4506,6 +4546,15 @@ prepare_build(bool print_fingerprint,
                 auto rels = rel.string();
                 if (rels.starts_with("..")) continue;       // not under depRoot
 
+                // ALL OR NOTHING. A unit plan.cppm could not give a
+                // machine-independent entry address to takes its whole package
+                // out of the cache, rather than leaving the package half
+                // staged. Mixing cached and freshly built artifacts within one
+                // package is the case GCC reports as a BMI CRC mismatch in a
+                // consumer three edges away, which is far harder to read than
+                // one extra compile.
+                if (cu.packageObjectRel.empty()) { addressable = false; break; }
+
                 if (cu.providesModule) {
                     std::string bmi;
                     for (char c : *cu.providesModule)
@@ -4513,11 +4562,18 @@ prepare_build(bool print_fingerprint,
                     bmi += std::string(bmiT.bmiExt);
                     arts.bmiFiles.push_back(std::move(bmi));
                 }
-                arts.objFiles.push_back(object_cache_path(cu.object));
+                arts.objFiles.push_back({cu.packageObjectRel.generic_string(),
+                                         cu.object});
                 unitIdx.push_back(u);
             }
+            if (!addressable) continue;
 
-            if (mcpp::bmi_cache::is_cached(key)) {
+            // Validate the entry against THIS build's artifact list, not
+            // against the entry's own (mcpp#344). Anything short of a full
+            // match is a miss — never a failure: the stage edges below are
+            // simply not emitted and the units compile normally.
+            auto probe = mcpp::bmi_cache::probe_cached(key, arts);
+            if (probe.ok) {
                 // Mark the units. The backend turns each into a stage_file
                 // edge; nothing is copied here. Copying behind ninja's back is
                 // exactly what made the old cache a no-op: the staged file was
@@ -4528,7 +4584,7 @@ prepare_build(bool print_fingerprint,
                     auto& cu = ctx.plan.compileUnits[u];
                     cu.servedFromCache = true;
                     cu.cachedObject = mcpp::bmi_cache::cached_obj_path(
-                        key, object_cache_path(cu.object));
+                        key, cu.packageObjectRel.generic_string());
                     if (cu.providesModule) {
                         std::string bmi;
                         for (char c : *cu.providesModule)
@@ -4540,6 +4596,22 @@ prepare_build(bool print_fingerprint,
                 mcpp::bmi_cache::touch_accessed(key);
                 ctx.cachedDeps.push_back({depName, depVer, unitIdx.size()});
                 continue;       // no populate task; it is already cached
+            }
+            // A valid entry that does not hold what we asked for means the
+            // entry and this build disagree about the layout under one key.
+            // After #344 that is unreachable; say so out loud if it ever
+            // happens again, because the alternative presentation is "the
+            // cache silently never hits", and a cache that lies about its own
+            // effectiveness went unnoticed for three months once already.
+            if (!probe.layoutMismatch.empty()) {
+                mcpp::ui::warning(std::format(
+                    "build cache entry for {}@{} [{}] does not contain the "
+                    "artifacts this build needs ({} of {} missing, e.g. `{}`); "
+                    "treating it as a miss. Run `mcpp cache verify` for details.",
+                    depName, depVer, key.keyHex,
+                    probe.layoutMismatch.size(),
+                    arts.bmiFiles.size() + arts.objFiles.size(),
+                    probe.layoutMismatch.front()));
             }
             ctx.depsToPopulate.push_back({ std::move(key), std::move(arts) });
         }

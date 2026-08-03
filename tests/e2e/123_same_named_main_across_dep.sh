@@ -65,15 +65,37 @@ cd consumer
 ninja_file="$(find target -name build.ninja | head -1)"
 [[ -n "$ninja_file" ]] || { echo "no build.ninja generated"; exit 1; }
 
-# The link edge must NOT reference a bare obj/main.o (the stale, unproduced
-# flat path). It must reference the consumer main's real, disambiguated object.
-link_line="$(grep -E 'bin/consumer *:' "$ninja_file")"
-if echo "$link_line" | grep -qE '(^| )obj/main\.o( |$)'; then
-    echo "FAIL: link still references stale flat obj/main.o"
-    echo "$link_line"
-    cat "$ninja_file"
+# THE invariant: every object the link edge names must be PRODUCED by an edge in
+# the same graph. #240's bug was a link input that no edge produced.
+#
+# This deliberately does not assert *which* path the consumer's main lands on.
+# The original assertion ("must not be the flat obj/main.o") encoded the shape of
+# the first fix rather than the property: back then the consumer's main WAS
+# renamed, because disambiguation was decided by a census over the whole build
+# dir, so a dependency's same-named file dragged the consumer along with it.
+# Since mcpp#344 a dependency's objects live under obj/<pkg>/, cross-package
+# collisions cannot happen, and the consumer's own main correctly stays flat.
+# Both layouts satisfy #240; only "produced by some edge" distinguishes a fixed
+# tree from a broken one.
+link_line="$(grep -E '^build bin/consumer *:' "$ninja_file")"
+[[ -n "$link_line" ]] || { echo "FAIL: no link edge for bin/consumer"; cat "$ninja_file"; exit 1; }
+
+for obj in $(echo "$link_line" | sed -E 's/^build bin\/consumer *: *cxx_link //' | tr ' ' '\n' | grep -E '\.o$'); do
+    grep -qE "^build ${obj//\//\\/} *:" "$ninja_file" || {
+        echo "FAIL: link input '$obj' is not produced by any edge"
+        echo "$link_line"
+        cat "$ninja_file"
+        exit 1
+    }
+done
+
+# And the dependency's same-named source must have gotten its own object rather
+# than silently overwriting the consumer's.
+grep -qE '^build obj/mydep/.*main\.o *:' "$ninja_file" || {
+    echo "FAIL: the dependency's src/main.cpp has no object of its own"
+    grep -n 'main\.o' "$ninja_file"
     exit 1
-fi
+}
 
 out="$("$MCPP" run 2>&1 | tail -1)"
 [[ "$out" == "val=41" ]] || { echo "unexpected output: $out"; exit 1; }

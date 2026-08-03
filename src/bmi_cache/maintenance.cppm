@@ -177,9 +177,24 @@ void check_pkg_files(Entry& e, const nlohmann::json& j) {
     if (auto it = j.find("obj"); it != j.end() && it->is_array()) {
         for (auto& v : *it) {
             if (!v.is_string()) continue;
-            if (missing(e.dir / "obj" / v.get<std::string>())) {
+            auto rel = v.get<std::string>();
+            // mcpp#344: an entry's obj addresses must be package-internal —
+            // downward, relative, no drive letter. An address that escapes the
+            // entry is one that was derived from some consumer's build tree,
+            // which is precisely the defect that made two consumers of one key
+            // disagree about the layout. Report it here so the invariant is
+            // auditable offline rather than only observable as a build that
+            // dies in ninja's graph phase.
+            if (rel.empty() || rel.starts_with("/") || rel.starts_with("..")
+                || rel.find(':') != std::string::npos) {
                 e.complete = false;
-                e.problem = std::format("missing obj/{}", v.get<std::string>());
+                e.problem = std::format(
+                    "obj address is not package-internal: '{}'", rel);
+                return;
+            }
+            if (missing(e.dir / "obj" / rel)) {
+                e.complete = false;
+                e.problem = std::format("missing obj/{}", rel);
                 return;
             }
         }

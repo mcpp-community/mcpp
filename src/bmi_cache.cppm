@@ -5,7 +5,16 @@
 //   (the cache root is $MCPP_HOME/build-cache/v1 — see mcpp.home::cache_root)
 //     entry.json                       sentinel + self-description + file list
 //     bmi/<module>.{gcm,pcm}
-//     obj/<relative>.o
+//     obj/<package-internal path>.o
+//
+// The obj address is PACKAGE-INTERNAL: it mirrors the source's path relative to
+// its own package root and contains nothing about the consuming project
+// (mcpp#344). It used to be the consumer's build-dir path with `obj/` stripped,
+// which made the layout depend on which OTHER packages the consumer happened to
+// pull in — #233's basename disambiguation is triggered by a census over the
+// whole build dir — while the key deliberately excludes the consumer. Two
+// consumers then wrote and read incompatible layouts under one key and the
+// second one died in ninja's graph phase.
 //
 // <key16> comes from mcpp.build.cache_key: a per-package Merkle key over the
 // toolchain, the language/dialect settings, the resolved profile, the package's
@@ -75,16 +84,63 @@ struct CacheKey {
     std::filesystem::path objDir()    const { return dir() / "obj"; }
 };
 
-// File names (basenames for BMIs, output-relative paths for objects) belonging
-// to one package's cache entry.
-struct DepArtifacts {
-    std::vector<std::string> bmiFiles;
-    std::vector<std::string> objFiles;
+// One cached object file. The two addresses are deliberately separate
+// (mcpp#344):
+//
+//   cacheRel — where it lives INSIDE the entry (`<entry>/obj/<cacheRel>`).
+//              Must be a pure function of the package, because the key
+//              deliberately excludes the consumer. plan.cppm derives it.
+//   buildRel — where THIS build produces it (`<buildDir>/<buildRel>`).
+//              Consumer-side and therefore not recordable: two consumers of
+//              one entry may legitimately place the same object at different
+//              build-dir paths.
+//
+// Collapsing the two — recording the consumer's path as the entry's address —
+// is exactly what made the second consumer of an entry fail with ninja's
+// "missing and no known rule to make it". Only `cacheRel` ever reaches
+// entry.json; `buildRel` is populate-time input and is empty on read-back.
+struct ObjArtifact {
+    std::string           cacheRel;
+    std::filesystem::path buildRel;
 };
 
-// True when entry.json exists, its schema matches, its recorded inputs equal
-// `key.inputs` field for field, and every listed file is present on disk.
-bool is_cached(const CacheKey& key);
+// The artifacts belonging to one package's cache entry: BMI basenames plus the
+// objects above.
+struct DepArtifacts {
+    std::vector<std::string>  bmiFiles;
+    std::vector<ObjArtifact>  objFiles;
+};
+
+// Why an entry could not serve this build.
+struct CacheProbe {
+    bool ok = false;
+    // Non-empty ONLY when the entry itself validated (schema, key, inputs) but
+    // does not carry the artifacts THIS build asked for. After mcpp#344 that
+    // shape should be unreachable, which is precisely why it must be reported
+    // rather than silently folded into "miss": a systematic recurrence would
+    // otherwise present as "the cache simply never hits", with no signal at
+    // all — the same failure mode as the fake `Cached` that went unnoticed for
+    // three months.
+    std::vector<std::string> layoutMismatch;
+};
+
+// Validate an entry AGAINST WHAT THIS BUILD WILL ACTUALLY READ.
+//
+// A hit requires all of: entry.json exists, its schema matches, its recorded
+// key matches, its recorded inputs equal `key.inputs` field for field, and
+// every artifact in `requested` is both listed by the entry and present on
+// disk. Checking only the entry's OWN file list — which is what this used to
+// do — validates a different question than the one the caller goes on to ask,
+// and the two answers diverged the moment the object layout stopped being a
+// function of the package alone.
+//
+// Anything short of a full match is a MISS. This function must never be the
+// reason a build fails: an unusable entry costs a recompile, and the staging
+// edges that would read it are never emitted.
+CacheProbe probe_cached(const CacheKey& key, const DepArtifacts& requested);
+
+// probe_cached(...).ok
+bool is_cached(const CacheKey& key, const DepArtifacts& requested);
 
 // The artifact list of a validated entry. Does NOT copy anything: the ninja
 // backend stages cached files through its own `stage_file` edges, so that a
@@ -137,12 +193,15 @@ std::optional<nlohmann::json> read_entry(const std::filesystem::path& p) {
     return j;
 }
 
+// Read-back fills `cacheRel` only: `buildRel` is consumer-side and is not — and
+// must not be — recorded in the entry.
 DepArtifacts artifacts_from(const nlohmann::json& j) {
     DepArtifacts a;
     if (auto it = j.find("bmi"); it != j.end() && it->is_array())
         for (auto& v : *it) if (v.is_string()) a.bmiFiles.push_back(v.get<std::string>());
     if (auto it = j.find("obj"); it != j.end() && it->is_array())
-        for (auto& v : *it) if (v.is_string()) a.objFiles.push_back(v.get<std::string>());
+        for (auto& v : *it)
+            if (v.is_string()) a.objFiles.push_back({v.get<std::string>(), {}});
     return a;
 }
 
@@ -199,21 +258,39 @@ std::filesystem::path cached_obj_path(const CacheKey& key, std::string_view rel)
     return key.objDir() / std::filesystem::path(std::string(rel));
 }
 
-bool is_cached(const CacheKey& key) {
+CacheProbe probe_cached(const CacheKey& key, const DepArtifacts& requested) {
+    CacheProbe probe;
     auto j = read_entry(key.entryFile());
-    if (!j) return false;
-    if (j->value("schema", 0) != kEntrySchema) return false;
-    if (j->value("key", std::string{}) != key.keyHex) return false;
+    if (!j) return probe;
+    if (j->value("schema", 0) != kEntrySchema) return probe;
+    if (j->value("key", std::string{}) != key.keyHex) return probe;
     auto it = j->find("inputs");
-    if (it == j->end() || !inputs_match(*it, key.inputs)) return false;
+    if (it == j->end() || !inputs_match(*it, key.inputs)) return probe;
 
-    auto arts = artifacts_from(*j);
+    // The entry itself is valid. From here on, every remaining check is about
+    // whether it holds what THIS build is going to read.
+    auto recorded = artifacts_from(*j);
+    std::set<std::string> haveBmi(recorded.bmiFiles.begin(), recorded.bmiFiles.end());
+    std::set<std::string> haveObj;
+    for (auto& o : recorded.objFiles) haveObj.insert(o.cacheRel);
+
     std::error_code ec;
-    for (auto& g : arts.bmiFiles)
-        if (!std::filesystem::exists(cached_bmi_path(key, g), ec)) return false;
-    for (auto& o : arts.objFiles)
-        if (!std::filesystem::exists(cached_obj_path(key, o), ec)) return false;
-    return true;
+    for (auto& g : requested.bmiFiles) {
+        if (!haveBmi.contains(g)
+            || !std::filesystem::exists(cached_bmi_path(key, g), ec))
+            probe.layoutMismatch.push_back(g);
+    }
+    for (auto& o : requested.objFiles) {
+        if (!haveObj.contains(o.cacheRel)
+            || !std::filesystem::exists(cached_obj_path(key, o.cacheRel), ec))
+            probe.layoutMismatch.push_back(o.cacheRel);
+    }
+    probe.ok = probe.layoutMismatch.empty();
+    return probe;
+}
+
+bool is_cached(const CacheKey& key, const DepArtifacts& requested) {
+    return probe_cached(key, requested).ok;
 }
 
 std::expected<DepArtifacts, std::string> resolve_cached(const CacheKey& key) {
@@ -250,7 +327,6 @@ populate_from(const CacheKey& key,
     std::filesystem::create_directories(cacheObj, ec);
 
     auto projectBmi = projectTargetDir / key.bmiDirName;
-    auto projectObj = projectTargetDir / "obj";
 
     for (auto& g : arts.bmiFiles) {
         auto from = projectBmi / g;
@@ -263,15 +339,20 @@ populate_from(const CacheKey& key,
                 "populate bmi '{}': {}", g, ec.message()));
         }
     }
+    // Read from `buildRel`, write at `cacheRel`. These are NOT the same path in
+    // general (mcpp#344): the build-dir layout partitions objects by package,
+    // the entry's layout is package-internal, and a source that sits outside its
+    // package root is re-anchored for the entry. Deriving one from the other
+    // here is what this split exists to prevent.
     for (auto& o : arts.objFiles) {
-        auto from = projectObj / o;
-        if (!std::filesystem::exists(from)) {
+        auto from = projectTargetDir / o.buildRel;
+        if (o.buildRel.empty() || !std::filesystem::exists(from)) {
             return std::unexpected(std::format(
                 "expected build output missing: {}", from.string()));
         }
-        if (!copy_one(from, cached_obj_path(key, o), ec)) {
+        if (!copy_one(from, cached_obj_path(key, o.cacheRel), ec)) {
             return std::unexpected(std::format(
-                "populate obj '{}': {}", o, ec.message()));
+                "populate obj '{}': {}", o.cacheRel, ec.message()));
         }
     }
 
@@ -289,7 +370,13 @@ populate_from(const CacheKey& key,
     j["tag"]      = key.manifestTag;
     j["inputs"]   = key.inputs;
     j["bmi"]      = arts.bmiFiles;
-    j["obj"]      = arts.objFiles;
+    // Only the entry-internal addresses. Recording the consumer's build path
+    // here is mcpp#344 in one line.
+    {
+        auto objs = nlohmann::json::array();
+        for (auto& o : arts.objFiles) objs.push_back(o.cacheRel);
+        j["obj"] = std::move(objs);
+    }
     j["accessed"] = now_iso8601();
     return write_entry(key.entryFile(), j);
 }

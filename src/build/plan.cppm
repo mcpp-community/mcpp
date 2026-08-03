@@ -42,6 +42,19 @@ struct CompileUnit {
     bool                            servedFromCache = false;
     std::filesystem::path           cachedObject;   // absolute, inside the cache
     std::filesystem::path           cachedBmi;      // absolute; empty if no module
+    // mcpp#344: this object's address INSIDE a global-cache entry — relative to
+    // `<entry>/obj/`, and a pure function of the owning package (its source's
+    // path relative to its own package root). Distinct from `object`, which is
+    // a build-dir path and therefore depends on which other packages this
+    // particular build contains.
+    //
+    // Empty means "no admissible cache address": the root package (never
+    // cached), or a dependency source that could not be anchored to anything
+    // machine-independent. prepare.cppm drops the WHOLE package out of the
+    // cache when any of its units has an empty address — a half-staged package
+    // mixes cached and freshly built BMIs, which is the mismatch GCC reports as
+    // a CRC error three edges later.
+    std::filesystem::path           packageObjectRel;
 };
 
 struct LinkUnit {
@@ -116,6 +129,20 @@ struct BuildPlan {
     std::vector<CapabilityProvider>    runtimeProviders;
 };
 
+// Is `p` inside one of `roots`, judged LEXICALLY?
+//
+// Lexical is the whole point (mcpp#344). std::filesystem::relative() runs
+// weakly_canonical on both sides and therefore RESOLVES SYMLINKS, and a payload
+// store whose entries are symlinks into another store is ordinary — e2e's
+// _inherit_toolchain.sh builds one, and so does any CI cache that links a warm
+// payload tree into a fresh MCPP_HOME. Under canonicalization those packages
+// stop looking like store packages and silently drop out of the build cache.
+// Both the cacheability gate and the cache-address anchor ask "where was this
+// installed", which is a question about the path, not about the inode — and
+// they must answer it the same way, so there is one function.
+bool path_is_under_any(const std::filesystem::path&              p,
+                       const std::vector<std::filesystem::path>& roots);
+
 // True if a source file defines a top-level `int main(`/`auto main(` entry,
 // ignoring comments and string/raw-string literals. Drives the archive-vs-inline
 // choice for kind="lib" dependencies (see plan.cppm).
@@ -135,7 +162,14 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
          const std::filesystem::path&            projectRoot,
          const std::filesystem::path&            outputDir,
          const std::filesystem::path&            stdBmiPath,
-         const std::filesystem::path&            stdObjectPath);
+         const std::filesystem::path&            stdObjectPath,
+         // Roots of the immutable xpkgs payload stores (there is more than
+         // one: the global registry, plus the project-local `.mcpp/**/data`
+         // roots a custom git index installs into). Used ONLY to anchor the
+         // cache address of a dependency source that lives outside its own
+         // package root (a build.mcpp OUT_DIR product). Empty is legal and
+         // simply makes those units uncacheable.
+         const std::vector<std::filesystem::path>& storeRoots = {});
 
 } // namespace mcpp::build
 
@@ -345,6 +379,37 @@ void append_unique_path(std::vector<std::filesystem::path>& out,
 // false-positive (that misfire chose archive linking for a no-main test →
 // gtest_main.o not pulled by MSVC lld-link → LNK1561). Heuristic but robust;
 // worst case is a sub-optimal archive-vs-inline choice, never a miscompile.
+bool path_is_under_any(const std::filesystem::path&              p,
+                       const std::vector<std::filesystem::path>& roots)
+{
+    // Empty = unrelated (different roots/drives). ".." or a "../" prefix =
+    // outside. Everything else — including "." for the root itself — is in.
+    auto inside = [](const std::filesystem::path& a,
+                     const std::filesystem::path& b) {
+        auto s = a.lexically_normal()
+                  .lexically_relative(b.lexically_normal())
+                  .generic_string();
+        return !s.empty() && s != ".." && !s.starts_with("../");
+    };
+    for (auto const& root : roots) {
+        if (root.empty()) continue;
+        if (inside(p, root)) return true;
+        // Retry on canonicalized paths. Lexical is the PRIMARY answer (it is
+        // the only one that survives a symlinked store), but it also requires
+        // the two paths to be spelled the same way, and mcpp's home is reached
+        // through more than one spelling on Windows (HOME vs USERPROFILE, drive
+        // letter case, 8.3 names). Both comparisons answer the same question
+        // under different equivalence relations, and either "yes" is sufficient
+        // evidence that the payload was installed into a store — so a spelling
+        // difference degrades to a slower build, never to a wrong one.
+        std::error_code e1, e2;
+        auto cp = std::filesystem::weakly_canonical(p, e1);
+        auto cr = std::filesystem::weakly_canonical(root, e2);
+        if (!e1 && !e2 && inside(cp, cr)) return true;
+    }
+    return false;
+}
+
 bool source_defines_main(const std::filesystem::path& src) {
     std::ifstream is(src);
     if (!is) return false;
@@ -413,7 +478,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
          const std::filesystem::path&            projectRoot,
          const std::filesystem::path&            outputDir,
          const std::filesystem::path&            stdBmiPath,
-         const std::filesystem::path&            stdObjectPath)
+         const std::filesystem::path&            stdObjectPath,
+         const std::vector<std::filesystem::path>& storeRoots)
 {
     BuildPlan plan;
     plan.manifest         = manifest;
@@ -567,43 +633,97 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         append_unique_path(plan.runtimeLibraryDirs, tc.payloadPaths->glibcLib);
     }
 
-    // 1a. Detect basename collisions (both cross-package AND intra-package:
-    //     ftxui ships dom/color.cpp + screen/color.cpp, for instance).
-    //     For colliding files the object path gets a per-unit prefix.
+    // 1a. Object addressing.
     //
-    //     mcpp#233: the prefix used to be derived from just the file's
-    //     IMMEDIATE parent directory name (`<pkg>_<parent-dir>`), which
-    //     itself collides whenever two files share a parent dir NAME at
-    //     different depths — e.g. a/src/util.cpp and b/src/util.cpp both
-    //     fold to `<pkg>_src/util.o`, and ninja rejects the plan with
-    //     "multiple rules generate obj/...". The prefix now mirrors the
-    //     unit's FULL relative directory instead (SourceUnit::relPath, set
-    //     by the scanner against the unit's own package root), which is
-    //     unique by construction: two distinct files under one package
-    //     root can never share both relPath and basename. Non-colliding
-    //     files keep the pre-existing flat `obj/<name>` layout untouched
-    //     (back-compat for the overwhelmingly common single-file-per-
-    //     basename project).
+    //     TWO addresses come out of one derivation here, and keeping it ONE
+    //     derivation is the point (mcpp#344):
+    //
+    //       cu.object           where this build writes the object
+    //       cu.packageObjectRel where the global cache stores it, if cacheable
+    //
+    //     The rule that makes them safe:
+    //
+    //       **A package's object layout may depend on that package and nothing
+    //       else.**
+    //
+    //     It used to depend on the whole build. Basename disambiguation
+    //     (mcpp#233) was driven by a census over EVERY unit in the graph, so
+    //     `compat.zlib`'s compress.o was `obj/compress.o` in a project that
+    //     pulled zlib alone and `obj/compat_zlib/zlib-1.3.2/compress.o` in one
+    //     that also pulled `compat.bzip2` (which ships its own compress.c).
+    //     The global cache key deliberately excludes the consumer — that is
+    //     what makes cross-project sharing sound — so both layouts landed under
+    //     one key and whichever project ran SECOND asked the entry for a file
+    //     the first had never written. ninja rejects that at graph load with
+    //     "missing and no known rule to make it", before any command runs.
+    //
+    //     #233 (compile edges collided), #240 (link inputs didn't follow the
+    //     rename) and #344 are three products of the same machine: a layout
+    //     decided by a global census. So the fix is not another place to keep
+    //     in sync — it is to take dependencies out of the census entirely.
+    //
+    //       root package (never cached):
+    //           obj/<name>.o                                  (historical)
+    //           obj/<root-slug>/<mirrored relDir>/<name>.o    when the ROOT's
+    //                                                         own sources
+    //                                                         collide
+    //       dependency package:
+    //           obj/<pkg-slug>/<mirrored relDir>/<name>.o     unconditionally
+    //
+    //     Dependencies get no census at all. A conditional layout is exactly
+    //     the state that generated this bug family, and all it buys is shorter
+    //     paths; the mirrored relDir is unique by construction (two distinct
+    //     files under one package root cannot share both relPath and basename),
+    //     which is what the L1b assertion below still backstops.
+    //
+    //     The root keeps its flat layout because it is never cached and because
+    //     `obj/main.o` is what every project has looked like since 0.0.1.
+    //     Its census now spans only root-owned units, which is both correct
+    //     (a dependency can no longer force the root to disambiguate) and
+    //     sufficient (dependencies live in their own subtrees).
+
+    // Owning package of a source. Longest matching root wins: package roots
+    // nest (a workspace member lives under the workspace root) and the first
+    // match would file the member's sources under the outer package. Index 0 is
+    // the root project; `packages.size()` means "outside every known root",
+    // which is treated as root-owned and never cached.
+    auto owner_of = [&](const std::filesystem::path& src) -> std::size_t {
+        std::size_t best = 0;
+        std::size_t bestLen = 0;
+        bool found = false;
+        for (std::size_t p = 0; p < packages.size(); ++p) {
+            std::error_code ec;
+            auto rel = std::filesystem::relative(src, packages[p].root, ec);
+            if (ec || rel.empty()) continue;
+            if (rel.generic_string().starts_with("..")) continue;
+            auto len = packages[p].root.generic_string().size();
+            if (!found || len > bestLen) { best = p; bestLen = len; found = true; }
+        }
+        return found ? best : 0;
+    };
+
     std::set<std::filesystem::path> scannedSources;
-    std::map<std::string, int> basenameCount;
+    std::map<std::string, int> rootBasenameCount;
+    std::vector<std::size_t> unitOwner(graph.units.size(), 0);
     for (auto idx : topoOrder) {
-        basenameCount[object_filename_for(graph.units[idx].path, objExt)]++;
+        unitOwner[idx] = owner_of(graph.units[idx].path);
         scannedSources.insert(graph.units[idx].path);
+        if (unitOwner[idx] == 0)
+            rootBasenameCount[object_filename_for(graph.units[idx].path, objExt)]++;
     }
     // mcpp#240: entry `main` sources are synthesized into compile units later
     // (during link assembly), NOT part of topoOrder — but they still occupy an
     // object path and must share ONE disambiguation census with everything
-    // else. Count each root target's entry that isn't already scanned (a globbed
-    // main IS scanned, so counting it again would falsely disambiguate the
-    // common single-binary project). This makes "consumer main not globbed +
-    // dependency ships a same-named main" disambiguate correctly too.
+    // else root-owned. Count each root target's entry that isn't already
+    // scanned (a globbed main IS scanned, so counting it again would falsely
+    // disambiguate the common single-binary project).
     for (auto& t : manifest.targets) {
         if (t.main.empty()) continue;
         if (t.kind != mcpp::manifest::Target::Binary
             && t.kind != mcpp::manifest::Target::TestBinary) continue;
         auto entry = projectRoot / t.main;
         if (scannedSources.contains(entry)) continue;
-        basenameCount[object_filename_for(entry, objExt)]++;
+        rootBasenameCount[object_filename_for(entry, objExt)]++;
     }
     auto sanitize = [](const std::string& s) {
         std::string out; out.reserve(s.size());
@@ -645,18 +765,64 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return pkg.empty() ? safe
                            : std::filesystem::path(sanitize(pkg)) / safe;
     };
-    // mcpp#233/#240: the single source of truth for a compile unit's object
-    // path — scanned units AND the synthesized entry main go through here, so
-    // the link input can never diverge from the compile edge.
+    // mcpp#233/#240/#344: the single source of truth for a compile unit's
+    // object addresses — scanned units AND the synthesized entry main go
+    // through here, so neither the link input nor the cache address can
+    // diverge from the compile edge.
+    struct ObjectAddress {
+        std::filesystem::path object;      // relative to outputDir
+        std::filesystem::path packageRel;  // inside a cache entry; empty = uncacheable
+    };
     auto object_for = [&](const std::filesystem::path& src,
                           const std::string& pkg,
-                          const std::filesystem::path& relPath)
-        -> std::filesystem::path {
+                          const std::filesystem::path& relPath,
+                          std::size_t owner) -> ObjectAddress
+    {
         const auto fname = object_filename_for(src, objExt);
-        if (basenameCount[fname] > 1)
-            return std::filesystem::path("obj")
-                 / safe_object_prefix(pkg, relPath.parent_path()) / fname;
-        return std::filesystem::path("obj") / fname;
+        if (owner == 0) {
+            // Root project: never cached, historical layout preserved.
+            if (rootBasenameCount[fname] > 1)
+                return { std::filesystem::path("obj")
+                       / safe_object_prefix(pkg, relPath.parent_path()) / fname,
+                         {} };
+            return { std::filesystem::path("obj") / fname, {} };
+        }
+
+        auto slug = sanitize(pkg.empty()
+            ? qualified_package_name(packages[owner].manifest)
+            : pkg);
+        auto mirrored = safe_object_prefix({}, relPath.parent_path()) / fname;
+
+        ObjectAddress addr;
+        addr.object = std::filesystem::path("obj") / slug / mirrored;
+
+        // The cache address additionally has to be MACHINE-independent: another
+        // machine computes the same key and reads the same entry. A relPath
+        // that stays inside the package root already is. One that escapes (a
+        // build.mcpp OUT_DIR product living beside the payload) is re-anchored
+        // at the xpkgs store root — the same `<store>`-relative trick
+        // cache_key.cppm uses for include dirs — and when even that fails the
+        // unit gets no address at all rather than one carrying this machine's
+        // absolute paths.
+        auto rels = relPath.generic_string();
+        if (!relPath.empty() && !relPath.is_absolute() && !rels.starts_with("..")) {
+            addr.packageRel = mirrored;
+        } else {
+            // Lexically — see path_is_under_any: a store built out of symlinks
+            // is ordinary, and canonicalizing here would answer a different
+            // question than the cacheability gate does.
+            auto norm = src.lexically_normal();
+            for (auto const& storeRoot : storeRoots) {
+                if (storeRoot.empty()) continue;
+                auto sr  = norm.lexically_relative(storeRoot.lexically_normal());
+                auto srs = sr.generic_string();
+                if (srs.empty() || srs == ".." || srs.starts_with("../")) continue;
+                addr.packageRel = std::filesystem::path("__store")
+                                / safe_object_prefix({}, sr.parent_path()) / fname;
+                break;
+            }
+        }
+        return addr;
     };
 
     // 1. Compile units in topological order
@@ -670,7 +836,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         cu.packageCflags = u.packageCflags;
         cu.packageCxxflags = u.packageCxxflags;
         cu.packageAsmflags = u.packageAsmflags;
-        cu.object = object_for(u.path, u.packageName, u.relPath);
+        {
+            auto addr = object_for(u.path, u.packageName, u.relPath, unitOwner[idx]);
+            cu.object           = std::move(addr.object);
+            cu.packageObjectRel = std::move(addr.packageRel);
+        }
         if (u.provides) {
             cu.providesModule = u.provides->logicalName;
         }
@@ -1005,9 +1175,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 }
             }
             if (!already) {
+                // Entry mains belong to the root project (`t.main` is resolved
+                // against projectRoot), which is owner 0 and never cached.
                 main_cu.object = object_for(
                     main_cu.source, main_cu.packageName,
-                    std::filesystem::relative(main_cu.source, projectRoot));
+                    std::filesystem::relative(main_cu.source, projectRoot),
+                    /*owner=*/0).object;
                 plan.compileUnits.push_back(main_cu);
                 entryObject = main_cu.object;
             }

@@ -68,8 +68,12 @@ nlohmann::json readJson(const std::filesystem::path& p) {
     return j;
 }
 
+// `cacheRel` is the entry-internal address, `buildRel` is where this "build"
+// produced the file (relative to the project target dir). They are separate on
+// purpose — see mcpp#344.
 DepArtifacts oneOfEach() {
-    return DepArtifacts{ .bmiFiles = {"lib.gcm"}, .objFiles = {"lib.m.o"} };
+    return DepArtifacts{ .bmiFiles = {"lib.gcm"},
+                         .objFiles = {{"lib.m.o", "obj/lib.m.o"}} };
 }
 
 void seedProject(const std::filesystem::path& project) {
@@ -101,7 +105,7 @@ TEST(BmiCache, EntryDirCarriesTheLayoutVersion) {
 
 TEST(BmiCache, IsCachedFalseWhenEntryMissing) {
     Tmp t;
-    EXPECT_FALSE(is_cached(makeKey(t.path)));
+    EXPECT_FALSE(is_cached(makeKey(t.path), oneOfEach()));
 }
 
 TEST(BmiCache, PopulateWritesSelfDescribingEntry) {
@@ -117,7 +121,7 @@ TEST(BmiCache, PopulateWritesSelfDescribingEntry) {
     ASSERT_TRUE(std::filesystem::exists(k.entryFile()));
     EXPECT_TRUE(std::filesystem::exists(k.bmiDir() / "lib.gcm"));
     EXPECT_TRUE(std::filesystem::exists(k.objDir() / "lib.m.o"));
-    EXPECT_TRUE(is_cached(k));
+    EXPECT_TRUE(is_cached(k, oneOfEach()));
 
     // The entry has to carry the key AND the full inputs: a hit is validated
     // field by field, so a cache whose entries only listed files could never be
@@ -141,10 +145,10 @@ TEST(BmiCache, IsCachedFalseWhenRecordedInputsDiffer) {
 
     auto written = makeKey(home, "samekey00000000", "base");
     ASSERT_TRUE(populate_from(written, project, oneOfEach()));
-    EXPECT_TRUE(is_cached(written));
+    EXPECT_TRUE(is_cached(written, oneOfEach()));
 
     auto probed = makeKey(home, "samekey00000000", "different-flag");
-    EXPECT_FALSE(is_cached(probed));
+    EXPECT_FALSE(is_cached(probed, oneOfEach()));
 }
 
 // An entry written by an older mcpp may carry extra keys, but every field the
@@ -162,7 +166,7 @@ TEST(BmiCache, IsCachedFalseWhenARequiredInputFieldIsAbsent) {
     j["inputs"].erase("profile");
     std::ofstream(k.entryFile()) << j.dump(2);
 
-    EXPECT_FALSE(is_cached(k));
+    EXPECT_FALSE(is_cached(k, oneOfEach()));
 }
 
 TEST(BmiCache, IsCachedFalseWhenSchemaDiffers) {
@@ -178,7 +182,7 @@ TEST(BmiCache, IsCachedFalseWhenSchemaDiffers) {
     j["schema"] = kEntrySchema + 1;
     std::ofstream(k.entryFile()) << j.dump(2);
 
-    EXPECT_FALSE(is_cached(k));
+    EXPECT_FALSE(is_cached(k, oneOfEach()));
 }
 
 TEST(BmiCache, IsCachedFalseWhenSentinelExistsButFileMissing) {
@@ -189,10 +193,10 @@ TEST(BmiCache, IsCachedFalseWhenSentinelExistsButFileMissing) {
 
     auto k = makeKey(home);
     ASSERT_TRUE(populate_from(k, project, oneOfEach()));
-    ASSERT_TRUE(is_cached(k));
+    ASSERT_TRUE(is_cached(k, oneOfEach()));
 
     std::filesystem::remove(k.objDir() / "lib.m.o");
-    EXPECT_FALSE(is_cached(k));
+    EXPECT_FALSE(is_cached(k, oneOfEach()));
 }
 
 TEST(BmiCache, ResolveCachedReportsTheArtifactsWithoutCopying) {
@@ -207,7 +211,11 @@ TEST(BmiCache, ResolveCachedReportsTheArtifactsWithoutCopying) {
     auto arts = resolve_cached(k);
     ASSERT_TRUE(arts) << arts.error();
     EXPECT_EQ(arts->bmiFiles, std::vector<std::string>{"lib.gcm"});
-    EXPECT_EQ(arts->objFiles, std::vector<std::string>{"lib.m.o"});
+    ASSERT_EQ(arts->objFiles.size(), 1u);
+    EXPECT_EQ(arts->objFiles[0].cacheRel, "lib.m.o");
+    // Read-back never yields a build path: the entry does not record one, which
+    // is the whole point of mcpp#344.
+    EXPECT_TRUE(arts->objFiles[0].buildRel.empty());
 
     // resolve_cached must not write into a project dir. Staging is a ninja edge
     // now: copying artifacts in from outside the graph is exactly what made the
@@ -232,10 +240,76 @@ TEST(BmiCache, PopulateHandlesNestedObjectPaths) {
     writeFile(project / "obj" / "pkg_zlib" / "zlib-1.3" / "compress.o", "NESTED");
 
     auto k = makeKey(home);
-    DepArtifacts arts { .objFiles = {"pkg_zlib/zlib-1.3/compress.o"} };
+    DepArtifacts arts {
+        .objFiles = {{"zlib-1.3/compress.o", "obj/pkg_zlib/zlib-1.3/compress.o"}} };
     ASSERT_TRUE(populate_from(k, project, arts));
-    EXPECT_EQ(readFile(k.objDir() / "pkg_zlib" / "zlib-1.3" / "compress.o"), "NESTED");
-    EXPECT_TRUE(is_cached(k));
+    // Stored at the ENTRY address, read from the BUILD path. The entry knows
+    // nothing about the `pkg_zlib/` partition, which is consumer-side.
+    EXPECT_EQ(readFile(k.objDir() / "zlib-1.3" / "compress.o"), "NESTED");
+    EXPECT_TRUE(is_cached(k, arts));
+    auto j = readJson(k.entryFile());
+    EXPECT_EQ(j["obj"][0].get<std::string>(), "zlib-1.3/compress.o");
+}
+
+// mcpp#344, the load-bearing case. Two consumers of ONE key may place the same
+// object at different build-dir paths (#233's basename disambiguation fires on
+// a census over the whole build dir, which varies with the consumer's package
+// mix). The entry is written by whoever runs first; whoever runs second must
+// get a clean MISS, with the divergence named — never a hit that goes on to
+// stage a file the entry never had, which is what ninja reported as
+// "missing and no known rule to make it" at graph load.
+TEST(BmiCache, ProbeMissesWhenTheEntryDoesNotHoldTheRequestedArtifacts) {
+    Tmp t;
+    auto home    = t.path / "home";
+    auto project = t.path / "proj" / "target";
+    writeFile(project / "obj" / "compress.o", "FLAT");
+
+    auto k = makeKey(home);
+    // The first consumer populated the entry under a DIFFERENT internal
+    // address than the one this build is going to ask for.
+    DepArtifacts written { .objFiles = {{"other/compress.o", "obj/compress.o"}} };
+    ASSERT_TRUE(populate_from(k, project, written));
+
+    DepArtifacts wanted { .objFiles = {{"zlib-1.3/compress.o", "obj/compress.o"}} };
+    auto probe = probe_cached(k, wanted);
+    EXPECT_FALSE(probe.ok);
+    ASSERT_EQ(probe.layoutMismatch.size(), 1u);
+    EXPECT_EQ(probe.layoutMismatch[0], "zlib-1.3/compress.o");
+}
+
+// The same asymmetry on the read side: an entry that lists a file it does not
+// have on disk must not be reported as a layout divergence OR as a hit.
+TEST(BmiCache, ProbeMissesWhenARequestedFileIsListedButAbsent) {
+    Tmp t;
+    auto home    = t.path / "home";
+    auto project = t.path / "proj" / "target";
+    seedProject(project);
+
+    auto k = makeKey(home);
+    ASSERT_TRUE(populate_from(k, project, oneOfEach()));
+    std::filesystem::remove(k.objDir() / "lib.m.o");
+
+    auto probe = probe_cached(k, oneOfEach());
+    EXPECT_FALSE(probe.ok);
+    ASSERT_EQ(probe.layoutMismatch.size(), 1u);
+    EXPECT_EQ(probe.layoutMismatch[0], "lib.m.o");
+}
+
+// An entry whose own validation fails (wrong inputs) is an ordinary miss and
+// carries NO layout complaint — the caller warns on layout divergence only, and
+// warning on every routine miss would make the signal worthless.
+TEST(BmiCache, ProbeReportsNoLayoutMismatchWhenTheEntryItselfIsInvalid) {
+    Tmp t;
+    auto home    = t.path / "home";
+    auto project = t.path / "proj" / "target";
+    seedProject(project);
+
+    ASSERT_TRUE(populate_from(makeKey(home, "samekey00000000", "base"),
+                              project, oneOfEach()));
+    auto probe = probe_cached(makeKey(home, "samekey00000000", "other"),
+                              oneOfEach());
+    EXPECT_FALSE(probe.ok);
+    EXPECT_TRUE(probe.layoutMismatch.empty());
 }
 
 // touch_accessed is what makes `cache gc` an LRU rather than "drop what was
@@ -266,7 +340,7 @@ TEST(BmiCache, TouchAccessedMovesTheStampAndNotTheArtifacts) {
         << "touch must not reset the creation stamp";
     EXPECT_EQ(std::filesystem::last_write_time(k.objDir() / "lib.m.o"), objTime0);
     EXPECT_EQ(std::filesystem::last_write_time(k.bmiDir() / "lib.gcm"), bmiTime0);
-    EXPECT_TRUE(is_cached(k)) << "touching must not invalidate the entry";
+    EXPECT_TRUE(is_cached(k, oneOfEach())) << "touching must not invalidate the entry";
 }
 
 TEST(BmiCache, RepopulatePreservesCreatedStamp) {
@@ -290,7 +364,7 @@ TEST(BmiCache, PopulateFailsIfBuildOutputMissing) {
     auto home    = t.path / "home";
     auto project = t.path / "proj" / "target";
     std::filesystem::create_directories(project / "gcm.cache");
-    DepArtifacts arts { .bmiFiles = {"missing.gcm"}, .objFiles = {} };
+    DepArtifacts arts { .bmiFiles = {"missing.gcm"} };
     auto k = makeKey(home);
     auto pop = populate_from(k, project, arts);
     EXPECT_FALSE(pop);
@@ -311,8 +385,8 @@ TEST(BmiCache, DifferentKeysAreIndependentEntries) {
     ASSERT_TRUE(populate_from(a, project, oneOfEach()));
     ASSERT_TRUE(populate_from(b, project, oneOfEach()));
     EXPECT_NE(a.dir(), b.dir());
-    EXPECT_TRUE(is_cached(a));
-    EXPECT_TRUE(is_cached(b));
+    EXPECT_TRUE(is_cached(a, oneOfEach()));
+    EXPECT_TRUE(is_cached(b, oneOfEach()));
 }
 
 #if !defined(_WIN32)
