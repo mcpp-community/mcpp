@@ -307,6 +307,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap-mcpp
+        with:
+          # Do NOT restore target/ in a cross job. This job builds twice — once
+          # for the host, then once for x86_64-linux-musl — and a restored BMI
+          # tree makes the second build read `std` BMIs that no longer match
+          # what the dependency BMIs were compiled against:
+          #
+          #   mcpplibs.cmdline: error: import 'std' has CRC mismatch
+          #
+          # GCC bakes a CRC of each imported module's BMI into the importer, so
+          # the two have to come from the same build round; a cache that
+          # restores one without the other is not a partial speedup, it is an
+          # unbuildable tree. It reproduced on rerun, and only in this job —
+          # the other two cross jobs below cache ~/.mcpp and ~/.xlings but
+          # deliberately never target/, which is the convention this now follows.
+          #
+          # It stayed hidden until a PR touched neither mcpp.toml nor
+          # .xlings.json: those two files key the sandbox cache, so every
+          # earlier run had been a cold miss.
+          cache-target: 'false'
 
       - name: Build mcpp from source (self-host)
         shell: bash
