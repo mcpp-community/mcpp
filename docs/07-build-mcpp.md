@@ -48,7 +48,7 @@ is ignored, so you can freely log diagnostics.
 | `mcpp:link-lib=<name>`             | link `-l<name>` |
 | `mcpp:link-search=<dir>`           | add a library search dir (`-L`; relative dirs resolve against the project root) |
 | `mcpp:cfg=<name>`                  | define `-D<name>` for both C and C++ |
-| `mcpp:generated=<path>`            | add a generated source (relative to the project root) to the build |
+| `mcpp:generated=<path>`            | add a generated source to the build. **A relative path resolves against the project root for the root package, but against `MCPP_OUT_DIR` for a dependency's build.mcpp** — emit an absolute path if the package is both (see below) |
 | `mcpp:source=<path>` *(0.0.100+)*  | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
@@ -164,6 +164,36 @@ cache, `MCPP_OUT_DIR`) live in the **consuming project's**
 `target/.build-mcpp/deps/<pkg>@<ver>/` — a registry package root is shared
 across projects (and may be read-only), so it is never written to; relative
 `generated=` paths resolve against `MCPP_OUT_DIR`, not the package root.
+
+### A library that is also built standalone: emit an absolute path
+
+Those two rules — project root for the root package, `MCPP_OUT_DIR` for a
+dependency — mean a *relative* `generated=` cannot be right in both roles. A
+library is built standalone by its own CI and consumed from the registry by
+everyone else, so it plays both.
+
+Writing into `MCPP_OUT_DIR` and emitting the bare filename works as a
+dependency and fails at the root with:
+
+```
+error: build.mcpp declared generated source 'foo.cppm' but it does not exist after the run
+```
+
+Write to `MCPP_OUT_DIR` (the package root may be read-only) and emit the
+**absolute** path:
+
+```cpp
+const auto out = std::filesystem::path(mcpp::out_dir()) / "foo.cppm";
+// ... write it ...
+mcpp::generated(out.string().c_str());
+```
+
+`mcpp::out_dir()` is always absolute, so this is correct in both roles and
+needs no branch on which one you are in.
+
+A generated **module interface** is fine here: `.cppm` goes through the same
+scan as any other source, so a generated file declaring `export module …` can
+be imported by the package's own TUs.
 
 ## Incremental: declared inputs (no needless re-runs)
 

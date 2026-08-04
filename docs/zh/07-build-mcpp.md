@@ -45,7 +45,7 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:link-lib=<name>`             | 链接 `-l<name>` |
 | `mcpp:link-search=<dir>`           | 增加库搜索目录(`-L`;相对路径按工程根目录解析) |
 | `mcpp:cfg=<name>`                  | 为 C 与 C++ 同时定义 `-D<name>` |
-| `mcpp:generated=<path>`            | 把生成的源码(相对工程根目录)加入构建 |
+| `mcpp:generated=<path>`            | 把生成的源码加入构建。**相对路径在根工程按工程根解析,在依赖的 build.mcpp 里按 `MCPP_OUT_DIR` 解析** —— 两种角色都可能出现的包应发绝对路径(见下文) |
 | `mcpp:source=<path>` *(0.0.100+)*  | 把一份**既有**源文件选入构建(绝对路径,或相对包根)。下游效果与 `generated=` 相同;语义区别在于文件是程序*选中*的(tarball payload / vendored 源树)而非程序写出的——例如对大型源码包做 per-target 源选择 |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
@@ -151,6 +151,31 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 到达终链。其产物(二进制、缓存、`MCPP_OUT_DIR`)放在**消费方工程**的
 `target/.build-mcpp/deps/<pkg>@<ver>/` 下——registry 包根跨工程共享(且可能只读),
 绝不写入;相对 `generated=` 路径按 `MCPP_OUT_DIR` 解析,而非包根。
+
+### 既独立构建又被当依赖的库:发绝对路径
+
+上面这两条规则——根工程按工程根、依赖按 `MCPP_OUT_DIR`——意味着**相对**
+`generated=` 不可能两种角色都对。而一个库正好两种角色都有:自己的 CI 独立构建它,
+别人从 registry 当依赖用它。
+
+写进 `MCPP_OUT_DIR` 再发裸文件名,在依赖角色下能用,在根工程下则失败:
+
+```
+error: build.mcpp declared generated source 'foo.cppm' but it does not exist after the run
+```
+
+正确做法是写进 `MCPP_OUT_DIR`(包根可能只读),并发**绝对**路径:
+
+```cpp
+const auto out = std::filesystem::path(mcpp::out_dir()) / "foo.cppm";
+// ... 写文件 ...
+mcpp::generated(out.string().c_str());
+```
+
+`mcpp::out_dir()` 恒为绝对路径,因此两种角色下都正确,不需要判断自己处在哪一种。
+
+生成**模块接口**是可以的:`.cppm` 走与其他源文件相同的扫描,所以一个生成出来的、
+声明 `export module …` 的文件可以被该包自己的 TU import。
 
 ## 增量:声明输入(避免无谓重跑)
 

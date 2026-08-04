@@ -12,3 +12,4 @@
 - [07 - build.mcpp 构建程序](07-build-mcpp.md)
 - [08 - 工具链机制内幕](08-toolchain-internals.md)
 - [09 - 发布 mcpp](09-release.md)
+- [10 - 发布一个库到 mcpp-index](10-publishing-a-library.md)
