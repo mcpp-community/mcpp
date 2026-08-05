@@ -1,6 +1,7 @@
 # issue #355：依赖产出的 host 工具（codegen 工具链缺口）
 
-> 状态：**设计待 review，未实施**（2026-08-05 追加 §12 行业调研，并据此调整了两处，见 §12.4）
+> 状态：**已实施（2026.8.5.1）**。§12 行业调研与据此调整的两处见 §12.4;
+> 实施与**真实案例验证**（含 §11 那条风险的结论）见 §13。
 > 关联：#355（本条）、#241（`MCPP_DEP_<NAME>_DIR`）、#274（显式 ninja 目标）、#344（cache 地址）
 > 涉及（预估）：`src/build/prepare.cppm`、`src/build/build_program.cppm`、
 > `src/build/hostprogram.cppm`、`src/pm/dep_spec.cppm`、`src/manifest/toml.cppm`、
