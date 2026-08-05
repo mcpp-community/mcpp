@@ -109,6 +109,14 @@ std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
 // escaped as `\"`) — cmd.exe/CreateProcess argv convention.
 std::string shell_quote_arg(std::string_view arg);
 
+// Ninja's own escaping for a value that will sit on a `command = ` line:
+// ` `, `$` and `:` get a leading `$`. Exported because it is needed WITH
+// shell_quote_arg, not instead of it — quoting stops the SHELL from splitting
+// a token, but ninja expands `$foo` before the shell is ever invoked, so a
+// token carrying a literal `$` needs both. Callers apply ninja escaping first,
+// then shell quoting (see include_dir_token).
+std::string escape_ninja_chars(std::string_view s);
+
 // One include-directory token, fully prepared for a ninja command line:
 // dialect prefix, ninja `$` escaping, and shell quoting — in that order.
 //
@@ -146,16 +154,15 @@ std::string include_token(const mcpp::toolchain::CommandDialect& d,
 
 namespace mcpp::build {
 
-namespace {
-
-std::filesystem::path staged_std_bmi_path(const BuildPlan& plan) {
-    return mcpp::toolchain::staged_std_bmi_path(plan.toolchain, plan.outputDir);
-}
-
 // Escape a string for embedding in ninja rule strings. Takes the text, not a
 // path: round-tripping through std::filesystem::path would re-normalize the
 // separators on Windows, which silently undoes a caller that deliberately
 // chose generic_string() for a response-file token (#261).
+//
+// Deliberately OUTSIDE the anonymous namespace below: it is declared in this
+// module's export block so ninja_backend can pair it with shell_quote_arg for
+// action command tokens. Leaving it internal would mean a fourth hand-written
+// copy of ninja's escaping rules, which is how they drift.
 std::string escape_ninja_chars(std::string_view s) {
     std::string out;
     out.reserve(s.size());
@@ -165,6 +172,12 @@ std::string escape_ninja_chars(std::string_view s) {
         out.push_back(c);
     }
     return out;
+}
+
+namespace {
+
+std::filesystem::path staged_std_bmi_path(const BuildPlan& plan) {
+    return mcpp::toolchain::staged_std_bmi_path(plan.toolchain, plan.outputDir);
 }
 
 // Escape a path for embedding in ninja rule strings (native separators).

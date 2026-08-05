@@ -144,6 +144,67 @@ if "$MCPP" build > b4.log 2>&1; then
 fi
 rm -f FAIL_THE_CHECK
 
+# ── 3b/3c: their own minimal project ───────────────────────────────────────
+# Separate from `app`, whose main.cpp deliberately depends on the generated
+# symbol — swapping its build.mcpp out would fail the LINK and say nothing
+# about what these two are actually testing.
+mkdir -p "$TMP/edge/src"
+cd "$TMP/edge"
+cat > mcpp.toml <<'EOF'
+[package]
+name    = "edge"
+version = "0.1.0"
+EOF
+printf 'int main() {}\n' > src/main.cpp
+
+# ── 3b. a literal `$` in a command survives to the tool ────────────────────
+# Shell-quoting alone does not save it: ninja expands `$foo` BEFORE the shell
+# runs, so a token carrying a `$` (a path containing one, `-Wl,-rpath,$ORIGIN`,
+# an awk program) needs ninja escaping too.
+cat > dollar.sh <<'EOF'
+#!/usr/bin/env bash
+# $1 must arrive containing a literal dollar sign
+case "$1" in *'$'*) : > "$2";; *) echo "lost the dollar: [$1]" >&2; exit 1;; esac
+EOF
+chmod +x dollar.sh
+cat > build.mcpp <<'EOF'
+#include <cstdio>
+#include <string>
+import mcpp;
+int main() {
+    const std::string root = mcpp::manifest_dir();
+    mcpp::action a;
+    a.id = "dollar"; a.role = "check";
+    a.arg((root + "/dollar.sh").c_str()).arg("-Wl,-rpath,$ORIGIN")
+     .arg("${mcpp.out_dir}/dollar.stamp")
+     .output("${mcpp.out_dir}/dollar.stamp")
+     .submit();
+}
+EOF
+rm -rf target
+"$MCPP" build > b3b.log 2>&1 || {
+    cat b3b.log; echo "FAIL: a literal \$ in an action command did not survive"; exit 1; }
+
+# ── 3c. an unknown target reference is an error, not an empty path ─────────
+cat > build.mcpp <<'EOF'
+#include <cstdio>
+import mcpp;
+int main() {
+    mcpp::action a;
+    a.id = "bad-ref"; a.role = "artifact";
+    a.arg("/bin/true").arg("${mcpp.target_file:no_such_target}")
+     .input("${mcpp.target_file:no_such_target}")
+     .output("${mcpp.out_dir}/x.out")
+     .submit();
+}
+EOF
+rm -rf target
+if "$MCPP" build > b3c.log 2>&1; then
+    cat b3c.log; echo "FAIL: an unknown target reference was accepted"; exit 1
+fi
+grep -q "no_such_target" b3c.log || {
+    cat b3c.log; echo "FAIL: error does not name the unknown target"; exit 1; }
+
 # ── 4. a malformed action is refused, not skipped ──────────────────────────
 cat > build.mcpp <<'EOF'
 #include <cstdio>

@@ -4644,6 +4644,11 @@ prepare_build(bool print_fingerprint,
     // what makes an action portable (Windows has no shell to assume) and
     // cacheable (nothing can smuggle in ambient state).
     {
+        // An engine variable that resolves to nothing must be an ERROR, not an
+        // empty string: `${mcpp.target_file:tpyo}` would otherwise silently
+        // become an edge with a blank path, and ninja reports that far away
+        // from the typo that caused it.
+        std::set<std::string> unresolvedTargets;
         auto substitute = [&](std::string s) {
             auto rep = [&](std::string_view what, const std::string& with) {
                 for (std::size_t p; (p = s.find(what)) != std::string::npos; )
@@ -4668,6 +4673,7 @@ prepare_build(bool print_fingerprint,
                 for (auto const& lu : ctx.plan.linkUnits)
                     if (lu.targetName == name)
                         resolved = lu.output.generic_string();
+                if (resolved.empty()) unresolvedTargets.insert(name);
                 s.replace(p, close - p + 1, resolved);
             }
             return s;
@@ -4683,6 +4689,19 @@ prepare_build(bool print_fingerprint,
         collect(*m);
         for (std::size_t i = 1; i < packages.size(); ++i)
             collect(packages[i].manifest);
+        if (!unresolvedTargets.empty()) {
+            std::string bad, known;
+            for (auto const& n : unresolvedTargets) bad += (bad.empty() ? "" : ", ") + n;
+            for (auto const& lu : ctx.plan.linkUnits)
+                known += (known.empty() ? "" : ", ") + lu.targetName;
+            return std::unexpected(std::format(
+                "build.mcpp action references unknown target(s) via "
+                "${{mcpp.target_file:...}}: {}\n"
+                "  targets in this build: [{}]\n"
+                "  (a target gated by required_features is absent unless those "
+                "features are active)",
+                bad, known.empty() ? std::string("none") : known));
+        }
     }
     ctx.plan.stdCompatBmiPath = stdCompatBmiPath;
     ctx.plan.stdCompatObjectPath = stdCompatObjectPath;

@@ -1314,7 +1314,21 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::string cmd;
         for (auto const& tok : a.command) {
             if (!cmd.empty()) cmd += ' ';
-            cmd += shell_quote_arg(tok);
+            // BOTH escapes, in the order the rest of this file uses
+            // (include_dir_token does the same): ninja first, shell second.
+            // Shell-quoting alone is not enough — a literal `$` in a token
+            // (a path containing one, or an argument like `-Wl,-rpath,$ORIGIN`)
+            // is a VARIABLE REFERENCE to ninja, and quoting does not stop
+            // ninja from expanding it before the shell ever sees it.
+            //
+            // Safe for ordinary tokens: escape_ninja_chars only touches
+            // ` `, `$` and `:`, and shell_quote_arg returns anything without a
+            // metacharacter byte-for-byte, so a plain `--cpp_out=gen` is
+            // unchanged. Each element here is exactly one argv token by
+            // construction (the typed builder appends them one at a time),
+            // which is the assumption per-token quoting needs and which #331
+            // showed is NOT true of hand-assembled flag blobs.
+            cmd += shell_quote_arg(escape_ninja_chars(tok));
         }
         append(std::format("rule mcpp_action_{}\n", i));
         append(std::format("  command = {}\n", cmd));
