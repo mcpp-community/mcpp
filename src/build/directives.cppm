@@ -517,6 +517,22 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
 
 std::string action_error(const Directives& d) {
     for (auto const& payload : d.at(Slot::Actions)) {
+        // The typed API sets this when an argv did not fit its fixed buffer.
+        // Diagnosed separately because "malformed action" would send the
+        // author looking for a typo in something that was actually correct
+        // and merely too long.
+        if (payload.find("\"overflow\":true") != std::string::npos) {
+            return std::format(
+                "build.mcpp declared an action whose arguments did not fit.\n"
+                "       The typed `mcpp::action` builder uses fixed buffers "
+                "(the bundled module has to stay\n"
+                "       buildable before a std module exists, so it cannot use "
+                "std::string).\n"
+                "       Shorten the command — e.g. pass a response file, or a "
+                "directory instead of\n"
+                "       enumerating its files.\n"
+                "       payload: {}", payload);
+        }
         if (decode_action(payload)) continue;
         // A malformed action is a hard error, never a skip: an action that
         // silently does not exist produces a build missing generated sources,

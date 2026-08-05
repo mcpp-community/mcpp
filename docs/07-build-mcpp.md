@@ -344,9 +344,13 @@ When nothing changed you'll see `build.mcpp up to date (cached)`; otherwise
 - **CWD is the project root**, so relative paths (`src/generated.cpp`) land where
   you expect.
 - A non-zero exit from `build.mcpp` aborts the build and prints its output.
-- **The run is bounded** (mcpp 2026.8.5.1+): a build program gets **600 s** by
-  default, after which mcpp kills it and fails the build naming the package.
-  Override with `MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>` (`0` = no limit). The
+- **The run is bounded** (mcpp 2026.8.5.1+, **POSIX only**): a build program
+  gets **600 s** by default, after which mcpp kills it and fails the build
+  naming the package. Override with `MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>`
+  (`0` = no limit). **On Windows the bound is not enforced** — the process
+  launcher has no kill-by-handle path yet (`mcpp.platform.process`), so a
+  build program that hangs there still hangs the build. Same limitation as
+  `mcpp test --timeout`; stated rather than papered over. The
   **compile** is deliberately *not* bounded — the same asymmetry `mcpp test`
   uses: a long compile is usually legitimate (a first-run `std` module build is
   minutes) and killing it produces a baffling failure, while a long-running

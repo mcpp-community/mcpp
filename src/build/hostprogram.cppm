@@ -64,19 +64,23 @@ struct action {
     const char* role        = "source";   // "source" | "check" | "artifact"
     const char* description = "";
     bool        blocking    = false;      // check only: gate compilation on it
-    action& input(const char* p)    { add(inputs_, p);   return *this; }
-    action& output(const char* p)   { add(outputs_, p);  return *this; }
-    action& arg(const char* a)      { add(command_, a);  return *this; }
+    action& input(const char* p)    { add(inputs_,  sizeof inputs_,  p); return *this; }
+    action& output(const char* p)   { add(outputs_, sizeof outputs_, p); return *this; }
+    action& arg(const char* a)      { add(command_, sizeof command_, a); return *this; }
     // Declare what a generated MODULE INTERFACE provides/imports. Same
     // "declare instead of discover" trade [modules].scan_overrides makes, and
     // what lets a generated .cppm exist as a graph node at all.
-    action& provides(const char* n) { add(provides_, n); return *this; }
-    action& imports(const char* n)  { add(imports_, n);  return *this; }
+    action& provides(const char* n) { add(provides_, sizeof provides_, n); return *this; }
+    action& imports(const char* n)  { add(imports_,  sizeof imports_,  n); return *this; }
     void submit() const {
         std::printf("mcpp:action={\"id\":");        esc(id);
         std::printf(",\"role\":");                  esc(role);
         std::printf(",\"description\":");           esc(description);
         std::printf(",\"blocking\":%s", blocking ? "true" : "false");
+        // A truncated argv would otherwise be INVALID rather than obviously
+        // wrong — the engine turns this marker into a diagnostic that names
+        // the limit, instead of a generic "malformed action".
+        if (overflow_) std::printf(",\"overflow\":true");
         std::printf(",\"inputs\":[%s]",   inputs_);
         std::printf(",\"outputs\":[%s]",  outputs_);
         std::printf(",\"command\":[%s]",  command_);
@@ -85,26 +89,42 @@ struct action {
         std::printf("}\n");
     }
 private:
-    char inputs_[4096]{}, outputs_[4096]{}, command_[8192]{}, provides_[1024]{}, imports_[1024]{};
+    // Fixed buffers because this module must stay buildable BEFORE a std BMI
+    // exists (it is what a build.mcpp imports, and it may be compiled first) —
+    // so no std::string. Sizes chosen for real generator invocations: a protoc
+    // command line with many -I paths runs long.
+    char inputs_[8192]{}, outputs_[8192]{}, command_[16384]{},
+         provides_[2048]{}, imports_[2048]{};
+    mutable bool overflow_ = false;
     static void esc(const char* s) {
         std::putchar('"');
         for (const char* p = s; *p; ++p) {
-            if (*p == '"' || *p == '\\') std::putchar('\\');
-            if (*p == '\n') { std::printf("\\n"); continue; }
-            std::putchar(*p);
+            unsigned char c = (unsigned char)*p;
+            if (c == '"' || c == '\\') { std::putchar('\\'); std::putchar(c); continue; }
+            // Any control character has to be escaped or the payload is not
+            // JSON at all. \n was handled before; \t and \r reach this code
+            // through ordinary Windows paths and log text.
+            if (c < 0x20) { std::printf("\\u%04x", c); continue; }
+            std::putchar(c);
         }
         std::putchar('"');
     }
-    static void add(char* buf, const char* s) {
+    // Capacity is a PARAMETER. The previous revision hardcoded 4096 while the
+    // smallest buffer here was 1024 — a bound living somewhere other than next
+    // to the array it bounds is exactly the shape that overflows.
+    bool add(char* buf, unsigned long cap, const char* s) {
         unsigned long o = 0; while (buf[o]) ++o;
+        if (o + 4 >= cap) { overflow_ = true; return false; }
         if (o) buf[o++] = ',';
         buf[o++] = '"';
-        for (const char* p = s; *p && o + 3 < 4096; ++p) {
+        for (const char* p = s; *p; ++p) {
+            if (o + 3 >= cap) { buf[o] = 0; overflow_ = true; return false; }
             if (*p == '"' || *p == '\\') buf[o++] = '\\';
             buf[o++] = *p;
         }
         buf[o++] = '"';
         buf[o] = 0;
+        return true;
     }
 };
 inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }
@@ -350,8 +370,12 @@ build_host_module(const fs::path& bdir, const fs::path& compiler,
             "(src/<name>.cppm or [lib] path).",
             logicalName, interfacePath.string()));
     }
-    // A filesystem-safe stem: a module name contains dots, which are fine in a
-    // path but make `foo.rules.o` read as an extension chain.
+    // A filesystem-safe stem. Partition separators and any path separator that
+    // sneaks into a logical name would otherwise create directories that do
+    // not exist. Dots are left ALONE on purpose: `a.b.rules.o` is a legal
+    // filename, GCC's own gcm.cache uses the dotted module name verbatim, and
+    // rewriting them would make the object name disagree with the BMI name for
+    // no gain.
     std::string stem(logicalName);
     for (auto& c : stem) if (c == ':' || c == '/' || c == '\\') c = '-';
 

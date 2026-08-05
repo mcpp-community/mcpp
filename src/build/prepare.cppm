@@ -876,15 +876,11 @@ prepare_build(bool print_fingerprint,
     if (!root) {
         return std::unexpected("no mcpp.toml found in current directory or any parent");
     }
-    // Where mcpp writes. Defaults to the project root, so every existing
-    // invocation is byte-for-byte unchanged; the tool-provisioning pass points
-    // it at the tool store instead (BuildOverrides::work_dir).
-    const std::filesystem::path workRoot =
-        overrides.work_dir.empty() ? *root : overrides.work_dir;
-    {
-        std::error_code wdEc;
-        std::filesystem::create_directories(workRoot, wdEc);
-    }
+    // NOTE: `workRoot` is deliberately NOT derived here. `root` is not final
+    // yet — the workspace block below reassigns it to the selected member
+    // (`root = memberDir`), and anchoring the write root to the pre-switch
+    // value puts a member's target/, mcpp.lock and .mcpp/ at the WORKSPACE
+    // root. See the derivation right after that block.
 
     auto m = mcpp::manifest::load(*root / "mcpp.toml");
     if (!m) return std::unexpected(m.error().format());
@@ -986,6 +982,18 @@ prepare_build(bool print_fingerprint,
                 mcpp::project::inherit_workspace_indices(*m, *wsm, wsRoot);
             }
         }
+    }
+
+    // Where mcpp WRITES — derived here because `root` is only final now: the
+    // workspace block above may have moved it to the selected member. Defaults
+    // to the project root, so every existing invocation is byte-for-byte
+    // unchanged; the tool-provisioning pass points it at the tool store
+    // instead (BuildOverrides::work_dir).
+    const std::filesystem::path workRoot =
+        overrides.work_dir.empty() ? *root : overrides.work_dir;
+    {
+        std::error_code wdEc;
+        std::filesystem::create_directories(workRoot, wdEc);
     }
 
     // Inject synthetic targets (e.g. test binaries from `mcpp test`).
@@ -4093,7 +4101,20 @@ prepare_build(bool print_fingerprint,
                     sub.project_root = depPkg.root;
                     // Never the package root: it is shared across projects and
                     // may be read-only. This is the reason work_dir exists.
-                    sub.work_dir     = entry / "build";
+                    //
+                    // Scratch is keyed on the CONSUMING project, not shared:
+                    // the store is GLOBAL, so two projects can want the same
+                    // tool at once. A single `<entry>/build` would have them
+                    // writing one ninja tree concurrently, and whichever
+                    // finished first would `remove_all` it out from under the
+                    // other. The published binary is what gets shared; the
+                    // scratch is not.
+                    //
+                    // Hashed rather than random so a re-run reuses its own
+                    // scratch (ninja stays incremental if the publish step
+                    // never got to delete it).
+                    sub.work_dir     = entry / std::format("build-{}",
+                        mcpp::toolchain::hash_string(workRoot.string()));
                     sub.target_triple = "";            // HOST — the whole point
                     sub.profile       = "release";
                     sub.cache_mode    = overrides.cache_mode;
@@ -4181,8 +4202,8 @@ prepare_build(bool print_fingerprint,
                     mcpp::build::tool_store::write_entry(entry, key);
                     // The sub-build tree is large (protoc is several hundred
                     // objects) and the key covers every input, so a hit never
-                    // needs it again.
-                    std::filesystem::remove_all(entry / "build", cpEc);
+                    // needs it again. Removes only THIS consumer's scratch.
+                    std::filesystem::remove_all(sub.work_dir, cpEc);
                     record(binOut);
                 }
             }
