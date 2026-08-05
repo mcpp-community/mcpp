@@ -20,10 +20,27 @@ const mcpp::toolchain::CommandDialect& gnu() {
     return mcpp::toolchain::gnu_dialect();
 }
 
-dirs::Directives parse(std::string_view text,
-                       const std::filesystem::path& root = "/pkg") {
+// A root that is genuinely absolute on the running platform. A literal "/pkg"
+// is NOT absolute on Windows (no root name), so hardcoding POSIX strings makes
+// these tests assert the wrong thing there rather than the right thing
+// everywhere.
+const std::filesystem::path& test_root() {
+    static const std::filesystem::path r =
+        (std::filesystem::current_path() / "pkg").lexically_normal();
+    return r;
+}
+
+// What the implementation should produce for a package-relative path —
+// expressed through the same std::filesystem arithmetic, so the expectation is
+// about the BEHAVIOUR ("relative resolves against the root") rather than about
+// one platform's separator.
+std::string under_root(std::string_view rel) {
+    return (test_root() / rel).lexically_normal().string();
+}
+
+dirs::Directives parse(std::string_view text) {
     dirs::Directives d;
-    dirs::accept_output(d, gnu(), root, text);
+    dirs::accept_output(d, gnu(), test_root(), text);
     return d;
 }
 
@@ -96,26 +113,33 @@ TEST(BuildDirectives, NonDirectiveLinesAreIgnored) {
 }
 
 TEST(BuildDirectives, TransformsAreAppliedOnceAtParseTime) {
-    auto d = parse("mcpp:cxxflag=-Wall\n"
-                   "mcpp:link-lib=z\n"
-                   "mcpp:link-search=vendor/lib\n"
-                   "mcpp:cfg=HAVE_X\n"
-                   "mcpp:include-dir=inc\n"
-                   "mcpp:include-dir-after=/abs/inc\n");
+    // An input that is already absolute ON THIS PLATFORM, so the "taken as-is"
+    // half of the assertion tests what it claims to.
+    const auto alreadyAbs =
+        (std::filesystem::current_path() / "abs" / "inc").lexically_normal();
+
+    auto d = parse(std::format("mcpp:cxxflag=-Wall\n"
+                               "mcpp:link-lib=z\n"
+                               "mcpp:link-search=vendor/lib\n"
+                               "mcpp:cfg=HAVE_X\n"
+                               "mcpp:include-dir=inc\n"
+                               "mcpp:include-dir-after={}\n",
+                               alreadyAbs.string()));
     EXPECT_EQ(d.at(dirs::Slot::CxxFlags), (std::vector<std::string>{"-Wall"}));
     // link-lib and link-search share the ldflags slot, in emission order.
     EXPECT_EQ(d.at(dirs::Slot::LdFlags),
-              (std::vector<std::string>{"-lz", "-L/pkg/vendor/lib"}));
+              (std::vector<std::string>{"-lz", "-L" + under_root("vendor/lib")}));
     EXPECT_EQ(d.at(dirs::Slot::Defines), (std::vector<std::string>{"-DHAVE_X"}));
     // Relative resolves against the package root; absolute is taken as-is.
-    EXPECT_EQ(d.at(dirs::Slot::IncludeDirs), (std::vector<std::string>{"/pkg/inc"}));
+    EXPECT_EQ(d.at(dirs::Slot::IncludeDirs),
+              (std::vector<std::string>{under_root("inc")}));
     EXPECT_EQ(d.at(dirs::Slot::IncludeDirsAfter),
-              (std::vector<std::string>{"/abs/inc"}));
+              (std::vector<std::string>{alreadyAbs.string()}));
 }
 
 TEST(BuildDirectives, DialectDecidesTheSpelling) {
     dirs::Directives d;
-    dirs::accept_output(d, mcpp::toolchain::msvc_dialect(), "/pkg",
+    dirs::accept_output(d, mcpp::toolchain::msvc_dialect(), test_root(),
                         "mcpp:link-lib=z\nmcpp:cfg=HAVE_X\n");
     EXPECT_EQ(d.at(dirs::Slot::LdFlags), (std::vector<std::string>{"z.lib"}));
     EXPECT_EQ(d.at(dirs::Slot::Defines), (std::vector<std::string>{"/DHAVE_X"}));
@@ -263,10 +287,10 @@ TEST(BuildDirectives, ApplyRoutesEachSlotToItsManifestChannel) {
                   m.modules.sources.end()) << s;
     }
     EXPECT_NE(std::find(bc.includeDirs.begin(), bc.includeDirs.end(),
-                        std::filesystem::path("/pkg/inc")),
+                        std::filesystem::path(under_root("inc"))),
               bc.includeDirs.end());
     EXPECT_NE(std::find(bc.includeDirsAfter.begin(), bc.includeDirsAfter.end(),
-                        std::filesystem::path("/pkg/after")),
+                        std::filesystem::path(under_root("after"))),
               bc.includeDirsAfter.end());
 }
 
@@ -309,7 +333,7 @@ TEST(BuildDirectives, FoldMovesOnlyTheTailAndOnlyPrivateChannels) {
     EXPECT_EQ(priv.cxxflags, (std::vector<std::string>{"-Wall", "-DHAVE_X"}));
     EXPECT_EQ(priv.cflags,   (std::vector<std::string>{"-DHAVE_X"}));
     EXPECT_EQ(priv.includeDirs,
-              (std::vector<std::filesystem::path>{"/pkg/inc"}));
+              (std::vector<std::filesystem::path>{under_root("inc")}));
     // Link flags are NOT private — they reach the final link through their own
     // path, and folding them here would double-apply them.
     EXPECT_TRUE(priv.includeDirsAfter.empty());
@@ -325,7 +349,7 @@ TEST(BuildDirectives, FoldIsIdempotentOnIncludeDirs) {
     dirs::fold_private_tail(priv, m, before);
     dirs::fold_private_tail(priv, m, before);
     EXPECT_EQ(priv.includeDirs,
-              (std::vector<std::filesystem::path>{"/pkg/inc"}));
+              (std::vector<std::filesystem::path>{under_root("inc")}));
 }
 
 // ── Run bound ──────────────────────────────────────────────────────────────
