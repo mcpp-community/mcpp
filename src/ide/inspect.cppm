@@ -21,7 +21,7 @@ struct Candidate {
 std::filesystem::path absolute_path(std::filesystem::path path) {
     std::error_code ec;
     auto result = std::filesystem::absolute(path, ec);
-    return ec ? path : result;
+    return (ec ? path : result).lexically_normal();
 }
 
 Diagnostic manifest_diagnostic(std::string code, Severity severity,
@@ -35,6 +35,89 @@ Diagnostic manifest_diagnostic(std::string code, Severity severity,
 std::optional<Range> error_range(const mcpp::manifest::ManifestError& error) {
     if (!error.line) return std::nullopt;
     return Range{{error.line, error.column}, {error.line, error.column}};
+}
+
+std::filesystem::path normalized_path(const std::filesystem::path& path) {
+    return absolute_path(path);
+}
+
+std::filesystem::path physical_path(const std::filesystem::path& path) {
+    auto absolute = normalized_path(path);
+    std::error_code ec;
+    auto normalized = std::filesystem::weakly_canonical(absolute, ec);
+    return ec ? absolute.lexically_normal() : normalized;
+}
+
+bool same_directory(const std::filesystem::path& left,
+                    const std::filesystem::path& right) {
+    std::error_code ec;
+    const bool equivalent = std::filesystem::equivalent(left, right, ec);
+    if (!ec) return equivalent;
+    return physical_path(left) == physical_path(right);
+}
+
+struct ManifestRootSearch {
+    std::optional<std::filesystem::path> root;
+    std::optional<Diagnostic> error;
+};
+
+ManifestRootSearch find_manifest_root_read_only(std::filesystem::path start) {
+    auto current = normalized_path(start);
+    while (true) {
+        const auto manifest = current / "mcpp.toml";
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(manifest, ec);
+        if (ec) {
+            return {{}, manifest_diagnostic(
+                "MCPP_IDE_MANIFEST_INVALID", Severity::Error,
+                std::format("could not inspect mcpp.toml: {}", ec.message()), manifest)};
+        }
+        if (exists) return {current, {}};
+        const auto parent = current.parent_path();
+        if (parent == current) return {};
+        current = parent;
+    }
+}
+
+struct WorkspaceSearch {
+    std::optional<std::filesystem::path> root;
+    std::optional<mcpp::manifest::Manifest> manifest;
+    std::optional<Diagnostic> error;
+};
+
+WorkspaceSearch find_workspace_read_only(const std::filesystem::path& memberRoot) {
+    auto current = normalized_path(memberRoot).parent_path();
+    while (true) {
+        const auto manifestPath = current / "mcpp.toml";
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(manifestPath, ec);
+        if (ec) {
+            return {{}, {}, manifest_diagnostic(
+                "MCPP_IDE_MANIFEST_INVALID", Severity::Error,
+                std::format("could not inspect ancestor mcpp.toml: {}", ec.message()),
+                manifestPath)};
+        }
+        if (exists) {
+            auto loaded = mcpp::manifest::load(manifestPath);
+            if (!loaded) {
+                const auto& error = loaded.error();
+                return {{}, {}, manifest_diagnostic(
+                    "MCPP_IDE_MANIFEST_INVALID", Severity::Error, error.message,
+                    error.file, error_range(error))};
+            }
+            if (loaded->workspace.present) {
+                for (const auto& declared : loaded->workspace.members) {
+                    const auto candidate = normalized_path(
+                        (current / declared).lexically_normal());
+                    if (same_directory(candidate, memberRoot))
+                        return {current, std::move(*loaded), {}};
+                }
+            }
+        }
+        const auto parent = current.parent_path();
+        if (parent == current) return {};
+        current = parent;
+    }
 }
 
 WorkspaceMember describe_member(const mcpp::manifest::Manifest& manifest,
@@ -66,22 +149,17 @@ WorkspaceMember describe_member(const mcpp::manifest::Manifest& manifest,
 }
 
 bool matches_selector(const Candidate& candidate, std::string_view selector,
-                      const std::filesystem::path& workspaceRoot) {
-    if (candidate.name == selector || candidate.workspacePath == selector)
+                      const std::filesystem::path&) {
+    if (candidate.workspacePath == selector)
         return true;
     if (candidate.root.filename() == selector)
         return true;
-    std::error_code ec;
-    auto relative = std::filesystem::relative(candidate.root, workspaceRoot, ec);
-    return !ec && relative.generic_string() == selector;
+    return false;
 }
 
 bool matches_workspace_path(const Candidate& candidate, std::string_view selector,
-                            const std::filesystem::path& workspaceRoot) {
-    if (candidate.workspacePath == selector) return true;
-    std::error_code ec;
-    auto relative = std::filesystem::relative(candidate.root, workspaceRoot, ec);
-    return !ec && relative.generic_string() == selector;
+                            const std::filesystem::path&) {
+    return candidate.workspacePath == selector;
 }
 
 } // namespace
@@ -92,10 +170,16 @@ export namespace mcpp::ide {
 WorkspaceInspection inspect_workspace(InspectRequest request) {
     WorkspaceInspection result;
     result.request = request;
-    result.request.start = absolute_path(std::move(result.request.start));
+    result.request.start = normalized_path(result.request.start);
 
-    auto startRoot = mcpp::project::find_manifest_root(result.request.start);
-    if (!startRoot) {
+    auto rootSearch = find_manifest_root_read_only(result.request.start);
+    if (rootSearch.error) {
+        result.workspaceRoot = rootSearch.error->path.parent_path();
+        result.workspaceManifest = rootSearch.error->path;
+        result.diagnostics.push_back(std::move(*rootSearch.error));
+        return result;
+    }
+    if (!rootSearch.root) {
         result.workspaceRoot = result.request.start;
         result.workspaceManifest = result.workspaceRoot / "mcpp.toml";
         result.diagnostics.push_back(manifest_diagnostic(
@@ -103,12 +187,12 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
             "could not locate mcpp.toml", result.workspaceManifest));
         return result;
     }
-    *startRoot = absolute_path(*startRoot);
+    auto startRoot = normalized_path(*rootSearch.root);
 
-    auto startManifest = mcpp::manifest::load(*startRoot / "mcpp.toml");
+    auto startManifest = mcpp::manifest::load(startRoot / "mcpp.toml");
     if (!startManifest) {
-        result.workspaceRoot = *startRoot;
-        result.workspaceManifest = *startRoot / "mcpp.toml";
+        result.workspaceRoot = startRoot;
+        result.workspaceManifest = startRoot / "mcpp.toml";
         const auto& error = startManifest.error();
         result.diagnostics.push_back(manifest_diagnostic(
             "MCPP_IDE_MANIFEST_INVALID", Severity::Error, error.message,
@@ -116,16 +200,21 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
         return result;
     }
 
-    std::filesystem::path workspaceRoot = *startRoot;
+    std::filesystem::path workspaceRoot = startRoot;
     std::optional<mcpp::manifest::Manifest> workspaceManifest = *startManifest;
     std::filesystem::path currentMemberRoot;
     if (!startManifest->workspace.present) {
-        auto found = mcpp::project::find_workspace_root(*startRoot);
-        if (!found.empty()) {
-            workspaceRoot = absolute_path(found);
-            currentMemberRoot = *startRoot;
-            auto loaded = mcpp::manifest::load(workspaceRoot / "mcpp.toml");
-            if (loaded) workspaceManifest = std::move(*loaded);
+        auto found = find_workspace_read_only(startRoot);
+        if (found.error) {
+            result.workspaceRoot = found.error->path.parent_path();
+            result.workspaceManifest = found.error->path;
+            result.diagnostics.push_back(std::move(*found.error));
+            return result;
+        }
+        if (found.root && found.manifest) {
+            workspaceRoot = normalized_path(*found.root);
+            currentMemberRoot = startRoot;
+            workspaceManifest = std::move(*found.manifest);
         }
     }
 
@@ -148,7 +237,8 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
 
     const auto& declared = workspaceManifest->workspace.members;
     for (const auto& workspacePath : declared) {
-        const auto memberRoot = workspaceRoot / workspacePath;
+        const auto memberRoot = normalized_path(
+            (workspaceRoot / workspacePath).lexically_normal());
         const auto manifestPath = memberRoot / "mcpp.toml";
         auto loaded = mcpp::manifest::load(manifestPath);
         if (loaded) {
@@ -157,9 +247,8 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
         }
         std::error_code ec;
         const bool exists = std::filesystem::exists(manifestPath, ec);
-        const auto code = ec ? "MCPP_IDE_MEMBER_MANIFEST_UNREADABLE"
-                       : exists ? "MCPP_IDE_MEMBER_MANIFEST_INVALID"
-                                : "MCPP_IDE_MEMBER_MANIFEST_MISSING";
+        const auto code = exists || ec ? "MCPP_IDE_MEMBER_MANIFEST_INVALID"
+                                       : "MCPP_IDE_MEMBER_MANIFEST_MISSING";
         const auto message = ec ? std::format("could not inspect member mcpp.toml: {}",
                                               ec.message())
                                 : exists ? loaded.error().message
@@ -201,7 +290,7 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
     } else if (workspaceManifest->workspace.present) {
         if (!currentMemberRoot.empty()) {
             for (std::size_t i = 0; i < candidates.size(); ++i)
-                if (candidates[i].root == currentMemberRoot) select(i);
+                if (same_directory(candidates[i].root, currentMemberRoot)) select(i);
         } else if (!workspaceManifest->package.name.empty()) {
             for (std::size_t i = 0; i < candidates.size(); ++i)
                 if (candidates[i].workspacePath == ".") select(i);
@@ -232,7 +321,6 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
 
     bool hasStale = false;
     bool hasMissing = false;
-    bool hasUnreadable = false;
     for (auto index : selected) {
         const auto& candidate = candidates[index];
         if (!candidate.member) continue;
@@ -244,19 +332,14 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
         result.compileCommands.push_back({candidate.name, path, state});
         hasStale = hasStale || regular;
         hasMissing = hasMissing || !regular;
-        hasUnreadable = hasUnreadable || static_cast<bool>(ec);
     }
     if (hasMissing) result.diagnostics.push_back(manifest_diagnostic(
         "MCPP_IDE_ARTIFACTS_MISSING", Severity::Warning,
-        "compile_commands.json is missing for one or more selected members",
+        "compile_commands.json is missing or could not be inspected for one or more selected members",
         result.workspaceManifest));
     if (hasStale) result.diagnostics.push_back(manifest_diagnostic(
         "MCPP_IDE_ARTIFACTS_UNVERIFIED", Severity::Warning,
         "compile_commands.json exists but was not verified",
-        result.workspaceManifest));
-    if (hasUnreadable) result.diagnostics.push_back(manifest_diagnostic(
-        "MCPP_IDE_ARTIFACTS_UNREADABLE", Severity::Warning,
-        "could not inspect compile_commands.json for one or more selected members",
         result.workspaceManifest));
     result.state = hasStale ? SnapshotState::Stale : SnapshotState::Partial;
     return result;

@@ -124,6 +124,19 @@ TEST(IdeSnapshotInspect, InvalidManifestPreservesLocation) {
     EXPECT_EQ(item->range->start.column, expected.error().column);
 }
 
+TEST(IdeSnapshotInspect, InvalidAncestorManifestIsUnavailableFromMember) {
+    TempProject p;
+    p.write("mcpp.toml", "[workspace\nmembers=[\"member\"]\n");
+    p.write("member/mcpp.toml", package_manifest("member"));
+    auto expected = mcpp::manifest::load(p.root / "mcpp.toml");
+    ASSERT_FALSE(expected.has_value());
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root / "member"});
+    EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Unavailable);
+    auto* item = diagnostic(snapshot, "MCPP_IDE_MANIFEST_INVALID");
+    ASSERT_NE(item, nullptr);
+    EXPECT_EQ(item->path, expected.error().file);
+}
+
 TEST(IdeSnapshotInspect, VirtualWorkspaceSelectsAllMembers) {
     TempProject p;
     p.write("mcpp.toml", "[workspace]\nmembers=[\"one\",\"two\"]\n");
@@ -155,6 +168,24 @@ TEST(IdeSnapshotInspect, MemberDirectorySelectsCurrentMember) {
     EXPECT_EQ(snapshot.selectedMembers, std::vector<std::string>{"member"});
 }
 
+TEST(IdeSnapshotInspect, DotMemberPathSelectsCurrentMember) {
+    TempProject p;
+    p.write("mcpp.toml", "[workspace]\nmembers=[\"./member\"]\n");
+    p.write("member/mcpp.toml", package_manifest("member"));
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root / "member"});
+    EXPECT_EQ(snapshot.workspaceRoot, p.root);
+    EXPECT_EQ(snapshot.selectedMembers, std::vector<std::string>{"member"});
+}
+
+TEST(IdeSnapshotInspect, ParentTraversalMemberPathSelectsCurrentMember) {
+    TempProject p;
+    p.write("mcpp.toml", "[workspace]\nmembers=[\"group/../member\"]\n");
+    p.write("member/mcpp.toml", package_manifest("member"));
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root / "member"});
+    EXPECT_EQ(snapshot.workspaceRoot, p.root);
+    EXPECT_EQ(snapshot.selectedMembers, std::vector<std::string>{"member"});
+}
+
 TEST(IdeSnapshotInspect, PackageSelectorMatchesBasenameAndPath) {
     TempProject p;
     p.write("mcpp.toml", "[workspace]\nmembers=[\"libs/one\",\"apps/two\"]\n");
@@ -183,6 +214,16 @@ TEST(IdeSnapshotInspect, PackageSelectorDoesNotUseDottedTailAlias) {
     p.write("libs/special/mcpp.toml", package_manifest("acme.foo"));
     auto snapshot = mcpp::ide::inspect_workspace({.start = p.root,
         .selectors = {.package = "foo"}});
+    EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Unavailable);
+    EXPECT_NE(diagnostic(snapshot, "MCPP_IDE_WORKSPACE_MEMBER_NOT_FOUND"), nullptr);
+}
+
+TEST(IdeSnapshotInspect, PackageSelectorDoesNotUseManifestPackageName) {
+    TempProject p;
+    p.write("mcpp.toml", "[workspace]\nmembers=[\"libs/special\"]\n");
+    p.write("libs/special/mcpp.toml", package_manifest("acme.foo"));
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root,
+        .selectors = {.package = "acme.foo"}});
     EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Unavailable);
     EXPECT_NE(diagnostic(snapshot, "MCPP_IDE_WORKSPACE_MEMBER_NOT_FOUND"), nullptr);
 }
