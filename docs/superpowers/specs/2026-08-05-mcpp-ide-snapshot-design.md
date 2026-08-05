@@ -100,6 +100,7 @@ Member selection follows existing command semantics:
 - `--workspace` selects every declared member and the root package when present.
 - A virtual workspace with no selector selects all declared members.
 - A rooted workspace with no selector selects the root package.
+- An invocation from a member directory with no selector selects that member.
 - A non-workspace project selects its root package.
 
 The snapshot always lists all successfully parsed workspace members, even when a
