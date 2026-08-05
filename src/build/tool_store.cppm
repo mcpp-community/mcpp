@@ -84,10 +84,15 @@ struct Key {
     std::string compilerIdentity; // the HOST toolchain that will build it
     std::string profile;
     std::vector<std::string> features;   // resolved closure, sorted
-    // The cache key of each direct dependency of the TOOL package, recursively
-    // (Merkle). Without it, bumping one of protobuf's own dependencies would
-    // leave a stale protoc in the store — a silently wrong artifact, which is
-    // the failure mode this project has paid for more than once.
+    // The tool package's TRANSITIVE dependency closure, as sorted
+    // `<name>@<version>` entries. Without it, bumping something the tool
+    // depends on leaves a stale binary in the store — a silently wrong
+    // artifact, the failure mode this project has paid for more than once.
+    //
+    // Transitive rather than direct-only: for an index package a frozen
+    // version cannot change its own dependencies, so direct edges would do —
+    // but a PATH dependency can, and then a change two levels down leaves the
+    // tool's direct list untouched.
     std::vector<std::string> upstreamKeys;
 };
 

@@ -4038,11 +4038,30 @@ prepare_build(bool print_fingerprint,
                     key.profile          = "release";
                     key.features         = closure;
                     std::ranges::sort(key.features);
-                    for (auto const& edge : dependencyEdges) {
-                        if (edge.consumerPackageIndex != depIdx) continue;
-                        auto const& up = packages[edge.dependencyPackageIndex];
-                        key.upstreamKeys.push_back(std::format("{}@{}",
-                            up.manifest.package.name, up.manifest.package.version));
+                    // The tool package's TRANSITIVE dependency closure, not just
+                    // its direct edges. Direct-only would be enough for index
+                    // packages (a frozen version cannot change its own deps),
+                    // but a path dependency can: bump something two levels down
+                    // and the tool's direct list is unchanged, so a stale binary
+                    // stays in the store. That is a silently wrong artifact —
+                    // the failure mode this project has paid for more than once
+                    // — and the closure walk costs nothing.
+                    {
+                        std::set<std::size_t> seen{depIdx};
+                        std::vector<std::size_t> queue{depIdx};
+                        while (!queue.empty()) {
+                            auto cur = queue.back();
+                            queue.pop_back();
+                            for (auto const& edge : dependencyEdges) {
+                                if (edge.consumerPackageIndex != cur) continue;
+                                auto up = edge.dependencyPackageIndex;
+                                if (!seen.insert(up).second) continue;
+                                queue.push_back(up);
+                                key.upstreamKeys.push_back(std::format("{}@{}",
+                                    packages[up].manifest.package.name,
+                                    packages[up].manifest.package.version));
+                            }
+                        }
                     }
                     std::ranges::sort(key.upstreamKeys);
 
