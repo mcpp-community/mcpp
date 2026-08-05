@@ -27,7 +27,7 @@
 
 ### 其他
 
-- **内带 xlings 保持 2026.8.5.1**。原计划升到 2026.8.5.2,实测它有回归:`install_packages` 装不上 `mcpplibs.xpkg@0.0.48`,`mcpp builds & runs xlings` 这条集成 CI 挂掉且**重跑可复现**(2026.8.5.1 上同一条 job 是绿的)。两版之间只有一个代码提交 —— xlings#481 把 `runtime_deps` 的版本匹配从字符串相等换成 semver 范围满足 —— 而失败正好在依赖安装阶段。已报 openxlings/xlings#486,等对方发新版本再升。
+- 内带 xlings 升到 **2026.8.5.2**(`.github/` 下 16 处 pin 由 `check_version_pins.sh` 机器校验同步)。
 
 ## [2026.8.5.3] — 2026-08-05
 
