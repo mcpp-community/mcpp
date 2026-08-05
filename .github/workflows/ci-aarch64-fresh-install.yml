@@ -99,8 +99,25 @@ jobs:
         run: |
           # mcpp/xlings manifests pin a glibc default toolchain; on aarch64 the
           # musl-static target is the published path, so build with --target.
-          git clone --depth 1 https://github.com/mcpp-community/mcpp /tmp/mcpp-src
+          #
+          # On a pull_request, self-host the code UNDER REVIEW rather than
+          # upstream main. Cloning main meant this gate never saw the PR at
+          # all: a change that breaks the from-source build passed here and
+          # only failed after merge, and — the way this surfaced — a fix to
+          # the repo's own bootstrap pin was untestable, because the fix was
+          # on the branch while the clone was of main. Outside a PR there is
+          # no head ref and main is exactly right.
+          ref='${{ github.event.pull_request.head.sha }}'
+          repo='${{ github.event.pull_request.head.repo.clone_url }}'
+          [ -n "$ref" ]  || ref='${{ github.sha }}'
+          [ -n "$repo" ] || repo='https://github.com/mcpp-community/mcpp'
+          # fetch-by-sha rather than `clone --depth 1`, which cannot take one.
+          git init -q /tmp/mcpp-src
           cd /tmp/mcpp-src
+          git remote add origin "$repo"
+          git fetch -q --depth 1 origin "$ref"
+          git checkout -q FETCH_HEAD
+          echo "self-hosting $repo @ $ref"
           mcpp self config --mirror GLOBAL 2>/dev/null || true
           mcpp build --target aarch64-linux-musl
           m=$(find target/aarch64-linux-musl -type f -path '*/bin/mcpp' | head -1)
