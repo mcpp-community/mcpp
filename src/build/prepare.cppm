@@ -35,6 +35,7 @@ import mcpp.build.cache_key;
 import mcpp.build.build_program;
 import mcpp.build.directives;   // directive table: mark / fold_private_tail
 import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
+import mcpp.build.dep_graph;    // queries over the resolved edge graph
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.lockfile;
@@ -2613,6 +2614,7 @@ prepare_build(bool print_fingerprint,
         std::vector<std::string> requestedTools;
     };
     std::vector<DependencyEdge> dependencyEdges;
+    namespace dg = mcpp::build::dep_graph;
     // #355: consumer package index → (env var, absolute path) for each host
     // tool that consumer requested. Filled by the provisioning pass below;
     // read by BOTH build.mcpp call sites (the dependency loop and the root),
@@ -2679,6 +2681,22 @@ prepare_build(bool print_fingerprint,
            const DirectiveMark& t)
     {
         mcpp::build::directives::fold_private_tail(pkg.privateBuild, ran, t);
+    };
+
+    // mcpp#241: the (name → dir) pairs a package's build.mcpp receives as
+    // MCPP_DEP_<NAME>_DIR. ONE owner: the dependency loop and the root call
+    // site had drifted into two near-identical copies of this, and #355 was
+    // about to add a third. Each dependency is emitted under BOTH its
+    // canonical name and its namespace-stripped tail, so
+    // `mcpp::dep_dir("compat.zlib")` and `mcpp::dep_dir("zlib")` both resolve
+    // regardless of which spelling the author used in `deps`.
+    auto fillDepDirs = [&](mcpp::build::BuildProgramEnv& e, std::size_t consumer) {
+        for (auto d : dg::direct_dependencies(dependencyEdges, consumer)) {
+            auto const& depPkg = packages[d];
+            for (auto const& spelling :
+                     dg::name_spellings(depPkg.manifest.package.name))
+                e.depDirs.emplace_back(spelling, depPkg.root);
+        }
     };
 
     // A declared build-graph node's Source outputs must be visible to the
@@ -3931,12 +3949,16 @@ prepare_build(bool print_fingerprint,
             // construction rather than by luck.
             for (auto const& [depName, spec] : m->dependencies) {
                 if (!spec.hostModule) continue;
-                for (auto const& edge : dependencyEdges) {
-                    if (edge.consumerPackageIndex != 0) continue;
-                    auto const& depPkg = packages[edge.dependencyPackageIndex];
+                for (auto d : dg::direct_dependencies(dependencyEdges, 0)) {
+                    auto const& depPkg = packages[d];
                     auto const& canon = depPkg.manifest.package.name;
-                    if (canon != depName && !depName.ends_with(canon)
-                        && !canon.ends_with(depName)) continue;
+                    // Match on either spelling, the same way `deps` keys and
+                    // MCPP_DEP_<NAME>_DIR do — a consumer may have written
+                    // `compat.zlib` or `zlib`.
+                    bool hit = false;
+                    for (auto const& s : dg::name_spellings(canon))
+                        if (depName == s || depName.ends_with("." + s)) hit = true;
+                    if (!hit) continue;
                     auto rel = mcpp::manifest::resolve_lib_root_path(depPkg.manifest);
                     hostModulesByConsumer[0].emplace_back(canon, depPkg.root / rel);
                     break;
@@ -4043,26 +4065,11 @@ prepare_build(bool print_fingerprint,
                     // packages (a frozen version cannot change its own deps),
                     // but a path dependency can: bump something two levels down
                     // and the tool's direct list is unchanged, so a stale binary
-                    // stays in the store. That is a silently wrong artifact —
-                    // the failure mode this project has paid for more than once
-                    // — and the closure walk costs nothing.
-                    {
-                        std::set<std::size_t> seen{depIdx};
-                        std::vector<std::size_t> queue{depIdx};
-                        while (!queue.empty()) {
-                            auto cur = queue.back();
-                            queue.pop_back();
-                            for (auto const& edge : dependencyEdges) {
-                                if (edge.consumerPackageIndex != cur) continue;
-                                auto up = edge.dependencyPackageIndex;
-                                if (!seen.insert(up).second) continue;
-                                queue.push_back(up);
-                                key.upstreamKeys.push_back(std::format("{}@{}",
-                                    packages[up].manifest.package.name,
-                                    packages[up].manifest.package.version));
-                            }
-                        }
-                    }
+                    // stays in the store — a silently wrong artifact.
+                    for (auto up : dg::transitive_dependencies(dependencyEdges, depIdx))
+                        key.upstreamKeys.push_back(std::format("{}@{}",
+                            packages[up].manifest.package.name,
+                            packages[up].manifest.package.version));
                     std::ranges::sort(key.upstreamKeys);
 
                     const auto cacheRoot = mcpp::home::cache_root();
@@ -4211,25 +4218,12 @@ prepare_build(bool print_fingerprint,
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
             bpEnv.genBase      = bpEnv.artifactsDir / "out";
-            // mcpp#241: expose this package's resolved dependencies (verdir /
-            // payload root) as MCPP_DEP_<NAME>_DIR. Uses the authoritative
-            // consumer→dep edge graph (no name-guessing); covers feature-
-            // activated deps too (mergeActiveFeatureDeps folded them into
-            // `dependencies` before the edges were recorded). A dep is emitted
-            // under BOTH its canonical package name AND its namespace-stripped
-            // short name, so `mcpp::dep_dir("compat.zlib")` and
-            // `mcpp::dep_dir("zlib")` both resolve regardless of which spelling
-            // the author used in `deps`. (The ROOT project's build.mcpp gets
-            // the same treatment at its own call site right after this loop.)
-            for (auto const& edge : dependencyEdges) {
-                if (edge.consumerPackageIndex != i) continue;
-                auto const& depPkg = packages[edge.dependencyPackageIndex];
-                const auto& canon = depPkg.manifest.package.name;
-                bpEnv.depDirs.emplace_back(canon, depPkg.root);
-                if (auto dot = canon.rfind('.'); dot != std::string::npos
-                        && dot + 1 < canon.size())
-                    bpEnv.depDirs.emplace_back(canon.substr(dot + 1), depPkg.root);
-            }
+            // mcpp#241: this package's resolved dependencies as
+            // MCPP_DEP_<NAME>_DIR, from the authoritative edge graph (no
+            // name-guessing); covers feature-activated deps too
+            // (mergeActiveFeatureDeps folded them in before the edges were
+            // recorded). Shared owner — see fillDepDirs.
+            fillDepDirs(bpEnv, i);
             // #355: the host tools THIS package requested (resolved above).
             if (auto tit = toolEnvByConsumer.find(i); tit != toolEnvByConsumer.end())
                 bpEnv.toolPaths = tit->second;
@@ -4361,18 +4355,8 @@ prepare_build(bool print_fingerprint,
         // contract hash — and therefore the build.mcpp cache — is unchanged
         // across the move for feature-identical builds.
         bpEnv.features     = feature_closure(*m, parse_feature_request(overrides.features));
-        // mcpp#241 (root): the root's resolved direct deps, from the same
-        // authoritative edge graph as the dep loop (consumer index 0 = root),
-        // emitted under canonical AND namespace-stripped names.
-        for (auto const& edge : dependencyEdges) {
-            if (edge.consumerPackageIndex != 0) continue;
-            auto const& depPkg = packages[edge.dependencyPackageIndex];
-            const auto& canon = depPkg.manifest.package.name;
-            bpEnv.depDirs.emplace_back(canon, depPkg.root);
-            if (auto dot = canon.rfind('.'); dot != std::string::npos
-                    && dot + 1 < canon.size())
-                bpEnv.depDirs.emplace_back(canon.substr(dot + 1), depPkg.root);
-        }
+        // mcpp#241 (root): consumer index 0, same owner as the dep loop.
+        fillDepDirs(bpEnv, 0);
         // #355: the host tools the ROOT package requested (consumer index 0).
         if (auto tit = toolEnvByConsumer.find(0u); tit != toolEnvByConsumer.end())
             bpEnv.toolPaths = tit->second;
