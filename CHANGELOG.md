@@ -3,6 +3,25 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.5.3] — 2026-08-05
+
+### 修复
+
+- **链接响应文件按行分隔(`$in_newline`)。** 一条链接边和操作系统之间有**两道**上限,而「改用响应文件」只拆掉了第一道:
+
+  1. **命令行**:Windows `CreateProcess` 32 KiB;POSIX 下 ninja 用 `sh -c "<整条命令>"`,整条命令是**一个** argv 项,撞的是 `MAX_ARG_STRLEN` 128 KiB。这道在 #344 / PR#345 已经拆掉。
+  2. **响应文件的单行长度**:`link.exe` 上限 128 KiB。所有对象写在一行,于是
+
+     ```
+     fatal error LNK1170: line in command file contains 135135 or more characters
+     ```
+
+     mcpp-index 的 `opencv-module` 与 `opencv-module-dnn` 在 windows 上正是死在这里 —— 链接前的 795s / 1166s 编译全部白做。
+
+  改成 `rspfile_content = $in_newline` 之后,**没有任何上限再随对象数增长**。全平台同一条规则形状:GNU 与 LLVM 的响应文件解析把任何空白(含换行)当分隔符,而 link.exe / lib.exe 要的正是这种写法。
+
+  > 同一族的第四次(#274 / #247 / #344 / 本条)。前三次的教训写的是「命令有多长不该有人放在心上」;这次补上的是它的孪生兄弟 —— **一行有多长同样不该**。e2e 190 两面都钉:既断言生成的规则,也断言 ninja 真正写出来的文件(`-d keeprsp`),因为只断言前者的话,ninja 哪天改了 `$in_newline` 的展开方式测试仍会绿。
+
 ## [2026.8.5.2] — 2026-08-05
 
 修复 `host-module = true`(规则包)的两个缺陷。二者都是 2026.8.5.1 引入的,合起来的效果是:**规则包只能写「手工 printf 指令」的玩具规则**,一旦规则要用它本该用的 API 就编不过。第一个真实使用者(`grpc-m` 的 protoc/gRPC codegen 规则)在第一分钟就同时撞上了这两个。

@@ -785,7 +785,26 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     cmd.replace(pos, 3, "@$out.rsp");
                 append(std::format("  command = {}\n", cmd));
                 append("  rspfile = $out.rsp\n");
-                append("  rspfile_content = $in\n");
+                // `$in_newline`, not `$in`: ninja separates by newlines instead
+                // of spaces. Routing the objects through a response file
+                // removed the COMMAND-LINE ceiling but left a second one
+                // nobody had reached yet — link.exe caps a response file's
+                // LINE at 128 KiB:
+                //
+                //     fatal error LNK1170: line in command file contains
+                //     135135 or more characters
+                //
+                // which is where mcpp-index's opencv-module landed on windows.
+                // Same failure shape as the one above it: a build system may
+                // not have a maximum project size it discovers by crashing.
+                // Newline separation removes the last per-line bound — no
+                // ceiling scales with the number of objects any more.
+                //
+                // Safe everywhere, so there is still one rule shape: GNU and
+                // LLVM response-file parsing treat any whitespace as a
+                // separator, newline included, and link.exe/lib.exe want
+                // exactly this form.
+                append("  rspfile_content = $in_newline\n");
             } else {
                 append(std::format("  command = {}\n", cmd));
             }
