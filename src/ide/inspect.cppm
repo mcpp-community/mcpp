@@ -69,9 +69,6 @@ bool matches_selector(const Candidate& candidate, std::string_view selector,
                       const std::filesystem::path& workspaceRoot) {
     if (candidate.name == selector || candidate.workspacePath == selector)
         return true;
-    if (const auto dot = candidate.name.rfind('.');
-        dot != std::string::npos && candidate.name.substr(dot + 1) == selector)
-        return true;
     if (candidate.root.filename() == selector)
         return true;
     std::error_code ec;

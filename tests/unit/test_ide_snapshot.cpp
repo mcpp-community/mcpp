@@ -177,6 +177,16 @@ TEST(IdeSnapshotInspect, PackageSelectorPathWinsOverNameCollision) {
     EXPECT_EQ(snapshot.selectedMembers, std::vector<std::string>{"member"});
 }
 
+TEST(IdeSnapshotInspect, PackageSelectorDoesNotUseDottedTailAlias) {
+    TempProject p;
+    p.write("mcpp.toml", "[workspace]\nmembers=[\"libs/special\"]\n");
+    p.write("libs/special/mcpp.toml", package_manifest("acme.foo"));
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root,
+        .selectors = {.package = "foo"}});
+    EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Unavailable);
+    EXPECT_NE(diagnostic(snapshot, "MCPP_IDE_WORKSPACE_MEMBER_NOT_FOUND"), nullptr);
+}
+
 TEST(IdeSnapshotInspect, UnknownPackageUnavailable) {
     TempProject p;
     p.write("mcpp.toml", "[workspace]\nmembers=[\"one\"]\n");
