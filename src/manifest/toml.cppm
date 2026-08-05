@@ -353,6 +353,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (cval.is_string()) m.capabilityPins[cap] = cval.as_string();
     }
 
+    // [tools.overrides] "<pkg>:<tool>" = "<path>" — #355 escape hatch. Use an
+    // existing host binary instead of building the dependency's tool target.
+    // Root-only, like [capabilities]: it is the consumer's environment being
+    // described, and a dependency has no business overriding it.
+    if (auto* tovr = doc->get_table("tools.overrides"); tovr && !tovr->empty()) {
+        for (auto& [k, v] : *tovr)
+            if (v.is_string()) m.toolOverrides[k] = v.as_string();
+    }
+
     // [generated_files] — "relative/path" = "file contents" (multiline
     // strings supported). Same mechanism as the index descriptor's
     // generated_files key: materialized into the package root before glob
@@ -533,7 +542,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             || k == "rev"    || k == "tag"     || k == "branch"
             || k == "features" || k == "default-features"
             || k == "workspace" || k == "visibility"
-            || k == "backend";
+            || k == "backend"  || k == "tools"
+            || k == "host-module";
     };
     auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
         if (sub.empty()) return false;
@@ -571,6 +581,19 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         // the default pseudo-feature is not seeded for this dependency.
         if (auto it = sub.find("default-features"); it != sub.end() && it->second.is_bool()) {
             spec.defaultFeatures = it->second.as_bool();
+        }
+        // #355: `tools = ["protoc"]` — HOST binaries this consumer wants from
+        // the dependency. Same shape as `features`, and deliberately on the
+        // dependency edge: requesting an extra artifact from the graph is a
+        // graph-level request, so it stays declarative in mcpp.toml.
+        if (auto it = sub.find("tools"); it != sub.end() && it->second.is_array()) {
+            for (auto& tv : it->second.as_array())
+                if (tv.is_string()) spec.tools.push_back(tv.as_string());
+        }
+        // #355 step 5: `host-module = true` — make this dependency's lib-root
+        // module importable from build.mcpp (reusable rules as packages).
+        if (auto it = sub.find("host-module"); it != sub.end() && it->second.is_bool()) {
+            spec.hostModule = it->second.as_bool();
         }
         // `backend = "<impl>"` — sugar for requesting the dependency's
         // `backend-<impl>` feature (library-level backend selection knob).
@@ -629,7 +652,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (!looks_like_inline_dep_spec(sub)) {
                 return std::unexpected(error(origin, std::format(
                     "[{}.{}] must be a version string or table of "
-                    "(path/version/git/rev/tag/branch/features/default-features/visibility)",
+                    "(path/version/git/rev/tag/branch/features/default-features/visibility/tools)",
                     section, key)));
             }
             if (auto r = fill_inline_spec(spec, section, key, sub); !r) return r;

@@ -50,6 +50,63 @@ inline void generated(const char* path)           { std::printf("mcpp:generated=
 inline void source(const char* path)              { std::printf("mcpp:source=%s\n", path); }
 inline void include_dir(const char* dir)          { std::printf("mcpp:include-dir=%s\n", dir); }
 inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-dir-after=%s\n", dir); }
+// ── Build-graph nodes (mcpp 2026.8.5.1+) ────────────────────────────────
+// Declare WORK instead of doing it. A build program is a good place to decide
+// what the build looks like and a bad place to perform it: work done here is
+// serial, whole-set, and reported as "build.mcpp exited 1". Declared as a node
+// it becomes an edge in the build graph — incremental, parallel, attributable.
+//
+// You must name the OUTPUT FILES. mcpp fixes the source set, the fingerprint
+// and the module graph during prepare, so an output whose name is unknown
+// cannot be built. Content may arrive later; names may not.
+struct action {
+    const char* id          = "";
+    const char* role        = "source";   // "source" | "check" | "artifact"
+    const char* description = "";
+    bool        blocking    = false;      // check only: gate compilation on it
+    action& input(const char* p)    { add(inputs_, p);   return *this; }
+    action& output(const char* p)   { add(outputs_, p);  return *this; }
+    action& arg(const char* a)      { add(command_, a);  return *this; }
+    // Declare what a generated MODULE INTERFACE provides/imports. Same
+    // "declare instead of discover" trade [modules].scan_overrides makes, and
+    // what lets a generated .cppm exist as a graph node at all.
+    action& provides(const char* n) { add(provides_, n); return *this; }
+    action& imports(const char* n)  { add(imports_, n);  return *this; }
+    void submit() const {
+        std::printf("mcpp:action={\"id\":");        esc(id);
+        std::printf(",\"role\":");                  esc(role);
+        std::printf(",\"description\":");           esc(description);
+        std::printf(",\"blocking\":%s", blocking ? "true" : "false");
+        std::printf(",\"inputs\":[%s]",   inputs_);
+        std::printf(",\"outputs\":[%s]",  outputs_);
+        std::printf(",\"command\":[%s]",  command_);
+        std::printf(",\"provides\":[%s]", provides_);
+        std::printf(",\"imports\":[%s]",  imports_);
+        std::printf("}\n");
+    }
+private:
+    char inputs_[4096]{}, outputs_[4096]{}, command_[8192]{}, provides_[1024]{}, imports_[1024]{};
+    static void esc(const char* s) {
+        std::putchar('"');
+        for (const char* p = s; *p; ++p) {
+            if (*p == '"' || *p == '\\') std::putchar('\\');
+            if (*p == '\n') { std::printf("\\n"); continue; }
+            std::putchar(*p);
+        }
+        std::putchar('"');
+    }
+    static void add(char* buf, const char* s) {
+        unsigned long o = 0; while (buf[o]) ++o;
+        if (o) buf[o++] = ',';
+        buf[o++] = '"';
+        for (const char* p = s; *p && o + 3 < 4096; ++p) {
+            if (*p == '"' || *p == '\\') buf[o++] = '\\';
+            buf[o++] = *p;
+        }
+        buf[o++] = '"';
+        buf[o] = 0;
+    }
+};
 inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }
 inline void rerun_if_env_changed(const char* var) { std::printf("mcpp:rerun-if-env-changed=%s\n", var); }
 // ── environment contract (read side; values injected by the engine) ─────
@@ -85,6 +142,26 @@ inline const char* dep_dir(const char* name) {
                : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
     }
     buf[o++] = '_'; buf[o++] = 'D'; buf[o++] = 'I'; buf[o++] = 'R'; buf[o] = 0;
+    return env_or(buf);
+}
+// mcpp#355: absolute path to a HOST tool built by a dependency — the binary
+// behind one of its `kind = "bin"` targets. Returns "" unless the consumer
+// declared it:  <dep> = { version = "…", tools = ["protoc"] }
+// The path already carries the platform's executable suffix.
+inline const char* dep_bin(const char* pkg, const char* tool) {
+    char buf[256] = "MCPP_DEP_";
+    unsigned long o = 9;
+    auto put = [&](const char* s) {
+        for (const char* p = s; *p && o + 8 < sizeof buf; ++p, ++o) {
+            char c = *p;
+            buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+                   : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+        }
+    };
+    put(pkg);
+    buf[o++] = '_'; buf[o++] = 'B'; buf[o++] = 'I'; buf[o++] = 'N'; buf[o++] = '_';
+    put(tool);
+    buf[o] = 0;
     return env_or(buf);
 }
 }
@@ -149,6 +226,27 @@ struct McppModule {
     std::vector<std::string> useFlags;   // how the consumer names the BMI
     fs::path                 object;     // linked alongside build.mcpp
 };
+
+// Compile ONE dependency-provided module interface for the host, into `bdir`,
+// with the SAME flags build.mcpp itself gets. Returns how to name its BMI plus
+// the object to link.
+//
+// Shares build_mcpp_module's per-family dispatch deliberately: a BMI is only
+// usable by a compile that agrees with it on standard, dialect and compiler
+// identity, and the cheapest way to guarantee that is to produce both from one
+// set of flags rather than to check afterwards.
+//
+// Limitation, stated rather than hidden: the interface is compiled ALONE, so it
+// may import `std` and the bundled `mcpp` module but not a third package. A
+// rule package is a leaf by construction; a transitive host module graph would
+// need the sub-build machinery and its own BMI-agreement story.
+std::expected<McppModule, std::string>
+build_host_module(const fs::path& bdir, const fs::path& compiler,
+                  const std::vector<std::string>& base, const std::string& stdFlag,
+                  const mcpp::toolchain::Toolchain& tc,
+                  const std::vector<std::pair<std::string, std::string>>& env,
+                  std::string_view logicalName, const fs::path& interfacePath,
+                  const std::vector<std::string>& extraUseFlags);
 
 std::expected<McppModule, std::string>
 build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
@@ -232,5 +330,92 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
     return out;
 }
 
+
+} // namespace mcpp::build
+
+namespace mcpp::build {
+
+std::expected<McppModule, std::string>
+build_host_module(const fs::path& bdir, const fs::path& compiler,
+                  const std::vector<std::string>& base, const std::string& stdFlag,
+                  const mcpp::toolchain::Toolchain& tc,
+                  const std::vector<std::pair<std::string, std::string>>& env,
+                  std::string_view logicalName, const fs::path& interfacePath,
+                  const std::vector<std::string>& extraUseFlags) {
+    std::error_code ec;
+    if (!fs::exists(interfacePath, ec)) {
+        return std::unexpected(std::format(
+            "host module '{}': no interface unit at {}\n"
+            "       A package offering build rules must have a lib root "
+            "(src/<name>.cppm or [lib] path).",
+            logicalName, interfacePath.string()));
+    }
+    // A filesystem-safe stem: a module name contains dots, which are fine in a
+    // path but make `foo.rules.o` read as an extension chain.
+    std::string stem(logicalName);
+    for (auto& c : stem) if (c == ':' || c == '/' || c == '\\') c = '-';
+
+    auto run = [&](std::vector<std::string> argv, const char* what)
+        -> std::expected<void, std::string> {
+        auto r = mcpp::platform::process::capture_exec(argv, env, bdir.string());
+        if (r.exit_code != 0)
+            return std::unexpected(std::format(
+                "host module '{}' {} failed (exit {}):\n{}",
+                logicalName, what, r.exit_code, r.output));
+        return {};
+    };
+    auto with_base = [&](std::vector<std::string> head) {
+        for (auto& b : base)          head.push_back(b);
+        for (auto& f : extraUseFlags) head.push_back(f);
+        return head;
+    };
+
+    const auto traits = mcpp::toolchain::bmi_traits(tc);
+    const auto& dial  = mcpp::toolchain::dialect_for(tc);
+    McppModule out;
+    out.object = bdir / (stem + std::string(dial.objExt));
+
+    if (tc.compiler == mcpp::toolchain::CompilerId::MSVC) {
+        fs::path ifc = bdir / (stem + std::string(traits.bmiExt));
+        std::vector<std::string> argv{compiler.string()};
+        for (auto f : dial.alwaysFlagsArgv) argv.emplace_back(f);
+        argv.push_back(stdFlag);
+        argv.push_back("/interface");
+        for (auto f : dial.forceCxxLangArgv) argv.emplace_back(f);
+        argv.push_back("/c");
+        argv.push_back(interfacePath.string());
+        argv.push_back("/ifcOutput"); argv.push_back(ifc.string());
+        argv.push_back(std::string(dial.outputObjPrefix) + out.object.string());
+        if (auto r = run(with_base(std::move(argv)), "compile"); !r)
+            return std::unexpected(r.error());
+        out.useFlags = mcpp::toolchain::bmi_reference_tokens(
+            std::format(" /reference {}=", logicalName), ifc);
+        return out;
+    }
+
+    if (mcpp::toolchain::is_clang(tc)) {
+        fs::path pcm = bdir / (stem + std::string(traits.bmiExt));
+        if (auto r = run(with_base({compiler.string(), stdFlag, "--precompile",
+                                    interfacePath.string(), "-o", pcm.string()}),
+                         "precompile"); !r)
+            return std::unexpected(r.error());
+        if (auto r = run(with_base({compiler.string(), stdFlag, "-c",
+                                    pcm.string(), "-o", out.object.string()}),
+                         "object"); !r)
+            return std::unexpected(r.error());
+        out.useFlags = mcpp::toolchain::bmi_reference_tokens(
+            std::format("-fmodule-file={}=", logicalName), pcm);
+        return out;
+    }
+
+    // GCC: BMIs are implicit under <cwd>/gcm.cache, so nothing to name — which
+    // is also why the compile has to happen in bdir (it already does).
+    if (auto r = run(with_base({compiler.string(), stdFlag, "-fmodules", "-c",
+                                interfacePath.string(), "-o", out.object.string()}),
+                     "compile"); !r)
+        return std::unexpected(r.error());
+    out.useFlags = {"-fmodules"};
+    return out;
+}
 
 } // namespace mcpp::build

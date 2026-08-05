@@ -82,6 +82,11 @@ struct BuildPlan {
 
     std::filesystem::path           projectRoot;      // where mcpp.toml lives
     std::filesystem::path           outputDir;        // target/<triple>/<fp>/
+    // Where compile_commands.json goes. Carried rather than derived from
+    // projectRoot: under BuildOverrides::work_dir the package root is a shared
+    // (possibly read-only) registry directory, and deriving the path would put
+    // an IDE database there. Empty → projectRoot, the historical default.
+    std::filesystem::path           compileDbPath;
     std::filesystem::path           stdBmiPath;      // absolute path to prebuilt std.gcm
     std::filesystem::path           stdObjectPath;   // absolute path to prebuilt std.o
     std::filesystem::path           stdCompatBmiPath;    // absolute path to prebuilt std.compat.pcm
@@ -95,6 +100,10 @@ struct BuildPlan {
 
     std::vector<CompileUnit>        compileUnits;     // topologically sorted
     std::vector<LinkUnit>           linkUnits;
+    // Build-graph nodes declared by build programs (`mcpp:action=`). Paths are
+    // absolute and engine variables already substituted by the time they get
+    // here, so the backend only has to spell edges.
+    std::vector<mcpp::manifest::BuildAction> actions;
     std::vector<std::filesystem::path> runtimeLibraryDirs;
     // ONLY the dependency packages' [runtime] library_dirs (not toolchain/
     // payload dirs). These are the dirs that must be baked into the produced

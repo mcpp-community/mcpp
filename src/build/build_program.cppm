@@ -54,6 +54,22 @@ struct BuildProgramEnv {
     // MCPP_DEP_<SANITIZED_NAME>_DIR (same sanitizer as MCPP_FEATURE_) instead of
     // reverse-engineering the store layout.
     std::vector<std::pair<std::string, std::filesystem::path>> depDirs;
+    // #355: HOST tools this package asked its dependencies for, as
+    // (env var name → absolute path to the executable) pairs. The caller has
+    // already resolved them (built, taken from the store, or an override), so
+    // this is purely the delivery channel. Rides the same contract env, hence
+    // the same re-run key: a rebuilt tool re-runs the program that uses it,
+    // with no `rerun-if-changed` needed from the author.
+    std::vector<std::pair<std::string, std::string>> toolPaths;
+    // #355 step 5: dependency-provided modules to compile FOR THE HOST and make
+    // importable from this build.mcpp — reusable build rules distributed as
+    // ordinary mcpp packages (`import mcpp.rules.protobuf;`) instead of a
+    // second, non-C++ rule DSL.
+    //
+    // (logical module name, absolute path to its interface unit). Compiled with
+    // the SAME flags as build.mcpp itself, in the same directory, which is what
+    // makes the BMI usable at all — see DependencySpec::hostModule.
+    std::vector<std::pair<std::string, std::filesystem::path>> hostModules;
 };
 
 // Compile + run `<root>/build.mcpp` (if present) with `hostCompiler` (the resolved
@@ -222,6 +238,22 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
                 it->second, dir.string()));
         }
     }
+    // #355: MCPP_DEP_<PKG>_BIN_<TOOL> — absolute path to a host tool the
+    // consumer declared via `tools = [...]`. A PATH rather than a directory:
+    // the store keys an entry per (package, target), the typed reader can
+    // append the platform's exe suffix itself, and a tool's adjacent DATA
+    // (protoc's well-known .proto files, say) lives in the package tree, which
+    // dep_dir() already exposes.
+    for (auto const& [var, path] : env.toolPaths) {
+        auto [it, inserted] = depVarValue.try_emplace(var, path);
+        if (inserted) {
+            e.emplace_back(var, path);
+        } else if (it->second != path) {
+            mcpp::ui::warning(std::format(
+                "build.mcpp: tool name collides on {} (kept '{}', ignored '{}')",
+                var, it->second, path));
+        }
+    }
     return e;
 }
 
@@ -374,6 +406,15 @@ std::expected<void, std::string> run_build_program(
     // Fold the policy into the compiler identity: a helper produced under an
     // older link policy must be rebuilt, not reused from the cache.
     std::string compilerIdentity = hostCompiler.string();
+    // Host modules change what the helper links, so they belong in the identity
+    // the cache keys on — otherwise adding or removing a rule package would
+    // replay a cached run compiled without it.
+    for (auto const& [logical, ifacePath] : env.hostModules) {
+        compilerIdentity += "\nhost-module=";
+        compilerIdentity += logical;
+        compilerIdentity += "@";
+        compilerIdentity += mcpp::toolchain::hash_file(ifacePath);
+    }
     compilerIdentity += "\nbuild-program-link=";
     compilerIdentity += muslStaticHelper  ? "musl-static-v1"
                       : mingwStaticHelper ? "mingw-static-v1"
@@ -456,6 +497,27 @@ std::expected<void, std::string> run_build_program(
         if (!mf) return std::unexpected(mf.error());
         moduleFlags = std::move(mf->useFlags);
         mcppModuleObject = std::move(mf->object);
+    }
+
+    // #355 step 5: dependency-provided host modules (reusable build rules
+    // shipped as ordinary packages). Compiled HERE, with `base` and `std_flag`
+    // — the same flags the build.mcpp compile below gets — because a BMI is
+    // only usable by a compile that agrees with it. Doing this in a separate
+    // sub-build would leave that agreement to chance, and disagreement shows
+    // up as `module X CRC mismatch`, not as a clear error.
+    std::vector<fs::path> hostModuleObjects;
+    for (auto const& [logical, ifacePath] : env.hostModules) {
+        auto hm = build_host_module(bdir, hostCompiler, base, std_flag, tc,
+                                    compileEnv, logical, ifacePath, moduleFlags);
+        if (!hm) return std::unexpected(hm.error());
+        for (auto& f : hm->useFlags) {
+            // GCC's marker is just `-fmodules`, already present when the
+            // bundled module was built; repeating it is harmless but noisy.
+            if (std::find(moduleFlags.begin(), moduleFlags.end(), f)
+                == moduleFlags.end())
+                moduleFlags.push_back(f);
+        }
+        hostModuleObjects.push_back(std::move(hm->object));
     }
 
     // ── `import std;` in build.mcpp ─────────────────────────────────────────
@@ -571,7 +633,7 @@ std::expected<void, std::string> run_build_program(
         for (auto f : dial.forceCxxLangArgv) compileArgv.emplace_back(f);
         compileArgv.push_back(src.string());
     }
-    if (usesModule || !stdObjects.empty()) {
+    if (usesModule || !stdObjects.empty() || !hostModuleObjects.empty()) {
         // Link the module objects. GNU drivers need the input language reset
         // first, or the .o that follows `-x c++` is handed to the frontend as
         // C++ source; cl.exe has no `-x` at all and infers from the extension.
@@ -580,6 +642,7 @@ std::expected<void, std::string> run_build_program(
         // answered with `D9002: ignoring unknown option '-x'`.
         if (!msvcHost) { compileArgv.push_back("-x"); compileArgv.push_back("none"); }
         if (usesModule) compileArgv.push_back(mcppModuleObject.string());
+        for (auto& hmo : hostModuleObjects) compileArgv.push_back(hmo.string());
         for (auto& so : stdObjects) compileArgv.push_back(so);
     }
     // Self-contained helper link — see the staticHostHelper doctrine above.
@@ -649,6 +712,12 @@ std::expected<void, std::string> run_build_program(
     // the historical warn-and-ignore behaviour.
     if (auto perr = dirs::protocol_error(d)) {
         return std::unexpected(*perr);
+    }
+    // Refuse a malformed action BEFORE applying anything: a half-applied
+    // action set is worse than none, and an action that silently does not
+    // exist surfaces as a missing generated source three edges away.
+    if (auto aerr = dirs::action_error(d); !aerr.empty()) {
+        return std::unexpected(aerr);
     }
     if (d.protocol == 0) {
         for (auto const& k : d.unknownKeys)

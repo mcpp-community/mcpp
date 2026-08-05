@@ -206,6 +206,50 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
                                 src.includeDirsAfter.end());
 }
 
+// A build-graph node declared by a build program (`mcpp:action=`).
+//
+// The architectural point (see
+// .agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md §3.1):
+// build.mcpp answers "what does this build look like" — CONFIGURATION — and is
+// a bad place to do WORK. Generating sources, linting, signing and packaging
+// are work: they want to be incremental, parallel and attributable, which a
+// once-per-prepare program can never be. So instead of DOING the work, the
+// program DECLARES it, and it becomes an edge in the build graph.
+//
+// One primitive, three wirings. `role` is not three mechanisms — it is where
+// the same edge's outputs attach:
+//
+//   Source   — outputs join the compile set (protoc, a transpiler)
+//   Check    — outputs are a stamp; nothing consumes them (clang-tidy, a
+//              format or ABI check). Runs alongside compilation by default,
+//              because serialising every compile behind a linter is a cost
+//              nobody accepts and "the build still fails" is just as true.
+//   Artifact — inputs are link outputs (codesign, packaging, size budgets)
+//
+// INV-D, the constraint that makes this expressible at all: the declaration
+// must name its OUTPUT FILES, not merely promise some. mcpp fixes the source
+// set, the fingerprint, compile_commands.json and the module topo order during
+// prepare, and all of them need to know which files exist. Content may arrive
+// later; names may not.
+struct BuildAction {
+    enum class Role { Source, Check, Artifact };
+
+    std::string                        id;        // diagnostics + edge naming
+    Role                               role = Role::Source;
+    std::vector<std::string>           inputs;    // absolute or package-relative
+    std::vector<std::string>           outputs;   // ditto; declared, see INV-D
+    std::vector<std::string>           command;   // argv; NOT a shell string
+    // Serialised module facts for a generated OUTPUT, when it is a module
+    // interface. Same "declare instead of discover" trade `[modules].scan_overrides`
+    // already makes — and the reason a generated `.cppm` does not need its
+    // content to exist during prepare.
+    std::vector<std::string>           provides;
+    std::vector<std::string>           imports;
+    // Check only: make compilation wait for this to pass. Off by default.
+    bool                               blocking = false;
+    std::string                        description;
+};
+
 // `[build]` section — tunables for the build backend.
 //
 // M5.0: now also carries `sources` (moved from [modules]) and `include_dirs`
@@ -240,6 +284,10 @@ struct BuildConfig : BuildInputs {
     // featureDefines above, which are interface switches).
     std::map<std::string, std::vector<GlobFlags>> featureFlags;
     std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
+    // Build-graph nodes declared by this package's build program
+    // (`mcpp:action=`). Empty for every package that does not use one, so an
+    // ordinary build is untouched.
+    std::vector<BuildAction>            actions;
     bool                                staticStdlib = true;
     // #336 — the C++ runtime DISTRIBUTION contract: what the artifact promises
     // about the machine that runs it ("self-contained" | "toolchain-coupled" |
@@ -521,6 +569,19 @@ struct Manifest {
         featureForwards;
     // Root-only: [capabilities] cap = "provider" pins (also fed by --cap).
     std::map<std::string, std::string>              capabilityPins;
+    // #355 `[tools.overrides]` — "<package>:<tool>" → absolute path to an
+    // existing host binary, which mcpp uses INSTEAD of building the tool.
+    //
+    // The escape hatch every comparable system provides (vcpkg's
+    // VCPKG_HOST_TRIPLET, CMake's LLVM_NATIVE_TOOL_DIR, Qt's QT_HOST_PATH,
+    // Cargo's `target = "target"`). Without one, a user whose tool cannot be
+    // built from source — or who already has the right binary — has no way
+    // forward at all.
+    //
+    // Deliberately NOT part of the tool store key: an override is an escape
+    // hatch, not a reproducible input. `mcpp doctor` reports the ones in
+    // effect so a build that silently used one is still explainable.
+    std::map<std::string, std::string>              toolOverrides;
 
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;

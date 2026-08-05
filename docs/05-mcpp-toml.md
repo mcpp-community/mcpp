@@ -123,7 +123,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 |---|---|
 | `defines` | Preprocessor macros (`name` or `name=value`); desugar to `-D<x>` on both the C and C++ entry compile. |
 | `cxxflags` / `cflags` | Extra compile flags for this target. Do **not** put `-std=...` here — use `[package].standard`. |
-| `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). |
+| `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). **One exception, and it is not a second rule:** when this target is requested as a host tool (`tools = [...]`, §2.14), the target is what was *asked for*, so its `required_features` become the sub-build's *inputs*. Same field, one meaning — the resolution just runs in the opposite direction. |
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
 > target's exclusive entry source** (its `main`) — never to shared module/impl objects, which
@@ -963,6 +963,90 @@ layer): `deps` (host build-tools), `[xlings.workspace]` (tool→version pins),
 build needs (`make`/`cmake`/`protoc`/…), pin tool versions per project, or set
 build-time env vars — without hand-editing `.xlings.json`. `[toolchain]` (§2.7) remains
 the ergonomic shorthand for the compiler; `[xlings.workspace]` is the general form.
+
+### 2.14 Host tools from a dependency (mcpp 2026.8.5.1+)
+
+A package can build a binary its consumers need *at build time* — `protoc`, a
+`grpc_cpp_plugin`, `flatc`, `moc`, a transpiler. Ask for it on the dependency:
+
+```toml
+[dependencies]
+protobuf = { version = "35.1",   tools = ["protoc"] }
+grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
+```
+
+Each name must be a `kind = "bin"` target of that package. mcpp builds it **for
+the build machine** and hands `build.mcpp` its absolute path as
+`MCPP_DEP_<PKG>_BIN_<TOOL>` — read it with `mcpp::dep_bin("protobuf", "protoc")`
+(see [07 — build.mcpp](07-build-mcpp.md)).
+
+Four properties worth knowing:
+
+- **Always a host binary.** Under `mcpp build --target <triple>` the tool is
+  still built for *this* machine, because a code generator has to run here. It
+  is a separate, host-targeted sub-build — the tool package's own `[toolchain]`
+  and its own dependency resolution apply, and none of it has to agree with
+  your build. That is safe precisely because an executable has no ABI contact
+  with your code.
+- **One version axis.** The tool's version *is* the dependency's version, so
+  a `protoc` that does not match its runtime is not expressible. (This is the
+  problem with packaging the tool separately, and it is the failure mode that
+  bites at run time rather than compile time.)
+- **Default off.** Nothing is built unless someone asks; the cost is the
+  consumer's to pay. A package gates the expensive part with
+  `[features]` + `required_features` (protobuf's `protoc` needs libprotoc's
+  ~157 extra TUs, which the runtime's users must not compile).
+- **Cached globally**, keyed on package version × host toolchain × features ×
+  its own dependency closure — built once per machine, not once per project.
+
+#### `[tools.overrides]` — use a binary you already have
+
+```toml
+[tools.overrides]
+"compat.protobuf:protoc" = "/usr/bin/protoc"
+```
+
+or, without editing the manifest (CI, distro packaging):
+
+```bash
+MCPP_TOOL_PROTOBUF_PROTOC=/usr/bin/protoc mcpp build
+```
+
+An override **skips the build entirely**. Every comparable system provides this
+escape hatch (vcpkg's `VCPKG_HOST_TRIPLET`, CMake's `LLVM_NATIVE_TOOL_DIR`,
+Qt's `QT_HOST_PATH`), and for the same reason: a tool that cannot be built from
+source on this machine must not be a dead end. It is deliberately **not** part
+of the cache key — an override is an escape hatch, not a reproducible input.
+
+#### `host-module = true` — reusable build rules as packages
+
+A rule (say "run protoc over these `.proto` files") should be written once, not
+copy-pasted into every consumer's `build.mcpp`. Ship it as an ordinary mcpp
+library package and import it:
+
+```toml
+[dependencies]
+"mcpp.rules.protobuf" = { version = "0.1.0", host-module = true }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+import mcpp.rules.protobuf;
+int main() { mcpp::rules::protobuf::generate(/* … */); }
+```
+
+mcpp compiles that package's lib-root module **for the host, in the same
+command as `build.mcpp`** — which is what makes the BMI usable at all, since a
+module interface is only importable by a compile that agrees with it on
+standard, dialect and compiler identity.
+
+Rules are therefore versioned, testable and distributable through the package
+manager you already have, written in **C++** — no second language, which is the
+whole point of `build.mcpp` existing.
+
+*Limit:* the rule interface is compiled alone, so it may import `std` and the
+bundled `mcpp` module, but not a third package. A rule package is a leaf.
 
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 

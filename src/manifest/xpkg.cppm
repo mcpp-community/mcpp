@@ -1344,6 +1344,27 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         t.main = cur.read_string();
                     } else if (sub == "soname") {
                         t.soname = cur.read_string();
+                    } else if (sub == "required_features") {
+                        // #355: without this, a Form B descriptor could not
+                        // express the cost gate that makes an optional host
+                        // tool affordable — e.g. compat.protobuf's `protoc`
+                        // needs libprotoc's ~157 extra TUs, which must NOT be
+                        // compiled for the consumers that only want the
+                        // runtime. mcpp.toml has read this since the target
+                        // gate landed; the descriptor parser silently dropped
+                        // it, so the target was either always or never built.
+                        if (cur.peek() == '{') {
+                            cur.consume('{');
+                            cur.skip_ws_and_comments();
+                            while (!cur.eof() && cur.peek() != '}') {
+                                auto s = cur.read_string();
+                                if (!s.empty()) t.requiredFeatures.push_back(std::move(s));
+                                cur.skip_ws_and_comments();
+                            }
+                            cur.consume('}');
+                        } else {
+                            (void)cur.read_bareword();
+                        }
                     } else {
                         // unknown subfield — skip its value
                         cur.skip_ws_and_comments();
@@ -1503,10 +1524,54 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 cur.skip_ws_and_comments();
                 if (!cur.consume('=')) break;
                 cur.skip_ws_and_comments();
-                auto dver = cur.read_string();
+                // The value is either a bare version string (the long-standing
+                // form) or a table. #355 needs the table form so a Form B
+                // descriptor can request a HOST tool from a dependency:
+                //   ["compat.protobuf"] = { version = "35.1", tools = {"protoc"} }
+                // Only the VALUE position becomes a table — namespaced
+                // subtables still are not supported, which is the limit the
+                // original comment was describing.
+                std::string dver;
+                std::vector<std::string> dtools;
+                if (cur.peek() == '{') {
+                    cur.consume('{');
+                    cur.skip_ws_and_comments();
+                    while (!cur.eof() && cur.peek() != '}') {
+                        auto dk = cur.read_key();
+                        if (dk.empty()) break;
+                        cur.skip_ws_and_comments();
+                        if (!cur.consume('=')) break;
+                        cur.skip_ws_and_comments();
+                        if (dk == "version") {
+                            dver = cur.read_string();
+                        } else if (dk == "tools" && cur.peek() == '{') {
+                            cur.consume('{');
+                            cur.skip_ws_and_comments();
+                            while (!cur.eof() && cur.peek() != '}') {
+                                auto s = cur.read_string();
+                                if (!s.empty()) dtools.push_back(std::move(s));
+                                cur.skip_ws_and_comments();
+                            }
+                            cur.consume('}');
+                        } else {
+                            // Record rather than swallow — a descriptor author
+                            // writing an unsupported dep key deserves to be
+                            // told, not to get a half-configured dependency.
+                            m.xpkgUnknownKeys.push_back(
+                                std::format("deps.{}.{}", dname, dk));
+                            if (cur.peek() == '{') cur.skip_table();
+                            else (void)cur.read_bareword();
+                        }
+                        cur.skip_ws_and_comments();
+                    }
+                    cur.consume('}');
+                } else {
+                    dver = cur.read_string();
+                }
                 if (!dname.empty()) {
                     DependencySpec spec;
                     spec.version = dver;
+                    spec.tools   = std::move(dtools);
                     auto selector = mcpp::pm::resolve_dependency_selector(
                         dname,
                         mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);

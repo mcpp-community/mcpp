@@ -34,6 +34,9 @@ import mcpp.build.plan;
 import mcpp.build.cache_key;
 import mcpp.build.build_program;
 import mcpp.build.directives;   // directive table: mark / fold_private_tail
+import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
+import mcpp.build.backend;      // BuildOptions for the tool sub-build
+import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.lockfile;
 import mcpp.config;
 import mcpp.xlings;
@@ -761,6 +764,32 @@ export std::string resolve_profile_name(const mcpp::manifest::Manifest& m,
 // Command-level overrides (--target / --static).
 // Empty defaults preserve pre-existing behaviour exactly.
 export struct BuildOverrides {
+    // Where the package being built LIVES (its mcpp.toml). Empty = walk up from
+    // the process cwd, which is what every user-facing invocation does. Set by
+    // the tool-provisioning pass, which builds a package that lives in the
+    // registry rather than under the cwd.
+    std::filesystem::path project_root;
+    // Where mcpp WRITES. Empty = the project root, which is the historical
+    // (and for a normal build, correct) behaviour.
+    //
+    // The two are separate because a registry package root is shared across
+    // projects and may be read-only — build_program.cppm has said so in a
+    // comment since G2, and until now nothing could honour it for anything
+    // bigger than build.mcpp's own scratch dir. Splitting "source" from "work"
+    // is what lets mcpp build such a package at all.
+    //
+    // EVERYTHING derived from it moves together: target/, mcpp.lock,
+    // compile_commands.json, .mcpp/, and build.mcpp's artifact dir. Moving
+    // only some would be worse than moving none — a half-redirected build
+    // writes into the shared root anyway, just less visibly.
+    std::filesystem::path work_dir;
+    // #355 tool provisioning re-enters prepare_build for the tool package. A
+    // tool package's own build.mcpp may legitimately want another tool (gRPC's
+    // wants protoc), so the depth cannot be 1 — but an unbounded chain is a
+    // bug, and hanging is a worse diagnostic than a named cycle.
+    int         tool_depth = 0;
+    // The request chain, for that diagnostic. "root → grpc:grpc_cpp_plugin → …"
+    std::string tool_chain;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
@@ -840,9 +869,20 @@ prepare_build(bool print_fingerprint,
               bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {}) {
-    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    auto root = overrides.project_root.empty()
+        ? mcpp::project::find_manifest_root(std::filesystem::current_path())
+        : std::optional<std::filesystem::path>(overrides.project_root);
     if (!root) {
         return std::unexpected("no mcpp.toml found in current directory or any parent");
+    }
+    // Where mcpp writes. Defaults to the project root, so every existing
+    // invocation is byte-for-byte unchanged; the tool-provisioning pass points
+    // it at the tool store instead (BuildOverrides::work_dir).
+    const std::filesystem::path workRoot =
+        overrides.work_dir.empty() ? *root : overrides.work_dir;
+    {
+        std::error_code wdEc;
+        std::filesystem::create_directories(workRoot, wdEc);
     }
 
     auto m = mcpp::manifest::load(*root / "mcpp.toml");
@@ -964,7 +1004,7 @@ prepare_build(bool print_fingerprint,
     // this function emits, both taken from the root manifest's [dependencies].
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
     {
-        auto lockPath = *root / "mcpp.lock";
+        auto lockPath = workRoot / "mcpp.lock";
         if (std::filesystem::exists(lockPath)) {
             if (auto lock = mcpp::pm::load(lockPath); lock) {
                 for (auto const& p : lock->packages)
@@ -1788,7 +1828,7 @@ prepare_build(bool print_fingerprint,
             penv.subos = m->xlings.subos;
             for (auto const& [k, v] : m->xlings.workspace) penv.workspace.emplace_back(k, v);
             for (auto const& [k, v] : m->xlings.envs)      penv.envs.emplace_back(k, v);
-            mcpp::config::ensure_project_index_dir(**cfg2, *root, m->indices, penv);
+            mcpp::config::ensure_project_index_dir(**cfg2, workRoot, m->indices, penv);
 
             // On first build, the project index data root may be empty because
             // ensure_project_index_dir only writes .xlings.json but does not
@@ -2423,7 +2463,7 @@ prepare_build(bool print_fingerprint,
                 // a hint about the known ≥2-repo xlings resolution gap. The
                 // real fix lives in openxlings/xlings; this only surfaces WHY.
                 auto xlingsJson = (useProjectEnv
-                        ? (*root / ".mcpp")
+                        ? (workRoot / ".mcpp")
                         : (*cfg)->xlingsHome())
                     / ".xlings.json";
                 auto indexRepos = mcpp::pm::read_seeded_index_repos(xlingsJson);
@@ -2566,8 +2606,25 @@ prepare_build(bool print_fingerprint,
         // silently dropped (resolution honors them per-edge; activation did not).
         std::vector<std::string> requestedFeatures;
         bool defaultFeatures = true;
+        // #355: HOST tools this consumer asked the dependency for. Aggregated
+        // off the edge graph exactly like requestedFeatures — a transitive
+        // consumer's request must not be silently dropped, which is the
+        // #242/#243 failure shape.
+        std::vector<std::string> requestedTools;
     };
     std::vector<DependencyEdge> dependencyEdges;
+    // #355: consumer package index → (env var, absolute path) for each host
+    // tool that consumer requested. Filled by the provisioning pass below;
+    // read by BOTH build.mcpp call sites (the dependency loop and the root),
+    // which is why it lives out here rather than inside the resolution block.
+    std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
+        toolEnvByConsumer;
+    // #355 step 5: consumer package index → (logical module name, interface
+    // path) for each dependency that offers HOST build rules. Same fan-out
+    // shape as toolEnvByConsumer, and read by the same two call sites.
+    std::map<std::size_t,
+             std::vector<std::pair<std::string, std::filesystem::path>>>
+        hostModulesByConsumer;
 
     auto parseVisibility = [](std::string_view visibility) {
         if (visibility == "private")
@@ -2622,6 +2679,34 @@ prepare_build(bool print_fingerprint,
            const DirectiveMark& t)
     {
         mcpp::build::directives::fold_private_tail(pkg.privateBuild, ran, t);
+    };
+
+    // A declared build-graph node's Source outputs must be visible to the
+    // scan, so they are materialized as placeholders and joined to the source
+    // set here — the same two lists `generated=` feeds, for the same reason
+    // (the scanner walks the legacy modules.sources mirror). ninja overwrites
+    // the placeholder before the compile edge runs, because that compile
+    // depends on the action's output.
+    auto adoptActionOutputs = [](mcpp::manifest::Manifest& mm,
+                                 const std::filesystem::path& pkgRoot,
+                                 std::size_t firstNewAction) {
+        if (firstNewAction >= mm.buildConfig.actions.size()) return;
+        std::vector<mcpp::manifest::BuildAction> fresh(
+            mm.buildConfig.actions.begin()
+                + static_cast<std::ptrdiff_t>(firstNewAction),
+            mm.buildConfig.actions.end());
+        mcpp::build::directives::prepare_actions(fresh, pkgRoot);
+        std::copy(fresh.begin(), fresh.end(),
+                  mm.buildConfig.actions.begin()
+                      + static_cast<std::ptrdiff_t>(firstNewAction));
+        for (auto const& a : fresh) {
+            if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
+            for (auto const& o : a.outputs) {
+                if (o.find("${mcpp.") != std::string::npos) continue;
+                mm.buildConfig.sources.push_back(o);
+                mm.modules.sources.push_back(o);
+            }
+        }
     };
 
 
@@ -2723,6 +2808,7 @@ prepare_build(bool print_fingerprint,
             .visibility = visibility,
             .requestedFeatures = spec.features,
             .defaultFeatures = spec.defaultFeatures,
+            .requestedTools = spec.tools,
         });
     };
 
@@ -3814,6 +3900,268 @@ prepare_build(bool print_fingerprint,
             apply(packages[i], req, depDefaultFeatures);
         }
 
+        // ── #355: HOST tool provisioning ────────────────────────────────────
+        //
+        // Runs AFTER feature activation (a tool target's gate is a feature) and
+        // BEFORE any build.mcpp (which is what consumes the tools). That
+        // ordering is the whole point: build.mcpp runs inside prepare, so a
+        // tool produced by the main ninja graph would arrive far too late —
+        // and under --target it would be the wrong architecture besides.
+        //
+        // Each tool is built by re-entering prepare_build with the DEPENDENCY
+        // as the root and no --target, i.e. for the build machine. That is
+        // Cargo's [build-dependencies] / Bazel's exec configuration shape.
+        // It is affordable because an executable has zero ABI contact with the
+        // main build: the sub-build may use the tool package's own toolchain,
+        // its own profile, and its own resolution — none of it has to agree
+        // with the consumer.
+        {
+            // Aggregate off the authoritative edge graph, exactly like feature
+            // activation — a transitive consumer's request must not be
+            // silently dropped (#242/#243).
+            std::map<std::size_t, std::set<std::string>> toolRequests;
+            for (auto const& edge : dependencyEdges)
+                for (auto const& t : edge.requestedTools)
+                    toolRequests[edge.dependencyPackageIndex].insert(t);
+
+            // #355 step 5: dependencies offering HOST build rules. Nothing is
+            // compiled here — the interface is handed to build_program.cppm,
+            // which compiles it in the SAME command as build.mcpp so the BMI
+            // and its consumer agree on standard, dialect and compiler by
+            // construction rather than by luck.
+            for (auto const& [depName, spec] : m->dependencies) {
+                if (!spec.hostModule) continue;
+                for (auto const& edge : dependencyEdges) {
+                    if (edge.consumerPackageIndex != 0) continue;
+                    auto const& depPkg = packages[edge.dependencyPackageIndex];
+                    auto const& canon = depPkg.manifest.package.name;
+                    if (canon != depName && !depName.ends_with(canon)
+                        && !canon.ends_with(depName)) continue;
+                    auto rel = mcpp::manifest::resolve_lib_root_path(depPkg.manifest);
+                    hostModulesByConsumer[0].emplace_back(canon, depPkg.root / rel);
+                    break;
+                }
+            }
+
+            if (overrides.tool_depth >= mcpp::build::tool_store::kMaxDepth
+                && !toolRequests.empty()) {
+                return std::unexpected(std::format(
+                    "tool provisioning nested more than {} levels deep — this is "
+                    "almost certainly a cycle.\n  chain: {}",
+                    mcpp::build::tool_store::kMaxDepth, overrides.tool_chain));
+            }
+
+            for (auto const& [depIdx, wanted] : toolRequests) {
+                auto& depPkg = packages[depIdx];
+                const auto& depName = depPkg.manifest.package.name;
+                std::string depShort = depName;
+                if (auto dot = depName.rfind('.');
+                    dot != std::string::npos && dot + 1 < depName.size())
+                    depShort = depName.substr(dot + 1);
+
+                for (auto const& toolName : wanted) {
+                    // The target must exist and be a binary. Naming the
+                    // alternatives matters: the consumer wrote a string, and a
+                    // typo is the likeliest cause.
+                    const mcpp::manifest::Target* tgt = nullptr;
+                    std::string binList;
+                    for (auto const& t : depPkg.manifest.targets) {
+                        if (t.kind != mcpp::manifest::Target::Binary) continue;
+                        if (!binList.empty()) binList += ", ";
+                        binList += t.name;
+                        if (t.name == toolName) tgt = &t;
+                    }
+                    if (!tgt) {
+                        return std::unexpected(std::format(
+                            "dependency '{}' has no `kind = \"bin\"` target named "
+                            "'{}' (requested via tools = [...]).\n"
+                            "  available bin targets: [{}]",
+                            depName, toolName,
+                            binList.empty() ? std::string("none") : binList));
+                    }
+
+                    auto var = mcpp::build::tool_store::env_var_name(depName, toolName);
+                    auto varShort =
+                        mcpp::build::tool_store::env_var_name(depShort, toolName);
+
+                    auto record = [&](const std::filesystem::path& p) {
+                        for (auto const& edge : dependencyEdges) {
+                            if (edge.dependencyPackageIndex != depIdx) continue;
+                            if (std::find(edge.requestedTools.begin(),
+                                          edge.requestedTools.end(), toolName)
+                                == edge.requestedTools.end()) continue;
+                            auto& v = toolEnvByConsumer[edge.consumerPackageIndex];
+                            v.emplace_back(var, p.string());
+                            if (varShort != var) v.emplace_back(varShort, p.string());
+                        }
+                    };
+
+                    // Escape hatch first: it is the cheapest resolution and the
+                    // one a user reaches for precisely when building is not an
+                    // option. Deliberately not part of the store key — see
+                    // tool_store.cppm.
+                    if (auto ovr = mcpp::build::tool_store::find_override(
+                            *m, depName, depShort, toolName)) {
+                        if (!std::filesystem::exists(*ovr)) {
+                            return std::unexpected(std::format(
+                                "tool override for '{}:{}' points at '{}', which "
+                                "does not exist", depName, toolName, ovr->string()));
+                        }
+                        mcpp::ui::info("Tool", std::format(
+                            "{}:{} → {} (override)", depName, toolName, ovr->string()));
+                        record(*ovr);
+                        continue;
+                    }
+
+                    // Build it. The feature set is the tool package's own
+                    // defaults PLUS the target's required_features — in a tool
+                    // sub-build the target is what was ASKED FOR, so its
+                    // requirements are inputs rather than a gate. (Same field,
+                    // opposite resolution direction; docs/05 says so.)
+                    std::vector<std::string> feats = tgt->requiredFeatures;
+                    auto closure = feature_closure(depPkg.manifest, feats, true);
+
+                    auto hostTc = host_tc_for_build_program();
+                    if (!hostTc) return std::unexpected(hostTc.error());
+
+                    mcpp::build::tool_store::Key key;
+                    key.indexName = depIdx >= 1 && depIdx - 1 < dep_cache_identities.size()
+                                  ? dep_cache_identities[depIdx - 1].indexName
+                                  : std::string(mcpp::pm::kDefaultNamespace);
+                    key.packageName      = depName;
+                    key.version          = depPkg.manifest.package.version;
+                    key.targetName       = toolName;
+                    key.hostTriple       = mcpp::toolchain::triple::host_triple().str();
+                    key.compilerIdentity = std::format("{}|{}|{}",
+                        hostTc->second.label(), hostTc->second.version,
+                        hostTc->first.string());
+                    key.profile          = "release";
+                    key.features         = closure;
+                    std::ranges::sort(key.features);
+                    for (auto const& edge : dependencyEdges) {
+                        if (edge.consumerPackageIndex != depIdx) continue;
+                        auto const& up = packages[edge.dependencyPackageIndex];
+                        key.upstreamKeys.push_back(std::format("{}@{}",
+                            up.manifest.package.name, up.manifest.package.version));
+                    }
+                    std::ranges::sort(key.upstreamKeys);
+
+                    const auto cacheRoot = mcpp::home::cache_root();
+                    const auto entry     = mcpp::build::tool_store::entry_dir(cacheRoot, key);
+                    const auto exeSuffix = std::string(mcpp::platform::exe_suffix);
+                    const auto binOut    = mcpp::build::tool_store::bin_path(
+                        entry, toolName, exeSuffix);
+
+                    if (mcpp::build::tool_store::entry_valid(entry, key, toolName,
+                                                             exeSuffix)) {
+                        record(binOut);
+                        continue;
+                    }
+
+                    mcpp::ui::status("Building", std::format(
+                        "host tool {}:{} from {} v{} (once per package version × "
+                        "host toolchain)", depName, toolName, depName,
+                        depPkg.manifest.package.version));
+
+                    BuildOverrides sub;
+                    sub.project_root = depPkg.root;
+                    // Never the package root: it is shared across projects and
+                    // may be read-only. This is the reason work_dir exists.
+                    sub.work_dir     = entry / "build";
+                    sub.target_triple = "";            // HOST — the whole point
+                    sub.profile       = "release";
+                    sub.cache_mode    = overrides.cache_mode;
+                    sub.tool_depth    = overrides.tool_depth + 1;
+                    sub.tool_chain    = overrides.tool_chain.empty()
+                        ? std::format("root → {}:{}", depName, toolName)
+                        : std::format("{} → {}:{}", overrides.tool_chain, depName,
+                                      toolName);
+                    for (auto const& f : closure) {
+                        if (!sub.features.empty()) sub.features += ",";
+                        sub.features += f;
+                    }
+
+                    auto subCtx = prepare_build(/*print_fingerprint=*/false,
+                                                /*includeDevDeps=*/false,
+                                                /*extraTargets=*/{}, sub);
+                    if (!subCtx) {
+                        return std::unexpected(std::format(
+                            "building host tool '{}:{}' failed: {}",
+                            depName, toolName, subCtx.error()));
+                    }
+
+                    // Build ONLY the requested target (#274 gave the backend
+                    // explicit goals) — a tool request must not drag the whole
+                    // package's other artifacts along.
+                    std::filesystem::path goal;
+                    for (auto const& lu : subCtx->plan.linkUnits) {
+                        if (lu.targetName == toolName) { goal = lu.output; break; }
+                    }
+                    if (goal.empty()) {
+                        return std::unexpected(std::format(
+                            "host tool '{}:{}' produced no link unit — its "
+                            "required_features may not be satisfiable on this "
+                            "platform", depName, toolName));
+                    }
+
+                    auto be = mcpp::build::make_ninja_backend();
+                    mcpp::build::BuildOptions bopt;
+                    bopt.ninjaTargets = { goal.generic_string() };
+                    auto br = be->build(subCtx->plan, bopt);
+                    if (!br) {
+                        return std::unexpected(std::format(
+                            "building host tool '{}:{}' failed: {}\n{}",
+                            depName, toolName, br.error().message,
+                            br.error().diagnosticOutput));
+                    }
+                    if (br->exitCode != 0) {
+                        return std::unexpected(std::format(
+                            "building host tool '{}:{}' failed (exit {})",
+                            depName, toolName, br->exitCode));
+                    }
+
+                    // Publish into the store: build out of place, then move —
+                    // the same discipline mcpp.build.stage follows, so a
+                    // concurrent consumer never observes a half-written entry.
+                    std::error_code cpEc;
+                    auto produced = subCtx->plan.outputDir / goal;
+                    if (!std::filesystem::exists(produced, cpEc)) {
+                        return std::unexpected(std::format(
+                            "host tool '{}:{}' built but '{}' is missing",
+                            depName, toolName, produced.string()));
+                    }
+                    std::filesystem::create_directories(binOut.parent_path(), cpEc);
+                    auto tmp = binOut;
+                    tmp += ".tmp";
+                    std::filesystem::remove(tmp, cpEc);
+                    std::filesystem::copy_file(produced, tmp,
+                        std::filesystem::copy_options::overwrite_existing, cpEc);
+                    if (cpEc) {
+                        return std::unexpected(std::format(
+                            "staging host tool '{}:{}' failed: {}",
+                            depName, toolName, cpEc.message()));
+                    }
+                    std::filesystem::permissions(tmp,
+                        std::filesystem::perms::owner_exec
+                        | std::filesystem::perms::group_exec
+                        | std::filesystem::perms::others_exec,
+                        std::filesystem::perm_options::add, cpEc);
+                    std::filesystem::rename(tmp, binOut, cpEc);
+                    if (cpEc) {
+                        return std::unexpected(std::format(
+                            "publishing host tool '{}:{}' failed: {}",
+                            depName, toolName, cpEc.message()));
+                    }
+                    mcpp::build::tool_store::write_entry(entry, key);
+                    // The sub-build tree is large (protoc is several hundred
+                    // objects) and the key covers every input, so a hit never
+                    // needs it again.
+                    std::filesystem::remove_all(entry / "build", cpEc);
+                    record(binOut);
+                }
+            }
+        }
+
         // ── G2: dependency build.mcpp (Cargo build.rs model) ────────────────
         // Runs AFTER feature activation (the env contract exposes the dep's
         // active features) and BEFORE the modgraph scan (generated sources
@@ -3841,7 +4189,7 @@ prepare_build(bool print_fingerprint,
             bpEnv.targetTriple = resolvedTargetCanonical;
             bpEnv.profile      = effectiveProfile;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
-            bpEnv.artifactsDir = *root / "target" / ".build-mcpp" / "deps"
+            bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
             bpEnv.genBase      = bpEnv.artifactsDir / "out";
             // mcpp#241: expose this package's resolved dependencies (verdir /
@@ -3863,9 +4211,16 @@ prepare_build(bool print_fingerprint,
                         && dot + 1 < canon.size())
                     bpEnv.depDirs.emplace_back(canon.substr(dot + 1), depPkg.root);
             }
+            // #355: the host tools THIS package requested (resolved above).
+            if (auto tit = toolEnvByConsumer.find(i); tit != toolEnvByConsumer.end())
+                bpEnv.toolPaths = tit->second;
+            bpEnv.hostModules = hostModulesByConsumer.count(i)
+                ? hostModulesByConsumer.at(i)
+                : std::vector<std::pair<std::string, std::filesystem::path>>{};
             auto& bcDep = pkg.manifest.buildConfig;
             const auto mark = markDirectiveTail(pkg.manifest);
             const auto ldN = bcDep.ldflags.size();
+            const auto actN = bcDep.actions.size();
             if (auto r = mcpp::build::run_build_program(
                     pkg.manifest, pkg.root, host->first, host->second,
                     pkg.manifest.cppStandard, bpEnv);
@@ -3883,6 +4238,7 @@ prepare_build(bool print_fingerprint,
             // BFS walk, which ran before this pass — forward the new tail
             // (link-search paths are already absolute from parse_line).
             foldDirectiveTailIntoPrivateBuild(pkg, pkg.manifest, mark);
+            adoptActionOutputs(pkg.manifest, pkg.root, actN);
             m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
                 bcDep.ldflags.begin() + ldN, bcDep.ldflags.end());
         }
@@ -3973,6 +4329,15 @@ prepare_build(bool print_fingerprint,
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = resolvedTargetCanonical;
         bpEnv.profile      = effectiveProfile;
+        // Set explicitly rather than relying on build_dir()'s root-relative
+        // default: under BuildOverrides::work_dir the package root is shared
+        // and may be read-only, and the default would write the compiled
+        // helper straight into it. Same value as the default when work_dir is
+        // unset, so an ordinary build is unchanged.
+        bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp";
+        // Root mode keeps genBase empty: a relative `generated=` from the ROOT
+        // package resolves against the package root (the documented contract),
+        // not against OUT_DIR.
         // Same expression as the pre-move call site (and same order), so the
         // contract hash — and therefore the build.mcpp cache — is unchanged
         // across the move for feature-identical builds.
@@ -3989,10 +4354,17 @@ prepare_build(bool print_fingerprint,
                     && dot + 1 < canon.size())
                 bpEnv.depDirs.emplace_back(canon.substr(dot + 1), depPkg.root);
         }
+        // #355: the host tools the ROOT package requested (consumer index 0).
+        if (auto tit = toolEnvByConsumer.find(0u); tit != toolEnvByConsumer.end())
+            bpEnv.toolPaths = tit->second;
+        bpEnv.hostModules = hostModulesByConsumer.count(0u)
+            ? hostModulesByConsumer.at(0u)
+            : std::vector<std::pair<std::string, std::filesystem::path>>{};
         auto& bcRoot = m->buildConfig;
         const auto mark = markDirectiveTail(*m);
         const auto rldN = bcRoot.ldflags.size(), rsrcN = bcRoot.sources.size(),
                    rmodN = m->modules.sources.size();
+        const auto ractN = bcRoot.actions.size();
         if (auto bp = mcpp::build::run_build_program(
                 *m, *root, host->first, host->second,
                 m->cppStandard, bpEnv);
@@ -4003,6 +4375,10 @@ prepare_build(bool print_fingerprint,
         // Compile-visible tail → privateBuild: the shared fold (same owner
         // as the dep loop; the root's TUs read privateBuild).
         foldDirectiveTailIntoPrivateBuild(pkg0, *m, mark);
+        // Before the source residues are mirrored below: adopting an action's
+        // outputs APPENDS to bcRoot.sources, and those appends must be inside
+        // the tail that gets copied into the packages[0] snapshot the scan reads.
+        adoptActionOutputs(*m, *root, ractN);
         // Root residues — apply() mutated *m, but packages[0].manifest is a
         // value-copy snapshot taken at makePackageRoot, so everything the
         // scan/fingerprint read from the snapshot needs the tail mirrored:
@@ -4206,7 +4582,7 @@ prepare_build(bool print_fingerprint,
     ctx.profile     = effectiveProfile;
     ctx.cacheMode   = cacheMode;
     ctx.projectRoot= *root;
-    ctx.outputDir  = target_dir(*tc, fp, *root);
+    ctx.outputDir  = target_dir(*tc, fp, workRoot);
     ctx.stdBmi     = stdBmiPath;
     ctx.stdObject  = stdObjectPath;
     // Every directory a package payload may legitimately have been INSTALLED
@@ -4221,7 +4597,7 @@ prepare_build(bool print_fingerprint,
     const auto storeRoots = [&]() -> std::vector<std::filesystem::path> {
         std::vector<std::filesystem::path> roots;
         if (auto c = get_cfg()) roots.push_back((*c)->xlingsHome() / "data" / "xpkgs");
-        for (auto& d : mcpp::config::project_xlings_data_roots(*root))
+        for (auto& d : mcpp::config::project_xlings_data_roots(workRoot))
             roots.push_back(d / "xpkgs");
         return roots;
     }();
@@ -4230,6 +4606,60 @@ prepare_build(bool print_fingerprint,
                                              stdBmiPath, stdObjectPath, storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
+    ctx.plan.compileDbPath = workRoot / "compile_commands.json";
+
+    // ── Declared build-graph nodes → the plan ───────────────────────────────
+    //
+    // Collected here rather than inside make_plan because the engine-variable
+    // vocabulary an action may reference includes values that only exist once
+    // the plan does (outputDir is fingerprint-derived; a target's file name is
+    // a link unit's output).
+    //
+    // The vocabulary is CLOSED on purpose. An action's command is an argv, not
+    // a shell string, and the only interpolations are these four — which is
+    // what makes an action portable (Windows has no shell to assume) and
+    // cacheable (nothing can smuggle in ambient state).
+    {
+        auto substitute = [&](std::string s) {
+            auto rep = [&](std::string_view what, const std::string& with) {
+                for (std::size_t p; (p = s.find(what)) != std::string::npos; )
+                    s.replace(p, what.size(), with);
+            };
+            rep("${mcpp.out_dir}",    ctx.plan.outputDir.string());
+            rep("${mcpp.bin_dir}",    (ctx.plan.outputDir / "bin").string());
+            rep("${mcpp.compile_db}", ctx.plan.compileDbPath.string());
+            constexpr std::string_view kTf = "${mcpp.target_file:";
+            for (std::size_t p; (p = s.find(kTf)) != std::string::npos; ) {
+                auto close = s.find('}', p);
+                if (close == std::string::npos) break;
+                auto name = s.substr(p + kTf.size(), close - p - kTf.size());
+                // The link unit's BUILD-DIR-RELATIVE output, not an absolute
+                // path. ninja identifies a file by the string an edge declares,
+                // and the link edge declares `bin/app`; an absolute reference
+                // to the same bytes is a DIFFERENT node, which ninja reports as
+                // "missing and no known rule to make it". Commands run with
+                // cwd = the build dir, so the relative form is also what the
+                // tool being invoked should receive.
+                std::string resolved;
+                for (auto const& lu : ctx.plan.linkUnits)
+                    if (lu.targetName == name)
+                        resolved = lu.output.generic_string();
+                s.replace(p, close - p + 1, resolved);
+            }
+            return s;
+        };
+        auto collect = [&](const mcpp::manifest::Manifest& mm) {
+            for (auto a : mm.buildConfig.actions) {
+                for (auto& x : a.inputs)  x = substitute(x);
+                for (auto& x : a.outputs) x = substitute(x);
+                for (auto& x : a.command) x = substitute(x);
+                ctx.plan.actions.push_back(std::move(a));
+            }
+        };
+        collect(*m);
+        for (std::size_t i = 1; i < packages.size(); ++i)
+            collect(packages[i].manifest);
+    }
     ctx.plan.stdCompatBmiPath = stdCompatBmiPath;
     ctx.plan.stdCompatObjectPath = stdCompatObjectPath;
 
@@ -4676,7 +5106,7 @@ prepare_build(bool print_fingerprint,
             lock.packages.push_back(std::move(lp));
         }
         if (!lock.packages.empty() || !lock.indices.empty()) {
-            auto lockPath = *root / "mcpp.lock";
+            auto lockPath = workRoot / "mcpp.lock";
             (void)mcpp::lockfile::write(lock, lockPath);
         }
     }

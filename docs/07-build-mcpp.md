@@ -97,6 +97,95 @@ int main() {
 | `mcpp::source(p)` | `mcpp:source=` |
 | `mcpp::include_dir(d)` / `mcpp::include_dir_after(d)` | `mcpp:include-dir=` / `mcpp:include-dir-after=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
+| `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | reads `MCPP_DEP_<PKG>_BIN_<TOOL>` — the absolute path of a **host tool** built by a dependency (see below) |
+| `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` — declares a **build-graph node** instead of doing the work here (see below) |
+
+### Host tools from a dependency (2026.8.5.1+)
+
+Declare the need in `mcpp.toml`, then call it:
+
+```toml
+[dependencies]
+protobuf = { version = "35.1", tools = ["protoc"] }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+int main() {
+    const char* protoc = mcpp::dep_bin("protobuf", "protoc");
+    // … invoke it, then declare what it produced …
+}
+```
+
+mcpp builds that `kind = "bin"` target **for the build machine** (even under
+`--target`), caches it globally, and hands you the path. The request lives in
+`mcpp.toml` rather than here for the same reason a dependency does: asking the
+graph for an extra artifact is a graph-level request, and the graph stays
+statically analysable. See [05 §2.14](05-mcpp-toml.md) for the full contract,
+including `[tools.overrides]`.
+
+### Declaring work instead of doing it: `mcpp::action` (2026.8.5.1+)
+
+Generating a source by writing it *here* is the easy path and the wrong one
+past a certain size: it happens once per prepare, for the whole set, serially,
+and a failure is reported as "build.mcpp exited 1". **Declare** the work and it
+becomes an edge in the build graph — incremental, parallel, and attributable to
+the edge that failed.
+
+```cpp
+import mcpp;
+int main() {
+    const std::string out = std::string(mcpp::out_dir()) + "/foo.pb.cc";
+    mcpp::action a;
+    a.id = "protoc:foo";
+    a.role = "source";                       // "source" | "check" | "artifact"
+    a.arg(mcpp::dep_bin("protobuf", "protoc"))
+     .arg("--cpp_out=...").arg("proto/foo.proto")
+     .input("proto/foo.proto")
+     .output(out.c_str())
+     .submit();
+}
+```
+
+Three roles, one primitive — `role` only decides where the edge's outputs
+attach:
+
+| `role` | Outputs | Ordering | Typical |
+|---|---|---|---|
+| `source` | join the compile set | the compile edge consumes them | protoc, a transpiler |
+| `check` | a stamp file | runs **alongside** compilation (set `blocking = true` to gate it) | clang-tidy, a format or ABI check |
+| `artifact` | a new file | its *inputs* are link outputs, so it runs after the link | codesign, packaging, size budgets |
+
+No phase machinery is involved: ninja's own file dependencies do the
+sequencing, which is also why an `artifact` action cannot double-apply itself
+the way a naive "post-build hook" would.
+
+**You must name the output files.** mcpp fixes the source set, the fingerprint
+and the module graph during prepare, so an output whose *name* is unknown
+cannot be built. Content may arrive later; names may not. A malformed action is
+a hard error, never a silent skip.
+
+For a generated **module interface**, declare its interface too:
+
+```cpp
+a.output(gen.c_str()).provides("my.generated").imports("std").submit();
+```
+
+mcpp seeds a placeholder carrying exactly that declaration so the prepare-time
+scan agrees with what your generator will emit — the same assertion-plus-
+verification trade `[modules].scan_overrides` makes, and the compiler's own
+P1689 output checks it at build time.
+
+Commands are an **argv, not a shell string** (no shell is assumed — Windows has
+none to rely on), and the only interpolations are a closed set:
+
+| Variable | Value |
+|---|---|
+| `${mcpp.out_dir}` | the build output directory |
+| `${mcpp.bin_dir}` | where produced binaries land |
+| `${mcpp.compile_db}` | path to `compile_commands.json` (what clang-tidy's `-p` wants) |
+| `${mcpp.target_file:<name>}` | the built file of target `<name>` |
 
 The raw stdout protocol above remains the low-level substrate; `import mcpp;`
 is the typed layer over it.

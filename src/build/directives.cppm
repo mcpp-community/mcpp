@@ -38,6 +38,7 @@
 export module mcpp.build.directives;
 
 import std;
+import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.toolchain.dialect;
 
@@ -96,6 +97,11 @@ enum class Slot : std::size_t {
     IncludeDirsAfter,
     RerunFiles,
     RerunEnv,
+    // Build-graph nodes (`mcpp:action=`). The value is a JSON payload rather
+    // than a scalar: an action has six fields, and a flat `key=value` line
+    // cannot carry them. The bundled `mcpp` module owns the encoding, which
+    // is exactly why the typed API is the only surface that grows (S4).
+    Actions,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -106,6 +112,7 @@ enum class Scope {
     LinkGlobal,      // reaches the final link of whatever consumes this package
     SourceSet,       // joins the compile set
     RerunKey,        // not a build input at all; only feeds the re-run key
+    GraphNode,       // declares an edge in the build graph; see manifest::BuildAction
 };
 
 // How the raw wire value is normalized before it is stored. Applied ONCE, at
@@ -140,7 +147,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 11> kTable{{
+inline constexpr std::array<Def, 12> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -153,6 +160,7 @@ inline constexpr std::array<Def, 11> kTable{{
     {"include-dir-after",   "include-dir-after", Slot::IncludeDirsAfter, Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"rerun-if-changed",    "",                  Slot::RerunFiles,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
     {"rerun-if-env-changed","",                  Slot::RerunEnv,         Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
+    {"action",              "action",            Slot::Actions,          Scope::GraphNode,      Transform::Verbatim,      false, "",                           "",                                              1},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -220,6 +228,35 @@ bool accept_cache_record(Directives& d, std::string_view tag, std::string_view v
 // Fold the collected directives into the manifest's buildConfig. The single
 // place that knows which manifest channel each slot feeds.
 void apply(mcpp::manifest::Manifest& m, const Directives& d);
+
+// Decode one `mcpp:action=` JSON payload. nullopt = malformed.
+std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payload);
+
+// Non-empty when any declared action is malformed. A separate pass so the
+// caller can refuse BEFORE applying anything — a half-applied action set is
+// worse than none.
+std::string action_error(const Directives& d);
+
+// Resolve an action's paths against `pkgRoot` and make its Source outputs
+// exist, so the ordinary source scan can see them.
+//
+// A placeholder rather than a synthesised CompileUnit, because that reuses
+// every existing mechanism: the glob finds it, the scanner reads it, the plan
+// gives it an object path, and ninja overwrites it with the real content
+// before the compile edge runs (the compile depends on the action's output).
+//
+// For a module interface the placeholder carries the DECLARED interface —
+// `export module X;` plus its imports — so the prepare-time scan agrees with
+// what the generator will emit. That is the same assertion-plus-verification
+// trade `[modules].scan_overrides` makes: the declaration is checked against
+// the compiler's own P1689 output at build time, so a wrong one is caught
+// rather than silently believed.
+//
+// Never truncates an existing file: after the first build the real content is
+// there, and rewriting it would make ninja think the input changed on every
+// prepare.
+void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
+                     const std::filesystem::path& pkgRoot);
 
 // ── Private-scope fold (was prepare.cppm's DirectiveMark / fold pair) ──────
 //
@@ -441,6 +478,92 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
         bc.includeDirs.emplace_back(p);
     for (auto const& p : d.at(Slot::IncludeDirsAfter))
         bc.includeDirsAfter.emplace_back(p);
+
+    // Build-graph nodes. Decoded here rather than at parse time so the cache
+    // stores the payload verbatim and a replay is byte-identical to a run.
+    for (auto const& payload : d.at(Slot::Actions)) {
+        if (auto a = decode_action(payload)) bc.actions.push_back(std::move(*a));
+    }
+}
+
+std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payload) {
+    try {
+        auto j = nlohmann::json::parse(payload);
+        mcpp::manifest::BuildAction a;
+        a.id = j.value("id", std::string{});
+        auto role = j.value("role", std::string{"source"});
+        a.role = role == "check"    ? mcpp::manifest::BuildAction::Role::Check
+               : role == "artifact" ? mcpp::manifest::BuildAction::Role::Artifact
+                                    : mcpp::manifest::BuildAction::Role::Source;
+        auto arr = [&](const char* k, std::vector<std::string>& dst) {
+            if (auto it = j.find(k); it != j.end() && it->is_array())
+                for (auto const& v : *it)
+                    if (v.is_string()) dst.push_back(v.get<std::string>());
+        };
+        arr("inputs", a.inputs);
+        arr("outputs", a.outputs);
+        arr("command", a.command);
+        arr("provides", a.provides);
+        arr("imports", a.imports);
+        a.blocking    = j.value("blocking", false);
+        a.description = j.value("description", std::string{});
+        if (a.command.empty() || a.outputs.empty()) return std::nullopt;
+        if (a.id.empty()) a.id = a.outputs.front();
+        return a;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::string action_error(const Directives& d) {
+    for (auto const& payload : d.at(Slot::Actions)) {
+        if (decode_action(payload)) continue;
+        // A malformed action is a hard error, never a skip: an action that
+        // silently does not exist produces a build missing generated sources,
+        // and the user is left staring at a "no such file" three edges away.
+        return std::format(
+            "build.mcpp declared a malformed action.\n"
+            "       Every action needs a non-empty `command` and at least one\n"
+            "       declared `output` — mcpp fixes the source set during prepare,\n"
+            "       so an output whose NAME is unknown cannot be built.\n"
+            "       payload: {}", payload);
+    }
+    return {};
+}
+
+void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
+                     const fs::path& pkgRoot) {
+    for (auto& a : actions) {
+        auto absolutize = [&](std::vector<std::string>& v) {
+            for (auto& p : v) {
+                // An engine variable is resolved later, once the plan exists
+                // (outputDir depends on the fingerprint). Leave it alone.
+                if (p.find("${mcpp.") != std::string::npos) continue;
+                p = abs_against(pkgRoot, p);
+            }
+        };
+        absolutize(a.inputs);
+        absolutize(a.outputs);
+        if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
+        for (auto const& o : a.outputs) {
+            if (o.find("${mcpp.") != std::string::npos) continue;
+            std::error_code ec;
+            fs::path p(o);
+            if (fs::exists(p, ec)) continue;      // real content already there
+            fs::create_directories(p.parent_path(), ec);
+            std::ofstream os(p, std::ios::trunc);
+            if (!os) continue;
+            if (!a.provides.empty()) {
+                os << "// placeholder — replaced by action '" << a.id
+                   << "' during the build\n";
+                for (auto const& imp : a.imports) os << "import " << imp << ";\n";
+                os << "export module " << a.provides.front() << ";\n";
+            }
+            // A non-module output needs nothing: an empty TU scans as
+            // "provides nothing, imports nothing", which is what a plain
+            // generated .cpp/.cc is.
+        }
+    }
 }
 
 Mark mark(const mcpp::manifest::Manifest& m) {

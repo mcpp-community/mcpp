@@ -40,6 +40,34 @@ struct DependencySpec {
     std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
     std::string                 visibility = "public"; // public / private / interface
     std::vector<std::string>    features;       // requested feature set (long-form dep spec)
+    // #355: HOST tools this consumer wants from the dependency — the names of
+    // its `kind = "bin"` targets. Requesting one makes mcpp build that target
+    // for the BUILD MACHINE (never the --target triple) and hand its path to
+    // build.mcpp as MCPP_DEP_<PKG>_BIN_<TOOL>.
+    //
+    // Declared here, on the dependency edge, rather than in build.mcpp: asking
+    // for an extra artifact from the graph is a graph-level request, and the
+    // graph stays statically analysable (lockfile / LSP / audit). It is also
+    // where the industry converged — vcpkg's `"host": true`, Conan's
+    // `tool_requires`, xmake's `add_deps(..., {host = true})`, Cargo's
+    // `[build-dependencies]` — all put it on the consumer's edge.
+    //
+    // Empty by default: the cost (e.g. protobuf's libprotoc is ~157 extra TUs)
+    // is paid by the consumer, so nothing is built unless someone asks.
+    std::vector<std::string>    tools;
+    // #355 step 5: compile this dependency's lib-root module interface FOR THE
+    // HOST and make it importable from the consumer's build.mcpp — the
+    // mechanism behind reusable build rules distributed as ordinary packages
+    // (`import mcpp.rules.protobuf;`), instead of a second, non-C++ rule DSL.
+    //
+    // Compiled ALONGSIDE build.mcpp with the SAME flags, not by a separate
+    // sub-build. That is not an optimisation: a BMI is only usable by a
+    // compile that agrees with it on standard, dialect flags and compiler
+    // identity, and two independently-resolved builds have no reason to. The
+    // shared-compile construction makes that agreement structural rather than
+    // something to verify — the same class of failure as `module X CRC
+    // mismatch`, which this project has paid for before.
+    bool                        hostModule = false;
     bool                        defaultFeatures = true; // consumer opt-out: `default-features = false`
                                                         // suppresses the dep's own [features].default seed
                                                         // (Cargo parity). Explicit `features = [...]` still apply.

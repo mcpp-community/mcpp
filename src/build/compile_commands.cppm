@@ -205,7 +205,9 @@ std::string merge_compile_commands(
 
 void write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
     auto content = emit_compile_commands(plan, flags);
-    auto path = plan.projectRoot / "compile_commands.json";
+    auto path = plan.compileDbPath.empty()
+        ? plan.projectRoot / "compile_commands.json"
+        : plan.compileDbPath;
 
     if (std::filesystem::exists(path)) {
         std::ifstream is(path);
