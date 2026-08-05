@@ -158,4 +158,67 @@ grep -q "override" b5.log || { cat b5.log; echo "FAIL: the override was not repo
 out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
 [[ "$out" == "ANSWER=7" ]] || { echo "FAIL: the override was not actually used: $out"; exit 1; }
 
+# ── a NAMESPACED package is addressable by both spellings ──────────────────
+# `toolpkg` above has no namespace, so its canonical and short names are the
+# same string and only one env var is emitted — the two-spelling path is never
+# exercised. A consumer may write either `myns.tp` or `tp`, exactly as
+# mcpp::dep_dir() accepts both, and the tool lookup has to match.
+cd "$TMP"
+mkdir -p ns/src
+cat > ns/mcpp.toml <<'EOF'
+[package]
+name    = "myns.tp"
+version = "0.1.0"
+
+[build]
+sources = ["src/lib.cpp"]
+
+[targets.gen]
+kind = "bin"
+main = "src/gen.cpp"
+EOF
+printf 'int tp_lib(){return 1;}\n' > ns/src/lib.cpp
+cat > ns/src/gen.cpp <<'EOF'
+#include <cstdio>
+int main(int c, char** v) {
+    if (c < 2) return 2;
+    FILE* f = std::fopen(v[1], "w");
+    if (!f) return 3;
+    std::fprintf(f, "int gv() { return 5; }\n");
+    std::fclose(f);
+    return 0;
+}
+EOF
+mkdir -p nsapp/src
+cat > nsapp/mcpp.toml <<'EOF'
+[package]
+name    = "nsapp"
+version = "0.1.0"
+
+[dependencies]
+"myns.tp" = { path = "../ns", tools = ["gen"] }
+EOF
+printf '#include <cstdio>\nint gv();\nint main(){std::printf("G=%%d\\n",gv());}\n' > nsapp/src/main.cpp
+cat > nsapp/build.mcpp <<'EOF'
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+import mcpp;
+int main() {
+    // BOTH spellings must resolve to the same tool.
+    const char* full  = mcpp::dep_bin("myns.tp", "gen");
+    const char* brief = mcpp::dep_bin("tp", "gen");
+    if (!*full)  { std::fprintf(stderr, "canonical spelling did not resolve\n"); return 1; }
+    if (!*brief) { std::fprintf(stderr, "short spelling did not resolve\n");     return 1; }
+    std::string out = std::string(mcpp::out_dir()) + "/g.cpp";
+    std::string cmd = std::string("\"") + brief + "\" \"" + out + "\"";
+    if (std::system(cmd.c_str()) != 0) return 1;
+    mcpp::generated(out.c_str());
+}
+EOF
+cd nsapp
+"$MCPP" build > b6.log 2>&1 || { cat b6.log; echo "FAIL: namespaced tool lookup failed"; exit 1; }
+out="$("$MCPP" run 2>&1 | grep '^G=' | tail -1)"
+[[ "$out" == "G=5" ]] || { echo "FAIL: namespaced tool did not generate: $out"; exit 1; }
+
 echo "OK"
