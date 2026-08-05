@@ -90,6 +90,87 @@ int main() {
 | `mcpp::source(p)` | `mcpp:source=` |
 | `mcpp::include_dir(d)` / `mcpp::include_dir_after(d)` | `mcpp:include-dir=` / `mcpp:include-dir-after=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
+| `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
+| `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` —— **声明一个构建图节点**,而不是在这里把活干了(见下) |
+
+### 依赖产出的 host 工具(2026.8.5.1+)
+
+在 `mcpp.toml` 里声明需求,然后调用它:
+
+```toml
+[dependencies]
+protobuf = { version = "35.1", tools = ["protoc"] }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+int main() {
+    const char* protoc = mcpp::dep_bin("protobuf", "protoc");
+    // … 调用它,然后声明它产出了什么 …
+}
+```
+
+mcpp 会**为构建机器**构建那个 `kind = "bin"` target(即使在 `--target` 下),
+全局缓存,并把路径交给你。这个请求写在 `mcpp.toml` 而不是这里,理由和依赖本身
+一样:向依赖图索取一个额外产物是**图级别**的请求,而图必须保持可静态分析。
+完整契约(含 `[tools.overrides]`)见 [05 §2.14](05-mcpp-toml.md)。
+
+### 声明工作而不是干活:`mcpp::action`(2026.8.5.1+)
+
+在**这里**直接把源码写出来是省事的路,超过一定规模就是错的:它每次 prepare 跑
+一遍、全量、串行,失败还只报「build.mcpp exited 1」。**声明**这份工作,它就成为
+构建图里的一条边 —— 增量、并行,失败能归因到具体那条边。
+
+```cpp
+import mcpp;
+int main() {
+    const std::string out = std::string(mcpp::out_dir()) + "/foo.pb.cc";
+    mcpp::action a;
+    a.id = "protoc:foo";
+    a.role = "source";                       // "source" | "check" | "artifact"
+    a.arg(mcpp::dep_bin("protobuf", "protoc"))
+     .arg("--cpp_out=...").arg("proto/foo.proto")
+     .input("proto/foo.proto")
+     .output(out.c_str())
+     .submit();
+}
+```
+
+三种 role,一个原语 —— `role` 只决定这条边的输出接到哪:
+
+| `role` | 输出 | 顺序 | 典型 |
+|---|---|---|---|
+| `source` | 进编译集 | 编译边消费它们 | protoc、转译器 |
+| `check` | 一个 stamp 文件 | **与编译并行**(`blocking = true` 才前置) | clang-tidy、格式/ABI 检查 |
+| `artifact` | 一个新文件 | 它的**输入**是链接产物,所以在链接之后跑 | 签名、打包、size budget |
+
+全程不涉及任何 phase 机制:顺序由 ninja 自己的文件依赖决定 —— 这也是为什么
+`artifact` 不会像朴素的「post 构建钩子」那样把自己重复施加一遍。
+
+**必须写出输出文件名。** mcpp 在 prepare 期就定死源码集、fingerprint 与模块图,
+所以名字未知的产物无法构建。内容可以晚到,名字不行。畸形 action 是**硬错误**,
+绝不静默跳过。
+
+生成**模块接口**时,把它的接口也声明出来:
+
+```cpp
+a.output(gen.c_str()).provides("my.generated").imports("std").submit();
+```
+
+mcpp 会播下一个带着该声明的占位文件,使 prepare 期的扫描与你的生成器将要产出的
+内容一致 —— 与 `[modules].scan_overrides` 同一条「声明 + 验证」的取舍,build 期由
+编译器自己的 P1689 输出复核。
+
+命令是 **argv 而不是 shell 字符串**(不假设存在 shell —— Windows 没有能依赖的那个),
+插值只有封闭的一组:
+
+| 变量 | 含义 |
+|---|---|
+| `${mcpp.out_dir}` | 构建输出目录 |
+| `${mcpp.bin_dir}` | 产出的二进制所在目录 |
+| `${mcpp.compile_db}` | `compile_commands.json` 的路径(clang-tidy 的 `-p` 要的就是它) |
+| `${mcpp.target_file:<name>}` | target `<name>` 构建出的文件 |
 
 上面的裸 stdout 协议仍是底层基底;`import mcpp;` 是其上的类型化层。
 

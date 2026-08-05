@@ -724,6 +724,81 @@ OPENBLAS_NUM_THREADS = "1"
 host 工具(`make`/`cmake`/`protoc`…)、按项目固定工具版本、或设构建期环境变量——无需手改
 `.xlings.json`。`[toolchain]`(§2.7)仍是编译器的便捷简写;`[xlings.workspace]` 是其通用形式。
 
+### 2.14 依赖产出的 host 工具(mcpp 2026.8.5.1+)
+
+一个包能构建出消费者在**构建期**需要的二进制 —— `protoc`、`grpc_cpp_plugin`、
+`flatc`、`moc`、转译器。在依赖上声明:
+
+```toml
+[dependencies]
+protobuf = { version = "35.1",   tools = ["protoc"] }
+grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
+```
+
+每个名字必须是该包的一个 `kind = "bin"` target。mcpp 会**为构建机器**构建它,
+并把绝对路径以 `MCPP_DEP_<PKG>_BIN_<TOOL>` 交给 `build.mcpp` —— 用
+`mcpp::dep_bin("protobuf", "protoc")` 读取(见 [07 — build.mcpp](07-build-mcpp.md))。
+
+四条值得知道的性质:
+
+- **永远是 host 二进制。** 即使 `mcpp build --target <triple>`,工具依然为**本机**
+  构建 —— 代码生成器必须在这里跑。它是一次独立的、面向 host 的子构建:工具包
+  自己的 `[toolchain]`、自己的依赖解析生效,不需要与你的构建一致。之所以安全,
+  是因为可执行文件与你的代码**零 ABI 接触**。
+- **单一版本轴。** 工具的版本**就是**依赖的版本,所以「protoc 与其运行时不匹配」
+  这种情况**不可表达**。(把工具单独打包正是会出这个问题,而且它在**运行期**才咬人,
+  不是编译期。)
+- **默认关闭。** 没人要就什么都不构建,成本由消费者付。包用 `[features]` +
+  `required_features` 给昂贵的部分加门(protobuf 的 `protoc` 需要 libprotoc 的
+  ~157 个额外 TU,只用运行时的人绝不该编译它)。
+- **全局缓存**,按 包版本 × host 工具链 × feature × 自身依赖闭包 键控 —— 每台机器
+  构建一次,而不是每个工程一次。
+
+#### `[tools.overrides]` —— 用你已经有的二进制
+
+```toml
+[tools.overrides]
+"compat.protobuf:protoc" = "/usr/bin/protoc"
+```
+
+或者不改 manifest(CI、发行版打包):
+
+```bash
+MCPP_TOOL_PROTOBUF_PROTOC=/usr/bin/protoc mcpp build
+```
+
+命中 override 会**完全跳过构建**。每个同类系统都提供这条逃生舱(vcpkg 的
+`VCPKG_HOST_TRIPLET`、CMake 的 `LLVM_NATIVE_TOOL_DIR`、Qt 的 `QT_HOST_PATH`),
+理由一样:一个在本机构建不出来的工具**不能是死路**。它**刻意不进** cache key ——
+逃生舱不是可复现输入。
+
+#### `host-module = true` —— 可复用的构建规则以包分发
+
+一条规则(比如「对这些 `.proto` 跑 protoc」)应该**写一次**,而不是复制进每个
+消费者的 `build.mcpp`。把它做成普通的 mcpp 库包再 import:
+
+```toml
+[dependencies]
+"mcpp.rules.protobuf" = { version = "0.1.0", host-module = true }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+import mcpp.rules.protobuf;
+int main() { mcpp::rules::protobuf::generate(/* … */); }
+```
+
+mcpp 会把该包的 lib 根模块**为 host 编译,且与 `build.mcpp` 在同一条命令里** ——
+这正是 BMI 能用的前提:一个模块接口只对「在 standard / dialect / 编译器身份上与
+它一致」的编译可导入。
+
+于是规则**有版本、能测试、能通过你已有的包管理器分发**,而且是用 **C++** 写的
+—— 不引入第二门语言,这正是 `build.mcpp` 存在的理由。
+
+*限制:* 规则接口是单独编译的,因此可以 import `std` 与内置 `mcpp` 模块,
+但不能 import 第三个包。规则包按构造是叶子。
+
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 
 > **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。
