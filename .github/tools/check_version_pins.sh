@@ -140,6 +140,19 @@ fi
 #     what an earlier revision of this script got wrong: it sent CI to install a
 #     version that did not exist yet, and every job died with
 #     `package 'mcpp@<unreleased>' not found`.
+#
+#     But it may lag by exactly ONE release, no more. xim-pkgindex carries a
+#     SINGLE mcpp version — the newest — so the moment a release lands, every
+#     older pin names something that is no longer installable:
+#
+#         [error] xlings: version '2026.8.4.1' not found for 'mcpp'
+#         [error]   available: 2026.8.5.1
+#
+#     which is how the aarch64 fresh-install job died after 2026.8.5.1 shipped.
+#     The rule that satisfies both directions: after publishing release N, the
+#     post-release commit sets this pin to N. Never ahead (check (c)), never
+#     more than one behind (not checkable here — it needs the index — so it
+#     surfaces as the error above, and this note is where to look when it does).
 
 # (c) …and the bootstrap pin must never run AHEAD of the version being built.
 #     Four-key numeric sort, so the date scheme orders correctly (a plain
