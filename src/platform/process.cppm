@@ -106,7 +106,8 @@ RunResult capture_exec_deadline(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
     std::chrono::milliseconds deadline,
-    bool* timed_out);
+    bool* timed_out,
+    std::string_view cwd = {});
 
 // Run `command` silently (discard stdout/stderr).
 // On POSIX, stdin is automatically redirected from /dev/null.
@@ -598,10 +599,11 @@ RunResult capture_exec_deadline(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
     std::chrono::milliseconds deadline,
-    bool* timed_out)
+    bool* timed_out,
+    std::string_view cwd)
 {
     if (timed_out) *timed_out = false;
-    if (deadline.count() <= 0) return capture_exec(argv, extraEnv);
+    if (deadline.count() <= 0) return capture_exec(argv, extraEnv, cwd);
     RunResult result;
     if (argv.empty()) { result.exit_code = 127; return result; }
 #if defined(__linux__) || defined(__APPLE__)
@@ -618,6 +620,12 @@ RunResult capture_exec_deadline(
 
     posix_spawn_file_actions_t fa;
     ::posix_spawn_file_actions_init(&fa);
+    // Same cwd contract as capture_exec: a timed child must land in the same
+    // directory an untimed one would, or adding a timeout would silently
+    // change where a build program's relative writes go.
+    std::string cwdStore(cwd);
+    if (!cwdStore.empty())
+        ::posix_spawn_file_actions_addchdir_np(&fa, cwdStore.c_str());
     ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);
     ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);
     ::posix_spawn_file_actions_addclose(&fa, fds[0]);
@@ -665,7 +673,7 @@ RunResult capture_exec_deadline(
         }
     }
 #else
-    return capture_exec(argv, extraEnv);
+    return capture_exec(argv, extraEnv, cwd);
 #endif
 }
 

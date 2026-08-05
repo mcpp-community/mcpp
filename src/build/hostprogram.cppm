@@ -13,6 +13,7 @@
 export module mcpp.build.hostprogram;
 
 import std;
+import mcpp.build.directives;   // kProtocolVersion — the announced value has ONE source
 import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.toolchain.dialect;
@@ -87,6 +88,26 @@ inline const char* dep_dir(const char* name) {
     return env_or(buf);
 }
 }
+// ── Protocol announcement ───────────────────────────────────────────────
+// Emitted before main() runs, so a program that uses `import mcpp;` never has
+// to remember to declare anything. The engine uses it two ways: it refuses a
+// program that speaks a NEWER protocol than it understands, and — because the
+// two sides then provably agree — it treats an unrecognized directive as an
+// error rather than warning and silently dropping it.
+//
+// A hand-written `printf("mcpp:...")` program emits no announcement, which is
+// exactly right: that surface is frozen at protocol 1 and keeps the historical
+// warn-and-ignore behaviour.
+//
+// Namespace-scope `static` in the module purview: internal linkage, one object
+// in mcpp.o, whose dynamic initializer runs from .init_array. mcpp.o is always
+// on the link line, so it always fires.
+namespace mcpp_detail {
+struct ProtocolAnnouncer {
+    ProtocolAnnouncer() { std::printf("mcpp:protocol=%d\n", @PROTOCOL@); }
+};
+static ProtocolAnnouncer mcpp_protocol_announcer;
+}
 )CPP";
 
 // Compile the bundled `mcpp` module into `bdir` and return the extra flags the
@@ -139,6 +160,11 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
     std::string moduleSrc(kMcppModuleSource);
     if (auto p = moduleSrc.find("@MODULE@"); p != std::string::npos)
         moduleSrc.replace(p, std::string_view("@MODULE@").size(), "export module");
+    // Substituted rather than hardcoded so the announced version can never
+    // drift from the one the engine checks against.
+    if (auto p = moduleSrc.find("@PROTOCOL@"); p != std::string::npos)
+        moduleSrc.replace(p, std::string_view("@PROTOCOL@").size(),
+                          std::to_string(mcpp::build::directives::kProtocolVersion));
     { std::ofstream os(cppm, std::ios::trunc);
       os << moduleSrc;
       if (!os) return std::unexpected(std::string("could not write mcpp module source")); }

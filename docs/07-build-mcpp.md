@@ -101,6 +101,34 @@ int main() {
 The raw stdout protocol above remains the low-level substrate; `import mcpp;`
 is the typed layer over it.
 
+### `import mcpp;` is the surface that evolves (mcpp 2026.8.5.1+)
+
+Two ways to talk to mcpp, and they carry **different compatibility promises**:
+
+| | `import mcpp;` | hand-written `printf("mcpp:…")` |
+|---|---|---|
+| Compatibility | The module is **bundled in the mcpp binary** and recompiled by the mcpp that runs it, so program and engine can never disagree | Your string is frozen text; nothing checks it against the engine |
+| New directives | Arrive as new functions | **Will not be added** |
+| Unknown directive | **Hard error** | Warning, then ignored |
+
+Programs using `import mcpp;` automatically announce the protocol version they
+were built against (`mcpp:protocol=<N>`, emitted before `main` runs — you never
+write it yourself). mcpp uses that two ways:
+
+- A program announcing a **newer** protocol than mcpp understands is **refused**,
+  with an upgrade hint. Continuing would silently drop directives the build
+  depends on — and "the build succeeded but the flag never arrived" is the
+  worst class of build bug.
+- Because the two sides then provably agree, an **unrecognized directive is an
+  error** rather than a warning: within one protocol version it can only be a
+  typo.
+
+A `printf`-style program announces nothing, so it keeps the historical
+warn-and-ignore behaviour. That surface is **frozen at the eleven directives in
+the table above** — it still works and will keep working, but new capabilities
+land only in the typed API. Prefer `import mcpp;` for anything you intend to
+maintain.
+
 ### `import std;` (mcpp 2026.8.2.1+)
 
 A `build.mcpp` may `import std;` (and `import std.compat;`), alone or together
@@ -204,7 +232,10 @@ directives and re-runs only when something it depends on changed:
 - the toolchain,
 - any file you declared with `rerun-if-changed`,
 - any env var you declared with `rerun-if-env-changed`,
-- (or a `generated` output / `source=` selection went missing).
+- (or a `generated` output / `source=` selection went missing),
+- (or the cache was written by an mcpp that interpreted a directive differently
+  — the entry carries a format **epoch**, and a foreign one re-runs the program
+  once instead of replaying values under the wrong meaning).
 
 So **declare your inputs**: if your program reads `config.h` or the `USE_FAST`
 variable, emit `mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`.
@@ -224,3 +255,11 @@ When nothing changed you'll see `build.mcpp up to date (cached)`; otherwise
 - **CWD is the project root**, so relative paths (`src/generated.cpp`) land where
   you expect.
 - A non-zero exit from `build.mcpp` aborts the build and prints its output.
+- **The run is bounded** (mcpp 2026.8.5.1+): a build program gets **600 s** by
+  default, after which mcpp kills it and fails the build naming the package.
+  Override with `MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>` (`0` = no limit). The
+  **compile** is deliberately *not* bounded — the same asymmetry `mcpp test`
+  uses: a long compile is usually legitimate (a first-run `std` module build is
+  minutes) and killing it produces a baffling failure, while a long-running
+  build *program* is usually stuck, and an unbounded one hangs the whole build
+  with no diagnostic at all.

@@ -19,6 +19,7 @@ import mcpp.platform.process;
 import mcpp.toolchain.cppfly;        // std_flag (dialect- and c++fly-aware -std= spelling)
 import mcpp.toolchain.dialect;       // CommandDialect — gnu vs cl.exe spellings
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
+import mcpp.build.directives;        // the directive definition table (own module: see its header)
 import mcpp.build.hostprogram;       // bundled `mcpp` module compile (own module: see its header)
 import mcpp.toolchain.hostflags;     // the shared host-compile flag producer
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
@@ -76,103 +77,21 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// Parsed directives in apply order. Stored verbatim in the cache so a cache hit
-// reapplies the exact same edits without re-running the program.
-struct Directives {
-    std::vector<std::string> cxxflags;      // -> buildConfig.cxxflags
-    std::vector<std::string> cflags;        // -> buildConfig.cflags
-    // -> buildConfig.ldflags, already spelled for the host dialect
-    // (-l/-L for GNU, name.lib//LIBPATH: for cl.exe) — see parse_line.
-    std::vector<std::string> ldflags;
-    std::vector<std::string> defines;       // cfg= -> define prefix, into BOTH c/cxx flags
-    std::vector<std::string> generated;     // relative source paths
-    // source= — select a PRE-EXISTING file (tarball payload / vendored tree)
-    // into the compile set. Downstream identical to generated=; the semantic
-    // difference is intent only: the program did not write this file, it chose
-    // it. Relative paths resolve against the PACKAGE ROOT in both root and
-    // dependency mode (a payload file lives in the package tree, never in
-    // OUT_DIR) — unlike generated=, whose dep-mode relatives resolve to genBase.
-    std::vector<std::string> sources;
-    // include-dir[/-after]= — private include directories for THIS package's
-    // own TUs (-I / -idirafter). Normalized to absolute at parse time (abs
-    // taken as-is, relative against the package root, same as link-search).
-    // Cargo discipline: NEVER propagated as a usage requirement — an include
-    // dir that consumers must see belongs in the declarative descriptor, not
-    // in a build-time program (supply-chain surface: a build program must not
-    // silently widen a package's public interface).
-    std::vector<std::string> includeDirs;
-    std::vector<std::string> includeDirsAfter;
-    std::vector<std::string> rerunFiles;    // declared file inputs
-    std::vector<std::string> rerunEnv;      // declared env-var inputs
-};
+namespace dirs = mcpp::build::directives;
 
-std::string trim(std::string_view s) {
-    std::size_t b = 0, e = s.size();
-    while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r')) ++b;
-    while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r')) --e;
-    return std::string(s.substr(b, e - b));
-}
+// The directive model — what a directive IS, how it parses, how it is cached
+// and applied — lives in mcpp.build.directives as a single table. This file
+// only orchestrates: compile, run, cache, validate. See that module's header
+// for why it is separate (both the nine-sites problem and the clang 22
+// anonymous-namespace miscompile that forbids growing this one).
+using Directives = dirs::Directives;
+using dirs::Slot;
 
 // Resolve a possibly-relative path against the project root, returning an
 // absolute lexically-normal path (no filesystem touch, so it works for dirs that
 // the program is about to create as well as existing ones).
 std::string abs_against_root(const fs::path& root, std::string_view p) {
-    fs::path pp(p);
-    if (pp.is_relative()) pp = root / pp;
-    return pp.lexically_normal().string();
-}
-
-// Parse one stdout line. Returns true if it was a recognized (or unknown-but-
-// `mcpp:`) directive; false for ordinary program chatter.
-// `dial` decides how `link-lib` / `link-search` are spelled. The `mcpp:`
-// protocol itself is declarative — a build program says WHICH library it
-// needs, never how the local compiler driver names one — so the translation
-// belongs here at the boundary, not in the program.
-//
-// Storing the translated form in Directives (and therefore in the build.mcpp
-// cache) is safe because the cache key already hashes the compiler: switching
-// toolchains invalidates the entry before any spelling from the old dialect
-// could be replayed under the new one.
-bool parse_line(const fs::path& root, const mcpp::toolchain::CommandDialect& dial,
-                std::string_view raw, Directives& d) {
-    std::string line = trim(raw);
-    constexpr std::string_view kPfx = "mcpp:";
-    if (!line.starts_with(kPfx)) return false;
-    std::string_view body = std::string_view(line).substr(kPfx.size());
-    auto eq = body.find('=');
-    std::string key = std::string(body.substr(0, eq));
-    std::string val = eq == std::string_view::npos ? std::string() : std::string(body.substr(eq + 1));
-
-    if (key == "cxxflag")            d.cxxflags.push_back(val);
-    else if (key == "cflag")         d.cflags.push_back(val);
-    else if (key == "link-lib")      d.ldflags.push_back(
-                                         mcpp::toolchain::lib_flag_for(dial, val));
-    else if (key == "link-search")   d.ldflags.push_back(
-                                         std::string(dial.libSearchPrefix)
-                                         + abs_against_root(root, val));
-    else if (key == "cfg")           d.defines.push_back(
-                                         std::string(dial.definePrefix) + val);
-    else if (key == "generated")     d.generated.push_back(val);
-    else if (key == "source")        d.sources.push_back(val);
-    else if (key == "include-dir")   d.includeDirs.push_back(abs_against_root(root, val));
-    else if (key == "include-dir-after")
-                                     d.includeDirsAfter.push_back(abs_against_root(root, val));
-    else if (key == "rerun-if-changed")     d.rerunFiles.push_back(val);
-    else if (key == "rerun-if-env-changed") d.rerunEnv.push_back(val);
-    else mcpp::ui::warning(std::format("build.mcpp: ignoring unknown directive 'mcpp:{}'", key));
-    return true;
-}
-
-void parse_output(const fs::path& root, const mcpp::toolchain::CommandDialect& dial,
-                  std::string_view out, Directives& d) {
-    std::size_t pos = 0;
-    while (pos <= out.size()) {
-        std::size_t nl = out.find('\n', pos);
-        std::string_view ln = out.substr(pos, nl == std::string_view::npos ? std::string_view::npos : nl - pos);
-        parse_line(root, dial, ln, d);
-        if (nl == std::string_view::npos) break;
-        pos = nl + 1;
-    }
+    return dirs::abs_against(root, p);
 }
 
 std::string env_value(const std::string& name) {
@@ -217,13 +136,17 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc,
 }
 
 // ── Cache (line-based; one record per line, internal format) ───────────────
+// epoch <n>
 // program <hash>
 // compiler <hash>
+// ctx <hash>
 // in <contenthash> <path>
 // env <valuehash> <NAME>
-// d cxxflag|cflag|ldflag|define|generated|source|include-dir|include-dir-after <verbatim value to end of line>
-// The leading program/compiler/in/env lines are the re-run key; the `d` lines
-// are the directives to reapply on a hit.
+// d <tag> <verbatim value to end of line>
+// The leading epoch/program/compiler/ctx/in/env lines are the re-run key; the
+// `d` lines are the directives to reapply on a hit. The `d` tag vocabulary is
+// owned by mcpp.build.directives::kTable and is NOT spelled here — that list
+// used to be duplicated in four places and drifted.
 
 // build.mcpp artifacts live under target/ (the build output tree), not in the
 // project: target/.build-mcpp/{build.mcpp.bin, build.mcpp.cache}. A stable subdir
@@ -317,33 +240,32 @@ void write_cache(const fs::path& bdir, const fs::path& root,
                  const Directives& d) {
     std::ofstream os(cache_path(bdir), std::ios::trunc);
     if (!os) return;  // best-effort: a failed cache write only loses the optimization
+    // The epoch guards against a semantics change: the `d` lines below are
+    // replayed verbatim on a hit, so if this mcpp interprets a directive
+    // differently than the one that wrote them, the entry must not be reused.
+    os << "epoch " << dirs::kCacheEpoch << '\n';
     os << "program " << programHash << '\n';
     os << "compiler " << compilerHash << '\n';
     os << "ctx " << ctxHash << '\n';
-    for (auto const& f : d.rerunFiles)
+    for (auto const& f : d.at(Slot::RerunFiles))
         os << "in " << mcpp::toolchain::hash_file(abs_against_root(root, f)) << ' ' << f << '\n';
-    for (auto const& e : d.rerunEnv)
+    for (auto const& e : d.at(Slot::RerunEnv))
         os << "env " << mcpp::toolchain::hash_string(env_value(e)) << ' ' << e << '\n';
-    auto emit = [&](std::string_view kind, const std::vector<std::string>& v) {
-        for (auto const& x : v) os << "d " << kind << ' ' << x << '\n';
-    };
-    emit("cxxflag", d.cxxflags);
-    emit("cflag", d.cflags);
-    emit("ldflag", d.ldflags);
-    emit("define", d.defines);
-    emit("generated", d.generated);
-    emit("source", d.sources);
-    emit("include-dir", d.includeDirs);
-    emit("include-dir-after", d.includeDirsAfter);
+    dirs::serialize(os, d);
 }
 
 struct CacheRecord {
+    int         epoch = 0;   // 0 = pre-epoch entry (written before this guard existed)
     std::string programHash;
     std::string compilerHash;
     std::string ctxHash;   // contract env (target/profile/features/out-dir)
     std::vector<std::pair<std::string, std::string>> inputs;  // (hash, path)
     std::vector<std::pair<std::string, std::string>> envs;    // (hash, name)
     Directives directives;
+    // A `d` record whose tag this mcpp does not know — the entry was written
+    // by a newer mcpp. Replaying the rest would apply a strict subset of what
+    // the program asked for, so the whole entry is discarded instead.
+    bool unknownRecord = false;
     bool loaded = false;
 };
 
@@ -358,7 +280,12 @@ CacheRecord read_cache(const fs::path& bdir) {
         if (sp == std::string::npos) continue;
         std::string tag = line.substr(0, sp);
         std::string rest = line.substr(sp + 1);
-        if (tag == "program") r.programHash = rest;
+        if (tag == "epoch") {
+            int n = 0;
+            if (std::from_chars(rest.data(), rest.data() + rest.size(), n).ec == std::errc{})
+                r.epoch = n;
+        }
+        else if (tag == "program") r.programHash = rest;
         else if (tag == "compiler") r.compilerHash = rest;
         else if (tag == "ctx") r.ctxHash = rest;
         else if (tag == "in" || tag == "env") {
@@ -370,14 +297,8 @@ CacheRecord read_cache(const fs::path& bdir) {
             auto sp2 = rest.find(' ');
             if (sp2 == std::string::npos) continue;
             std::string kind = rest.substr(0, sp2), val = rest.substr(sp2 + 1);
-            if (kind == "cxxflag") r.directives.cxxflags.push_back(val);
-            else if (kind == "cflag") r.directives.cflags.push_back(val);
-            else if (kind == "ldflag") r.directives.ldflags.push_back(val);
-            else if (kind == "define") r.directives.defines.push_back(val);
-            else if (kind == "generated") r.directives.generated.push_back(val);
-            else if (kind == "source") r.directives.sources.push_back(val);
-            else if (kind == "include-dir") r.directives.includeDirs.push_back(val);
-            else if (kind == "include-dir-after") r.directives.includeDirsAfter.push_back(val);
+            if (!dirs::accept_cache_record(r.directives, kind, val))
+                r.unknownRecord = true;
         }
     }
     r.loaded = true;
@@ -389,6 +310,8 @@ bool cache_fresh(const fs::path& root, const CacheRecord& c,
                  const std::string& programHash, const std::string& compilerHash,
                  const std::string& ctxHash) {
     if (!c.loaded) return false;
+    if (c.epoch != dirs::kCacheEpoch) return false;  // pre-epoch entries rerun once
+    if (c.unknownRecord) return false;
     if (c.programHash != programHash) return false;
     if (c.compilerHash != compilerHash) return false;
     if (c.ctxHash != ctxHash) return false;   // pre-G3 caches (no ctx line) rerun once
@@ -396,43 +319,15 @@ bool cache_fresh(const fs::path& root, const CacheRecord& c,
         if (mcpp::toolchain::hash_file(abs_against_root(root, path)) != h) return false;
     for (auto const& [h, name] : c.envs)
         if (mcpp::toolchain::hash_string(env_value(name)) != h) return false;
-    // A declared generated output / selected source that vanished invalidates
-    // the cache.
-    for (auto const& g : c.directives.generated)
-        if (!fs::exists(abs_against_root(root, g))) return false;
-    for (auto const& s : c.directives.sources)
-        if (!fs::exists(abs_against_root(root, s))) return false;
+    // A declared output that vanished invalidates the cache. Driven off the
+    // table's mustExistAfterRun so a future output-shaped directive is covered
+    // without editing this function.
+    for (auto const& def : dirs::kTable) {
+        if (!def.mustExistAfterRun) continue;
+        for (auto const& p : c.directives.at(def.slot))
+            if (!fs::exists(abs_against_root(root, p))) return false;
+    }
     return true;
-}
-
-void apply(mcpp::manifest::Manifest& m, const Directives& d) {
-    auto& bc = m.buildConfig;
-    bc.cxxflags.insert(bc.cxxflags.end(), d.cxxflags.begin(), d.cxxflags.end());
-    bc.cflags.insert(bc.cflags.end(), d.cflags.begin(), d.cflags.end());
-    bc.ldflags.insert(bc.ldflags.end(), d.ldflags.begin(), d.ldflags.end());
-    // cfg defines apply to both C and C++ translation units.
-    bc.cflags.insert(bc.cflags.end(), d.defines.begin(), d.defines.end());
-    bc.cxxflags.insert(bc.cxxflags.end(), d.defines.begin(), d.defines.end());
-    // Generated + selected (source=) sources join the source set. BOTH lists:
-    // the scanner walks the legacy modules.sources mirror — pushing only
-    // bc.sources left a generated file outside the base globs invisible to the
-    // scan (latent since L3).
-    for (auto const& g : d.generated) {
-        bc.sources.push_back(g);
-        m.modules.sources.push_back(g);
-    }
-    for (auto const& s : d.sources) {
-        bc.sources.push_back(s);
-        m.modules.sources.push_back(s);
-    }
-    // Include dirs (already absolute from parse_line). PRIVATE by design: for
-    // the root they join buildConfig before the package snapshot; for a
-    // dependency the caller (prepare.cppm dep loop) mirrors them into the
-    // dep's privateBuild only — never into publicUsage (see Directives note).
-    for (auto const& p : d.includeDirs)
-        bc.includeDirs.emplace_back(p);
-    for (auto const& p : d.includeDirsAfter)
-        bc.includeDirsAfter.push_back(p);
 }
 
 } // namespace
@@ -490,7 +385,7 @@ std::expected<void, std::string> run_build_program(
     // directives, no run.
     CacheRecord cache = read_cache(bdir);
     if (cache_fresh(root, cache, programHash, compilerHash, ctxHash)) {
-        apply(m, cache.directives);
+        dirs::apply(m, cache.directives);
         mcpp::ui::info("build.mcpp", "up to date (cached)");
         return {};
     }
@@ -717,15 +612,49 @@ std::expected<void, std::string> run_build_program(
     // Run with cwd = package root so the program's relative file writes (e.g.
     // mcpp:generated sources) land in the project, not in mcpp's invocation
     // dir. The MCPP_* contract env is injected into the CHILD only.
+    //
+    // Bounded, unlike the compile above. The asymmetry is deliberate and the
+    // same one `mcpp test` settled on: a COMPILE that runs long is usually
+    // legitimate (a first-run std module build is minutes), and killing it
+    // produces a baffling failure; a build PROGRAM that runs long is usually
+    // stuck — waiting on a network read or spinning — and without a bound the
+    // whole build hangs with no diagnostic at all.
     mcpp::ui::info("build.mcpp", "running");
-    auto rres = mcpp::platform::process::capture_exec({bin.string()}, childEnv, root.string());
+    bool timedOut = false;
+    auto rres = mcpp::platform::process::capture_exec_deadline(
+        {bin.string()}, childEnv, dirs::run_timeout(), &timedOut, root.string());
+    if (timedOut) {
+        return std::unexpected(std::format(
+            "build.mcpp for '{}' exceeded its {}s time limit and was killed.\n"
+            "       Raise or disable it with MCPP_BUILD_PROGRAM_TIMEOUT=<seconds> "
+            "(0 = no limit).\n"
+            "       Output so far:\n{}",
+            m.package.name.empty() ? std::string("<unnamed package>")
+                                   : m.package.name,
+            dirs::run_timeout().count() / 1000, rres.output));
+    }
     if (rres.exit_code != 0) {
         return std::unexpected(std::format(
             "build.mcpp exited with {} (build aborted):\n{}", rres.exit_code, rres.output));
     }
 
     Directives d;
-    parse_output(root, dial, rres.output, d);
+    dirs::accept_output(d, dial, root, rres.output);
+
+    // Protocol gate (S1). A program that announced a version this mcpp cannot
+    // speak, or that emitted an unknown directive INSIDE a version both sides
+    // speak, is a hard error — "warn and ignore" would turn a missing
+    // directive into a silently different build. A program that announced
+    // nothing is a hand-written printf program (the frozen surface) and keeps
+    // the historical warn-and-ignore behaviour.
+    if (auto perr = dirs::protocol_error(d)) {
+        return std::unexpected(*perr);
+    }
+    if (d.protocol == 0) {
+        for (auto const& k : d.unknownKeys)
+            mcpp::ui::warning(std::format(
+                "build.mcpp: ignoring unknown directive 'mcpp:{}'", k));
+    }
 
     // Dependency mode (genBase set): relative `generated=` paths resolve
     // against OUT_DIR-style genBase, not the (possibly read-only, shared)
@@ -733,30 +662,28 @@ std::expected<void, std::string> run_build_program(
     // `source=` paths are NOT rewritten: they name pre-existing files in the
     // package tree (MCPP_MANIFEST_DIR-relative), never OUT_DIR products.
     if (!env.genBase.empty()) {
-        for (auto& g : d.generated) {
+        for (auto& g : d.at(Slot::Generated)) {
             fs::path gp(g);
             if (gp.is_relative()) g = (env.genBase / gp).lexically_normal().string();
         }
     }
 
-    // Missing declared generated outputs are a hard error (declared-output contract).
-    for (auto const& g : d.generated) {
-        if (!fs::exists(abs_against_root(root, g))) {
-            return std::unexpected(std::format(
-                "build.mcpp declared generated source '{}' but it does not exist after the run", g));
-        }
-    }
-    // A `source=` selection must already exist — the program selects a file it
-    // did NOT write (payload / vendored tree); a missing one is a typo or a
-    // broken payload, surfaced now instead of as a later glob no-match.
-    for (auto const& s : d.sources) {
-        if (!fs::exists(abs_against_root(root, s))) {
-            return std::unexpected(std::format(
-                "build.mcpp selected source '{}' (mcpp:source=) but no such file exists", s));
+    // Declared-output contract, driven off the table's mustExistAfterRun:
+    //   generated= — the program said it wrote this file; if it did not, the
+    //                build would fail far away as a glob no-match.
+    //   source=    — the program SELECTED a pre-existing file (payload /
+    //                vendored tree); a missing one is a typo or a broken
+    //                payload, surfaced now.
+    for (auto const& def : dirs::kTable) {
+        if (!def.mustExistAfterRun) continue;
+        for (auto const& p : d.at(def.slot)) {
+            if (fs::exists(abs_against_root(root, p))) continue;
+            return std::unexpected(std::format("build.mcpp {} '{}' {}",
+                                               def.missingPrefix, p, def.missingSuffix));
         }
     }
 
-    apply(m, d);
+    dirs::apply(m, d);
     write_cache(bdir, root, programHash, compilerHash, ctxHash, d);
     return {};
 }

@@ -33,6 +33,7 @@ import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.cache_key;
 import mcpp.build.build_program;
+import mcpp.build.directives;   // directive table: mark / fold_private_tail
 import mcpp.lockfile;
 import mcpp.config;
 import mcpp.xlings;
@@ -2601,42 +2602,26 @@ prepare_build(bool print_fingerprint,
         return changed;
     };
 
-    // ONE owner of "which compile-visible channels a build.mcpp directive
-    // lands in" — shared by the dep loop and the root call site so the
-    // next directive kind cannot be threaded through one and silently
-    // missed in the other (the #242 two-derivations failure shape).
-    // apply() mutates the manifest the program ran against; this folds
-    // the NEW tail (recorded sizes → end) into the package's
-    // usage-resolved privateBuild, which is what its TUs actually read.
-    // Link/source/fingerprint residues stay at the call sites — they
-    // genuinely differ between root and dep (see each).
-    struct DirectiveMark { std::size_t c, cx, inc, incAfter; };
+    // "Which compile-visible channels a build.mcpp directive lands in" is a
+    // property of the DIRECTIVE TABLE, not of this call site, so both the mark
+    // and the fold now live with the table in mcpp.build.directives. This pair
+    // used to be defined here and was already incomplete — the comment it
+    // replaced admitted that link/source residues stayed at the call sites,
+    // which is the #242 two-derivations shape.
+    //
+    // The fold is PRIVATE by design (Cargo discipline — a build-time program
+    // must not widen the package's public interface): privateBuild only, never
+    // publicUsage. The after-dirs ride the typed #249 channel, which owns the
+    // per-dialect degradations (cl.exe /I, NASM -I).
+    using DirectiveMark = mcpp::build::directives::Mark;
     auto markDirectiveTail = [](const mcpp::manifest::Manifest& mm) {
-        return DirectiveMark{ mm.buildConfig.cflags.size(),
-                              mm.buildConfig.cxxflags.size(),
-                              mm.buildConfig.includeDirs.size(),
-                              mm.buildConfig.includeDirsAfter.size() };
+        return mcpp::build::directives::mark(mm);
     };
     auto foldDirectiveTailIntoPrivateBuild =
-        [&](auto& pkg, const mcpp::manifest::Manifest& ran,
-            const DirectiveMark& t)
+        [](auto& pkg, const mcpp::manifest::Manifest& ran,
+           const DirectiveMark& t)
     {
-        auto const& bc = ran.buildConfig;
-        pkg.privateBuild.cflags.insert(pkg.privateBuild.cflags.end(),
-            bc.cflags.begin() + t.c, bc.cflags.end());
-        pkg.privateBuild.cxxflags.insert(pkg.privateBuild.cxxflags.end(),
-            bc.cxxflags.begin() + t.cx, bc.cxxflags.end());
-        // include-dir[/-after] directives are PRIVATE (design §3.1: Cargo
-        // discipline — a build-time program must not widen the package's
-        // public interface): privateBuild only, never publicUsage. The
-        // after-dirs ride the typed #249 channel, which owns the
-        // per-dialect degradations (cl.exe /I, NASM -I).
-        for (auto it = bc.includeDirs.begin() + t.inc;
-             it != bc.includeDirs.end(); ++it)
-            appendUniquePath(pkg.privateBuild.includeDirs, *it);
-        for (auto it = bc.includeDirsAfter.begin() + t.incAfter;
-             it != bc.includeDirsAfter.end(); ++it)
-            appendUniquePath(pkg.privateBuild.includeDirsAfter, *it);
+        mcpp::build::directives::fold_private_tail(pkg.privateBuild, ran, t);
     };
 
 
@@ -4033,16 +4018,20 @@ prepare_build(bool print_fingerprint,
         // as the old pre-snapshot ordering implicitly did.
         pkg0.manifest.buildConfig.cflags.insert(
             pkg0.manifest.buildConfig.cflags.end(),
-            bcRoot.cflags.begin() + mark.c, bcRoot.cflags.end());
+            bcRoot.cflags.begin() + static_cast<std::ptrdiff_t>(mark.cflags),
+            bcRoot.cflags.end());
         pkg0.manifest.buildConfig.cxxflags.insert(
             pkg0.manifest.buildConfig.cxxflags.end(),
-            bcRoot.cxxflags.begin() + mark.cx, bcRoot.cxxflags.end());
+            bcRoot.cxxflags.begin() + static_cast<std::ptrdiff_t>(mark.cxxflags),
+            bcRoot.cxxflags.end());
         pkg0.manifest.buildConfig.includeDirs.insert(
             pkg0.manifest.buildConfig.includeDirs.end(),
-            bcRoot.includeDirs.begin() + mark.inc, bcRoot.includeDirs.end());
+            bcRoot.includeDirs.begin() + static_cast<std::ptrdiff_t>(mark.includeDirs),
+            bcRoot.includeDirs.end());
         pkg0.manifest.buildConfig.includeDirsAfter.insert(
             pkg0.manifest.buildConfig.includeDirsAfter.end(),
-            bcRoot.includeDirsAfter.begin() + mark.incAfter,
+            bcRoot.includeDirsAfter.begin()
+                + static_cast<std::ptrdiff_t>(mark.includeDirsAfter),
             bcRoot.includeDirsAfter.end());
         // Link flags → the final link reads *m (already applied); keep the
         // linkUsage snapshot and fingerprint metadata equivalent too.

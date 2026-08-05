@@ -3,6 +3,35 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.5.1] — 2026-08-05
+
+`build.mcpp` 机制的**架构地基**:把「一条指令是什么」收敛成一张表,并补上三个今天就存在的稳定性缺口。架构分析见 `.agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md`(本次实现其中的步 0 与步 1)。
+
+### 改进
+
+- **新增一条 directive 从改 9 处降到改 1 处。** 一条指令原本要在九个地方定义:`Directives` 结构体字段、`parse_line` 分派、`write_cache` 序列化、`read_cache` 反序列化、`apply` 落到 manifest、`cache_fresh` 的产物存在性校验、`prepare.cppm` 的 `DirectiveMark` 字段、`markDirectiveTail`、`foldDirectiveTailIntoPrivateBuild`,再加内置 `mcpp` 模块的类型化包装。`prepare.cppm` 自己的注释还承认这个拆分**仍不完整**(「link/source/fingerprint residues stay at the call sites」)。
+
+  这是本仓库反复付过学费的「同一决策在 N 处推导」形态(#233/#240/#242/#344):它**不在你新增指令时失败**,而是过一阵子在别的地方失败。现在一条指令就是新模块 `src/build/directives.cppm` 里 `kTable` 的**一行**,解析、缓存读写、落盘应用、声明产物契约、私有作用域折叠全部由该行驱动。
+
+  **作用域是必填字段**,不是可选注释:`include-dir` 之所以是 `PackagePrivate`,是「构建期程序不得静默拓宽包的公开接口」这条供应链规则(Cargo 纪律),把它变成表里一列意味着**下一条指令不回答这个问题就加不进来**。
+
+  > 为什么是新模块而不是继续写 `build_program.cppm`:那个文件的匿名 namespace 在 clang 22 + C++20 modules + `-O2` 下会**误编译自己的邻居**(PR#332 证实一个**从未被调用**的新函数就足以破坏 `contract_env`,PR#334 复现)。`mcpp.build.hostprogram` 当初就是为此拆出去的。
+
+- **`build.mcpp` 有了线协议版本(S1)。** 用 `import mcpp;` 的程序在 `main` 之前自动声明 `mcpp:protocol=<N>`(你不用自己写)。于是:
+
+  - 程序声明的协议**高于**本 mcpp 所理解的 → **拒绝执行**并给出升级提示。原先的行为是警告后忽略,那会让「构建成功了但那个 flag 根本没到」——最难查的一类构建 bug——静默发生。
+  - 既然双方已被证明一致,**未知指令即错误**:同一协议版本内它只可能是拼写错误。
+
+  手写 `printf("mcpp:…")` 的程序什么都不声明,**保留**历史上的「警告并忽略」。这条不对称就是兼容性契约本身:那一面**冻结在现有 11 条指令**上,新能力只在类型化 API 里落地。
+
+- **`build.mcpp` 缓存带上了语义 epoch(S2)。** 缓存条目里的指令是命中时**原样重放**的,所以当引擎对某条指令的**解释**改变时,旧条目必须失效而不是被按新含义重放。纪律照抄 `cache_key::kCacheEpoch`:只在旧条目真的不可用时 bump,且**与 mcpp 版本号解耦**(否则每次发布都会让所有构建程序白重跑一遍)。一条本 mcpp 不认识的 `d` 记录(更新的 mcpp 写的)同样让整条条目作废——只重放认识的那部分,等于应用了程序所要求的一个**真子集**。
+
+- **`build.mcpp` 的运行有了时间上限(S3)。** 默认 600 秒,超时杀掉并让构建失败,错误**点名是哪个包**、并说明怎么改。原先没有任何上限:一个死循环或卡在网络读上的构建程序会让整个构建**挂死且毫无诊断**。
+
+  **编译**这一步刻意不设上限——与 `mcpp test` 同一条不对称纪律(run 有限 / build 无限):编译跑得久通常是正当的(首次构建 `std` 模块就是分钟级),杀掉它只会产生莫名其妙的失败;构建**程序**跑得久通常是卡住了。`capture_exec_deadline` 顺带补上了 `cwd` 形参——没有它,加超时会**静默改变**构建程序相对写入的落点。
+
+- **内带 xlings 升级到 `2026.8.5.1`**(自 `2026.8.4.1`)。13 个 pin 点由 `check_version_pins.sh` 机器校验并全部更新。
+
 ## [2026.8.4.1] — 2026-08-04
 
 ### 修复

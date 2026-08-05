@@ -15,7 +15,7 @@ inputs:
     # Floor imposed by the index, not a routine bump — see
     # .github/actions/bootstrap-mcpp/action.yml for why 0.4.69 is required
     # (two packages named `lua` in one repo need openxlings/xlings#381).
-    default: '2026.8.4.1'
+    default: '2026.8.5.1'
 
 runs:
   using: composite
