@@ -141,18 +141,27 @@ fi
 #     version that did not exist yet, and every job died with
 #     `package 'mcpp@<unreleased>' not found`.
 #
-#     But it may lag by exactly ONE release, no more. xim-pkgindex carries a
-#     SINGLE mcpp version — the newest — so the moment a release lands, every
-#     older pin names something that is no longer installable:
+#     In practice it must equal the NEWEST published release, not merely some
+#     released version. Observed twice, one release apart, in the aarch64
+#     fresh-install job:
 #
-#         [error] xlings: version '2026.8.4.1' not found for 'mcpp'
-#         [error]   available: 2026.8.5.1
+#         pin 2026.8.3.2 -> [error] xlings: version '2026.8.3.2' not found for 'mcpp'
+#                           [error]   available: 2026.8.4.1
+#         pin 2026.8.4.1 -> [error] xlings: version '2026.8.4.1' not found for 'mcpp'
+#                           [error]   available: 2026.8.5.1
 #
-#     which is how the aarch64 fresh-install job died after 2026.8.5.1 shipped.
-#     The rule that satisfies both directions: after publishing release N, the
-#     post-release commit sets this pin to N. Never ahead (check (c)), never
-#     more than one behind (not checkable here — it needs the index — so it
-#     surfaces as the error above, and this note is where to look when it does).
+#     Note what `available:` lists: exactly ONE version, the newest release at
+#     that moment. That is NOT because the index dropped the others — checked
+#     directly, pkgs/m/mcpp.lua carries 17 versions including both pins above,
+#     each with aarch64 assets. So the resolver in that job is not seeing the
+#     full index, and the mechanism is not yet understood; what is established
+#     is the pattern and its fix.
+#
+#     The operational rule that satisfies both directions: after publishing
+#     release N, the post-release commit sets this pin to N. Never ahead
+#     (check (c) enforces that), and in practice never behind either. This is
+#     not checkable here — it needs the index — so it surfaces as the error
+#     above, and this note is where to look when it does.
 
 # (c) …and the bootstrap pin must never run AHEAD of the version being built.
 #     Four-key numeric sort, so the date scheme orders correctly (a plain
