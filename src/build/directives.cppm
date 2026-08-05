@@ -258,6 +258,18 @@ std::string action_error(const Directives& d);
 void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
                      const std::filesystem::path& pkgRoot);
 
+// Does this action output belong in the COMPILE set?
+//
+// A `source` action routinely emits companion files that must exist but must
+// not be compiled — protoc writes `foo.pb.cc` AND `foo.pb.h`, and the header
+// is an include, not a translation unit. Adopting everything gave both the
+// same object path and tripped the uniqueness assertion
+// ("object path collision after uniqueness pass").
+//
+// The non-source outputs are still declared to ninja, so the edge still
+// produces them and anything that includes them still waits for the generator.
+bool is_compilable_output(const std::filesystem::path& p);
+
 // ── Private-scope fold (was prepare.cppm's DirectiveMark / fold pair) ──────
 //
 // Lives here because "which compile-visible channels a PackagePrivate
@@ -545,6 +557,16 @@ std::string action_error(const Directives& d) {
             "       payload: {}", payload);
     }
     return {};
+}
+
+bool is_compilable_output(const fs::path& p) {
+    auto ext = p.extension().string();
+    // The same set the plan treats as translation units, plus .cppm/.ixx for a
+    // generated module interface.
+    return ext == ".cpp" || ext == ".cc"  || ext == ".cxx" || ext == ".c"
+        || ext == ".m"   || ext == ".mm"
+        || ext == ".S"   || ext == ".s"   || ext == ".asm"
+        || ext == ".cppm" || ext == ".ixx";
 }
 
 void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,

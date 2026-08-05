@@ -144,6 +144,52 @@ if "$MCPP" build > b4.log 2>&1; then
 fi
 rm -f FAIL_THE_CHECK
 
+# ── 2c. a companion output that is NOT a translation unit ──────────────────
+# The single most natural generator shape: protoc emits foo.pb.cc AND foo.pb.h.
+# Adopting every declared output into the compile set gave both the same object
+# path and tripped "object path collision after uniqueness pass". The header
+# must still be PRODUCED by the edge (things include it) but never compiled.
+cat > genpair.sh <<'EOF'
+#!/usr/bin/env bash
+# $1 = .cc to write, $2 = .h to write
+printf '#include "%s"\nint paired() { return 13; }\n' "$(basename "$2")" > "$1"
+printf 'int paired();\n' > "$2"
+EOF
+chmod +x genpair.sh
+cat >> src/main.cpp <<'EOF'
+EOF
+cat > build.mcpp <<'EOF'
+#include <cstdio>
+#include <string>
+import mcpp;
+int main() {
+    const std::string root = mcpp::manifest_dir();
+    const std::string out  = mcpp::out_dir();
+    mcpp::action a;
+    a.id = "pair"; a.role = "source";
+    a.arg((root + "/genpair.sh").c_str())
+     .arg((out + "/p.cc").c_str())
+     .arg((out + "/p.h").c_str())
+     .output((out + "/p.cc").c_str())
+     .output((out + "/p.h").c_str())   // companion: produced, NOT compiled
+     .submit();
+    mcpp::include_dir(out.c_str());
+    // Keep the earlier generated source in the build so main.cpp still links.
+    mcpp::action g;
+    g.id = "generate"; g.role = "source";
+    g.arg((root + "/gen.sh").c_str()).arg((root + "/data/other.txt").c_str())
+     .arg((out + "/gen.cpp").c_str())
+     .input((root + "/data/other.txt").c_str())
+     .output((out + "/gen.cpp").c_str())
+     .submit();
+}
+EOF
+rm -rf target
+"$MCPP" build > b2c.log 2>&1 || {
+    cat b2c.log; echo "FAIL: a companion (non-source) action output broke the build"; exit 1; }
+grep -q "object path collision" b2c.log && {
+    cat b2c.log; echo "FAIL: the header was adopted as a translation unit"; exit 1; }
+
 # ── 3b/3c: their own minimal project ───────────────────────────────────────
 # Separate from `app`, whose main.cpp deliberately depends on the generated
 # symbol — swapping its build.mcpp out would fail the LINK and say nothing

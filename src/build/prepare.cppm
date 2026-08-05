@@ -791,6 +791,24 @@ export struct BuildOverrides {
     int         tool_depth = 0;
     // The request chain, for that diagnostic. "root → grpc:grpc_cpp_plugin → …"
     std::string tool_chain;
+    // Use THIS manifest instead of reading `<project_root>/mcpp.toml`.
+    //
+    // Required for a `compat`-style registry package (Form B), which ships no
+    // mcpp.toml at all — its manifest is synthesized from the `.lua`
+    // descriptor during resolution. Without this the tool sub-build could only
+    // ever handle packages that carry their own manifest (Form A), which
+    // excludes most of the index, protobuf among them.
+    //
+    // Must be the PRISTINE manifest, before feature activation: the sub-build
+    // activates its own feature set, and starting from an already-activated
+    // copy would fold the same feature sources in twice.
+    // A shared_ptr rather than an optional<Manifest>: BuildOverrides is an
+    // EXPORTED struct, and embedding a large value type in the module
+    // interface made GCC fail to write the cluster at all
+    // ('failed to read compiled module cluster ...: Bad file data' when
+    // mcpp.build.execute imported it). A pointer keeps the exported layout
+    // trivial, and it also avoids copying the manifest per tool build.
+    std::shared_ptr<const mcpp::manifest::Manifest> preloaded_manifest;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
@@ -882,7 +900,19 @@ prepare_build(bool print_fingerprint,
     // value puts a member's target/, mcpp.lock and .mcpp/ at the WORKSPACE
     // root. See the derivation right after that block.
 
-    auto m = mcpp::manifest::load(*root / "mcpp.toml");
+    // A registry package in `compat` form (Form B) ships NO mcpp.toml — its
+    // manifest is synthesized from the `.lua` descriptor by the resolver. So a
+    // nested build of such a package cannot re-read one off disk, and the
+    // caller hands over the manifest it already synthesized instead.
+    //
+    // Passing it in rather than re-deriving it is also the more correct of the
+    // two: re-deriving could produce a DIFFERENT manifest than the one the
+    // parent resolved against (the L1 cfg merge and feature-activated deps
+    // have already been folded in by then).
+    auto m = overrides.preloaded_manifest
+        ? std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>(
+              *overrides.preloaded_manifest)
+        : mcpp::manifest::load(*root / "mcpp.toml");
     if (!m) return std::unexpected(m.error().format());
 
     // ─── Workspace handling ────────────────────────────────────────────
@@ -994,6 +1024,30 @@ prepare_build(bool print_fingerprint,
     {
         std::error_code wdEc;
         std::filesystem::create_directories(workRoot, wdEc);
+    }
+
+    // A `compat`-form (Form B) package's sources live under a wrap directory
+    // inside the version dir, which is why its descriptor writes globs like
+    // `*/src/foo.cc` — the `*` stands for the tarball's top-level folder,
+    // whose name the descriptor cannot know. `[build] sources` has always
+    // expanded those; `targets.<x>.main` did NOT, so a bin target in such a
+    // package handed ninja a literal `*` and died with
+    // `missing and no known rule to make it`.
+    //
+    // Nothing could reach that path before #355 (a dependency's bin targets
+    // were never built), which is why it went unnoticed. Resolve it here, once
+    // the manifest is final and before anything reads `t.main`.
+    for (auto& t : m->targets) {
+        if (t.main.empty() || t.main.find('*') == std::string::npos) continue;
+        auto hits = mcpp::modgraph::expand_glob(*root, t.main);
+        if (hits.size() == 1) {
+            t.main = std::filesystem::relative(hits.front(), *root).generic_string();
+        } else {
+            return std::unexpected(std::format(
+                "target '{}': `main = \"{}\"` matched {} files; it must name "
+                "exactly one entry source",
+                t.name, t.main, hits.size()));
+        }
     }
 
     // Inject synthetic targets (e.g. test binaries from `mcpp test`).
@@ -2729,6 +2783,9 @@ prepare_build(bool print_fingerprint,
             if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
             for (auto const& o : a.outputs) {
                 if (o.find("${mcpp.") != std::string::npos) continue;
+                // Companion outputs (protoc's .pb.h next to its .pb.cc) are
+                // produced by the edge but are NOT translation units.
+                if (!mcpp::build::directives::is_compilable_output(o)) continue;
                 mm.buildConfig.sources.push_back(o);
                 mm.modules.sources.push_back(o);
             }
@@ -4119,6 +4176,18 @@ prepare_build(bool print_fingerprint,
                     sub.profile       = "release";
                     sub.cache_mode    = overrides.cache_mode;
                     sub.tool_depth    = overrides.tool_depth + 1;
+                    // The PRISTINE manifest the resolver produced for this
+                    // package — `packages[depIdx].manifest` is a copy that
+                    // feature activation has already mutated, and re-activating
+                    // on top of it would fold the same feature sources in
+                    // twice. A `compat` (Form B) package has no mcpp.toml on
+                    // disk at all, so without this the sub-build could not read
+                    // a manifest for it in the first place.
+                    if (depIdx >= 1 && depIdx - 1 < dep_manifests.size()
+                        && dep_manifests[depIdx - 1])
+                        sub.preloaded_manifest =
+                            std::make_shared<const mcpp::manifest::Manifest>(
+                                *dep_manifests[depIdx - 1]);
                     sub.tool_chain    = overrides.tool_chain.empty()
                         ? std::format("root → {}:{}", depName, toolName)
                         : std::format("{} → {}:{}", overrides.tool_chain, depName,
