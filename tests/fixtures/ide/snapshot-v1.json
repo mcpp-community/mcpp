@@ -3,18 +3,20 @@
   "kind": "mcpp.ide.snapshot",
   "snapshotId": "fnv1a64:0000000000000000",
   "state": "partial",
-  "mcppVersion": "2026.8.5.2",
-  "protocol": {
-    "min": 1,
-    "max": 1
+  "mcpp": {
+    "version": "2026.8.5.2",
+    "protocol": {
+      "min": 1,
+      "max": 1
+    },
+    "capabilities": [
+      "workspace-inspection",
+      "manifest-diagnostics",
+      "compile-commands-location"
+    ]
   },
-  "capabilities": [
-    "workspace-inspection",
-    "manifest-diagnostics",
-    "compile-commands-location"
-  ],
   "request": {
-    "start": "/workspace/app",
+    "root": "/workspace/app",
     "mode": "read-only",
     "selectors": {
       "package": null,
@@ -63,9 +65,8 @@
     {
       "code": "MCPP_IDE_ARTIFACTS_MISSING",
       "severity": "warning",
-      "message": "Compile commands are unavailable for one or more selected members.",
-      "path": "/workspace/app/mcpp.toml",
-      "range": null
+      "source": "mcpp",
+      "message": "Compile commands are unavailable for one or more selected members."
     }
   ]
 }
