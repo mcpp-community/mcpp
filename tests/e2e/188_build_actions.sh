@@ -123,6 +123,19 @@ touch src/main.cpp
 grep -q "GENERATE" b3.log && {
     cat b3.log; echo "FAIL: the action re-ran although its inputs were unchanged"; exit 1; }
 
+# ── 2b. changing the action's COMMAND also takes effect ────────────────────
+# Distinct from 2: there the action's declared INPUT changed and ninja noticed.
+# Here nothing ninja tracks changed — only build.mcpp, which re-runs (its own
+# source is part of its cache key), re-declares the action with a different
+# command, and ninja re-runs the edge because the rule's command changed. Both
+# halves have to work or an edited generator invocation is silently ignored.
+sed -i 's|"/data/value.txt"|"/data/other.txt"|g' build.mcpp
+echo "31" > data/other.txt
+"$MCPP" build > b2b.log 2>&1 || { cat b2b.log; echo "FAIL: rebuild after editing build.mcpp failed"; exit 1; }
+out="$("$MCPP" run 2>&1 | grep '^VALUE=' | tail -1)"
+[[ "$out" == "VALUE=31" ]] || {
+    cat b2b.log; echo "FAIL: an edited action command did not take effect: $out"; exit 1; }
+
 # ── 3. a failing check fails the build ─────────────────────────────────────
 touch FAIL_THE_CHECK
 rm -f "$OUTDIR/lint.stamp"
