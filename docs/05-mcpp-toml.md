@@ -1026,14 +1026,14 @@ library package and import it:
 
 ```toml
 [dependencies]
-"mcpp.rules.protobuf" = { version = "0.1.0", host-module = true }
+protobufgen = { version = "0.1.0", host-module = true }
 ```
 
 ```cpp
 // build.mcpp
 import mcpp;
-import mcpp.rules.protobuf;
-int main() { mcpp::rules::protobuf::generate(/* … */); }
+import protobufgen;
+int main() { return protobufgen::generate({"schema"}) ? 0 : 1; }
 ```
 
 mcpp compiles that package's lib-root module **for the host, in the same
@@ -1045,8 +1045,24 @@ Rules are therefore versioned, testable and distributable through the package
 manager you already have, written in **C++** — no second language, which is the
 whole point of `build.mcpp` existing.
 
+**The module name is the package's `name`.** mcpp registers the host module
+under the dependency's bare `package.name` (not `<namespace>.<name>`), so a
+rule package's name has to be a legal C++ module name: `grpcgen` works,
+`grpc-rules` does not — the hyphen is fine in a package name and illegal in a
+module name, and the mismatch surfaces as `module 'grpc_rules' not found`
+rather than as a complaint about the name.
+
+The lib root must be at `src/<name>.cppm` (or wherever `[lib] path` points); a
+missing one is reported as *"host module 'x': no interface unit at …"*.
+
 *Limit:* the rule interface is compiled alone, so it may import `std` and the
 bundled `mcpp` module, but not a third package. A rule package is a leaf.
+
+*Build-time only:* a `host-module = true` dependency is **not** compiled into
+or linked with your target. It exists to run during `build.mcpp` and nowhere
+else — the same separation Cargo draws with `[build-dependencies]`. (Before
+2026.8.5.2 it was also built as an ordinary library, which made `import mcpp;`
+inside a rule fail: the bundled module does not exist in that second compile.)
 
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 

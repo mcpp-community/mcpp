@@ -779,14 +779,14 @@ MCPP_TOOL_PROTOBUF_PROTOC=/usr/bin/protoc mcpp build
 
 ```toml
 [dependencies]
-"mcpp.rules.protobuf" = { version = "0.1.0", host-module = true }
+protobufgen = { version = "0.1.0", host-module = true }
 ```
 
 ```cpp
 // build.mcpp
 import mcpp;
-import mcpp.rules.protobuf;
-int main() { mcpp::rules::protobuf::generate(/* … */); }
+import protobufgen;
+int main() { return protobufgen::generate({"schema"}) ? 0 : 1; }
 ```
 
 mcpp 会把该包的 lib 根模块**为 host 编译,且与 `build.mcpp` 在同一条命令里** ——
@@ -796,8 +796,21 @@ mcpp 会把该包的 lib 根模块**为 host 编译,且与 `build.mcpp` 在同�
 于是规则**有版本、能测试、能通过你已有的包管理器分发**,而且是用 **C++** 写的
 —— 不引入第二门语言,这正是 `build.mcpp` 存在的理由。
 
+**模块名就是包的 `name`。** mcpp 用依赖的裸 `package.name`(而**不是**
+`<namespace>.<name>`)注册这个 host 模块,所以规则包的名字必须是合法的 C++ 模块名:
+`grpcgen` 可以,`grpc-rules` 不行 —— 连字符在包名里合法、在模块名里非法,而且报出来
+的是 `module 'grpc_rules' not found`,不会提示你名字有问题。
+
+lib 根必须在 `src/<name>.cppm`(或 `[lib] path` 指向的位置);缺失时报
+*"host module 'x': no interface unit at …"*。
+
 *限制:* 规则接口是单独编译的,因此可以 import `std` 与内置 `mcpp` 模块,
 但不能 import 第三个包。规则包按构造是叶子。
+
+*仅构建期:* `host-module = true` 的依赖**不会**被编进、也不会被链进你的 target。
+它只在 `build.mcpp` 期间运行,别处都不出现 —— 与 Cargo 用 `[build-dependencies]`
+划出的是同一条界线。(2026.8.5.2 之前它还会被当作普通库再编一遍,这正是规则里
+`import mcpp;` 失败的原因:在那第二次编译里内置模块并不存在。)
 
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 

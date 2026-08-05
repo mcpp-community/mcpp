@@ -95,6 +95,51 @@ out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
 [[ "$out" == "ANSWER=43" ]] || {
     echo "FAIL: the edited rule did not take effect: $out"; exit 1; }
 
+# ── a rule that uses the API it exists to wrap ──────────────────────────────
+# The two properties below are what make the feature usable for a REAL rule
+# rather than one that hand-prints directives, and 2026.8.5.1 had neither:
+#
+#   `import std;`   the rule was compiled before the std module was built, so
+#                   it failed with `module 'std' not found`. The scan for
+#                   `import std` read build.mcpp only, so a rule that needed it
+#                   did not even trigger the build.
+#   `import mcpp;`  registering the host module never removed the package from
+#                   the consumer's ORDINARY graph, so the same .cppm was also
+#                   compiled as a normal library — where `mcpp` does not exist.
+cd "$TMP"
+mv rules/src/rules.cppm rules/src/rules.cppm.bak
+cat > rules/src/rules.cppm <<'EOF'
+export module rules;
+import std;    // must be usable: a rule is a normal C++23 module
+import mcpp;   // must be usable: the typed wrapper is the whole point
+
+export namespace rules {
+inline void banner(const char* macro) { mcpp::define(macro); }
+inline void define_answer(int n) {
+    mcpp::cxxflag(std::format("-DRULE_ANSWER={}", n).c_str());
+}
+}
+EOF
+cd app && rm -rf target
+"$MCPP" build > b4.log 2>&1 || {
+    cat b4.log
+    echo "FAIL: a rule using import std + import mcpp did not build"; exit 1; }
+out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
+[[ "$out" == "ANSWER=42" ]] || {
+    echo "FAIL: the std/mcpp-based rule's directives did not land: $out"; exit 1; }
+
+# The rule package must NOT be compiled into the consumer's target. It is
+# build-time-only; an object under obj/rules/ means it was also treated as an
+# ordinary library, which is what made `import mcpp;` fail in the first place.
+if find target -path '*obj/rules/*' -name '*.o' | grep -q .; then
+    find target -path '*obj/rules/*' -name '*.o'
+    echo "FAIL: the host-module package was also built as a normal library"; exit 1
+fi
+
+cd "$TMP"
+rm -f rules/src/rules.cppm
+mv rules/src/rules.cppm.bak rules/src/rules.cppm
+
 # A missing lib root must say so, not fail three edges later.
 cd "$TMP"
 mv rules/src/rules.cppm rules/src/elsewhere.cppm

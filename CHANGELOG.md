@@ -3,6 +3,26 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.5.2] — 2026-08-05
+
+修复 `host-module = true`(规则包)的两个缺陷。二者都是 2026.8.5.1 引入的,合起来的效果是:**规则包只能写「手工 printf 指令」的玩具规则**,一旦规则要用它本该用的 API 就编不过。第一个真实使用者(`grpc-m` 的 protoc/gRPC codegen 规则)在第一分钟就同时撞上了这两个。
+
+### 修复
+
+- **规则里的 `import std;`。** `build_program.cppm` 先编 host module、后建 std 模块,所以规则拿到的 `stdFlags` 是空的,报 `module 'std' not found`。而且「是否需要 std」只扫了 `build.mcpp` 的源码 —— 一条只有**规则**用 `import std;` 的构建根本不会去建 std 模块。现在两处都修:扫描把规则接口一并计入,std 那一段整体挪到编译 host module **之前**。
+
+  这里的顺序是承重的,不是风格问题:BMI 必须先存在、`stdFlags` 必须先指向它,规则才可能 import。
+
+- **规则里的 `import mcpp;`。** `host-module = true` 只做了「注册这个模块」,从没把这个包移出消费者的**普通依赖图** —— 于是同一个 `.cppm` 又被当作消费者的一个普通库编译了一遍,而在那次编译里内置 `mcpp` 模块并不存在,报 `fatal error: module 'mcpp' not found`。
+
+  一条构建规则是**纯构建期**的东西,本来就不该进消费者的二进制(Cargo 用 `[build-dependencies]` 划的是同一条界线)。现在只经由 root 的 host-module 边到达的包会被清空源码集,不再参与编译与链接;仍会被解析落盘,因为 lib 根要从那里读。
+
+  **有护栏**:同一个包完全可以既是规则、又是别处(或 root 另一种拼法)的普通库,此时不清空 —— 否则会变成一个离现场很远的 undefined reference。
+
+### 文档
+
+- `docs/05-mcpp-toml.md` 的示例此前写的是 `import mcpp.rules.protobuf;`,**做不到**:mcpp 用依赖的裸 `package.name` 注册 host 模块,而 SPEC-001 要求 `name` 是单一原子段。随之澄清一条会咬人的约束:规则包的名字必须是**合法 C++ 模块名**(`grpcgen` 可以,`grpc-rules` 不行),否则报的是 `module 'grpc_rules' not found`,不会提示你名字有问题。
+
 ## [2026.8.5.1] — 2026-08-05
 
 `build.mcpp` 机制的**架构地基**:把「一条指令是什么」收敛成一张表,并补上三个今天就存在的稳定性缺口。架构分析见 `.agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md`(本次实现其中的步 0 与步 1)。

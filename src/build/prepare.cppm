@@ -4026,6 +4026,40 @@ prepare_build(bool print_fingerprint,
                     if (!hit) continue;
                     auto rel = mcpp::manifest::resolve_lib_root_path(depPkg.manifest);
                     hostModulesByConsumer[0].emplace_back(canon, depPkg.root / rel);
+
+                    // A build rule is BUILD-TIME ONLY. Registering the module
+                    // is not enough: the package is still an ordinary node of
+                    // the consumer's graph, so its interface was ALSO compiled
+                    // as a normal library and linked into the target. That is
+                    // wrong on its own terms — a rule has no business in the
+                    // consumer's binary — and it made the feature nearly
+                    // unusable, because in that second compile the bundled
+                    // `mcpp` module does not exist: any rule that actually used
+                    // the API it exists to wrap died with
+                    // `fatal error: module 'mcpp' not found` (2026.8.5.1).
+                    //
+                    // Emptying the source globs is how a package is removed
+                    // from the compile set here — the same mechanism the
+                    // feature-gated-sources drop above uses. Resolution is
+                    // untouched: the package still lands on disk, which is
+                    // what `resolve_lib_root_path` just read.
+                    //
+                    // Guarded on the package being reached ONLY from the root's
+                    // host-module edge. A package can legitimately be both a
+                    // rule and a library — for something else in the graph, or
+                    // for the root itself under a second spelling — and
+                    // silently dropping its objects then would surface as an
+                    // undefined reference far from here.
+                    bool hostOnly = true;
+                    for (auto const& e : dependencyEdges)
+                        if (e.dependencyPackageIndex == d
+                            && e.consumerPackageIndex != 0) hostOnly = false;
+                    if (hostOnly) {
+                        auto& dm = packages[d].manifest;
+                        dm.buildConfig.sources.clear();
+                        dm.buildConfig.featureSources.clear();
+                        dm.modules.sources.clear();
+                    }
                     break;
                 }
             }

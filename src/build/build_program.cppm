@@ -478,6 +478,22 @@ std::expected<void, std::string> run_build_program(
     bool usesStdCompat = imports_module(srcText, "std.compat");
     bool usesStd       = usesStdCompat || imports_module(srcText, "std");
 
+    // A rule package's interface is compiled by this same function, so what IT
+    // imports decides what has to be built just as much as what build.mcpp
+    // imports. Scanning only build.mcpp made a rule that said `import std;`
+    // fail with `module 'std' not found` — the std module was never built,
+    // because the program that triggers the build did not mention it.
+    for (auto const& [logical, ifacePath] : env.hostModules) {
+        std::ifstream is(ifacePath);
+        if (!is) continue;  // a missing interface is diagnosed by build_host_module
+        std::ostringstream ss; ss << is.rdbuf();
+        const std::string t = ss.str();
+        if (t.find("import mcpp") != std::string::npos) usesModule = true;
+        if (imports_module(t, "std.compat")) usesStdCompat = true;
+        if (imports_module(t, "std"))        usesStd       = true;
+    }
+    usesStd = usesStd || usesStdCompat;
+
     // The toolchain's own environment (MSVC's INCLUDE / LIB / VSLANG, which
     // detection synthesized from the located VC tools + Windows SDK). Needed
     // by every compile below, the module precompile included.
@@ -497,27 +513,6 @@ std::expected<void, std::string> run_build_program(
         if (!mf) return std::unexpected(mf.error());
         moduleFlags = std::move(mf->useFlags);
         mcppModuleObject = std::move(mf->object);
-    }
-
-    // #355 step 5: dependency-provided host modules (reusable build rules
-    // shipped as ordinary packages). Compiled HERE, with `base` and `std_flag`
-    // — the same flags the build.mcpp compile below gets — because a BMI is
-    // only usable by a compile that agrees with it. Doing this in a separate
-    // sub-build would leave that agreement to chance, and disagreement shows
-    // up as `module X CRC mismatch`, not as a clear error.
-    std::vector<fs::path> hostModuleObjects;
-    for (auto const& [logical, ifacePath] : env.hostModules) {
-        auto hm = build_host_module(bdir, hostCompiler, base, std_flag, tc,
-                                    compileEnv, logical, ifacePath, moduleFlags);
-        if (!hm) return std::unexpected(hm.error());
-        for (auto& f : hm->useFlags) {
-            // GCC's marker is just `-fmodules`, already present when the
-            // bundled module was built; repeating it is harmless but noisy.
-            if (std::find(moduleFlags.begin(), moduleFlags.end(), f)
-                == moduleFlags.end())
-                moduleFlags.push_back(f);
-        }
-        hostModuleObjects.push_back(std::move(hm->object));
     }
 
     // ── `import std;` in build.mcpp ─────────────────────────────────────────
@@ -604,6 +599,35 @@ std::expected<void, std::string> run_build_program(
         if (usesStdCompat && !sm->compatObjectPath.empty()
             && fs::exists(sm->compatObjectPath))
             stdObjects.push_back(sm->compatObjectPath.string());
+    }
+
+    // #355 step 5: dependency-provided host modules (reusable build rules
+    // shipped as ordinary packages). Compiled HERE, with `base` and `std_flag`
+    // — the same flags the build.mcpp compile below gets — because a BMI is
+    // only usable by a compile that agrees with it. Doing this in a separate
+    // sub-build would leave that agreement to chance, and disagreement shows
+    // up as `module X CRC mismatch`, not as a clear error.
+    //
+    // AFTER the std block, and that ordering is load-bearing: a rule may
+    // `import std;` just as build.mcpp may, and it can only do so once the std
+    // BMI exists and `stdFlags` names it. Compiling rules first — which is what
+    // 2026.8.5.1 did — handed them an empty `stdFlags` and failed with
+    // `module 'std' not found`.
+    std::vector<fs::path> hostModuleObjects;
+    for (auto const& [logical, ifacePath] : env.hostModules) {
+        std::vector<std::string> use = moduleFlags;
+        use.insert(use.end(), stdFlags.begin(), stdFlags.end());
+        auto hm = build_host_module(bdir, hostCompiler, base, std_flag, tc,
+                                    compileEnv, logical, ifacePath, use);
+        if (!hm) return std::unexpected(hm.error());
+        for (auto& f : hm->useFlags) {
+            // GCC's marker is just `-fmodules`, already present when the
+            // bundled module was built; repeating it is harmless but noisy.
+            if (std::find(moduleFlags.begin(), moduleFlags.end(), f)
+                == moduleFlags.end())
+                moduleFlags.push_back(f);
+        }
+        hostModuleObjects.push_back(std::move(hm->object));
     }
 
     // `-x c++` is required: the `.mcpp` extension is unknown to the compiler, so
