@@ -1,6 +1,6 @@
 # build.mcpp 机制架构设计：一个 hook，多种节点
 
-> 状态：**步 0 + 步 1 已实施（2026.8.5.1）**；步 2–6 待 review。实施记录见 §9。
+> 状态：**步 0–6 全部已实施（2026.8.5.1）**。实施记录见 §9（步 0+1）与 §10（步 2–6）。
 > 范围：`build.mcpp` 作为**扩展机制**的长期形态 —— 不是某个具体特性
 > 关联：#355（依赖产出的 host 工具，是本路线的第一块地基）、#241、L3 原始设计
 > （`.agents/docs/2026-06-30-l3-build-mcpp-implementation-design.md`）
@@ -307,11 +307,11 @@ L3  分发层（mcpp pack）
 |---|---|---|---|---|
 | 0 | 补 S1–S4：协议版本 / cache epoch / 超时 / 冻结裸 printf | — | 无（S4 是文档 + 停止扩表） | **已实施 2026.8.5.1** |
 | 1 | S5：directive 定义表收敛 | — | 无（纯内部重构，可用「产物逐字节相同」验证） | **已实施 2026.8.5.1** |
-| 2 | #355：host 工具 + 工作目录外置 | 0, 1 | 无 | 待 review |
-| 3 | `action` 原语，先只做 `role=source`（即 codegen 进图） | 2 | 无（新增） | 待 review（§8 未决） |
-| 4 | `role=check`（静态分析）、`role=artifact`（后处理） | 3 | 无（新增） | 待 review |
-| 5 | build.mcpp 可 `import` 依赖提供的 host 模块 → **规则包生态** | 2 | 无（新增） | 待 review |
-| 6 | 核实并（若成立）解除「生成的 `.cppm` 必须 eager」限制 | 3 | 无 | 待核实 |
+| 2 | #355：host 工具 + 工作目录外置 | 0, 1 | 无 | **已实施 2026.8.5.1** |
+| 3 | `action` 原语，先只做 `role=source`（即 codegen 进图） | 2 | 无（新增） | **已实施 2026.8.5.1** |
+| 4 | `role=check`（静态分析）、`role=artifact`（后处理） | 3 | 无（新增） | **已实施 2026.8.5.1** |
+| 5 | build.mcpp 可 `import` 依赖提供的 host 模块 → **规则包生态** | 2 | 无（新增） | **已实施 2026.8.5.1** |
+| 6 | 核实并（若成立）解除「生成的 `.cppm` 必须 eager」限制 | 3 | 无 | **已核实并解决（§10.4）** |
 
 步 0/1 值得优先，因为它们**成本最低而收益随时间递增**：directive 表越长，补的代价越大。
 
@@ -399,3 +399,79 @@ L3  分发层（mcpp pack）
 > 挡在前面 —— 无变更的第二次构建走 fast path，**根本不会读 build.mcpp 缓存**。
 > 验证缓存行为必须先 `touch` 一个源文件把 fast path 打掉，否则会把「fast path 生效」
 > 误读成「缓存未命中」。我第一次就是这么误判的。
+
+---
+
+## 10. 实施记录（步 2–6，2026.8.5.1）
+
+### 10.1 §8 五个开放问题的定案
+
+| # | 问题 | 定案 | 理由 |
+|---|---|---|---|
+| 1 | `action.command` 的表达力 | **封闭词表**：argv + `${mcpp.out_dir}` / `${mcpp.bin_dir}` / `${mcpp.compile_db}` / `${mcpp.target_file:<name>}` | 不假设存在 shell（Windows 没有可依赖的那个），且没有东西能夹带环境状态进来 —— 可移植性与可缓存性同一个理由 |
+| 2 | 结构化载荷格式 | **在既有平坦协议上扩展 `mcpp:action={json}`** | action 有六个字段，平坦 `key=value` 表达不了；内置模块负责编码，与 S4「`import mcpp;` 是唯一演进面」自洽 |
+| 3 | `role=check` 默认挂载 | **默认并行**，`blocking = true` 才前置 | 把整条编译串行化在 linter 后面是没人接受的代价，而「构建最终失败」的效果一样 |
+| 4 | 规则包命名空间 | `mcpp.rules.*` 作为约定前缀，机制上不特殊 | 规则包就是普通包，特殊化它只会多一套规则 |
+| 5 | dyndep 下 topoOrder 是否冗余 | **问题问错了** —— 见 §10.4 | |
+
+### 10.2 host 工具（步 2）：实现要点与两个坑
+
+- **工作目录外置是硬前置**，且必须**五处一起搬**（`target/`、`mcpp.lock`、
+  `compile_commands.json`、`.mcpp/`、`target/.build-mcpp`）。只搬一部分比一处都
+  不搬更糟：那等于照样写进共享的注册表包根，只是更不显眼。
+- **`${mcpp.target_file:NAME}` 必须解析成 build-dir 相对路径，不是绝对路径。**
+  ninja 用「边声明的那个字符串」标识文件，link 边声明的是 `bin/app`；指向同一份
+  字节的绝对路径是**另一个节点**，ninja 报
+  `missing and no known rule to make it`。第一次实现取了绝对路径，e2e 立刻炸。
+  顺带确认了 action 命令的 cwd 是 build dir。
+- 子构建通过 `mcpp.build.ninja` 的 backend 驱动，**不能**走 `execute.cppm`
+  （它 import 了 prepare，反过来会成环）。`prepare_build` 全函数只有一处 `static`，
+  递归重入是安全的。
+
+### 10.3 `action`（步 3+4）：为什么占位文件是对的
+
+role=source 的产物在 prepare 期不存在，而 modgraph 扫描要 glob 磁盘。选择是
+**播下占位文件**而不是凭空合成 CompileUnit：这样 glob 找得到它、scanner 读得到它、
+plan 给得出对象路径、ninja 在编译边之前用真实内容覆盖它（因为那条编译**依赖**
+action 的输出）。整条链路复用现有机制，没有一处特判。
+
+占位文件**绝不截断已存在的文件** —— 第一次构建之后那里是真实内容，重写它会让 ninja
+以为输入每次 prepare 都变了。
+
+### 10.4 步 6 的核实结论：问题问错了
+
+设计里问的是「dyndep 模式下 `prepare.cppm:4239` 传给 `make_plan` 的 `topoOrder`
+是否冗余」。核实后：`topoOrder` 在 `plan.cppm` 有两处用途 —— `:708` 的名字消歧
+普查（**与顺序无关**，只是遍历全部已扫描单元）和 `:829` 的 CompileUnit 发射次序。
+
+**但真正的阻塞点根本不是顺序**，而是：一个没有被扫描过的文件**根本没有
+`graph.units` 条目**，于是没有 CompileUnit，于是不会被编译。顺序是不是冗余，与
+它无关。
+
+解法用代码库**已有的**答案 ——「声明而非发现」，即 `[modules].scan_overrides` 早就
+做过的那个取舍：action 用 `.provides()/.imports()` 声明生成模块的接口，mcpp 播下
+带该声明的占位文件，prepare 期的扫描因此与生成器将要产出的内容一致，而 build 期
+由编译器自己的 P1689 复核这条声明。**限制解除，且没有动 topoOrder 一行。**
+
+### 10.5 规则包（步 5）：为什么不走 tool store
+
+最初的直觉是「像 host 工具一样，用子构建产出 BMI + 对象，放进 store」。那是**错的**：
+BMI 只对「在 standard / dialect / 编译器身份上与它一致」的编译可用，而两次独立解析
+的构建**没有理由**一致 —— 消费者的 `standard` 与规则包自己的 `standard` 就可以不同。
+不一致的表现是 `module X CRC mismatch`，不是一条清楚的错误，而这个代码库为这一族
+问题付过多次学费。
+
+改成**与 build.mcpp 同一条命令、同一套 flag 编译**，一致性就从「需要验证的性质」
+变成了**结构性事实**。代价是规则接口单独编译，只能 import `std` 与内置 `mcpp` 模块
+—— 一个规则包按构造就是叶子，这个限制写进文档而不是藏起来。
+
+### 10.6 验证
+
+- 单测 56/56
+- e2e 19/21；`07_static_library`（本机 binutils payload 的 `ar` 跑不起来）与
+  `09_path_dependency`（`ninja missing dep BMI`）在**已发布的 2026.8.4.1 上同样
+  失败** ⇒ 环境性，非回归（判定回归前先跑已发布二进制做对照）
+- 新增 3 个 e2e：**187**（端到端 / 成本门 / 默认关闭 / 错名列出可用 target /
+  override 生效）、**188**（三种 role + 输入变则重生成 + 无关重建不重跑 +
+  失败的 check 让构建失败 + 畸形 action 被拒）、**189**（规则包导入生效 / 编辑规则
+  触发 build.mcpp 重跑 / 缺 lib root 的诊断）
