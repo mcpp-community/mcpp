@@ -808,3 +808,63 @@ ninja 期执行、增量、并行；工具从本设计的 tool store 取。收�
 - CMake cross：<https://cmake.org/cmake/help/book/mastering-cmake/chapter/Cross%20Compiling%20With%20CMake.html>；
   LLVM `LLVM_NATIVE_TOOL_DIR` <https://reviews.llvm.org/D131052>
 - Zig build system：<https://ziglang.org/learn/build-system/>
+
+---
+
+## 13. 实施与真实案例验证（2026.8.5.1）
+
+### 13.1 §11 第 4 步的「未核实风险」——已核实，结论是**能**
+
+设计里写着：`compat.protobuf` 描述符明文「does NOT build libprotoc」，而
+**libprotoc 能否被 mcpp 无 CMake 构建出来尚未核实**；若不能，Phase 2 的
+prebuilt provider 就从「优化」升级为 protoc 的唯一可行路径。
+
+拿真实的 mcpp-index + protobuf 35.1 源码实测：
+
+- 上游 `src/file_lists.cmake` 的 `libprotoc_srcs` = **138 项**，与 libprotobuf 的
+  源码集**零重叠**（`importer.cc` / `parser.cc` 早已在 libprotobuf 里）
+- 源码树里**没有** `.h.in` / `.cmake.in` —— 不需要任何 configure 步骤
+- 138 个 TU 全部编过；第一次链接失败，缺 `upb_*` 符号 —— libprotoc 的 upb 生成器
+  需要 upb 运行时，而那正是 compat.protobuf **已有**的 `upb` feature
+- 把 target 写成 `required_features = { "protoc", "upb" }` 后**链接通过**
+  —— 这正是成本门机制该起的作用，**零引擎改动**
+
+端到端：`protoc` 从源码建出 → `mcpp::dep_bin("protobuf","protoc")` 拿到路径 →
+`action` 调用它生成 `demo.pb.cc` / `demo.pb.h` → 编译链接 → 程序输出 `NAME=mcpp`。
+store 命中实测：第二次 `rm -rf target` 后构建 **1.41s**，不重建 protoc。
+
+**⇒ Phase 2（prebuilt-asset provider）确认为纯优化，不是必需路径。**
+
+### 13.2 真实案例暴露的三个 bug（合成 e2e 全部漏掉）
+
+四个新 e2e 都用 path 依赖，也就是 **Form A**（包自带 mcpp.toml）。真实索引里绝大
+多数是 **Form B**（compat 描述符，manifest 由 `.lua` 合成），protobuf 就是。这个
+差异一次性暴露了三个 bug：
+
+| # | 问题 | 后果 |
+|---|---|---|
+| 1 | 子构建从 `<root>/mcpp.toml` 读 manifest，**Form B 包没有这个文件** | Form B 包**完全不能**当工具提供方 —— gRPC 那条链整个走不通 |
+| 2 | `targets.<x>.main` **不展开** `*/` 包装 glob（`sources` 一直会展开） | Form B 包的任何 bin target 都拿不到入口源码 |
+| 3 | `role=source` 的**全部**输出都被当成翻译单元 | protoc 的 `.pb.h` 与 `.pb.cc` 撞同一个对象路径 |
+
+修法分别是：`BuildOverrides::preloaded_manifest`（由调用方交出**未经 feature 激活**
+的那份 manifest —— `packages[i].manifest` 是被 `apply()` 改过的副本，从它出发会把
+同一批 feature 源码折两次）、在 manifest 定稿后解析 `main` 的 glob、
+`is_compilable_output()` 按扩展名过滤。
+
+**方法论**：合成测试测的是「我想到的形状」，真实案例测的是「现实的形状」。这三个
+bug 没有一个能靠再多写几个 path-依赖 e2e 发现。
+
+### 13.3 一个 GCC modules 约束
+
+`preloaded_manifest` 初版写成 `std::optional<Manifest>`，而 `BuildOverrides` 是
+**导出**结构体 —— GCC 写不出 module cluster：
+
+```
+mcpp.build.prepare: error: failed to read compiled module cluster 529: Bad file data
+src/build/execute.cppm:52:45: fatal error: failed to load pendings for 'std::pair'
+```
+
+`rm -rf target` 无效（不是陈旧 BMI）。换成 `shared_ptr<const Manifest>` 让导出布局
+保持 trivial 后即通过，顺带省掉每次工具构建的一次 manifest 拷贝。
+**导出结构体里不要放大的值类型。**
