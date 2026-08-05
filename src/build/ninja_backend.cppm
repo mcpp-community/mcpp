@@ -25,6 +25,7 @@ import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.build.hermetic;
 import mcpp.build.compile_commands;
+import mcpp.build.cmdlimits;
 import mcpp.diag;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
@@ -1422,6 +1423,57 @@ std::string append_goal_phony(std::string& manifest,
     return std::string(kGoalPhony);
 }
 
+
+// Edges whose rule has no `rspfile` carry their inputs ON THE COMMAND LINE, so
+// their `build` line length is what the OS will have to accept. Edges that DO
+// have one are exempt: their command holds `@$out.rsp` and nothing else that
+// grows.
+//
+// Scanning the emitted manifest rather than instrumenting each emit site is
+// deliberate — a new edge kind is then covered the day it is added, which is
+// precisely how the previous seven slipped through.
+std::optional<std::string> check_inline_command_lengths(const std::string& manifest) {
+    std::set<std::string> rspRules;
+    std::string current;
+    for (auto line : manifest | std::views::split('\n')) {
+        std::string_view l{line.begin(), line.end()};
+        if (l.starts_with("rule ")) {
+            current = std::string(l.substr(5));
+        } else if (!current.empty() && l.find("rspfile") != std::string_view::npos
+                   && l.find("rspfile_content") == std::string_view::npos) {
+            rspRules.insert(current);
+        } else if (l.empty()) {
+            current.clear();
+        }
+    }
+
+    for (auto line : manifest | std::views::split('\n')) {
+        std::string_view l{line.begin(), line.end()};
+        if (!l.starts_with("build ")) continue;
+        auto colon = l.find(" : ");
+        if (colon == std::string_view::npos) continue;
+        auto rest = l.substr(colon + 3);
+        auto sp = rest.find(' ');
+        std::string rule(sp == std::string_view::npos ? rest : rest.substr(0, sp));
+        if (rspRules.contains(rule)) continue;
+        // `phony` has no command at all, so its inputs never reach a command
+        // line however many there are. Checking it would fire on exactly the
+        // edge #274 introduced to SOLVE this problem — the goal aggregate,
+        // whose whole point is that thousands of targets cost one word.
+        if (rule == "phony") continue;
+
+        // `sh -c` on POSIX; on windows nothing needs a shell since #261.
+        auto over = mcpp::build::cmdlimits::check_inline(
+            l, mcpp::platform::is_windows, /*needsShell=*/!mcpp::platform::is_windows);
+        if (!over) continue;
+
+        auto out = l.substr(6, colon - 6);
+        return mcpp::build::cmdlimits::explain(
+            std::format("build edge '{}' (rule {})", out, rule), *over);
+    }
+    return std::nullopt;
+}
+
 std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan,
                                                            const BuildOptions& opts) {
     auto t0 = std::chrono::steady_clock::now();
@@ -1435,6 +1487,16 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 
     auto ninja_path = plan.outputDir / "build.ninja";
     auto manifest = emit_ninja_string(plan);
+
+    // Command-length backstop (see
+    // .agents/docs/2026-08-06-command-length-architecture.md). The structural
+    // defence is that every unbounded payload goes through a response file;
+    // this catches the case where something new does not, and it catches it
+    // HERE — while writing build.ninja, before a single object is compiled —
+    // rather than as a spawn failure at the end of a long build that names
+    // neither the edge nor the reason.
+    if (auto over = check_inline_command_lengths(manifest))
+        return std::unexpected(BuildError{*over, ninja_path});
     auto goalArg = append_goal_phony(manifest, opts.ninjaTargets);
     write_file(ninja_path, manifest);
 

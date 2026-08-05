@@ -752,8 +752,42 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
         // PE link, MSVC-ABI Clang (native MinGW is handled by the target-keyed
         // branch above and has already returned): no rpath/loader/payload —
-        // MSVC STL/SDK come via the driver, nothing extra needed.
-        f.ld = std::format("{}{}", user_ldflags, link_extra);
+        // MSVC STL/SDK come via the driver.
+        //
+        // `-fuse-ld=lld` is the one thing that IS needed, and it removes the
+        // last object-count ceiling in the build.
+        //
+        // WHY IT SURFACED NOW. #344 gave every dependency's objects a
+        // per-package directory, because the previous layout let one cache
+        // entry hold two different ones. Necessary, and it made every object
+        // path longer — the same link edge went from 56 840 to 161 687 bytes
+        // on linux. mcpp-index's CI had been pinned to 2026.8.3.3, one release
+        // BEFORE that, so its windows leg had never linked with the longer
+        // paths. Raising that pin is what first reached link.exe's limit:
+        //
+        //     C:\…\Temp\response-4b66e9.txt : fatal error LNK1170: line in
+        //     command file contains 135135 or more characters
+        //
+        // WHY THE PREVIOUS FIX DID NOT COVER IT. 2026.8.5.3 made mcpp's own
+        // response file newline-separated. That was necessary and is not
+        // redundant — under the msvc dialect mcpp invokes link.exe directly,
+        // and that file is ours. But here clang is the driver: it reads our
+        // file and writes a SECOND one for the linker, on a single line. No
+        // amount of formatting on our side reaches a file clang generates.
+        //
+        // WHY THIS IS NOT A WORKAROUND. It does not raise a threshold; it
+        // removes the class. lld parses response files through LLVM's
+        // tokenizer, which has no per-line limit, so nothing here scales with
+        // the number of objects any more. Nor can the paths simply be made
+        // shorter: the per-package component is what #344 needs, and the rest
+        // is the source tree's own layout. And it removes an inconsistency
+        // rather than adding a special case — linux and macOS already link
+        // with lld (kLinkDriverFlags); windows was the only platform left on
+        // the system linker, and the only one with a per-line ceiling.
+        //
+        // Native cl.exe (isMsvcDialect, returned above) keeps link.exe: there
+        // the response file is ours, and 2026.8.5.3 already fixed it.
+        f.ld = std::format(" -fuse-ld=lld{}{}", user_ldflags, link_extra);
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         // macOS. The C++ runtime itself is decided by the contract table above
         // (dist::Format::MachO) and rides unit_ldflags; what is left here is
