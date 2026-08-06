@@ -118,7 +118,7 @@ jobs:
           # release assets were uploaded in a broken state (records present,
           # blobs missing → 404 on GET); re-uploaded clean. The stale-INDEX
           # half is handled by the marker-clear below.
-          XLINGS_VERSION: '2026.8.6.2'
+          XLINGS_VERSION: '2026.8.6.3'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -255,7 +255,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '2026.8.6.2'
+          XLINGS_VERSION: '2026.8.6.3'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \

@@ -123,7 +123,7 @@ jobs:
 
       - name: Bootstrap xlings + released mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.6.2
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.6.3
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
           xlings update
           xlings install mcpp -y -g
