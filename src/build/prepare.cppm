@@ -843,9 +843,6 @@ export struct BuildOverrides {
     bool        strict = false;      // --strict: schema warnings become errors
     std::string capabilities;        // --cap blas=openblas,lapack=mkl (provider pins)
     std::string cache_mode;          // --cache global|local|off ("" = unset)
-    // IDE configure 只需要准确的编译参数和预期 BMI 路径；实际 std BMI
-    // 由 ide prepare/build 物化，避免 CDB 发布等待一次编译。
-    bool materialize_std_modules = true;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────
@@ -4859,11 +4856,8 @@ prepare_build(bool print_fingerprint,
         // construction the fingerprint promised (stdFlagAndDialect above).
         const auto deploymentTarget = mcpp::platform::macos::deployment_target(
             m->buildConfig.macosDeploymentTarget);
-        auto sm = overrides.materialize_std_modules
-            ? mcpp::toolchain::ensure_built(
-                  *tc, m->package.standard, stdFlagAndDialect, deploymentTarget)
-            : mcpp::toolchain::describe_std_module(
-                  *tc, m->package.standard, stdFlagAndDialect, deploymentTarget);
+        auto sm = mcpp::toolchain::ensure_built(
+            *tc, m->package.standard, stdFlagAndDialect, deploymentTarget);
         if (!sm) return std::unexpected(sm.error().message);
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;

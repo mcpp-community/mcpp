@@ -17,6 +17,8 @@ EOF
 
 # 故意保留语法错误：configure 只能解析工程，不能要求普通 TU 编译成功。
 cat >"$PROJECT/src/main.cpp" <<'EOF'
+import std;
+
 int main( {
     return missing_symbol;
 }
@@ -59,6 +61,9 @@ published = events[1]
 assert published["phase"] == "configured"
 assert published["state"] == "configured"
 assert published["compileCommandCount"] >= 1
+std_module = published["stdModule"]
+assert std_module["state"] == "ready", std_module
+assert os.path.isfile(std_module["path"]), std_module
 
 snapshot_cdb = published["compileCommands"]
 compat_cdb = published["compatibilityCompileCommands"]
@@ -75,6 +80,21 @@ assert os.path.realpath(entry["directory"]) == os.path.realpath(project), (
 )
 assert entry["arguments"][0].endswith("clang++"), entry["arguments"][0]
 assert any(arg.startswith("-std=c++") for arg in entry["arguments"]), entry["arguments"]
+std_bmi = next(
+    arg.removeprefix("-fmodule-file=std=")
+    for arg in entry["arguments"]
+    if arg.startswith("-fmodule-file=std=")
+)
+std_compat_bmi = next(
+    arg.removeprefix("-fmodule-file=std.compat=")
+    for arg in entry["arguments"]
+    if arg.startswith("-fmodule-file=std.compat=")
+)
+assert os.path.realpath(std_bmi) == os.path.realpath(std_module["path"]), (
+    std_bmi, std_module
+)
+assert os.path.isfile(std_bmi), std_bmi
+assert os.path.isfile(std_compat_bmi), std_compat_bmi
 PY
 
 cat >>"$PROJECT/mcpp.toml" <<'EOF'

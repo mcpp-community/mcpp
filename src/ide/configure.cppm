@@ -6,11 +6,14 @@ export module mcpp.ide.configure;
 import std;
 import mcpp.build.compile_commands;
 import mcpp.build.flags;
+import mcpp.build.plan;
 import mcpp.build.prepare;
+import mcpp.build.stage;
 import mcpp.ide.model;
 import mcpp.libs.json;
 import mcpp.project;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.model;
 import mcpp.ui;
 
 namespace mcpp::ide {
@@ -81,6 +84,37 @@ export struct ConfigureResult {
     std::string stdModuleState;
 };
 
+export std::expected<void, std::string>
+stage_cached_module_prerequisites(const mcpp::build::BuildPlan& plan) {
+    const auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
+    const auto bmiDir = plan.outputDir / traits.bmiDir;
+
+    auto stage = [&](const std::filesystem::path& source)
+        -> std::expected<void, std::string> {
+        if (source.empty()) return {};
+        // Keep this destination spelling identical to ninja_backend's BMI
+        // output: the CDB is published only after every referenced prerequisite
+        // is present at the path clangd will open.
+        auto staged = mcpp::build::stage::stage_file(source, bmiDir / source.filename());
+        if (!staged) return std::unexpected(staged.error().message);
+        return {};
+    };
+
+    // CDB 引用构建目录中的标准库 BMI；configure 不运行 Ninja，因此
+    // 必须在发布前主动物化这两个前置产物。
+    if (auto result = stage(plan.stdBmiPath); !result) return result;
+    if (auto result = stage(plan.stdCompatBmiPath); !result) return result;
+
+    // 全局依赖缓存命中时只 stage BMI，不复制对象文件。clangd 只需要
+    // 模块语义产物，普通编译和链接仍由后续 build/test 负责。
+    for (const auto& unit : plan.compileUnits) {
+        if (!unit.servedFromCache || !unit.providesModule || unit.cachedBmi.empty())
+            continue;
+        if (auto result = stage(unit.cachedBmi); !result) return result;
+    }
+    return {};
+}
+
 export std::expected<ConfigureResult, std::string>
 configure_project(const ConfigureRequest& request) {
     auto start = request.start.empty() ? std::filesystem::current_path() : request.start;
@@ -98,7 +132,6 @@ configure_project(const ConfigureRequest& request) {
     if (request.selectors.target) overrides.target_triple = *request.selectors.target;
     overrides.features = join(request.selectors.features);
     overrides.capabilities = join(request.selectors.capabilities);
-    overrides.materialize_std_modules = false;
 
     // configure 的结构化 stdout 不能混入普通进度；mcpp 自身写入的项目文件
     // 仍保持原有 prepare_build 语义，但状态行转为诊断/事件。
@@ -107,6 +140,10 @@ configure_project(const ConfigureRequest& request) {
         /*print_fingerprint=*/false, request.selectors.includeDevDependencies, {},
         std::move(overrides));
     if (!context) return std::unexpected(context.error());
+    // A failed stage must leave the previous CDB untouched and must not emit a
+    // snapshot that clangd cannot load.
+    if (auto staged = stage_cached_module_prerequisites(context->plan); !staged)
+        return std::unexpected(staged.error());
 
     const auto configSelectors = configuration_selectors(request.selectors);
     auto resolvedSelectors = configSelectors;
@@ -136,15 +173,19 @@ configure_project(const ConfigureRequest& request) {
 
     const auto snapshotId = std::format("snapshot-fnv1a64:{}",
         mcpp::toolchain::hash_string(configId + "\x1f" + content));
+    const auto traits = mcpp::toolchain::bmi_traits(context->plan.toolchain);
+    const auto stagedStdModule = context->plan.stdBmiPath.empty()
+        ? std::filesystem::path{}
+        : context->plan.outputDir / traits.bmiDir / context->plan.stdBmiPath.filename();
     return ConfigureResult{
         .projectId = projectId, .configurationId = configId, .snapshotId = snapshotId,
         .projectRoot = context->projectRoot, .compileCommands = snapshotCdb,
         .compatibilityCompileCommands = compatibilityCdb, .toolchain = context->tc.label(),
         .toolchainFingerprint = toolchainFingerprint, .compileCommandCount = parsed.size(),
-        .stdModule = context->plan.stdBmiPath,
-        .stdModuleState = context->plan.stdBmiPath.empty()
+        .stdModule = stagedStdModule,
+        .stdModuleState = stagedStdModule.empty()
             ? "not-required"
-            : (std::filesystem::is_regular_file(context->plan.stdBmiPath) ? "ready" : "pending"),
+            : (std::filesystem::is_regular_file(stagedStdModule) ? "ready" : "pending"),
     };
 }
 
