@@ -141,6 +141,20 @@ would again let the index guard and the installed version drift apart.
 > §3, seen from the other side. Nothing about a release removes older versions,
 > and no reasoning should be built on the idea that it does.
 
+> **The same misdiagnosis, again (2026-08-06).** `ci-aarch64-fresh-install`
+> failed with `xlings: version '2026.8.5.3' not found for 'mcpp' — available:
+> 2026.8.6.1`, and the fix commit again claimed the index had dropped the
+> version. It had not: both `openxlings/xim-pkgindex` and `d2learn/xim-pkgindex`
+> list 63 mcpp versions including `2026.8.5.3`. Note what `available:` actually
+> enumerated — a single version, the one that job had just installed — which is
+> the shape of an *installed-versions* view, not an index listing. That step
+> resolves a `.xlings.json` **workspace** pin, and a workspace-scoped resolve is
+> the documented scope trap.
+>
+> The bump itself was fine (§4 endorses it, and it did unblock the job). The
+> lesson is narrower and keeps being relearned: **before concluding "the index
+> dropped it", read the index.** One `curl` of `pkgs/m/mcpp.lua` settles it.
+
 ## 6. Checklist
 
 ```
