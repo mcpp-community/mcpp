@@ -1151,6 +1151,100 @@ the other conditional dependency tables (§2.7.1). The **feature itself is
 registered on every platform** — only what it pulls in is conditional — so
 requesting it where no predicate matches is not an unknown-feature error.
 
+### 2.15 `[resources]` — Metadata and Assets Embedded in the Artifact (2026.8.7.1+)
+
+An exe icon and the version metadata Windows shows in a file's Properties dialog
+are a path in `mcpp.toml`, nothing more:
+
+```toml
+[resources]
+icon = "assets/app.ico"
+```
+
+That is the whole common case. `FILEVERSION`, `ProductName`, `FileDescription`,
+`CompanyName` and `LegalCopyright` all default from `[package]`, and mcpp
+generates the resource script for you.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `icon` | path | Embedded as the application icon (resource ordinal 1) |
+| `files` | list of paths | Your own `.rc` scripts, compiled and **tracked** as build inputs |
+| `extra-inputs` | list of paths | Inputs the `.rc` scanner could not see (see below) |
+| `version-info` | bool | `false` opts out of the generated version resource |
+| `[resources.version-info]` | table | `company`, `product`, `description`, `copyright`, `original-filename`, `internal-name` |
+
+**Only PE targets consume this.** On Linux and macOS the section is
+*inapplicable*: no work, no warning, byte-identical build. You do **not** need
+(and cannot use) a `cfg(windows)` predicate — write it once, unconditionally.
+
+**A declared file that does not exist fails the build.** A resource is a build
+input like a source file; mcpp will not quietly ship a binary without it. If you
+do not want an icon, delete the line.
+
+**Version fields.** `FILEVERSION` takes the four numeric segments of
+`[package].version`, each of which must fit in 16 bits; the string fields keep
+the version verbatim, so a form the numeric fields cannot hold (`1.0.0-rc1`)
+still shows up in the Properties dialog.
+
+#### Writing your own `.rc`
+
+```toml
+[resources]
+files = ["res/app.rc"]
+```
+
+With `files` set, mcpp stops generating a version resource — you own the
+resource ID space. Set `version-info = true` alongside it if you want both (and
+mind the collision: there can be only one `RT_VERSION` at ordinal 1).
+
+To start from the generated script instead of a blank file, copy it out of the
+build directory (`target/<triple>/<fp>/res/<target>.mcpp.rc`) and list it in
+`files`. The result is byte-identical, so moving from generated to hand-written
+never changes what ships.
+
+> **`VS_VERSION_INFO` needs `<windows.h>`.** In a hand-written script,
+> `VS_VERSION_INFO VERSIONINFO` without `#include <windows.h>` files the version
+> resource under a *string* name instead of ordinal 1. Every tool still reports
+> `Type: VERSIONINFO`, but `GetFileVersionInfo` looks up the ordinal, so
+> PowerShell's `FileVersionInfo` shows every field as empty. Either include
+> `<windows.h>` or write `1 VERSIONINFO`. mcpp warns when it sees this shape;
+> the script it generates uses the literal `1`.
+
+#### Tracked inputs
+
+mcpp reads the `.rc` for quoted `#include`s and for the files named by resource
+statements (`ICON`, `RCDATA`, `MANIFEST`, …), and makes them build inputs, so
+editing your icon relinks. Angled includes (`<windows.h>`) are the toolchain's
+and are covered by the toolchain fingerprint instead.
+
+A file name reached through a macro (`1 ICON APP_ICON`) is invisible to that
+scan. mcpp names what it could not resolve and asks you to declare it:
+
+```toml
+extra-inputs = ["assets/app.ico"]
+```
+
+#### Anything else: `role = "object"`
+
+For inputs that are not resource scripts — a blob embedded with `objcopy`, a
+generated `.def`, a pre-built object — a build program can declare a build-graph
+node whose outputs join the link:
+
+```cpp
+mcpp::action o;
+o.id = "blob"; o.role = "object";
+o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
+ .input("blob.bin")
+ .output("${mcpp.out_dir}/blob.o")
+ .target("myapp")        // omit for every image this package produces
+ .submit();
+```
+
+See [07 — build.mcpp](07-build-mcpp.md). Naming such a file in
+`[build].ldflags` also "works", but ldflags is a flat string in the link
+command: nothing tracks it, and editing the file gives you `ninja: no work to
+do`.
+
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 
 > **Closed syntax, open vocabulary**: whoever owns the parsing semantics defines the keys; whoever owns the domain knowledge defines the values.

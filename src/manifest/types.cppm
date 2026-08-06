@@ -216,7 +216,7 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
 // once-per-prepare program can never be. So instead of DOING the work, the
 // program DECLARES it, and it becomes an edge in the build graph.
 //
-// One primitive, three wirings. `role` is not three mechanisms — it is where
+// One primitive, four wirings. `role` is not four mechanisms — it is where
 // the same edge's outputs attach:
 //
 //   Source   — outputs join the compile set (protoc, a transpiler)
@@ -224,7 +224,18 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
 //              format or ABI check). Runs alongside compilation by default,
 //              because serialising every compile behind a linter is a cost
 //              nobody accepts and "the build still fails" is just as true.
+//   Object   — outputs join the LINK set (a resource compiler, objcopy
+//              embedding a blob, a generated .def, a pre-built .o)
 //   Artifact — inputs are link outputs (codesign, packaging, size budgets)
+//
+// `Object` completes the table (mcpp#365). The other three attach to the
+// compile inputs, to nothing, and to the link OUTPUTS — leaving the link
+// INPUTS, the one attachment point a build graph obviously has, inexpressible.
+// The consequence was not theoretical: a Windows resource could only reach the
+// linker by naming a pre-built `.res` in `[build].ldflags`, where it is a flat
+// string in the link command rather than a file in the graph — so editing the
+// icon produced "ninja: no work to do". A missing attachment point does not
+// stop people; it makes them route around the graph.
 //
 // INV-D, the constraint that makes this expressible at all: the declaration
 // must name its OUTPUT FILES, not merely promise some. mcpp fixes the source
@@ -232,12 +243,20 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
 // prepare, and all of them need to know which files exist. Content may arrive
 // later; names may not.
 struct BuildAction {
-    enum class Role { Source, Check, Artifact };
+    enum class Role { Source, Check, Object, Artifact };
 
     std::string                        id;        // diagnostics + edge naming
     Role                               role = Role::Source;
     std::vector<std::string>           inputs;    // absolute or package-relative
     std::vector<std::string>           outputs;   // ditto; declared, see INV-D
+    // Object only: which link units receive the outputs. Empty = every image
+    // (binary / shared library) of the declaring package.
+    //
+    // Artifact infers its target from `${mcpp.target_file:NAME}` appearing in
+    // its inputs; Object cannot, because it runs BEFORE the link and so has no
+    // link output to name. Naming the targets is the only honest option, and an
+    // unknown name is an error rather than a silently unattached edge.
+    std::vector<std::string>           targets;
     std::vector<std::string>           command;   // argv; NOT a shell string
     // Serialised module facts for a generated OUTPUT, when it is a module
     // interface. Same "declare instead of discover" trade `[modules].scan_overrides`
@@ -248,6 +267,66 @@ struct BuildAction {
     // Check only: make compilation wait for this to pass. Off by default.
     bool                               blocking = false;
     std::string                        description;
+};
+
+// `[resources]` — metadata and assets compiled INTO the produced artifact
+// (mcpp#365).
+//
+// SCOPE. Today only PE targets consume this: `icon` becomes RT_GROUP_ICON and
+// the version fields become an RT_VERSION resource. On ELF/Mach-O the whole
+// section is INAPPLICABLE — not degraded, not skipped-with-a-warning: there is
+// no consumer, the build is byte-identical, and nothing is said. That is why
+// the section is spelled `[resources]` and not `[windows]`, and why it does not
+// need (or accept) a `cfg(windows)` predicate: an icon is a cross-platform
+// CONCEPT — only the file format and the embedding mechanism are per-OS — so a
+// future macOS `.icns` / Linux `.desktop` consumer extends THIS section instead
+// of splitting the axis three ways. It also could not live in the conditional
+// channel: `[target.'cfg(...)'.build]` carries BuildInputs and nothing else.
+//
+// A DECLARED FILE THAT DOES NOT EXIST IS AN ERROR, deliberately, and this is a
+// documented deviation from what #365 asked for. Every other declared input in
+// mcpp behaves this way (`main = "..."` must match exactly one file,
+// scan_overrides globs must match ≥1, a missing nasm is fatal), and "missing →
+// silently skip" would institutionalise the very failure this feature exists to
+// fix: a release binary shipping with no icon and no version metadata, with
+// nothing in the build output saying so. Not wanting an icon is already
+// expressible — delete the line.
+struct ResourceVersionInfo {
+    std::string company;            // default: [package].authors[0]
+    std::string product;            // default: [package].name
+    std::string description;        // default: [package].description
+    std::string copyright;          // default: synthesised from authors/license
+    std::string originalFilename;   // default: the produced file name
+    std::string internalName;       // default: [package].name
+
+    bool empty() const {
+        return company.empty() && product.empty() && description.empty()
+            && copyright.empty() && originalFilename.empty() && internalName.empty();
+    }
+};
+
+struct Resources {
+    std::filesystem::path              icon;         // e.g. "assets/app.ico"
+    std::vector<std::filesystem::path> files;        // author-written .rc sources
+    // Escape hatch for the .rc input scanner: a file name reached through a
+    // macro (`1 ICON APP_ICON`) is invisible to it. mcpp names what it could not
+    // resolve and points here — same "declare when discovery is not enough"
+    // trade as [modules].scan_overrides.
+    std::vector<std::filesystem::path> extraInputs;
+    // Unset = the default rule: synthesise a version resource unless the author
+    // supplied their own .rc (in which case they own the resource ID space).
+    std::optional<bool>                versionInfo;
+    ResourceVersionInfo                info;
+
+    bool declared() const {
+        return !icon.empty() || !files.empty() || versionInfo.has_value()
+            || !info.empty() || !extraInputs.empty();
+    }
+    // The 3-row rule from the design doc, in one place.
+    bool synthesize_version_info() const {
+        if (versionInfo.has_value()) return *versionInfo;
+        return files.empty();
+    }
 };
 
 // `[build]` section — tunables for the build backend.
@@ -545,6 +624,7 @@ struct Manifest {
 
     Toolchain                   toolchain;     // optional; empty == fallback
     BuildConfig                 buildConfig;
+    Resources                   resources;          // [resources] (mcpp#365)
     RuntimeConfig               runtimeConfig;
     XlingsConfig                xlings;             // [xlings] build environment (L-1)
     std::vector<ConditionalConfig> conditionalConfigs;  // [target.'cfg(...)'.build], deferred

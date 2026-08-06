@@ -587,6 +587,7 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
         auto role = j.value("role", std::string{"source"});
         a.role = role == "check"    ? mcpp::manifest::BuildAction::Role::Check
                : role == "artifact" ? mcpp::manifest::BuildAction::Role::Artifact
+               : role == "object"   ? mcpp::manifest::BuildAction::Role::Object
                                     : mcpp::manifest::BuildAction::Role::Source;
         auto arr = [&](const char* k, std::vector<std::string>& dst) {
             if (auto it = j.find(k); it != j.end() && it->is_array())
@@ -598,6 +599,7 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
         arr("command", a.command);
         arr("provides", a.provides);
         arr("imports", a.imports);
+        arr("targets", a.targets);
         a.blocking    = j.value("blocking", false);
         a.description = j.value("description", std::string{});
         if (a.command.empty() || a.outputs.empty()) return std::nullopt;

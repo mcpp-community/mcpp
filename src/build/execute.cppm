@@ -323,7 +323,16 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     for (auto& [name, spec] : ctx.manifest.dependencies) {
         if (announced.contains(name)) continue;
         announced.insert(name);
-        std::string ver = spec.isPath() ? "(path)" : std::string("v") + spec.version;
+        // `spec.version` is the constraint the manifest WROTE. Announcing it
+        // printed "Compiling compat.imgui v^1.92.8" — a banner naming a version
+        // that does not exist (mcpp#363). prepare_build hands the resolution
+        // result over in ctx.resolvedVersions; fall back to the spec only for
+        // deps that never went through resolution (git, or an exact pin).
+        auto rit = ctx.resolvedVersions.find(name);
+        std::string ver = spec.isPath()
+            ? "(path)"
+            : std::string("v") + (rit != ctx.resolvedVersions.end() ? rit->second
+                                                                    : spec.version);
         auto it = cachedUnits.find(name);
         if (it == cachedUnits.end()) {
             mcpp::ui::status("Compiling", std::format("{} {}", name, ver));

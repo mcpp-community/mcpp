@@ -9,10 +9,14 @@
 # reported as "build.mcpp exited 1". Declared as a node it is incremental,
 # parallel and attributable to the edge that failed.
 #
-# All three wirings of the one primitive:
+# All four wirings of the one primitive:
 #   source   — outputs join the compile set, and are REGENERATED when an input
 #              changes (the property the eager path can never have)
 #   check    — outputs are a stamp; a failing check fails the build
+#   object   — outputs join the LINK set (mcpp#365). Without it the link inputs
+#              were the one attachment point a build graph obviously has and
+#              this table could not express, so people routed around the graph
+#              through `[build].ldflags` and lost incrementality.
 #   artifact — inputs are link outputs, so ninja orders it after the link with
 #              no phase machinery at all
 #
@@ -250,6 +254,104 @@ if "$MCPP" build > b3c.log 2>&1; then
 fi
 grep -q "no_such_target" b3c.log || {
     cat b3c.log; echo "FAIL: error does not name the unknown target"; exit 1; }
+
+# ── 3d. role = "object": outputs join the LINK set ─────────────────────────
+#
+# The fourth wiring (mcpp#365). Source attaches to the compile inputs, Artifact
+# to the link outputs, Check to nothing — which left the link INPUTS, an
+# obvious attachment point, inexpressible. The consequence was concrete: a
+# pre-built object could only reach the linker by being named in
+# `[build].ldflags`, where it is a flat string in the command rather than a file
+# in the graph, so editing it produced "ninja: no work to do".
+#
+# The object is produced by THE COMPILER MCPP ITSELF RESOLVED, read out of the
+# generated build.ninja. Reaching for the host's `cc` looks simpler and is not:
+# on a machine with xlings shims installed, a bare `cc` can resolve to a
+# dispatcher pointing at some other sandbox, and the object would either fail to
+# build or be built by a compiler whose ABI has nothing to do with the link.
+mkdir -p "$TMP/objrole/src"
+cd "$TMP/objrole"
+cat > mcpp.toml <<'EOF'
+[package]
+name    = "objrole"
+version = "0.1.0"
+EOF
+printf 'int main() { return 0; }\n' > src/main.cpp
+"$MCPP" build > o0.log 2>&1 || { cat o0.log; echo "FAIL: probe build failed"; exit 1; }
+OBJ_NINJA=$(find target -name build.ninja | head -1)
+OBJ_CXX=$(sed -n 's/^cxx *= *//p' "$OBJ_NINJA" | head -1)
+[ -n "$OBJ_CXX" ] || { cat "$OBJ_NINJA"; echo "FAIL: could not read the compiler out of build.ninja"; exit 1; }
+
+cat > src/main.cpp <<'EOF'
+#include <cstdio>
+extern "C" int blob_value();
+int main() { std::printf("BLOB=%d\n", blob_value()); return blob_value() == 7 ? 0 : 1; }
+EOF
+# extern "C" keeps the symbol unmangled without needing a C driver.
+printf 'extern "C" int blob_value() { return 7; }\n' > blob.cpp
+cat > mkobj.sh <<EOF
+#!/usr/bin/env bash
+# \$1 = source, \$2 = object to produce
+"$OBJ_CXX" -c "\$1" -o "\$2"
+EOF
+chmod +x mkobj.sh
+cat > build.mcpp <<'EOF'
+#include <cstdio>
+#include <string>
+import mcpp;
+int main() {
+    const std::string root = mcpp::manifest_dir();
+    const std::string out  = mcpp::out_dir();
+    mcpp::action o;
+    o.id = "blob"; o.role = "object";
+    o.arg((root + "/mkobj.sh").c_str())
+     .arg((root + "/blob.cpp").c_str())
+     .arg((out + "/blob.o").c_str())
+     .input((root + "/blob.cpp").c_str())
+     .output((out + "/blob.o").c_str())
+     .submit();
+}
+EOF
+"$MCPP" build > o1.log 2>&1 || { cat o1.log; echo "FAIL: role=object build failed"; exit 1; }
+"$MCPP" run > o2.log 2>&1 || { cat o2.log; echo "FAIL: the object was not linked in"; exit 1; }
+grep -q 'BLOB=7' o2.log || { cat o2.log; echo "FAIL: wrong value from the linked object"; exit 1; }
+
+# Tracked, unlike the ldflags workaround it replaces.
+sleep 1
+printf 'extern "C" int blob_value() { return 9; }\n' > blob.cpp
+"$MCPP" run > o3.log 2>&1 && { cat o3.log; echo "FAIL: expected the changed object to be relinked (main asserts ==7)"; exit 1; }
+grep -q 'BLOB=9' o3.log || { cat o3.log; echo "FAIL: editing the object's input did not reach the link"; exit 1; }
+printf 'extern "C" int blob_value() { return 7; }\n' > blob.cpp
+
+# An unknown target name is an error, not an edge that quietly attaches to
+# nothing. (Artifact infers its target from ${mcpp.target_file:}; an object runs
+# before the link and has to say the name.)
+cat > build.mcpp <<'EOF'
+#include <cstdio>
+#include <string>
+import mcpp;
+int main() {
+    const std::string root = mcpp::manifest_dir();
+    const std::string out  = mcpp::out_dir();
+    mcpp::action o;
+    o.id = "blob"; o.role = "object";
+    o.arg((root + "/mkobj.sh").c_str())
+     .arg((root + "/blob.cpp").c_str())
+     .arg((out + "/blob.o").c_str())
+     .input((root + "/blob.cpp").c_str())
+     .output((out + "/blob.o").c_str())
+     .target("no_such_target")
+     .submit();
+}
+EOF
+rm -rf target
+if "$MCPP" build > o4.log 2>&1; then
+    cat o4.log; echo "FAIL: role=object accepted an unknown target"; exit 1
+fi
+grep -q "no_such_target" o4.log || {
+    cat o4.log; echo "FAIL: error does not name the unknown target"; exit 1; }
+
+cd "$TMP/edge"
 
 # ── 4. a malformed action is refused, not skipped ──────────────────────────
 cat > build.mcpp <<'EOF'

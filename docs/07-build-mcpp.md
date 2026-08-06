@@ -170,7 +170,7 @@ int main() {
     const std::string out = std::string(mcpp::out_dir()) + "/foo.pb.cc";
     mcpp::action a;
     a.id = "protoc:foo";
-    a.role = "source";                       // "source" | "check" | "artifact"
+    a.role = "source";              // "source" | "check" | "object" | "artifact"
     a.arg(mcpp::dep_bin("protobuf", "protoc"))
      .arg("--cpp_out=...").arg("proto/foo.proto")
      .input("proto/foo.proto")
@@ -179,18 +179,32 @@ int main() {
 }
 ```
 
-Three roles, one primitive — `role` only decides where the edge's outputs
+Four roles, one primitive — `role` only decides where the edge's outputs
 attach:
 
 | `role` | Outputs | Ordering | Typical |
 |---|---|---|---|
 | `source` | join the compile set | the compile edge consumes them | protoc, a transpiler |
 | `check` | a stamp file | runs **alongside** compilation (set `blocking = true` to gate it) | clang-tidy, a format or ABI check |
+| `object` | join the **link** set | the link edge consumes them | a resource compiler, `objcopy` embedding a blob, a generated `.def`, a pre-built `.o` |
 | `artifact` | a new file | its *inputs* are link outputs, so it runs after the link | codesign, packaging, size budgets |
 
 No phase machinery is involved: ninja's own file dependencies do the
 sequencing, which is also why an `artifact` action cannot double-apply itself
 the way a naive "post-build hook" would.
+
+`object` (2026.8.7.1+) takes an optional `.target("name")`, repeatable; omit it
+and the outputs attach to every image (binary / shared library) the declaring
+package produces. It needs the name because, unlike `artifact`, it runs *before*
+the link and so has no `${mcpp.target_file:…}` to infer one from — an unknown
+name is an error rather than an edge that quietly attaches to nothing.
+
+> Naming a pre-built object in `[build].ldflags` also reaches the linker, and
+> should not be used for anything the build produces: ldflags is a flat string
+> in the link command, not a file in the graph, so nothing tracks it and editing
+> it gives you `ninja: no work to do`. For Windows resources specifically, use
+> [`[resources]`](05-mcpp-toml.md) —
+> `object` is the escape hatch for everything else.
 
 **You must name the output files.** mcpp fixes the source set, the fingerprint
 and the module graph during prepare, so an output whose *name* is unknown

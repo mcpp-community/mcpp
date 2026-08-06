@@ -21,9 +21,34 @@ struct McppField {
     std::string                 value;   // glob path (StringPath) or table body (TableBody)
 };
 McppField extract_mcpp_field(std::string_view luaContent);
-// Extract the list of available versions for `platform` (e.g. "linux", "macosx",
+// One entry of an xpkg .lua's `xpm.<platform>` table.
+//
+// `alias` marks `["25.0.4"] = { ref = "25.0.4.7.1" }` — a POINTER at another
+// entry, not a release of its own. mcpp had no notion of this (mcpp#363): every
+// quoted key counted as a version, so `jdk-temurin`'s candidate set was
+// {latest, 25.0.4, 25.0.4+7} where two of the three point at the third. That
+// produced a precedence TIE between an alias and its own target, and for
+// `jdk-corretto` (`["25.0.4"] = { ref = "25.0.4.7.1" }`) a range constraint
+// resolved to a five-segment key truncated to four — an address that does not
+// exist. Aliases stay exactly addressable; they are simply not candidates when
+// a RANGE is doing the choosing.
+struct XpkgVersionEntry {
+    std::string version;          // the literal key, as written
+    bool        alias = false;    // entry carries `ref = "..."`
+};
+
+// Extract the version entries for `platform` (e.g. "linux", "macosx",
 // "windows") from an xpkg .lua's xpm.<platform> = { ["X.Y.Z"] = {...}, ... }.
+// Only TOP-LEVEL keys of the platform table are returned: an entry's own body
+// is skipped, so a nested `["GLOBAL"] = "…"` mirror key inside a version's
+// `url` table can never be mistaken for a version.
 // Returns an empty vector if the platform table is missing or has no entries.
+std::vector<XpkgVersionEntry>
+list_xpkg_version_entries(std::string_view luaContent,
+                          const mcpp::platform::PlatformKey& platform);
+
+// Keys only, aliases included — the shape every caller that just wants to show
+// or existence-check the published versions wants.
 std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent,
                    const mcpp::platform::PlatformKey& platform);
@@ -876,16 +901,16 @@ xpkg_name_form_violation_from_lua(std::string_view luaContent)
                                     extract_xpkg_name(luaContent));
 }
 
-std::vector<std::string>
-list_xpkg_versions(std::string_view luaContent,
-                   const mcpp::platform::PlatformKey& platformAxis) {
+std::vector<XpkgVersionEntry>
+list_xpkg_version_entries(std::string_view luaContent,
+                          const mcpp::platform::PlatformKey& platformAxis) {
     const std::string_view platform = platformAxis.key();
     // Locate `xpm = { ... <platform> = { ["X.Y.Z"] = {...}, ... } ... }`.
     // We work on a sanitized copy so quoted version keys remain locatable
     // by their offsets in the original text.
     auto sanitized = strip_lua_comments_and_strings(luaContent);
     std::string_view text { sanitized };
-    std::vector<std::string> versions;
+    std::vector<XpkgVersionEntry> versions;
 
     auto find_word_at_lhs = [&](std::string_view name, std::size_t from)
         -> std::size_t
@@ -943,25 +968,84 @@ list_xpkg_versions(std::string_view luaContent,
     auto plat_end = find_table_end(plat_open);
     if (plat_end == std::string_view::npos) return versions;
 
-    // Inside platform table: scan for ["X.Y.Z"] = { ... }
+    // Does this entry body declare `ref = ...` at its own top level? Nested
+    // tables are skipped so a `url = { ref = ... }` (no such shape today, but
+    // the scanner should not depend on that) cannot make a real release look
+    // like a pointer.
+    auto entry_is_alias = [&](std::size_t open, std::size_t end) -> bool {
+        int depth = 0;
+        std::size_t p = open + 1;
+        while (p < end) {
+            const char c = text[p];
+            if (c == '{') { ++depth; ++p; continue; }
+            if (c == '}') { --depth; ++p; continue; }
+            if (depth == 0 && (c == 'r') &&
+                (p == open + 1 ||
+                 (!std::isalnum(static_cast<unsigned char>(text[p-1])) && text[p-1] != '_')) &&
+                text.compare(p, 3, "ref") == 0) {
+                std::size_t after = p + 3;
+                const bool word_end = (after >= end ||
+                    (!std::isalnum(static_cast<unsigned char>(text[after])) && text[after] != '_'));
+                std::size_t w = after;
+                while (w < end && (text[w] == ' ' || text[w] == '\t' ||
+                                   text[w] == '\n' || text[w] == '\r')) ++w;
+                if (word_end && w < end && text[w] == '=') return true;
+            }
+            ++p;
+        }
+        return false;
+    };
+
+    // Inside platform table: scan for ["X.Y.Z"] = { ... }, skipping each
+    // entry's own body so nested bracket keys are not read as versions.
     std::size_t q = plat_open + 1;
     while (q < plat_end) {
-        if (text[q] == '[') {
-            std::size_t r = q + 1;
-            while (r < plat_end && (text[r] == ' ' || text[r] == '\t')) ++r;
-            if (r < plat_end && (text[r] == '"' || text[r] == '\'')) {
-                const char quote = text[r];
-                ++r;
-                std::size_t key_start = r;
-                while (r < plat_end && text[r] != quote && text[r] != '\n') ++r;
-                if (r < plat_end && text[r] == quote) {
-                    versions.emplace_back(luaContent.substr(key_start, r - key_start));
-                }
+        if (text[q] != '[') { ++q; continue; }
+        std::size_t r = q + 1;
+        while (r < plat_end && (text[r] == ' ' || text[r] == '\t')) ++r;
+        if (r >= plat_end || (text[r] != '"' && text[r] != '\'')) { ++q; continue; }
+        const char quote = text[r];
+        ++r;
+        const std::size_t key_start = r;
+        while (r < plat_end && text[r] != quote && text[r] != '\n') ++r;
+        if (r >= plat_end || text[r] != quote) { ++q; continue; }
+        XpkgVersionEntry e;
+        e.version = std::string(luaContent.substr(key_start, r - key_start));
+
+        // Past the closing quote: `] = <value>`. Only a table value can be an
+        // alias, and only a table value has a body worth skipping.
+        std::size_t v = r + 1;
+        auto skip_blank = [&] {
+            while (v < plat_end && (text[v] == ' ' || text[v] == '\t' ||
+                                    text[v] == '\n' || text[v] == '\r')) ++v;
+        };
+        skip_blank();
+        if (v < plat_end && text[v] == ']') ++v;
+        skip_blank();
+        if (v < plat_end && text[v] == '=') ++v;
+        skip_blank();
+        if (v < plat_end && text[v] == '{') {
+            const auto entry_end = find_table_end(v);
+            if (entry_end != std::string_view::npos && entry_end <= plat_end) {
+                e.alias = entry_is_alias(v, entry_end);
+                versions.push_back(std::move(e));
+                q = entry_end + 1;
+                continue;
             }
         }
-        ++q;
+        versions.push_back(std::move(e));
+        q = r + 1;
     }
     return versions;
+}
+
+std::vector<std::string>
+list_xpkg_versions(std::string_view luaContent,
+                   const mcpp::platform::PlatformKey& platformAxis) {
+    std::vector<std::string> out;
+    for (auto& e : list_xpkg_version_entries(luaContent, platformAxis))
+        out.push_back(std::move(e.version));
+    return out;
 }
 
 // Parses the `{ { glob = "...", cflags/cxxflags/asmflags/defines = {...} },

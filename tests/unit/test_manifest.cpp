@@ -372,6 +372,62 @@ TEST(ListXpkgVersions, MissingXpmReturnsEmpty) {
     EXPECT_TRUE(mcpp::manifest::list_xpkg_versions(src, mcpp::platform::TargetPlatform::for_lint_of("linux")).empty());
 }
 
+// #363: `["25.0.4"] = { ref = "25.0.4.7.1" }` is a POINTER at another entry,
+// not a release. Shape copied from the real jdk-corretto / jdk-temurin
+// descriptors. Treating it as a version gave range resolution a candidate that
+// ties with (or truncates to something other than) its own target.
+TEST(ListXpkgVersions, AliasEntriesAreFlagged) {
+    constexpr auto src = R"(
+package = {
+    name = "jdk",
+    xpm = {
+        linux = {
+            ["latest"]     = { ref = "25.0.4.7.1" },
+            ["25.0.4"]     = { ref = "25.0.4.7.1" },
+            ["25.0.4.7.1"] = { url = "u", sha256 = "z" },
+        },
+    },
+}
+)";
+    auto e = mcpp::manifest::list_xpkg_version_entries(
+        src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+    ASSERT_EQ(e.size(), 3u);
+    EXPECT_EQ(e[0].version, "latest");      EXPECT_TRUE (e[0].alias);
+    EXPECT_EQ(e[1].version, "25.0.4");      EXPECT_TRUE (e[1].alias);
+    EXPECT_EQ(e[2].version, "25.0.4.7.1");  EXPECT_FALSE(e[2].alias);
+
+    // The keys-only view is unchanged for every existing caller.
+    auto keys = mcpp::manifest::list_xpkg_versions(
+        src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+    ASSERT_EQ(keys.size(), 3u);
+    EXPECT_EQ(keys[2], "25.0.4.7.1");
+}
+
+// The scanner used to walk the platform table character by character, so a
+// bracket key nested inside a version's own body (mirror tables write
+// `["GLOBAL"] = "https://..."`) counted as a published version.
+TEST(ListXpkgVersions, NestedBracketKeysAreNotVersions) {
+    constexpr auto src = R"(
+package = {
+    name = "foo",
+    xpm = {
+        linux = {
+            ["1.0.0"] = {
+                url = { ["GLOBAL"] = "u-global", ["CN"] = "u-cn" },
+                sha256 = "z",
+            },
+            ["1.1.0"] = { url = "u", sha256 = "z" },
+        },
+    },
+}
+)";
+    auto keys = mcpp::manifest::list_xpkg_versions(
+        src, mcpp::platform::TargetPlatform::for_lint_of("linux"));
+    ASSERT_EQ(keys.size(), 2u);
+    EXPECT_EQ(keys[0], "1.0.0");
+    EXPECT_EQ(keys[1], "1.1.0");
+}
+
 TEST(Manifest, BuildCflagsCxxflagsAndCStandard) {
     constexpr auto src = R"(
 [package]

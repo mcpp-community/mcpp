@@ -37,6 +37,7 @@ import mcpp.build.directives;   // directive table: mark / fold_private_tail
 import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
 import mcpp.build.dep_graph;    // queries over the resolved edge graph
 import mcpp.build.provisions;   // #359 build-time provisions: table + propagation
+import mcpp.build.resources;    // #365 Windows resources: synthesise / scan / find rc
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.lockfile;
@@ -739,6 +740,14 @@ export struct BuildContext {
         std::size_t units = 0;
     };
     std::vector<CachedDep>          cachedDeps;
+
+    // What the dependency walk actually RESOLVED, keyed by the root manifest's
+    // dependency map key. The "Compiling <dep> v<version>" banner used to read
+    // `manifest.dependencies[...].version` — the constraint as authored — so a
+    // caret dep announced itself as `v^1.92.8` (mcpp#363). The resolution result
+    // already existed inside prepare_build; the banner and mcpp.lock were simply
+    // reading the input instead of the output. Both now read this.
+    std::map<std::string, std::string> resolvedVersions;
 };
 
 // The ONE cache-mode resolver, for the same reason resolve_profile_name exists:
@@ -4950,6 +4959,54 @@ prepare_build(bool print_fingerprint,
                 "features are active)",
                 bad, known.empty() ? std::string("none") : known));
         }
+
+        // role = "object": the outputs are LINK inputs, so attach them to the
+        // link units that should receive them.
+        //
+        // The strings are pushed VERBATIM. ninja identifies a file by the string
+        // an edge declares, and the action edge declares whatever
+        // prepare_actions produced (an absolute path); handing the link edge a
+        // prettier relative spelling of the same bytes creates a second node and
+        // "missing and no known rule to make it" — the same trap
+        // ${mcpp.target_file:} documents just above.
+        std::set<std::string> unknownObjectTargets;
+        for (auto const& a : ctx.plan.actions) {
+            if (a.role != mcpp::manifest::BuildAction::Role::Object) continue;
+            for (auto const& o : a.outputs) {
+                bool attached = false;
+                for (auto& lu : ctx.plan.linkUnits) {
+                    const bool image = lu.kind == mcpp::build::LinkUnit::Binary
+                                    || lu.kind == mcpp::build::LinkUnit::SharedLibrary;
+                    const bool wanted = a.targets.empty()
+                        ? image
+                        : std::find(a.targets.begin(), a.targets.end(),
+                                    lu.targetName) != a.targets.end();
+                    if (!wanted) continue;
+                    lu.objects.emplace_back(o);
+                    attached = true;
+                }
+                if (!attached && !a.targets.empty())
+                    for (auto const& t : a.targets) {
+                        bool known = false;
+                        for (auto const& lu : ctx.plan.linkUnits)
+                            if (lu.targetName == t) known = true;
+                        if (!known) unknownObjectTargets.insert(t);
+                    }
+            }
+        }
+        if (!unknownObjectTargets.empty()) {
+            std::string bad, known;
+            for (auto const& n : unknownObjectTargets) bad += (bad.empty() ? "" : ", ") + n;
+            for (auto const& lu : ctx.plan.linkUnits)
+                known += (known.empty() ? "" : ", ") + lu.targetName;
+            return std::unexpected(std::format(
+                "build.mcpp action with role = \"object\" names unknown "
+                "target(s): {}\n"
+                "  targets in this build: [{}]\n"
+                "  (a target gated by required_features is absent unless those "
+                "features are active)",
+                bad, known.empty() ? std::string("none") : known));
+        }
     }
     ctx.plan.stdCompatBmiPath = stdCompatBmiPath;
     ctx.plan.stdCompatObjectPath = stdCompatObjectPath;
@@ -5028,6 +5085,251 @@ prepare_build(bool print_fingerprint,
                     "nasm` or your system package manager"));
             }
             ctx.plan.nasmPath = *nasmBin;
+        }
+    }
+
+    // ─── Windows resources: [resources] → a tracked link input (mcpp#365) ──
+    //
+    // Three rules decide whether anything happens here, in this order:
+    //   1. Only the ROOT package's [resources] is read. A dependency's version
+    //      resource would fight its consumer's for ordinal 1, and a dependency
+    //      that produces no PE image of its own has nothing to embed into.
+    //   2. On a non-PE target the section is INAPPLICABLE — no work, no
+    //      warning, byte-identical build. This is what makes `cfg(windows)`
+    //      unnecessary (and it could not be used anyway: the conditional
+    //      channel carries BuildInputs only).
+    //   3. A declared file that does not exist is a hard error. Every other
+    //      declared input in mcpp behaves this way, and "missing → skip" is how
+    //      a release binary ships with no icon and nothing says so.
+    if (m->resources.declared()) {
+        namespace rsrc = mcpp::build::resources;
+        const auto trip = mcpp::toolchain::triple::parse(tc->targetTriple)
+                              .value_or(mcpp::toolchain::triple::host_triple());
+        if (trip.is_pe()) {
+            const auto  dialectId = mcpp::toolchain::dialect_for(*tc).id;
+            const auto& R = m->resources;
+
+            auto resolve_declared = [&](const std::filesystem::path& p,
+                                        std::string_view key)
+                -> std::expected<std::filesystem::path, std::string>
+            {
+                // Lexical, not weakly_canonical: canonicalising resolves
+                // symlinks, and a symlinked source tree would then bake a
+                // different path into the generated script than the one the
+                // user wrote. (Same reason mcpp#344 made the cache anchor
+                // lexical.)
+                auto abs = (p.is_absolute() ? p : (*root / p)).lexically_normal();
+                std::error_code ec;
+                if (!std::filesystem::is_regular_file(abs, ec))
+                    return std::unexpected(std::format(
+                        "[resources] {} = \"{}\" does not exist (looked at {}).\n"
+                        "  A declared resource is a build input like any other "
+                        "source: mcpp will not quietly ship a binary without it. "
+                        "Remove the key if the resource is not wanted.",
+                        key, p.generic_string(), abs.generic_string()));
+                return abs;
+            };
+
+            std::filesystem::path iconAbs;
+            if (!R.icon.empty()) {
+                auto r = resolve_declared(R.icon, "icon");
+                if (!r) return std::unexpected(r.error());
+                iconAbs = *r;
+            }
+            std::vector<std::filesystem::path> extraInputs;
+            for (auto const& e : R.extraInputs) {
+                auto r = resolve_declared(e, "extra-inputs");
+                if (!r) return std::unexpected(r.error());
+                extraInputs.push_back(*r);
+            }
+
+            const bool msvcStyle = (dialectId == "msvc");
+            const std::string_view outExt = msvcStyle ? ".res" : ".o";
+            const auto resDir = ctx.plan.outputDir / "res";
+            std::error_code mkEc;
+            std::filesystem::create_directories(resDir, mkEc);
+
+            // Which link units embed resources: images, not archives. A `.res`
+            // inside a static library is dropped by every linker that reads one.
+            std::vector<std::size_t> peUnits;
+            for (std::size_t i = 0; i < ctx.plan.linkUnits.size(); ++i) {
+                auto k = ctx.plan.linkUnits[i].kind;
+                if (k == mcpp::build::LinkUnit::Binary ||
+                    k == mcpp::build::LinkUnit::SharedLibrary)
+                    peUnits.push_back(i);
+            }
+            // Nothing to embed into. Compiling the scripts anyway would leave
+            // orphan edges nothing depends on, and demanding a resource
+            // compiler for them would fail a build that has no use for one.
+            if (peUnits.empty()) {
+                mcpp::diag::warning("resources/no-image", std::format(
+                    "[resources] is declared but '{}' produces no executable or "
+                    "shared library for {} — nothing to embed the resources into",
+                    m->package.name, trip.str()));
+            } else {
+
+            // Two scripts with the same stem in different directories would
+            // otherwise write the same artifact — a silent "multiple rules
+            // generate" that ninja reports far from the cause.
+            std::set<std::string> usedStems;
+            auto add_unit = [&](const std::filesystem::path& src,
+                                std::string_view stem,
+                                std::vector<std::filesystem::path> inputs,
+                                std::size_t attachTo)
+                -> std::expected<void, std::string>
+            {
+                if (!usedStems.insert(std::string(stem)).second)
+                    return std::unexpected(std::format(
+                        "[resources] two resource scripts are named '{}.rc'; "
+                        "they would produce the same artifact. Rename one.", stem));
+                mcpp::build::ResourceUnit ru;
+                ru.source = src;
+                ru.output = std::filesystem::path("res") /
+                            (std::string(stem) + std::string(outExt));
+                ru.implicitInputs = std::move(inputs);
+                ru.packageName = m->package.name;
+                ctx.plan.resourceUnits.push_back(std::move(ru));
+                const auto& out = ctx.plan.resourceUnits.back().output;
+                if (attachTo == static_cast<std::size_t>(-1)) {
+                    for (auto i : peUnits) ctx.plan.linkUnits[i].objects.push_back(out);
+                } else {
+                    ctx.plan.linkUnits[attachTo].objects.push_back(out);
+                }
+                return {};
+            };
+
+            // Author-written scripts: compiled once, linked into every image.
+            for (auto const& f : R.files) {
+                auto r = resolve_declared(f, "files");
+                if (!r) return std::unexpected(r.error());
+                auto scan = rsrc::scan_rc(*r);
+                if (scan.versionInfoNamedByString) {
+                    // The mcpp#365 silent failure, caught on the way in. Only a
+                    // warning: the file may define the macro somewhere this
+                    // scanner cannot see.
+                    mcpp::diag::warning("resources/versioninfo", std::format(
+                        "{}: `{} VERSIONINFO` names the version resource '{}' "
+                        "instead of ordinal 1, so Windows will not find it "
+                        "(GetFileVersionInfo looks up MAKEINTRESOURCE(1) and "
+                        "every field comes back empty). VS_VERSION_INFO is a "
+                        "macro from <windows.h>; add `#include <windows.h>` to "
+                        "the script, or write `1 VERSIONINFO`.",
+                        r->filename().generic_string(), scan.versionInfoName,
+                        scan.versionInfoName));
+                }
+                for (auto const& g : scan.gaps) {
+                    mcpp::diag::degraded("resources/inputs",
+                        std::format("{}: `{}` names its file through a macro, so "
+                                    "mcpp cannot track it",
+                                    r->filename().generic_string(), g),
+                        "editing that file will not trigger a rebuild",
+                        "list it in [resources] extra-inputs = [...]");
+                }
+                auto inputs = std::move(scan.inputs);
+                inputs.insert(inputs.end(), extraInputs.begin(), extraInputs.end());
+                if (auto a = add_unit(*r, r->stem().string(), std::move(inputs),
+                                      static_cast<std::size_t>(-1)); !a)
+                    return std::unexpected(a.error());
+            }
+
+            // The synthesised script: per image, because OriginalFilename and
+            // the version block belong to a specific artifact.
+            if (!iconAbs.empty() || R.synthesize_version_info()) {
+                // A version key mcpp cannot order (an upstream build number)
+                // leaves FILEVERSION's four numeric fields at zero while the
+                // string fields keep the real text. Say so — the properties
+                // dialog will disagree with `[package].version` and nothing
+                // else would explain why.
+                if (R.synthesize_version_info() && !m->package.version.empty()
+                    && !mcpp::version_req::parse_version(m->package.version)) {
+                    mcpp::diag::degraded("resources/version",
+                        std::format("[package].version = \"{}\" has no numeric "
+                                    "form", m->package.version),
+                        "the embedded FILEVERSION / PRODUCTVERSION fields are "
+                        "0,0,0,0 (the string fields keep the real version)",
+                        "set [resources.version-info] explicitly, or use a "
+                        "dotted numeric version");
+                }
+                for (auto i : peUnits) {
+                    const auto& lu = ctx.plan.linkUnits[i];
+                    auto text = rsrc::synthesize_rc(
+                        m->package, R, lu.output.filename().string(), iconAbs);
+                    if (!text) return std::unexpected(text.error());
+                    // A stable path, so `cp` + `files = [...]` reproduces the
+                    // same resource byte for byte (the L0→L1 escape hatch).
+                    auto rcPath = resDir / (lu.targetName + ".mcpp.rc");
+                    // Write only on change: rewriting unconditionally would
+                    // relink on every build.
+                    std::string existing;
+                    if (std::ifstream in(rcPath, std::ios::binary); in)
+                        existing.assign(std::istreambuf_iterator<char>(in), {});
+                    if (existing != *text) {
+                        std::ofstream os(rcPath, std::ios::binary);
+                        if (!os) return std::unexpected(std::format(
+                            "cannot write generated resource script '{}'",
+                            rcPath.string()));
+                        os << *text;
+                    }
+                    std::vector<std::filesystem::path> inputs;
+                    if (!iconAbs.empty()) inputs.push_back(iconAbs);
+                    inputs.insert(inputs.end(), extraInputs.begin(), extraInputs.end());
+                    if (auto a = add_unit(rcPath, lu.targetName + ".mcpp",
+                                          std::move(inputs), i); !a)
+                        return std::unexpected(a.error());
+                }
+            }
+
+            if (!ctx.plan.resourceUnits.empty()) {
+                // Lazy + hard failure, exactly like nasm: a dropped resource
+                // surfaces as "where did my icon go", which is unattributable.
+                auto tool = rsrc::find_rc_tool(*tc, dialectId);
+                if (!tool) {
+                    return std::unexpected(std::format(
+                        "[resources] needs a Windows resource compiler for the "
+                        "{} toolchain targeting {}, and none was found next to "
+                        "{}.\n  Expected {} in the toolchain's own bin directory "
+                        "(mcpp does not search PATH for build tools).",
+                        dialectId, trip.str(), tc->binaryPath.string(),
+                        msvcStyle ? "rc.exe or llvm-rc"
+                                  : "<triple>-windres, windres or llvm-windres"));
+                }
+                ctx.plan.rcPath  = tool->path;
+                ctx.plan.rcStyle = tool->style;
+
+                // Include search: the project first, then whatever the
+                // toolchain puts on INCLUDE. llvm-rc preprocesses but does NOT
+                // read INCLUDE (rc.exe does), so the SDK dirs have to be spelled
+                // out for it — that is what makes `#include <windows.h>` work,
+                // and it is the supported way to get VS_VERSION_INFO defined.
+                // UTF-8 input, always. `[package]` metadata is user text and
+                // routinely non-ASCII; without this llvm-rc refuses the script
+                // outright ("Non-ASCII 8-bit codepoint can't be interpreted in
+                // the current codepage") rather than mangling it, so a project
+                // with a Chinese description could not build at all.
+                ctx.plan.rcFlags.push_back(msvcStyle ? "/C" : "--codepage=65001");
+                if (msvcStyle) ctx.plan.rcFlags.push_back("65001");
+
+                const std::string ip = msvcStyle ? "/I" : "-I";
+                ctx.plan.rcFlags.push_back(ip + root->string());
+                for (auto const& d : m->buildConfig.includeDirs) {
+                    auto abs = d.is_absolute() ? d : (*root / d);
+                    ctx.plan.rcFlags.push_back(ip + abs.string());
+                }
+                if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos) {
+                    for (auto const& ev : tc->envOverrides) {
+                        if (ev.key != "INCLUDE") continue;
+                        std::string_view rest = ev.value;
+                        while (!rest.empty()) {
+                            const auto sep = rest.find(';');
+                            auto dir = rest.substr(0, sep);
+                            if (!dir.empty()) ctx.plan.rcFlags.push_back(ip + std::string(dir));
+                            if (sep == std::string_view::npos) break;
+                            rest = rest.substr(sep + 1);
+                        }
+                    }
+                }
+            }
+            }   // peUnits non-empty
         }
     }
 
@@ -5346,9 +5648,31 @@ prepare_build(bool print_fingerprint,
 
     // Write/update mcpp.lock for any version-based deps that succeeded.
     // Path deps are intentionally NOT locked — their source is local filesystem.
+    //
+    // mcpp#363: the version entries come from `resolved` — what the walk
+    // actually picked — not from `m->dependencies`, which still holds the
+    // constraint the user wrote and only covers DIRECT deps. Reading the input
+    // instead of the output made the lock record `^1.92.8` (a range locks
+    // nothing) and omit the transitive graph entirely. Git entries deliberately
+    // stay on `m->dependencies`: their lock line is read back as a resolution
+    // anchor (#329), keyed by the root manifest's map key, and that contract is
+    // unchanged here.
     {
         mcpp::lockfile::Lockfile lock;
         lock.schemaVersion = 2;
+
+        // The lock key for a dep the ROOT declares is the map key it declared
+        // it under (`compat.imgui`, `gtest`) — that is the key #329's git anchor
+        // lookup uses, and changing it would silently unpin every branch dep.
+        // A dep reached only transitively has no such key, so it is written
+        // under its fully-qualified identity.
+        auto lock_name_for = [&](const ResolvedKey& k) -> std::string {
+            for (auto const& [n, s] : m->dependencies) {
+                const std::string sn = s.shortName.empty() ? n : s.shortName;
+                if (s.namespace_ == k.ns && sn == k.shortName) return n;
+            }
+            return mcpp::pm::compat::qualified_name(k.ns, k.shortName);
+        };
 
         // Lock custom index shas from manifest [indices] section.
         for (auto const& [idxName, spec] : m->indices) {
@@ -5360,45 +5684,59 @@ prepare_build(bool print_fingerprint,
             lock.indices.push_back(std::move(li));
         }
 
+        // Git deps: root-declared only, unchanged (see the note above).
         for (auto const& [name, spec] : m->dependencies) {
-            if (spec.isPath()) continue;
+            if (!spec.isGit()) continue;
             mcpp::lockfile::LockedPackage lp;
-            lp.name       = name;
-            if (spec.isGit()) {
-                auto gitIt = root_git_lock_identities.find(name);
-                lp.version = spec.gitRev;
-                if (gitIt == root_git_lock_identities.end()) {
-                    lp.source = std::format("git+{}#{}={}",
-                        spec.git, spec.gitRefKind, spec.gitRev);
-                    std::hash<std::string> hasher;
-                    lp.hash = std::format("fnv1a:{:016x}", hasher(lp.source));
-                } else {
-                    lp.source = gitIt->second.source;
-                    lp.hash = gitIt->second.hash;
-                }
-            } else {
-                lp.namespace_ = spec.namespace_.empty()
-                    ? std::string{}
-                    : spec.namespace_;
-                lp.version    = spec.version;
-                // Use the namespace and resolved version as the source identifier.
-                // For custom indices, include the index name for traceability.
-                auto sourceIndex = lp.namespace_.empty()
-                    ? std::string(mcpp::pm::kDefaultNamespace)
-                    : lp.namespace_;
-                lp.source     = std::format("index+{}@{}", sourceIndex, lp.version);
-                // Use a deterministic hash based on namespace + name + version.
-                // A future PR can replace this with a real content hash from the
-                // xpkg.lua's declared sha256 or from the install plan.
+            lp.name    = name;
+            lp.version = spec.gitRev;
+            auto gitIt = root_git_lock_identities.find(name);
+            if (gitIt == root_git_lock_identities.end()) {
+                lp.source = std::format("git+{}#{}={}",
+                    spec.git, spec.gitRefKind, spec.gitRev);
                 std::hash<std::string> hasher;
-                auto hashInput = std::format("{}:{}@{}", sourceIndex, name, lp.version);
-                lp.hash = std::format("fnv1a:{:016x}", hasher(hashInput));
+                lp.hash = std::format("fnv1a:{:016x}", hasher(lp.source));
+            } else {
+                lp.source = gitIt->second.source;
+                lp.hash = gitIt->second.hash;
             }
+            lock.packages.push_back(std::move(lp));
+        }
+
+        // Version deps: the whole resolved graph, at the versions actually
+        // chosen. `resolved` is an ordered map, so the file is deterministic.
+        for (auto const& [key, rec] : resolved) {
+            if (rec.source != "version") continue;   // path / git handled elsewhere
+            if (rec.version.empty()) continue;
+            mcpp::lockfile::LockedPackage lp;
+            lp.name       = lock_name_for(key);
+            lp.namespace_ = key.ns;
+            lp.version    = rec.version;
+            // Use the namespace and resolved version as the source identifier.
+            // For custom indices, include the index name for traceability.
+            auto sourceIndex = lp.namespace_.empty()
+                ? std::string(mcpp::pm::kDefaultNamespace)
+                : lp.namespace_;
+            lp.source     = std::format("index+{}@{}", sourceIndex, lp.version);
+            // Use a deterministic hash based on namespace + name + version.
+            // A future PR can replace this with a real content hash from the
+            // xpkg.lua's declared sha256 or from the install plan.
+            std::hash<std::string> hasher;
+            auto hashInput = std::format("{}:{}@{}", sourceIndex, lp.name, lp.version);
+            lp.hash = std::format("fnv1a:{:016x}", hasher(hashInput));
             lock.packages.push_back(std::move(lp));
         }
         if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = workRoot / "mcpp.lock";
             (void)mcpp::lockfile::write(lock, lockPath);
+        }
+
+        // Same data, second consumer: the "Compiling <dep> v<version>" banner.
+        // It reads this rather than re-deriving from the manifest, so the banner
+        // and the lock cannot disagree about what was built.
+        for (auto const& [key, rec] : resolved) {
+            if (rec.source != "version" || rec.version.empty()) continue;
+            ctx.resolvedVersions[lock_name_for(key)] = rec.version;
         }
     }
 

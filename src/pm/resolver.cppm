@@ -1,6 +1,16 @@
 // mcpp.pm.resolver — turn a SemVer constraint into a concrete version,
 // using the package's xpkg lua descriptor as the version inventory.
 //
+// WHAT THIS RETURNS IS AN INDEX KEY, NOT A RENDERING (mcpp#363)
+//
+// The resolved string flows into the xlings wire address, the store directory
+// and mcpp.lock, so it must be a key the index literally holds. This function
+// used to return `parsed[i].str()` — the parsed numbers re-rendered — which
+// cannot reproduce `1.92.8-docking` (prerelease), `b10069` (not a number) or
+// `25.0.4.7.1` (five segments, truncated to four). The literal was already in
+// hand and was thrown away. It now travels alongside the order, and
+// `version_req` is only ever asked to SORT.
+//
 // Part of the package-management subsystem refactor (PR-R4 in
 // `.agents/docs/2026-05-08-pm-subsystem-architecture.md`), originally
 // pulled out of `cli.cppm` verbatim.
@@ -117,6 +127,34 @@ resolve_semver(std::string_view ns, std::string_view shortName,
             refreshable ? " — run `mcpp index update` first" : ""));
     }
 
+    auto entries = mcpp::manifest::list_xpkg_version_entries(*luaContent, platform);
+
+    // An exact constraint naming a published key IS the answer, before any
+    // parsing. Two things depend on this short-circuit:
+    //
+    //   * `= pre-v0.0.5` has to work. It is the documented remedy the
+    //     unorderable-key error below hands out, and it reaches here through
+    //     try_merge_semver (which canonicalises a literal pin to `=<literal>`).
+    //     Routing it through the SemVer grammar would reject the very form the
+    //     error message just told the user to write.
+    //   * `= 1.0.0+a` has to select `1.0.0+a`. SemVer excludes build metadata
+    //     from precedence, so comparing by order alone makes it ambiguous with
+    //     `1.0.0+b` — while the two literals are not ambiguous at all.
+    //
+    // Aliases are eligible here: pinning `latest` or `25.0.4` exactly is a
+    // legitimate address, and only RANGE selection has to ignore pointers.
+    {
+        auto exact = constraint;
+        if (exact.starts_with('=')) exact.remove_prefix(1);
+        while (!exact.empty() && (exact.front() == ' ' || exact.front() == '\t'))
+            exact.remove_prefix(1);
+        while (!exact.empty() && (exact.back() == ' ' || exact.back() == '\t'))
+            exact.remove_suffix(1);
+        if (!exact.empty() && exact != "*")
+            for (auto const& e : entries)
+                if (e.version == exact) return e.version;
+    }
+
     auto req = vr::parse_req(constraint);
     if (!req) {
         return std::unexpected(std::format(
@@ -124,34 +162,90 @@ resolve_semver(std::string_view ns, std::string_view shortName,
             qname, constraint, req.error()));
     }
 
-    auto rawVersions = mcpp::manifest::list_xpkg_versions(*luaContent, platform);
-    if (rawVersions.empty()) {
+    if (entries.empty()) {
         return std::unexpected(std::format(
             "dependency '{}': index entry has no versions for platform '{}'",
             qname, platform.key()));
     }
 
+    // Split the published keys three ways. The LITERAL travels with the order:
+    // what this function returns has to be a key the index actually holds, and
+    // no rendering of the parsed numbers can promise that (mcpp#363).
+    std::vector<std::string> literals;       // candidate keys, index-aligned with `parsed`
     std::vector<vr::Version> parsed;
-    parsed.reserve(rawVersions.size());
-    for (auto& s : rawVersions) {
-        auto v = vr::parse_version(s);
-        if (!v) continue;     // ignore unparseable entries
-        parsed.push_back(*v);
-    }
-    if (parsed.empty()) {
-        return std::unexpected(std::format(
-            "dependency '{}': no valid versions in index", qname));
+    std::vector<std::string> unorderable;    // real entries whose key has no order
+    std::vector<std::string> aliases;        // `{ ref = "..." }` pointers
+    for (auto& e : entries) {
+        if (e.alias) { aliases.push_back(e.version); continue; }
+        auto v = vr::parse_version(e.version);
+        if (!v) { unorderable.push_back(e.version); continue; }
+        literals.push_back(e.version);
+        parsed.push_back(std::move(*v));
     }
 
-    auto idx = vr::choose(*req, parsed);
-    if (!idx) {
-        std::string avail;
-        for (auto& s : rawVersions) { if (!avail.empty()) avail += ", "; avail += s; }
+    auto join = [](const std::vector<std::string>& v) {
+        std::string s;
+        for (auto& x : v) { if (!s.empty()) s += ", "; s += x; }
+        return s;
+    };
+    // "Pin it exactly" is the whole remedy for an unorderable key, so the hint
+    // carries a line the user can paste.
+    auto pin_hint = [&](const std::vector<std::string>& keys) {
+        return std::format(
+            "\n  These keys are not ordered versions, so no range can address "
+            "them — pin one exactly:\n    {} = \"{}\"",
+            qname, keys.front());
+    };
+
+    if (parsed.empty()) {
+        // Blaming the index for having "no valid versions" is what this used to
+        // do, and it is false: `khistory` publishes exactly one release, keyed
+        // `pre-v0.0.5`, which is perfectly installable — just not by a range.
+        if (!unorderable.empty()) {
+            return std::unexpected(std::format(
+                "dependency '{}': constraint '{}' cannot be resolved. The index "
+                "publishes [{}]{}",
+                qname, constraint, join(unorderable), pin_hint(unorderable)));
+        }
+        if (!aliases.empty()) {
+            return std::unexpected(std::format(
+                "dependency '{}': the index entry for platform '{}' has only "
+                "alias versions [{}] and no release to point at",
+                qname, platform.key(), join(aliases)));
+        }
         return std::unexpected(std::format(
-            "dependency '{}': constraint '{}' matches none of: [{}]",
-            qname, constraint, avail));
+            "dependency '{}': index entry has no versions for platform '{}'",
+            qname, platform.key()));
     }
-    return parsed[*idx].str();
+
+    auto best = vr::choose_all(*req, parsed);
+    if (best.empty()) {
+        auto msg = std::format(
+            "dependency '{}': constraint '{}' matches none of: [{}]",
+            qname, constraint, join(literals));
+        if (!unorderable.empty())
+            msg += std::format("\n  (also published, but not orderable: [{}]){}",
+                               join(unorderable), pin_hint(unorderable));
+        return std::unexpected(msg);
+    }
+    if (best.size() > 1) {
+        // Distinct keys that compare equal — build metadata (`1.0.0+a` vs
+        // `1.0.0+b`), which SemVer excludes from precedence. They are two
+        // different tarballs with two different hashes, and nothing in the
+        // ordering can say which one was meant. Choosing "the larger literal"
+        // would be a guess wearing determinism's clothes, and picking by
+        // whichever line came first in the descriptor (the old behaviour) makes
+        // a cosmetic reordering of the index change what gets built.
+        std::vector<std::string> tied;
+        for (auto i : best) tied.push_back(literals[i]);
+        return std::unexpected(std::format(
+            "dependency '{}': constraint '{}' matches {} versions that compare "
+            "EQUAL: [{}]. They differ only in build metadata, which SemVer "
+            "excludes from precedence, so mcpp cannot tell which one you want "
+            "— pin one exactly:\n    {} = \"{}\"",
+            qname, constraint, tied.size(), join(tied), qname, tied.front()));
+    }
+    return literals[best.front()];
 }
 
 // ─── Namespace-aware try_merge_semver (canonical, 0.0.10+) ───────────

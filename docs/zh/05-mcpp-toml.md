@@ -884,6 +884,89 @@ mcpp 写的包仍然能加载,这个读取器认识的部分照常生效。在�
 —— 只有它拉进来的东西是条件性的 —— 因此在没有任何谓词匹配的平台上请求它,不是
 「未知 feature」错误。
 
+### 2.15 `[resources]` —— 编译进产物的元数据与资产(2026.8.7.1+)
+
+exe 图标,以及 Windows 在文件「属性」里显示的版本信息,就是 `mcpp.toml` 里的一个路径:
+
+```toml
+[resources]
+icon = "assets/app.ico"
+```
+
+常见场景到此为止。`FILEVERSION`、`ProductName`、`FileDescription`、`CompanyName`、
+`LegalCopyright` 全部从 `[package]` 取默认值,资源脚本由 mcpp 生成。
+
+| 键 | 类型 | 含义 |
+|---|---|---|
+| `icon` | 路径 | 作为应用图标嵌入(资源序号 1) |
+| `files` | 路径列表 | 你自己的 `.rc` 脚本,mcpp 编译并**跟踪**为构建输入 |
+| `extra-inputs` | 路径列表 | `.rc` 扫描器看不见的输入(见下) |
+| `version-info` | 布尔 | `false` 表示不要生成版本资源 |
+| `[resources.version-info]` | 表 | `company`、`product`、`description`、`copyright`、`original-filename`、`internal-name` |
+
+**只有 PE 目标消费这一节。** 在 Linux/macOS 上它**不适用**:不做事、不警告、
+构建逐字节不变。你**不需要**(也不能)加 `cfg(windows)` 谓词 —— 无条件写一次即可。
+
+**声明了却不存在的文件会让构建失败。** 资源和源码一样是构建输入;mcpp 不会
+悄悄产出一个缺了它的二进制。不想要图标,把那一行删掉。
+
+**版本字段。** `FILEVERSION` 取 `[package].version` 的四段数值,每段必须放得进
+16 位;字符串字段保留版本原文,所以数值字段装不下的形态(`1.0.0-rc1`)在属性
+对话框里照样看得到。
+
+#### 自写 `.rc`
+
+```toml
+[resources]
+files = ["res/app.rc"]
+```
+
+写了 `files`,mcpp 就不再生成版本资源 —— 资源 ID 空间归你。想两者都要就同时写
+`version-info = true`(注意冲突:序号 1 的 `RT_VERSION` 只能有一个)。
+
+想从生成的脚本起步而不是从空文件起步:把它从构建目录里拷出来
+(`target/<triple>/<fp>/res/<target>.mcpp.rc`)填进 `files`。结果**字节相同**,
+所以从「生成」走到「手写」不会改变产物。
+
+> **`VS_VERSION_INFO` 需要 `<windows.h>`。** 手写脚本里如果写
+> `VS_VERSION_INFO VERSIONINFO` 而没有 `#include <windows.h>`,版本资源会被存成
+> **字符串名**而不是序号 1。所有工具依然报告 `Type: VERSIONINFO`,但
+> `GetFileVersionInfo` 查的是序号,于是 PowerShell 的 `FileVersionInfo` 里每个字段
+> 都是空的。要么 include `<windows.h>`,要么直接写 `1 VERSIONINFO`。mcpp 见到这个
+> 形状会警告;它自己生成的脚本用的是字面 `1`。
+
+#### 被跟踪的输入
+
+mcpp 会读 `.rc`,把引号形式的 `#include` 和资源语句(`ICON`、`RCDATA`、
+`MANIFEST` …)点名的文件都变成构建输入,所以改图标会重链。尖括号形式
+(`<windows.h>`)属于工具链,由工具链 fingerprint 覆盖。
+
+通过宏间接引用的文件名(`1 ICON APP_ICON`)扫描看不见。mcpp 会**指名**它没能解析
+的东西,并要求你显式声明:
+
+```toml
+extra-inputs = ["assets/app.ico"]
+```
+
+#### 其余一切:`role = "object"`
+
+不是资源脚本的输入 —— `objcopy` 嵌入的 blob、生成的 `.def`、预编译对象 ——
+可以由构建程序声明一个产出接到链接的图节点:
+
+```cpp
+mcpp::action o;
+o.id = "blob"; o.role = "object";
+o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
+ .input("blob.bin")
+ .output("${mcpp.out_dir}/blob.o")
+ .target("myapp")        // 省略则接到本包产出的每个镜像
+ .submit();
+```
+
+见 [07 — build.mcpp](07-build-mcpp.md)。把这类文件写进 `[build].ldflags` 也「能用」,
+但 ldflags 是链接命令里的一串字符:没有任何东西跟踪它,改了它得到的是
+`ninja: no work to do`。
+
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 
 > **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。

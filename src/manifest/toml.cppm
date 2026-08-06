@@ -1056,6 +1056,65 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
     }
 
+    // [resources] — metadata and assets compiled into the artifact (mcpp#365).
+    // See types.cppm for why the section is not named after Windows and why it
+    // is not conditionable.
+    if (auto v = doc->get_string("resources.icon"))          m.resources.icon = *v;
+    if (auto v = doc->get_string_array("resources.files"))
+        for (auto& s : *v) m.resources.files.emplace_back(s);
+    if (auto v = doc->get_string_array("resources.extra-inputs"))
+        for (auto& s : *v) m.resources.extraInputs.emplace_back(s);
+    if (auto* res = doc->get_table("resources"); res && !res->empty()) {
+        // `version-info` is two things by design: `= false` opts out, and a
+        // `[resources.version-info]` table both opts IN and supplies overrides.
+        if (auto it = res->find("version-info"); it != res->end()) {
+            if (it->second.is_bool()) {
+                m.resources.versionInfo = it->second.as_bool();
+            } else if (it->second.is_table()) {
+                m.resources.versionInfo = true;
+                auto& vi = it->second.as_table();
+                auto str = [&](const char* k, std::string& dst) {
+                    if (auto f = vi.find(k); f != vi.end() && f->second.is_string())
+                        dst = f->second.as_string();
+                };
+                str("company",           m.resources.info.company);
+                str("product",           m.resources.info.product);
+                str("description",       m.resources.info.description);
+                str("copyright",         m.resources.info.copyright);
+                str("original-filename", m.resources.info.originalFilename);
+                str("internal-name",     m.resources.info.internalName);
+                static constexpr std::string_view kKnownVersionInfoKeys[] = {
+                    "company", "product", "description", "copyright",
+                    "original-filename", "internal-name",
+                };
+                for (auto& [k, _] : vi) {
+                    bool known = false;
+                    for (auto kk : kKnownVersionInfoKeys) if (k == kk) { known = true; break; }
+                    if (!known)
+                        m.schemaWarnings.push_back(std::format(
+                            "[resources.version-info] has unsupported key '{}' (ignored). "
+                            "Fields: company, product, description, copyright, "
+                            "original-filename, internal-name.", k));
+                }
+            } else {
+                return std::unexpected(error(origin,
+                    "[resources].version-info must be a boolean (`false` to opt out) "
+                    "or a [resources.version-info] table of overrides"));
+            }
+        }
+        static constexpr std::string_view kKnownResourceKeys[] = {
+            "icon", "files", "extra-inputs", "version-info",
+        };
+        for (auto& [k, _] : *res) {
+            bool known = false;
+            for (auto kk : kKnownResourceKeys) if (k == kk) { known = true; break; }
+            if (!known)
+                m.schemaWarnings.push_back(std::format(
+                    "[resources] has unsupported key '{}' (ignored). Keys: icon, "
+                    "files, extra-inputs, version-info.", k));
+        }
+    }
+
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {
         m.lib.path = *v;

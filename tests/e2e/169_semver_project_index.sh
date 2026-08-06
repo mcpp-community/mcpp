@@ -132,8 +132,13 @@ grep -q '\[package\."acme.gadget"\]' mcpp.lock || {
 }
 # Only 2.1.0 is seeded above, so a build that got here at all consumed the
 # resolved version rather than falling back to the constraint's lower bound.
-# (The lockfile records the CONSTRAINT, not the pin — pre-existing behaviour
-# shared with registry deps, not something this test is asserting about.)
+# The lock records that resolution (mcpp#363 — it used to record the constraint
+# `^2.0`, which locks nothing); 196 owns the full set of assertions about it.
+grep -q 'version = "2.1.0"' mcpp.lock || {
+    cat mcpp.lock
+    echo "FAIL: the lock must record the resolved version, not the constraint"
+    exit 1
+}
 
 "$MCPP" run > run.log 2>&1 || { cat run.log; echo "FAIL: run failed"; exit 1; }
 

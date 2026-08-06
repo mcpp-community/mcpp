@@ -431,6 +431,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append(std::format("nasmfmt   = {}\n", plan.nasmFormat));
         append(std::format("nasmflags ={}\n", flags.nasm));
     }
+    const bool need_rc_rule = !plan.resourceUnits.empty();
+    if (need_rc_rule) {
+        append(std::format("rc        = {}\n", escape_ninja_path(plan.rcPath)));
+        std::string rcf;
+        for (auto const& f : plan.rcFlags) { rcf += ' '; rcf += shell_quote_arg(f); }
+        append(std::format("rcflags   ={}\n", rcf));
+    }
     append(std::format("ldflags   ={}\n", flags.ld));
 
     // `ar` for cxx_archive.
@@ -742,6 +749,24 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("  deps = gcc\n");
         append("  depfile = $out.d\n");
         append("  description = NASM $out\n\n");
+    }
+
+    if (need_rc_rule) {
+        // Windows resources (mcpp#365). Two spellings, and the difference is
+        // structural rather than cosmetic: GNU ld cannot consume a `.res`, so
+        // windres is asked for a COFF object; link.exe and lld-link take a
+        // `.res` directly, and rc.exe/llvm-rc produce nothing else.
+        //
+        // No depfile in either branch — neither tool can emit one (checked
+        // against llvm-rc 22.1.8: /I, /D and no dependency output). What the
+        // script pulls in is declared instead, from a scan of the .rc plus
+        // [resources].extra-inputs, and lands on this edge as implicit inputs.
+        append("rule rc_object\n");
+        if (plan.rcStyle == "msvc")
+            append("  command = $rc /nologo $rcflags /fo $out $in\n");
+        else
+            append("  command = $rc -O coff $rcflags -o $out $in\n");
+        append("  description = RC $out\n\n");
     }
 
     // Link/archive/shared: driver-style (g++/clang++ are the linker) vs the
@@ -1232,6 +1257,22 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("\n");
     }
 
+    // Windows resource units (mcpp#365). One edge per .rc; the output is
+    // already in the consuming link unit's `objects`, so ninja sequences the
+    // compile before the link with no help from us — and, unlike the `.res`
+    // path smuggled through ldflags that this replaces, editing the icon or the
+    // script now actually reaches the linker.
+    for (auto const& ru : plan.resourceUnits) {
+        std::string implicit;
+        for (auto const& in : ru.implicitInputs)
+            implicit += " " + escape_ninja_path(in);
+        append(std::format("build {} : rc_object {}{}\n",
+            escape_ninja_path(ru.output),
+            escape_ninja_path(ru.source),
+            implicit.empty() ? std::string{} : " |" + implicit));
+    }
+    if (!plan.resourceUnits.empty()) append("\n");
+
     // Link units
     for (auto& lu : plan.linkUnits) {
         std::string ins;
@@ -1355,6 +1396,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append(std::format("  description = {} {}\n",
             a.role == mcpp::manifest::BuildAction::Role::Check    ? "CHECK"
           : a.role == mcpp::manifest::BuildAction::Role::Artifact ? "ARTIFACT"
+          : a.role == mcpp::manifest::BuildAction::Role::Object   ? "OBJECT"
                                                                   : "GENERATE",
             a.description.empty() ? a.id : a.description));
         append("\n");
@@ -1364,11 +1406,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append(std::format("build{} : mcpp_action_{}{}\n", outs, i, ins));
         append("\n");
         // A Source action's outputs are already reachable through the compile
-        // edges that consume them. Check and Artifact outputs are terminal, so
-        // without this nothing would ever ask for them — and under explicit
-        // ninja goals (#274) an edge reachable only via `default` is skipped,
-        // which is exactly how the soname aliases went missing in 0.0.104.
-        if (a.role != mcpp::manifest::BuildAction::Role::Source)
+        // edges that consume them, and an Object action's through the link edge
+        // that lists them. Check and Artifact outputs are terminal, so without
+        // this nothing would ever ask for them — and under explicit ninja goals
+        // (#274) an edge reachable only via `default` is skipped, which is
+        // exactly how the soname aliases went missing in 0.0.104.
+        if (a.role != mcpp::manifest::BuildAction::Role::Source &&
+            a.role != mcpp::manifest::BuildAction::Role::Object)
             for (auto const& o : a.outputs)
                 actionDefaults += " " + escape_ninja_path(o);
     }

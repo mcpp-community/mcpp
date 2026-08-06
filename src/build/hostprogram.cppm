@@ -61,7 +61,7 @@ inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-di
 // cannot be built. Content may arrive later; names may not.
 struct action {
     const char* id          = "";
-    const char* role        = "source";   // "source" | "check" | "artifact"
+    const char* role        = "source";   // "source" | "check" | "object" | "artifact"
     const char* description = "";
     bool        blocking    = false;      // check only: gate compilation on it
     action& input(const char* p)    { add(inputs_,  sizeof inputs_,  p); return *this; }
@@ -72,6 +72,11 @@ struct action {
     // what lets a generated .cppm exist as a graph node at all.
     action& provides(const char* n) { add(provides_, sizeof provides_, n); return *this; }
     action& imports(const char* n)  { add(imports_,  sizeof imports_,  n); return *this; }
+    // Object only: which link unit receives the outputs. Omit for "every image
+    // this package produces". An Artifact reads its target out of
+    // ${mcpp.target_file:NAME}; an Object runs before the link and has no such
+    // handle, so it has to say the name.
+    action& target(const char* n)   { add(targets_,  sizeof targets_,  n); return *this; }
     void submit() const {
         std::printf("mcpp:action={\"id\":");        esc(id);
         std::printf(",\"role\":");                  esc(role);
@@ -86,6 +91,7 @@ struct action {
         std::printf(",\"command\":[%s]",  command_);
         std::printf(",\"provides\":[%s]", provides_);
         std::printf(",\"imports\":[%s]",  imports_);
+        std::printf(",\"targets\":[%s]",  targets_);
         std::printf("}\n");
     }
 private:
@@ -94,7 +100,7 @@ private:
     // so no std::string. Sizes chosen for real generator invocations: a protoc
     // command line with many -I paths runs long.
     char inputs_[8192]{}, outputs_[8192]{}, command_[16384]{},
-         provides_[2048]{}, imports_[2048]{};
+         provides_[2048]{}, imports_[2048]{}, targets_[1024]{};
     mutable bool overflow_ = false;
     static void esc(const char* s) {
         std::putchar('"');

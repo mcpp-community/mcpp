@@ -69,6 +69,27 @@ struct LinkUnit {
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
 };
 
+// One Windows resource script compiled into one linkable resource artifact
+// (mcpp#365).
+//
+// Deliberately NOT a CompileUnit. A `.rc` has no module semantics, so putting it
+// there would drag it into the module graph, the topological order, the cache
+// key and compile_commands.json — where clangd would be handed a file no C++
+// frontend can parse. It is its own edge whose output joins `LinkUnit::objects`,
+// which is the one thing `[build].ldflags` could never do: ldflags is a flat
+// string in the link command, so a `.res` named there is invisible to ninja and
+// changing it produced "no work to do".
+struct ResourceUnit {
+    std::filesystem::path              source;    // absolute; synthesised ones live under outputDir
+    std::filesystem::path              output;    // relative to plan.outputDir
+    // The `.rc`'s own inputs: quoted #includes and the data files named by its
+    // resource statements. Neither windres nor llvm-rc can emit a depfile
+    // (verified against llvm-rc 22.1.8: /I, /D, no dependency output), so these
+    // come from a text scan plus `[resources].extra-inputs`.
+    std::vector<std::filesystem::path> implicitInputs;
+    std::string                        packageName;
+};
+
 struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      toolchain;
@@ -97,6 +118,16 @@ struct BuildPlan {
     // failure when unavailable; never a silent skip).
     std::filesystem::path           nasmPath;        // nasm binary (empty → no .asm units)
     std::string                     nasmFormat;      // -f value derived from the target triple
+    // Windows resources (mcpp#365). Resolved in prepare AFTER the plan exists
+    // and only when the plan actually has resource units — same lazy, hard-fail
+    // shape as nasm above: a resource that silently vanished would show up as
+    // "my icon is gone" with nothing to attribute it to.
+    std::vector<ResourceUnit>       resourceUnits;
+    std::filesystem::path           rcPath;          // windres / llvm-rc / rc.exe
+    // "gnu"  → windres, emits a COFF object (ld cannot consume a .res)
+    // "msvc" → rc.exe / llvm-rc, emits a .res (link.exe and lld-link take it)
+    std::string                     rcStyle;
+    std::vector<std::string>        rcFlags;         // -I / -D, target-shaped
 
     std::vector<CompileUnit>        compileUnits;     // topologically sorted
     std::vector<LinkUnit>           linkUnits;

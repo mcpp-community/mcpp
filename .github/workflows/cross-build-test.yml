@@ -296,6 +296,16 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/102_mingw_cross_wine.sh
 
+      # mcpp#365. This is the only job with a MinGW cross toolchain, so it is
+      # the only place the GNU half of resource compilation (windres -O coff,
+      # because GNU ld cannot consume a .res) can run at all — the Linux e2e
+      # shards skip it for want of the `mingw-cross` capability. Named
+      # explicitly for the same reason 102 is.
+      - name: "e2e: windows resources (windres / COFF)"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash tests/e2e/198_windows_resources_cross.sh
+
   # ── windows → linux ───────────────────────────────────────────────────────
   # The mirror of mingw-cross-wine. Two jobs because a Windows runner cannot
   # execute the ELF it produces; the artefact is handed to a Linux job and
