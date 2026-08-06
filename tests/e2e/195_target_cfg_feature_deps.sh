@@ -129,9 +129,18 @@ nomatchlib = { path = "../nomatch", features = ["codegen"] }
 EOF
 printf 'int main(){}\n' > nmapp/src/main.cpp
 cd nmapp
-"$MCPP" build --strict > b3.log 2>&1 || {
+# Asserted on the DIAGNOSTIC rather than with --strict: --strict promotes every
+# degradation, including unrelated ones (clang on Windows reports "this
+# toolchain and platform combination emits no GNU depfile"), so it would make
+# this test fail for a reason it is not about.
+"$MCPP" build > b3.log 2>&1 || {
     cat b3.log
     echo "FAIL: requesting a conditionally-populated feature failed where no predicate matches"
+    exit 1
+}
+grep -q "does not declare requested feature" b3.log && {
+    cat b3.log
+    echo "FAIL: the feature was reported as undeclared where no predicate matches"
     exit 1
 }
 
