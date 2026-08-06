@@ -43,6 +43,10 @@ std::string merge_compile_commands(
 // Write compile_commands.json to the project root.
 void write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 
+// Publish one configuration's CDB without merging historical build/test entries.
+std::expected<void, std::string>
+write_fresh_compile_commands(const std::filesystem::path& path, std::string_view content);
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
@@ -229,6 +233,64 @@ void write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
 
     std::ofstream os(path);
     os << content;
+}
+
+std::expected<void, std::string>
+write_fresh_compile_commands(const std::filesystem::path& path, std::string_view content) {
+    auto json = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false);
+    if (json.is_discarded() || !json.is_array())
+        return std::unexpected("compile commands must be a JSON array");
+
+    const auto normalized = json.dump(2) + "\n";
+    {
+        std::ifstream existing(path, std::ios::binary);
+        if (existing) {
+            std::string bytes(std::istreambuf_iterator<char>(existing), {});
+            if (bytes == normalized) return {};
+        }
+    }
+
+    std::error_code ec;
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "cannot create compile commands directory '{}': {}",
+                path.parent_path().string(), ec.message()));
+        }
+    }
+
+    // 先完成临时文件，再切换可见路径，避免 clangd 读到半截 JSON。
+    auto temp = path;
+    temp += std::format(".tmp-{}",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    {
+        std::ofstream output(temp, std::ios::binary | std::ios::trunc);
+        if (!output)
+            return std::unexpected(std::format("cannot write '{}'", temp.string()));
+        output << normalized;
+        output.flush();
+        if (!output) {
+            output.close();
+            std::filesystem::remove(temp, ec);
+            return std::unexpected(std::format("cannot flush '{}'", temp.string()));
+        }
+    }
+
+    std::filesystem::rename(temp, path, ec);
+    if (ec) {
+        // Windows rename 不覆盖已有文件；此分支保持结果完整，但替换窗口不是原子的。
+        std::error_code removeEc;
+        std::filesystem::remove(path, removeEc);
+        ec.clear();
+        std::filesystem::rename(temp, path, ec);
+    }
+    if (ec) {
+        std::filesystem::remove(temp, ec);
+        return std::unexpected(std::format("cannot publish '{}': {}",
+                                           path.string(), ec.message()));
+    }
+    return {};
 }
 
 }  // namespace mcpp::build

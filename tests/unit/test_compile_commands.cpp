@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.build.compile_commands;
+import mcpp.libs.json;
 
 using namespace mcpp::build;
 
@@ -91,4 +92,26 @@ TEST(CompileCommandsMerge, MalformedExistingFallsBackToFresh) {
 
     EXPECT_NE(merged.find("src/main.cpp"), std::string::npos) << merged;
     EXPECT_NE(merged.find("-O2"), std::string::npos) << merged;
+}
+
+TEST(CompileCommandsFresh, DoesNotMergeHistoricalEntries) {
+    // IDE CDB 必须只描述当前 configuration，不能继承上一轮 test/build 的文件。
+    const auto root = std::filesystem::temp_directory_path()
+                    / std::format("mcpp_cdb_fresh_{}",
+                        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(root);
+    const auto path = root / "compile_commands.json";
+    std::ofstream(path) << cdb({entry("/p/tests/old.cpp", "-OLD")});
+
+    const auto fresh = cdb({entry("/p/src/main.cpp", "-FRESH")});
+    auto result = write_fresh_compile_commands(path, fresh);
+    ASSERT_TRUE(result.has_value());
+    std::ifstream input(path);
+    auto json = nlohmann::json::parse(input);
+    ASSERT_EQ(json.size(), 1u);
+    EXPECT_EQ(json[0]["file"], "/p/src/main.cpp");
+    EXPECT_EQ(json, nlohmann::json::parse(fresh));
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
 }
