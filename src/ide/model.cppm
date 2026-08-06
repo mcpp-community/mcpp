@@ -4,6 +4,25 @@ import std;
 
 export namespace mcpp::ide {
 
+enum class IdePhase {
+    Declared,
+    Configured,
+    Ready,
+    Stale,
+    Unavailable,
+};
+
+std::string_view wire_name(IdePhase phase) {
+    switch (phase) {
+    case IdePhase::Declared: return "declared";
+    case IdePhase::Configured: return "configured";
+    case IdePhase::Ready: return "ready";
+    case IdePhase::Stale: return "stale";
+    case IdePhase::Unavailable: return "unavailable";
+    }
+    return {};
+}
+
 enum class SnapshotState {
     Partial,
     Stale,
@@ -74,6 +93,52 @@ struct Selectors {
     std::vector<std::string> capabilities;
     bool includeDevDependencies = false;
 };
+
+// IDE 配置标识只包含用户选择和有效工具链，不包含时间戳或构建结果。
+struct ConfigurationSelectors {
+    std::optional<std::string> package;
+    bool workspace = false;
+    std::string profile;
+    std::string target;
+    std::vector<std::string> features;
+    std::vector<std::string> capabilities;
+    bool includeDevDependencies = false;
+};
+
+std::string configuration_id(const std::filesystem::path& workspaceRoot,
+                             ConfigurationSelectors selectors,
+                             std::string_view toolchainFingerprint) {
+    auto normalize = [](std::vector<std::string>& values) {
+        std::ranges::sort(values);
+        values.erase(std::unique(values.begin(), values.end()), values.end());
+    };
+    normalize(selectors.features);
+    normalize(selectors.capabilities);
+
+    std::string canonical;
+    auto append = [&](std::string_view key, std::string_view value) {
+        canonical += key;
+        canonical.push_back('=');
+        canonical += value;
+        canonical.push_back('\x1f');
+    };
+    append("root", workspaceRoot.lexically_normal().generic_string());
+    append("package", selectors.package.value_or(""));
+    append("workspace", selectors.workspace ? "1" : "0");
+    append("profile", selectors.profile);
+    append("target", selectors.target);
+    for (const auto& feature : selectors.features) append("feature", feature);
+    for (const auto& capability : selectors.capabilities) append("capability", capability);
+    append("dev", selectors.includeDevDependencies ? "1" : "0");
+    append("toolchain", toolchainFingerprint);
+
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const unsigned char byte : canonical) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return std::format("config-fnv1a64:{:016x}", hash);
+}
 
 struct InspectRequest {
     std::filesystem::path start;
