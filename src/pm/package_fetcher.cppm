@@ -1173,10 +1173,22 @@ Fetcher::install_path(std::string_view ns, std::string_view shortName,
         if (auto p = try_dir(dirName)) return *p;
     }
 
-    // Last-resort fallback scan (COMPAT, remove in 1.0.0): walk xpkgs/ for
-    // any directory ending with -x-<qname> or -x-<shortName>.
+    // Last-resort fallback scan (COMPAT, remove in 1.0.0): walk xpkgs/ for a
+    // directory holding this package under an older layout.
+    //
+    // The bare `-x-<shortName>` arm is bound to the namespaces the caller
+    // actually asked for. Unbound, it returned ANY namespace's directory with
+    // a matching short name — `ocornut:imgui` resolving to `compat-x-imgui` —
+    // and install_path's contract is "the verdir for THIS package", so the
+    // install was skipped and another package's tree read in its place. See
+    // the header of mcpp.fallback.legacy_dirs for why version alignment is
+    // what made it reachable.
     auto qname = mcpp::pm::compat::qualified_name(ns, shortName);
-    if (auto legacy = mcpp::fallback::scan_legacy_install_dirs(base, qname, shortName)) {
+    std::vector<std::string> acceptedPrefixes;
+    if (!ns.empty()) acceptedPrefixes.emplace_back(ns);
+    if (!cfg_.defaultIndex.empty()) acceptedPrefixes.emplace_back(cfg_.defaultIndex);
+    if (auto legacy = mcpp::fallback::scan_legacy_install_dirs(
+            base, qname, shortName, acceptedPrefixes)) {
         if (auto p = try_dir(*legacy)) return *p;
     }
     return std::nullopt;

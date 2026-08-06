@@ -2602,12 +2602,20 @@ prepare_build(bool print_fingerprint,
                 matches = mcpp::modgraph::expand_glob(verRoot, pat);
                 if (!matches.empty()) break;
             }
+            // Name the directory actually searched. `<verdir>` was a literal
+            // placeholder, so the message could not distinguish "the package
+            // is Form B and you forgot the mcpp field" from "the verdir mcpp
+            // resolved is not this package's at all" — the second is what a
+            // cross-namespace install_path hit produces, and it sent this
+            // investigation down the wrong path for a while.
             if (matches.empty()) return std::unexpected(std::format(
                 "dependency '{}': index entry has no `mcpp = ...` field, "
-                "and no mcpp.toml was found at <verdir>/mcpp.toml or "
-                "<verdir>/*/mcpp.toml — add an explicit `mcpp = \"<path>\"` "
-                "or `mcpp = {{ ... }}` block to the .lua descriptor.",
-                depName));
+                "and no mcpp.toml was found at '{}/mcpp.toml' or "
+                "'{}/*/mcpp.toml' — add an explicit `mcpp = \"<path>\"` "
+                "or `mcpp = {{ ... }}` block to the .lua descriptor. "
+                "(If that directory belongs to a DIFFERENT package, the "
+                "install step resolved the wrong verdir.)",
+                depName, verRoot.string(), verRoot.string()));
             if (matches.size() > 1) return std::unexpected(std::format(
                 "dependency '{}': default mcpp.toml lookup matched {} "
                 "files; pin one with explicit `mcpp = \"<path>\"`.",
