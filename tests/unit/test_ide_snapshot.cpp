@@ -3,6 +3,8 @@
 import std;
 import mcpp.ide.model;
 import mcpp.ide.inspect;
+import mcpp.ide.snapshot;
+import mcpp.libs.json;
 import mcpp.manifest;
 
 namespace {
@@ -70,6 +72,36 @@ std::optional<Inventory> inventory(const std::filesystem::path& root) {
 std::string package_manifest(std::string_view name = "app",
                              std::string_view version = "1.2.3") {
     return std::format("[package]\nname=\"{}\"\nversion=\"{}\"\n", name, version);
+}
+
+mcpp::ide::WorkspaceInspection fixture_inspection() {
+    using namespace mcpp::ide;
+    WorkspaceInspection snapshot;
+    snapshot.state = SnapshotState::Partial;
+    snapshot.request.start = "/workspace/app";
+    snapshot.workspaceRoot = "/workspace/app";
+    snapshot.workspaceManifest = "/workspace/app/mcpp.toml";
+    snapshot.members.push_back(WorkspaceMember{
+        .name = "app",
+        .version = "1.0.0",
+        .workspacePath = ".",
+        .root = "/workspace/app",
+        .manifest = "/workspace/app/mcpp.toml",
+        .targets = {DeclaredTarget{
+            .name = "app", .kind = "binary", .main = "src/main.cpp"}},
+    });
+    snapshot.selectedMembers = {"app"};
+    snapshot.compileCommands.push_back({
+        .member = "app",
+        .path = "/workspace/app/compile_commands.json",
+        .state = ArtifactState::Missing,
+    });
+    snapshot.diagnostics.push_back({
+        .code = "MCPP_IDE_ARTIFACTS_MISSING",
+        .severity = Severity::Warning,
+        .message = "Compile commands are unavailable for one or more selected members.",
+    });
+    return snapshot;
 }
 
 } // namespace
@@ -342,4 +374,76 @@ TEST(IdeSnapshotInspect, ReadOnlyInventory) {
     ASSERT_TRUE(after.has_value());
     EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Partial);
     EXPECT_EQ(*before, *after);
+}
+
+TEST(IdeSnapshotSerialize, EmitsCompleteSchemaOneDocument) {
+    auto inspection = fixture_inspection();
+    inspection.request.selectors = {
+        .package = "app",
+        .workspace = true,
+        .profile = "debug",
+        .target = "aarch64-apple-darwin",
+        .features = {"tls", "metrics"},
+        .capabilities = {"ssl=openssl", "zlib=zlib"},
+        .includeDevDependencies = true,
+    };
+    inspection.diagnostics.push_back({
+        .code = "MCPP_IDE_MANIFEST_INVALID",
+        .severity = mcpp::ide::Severity::Error,
+        .message = "expected value",
+        .path = "/workspace/app/mcpp.toml",
+        .range = mcpp::ide::Range{{4, 9}, {4, 9}},
+    });
+
+    const auto text = mcpp::ide::snapshot_json(inspection);
+    auto json = nlohmann::json::parse(text);
+    EXPECT_EQ(json["schemaVersion"], 1);
+    EXPECT_EQ(json["kind"], "mcpp.ide.snapshot");
+    EXPECT_EQ(json["state"], "partial");
+    EXPECT_EQ(json["mcpp"]["version"], "2026.8.5.2");
+    EXPECT_EQ(json["mcpp"]["protocol"], nlohmann::json({{"min", 1}, {"max", 1}}));
+    EXPECT_EQ(json["mcpp"]["capabilities"], nlohmann::json({
+        "workspace-inspection", "manifest-diagnostics", "compile-commands-location"}));
+    EXPECT_EQ(json["request"]["root"], "/workspace/app");
+    EXPECT_EQ(json["request"]["mode"], "read-only");
+    EXPECT_EQ(json["request"]["selectors"]["package"], "app");
+    EXPECT_TRUE(json["request"]["selectors"]["workspace"]);
+    EXPECT_EQ(json["request"]["selectors"]["profile"], "debug");
+    EXPECT_EQ(json["request"]["selectors"]["target"], "aarch64-apple-darwin");
+    EXPECT_EQ(json["request"]["selectors"]["features"],
+              nlohmann::json({"tls", "metrics"}));
+    EXPECT_EQ(json["request"]["selectors"]["capabilities"],
+              nlohmann::json({"ssl=openssl", "zlib=zlib"}));
+    EXPECT_TRUE(json["request"]["selectors"]["includeDevDependencies"]);
+    EXPECT_EQ(json["workspace"]["members"][0]["targets"][0]["kind"], "binary");
+    EXPECT_EQ(json["workspace"]["selectedMembers"], nlohmann::json({"app"}));
+    EXPECT_EQ(json["artifacts"]["state"], "partial");
+    EXPECT_EQ(json["artifacts"]["compileCommands"][0]["state"], "missing");
+    EXPECT_EQ(json["diagnostics"][1]["source"], "mcpp");
+    EXPECT_EQ(json["diagnostics"][1]["range"]["start"]["line"], 4);
+    EXPECT_EQ(json["diagnostics"][1]["range"]["start"]["column"], 9);
+}
+
+TEST(IdeSnapshotSerialize, IsDeterministicAndContentAddressed) {
+    auto inspection = fixture_inspection();
+    const auto first = mcpp::ide::snapshot_json(inspection);
+    const auto second = mcpp::ide::snapshot_json(inspection);
+    EXPECT_EQ(first, second);
+    auto firstJson = nlohmann::json::parse(first);
+    EXPECT_TRUE(firstJson["snapshotId"].get<std::string>().starts_with("fnv1a64:"));
+
+    inspection.members[0].version = "1.0.1";
+    auto changed = nlohmann::json::parse(mcpp::ide::snapshot_json(inspection));
+    EXPECT_NE(firstJson["snapshotId"], changed["snapshotId"]);
+}
+
+TEST(IdeSnapshotSerialize, MatchesSchemaOneFixture) {
+    const auto actualText = mcpp::ide::snapshot_json(fixture_inspection());
+    auto actual = nlohmann::json::parse(actualText);
+    std::ifstream input(std::filesystem::current_path()
+                        / "tests/fixtures/ide/snapshot-v1.json");
+    ASSERT_TRUE(input.good());
+    auto expected = nlohmann::json::parse(input);
+    expected["snapshotId"] = actual["snapshotId"];
+    EXPECT_EQ(actual, expected);
 }
