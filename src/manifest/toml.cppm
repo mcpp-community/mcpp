@@ -537,11 +537,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // namespaces (so existing fetcher / lockfile lookups by composite name
     // keep working) and the bare `<name>` for the default namespace (so the
     // common case stays unchanged).
-    // MUST list every key `fill_inline_spec` below reads. The two are one
-    // decision in two places: this predicate also distinguishes an inline dep
-    // spec from a NESTED namespace table, so a key missing here does not read
-    // as "unknown option" — the table is taken for a namespace and the user is
-    // told their value "must be a string, inline dep table, or nested table".
+    // MUST list every key `fill_inline_spec` below reads.
     // `Manifest.EveryDependencySpecKeyIsAccepted` holds the two in sync.
     auto is_dep_spec_key = [](std::string_view k) {
         return k == "path"   || k == "version" || k == "git"
@@ -551,12 +547,30 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             || k == "backend"  || k == "tools"
             || k == "host-module" || k == "reexport";
     };
-    auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
+    // What makes a table an inline dep spec is that it names a SOURCE. This
+    // used to be "every key is known", which quietly coupled two unrelated
+    // things: the discriminator (spec vs nested namespace table) and the
+    // vocabulary (which keys mean something).
+    //
+    // The coupling is a compatibility hazard, not a style problem. A manifest
+    // using a key introduced after the reader was built did not get "unknown
+    // option" — the table failed the discriminator, was taken for a NAMESPACE,
+    // and the user was told their `reexport = true` "must be a string, inline
+    // dep table, or nested table". Worse, a published package cannot adopt a
+    // new key at all, because every older client fails to load it outright
+    // rather than ignoring what it does not understand. That is the same
+    // property #349 established for the index floor: data must not be able to
+    // decide whether the program works.
+    //
+    // An identity key is an unambiguous discriminator: a nested namespace
+    // table's keys are PACKAGE names, and no package is named `version` /
+    // `path` / `git` / `workspace`.
+    auto looks_like_inline_dep_spec = [](const t::Table& sub) {
         if (sub.empty()) return false;
-        for (auto& [sk, sv] : sub) {
-            if (!is_dep_spec_key(sk)) return false;
-        }
-        return true;
+        for (auto& [sk, sv] : sub)
+            if (sk == "path" || sk == "version" || sk == "git" || sk == "workspace")
+                return true;
+        return false;
     };
 
     auto fill_inline_spec = [&](DependencySpec& spec,
@@ -564,6 +578,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                 std::string_view fqName,
                                 const t::Table& sub) -> std::expected<void, ManifestError>
     {
+        // Now that the discriminator no longer doubles as the vocabulary, an
+        // unrecognized key can be REPORTED — as a degradation, so `--strict`
+        // still refuses it, while an ordinary build of a package written for a
+        // newer mcpp proceeds with the part this one understands. Same
+        // discipline as the xpkg reader's `xpkgUnknownKeys`: record rather
+        // than swallow, and never fail the whole load over it.
+        for (auto& [sk, sv] : sub) {
+            if (is_dep_spec_key(sk)) continue;
+            m.schemaWarnings.push_back(std::format(
+                "[{}.\"{}\"] has unrecognized key '{}' (ignored). It may be a "
+                "typo, or a field a newer mcpp understands.", section, fqName, sk));
+        }
         if (auto it = sub.find("path");    it != sub.end() && it->second.is_string()) spec.path    = it->second.as_string();
         if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) spec.version = it->second.as_string();
         if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
@@ -664,9 +690,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             auto& sub = value.as_table();
             if (!looks_like_inline_dep_spec(sub)) {
                 return std::unexpected(error(origin, std::format(
-                    "[{}.{}] must be a version string or table of "
-                    "(path/version/git/rev/tag/branch/features/default-features/"
-                    "visibility/backend/workspace/tools/host-module/reexport)",
+                    "[{}.{}] must be a version string, or a table naming a "
+                    "source (one of path/version/git/workspace) alongside any "
+                    "of rev/tag/branch/features/default-features/visibility/"
+                    "backend/tools/host-module/reexport",
                     section, key)));
             }
             if (auto r = fill_inline_spec(spec, section, key, sub); !r) return r;

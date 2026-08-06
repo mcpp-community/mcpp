@@ -3160,3 +3160,76 @@ bypath     = { path = "../sibling" }
     EXPECT_NE(std::find(all->features.begin(), all->features.end(), "backend-openblas"),
               all->features.end());
 }
+
+// #359: a manifest written for a NEWER mcpp must still load.
+//
+// What made this impossible was that one predicate served two purposes: it
+// decided "inline dep spec vs nested namespace table" AND enumerated the
+// vocabulary. A key the reader did not know therefore did not read as an
+// unknown option — the table failed the discriminator, was taken for a
+// namespace, and the user was told their `reexport = true` "must be a string,
+// inline dep table, or nested table". A published package could consequently
+// never adopt a new key: every older client failed to load it outright.
+//
+// The discriminator is now "does it name a source", which a namespace table
+// cannot accidentally satisfy, and an unrecognized key is a recorded
+// degradation (--strict still refuses it).
+TEST(Manifest, UnknownDependencyKeyDegradesInsteadOfFailingTheLoad) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_dep_future_key";
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    {
+        std::ofstream os(path);
+        os << R"(
+[package]
+name = "futurekey"
+version = "0.1.0"
+
+[dependencies]
+zlib = { version = "1.3.1", some-future-field = true }
+)";
+    }
+    auto m = mcpp::manifest::load(path);
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+
+    const mcpp::pm::DependencySpec* z = nullptr;
+    for (auto const& [k, spec] : m->dependencies)
+        if (spec.shortName == "zlib") z = &spec;
+    ASSERT_NE(z, nullptr);
+    EXPECT_EQ(z->version, "1.3.1");   // the part this reader understands still applies
+
+    bool warned = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("some-future-field") != std::string::npos) warned = true;
+    EXPECT_TRUE(warned) << "the ignored key must be reported, not swallowed";
+}
+
+// The discriminator must not mistake a namespace subtable for an inline spec.
+// `[dependencies.compat] zlib = "1.3.1"` has one key, `zlib`, which names no
+// source — so it is a namespace, and the entry below it is the dependency.
+TEST(Manifest, NamespaceSubtableIsNotMistakenForAnInlineSpec) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_ns_vs_spec";
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    {
+        std::ofstream os(path);
+        os << R"(
+[package]
+name = "nsvsspec"
+version = "0.1.0"
+
+[dependencies.compat]
+zlib = "1.3.1"
+gtest = { version = "1.15.2", features = ["main"] }
+)";
+    }
+    auto m = mcpp::manifest::load(path);
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+    std::set<std::string> got;
+    for (auto const& [k, spec] : m->dependencies) {
+        got.insert(spec.shortName);
+        EXPECT_EQ(spec.namespace_, "compat") << spec.shortName;
+    }
+    EXPECT_TRUE(got.contains("zlib"));
+    EXPECT_TRUE(got.contains("gtest"));
+}

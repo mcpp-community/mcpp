@@ -1122,6 +1122,19 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
   unnamespaced `<x>`, else the single remaining candidate — and when it is
   contested mcpp says so instead of picking silently.
 
+##### Older mcpp reading a manifest that uses this
+
+An unrecognized dependency key is reported as a **degradation** and ignored
+(mcpp 2026.8.6.2+), so a package written for a newer mcpp still loads and the
+parts this reader understands still apply. Before that release it was a hard
+load failure with a misleading message, which is why a published package could
+not adopt a new key at all — the same property the index floor establishes:
+data must not decide whether the program works.
+
+Consequently a package that *relies* on `reexport` for its ergonomics still
+needs a client new enough to implement it; what changed is that everything else
+about that package keeps working on an older one.
+
 ##### Scoping a provision per platform
 
 A package may declare a `bin` target on some platforms only. Because the

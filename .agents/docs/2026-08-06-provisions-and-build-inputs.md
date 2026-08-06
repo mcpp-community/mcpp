@@ -177,6 +177,30 @@ feature 存在的全部理由。
 
 这与索引解析裸包名的阶梯(`(mcpplibs,X) → (compat,X) → (∅,X)`)是同一条规则的同一次应用;第 3 级是必需的补充,否则 `grpc.grpc-plugin` 这类非默认命名空间的包连裸名都拿不到(grpc-m 现在写的正是 `dep_bin("grpc-plugin", ...)`)。`dep_dir()` 沿用同一套。
 
+### D1.4 发布一个新键不能让旧客户端加载失败
+
+`reexport` 要写进**已发布包**的 manifest(grpc 的 `[feature-deps.codegen]`),
+于是冒出一个此前没人问过的问题:比它旧的 mcpp 读到这份 manifest 会怎样?
+
+答案曾经是**整份加载失败**,而且报错是误导性的:
+`reexport = true` 被告知「must be a string, inline dep table, or nested table」。
+
+根因是**一个谓词兼任两职**:`looks_like_inline_dep_spec` 既判定「这是内联依赖
+spec 还是嵌套命名空间表」,又枚举「哪些键有意义」。于是「不认识的键」不会走到
+「未知选项」那条路上——表直接判不出是 spec,被当成命名空间。
+
+后果不是提示不友好,而是**任何已发布包都永远无法采用新键**。这与 #349 确立的
+性质是同一条:**数据不得决定程序是否可用**。
+
+判据换轴:**内联 spec 的判定是「它是否指名了一个来源」**(`path` / `version` /
+`git` / `workspace`)。嵌套命名空间表的键是**包名**,不会有包叫 `version`,所以
+这个判据不会误判。识别为 spec 之后,不认识的键**记为降级**(`--strict` 仍拒
+绝),而不是让整份 manifest 加载失败——与 xpkg 读取器的 `xpkgUnknownKeys`
+(「record rather than swallow」)同一条纪律。
+
+这不能救**已经发布出去的**旧客户端(它们的解析器就是那样),但从这一版起,
+这类问题不再复发。
+
 ### D2. 输入种类进表,指纹由种类决定
 
 新增一种输入:**glob**。
