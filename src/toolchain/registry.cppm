@@ -86,6 +86,20 @@ void print_compat_hint(const ToolchainSpec& spec);
 // The (family, target, host) → xim package mapping — the distribution layer.
 XimToolchainPackage to_xim_package(const ToolchainSpec& spec);
 
+// #367: does a GCC spec aimed at the NATIVE Linux host resolve to the
+// `musl-gcc` payload rather than the glibc `gcc` one?
+//
+// `xim:gcc` publishes x86_64 assets only (`archs = { "x86_64" }`); the GCC the
+// ecosystem ships for other Linux architectures is `musl-gcc`, which does
+// publish them (aarch64 included, verified against xlings-res). Asking for
+// `gcc` on aarch64 404s.
+//
+// A free function taking the host arch rather than reading the compile-time
+// constant, so the aarch64 answer is testable on an x86_64 machine — the whole
+// point being an architecture the developer is not sitting in front of.
+bool gcc_native_payload_is_musl(std::string_view hostArch, bool isLinux,
+                                const triple::Triple& target);
+
 ToolchainSpec with_resolved_xim_version(const ToolchainSpec& spec,
                                         std::string_view ximVersion);
 
@@ -209,6 +223,16 @@ void print_compat_hint(const ToolchainSpec& spec) {
     compat::print_hint_once(spec.compatHint);
 }
 
+bool gcc_native_payload_is_musl(std::string_view hostArch, bool isLinux,
+                                const triple::Triple& target) {
+    if (!isLinux) return false;
+    if (hostArch == "x86_64") return false;      // the glibc payload exists here
+    // "Native" = no explicit target, or one naming this same machine. A CROSS
+    // target keeps its own payload rule (the `<triple>-gcc` packages above).
+    return target.empty()
+        || (target.os == "linux" && target.arch == hostArch);
+}
+
 XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     XimToolchainPackage pkg;
     pkg.displaySpec = spec.display();
@@ -271,7 +295,30 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
         return pkg;
     }
 
-    // Host target (or linux-gnu): the glibc gcc package.
+    // Host target (or linux-gnu): the glibc gcc package — on x86_64.
+    //
+    // #367: `xim:gcc` declares `archs = { "x86_64" }` and publishes assets for
+    // that arch only. The GCC the ecosystem ships for other Linux
+    // architectures is `musl-gcc`, which does publish them (aarch64 included).
+    // Asking for `gcc` on aarch64 therefore 404s — and because a `build.mcpp`
+    // host compile resolves the toolchain spec with NO target injection, it
+    // landed here and made every project whose graph contains a build program
+    // unbuildable on aarch64, with `--target aarch64-linux-musl` fixing only
+    // the target half.
+    //
+    // "Which payload backs this spec on this machine" is exactly the question
+    // this function exists to answer — the musl branch above already answers
+    // its half the same way ("same target, two payload shapes"). The knowledge
+    // belongs here rather than in every manifest: a user should not have to
+    // encode which architectures a toolchain package was built for.
+    if (gcc_native_payload_is_musl(mcpp::platform::host_arch,
+                                   mcpp::platform::is_linux, t)) {
+        const auto mt = host_musl_triple();
+        pkg.ximName = "musl-gcc";
+        pkg.frontendCandidates = { mt.str() + "-g++", "g++" };
+        return pkg;   // no glibc specs fixup: that payload is not glibc-linked
+    }
+
     pkg.ximName = "gcc";
     pkg.frontendCandidates = {"g++"};
     pkg.needsGccPostInstallFixup = true;

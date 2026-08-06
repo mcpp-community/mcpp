@@ -3,6 +3,7 @@
 import std;
 import mcpp.platform;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.triple;
 
 using namespace mcpp::toolchain;
 
@@ -186,4 +187,40 @@ TEST(ToolchainRegistry, IdentifiesToolchainPayloadsAndSkipsOthers) {
     EXPECT_FALSE(identify_xim_payload("glibc").has_value());
     EXPECT_FALSE(identify_xim_payload("python").has_value());
     EXPECT_FALSE(identify_xim_payload("linux-headers").has_value());
+}
+
+// #367: which GCC payload backs a NATIVE Linux build.
+//
+// `xim:gcc` declares `archs = { "x86_64" }` and publishes assets for that arch
+// only; the GCC the ecosystem ships for other Linux architectures is
+// `musl-gcc` (xlings-res carries musl-gcc-16.1.0-linux-aarch64.tar.gz). Asking
+// for `gcc` on aarch64 therefore 404s — which is what made every project whose
+// graph contains a `build.mcpp` unbuildable there, since a build program's
+// host compile resolves the spec with no target injection and landed on the
+// glibc package.
+//
+// Tested through a free function taking the host arch rather than the
+// compile-time constant, precisely so the aarch64 answer is checkable from an
+// x86_64 machine.
+TEST(ToolchainRegistry, NativeGccPayloadFollowsWhatTheArchActuallyPublishes) {
+    using mcpp::toolchain::gcc_native_payload_is_musl;
+    const mcpp::toolchain::triple::Triple none{};
+
+    // x86_64: unchanged — the glibc package is the one that exists.
+    EXPECT_FALSE(gcc_native_payload_is_musl("x86_64", true, none));
+    EXPECT_FALSE(gcc_native_payload_is_musl(
+        "x86_64", true, {"x86_64", "linux", "gnu"}));
+
+    // aarch64: the glibc package has no asset, musl-gcc does.
+    EXPECT_TRUE(gcc_native_payload_is_musl("aarch64", true, none));
+    EXPECT_TRUE(gcc_native_payload_is_musl(
+        "aarch64", true, {"aarch64", "linux", "gnu"}));
+
+    // A CROSS target keeps its own payload rule — this is about the native
+    // one, and `<triple>-gcc` packages answer for the rest.
+    EXPECT_FALSE(gcc_native_payload_is_musl(
+        "aarch64", true, {"x86_64", "linux", "gnu"}));
+
+    // Non-Linux hosts are out of scope: macOS uses llvm, Windows mingw/msvc.
+    EXPECT_FALSE(gcc_native_payload_is_musl("aarch64", false, none));
 }
