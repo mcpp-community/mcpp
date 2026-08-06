@@ -66,6 +66,7 @@ void print_usage() {
     std::println("  mcpp emit xpkg [-V VER] [-o FILE]    Generate xpkg Lua entry");
     std::println("  mcpp xpkg parse <file.lua> [--json]  Validate an xpkg descriptor (resolver grammar)");
     std::println("  mcpp ide snapshot [selectors]        Inspect workspace state for IDE clients");
+    std::println("  mcpp ide configure [selectors]       Resolve and publish a fresh IDE CDB");
     std::println("");
     std::println("Resource management:");
     std::println("  mcpp toolchain install|list|default  Manage mcpp's private toolchains");
@@ -407,8 +408,28 @@ int run(int argc, char** argv) {
                     .help("Echo dev-dependency inclusion"))
                 .option(cl::Option("format").takes_value().value_name("FORMAT")
                     .help("Output format (json)")))
+            .subcommand(cl::App("configure")
+                .description("Resolve the project and publish a fresh compile database")
+                .option(cl::Option("package").short_name('p').takes_value().value_name("MEMBER")
+                    .help("Select one workspace member"))
+                .option(cl::Option("workspace").help("Reserved for workspace fan-out"))
+                .option(cl::Option("profile").takes_value().value_name("NAME")
+                    .help("Build profile"))
+                .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                    .help("Target triple"))
+                .option(cl::Option("features").takes_value().value_name("LIST")
+                    .help("Comma-separated features"))
+                .option(cl::Option("cap").takes_value().value_name("LIST")
+                    .help("Comma-separated capability pins"))
+                .option(cl::Option("include-dev-dependencies")
+                    .help("Include development dependencies"))
+                .option(cl::Option("format").takes_value().value_name("FORMAT")
+                    .help("Output format (ndjson)")))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
-                return dispatch_sub("ide", p, {{"snapshot", cmd_ide_snapshot}});
+                return dispatch_sub("ide", p, {
+                    {"snapshot", cmd_ide_snapshot},
+                    {"configure", cmd_ide_configure},
+                });
             })))
 
         // ─── resource management ───────────────────────────────────────

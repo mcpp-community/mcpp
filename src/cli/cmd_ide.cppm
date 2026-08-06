@@ -5,6 +5,7 @@ export module mcpp.cli.cmd_ide;
 
 import std;
 import mcpplibs.cmdline;
+import mcpp.ide.configure;
 import mcpp.ide.inspect;
 import mcpp.ide.model;
 import mcpp.ide.snapshot;
@@ -73,6 +74,35 @@ export int cmd_ide_snapshot(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     std::print("{}", mcpp::ide::snapshot_json(inspection));
     return inspection.state == mcpp::ide::SnapshotState::Unavailable ? 3 : 0;
+}
+
+export int cmd_ide_configure(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    const auto format = parsed.value("format").value_or("ndjson");
+    if (format != "ndjson") {
+        // IDE 客户端依赖逐行 JSON；拒绝未知格式，避免先执行 prepare
+        // 再发现无法解析，或在错误请求下意外发布兼容 CDB。
+        std::println(stderr, "error: unsupported IDE configure format '{}'; expected ndjson",
+                     format);
+        return 2;
+    }
+    std::error_code ec;
+    auto start = std::filesystem::current_path(ec);
+    if (ec) start = ".";
+    auto absolute = std::filesystem::absolute(start, ec);
+    if (!ec) start = std::move(absolute);
+
+    mcpp::ide::ConfigureRequest request{
+        .start = start.lexically_normal(),
+        .selectors = selectors_from(parsed),
+    };
+    const auto result = mcpp::ide::configure_project(request);
+    if (!result) {
+        std::println("{}", mcpp::ide::configure_error_event(result.error()));
+        return 3;
+    }
+    for (const auto& line : mcpp::ide::configure_events(*result))
+        std::println("{}", line);
+    return 0;
 }
 
 } // namespace mcpp::cli

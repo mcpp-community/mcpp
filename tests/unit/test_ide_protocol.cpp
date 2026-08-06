@@ -27,6 +27,11 @@ TEST(IdeProtocol, ConfigurationIdIsStableAndSelectorSensitive) {
 
     selectors.features.push_back("gui");
     EXPECT_NE(first, configuration_id("/workspace/app", selectors, "llvm-22"));
+
+    selectors.features.pop_back();
+    const auto cxx23 = configuration_id("/workspace/app", selectors, "llvm-22");
+    selectors.cppStandard = "c++20";
+    EXPECT_NE(cxx23, configuration_id("/workspace/app", selectors, "llvm-22"));
 }
 
 TEST(IdeProtocol, NdjsonRejectsSequenceRegression) {
@@ -38,4 +43,3 @@ TEST(IdeProtocol, NdjsonRejectsSequenceRegression) {
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), "MCPP_IDE_EVENT_SEQUENCE_INVALID");
 }
-

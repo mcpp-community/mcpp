@@ -4,6 +4,7 @@ import std;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.model;
+import mcpp.toolchain.stdmod;
 
 using namespace mcpp::toolchain;
 
@@ -69,4 +70,21 @@ TEST(ToolchainStdmod, ClangStdCompatCommandsUseRequestedStandard) {
         EXPECT_NE(cmd.find("-std=c++26"), std::string::npos) << cmd;
         EXPECT_EQ(cmd.find("-std=c++23"), std::string::npos) << cmd;
     }
+}
+
+TEST(ToolchainStdmod, DescribeComputesArtifactsWithoutCreatingCache) {
+    auto tc = clang_toolchain();
+    tc.driverIdent = "clang version 22.1.8";
+    const auto root = std::filesystem::temp_directory_path()
+                    / std::format("mcpp_std_describe_{}",
+                        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+
+    auto described = describe_std_module(tc, "c++23", "-std=c++23", "", root);
+    ASSERT_TRUE(described.has_value()) << described.error().message;
+    EXPECT_EQ(described->cacheDir.parent_path(), root / "std");
+    EXPECT_EQ(described->bmiPath.parent_path(), described->cacheDir / "pcm.cache");
+    EXPECT_EQ(described->objectPath, described->cacheDir / "std.o");
+    EXPECT_FALSE(std::filesystem::exists(root));
 }

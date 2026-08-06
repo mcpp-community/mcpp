@@ -843,6 +843,9 @@ export struct BuildOverrides {
     bool        strict = false;      // --strict: schema warnings become errors
     std::string capabilities;        // --cap blas=openblas,lapack=mkl (provider pins)
     std::string cache_mode;          // --cache global|local|off ("" = unset)
+    // IDE configure 只需要准确的编译参数和预期 BMI 路径；实际 std BMI
+    // 由 ide prepare/build 物化，避免 CDB 发布等待一次编译。
+    bool materialize_std_modules = true;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────
@@ -4743,10 +4746,14 @@ prepare_build(bool print_fingerprint,
             if (f.enabled && !f.flags.empty()) dst += std::format(" ({})", f.flags);
             if (!f.enabled) dst += std::format(" ({})", f.reason);
         }
-        std::println("c++fly on {}: {}; enabled: {}; skipped: {}",
-                     tc->label(), stdFlagAndDialect,
-                     enabled.empty() ? "(none)" : enabled,
-                     skipped.empty() ? "(none)" : skipped);
+        // IDE configure 的 stdout 是 NDJSON；普通 build 仍保留这条
+        // 人类可读摘要，但 quiet 模式必须完全静默，避免污染协议。
+        if (!mcpp::ui::is_quiet()) {
+            std::println("c++fly on {}: {}; enabled: {}; skipped: {}",
+                         tc->label(), stdFlagAndDialect,
+                         enabled.empty() ? "(none)" : enabled,
+                         skipped.empty() ? "(none)" : skipped);
+        }
     }
     for (auto& f : mcpp::toolchain::cppfly::effective_dialect_flags(
              *tc, m->cppStandard.experimental,
@@ -4850,10 +4857,13 @@ prepare_build(bool print_fingerprint,
         // a std BMI built without it structurally lacks std::meta). Both
         // pieces were already in the fingerprint; this fixes the COMMAND
         // construction the fingerprint promised (stdFlagAndDialect above).
-        auto sm = mcpp::toolchain::ensure_built(
-            *tc, m->package.standard, stdFlagAndDialect,
-            mcpp::platform::macos::deployment_target(
-                m->buildConfig.macosDeploymentTarget));
+        const auto deploymentTarget = mcpp::platform::macos::deployment_target(
+            m->buildConfig.macosDeploymentTarget);
+        auto sm = overrides.materialize_std_modules
+            ? mcpp::toolchain::ensure_built(
+                  *tc, m->package.standard, stdFlagAndDialect, deploymentTarget)
+            : mcpp::toolchain::describe_std_module(
+                  *tc, m->package.standard, stdFlagAndDialect, deploymentTarget);
         if (!sm) return std::unexpected(sm.error().message);
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;

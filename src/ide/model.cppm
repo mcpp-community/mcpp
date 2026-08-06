@@ -103,6 +103,8 @@ struct ConfigurationSelectors {
     std::vector<std::string> features;
     std::vector<std::string> capabilities;
     bool includeDevDependencies = false;
+    std::string cacheMode = "global";
+    std::string cppStandard = "c++23";
 };
 
 std::string configuration_id(const std::filesystem::path& workspaceRoot,
@@ -130,6 +132,8 @@ std::string configuration_id(const std::filesystem::path& workspaceRoot,
     for (const auto& feature : selectors.features) append("feature", feature);
     for (const auto& capability : selectors.capabilities) append("capability", capability);
     append("dev", selectors.includeDevDependencies ? "1" : "0");
+    append("cache", selectors.cacheMode);
+    append("standard", selectors.cppStandard);
     append("toolchain", toolchainFingerprint);
 
     std::uint64_t hash = 14695981039346656037ull;
