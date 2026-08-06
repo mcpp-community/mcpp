@@ -3148,7 +3148,34 @@ prepare_build(bool print_fingerprint,
         for (auto& f : activateFeatures(pm, requested, seedDefault)) {
             auto it = pm.featureDeps.find(f);
             if (it == pm.featureDeps.end()) continue;
-            for (auto& [k, spec] : it->second) pm.dependencies.try_emplace(k, spec);
+            for (auto& [k, spec] : it->second) {
+                auto [pos, fresh] = pm.dependencies.try_emplace(k, spec);
+                if (fresh) continue;
+                // #359: the key already exists unconditionally, and dropping
+                // the feature's spec here loses REQUESTS the feature exists to
+                // make. gRPC is the shape: it depends on compat.protobuf
+                // always, and its `codegen` feature has to add
+                // `tools = ["protoc"], reexport = true` to that same edge —
+                // which is precisely what must NOT be paid for by a consumer
+                // who did not ask for codegen, so moving it to the
+                // unconditional entry is not an option either.
+                //
+                // Additive fields merge; identity fields (version/path/git) do
+                // not, keeping "a conditional section never silently
+                // overrides an unconditional one" intact. Same rule the
+                // per-edge feature request already follows.
+                auto& dst = pos->second;
+                for (auto const& t : spec.tools)
+                    if (std::find(dst.tools.begin(), dst.tools.end(), t)
+                        == dst.tools.end())
+                        dst.tools.push_back(t);
+                for (auto const& f2 : spec.features)
+                    if (std::find(dst.features.begin(), dst.features.end(), f2)
+                        == dst.features.end())
+                        dst.features.push_back(f2);
+                dst.hostModule = dst.hostModule || spec.hostModule;
+                dst.reexport   = dst.reexport   || spec.reexport;
+            }
         }
     };
 

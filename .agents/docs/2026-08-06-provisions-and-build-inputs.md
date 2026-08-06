@@ -146,6 +146,18 @@ visible(P)    = ⋃ {P→D}                 [ own(P→D) ∪ exported(D) ]
 2. **provision 的存在性绑定 feature 激活**,与 `featureDefines`(`prepare.cppm:3812`)同一时机。feature 关闭时不应有任何工具被构建。
 3. **`reexport` 只在依赖侧有意义。** root 写它无害但无效果(root 没有消费者)。
 
+##### feature-dep 与已声明依赖同键时按加法合并
+
+`mergeActiveFeatureDeps` 原本用 `try_emplace`,即「键已存在就丢弃 feature 的
+spec」。gRPC 恰好是反例:它**无条件**依赖 `compat.protobuf`,而 `codegen`
+feature 需要往**同一条边**加 `tools = ["protoc"], reexport = true`。把这个请求
+挪到无条件条目上不可行(那会让每个消费者都构建 protoc),丢弃又会静默丢掉这个
+feature 存在的全部理由。
+
+因此:`tools` / `features` 取并集,`host-module` / `reexport` 取或;
+`version` / `path` / `git` 这类**身份字段不合并**,「条件段绝不静默覆盖无条件
+段」这条纪律保持不变。与逐边 feature 请求本来就遵循的规则一致。
+
 #### D1.3 裸名:走索引那套命名空间阶梯,而不是「谁最后写谁赢」
 
 `env_var_name`(`tool_store.cppm:154`)今天同时发长名与短名:`compat.protobuf` → `MCPP_DEP_COMPAT_PROTOBUF_BIN_PROTOC` 与 `MCPP_DEP_PROTOBUF_BIN_PROTOC`。今天只有 root 亲自声明的工具进环境,撞车在用户眼皮底下;传递传播之后,两条互不相识的库各自提供同名短名工具时,谁赢取决于 vector 的追加顺序,且无任何诊断。这从另一扇门放回了本设计要保住的「版本错配不可表达」性质。

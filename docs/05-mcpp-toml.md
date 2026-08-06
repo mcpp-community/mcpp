@@ -1106,6 +1106,12 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
 - **One hop per declaration.** A re-exported provision reaches the consumers of
   the package that declared it. For it to travel further, the next package must
   re-export in turn — each package decides only what *it* hands on.
+- **A feature may add a request to a dependency you already declare.** gRPC
+  depends on protobuf unconditionally and its `codegen` feature adds
+  `tools = ["protoc"], reexport = true` to that same edge. `tools` and
+  `features` union, `host-module` and `reexport` OR together; `version` /
+  `path` / `git` do not merge, so a feature still cannot silently override the
+  unconditional entry's identity.
 - **Visibility, not execution.** `dep_bin()` returns a path; whether anything
   runs is still the consumer's `build.mcpp`'s decision. Nothing changes about
   who builds the tool or how the tool store is keyed.

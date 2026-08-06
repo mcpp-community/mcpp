@@ -847,6 +847,10 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
   命名空间里塞东西。「把某样东西交给消费者」是一条供应链主张,必须写下来。
 - **一次声明只走一跳。** 被再导出的提供物到达声明它的那个包的消费者;要继续
   往上走,下一个包必须自己也写 `reexport`。每个包只决定**它**交出什么。
+- **feature 可以往一条已经声明过的依赖上追加请求。** gRPC 无条件依赖 protobuf,
+  而它的 `codegen` feature 往同一条边加 `tools = ["protoc"], reexport = true`。
+  `tools` 与 `features` 取并集,`host-module` 与 `reexport` 取或;`version` /
+  `path` / `git` 不合并 —— feature 仍然无法静默覆盖无条件条目的身份。
 - **传播的是可见性,不是执行。** `dep_bin()` 只返回路径,跑不跑仍由消费者的
   `build.mcpp` 决定;谁构建了这个工具、tool store 怎么做键,都不改变。
 - **裸名由阶梯决定,而不是靠运气。** 一旦两个库都能再导出,它们可能同时提供

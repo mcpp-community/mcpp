@@ -179,4 +179,58 @@ if grep -q "rulepkg" <(nm -C "target"/*/*/bin/app 2>/dev/null || true); then
     echo "FAIL: the rule package was linked into the consumer's binary"; exit 1
 fi
 
+# ── 3. a feature ADDING a request to an already-declared dependency ────────
+# The real shape: gRPC depends on protobuf always, and its `codegen` feature
+# has to add `tools = ["protoc"], reexport = true` to that SAME edge. Moving
+# the request to the unconditional entry is not an option — it would make every
+# consumer build protoc — and dropping the feature's spec (try_emplace keeps
+# the existing key) would silently lose the request.
+cd "$TMP"
+cat > lib/mcpp.toml <<'EOF'
+[package]
+name    = "mylib"
+version = "0.1.0"
+
+[build]
+sources = ["src/mylib.cpp"]
+
+# Unconditional: the library links against this package no matter what.
+[dependencies]
+toolpkg = { path = "../toolpkg" }
+rulepkg = { path = "../rulepkg", host-module = true, reexport = true }
+
+# The feature adds a REQUEST to the edge above, and nothing else.
+[feature-deps.codegen]
+toolpkg = { path = "../toolpkg", tools = ["codegen"], reexport = true }
+EOF
+cat > app/mcpp.toml <<'EOF'
+[package]
+name    = "app"
+version = "0.1.0"
+
+[dependencies]
+mylib = { path = "../lib", features = ["codegen"] }
+EOF
+cd app && rm -rf target
+"$MCPP" build > b3.log 2>&1 || {
+    cat b3.log
+    echo "FAIL: a feature could not add a tool request to an existing dependency"
+    exit 1
+}
+out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
+[[ "$out" == "ANSWER=42" ]] || { echo "FAIL: expected ANSWER=42, got '$out'"; exit 1; }
+
+# … and without the feature, nothing is built.
+cd "$TMP"
+sed 's/, features = \["codegen"\]//' app/mcpp.toml > app/mcpp.toml.new
+mv app/mcpp.toml.new app/mcpp.toml
+cd app && rm -rf target
+if "$MCPP" build > b4.log 2>&1; then
+    cat b4.log
+    echo "FAIL: the build succeeded without the codegen feature — the tool ran anyway"
+    exit 1
+fi
+grep -q "host tool" b4.log && {
+    cat b4.log; echo "FAIL: a tool was built for a consumer that did not enable the feature"; exit 1; }
+
 echo "PASS: 193_provision_reexport"
