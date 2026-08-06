@@ -16,6 +16,7 @@ struct Candidate {
     std::filesystem::path manifest;
     std::optional<WorkspaceMember> member;
     std::optional<Diagnostic> error;
+    std::vector<std::string> workspaceAliases;
 };
 
 std::filesystem::path absolute_path(std::filesystem::path path) {
@@ -46,6 +47,15 @@ std::filesystem::path physical_path(const std::filesystem::path& path) {
     std::error_code ec;
     auto normalized = std::filesystem::weakly_canonical(absolute, ec);
     return ec ? absolute.lexically_normal() : normalized;
+}
+
+bool is_within_workspace(const std::filesystem::path& path,
+                         const std::filesystem::path& workspaceRoot) {
+    const auto relative = physical_path(path).lexically_relative(
+        physical_path(workspaceRoot));
+    if (relative.empty() || relative.is_absolute()) return false;
+    const auto first = relative.begin();
+    return first == relative.end() || *first != "..";
 }
 
 bool same_directory(const std::filesystem::path& left,
@@ -150,8 +160,8 @@ WorkspaceMember describe_member(const mcpp::manifest::Manifest& manifest,
 
 bool matches_selector(const Candidate& candidate, std::string_view selector,
                       const std::filesystem::path&) {
-    if (candidate.workspacePath == selector)
-        return true;
+    if (std::ranges::find(candidate.workspaceAliases, selector)
+        != candidate.workspaceAliases.end()) return true;
     if (candidate.root.filename() == selector)
         return true;
     return false;
@@ -159,7 +169,8 @@ bool matches_selector(const Candidate& candidate, std::string_view selector,
 
 bool matches_workspace_path(const Candidate& candidate, std::string_view selector,
                             const std::filesystem::path&) {
-    return candidate.workspacePath == selector;
+    return std::ranges::find(candidate.workspaceAliases, selector)
+        != candidate.workspaceAliases.end();
 }
 
 } // namespace
@@ -226,8 +237,10 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
                             std::string workspacePath,
                             const std::filesystem::path& root) {
         auto member = describe_member(manifest, std::move(workspacePath), root);
+        const auto alias = member.workspacePath;
         candidates.push_back(Candidate{member.name, member.workspacePath, root,
-                                       member.manifest, std::move(member), std::nullopt});
+                                       member.manifest, std::move(member), std::nullopt,
+                                       {alias}});
     };
 
     if (workspaceManifest->workspace.present && !workspaceManifest->package.name.empty())
@@ -240,6 +253,23 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
         const auto memberRoot = normalized_path(
             (workspaceRoot / workspacePath).lexically_normal());
         const auto manifestPath = memberRoot / "mcpp.toml";
+        if (!is_within_workspace(memberRoot, workspaceRoot)) {
+            candidates.push_back(Candidate{
+                memberRoot.filename().string(), workspacePath, memberRoot, manifestPath,
+                std::nullopt,
+                manifest_diagnostic(
+                    "MCPP_IDE_MEMBER_MANIFEST_INVALID", Severity::Error,
+                    "workspace member path escapes the workspace root", manifestPath),
+                {workspacePath}});
+            continue;
+        }
+        auto duplicate = std::ranges::find_if(candidates, [&](const Candidate& candidate) {
+            return same_directory(candidate.root, memberRoot);
+        });
+        if (duplicate != candidates.end()) {
+            duplicate->workspaceAliases.push_back(workspacePath);
+            continue;
+        }
         auto loaded = mcpp::manifest::load(manifestPath);
         if (loaded) {
             add_manifest(*loaded, workspacePath, memberRoot);
@@ -257,7 +287,8 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
         candidates.push_back(Candidate{
             manifestPath.filename().string(), workspacePath, memberRoot, manifestPath,
             std::nullopt,
-            manifest_diagnostic(code, Severity::Error, message, manifestPath, range)});
+            manifest_diagnostic(code, Severity::Error, message, manifestPath, range),
+            {workspacePath}});
     }
 
     std::vector<std::size_t> selected;
@@ -321,13 +352,34 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
 
     bool hasStale = false;
     bool hasMissing = false;
+    bool artifactProbeError = false;
     for (auto index : selected) {
         const auto& candidate = candidates[index];
         if (!candidate.member) continue;
         result.selectedMembers.push_back(candidate.name);
         const auto path = candidate.root / "compile_commands.json";
         std::error_code ec;
-        const bool regular = std::filesystem::is_regular_file(path, ec);
+        const bool exists = std::filesystem::exists(path, ec);
+        if (ec) {
+            result.diagnostics.push_back(manifest_diagnostic(
+                "MCPP_IDE_ARTIFACTS_UNAVAILABLE", Severity::Error,
+                std::format("could not inspect compile_commands.json: {}", ec.message()),
+                path));
+            artifactProbeError = true;
+            continue;
+        }
+        bool regular = false;
+        if (exists) {
+            regular = std::filesystem::is_regular_file(path, ec);
+            if (ec) {
+                result.diagnostics.push_back(manifest_diagnostic(
+                    "MCPP_IDE_ARTIFACTS_UNAVAILABLE", Severity::Error,
+                    std::format("could not inspect compile_commands.json: {}", ec.message()),
+                    path));
+                artifactProbeError = true;
+                continue;
+            }
+        }
         const auto state = regular ? ArtifactState::Stale : ArtifactState::Missing;
         result.compileCommands.push_back({candidate.name, path, state});
         hasStale = hasStale || regular;
@@ -341,6 +393,7 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
         "MCPP_IDE_ARTIFACTS_UNVERIFIED", Severity::Warning,
         "compile_commands.json exists but was not verified",
         result.workspaceManifest));
+    if (artifactProbeError) return result;
     result.state = hasStale ? SnapshotState::Stale : SnapshotState::Partial;
     return result;
 }

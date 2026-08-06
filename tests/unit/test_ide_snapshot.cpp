@@ -37,26 +37,34 @@ const mcpp::ide::Diagnostic* diagnostic(const mcpp::ide::WorkspaceInspection& sn
 }
 
 using Inventory = std::map<std::filesystem::path,
-                           std::tuple<std::uintmax_t, std::filesystem::file_time_type>>;
+                           std::tuple<std::uintmax_t, std::filesystem::file_time_type,
+                                      std::string>>;
 
-Inventory inventory(const std::filesystem::path& root) {
+std::optional<Inventory> inventory(const std::filesystem::path& root) {
     Inventory result;
     std::error_code ec;
-    std::filesystem::recursive_directory_iterator it(
-        root, std::filesystem::directory_options::skip_permission_denied, ec);
+    std::filesystem::recursive_directory_iterator it(root, ec);
+    if (ec) return std::nullopt;
     std::filesystem::recursive_directory_iterator end;
     for (; it != end; it.increment(ec)) {
-        if (ec) { ec.clear(); continue; }
+        if (ec) return std::nullopt;
         const auto relative = std::filesystem::relative(it->path(), root, ec);
-        if (ec) { ec.clear(); continue; }
-        const auto size = std::filesystem::is_regular_file(it->path(), ec)
-                        ? std::filesystem::file_size(it->path(), ec) : 0;
-        ec.clear();
+        if (ec) return std::nullopt;
+        const bool regular = std::filesystem::is_regular_file(it->path(), ec);
+        if (ec) return std::nullopt;
+        const auto size = regular ? std::filesystem::file_size(it->path(), ec) : 0;
+        if (ec) return std::nullopt;
         const auto stamp = std::filesystem::last_write_time(it->path(), ec);
-        if (ec) { ec.clear(); continue; }
-        result.emplace(relative, std::tuple{size, stamp});
+        if (ec) return std::nullopt;
+        std::string contents;
+        if (regular) {
+            std::ifstream input(it->path(), std::ios::binary);
+            if (!input) return std::nullopt;
+            contents.assign(std::istreambuf_iterator<char>(input), {});
+        }
+        result.emplace(relative, std::tuple{size, stamp, std::move(contents)});
     }
-    return result;
+    return std::make_optional(std::move(result));
 }
 
 std::string package_manifest(std::string_view name = "app",
@@ -186,6 +194,53 @@ TEST(IdeSnapshotInspect, ParentTraversalMemberPathSelectsCurrentMember) {
     EXPECT_EQ(snapshot.selectedMembers, std::vector<std::string>{"member"});
 }
 
+TEST(IdeSnapshotInspect, RejectsMemberOutsideWorkspaceRoot) {
+    TempProject p;
+    TempProject outside;
+    p.write("mcpp.toml", std::format("[workspace]\nmembers=[\"../{}\"]\n",
+                                      outside.root.filename().string()));
+    outside.write("mcpp.toml", package_manifest("outside"));
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root});
+    EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Unavailable);
+    EXPECT_TRUE(snapshot.members.empty());
+    EXPECT_NE(diagnostic(snapshot, "MCPP_IDE_MEMBER_MANIFEST_INVALID"), nullptr);
+}
+
+TEST(IdeSnapshotInspect, RejectsSymlinkedMemberOutsideWorkspaceRoot) {
+    TempProject p;
+    TempProject outside;
+    p.write("mcpp.toml", "[workspace]\nmembers=[\"linked\"]\n");
+    outside.write("mcpp.toml", package_manifest("outside"));
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(outside.root, p.root / "linked", ec);
+    if (ec) GTEST_SKIP() << "directory symlink unavailable: " << ec.message();
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root});
+    EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Unavailable);
+    EXPECT_TRUE(snapshot.members.empty());
+    EXPECT_NE(diagnostic(snapshot, "MCPP_IDE_MEMBER_MANIFEST_INVALID"), nullptr);
+}
+
+TEST(IdeSnapshotInspect, DeduplicatesEquivalentMemberPaths) {
+    TempProject p;
+    p.write("mcpp.toml", "[workspace]\nmembers=[\"member\",\"group/../member\"]\n");
+    p.write("member/mcpp.toml", package_manifest("member"));
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root});
+    ASSERT_EQ(snapshot.members.size(), 1u);
+    EXPECT_EQ(snapshot.selectedMembers, std::vector<std::string>{"member"});
+    ASSERT_EQ(snapshot.compileCommands.size(), 1u);
+}
+
+TEST(IdeSnapshotInspect, ArtifactProbeErrorIsUnavailable) {
+    TempProject p;
+    p.write("mcpp.toml", package_manifest());
+    std::error_code ec;
+    std::filesystem::create_symlink("compile_commands.json", p.root / "compile_commands.json", ec);
+    if (ec) GTEST_SKIP() << "symlink unavailable: " << ec.message();
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root});
+    EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Unavailable);
+    EXPECT_NE(diagnostic(snapshot, "MCPP_IDE_ARTIFACTS_UNAVAILABLE"), nullptr);
+}
+
 TEST(IdeSnapshotInspect, PackageSelectorMatchesBasenameAndPath) {
     TempProject p;
     p.write("mcpp.toml", "[workspace]\nmembers=[\"libs/one\",\"apps/two\"]\n");
@@ -281,8 +336,10 @@ TEST(IdeSnapshotInspect, ReadOnlyInventory) {
     p.write("mcpp.toml", package_manifest());
     p.write("src/module.cppm", "export module app;\n");
     const auto before = inventory(p.root);
+    ASSERT_TRUE(before.has_value());
     auto snapshot = mcpp::ide::inspect_workspace({.start = p.root});
     const auto after = inventory(p.root);
+    ASSERT_TRUE(after.has_value());
     EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Partial);
-    EXPECT_EQ(before, after);
+    EXPECT_EQ(*before, *after);
 }

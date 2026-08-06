@@ -174,7 +174,8 @@ The top-level and artifact state machine is deliberately conservative:
 - `partial`: manifests were inspected, but every selected CDB is missing.
 - `stale`: at least one selected CDB exists but none can be freshness-verified.
 - `unavailable`: no usable workspace snapshot can be formed because the root
-  manifest is missing/invalid or the requested member is invalid.
+  manifest is missing/invalid, the requested member is invalid, or a selected
+  artifact path cannot be inspected safely.
 - `ready`: reserved for a later `ide prepare` publication and never emitted by M0.
 
 Valid partial/stale snapshots exit 0. Unavailable snapshots exit 3. Human CLI
@@ -208,10 +209,13 @@ one-based on the wire in schema 1. M0 defines these codes:
 - `MCPP_IDE_WORKSPACE_MEMBER_NOT_FOUND`
 - `MCPP_IDE_ARTIFACTS_MISSING`
 - `MCPP_IDE_ARTIFACTS_UNVERIFIED`
+- `MCPP_IDE_ARTIFACTS_UNAVAILABLE`
 - `MCPP_IDE_UNSUPPORTED_FORMAT`
 
 Member manifest failures are diagnostics attached to the workspace. They become
 fatal only when the failed member is selected or when no selected member remains.
+Artifact probe failures use `MCPP_IDE_ARTIFACTS_UNAVAILABLE` and make the
+snapshot unavailable instead of being misreported as a missing CDB.
 
 ## Snapshot Identity
 
