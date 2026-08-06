@@ -378,3 +378,11 @@ configure/prepare 运行任意项目代码和外部工具，只有 workspace tru
 
 Node 单元测试和 `clangd --check` 不能替代真实 Extension Development Host。发布前必须用真实 VS Code、真实 mcpp binary、匹配 LLVM/clangd、模块工程、build.mcpp、测试源码和多根 workspace 运行 E2E。
 
+### 当前实现的验证边界
+
+截至 2026-08-06，早期 CDB 实现还有两个 IDE 路径的测试缺口，不能据此推断核心 Ninja 构建后端存在回归：
+
+1. 尚未通过真实 `configure_project()` 流程制造 staging 失败，并断言已有根 CDB 保持不变。普通 `mcpp build/test` 继续使用既有 `write_compile_commands()` 和 Ninja 执行路径，不经过 IDE 的 fresh CDB 发布与回退逻辑。完整 last-known-good 状态仍属于后续 snapshot publish 层，不应把它与当前测试缺口混为已实现能力。
+2. cached dependency BMI 的发布前 staging 已有 helper 单测和 macOS/Clang E2E，但尚缺真实 GCC `.gcm`、MSVC `.ifc` 缓存命中工程。核心 Ninja 后端仍通过自己的 `stage_file` edges 物化缓存产物；此缺口的直接风险是 IDE CDB 引用了未物化或路径漂移的 BMI，而不是普通构建无法完成。
+
+第二项仍跨越 `BuildPlan::cachedBmi`、`bmi_traits()`、`stage_file()` 和 Ninja BMI 命名等共享契约。应按任务 3 将目标路径收敛到 `mcpp.build.artifact_layout`，由 Ninja 与 IDE 共同消费，再补真实工具链矩阵。GCC/MSVC E2E 只证明路径和产物契约，不代表 clangd 能消费 `.gcm` 或 `.ifc`；该能力仍按工具链 capability 明确表达。

@@ -308,7 +308,13 @@ stdout 只写合法 NDJSON；人类日志进入 stderr/output channel。成功 c
 
 fixture 包含语法错误的 `src/main.cpp`。运行 configure，解析 configured event，检查 CDB entry 的 compiler/directory/arguments；断言最终 binary 和普通 `.o` 不存在。使用一个不会触发网络安装的显式 system toolchain fixture，避免测试依赖外部 index。
 
-- [ ] **Step 6: 运行 focused unit/e2e 并提交**
+- [ ] **Step 6: 补齐失败回退和 cached BMI 工具链矩阵**
+
+失败回退测试先写入带 marker 的旧根 CDB，再通过真实 `configure_project()` 制造 cached BMI staging 失败，断言命令返回结构化诊断、没有发布新 snapshot，并且旧根 CDB 字节不变。任务 5 的 publish 层完成后，再把同一故障注入扩展为 current/last-known-good 均不变的断言。
+
+cached BMI 测试分别在可用的 Clang、GCC、MSVC capability 下预热一个含依赖模块的全局缓存，删除工程 target 后运行 `ide configure`，断言 CDB 引用的 `.pcm`、`.gcm` 或 `.ifc` 已存在，且目标路径与 Ninja 消费的 `artifact_layout` 完全相同。该矩阵验证 IDE staging 和核心后端共享契约，不宣称 clangd 能读取 GCC `.gcm` 或 MSVC `.ifc`。
+
+- [ ] **Step 7: 运行 focused unit/e2e 并提交**
 
 ```bash
 mcpp test ide_configure
@@ -486,4 +492,3 @@ schema 增加字段时先更新 mcpp snapshot contract，再更新 BSP adapter�
 - `git diff --check` 通过；
 - 没有把历史 CDB 条目、单代表性 CDB 推断或人类 CLI 正则重新引入新主链路；
 - 文档中的 capability、state、side-effect 和回退承诺与测试一致。
-
