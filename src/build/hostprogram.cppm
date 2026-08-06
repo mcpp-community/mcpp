@@ -128,6 +128,19 @@ private:
     }
 };
 inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }
+// mcpp#359: re-run when the SET of files matching `pattern` changes — a file
+// appearing or disappearing, not its contents (declare those with
+// rerun_if_changed). `pattern` is relative to the manifest directory and uses
+// the same `*` / `**` grammar as `sources = [...]`, e.g. "proto/**/*.proto".
+//
+// Without this a build program that globs is structurally unsafe: adding a
+// .proto changes no declared file's hash, so the program does not re-run and
+// the new file is silently never generated. The build output tree and .git are
+// never part of the set, so watching a wide pattern cannot create a re-run
+// loop with the program's own outputs.
+inline void rerun_if_changed_glob(const char* pattern) {
+    std::printf("mcpp:rerun-if-changed-glob=%s\n", pattern);
+}
 inline void rerun_if_env_changed(const char* var) { std::printf("mcpp:rerun-if-env-changed=%s\n", var); }
 // ── environment contract (read side; values injected by the engine) ─────
 inline const char* env_or(const char* n)          { const char* v = std::getenv(n); return v ? v : ""; }

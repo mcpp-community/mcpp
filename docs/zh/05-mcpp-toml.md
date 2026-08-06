@@ -812,6 +812,64 @@ lib 根必须在 `src/<name>.cppm`(或 `[lib] path` 指向的位置);缺失时�
 划出的是同一条界线。(2026.8.5.2 之前它还会被当作普通库再编一遍,这正是规则里
 `import mcpp;` 失败的原因:在那第二次编译里内置模块并不存在。)
 
+#### `reexport = true` —— 由库替用户拉起整条工具链(2026.8.6.2+)
+
+上面这些都由**使用工具的人**声明。当知识本来属于库时,这个位置就错了:gRPC
+的代码生成需要 protobuf 的 `protoc`,而 gRPC 包的任何使用者都不应该知道这件事。
+
+`reexport = true` 把一条边上的构建期提供物 —— 它的 `tools`、它的
+`host-module`、以及该依赖的目录 —— 交给**本包自己的消费者**:
+
+```toml
+# 写在 grpc 包自己的 manifest 里
+[feature-deps.codegen]
+"compat.protobuf" = { version = "35.1",   tools = ["protoc"],          reexport = true }
+grpc-plugin       = { version = "1.83.0", tools = ["grpc_cpp_plugin"], reexport = true }
+grpcgen           = { version = "1.83.0", host-module = true,          reexport = true }
+```
+
+于是使用者只写一行,再 import 那个规则:
+
+```toml
+[dependencies]
+grpc = { version = "1.83.0", features = ["codegen"] }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+import grpcgen;
+int main() { return grpcgen::generate_all() ? 0 : 1; }
+```
+
+- **默认关闭,并且刻意不复用边上的 `visibility`。** `visibility` 本身默认就是
+  `"public"`,搭它的车意味着任意深度的依赖都能不声不响地往你的构建程序的工具
+  命名空间里塞东西。「把某样东西交给消费者」是一条供应链主张,必须写下来。
+- **一次声明只走一跳。** 被再导出的提供物到达声明它的那个包的消费者;要继续
+  往上走,下一个包必须自己也写 `reexport`。每个包只决定**它**交出什么。
+- **传播的是可见性,不是执行。** `dep_bin()` 只返回路径,跑不跑仍由消费者的
+  `build.mcpp` 决定;谁构建了这个工具、tool store 怎么做键,都不改变。
+- **裸名由阶梯决定,而不是靠运气。** 一旦两个库都能再导出,它们可能同时提供
+  尾名 `protobuf`。全限定的 `MCPP_DEP_<NS>_<NAME>_BIN_<TOOL>` 总是发布;裸名
+  依次绑定到 `mcpplibs.<x>`、`compat.<x>`、无命名空间的 `<x>`,最后才是「剩下
+  的唯一候选」——存在争用时 mcpp 会说出来,而不是默默选一个。
+
+##### 按平台裁剪提供物
+
+一个包可能只在部分平台声明 `bin` 目标。既然现在是**库**决定请求什么,无条件的
+请求就会把「不支持的平台」变成用户改不掉的硬错。用条件段裁剪:
+
+```toml
+[target.'cfg(not(windows))'.feature-deps.codegen]
+"compat.protobuf" = { version = "35.1", tools = ["protoc"], reexport = true }
+```
+
+`[target.<sel>.feature-deps.<feature>]`(2026.8.6.2+)与 `[target.<sel>]` 下的
+其余依赖表(`dependencies` / `dev-dependencies` / `build-dependencies`)遵循同
+一套谓词规则,针对**解析后的 target** 求值。**feature 本身在所有平台都注册**
+—— 只有它拉进来的东西是条件性的 —— 因此在没有任何谓词匹配的平台上请求它,不是
+「未知 feature」错误。
+
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 
 > **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。

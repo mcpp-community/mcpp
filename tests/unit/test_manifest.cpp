@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.manifest;
+import mcpp.pm.dep_spec;
 import mcpp.platform.axis;
 import mcpp.platform;
 
@@ -3033,4 +3034,129 @@ pinned = { url = "https://example.com/i.git", artifact = "https://example.com/re
     auto& pinned = m->indices.at("pinned");
     EXPECT_EQ(pinned.artifact, "https://example.com/res/i");
     EXPECT_FALSE(pinned.artifact_applicable());
+}
+
+// #359: `reexport = true` on a dependency edge — the knob that lets a library
+// hand its build-time provisions (tools, host module, dependency dir) to its
+// own consumers. Off by default, deliberately: the edge's `visibility` already
+// defaults to "public", so riding that would have made every dependency at
+// every depth able to push entries into a consumer's tool namespace silently.
+TEST(Manifest, DependencyReexportIsOptIn) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_dep_reexport";
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    {
+        std::ofstream os(path);
+        os << R"(
+[package]
+name = "reexporter"
+version = "0.1.0"
+
+[dependencies.compat]
+protobuf = { version = "35.1", tools = ["protoc"], reexport = true }
+zlib     = { version = "1.3.1", tools = ["minigzip"] }
+)";
+    }
+    auto m = mcpp::manifest::load(path);
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+
+    const mcpp::pm::DependencySpec* pb = nullptr;
+    const mcpp::pm::DependencySpec* zl = nullptr;
+    for (auto const& [k, spec] : m->dependencies) {
+        if (spec.shortName == "protobuf") pb = &spec;
+        if (spec.shortName == "zlib")     zl = &spec;
+    }
+    ASSERT_NE(pb, nullptr);
+    ASSERT_NE(zl, nullptr);
+    EXPECT_TRUE(pb->reexport);
+    EXPECT_FALSE(zl->reexport);
+}
+
+// #359 D3a: the conditional channel carried three of the four dependency maps
+// and silently lacked `feature-deps`. A library that puts a host tool behind a
+// feature has no other way to say "not on this platform", and an unconditional
+// declaration turns an unsupported platform into a hard error raised from
+// inside the LIBRARY's manifest, which its user cannot work around.
+//
+// The FEATURE is registered regardless of the predicate — only what it pulls
+// in is conditional — so requesting it on a non-matching platform is not an
+// unknown-feature error.
+TEST(Manifest, ConditionalFeatureDepsAreParsedAndTheFeatureIsRegistered) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_cond_feature_deps";
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    {
+        std::ofstream os(path);
+        os << R"(
+[package]
+name = "condfeatdeps"
+version = "0.1.0"
+
+[target.'cfg(not(windows))'.feature-deps.codegen]
+"compat.protobuf" = { version = "35.1", tools = ["protoc"], reexport = true }
+)";
+    }
+    auto m = mcpp::manifest::load(path);
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+
+    EXPECT_TRUE(m->featuresMap.contains("codegen"));
+    // Not folded into the unconditional map: that happens in prepare, after
+    // the predicate is evaluated against the RESOLVED target.
+    EXPECT_TRUE(m->featureDeps.empty());
+
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    auto const& cc = m->conditionalConfigs[0];
+    EXPECT_EQ(cc.predicate, "cfg(not(windows))");
+    ASSERT_TRUE(cc.featureDeps.contains("codegen"));
+    ASSERT_EQ(cc.featureDeps.at("codegen").size(), 1u);
+    auto const& spec = cc.featureDeps.at("codegen").begin()->second;
+    EXPECT_EQ(spec.shortName, "protobuf");
+    ASSERT_EQ(spec.tools.size(), 1u);
+    EXPECT_EQ(spec.tools[0], "protoc");
+    EXPECT_TRUE(spec.reexport);
+}
+
+// A dependency-spec key must be listed in TWO places in the TOML reader: the
+// predicate that tells an inline spec from a nested namespace table, and the
+// filler that reads the value. Miss the first and the diagnostic is actively
+// misleading — the table is taken for a namespace and the user is told their
+// bool "must be a string, inline dep table, or nested table". #359 hit exactly
+// that while adding `reexport`.
+//
+// One manifest using every key at once is the cheapest way to keep the two in
+// sync: a key added to the filler but not the predicate fails this test.
+TEST(Manifest, EveryDependencySpecKeyIsAccepted) {
+    auto tmp = std::filesystem::temp_directory_path() / "mcpp_dep_spec_keys";
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    {
+        std::ofstream os(path);
+        os << R"(
+[package]
+name = "depspeckeys"
+version = "0.1.0"
+
+[dependencies.compat]
+everything = { version = "1.0.0", features = ["x"], default-features = false, visibility = "private", backend = "openblas", tools = ["t"], host-module = true, reexport = true }
+bygit      = { git = "https://example.invalid/x.git", tag = "v1", visibility = "interface" }
+bypath     = { path = "../sibling" }
+)";
+    }
+    auto m = mcpp::manifest::load(path);
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+
+    const mcpp::pm::DependencySpec* all = nullptr;
+    for (auto const& [k, spec] : m->dependencies)
+        if (spec.shortName == "everything") all = &spec;
+    ASSERT_NE(all, nullptr);
+    EXPECT_EQ(all->version, "1.0.0");
+    EXPECT_EQ(all->visibility, "private");
+    EXPECT_FALSE(all->defaultFeatures);
+    EXPECT_TRUE(all->hostModule);
+    EXPECT_TRUE(all->reexport);
+    ASSERT_EQ(all->tools.size(), 1u);
+    EXPECT_EQ(all->tools[0], "t");
+    // `backend = "openblas"` is sugar for requesting the backend-<impl> feature.
+    EXPECT_NE(std::find(all->features.begin(), all->features.end(), "backend-openblas"),
+              all->features.end());
 }

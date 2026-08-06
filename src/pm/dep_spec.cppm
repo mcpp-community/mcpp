@@ -68,6 +68,25 @@ struct DependencySpec {
     // something to verify — the same class of failure as `module X CRC
     // mismatch`, which this project has paid for before.
     bool                        hostModule = false;
+    // #359: re-export everything this edge provides at BUILD time — the tools
+    // above, the host module above, and the dependency's directory — to this
+    // package's own consumers, transitively.
+    //
+    // This is what lets a library stand up a toolchain on its user's behalf:
+    // `grpc` declares protoc + the codegen rule with `reexport = true`, and the
+    // user writes one dependency line instead of four. It is the knob vcpkg's
+    // `"host": true` and Conan's `tool_requires` have no equivalent of.
+    //
+    // Default FALSE, and deliberately NOT reusing the edge's `visibility`:
+    // visibility already defaults to "public", so riding it would mean any
+    // dependency at any depth could push entries into its consumer's tool
+    // namespace without saying so. That is a supply-chain property, not a
+    // convenience, so it must be written down. (The initial design proposed
+    // riding public edges on the analogy that `include_dirs` are private by
+    // default — they are not: prepare.cppm copies privateBuild.includeDirs
+    // into publicUsage unconditionally. Only build.mcpp-INJECTED include dirs
+    // are private-only.)
+    bool                        reexport = false;
     bool                        defaultFeatures = true; // consumer opt-out: `default-features = false`
                                                         // suppresses the dep's own [features].default seed
                                                         // (Cargo parity). Explicit `features = [...]` still apply.

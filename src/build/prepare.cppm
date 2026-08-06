@@ -36,6 +36,7 @@ import mcpp.build.build_program;
 import mcpp.build.directives;   // directive table: mark / fold_private_tail
 import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
 import mcpp.build.dep_graph;    // queries over the resolved edge graph
+import mcpp.build.provisions;   // #359 build-time provisions: table + propagation
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.lockfile;
@@ -446,11 +447,14 @@ materialize_generated_files(const std::filesystem::path& root,
 // loadVersionDep() (shared by the main per-dependency loop, the
 // multi-version mangling secondary, and the SemVer-merge re-fetch — all three
 // of ITS callers get the merge for free from the one call inside it).
-// (Conditional *dependencies* are a separate, root-only concern: they must be
-// merged into the dependency map BEFORE resolution even starts, so a
-// dependency's own conditional deps are out of scope — see the root cfg
-// block that merges `cc.dependencies` etc.)
-void merge_conditional_build_inputs(mcpp::manifest::Manifest& m,
+// The dependency MAPS ride the same funnel (#359). They used to be merged by
+// a hand-written loop at the root call site only, with a comment declaring a
+// dependency's own conditional deps "out of scope". That was the #229 shape
+// one level up: three call sites merged build inputs, ONE of them also merged
+// deps, and nothing said why. A package's `[target.windows.dependencies]` is
+// its own statement about itself and means the same thing whether the package
+// is the root or someone's dependency.
+void merge_conditional_config(mcpp::manifest::Manifest& m,
                              const cfgpred::Ctx& ctx,
                              std::string_view targetTriple)
 {
@@ -465,13 +469,26 @@ void merge_conditional_build_inputs(mcpp::manifest::Manifest& m,
         // BuildInputs, so conditional sources are mirrored into it here.
         for (auto const& s : cc.inputs.sources)
             m.modules.sources.push_back(s);
+        // insert() keeps an existing unconditional entry: a conditional
+        // section adds a dependency, it never silently overrides one.
+        m.dependencies.insert(cc.dependencies.begin(), cc.dependencies.end());
+        m.devDependencies.insert(cc.devDependencies.begin(), cc.devDependencies.end());
+        m.buildDependencies.insert(cc.buildDependencies.begin(),
+                                   cc.buildDependencies.end());
+        // #359: `[target.<sel>.feature-deps.<feature>]`. The feature is
+        // registered by the parser regardless of the predicate; only what it
+        // pulls in is conditional.
+        for (auto const& [fname, deps] : cc.featureDeps) {
+            auto& dst = m.featureDeps[fname];
+            dst.insert(deps.begin(), deps.end());
+        }
     }
 }
 
 // Desugar `[build].defines` into `-D<x>` on both C and C++ flag channels.
 //
 // ORDER (both halves are load-bearing): this must run AFTER
-// merge_conditional_build_inputs — `defines` is a BuildInputs member, so a
+// merge_conditional_config — `defines` is a BuildInputs member, so a
 // matching `[target.'cfg(...)'.build] defines` has been appended by then and
 // folds in the same pass, landing after the unconditional entries so GNU
 // last-wins gives the conditional rule precedence — and BEFORE the manifest is
@@ -1354,12 +1371,11 @@ prepare_build(bool print_fingerprint,
     const auto targetPlatform = mcpp::platform::TargetPlatform::for_os(
         cfgpred::context_for(overrides.target_triple).os);
 
-    // ── L1: merge conditional [target.'cfg(...)'.build] sources/flags AND
-    // root-only [target.'cfg(...)'.dependencies] ─────────────────────────────
+    // ── L1: merge conditional [target.'cfg(...)'] sections ───────────────────
     // Evaluated now (target resolved) against the resolved target — the
     // --target triple for a cross build, else the host.
     //
-    // #229: merge_conditional_build_inputs MUST run here — before
+    // #229: merge_conditional_config MUST run here — before
     // `packages[0] = makePackageRoot(*root, *m)` snapshots `m->buildConfig`
     // into `packages[0].privateBuild`/`.manifest` — because that snapshot,
     // not `*m`, is what the modgraph scan and per-TU compile-flag assembly
@@ -1370,19 +1386,8 @@ prepare_build(bool print_fingerprint,
     // package's half of the one funnel, not a special case: every package is
     // merged exactly once, immediately before it is captured into `packages[]`.
     if (!m->conditionalConfigs.empty()) {
-        auto cc_ctx = cfgpred::context_for(overrides.target_triple);
-        merge_conditional_build_inputs(*m, cc_ctx, overrides.target_triple);
-        for (auto const& cc : m->conditionalConfigs) {
-            if (!cfgpred::matches(cc.predicate, cc_ctx, overrides.target_triple))
-                continue;
-            // Conditional dependencies (Phase 1b): merge into the manifest maps
-            // before dependency resolution so they resolve like any dep. insert()
-            // keeps an existing unconditional entry (no silent override).
-            // Root-only — a dependency's own conditional deps are out of scope.
-            m->dependencies.insert(cc.dependencies.begin(), cc.dependencies.end());
-            m->devDependencies.insert(cc.devDependencies.begin(), cc.devDependencies.end());
-            m->buildDependencies.insert(cc.buildDependencies.begin(), cc.buildDependencies.end());
-        }
+        merge_conditional_config(*m, cfgpred::context_for(overrides.target_triple),
+                                 overrides.target_triple);
     }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
@@ -2655,7 +2660,7 @@ prepare_build(bool print_fingerprint,
         // just keyed off a different loading branch since path/git deps never
         // pass through loadVersionDep.
         if (!manifest->conditionalConfigs.empty()) {
-            merge_conditional_build_inputs(*manifest,
+            merge_conditional_config(*manifest,
                                     cfgpred::context_for(overrides.target_triple),
                                     overrides.target_triple);
         }
@@ -2682,6 +2687,11 @@ prepare_build(bool print_fingerprint,
         // consumer's request must not be silently dropped, which is the
         // #242/#243 failure shape.
         std::vector<std::string> requestedTools;
+        // #355 step 5 / #359: does this edge ask for the dependency's lib-root
+        // interface as a HOST module, and does it hand its build-time
+        // provisions on to this consumer's own consumers?
+        bool hostModule = false;
+        bool reexport = false;
     };
     std::vector<DependencyEdge> dependencyEdges;
     namespace dg = mcpp::build::dep_graph;
@@ -2697,6 +2707,30 @@ prepare_build(bool print_fingerprint,
     std::map<std::size_t,
              std::vector<std::pair<std::string, std::filesystem::path>>>
         hostModulesByConsumer;
+    // #359: who can see which build-time provision. Computed once by the
+    // provisioning pass below (a fixpoint over `dependencyEdges`, the same
+    // shape as computeUsageRequirements) and read by every consumer of the
+    // three env channels above. Declared here because `fillDepDirs` closes
+    // over it and is defined long before the pass runs; every call site is
+    // after it.
+    namespace prov = mcpp::build::provisions;
+    prov::Propagation provisionGraph;
+    // The spellings a given consumer may address a provider by. The qualified
+    // name always works; the bare tail only when the namespace ladder binds it
+    // to exactly this package FOR THIS CONSUMER. Scoped per consumer rather
+    // than globally because two packages sharing a tail only collide inside an
+    // environment that contains both.
+    auto bareBindingsFor = [&](std::size_t consumer) {
+        std::vector<std::string> fqns;
+        if (consumer < provisionGraph.visible.size())
+            for (auto const& pr : provisionGraph.visible[consumer]) {
+                if (pr.provider >= packages.size()) continue;
+                auto const& n = packages[pr.provider].manifest.package.name;
+                if (std::find(fqns.begin(), fqns.end(), n) == fqns.end())
+                    fqns.push_back(n);
+            }
+        return prov::bind_bare_names(fqns);
+    };
 
     auto parseVisibility = [](std::string_view visibility) {
         if (visibility == "private")
@@ -2760,12 +2794,36 @@ prepare_build(bool print_fingerprint,
     // canonical name and its namespace-stripped tail, so
     // `mcpp::dep_dir("compat.zlib")` and `mcpp::dep_dir("zlib")` both resolve
     // regardless of which spelling the author used in `deps`.
+    //
+    // #359: the set is now the consumer's VISIBLE provisions rather than its
+    // direct edges, so a re-exported dependency's directory reaches it too.
+    // That is what makes a rule package able to find data files belonging to a
+    // dependency the user never declared — protoc's well-known .proto files
+    // are exactly such a directory, and `grpcgen` reads them through dep_dir.
+    //
+    // The bare tail is emitted only when the namespace ladder binds it here.
+    // Emitting it unconditionally was safe while only the root's own
+    // declarations reached build.mcpp; with re-export, two packages that never
+    // heard of each other can share a tail and the later emplace_back would
+    // silently win.
     auto fillDepDirs = [&](mcpp::build::BuildProgramEnv& e, std::size_t consumer) {
-        for (auto d : dg::direct_dependencies(dependencyEdges, consumer)) {
-            auto const& depPkg = packages[d];
-            for (auto const& spelling :
-                     dg::name_spellings(depPkg.manifest.package.name))
-                e.depDirs.emplace_back(spelling, depPkg.root);
+        if (consumer >= provisionGraph.visible.size()) return;
+        auto bind = bareBindingsFor(consumer);
+        for (auto const& [tail, b] : bind) {
+            if (auto note = prov::contest_note(tail, b); !note.empty())
+                mcpp::diag::warning("provisions/ambiguous", note);
+        }
+        for (auto const& pr : provisionGraph.visible[consumer]) {
+            if (pr.kind != prov::Kind::DepDir) continue;
+            if (pr.provider >= packages.size()) continue;
+            auto const& depPkg = packages[pr.provider];
+            auto const& canon  = depPkg.manifest.package.name;
+            e.depDirs.emplace_back(canon, depPkg.root);
+            auto tail = prov::tail_of(canon);
+            if (tail == canon) continue;
+            auto it = bind.find(tail);
+            if (it != bind.end() && it->second.owner == canon)
+                e.depDirs.emplace_back(tail, depPkg.root);
         }
     };
 
@@ -2900,6 +2958,8 @@ prepare_build(bool print_fingerprint,
             .requestedFeatures = spec.features,
             .defaultFeatures = spec.defaultFeatures,
             .requestedTools = spec.tools,
+            .hostModule = spec.hostModule,
+            .reexport = spec.reexport,
         });
     };
 
@@ -3664,7 +3724,7 @@ prepare_build(bool print_fingerprint,
             // BEFORE `propagateLinkFlags`/`makePackageRoot` below, which
             // snapshot this manifest's flags/sources into `packages[]`.
             if (!dep_manifest->conditionalConfigs.empty()) {
-                merge_conditional_build_inputs(*dep_manifest,
+                merge_conditional_config(*dep_manifest,
                     cfgpred::context_for(overrides.target_triple),
                     overrides.target_triple);
             }
@@ -4015,60 +4075,68 @@ prepare_build(bool print_fingerprint,
                 for (auto const& t : edge.requestedTools)
                     toolRequests[edge.dependencyPackageIndex].insert(t);
 
+            // #359: one fixpoint decides who SEES what. `toolRequests` above
+            // still decides what gets BUILT — the two questions are separate,
+            // and conflating them is what made a re-exported tool impossible:
+            // the tool was built, but its path was recorded against the library
+            // that asked for it rather than the project that needs it.
+            provisionGraph = prov::propagate(dependencyEdges, packages.size());
+
             // #355 step 5: dependencies offering HOST build rules. Nothing is
             // compiled here — the interface is handed to build_program.cppm,
             // which compiles it in the SAME command as build.mcpp so the BMI
             // and its consumer agree on standard, dialect and compiler by
             // construction rather than by luck.
-            for (auto const& [depName, spec] : m->dependencies) {
-                if (!spec.hostModule) continue;
-                for (auto d : dg::direct_dependencies(dependencyEdges, 0)) {
-                    auto const& depPkg = packages[d];
+            //
+            // Driven off the visible set rather than the root manifest, so a
+            // rule a library re-exports is importable from the consumer's
+            // build.mcpp without the consumer naming it. The name matching the
+            // old loop needed is gone with it: the edge already knows which
+            // package it points at.
+            for (std::size_t c = 0; c < provisionGraph.visible.size(); ++c) {
+                for (auto const& pr : provisionGraph.visible[c]) {
+                    if (pr.kind != prov::Kind::HostModule) continue;
+                    if (pr.provider >= packages.size()) continue;
+                    auto const& depPkg = packages[pr.provider];
                     auto const& canon = depPkg.manifest.package.name;
-                    // Match on either spelling, the same way `deps` keys and
-                    // MCPP_DEP_<NAME>_DIR do — a consumer may have written
-                    // `compat.zlib` or `zlib`.
-                    bool hit = false;
-                    for (auto const& s : dg::name_spellings(canon))
-                        if (depName == s || depName.ends_with("." + s)) hit = true;
-                    if (!hit) continue;
                     auto rel = mcpp::manifest::resolve_lib_root_path(depPkg.manifest);
-                    hostModulesByConsumer[0].emplace_back(canon, depPkg.root / rel);
+                    hostModulesByConsumer[c].emplace_back(canon, depPkg.root / rel);
+                }
+            }
 
-                    // A build rule is BUILD-TIME ONLY. Registering the module
-                    // is not enough: the package is still an ordinary node of
-                    // the consumer's graph, so its interface was ALSO compiled
-                    // as a normal library and linked into the target. That is
-                    // wrong on its own terms — a rule has no business in the
-                    // consumer's binary — and it made the feature nearly
-                    // unusable, because in that second compile the bundled
-                    // `mcpp` module does not exist: any rule that actually used
-                    // the API it exists to wrap died with
-                    // `fatal error: module 'mcpp' not found` (2026.8.5.1).
-                    //
-                    // Emptying the source globs is how a package is removed
-                    // from the compile set here — the same mechanism the
-                    // feature-gated-sources drop above uses. Resolution is
-                    // untouched: the package still lands on disk, which is
-                    // what `resolve_lib_root_path` just read.
-                    //
-                    // Guarded on the package being reached ONLY from the root's
-                    // host-module edge. A package can legitimately be both a
-                    // rule and a library — for something else in the graph, or
-                    // for the root itself under a second spelling — and
-                    // silently dropping its objects then would surface as an
-                    // undefined reference far from here.
-                    bool hostOnly = true;
-                    for (auto const& e : dependencyEdges)
-                        if (e.dependencyPackageIndex == d
-                            && e.consumerPackageIndex != 0) hostOnly = false;
-                    if (hostOnly) {
-                        auto& dm = packages[d].manifest;
-                        dm.buildConfig.sources.clear();
-                        dm.buildConfig.featureSources.clear();
-                        dm.modules.sources.clear();
-                    }
-                    break;
+            // A build rule is BUILD-TIME ONLY. Registering the module is not
+            // enough: the package is still an ordinary node of the consumer's
+            // graph, so its interface was ALSO compiled as a normal library and
+            // linked into the target. That is wrong on its own terms — a rule
+            // has no business in the consumer's binary — and it made the
+            // feature nearly unusable, because in that second compile the
+            // bundled `mcpp` module does not exist: any rule that actually used
+            // the API it exists to wrap died with `fatal error: module 'mcpp'
+            // not found` (2026.8.5.1).
+            //
+            // Emptying the source globs is how a package is removed from the
+            // compile set here — the same mechanism the feature-gated-sources
+            // drop above uses. Resolution is untouched: the package still lands
+            // on disk, which is what `resolve_lib_root_path` just read.
+            //
+            // Guarded on EVERY edge into the package being a host-module edge.
+            // A package can legitimately be both a rule and a library, and
+            // silently dropping its objects then would surface as an undefined
+            // reference far from here. (The predicate used to be "no consumer
+            // other than the root", which said the same thing only while the
+            // root was the only possible requester.)
+            {
+                std::set<std::size_t> ruleOnly;
+                for (auto const& e : dependencyEdges)
+                    if (e.hostModule) ruleOnly.insert(e.dependencyPackageIndex);
+                for (auto const& e : dependencyEdges)
+                    if (!e.hostModule) ruleOnly.erase(e.dependencyPackageIndex);
+                for (auto d : ruleOnly) {
+                    if (d >= packages.size()) continue;
+                    auto& dm = packages[d].manifest;
+                    dm.buildConfig.sources.clear();
+                    dm.buildConfig.featureSources.clear();
+                    dm.modules.sources.clear();
                 }
             }
 
@@ -4101,10 +4169,17 @@ prepare_build(bool print_fingerprint,
                         if (t.name == toolName) tgt = &t;
                     }
                     if (!tgt) {
+                        // A package may declare a bin target on some platforms
+                        // only. When the request came from a LIBRARY rather
+                        // than from the user, the user cannot edit it away, so
+                        // point at the knob that library needs (#359 D3a).
                         return std::unexpected(std::format(
                             "dependency '{}' has no `kind = \"bin\"` target named "
                             "'{}' (requested via tools = [...]).\n"
-                            "  available bin targets: [{}]",
+                            "  available bin targets: [{}]\n"
+                            "  If the requesting package is a library, it can "
+                            "scope the request per platform with\n"
+                            "  [target.'cfg(...)'.feature-deps.<feature>].",
                             depName, toolName,
                             binList.empty() ? std::string("none") : binList));
                     }
@@ -4113,15 +4188,22 @@ prepare_build(bool print_fingerprint,
                     auto varShort =
                         mcpp::build::tool_store::env_var_name(depShort, toolName);
 
+                    // #359: every consumer that can SEE this tool gets it, not
+                    // just the one whose edge asked for it. The bare spelling
+                    // is emitted only where the namespace ladder binds the tail
+                    // to this package — otherwise two libraries re-exporting a
+                    // same-tailed tool would decide the winner by append order.
+                    const prov::Provision want{ prov::Kind::Tool, depIdx, toolName };
                     auto record = [&](const std::filesystem::path& p) {
-                        for (auto const& edge : dependencyEdges) {
-                            if (edge.dependencyPackageIndex != depIdx) continue;
-                            if (std::find(edge.requestedTools.begin(),
-                                          edge.requestedTools.end(), toolName)
-                                == edge.requestedTools.end()) continue;
-                            auto& v = toolEnvByConsumer[edge.consumerPackageIndex];
+                        for (std::size_t c = 0; c < provisionGraph.visible.size(); ++c) {
+                            if (!provisionGraph.visible[c].contains(want)) continue;
+                            auto& v = toolEnvByConsumer[c];
                             v.emplace_back(var, p.string());
-                            if (varShort != var) v.emplace_back(varShort, p.string());
+                            if (varShort == var) continue;
+                            auto bind = bareBindingsFor(c);
+                            auto it = bind.find(depShort);
+                            if (it != bind.end() && it->second.owner == depName)
+                                v.emplace_back(varShort, p.string());
                         }
                     };
 
@@ -4239,13 +4321,30 @@ prepare_build(bool print_fingerprint,
                         sub.features += f;
                     }
 
+                    // #359 (D3b): a sub-build failure must be attributable and
+                    // REPRODUCIBLE. The Windows tool sub-build has been failing
+                    // on three abseil TUs since #355 and is still unlocated,
+                    // because what reached the log was a one-line summary with
+                    // no scratch path, no chain, and — on the ninja branch below
+                    // — a filtered view of the inner output. Naming the scratch
+                    // directory is what lets a maintainer re-run the exact inner
+                    // build; MCPP_TOOL_BUILD_VERBOSE turns off the filtering.
+                    auto subContext = [&] {
+                        return std::format(
+                            "\n  chain: {}\n  sub-build scratch: {}\n"
+                            "  re-run it directly:  mcpp build -p {} --release\n"
+                            "  (set MCPP_TOOL_BUILD_VERBOSE=1 for the inner "
+                            "build's unfiltered output)",
+                            sub.tool_chain, sub.work_dir.string(),
+                            depPkg.root.string());
+                    };
                     auto subCtx = prepare_build(/*print_fingerprint=*/false,
                                                 /*includeDevDeps=*/false,
                                                 /*extraTargets=*/{}, sub);
                     if (!subCtx) {
                         return std::unexpected(std::format(
-                            "building host tool '{}:{}' failed: {}",
-                            depName, toolName, subCtx.error()));
+                            "building host tool '{}:{}' failed: {}{}",
+                            depName, toolName, subCtx.error(), subContext()));
                     }
 
                     // Build ONLY the requested target (#274 gave the backend
@@ -4265,17 +4364,28 @@ prepare_build(bool print_fingerprint,
                     auto be = mcpp::build::make_ninja_backend();
                     mcpp::build::BuildOptions bopt;
                     bopt.ninjaTargets = { goal.generic_string() };
+                    // Unfiltered inner output on demand: the filter drops
+                    // ninja's own progress and command echoes, which is right
+                    // for a normal build and wrong when the question is "what
+                    // did the inner build actually do".
+                    if (const char* v = std::getenv("MCPP_TOOL_BUILD_VERBOSE");
+                        v && *v && std::string_view(v) != "0")
+                        bopt.verbose = true;
                     auto br = be->build(subCtx->plan, bopt);
                     if (!br) {
+                        auto diag = br.error().diagnosticOutput;
+                        if (diag.empty())
+                            diag = "(the inner build produced no diagnostic "
+                                   "output; re-run with MCPP_TOOL_BUILD_VERBOSE=1)";
                         return std::unexpected(std::format(
-                            "building host tool '{}:{}' failed: {}\n{}",
+                            "building host tool '{}:{}' failed: {}{}\n{}",
                             depName, toolName, br.error().message,
-                            br.error().diagnosticOutput));
+                            subContext(), diag));
                     }
                     if (br->exitCode != 0) {
                         return std::unexpected(std::format(
-                            "building host tool '{}:{}' failed (exit {})",
-                            depName, toolName, br->exitCode));
+                            "building host tool '{}:{}' failed (exit {}){}",
+                            depName, toolName, br->exitCode, subContext()));
                     }
 
                     // Publish into the store: build out of place, then move —

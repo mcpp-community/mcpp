@@ -443,6 +443,18 @@ struct ConditionalConfig {
     std::map<std::string, DependencySpec> dependencies;
     std::map<std::string, DependencySpec> devDependencies;
     std::map<std::string, DependencySpec> buildDependencies;
+    // #359: `[target.<sel>.feature-deps.<feature>]`. The conditional channel
+    // carried three of the four dependency maps and silently lacked the
+    // fourth, which is the exact failure this struct's `BuildInputs` comment
+    // above describes for #258 — the conditional reader kept its own subset of
+    // the keys and fell behind without anyone noticing.
+    //
+    // It is load-bearing for build-time provisions: a library that declares a
+    // host tool behind a feature (`grpc`'s `codegen` pulling protoc) has no
+    // other way to say "not on this platform", and an unconditional
+    // declaration turns an unsupported platform into a hard error raised from
+    // inside the LIBRARY's manifest, which its user cannot work around.
+    std::map<std::string, std::map<std::string, DependencySpec>> featureDeps;
 };
 
 // `[lib]` — library "root" interface convention.

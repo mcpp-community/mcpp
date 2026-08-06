@@ -90,6 +90,7 @@ int main() {
 | `mcpp::source(p)` | `mcpp:source=` |
 | `mcpp::include_dir(d)` / `mcpp::include_dir_after(d)` | `mcpp:include-dir=` / `mcpp:include-dir-after=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
+| `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` —— 匹配 `pat` 的文件**集合**发生变化时重跑(见下) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` —— **声明一个构建图节点**,而不是在这里把活干了(见下) |
 
@@ -114,7 +115,34 @@ int main() {
 mcpp 会**为构建机器**构建那个 `kind = "bin"` target(即使在 `--target` 下),
 全局缓存,并把路径交给你。这个请求写在 `mcpp.toml` 而不是这里,理由和依赖本身
 一样:向依赖图索取一个额外产物是**图级别**的请求,而图必须保持可静态分析。
-完整契约(含 `[tools.overrides]`)见 [05 §2.14](05-mcpp-toml.md)。
+完整契约(含 `[tools.overrides]` 与 `reexport = true` —— 库据此把整条工具链交给
+你,于是你只写**一条**依赖而不是四条)见 [05 §2.14](05-mcpp-toml.md)。
+
+### 用通配符声明输入:`rerun_if_changed_glob`(2026.8.6.2+)
+
+重跑键由**声明过的**输入构成。声明具体文件是可行的;而 glob 一个目录不可行 ——
+新增一个 `.proto` 不改变任何已声明文件的哈希,于是程序不重跑,新文件静默地永远
+不被生成。`rerun_if_changed_glob` 就是程序用来说「我的输出取决于这里有哪些文件」
+的方式:
+
+```cpp
+import mcpp;
+int main() {
+    mcpp::rerun_if_changed_glob("proto/**/*.proto");
+    // … 扫描目录,为每个文件声明一条 action …
+}
+```
+
+模式相对 manifest 目录,`*` / `**` 的文法与 `sources = [...]` 完全一致。它的指纹
+是**排序后的匹配路径集合**,不含其他任何东西:
+
+- **不含内容** —— 字节内容重要的文件本来就该用 `rerun_if_changed` 声明,那条
+  条目已经在哈希它;
+- **不含 mtime 与 size** —— mtime 在 `git checkout`、容器构建、`rsync` 下都不
+  稳定,而 size 是比上面那个哈希更弱的信号。
+
+构建输出目录与 `.git` 永远不进入集合,因此再宽的模式也不会让程序对着自己的产物
+无限重跑。
 
 ### 声明工作而不是干活:`mcpp::action`(2026.8.5.1+)
 

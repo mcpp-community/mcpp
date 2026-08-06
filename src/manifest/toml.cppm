@@ -537,13 +537,19 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // namespaces (so existing fetcher / lockfile lookups by composite name
     // keep working) and the bare `<name>` for the default namespace (so the
     // common case stays unchanged).
+    // MUST list every key `fill_inline_spec` below reads. The two are one
+    // decision in two places: this predicate also distinguishes an inline dep
+    // spec from a NESTED namespace table, so a key missing here does not read
+    // as "unknown option" — the table is taken for a namespace and the user is
+    // told their value "must be a string, inline dep table, or nested table".
+    // `Manifest.EveryDependencySpecKeyIsAccepted` holds the two in sync.
     auto is_dep_spec_key = [](std::string_view k) {
         return k == "path"   || k == "version" || k == "git"
             || k == "rev"    || k == "tag"     || k == "branch"
             || k == "features" || k == "default-features"
             || k == "workspace" || k == "visibility"
             || k == "backend"  || k == "tools"
-            || k == "host-module";
+            || k == "host-module" || k == "reexport";
     };
     auto looks_like_inline_dep_spec = [&](const t::Table& sub) {
         if (sub.empty()) return false;
@@ -594,6 +600,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         // module importable from build.mcpp (reusable rules as packages).
         if (auto it = sub.find("host-module"); it != sub.end() && it->second.is_bool()) {
             spec.hostModule = it->second.as_bool();
+        }
+        // #359: `reexport = true` — hand this edge's build-time provisions
+        // (tools, host module, dependency dir) on to THIS package's consumers.
+        // Off by default; see DependencySpec::reexport for why it is not the
+        // edge's `visibility`.
+        if (auto it = sub.find("reexport"); it != sub.end() && it->second.is_bool()) {
+            spec.reexport = it->second.as_bool();
         }
         // `backend = "<impl>"` — sugar for requesting the dependency's
         // `backend-<impl>` feature (library-level backend selection knob).
@@ -652,7 +665,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (!looks_like_inline_dep_spec(sub)) {
                 return std::unexpected(error(origin, std::format(
                     "[{}.{}] must be a version string or table of "
-                    "(path/version/git/rev/tag/branch/features/default-features/visibility/tools)",
+                    "(path/version/git/rev/tag/branch/features/default-features/"
+                    "visibility/backend/workspace/tools/host-module/reexport)",
                     section, key)));
             }
             if (auto r = fill_inline_spec(spec, section, key, sub); !r) return r;
@@ -1166,13 +1180,30 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());
             if (auto r = read_deps("dev-dependencies",   cc.devDependencies);  !r) return std::unexpected(r.error());
             if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());
+            // [target.<predicate>.feature-deps.<feature>] (#359). The feature
+            // itself is registered UNCONDITIONALLY: whether the platform
+            // matches decides what the feature pulls in, not whether the
+            // feature exists. Otherwise requesting it on a non-matching
+            // platform would trip the unknown-feature diagnostic.
+            if (auto f = body.find("feature-deps");
+                f != body.end() && f->second.is_table()) {
+                for (auto& [fname, fval] : f->second.as_table()) {
+                    if (!fval.is_table()) continue;
+                    if (auto r = load_deps_table(
+                            std::format("[target.{}.feature-deps.{}]", triple, fname),
+                            fval.as_table(), cc.featureDeps[std::string(fname)]); !r)
+                        return std::unexpected(r.error());
+                    m.featuresMap.try_emplace(std::string(fname),
+                                              std::vector<std::string>{});
+                }
+            }
             if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
                 || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
                 || !cc.inputs.defines.empty()
                 || !cc.inputs.globFlags.empty() || !cc.inputs.includeDirs.empty()
                 || !cc.inputs.includeDirsAfter.empty()
                 || !cc.dependencies.empty() || !cc.devDependencies.empty()
-                || !cc.buildDependencies.empty())
+                || !cc.buildDependencies.empty() || !cc.featureDeps.empty())
                 m.conditionalConfigs.push_back(std::move(cc));
         }
     }

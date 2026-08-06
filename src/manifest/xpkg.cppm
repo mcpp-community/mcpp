@@ -1533,6 +1533,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 // original comment was describing.
                 std::string dver;
                 std::vector<std::string> dtools;
+                bool dhostModule = false, dreexport = false;
                 if (cur.peek() == '{') {
                     cur.consume('{');
                     cur.skip_ws_and_comments();
@@ -1553,6 +1554,15 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                                 cur.skip_ws_and_comments();
                             }
                             cur.consume('}');
+                        } else if (dk == "host-module" || dk == "reexport") {
+                            // #359: the two build-time-provision knobs. They
+                            // exist here for the reason the `defines` comment
+                            // below states — the xpkg segment and mcpp.toml are
+                            // two spellings of ONE schema, so a key accepted in
+                            // one must not be an unknown-key error in the other.
+                            bool v = cur.read_bareword() == "true";
+                            if (dk == "host-module") dhostModule = v;
+                            else                     dreexport   = v;
                         } else {
                             // Record rather than swallow — a descriptor author
                             // writing an unsupported dep key deserves to be
@@ -1570,8 +1580,10 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 }
                 if (!dname.empty()) {
                     DependencySpec spec;
-                    spec.version = dver;
-                    spec.tools   = std::move(dtools);
+                    spec.version    = dver;
+                    spec.tools      = std::move(dtools);
+                    spec.hostModule = dhostModule;
+                    spec.reexport   = dreexport;
                     auto selector = mcpp::pm::resolve_dependency_selector(
                         dname,
                         mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);

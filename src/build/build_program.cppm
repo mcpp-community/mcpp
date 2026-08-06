@@ -85,6 +85,23 @@ std::expected<void, std::string> run_build_program(
     const mcpp::manifest::CppStandardConfig& cppStandard,
     const BuildProgramEnv& env);
 
+// #359: has any recorded glob input's path SET changed since its build.mcpp
+// cache was written?
+//
+// The project-level fast path skips prepare_build entirely when no source is
+// newer than build.ninja, and prepare is where the build.mcpp cache is
+// normally consulted. A glob input is precisely an input whose change leaves
+// every existing file's mtime alone — adding a .proto — so without this ask,
+// the fast path would report "Finished dev in 0.00s" and the new file would
+// never be generated. That is the same gap the fast path already closes for
+// the build.mcpp source itself; a glob is one more kind of build-program input,
+// so it belongs to the same question.
+//
+// Scans the caches under `<projectRoot>/target/.build-mcpp` (the root's own and
+// each dependency's). Each cache records the root its globs were relative to,
+// so a dependency's glob is evaluated against the dependency's tree.
+bool glob_inputs_stale(const std::filesystem::path& projectRoot);
+
 } // namespace mcpp::build
 
 namespace mcpp::build {
@@ -266,6 +283,20 @@ std::string contract_hash(const std::vector<std::pair<std::string, std::string>>
     return mcpp::toolchain::hash_string(s);
 }
 
+// The project-relative name of the build output tree ("target" by default), so
+// a glob input never walks into what a previous run produced. Empty when the
+// output lives outside the project, in which case nothing needs excluding.
+std::string output_dir_name(const fs::path& root, const fs::path& bdir) {
+    std::error_code ec;
+    auto rel = bdir.lexically_relative(root);
+    if (rel.empty()) return {};
+    auto first = rel.begin();
+    if (first == rel.end()) return {};
+    auto name = first->string();
+    if (name == "..") return {};   // outside the project
+    return name;
+}
+
 void write_cache(const fs::path& bdir, const fs::path& root,
                  const std::string& programHash,
                  const std::string& compilerHash, const std::string& ctxHash,
@@ -279,10 +310,22 @@ void write_cache(const fs::path& bdir, const fs::path& root,
     os << "program " << programHash << '\n';
     os << "compiler " << compilerHash << '\n';
     os << "ctx " << ctxHash << '\n';
+    // The root the relative entries below are resolved against. Recorded so a
+    // reader that is not prepare_build — the fast-path glob check — can
+    // evaluate a DEPENDENCY's cache against the dependency's own tree.
+    os << "root " << root.string() << '\n';
     for (auto const& f : d.at(Slot::RerunFiles))
         os << "in " << mcpp::toolchain::hash_file(abs_against_root(root, f)) << ' ' << f << '\n';
     for (auto const& e : d.at(Slot::RerunEnv))
         os << "env " << mcpp::toolchain::hash_string(env_value(e)) << ' ' << e << '\n';
+    // #359: a glob input's fingerprint is the SET of matching paths. Same
+    // record shape as `in`/`env`; the value is computed by the table's owner.
+    {
+        auto outName = output_dir_name(root, bdir);
+        for (auto const& g : d.at(Slot::RerunGlobs))
+            os << "glob " << dirs::glob_fingerprint(root, g, outName) << ' '
+               << g << '\n';
+    }
     dirs::serialize(os, d);
 }
 
@@ -291,8 +334,10 @@ struct CacheRecord {
     std::string programHash;
     std::string compilerHash;
     std::string ctxHash;   // contract env (target/profile/features/out-dir)
+    std::string rootPath;  // what relative entries are resolved against
     std::vector<std::pair<std::string, std::string>> inputs;  // (hash, path)
     std::vector<std::pair<std::string, std::string>> envs;    // (hash, name)
+    std::vector<std::pair<std::string, std::string>> globs;   // (hash, pattern)
     Directives directives;
     // A `d` record whose tag this mcpp does not know — the entry was written
     // by a newer mcpp. Replaying the rest would apply a strict subset of what
@@ -320,11 +365,13 @@ CacheRecord read_cache(const fs::path& bdir) {
         else if (tag == "program") r.programHash = rest;
         else if (tag == "compiler") r.compilerHash = rest;
         else if (tag == "ctx") r.ctxHash = rest;
-        else if (tag == "in" || tag == "env") {
+        else if (tag == "root") r.rootPath = rest;
+        else if (tag == "in" || tag == "env" || tag == "glob") {
             auto sp2 = rest.find(' ');
             if (sp2 == std::string::npos) continue;
             std::string h = rest.substr(0, sp2), name = rest.substr(sp2 + 1);
-            (tag == "in" ? r.inputs : r.envs).emplace_back(h, name);
+            (tag == "in" ? r.inputs : tag == "env" ? r.envs : r.globs)
+                .emplace_back(h, name);
         } else if (tag == "d") {
             auto sp2 = rest.find(' ');
             if (sp2 == std::string::npos) continue;
@@ -338,7 +385,7 @@ CacheRecord read_cache(const fs::path& bdir) {
 }
 
 // Decide whether the cached run is still valid (so we can skip recompiling/running).
-bool cache_fresh(const fs::path& root, const CacheRecord& c,
+bool cache_fresh(const fs::path& root, const fs::path& bdir, const CacheRecord& c,
                  const std::string& programHash, const std::string& compilerHash,
                  const std::string& ctxHash) {
     if (!c.loaded) return false;
@@ -351,6 +398,14 @@ bool cache_fresh(const fs::path& root, const CacheRecord& c,
         if (mcpp::toolchain::hash_file(abs_against_root(root, path)) != h) return false;
     for (auto const& [h, name] : c.envs)
         if (mcpp::toolchain::hash_string(env_value(name)) != h) return false;
+    // #359: the path SET behind each declared glob. A file appearing or
+    // disappearing changes it; editing one does not (that is what the `in`
+    // entries above are for).
+    if (!c.globs.empty()) {
+        auto outName = output_dir_name(root, bdir);
+        for (auto const& [h, pattern] : c.globs)
+            if (dirs::glob_fingerprint(root, pattern, outName) != h) return false;
+    }
     // A declared output that vanished invalidates the cache. Driven off the
     // table's mustExistAfterRun so a future output-shaped directive is covered
     // without editing this function.
@@ -425,7 +480,7 @@ std::expected<void, std::string> run_build_program(
     // Fast path: declared inputs + contract unchanged → reapply cached
     // directives, no run.
     CacheRecord cache = read_cache(bdir);
-    if (cache_fresh(root, cache, programHash, compilerHash, ctxHash)) {
+    if (cache_fresh(root, bdir, cache, programHash, compilerHash, ctxHash)) {
         dirs::apply(m, cache.directives);
         mcpp::ui::info("build.mcpp", "up to date (cached)");
         return {};
@@ -779,6 +834,32 @@ std::expected<void, std::string> run_build_program(
     dirs::apply(m, d);
     write_cache(bdir, root, programHash, compilerHash, ctxHash, d);
     return {};
+}
+
+bool glob_inputs_stale(const fs::path& projectRoot) {
+    std::error_code ec;
+    const fs::path base = projectRoot / "target" / ".build-mcpp";
+    if (!fs::exists(base, ec)) return false;
+
+    // Depth-bounded: the root's cache sits at depth 0 and a dependency's at
+    // `deps/<pkg>/` (depth 2). Bounding it keeps this off the generated-output
+    // tree under `out/`, which can hold thousands of files and never holds a
+    // cache.
+    fs::recursive_directory_iterator it(
+        base, fs::directory_options::skip_permission_denied, ec);
+    if (ec) return false;
+    for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        if (it.depth() >= 3) { it.disable_recursion_pending(); continue; }
+        if (it->path().filename() != "build.mcpp.cache") continue;
+        auto rec = read_cache(it->path().parent_path());
+        if (!rec.loaded || rec.globs.empty() || rec.rootPath.empty()) continue;
+        fs::path recRoot{rec.rootPath};
+        auto outName = output_dir_name(recRoot, it->path().parent_path());
+        for (auto const& [h, pattern] : rec.globs)
+            if (dirs::glob_fingerprint(recRoot, pattern, outName) != h) return true;
+    }
+    return false;
 }
 
 } // namespace mcpp::build

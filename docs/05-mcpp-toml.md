@@ -596,7 +596,9 @@ aliases `windows` / `linux` / `macos` / `unix` are never valid target triples, s
 there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
 when you need arch/env conditions or combinators.
 
-- **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies`, and
+- **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies` /
+  `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see §2.14; the feature is
+  registered unconditionally, only its dependency set is scoped), and
   `build` with `cflags` / `cxxflags` / `ldflags` / `sources` (mcpp 0.0.95+ —
   conditional source globs, e.g. gating `src/x86/**/*.asm` behind
   `cfg(arch = "x86_64")`; `!`-exclusion globs work here too), plus `flags` and
@@ -1063,6 +1065,72 @@ or linked with your target. It exists to run during `build.mcpp` and nowhere
 else — the same separation Cargo draws with `[build-dependencies]`. (Before
 2026.8.5.2 it was also built as an ordinary library, which made `import mcpp;`
 inside a rule fail: the bundled module does not exist in that second compile.)
+
+#### `reexport = true` — a library standing up a toolchain for its user (2026.8.6.2+)
+
+Everything above is declared by whoever *uses* the tool. That is the wrong
+place when the knowledge belongs to a library: gRPC's code generation needs
+protobuf's `protoc`, and no user of a gRPC package should have to know that.
+
+`reexport = true` hands an edge's build-time provisions — its `tools`, its
+`host-module`, and the dependency's directory — to **this package's own
+consumers**:
+
+```toml
+# inside the grpc package's manifest
+[feature-deps.codegen]
+"compat.protobuf" = { version = "35.1",   tools = ["protoc"],            reexport = true }
+grpc-plugin       = { version = "1.83.0", tools = ["grpc_cpp_plugin"],   reexport = true }
+grpcgen           = { version = "1.83.0", host-module = true,            reexport = true }
+```
+
+Its user then writes one line, and imports the rule:
+
+```toml
+[dependencies]
+grpc = { version = "1.83.0", features = ["codegen"] }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+import grpcgen;
+int main() { return grpcgen::generate_all() ? 0 : 1; }
+```
+
+- **Off by default, and deliberately not the edge's `visibility`.** `visibility`
+  already defaults to `"public"`, so riding it would let any dependency at any
+  depth put entries into your build program's tool namespace without saying so.
+  Handing something to your consumers is a supply-chain statement; it has to be
+  written down.
+- **One hop per declaration.** A re-exported provision reaches the consumers of
+  the package that declared it. For it to travel further, the next package must
+  re-export in turn — each package decides only what *it* hands on.
+- **Visibility, not execution.** `dep_bin()` returns a path; whether anything
+  runs is still the consumer's `build.mcpp`'s decision. Nothing changes about
+  who builds the tool or how the tool store is keyed.
+- **Unqualified names are resolved by a ladder, not by luck.** Once two
+  libraries can re-export, both may offer the tail `protobuf`. The
+  fully-qualified `MCPP_DEP_<NS>_<NAME>_BIN_<TOOL>` is always published; the
+  bare spelling is bound to `mcpplibs.<x>`, else `compat.<x>`, else an
+  unnamespaced `<x>`, else the single remaining candidate — and when it is
+  contested mcpp says so instead of picking silently.
+
+##### Scoping a provision per platform
+
+A package may declare a `bin` target on some platforms only. Because the
+*library* now decides what is requested, an unconditional request turns an
+unsupported platform into an error its user cannot edit away. Scope it:
+
+```toml
+[target.'cfg(not(windows))'.feature-deps.codegen]
+"compat.protobuf" = { version = "35.1", tools = ["protoc"], reexport = true }
+```
+
+`[target.<sel>.feature-deps.<feature>]` (2026.8.6.2+) follows the same rules as
+the other conditional dependency tables (§2.7.1). The **feature itself is
+registered on every platform** — only what it pulls in is conditional — so
+requesting it where no predicate matches is not an unknown-feature error.
 
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 

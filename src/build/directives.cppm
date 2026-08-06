@@ -41,6 +41,8 @@ import std;
 import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.toolchain.dialect;
+import mcpp.toolchain.fingerprint;   // hash_string for the glob fingerprint
+import mcpp.modgraph.glob;           // the one path-glob matcher
 
 export namespace mcpp::build::directives {
 
@@ -56,7 +58,8 @@ export namespace mcpp::build::directives {
 // directive is added that a program may rely on. An engine seeing a HIGHER
 // number than this must refuse: it cannot know what it is being asked to do,
 // and "warn and ignore" would turn that into a silently different build.
-inline constexpr int kProtocolVersion = 1;
+// v2 (#359): adds `rerun-if-changed-glob`.
+inline constexpr int kProtocolVersion = 2;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //
@@ -66,7 +69,10 @@ inline constexpr int kProtocolVersion = 1;
 // Deliberately NOT the mcpp release number: folding the whole version in would
 // re-run every build program on every release for nothing. Same discipline as
 // mcpp.build.cache_key::kCacheEpoch.
-inline constexpr int kCacheEpoch = 1;
+// Epoch 2 (#359): entries gained `glob` records. An engine that does not know
+// them would replay a strict subset of the declared inputs and call a stale
+// build fresh, which is exactly the silent-wrong-answer this guard exists for.
+inline constexpr int kCacheEpoch = 2;
 
 // ── Run bound ──────────────────────────────────────────────────────────────
 //
@@ -97,6 +103,12 @@ enum class Slot : std::size_t {
     IncludeDirsAfter,
     RerunFiles,
     RerunEnv,
+    // #359: an input that is a SET of files rather than one file. The
+    // fingerprint is the sorted list of matching relative paths — never their
+    // contents, sizes or timestamps. A program that globs (`proto/**/*.proto`)
+    // otherwise cannot express "re-run me when a file appears", because no
+    // declared file's hash changes and the new file is silently never built.
+    RerunGlobs,
     // Build-graph nodes (`mcpp:action=`). The value is a JSON payload rather
     // than a scalar: an action has six fields, and a flat `key=value` line
     // cannot carry them. The bundled `mcpp` module owns the encoding, which
@@ -147,7 +159,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 12> kTable{{
+inline constexpr std::array<Def, 13> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -160,6 +172,7 @@ inline constexpr std::array<Def, 12> kTable{{
     {"include-dir-after",   "include-dir-after", Slot::IncludeDirsAfter, Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"rerun-if-changed",    "",                  Slot::RerunFiles,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
     {"rerun-if-env-changed","",                  Slot::RerunEnv,         Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
+    {"rerun-if-changed-glob","",                 Slot::RerunGlobs,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              2},
     {"action",              "action",            Slot::Actions,          Scope::GraphNode,      Transform::Verbatim,      false, "",                           "",                                              1},
 }};
 
@@ -222,6 +235,34 @@ void serialize(std::ostream& os, const Directives& d);
 // One `d <tag> <value>` record. Returns false for an unknown tag (a cache
 // written by a newer mcpp) — the caller treats that as a stale entry.
 bool accept_cache_record(Directives& d, std::string_view tag, std::string_view value);
+
+// ── Glob inputs (#359) ─────────────────────────────────────────────────────
+//
+// The fingerprint of `rerun-if-changed-glob=<pattern>`: the SORTED SET of
+// relative paths matching the pattern under `root`, and nothing else.
+//
+// Deliberately not contents, size or mtime:
+//   * contents are already covered — a file whose bytes matter is declared as
+//     an ordinary `rerun-if-changed` input, and size is a strictly weaker
+//     signal than the hash that entry already carries;
+//   * mtime is unstable across git checkout, container builds and rsync, and
+//     this project has already paid for treating a timestamp as identity
+//     (the file_time_type epoch in the dependency cache).
+// The question a glob input asks is "which files are here", so the answer is
+// the path set, exactly.
+//
+// `root`-relative, generic_string, byte-ordered — otherwise the same tree
+// fingerprints differently depending on the platform's directory-iteration
+// order and separator.
+//
+// `outputDirName` (typically "target") and ".git" are never walked. A build
+// program writes its outputs INSIDE the project, so a pattern like `**` would
+// otherwise include what the previous run produced and the set would change on
+// every build — a permanent re-run loop, and the classic Cargo footgun. This
+// is enforced here rather than left to the author's pattern.
+std::string glob_fingerprint(const std::filesystem::path& root,
+                             std::string_view pattern,
+                             std::string_view outputDirName);
 
 // ── Apply ──────────────────────────────────────────────────────────────────
 
@@ -455,6 +496,46 @@ bool accept_cache_record(Directives& d, std::string_view tag, std::string_view v
     if (!def) return false;
     d.at(def->slot).emplace_back(value);
     return true;
+}
+
+std::string glob_fingerprint(const std::filesystem::path& root,
+                             std::string_view pattern,
+                             std::string_view outputDirName) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> hits;
+    std::error_code ec;
+    // skip_permission_denied only: symlinked directories are NOT followed, the
+    // same rule the source scan uses, so a self-referential link cannot make
+    // this walk diverge.
+    fs::recursive_directory_iterator it(
+        root, fs::directory_options::skip_permission_denied, ec);
+    if (ec) return {};
+    for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        const auto& p = it->path();
+        std::error_code dec;
+        if (it->is_directory(dec)) {
+            auto name = p.filename().string();
+            if (name == ".git" || (!outputDirName.empty() && name == outputDirName)) {
+                it.disable_recursion_pending();
+                continue;
+            }
+            if (it->is_symlink(dec)) it.disable_recursion_pending();
+            continue;
+        }
+        if (!mcpp::modgraph::path_matches_glob(p, root, pattern)) continue;
+        std::string rel;
+        try {
+            rel = p.lexically_relative(root).generic_string();
+        } catch (const std::exception&) {
+            continue;   // unspellable name — see path_matches_glob
+        }
+        hits.push_back(std::move(rel));
+    }
+    std::ranges::sort(hits);
+    std::string joined;
+    for (auto const& h : hits) { joined += h; joined.push_back('\n'); }
+    return mcpp::toolchain::hash_string(joined);
 }
 
 void apply(mcpp::manifest::Manifest& m, const Directives& d) {

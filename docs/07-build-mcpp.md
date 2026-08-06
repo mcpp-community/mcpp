@@ -97,6 +97,7 @@ int main() {
 | `mcpp::source(p)` | `mcpp:source=` |
 | `mcpp::include_dir(d)` / `mcpp::include_dir_after(d)` | `mcpp:include-dir=` / `mcpp:include-dir-after=` |
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
+| `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` — re-run when the **set** of files matching `pat` changes (see below) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | reads `MCPP_DEP_<PKG>_BIN_<TOOL>` — the absolute path of a **host tool** built by a dependency (see below) |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` — declares a **build-graph node** instead of doing the work here (see below) |
 
@@ -123,7 +124,37 @@ mcpp builds that `kind = "bin"` target **for the build machine** (even under
 `mcpp.toml` rather than here for the same reason a dependency does: asking the
 graph for an extra artifact is a graph-level request, and the graph stays
 statically analysable. See [05 §2.14](05-mcpp-toml.md) for the full contract,
-including `[tools.overrides]`.
+including `[tools.overrides]` and `reexport = true` (which is how a library
+hands you the whole toolchain so you declare **one** dependency instead of
+four).
+
+### Globbing your inputs: `rerun_if_changed_glob` (2026.8.6.2+)
+
+The re-run key is built from *declared* inputs. Declare files and it works;
+glob a directory and it does not — adding a `.proto` changes no declared file's
+hash, so the program never re-runs and the new file is silently never
+generated. `rerun_if_changed_glob` is how a program says "my output depends on
+which files are here":
+
+```cpp
+import mcpp;
+int main() {
+    mcpp::rerun_if_changed_glob("proto/**/*.proto");
+    // … scan the directory, declare one action per file …
+}
+```
+
+The pattern is relative to the manifest directory and uses the same `*` / `**`
+grammar as `sources = [...]`. Its fingerprint is the **sorted set of matching
+paths** and nothing else:
+
+- **not contents** — a file whose bytes matter is an ordinary
+  `rerun_if_changed` input, which already hashes them;
+- **not mtime or size** — mtime is unstable across `git checkout`, container
+  builds and `rsync`, and size is a weaker signal than the hash above.
+
+The build output tree and `.git` are never part of the set, so a wide pattern
+cannot make the program re-run forever against its own outputs.
 
 ### Declaring work instead of doing it: `mcpp::action` (2026.8.5.1+)
 

@@ -9,6 +9,7 @@ module;
 export module mcpp.build.execute;
 
 import std;
+import mcpp.build.build_program;   // #359 glob inputs the mtime sweep cannot see
 import mcpp.build.prepare;
 import mcpp.diag;
 import mcpp.build.plan;
@@ -449,6 +450,12 @@ bool sources_newer_than(const std::filesystem::path& projectRoot,
         auto bt = std::filesystem::last_write_time(bp, ec);
         if (ec || bt > ninjaTime) return true;
     }
+    // #359: a GLOB input changes without any existing file's mtime changing —
+    // a new .proto appears and every timestamp below is unmoved. The mtime
+    // sweep therefore cannot see it, and the fast path would report
+    // "Finished dev in 0.00s" while the new file is never generated. Same
+    // question as the build.mcpp check above, different kind of input.
+    if (mcpp::build::glob_inputs_stale(projectRoot)) return true;
     for (auto& f : mcpp::modgraph::expand_glob(projectRoot, "src/**/*")) {
         auto ext = f.extension().string();
         if (ext != ".cppm" && ext != ".cpp" && ext != ".cc" &&

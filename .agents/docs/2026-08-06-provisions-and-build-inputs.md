@@ -1,9 +1,10 @@
 # 依赖提供物与构建期输入:两个缺口,同一个形状
 
-> 状态：**设计待 review**
+> 状态：**已定案，实施中**
 > 关联：[#359](https://github.com/mcpp-community/mcpp/issues/359)（由 grpc-m 的真实使用暴露）
-> 涉及：`src/modgraph/scanner.cppm`（`UsageRequirements`）、`src/build/prepare.cppm`、
-> `src/build/build_program.cppm`、`src/build/directives.cppm`
+> 涉及：`src/build/provisions.cppm`（新增）、`src/build/prepare.cppm`、
+> `src/build/build_program.cppm`、`src/build/directives.cppm`、
+> `src/pm/dep_spec.cppm`、`src/manifest/{types,toml,xpkg}.cppm`
 
 ---
 
@@ -25,7 +26,7 @@ import mcpp; import grpcgen;
 int main() { return grpcgen::generate({"helloworld"}) ? 0 : 1; }
 ```
 
-后三条**全是为了 codegen**,而且要求用户知道「gRPC 的代码生成需要 protobuf 的 protoc」——这是**库该承担的知识**。目标形态:
+后三条全部服务于 codegen,并且要求用户知道「gRPC 的代码生成需要 protobuf 的 protoc」——这是库该承担的知识。目标形态:
 
 ```toml
 grpc = { version = "1.83.0", features = ["codegen"] }
@@ -35,143 +36,211 @@ import mcpp; import grpcgen;
 int main() { return grpcgen::generate_all() ? 0 : 1; }   // 扫 proto/**
 ```
 
-对照业界:xmake 是 `add_requires("grpc")` + `add_files("proto/*.proto")`;CMake+vcpkg 是 1 条依赖 + `protobuf_generate(...)`。达到目标形态后 mcpp **严格更优** —— 因为它还额外保有「版本错配不可表达」与「交叉编译构造上正确」这两条别人没有的性质。
+对照业界:xmake 是 `add_requires("grpc")` + `add_files("proto/*.proto")`;CMake + vcpkg 是 1 条依赖 + `protobuf_generate(...)`。达到目标形态后 mcpp 严格更优,因为它额外保有「工具与运行时版本错配不可表达」与「交叉编译构造上正确」两条性质。
 
-两个缺口各挡住一半,**缺一个都到不了**。
+两个缺口各挡住一半,缺一个都到不了。
 
-## 1. 关键发现:模型已经存在,新东西没接进去
+## 1. 关键发现:一个必答问题在零处被表达
 
 mcpp 早有一套「依赖能提供什么 × 提供给谁」的模型(`src/modgraph/scanner.cppm`):
 
 ```cpp
 struct UsageRequirements {
-    std::vector<std::filesystem::path> includeDirs;
-    std::vector<std::filesystem::path> includeDirsAfter;
+    std::vector<std::filesystem::path> includeDirs, includeDirsAfter;
     std::vector<std::string>           cflags, cxxflags, ldflags, modules;
 };
-
 struct PackageRoot {
-    UsageRequirements privateBuild;   // 只给自己
-    UsageRequirements publicUsage;    // 沿边传给消费者
+    UsageRequirements privateBuild;   // 编译自己时用
+    UsageRequirements publicUsage;    // 沿边流向消费者
     UsageRequirements linkUsage;      // 链接期
 };
 ```
 
-include dirs、defines、link flags、modules 全都通过它传播,规则清楚、单点定义。
+#355 引入的两种新提供物没有进入任何等价模型:
 
-**#355 引入的两种新提供物没有进入这个模型**:
-
-| 提供物 | 在模型里? | 实际实现 |
+| 提供物 | 传播规则在哪 | 实际行为 |
 |---|---|---|
-| include dirs / defines / ldflags / modules | ✅ `UsageRequirements` | 按作用域传播 |
-| **host 工具**(`tools = [...]`) | ❌ | `prepare.cppm:4113` 硬编码 `toolEnvByConsumer[edge.consumerPackageIndex]` —— 只给**发出请求的那条边**的消费者 |
-| **host 模块**(`host-module = true`) | ❌ | `prepare.cppm:4016` 只遍历 `m->dependencies`,即**只认 root 的**直接依赖 |
+| include dirs / defines / ldflags / modules | `UsageRequirements` + 不动点(`prepare.cppm:2906`) | 按作用域传播 |
+| host 工具(`tools = [...]`) | 无 | `prepare.cppm:4122` 只发给发出请求的那条边的消费者 |
+| host 模块(`host-module = true`) | 无 | `prepare.cppm:4016` 只遍历 root 的 `dependencies` |
+| 依赖目录(`dep_dir()`) | 无 | `fillDepDirs` 只覆盖直接依赖 |
 
-于是「库代用户拉起整条 codegen 工具链」在架构上不可能:工具**被构建了**,但环境变量记在库的账上,消费者的 `build.mcpp` 看不见。
+于是「库代用户拉起整条 codegen 工具链」在架构上不可能:工具被构建了,但环境变量记在库的账上,消费者的 `build.mcpp` 看不见。
 
-> 实测确认(不是推断):一个 path 依赖在自己的 manifest 里写 `compat.protobuf = { tools = ["protoc"] }`,消费者 `mcpp::dep_bin("protobuf","protoc")` 拿到**空串**,`dep_dir` 同样为空。
+> 实测确认:一个 path 依赖在自己的 manifest 里写 `compat.protobuf = { tools = ["protoc"] }`,消费者 `mcpp::dep_bin("protobuf","protoc")` 拿到空串,`dep_dir` 同样为空。
 
-**根因不是「少了一次传播」,而是:新增一种提供物时,没有任何地方逼你回答「它怎么传播」。** 这与本仓库反复付学费的「同一决策在 N 处推导」是同一形状的镜像——一个必答问题在**零处**被表达。`directives::kTable` 已经用「Scope 是必填字段」解过一次。
+**根因不是少了一次传播,而是新增一种提供物时,没有任何地方逼你回答「它怎么传播」。** 这与本仓库反复付学费的「同一决策在 N 处推导」是同一形状的镜像——一个必答问题在零处被表达。`directives::kTable` 已经用「Scope 是必填字段」解过一次。
 
 ## 2. 缺口 B 同构:输入声明的种类是封闭的
 
-`build.mcpp` 的缓存键由**声明过的输入**构成,而输入只有两种形态:
+`build.mcpp` 的缓存键由声明过的输入构成,而输入只有两种形态:
 
 ```cpp
 // build_program.cppm:283
-os << "in " << hash_file(abs_against_root(root, f)) << ' ' << f << '\n';   // 文件内容
-os << "env " << hash_string(env_value(e)) << ' ' << e << '\n';             // 环境变量
+os << "in "  << hash_file(abs_against_root(root, f)) << ' ' << f << '\n';   // 文件内容
+os << "env " << hash_string(env_value(e))            << ' ' << e << '\n';   // 环境变量
 ```
 
-`hash_file` 读的是**文件内容**。于是「我的输出取决于这个目录里有哪些文件」**无法表达**:
+`hash_file` 读的是文件内容,于是「我的输出取决于这里有哪些文件」无法表达:新增一个 `.proto` 不改变任何已声明文件的哈希,build.mcpp 不重跑,新文件静默不生成。实测:glob `proto/**` 后新增 `fresh.proto`,`Finished dev in 0.01s`,产物 0 个。这比「要求用户列名字」更坏,所以 grpc-m 最终选了显式列表。
 
-- 对目录调用 `rerun_if_changed` 无效(目录没有可读内容);
-- 新增一个 `.proto` 不改变任何已声明文件的哈希 → build.mcpp 不重跑 → **新文件静默不生成**。
+同样的形状:新增一种输入时,没有地方回答「它的指纹怎么取」。
 
-实测:glob `proto/**` 后新增 `fresh.proto`,`Finished dev in 0.01s`,产物 0 个。这比「要求用户列名字」更坏,所以 grpc-m 最终选了显式列表。
-
-同样的形状:**新增一种输入时,没有地方回答「它的指纹怎么取」。**
+---
 
 ## 3. 设计
 
-一条主张:**两个缺口都收敛成「表 + 必答字段」,与 `directives::kTable` 同一范式**,而不是各打一个补丁。
+一条主张:两个缺口都收敛成「表 + 必答字段」,与 `directives::kTable` 同一范式。
 
-### D1. 提供物进 `UsageRequirements`,传播由作用域决定
+### D1. 提供物进一张 `ProvisionKind` 表,传播由 `reexport` 决定
+
+#### D1.1 容器:新模块,不是 `UsageRequirements`
+
+`UsageRequirements` 描述的是消费者**编译**时的命令行,进的是 ninja 边;提供物描述的是消费者的 **build.mcpp 程序**能看见什么,进的是 prepare 期子进程的环境。两者的消费者、时机、失效条件都不同,合并会让 `privateBuild / publicUsage / linkUsage` 这三个作用域名字对新字段失去意义(`linkUsage.tools` 没有含义)。
+
+因此新增 `src/build/provisions.cppm`,持有:
 
 ```cpp
-struct UsageRequirements {
-    // …既有字段…
-    // #359: host 工具与 host 模块。放在这里而不是旁路,是为了让「它怎么
-    // 传播」由所在的作用域回答,与 includeDirs 完全同一条规则。
-    std::vector<ToolProvision>       tools;
-    std::vector<HostModuleProvision> hostModules;
-};
+enum class ProvisionKind { Tool, HostModule, DepDir };
 ```
 
-- 放进 `privateBuild` → 只有该包自己的 `build.mcpp` 能用;
-- 放进 `publicUsage` → 沿 **public 边**传给消费者。
+每一种在表里必须给出三件事:环境变量的形态、裸名是否可用、传播是否需要 `reexport`。新增第四种提供物时,这张表逼你回答同样三个问题——这正是 §1 的病所缺的那个位置。
 
-于是 `grpc` 可以在描述符里声明「我的 codegen feature 对外提供 protoc 与 grpc_cpp_plugin」,消费者只写一条依赖。
+分模块而非并进 `prepare.cppm` 的匿名命名空间,理由与 `directives.cppm` 头部记录的一致:该匿名命名空间在 clang 22 + C++20 modules + `-O2` 下会破坏邻居(PR#332 / PR#334)。
 
-**三条必须写死的语义**,否则这会变成一个安全与可维护性的洞:
+#### D1.2 语法:`reexport = true`,一个布尔,覆盖三种提供物
 
-1. **传播的是「可见性」,不是「自动执行」。** `dep_bin()` 只返回路径;跑不跑由消费者的 `build.mcpp` 决定。传播不改变「谁构建了这个工具」,也不改变 tool store 的键。
-2. **必须显式声明,不能默认传播。** 默认传播意味着任意深层依赖都能往消费者的工具命名空间里塞东西——那是供应链问题。库要对外提供,必须自己写明(与 `include_dirs` 默认 private、要 public 得显式是同一条纪律)。
-3. **命名冲突用包名消歧**,`dep_bin(pkg, tool)` 本来就是两段式,无需新语法。
+```toml
+# grpc 的描述符
+[feature-deps.codegen]
+"compat.protobuf" = { version = "35.1", tools = ["protoc"],            reexport = true }
+grpc-plugin       = { version = "1.83.0", tools = ["grpc_cpp_plugin"], reexport = true }
+grpcgen           = { version = "1.83.0", host-module = true,          reexport = true }
+```
 
-> 顺带修掉一个相邻缺陷:`dep_dir()` 目前只覆盖**直接**依赖,所以传递依赖的数据文件目录取不到(protoc 的 well-known types 就是这么一个目录)。它应与 tools 走同一条传播规则。
+默认 `false`,即今天的行为。选它而不是新开 `[provides]` 表,理由:
+
+1. `tools` / `host-module` 已经是这条边上的请求字段,「是否再导出」是同一条边的属性。另开一张表会让「谁请求 / 谁提供」在两处推导——正是本设计要治的病。
+2. 一个词覆盖三种提供物。grpc 的三条依赖各写一次 `reexport = true`,而不是三种不同的键。
+3. `reexport` 在 C++20 模块里就是 `export import` 的名字,读者不需要学新概念。
+4. 粒度已经是 per-edge:库要只导出 protoc 而不导出规则模块,把 `reexport` 写在那一条边上即可。per-kind 的更细粒度是 YAGNI。
+
+##### 为什么不能复用边的 `visibility`
+
+`parseVisibility`(`prepare.cppm:2701`)与 `DependencyEdge::visibility`(`:2670`)**默认都是 Public**。「放进 `publicUsage`、沿 public 边传」落地后就是默认传播,与「必须显式声明」直接冲突。
+
+同时更正设计初稿里一处对本仓库的事实误述:manifest 里的 `include_dirs` **并非默认 private**——`prepare.cppm:2868` 把 `publicUsage.includeDirs = privateBuild.includeDirs`,它们默认就是 public 的;真正 private-only 的是 `build.mcpp` 注入的那些(`:2742`)。所以「和 include_dirs 同一条纪律」这个类比不成立,`reexport` 必须是独立的、默认关闭的位。
+
+##### 传播规则(不动点,与 include dirs 同构)
+
+```
+own(P→D)      = 该边上请求的 tools / host-module,以及 D 本身的目录
+exported(P)   = ⋃ {P→D : edge.reexport} [ own(P→D) ∪ exported(D) ]
+visible(P)    = ⋃ {P→D}                 [ own(P→D) ∪ exported(D) ]
+```
+
+即:一条边写了 `reexport`,就把「这条边提供的东西,以及 D 转手给我的东西」继续交给 P 的消费者;而 P 自己总能看见所有直接依赖提供给它的东西。单调、可用不动点求解,和 `prepare.cppm:2906` 那个循环同形。
+
+三条必须写死的语义:
+
+1. **传播的是可见性,不是自动执行。** `dep_bin()` 只返回路径,跑不跑由消费者的 `build.mcpp` 决定。传播不改变「谁构建了这个工具」,也不改变 tool store 的键。
+2. **provision 的存在性绑定 feature 激活**,与 `featureDefines`(`prepare.cppm:3812`)同一时机。feature 关闭时不应有任何工具被构建。
+3. **`reexport` 只在依赖侧有意义。** root 写它无害但无效果(root 没有消费者)。
+
+#### D1.3 裸名:走索引那套命名空间阶梯,而不是「谁最后写谁赢」
+
+`env_var_name`(`tool_store.cppm:154`)今天同时发长名与短名:`compat.protobuf` → `MCPP_DEP_COMPAT_PROTOBUF_BIN_PROTOC` 与 `MCPP_DEP_PROTOBUF_BIN_PROTOC`。今天只有 root 亲自声明的工具进环境,撞车在用户眼皮底下;传递传播之后,两条互不相识的库各自提供同名短名工具时,谁赢取决于 vector 的追加顺序,且无任何诊断。这从另一扇门放回了本设计要保住的「版本错配不可表达」性质。
+
+采用与包身份解析同一套机制:**FQN 是标识,裸名是缺省形式,按固定阶梯解析。**
+
+- 全限定变量 `MCPP_DEP_<NS>_<NAME>_BIN_<TOOL>` **总是**发布,永远无歧义;
+- 裸名变量 `MCPP_DEP_<NAME>_BIN_<TOOL>` 按阶梯选出唯一归属:
+
+  1. `(mcpplibs, X)` —— `kDefaultNamespace`
+  2. `(compat, X)` —— `kCompatNamespace`
+  3. 其余候选中恰好只剩一个
+  4. 否则不发布裸名变量
+
+- 阶梯在第 1/2 级破除了平局(即同名候选不止一个)时,发一条 `provisions/ambiguous` 诊断,写明胜出者与全部候选的 FQN;
+- 第 4 级不发布裸名,并把同一条诊断升级为「请改用全限定名」。
+
+这与索引解析裸包名的阶梯(`(mcpplibs,X) → (compat,X) → (∅,X)`)是同一条规则的同一次应用;第 3 级是必需的补充,否则 `grpc.grpc-plugin` 这类非默认命名空间的包连裸名都拿不到(grpc-m 现在写的正是 `dep_bin("grpc-plugin", ...)`)。`dep_dir()` 沿用同一套。
 
 ### D2. 输入种类进表,指纹由种类决定
 
-```cpp
-enum class InputKind {
-    File,       // 内容哈希(现有)
-    Directory,  // 递归成员集合:相对路径 + size + mtime,不读内容
-    Env,        // 环境变量(现有)
-};
-```
-
-`Directory` 的指纹**只取集合**,不取内容——内容变化由集合里的 `File` 条目负责。这与 Cargo 的 `cargo:rerun-if-changed=<dir>` 是同一个解。
-
-补上之后 glob 从「结构性不安全」变成一等用法,规则包才能提供 `generate_all()`:
+新增一种输入:**glob**。
 
 ```cpp
-mcpp::rerun_if_changed_dir("proto");   // 集合变了就重跑
+mcpp::rerun_if_changed_glob("proto/**/*.proto");
 ```
 
-**代价要写明**:目录指纹用 mtime,而 mtime 在某些场景(容器构建、git checkout)不稳定。因此:
-- 只把**成员集合**纳入指纹,不把内容纳入 → 误重跑的代价只是一次 build.mcpp 重跑(秒级),不是全量重编;
-- 不递归进符号链接(与既有扫描一致)。
+选 glob 而不是「目录 + 可选过滤器」,因为 glob 严格包含目录(`proto/**` 就是目录形态),并且与用户已经在写的 `sources = ["src/**/*.cppm"]` 是同一个概念、同一套匹配器(`scanner.cppm::path_matches_glob` 已支持 `**` 与 `*`)。
 
-### D3. 为什么这两条必须一起做
+**指纹只取排序后的相对路径集合**,不含 mtime、不含 size、不含内容:
+
+- size 变化 ⊂ 内容变化,已由 `File` 条目覆盖,纳入只带来误重跑;
+- mtime 在 git checkout、容器构建、rsync 下不稳定,而本仓库已经在 `file_time_type` 的 epoch 上摔过一次;
+- 「我依赖这里有哪些文件」的语义正好是路径集合,不多不少。
+
+必须写死的三条:
+
+1. **排序与规范化**:`generic_string()` + 字节序排序,否则不同平台的目录遍历顺序会让同一棵树算出不同指纹。
+2. **永不走进构建输出目录与 `.git`。** `mcpp:generated=` 的产物落在 `target/` 下,在项目树内;`rerun_if_changed_glob("**")` 若把它算进去,集合每次都变,build.mcpp 每次重跑。这是 Cargo 的经典坑,必须在引擎侧堵死而不是靠用户写对模式。
+3. **不跟随符号链接**,与既有扫描一致。
+
+代价:误重跑的上限是一次 build.mcpp 重跑(秒级),不是全量重编。
+
+配套的版本处理(初稿遗漏):
+
+- `directives::kProtocolVersion` → 2:新增了程序可依赖的 directive;
+- `directives::kCacheEpoch` → 2:缓存记录多了一类行,旧引擎读到新条目会忽略它并误判为新鲜。
+
+### D3. B3:让库能按平台裁剪 provision,并让子构建说出真话
+
+D1 把「是否请求 host 工具」的决定权从用户搬给了库。Windows 上 `compat.protobuf` 不声明 protoc 目标(工具子构建在 Windows 上有一个尚未定位的缺陷,见 #359 的相邻条目),于是库一旦无条件声明,Windows 用户会撞上 `prepare.cppm:4104` 那条硬错:`dependency 'compat.protobuf' has no kind = "bin" target named 'protoc'`。这会让 D1 在 Windows 上从「4 条降到 1 条」变成「本来能构建的现在报错」。
+
+采取两条小改动,而不是把 D1 压在一个开放式排查后面:
+
+**D3a — `[target.<sel>.feature-deps.<name>]`。**
+`ConditionalConfig` 今天已经带 `dependencies` / `devDependencies` / `buildDependencies`,唯独缺 `featureDeps`。这正是该类型自己的注释记录过的失败形状:「条件读取器维护自己的一份键子集,落后了也没人发现」(#258 修的是 `BuildInputs`)。补上它是在补一个已知形状的洞,而不是为一个 issue 加特性。补上后,库可以写:
+
+```toml
+[target.'cfg(not(windows))'.feature-deps.codegen]
+"compat.protobuf" = { version = "35.1", tools = ["protoc"], reexport = true }
+```
+
+Windows 上 feature 仍可激活,但不请求工具,于是不触发硬错;用户看到的是 grpcgen 那条自带修复建议的诊断——与今天 Windows 上的处境相同。**D1 因此在 Windows 上是中性的,在其余平台是净收益。**
+
+**D3b — 工具子构建必须透出内层的真实错误。**
+Windows 那个缺陷至今未定位的直接原因是内层 ninja 的输出被汇总吞掉,真正的 scan 报错从未进入日志。透出它是小改动,并且是「将来能定位」的前提。缺陷本身仍然单独开 issue。
+
+### D4. 为什么这些必须一起做
 
 只做 D1:用户从 4 条降到 1 条,但仍要在 `build.mcpp` 里逐个列 `.proto`。
 只做 D2:用户不必列 proto,但仍要写 4 条依赖并知道 gRPC 需要 protobuf 的 protoc。
-
-**两条合起来**才是目标形态,也才是「对齐并超过业界」的那一步。
+不做 D3:D1 在 Windows 上是倒退。
 
 ## 4. 实施步骤
 
 | 步 | 内容 | 风险 |
 |---|---|---|
-| 1 | `UsageRequirements` 加 tools / hostModules 两个字段,`privateBuild` 行为保持今天不变 | 低,纯新增 |
-| 2 | 沿 public 边聚合(复用 features 的边聚合路径,#242/#243 已有先例) | 中——要确认不会把 private 依赖的工具泄漏出去 |
-| 3 | 描述符/manifest 侧:声明「对外提供」的语法 | 中——是新的用户可见语法,需按 Schema Ownership Principle 审 |
-| 4 | `dep_dir()` 覆盖传递依赖 | 低 |
-| 5 | `InputKind` 表 + `Directory` 指纹 + `rerun_if_changed_dir` | 低 |
-| 6 | grpc-m 侧改成 1 条依赖 + `generate_all()`,作为真实验证 | —— |
-
-步 1–4 是缺口 A,步 5 是缺口 B,步 6 是端到端证据。
+| 1 | `src/build/provisions.cppm`:`ProvisionKind` 表、env 命名、裸名阶梯、传播不动点 | 低,纯新增 |
+| 2 | `DependencySpec::reexport` + toml/xpkg 两个解析器 | 低 |
+| 3 | `prepare.cppm` 接入:tools / host-module / dep_dir 三处改用不动点结果 | 中——须确认未 `reexport` 的边不外泄 |
+| 4 | `ConditionalConfig::featureDeps` + prepare 侧合并(D3a) | 低,与既有条件依赖同路径 |
+| 5 | 子构建错误透出(D3b) | 低 |
+| 6 | `rerun-if-changed-glob` + 指纹 + protocol/epoch bump + `hostprogram` API | 中——缓存格式变更 |
+| 7 | grpc-m 侧改成 1 条依赖 + `generate_all()`,作为真实验证 | ——(需要本设计先发布) |
 
 ## 5. 验证
 
-- **单测**:传播规则(private 不外泄、public 沿边传、冲突消歧)、目录指纹(增删文件变、改内容不变、mtime 抖动不误伤集合)。
-- **e2e**:一个库对外提供工具 + 一个消费者只写一条依赖就能在 `build.mcpp` 里 `dep_bin` 到;新增一个文件后 glob 场景确实重跑。
+- **单测**:传播规则(未 `reexport` 不外泄、`reexport` 沿链传递、feature 关闭时不存在);裸名阶梯(默认命名空间优先、compat 次之、唯一候选兜底、歧义不发布裸名);glob 指纹(增删文件变、改内容不变、输出目录不参与、跨平台排序一致)。
+- **e2e**:一个库 `reexport` 工具 + 一个消费者只写一条依赖就能 `dep_bin` 到;两个不同命名空间的同名包同时提供工具时裸名不被静默绑定;新增一个文件后 glob 场景确实重跑;`[target.*.feature-deps]` 在非匹配平台上不引入依赖。
 - **真实场景**:grpc-m 的模板降到 1 条依赖 + 1 行 build.mcpp,且生成产物仍与官方 protoc 逐字节相同(该基线已在 2026.8.5.x 建立)。
 
 ## 6. 明确不做
 
-- **不让传播默认开启**。库必须显式声明对外提供,理由见 D1 第 2 条。
-- **不把目录内容纳入指纹**。那会把一次 build.mcpp 重跑放大成全量重编,而收益为零(内容变化本来就由 File 条目覆盖)。
-- **不引入「工具版本独立于依赖版本」的语法**。单一版本轴正是「错配不可表达」的来源,是本设计要保住的性质。
-- **不在本轮解决 windows 的工具子构建失败**(见 mcpp-index 的 compat.protobuf windows 块):那是独立缺陷,原因尚未定位。
+- **不让传播默认开启**。理由见 D1.2。
+- **不把目录内容或 mtime/size 纳入 glob 指纹**。理由见 D2。
+- **不引入「工具版本独立于依赖版本」的语法**。单一版本轴正是「错配不可表达」的来源。
+- **不在本轮定位 Windows 的工具子构建失败**。D3b 只让它可被观测,缺陷本身单独开 issue。
+- **不做 per-kind 的 `reexport` 粒度**。per-edge 已经够用。

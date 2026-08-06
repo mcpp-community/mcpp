@@ -360,3 +360,104 @@ TEST(BuildDirectives, RunTimeoutDefaultsToABoundAndIsOverridable) {
     EXPECT_GT(dirs::run_timeout().count(), 0);
     EXPECT_EQ(dirs::run_timeout().count(), dirs::kDefaultRunTimeoutSecs * 1000);
 }
+
+// ── Glob inputs (#359) ─────────────────────────────────────────────────────
+//
+// A build program that globs its inputs was structurally unsafe: adding a
+// .proto changed no declared file's hash, so the program did not re-run and
+// the new file was silently never generated. Measured before the fix:
+// `Finished dev in 0.01s`, zero artifacts.
+//
+// The fingerprint is the SET of matching paths. These tests pin what is in it
+// and — just as importantly — what is not.
+
+namespace {
+
+struct GlobTree {
+    std::filesystem::path root;
+    explicit GlobTree(std::string_view name) {
+        root = std::filesystem::temp_directory_path() / name;
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root / "proto");
+    }
+    ~GlobTree() { std::error_code ec; std::filesystem::remove_all(root, ec); }
+    void write(std::string_view rel, std::string_view text) {
+        auto p = root / rel;
+        std::filesystem::create_directories(p.parent_path());
+        std::ofstream os(p, std::ios::trunc);
+        os << text;
+    }
+    std::string fp(std::string_view pattern, std::string_view outDir = "target") {
+        return dirs::glob_fingerprint(root, pattern, outDir);
+    }
+};
+
+}  // namespace
+
+TEST(BuildDirectives, GlobFingerprintChangesWhenAFileAppearsOrDisappears) {
+    GlobTree t{"mcpp_glob_fp_membership"};
+    t.write("proto/a.proto", "syntax=\"proto3\";");
+    auto one = t.fp("proto/**/*.proto");
+
+    t.write("proto/b.proto", "syntax=\"proto3\";");
+    auto two = t.fp("proto/**/*.proto");
+    EXPECT_NE(one, two);
+
+    std::filesystem::remove(t.root / "proto/b.proto");
+    EXPECT_EQ(t.fp("proto/**/*.proto"), one);
+}
+
+TEST(BuildDirectives, GlobFingerprintIgnoresContentSizeAndTimestamp) {
+    // Contents are covered by the ordinary `rerun-if-changed` entry for that
+    // file. Folding them in here would only add false re-runs — and mtime is
+    // unstable across git checkout, container builds and rsync, which this
+    // project has already paid for once (the file_time_type epoch in the
+    // dependency cache).
+    GlobTree t{"mcpp_glob_fp_content"};
+    t.write("proto/a.proto", "syntax=\"proto3\";");
+    auto before = t.fp("proto/**/*.proto");
+    t.write("proto/a.proto", "syntax=\"proto3\"; message Much { string longer = 1; }");
+    std::filesystem::last_write_time(
+        t.root / "proto/a.proto",
+        std::filesystem::file_time_type::clock::now() + std::chrono::hours(1));
+    EXPECT_EQ(t.fp("proto/**/*.proto"), before);
+}
+
+TEST(BuildDirectives, GlobFingerprintNeverWalksTheBuildOutputTree) {
+    // A build program writes its outputs INSIDE the project. If a wide pattern
+    // included them the set would change on every build and the program would
+    // re-run forever — the classic Cargo footgun. Enforced by the engine
+    // rather than left to the author's pattern.
+    GlobTree t{"mcpp_glob_fp_outdir"};
+    t.write("proto/a.proto", "x");
+    auto before = t.fp("**");
+    t.write("target/.build-mcpp/out/a.pb.cc", "generated");
+    t.write("target/.build-mcpp/out/a.pb.h", "generated");
+    EXPECT_EQ(t.fp("**"), before);
+
+    // .git is excluded for the same reason: it changes on every commit and
+    // never means the build program's inputs changed.
+    t.write(".git/HEAD", "ref: refs/heads/main");
+    EXPECT_EQ(t.fp("**"), before);
+}
+
+TEST(BuildDirectives, GlobFingerprintIsIndependentOfDirectoryIterationOrder) {
+    // The set is sorted before hashing, so two trees with the same members
+    // agree regardless of the order the platform hands them back.
+    GlobTree a{"mcpp_glob_fp_order_a"};
+    GlobTree b{"mcpp_glob_fp_order_b"};
+    for (auto n : { "z.proto", "a.proto", "m.proto" }) a.write(std::string("proto/") + n, "x");
+    for (auto n : { "a.proto", "m.proto", "z.proto" }) b.write(std::string("proto/") + n, "y");
+    EXPECT_EQ(a.fp("proto/**/*.proto"), b.fp("proto/**/*.proto"));
+}
+
+TEST(BuildDirectives, GlobDirectiveParsesIntoItsOwnSlot) {
+    auto d = parse("mcpp:rerun-if-changed-glob=proto/**/*.proto\n");
+    ASSERT_EQ(d.at(dirs::Slot::RerunGlobs).size(), 1u);
+    EXPECT_EQ(d.at(dirs::Slot::RerunGlobs)[0], "proto/**/*.proto");
+    // A re-run key is not a build input, so it must not be persisted as a `d`
+    // record — otherwise a cache hit would replay it as one.
+    std::ostringstream os;
+    dirs::serialize(os, d);
+    EXPECT_EQ(os.str().find("proto/**"), std::string::npos) << os.str();
+}
