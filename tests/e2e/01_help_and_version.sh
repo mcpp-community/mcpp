@@ -19,6 +19,7 @@ out=$("$MCPP" --help)
 [[ "$out" == *"Usage:"* ]] || { echo "--help missing 'Usage:' section"; exit 1; }
 [[ "$out" == *"mcpp new"* ]] || { echo "--help missing 'mcpp new'"; exit 1; }
 [[ "$out" == *"mcpp build"* ]] || { echo "--help missing 'mcpp build'"; exit 1; }
+[[ "$out" == *"mcpp ide snapshot"* ]] || { echo "--help missing 'mcpp ide snapshot'"; exit 1; }
 
 # Unknown command exit code (127) — must capture rc explicitly under `set -e`
 rc=0
