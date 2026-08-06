@@ -120,12 +120,27 @@ jobs:
           echo "self-hosting $repo @ $ref"
           mcpp self config --mirror GLOBAL 2>/dev/null || true
           mcpp build --target aarch64-linux-musl
-          m=$(find target/aarch64-linux-musl -type f -path '*/bin/mcpp' | head -1)
+          # Absolute: it is used again after `cd /tmp/xlings-src` below.
+          m=$(find "$PWD/target/aarch64-linux-musl" -type f -path '*/bin/mcpp' | head -1)
           file "$m" | grep -q "ARM aarch64" || { echo "expected aarch64 mcpp"; exit 1; }
           "$m" --version
           git clone --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src
-          mcpp build --target aarch64-linux-musl
+          # "$m", not `mcpp`: the just-built binary is the code under review,
+          # and building xlings with the INSTALLED one meant this half of the
+          # gate never saw the PR — the same defect the clone-ref comment above
+          # records, one line further down. It surfaced the same way: a fix for
+          # an aarch64-only failure in exactly this build could not be
+          # validated here, because the binary running it predated the fix.
+          #
+          # MCPP_HOME must be carried over explicitly: mcpp derives it from the
+          # BINARY's location, so a binary sitting in /tmp/mcpp-src/target would
+          # otherwise adopt an empty home and re-bootstrap the whole ecosystem
+          # instead of reusing what the fresh-install steps above provisioned.
+          export MCPP_HOME=$(mcpp self env | awk -F'= *' '/^MCPP_HOME/{print $2; exit}')
+          echo "reusing MCPP_HOME=$MCPP_HOME"
+          test -d "$MCPP_HOME" || { echo "could not determine MCPP_HOME"; exit 1; }
+          "$m" build --target aarch64-linux-musl
           x=$(find target/aarch64-linux-musl -type f -path '*/bin/xlings' | head -1)
           file "$x" | grep -q "ARM aarch64" || { echo "expected aarch64 xlings"; exit 1; }
           "$x" --version
