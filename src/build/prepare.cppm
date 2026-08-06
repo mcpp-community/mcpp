@@ -1812,6 +1812,34 @@ prepare_build(bool print_fingerprint,
         mcpp::fetcher::InstallProgressHandler progress;
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         if (!payload) {
+            // The pinned host toolchain is not obtainable here. Before giving
+            // up, ask whether we already HAVE a compiler that runs on this
+            // machine: when the resolved target differs from the host only in
+            // its libc environment (aarch64-linux-musl on an aarch64 Linux
+            // host), the target toolchain is native — it runs here and the
+            // binaries it produces run here — so it is a perfectly good
+            // compiler for a build program.
+            //
+            // Without this, a whole architecture is a dead end for any project
+            // whose graph contains a build.mcpp: `[toolchain]` is keyed by OS
+            // with no arch axis (#367), so `default = "gcc@16.1.0"` is what
+            // aarch64 asks for too, and that package declares
+            // `archs = { "x86_64" }` — the download 404s and the build stops.
+            // A toolchain that is already on disk and already correct should
+            // not be unusable because a second, redundant one is missing.
+            auto hostT = mcpp::toolchain::triple::host_triple();
+            auto tgtT  = mcpp::toolchain::triple::parse(overrides.target_triple);
+            if (tgtT && tgtT->arch == hostT.arch && tgtT->os == hostT.os) {
+                mcpp::diag::warning("toolchain/host-fallback", std::format(
+                    "the pinned host toolchain '{}' could not be provisioned "
+                    "({}), so build.mcpp will be compiled with the target "
+                    "toolchain instead — it is native here ({} vs host {}). "
+                    "Pin a host toolchain that exists on this architecture to "
+                    "silence this.",
+                    *tcSpec, payload.error().message, tgtT->str(), hostT.str()));
+                hostTcCache = std::pair{explicit_compiler, *tc};
+                return *hostTcCache;
+            }
             return std::unexpected(std::format(
                 "host toolchain for build.mcpp ('{}'): {}", *tcSpec,
                 payload.error().message));
