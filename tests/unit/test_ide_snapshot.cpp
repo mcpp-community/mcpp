@@ -6,6 +6,7 @@ import mcpp.ide.inspect;
 import mcpp.ide.snapshot;
 import mcpp.libs.json;
 import mcpp.manifest;
+import mcpp.version;
 
 namespace {
 
@@ -400,7 +401,7 @@ TEST(IdeSnapshotSerialize, EmitsCompleteSchemaOneDocument) {
     EXPECT_EQ(json["schemaVersion"], 1);
     EXPECT_EQ(json["kind"], "mcpp.ide.snapshot");
     EXPECT_EQ(json["state"], "partial");
-    EXPECT_EQ(json["mcpp"]["version"], "2026.8.5.2");
+    EXPECT_EQ(json["mcpp"]["version"], std::string(mcpp::MCPP_VERSION));
     EXPECT_EQ(json["mcpp"]["protocol"], nlohmann::json({{"min", 1}, {"max", 1}}));
     EXPECT_EQ(json["mcpp"]["capabilities"], nlohmann::json({
         "workspace-inspection", "manifest-diagnostics", "compile-commands-location"}));
@@ -445,5 +446,7 @@ TEST(IdeSnapshotSerialize, MatchesSchemaOneFixture) {
     ASSERT_TRUE(input.good());
     auto expected = nlohmann::json::parse(input);
     expected["snapshotId"] = actual["snapshotId"];
+    // Fixture 锁定协议结构；发布版本由序列化器使用的同一常量提供。
+    expected["mcpp"]["version"] = actual["mcpp"]["version"];
     EXPECT_EQ(actual, expected);
 }

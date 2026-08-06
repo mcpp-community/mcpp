@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
-# requires:
+# requires: import-std-libcxx
 # Syntax errors must not prevent IDE configure from publishing a fresh CDB.
 set -euo pipefail
+
+OS="$(uname -s)"
+if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
+    echo "SKIP: libc++ std modules are unavailable on Windows"
+    exit 0
+fi
+
+source "$(dirname "$0")/_llvm_env.sh"
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 PROJECT="$TMP/app"
 mkdir -p "$PROJECT/src"
 
-cat >"$PROJECT/mcpp.toml" <<'EOF'
+cat >"$PROJECT/mcpp.toml" <<EOF
 [package]
 name = "ide-broken-source"
 version = "1.0.0"
 standard = "c++fly"
+
+[toolchain]
+linux = "llvm@${LLVM_VERSION}"
+macosx = "llvm@${LLVM_VERSION}"
 EOF
 
 # 故意保留语法错误：configure 只能解析工程，不能要求普通 TU 编译成功。
