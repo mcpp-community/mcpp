@@ -46,6 +46,8 @@
 
   lock 头部现在自己声明**它还不 pin 后续构建**(index 依赖仍每次从约束重新解析)。一个记着真实版本却不生效的文件,比一个明显记着范围的文件更容易被误当权威。
 
+- **`.rc` 现在能穿过工程级 fast path。** `sources_newer_than` 只扫 `src/**/*` 的 C++ 扩展名,一次只改资源脚本的构建因此报 `Finished dev in 0.15s` —— 而 `.rc` 的 implicit input 集合来自扫描它、扫描发生在 prepare,所以往脚本里新加一行 `#include "ids.h"` 那个头文件永远不会被跟踪。与 `build.mcpp`、glob 输入(#359)是同一类:**mtime 扫描看不见,但改了它图就该长得不一样**。只扫 `files`——`icon` 与 `extra-inputs` 已经是 ninja 的 implicit input。
+
 ### 其他
 
 - 版本号 2026.8.6.3 → **2026.8.7.1**。
