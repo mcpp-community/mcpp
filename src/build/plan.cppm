@@ -242,8 +242,8 @@ std::string object_filename_for(const std::filesystem::path& src,
         return src.filename().string() + std::string(objExt);
     }
     auto stem = src.stem().string();
-    // distinguish .cppm vs .cpp by extension prefix to avoid collisions
-    return stem + (ext == ".cppm"
+    // distinguish .cppm/.ccm/.cxxm/.ixx vs .cpp/.cc/.cxx by extension prefix
+    return stem + ((ext == ".cppm" || ext == ".ccm" || ext == ".cxxm" || ext == ".ixx")
                        ? ".m" + std::string(objExt)
                        : std::string(objExt));
 }
@@ -1081,7 +1081,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     auto append_package_objects = [&](LinkUnit& lu, const std::string& packageName) {
         for (auto& cu : plan.compileUnits) {
             if (cu.packageName != packageName) continue;
-            if (cu.source.extension() == ".cppm") {
+            if (cu.providesModule) {
                 lu.objects.push_back(cu.object);
             }
         }
@@ -1141,7 +1141,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // For binary target, also include main.cpp's object if main is present.
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
-            if (cu.source.extension() == ".cppm") {
+            if (cu.providesModule) {
                 lu.objects.push_back(cu.object);
             }
         }

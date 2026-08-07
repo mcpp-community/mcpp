@@ -487,8 +487,9 @@ bool sources_newer_than(const std::filesystem::path& projectRoot,
     }
     for (auto& f : mcpp::modgraph::expand_glob(projectRoot, "src/**/*")) {
         auto ext = f.extension().string();
-        if (ext != ".cppm" && ext != ".cpp" && ext != ".cc" &&
-            ext != ".cxx" && ext != ".c" && ext != ".h" && ext != ".hpp")
+        if (ext != ".cppm" && ext != ".ccm" && ext != ".cxxm" && ext != ".ixx" &&
+            ext != ".cpp" && ext != ".cc" && ext != ".cxx" && ext != ".c" &&
+            ext != ".h" && ext != ".hpp")
             continue;
         auto ft = std::filesystem::last_write_time(f, ec);
         if (ec || ft > ninjaTime) return true;
