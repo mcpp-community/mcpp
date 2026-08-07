@@ -416,6 +416,33 @@ TEST(IdeConfigure, ConcurrentPublicationCannotChangeCompatibilityCdb) {
     std::filesystem::remove_all(root, ec);
 }
 
+TEST(IdeConfigure, PublicationIoFailureIsNotReportedAsLockContention) {
+    const auto root = temp_root();
+    std::filesystem::create_directories(root / ".mcpp");
+    // 用普通文件占据锁目录，跨平台稳定制造锁初始化 I/O 失败。
+    std::ofstream(root / ".mcpp" / "ide") << "not a directory";
+
+    auto published = mcpp::ide::publish_configured_snapshot(root, {
+        .projectId = "project-1",
+        .configurationId = "config-1",
+        .snapshotId = "snapshot-new",
+        .phase = "configured",
+        .projectRoot = root,
+        .compileCommands = root / ".mcpp" / "ide" / "replies" / "cdb.json",
+        .compatibilityCompileCommands = root / "compile_commands.json",
+        .toolchain = "llvm@22",
+        .toolchainFingerprint = "toolchain-1",
+    }, "[]");
+
+    ASSERT_FALSE(published.has_value());
+    EXPECT_NE(published.error().find("cannot acquire IDE publication lock"),
+              std::string::npos);
+    EXPECT_EQ(published.error().find("already in progress"), std::string::npos);
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
 TEST(IdeConfigure, RejectsSnapshotCdbOutsideProject) {
     const auto root = temp_root();
     const auto outside = root.parent_path() / std::format(

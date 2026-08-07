@@ -267,9 +267,16 @@ publish_configured_snapshot(const std::filesystem::path& projectRoot,
 
     // 同一工程的两个 configure 可以并行完成解析，但 mutable 指针只能串行
     // 切换；否则旧内容备份和失败回滚可能覆盖另一个进程刚发布的配置。
+    const auto publicationDir = physicalRoot / ".mcpp" / "ide";
+    std::error_code lockEc;
     auto publicationLock = mcpp::platform::fs::FileLock::try_acquire(
-        physicalRoot / ".mcpp" / "ide");
+        publicationDir, lockEc);
     if (!publicationLock) {
+        if (lockEc) {
+            return std::unexpected(std::format(
+                "cannot acquire IDE publication lock '{}': {}",
+                (publicationDir / ".lock").string(), lockEc.message()));
+        }
         return std::unexpected(
             "another IDE snapshot publication is already in progress");
     }
