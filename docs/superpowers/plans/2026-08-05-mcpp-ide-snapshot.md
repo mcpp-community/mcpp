@@ -21,8 +21,8 @@
 | `src/cli.cppm` | Import/register `ide snapshot`, help entry, known-command list |
 | `tests/unit/test_ide_snapshot.cpp` | DTO, inspection, selector, diagnostic, artifact, serialization, and identity tests |
 | `tests/fixtures/ide/snapshot-v1.json` | Schema-1 golden fixture consumed by unit tests |
-| `tests/e2e/190_ide_snapshot.sh` | Fresh-binary CLI contract and workspace/error cases |
-| `tests/e2e/191_ide_snapshot_read_only.sh` | Before/after project and isolated-home zero-side-effect proof |
+| `tests/e2e/196_ide_snapshot.sh` | Fresh-binary CLI contract and workspace/error cases |
+| `tests/e2e/197_ide_snapshot_read_only.sh` | Before/after project and isolated-home zero-side-effect proof |
 | `docs/superpowers/specs/2026-08-05-mcpp-ide-snapshot-design.md` | Approved protocol and side-effect contract |
 
 ### Task 1: Define the Public IDE DTO and Protocol Fixture
@@ -382,13 +382,13 @@ git commit -m "feat(ide): serialize versioned workspace snapshots"
 - Create: `src/cli/cmd_ide.cppm`
 - Modify: `src/cli.cppm`
 - Modify: `tests/e2e/01_help_and_version.sh`
-- Create: `tests/e2e/190_ide_snapshot.sh`
+- Create: `tests/e2e/196_ide_snapshot.sh`
 
 - [ ] **Step 1: Add failing help and CLI E2E assertions**
 
 Update `tests/e2e/01_help_and_version.sh` to require `mcpp ide snapshot` in help.
 
-Create `tests/e2e/190_ide_snapshot.sh` with `# requires:` on line 2. It must:
+Create `tests/e2e/196_ide_snapshot.sh` with `# requires:` on line 2. It must:
 
 1. Create a minimal package in `mktemp -d` without calling `mcpp new`.
 2. Run `"$MCPP" ide snapshot --format json`, capture stdout and stderr
@@ -409,7 +409,7 @@ Run:
 ```bash
 mcpp build
 FRESH_MCPP=$(find "$PWD/target" -type f -path '*/bin/mcpp' -perm -111 | head -1)
-MCPP="$FRESH_MCPP" bash tests/e2e/190_ide_snapshot.sh
+MCPP="$FRESH_MCPP" bash tests/e2e/196_ide_snapshot.sh
 ```
 
 Expected: unknown command `ide` or missing help entry.
@@ -463,7 +463,7 @@ mcpp build
 FRESH_MCPP=$(find "$PWD/target" -type f -path '*/bin/mcpp' -perm -111 | head -1)
 "$FRESH_MCPP" test ide_snapshot
 MCPP="$FRESH_MCPP" bash tests/e2e/01_help_and_version.sh
-MCPP="$FRESH_MCPP" bash tests/e2e/190_ide_snapshot.sh
+MCPP="$FRESH_MCPP" bash tests/e2e/196_ide_snapshot.sh
 ```
 
 Expected: focused unit tests and both E2E scripts pass.
@@ -471,19 +471,19 @@ Expected: focused unit tests and both E2E scripts pass.
 - [ ] **Step 6: Commit the CLI**
 
 ```bash
-git add src/cli/cmd_ide.cppm src/cli.cppm tests/e2e/01_help_and_version.sh tests/e2e/190_ide_snapshot.sh
+git add src/cli/cmd_ide.cppm src/cli.cppm tests/e2e/01_help_and_version.sh tests/e2e/196_ide_snapshot.sh
 git commit -m "feat(cli): add read-only ide snapshot command"
 ```
 
 ### Task 5: Prove the Zero-side-effect Contract
 
 **Files:**
-- Create: `tests/e2e/191_ide_snapshot_read_only.sh`
+- Create: `tests/e2e/197_ide_snapshot_read_only.sh`
 - Modify: `tests/unit/test_ide_snapshot.cpp`
 
 - [ ] **Step 1: Add the failing side-effect E2E**
 
-Create `tests/e2e/191_ide_snapshot_read_only.sh` with `# requires:` on line 2. The
+Create `tests/e2e/197_ide_snapshot_read_only.sh` with `# requires:` on line 2. The
 script must create a project containing:
 
 - a remote-looking version dependency;
@@ -506,7 +506,7 @@ Run with the current fresh binary:
 
 ```bash
 FRESH_MCPP=$(find "$PWD/target" -type f -path '*/bin/mcpp' -perm -111 | head -1)
-MCPP="$FRESH_MCPP" bash tests/e2e/191_ide_snapshot_read_only.sh
+MCPP="$FRESH_MCPP" bash tests/e2e/197_ide_snapshot_read_only.sh
 ```
 
 Expected: pass if the architecture boundary is intact. If it fails, treat any new
@@ -528,7 +528,7 @@ Expected: both pass; no project/home additions or modifications.
 - [ ] **Step 5: Commit the side-effect proof**
 
 ```bash
-git add tests/unit/test_ide_snapshot.cpp tests/e2e/191_ide_snapshot_read_only.sh
+git add tests/unit/test_ide_snapshot.cpp tests/e2e/197_ide_snapshot_read_only.sh
 git commit -m "test(ide): prove snapshot is read only"
 ```
 
@@ -573,8 +573,8 @@ Expected: all test binaries pass with zero failures.
 
 ```bash
 MCPP="$FRESH_MCPP" bash tests/e2e/01_help_and_version.sh
-MCPP="$FRESH_MCPP" bash tests/e2e/190_ide_snapshot.sh
-MCPP="$FRESH_MCPP" bash tests/e2e/191_ide_snapshot_read_only.sh
+MCPP="$FRESH_MCPP" bash tests/e2e/196_ide_snapshot.sh
+MCPP="$FRESH_MCPP" bash tests/e2e/197_ide_snapshot_read_only.sh
 ```
 
 Expected: all three scripts print `OK` and exit 0.

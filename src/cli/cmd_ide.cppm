@@ -95,12 +95,21 @@ export int cmd_ide_configure(const mcpplibs::cmdline::ParsedArgs& parsed) {
         .start = start.lexically_normal(),
         .selectors = selectors_from(parsed),
     };
+
+    // 先发布生命周期起点并立即 flush；prepare 可能触发依赖解析或
+    // build.mcpp host tool，客户端不应在这段耗时期间失去状态。
+    const auto operationId = mcpp::ide::new_operation_id();
+    std::println("{}", mcpp::ide::configure_started_event(operationId));
+    std::fflush(stdout);
     const auto result = mcpp::ide::configure_project(request);
     if (!result) {
-        std::println("{}", mcpp::ide::configure_error_event(result.error()));
+        for (const auto& line : mcpp::ide::configure_failure_events(
+                 result.error(), operationId, 2))
+            std::println("{}", line);
         return 3;
     }
-    for (const auto& line : mcpp::ide::configure_events(*result))
+    for (const auto& line : mcpp::ide::configure_events(*result, operationId, 2,
+                                                         /*includeStarted=*/false))
         std::println("{}", line);
     return 0;
 }

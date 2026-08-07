@@ -33,8 +33,8 @@
 | `tests/unit/test_ide_protocol.cpp` | DTO、ID、event、publisher、schema fixture |
 | `tests/unit/test_ide_configure.cpp` | CDB 提前发布和 no-ordinary-build 契约 |
 | `tests/unit/test_ide_prepare.cpp` | minimal goals、artifact state 和回退 |
-| `tests/e2e/192_ide_configure.sh` | fresh CDB、错误源码、事件顺序和零链接证明 |
-| `tests/e2e/193_ide_prepare.sh` | generated/BMI、last-known-good、取消和多配置 |
+| `tests/e2e/198_ide_configure.sh` | fresh CDB、错误源码、事件顺序和零链接证明 |
+| `tests/e2e/199_ide_prepare.sh` | generated/BMI、last-known-good、取消和多配置 |
 | `/Users/cltx/projects/mcpp/mcpp-vscode/src/ideProtocol.ts` | 插件协议进程、NDJSON parser、snapshot client |
 | `/Users/cltx/projects/mcpp/mcpp-vscode/src/ideWorkflow.ts` | configure/prepare 生命周期和状态机 |
 | `/Users/cltx/projects/mcpp/mcpp-vscode/src/extension.ts` | 打开工程、watcher、clangd 配置和 UI 生命周期 |
@@ -272,7 +272,7 @@ git commit -m "feat(ide): atomically publish configured and ready snapshots"
 - Modify: `src/cli.cppm`
 - Modify: `src/ide/model.cppm`
 - Create: `tests/unit/test_ide_configure.cpp`
-- Create: `tests/e2e/192_ide_configure.sh`
+- Create: `tests/e2e/198_ide_configure.sh`
 
 - [ ] **Step 1: 写失败测试锁定事件顺序**
 
@@ -318,8 +318,8 @@ cached BMI 测试分别在可用的 Clang、GCC、MSVC capability 下预热一�
 
 ```bash
 mcpp test ide_configure
-bash tests/e2e/192_ide_configure.sh
-git add src/ide/configure.cppm src/cli/cmd_ide.cppm src/cli.cppm src/ide/model.cppm tests/unit/test_ide_configure.cpp tests/e2e/192_ide_configure.sh
+bash tests/e2e/198_ide_configure.sh
+git add src/ide/configure.cppm src/cli/cmd_ide.cppm src/cli.cppm src/ide/model.cppm tests/unit/test_ide_configure.cpp tests/e2e/198_ide_configure.sh
 git commit -m "feat(ide): add configure command with early CDB publication"
 ```
 
@@ -331,7 +331,7 @@ git commit -m "feat(ide): add configure command with early CDB publication"
 - Modify: `src/build/backend.cppm`
 - Modify: `src/build/ninja_backend.cppm`
 - Create: `tests/unit/test_ide_prepare.cpp`
-- Create: `tests/e2e/193_ide_prepare.sh`
+- Create: `tests/e2e/199_ide_prepare.sh`
 
 - [ ] **Step 1: 写失败测试固定 goal 过滤**
 
@@ -361,8 +361,8 @@ fixture 需要一个 generated header 或 source、一个 module interface 和�
 
 ```bash
 mcpp test ide_prepare
-bash tests/e2e/193_ide_prepare.sh
-git add src/ide/prepare.cppm src/build/artifact_layout.cppm src/build/backend.cppm src/build/ninja_backend.cppm tests/unit/test_ide_prepare.cpp tests/e2e/193_ide_prepare.sh
+bash tests/e2e/199_ide_prepare.sh
+git add src/ide/prepare.cppm src/build/artifact_layout.cppm src/build/backend.cppm src/build/ninja_backend.cppm tests/unit/test_ide_prepare.cpp tests/e2e/199_ide_prepare.sh
 git commit -m "feat(ide): prepare generated files and module artifacts without linking"
 ```
 
@@ -419,8 +419,8 @@ git commit -m "feat: consume mcpp IDE snapshots and early CDB events"
 - Create: `/Users/cltx/projects/mcpp/mcpp-vscode/test/extension-host/ide-fixture/`
 - Create: `/Users/cltx/projects/mcpp/mcpp-vscode/test/extension-host/ide-e2e.ts`
 - Modify: `/Users/cltx/projects/mcpp/mcpp-vscode/package.json`
-- Modify: `tests/e2e/192_ide_configure.sh`
-- Modify: `tests/e2e/193_ide_prepare.sh`
+- Modify: `tests/e2e/198_ide_configure.sh`
+- Modify: `tests/e2e/199_ide_prepare.sh`
 - Create: `docs/ide/ide-client-contract.md`
 
 - [ ] **Step 1: 建立真实 extension host runner**
@@ -458,7 +458,7 @@ npm run package
 - [ ] **Step 7: 提交文档和发布门槛**
 
 ```bash
-git add docs/ide/ide-client-contract.md tests/e2e/192_ide_configure.sh tests/e2e/193_ide_prepare.sh
+git add docs/ide/ide-client-contract.md tests/e2e/198_ide_configure.sh tests/e2e/199_ide_prepare.sh
 git commit -m "docs(ide): document client contract and release gates"
 ```
 

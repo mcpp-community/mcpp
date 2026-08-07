@@ -278,17 +278,22 @@ write_fresh_compile_commands(const std::filesystem::path& path, std::string_view
     }
 
     std::filesystem::rename(temp, path, ec);
-    if (ec) {
-        // Windows rename 不覆盖已有文件；此分支保持结果完整，但替换窗口不是原子的。
+    std::error_code typeEc;
+    const bool replaceableFile = std::filesystem::is_regular_file(path, typeEc);
+    if (ec && replaceableFile && !typeEc) {
+        // Windows rename 不覆盖已有普通文件；只对文件执行 remove + rename，
+        // 不能把同名目录等其他对象当成可替换的旧 CDB。
         std::error_code removeEc;
         std::filesystem::remove(path, removeEc);
         ec.clear();
         std::filesystem::rename(temp, path, ec);
     }
     if (ec) {
-        std::filesystem::remove(temp, ec);
+        const auto publishError = ec;
+        std::error_code cleanupEc;
+        std::filesystem::remove(temp, cleanupEc);
         return std::unexpected(std::format("cannot publish '{}': {}",
-                                           path.string(), ec.message()));
+                                           path.string(), publishError.message()));
     }
     return {};
 }

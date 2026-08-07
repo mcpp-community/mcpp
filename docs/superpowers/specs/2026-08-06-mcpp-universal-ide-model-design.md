@@ -226,14 +226,14 @@ artifact 状态包括 `pending`、`ready`、`stale`、`missing`、`unavailable`�
 
 ### 6.5 NDJSON 事件
 
-`configure` 和 `prepare` 的 stdout 只输出一条 JSON 一行，格式如下：
+`configure` 和 `prepare` 的 stdout 每行只输出一条 JSON，格式如下：
 
 ```json
-{"schemaVersion":1,"type":"operation-started","operationId":"...","configurationId":"..."}
-{"schemaVersion":1,"type":"progress","operationId":"...","phase":"resolve","completed":2,"total":5}
-{"schemaVersion":1,"type":"diagnostic","operationId":"...","diagnostic":{}}
-{"schemaVersion":1,"type":"snapshot-published","operationId":"...","phase":"configured","snapshotId":"...","manifest":"...","compileCommands":"..."}
-{"schemaVersion":1,"type":"operation-finished","operationId":"...","status":"success","phase":"configured"}
+{"schemaVersion":1,"seq":1,"type":"operation-started","operationId":"...","operation":"configure"}
+{"schemaVersion":1,"seq":2,"type":"progress","operationId":"...","phase":"resolve","completed":2,"total":5}
+{"schemaVersion":1,"seq":3,"type":"diagnostic","operationId":"...","diagnostic":{}}
+{"schemaVersion":1,"seq":4,"type":"snapshot-published","operationId":"...","phase":"configured","snapshotId":"...","manifest":"...","compileCommands":"..."}
+{"schemaVersion":1,"seq":5,"type":"operation-finished","operationId":"...","operation":"configure","status":"success","phase":"configured"}
 ```
 
 事件包含单调递增 `seq`。失败、取消和超时也必须有 `operation-finished`，并携带 `status`、`diagnosticCodes` 和 `lastKnownGoodSnapshotId`。未受信任 workspace 不执行这些命令。
@@ -386,3 +386,15 @@ Node 单元测试和 `clangd --check` 不能替代真实 Extension Development H
 2. cached dependency BMI 的发布前 staging 已有 helper 单测和 macOS/Clang E2E，但尚缺真实 GCC `.gcm`、MSVC `.ifc` 缓存命中工程。核心 Ninja 后端仍通过自己的 `stage_file` edges 物化缓存产物；此缺口的直接风险是 IDE CDB 引用了未物化或路径漂移的 BMI，而不是普通构建无法完成。
 
 第二项仍跨越 `BuildPlan::cachedBmi`、`bmi_traits()`、`stage_file()` 和 Ninja BMI 命名等共享契约。应按任务 3 将目标路径收敛到 `mcpp.build.artifact_layout`，由 Ninja 与 IDE 共同消费，再补真实工具链矩阵。GCC/MSVC E2E 只证明路径和产物契约，不代表 clangd 能消费 `.gcm` 或 `.ifc`；该能力仍按工具链 capability 明确表达。
+
+当前 `configure` 已在解析前发送带 `operationId` 的 `operation-started`，并在成功或
+失败的全部后续事件中沿用该 ID；失败序列为
+`diagnostic -> operation-finished(status=failed)`。解析前尚无 resolved
+`configurationId`，因此早期 started 事件不携带该字段，客户端应以 `operationId`
+关联整个生命周期。阶段化 `progress`、取消、迟到事件过滤，以及
+index/current/last-known-good 发布仍属于后续 publish/prepare 任务。现阶段不能据此
+宣称完整的长任务管理和失败回退协议已经完成。
+
+当前 `configured_snapshot_id` 已绑定 configuration、BuildContext fingerprint 和
+CDB 内容；完整 resolved module graph、artifact metadata 和输入 provenance 尚未
+进入 snapshot DTO/ID，需随后续模型与 publish 层一并补齐。

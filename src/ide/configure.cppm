@@ -58,9 +58,10 @@ ConfigurationSelectors configuration_selectors(const Selectors& selectors) {
     };
 }
 
-Json event(std::uint64_t seq, std::string_view type) {
+Json event(std::uint64_t seq, std::string_view type, std::string_view operationId) {
     Json value = Json::object();
     value["schemaVersion"] = 1; value["seq"] = seq; value["type"] = type;
+    value["operationId"] = operationId;
     return value;
 }
 } // namespace
@@ -84,10 +85,36 @@ export struct ConfigureResult {
     std::string stdModuleState;
 };
 
+// configured snapshot 的身份同时绑定配置、当前 resolved build fingerprint
+// 和 CDB 内容；精简 toolchain fingerprint 只用于 configurationId，不能替代
+// 这里的 BuildContext::fp。
+export std::string configured_snapshot_id(std::string_view configurationId,
+                                          std::string_view buildFingerprint,
+                                          std::string_view cdbHash) {
+    return std::format("snapshot-fnv1a64:{}",
+        mcpp::toolchain::hash_string(std::string(configurationId) + "\x1f"
+                                     + std::string(buildFingerprint) + "\x1f"
+                                     + std::string(cdbHash)));
+}
+
+export std::string new_operation_id() {
+    static std::atomic<std::uint64_t> sequence = 0;
+    const auto serial = sequence.fetch_add(1, std::memory_order_relaxed);
+    const auto wall = std::chrono::system_clock::now().time_since_epoch().count();
+    const auto monotonic = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto entropy = std::random_device{}();
+    return std::format("operation-fnv1a64:{}", mcpp::toolchain::hash_string(
+        std::format("{}:{}:{}:{}", wall, monotonic, entropy, serial)));
+}
+
 export std::expected<void, std::string>
 stage_cached_module_prerequisites(const mcpp::build::BuildPlan& plan) {
     const auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
     const auto bmiDir = plan.outputDir / traits.bmiDir;
+    // BMI 来源由工具链 fingerprint 和缓存 key 约束；与 Ninja 的
+    // --verify size 一致可避免 clangd 映射目标文件时再次打开它比较内容。
+    const mcpp::build::stage::StageOptions stageOptions{
+        .verify = mcpp::build::stage::Verify::Size};
 
     auto stage = [&](const std::filesystem::path& source)
         -> std::expected<void, std::string> {
@@ -95,7 +122,8 @@ stage_cached_module_prerequisites(const mcpp::build::BuildPlan& plan) {
         // Keep this destination spelling identical to ninja_backend's BMI
         // output: the CDB is published only after every referenced prerequisite
         // is present at the path clangd will open.
-        auto staged = mcpp::build::stage::stage_file(source, bmiDir / source.filename());
+        auto staged = mcpp::build::stage::stage_file(
+            source, bmiDir / source.filename(), stageOptions);
         if (!staged) return std::unexpected(staged.error().message);
         return {};
     };
@@ -164,15 +192,18 @@ configure_project(const ConfigureRequest& request) {
         return std::unexpected("mcpp produced an invalid compile database");
 
     const auto ideRoot = context->projectRoot / ".mcpp" / "ide" / "replies";
-    const auto snapshotCdb = ideRoot / std::format("compile_commands-{}.json", configId);
+    // Reply 文件按 CDB 内容寻址：配置保持不变而 flags/source 变化时，旧
+    // reply 仍可被 last-known-good 客户端读取；同时 hash 只含十六进制字符，
+    // 不会把 configId 中的 ':' 带入 Windows 文件名。
+    const auto cdbHash = mcpp::toolchain::hash_string(content);
+    const auto snapshotCdb = ideRoot / std::format("compile_commands-{}.json", cdbHash);
     if (auto written = mcpp::build::write_fresh_compile_commands(snapshotCdb, content); !written)
         return std::unexpected(written.error());
     const auto compatibilityCdb = context->projectRoot / "compile_commands.json";
     if (auto written = mcpp::build::write_fresh_compile_commands(compatibilityCdb, content); !written)
         return std::unexpected(written.error());
 
-    const auto snapshotId = std::format("snapshot-fnv1a64:{}",
-        mcpp::toolchain::hash_string(configId + "\x1f" + content));
+    const auto snapshotId = configured_snapshot_id(configId, context->fp.hex, cdbHash);
     const auto traits = mcpp::toolchain::bmi_traits(context->plan.toolchain);
     const auto stagedStdModule = context->plan.stdBmiPath.empty()
         ? std::filesystem::path{}
@@ -189,12 +220,28 @@ configure_project(const ConfigureRequest& request) {
     };
 }
 
-export std::vector<std::string> configure_events(const ConfigureResult& result) {
+export std::string configure_started_event(
+    std::string_view operationId, std::string_view configurationId = {}) {
+    auto started = event(1, "operation-started", operationId);
+    started["operation"] = "configure";
+    if (!configurationId.empty()) started["configurationId"] = configurationId;
+    return started.dump();
+}
+
+export std::vector<std::string> configure_events(
+    const ConfigureResult& result,
+    std::string_view operationId,
+    std::uint64_t firstSeq = 1,
+    bool includeStarted = true) {
     std::vector<std::string> lines;
-    auto started = event(1, "operation-started");
-    started["operation"] = "configure"; started["configurationId"] = result.configurationId;
-    lines.push_back(started.dump());
-    auto published = event(2, "snapshot-published");
+    auto seq = firstSeq;
+    if (includeStarted) {
+        auto started = event(seq++, "operation-started", operationId);
+        started["operation"] = "configure";
+        started["configurationId"] = result.configurationId;
+        lines.push_back(started.dump());
+    }
+    auto published = event(seq++, "snapshot-published", operationId);
     published["phase"] = "configured"; published["state"] = "configured";
     published["projectId"] = result.projectId; published["configurationId"] = result.configurationId;
     published["snapshotId"] = result.snapshotId;
@@ -211,20 +258,31 @@ export std::vector<std::string> configure_events(const ConfigureResult& result) 
         published["stdModule"] = std::move(stdModule);
     }
     lines.push_back(published.dump());
-    auto finished = event(3, "operation-finished");
+    auto finished = event(seq, "operation-finished", operationId);
     finished["operation"] = "configure"; finished["status"] = "success";
     finished["phase"] = "configured"; finished["configurationId"] = result.configurationId;
     lines.push_back(finished.dump());
     return lines;
 }
 
-export std::string configure_error_event(std::string_view message) {
-    auto value = event(1, "diagnostic");
-    value["diagnostic"] = Json::object({
+export std::vector<std::string> configure_failure_events(
+    std::string_view message,
+    std::string_view operationId,
+    std::uint64_t firstSeq = 1) {
+    std::vector<std::string> lines;
+    auto diagnostic = event(firstSeq, "diagnostic", operationId);
+    diagnostic["diagnostic"] = Json::object({
         {"code", "MCPP_IDE_CONFIGURE_FAILED"}, {"severity", "error"},
         {"source", "mcpp"}, {"message", message},
     });
-    return value.dump();
+    lines.push_back(diagnostic.dump());
+
+    auto finished = event(firstSeq + 1, "operation-finished", operationId);
+    finished["operation"] = "configure";
+    finished["status"] = "failed";
+    finished["diagnosticCodes"] = Json::array({"MCPP_IDE_CONFIGURE_FAILED"});
+    lines.push_back(finished.dump());
+    return lines;
 }
 
 } // namespace mcpp::ide

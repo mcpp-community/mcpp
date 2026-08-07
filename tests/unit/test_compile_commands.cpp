@@ -115,3 +115,39 @@ TEST(CompileCommandsFresh, DoesNotMergeHistoricalEntries) {
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
 }
+
+TEST(CompileCommandsFresh, PreservesPublishErrorAfterTempCleanup) {
+    const auto root = std::filesystem::temp_directory_path()
+                    / std::format("mcpp_cdb_publish_error_{}",
+                        std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto path = root / "compile_commands.json";
+    std::filesystem::create_directories(path);
+    std::ofstream(path / "keep") << "keep";
+
+    // 非空目录既不能被 CDB 临时文件覆盖，也不能被 fallback remove 删除。
+    auto result = write_fresh_compile_commands(
+        path, cdb({entry("/p/src/main.cpp", "-FRESH")}));
+    ASSERT_FALSE(result.has_value());
+    EXPECT_FALSE(result.error().ends_with(": " + std::error_code{}.message()))
+        << result.error();
+    EXPECT_TRUE(std::filesystem::is_regular_file(path / "keep"));
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(CompileCommandsFresh, RefusesToReplaceDirectoryAtPublishPath) {
+    const auto root = std::filesystem::temp_directory_path()
+                    / std::format("mcpp_cdb_publish_directory_{}",
+                        std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto path = root / "compile_commands.json";
+    std::filesystem::create_directories(path);
+
+    auto result = write_fresh_compile_commands(
+        path, cdb({entry("/p/src/main.cpp", "-FRESH")}));
+    EXPECT_FALSE(result.has_value());
+    EXPECT_TRUE(std::filesystem::is_directory(path));
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}

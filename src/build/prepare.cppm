@@ -1149,7 +1149,9 @@ prepare_build(bool print_fingerprint,
     bool bootstrap_checked = false;
     auto get_cfg = [&](bool requireBootstrap = true) -> std::expected<mcpp::config::GlobalConfig*, std::string> {
         if (!cfg_opt) {
-            auto c = mcpp::config::load_or_init(/*quiet=*/false,
+            // IDE configure/JSON build 已通过 ui 设置静默；这里必须沿用该
+            // 状态，否则 fresh MCPP_HOME 的 xlings bootstrap 文本会污染协议 stdout。
+            auto c = mcpp::config::load_or_init(/*quiet=*/mcpp::ui::is_quiet(),
                 mcpp::fetcher::make_bootstrap_progress_callback());
             if (!c) return std::unexpected(c.error().message);
             cfg_opt = std::move(*c);
@@ -4418,8 +4420,10 @@ prepare_build(bool print_fingerprint,
                     // ninja's own progress and command echoes, which is right
                     // for a normal build and wrong when the question is "what
                     // did the inner build actually do".
+                    // 结构化命令的 stdout 必须保持机器可读；quiet 模式仍会在
+                    // 失败结果中携带诊断，但不能把成功的 Ninja 日志插入 NDJSON。
                     if (const char* v = std::getenv("MCPP_TOOL_BUILD_VERBOSE");
-                        v && *v && std::string_view(v) != "0")
+                        !mcpp::ui::is_quiet() && v && *v && std::string_view(v) != "0")
                         bopt.verbose = true;
                     auto br = be->build(subCtx->plan, bopt);
                     if (!br) {

@@ -1449,20 +1449,20 @@ int update_index(const Env& env, bool quiet) {
     // Report ONLY when the guard had to act. The common path — refresh keeps
     // the index readable — must stay silent, or the notice becomes noise that
     // users learn to skip past, which is the same as not printing it.
-    for (auto& dir : out.rolledBack) {
-        print_status("Kept", std::format(
-            "previous index for `{}` — the refreshed one requires a newer mcpp",
-            dir.filename().string()));
-        if (!quiet) {
+    if (!quiet) {
+        for (auto& dir : out.rolledBack) {
+            print_status("Kept", std::format(
+                "previous index for `{}` — the refreshed one requires a newer mcpp",
+                dir.filename().string()));
             std::println("      Your build continues to work with the packages "
                          "it already describes.");
             std::println("      Upgrade to pick up newer packages:  xlings update mcpp");
         }
-    }
-    for (auto& dir : out.recovered) {
-        print_status("Restored", std::format(
-            "index `{}` from a local snapshot this mcpp can read",
-            dir.filename().string()));
+        for (auto& dir : out.recovered) {
+            print_status("Restored", std::format(
+                "index `{}` from a local snapshot this mcpp can read",
+                dir.filename().string()));
+        }
     }
     for (auto& dir : out.stillUnusable) {
         mcpp::log::verbose("index", std::format(
