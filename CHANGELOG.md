@@ -60,6 +60,8 @@
 
 - 版本号 2026.8.6.3 → **2026.8.7.1**。
 - **行为变化(生态可见)**:`cc-connect` 这类「稳定版 + 预发布版」并存的包,`^1.3` 从 `1.3.3-beta.1` 改为解析到 `1.3.2`;`jdk-corretto`/`jdk-temurin` 这类带别名的包,范围解析改为选中真条目(`25.0.4.7.1` 而非别名 `25.0.4`),store 目录名随之变化。
+- **诊断口径**:`resources/versioninfo`(版本资源 Windows 读不到)与 `resources/no-image`(声明了却没有任何镜像可嵌)由 warning 改为 **degradation** —— 它们的 impact 正是本批要消灭的静默失效,`--strict` 必须看得见;`role = "object"` 无消费者新增 `action/no-target`,同口径。
+- README 的包索引链接由仓库地址改为 <https://mcpplibs.github.io/mcpp-index/>。
 
 ## [2026.8.5.4] — 2026-08-06
 
