@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# requires: linux
-# 195_subos_env_reaches_program.sh — a subos's declared environment must reach
+# requires: elf
+# 200_subos_env_reaches_program.sh — a subos's declared environment must reach
 # the program mcpp launches (mcpp#352).
 #
 # A program needs three things: it links (bootstrap), it finds its libraries
@@ -54,6 +54,49 @@ echo "$out" | grep -q "PROBE=$subos/usr/lib/dri" || {
     echo "$out"
     exit 1
 }
+
+# 1b. THE SECOND RUN, which takes the cached fast path.
+#
+# This is the assertion that matters most, and the one a single-run test
+# cannot make. The fast path builds its own child environment and skips
+# prepare_build entirely; when it was first written it did not know about
+# subos declarations at all, so a program worked on the run right after a
+# build and silently stopped finding its runtime data on every run after
+# that. For a GL application that is "it worked once and now the window is
+# black", with nothing in between to attribute it to.
+out_cached=$(MCPP_SUBOS_DIR="$subos" "$MCPP" run 2>&1) || {
+    echo "cached mcpp run failed:"; echo "$out_cached"; exit 1; }
+# Self-check FIRST: prove this run actually took the fast path, otherwise the
+# assertion below is vacuous and would keep passing after the coverage it
+# exists for has silently gone away. The full path resolves the toolchain and
+# says so; the fast path skips prepare_build entirely and never prints it.
+echo "$out_cached" | grep -q 'Resolving toolchain' && {
+    echo "the second run did NOT take the cached fast path, so this test is"
+    echo "  not covering it. Fix the test before trusting the assertion below:"
+    echo "$out_cached"
+    exit 1
+}
+echo "$out_cached" | grep -q "PROBE=$subos/usr/lib/dri" || {
+    echo "the cached fast path dropped the subos environment — the program"
+    echo "  gets a different environment on its second run than its first:"
+    echo "$out_cached"
+    exit 1
+}
+
+# 1c. ...and the environment is re-READ, not cached with the build. A user
+#     who installs a graphics stack between two runs must get it without
+#     rebuilding, so changing the declaration must change the next run.
+sed -i 's#/usr/lib/dri#/usr/lib/dri2#' "$subos/.xlings.json"
+out_changed=$(MCPP_SUBOS_DIR="$subos" "$MCPP" run 2>&1) || {
+    echo "run after changing the declaration failed:"; echo "$out_changed"; exit 1; }
+echo "$out_changed" | grep -q "PROBE=$subos/usr/lib/dri2" || {
+    echo "the subos declaration changed but the program still sees the old"
+    echo "  value — the environment was cached with the build instead of"
+    echo "  being read from the subos:"
+    echo "$out_changed"
+    exit 1
+}
+sed -i 's#/usr/lib/dri2#/usr/lib/dri#' "$subos/.xlings.json"
 
 # 2. Without a subos saying anything, nothing is invented.
 out2=$("$MCPP" run 2>&1) || { echo "plain mcpp run failed:"; echo "$out2"; exit 1; }

@@ -44,7 +44,7 @@ namespace pinned {
     // in lock-step by hand; that list was already missing both composite
     // actions, which is how CI's sandbox sat on 0.4.30 unnoticed while
     // everything else had moved on. Don't reintroduce a hand-maintained list.
-    inline constexpr std::string_view kXlingsVersion   = "2026.8.7.1";
+    inline constexpr std::string_view kXlingsVersion   = "2026.8.6.3";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -74,25 +74,25 @@ namespace paths {
     std::optional<std::filesystem::path>
     xpkgs_from_compiler(const std::filesystem::path& compilerBin);
 
-    // The subos whose declared ENVIRONMENT a program built with this toolchain
-    // should run under (mcpp#352).
+    // The subos a TOOLCHAIN belongs to (mcpp#352).
     //
     // Derived from the compiler rather than from a global: a build already
     // knows which home its toolchain came from, and asking a second source
     // would let the two disagree — the "one question, several answerers" shape
     // that the same investigation found four times over on the xlings side.
     //
-    // MCPP_SUBOS_DIR overrides it outright. That exists so tests can exercise
-    // this path without touching the developer's real environment (a lesson
-    // with a scar: an earlier e2e wrote through a symlink and permanently
-    // broke a real toolchain), and so a user can point one run at another
-    // subos without switching the active one.
+    // A PURE derivation, with no environment override in it. That is not an
+    // omission: this value gets written into the build cache, and an override
+    // means "for this invocation", not "for this build from now on". Caching
+    // one would make a single `MCPP_SUBOS_DIR=… mcpp run` silently change
+    // where every later run looked. Which subos a RUN should use is a
+    // different question, answered in execute.cppm.
     //
     // Empty when the toolchain is not sandbox-resident — a system compiler is
     // the user's explicit choice of the host world, and there is no subos
     // speaking for it.
     std::optional<std::filesystem::path>
-    subos_dir_for(const std::filesystem::path& compilerBin);
+    subos_dir_of(const std::filesystem::path& compilerBin);
 
     // Find a sibling xim tool relative to a compiler binary.
     // e.g. find_sibling_tool(gcc_bin, "binutils") returns highest version
@@ -694,9 +694,7 @@ xpkgs_from_compiler(const std::filesystem::path& compilerBin) {
 }
 
 std::optional<std::filesystem::path>
-subos_dir_for(const std::filesystem::path& compilerBin) {
-    if (const char* e = std::getenv("MCPP_SUBOS_DIR"); e && *e)
-        return std::filesystem::path(e);
+subos_dir_of(const std::filesystem::path& compilerBin) {
     auto xpkgs = xpkgs_from_compiler(compilerBin);
     if (!xpkgs) return std::nullopt;
     // <home>/data/xpkgs → <home>/subos/default. Spelled from the xpkgs dir

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: llvm linux
+# requires: scan-deps elf
 # dlopen() providers such as GLX drivers do not use the main executable's
 # RUNPATH for their own DT_NEEDED closure. mcpp run must therefore expose the
 # toolchain runtime directories in LD_LIBRARY_PATH as well.

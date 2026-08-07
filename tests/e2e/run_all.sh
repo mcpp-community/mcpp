@@ -130,6 +130,40 @@ fi
 echo "Detected capabilities: ${CAPS[*]:-<none>}"
 
 # ---------------------------------------------------------------------------
+# Every token a test may declare, across ALL platforms.
+# ---------------------------------------------------------------------------
+# A test declaring anything else is skipped on every runner, forever, and the
+# skip line reads exactly like a legitimate one -- "missing capability: linux"
+# is indistinguishable from "missing capability: msvc" on a Linux box. Two
+# tests were in that state when this guard was added: 65_toolchain_runtime_
+# dirs_for_run.sh (`llvm linux`) had never run in CI at all, and it passes.
+#
+# This list is the UNIVERSE, not what this machine has: `msvc` is legitimately
+# absent on Linux and must stay legal to declare. It is checked against the
+# CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
+# sync when adding a capability.
+KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx macos mingw-cross msvc
+            musl nasm no-msvc pack patchelf scan-deps symlink unix-shell
+            windows wine)
+
+bad_tokens=0
+for tf in "$HERE"/[0-9]*.sh; do
+    base="$(basename "$tf")"
+    req="$(sed -n '2p' "$tf")"
+    [[ "$req" =~ ^#\ requires: ]] || continue
+    toks="${req#\# requires:}"
+    for tok in $toks; do
+        if [[ " ${KNOWN_CAPS[*]} " != *" $tok "* ]]; then
+            echo "ERROR: $base declares unknown capability '$tok' — it would be"
+            echo "       skipped on every runner. Known: ${KNOWN_CAPS[*]}"
+            bad_tokens=1
+        fi
+    done
+done
+[[ $bad_tokens -eq 0 ]] || exit 1
+
+
+# ---------------------------------------------------------------------------
 # Helper: check if a test's requirements are satisfied
 # ---------------------------------------------------------------------------
 # Returns 0 (true) if the test should be skipped, prints reason.
