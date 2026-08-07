@@ -13,6 +13,7 @@
 - [08 - Toolchain Internals](08-toolchain-internals.md)
 - [09 - Releasing mcpp](09-release.md)
 - [10 - Publishing a Library to mcpp-index](10-publishing-a-library.md)
+- [11 - IDE Protocol](11-ide-protocol.md)
 
 ## Specifications
 
