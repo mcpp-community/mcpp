@@ -14,6 +14,12 @@
 # know what any of these variables mean -- it carries whatever the subos
 # declares -- and a test naming LIBGL_DRIVERS_PATH would quietly suggest
 # otherwise.
+#
+# The JSON below is xlings's REAL shape: `envs` is an object keyed by binding,
+# whose values are arrays of declarations. The first version of this test wrote
+# an array of {binding, decls} -- a shape xlings never produces -- and it
+# passed, because the reader had been written from the same misunderstanding.
+# Do not "simplify" this structure; it is a wire format, not a convenience.
 set -euo pipefail
 
 TMP=$(mktemp -d)
@@ -28,9 +34,9 @@ mkdir -p "$subos/usr/lib/dri"
 cat > "$subos/.xlings.json" <<'EOF'
 { "workspace": {},
   "subos_info": { "schema_version": 1, "runtime": "glibc@2.39",
-    "envs": [ { "binding": "probe@1", "decls": [
+    "envs": { "probe@1": [
       { "var": "MCPP_E2E_PROBE", "op": "prepend",
-        "value": "${subosdir}/usr/lib/dri" } ] } ] } }
+        "value": "${subosdir}/usr/lib/dri" } ] } } }
 EOF
 
 cd "$TMP"
