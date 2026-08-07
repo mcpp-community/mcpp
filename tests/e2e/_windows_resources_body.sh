@@ -123,42 +123,41 @@ esac
 RC_TOOL=$(sed -n 's/^rc *= *//p' "$BUILD_DIR/build.ninja" | head -1)
 [ -n "$RC_TOOL" ] || fail "no 'rc =' binding in build.ninja" "$BUILD_DIR/build.ninja"
 
+# Two routes, TRIED in order rather than dispatched on the tool's name: GNU
+# binutils' windres round-trips, `llvm-windres` does not (it only wraps llvm-rc,
+# one way) — and both answer to `*windres*`, so the name tells you nothing. Only
+# when NEITHER route exists is this a hard failure; silently skipping the
+# assertion is how #365 shipped in the first place.
+#
 # $1 = file to inspect, $2 = log suffix, $3 = "ordinal" | "string"
 version_name_is() {
     case "$3" in
-      ordinal) _want='^[[:space:]]*1[[:space:]]+VERSIONINFO' ;;
-      string)  _want='"VS_VERSION_INFO"[[:space:]]+VERSIONINFO' ;;
+      ordinal) _want='^[[:space:]]*1[[:space:]]+VERSIONINFO' ; _n='Name: (ID 1)' ;;
+      string)  _want='"VS_VERSION_INFO"[[:space:]]+VERSIONINFO' ; _n='Name: VS_VERSION_INFO' ;;
     esac
-    case "$RC_TOOL" in
-      *windres*)
-        "$RC_TOOL" -J coff -O rc -i "$1" -o "rt.$2.rc" 2>"rt.$2.err" \
-            || fail "windres could not read back $1" "rt.$2.err"
-        grep -qiE 'VERSIONINFO' "rt.$2.rc" \
-            || fail "$1 carries no version resource at all" "rt.$2.rc"
+
+    # Route 1 — windres back to rc SOURCE. Readable, and no PE parser needed.
+    if [ -n "$RC_TOOL" ] \
+       && "$RC_TOOL" -J coff -O rc -i "$1" -o "rt.$2.rc" 2>"rt.$2.err" \
+       && grep -qiE 'VERSIONINFO' "rt.$2.rc"; then
         grep -qE "$_want" "rt.$2.rc" \
             || fail "expected the version resource to be named by $3 in $1" "rt.$2.rc"
-        ;;
-      *)
-        # rc.exe / llvm-rc cannot read back, so use llvm-readobj — which ships
-        # with the LLVM payload that IS the default Windows toolchain, i.e. the
-        # only configuration that reaches this branch. Same discriminator, in
-        # the resource directory: `Name: (ID 1)` vs `Name: VS_VERSION_INFO`.
-        READOBJ=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj \
-                     "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj.exe \
-                     2>/dev/null | head -1)
-        [ -n "$READOBJ" ] || fail "no way to read back $1 (no windres, no llvm-readobj) — silently skipping this assertion is how #365 shipped" b1.log
-        "$READOBJ" --coff-resources "$1" > "readobj.$2.log" 2>&1 \
-            || fail "llvm-readobj could not read $1" "readobj.$2.log"
-        grep -q 'Type: VERSIONINFO' "readobj.$2.log" \
-            || fail "$1 carries no version resource at all" "readobj.$2.log"
-        case "$3" in ordinal) _n='Name: (ID 1)' ;; string) _n='Name: VS_VERSION_INFO' ;; esac
-        # The window is the VERSIONINFO type table only — an icon is also
-        # `(ID 1)`, so matching anywhere in the file would pass for the wrong
-        # reason.
-        grep -A5 'Type: VERSIONINFO' "readobj.$2.log" | grep -qF "$_n" \
-            || fail "expected the version resource to be named by $3 in $1" "readobj.$2.log"
-        ;;
-    esac
+        return 0
+    fi
+
+    # Route 2 — the resource DIRECTORY, via llvm-readobj.
+    READOBJ=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj \
+                 "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj.exe \
+                 2>/dev/null | head -1)
+    [ -n "$READOBJ" ] || fail "no way to read back $1: '$RC_TOOL' cannot round-trip and no llvm-readobj was found under $MCPP_HOME" "rt.$2.err"
+    "$READOBJ" --coff-resources "$1" > "readobj.$2.log" 2>&1 \
+        || fail "llvm-readobj could not read $1" "readobj.$2.log"
+    grep -q 'Type: VERSIONINFO' "readobj.$2.log" \
+        || fail "$1 carries no version resource at all" "readobj.$2.log"
+    # The window is the VERSIONINFO type table only — an icon is also `(ID 1)`,
+    # so matching anywhere in the file would pass for the wrong reason.
+    grep -A5 'Type: VERSIONINFO' "readobj.$2.log" | grep -qF "$_n" \
+        || fail "expected the version resource to be named by $3 in $1" "readobj.$2.log"
 }
 version_name_is "$RES_ART" art ordinal
 

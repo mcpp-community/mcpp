@@ -550,3 +550,23 @@ FAIL: llvm-readobj not found under /home/runner/.mcpp
 rc 工具从 `build.ninja` 的 `rc =` 绑定里取而不走 PATH——mcpp 本来就是 payload 相对解析的(裸 `windres` 在 PATH 上是 xlings shim),问 PATH 会用**另一个**工具去检查这个产物。msvc 那一支保留 llvm-readobj:能走到那一支的配置里,LLVM 载荷就是默认工具链本身。
 
 **判据:一条断言要用的工具,必须来自它所断言的那条路径本身。** 「本机装得全」是最容易把环境假设藏起来的地方——三次改判据里,前两次都是本机绿、别处红。
+
+## F.11 第四条:`*windres*` 这个名字什么都不告诉你 + msvc 那一支其实零 CI 覆盖
+
+F.10 改成 windres 反读后,mingw job 绿了,**Windows job 红了**:
+
+```
+FAIL: windres could not read back .../res/resapp.mcpp.o
+```
+
+两件事同时暴露:
+
+1. **`llvm-windres` 不能反读。** 它只是 `llvm-rc` 的单向包装,没有 `-J coff`。而它和 GNU binutils 的 `windres` **都匹配 `*windres*`** ⇒ 按工具名分派是错的。修法:**两条路线依次 TRY**(反读 → llvm-readobj),只有两条都不可用才硬失败。
+2. **native Windows 上默认工具链走的是 GNU 支,不是 msvc 支。** 证据在失败信息里:target 目录是 `x86_64-windows-msvc`,而产物是 **`.o` 不是 `.res`** ⇒ `dialect_for(tc).id != "msvc"`,`find_rc_tool` 取了 GNU 分支并选中 `llvm-windres.exe`,lld-link 照单全收。
+
+**⚠️ 推论:`.res` 那一支(rc.exe / llvm-rc + 偏移-40 字节判据)在两个 CI job 里都不执行。** mingw job 是 GNU,Windows job 也是 GNU。也就是说:
+
+- e2e 里 `case "$RES_ART" in *.res)` 是**死分支**——这也正是为什么「方言无关的那条判据」不是锦上添花而是唯一的那条。
+- **F.1 修的那个 PATH 切分缺陷(msvc 下找不到 `rc.exe`)没有任何 CI 覆盖**,只有单测 `EnvListSplitsOnSemicolonsOnly` 守着字符串切分本身。要真正覆盖它需要一个 `# requires: msvc` 的资源 e2e(`msvc@system` 工具链),本批不做,**明确记为缺口**。
+
+**判据:「本机/某个 job 绿」不等于「这条分支跑过」。判断一条 fork 是否被覆盖,要看产物形态(`.res` vs `.o`),不能看 job 名字里有没有 windows。**
