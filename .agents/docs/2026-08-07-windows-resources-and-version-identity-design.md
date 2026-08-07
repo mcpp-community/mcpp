@@ -529,3 +529,24 @@ mcpp build → 1 条    mcpp test → 2 条(多了 dev-dep)   mcpp build → 又
 ## F.9 方法论
 
 **每一条都先真机复现再下判断,没有一条是纯代码推理。** 复现同时充当「断言能失败」的证明:五条新断言各自对应一段用**修复前**二进制跑出来的、看得见的错误输出。这比事后再造一个反向用例更便宜也更可信。
+
+## F.10 CI 抓到的第三条:判据选了一个那条 job 拿不到的工具
+
+改完 F.8 的判据后本机 198 通过,CI 的 `mingw-cross` job 却红在:
+
+```
+FAIL: llvm-readobj not found under /home/runner/.mcpp
+```
+
+那条 job 只装 mingw 工具链,**sandbox 里根本没有 LLVM 载荷**——而本机什么都装着,所以本机永远看不见。
+
+**硬失败本身是对的**(静默跳过正是 #365 的出厂方式),错的是**判据依赖了一个不属于这条路径的工具**。正解:`windres -J coff -O rc` 把编译好的资源**反读成 rc 源码**,名字直接可见,而且它在 GNU 这一支**必然存在**——它就是产出这个文件的工具。实测 `.o` 与链接后的 `.exe` 都能读:
+
+```
+1 VERSIONINFO                   ← Windows 找得到
+"VS_VERSION_INFO" VERSIONINFO   ← 找不到
+```
+
+rc 工具从 `build.ninja` 的 `rc =` 绑定里取而不走 PATH——mcpp 本来就是 payload 相对解析的(裸 `windres` 在 PATH 上是 xlings shim),问 PATH 会用**另一个**工具去检查这个产物。msvc 那一支保留 llvm-readobj:能走到那一支的配置里,LLVM 载荷就是默认工具链本身。
+
+**判据:一条断言要用的工具,必须来自它所断言的那条路径本身。** 「本机装得全」是最容易把环境假设藏起来的地方——三次改判据里,前两次都是本机绿、别处红。
