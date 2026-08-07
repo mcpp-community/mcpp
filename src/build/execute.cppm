@@ -20,6 +20,8 @@ import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.stdmod;
 import mcpp.xlings;
+import mcpp.xlings.subos_info;
+import mcpp.log;
 import mcpp.platform;
 import mcpp.fetcher.progress;
 import mcpp.project;
@@ -285,6 +287,39 @@ compute_run_env(const mcpp::build::BuildPlan& plan) {
     auto value = mcpp::platform::env::prepend_path_list(key, plan.runtimeLibraryDirs);
     if (key.empty() || value.empty()) return {"", ""};
     return {key, value};
+}
+
+// The environment the active subos declares for the programs it hosts
+// (mcpp#352).
+//
+// A GL application needs three things and mcpp only ever supplied two: the
+// binary links (bootstrap), it finds its libraries (RPATH), and then it has to
+// be told which driver module to load and which GL vendors exist. That third
+// one is a set of environment variables, xlings's graphics packages declare
+// them into the subos, and until now nothing carried them to a program mcpp
+// launched — `xlings subos use` applied them, `mcpp run` did not. Hence a
+// binary that links fine and exits 255 with no output.
+//
+// Resolved at RUN time, deliberately not cached with the build: these values
+// belong to the subos, not to the build, and a user who switches subos between
+// `mcpp build` and `mcpp run` must get the new one. It is a file read.
+//
+// mcpp does not know what any of these variables MEAN, and that is the design:
+// when the ecosystem gains a Vulkan loader or a new driver bridge, the
+// declaration changes and this code does not.
+std::vector<std::pair<std::string, std::string>>
+compute_subos_env(const mcpp::build::BuildPlan& plan) {
+    auto dir = mcpp::xlings::paths::subos_dir_for(plan.toolchain.binaryPath);
+    if (!dir) return {};
+    auto info = mcpp::xlings::subos::read(*dir);
+    // The note is a `verbose` line rather than a warning: a subos with no
+    // self-description is the normal state of every machine whose subos
+    // predates the block, and a warning on every run would train people to
+    // ignore it. It becomes loud only where it explains a failure — the GL
+    // diagnostic path in doctor.
+    if (!info.note.empty())
+        mcpp::log::verbose("subos", info.note);
+    return mcpp::xlings::subos::resolve_env(info, *dir);
 }
 
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
@@ -827,6 +862,8 @@ export int build_run_target(const std::optional<std::string>& targetName,
     auto [runEnvKey, runEnvValue] = compute_run_env(ctx->plan);
     if (!runEnvKey.empty() && !runEnvValue.empty())
         childEnv.emplace_back(runEnvKey, runEnvValue);
+    // ...plus whatever the subos declares for the programs it hosts (#352).
+    for (auto& kv : compute_subos_env(ctx->plan)) childEnv.push_back(std::move(kv));
 
     // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
     // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
@@ -1213,6 +1250,9 @@ export int run_tests(std::span<const std::string> passthrough,
     auto runtimeEnvKey = mcpp::platform::env::runtime_library_path_key();
     auto runtimeEnvValue = mcpp::platform::env::prepend_path_list(
         runtimeEnvKey, ctx->plan.runtimeLibraryDirs);
+    // Read once for the whole run rather than per test: it is one file, and
+    // every test in a run belongs to the same subos.
+    const auto subosEnv = compute_subos_env(ctx->plan);
 
     // macOS deliberately has no runtime-library-path key (env.cppm): injecting
     // DYLD_LIBRARY_PATH would reach every executable ninja launches and can
@@ -1283,6 +1323,10 @@ export int run_tests(std::span<const std::string> passthrough,
         std::vector<std::pair<std::string, std::string>> childEnv;
         if (!runtimeEnvKey.empty() && !runtimeEnvValue.empty())
             childEnv.emplace_back(runtimeEnvKey, runtimeEnvValue);
+        // ...and the subos's declared environment, same as `mcpp run` (#352).
+        // A GL test that cannot find a driver fails the same way a GL program
+        // does, so it must be told the same things.
+        for (auto& kv : subosEnv) childEnv.push_back(kv);
 
         // Prepend the sandbox's subos/default/bin to the CHILD PATH so test
         // binaries that shell out to bootstrapped tools (patchelf, ninja) find
