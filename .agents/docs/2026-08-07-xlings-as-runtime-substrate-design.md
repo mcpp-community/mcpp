@@ -29,16 +29,16 @@
 | | 缝 | 现状 | 目标 |
 |---|---|---|---|
 | **S1** | **运行时身份** | 从目录布局反推「哪个 libc」,且**无版本** | 读 subos 的 `subos_info.runtime`(`glibc@2.39`),成为一等轴 |
-| **S2** | **链接契约** | C++ 运行时契约在**构建期**可声明,C 运行时契约**只有打包期**有 | 补 `c_runtime` 轴,与 `cxx_runtime` 同词汇、同 total function |
+| **S2** | **分发路径** | 三条 hermetic 路径都存在,但用户找不到;其中一条自己是坏的 | 修坏的那条 + 让三条可发现。**不加「链宿主 libc」的开关** |
 | **S3** | **环境契约** | mcpp 产物拿不到 subos 的 env,图形栈靠 mcpp 代码硬扛 | 消费 `subos_info.envs`;图形栈以**依赖**而非代码到达 |
 
 **关键结论:P0 需要 xlings 零改动。** `subos_info` 已经存在,subos view 已经填充好(`subos/default/lib/ld-linux-x86-64.so.2` 实测在位)。唯一需要 xlings 配合的是**把 installer 已经算出来、当前只活在进程里的 `resolved_deps`/`deps_exports` 持久化**——那是 P1。
 
 **多维评估见 §11**(实现代价 / 用户 / 稳定性 / 跨平台 / 简洁 / 兼容性,每项带实测数字)。三条要点:
 
-- **零 BMI/对象缓存失效** —— fingerprint 是 compile-side,契约只改链接命令
-- **收益 ≈ 全在 Linux**,macOS 上这条轴退化成单值(有 `cxx_runtime` 在 MSVC 上同样退化的先例可援)
-- **评估过程改掉了初稿的两处**:①`subos-coupled` 不该是第四个契约值(它是 Mechanism 不是 Contract);②视图寻址从「建议新默认」下调为「P2 且带两个前置条件」——因为 `doctor.cppm` 已经记录了视图会悬空,而爆炸半径是全体产物
+- **本文被推翻过一整节**(§3-S2):初稿要补一条 `c_runtime` 轴,其 `host-coupled` = 链宿主 libc。已实现、全绿、然后整条撤销。理由与教训写在那一节,**比结论更值得读**
+- **零 BMI/对象缓存失效** —— fingerprint 是 compile-side,分发相关的改动都只碰链接与打包
+- **收益 ≈ 全在 Linux**;#352 的图形栈迁移是其中收益最大、代价最小的一条
 
 ---
 
@@ -198,7 +198,9 @@ Mechanism (contract × stdlib × 二进制格式) → 链接 flags     ← total
 
 > 那个 bool 拼的是**机制**(「静态链接 stdlib」),它膨胀成三种不同的平台含义——包括在 Linux/libc++ 上静默无操作:声称 static、产出 toolchain-coupled。契约拼的是**意图**。
 
-**mcpp#375 就是同一句话在 libc 轴上的复述。** 用户想要的是意图(「这个产物要能在没装 mcpp 的机器上跑」),而在 `mcpp build` 期能写的只有机制(`--static`,对 glibc 无解)。
+**这个观察是对的,但从它推出的结论曾经是错的。** 初稿由此推出「那就补一条 `c_runtime` 轴」——而这条轴唯一的新能力是把产物链到宿主 libc,即策略上被禁的那一侧。**一个真实的架构不对称,不构成做一件被禁的事的理由。** 正确的读法见 §3-S2:用户要的是「能分发」,而 hermetic 的分发路径已经有三条。
+
+这一段保留,是因为那个不对称本身仍然真实,只是它的正确用途是**解释为什么 `mcpp pack` 的默认模式是宿主耦合的**(§3-S2 末尾那笔记账),而不是给 build 期再开一个口子。
 
 **准确说,不是「没有机制」——是机制在错误的生命周期上。** `mcpp pack` 有一个成熟的两轴模型(`docs/02-pack-and-release.md:8-37`:target(libc)× mode(bundling depth),四个模式 `system` / `vendored` / `self-contained` / `static`),`vendored` 默认就会把 PT_INTERP 重指到 `/lib64/ld-linux-*.so.2`(`pack.cppm:649-658`)。所以 **#375 的第 1、2 条症状今天有受支持的答案**。
 
@@ -255,63 +257,40 @@ mcpp 在**运行期**绑载荷是错的——那一层的正确锚点是视图�
 
 **删除**:`probe.cppm` 的 glibc 目录爬升与 `{lib64,lib}` 约定(回答者 #1)。
 
-### S2 — 链接契约(`c_runtime`)
+### S2 — 分发路径:修好坏的那条,让三条可发现
 
-补上缺失的 Contract 层,**照抄 `cxx_runtime` 的三层形状与词汇**,不发明新概念。
-
-```toml
-[build]
-cxx_runtime = "self-contained"     # 已有
-c_runtime   = "host-coupled"       # 新增(这里写的是「要能分发」)
-```
-
-**词汇是三个,和 `cxx_runtime` 逐字相同**——这一点在评估阶段被修正过一次,理由见下面的框:
-
-| Contract | PT_INTERP | RUNPATH | 语义 | 目标场景 |
-|---|---|---|---|---|
-| `self-contained` | 无(静态) | 无 | 不依赖外部 libc | musl 全静态 |
-| `toolchain-coupled`(默认) | 见下:**载荷寻址** 或 **视图寻址** | 同左 | 只在装了这套工具链的机器上可跑 | 开发循环、生态内分发 |
-| `host-coupled` | `/lib64/ld-linux-*.so.N`(LSB) | `$ORIGIN/../lib` | manylinux 模型:宿主 glibc ≥ 构建期版本即可跑 | **#375 要的那个** |
-
-> **⚠️ 修正(评估阶段发现)**:本文初稿把「视图寻址」写成第四个契约值 `subos-coupled`。**那是错的**,两条理由:
-> 1. `cxx_runtime` 只有三个值,加第四个立刻破坏「同词汇」这个本设计唯一的优雅性论据;而且第四个值在 macOS/Windows 上无对应物。
-> 2. 它根本不是一个**契约**——契约描述「对运行它的机器承诺什么」,而载荷寻址与视图寻址对目标机的承诺**完全相同**(「这台机器装了这套工具链」)。它们的差别是**寻址方式**,属于 Mechanism 层。
+> **⚠️ 这一节被整节推翻过一次,推翻的理由比结论更重要。**
 >
-> 所以:`toolchain-coupled` 保持为一个契约值,其 Mechanism 有两种实现——
+> 初稿在这里提出补一条 `[build] c_runtime` 轴,三值与 `cxx_runtime` 相同,其中 `host-coupled` = 把产物链到**宿主的 libc**。它已经实现并通过了全部测试,然后被整条撤销(commit 已 reset)。
+>
+> **撤销理由一:那是照着 issue 提的实现方法做,不是解决 issue 的问题。** #375 的标题写着「让要分发的应用链到系统 libc」——那是提报者**已经想好的解法**。他的**问题**是「产物没法分发」。照着解法做,等于把提报者的方案当成需求。
+>
+> **撤销理由二:它穿越了这个生态存在的意义所在的那条边界。** hermetic 策略明文列出禁止穿越项,第一条就是「任何 `/usr/lib*` `/lib*` 下的 `.so`(含 libc)」。xlings 是用户态发行版;一个伸手去 `/lib64` 取 libc 的产物已经不在这个发行版里了。**mcpp 能不用 host 就不用 host。**
+>
+> **撤销理由三:去掉 `host-coupled` 之后它不剩任何新能力。** `self-contained` 已经由 `--target x86_64-linux-musl` 表达,`toolchain-coupled` 是现状。也就是说这条轴的**全部增量就是那个不该有的值**。
+>
+> 保留这段记录,是因为「同一个东西以后还会被再提一次」——下次有人拿 #375 说「加个链系统 libc 的开关吧」,这里有现成的答案。
 
-| Mechanism(`toolchain-coupled` 内部) | PT_INTERP / RUNPATH | 抗载荷升级 | 爆炸半径 |
+**用户的真问题是「产物没法分发」,而它有三条 hermetic 答案,全都已经存在**:
+
+| 路径 | 命令 | libc 从哪来 | 适用 |
 |---|---|---|---|
-| **载荷寻址**(今天) | `…/xpkgs/xim-x-glibc/2.39/lib64/…` | ❌ 载荷被 GC 即失效 | 只影响针对该版本构建的那批 |
-| **视图寻址** | `<subos>/lib/…` | ✅ 视图跟随活动版本 | ⚠️ **一个符号链接悬空 = 所有产物同时坏** |
+| **A. 生态闭环** | `mcpp emit xpkg` → `xlings install` | 目标机自己的 xlings 载荷,**elfpatch 在装机期重指 PT_INTERP/RUNPATH** | 目标机在生态内 |
+| **B. 静态单文件** | `--target x86_64-linux-musl` | 自带,静态链接 | 任何 Linux,无任何运行期依赖 |
+| **C. 自带运行时** | `mcpp pack --mode self-contained` | 自带这套工具链的 glibc + loader | 任何 Linux,含比构建机更老的 |
 
-这把「要不要换默认」从一个**契约层的评审**降格成一个**机制层的开关**,评审面和风险都小一圈。选哪个见 §5.3。
+**A 是这个生态真正的答案**,而且它解释了一件容易被误读的事:产物里烙的那个 `PT_INTERP` 指向构建机路径**并不构成分发障碍**——走 A 时目标机的 xlings 会重写它。#375 观察到的「目标机上路径不存在所以起不来」,前提是**绕开生态直接拷贝二进制**。
 
-Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了的格子返回 `degraded` + 非空 `diagnostic`,调用方必须上抛。这条是 `distribution.cppm` 已经立下的规矩,直接沿用——**「静默无操作」是这个模块存在的意义所要杜绝的那一个结果**。
+所以缺口不在机制,在**可发现性**,外加 **C 这条路自己是坏的**(§1.6)。
 
-**默认值:`toolchain-coupled` 不变**(= 今天的行为),所以引入这条轴**本身不改变任何现有产物**。视图寻址是 `toolchain-coupled` 内部的机制开关,排 P2,判据见 §5.3。
+**要做的两件事,都不新增穿越宿主的能力:**
 
-一个无论何时切换都必须成立的前提:**仅当 `family_of(subos_info.runtime)` 与目标 triple 的 `{os, arch, libc}` 相符时才允许视图寻址**;交叉编译(目标 aarch64、视图是 x86_64)必须落回载荷寻址。这是一个带判据的派生选择,不是静默默认值。
+1. **修 C**(§1.6 已实施):`self-contained` 的 wrapper 打坏 `/proc/self/exe`。这是三条 hermetic 路径里唯一一条自己有缺陷的,而它恰好是「目标机没有 xlings 又不想静态链接」时的那条。
+2. **让三条可发现**:`mcpp pack` 与 `mcpp build` 的文档把这三条并列写清楚,`self-contained` 在 glibc 上不可行时的诊断**逐条列出这三条**,而不是只说「不行」。一个只说「不行」的诊断会把用户推向他自己能想到的办法——而那个办法通常就是宿主 libc。
 
-**与 `mcpp pack` 两轴模型的关系(重要:不能变成第三个回答者)**
+**明确不做**:不新增任何让 `mcpp build` 产出链宿主 libc 的开关。已有的那个决定只有一个入口(`[build] allow_host_libs` / `MCPP_ALLOW_HOST_LIBS`),再开第二个就是「同一决策两处推导」,而且这一次推导出来的是策略上被禁的那一侧。
 
-`pack` 的两轴是 **target(libc)× mode(bundling depth)**。新的 `c_runtime` **不是第三条轴**,它是 pack 的 mode 轴一直在隐式表达、却只能在打包期表达的那条**契约**。对应关系必须是一个函数,不是一张需要人对齐的表:
-
-| `c_runtime` 契约 | pack mode | 关系 |
-|---|---|---|
-| `self-contained` | `static` | 契约决定 mode 的合法集合 |
-| `host-coupled` | `system` / `vendored` | 二者差别是**打包深度**(带多少第三方 `.so`),不是契约——契约都是「宿主提供 libc + loader」 |
-| `toolchain-coupled` | (不可分发) | pack 时必须报错或提升契约,**不能静默产出一个跑不起来的 tarball** |
-
-也就是说:**mode 继续管「带多少东西」,contract 管「对目标机承诺什么」**。今天 mode 同时承担了两件事,这是它必须在打包期才能决定的原因。拆开之后,`mcpp pack` 的 mode 语义不变、别名不变、tarball 后缀这个 frozen wire format 不变。
-
-**`self-contained` 的 wrapper 要一并处理**(§1.6):ELF 禁止 `PT_INTERP` 用 `$ORIGIN` 是硬约束,所以「不用 wrapper」需要另一条路。两个候选,留给 review:
-
-- **(i) 安装期改写**:解包时把 PT_INTERP 改成解包目录的绝对路径(conda / AppImage 系的做法)。mcpp 已经有 patchelf 管线,`/proc/self/exe` 完全正确。代价:多一个安装步骤,tarball 不再是「解开就能跑」。
-- **(ii) 保留 wrapper + 显式补偿**:wrapper 里导出 `MCPP_BUNDLE_DIR`,文档写明陷阱,并提供一个「先看 `MCPP_BUNDLE_DIR` 再退回 `/proc/self/exe`」的推荐解析顺序。代价:需要应用配合,救不了第三方库(GUI 框架的字体解析)。
-
-倾向 (i)——它把问题真正消灭而不是转嫁给应用,符合 R3(删掉一个回答者,而不是再加一条路径)。但它改变了 `self-contained` 的用户契约,需要你拍板。
-
-**删除/收敛**:回答者 #2 #3 #5 收敛为一处「按 contract 求 PT_INTERP」的 total function;`pack.cppm` 不再自己拼 `/lib64/`,改为向该函数请求。
+> **顺带记一笔既有账**(不在本轮改):`mcpp pack --mode vendored` 是 pack 的**默认**模式,而它把 PT_INTERP 重指到 `/lib64/ld-linux-*.so.2`——即默认打包路径本身就是宿主耦合的。这与 hermetic 策略不一致,但改默认会破坏既有用户,需要单独评估。先记在这里。
 
 ### S3 — 环境契约(subos 一等公民)
 
@@ -375,20 +354,25 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 
 **分期上这个选择是无痛的**:`subos_info`(C2)已经在盘上,所以 **S1 与 S3 的 P0 完全不依赖 xlings 改动**;只有 C1 的 `exports` 持久化需要跨仓协作,排 P1。
 
-### 5.2 `c_runtime` 该不该是新轴(而不是复用已有开关)
+### 5.2 为什么不补 `c_runtime` 这条轴
 
-| | A. 复用 `--static` / `linkage` | B. 让 `cxx_runtime` 一并管 libc | D. 维持现状(只有 pack `--mode`) | **C. 新增同族 `c_runtime` 轴** |
-|---|---|---|---|---|
-| 能表达 `host-coupled` glibc 吗 | ❌ glibc 静态链接不可行 | —— | ✅ 打包期能 | ✅ 构建期就能 |
-| `mcpp build` / `mcpp run` 能跑将要分发的配置吗 | ❌ | —— | ❌ **只能 pack 后才知道** | ✅ |
-| 与 #336 的结论一致吗 | ❌ 正是 #336 判定为错的形状(机制冒充意图) | ❌ `distribution.cppm:73` 写明了两轴分离的理由 | ⚠️ 同一类决策两个生命周期两套词汇 | ✅ |
-| 新概念数 | 0 | 0 | 0 | 0(词汇、三层、total function 全部照抄) |
-| 代价 | —— | —— | **零**(什么都不做) | 一个新 manifest 键 + 一张 mechanism 表 |
+这一节记录一个**被否掉的方案**,因为它已经实现过一遍,而且看起来很有说服力。
 
-**推荐 C。**
+| | A. 补 `c_runtime`(含 `host-coupled`) | **B. 不补,修好并指明三条 hermetic 路径** |
+|---|---|---|
+| 解决「产物没法分发」 | ✅ | ✅ |
+| 需要新概念 | 一个 manifest 键 + 一张机制表 + 一条跨层枚举镜像 | 零 |
+| 是否新增穿越宿主的能力 | **是** —— 这正是它的全部增量 | 否 |
+| 与 hermetic 策略 | **冲突**(禁止穿越第一条就是 `/lib*` 下的 libc) | 一致 |
+| 「可不可以用宿主 libc」的回答者数 | **2**(`allow_host_libs` + 新键) | 1 |
 
-- **B** 看似更省,但 `distribution.cppm` 已经把两轴合并的后果写清楚了:一个 `static_stdlib` bool 膨胀成三种平台含义,并在 Linux/libc++ 上静默无操作。C++ 与 C 的运行时是两条独立可组合的轴(自带 libc++ + 用宿主 glibc 是完全合法的一组),合并会立刻产生表达不了的格子。
-- **D 是需要认真对待的对照组**——它代价为零,而且今天确实能把产物分发出去。**不选它的理由只有一条,但这条足够**:「产物对运行它的机器承诺什么」这一个决策,在 C++ 轴上是构建期属性、在 C 轴上是打包期属性,两套词汇。这个代码库里「同一决策两处推导」的账已经反复付过(#233/#240/#344 是同一台机器,#336 本身就是第五次),而它的表现形式一贯是:**加新语义时变成构建失败,或者更糟——静默产出错的东西**。§1.6 的 wrapper 缺陷就是这笔账已经开始收利息的证据。
+**选 B。** A 有三个独立的致命处,任何一个都够:
+
+1. **它是照着 issue 的解法做,不是解 issue 的问题**(§3-S2 撤销理由一)
+2. **它穿越了这个生态存在的意义所在的边界**(理由二)
+3. **去掉那个值之后它不剩任何能力**(理由三)—— 也就是说 A 列那些 ✅ 全都不是 A 独有的
+
+值得单独记下:A **已经通过了全部测试** —— 12 个契约表单测、7 个渲染单测、一条覆盖五个断言的 e2e(含「默认不变」与「拒绝要出声」)。**测试全绿不能告诉你这个功能不该存在。**
 
 ### 5.3 `toolchain-coupled` 用载荷寻址还是视图寻址
 
@@ -439,7 +423,7 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 1. **文档 + `self-contained` 缺陷**(§1.6):在 `docs/02-pack-and-release.md` 写明 `/proc/self/exe` / `/proc/self/cmdline` 陷阱,并按 §3-S2 的 (i)/(ii) 择一修掉 wrapper。**这是 #375 唯一一条纯粹的既有缺陷**,不依赖本文任何架构改动。
 2. **mcpp-index**:`compat.glx-runtime` → `xim:graphics` → **#352 关闭**
 3. **S3-读**:`mcpp run` / `mcpp test` 消费 `subos_info.envs`;初始化时确保 subos 有 `subos_info`(§1.3 的缺口)。第 2 条要在真实 GPU 上验成(V4),依赖这一条。
-4. **S2**:落 `c_runtime` 契约层 + Mechanism total function;`host-coupled` 在**构建期**打通 → **#375 的架构诉求关闭**(第 1、2 条症状今天已可用 `mcpp pack` 解决,见 §2.3;这里补的是「在链接期声明意图」的能力)
+4. **S2-可发现性**:`self-contained` 在 glibc 上不可行时的诊断逐条列出三条 hermetic 路径;`docs/02-pack-and-release.md` 与 `05-mcpp-toml.md` 并列写清 A/B/C。**不新增任何 build 期链宿主 libc 的开关。**
 
 ### P1 — 跨仓契约
 
@@ -501,7 +485,7 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 ## 9. 开放问题
 
 - **Q1**(已在评估阶段自我下调,**不再阻塞 P0/P1**)§5.3 载荷寻址 vs 视图寻址:现推荐维持载荷寻址,先把 doctor 自动修复 + exec 失败人话诊断做完,再在 P2 独立评审是否切换。
-- **Q2** `host-coupled` 时依赖包的 `.so` 怎么走?`$ORIGIN/../lib` + 打包时收集(= 今天 `mcpp pack` 的 `BundleProject`),还是要求依赖也 `host-coupled`?倾向前者,但要确认与 `cxx_runtime` 的组合矩阵每格都有答案。
+- **Q2**(新)`mcpp pack --mode vendored` 是 pack 的**默认**,而它把 PT_INTERP 重指到 `/lib64/ld-linux-*.so.2` —— 默认打包路径本身就是宿主耦合的,与 hermetic 策略不一致。改默认会破坏既有用户,需单独评估:改默认、打告警、还是维持并在文档里说清。
 - **Q3** 多 subos:mcpp 有 home 级 sandbox 和项目级 subos(实测 `<proj>/.xlings/subos/_/`)。S3 该读**哪一个**的 `subos_info`?倾向「构建时活动的那个」,但需要确认它在 CI 与本机的一致性。(视图寻址一旦在 P2 启用,同一个问题会变成「烙哪一个」,风险更高——这是又一条把它排到 P2 的理由。)
 - **Q4** 交叉编译时 `subos_info.runtime` 描述的是宿主 subos,目标 runtime 从哪来?可能需要 `[target.<triple>].runtime` 强制显式(而不是有一个缺省)。
 - **Q5**(回答 xlings 开放问题 K)本文的答案是「**消费 subos 的身份,而不是在 subos 里跑**」——mcpp 读 `subos_info.runtime` 作为契约输入,构建仍在 mcpp 自己的 hermetic 环境里。是否与 xlings 侧的设想一致,需要跨仓确认。
@@ -513,13 +497,13 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 
 | # | 判据 | 怎么测 |
 |---|---|---|
-| V1 | `mcpp build`(不经 pack)产出的 `host-coupled` 产物在**无 mcpp** 的机器上直接跑通 | 容器里只装 glibc ≥ 2.39,把 `target/**/bin/hello` **原样**拷进去执行。**不经 pack 是判据的一部分**——经 pack 今天就能过,测不出新东西 |
+| V1 | 三条 hermetic 路径各自在**无 mcpp** 的机器上跑通 | 干净容器里分别验:A `xlings install` 后跑;B musl 产物原样拷进去跑;C `pack --mode self-contained` 解开就跑。**必须是真实干净容器** —— 在 mcpp 沙箱里跑测不出东西,那里载荷路径恰好总是存在 |
 | V2 | **每一个** pack 模式产出的程序,`/proc/self/exe` 都指向自身 | 产物内打印 `readlink("/proc/self/exe")` 并断言 == 自身路径,**四个模式全跑**。今天 `self-contained` 必红(§1.6),这条就是它的先红后绿 |
 | V3 | (仅当 P2 切视图寻址)产物在载荷升级+GC 后仍可运行 | 装 glibc@2.44、`xlings use`、**删掉 2.39**,不重新构建直接跑旧产物 |
 | V4 | GL 程序在 hermetic 图形栈下起窗口 | `xlings install graphics` 后跑 GLFW e2e;**断言渲染器不是 llvmpipe**——「跑起来了」是假绿,#352 的教训是要问「谁答的」 |
 | V5 | mcpp 侧 loader/libdir 推导点数量单调下降 | 对 §2.1 六个位置做静态计数,CI 守住上界 |
 | V6 | subos 无 `subos_info` 时**出声降级** | 删掉块,断言 stderr 有一行,且构建仍成功 |
-| V7 | `c_runtime × cxx_runtime × 格式` 矩阵无静默格 | 单测遍历全矩阵,断言每格要么有 flags 要么 `degraded` + 非空 diagnostic |
+| V7 | 产物不引用任何 `/usr/lib*` `/lib*` 下的 `.so` | 对 `mcpp build` 产物做 `ldd` 闭包扫描,断言无宿主路径命中(`allow_host_libs` 显式开启时豁免)|
 
 > **两条来自本仓历史的验证陷阱,必须避开**:
 > - **CI 全绿不等于覆盖**(#346:18 个 job 全绿也没测到大链接)。V1/V3 必须在**真实的干净容器**里跑,不能只在 CI 的 mcpp 沙箱里跑——那里 PT_INTERP 恰好总是存在。
@@ -535,7 +519,7 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 
 | 项 | 数字 | 依据 |
 |---|---|---|
-| `c_runtime` 实现面 | ~9 个文件,`flags.cppm` 约 30 处 | 以同构的 `cxx_runtime` 实测面积为代理 |
+| ~~`c_runtime` 实现面~~ | ~~9 文件~~ | **已撤销**(§5.2)。实测过:9 文件 / `flags.cppm` 约 30 处 / 12+7 单测 / 1 条 e2e 全绿 —— 记在这里是为了说明「代价可控」从来不是做不做的判据 |
 | **BMI / 对象缓存失效** | **零** | fingerprint 是 **compile-side 10 字段**(`fingerprint.cppm:3-8`),不含链接侧;`target/<fp>/` 目录名不变,只重链 |
 | e2e 需改 | ~4 个(203 个中) | 断言 PT_INTERP 的:`30_pack_modes` `86_llvm_hermetic_link` `28_target_static` `168_build_mcpp_musl_host_static` |
 | e2e 耦合载荷路径 | 58 处 / 26 文件 | 大多是工具链解析,不是 PT_INTERP;S1 落地时才受影响 |
@@ -550,10 +534,10 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 | 用户 | 影响 |
 |---|---|
 | **普通用户**(build/run/test) | P0 全部**零感知**;S3 让 GL 程序从「exit 255 无输出」变成能跑,是纯增益 |
-| **分发者** | 收益最大:`c_runtime = "host-coupled"` 让 `mcpp build` 直接产出可分发物,`mcpp run` 跑的就是将要分发的配置。**但对已经知道 `mcpp pack` 的人,增量只是「早一步发现问题」** |
+| **分发者** | `pack --mode self-contained` 从「静默打坏 exe 相对资源解析」变成可用(§1.6),这是三条 hermetic 路径里唯一一条自己有缺陷的;另外两条(A 生态闭环 / B musl 静态)本来就能用,缺的是文档 |
 | **库作者** | `compat.glx-runtime` 废弃是破坏性变更,需过渡期(保留空壳 provider 一个版本) |
 
-**新增的认知负担是真实的**:用户模型从「target × pack mode」变成「+ `c_runtime` + `cxx_runtime`」。缓解只有一条——三值词汇完全相同,学一次用两处;且 `c_runtime → 合法 pack mode` 是函数关系而非需要人工对齐的表(§3-S2)。
+**新增认知负担:零。** 不加键、不加轴、不加词汇。用户模型仍是「target × pack mode」,只是三条分发路径终于被并列写出来了。这是选 B 而非 A 的直接收益之一。
 
 ### 11.3 稳定性
 
@@ -569,7 +553,7 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 
 ### 11.4 跨平台(最弱的一维,必须直说)
 
-| 平台 | `c_runtime` 有几个有意义的值 | S1 runtime 身份 | S3 env / 图形 |
+| 平台 | 分发路径可用性 | S1 runtime 身份 | S3 env / 图形 |
 |---|---|---|---|
 | Linux / glibc | **3** | `glibc@X`,有意义 | ✅ 全部收益 |
 | Linux / musl | 1(恒 self-contained) | `musl@X` | 部分 |
@@ -578,7 +562,7 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 
 **收益 ≈ 全在 Linux。** macOS 上这条轴是退化的——只有一个合法值。
 
-**但这是「诚实的退化」而非「破坏」,且有直接先例**:`cxx_runtime` 在 Windows/MSVC 上同样退化,`distribution.cppm` 用 `explicitRequest` 处理——**默认不吭声,显式写了才告诉你没实现**。`c_runtime` 照抄即可,不需要新机制。
+macOS/Windows 上没有 mesa/glvnd,所以 S3 的图形收益是 Linux-only;而分发路径 A/B/C 里,B(musl 静态)本身就是 Linux 概念。**这是诚实的不对称,不是退化** —— 因为本轮不新增任何全平台的轴,也就不存在「为一个平台的问题给三个平台加概念」。
 
 若 review 认为 Linux-only 收益不值一条全局轴,替代是放进 `[target.'cfg(linux)']`。**我不推荐**——那会引入第二套作用域规则,而 `cxx_runtime` 已经确立了「全局轴 + 平台退化」的先例。
 
@@ -603,7 +587,7 @@ Mechanism 层同样是 **total function**:每个格子都有答案,兑现不了�
 
 ### 11.7 总评
 
-| 维度 | P0(文档/wrapper + 图形栈 + S3-读) | S2(`c_runtime`) | S1(RuntimeBinding) | P2(视图寻址) |
+| 维度 | P0(wrapper 修复 + 图形栈 + S3-读) | S2(分发路径可发现性) | S1(RuntimeBinding) | ~~c_runtime~~ / P2 视图寻址 |
 |---|---|---|---|---|
 | 实现代价 | 低 | 中 | 中高(动 `abi.cppm`,参与依赖解析) | 低 |
 | 用户收益 | **高**(#352 从不可用变可用) | 中高 | 低(内部收敛) | 低 |
