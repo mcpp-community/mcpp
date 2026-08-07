@@ -106,6 +106,33 @@ echo "$out2" | grep -q 'PROBE=(unset)' || {
     exit 1
 }
 
+# 2b. A cache written before this mcpp knew about subos environments must NOT
+#     be replayed by the fast path. Simulated by stripping the field, which is
+#     exactly what an older mcpp's cache looks like.
+#
+#     Without this the fix survives an upgrade in name only: the fast path's
+#     identity is the profile, the cache mode and the resource list, and its
+#     fingerprint check compares a cached entry against itself -- so nothing
+#     notices that a different mcpp wrote it, and an upgraded mcpp would keep
+#     running the pre-upgrade build with no subos environment at all.
+cache="$TMP/hello/target/.build_cache"
+[ -f "$cache" ] || { echo "no build cache to age"; exit 1; }
+grep -q '^subos=' "$cache" || { echo "cache has no subos= line to strip"; exit 1; }
+grep -v '^subos=' "$cache" > "$cache.old" && mv "$cache.old" "$cache"
+aged=$(MCPP_SUBOS_DIR="$subos" "$MCPP" run 2>&1) || {
+    echo "run against an aged cache failed:"; echo "$aged"; exit 1; }
+echo "$aged" | grep -q 'Resolving toolchain' || {
+    echo "an aged cache was replayed by the fast path — the subos environment"
+    echo "  would be missing for every run after an upgrade:"
+    echo "$aged"
+    exit 1
+}
+echo "$aged" | grep -q "PROBE=$subos/usr/lib/dri" || {
+    echo "the rebuild after an aged cache did not apply the environment:"
+    echo "$aged"; exit 1; }
+grep -q '^subos=' "$cache" || {
+    echo "the rebuild did not record subos= , so every later run repeats it"; exit 1; }
+
 # 3. A subos with no self-description degrades quietly and still runs. This is
 #    the state of every subos created before xlings grew the block, so it must
 #    not be an error.
