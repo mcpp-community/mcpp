@@ -92,14 +92,14 @@ The inspection state is aggregated as follows:
 ```text
 missing artifacts -> partial
 unverified regular root CDB -> stale
-readable configured snapshot and reply CDB -> configured
+valid configured metadata and an existing regular-file reply CDB -> configured
 ```
 
 `ready` is reserved for a future artifact-prepared state and is not currently
 produced.
 
 Diagnostics contain `code`, `severity`, `message`, `source: "mcpp"`, and may
-include `path` and a zero-based `range` with `line` and `column` positions.
+include `path` and a one-based `range` with `line` and `column` positions.
 Known codes include `MCPP_IDE_MANIFEST_NOT_FOUND`,
 `MCPP_IDE_MANIFEST_INVALID`, `MCPP_IDE_MEMBER_MANIFEST_MISSING`,
 `MCPP_IDE_MEMBER_MANIFEST_INVALID`, `MCPP_IDE_WORKSPACE_MEMBER_NOT_FOUND`,
@@ -107,11 +107,12 @@ Known codes include `MCPP_IDE_MANIFEST_NOT_FOUND`,
 `MCPP_IDE_ARTIFACTS_UNAVAILABLE`, `MCPP_IDE_SNAPSHOT_INVALID`,
 `MCPP_IDE_SNAPSHOT_STALE` and `MCPP_IDE_UNSUPPORTED_FORMAT`.
 
-The snapshot inspection checks metadata, project-root containment and CDB
-readability. It does not recompute the manifest, lockfile, source set,
-selectors or toolchain fingerprint. Therefore `configured` means that the last
-published configured snapshot remains readable, not that the current inputs
-have been revalidated. Clients should run `configure` after those inputs change.
+The snapshot inspection checks metadata, project-root containment and whether
+the CDB path is still a regular file. It does not open or parse the CDB, nor
+recompute the manifest, lockfile, source set, selectors or toolchain
+fingerprint. Therefore `configured` only means that the last published metadata
+still points to an existing regular file. Clients may validate the JSON before
+handing it to a language server and should run `configure` after inputs change.
 
 ## 4. Configure and NDJSON events
 
@@ -206,9 +207,13 @@ still leave a new CDB alongside old metadata.
 
 Configure resolves the project and produces a CDB from the resolved `BuildPlan`
 and compile flags. It does not compile ordinary project translation units or
-link the final executable. It may nevertheless parse dependencies and the
-toolchain, prepare a `build.mcpp` host tool, create or update caches, discover
-tests, and stage standard-library or cached dependency BMIs.
+link the final executable. It is not read-only: resolution can install
+dependencies or toolchains, execute root-project and dependency `build.mcpp`
+code, update `mcpp.lock`, write target resolution metadata, create or update
+caches, discover tests, and stage standard-library or cached dependency BMIs.
+An IDE must obtain workspace trust or equivalent explicit permission before it
+runs configure for an untrusted project. Read-only discovery should use
+`snapshot` instead.
 
 The CDB includes ordinary sources and discovered test sources. Cached module
 prerequisites are staged before the CDB is published. Uncached project or
@@ -233,8 +238,10 @@ mcpp protocol command:
 3. Reconfigure after the root/member `mcpp.toml`, `mcpp.lock`, `build.mcpp`,
    source-set/module declarations, selected profile/target/features/capabilities
    or toolchain selection changes. Debounce file events and reconfigure after an
-   mcpp dependency or toolchain command completes. A plain source-content edit
-   that does not change the source set or module graph does not require a new CDB.
+   mcpp dependency or toolchain command completes. Do not immediately retrigger
+   on `mcpp.lock`, target metadata or cache events produced by the configure
+   operation that is already in progress. A plain source-content edit that does
+   not change the source set or module graph does not require a new CDB.
 4. Validate `seq`, correlate events by `operationId`, and ignore events from a
    superseded operation. The protocol has no cancellation yet, so the client
    should not start overlapping configure operations for the same member.
@@ -244,9 +251,10 @@ mcpp protocol command:
    that event from the same operation. On startup or recovery, rerun configure
    instead of trusting a root CDB merely because it exists.
 6. If configure fails, keep the previous usable clangd configuration, surface
-   the structured diagnostic and mark it stale. A contention diagnostic may be
-   retried with bounded backoff; an I/O/path diagnostic should be shown to the
-   user instead of being retried as contention.
+   the structured diagnostic and mark it stale. Version 1 reports configure
+   failures under the generic `MCPP_IDE_CONFIGURE_FAILED` code; clients must not
+   parse the human message to infer lock contention or I/O categories. Serialize
+   operations per member and expose a user-initiated retry for other failures.
 7. Do not interpret `configured` as full module readiness. Start clangd for the
    available TUs, show module support as pending when required BMIs are absent,
    and offer a normal `mcpp build` (or `mcpp test` for test-only preparation) when

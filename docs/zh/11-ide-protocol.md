@@ -81,13 +81,13 @@ CSV selector 会丢弃空项，但不会去除空格。当前没有 `--offline` 
 ```text
 缺少 artifact -> partial
 存在但未经验证的根 CDB -> stale
-current.json 有效且 reply CDB 可读 -> configured
+configured metadata 有效且 reply CDB 是仍存在的普通文件 -> configured
 ```
 
 `ready` 只是为未来“artifact 已准备好”状态预留，当前不会生成。
 
 诊断包含 `code`、`severity`、`message`、`source: "mcpp"`，并可包含 `path` 和
-带 `line`、`column` 的零基 `range`。已知 code 包括：
+带 `line`、`column` 的一基 `range`。已知 code 包括：
 `MCPP_IDE_MANIFEST_NOT_FOUND`、`MCPP_IDE_MANIFEST_INVALID`、
 `MCPP_IDE_MEMBER_MANIFEST_MISSING`、`MCPP_IDE_MEMBER_MANIFEST_INVALID`、
 `MCPP_IDE_WORKSPACE_MEMBER_NOT_FOUND`、`MCPP_IDE_ARTIFACTS_MISSING`、
@@ -95,10 +95,11 @@ current.json 有效且 reply CDB 可读 -> configured
 `MCPP_IDE_SNAPSHOT_INVALID`、`MCPP_IDE_SNAPSHOT_STALE` 和
 `MCPP_IDE_UNSUPPORTED_FORMAT`。
 
-只读检查会验证 metadata、项目根路径约束和 CDB 可读性，但不会重新计算
-manifest、lockfile、源码集合、selector 或工具链 fingerprint。因此
-`configured` 只表示“上一次发布的 configured snapshot 仍可读”，不表示当前输入
-已经重新验证。输入变化后插件应再次运行 `configure`。
+只读检查会验证 metadata、项目根路径约束，以及 CDB 路径仍为普通文件；它不会
+打开或解析 CDB，也不会重新计算 manifest、lockfile、源码集合、selector 或工具链
+fingerprint。因此 `configured` 只表示上一次 metadata 仍指向现存普通文件，不表示
+CDB 内容有效或当前输入已经重新验证。插件可以在交给语言服务前自行验证 JSON；
+输入变化后应再次运行 `configure`。
 
 ## 4. Configure 与 NDJSON 事件
 
@@ -184,8 +185,11 @@ phase、各 ID、项目根、两个 CDB 路径、命令数和工具链身份。
 ## 6. Configure 做什么
 
 Configure 从解析后的 `BuildPlan` 和 compile flags 生成 CDB，不编译普通项目 TU，
-也不链接最终可执行文件。但它可能解析依赖和工具链、准备 `build.mcpp` 宿主
-工具、创建或更新缓存、发现测试，以及 stage 标准库或已命中的依赖 BMI。
+也不链接最终可执行文件，但它不是只读操作：解析过程可能安装依赖或工具链、执行
+根项目及依赖的 `build.mcpp` 代码、更新 `mcpp.lock`、写入 target resolution
+metadata、创建或更新缓存、发现测试，以及 stage 标准库或已命中的依赖 BMI。
+IDE 对不可信工程运行 configure 前必须取得 workspace trust 或等价的明确授权；
+未授权时只能运行只读的 `snapshot`。
 
 CDB 包含普通源码和发现到的测试源码；发布前会 stage 已缓存的模块前置产物。未
 命中的工程或依赖模块 BMI 不会由此命令完整生成，因此模块补全可能要等普通 build
@@ -206,7 +210,8 @@ CDB 包含普通源码和发现到的测试源码；发布前会 stage 已缓存
 3. 根/成员 `mcpp.toml`、`mcpp.lock`、`build.mcpp`、源码集合或 module 声明、
    profile/target/features/capabilities selector、工具链选择发生变化时重新 configure。
    文件事件应 debounce；插件执行完 mcpp 依赖或工具链命令后也应重新 configure。
-   不改变源码集合或 module graph 的普通源码内容编辑不需要重建 CDB。
+   不要因当前 configure 自己写出的 `mcpp.lock`、target metadata 或缓存事件立即再次
+   触发 configure。不改变源码集合或 module graph 的普通源码内容编辑不需要重建 CDB。
 4. 校验 `seq`，用 `operationId` 关联事件，忽略已经被新操作取代的事件。协议尚无
    cancellation，因此插件不应为同一成员启动重叠的 configure。
 5. 把 `snapshot-published` 作为发布边界。reply CDB 是协议事实来源；如果语言服务
@@ -214,7 +219,9 @@ CDB 包含普通源码和发现到的测试源码；发布前会 stage 已缓存
    `compatibilityCompileCommands`，但必须等同一次 operation 的该事件到达后再启用。
    启动或崩溃恢复时应重新 configure，不能仅因根 CDB 存在就信任它。
 6. configure 失败时继续使用此前可用的 clangd 配置，展示结构化诊断并标为 stale。
-   锁竞争可以有限退避重试；I/O 或路径错误应直接提示用户，不能当成竞争反复重试。
+   schema 1 将 configure 失败统一报告为 `MCPP_IDE_CONFIGURE_FAILED`；插件不能解析
+   面向人的 message 来推断锁竞争或 I/O 分类。同一成员的操作应串行，其他失败由
+   用户主动重试。
 7. 不要把 `configured` 当成 module 已完全 ready。先让 clangd 分析可用 TU；缺少
    BMI 时显示 module pending，并在用户要求完整 module 语义时提供普通
    `mcpp build`（仅测试准备可使用 `mcpp test`），命令完成后重新 configure。
