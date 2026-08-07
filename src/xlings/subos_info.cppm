@@ -37,6 +37,7 @@ export module mcpp.xlings.subos_info;
 
 import std;
 import mcpp.libs.json;
+import mcpp.platform;
 
 export namespace mcpp::xlings::subos {
 
@@ -177,10 +178,17 @@ Info read(const std::filesystem::path& subosDir) {
 // Resolve the declarations into concrete (var, value) pairs with
 // `${subosdir}` expanded.
 //
-// `prepend` joins with ':' in provider order and de-duplicates; `set`
-// replaces. That is xlings's own precedence, and the de-duplication matters
-// because these variables are inherited: without it a nested invocation
-// grows the list every time.
+// `prepend` joins in provider order and de-duplicates; `set` replaces. That
+// is xlings's own precedence, and the de-duplication matters because these
+// variables are inherited: without it a nested invocation grows the list
+// every time.
+//
+// The separator is the PLATFORM's, never a literal ':'. Hardcoding one is a
+// mistake this repository has made before and it is not cosmetic: on Windows
+// the list separator is ';' and ':' appears INSIDE every absolute path, so a
+// ':'-keyed split cuts "C:\\x" into "C" and "\\x" -- the de-duplication then
+// never matches and the joined value is a corrupt list. Caught by CI on
+// Windows, not by any amount of reading.
 std::vector<std::pair<std::string, std::string>>
 resolve_env(const Info& info, const std::filesystem::path& subosDir) {
     std::vector<std::pair<std::string, std::string>> out;
@@ -194,17 +202,19 @@ resolve_env(const Info& info, const std::filesystem::path& subosDir) {
         return v;
     };
 
-    // A colon-separated list already contains `value` as a whole element?
-    // Compared element-wise rather than by substring: a plain `find` would
-    // consider "/a/bc" already present in "/a/bcd".
-    auto contains_element = [](std::string_view list, std::string_view value) {
+    const std::string sep = mcpp::platform::env::path_list_separator();
+
+    // Does the list already contain `value` as a WHOLE element? Compared
+    // element-wise rather than by substring: a plain `find` would consider
+    // "/a/bc" already present in "/a/bcd".
+    auto contains_element = [&](std::string_view list, std::string_view value) {
         for (std::size_t i = 0; i <= list.size();) {
-            auto end = list.find(':', i);
+            auto end = list.find(sep, i);
             auto piece = list.substr(i, end == std::string_view::npos
                                             ? std::string_view::npos : end - i);
             if (piece == value) return true;
             if (end == std::string_view::npos) break;
-            i = end + 1;
+            i = end + sep.size();
         }
         return false;
     };
@@ -217,7 +227,7 @@ resolve_env(const Info& info, const std::filesystem::path& subosDir) {
             if (hit == out.end()) { out.emplace_back(d.var, value); continue; }
             if (d.op == "set") { hit->second = value; continue; }
             if (!contains_element(hit->second, value))
-                hit->second = value + ":" + hit->second;
+                hit->second = value + sep + hit->second;
         }
     }
     return out;

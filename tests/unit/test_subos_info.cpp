@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.platform;
 import mcpp.xlings.subos_info;
 
 namespace su = mcpp::xlings::subos;
@@ -68,7 +69,11 @@ TEST(SubosInfo, ResolvesSubosdirPlaceholder) {
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
     EXPECT_EQ(env[0].first, "LIBGL_DRIVERS_PATH");
-    EXPECT_EQ(env[0].second, (t.dir / "usr" / "lib" / "dri").string());
+    // Literal concatenation, NOT a path join. The separator in the declaration
+    // belongs to the subos manifest and is substituted verbatim; turning it
+    // into the host's would rewrite a value we do not own. On Windows the two
+    // spellings differ and the path-join form is the wrong expectation.
+    EXPECT_EQ(env[0].second, t.dir.string() + "/usr/lib/dri");
 }
 
 // Several providers may contribute to one variable — that is the normal
@@ -83,10 +88,10 @@ TEST(SubosInfo, PrependJoinsProvidersInOrder) {
         {"var":"V","op":"prepend","value":"${subosdir}/two"}]}]}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
-    auto one = (t.dir / "one").string();
-    auto two = (t.dir / "two").string();
-    EXPECT_NE(env[0].second.find(one), std::string::npos);
-    EXPECT_NE(env[0].second.find(two), std::string::npos);
+    const auto sep = mcpp::platform::env::path_list_separator();
+    EXPECT_EQ(env[0].second,
+              t.dir.string() + "/two" + sep + t.dir.string() + "/one")
+        << "both providers must survive, later binding front-most";
 }
 
 // The same value arriving twice must not accumulate: nested invocations
@@ -98,7 +103,12 @@ TEST(SubosInfo, PrependDeduplicates) {
       {"binding":"b@1","decls":[{"var":"V","op":"prepend","value":"${subosdir}/x"}]}]}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
-    EXPECT_EQ(env[0].second, (t.dir / "x").string());
+    // One entry, not two. The de-duplication has to split on the PLATFORM's
+    // list separator: keyed on ':' it would cut "C:\\x" apart on Windows,
+    // match nothing, and grow the list on every nested invocation.
+    EXPECT_EQ(env[0].second, t.dir.string() + "/x");
+    EXPECT_EQ(env[0].second.find(mcpp::platform::env::path_list_separator()),
+              std::string::npos);
 }
 
 // `set` replaces rather than joins — xlings's own precedence.
