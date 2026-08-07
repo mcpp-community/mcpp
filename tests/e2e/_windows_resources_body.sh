@@ -100,42 +100,74 @@ case "$RES_ART" in
     ;;
 esac
 
-# The dialect-independent form of the SAME assertion — and the only one that
-# covers the GNU fork, since the byte-offset check above reads the `.res`
-# container and windres emits a COFF object. llvm-readobj reads both, and the
-# resource DIRECTORY is where the discriminator lives (measured on both):
+# The same assertion in a form that covers the GNU fork too, since the byte
+# check above reads the `.res` container and windres emits a COFF object.
 #
-#     Type: VERSIONINFO (ID 16)  →  Name: (ID 1)             ← Windows finds it
-#     Type: VERSIONINFO (ID 16)  →  Name: VS_VERSION_INFO    ← Windows does not
+# `windres -J coff -O rc` round-trips a compiled resource back to rc SOURCE, so
+# the name is readable without a PE parser — and it is guaranteed present on
+# this fork, because it is the tool that produced the file. Measured on both a
+# `.o` and the linked `.exe`:
+#
+#     1 VERSIONINFO                   ← Windows finds it
+#     "VS_VERSION_INFO" VERSIONINFO   ← Windows does not
 #
 # NOT a whole-file search for the string `VS_VERSION_INFO`: that is the `szKey`
 # of the VS_VERSIONINFO struct itself, so a CORRECT resource contains it too.
 # Written that way first, and it fired on a good windres build — which is the
 # only reason this comment exists.
-READOBJ=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj \
-             "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj.exe \
-             2>/dev/null | head -1)
-[ -n "$READOBJ" ] || fail "llvm-readobj not found under $MCPP_HOME — the ordinal assertion cannot run, and silently skipping it is how #365 shipped" b1.log
+#
+# The rc tool comes out of build.ninja rather than off PATH: mcpp resolved it
+# payload-relative on purpose (a bare `windres` on PATH is an xlings shim), so
+# asking PATH here would inspect the artifact with a different tool than the one
+# that built it.
+RC_TOOL=$(sed -n 's/^rc *= *//p' "$BUILD_DIR/build.ninja" | head -1)
+[ -n "$RC_TOOL" ] || fail "no 'rc =' binding in build.ninja" "$BUILD_DIR/build.ninja"
 
-# $1 = file to inspect, $2 = log suffix, $3 = expected `Name:` text
+# $1 = file to inspect, $2 = log suffix, $3 = "ordinal" | "string"
 version_name_is() {
-    "$READOBJ" --coff-resources "$1" > "readobj.$2.log" 2>&1 \
-        || fail "llvm-readobj could not read $1" "readobj.$2.log"
-    grep -q 'Type: VERSIONINFO' "readobj.$2.log" \
-        || fail "$1 carries no version resource at all" "readobj.$2.log"
-    # The window is the VERSIONINFO type table only — an icon is also `(ID 1)`,
-    # so matching anywhere in the file would pass for the wrong reason.
-    grep -A5 'Type: VERSIONINFO' "readobj.$2.log" | grep -q "Name: $3" \
-        || fail "expected the version resource to be named '$3'" "readobj.$2.log"
+    case "$3" in
+      ordinal) _want='^[[:space:]]*1[[:space:]]+VERSIONINFO' ;;
+      string)  _want='"VS_VERSION_INFO"[[:space:]]+VERSIONINFO' ;;
+    esac
+    case "$RC_TOOL" in
+      *windres*)
+        "$RC_TOOL" -J coff -O rc -i "$1" -o "rt.$2.rc" 2>"rt.$2.err" \
+            || fail "windres could not read back $1" "rt.$2.err"
+        grep -qiE 'VERSIONINFO' "rt.$2.rc" \
+            || fail "$1 carries no version resource at all" "rt.$2.rc"
+        grep -qE "$_want" "rt.$2.rc" \
+            || fail "expected the version resource to be named by $3 in $1" "rt.$2.rc"
+        ;;
+      *)
+        # rc.exe / llvm-rc cannot read back, so use llvm-readobj — which ships
+        # with the LLVM payload that IS the default Windows toolchain, i.e. the
+        # only configuration that reaches this branch. Same discriminator, in
+        # the resource directory: `Name: (ID 1)` vs `Name: VS_VERSION_INFO`.
+        READOBJ=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj \
+                     "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj.exe \
+                     2>/dev/null | head -1)
+        [ -n "$READOBJ" ] || fail "no way to read back $1 (no windres, no llvm-readobj) — silently skipping this assertion is how #365 shipped" b1.log
+        "$READOBJ" --coff-resources "$1" > "readobj.$2.log" 2>&1 \
+            || fail "llvm-readobj could not read $1" "readobj.$2.log"
+        grep -q 'Type: VERSIONINFO' "readobj.$2.log" \
+            || fail "$1 carries no version resource at all" "readobj.$2.log"
+        case "$3" in ordinal) _n='Name: (ID 1)' ;; string) _n='Name: VS_VERSION_INFO' ;; esac
+        # The window is the VERSIONINFO type table only — an icon is also
+        # `(ID 1)`, so matching anywhere in the file would pass for the wrong
+        # reason.
+        grep -A5 'Type: VERSIONINFO' "readobj.$2.log" | grep -qF "$_n" \
+            || fail "expected the version resource to be named by $3 in $1" "readobj.$2.log"
+        ;;
+    esac
 }
-version_name_is "$RES_ART" art '(ID 1)'
+version_name_is "$RES_ART" art ordinal
 
 # ── The resource actually reached the linked image ────────────────────────
 EXE="$BUILD_DIR/bin/resapp$EXE_SUFFIX"
 [ -f "$EXE" ] || fail "no executable at $EXE" b1.log
 # The ordinal has to survive the LINK, not just the resource compile — that is
 # what GetFileVersionInfo actually reads.
-version_name_is "$EXE" exe '(ID 1)'
+version_name_is "$EXE" exe ordinal
 EXE_HEX=$(hexof "$EXE")
 echo "$EXE_HEX" | grep -q "$(utf16hex 'Acme Corp')" \
     || fail "the version metadata did not reach the executable" b1.log
@@ -241,7 +273,7 @@ grep -q 'GetFileVersionInfo' b6.log \
 # Without it, "the name is (ID 1)" could be passing for any reason at all.
 BROKEN=$(ls "$BUILD_DIR"/res/app.res "$BUILD_DIR"/res/app.o 2>/dev/null | head -1)
 [ -n "$BROKEN" ] || fail "the broken script produced no artifact to compare against" b6.log
-version_name_is "$BROKEN" broken 'VS_VERSION_INFO'
+version_name_is "$BROKEN" broken string
 
 # ── D-6. A declared resource that does not exist is an ERROR ──────────────
 #
