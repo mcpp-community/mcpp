@@ -261,6 +261,28 @@ artifact 状态包括 `pending`、`ready`、`stale`、`missing`、`unavailable`�
 
 回复文件写入临时文件后关闭并校验，再使用同目录 rename 发布。`index-<generation>.json` 只引用完整回复文件；客户端先读 index，再按引用读取对象。这借鉴 CMake File API 的 reply index 和不可变 reply 文件，避免读到半个 JSON。
 
+截至 2026-08-07，configured 阶段先实现以下可恢复子集：
+
+```text
+<project-root>/.mcpp/ide/
+  current.json
+  replies/
+    snapshot-<contentHash>.json
+    compile_commands-<cdbHash>.json
+```
+
+`current.json` 是最后一个原子切换点，记录 `projectId`、`configurationId`、
+`snapshotId`、toolchain 和内容寻址 CDB。`ide snapshot` 会读取并验证该记录；无
+mcpp metadata 的根 CDB 仍为 `stale/unverified`。按 configuration 分目录的 index、
+ready 和 last-known-good 仍由后续 prepare/publish 阶段实现。
+
+configured publisher 会在替换根 compatibility CDB 前保存旧内容；若随后
+`current.json` 发布失败，则尝试原子恢复旧根 CDB。内容寻址 reply 可以保留为不可见文件。
+根 CDB 与 `current.json` 是两个独立路径，操作系统不能为它们提供跨文件事务；如果外部
+进程在回滚期间持续占用文件，发布结果会返回复合错误，调用方必须把它视为需要人工恢复的
+不一致状态。发布过程持有 `.mcpp/ide/.lock`，多个 configure 可以并行解析，但不能交错
+切换 mutable 指针。
+
 ### 7.2 CDB 发布时序
 
 ```text
@@ -380,20 +402,33 @@ Node 单元测试和 `clangd --check` 不能替代真实 Extension Development H
 
 ### 当前实现的验证边界
 
-截至 2026-08-06，早期 CDB 实现还有两个 IDE 路径的测试缺口，不能据此推断核心 Ninja 构建后端存在回归：
+截至 2026-08-07，早期 CDB 实现仍有一个工具链矩阵缺口，不能据此推断核心 Ninja 构建后端存在回归：
 
-1. 尚未通过真实 `configure_project()` 流程制造 staging 失败，并断言已有根 CDB 保持不变。普通 `mcpp build/test` 继续使用既有 `write_compile_commands()` 和 Ninja 执行路径，不经过 IDE 的 fresh CDB 发布与回退逻辑。完整 last-known-good 状态仍属于后续 snapshot publish 层，不应把它与当前测试缺口混为已实现能力。
-2. cached dependency BMI 的发布前 staging 已有 helper 单测和 macOS/Clang E2E，但尚缺真实 GCC `.gcm`、MSVC `.ifc` 缓存命中工程。核心 Ninja 后端仍通过自己的 `stage_file` edges 物化缓存产物；此缺口的直接风险是 IDE CDB 引用了未物化或路径漂移的 BMI，而不是普通构建无法完成。
+1. cached dependency BMI 的发布前 staging 已有 helper 单测和 macOS/Clang E2E，但尚缺真实 GCC `.gcm`、MSVC `.ifc` 缓存命中工程。核心 Ninja 后端仍通过自己的 `stage_file` edges 物化缓存产物；此缺口的直接风险是 IDE CDB 引用了未物化或路径漂移的 BMI，而不是普通构建无法完成。
 
-第二项仍跨越 `BuildPlan::cachedBmi`、`bmi_traits()`、`stage_file()` 和 Ninja BMI 命名等共享契约。应按任务 3 将目标路径收敛到 `mcpp.build.artifact_layout`，由 Ninja 与 IDE 共同消费，再补真实工具链矩阵。GCC/MSVC E2E 只证明路径和产物契约，不代表 clangd 能消费 `.gcm` 或 `.ifc`；该能力仍按工具链 capability 明确表达。
+该缺口仍跨越 `BuildPlan::cachedBmi`、`bmi_traits()`、`stage_file()` 和 Ninja BMI 命名等共享契约。应按任务 3 将目标路径收敛到 `mcpp.build.artifact_layout`，由 Ninja 与 IDE 共同消费，再补真实工具链矩阵。GCC/MSVC E2E 只证明路径和产物契约，不代表 clangd 能消费 `.gcm` 或 `.ifc`；该能力仍按工具链 capability 明确表达。
+
+真实 CLI E2E 已覆盖 `build.mcpp` 失败，并逐字节断言已有根 CDB 和
+`current.json` 不变；configure 还会把选中 member 的 `tests/**/*.cpp` 合成为与
+`mcpp test` 相同的 targets，并在发现测试时自动启用 dev-dependencies，使测试 CDB
+包含实际测试构建所需的 include/define。workspace selector 与 member 目录调用使用物理
+workspace root 和规范化 member path，产生相同的 `projectId + configurationId`。
 
 当前 `configure` 已在解析前发送带 `operationId` 的 `operation-started`，并在成功或
 失败的全部后续事件中沿用该 ID；失败序列为
 `diagnostic -> operation-finished(status=failed)`。解析前尚无 resolved
 `configurationId`，因此早期 started 事件不携带该字段，客户端应以 `operationId`
-关联整个生命周期。阶段化 `progress`、取消、迟到事件过滤，以及
-index/current/last-known-good 发布仍属于后续 publish/prepare 任务。现阶段不能据此
-宣称完整的长任务管理和失败回退协议已经完成。
+关联整个生命周期。阶段化 `progress`、取消、迟到事件过滤，以及按 configuration
+的 index、ready 和 last-known-good 发布仍属于后续 prepare 任务。configured
+`current.json` 已原子发布，但现阶段仍不能据此宣称完整的长任务管理和失败回退协议
+已经完成。
+
+`ide snapshot` 当前验证 metadata schema、工程内路径约束和 CDB 文件存在性，但不会
+在只读路径重新执行 resolved build fingerprint。manifest、lockfile、source 集或工具链
+输入变化后，插件必须触发一次 `ide configure` 才能得到新 snapshot；在此之前
+`configured` 仅表示“最后一次已发布 configured snapshot 仍可读取”，不表示所有输入
+已重新证明为 fresh。验收标准中的主动 stale 判定仍属于后续 configuration index/freshness
+工作。
 
 当前 `configured_snapshot_id` 已绑定 configuration、BuildContext fingerprint 和
 CDB 内容；完整 resolved module graph、artifact metadata 和输入 provenance 尚未

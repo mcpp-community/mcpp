@@ -3,6 +3,7 @@
 import std;
 import mcpp.ide.model;
 import mcpp.ide.inspect;
+import mcpp.ide.publish;
 import mcpp.ide.snapshot;
 import mcpp.libs.json;
 import mcpp.manifest;
@@ -375,6 +376,33 @@ TEST(IdeSnapshotInspect, ReadOnlyInventory) {
     ASSERT_TRUE(after.has_value());
     EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Partial);
     EXPECT_EQ(*before, *after);
+}
+
+TEST(IdeSnapshotInspect, RestoresPublishedConfiguredArtifact) {
+    TempProject p;
+    p.write("mcpp.toml", package_manifest());
+    p.write("compile_commands.json", "[]\n");
+    p.write(".mcpp/ide/replies/compile_commands-a.json", "[]\n");
+    auto published = mcpp::ide::publish_current_snapshot(p.root, {
+        .projectId = "project-1",
+        .configurationId = "config-1",
+        .snapshotId = "snapshot-1",
+        .phase = "configured",
+        .projectRoot = p.root,
+        .compileCommands = p.root / ".mcpp/ide/replies/compile_commands-a.json",
+        .compatibilityCompileCommands = p.root / "compile_commands.json",
+        .toolchain = "llvm@22",
+        .toolchainFingerprint = "toolchain-1",
+    });
+    ASSERT_TRUE(published.has_value()) << published.error();
+
+    auto snapshot = mcpp::ide::inspect_workspace({.start = p.root});
+
+    EXPECT_EQ(snapshot.state, mcpp::ide::SnapshotState::Configured);
+    ASSERT_EQ(snapshot.compileCommands.size(), 1u);
+    EXPECT_EQ(snapshot.compileCommands[0].state, mcpp::ide::ArtifactState::Configured);
+    EXPECT_EQ(snapshot.compileCommands[0].snapshotId,
+              std::optional<std::string>("snapshot-1"));
 }
 
 TEST(IdeSnapshotSerialize, EmitsCompleteSchemaOneDocument) {

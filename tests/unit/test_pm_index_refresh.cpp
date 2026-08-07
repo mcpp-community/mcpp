@@ -166,7 +166,7 @@ TEST(PmIndexRefresh, OfflineDoesNotMisreportAResolvableDependency) {
               RefreshReason::None);
 }
 
-TEST(PmIndexRefresh, QuietIndexRecoveryDoesNotWriteToStdout) {
+TEST(PmIndexRefresh, QuietIndexRecoveryKeepsSafetyNoticeOffProtocolStdout) {
     FakeRegistry reg("quiet-recovery");
     const auto idx = reg.index_dir();
     auto write_index = [&](std::string_view floor, std::string_view marker) {
@@ -182,11 +182,14 @@ TEST(PmIndexRefresh, QuietIndexRecoveryDoesNotWriteToStdout) {
 
     mcpp::platform::env::ScopedEnv offline("MCPP_OFFLINE", "1");
     testing::internal::CaptureStdout();
+    testing::internal::CaptureStderr();
     const auto rc = mcpp::xlings::update_index(reg.env(), /*quiet=*/true);
     const auto output = testing::internal::GetCapturedStdout();
+    const auto errors = testing::internal::GetCapturedStderr();
 
     EXPECT_EQ(rc, 0);
     EXPECT_TRUE(output.empty()) << output;
+    EXPECT_NE(errors.find("Restored"), std::string::npos) << errors;
 }
 
 TEST(PmIndexRefresh, AutoRefreshOptOutSuppressesAGenuineMiss) {

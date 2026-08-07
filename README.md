@@ -220,7 +220,9 @@ import mcpplibs.cmdline;
 - Fingerprinted BMI cache: hashed by compiler/flags/standard library, shared across projects
 - Ninja backend: auto-generated build.ninja, parallel compilation
 - compile_commands.json generated automatically (ready for clangd / ccls)
-- `mcpp ide configure` publishes a fresh CDB before ordinary TU compilation,
+- `mcpp ide configure` publishes a fresh CDB for ordinary and `tests/**/*.cpp`
+  translation units (including test dev-dependency flags) before compilation,
+  and persists the configured snapshot
   so clangd can analyze a project whose source currently has build errors
 - First-class C support: `.c` files auto-detected, mixed C/C++ projects
 - User-defined cflags / cxxflags / ldflags / c_standard

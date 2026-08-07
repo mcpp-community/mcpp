@@ -67,6 +67,9 @@ Json artifacts_json(const WorkspaceInspection& inspection) {
         item["member"] = artifact.member;
         item["path"] = artifact.path.generic_string();
         item["state"] = std::string(wire_name(artifact.state));
+        if (artifact.snapshotId) item["snapshotId"] = *artifact.snapshotId;
+        if (artifact.configurationId)
+            item["configurationId"] = *artifact.configurationId;
         compileCommands.push_back(std::move(item));
     }
     auto result = Json::object();

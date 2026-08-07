@@ -101,7 +101,9 @@ export int cmd_ide_configure(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const auto operationId = mcpp::ide::new_operation_id();
     std::println("{}", mcpp::ide::configure_started_event(operationId));
     std::fflush(stdout);
-    const auto result = mcpp::ide::configure_project(request);
+    const auto result = mcpp::ide::run_configure_safely([&] {
+        return mcpp::ide::configure_project(request);
+    });
     if (!result) {
         for (const auto& line : mcpp::ide::configure_failure_events(
                  result.error(), operationId, 2))

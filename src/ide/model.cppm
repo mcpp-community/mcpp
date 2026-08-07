@@ -25,6 +25,7 @@ std::string_view wire_name(IdePhase phase) {
 
 enum class SnapshotState {
     Partial,
+    Configured,
     Stale,
     Unavailable,
     Ready,
@@ -32,6 +33,7 @@ enum class SnapshotState {
 
 enum class ArtifactState {
     Missing,
+    Configured,
     Stale,
 };
 
@@ -43,6 +45,7 @@ enum class Severity {
 std::string_view wire_name(SnapshotState state) {
     switch (state) {
     case SnapshotState::Partial: return "partial";
+    case SnapshotState::Configured: return "configured";
     case SnapshotState::Stale: return "stale";
     case SnapshotState::Unavailable: return "unavailable";
     case SnapshotState::Ready: return "ready";
@@ -53,6 +56,7 @@ std::string_view wire_name(SnapshotState state) {
 std::string_view wire_name(ArtifactState state) {
     switch (state) {
     case ArtifactState::Missing: return "missing";
+    case ArtifactState::Configured: return "configured";
     case ArtifactState::Stale: return "stale";
     }
     return {};
@@ -107,6 +111,35 @@ struct ConfigurationSelectors {
     std::string cppStandard = "c++23";
 };
 
+std::filesystem::path physical_project_root(const std::filesystem::path& root) {
+    std::error_code ec;
+    auto absolute = std::filesystem::absolute(root, ec);
+    if (ec) absolute = root;
+    auto physical = std::filesystem::weakly_canonical(absolute, ec);
+    return (ec ? absolute : physical).lexically_normal();
+}
+
+std::optional<std::string>
+canonical_member_selector(const std::filesystem::path& workspaceRoot,
+                          const std::filesystem::path& projectRoot) {
+    const auto workspace = physical_project_root(workspaceRoot);
+    const auto project = physical_project_root(projectRoot);
+    if (project == workspace) return std::nullopt;
+    const auto relative = project.lexically_relative(workspace);
+    if (relative.empty() || relative.is_absolute() || *relative.begin() == "..")
+        return std::nullopt;
+    return relative.generic_string();
+}
+
+std::string project_id(const std::filesystem::path& workspaceRoot) {
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const unsigned char byte : physical_project_root(workspaceRoot).generic_string()) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return std::format("project-fnv1a64:{:016x}", hash);
+}
+
 std::string configuration_id(const std::filesystem::path& workspaceRoot,
                              ConfigurationSelectors selectors,
                              std::string_view toolchainFingerprint) {
@@ -124,7 +157,7 @@ std::string configuration_id(const std::filesystem::path& workspaceRoot,
         canonical += value;
         canonical.push_back('\x1f');
     };
-    append("root", workspaceRoot.lexically_normal().generic_string());
+    append("root", physical_project_root(workspaceRoot).generic_string());
     append("package", selectors.package.value_or(""));
     append("workspace", selectors.workspace ? "1" : "0");
     append("profile", selectors.profile);
@@ -168,6 +201,8 @@ struct CompileCommandsArtifact {
     std::string member;
     std::filesystem::path path;
     ArtifactState state = ArtifactState::Missing;
+    std::optional<std::string> snapshotId;
+    std::optional<std::string> configurationId;
 };
 
 struct WorkspaceInspection {

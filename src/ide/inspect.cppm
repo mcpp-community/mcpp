@@ -2,6 +2,7 @@ export module mcpp.ide.inspect;
 
 import std;
 import mcpp.ide.model;
+import mcpp.ide.publish;
 import mcpp.manifest;
 import mcpp.project;
 
@@ -352,11 +353,39 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
 
     bool hasStale = false;
     bool hasMissing = false;
+    bool hasConfigured = false;
     bool artifactProbeError = false;
     for (auto index : selected) {
         const auto& candidate = candidates[index];
         if (!candidate.member) continue;
         result.selectedMembers.push_back(candidate.name);
+
+        auto current = read_current_snapshot(candidate.root);
+        if (!current) {
+            result.diagnostics.push_back(manifest_diagnostic(
+                "MCPP_IDE_SNAPSHOT_INVALID", Severity::Warning,
+                current.error(), candidate.root / ".mcpp" / "ide" / "current.json"));
+        } else if (current->has_value()) {
+            const auto& published = **current;
+            std::error_code publishedEc;
+            const bool publishedCdb = std::filesystem::is_regular_file(
+                published.compileCommands, publishedEc);
+            if (!publishedEc && publishedCdb
+                && physical_project_root(published.projectRoot)
+                    == physical_project_root(candidate.root)) {
+                result.compileCommands.push_back({
+                    candidate.name, published.compileCommands,
+                    ArtifactState::Configured, published.snapshotId,
+                    published.configurationId});
+                hasConfigured = true;
+                continue;
+            }
+            result.diagnostics.push_back(manifest_diagnostic(
+                "MCPP_IDE_SNAPSHOT_STALE", Severity::Warning,
+                "published IDE snapshot no longer references a usable CDB",
+                candidate.root / ".mcpp" / "ide" / "current.json"));
+        }
+
         const auto path = candidate.root / "compile_commands.json";
         std::error_code ec;
         const bool exists = std::filesystem::exists(path, ec);
@@ -394,7 +423,10 @@ WorkspaceInspection inspect_workspace(InspectRequest request) {
         "compile_commands.json exists but was not verified",
         result.workspaceManifest));
     if (artifactProbeError) return result;
-    result.state = hasStale ? SnapshotState::Stale : SnapshotState::Partial;
+    if (hasMissing) result.state = SnapshotState::Partial;
+    else if (hasStale) result.state = SnapshotState::Stale;
+    else if (hasConfigured) result.state = SnapshotState::Configured;
+    else result.state = SnapshotState::Partial;
     return result;
 }
 

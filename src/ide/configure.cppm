@@ -9,7 +9,9 @@ import mcpp.build.flags;
 import mcpp.build.plan;
 import mcpp.build.prepare;
 import mcpp.build.stage;
+import mcpp.build.test_targets;
 import mcpp.ide.model;
+import mcpp.ide.publish;
 import mcpp.libs.json;
 import mcpp.project;
 import mcpp.toolchain.fingerprint;
@@ -84,6 +86,19 @@ export struct ConfigureResult {
     std::filesystem::path stdModule;
     std::string stdModuleState;
 };
+
+export std::expected<ConfigureResult, std::string>
+run_configure_safely(const std::function<
+    std::expected<ConfigureResult, std::string>()>& operation) {
+    try {
+        return operation();
+    } catch (const std::exception& error) {
+        return std::unexpected(std::format(
+            "IDE configure raised an exception: {}", error.what()));
+    } catch (...) {
+        return std::unexpected("IDE configure raised an unknown exception");
+    }
+}
 
 // configured snapshot 的身份同时绑定配置、当前 resolved build fingerprint
 // 和 CDB 内容；精简 toolchain fingerprint 只用于 configurationId，不能替代
@@ -164,8 +179,16 @@ configure_project(const ConfigureRequest& request) {
     // configure 的结构化 stdout 不能混入普通进度；mcpp 自身写入的项目文件
     // 仍保持原有 prepare_build 语义，但状态行转为诊断/事件。
     QuietGuard quiet;
+    auto tests = mcpp::build::discover_test_targets(
+        *root, request.selectors.package.value_or(""));
+    if (!tests) return std::unexpected(tests.error());
+    // 测试 target 的真实构建语义包含 dev-dependencies；只把测试源放进 CDB
+    // 却遗漏其依赖 include/define，clangd 仍会把测试文件解析成错误配置。
+    const bool includeDevDependencies = request.selectors.includeDevDependencies
+                                     || !tests->targets.empty();
     auto context = mcpp::build::prepare_build(
-        /*print_fingerprint=*/false, request.selectors.includeDevDependencies, {},
+        /*print_fingerprint=*/false, includeDevDependencies,
+        std::move(tests->targets),
         std::move(overrides));
     if (!context) return std::unexpected(context.error());
     // A failed stage must leave the previous CDB untouched and must not emit a
@@ -180,11 +203,16 @@ configure_project(const ConfigureRequest& request) {
     resolvedSelectors.cacheMode = std::string(
         mcpp::build::cache_mode_name(context->cacheMode));
     resolvedSelectors.cppStandard = context->manifest.package.standard;
+    resolvedSelectors.includeDevDependencies = includeDevDependencies;
+    auto workspaceRoot = mcpp::project::find_workspace_root(context->projectRoot);
+    if (workspaceRoot.empty()) workspaceRoot = context->projectRoot;
+    workspaceRoot = physical_project_root(workspaceRoot);
+    resolvedSelectors.package = canonical_member_selector(
+        workspaceRoot, context->projectRoot);
     const auto toolchainFingerprint = toolchain_fingerprint(context->fp);
     const auto configId = configuration_id(
-        context->projectRoot, resolvedSelectors, toolchainFingerprint);
-    const auto projectId = std::format("project-fnv1a64:{}",
-        mcpp::toolchain::hash_string(context->projectRoot.generic_string()));
+        workspaceRoot, resolvedSelectors, toolchainFingerprint);
+    const auto projectId = project_id(workspaceRoot);
     auto flags = mcpp::build::compute_flags(context->plan);
     const auto content = mcpp::build::emit_compile_commands(context->plan, flags);
     auto parsed = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false);
@@ -200,15 +228,13 @@ configure_project(const ConfigureRequest& request) {
     if (auto written = mcpp::build::write_fresh_compile_commands(snapshotCdb, content); !written)
         return std::unexpected(written.error());
     const auto compatibilityCdb = context->projectRoot / "compile_commands.json";
-    if (auto written = mcpp::build::write_fresh_compile_commands(compatibilityCdb, content); !written)
-        return std::unexpected(written.error());
 
     const auto snapshotId = configured_snapshot_id(configId, context->fp.hex, cdbHash);
     const auto traits = mcpp::toolchain::bmi_traits(context->plan.toolchain);
     const auto stagedStdModule = context->plan.stdBmiPath.empty()
         ? std::filesystem::path{}
         : context->plan.outputDir / traits.bmiDir / context->plan.stdBmiPath.filename();
-    return ConfigureResult{
+    ConfigureResult result{
         .projectId = projectId, .configurationId = configId, .snapshotId = snapshotId,
         .projectRoot = context->projectRoot, .compileCommands = snapshotCdb,
         .compatibilityCompileCommands = compatibilityCdb, .toolchain = context->tc.label(),
@@ -218,6 +244,20 @@ configure_project(const ConfigureRequest& request) {
             ? "not-required"
             : (std::filesystem::is_regular_file(stagedStdModule) ? "ready" : "pending"),
     };
+    auto published = publish_configured_snapshot(context->projectRoot, {
+        .projectId = result.projectId,
+        .configurationId = result.configurationId,
+        .snapshotId = result.snapshotId,
+        .phase = "configured",
+        .projectRoot = result.projectRoot,
+        .compileCommands = result.compileCommands,
+        .compatibilityCompileCommands = result.compatibilityCompileCommands,
+        .toolchain = result.toolchain,
+        .toolchainFingerprint = result.toolchainFingerprint,
+        .compileCommandCount = result.compileCommandCount,
+    }, content);
+    if (!published) return std::unexpected(published.error());
+    return result;
 }
 
 export std::string configure_started_event(

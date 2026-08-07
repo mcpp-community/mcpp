@@ -80,6 +80,12 @@ private:
 #endif
 };
 
+// 不先删除旧目标就完成替换。Windows 的 std::filesystem::rename 不能覆盖
+// 已有文件，因此使用 MoveFileEx 保证发布失败时保留 last-known-good 内容。
+void replace_file(const std::filesystem::path& source,
+                  const std::filesystem::path& destination,
+                  std::error_code& ec) noexcept;
+
 } // namespace mcpp::platform::fs
 
 // ─── Implementation ──────────────────────────────────────────────────────
@@ -221,5 +227,21 @@ FileLock& FileLock::operator=(FileLock&& o) noexcept {
 }
 
 #endif
+
+void replace_file(const std::filesystem::path& source,
+                  const std::filesystem::path& destination,
+                  std::error_code& ec) noexcept {
+    ec.clear();
+#if defined(_WIN32)
+    // Windows 上 path::value_type 就是 wchar_t；直接使用原生缓冲区，避免
+    // noexcept 函数中的 wstring 临时分配抛出异常并触发 terminate。
+    if (!MoveFileExW(source.c_str(), destination.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+    }
+#else
+    std::filesystem::rename(source, destination, ec);
+#endif
+}
 
 } // namespace mcpp::platform::fs

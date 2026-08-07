@@ -4,7 +4,9 @@ import std;
 import mcpp.build.plan;
 import mcpp.ide.configure;
 import mcpp.ide.model;
+import mcpp.ide.publish;
 import mcpp.libs.json;
+import mcpp.platform.fs;
 import mcpp.toolchain.model;
 
 namespace {
@@ -246,5 +248,243 @@ TEST(IdeConfigure, RefusesToPublishWhenCachedModuleIsMissing) {
     EXPECT_FALSE(std::filesystem::exists(plan.outputDir));
 
     std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(IdeConfigure, CanonicalizesWorkspaceAndMemberIdentity) {
+    const auto root = temp_root();
+    const auto workspace = root / "workspace";
+    const auto member = workspace / "libs" / "server";
+    std::filesystem::create_directories(member);
+
+    const auto normalized = mcpp::ide::physical_project_root(workspace / "libs" / "..");
+    EXPECT_EQ(normalized, mcpp::ide::physical_project_root(workspace));
+    EXPECT_EQ(mcpp::ide::canonical_member_selector(workspace, member),
+              std::optional<std::string>("libs/server"));
+    EXPECT_EQ(mcpp::ide::canonical_member_selector(workspace, workspace), std::nullopt);
+    EXPECT_EQ(mcpp::ide::project_id(workspace / "libs" / ".."),
+              mcpp::ide::project_id(workspace));
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(IdeConfigure, ConvertsThrownExceptionToExpectedFailure) {
+    auto result = mcpp::ide::run_configure_safely([]()
+        -> std::expected<mcpp::ide::ConfigureResult, std::string> {
+        throw std::runtime_error("synthetic configure failure");
+    });
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().find("synthetic configure failure"), std::string::npos);
+}
+
+TEST(IdeConfigure, PublishesRecoverableConfiguredSnapshot) {
+    const auto root = temp_root();
+    std::filesystem::create_directories(root / ".mcpp" / "ide" / "replies");
+    const auto cdb = root / ".mcpp" / "ide" / "replies" / "compile_commands-a.json";
+    std::ofstream(cdb) << "[]\n";
+
+    mcpp::ide::PublishedSnapshot snapshot{
+        .projectId = "project-1",
+        .configurationId = "config-1",
+        .snapshotId = "snapshot-1",
+        .phase = "configured",
+        .projectRoot = root,
+        .compileCommands = cdb,
+        .compatibilityCompileCommands = root / "compile_commands.json",
+        .toolchain = "llvm@22",
+        .toolchainFingerprint = "toolchain-1",
+    };
+    auto published = mcpp::ide::publish_current_snapshot(root, snapshot);
+    ASSERT_TRUE(published.has_value()) << published.error();
+
+    auto loaded = mcpp::ide::read_current_snapshot(root);
+    ASSERT_TRUE(loaded.has_value()) << loaded.error();
+    ASSERT_TRUE(loaded->has_value());
+    EXPECT_EQ((*loaded)->snapshotId, snapshot.snapshotId);
+    EXPECT_EQ((*loaded)->configurationId, snapshot.configurationId);
+    EXPECT_EQ((*loaded)->compileCommands, cdb);
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(IdeConfigure, FailedPublicationKeepsCurrentSnapshot) {
+    const auto root = temp_root();
+    std::filesystem::create_directories(root / ".mcpp" / "ide" / "replies");
+    const auto oldCdb = root / ".mcpp" / "ide" / "replies" / "compile_commands-old.json";
+    std::ofstream(oldCdb) << "[]\n";
+    auto first = mcpp::ide::publish_current_snapshot(root, {
+        .projectId = "project-1",
+        .configurationId = "config-1",
+        .snapshotId = "snapshot-old",
+        .phase = "configured",
+        .projectRoot = root,
+        .compileCommands = oldCdb,
+        .compatibilityCompileCommands = root / "compile_commands.json",
+        .toolchain = "llvm@22",
+        .toolchainFingerprint = "toolchain-1",
+    });
+    ASSERT_TRUE(first.has_value()) << first.error();
+
+    auto failed = mcpp::ide::publish_current_snapshot(root, {
+        .projectId = "project-1",
+        .configurationId = "config-1",
+        .snapshotId = "snapshot-new",
+        .phase = "configured",
+        .projectRoot = root,
+        .compileCommands = root / "missing.json",
+        .compatibilityCompileCommands = root / "compile_commands.json",
+        .toolchain = "llvm@22",
+        .toolchainFingerprint = "toolchain-1",
+    });
+    ASSERT_FALSE(failed.has_value());
+
+    auto current = mcpp::ide::read_current_snapshot(root);
+    ASSERT_TRUE(current.has_value()) << current.error();
+    ASSERT_TRUE(current->has_value());
+    EXPECT_EQ((*current)->snapshotId, "snapshot-old");
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(IdeConfigure, MetadataPublicationFailureRestoresCompatibilityCdb) {
+    const auto root = temp_root();
+    const auto replies = root / ".mcpp" / "ide" / "replies";
+    std::filesystem::create_directories(replies);
+    const auto snapshotCdb = replies / "compile_commands-new.json";
+    const auto compatibilityCdb = root / "compile_commands.json";
+    const std::string oldContent = R"([{"file":"old.cpp"}])";
+    const std::string newContent = R"([{"file":"new.cpp"}])";
+    std::ofstream(snapshotCdb) << newContent;
+    std::ofstream(compatibilityCdb) << oldContent;
+
+    // 用目录占据最终 metadata 路径，跨平台稳定制造第二个切换点失败。
+    std::filesystem::create_directories(root / ".mcpp" / "ide" / "current.json");
+    auto published = mcpp::ide::publish_configured_snapshot(root, {
+        .projectId = "project-1",
+        .configurationId = "config-1",
+        .snapshotId = "snapshot-new",
+        .phase = "configured",
+        .projectRoot = root,
+        .compileCommands = snapshotCdb,
+        .compatibilityCompileCommands = compatibilityCdb,
+        .toolchain = "llvm@22",
+        .toolchainFingerprint = "toolchain-1",
+    }, newContent);
+
+    ASSERT_FALSE(published.has_value());
+    std::ifstream restored(compatibilityCdb, std::ios::binary);
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), oldContent);
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(IdeConfigure, ConcurrentPublicationCannotChangeCompatibilityCdb) {
+    const auto root = temp_root();
+    const auto replies = root / ".mcpp" / "ide" / "replies";
+    std::filesystem::create_directories(replies);
+    const auto snapshotCdb = replies / "compile_commands-new.json";
+    const auto compatibilityCdb = root / "compile_commands.json";
+    const std::string oldContent = R"([{"file":"old.cpp"}])";
+    const std::string newContent = R"([{"file":"new.cpp"}])";
+    std::ofstream(snapshotCdb) << newContent;
+    std::ofstream(compatibilityCdb) << oldContent;
+    auto held = mcpp::platform::fs::FileLock::try_acquire(root / ".mcpp" / "ide");
+    ASSERT_TRUE(held.has_value());
+
+    auto published = mcpp::ide::publish_configured_snapshot(root, {
+        .projectId = "project-1",
+        .configurationId = "config-1",
+        .snapshotId = "snapshot-new",
+        .phase = "configured",
+        .projectRoot = root,
+        .compileCommands = snapshotCdb,
+        .compatibilityCompileCommands = compatibilityCdb,
+        .toolchain = "llvm@22",
+        .toolchainFingerprint = "toolchain-1",
+    }, newContent);
+
+    ASSERT_FALSE(published.has_value());
+    EXPECT_NE(published.error().find("already in progress"), std::string::npos);
+    std::ifstream unchanged(compatibilityCdb, std::ios::binary);
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(unchanged), {}), oldContent);
+    held.reset();
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(IdeConfigure, RejectsSnapshotCdbOutsideProject) {
+    const auto root = temp_root();
+    const auto outside = root.parent_path() / std::format(
+        "mcpp_outside_cdb_{}.json",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(root);
+    std::ofstream(outside) << "[]\n";
+
+    auto published = mcpp::ide::publish_current_snapshot(root, {
+        .projectId = "project-1",
+        .configurationId = "config-1",
+        .snapshotId = "snapshot-1",
+        .phase = "configured",
+        .projectRoot = root,
+        .compileCommands = outside,
+        .compatibilityCompileCommands = root / "compile_commands.json",
+        .toolchain = "llvm@22",
+        .toolchainFingerprint = "toolchain-1",
+    });
+
+    EXPECT_FALSE(published.has_value());
+    EXPECT_FALSE(std::filesystem::exists(root / ".mcpp" / "ide" / "current.json"));
+    std::error_code ec;
+    std::filesystem::remove(outside, ec);
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(IdeConfigure, InvalidCurrentMetadataReturnsError) {
+    const auto root = temp_root();
+    std::filesystem::create_directories(root / ".mcpp" / "ide");
+    std::ofstream(root / ".mcpp" / "ide" / "current.json")
+        << R"({"schemaVersion":"wrong","kind":17})";
+
+    auto current = mcpp::ide::read_current_snapshot(root);
+
+    EXPECT_FALSE(current.has_value());
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(IdeConfigure, CurrentMetadataCannotReferenceCdbOutsideProject) {
+    const auto root = temp_root();
+    const auto outside = root.parent_path() / std::format(
+        "mcpp_external_current_cdb_{}.json",
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(root / ".mcpp" / "ide");
+    std::ofstream(outside) << "[]\n";
+    std::ofstream(root / ".mcpp" / "ide" / "current.json")
+        << nlohmann::ordered_json{
+            {"schemaVersion", 1},
+            {"kind", "mcpp.ide.configured-snapshot"},
+            {"phase", "configured"},
+            {"projectId", "project-1"},
+            {"configurationId", "config-1"},
+            {"snapshotId", "snapshot-1"},
+            {"projectRoot", root.generic_string()},
+            {"compileCommands", outside.generic_string()},
+            {"compatibilityCompileCommands",
+             (root / "compile_commands.json").generic_string()},
+            {"compileCommandCount", 0},
+            {"toolchain", "llvm@22"},
+            {"toolchainFingerprint", "toolchain-1"},
+        }.dump();
+
+    auto current = mcpp::ide::read_current_snapshot(root);
+
+    EXPECT_FALSE(current.has_value());
+    if (!current) EXPECT_NE(current.error().find("escapes"), std::string::npos);
+    std::error_code ec;
+    std::filesystem::remove(outside, ec);
     std::filesystem::remove_all(root, ec);
 }

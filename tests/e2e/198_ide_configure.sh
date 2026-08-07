@@ -14,9 +14,23 @@ source "$(dirname "$0")/_llvm_env.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 PROJECT="$TMP/app"
+DEV_PACKAGE="$TMP/test-helper"
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
-mkdir -p "$PROJECT/src"
+mkdir -p "$PROJECT/src" "$PROJECT/include" "$PROJECT/tests" "$DEV_PACKAGE/include"
+
+cat >"$DEV_PACKAGE/mcpp.toml" <<'EOF'
+[package]
+name = "test-helper"
+version = "1.0.0"
+
+[build]
+include_dirs = ["include"]
+EOF
+cat >"$DEV_PACKAGE/include/test_helper.h" <<'EOF'
+#pragma once
+inline int test_helper_value() { return 1; }
+EOF
 
 cat >"$PROJECT/mcpp.toml" <<EOF
 [package]
@@ -27,6 +41,12 @@ standard = "c++fly"
 [toolchain]
 linux = "llvm@${LLVM_VERSION}"
 macosx = "llvm@${LLVM_VERSION}"
+
+[dev-dependencies]
+test-helper = { path = "../test-helper" }
+
+[build]
+include_dirs = ["include"]
 EOF
 
 # 故意保留语法错误：configure 只能解析工程，不能要求普通 TU 编译成功。
@@ -36,6 +56,17 @@ import std;
 int main( {
     return missing_symbol;
 }
+EOF
+
+cat >"$PROJECT/include/util.h" <<'EOF'
+#pragma once
+inline bool is_valid(int value) { return value > 0; }
+EOF
+
+cat >"$PROJECT/tests/testisvalid.cpp" <<'EOF'
+#include "util.h"
+#include "test_helper.h"
+int main() { return is_valid(test_helper_value()) ? 0 : 1; }
 EOF
 
 set +e
@@ -77,7 +108,7 @@ assert next(iter(operation_ids)).startswith("operation-fnv1a64:"), events
 published = events[1]
 assert published["phase"] == "configured"
 assert published["state"] == "configured"
-assert published["compileCommandCount"] >= 1
+assert published["compileCommandCount"] >= 2
 std_module = published["stdModule"]
 assert std_module["state"] == "ready", std_module
 assert os.path.isfile(std_module["path"]), std_module
@@ -92,11 +123,24 @@ assert os.path.isfile(compat_cdb), compat_cdb
 
 cdb = json.load(open(snapshot_cdb, encoding="utf-8"))
 entry = next(item for item in cdb if item["file"].endswith("/src/main.cpp"))
+test_entry = next(item for item in cdb if item["file"].endswith("/tests/testisvalid.cpp"))
 assert os.path.realpath(entry["directory"]) == os.path.realpath(project), (
     entry["directory"], project
 )
 assert entry["arguments"][0].endswith("clang++"), entry["arguments"][0]
 assert any(arg.startswith("-std=c++") for arg in entry["arguments"]), entry["arguments"]
+assert any(
+    arg.startswith("-I") and os.path.realpath(arg[2:]) == os.path.realpath(
+        os.path.join(project, "include")
+    )
+    for arg in test_entry["arguments"]
+), test_entry["arguments"]
+assert any(
+    arg.startswith("-I") and os.path.realpath(arg[2:]) == os.path.realpath(
+        os.path.join(os.path.dirname(project), "test-helper", "include")
+    )
+    for arg in test_entry["arguments"]
+), test_entry["arguments"]
 std_bmi = next(
     arg.removeprefix("-fmodule-file=std=")
     for arg in entry["arguments"]
@@ -114,9 +158,73 @@ assert os.path.isfile(std_bmi), std_bmi
 assert os.path.isfile(std_compat_bmi), std_compat_bmi
 PY
 
-cat >>"$PROJECT/mcpp.toml" <<'EOF'
+(cd "$PROJECT" && "$MCPP" ide snapshot --format json) >"$TMP/snapshot.json"
+python3 - "$TMP/snapshot.json" <<'PY'
+import json
+import sys
 
-[build]
+snapshot = json.load(open(sys.argv[1], encoding="utf-8"))
+assert snapshot["state"] == "configured", snapshot
+artifact = snapshot["artifacts"]["compileCommands"][0]
+assert artifact["state"] == "configured", artifact
+assert artifact["snapshotId"].startswith("snapshot-fnv1a64:"), artifact
+PY
+
+# 从 workspace selector 和 member 目录配置同一工程，ID 必须规范化一致。
+WORKSPACE="$TMP/workspace"
+MEMBER="$WORKSPACE/libs/server"
+mkdir -p "$MEMBER/src"
+cat >"$WORKSPACE/mcpp.toml" <<EOF
+[workspace]
+members = ["libs/server"]
+
+[toolchain]
+linux = "llvm@${LLVM_VERSION}"
+macosx = "llvm@${LLVM_VERSION}"
+EOF
+cat >"$MEMBER/mcpp.toml" <<'EOF'
+[package]
+name = "workspace-server"
+version = "1.0.0"
+EOF
+cat >"$MEMBER/src/main.cpp" <<'EOF'
+int main() { return 0; }
+EOF
+(cd "$WORKSPACE" && "$MCPP" ide configure -p libs/server --format ndjson) \
+    >"$TMP/workspace-configure.ndjson"
+(cd "$MEMBER" && "$MCPP" ide configure --format ndjson) \
+    >"$TMP/member-configure.ndjson"
+python3 - "$TMP/workspace-configure.ndjson" "$TMP/member-configure.ndjson" "$WORKSPACE" <<'PY'
+import json
+import os
+import sys
+
+
+def published(path):
+    events = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+    return next(event for event in events if event["type"] == "snapshot-published")
+
+
+def project_id(path):
+    value = 0xCBF29CE484222325
+    for byte in os.path.realpath(path).encode():
+        value ^= byte
+        value = (value * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"project-fnv1a64:{value:016x}"
+
+
+from_workspace = published(sys.argv[1])
+from_member = published(sys.argv[2])
+assert from_workspace["projectId"] == project_id(sys.argv[3]), from_workspace
+assert from_workspace["projectId"] == from_member["projectId"], (
+    from_workspace, from_member
+)
+assert from_workspace["configurationId"] == from_member["configurationId"], (
+    from_workspace, from_member
+)
+PY
+
+cat >>"$PROJECT/mcpp.toml" <<'EOF'
 cxxflags = ["-DIDE_SNAPSHOT_CHANGED=1"]
 EOF
 
@@ -277,6 +385,36 @@ events = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if li
 assert [event["type"] for event in events] == [
     "operation-started", "snapshot-published", "operation-finished"
 ], events
+PY
+
+# 真实 prepare 失败不能替换根 CDB 或已发布的 current snapshot。
+cp "$PROJECT/compile_commands.json" "$TMP/last-good-cdb.json"
+cp "$PROJECT/.mcpp/ide/current.json" "$TMP/last-good-current.json"
+cat >"$PROJECT/build.mcpp" <<'EOF'
+int main() { return 9; }
+EOF
+set +e
+(cd "$PROJECT" && "$MCPP" ide configure --format ndjson) \
+    >"$TMP/build-mcpp-failure.ndjson" 2>"$TMP/build-mcpp-failure.err"
+build_mcpp_failure_rc=$?
+set -e
+if [ "$build_mcpp_failure_rc" -ne 3 ]; then
+    echo "FAIL: build.mcpp configure failure returned $build_mcpp_failure_rc" >&2
+    cat "$TMP/build-mcpp-failure.ndjson" >&2
+    cat "$TMP/build-mcpp-failure.err" >&2
+    exit 1
+fi
+cmp "$TMP/last-good-cdb.json" "$PROJECT/compile_commands.json"
+cmp "$TMP/last-good-current.json" "$PROJECT/.mcpp/ide/current.json"
+python3 - "$TMP/build-mcpp-failure.ndjson" <<'PY'
+import json
+import sys
+
+events = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+assert [event["type"] for event in events] == [
+    "operation-started", "diagnostic", "operation-finished"
+], events
+assert events[-1]["status"] == "failed", events
 PY
 
 if find "$PROJECT/target" -type f \( -name '*.o' -o -name '*.obj' \) \

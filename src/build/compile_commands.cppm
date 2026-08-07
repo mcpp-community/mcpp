@@ -18,6 +18,7 @@ import std;
 import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.libs.json;
+import mcpp.platform.fs;
 
 export namespace mcpp::build {
 
@@ -281,17 +282,9 @@ write_fresh_compile_commands(const std::filesystem::path& path, std::string_view
         }
     }
 
-    std::filesystem::rename(temp, path, ec);
-    std::error_code typeEc;
-    const bool replaceableFile = std::filesystem::is_regular_file(path, typeEc);
-    if (ec && replaceableFile && !typeEc) {
-        // Windows rename 不覆盖已有普通文件；只对文件执行 remove + rename，
-        // 不能把同名目录等其他对象当成可替换的旧 CDB。
-        std::error_code removeEc;
-        std::filesystem::remove(path, removeEc);
-        ec.clear();
-        std::filesystem::rename(temp, path, ec);
-    }
+    // POSIX 使用 rename，Windows 使用 MoveFileEx(REPLACE_EXISTING)；两者
+    // 都不会先删除旧文件，因此失败时 last-known-good CDB 仍然存在。
+    mcpp::platform::fs::replace_file(temp, path, ec);
     if (ec) {
         const auto publishError = ec;
         std::error_code cleanupEc;
