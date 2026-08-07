@@ -447,7 +447,8 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
 // caller's broader glob; and it's the same choke-point fix as expand_glob
 // itself, see scanner.cppm).
 bool sources_newer_than(const std::filesystem::path& projectRoot,
-                        std::filesystem::file_time_type ninjaTime) {
+                        std::filesystem::file_time_type ninjaTime,
+                        const std::vector<std::filesystem::path>& resourceScripts = {}) {
     std::error_code ec;
     // The root build.mcpp is a build input too — its directives shape
     // build.ninja (flags, generated/selected sources). A changed program must
@@ -465,6 +466,25 @@ bool sources_newer_than(const std::filesystem::path& projectRoot,
     // "Finished dev in 0.00s" while the new file is never generated. Same
     // question as the build.mcpp check above, different kind of input.
     if (mcpp::build::glob_inputs_stale(projectRoot)) return true;
+    // mcpp#365: an author-written `.rc` is a third input of the same kind. It
+    // is not under src/ and has no C++ extension, so the sweep below cannot see
+    // it — and unlike the icon or a header the script includes, editing it can
+    // change WHAT THE GRAPH SHOULD BE: the implicit-input set comes from
+    // scanning the script, and the "your VERSIONINFO is named by string"
+    // diagnostic is produced while scanning. Both happen in prepare_build, so a
+    // fresh build.ninja made the edit invisible — the resource itself rebuilt
+    // (ninja tracks it), but a newly added `#include "ids.h"` went untracked and
+    // the diagnostic never fired again after the first build.
+    //
+    // Only `files` is swept. `icon` and `extra-inputs` are already ninja
+    // implicit inputs and changing them cannot change the shape of the graph,
+    // so forcing a full prepare on every icon tweak would buy nothing.
+    for (auto const& f : resourceScripts) {
+        auto p = f.is_absolute() ? f : (projectRoot / f);
+        auto ft = std::filesystem::last_write_time(p, ec);
+        if (ec) { ec.clear(); continue; }   // missing → prepare_build reports it
+        if (ft > ninjaTime) return true;
+    }
     for (auto& f : mcpp::modgraph::expand_glob(projectRoot, "src/**/*")) {
         auto ext = f.extension().string();
         if (ext != ".cppm" && ext != ".cpp" && ext != ".cc" &&
@@ -556,6 +576,11 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
 struct FastPathIdentity {
     std::string profile;
     std::string cacheMode;
+    // mcpp#365: author-written resource scripts, for the freshness sweep. They
+    // ride along here because this is the one place on the fast path that
+    // already parses the manifest — re-reading it to answer a second question
+    // would be a second derivation of the same fact.
+    std::vector<std::filesystem::path> resourceScripts;
 };
 
 std::optional<FastPathIdentity>
@@ -567,6 +592,7 @@ fast_path_identity(const std::filesystem::path& projectRoot,
         mcpp::build::resolve_profile_name(*m, profileOverride),
         std::string(mcpp::build::cache_mode_name(
             mcpp::build::resolve_cache_mode(*m, ""))),
+        m->resources.files,
     };
 }
 
@@ -631,7 +657,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
 
     // mcpp#225: bounded + vcs/build-dir-excluded walk (see sources_newer_than)
     // instead of a hand-rolled recursive_directory_iterator over src/.
-    if (sources_newer_than(projectRoot, ninjaTime)) return std::nullopt;
+    if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts)) return std::nullopt;
 
     // All inputs are older than build.ninja → fast-path: just run ninja.
     std::chrono::milliseconds elapsed{};
@@ -706,7 +732,7 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     auto tomlTime = std::filesystem::last_write_time(tomlPath, ec);
     if (ec || tomlTime > ninjaTime) return std::nullopt;
 
-    if (sources_newer_than(projectRoot, ninjaTime)) return std::nullopt;
+    if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts)) return std::nullopt;
 
     // Fresh → run ninja (picks up any incremental object/link work) then
     // exec the cached exe path directly.

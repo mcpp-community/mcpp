@@ -28,13 +28,21 @@ utf16hex() {
 mkdir -p "$TMP/proj/src" "$TMP/proj/assets"
 cd "$TMP/proj"
 
-# A minimal but structurally valid 1x1 32bpp icon: ICONDIR + ICONDIRENTRY +
-# BITMAPINFOHEADER + one BGRA pixel + AND mask. The pixel is ff0000ff so the
-# payload can be found again inside the linked image.
-write_icon() {   # $1 = BGRA pixel bytes as printf escapes
-    printf '\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00\x20\x00\x30\x00\x00\x00\x16\x00\x00\x00\x28\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00\x20\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'"$1"'\x00\x00\x00\x00' > assets/app.ico
+# A minimal but structurally valid 4x1 32bpp icon: ICONDIR + ICONDIRENTRY +
+# BITMAPINFOHEADER + four BGRA pixels + AND mask.
+#
+# Four pixels, not one, purely so the payload is findable AGAIN inside the
+# linked image without false positives: an .ico's bitmap data is embedded
+# verbatim, and searching a megabyte-scale binary for a 4-byte pattern hits by
+# chance often enough to make the assertion meaningless. 16 bytes does not.
+write_icon() {   # $1 = 4 BGRA pixels (16 bytes) as printf escapes
+    printf '\x00\x00\x01\x00\x01\x00\x04\x01\x00\x00\x01\x00\x20\x00\x3c\x00\x00\x00\x16\x00\x00\x00\x28\x00\x00\x00\x04\x00\x00\x00\x02\x00\x00\x00\x01\x00\x20\x00\x00\x00\x00\x00\x14\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'"$1"'\x00\x00\x00\x00' > assets/app.ico
 }
-write_icon '\xff\x00\x00\xff'
+ICON_A='\xd3\x1c\x7a\x45\x92\xe6\x0b\xa8\x41\xf7\x2d\x63\xbe\x50\x84\x19'
+ICON_B='\x6c\xa2\x38\xd7\xe1\x4b\x95\x0f\x77\xc4\x1a\x8e\x2b\xf3\x60\xd5'
+ICON_A_HEX='d31c7a4592e60ba841f72d63be508419'
+ICON_B_HEX='6ca238d7e14b950f77c41a8e2bf360d5'
+write_icon "$ICON_A"
 
 printf 'int main() { return 0; }\n' > src/main.cpp
 
@@ -111,7 +119,7 @@ EXE="$BUILD_DIR/bin/resapp$EXE_SUFFIX"
 EXE_HEX=$(hexof "$EXE")
 echo "$EXE_HEX" | grep -q "$(utf16hex 'Acme Corp')" \
     || fail "the version metadata did not reach the executable" b1.log
-echo "$EXE_HEX" | grep -q 'ff0000ff' \
+echo "$EXE_HEX" | grep -q "$ICON_A_HEX" \
     || fail "the icon payload did not reach the executable" b1.log
 
 # ── A2. Resources are tracked build inputs ────────────────────────────────
@@ -123,10 +131,13 @@ echo "$EXE_HEX" | grep -q 'ff0000ff' \
 grep -qE 'no work to do|Finished' b2.log || fail "unexpected rebuild output" b2.log
 
 sleep 1
-write_icon '\x00\xff\x00\xff'          # a different pixel: same size, new bytes
+write_icon "$ICON_B"                  # same size, entirely different bytes
 "$MCPP" build $BUILD_ARGS > b3.log 2>&1 || fail "rebuild after icon change failed" b3.log
-hexof "$BUILD_DIR/bin/resapp$EXE_SUFFIX" | grep -q '00ff00ff' \
+NEW_HEX=$(hexof "$BUILD_DIR/bin/resapp$EXE_SUFFIX")
+echo "$NEW_HEX" | grep -q "$ICON_B_HEX" \
     || fail "editing the icon did not reach the executable (the #365 symptom)" b3.log
+echo "$NEW_HEX" | grep -q "$ICON_A_HEX" \
+    && fail "the old icon is still embedded — the resource was not rebuilt" b3.log
 
 # Metadata is an input too: the .rc is regenerated and everything downstream
 # re-runs.
