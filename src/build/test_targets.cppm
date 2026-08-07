@@ -17,17 +17,20 @@ std::expected<TestTargetDiscovery, std::string>
 discover_test_targets(const std::filesystem::path& manifestRoot,
                       std::string_view packageFilter = {}) {
     auto rootManifest = mcpp::manifest::load(manifestRoot / "mcpp.toml");
-    if (!rootManifest) return std::unexpected(rootManifest.error().format());
+    auto testRoot = manifestRoot;
+    std::optional<mcpp::manifest::Manifest> manifest;
+    if (rootManifest) {
+        auto member = mcpp::project::resolve_member_dir(
+            *rootManifest, manifestRoot, packageFilter);
+        if (!member) return std::unexpected(member.error());
+        testRoot = member->empty() ? manifestRoot : *member;
 
-    auto member = mcpp::project::resolve_member_dir(
-        *rootManifest, manifestRoot, packageFilter);
-    if (!member) return std::unexpected(member.error());
-    const auto testRoot = member->empty() ? manifestRoot : *member;
-
-    auto manifest = member->empty()
-        ? std::move(rootManifest)
-        : mcpp::manifest::load(testRoot / "mcpp.toml");
-    if (!manifest) return std::unexpected(manifest.error().format());
+        if (member->empty()) {
+            manifest.emplace(std::move(*rootManifest));
+        } else if (auto loaded = mcpp::manifest::load(testRoot / "mcpp.toml")) {
+            manifest.emplace(std::move(*loaded));
+        }
+    }
 
     const auto testFiles = mcpp::modgraph::expand_glob(testRoot, "tests/**/*.cpp");
     if (testFiles.empty()) return TestTargetDiscovery{.root = testRoot};
@@ -38,9 +41,13 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         std::set<std::filesystem::path> files;
     };
     std::vector<TestGlobFlags> globFlags;
-    for (const auto& flags : manifest->buildConfig.globFlags) {
-        auto files = mcpp::modgraph::expand_glob(testRoot, flags.glob);
-        globFlags.push_back({flags, {files.begin(), files.end()}});
+    // inventory 可在损坏源码/manifest 上工作；只有成功解析时才附加
+    // `[build].flags`，真正 build/configure 随后仍由 prepare_build 严格校验。
+    if (manifest) {
+        for (const auto& flags : manifest->buildConfig.globFlags) {
+            auto files = mcpp::modgraph::expand_glob(testRoot, flags.glob);
+            globFlags.push_back({flags, {files.begin(), files.end()}});
+        }
     }
 
     TestTargetDiscovery result{.root = testRoot};

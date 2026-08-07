@@ -3,6 +3,7 @@
 import std;
 import mcpp.build.backend;
 import mcpp.build.execute;
+import mcpp.build.test_targets;
 
 using namespace mcpp::build;
 
@@ -67,4 +68,28 @@ TEST(TestRunSummary, DefaultsAreZeroAndPrintable) {
     EXPECT_EQ(s.runMs, 0);
     EXPECT_EQ(s.elapsedMs, 0);
     EXPECT_FALSE(s.packageError);
+}
+
+// `mcpp test --list` 和“没有测试”路径不进入 prepare_build；发现阶段若把
+// manifest 解析改成强制成功，就会让原本无需构建的查询产生行为回归。
+TEST(TestTargetDiscovery, InvalidManifestStillAllowsBestEffortInventory) {
+    const auto root = std::filesystem::temp_directory_path()
+                    / std::format("mcpp_test_discovery_{}",
+                        std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(root / "tests");
+    std::ofstream(root / "mcpp.toml") << "[package\n";
+    std::ofstream(root / "tests" / "smoke.cpp") << "this need not compile";
+
+    auto discovery = discover_test_targets(root);
+    EXPECT_TRUE(discovery.has_value())
+        << (discovery ? "" : discovery.error());
+    if (discovery) {
+        ASSERT_EQ(discovery->targets.size(), 1u);
+        EXPECT_EQ(discovery->targets.front().name, "smoke");
+        EXPECT_EQ(discovery->targets.front().main,
+                  (std::filesystem::path("tests") / "smoke.cpp").string());
+    }
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
 }
