@@ -1,9 +1,42 @@
 # 02 — Packaging for Release
 
-> A default dynamically linked binary produced by `mcpp build` normally has a
-> loader and RUNPATH tied to the build sandbox. To distribute it to other
-> machines or deploy it to a server, use `mcpp pack` to produce a release
-> tarball or directory with the appropriate runtime closure.
+> A default dynamically linked binary produced by `mcpp build` has a loader and
+> RUNPATH tied to the build sandbox. It is a development artifact, not a
+> deliverable. Three routes turn it into one — and none of them uses the host's
+> C library.
+
+## Three ways to ship
+
+Every route below produces an artifact whose C runtime comes from the
+ecosystem, never from `/lib64`. That is deliberate: mcpp builds against a
+private glibc precisely so a binary's behaviour does not depend on which
+distribution happens to be underneath it, and reaching back out to the host's
+libc to distribute would give that away at the last step.
+
+| | Route | Command | Where its C runtime comes from | Choose it when |
+|---|---|---|---|---|
+| **A** | Through the ecosystem | `mcpp emit xpkg` → `xlings install <pkg>` | the target machine's own xlings payloads | the target has xlings |
+| **B** | One static file | `mcpp build --target x86_64-linux-musl` | nowhere — it is linked in | you want a single file with no runtime at all |
+| **C** | Carry the runtime | `mcpp pack --mode self-contained` | shipped inside the bundle | any Linux, including older than the build machine |
+
+**On route A, and the thing that surprises people.** The `PT_INTERP` baked into
+a freshly built binary points at *your* machine's payload, so copying that file
+to another machine by hand does not work — the path is not there. That is not a
+property of the artifact so much as of the copy: installed through `xlings`, the
+package's ELF files are repointed at the target machine's own payloads at
+install time. The baked path is a build-machine detail, not a distribution
+format. If you are hand-copying binaries between machines, you want B or C.
+
+**On route B.** `--target …-musl` implies a static link, so there is no loader,
+no RUNPATH and nothing to find at run time. It is the smallest and most
+portable result, and the one to reach for first when the program does not need
+glibc-specific behaviour (NSS lookups, `dlopen` of host plugins).
+
+**On route C.** The bundle carries this toolchain's glibc and its loader, so it
+runs on distributions older than the build machine — the case B cannot cover
+when glibc is actually required. Read the `/proc/self/exe` note below before
+choosing it: launching through a bundled loader changes what the program sees
+about itself.
 
 ## Two axes: target (libc) × mode (bundling depth)
 
