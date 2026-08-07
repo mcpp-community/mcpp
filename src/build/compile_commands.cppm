@@ -242,7 +242,11 @@ write_fresh_compile_commands(const std::filesystem::path& path, std::string_view
         return std::unexpected("compile commands must be a JSON array");
 
     const auto normalized = json.dump(2) + "\n";
-    {
+    std::error_code existingTypeEc;
+    // 只有普通文件才能进入内容比较；Linux 上把目录交给 ifstream 读取会抛异常，
+    // 而不是稳定地设置 failbit，导致 IDE configure 无法返回结构化失败事件。
+    if (std::filesystem::is_regular_file(path, existingTypeEc)
+        && !existingTypeEc) {
         std::ifstream existing(path, std::ios::binary);
         if (existing) {
             std::string bytes(std::istreambuf_iterator<char>(existing), {});

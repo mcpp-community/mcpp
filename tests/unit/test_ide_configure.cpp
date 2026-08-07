@@ -80,11 +80,15 @@ TEST(IdeConfigure, CorrelatesEveryLifecycleEventWithOperationId) {
     auto failure = mcpp::ide::configure_failure_events(
         "cannot resolve toolchain", operationId, /*firstSeq=*/2);
 
-    EXPECT_EQ(started["operationId"], operationId);
+    // 显式提取字符串，避免 Windows Clang 在 json 与 string_view 间选择
+    // operator== 时产生二义性。
+    EXPECT_EQ(started["operationId"].get<std::string>(), std::string(operationId));
     for (const auto& line : success)
-        EXPECT_EQ(nlohmann::json::parse(line)["operationId"], operationId);
+        EXPECT_EQ(nlohmann::json::parse(line)["operationId"].get<std::string>(),
+                  std::string(operationId));
     for (const auto& line : failure)
-        EXPECT_EQ(nlohmann::json::parse(line)["operationId"], operationId);
+        EXPECT_EQ(nlohmann::json::parse(line)["operationId"].get<std::string>(),
+                  std::string(operationId));
 }
 
 TEST(IdeConfigure, GeneratesDistinctOperationIds) {
