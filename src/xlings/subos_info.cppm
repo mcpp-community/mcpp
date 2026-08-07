@@ -160,12 +160,12 @@ Info read(const std::filesystem::path& subosDir) {
 
     // Sorted by binding, matching xlings's own ordering, so two reads of one
     // subos produce the same environment in the same order. Ordering is not
-    // cosmetic here: for a colon-separated list it decides which provider
-    // wins, and libglvnd resolves GL vendors by exactly that order.
-    std::ranges::sort(info.providers,
-                      [](Provider const& a, Provider const& b) {
-                          return a.binding < b.binding;
-                      });
+    // cosmetic here: it decides which provider wins a list variable, and
+    // libglvnd resolves GL vendors by exactly that order.
+    std::sort(info.providers.begin(), info.providers.end(),
+              [](Provider const& a, Provider const& b) {
+                  return a.binding < b.binding;
+              });
 
     if (info.schema > kSupportedSchema)
         info.note = std::format(
@@ -219,12 +219,18 @@ resolve_env(const Info& info, const std::filesystem::path& subosDir) {
         return false;
     };
 
+    // An explicit loop rather than std::ranges::find with a member-pointer
+    // projection into std::pair. The projection form reads well and crashed
+    // the clang 20.1.7 frontend outright when this module was compiled for
+    // the MSVC target -- a segfault with no diagnostic beyond "clang frontend
+    // command failed due to signal". Nothing here needs the fancier spelling.
     for (auto const& p : info.providers) {
         for (auto const& d : p.decls) {
             auto value = expand(d.value);
-            auto hit = std::ranges::find(out, d.var,
-                                         &std::pair<std::string, std::string>::first);
-            if (hit == out.end()) { out.emplace_back(d.var, value); continue; }
+            std::pair<std::string, std::string>* hit = nullptr;
+            for (auto& kv : out)
+                if (kv.first == d.var) { hit = &kv; break; }
+            if (!hit) { out.emplace_back(d.var, value); continue; }
             if (d.op == "set") { hit->second = value; continue; }
             if (!contains_element(hit->second, value))
                 hit->second = value + sep + hit->second;
