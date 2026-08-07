@@ -128,6 +128,37 @@ exec "$here/lib/ld-linux-x86-64.so.2" --library-path "$here/lib" "$here/bin/myap
 The layout and wrapper above use an x86_64 example. The packer derives the
 loader name from the target; for aarch64 it is `ld-linux-aarch64.so.1`.
 
+#### Trap: `/proc/self/exe` under the bundled loader
+
+Being started *by* the loader has a consequence the layout above does not
+show: the kernel sets `/proc/self/exe` to the **loader**, not to your program,
+and `/proc/self/cmdline` carries the `--library-path` argument. Every "find my
+resources next to the executable" path therefore resolves against `lib/`
+instead of the bundle root — and it does so silently. In practice that means
+a GUI toolkit rendering blank text because it cannot find its fonts, an
+`assets/` directory that appears to be missing, and helper binaries shipped
+alongside the program that cannot be located. Code that parses `argv` from
+`/proc/self/cmdline` sees the loader's arguments mixed in.
+
+This affects `self-contained` only. `vendored`, `system` and `static` all
+carry a `PT_INTERP` that the kernel can use directly, so `/proc/self/exe` is
+correct there.
+
+The wrapper exports **`MCPP_BUNDLE_DIR`** (the bundle root) for this. Resolve
+against it first and fall back only when it is unset:
+
+```c
+const char *base = getenv("MCPP_BUNDLE_DIR");   /* set by run.sh */
+if (!base) {
+    /* not launched through the wrapper — /proc/self/exe is trustworthy */
+}
+```
+
+If the application cannot be changed — a third-party GUI framework doing its
+own resolution, say — use `--mode vendored` instead. It repoints `PT_INTERP`
+at the host loader, at the cost of requiring the host's glibc to be at least
+as new as the one the artifact was built against.
+
 ## Configuration
 
 Packaging behavior is configured via the `[pack]` section in `mcpp.toml`. The

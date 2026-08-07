@@ -120,6 +120,32 @@ exec "$here/lib/ld-linux-x86-64.so.2" --library-path "$here/lib" "$here/bin/myap
 上面的布局与 wrapper 以 x86_64 为例。打包器会按 target 推导 loader 名称；aarch64
 对应 `ld-linux-aarch64.so.1`。
 
+#### 陷阱:经 bundled loader 启动后的 `/proc/self/exe`
+
+「由 loader 启动」有一个上面的布局看不出来的后果:内核会把 `/proc/self/exe`
+指向 **loader**,而不是你的程序;`/proc/self/cmdline` 里也混进了
+`--library-path`。于是所有「在可执行文件旁边找资源」的逻辑都会解析到 `lib/`
+而不是 bundle 根目录——而且是**静默**的。实际表现是:GUI 框架找不到字体因而
+文字渲染空白、`assets/` 目录看起来不存在、随包分发的辅助二进制定位失败。
+按 `/proc/self/cmdline` 解析 argv 的代码则会拿到混入 loader 参数的结果。
+
+这只影响 `self-contained`。`vendored`、`system`、`static` 的 `PT_INTERP`
+都能被内核直接使用,`/proc/self/exe` 是正确的。
+
+wrapper 为此导出 **`MCPP_BUNDLE_DIR`**(bundle 根目录)。优先用它,只在未设置
+时回退:
+
+```c
+const char *base = getenv("MCPP_BUNDLE_DIR");   /* 由 run.sh 设置 */
+if (!base) {
+    /* 不是经 wrapper 启动的 —— 此时 /proc/self/exe 可信 */
+}
+```
+
+如果应用本身改不了(比如第三方 GUI 框架自己做解析),改用 `--mode vendored`:
+它把 `PT_INTERP` 重指到宿主 loader,`/proc/self/exe` 正常,代价是要求宿主
+glibc 不低于构建时所用的那份。
+
 ## 配置项
 
 打包行为通过 `mcpp.toml` 中的 `[pack]` 节配置,常用字段如下:

@@ -138,6 +138,28 @@ grep -q 'Hello' "$TMP/b-out.log" || {
 grep -q 'Hello' "$TMP/b-name.log" || {
     cat "$TMP/b-name.log"; echo "Mode B <name>-entry output missing"; exit 1; }
 
+# Launching through the loader makes the kernel set /proc/self/exe to the
+# LOADER, so every "find my resources next to the executable" path silently
+# resolves against lib/ instead. The wrapper must therefore hand the program
+# an answer that survives — and it must hand the same one from both entry
+# points, since they are documented as interchangeable.
+for entry in run.sh myapp; do
+    grep -q 'MCPP_BUNDLE_DIR' \
+        "$TMP/b/myapp-0.1.0-x86_64-linux-gnu-bundle-all/$entry" || {
+        echo "Mode B: $entry does not export MCPP_BUNDLE_DIR — an application"
+        echo "  cannot locate its own resources under the bundled loader"
+        exit 1; }
+done
+
+# The value must be the bundle ROOT (`$here`), not the loader's directory and
+# not a path baked in at pack time — the bundle is relocatable, so anything
+# absolute would be wrong the moment it is extracted somewhere else.
+grep -q 'MCPP_BUNDLE_DIR="\$here"' \
+    "$TMP/b/myapp-0.1.0-x86_64-linux-gnu-bundle-all/run.sh" || {
+    echo "Mode B: MCPP_BUNDLE_DIR is not derived from the bundle root (\$here)"
+    grep MCPP_BUNDLE_DIR "$TMP/b/myapp-0.1.0-x86_64-linux-gnu-bundle-all/run.sh"
+    exit 1; }
+
 # ─── Mode `system` (Mode::None — depend on OS for all .so) ─────────────
 "$MCPP" pack --mode system > "$TMP/pack-sys.log" 2>&1 || {
     cat "$TMP/pack-sys.log"; echo "system pack failed"; exit 1; }
