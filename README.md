@@ -11,7 +11,7 @@
 
 | [Documentation](docs/) · [Getting Started](docs/00-getting-started.md) · [mcpp.toml Guide](docs/05-mcpp-toml.md) · [Examples](docs/01-examples.md) · [Toolchains](docs/03-toolchains.md) |
 |:---:|
-| [Package index mcpp-index](https://github.com/mcpp-community/mcpp-index) · [Module libraries mcpplibs](https://github.com/mcpplibs) · [Community Forum](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
+| [Package index mcpp-index](https://mcpplibs.github.io/mcpp-index/) · [Module libraries mcpplibs](https://github.com/mcpplibs) · [Community Forum](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
 | [![ci-linux](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml) [![ci-macos](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml) [![ci-windows](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml) |
 
 <p align="center">
@@ -360,7 +360,7 @@ Real projects built with mcpp — `import`-able C++23 modules and the toolchain 
 | [imgui-m](https://github.com/mcpplibs/imgui-m) | Dear ImGui as a C++23 module package |
 | [cmdline](https://github.com/mcpplibs/cmdline) | Command-line parsing library / framework (mcpp uses it) |
 
-More modular libraries → [mcpplibs](https://github.com/mcpplibs) · package index → [mcpp-index](https://github.com/mcpp-community/mcpp-index)
+More modular libraries → [mcpplibs](https://github.com/mcpplibs) · package index → [mcpp-index](https://mcpplibs.github.io/mcpp-index/)
 
 ## Contributing
 
@@ -386,7 +386,7 @@ then follow the guide to help me submit a contribution to mcpp.
 ## Community & Ecosystem
 
 - [Community Forum](https://forum.d2learn.org/category/20) — chat group (QQ: 1067245099)
-- [mcpp-index](https://github.com/mcpp-community/mcpp-index) — default package index
+- [mcpp-index](https://mcpplibs.github.io/mcpp-index/) — default package index
 - [mcpplibs](https://github.com/mcpplibs) — collection of modular C++ libraries
 
 ### Acknowledgements

@@ -11,7 +11,7 @@
 
 | [文档](docs/zh/) · [快速开始](docs/zh/00-getting-started.md) · [mcpp.toml 指南](docs/zh/05-mcpp-toml.md) · [示例项目](docs/zh/01-examples.md) · [工具链管理](docs/zh/03-toolchains.md) |
 |:---:|
-| [包索引 mcpp-index](https://github.com/mcpp-community/mcpp-index) · [模块化库 mcpplibs](https://github.com/mcpplibs) · [社区论坛](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
+| [包索引 mcpp-index](https://mcpplibs.github.io/mcpp-index/) · [模块化库 mcpplibs](https://github.com/mcpplibs) · [社区论坛](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
 | [![ci-linux](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml) [![ci-macos](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml) [![ci-windows](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml) |
 
 <p align="center">
@@ -352,7 +352,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 | [imgui-m](https://github.com/mcpplibs/imgui-m) | Dear ImGui 的 C++23 模块封装包 |
 | [cmdline](https://github.com/mcpplibs/cmdline) | 命令行解析库/框架(mcpp 自身在用) |
 
-更多模块化库 → [mcpplibs](https://github.com/mcpplibs) · 包索引 → [mcpp-index](https://github.com/mcpp-community/mcpp-index)
+更多模块化库 → [mcpplibs](https://github.com/mcpplibs) · 包索引 → [mcpp-index](https://mcpplibs.github.io/mcpp-index/)
 
 ## 参与贡献
 
@@ -378,7 +378,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 ## 社区 & 生态
 
 - [社区论坛](https://forum.d2learn.org/category/20) — 交流群 (Q: 1067245099)
-- [mcpp-index](https://github.com/mcpp-community/mcpp-index) — 默认包索引
+- [mcpp-index](https://mcpplibs.github.io/mcpp-index/) — 默认包索引
 - [mcpplibs](https://github.com/mcpplibs) — 模块化 C++ 库集合
 
 ### 致谢

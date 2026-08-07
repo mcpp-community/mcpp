@@ -145,7 +145,10 @@ std::string serialize(const Lockfile& lock) {
     out += "# Records what this build resolved. It does not yet pin future "
            "builds:\n"
            "# index dependencies are re-resolved from their constraints each "
-           "time.\n";
+           "time.\n"
+           "# dev-dependencies are excluded: only `mcpp test` resolves them, and "
+           "this\n"
+           "# file must not change depending on which command ran last.\n";
     out += std::format("version = {}\n", lock.schemaVersion);
 
     // Write [indices.<name>] sections.

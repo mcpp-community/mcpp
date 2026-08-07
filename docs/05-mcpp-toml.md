@@ -1173,13 +1173,18 @@ generates the resource script for you.
 | `version-info` | bool | `false` opts out of the generated version resource |
 | `[resources.version-info]` | table | `company`, `product`, `description`, `copyright`, `original-filename`, `internal-name` |
 
-**Only PE targets consume this.** On Linux and macOS the section is
-*inapplicable*: no work, no warning, byte-identical build. You do **not** need
-(and cannot use) a `cfg(windows)` predicate — write it once, unconditionally.
+**Only PE targets *compile* this.** On Linux and macOS the section is
+*inapplicable*: no resource units, no diagnostics, byte-identical build. You do
+**not** need (and cannot use) a `cfg(windows)` predicate — write it once,
+unconditionally.
 
-**A declared file that does not exist fails the build.** A resource is a build
-input like a source file; mcpp will not quietly ship a binary without it. If you
-do not want an icon, delete the line.
+**A declared file that does not exist fails the build — on every target.** A
+resource is a build input like a source file; mcpp will not quietly ship a
+binary without it. Validation is deliberately *not* PE-gated: whether a path
+exists is a fact about your working tree, not about the target, so a typo in
+`icon = "assets/app.ico"` is caught by your Linux or macOS build (and by their
+CI jobs) instead of waiting for the Windows one. If you do not want an icon,
+delete the line.
 
 **Version fields.** `FILEVERSION` takes the four numeric segments of
 `[package].version`, each of which must fit in 16 bits; the string fields keep
@@ -1236,7 +1241,7 @@ o.id = "blob"; o.role = "object";
 o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
  .input("blob.bin")
  .output("${mcpp.out_dir}/blob.o")
- .target("myapp")        // omit for every image this package produces
+ .target("myapp")        // omit: every image, test binaries included
  .submit();
 ```
 

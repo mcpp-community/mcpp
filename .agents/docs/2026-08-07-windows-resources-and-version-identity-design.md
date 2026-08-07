@@ -455,3 +455,77 @@ std::map<ResolvedKey, ResolvedRecord> resolved;    // 覆盖整张图，含传�
 ## E.4 本批 CI 覆盖的真实缺口
 
 `cross-build-test.yml` 的 `mingw-cross-wine` 是**唯一**有 MinGW 交叉链的 job,而它**按文件名逐个调用 e2e**(不跑 `run_all.sh`)⇒ 新增的 198 必须显式加进 workflow,否则 GNU/windres 这一半在 CI 里一次都不会跑。已加。Windows 原生那一半走 `ci-windows-e2e` 的整套 `run_all.sh`,`# requires: windows` 自动生效。
+
+---
+
+# F. 实施后 review 轮(同一 PR,合入前)
+
+对已实施版本做了一次架构 / 稳定性 / 一致性 / 多平台的深度 review,并对每条可疑点做真机复现而不是代码推理。**四条实测确认的缺陷 + 三条口径不一致**,全部在本 PR 内修掉。下面记的是**判据**,不是清单。
+
+## F.1 「同一决策两处推导」又出现了一次,而且两处已经不一致
+
+`resources.cppm:202` 用 `find_first_of(";:")` 切工具链 PATH 覆盖,`prepare.cppm:5323` 切 INCLUDE 用 `find(';')`——**同一份数据、同一个 PR、两种切法**。
+
+`;:` 那一种是错的:msvc 分支只在 Windows 上走,PATH 覆盖由 `msvc.cppm:492` 用 `;` 拼接真实 Windows 路径,而**盘符冒号就在下标 1**。`C:\Windows Kits\…` 被切成 `C` 加一段当前盘相对路径 —— 同盘侥幸命中、跨盘必然找不到。放大它的是:这条 PATH 遍历是 msvc 下的**主路径**,不是兜底(`rc.exe` 属于 Windows SDK,从不在 `cl.exe` 旁边,`probe_dir(compilerDir)` 只答得出 llvm-rc)。
+
+⇒ 收敛成一个 `rsrc::split_env_list`,两个调用点共用。**判据:一个 PR 内出现两处相同解析,先合并再讨论哪种对。**
+
+## F.2 「模型少一层」在本 PR 自己身上复发:`Role::Object` 的默认目标集漏了测试二进制
+
+真机复现(Linux/clang22,库代码调用 object 提供的符号):
+
+```
+mcpp build → rc=0     mcpp run → rc=0
+mcpp test  → ld.lld: error: undefined symbol: blob_value
+```
+
+`image` 只认 `Binary | SharedLibrary`,而 `TestBinary` 是第三种 kind。**这正是 #365 那条毛病的同构体**:表格少一格,后果是用户在图外找路。
+
+关键在于**它没有可用的逃生口**:显式 `.target("t_core")` 确实能修(实测通过),但测试链接单元是从 `tests/*.cpp` **发现**出来的,名字不在 `mcpp.toml` 里;而且只写测试目标时 `mcpp build` 直接硬失败(实测:`names unknown target(s): t_core / targets in this build: [objrole]`)。⇒ **目标名字空间是 mode-dependent 的**,这一层设计没有承认。
+
+⇒ 默认集合加入 `TestBinary`。`[resources]` 的 `peUnits` 反向决策(排除测试二进制)保持不变,并在两边互相写明理由:**图标属于「要发布的东西」,符号属于「要链接的东西」**。
+
+## F.3 F.2 与「未知 target 报错」是耦合的,不能分开修
+
+未知名检查挂在 `if (!attached && ...)` 上,于是**只要有一个名字命中,其余拼错的就永不上报**。实测 `.target("objrole").target("no_such_target_TYPO")` → `rc=0`,日志零提及 —— 与 `types.cppm` 和 docs 明写的契约相反。
+
+⚠️ **但先修这条会当场废掉 F.2 的唯一逃生口**:`.target("app").target("t_core")` 之所以能在 `mcpp build` 下不报错,靠的正是这个漏洞。⇒ **正确顺序是先给 F.2 一个不依赖具体测试名的表达方式(默认集合),再把检查收紧到 per-target。** 单独修任何一条都会把用户推进另一个坑。
+
+## F.4 lock 从「读输入」改成「读输出」,顺带把命令也读进去了
+
+真机复现(同一工程交替执行):
+
+```
+mcpp build → 1 条    mcpp test → 2 条(多了 dev-dep)   mcpp build → 又变回 1 条
+```
+
+`resolved` 在 `includeDevDeps` 时含 dev-deps,而旧代码遍历 `m->dependencies`(dev-deps 是另一张表)**结构性地写不进去**。196 只断言了 build→build 幂等,抓不到。
+
+⇒ `WorkItem`/`ResolvedRecord` 增加 `devOnly` 并沿依赖边传播(**多消费者取 AND**:非 dev 的消费者一出现就清掉),lock 跳过 `devOnly`。**判据:lock 是 manifest 的函数,不是命令的函数。** 196 补 build→test→build 三段 `cmp`,并断言 dev-dep 确实被解析过(否则断言是空转)。
+
+## F.5 「不适用」不该覆盖到校验
+
+`[resources]` 的「声明了必须存在」整块包在 `if (trip.is_pe())` 里。实测:Linux 上 `icon = "assets/DOES_NOT_EXIST.ico"` + `files = ["res/nope.rc"]` → `rc=0`,日志里 `resource` 出现 **0 次**。
+
+⇒ Linux/macOS 的开发机与 CI **结构性地**抓不到打错的资源路径,只有 Windows job 会红 —— 这正是这条硬错误要消灭的「太晚才知道」。**路径存不存在是关于工作树的事实,不是关于目标的事实。** 校验提到 `is_pe()` 之前,编译留在后面。新增 `199_resources_validation.sh`(无 `requires`,每个 shard 都跑)守这条。
+
+## F.6 两条 warning 应当是 degraded
+
+`diag.cppm` 的规矩:`degraded` 带 impact 且 `--strict` 会失败;`warning` 是作者笔误 / schema 漂移。按这条口径,`resources/versioninfo`(你的 VERSIONINFO Windows 读不到)和 `resources/no-image`(声明了却没有任何东西嵌)都是「你要了 X,得到的是零」,应当是 degraded —— 尤其前者正是本 feature 要消灭的静默失效,`--strict` 抓不到它说不过去。`role="object"` 无消费者是同一形状,新增 `action/no-target`,与 `resources/no-image` 同口径。
+
+## F.7 优雅性
+
+- `} else {` 之后约 150 行**完全不缩进**、靠底部 `}   // peUnits non-empty` 收尾 —— 在一个对形式如此讲究的仓里是「这块该抽出去」的直接信号。改成带早返回的 `plan_resources` lambda。
+- `ResourceUnit::packageName` 写入后全仓无人读取,删除。
+- `LinkUnit::objects` 注释写「relative to plan.outputDir」而 `Role::Object` 往里塞绝对路径 —— 有理由(ninja 按字面串识别节点),但字段契约本身要改口径,否则下一个人会「顺手规范化」。
+- `resolve_semver` 的字面短路对**任意**约束生效而不只 `=` 前缀。今天安全,靠的是三个调用方都先过 `is_version_constraint` 门——但**那个判据没有写进这个函数**。裸 `1.2.3` 在本语法里是 caret,哪天直达此处,caret 会静默变成精确 pin。收紧成必须 `=` 前缀。
+- `try_merge_semver` 在两个约束相同时不再拼成 `=X,=X`(防御性:prepare 只在两个**已解析版本**不同时才走到这里,而相同约束解析结果相同 —— 但它挡的失败是静默且彻底的)。
+
+## F.8 测试自身的假绿
+
+- `_windows_resources_body.sh` 里 `.res` 的序号字节判据包在 `case *.res` 中,而 windres 产 `.o` ⇒ **GNU 那一半的核心断言可能一次都不跑**;后备的 readobj 检查也是「grep 不到就跳过」。补一条方言无关的判据(字符串名资源会把 UTF-16 名字写进资源目录,序号名不会),并在 A3-lint 段加**正向反证**:故意构造坏脚本,断言它确实产生了那个 UTF-16 名字 —— 否则「名字不存在」可能因任何理由通过。
+- 改写 `res/app.rc` 那一步前缺 `sleep 1`,而该段**唯一**的重跑 prepare 触发源就是 `.rc` 的 mtime。其余每处 mtime 敏感改动都有。
+
+## F.9 方法论
+
+**每一条都先真机复现再下判断,没有一条是纯代码推理。** 复现同时充当「断言能失败」的证明:五条新断言各自对应一段用**修复前**二进制跑出来的、看得见的错误输出。这比事后再造一个反向用例更便宜也更可信。

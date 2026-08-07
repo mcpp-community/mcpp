@@ -193,11 +193,23 @@ No phase machinery is involved: ninja's own file dependencies do the
 sequencing, which is also why an `artifact` action cannot double-apply itself
 the way a naive "post-build hook" would.
 
-`object` (2026.8.7.1+) takes an optional `.target("name")`, repeatable; omit it
-and the outputs attach to every image (binary / shared library) the declaring
-package produces. It needs the name because, unlike `artifact`, it runs *before*
-the link and so has no `${mcpp.target_file:…}` to infer one from — an unknown
-name is an error rather than an edge that quietly attaches to nothing.
+`object` (2026.8.7.1+) takes an optional `.target("name")`, repeatable. It needs
+a name at all because, unlike `artifact`, it runs *before* the link and so has
+no `${mcpp.target_file:…}` to infer one from; every name that matches no link
+unit is an error, including one written next to a name that does match.
+
+**Prefer omitting it.** With no target, the outputs attach to every image the
+declaring package produces in this build — binary, shared library **and test
+binary**. Test binaries are in that set because they link the same library code:
+leave them out and `mcpp build` succeeds while `mcpp test` dies with `undefined
+symbol` on the very symbol the action exists to provide. Naming them instead is
+not an option — test link units are discovered from `tests/*.cpp`, so their
+names are not in `mcpp.toml`, and a `build.mcpp` that spells one stops building
+under plain `mcpp build`, where that unit does not exist.
+
+If nothing in the build can receive the outputs (an archive-only package), mcpp
+reports a degradation: the edge is reachable only through a link, so with no
+link the command would never run and the build would say nothing.
 
 > Naming a pre-built object in `[build].ldflags` also reaches the linker, and
 > should not be used for anything the build produces: ldflags is a flat string

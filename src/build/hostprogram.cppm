@@ -73,9 +73,11 @@ struct action {
     action& provides(const char* n) { add(provides_, sizeof provides_, n); return *this; }
     action& imports(const char* n)  { add(imports_,  sizeof imports_,  n); return *this; }
     // Object only: which link unit receives the outputs. Omit for "every image
-    // this package produces". An Artifact reads its target out of
-    // ${mcpp.target_file:NAME}; an Object runs before the link and has no such
-    // handle, so it has to say the name.
+    // this package produces" — which INCLUDES test binaries, and is what you
+    // want: their names come from tests/*.cpp, so spelling one here breaks
+    // plain `mcpp build`, where that link unit does not exist. An Artifact reads
+    // its target out of ${mcpp.target_file:NAME}; an Object runs before the link
+    // and has no such handle, so it has to say the name.
     action& target(const char* n)   { add(targets_,  sizeof targets_,  n); return *this; }
     void submit() const {
         std::printf("mcpp:action={\"id\":");        esc(id);

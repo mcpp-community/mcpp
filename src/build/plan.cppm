@@ -60,7 +60,12 @@ struct CompileUnit {
 struct LinkUnit {
     std::string                     targetName;
     enum Kind { Binary, StaticLibrary, SharedLibrary, TestBinary } kind = Binary;
-    std::vector<std::filesystem::path> objects;        // relative to plan.outputDir
+    // Normally relative to plan.outputDir. A `role = "object"` action's outputs
+    // land here ABSOLUTE, on purpose: ninja identifies a file by the string an
+    // edge declares, and the action edge declares whatever prepare_actions
+    // produced — respelling it here would create a second node and "missing and
+    // no known rule to make it". Do not normalise this vector.
+    std::vector<std::filesystem::path> objects;
     std::vector<std::filesystem::path> implicitInputs; // relative to plan.outputDir
     std::vector<std::string>        linkFlags;          // per-link edge flags
     std::filesystem::path           output;            // relative to plan.outputDir
@@ -87,7 +92,6 @@ struct ResourceUnit {
     // (verified against llvm-rc 22.1.8: /I, /D, no dependency output), so these
     // come from a text scan plus `[resources].extra-inputs`.
     std::vector<std::filesystem::path> implicitInputs;
-    std::string                        packageName;
 };
 
 struct BuildPlan {

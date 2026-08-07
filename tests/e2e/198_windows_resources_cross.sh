@@ -40,4 +40,18 @@ grep -qi 'resource' host.log && { cat host.log; echo "FAIL: a non-PE build must 
 HOST_DIR=$(dirname "$(find target -name 'build.ninja' -print | xargs grep -L 'rc_object' | head -1)")
 [ -d "$HOST_DIR/res" ] && { echo "FAIL: a non-PE build must not emit resource units"; exit 1; }
 
+# ── A4. "inapplicable" stops at COMPILATION, not at validation ────────────
+#
+# Whether a declared path exists is a fact about the working tree, not about the
+# target. Gating the existence check on is_pe() meant a Linux or macOS CI could
+# not see a typo in `icon = ...` at all and only the Windows job went red — the
+# same "find out late" failure the hard error exists to remove. So: nothing is
+# compiled here, nothing is said when the files are fine, and a missing one is
+# still an error.
+sed -i.bak 's|^icon = .*|icon = "assets/typo.ico"|' mcpp.toml && rm -f mcpp.toml.bak
+"$MCPP" build > host2.log 2>&1 \
+    && { cat host2.log; echo "FAIL: a missing declared resource must fail on non-PE targets too"; exit 1; }
+grep -q 'does not exist' host2.log \
+    || { cat host2.log; echo "FAIL: expected the same missing-file error as on Windows"; exit 1; }
+
 echo "OK"

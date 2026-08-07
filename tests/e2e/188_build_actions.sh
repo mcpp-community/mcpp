@@ -351,6 +351,86 @@ fi
 grep -q "no_such_target" o4.log || {
     cat o4.log; echo "FAIL: error does not name the unknown target"; exit 1; }
 
+# ...and EVERY name is checked, not just the case where none of them matched.
+# A typo alongside a name that does exist is the shape a typo actually takes,
+# and the check used to be gated on "nothing attached" — so `objrole` absorbed
+# it and the misspelling was dropped without a word.
+sed -i.bak 's/.target("no_such_target")/.target("objrole").target("no_such_target")/' build.mcpp
+rm -f build.mcpp.bak
+rm -rf target
+if "$MCPP" build > o4b.log 2>&1; then
+    cat o4b.log
+    echo "FAIL: an unknown target was silently dropped because a sibling matched"; exit 1
+fi
+grep -q "no_such_target" o4b.log || {
+    cat o4b.log; echo "FAIL: error does not name the unknown target"; exit 1; }
+
+# ── 3e. the default target set includes TEST binaries ──────────────────────
+#
+# `mcpp build` linking and `mcpp test` failing on the very symbol the action
+# exists to provide is the worst shape this can take: the object is what the
+# library under test needs, and test link units are DISCOVERED from tests/*.cpp
+# so their names cannot be spelled in build.mcpp without breaking plain
+# `mcpp build`, where those units do not exist.
+mkdir -p "$TMP/objtest/src" "$TMP/objtest/tests"
+cd "$TMP/objtest"
+cat > mcpp.toml <<'EOF'
+[package]
+name    = "objtest"
+version = "0.1.0"
+EOF
+printf 'export module objtest.engine;\nextern "C" int blob_value();\nexport int get(){ return blob_value(); }\n' > src/engine.cppm
+printf 'import objtest.engine;\nint main(){ return get()==7?0:1; }\n' > src/main.cpp
+printf 'import objtest.engine;\nint main(){ return get()==7?0:1; }\n' > tests/t_engine.cpp
+printf 'extern "C" int blob_value() { return 7; }\n' > blob.cpp
+cp "$TMP/objrole/mkobj.sh" mkobj.sh
+cat > build.mcpp <<'EOF'
+#include <cstdio>
+#include <string>
+import mcpp;
+int main() {
+    const std::string root = mcpp::manifest_dir();
+    const std::string out  = mcpp::out_dir();
+    mcpp::action o;
+    o.id = "blob"; o.role = "object";
+    o.arg((root + "/mkobj.sh").c_str())
+     .arg((root + "/blob.cpp").c_str())
+     .arg((out + "/blob.o").c_str())
+     .input((root + "/blob.cpp").c_str())
+     .output((out + "/blob.o").c_str())
+     .submit();                      // no .target(): every image, tests included
+}
+EOF
+"$MCPP" build > o5.log 2>&1 || { cat o5.log; echo "FAIL: objtest build failed"; exit 1; }
+"$MCPP" test  > o6.log 2>&1 || {
+    cat o6.log
+    echo "FAIL: the test binary did not receive the object (undefined symbol)"; exit 1; }
+grep -q '1 passed' o6.log || { cat o6.log; echo "FAIL: the test did not run"; exit 1; }
+
+# ── 3f. an object with no consumer at all is reported, not silent ──────────
+#
+# The edge is deliberately kept out of `actionDefaults` (an object's outputs are
+# supposed to be reachable through a link edge), so "no consumer" means the
+# command never runs. Saying nothing there is the same failure `[resources]`
+# reports as resources/no-image.
+mkdir -p "$TMP/objnone/src"
+cd "$TMP/objnone"
+cat > mcpp.toml <<'EOF'
+[package]
+name    = "objnone"
+version = "0.1.0"
+
+[targets.objnone]
+kind = "lib"
+EOF
+printf 'export module objnone;\nexport int f(){return 1;}\n' > src/objnone.cppm
+cp "$TMP/objtest/blob.cpp" blob.cpp
+cp "$TMP/objtest/mkobj.sh" mkobj.sh
+cp "$TMP/objtest/build.mcpp" build.mcpp
+"$MCPP" build > o7.log 2>&1 || { cat o7.log; echo "FAIL: objnone build failed"; exit 1; }
+grep -q 'no executable, shared library or test binary' o7.log || {
+    cat o7.log; echo "FAIL: an object with no consumer must be reported"; exit 1; }
+
 cd "$TMP/edge"
 
 # ── 4. a malformed action is refused, not skipped ──────────────────────────

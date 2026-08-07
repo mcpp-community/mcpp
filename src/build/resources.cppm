@@ -79,6 +79,19 @@ struct RcTool {
 std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
                                    std::string_view dialectId);
 
+// Split a Windows environment list (PATH, INCLUDE, LIB) into its entries.
+//
+// `;` is the ONLY separator, and that is not a simplification. Every value that
+// reaches here was synthesised by the MSVC backend for a Windows host, where an
+// entry routinely begins `C:\`. Splitting on `find_first_of(";:")` cuts at the
+// DRIVE COLON: `C:\Windows Kits\10\bin\...;C:\...` becomes `C` plus a
+// current-drive-relative tail, which resolves by accident when the build sits
+// on the same drive and silently finds nothing otherwise. One function because
+// two callers (the rc-tool search here, the llvm-rc include list in
+// prepare.cppm) were deriving the same rule independently and had already
+// disagreed about it.
+std::vector<std::string_view> split_env_list(std::string_view value);
+
 // ─── Reading an author-written .rc ────────────────────────────────────────
 
 struct ScanResult {
@@ -185,6 +198,18 @@ std::string escape_rc_string(std::string_view s) {
 
 } // namespace
 
+std::vector<std::string_view> split_env_list(std::string_view value) {
+    std::vector<std::string_view> out;
+    while (!value.empty()) {
+        const auto sep = value.find(';');
+        if (auto entry = value.substr(0, sep); !entry.empty())
+            out.push_back(entry);
+        if (sep == std::string_view::npos) break;
+        value = value.substr(sep + 1);
+    }
+    return out;
+}
+
 std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
                                    std::string_view dialectId) {
     const auto compilerDir = tc.binaryPath.parent_path();
@@ -193,20 +218,17 @@ std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
         // rc.exe comes from the Windows SDK, which the MSVC backend surfaces on
         // the toolchain's own PATH override (never the host's). llvm-rc ships
         // beside clang and is the fallback for clang + lld-link.
+        //
+        // The PATH walk is the PRIMARY route, not a fallback: rc.exe lives in
+        // the SDK's own bin directory, never next to cl.exe, so the probe above
+        // answers only for llvm-rc.
         const std::vector<std::string> names = {"rc", "llvm-rc"};
         if (auto p = probe_dir(compilerDir, names)) return RcTool{*p, "msvc"};
         for (auto const& ev : tc.envOverrides) {
             if (ev.key != "PATH" && ev.key != "Path") continue;
-            std::string_view rest = ev.value;
-            while (!rest.empty()) {
-                const auto sep = rest.find_first_of(";:");
-                const auto dir = rest.substr(0, sep);
-                if (!dir.empty())
-                    if (auto p = probe_dir(std::filesystem::path(dir), names))
-                        return RcTool{*p, "msvc"};
-                if (sep == std::string_view::npos) break;
-                rest = rest.substr(sep + 1);
-            }
+            for (auto dir : split_env_list(ev.value))
+                if (auto p = probe_dir(std::filesystem::path(dir), names))
+                    return RcTool{*p, "msvc"};
         }
         return std::nullopt;
     }

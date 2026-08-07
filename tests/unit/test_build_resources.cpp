@@ -200,6 +200,32 @@ END
     EXPECT_EQ(s.versionInfoName, "VS_VERSION_INFO");
 }
 
+// ─── Splitting a Windows environment list ─────────────────────────────────
+
+TEST(BuildResources, EnvListSplitsOnSemicolonsOnly) {
+    // The rc-tool search walks the toolchain's PATH override, which the MSVC
+    // backend builds with `;` from real Windows paths. Splitting on ":" as well
+    // cuts at the DRIVE COLON: `C:\...` becomes `C` plus a current-drive-relative
+    // tail, which resolves by accident on the same drive and finds nothing
+    // otherwise — so rc.exe (which lives in the SDK bin, never next to cl.exe)
+    // became unfindable.
+    auto v = res::split_env_list(
+        R"(C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64;C:\VC\bin\Hostx64\x64)");
+    ASSERT_EQ(v.size(), 2u);
+    EXPECT_EQ(v[0], R"(C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64)");
+    EXPECT_EQ(v[1], R"(C:\VC\bin\Hostx64\x64)");
+
+    // Empty entries (a trailing or doubled separator) are dropped rather than
+    // becoming a probe of the current directory.
+    auto e = res::split_env_list(R"(C:\a;;C:\b;)");
+    ASSERT_EQ(e.size(), 2u);
+    EXPECT_EQ(e[0], R"(C:\a)");
+    EXPECT_EQ(e[1], R"(C:\b)");
+
+    EXPECT_TRUE(res::split_env_list("").empty());
+    EXPECT_EQ(res::split_env_list(R"(C:\only)").size(), 1u);
+}
+
 TEST(BuildResources, ScanStaysQuietWhenTheMacroIsActuallyDefined) {
     TempDir d;
     // Either of these makes VS_VERSION_INFO real, so there is nothing to warn

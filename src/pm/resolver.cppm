@@ -143,9 +143,18 @@ resolve_semver(std::string_view ns, std::string_view shortName,
     //
     // Aliases are eligible here: pinning `latest` or `25.0.4` exactly is a
     // legitimate address, and only RANGE selection has to ignore pointers.
-    {
-        auto exact = constraint;
-        if (exact.starts_with('=')) exact.remove_prefix(1);
+    //
+    // The `=` prefix is REQUIRED, and the guard is load-bearing rather than
+    // decorative. A bare `1.2.3` is caret-default in this grammar (see
+    // version_req.cppm), so matching it literally here would turn every
+    // `dep = "1.2.3"` into an exact pin the moment the index happens to publish
+    // that key — silently disabling `^`. Callers never send a bare literal
+    // (`prepare`, `index_refresh` and `mcpp add` all gate on
+    // `is_version_constraint`, and `try_merge_semver` canonicalises a literal
+    // pin to `=<literal>`), but that invariant lives in the callers, so this
+    // function refuses to depend on it.
+    if (constraint.starts_with('=')) {
+        auto exact = constraint.substr(1);
         while (!exact.empty() && (exact.front() == ' ' || exact.front() == '\t'))
             exact.remove_prefix(1);
         while (!exact.empty() && (exact.back() == ' ' || exact.back() == '\t'))
@@ -266,7 +275,14 @@ try_merge_semver(std::string_view ns, std::string_view shortName,
     std::string ca = canon(a);
     std::string cb = canon(b);
     std::string merged;
-    if (!ca.empty() && !cb.empty()) merged = ca + "," + cb;
+    // Two consumers asking for the SAME thing is not a merge. Defensive rather
+    // than a live fix — prepare only reaches here when the two RESOLVED versions
+    // differ, and identical constraints resolve identically — but the failure it
+    // prevents is silent and total: `=pre-v0.0.5,=pre-v0.0.5` routes an
+    // unorderable key through the SemVer grammar, which rejects the very form
+    // the unorderable-key error tells users to write.
+    if (ca == cb) merged = ca.empty() ? "*" : ca;
+    else if (!ca.empty() && !cb.empty()) merged = ca + "," + cb;
     else if (!ca.empty())            merged = ca;
     else if (!cb.empty())            merged = cb;
     else                              merged = "*";

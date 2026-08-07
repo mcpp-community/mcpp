@@ -15,6 +15,11 @@
 
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
+# The ordinal assertions below read the LLVM payload, so the body needs to know
+# where it is even when the caller was invoked directly rather than through
+# run_all.sh (which exports this).
+export MCPP_HOME="${MCPP_HOME:-$HOME/.mcpp}"
+
 # Hex dump of a file as one unbroken lowercase string — enough to search for a
 # byte pattern without needing `strings`, python, or a PE parser on the runner.
 hexof() { od -An -v -tx1 "$1" | tr -d ' \n'; }
@@ -95,27 +100,42 @@ case "$RES_ART" in
     ;;
 esac
 
-# The same assertion in readable form, wherever llvm-readobj is around (it ships
-# in the LLVM payload). Worth having in BOTH shapes because the type line is
-# identical either way — `Type: VERSIONINFO (ID 16)` is exactly what convinced
-# the reporter the resource was fine. The name is the discriminator:
+# The dialect-independent form of the SAME assertion — and the only one that
+# covers the GNU fork, since the byte-offset check above reads the `.res`
+# container and windres emits a COFF object. llvm-readobj reads both, and the
+# resource DIRECTORY is where the discriminator lives (measured on both):
 #
-#     Name: (ID 1)             ← Windows finds it
-#     Name: VS_VERSION_INFO    ← Windows does not
+#     Type: VERSIONINFO (ID 16)  →  Name: (ID 1)             ← Windows finds it
+#     Type: VERSIONINFO (ID 16)  →  Name: VS_VERSION_INFO    ← Windows does not
+#
+# NOT a whole-file search for the string `VS_VERSION_INFO`: that is the `szKey`
+# of the VS_VERSIONINFO struct itself, so a CORRECT resource contains it too.
+# Written that way first, and it fired on a good windres build — which is the
+# only reason this comment exists.
 READOBJ=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj \
              "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-readobj.exe \
              2>/dev/null | head -1)
-if [ -n "$READOBJ" ]; then
-    "$READOBJ" --coff-resources "$RES_ART" > readobj.log 2>&1 || true
-    if grep -q 'VERSIONINFO' readobj.log; then
-        grep -q 'Name: (ID 1)' readobj.log \
-            || fail "the version resource is not named by ordinal 1" readobj.log
-    fi
-fi
+[ -n "$READOBJ" ] || fail "llvm-readobj not found under $MCPP_HOME — the ordinal assertion cannot run, and silently skipping it is how #365 shipped" b1.log
+
+# $1 = file to inspect, $2 = log suffix, $3 = expected `Name:` text
+version_name_is() {
+    "$READOBJ" --coff-resources "$1" > "readobj.$2.log" 2>&1 \
+        || fail "llvm-readobj could not read $1" "readobj.$2.log"
+    grep -q 'Type: VERSIONINFO' "readobj.$2.log" \
+        || fail "$1 carries no version resource at all" "readobj.$2.log"
+    # The window is the VERSIONINFO type table only — an icon is also `(ID 1)`,
+    # so matching anywhere in the file would pass for the wrong reason.
+    grep -A5 'Type: VERSIONINFO' "readobj.$2.log" | grep -q "Name: $3" \
+        || fail "expected the version resource to be named '$3'" "readobj.$2.log"
+}
+version_name_is "$RES_ART" art '(ID 1)'
 
 # ── The resource actually reached the linked image ────────────────────────
 EXE="$BUILD_DIR/bin/resapp$EXE_SUFFIX"
 [ -f "$EXE" ] || fail "no executable at $EXE" b1.log
+# The ordinal has to survive the LINK, not just the resource compile — that is
+# what GetFileVersionInfo actually reads.
+version_name_is "$EXE" exe '(ID 1)'
 EXE_HEX=$(hexof "$EXE")
 echo "$EXE_HEX" | grep -q "$(utf16hex 'Acme Corp')" \
     || fail "the version metadata did not reach the executable" b1.log
@@ -184,6 +204,12 @@ grep -q 'resapp\.mcpp\.' "$BUILD_DIR/build.ninja" \
     && fail "mcpp must not add a second VERSIONINFO behind an author-written script" "$BUILD_DIR/build.ninja"
 
 # ── A3 (lint). A script Windows cannot read is named, not shipped quietly ──
+#
+# The `.rc` is the ONLY thing that changes here, so the rebuild has to come from
+# its mtime — which is exactly the project-level fast-path hole this feature had
+# to close. A same-second write against a coarse-granularity filesystem would
+# make the whole section silently not run.
+sleep 1
 cat > res/app.rc <<'EOF'
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 1,2,3,0
@@ -205,6 +231,17 @@ EOF
 "$MCPP" build $BUILD_ARGS > b6.log 2>&1 || true
 grep -q 'instead of ordinal 1' b6.log \
     || fail "the VS_VERSION_INFO-without-windows.h shape must be diagnosed" b6.log
+# It is a DEGRADATION, not a bare warning: the impact is a shipped binary whose
+# version metadata Windows cannot read, so --strict has to see it.
+grep -q 'GetFileVersionInfo' b6.log \
+    || fail "the diagnostic must state the impact, not just the shape" b6.log
+
+# And the counter-check that makes the ordinal assertion at the top meaningful:
+# compiled from THIS script, the resource really is filed under a STRING name.
+# Without it, "the name is (ID 1)" could be passing for any reason at all.
+BROKEN=$(ls "$BUILD_DIR"/res/app.res "$BUILD_DIR"/res/app.o 2>/dev/null | head -1)
+[ -n "$BROKEN" ] || fail "the broken script produced no artifact to compare against" b6.log
+version_name_is "$BROKEN" broken 'VS_VERSION_INFO'
 
 # ── D-6. A declared resource that does not exist is an ERROR ──────────────
 #

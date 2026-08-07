@@ -30,15 +30,16 @@ mkdir -p "$TMP/proj/src" "$TMP/proj/local-index/pkgs/a"
 cd "$TMP/proj"
 
 # ── One descriptor per upstream shape ─────────────────────────────────────
-mk_pkg() {   # $1 = short name, $2 = version-table body (same for all platforms)
+mk_pkg() {   # $1 = short name, $2 = version-table body, $3 = module name (default gadget)
+    MOD="${3:-gadget}"
     cat > "local-index/pkgs/a/acme.$1.lua" <<EOF
 package = {
     spec = "1", namespace = "acme", name = "acme.$1",
     description = "version-model fixture", licenses = {"MIT"}, type = "package",
     xpm = { linux = $2, macosx = $2, windows = $2 },
     mcpp = { language = "c++23", import_std = false,
-             sources = { "src/gadget.cppm" },
-             targets = { ["gadget"] = { kind = "lib" } }, deps = {} },
+             sources = { "src/$MOD.cppm" },
+             targets = { ["$MOD"] = { kind = "lib" } }, deps = {} },
 }
 EOF
 }
@@ -56,14 +57,18 @@ mk_pkg kh  '{ ["latest"] = { ref = "pre-v0.0.5" },
 # jdk-temurin's shape, but with two REAL entries: a genuine precedence tie.
 mk_pkg tie '{ ["1.0.0+a"] = { url = "u", sha256 = "0" },
               ["1.0.0+b"] = { url = "u", sha256 = "0" } }'
+# An ordinary package, used below as a DEV-dependency.
+mk_pkg dv  '{ ["1.0.0"] = { url = "u", sha256 = "0" } }' devkit
 
 seed() {     # pre-seed a payload so only the RIGHT key can install
+    MOD="${3:-gadget}"
     mkdir -p ".mcpp/.xlings/data/xpkgs/acme.$1/$2/src"
-    printf 'export module gadget;\nexport int gadget_value() { return 42; }\n' \
-        > ".mcpp/.xlings/data/xpkgs/acme.$1/$2/src/gadget.cppm"
+    printf 'export module %s;\nexport int %s_value() { return 42; }\n' "$MOD" "$MOD" \
+        > ".mcpp/.xlings/data/xpkgs/acme.$1/$2/src/$MOD.cppm"
 }
 seed im  1.92.8
 seed jdk 25.0.4.7.1
+seed dv  1.0.0 devkit
 
 printf 'import gadget;\nint main(){ return gadget_value() == 42 ? 0 : 1; }\n' > src/main.cpp
 
@@ -174,5 +179,50 @@ grep -q 'does not yet pin future builds' mcpp.lock \
 cp mcpp.lock lock.first
 "$MCPP" build > b8.log 2>&1 || fail "second build failed" b8.log
 cmp -s mcpp.lock lock.first || fail "mcpp.lock is not stable across builds" mcpp.lock
+
+# ── 7. ...and stable across COMMANDS, which is the harder half ────────────
+#
+# The lock is written from the resolution result, and `mcpp test` resolves
+# dev-dependencies while `mcpp build` does not. Recording them therefore made a
+# VCS-committed file depend on which command ran last: build, test, build wrote
+# three different files. A lock has to be a function of the MANIFEST.
+mkdir -p tests
+printf 'import devkit;\nint main(){ return devkit_value()==42?0:1; }\n' > tests/t_dev.cpp
+cat > mcpp.toml <<'EOF'
+[package]
+name    = "proj"
+version = "0.1.0"
+
+[indices]
+acme = { path = "local-index" }
+
+[dependencies.acme]
+im = "^1.92.8"
+
+[dev-dependencies.acme]
+dv = "^1.0"
+
+[targets.proj]
+kind = "bin"
+main = "src/main.cpp"
+EOF
+rm -f mcpp.lock
+"$MCPP" build > c1.log 2>&1 || fail "build with a dev-dep failed" c1.log
+cp mcpp.lock lock.build
+"$MCPP" test  > c2.log 2>&1 || fail "test with a dev-dep failed" c2.log
+cmp -s mcpp.lock lock.build \
+    || { diff lock.build mcpp.lock || true
+         fail "mcpp test rewrote mcpp.lock — the lock must not depend on the command"; }
+"$MCPP" build > c3.log 2>&1 || fail "build after test failed" c3.log
+cmp -s mcpp.lock lock.build \
+    || fail "mcpp build rewrote mcpp.lock after mcpp test" mcpp.lock
+# The dev-dep really was resolved (so this is not passing by never reaching it)…
+grep -q 'Resolved acme.dv' c2.log \
+    || fail "the dev-dependency was never resolved — the check above is vacuous" c2.log
+# …and it is deliberately absent from the file.
+grep -q 'acme\.dv' mcpp.lock \
+    && fail "dev-dependencies must not be recorded in mcpp.lock" mcpp.lock
+grep -q 'dev-dependencies are excluded' mcpp.lock \
+    || fail "the lock must state that dev-dependencies are excluded" mcpp.lock
 
 echo "OK"

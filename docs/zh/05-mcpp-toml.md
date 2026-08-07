@@ -904,11 +904,15 @@ icon = "assets/app.ico"
 | `version-info` | 布尔 | `false` 表示不要生成版本资源 |
 | `[resources.version-info]` | 表 | `company`、`product`、`description`、`copyright`、`original-filename`、`internal-name` |
 
-**只有 PE 目标消费这一节。** 在 Linux/macOS 上它**不适用**:不做事、不警告、
-构建逐字节不变。你**不需要**(也不能)加 `cfg(windows)` 谓词 —— 无条件写一次即可。
+**只有 PE 目标会*编译*这一节。** 在 Linux/macOS 上它**不适用**:不产资源单元、
+不出诊断、构建逐字节不变。你**不需要**(也不能)加 `cfg(windows)` 谓词 ——
+无条件写一次即可。
 
-**声明了却不存在的文件会让构建失败。** 资源和源码一样是构建输入;mcpp 不会
-悄悄产出一个缺了它的二进制。不想要图标,把那一行删掉。
+**声明了却不存在的文件会让构建失败 —— 在每个目标上都是。** 资源和源码一样是
+构建输入;mcpp 不会悄悄产出一个缺了它的二进制。校验刻意**不**按 PE 设门:
+路径存不存在是关于你工作树的事实,不是关于目标的事实,所以 `icon = "assets/app.ico"`
+里的拼写错误由你的 Linux/macOS 构建(以及它们的 CI job)当场抓住,而不是等
+Windows 那条。不想要图标,把那一行删掉。
 
 **版本字段。** `FILEVERSION` 取 `[package].version` 的四段数值,每段必须放得进
 16 位;字符串字段保留版本原文,所以数值字段装不下的形态(`1.0.0-rc1`)在属性
@@ -959,7 +963,7 @@ o.id = "blob"; o.role = "object";
 o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
  .input("blob.bin")
  .output("${mcpp.out_dir}/blob.o")
- .target("myapp")        // 省略则接到本包产出的每个镜像
+ .target("myapp")        // 省略:接到每个镜像,含测试二进制
  .submit();
 ```
 

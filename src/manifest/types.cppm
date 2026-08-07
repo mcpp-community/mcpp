@@ -249,13 +249,22 @@ struct BuildAction {
     Role                               role = Role::Source;
     std::vector<std::string>           inputs;    // absolute or package-relative
     std::vector<std::string>           outputs;   // ditto; declared, see INV-D
-    // Object only: which link units receive the outputs. Empty = every image
-    // (binary / shared library) of the declaring package.
+    // Object only: which link units receive the outputs. Empty = every LINKED
+    // IMAGE of the declaring package — binary, shared library AND test binary.
+    // Test binaries are in the default set because they link the same library
+    // code: leaving them out made `mcpp build` pass and `mcpp test` fail with
+    // `undefined symbol` on the very symbol the action exists to provide. It is
+    // also the only workable default, because test link units are DISCOVERED
+    // from tests/*.cpp — their names are not in mcpp.toml, and a build.mcpp that
+    // spells one stops building under plain `mcpp build`, where it does not
+    // exist. (`[resources]` deliberately excludes them: an icon belongs to what
+    // the project ships, not to a test runner.)
     //
     // Artifact infers its target from `${mcpp.target_file:NAME}` appearing in
     // its inputs; Object cannot, because it runs BEFORE the link and so has no
-    // link output to name. Naming the targets is the only honest option, and an
-    // unknown name is an error rather than a silently unattached edge.
+    // link output to name. Naming the targets is the only honest option, and
+    // EVERY unknown name is an error — including one alongside a name that did
+    // match, which is the shape a typo actually takes.
     std::vector<std::string>           targets;
     std::vector<std::string>           command;   // argv; NOT a shell string
     // Serialised module facts for a generated OUTPUT, when it is a module
