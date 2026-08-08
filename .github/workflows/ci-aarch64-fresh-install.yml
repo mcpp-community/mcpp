@@ -118,12 +118,44 @@ jobs:
           git fetch -q --depth 1 origin "$ref"
           git checkout -q FETCH_HEAD
           echo "self-hosting $repo @ $ref"
+          # The clone's .xlings.json declares `workspace.mcpp` — the BOOTSTRAP
+          # pin, hand-maintained and deliberately lagging the newest release.
+          # It is scoped to the working directory and beats anything installed,
+          # so every `mcpp` below resolved the bootstrap version, which the
+          # fresh-install steps above never installed:
+          #
+          #     [error] xlings: version '2026.8.6.2' not found for 'mcpp'
+          #     [error]   available: 2026.8.8.2
+          #
+          # "newest release != bootstrap pin" is the NORMAL state, so this step
+          # failed on every run from the moment the two diverged — and it is
+          # weekly, so nothing pointed at it. This step tests the freshly
+          # installed RELEASED binary against a source tree; the bootstrap pin
+          # has no standing in that question. install_released_mcpp.sh removes
+          # it for exactly this reason on the x86_64 legs (its point 1); this
+          # leg was written separately and never got it.
+          rm -f .xlings.json
           mcpp self config --mirror GLOBAL 2>/dev/null || true
           mcpp build --target aarch64-linux-musl
           # Absolute: it is used again after `cd /tmp/xlings-src` below.
           m=$(find "$PWD/target/aarch64-linux-musl" -type f -path '*/bin/mcpp' | head -1)
           file "$m" | grep -q "ARM aarch64" || { echo "expected aarch64 mcpp"; exit 1; }
           "$m" --version
+          # MCPP_HOME must be carried over explicitly: mcpp derives it from the
+          # BINARY's location, so a binary sitting in /tmp/mcpp-src/target would
+          # otherwise adopt an empty home and re-bootstrap the whole ecosystem
+          # instead of reusing what the fresh-install steps above provisioned.
+          #
+          # Resolved HERE, before the cd below, and that placement is load-
+          # bearing: `mcpp` is the shim, so it obeys whatever workspace pin the
+          # CURRENT DIRECTORY carries — and the xlings checkout declares one too
+          # (`workspace.mcpp = 2026.8.6.1`, its own bootstrap). Run from there,
+          # this resolves a version nothing installed, MCPP_HOME comes back
+          # empty, and the step dies on the guard below instead of on the real
+          # cause. /tmp/mcpp-src has had its pin removed above, so ask from here.
+          export MCPP_HOME=$(mcpp self env | awk -F'= *' '/^MCPP_HOME/{print $2; exit}')
+          echo "reusing MCPP_HOME=$MCPP_HOME"
+          test -d "$MCPP_HOME" || { echo "could not determine MCPP_HOME"; exit 1; }
           git clone --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src
           # "$m", not `mcpp`: the just-built binary is the code under review,
@@ -132,14 +164,6 @@ jobs:
           # records, one line further down. It surfaced the same way: a fix for
           # an aarch64-only failure in exactly this build could not be
           # validated here, because the binary running it predated the fix.
-          #
-          # MCPP_HOME must be carried over explicitly: mcpp derives it from the
-          # BINARY's location, so a binary sitting in /tmp/mcpp-src/target would
-          # otherwise adopt an empty home and re-bootstrap the whole ecosystem
-          # instead of reusing what the fresh-install steps above provisioned.
-          export MCPP_HOME=$(mcpp self env | awk -F'= *' '/^MCPP_HOME/{print $2; exit}')
-          echo "reusing MCPP_HOME=$MCPP_HOME"
-          test -d "$MCPP_HOME" || { echo "could not determine MCPP_HOME"; exit 1; }
           "$m" build --target aarch64-linux-musl
           x=$(find target/aarch64-linux-musl -type f -path '*/bin/xlings' | head -1)
           file "$x" | grep -q "ARM aarch64" || { echo "expected aarch64 xlings"; exit 1; }
@@ -162,6 +186,13 @@ jobs:
       # is the only place #295 can actually be reproduced.
       - name: Build current mcpp source for native regression tests
         run: |
+          # Third site of the same pin, and the reason to remove it here too:
+          # this job installs `xlings install mcpp` (bare = latest) and NOTHING
+          # else, so the bootstrap version the checkout pins is never on this
+          # runner. Obeying the pin here does not select an older builder — it
+          # selects one that does not exist. Same removal as the self-host step
+          # above, same reason as install_released_mcpp.sh point 1.
+          rm -f .xlings.json
           mcpp build --target aarch64-linux-musl
           self=$(find target/aarch64-linux-musl -type f -path '*/bin/mcpp' | head -1)
           test -x "$self"
