@@ -11,6 +11,8 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.bmi_cache.maintenance;
 import mcpp.ui;
+import mcpp.wire;
+import mcpp.libs.json;
 
 namespace mcpp::cli {
 
@@ -19,6 +21,23 @@ export int cmd_cache_dir(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
 }
 
 export int cmd_cache_list(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    // `--format json` is enveloped; `--json` keeps the payload it shipped
+    // with (`{root, entries}` at the top level, which this repo's own e2e
+    // asserts). Spelling compatibility is not payload compatibility, and
+    // wrapping the old spelling would break every consumer that already
+    // reads it.
+    if (auto f = parsed.value("format")) {
+        auto fmt = mcpp::wire::parse_format(*f);
+        if (!fmt) {
+            std::println(stderr, "error: {}", mcpp::wire::unsupported_format(*f));
+            return 2;
+        }
+        mcpp::wire::emit({
+            .kind = "mcpp.cache",
+            .data = mcpp::bmi_cache::cache_list_json(),
+        });
+        return 0;
+    }
     return mcpp::bmi_cache::cache_list(parsed.is_flag_set("json"));
 }
 

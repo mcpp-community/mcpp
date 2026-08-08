@@ -13,3 +13,4 @@
 - [08 - 工具链机制内幕](08-toolchain-internals.md)
 - [09 - 发布 mcpp](09-release.md)
 - [10 - 发布一个库到 mcpp-index](10-publishing-a-library.md)
+- [11 - 机器可读输出](11-machine-output.md)

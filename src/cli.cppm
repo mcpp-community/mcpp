@@ -28,6 +28,7 @@ import mcpp.cli.cmd_self;
 import mcpp.cli.cmd_toolchain;
 import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
+import mcpp.wire;
 import mcpp.platform.env;            // --offline → MCPP_OFFLINE
 import mcpp.ui;
 import mcpp.log;
@@ -215,6 +216,12 @@ int run(int argc, char** argv) {
         .option(cl::Option("offline")
             .help("Never touch the network (index refresh, downloads, toolchain install)")
             .global())
+        // Answers "what do you speak" without spawning a command that might
+        // fail. An optimisation, NOT the client's detection rule: on any mcpp
+        // predating it this is itself an unknown option, so a client must
+        // still detect the protocol by parsing stdout for schemaVersion+kind.
+        .option(cl::Option("protocol-version")
+            .help("Print the machine-output protocol this build speaks (JSON)"))
 
         // ─── project commands ──────────────────────────────────────────
         .subcommand(cl::App("new")
@@ -372,7 +379,10 @@ int run(int argc, char** argv) {
             .description("Inspect / validate xpkg descriptors")
             .subcommand(cl::App("parse")
                 .description("Parse a descriptor's mcpp segment exactly as the resolver would (strict: unknown keys are errors)")
-                .option(cl::Option("json").help("Emit machine-readable JSON"))
+                .option(cl::Option("json")
+                    .help("Emit machine-readable JSON (legacy payload, kept for ever)"))
+                .option(cl::Option("format").takes_value().value_name("json")
+                    .help("Machine-readable output (enveloped; see docs/11-machine-output.md)"))
                 .option(cl::Option("allow-unknown")
                     .help("Downgrade unknown mcpp-segment keys from error to warning"))
                 .option(cl::Option("all-os")
@@ -423,7 +433,10 @@ int run(int argc, char** argv) {
                 .description("Print the cache root (and any pre-v1 cache)"))
             .subcommand(cl::App("list")
                 .description("List cache entries with size + last-use")
-                .option(cl::Option("json").help("Emit machine-readable JSON")))
+                .option(cl::Option("json")
+                    .help("Emit machine-readable JSON (legacy payload, kept for ever)"))
+                .option(cl::Option("format").takes_value().value_name("json")
+                    .help("Machine-readable output (enveloped; see docs/11-machine-output.md)")))
             .subcommand(cl::App("info")
                 .description("Show details (incl. key inputs) for a cached package")
                 .arg(cl::Arg("pkg").help("<pkg>@<ver>").required()))
@@ -502,7 +515,9 @@ int run(int argc, char** argv) {
             .subcommand(cl::App("doctor")
                 .description("Diagnose mcpp environment health"))
             .subcommand(cl::App("env")
-                .description("Print mcpp paths and configuration"))
+                .description("Print mcpp paths and configuration")
+                .option(cl::Option("format").takes_value().value_name("json")
+                    .help("Machine-readable output (enveloped; see docs/11-machine-output.md)")))
             .subcommand(cl::App("config")
                 .description("Show or modify mcpp's private xlings configuration")
                 .option(cl::Option("mirror").takes_value().value_name("CN|GLOBAL")
@@ -591,6 +606,37 @@ int run(int argc, char** argv) {
         return cmd_explain(argv[2]);
     }
 
+    // What each machine-output command does before it prints anything.
+    //
+    // Declared here, beside the commands themselves, rather than inside
+    // mcpp.wire: the effects of `self env` are a fact about `self env`. A
+    // protocol module that knew the command list would mean adding a command
+    // in one file and remembering to describe it in another.
+    //
+    // `self env` carries `init-mcpp-home` because on a fresh machine it does
+    // create $MCPP_HOME -- measured: six entries, where `xpkg parse` and
+    // `cache list` create none. Naming the effect rather than flagging a
+    // boolean lets an IDE ignore this one and still refuse `exec-build-script`.
+    auto protocol_commands = [] {
+        using mcpp::wire::Effect;
+        return std::vector<mcpp::wire::CommandEffects>{
+            {"self env",   {Effect::InitMcppHome}},
+            {"xpkg parse", {}},
+            {"cache list", {}},
+        };
+    };
+
+    // `--protocol-version` is answered before anything else parses, and
+    // before any command can decide it needs a project. A client asks this
+    // first, in a directory that may not be one.
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) == "--protocol-version") {
+            std::println("{}",
+                mcpp::wire::protocol_document(protocol_commands()).dump(2));
+            return 0;
+        }
+    }
+
     // Unknown-command pre-check. cmdline doesn't error on an unknown
     // top-level word — it just treats it as a positional and returns
     // 0 silently (since the root App has no top-level action). The
@@ -615,8 +661,30 @@ int run(int argc, char** argv) {
         }
     }
 
-    auto app_rc = app.run(trimmed_argc, trimmed_argp);
-    if (app_rc != 0) return app_rc;
+    // Parse and dispatch separately, rather than `app.run(argc, argv)`.
+    //
+    // `App::run` prints its parse errors with `std::println` -- to STDOUT --
+    // and returns 1. stdout is the channel a machine-readable request owns, so
+    // a client doing `mcpp cache list --format json | jq` got
+    // `Error: unknown option: --format` fed to its parser, with nothing to
+    // distinguish "this mcpp is too old" from "the command failed". stderr was
+    // empty.
+    //
+    // That print lives in mcpplibs.cmdline, a published dependency. Taking the
+    // ParseResult here fixes it without a cross-package release, and keeps one
+    // rule for the whole CLI: anything mcpp says ABOUT ITSELF goes to stderr.
+    //
+    // Exit 2 for a usage error, matching `pack --format bogus` -- which was
+    // already right, and was the only one of the two that was.
+    auto parsed = app.parse(trimmed_argc, trimmed_argp);
+    if (!parsed) {
+        // `--help` / `--version` come back as a non-error "failure": the
+        // parser handled them and printed. Nothing to add, nothing to report.
+        if (!parsed.error().is_error()) return 0;
+        mcpp::ui::error(parsed.error().message);
+        return 2;
+    }
+    app.run(*parsed);
     return action_rc;
 }
 
