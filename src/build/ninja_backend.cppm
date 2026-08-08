@@ -1546,7 +1546,19 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 
     // compile_commands.json — via the dedicated module.
     auto flags = compute_flags(plan);
-    write_compile_commands(plan, flags);
+    auto cdb = write_compile_commands(plan, flags);
+    if (!cdb) {
+        if (opts.requireCompileDatabase) {
+            return std::unexpected(BuildError{
+                std::format("cannot publish compile_commands.json: {}",
+                            cdb.error().message),
+                plan.compileDbPath.empty()
+                    ? plan.projectRoot / "compile_commands.json"
+                    : plan.compileDbPath});
+        }
+        mcpp::ui::warning(std::format(
+            "compile_commands.json was not updated: {}", cdb.error().message));
+    }
 
     // A distribution contract that could not be honored is reported, never
     // silently downgraded — the whole point of the model (INV-1/INV-4 in
@@ -1567,6 +1579,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (opts.dryRun) {
         BuildResult r;
         r.exitCode = 0;
+        r.compileCommands = cdb ? cdb->commandCount : 0;
         r.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - t0);
         return r;
@@ -1603,6 +1616,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 
     // Record ninja binary for P0 fast-path cache.
     BuildResult r;
+    r.compileCommands = cdb ? cdb->commandCount : 0;
     r.ninjaProgram = ninjaProgram;
     if (!plan.toolchain.envOverrides.empty()) {
         // Toolchain-declared env (MSVC INCLUDE/LIB/PATH/VSLANG). Encode all

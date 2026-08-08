@@ -83,6 +83,7 @@ void print_usage() {
     std::println("  --verbose, -v                        Verbose compiler output");
     std::println("  --quiet, -q                          Suppress status output");
     std::println("  --print-fingerprint                  Show toolchain fingerprint and 10 inputs");
+    std::println("  --configure-only                     Generate CDB without compiling or linking");
     std::println("  --cache <MODE>                       Dependency cache: global (default) | local | off");
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
@@ -235,6 +236,8 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_new)))
         .subcommand(cl::App("build")
             .description("Build the current package")
+            .option(cl::Option("configure-only")
+                .help("Generate compile_commands.json without compiling or linking"))
             .option(cl::Option("print-fingerprint")
                 .help("Show toolchain fingerprint and 10 inputs"))
             .option(cl::Option("cache").takes_value().value_name("MODE")

@@ -7,13 +7,40 @@ using namespace mcpp::build;
 
 namespace {
 
+struct TempDir {
+    std::filesystem::path path = std::filesystem::temp_directory_path()
+        / std::format("mcpp-compile-commands-{}",
+                      std::chrono::steady_clock::now().time_since_epoch().count());
+
+    TempDir() { std::filesystem::create_directories(path); }
+
+    ~TempDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+};
+
+std::string read_file(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    return {std::istreambuf_iterator<char>(in), {}};
+}
+
 // Build a single CDB entry as JSON text. `flag` is a marker we can grep for.
 std::string entry(std::string_view file, std::string_view flag) {
     // Keep the file path out of `arguments` so it appears exactly once (in
     // "file") — lets tests count entries per file unambiguously.
+    // The path is embedded in JSON, so backslashes (Windows) must be escaped:
+    // `C:\Users\...` would otherwise be rejected as invalid JSON (`\U` is
+    // not an escape) and every CDB-parsing test would fail on Windows.
+    std::string fileJson;
+    fileJson.reserve(file.size());
+    for (char c : file) {
+        if (c == '\\') fileJson += "\\\\";
+        else fileJson += c;
+    }
     return std::format(
         R"({{"directory":"/p","file":"{}","arguments":["g++","{}","-c","src.cpp"],"output":"o"}})",
-        file, flag);
+        fileJson, flag);
 }
 
 std::string cdb(std::initializer_list<std::string> entries) {
@@ -91,6 +118,127 @@ TEST(CompileCommandsMerge, MalformedExistingFallsBackToFresh) {
 
     EXPECT_NE(merged.find("src/main.cpp"), std::string::npos) << merged;
     EXPECT_NE(merged.find("-O2"), std::string::npos) << merged;
+}
+
+TEST(CompileCommandsMerge, SortsFinalEntriesByFile) {
+    auto fresh = cdb({entry("/p/z.cpp", "-DZ"), entry("/p/a.cpp", "-DA")});
+    auto merged = merge_compile_commands(
+        fresh, "[]", [](const std::filesystem::path&) { return true; });
+
+    EXPECT_LT(merged.find("/p/a.cpp"), merged.find("/p/z.cpp"));
+}
+
+TEST(CompileCommandsWriter, RejectsNonArrayFreshJson) {
+    TempDir temp;
+    auto result = publish_compile_commands(
+        temp.path / "compile_commands.json", R"({"file":"not-an-array"})",
+        [](const std::filesystem::path&) { return true; });
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().message.find("JSON array"), std::string::npos);
+}
+
+TEST(CompileCommandsWriter, PublishesFreshDatabaseWhenNoneExists) {
+    TempDir temp;
+    auto path = temp.path / "compile_commands.json";  // deliberately absent
+    auto content = cdb({entry("/p/src/main.cpp", "-O2")});
+
+    auto result = publish_compile_commands(
+        path, content, [](const std::filesystem::path&) { return true; });
+
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_TRUE(result->changed);
+    // The file is re-serialised via nlohmann (sorted + 2-space indent), so
+    // assert on content, not on byte-equality with the raw input.
+    auto published = read_file(path);
+    EXPECT_NE(published.find("/p/src/main.cpp"), std::string::npos) << published;
+    EXPECT_NE(published.find("-O2"), std::string::npos) << published;
+}
+
+TEST(CompileCommandsWriter, UnchangedContentKeepsMtime) {
+    TempDir temp;
+    auto path = temp.path / "compile_commands.json";
+    auto content = cdb({entry((temp.path / "a.cpp").string(), "-DOK")});
+    std::ofstream(path, std::ios::binary) << content;
+    auto before = std::filesystem::last_write_time(path);
+
+    auto result = publish_compile_commands(
+        path, content, [](const std::filesystem::path&) { return true; });
+
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_FALSE(result->changed);
+    EXPECT_EQ(std::filesystem::last_write_time(path), before);
+}
+
+TEST(CompileCommandsWriter, ReplacementFailurePreservesOldDatabase) {
+    TempDir temp;
+    auto path = temp.path / "compile_commands.json";
+    auto oldContent = cdb({entry((temp.path / "old.cpp").string(), "-DOLD")});
+    auto newContent = cdb({entry((temp.path / "new.cpp").string(), "-DNEW")});
+    std::ofstream(path) << oldContent;
+    auto failReplace = [](const std::filesystem::path&,
+                          const std::filesystem::path&,
+                          std::error_code& ec) {
+        ec = std::make_error_code(std::errc::permission_denied);
+        return false;
+    };
+
+    auto result = publish_compile_commands(
+        path, newContent, [](const std::filesystem::path&) { return true; },
+        failReplace);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(read_file(path), oldContent);
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(temp.path),
+                            std::filesystem::directory_iterator{}), 1);
+}
+
+TEST(CompileCommandsWriter, ReplacesSymlinkTargetWithoutRemovingLink) {
+    TempDir temp;
+    auto target = temp.path / "build" / "compile_commands.json";
+    auto link = temp.path / "compile_commands.json";
+    std::filesystem::create_directories(target.parent_path());
+    auto oldContent = cdb({entry((temp.path / "old.cpp").string(), "-DOLD")});
+    auto newContent = cdb({entry((temp.path / "new.cpp").string(), "-DNEW")});
+    std::ofstream(target) << oldContent;
+    std::error_code symlinkEc;
+    std::filesystem::create_symlink(target, link, symlinkEc);
+    if (symlinkEc) GTEST_SKIP() << "symlink unavailable: " << symlinkEc.message();
+
+    auto result = publish_compile_commands(
+        link, newContent, [](const std::filesystem::path&) { return false; });
+
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_TRUE(std::filesystem::is_symlink(link));
+    auto published = read_file(target);
+    EXPECT_NE(published.find("-DNEW"), std::string::npos);
+    EXPECT_EQ(published.find("-DOLD"), std::string::npos);
+}
+
+TEST(CompileCommandsWriter, ExistingUnreadableDatabaseIsNotOverwritten) {
+    TempDir temp;
+    auto path = temp.path / "compile_commands.json";
+    std::ofstream(path) << "last-known-good";
+    std::error_code permissionEc;
+    std::filesystem::permissions(
+        path, std::filesystem::perms::owner_read,
+        std::filesystem::perm_options::remove, permissionEc);
+    if (permissionEc) GTEST_SKIP() << "cannot change permissions: " << permissionEc.message();
+    std::ifstream probe(path);
+    if (probe) {
+        std::filesystem::permissions(path, std::filesystem::perms::owner_all,
+                                     std::filesystem::perm_options::replace, permissionEc);
+        GTEST_SKIP() << "test user can still read restricted file";
+    }
+
+    auto result = publish_compile_commands(
+        path, cdb({entry((temp.path / "new.cpp").string(), "-DNEW")}),
+        [](const std::filesystem::path&) { return true; });
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().message.find("read existing"), std::string::npos);
+    std::filesystem::permissions(path, std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::replace, permissionEc);
 }
 
 // ── CDB arguments must be argv, not shell words ─────────────────────────────

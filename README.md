@@ -219,7 +219,8 @@ import mcpplibs.cmdline;
 - Three-layer incremental optimization: front-end dirty check + per-file P1689 dyndep + BMI copy-if-different restat
 - Fingerprinted BMI cache: hashed by compiler/flags/standard library, shared across projects
 - Ninja backend: auto-generated build.ninja, parallel compilation
-- compile_commands.json generated automatically (ready for clangd / ccls)
+- `compile_commands.json` generated automatically (ready for clangd / ccls); use
+  `mcpp build --configure-only` to refresh it before ordinary sources compile
 - First-class C support: `.c` files auto-detected, mixed C/C++ projects
 - User-defined cflags / cxxflags / ldflags / c_standard
 

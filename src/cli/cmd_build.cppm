@@ -12,7 +12,9 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
+import mcpp.build.configure;
 import mcpp.build.stage;
+import mcpp.build.test_targets;
 import mcpp.dyndep;
 import mcpp.log;
 import mcpp.project;
@@ -42,6 +44,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     bool verbose  = parsed.is_flag_set("verbose") || mcpp::log::is_verbose();
     bool print_fp = parsed.is_flag_set("print-fingerprint");
     bool no_cache = parsed.is_flag_set("no-cache");
+    bool configure_only = parsed.is_flag_set("configure-only");
 
     mcpp::build::BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
@@ -62,6 +65,31 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     ov.strict = parsed.is_flag_set("strict");
     ov.force_static = parsed.is_flag_set("static");
 
+    auto configure_member = [&](mcpp::build::BuildOverrides memberOv) -> int {
+        auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+        if (!root) {
+            std::println(stderr, "error: no mcpp.toml found in current directory or any parent");
+            return 2;
+        }
+        auto discovered = mcpp::build::discover_test_targets(*root,
+                                                              memberOv.package_filter);
+        if (!discovered) {
+            std::println(stderr, "error: {}", discovered.error());
+            return 2;
+        }
+        // configure-only deliberately includes dev-dependencies and test TUs:
+        // clangd needs the same include/module surface as `mcpp test`, even
+        // though Ninja is run in dry-run mode and compiles no object.
+        auto ctx = mcpp::build::prepare_build(
+            print_fp, /*includeDevDeps=*/!discovered->targets.empty(),
+            std::move(discovered->targets), std::move(memberOv));
+        if (!ctx) {
+            std::println(stderr, "error: {}", ctx.error());
+            return 2;
+        }
+        return mcpp::build::run_configure_plan(*ctx, verbose);
+    };
+
     // Workspace fan-out: build every member, one per the existing per-package
     // pipeline (continue-on-failure; first non-zero exit wins). Checked before
     // the fast path, which is single-package only.
@@ -71,6 +99,11 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
         for (auto& mp : *members) {
             mcpp::build::BuildOverrides mo = ov;
             mo.package_filter = mp;
+            if (configure_only) {
+                int r = configure_member(std::move(mo));
+                if (r != 0) rc = r;
+                continue;
+            }
             auto ctx = mcpp::build::prepare_build(print_fp, /*includeDevDeps=*/false,
                                                   /*extraTargets=*/{}, mo);
             if (!ctx) { std::println(stderr, "error: {}: {}", mp, ctx.error()); rc = 2; continue; }
@@ -79,6 +112,9 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
         return rc;
     }
+
+    if (configure_only)
+        return configure_member(std::move(ov));
 
     // P0: try fast-path if inputs haven't changed. Any resolution-affecting
     // override (--profile/--features/--strict, like --target/--static) must
