@@ -21,6 +21,13 @@ import mcpp.libs.json;
 
 export namespace mcpp::build {
 
+// Split one flag string into CDB `arguments` tokens.
+//
+// Exported because it IS the contract: what a consumer receives in
+// `arguments` is decided here, and that contract needs pinning by test
+// rather than by inspection of a whole generated document.
+std::vector<std::string> split_flags(std::string_view s);
+
 // Generate compile_commands.json content as a string.
 std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 
@@ -54,49 +61,86 @@ bool is_c_source(const std::filesystem::path& src) {
     return ext == ".c" || ext == ".m";
 }
 
-// Split a flag string into individual tokens AND un-escape ninja-style
-// path escapes (`$ ` → space, `$:` → `:`, `$$` → `$`).
+}  // namespace
+
+// Split one flag string into CDB `arguments` tokens.
 //
-// `flags.cppm::escape_path` ninja-escapes path arguments so they survive
-// embedding in ninja rule strings. Those escaped strings are then captured
-// into `f.cxx` / `f.cc` which is what we receive here. CDB consumers like
-// clangd exec the `arguments` array literally — no ninja involved — so
-// escaped chars must be undone or paths like `C:\Users\...` come through
-// as `C$:\Users\...` and break clangd's path resolution on Windows. (The
-// same issue would silently affect any POSIX path containing a space or
-// `$` — those just happen to be rare.)
+// Three things happen here, and the ORDER between them is the whole point.
 //
-// Splitting and un-escaping in one pass is correct: a literal space inside
-// a path appears as `$ ` in the input, which we must NOT treat as a token
-// separator.
+// 1. Ninja escapes are undone (`$ ` -> space, `$:` -> `:`, `$$` -> `$`).
+//    `flags.cppm::escape_path` adds them so a path survives embedding in a
+//    ninja rule string. A CDB consumer execs `arguments` literally -- no
+//    ninja -- so `C$:\Users\...` would be a path that does not exist.
+//
+// 2. Shell quoting is removed. `flags.cppm::shell_quote_arg` wraps a token
+//    whose characters would split or alter a word in `sh -c` / cmd.exe --
+//    and its trigger set contains the BACKSLASH, so on Windows every
+//    path-bearing flag is quoted. That quoting is correct for ninja and
+//    wrong for a consumer that never invokes a shell: the quotes arrive as
+//    part of the filename.
+//
+// 3. Tokens split on spaces -- but not on a space that came from `$ `, and
+//    not on one inside quotes.
+//
+// Getting (3) wrong is what shipped: quoting was ignored entirely, so a
+// quoted path containing a space was cut in half at that space. Measured on
+// a real build under `/tmp/.../my project`:
+//
+//   '-fmodule-file=std=/tmp/.../my project/.../std.pcm   <- closing quote gone
+//   '-fprebuilt-module-path=/tmp/.../my project/.../pcm.cache'
+//
+// One argument became two, one of them opening a quote that never closes.
+// The comment that used to live here stated the right principle -- consumers
+// exec literally, so escapes must be undone -- and implemented half of it.
+//
+// A quote in the MIDDLE of a token is data: `-DGREETING="hi"` keeps its
+// inner quotes, or the define changes meaning. Only a quote that OPENS a
+// region is quoting.
 std::vector<std::string> split_flags(std::string_view s) {
     std::vector<std::string> out;
     std::string token;
+    bool started = false;          // token has begun (so "" is a real empty arg)
+    char quote = 0;                // active quote char, 0 when outside
+
     auto flush = [&] {
-        if (!token.empty()) {
-            out.push_back(std::move(token));
-            token.clear();
-        }
+        if (started) { out.push_back(std::move(token)); token.clear(); }
+        started = false;
     };
+
     for (std::size_t i = 0; i < s.size(); ++i) {
         char c = s[i];
+
+        // Ninja escapes first, and INSIDE quotes too -- a quoted path's space
+        // arrives as `$ ` because flags.cppm escapes before it quotes.
         if (c == '$' && i + 1 < s.size()) {
             char nc = s[i + 1];
             if (nc == ' ' || nc == ':' || nc == '$') {
                 token.push_back(nc);
+                started = true;
                 ++i;
                 continue;
             }
         }
-        if (c == ' ') {
-            flush();
-        } else {
+
+        if (quote) {
+            if (c == quote) { quote = 0; continue; }   // closes the region
             token.push_back(c);
+            continue;
         }
+
+        // Opens a region only at a token boundary; elsewhere it is data.
+        if ((c == '"' || c == '\'') && !started) { quote = c; started = true; continue; }
+
+        if (c == ' ') { flush(); continue; }
+
+        token.push_back(c);
+        started = true;
     }
     flush();
     return out;
 }
+
+namespace {
 
 std::vector<std::string> local_include_args(const CompileUnit& cu) {
     std::vector<std::string> args;
