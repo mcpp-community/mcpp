@@ -20,10 +20,33 @@ import mcpplibs.cmdline;
 import mcpp.manifest;
 import mcpp.platform.axis;
 import mcpp.ui;
+import mcpp.wire;
+import mcpp.libs.json;
 
 namespace mcpp::cli {
 
 namespace {
+
+// One exit for both spellings.
+//
+// `--json` prints the payload exactly as it has shipped -- a bare object, no
+// envelope -- because consumers already read that shape and this repository's
+// own e2e asserts its keys. `--format json` wraps the SAME payload. Two
+// spellings of one answer; the payload is produced once so they cannot drift.
+//
+// The payload is built as a string at three sites in this file, so it is
+// parsed back here rather than duplicating three builders. A parse failure
+// means mcpp emitted invalid JSON, which is a bug worth surfacing loudly
+// rather than papering over.
+void emit_xpkg(std::string_view payload, bool enveloped) {
+    if (!enveloped) { std::println("{}", payload); return; }
+    auto j = nlohmann::json::parse(payload, nullptr, /*allow_exceptions=*/false);
+    if (j.is_discarded()) {
+        mcpp::ui::error("internal: xpkg payload is not valid JSON");
+        j = nlohmann::json::object();
+    }
+    mcpp::wire::emit({.kind = "mcpp.xpkg", .data = std::move(j)});
+}
 
 std::string json_escape(std::string_view s) {
     std::string out;
@@ -69,7 +92,15 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     std::string lua{std::istreambuf_iterator<char>(is), {}};
 
-    const bool asJson         = parsed.is_flag_set("json");
+    bool enveloped = false;
+    if (auto f = parsed.value("format")) {
+        if (!mcpp::wire::parse_format(*f)) {
+            std::println(stderr, "error: {}", mcpp::wire::unsupported_format(*f));
+            return 2;
+        }
+        enveloped = true;
+    }
+    const bool asJson         = enveloped || parsed.is_flag_set("json");
     const bool allowUnknown   = parsed.is_flag_set("allow-unknown");
     const bool allOs          = parsed.is_flag_set("all-os");
     const bool allowSplitName = parsed.is_flag_set("allow-split-name");
@@ -105,10 +136,10 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
             ? std::nullopt
             : mcpp::manifest::xpkg_name_form_violation_from_lua(lua)) {
         if (asJson) {
-            std::println("{{\"namespace\":\"{}\",\"name\":\"{}\","
-                         "\"error\":\"{}\"}}",
-                         json_escape(id.ns), json_escape(id.name),
-                         json_escape(*violation));
+            emit_xpkg(std::format(
+                "{{\"namespace\":\"{}\",\"name\":\"{}\",\"error\":\"{}\"}}",
+                json_escape(id.ns), json_escape(id.name),
+                json_escape(*violation)), enveloped);
         } else {
             mcpp::ui::error(std::format("{}: {}", file, *violation));
         }
@@ -136,8 +167,9 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto field = mcpp::manifest::extract_mcpp_field(lua);
     if (field.kind != mcpp::manifest::McppField::TableBody) {
         if (asJson) {
-            std::println("{{\"namespace\":\"{}\",\"name\":\"{}\",\"form\":\"A\"}}",
-                         json_escape(id.ns), json_escape(id.name));
+            emit_xpkg(std::format(
+                "{{\"namespace\":\"{}\",\"name\":\"{}\",\"form\":\"A\"}}",
+                json_escape(id.ns), json_escape(id.name)), enveloped);
         } else {
             std::println("package    {} (namespace '{}')", fqn, id.ns);
             std::println("form       A — no mcpp segment (build info from the "
@@ -243,7 +275,8 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
             }
         }
         genContents += "}";
-        std::println("{{\"namespace\":\"{}\",\"name\":\"{}\",\"versions\":{},"
+        emit_xpkg(std::format(
+                     "{{\"namespace\":\"{}\",\"name\":\"{}\",\"versions\":{},"
                      "\"standard\":\"{}\",\"import_std\":{},\"sources\":{},"
                      "\"include_dirs\":{},\"generated_files\":{},"
                      "\"generated_contents\":{},\"targets\":{},"
@@ -259,7 +292,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
                          return dirs;
                      }()),
                      genFiles, genContents, targets,
-                     json_array(m->xpkgUnknownKeys));
+                     json_array(m->xpkgUnknownKeys)), enveloped);
         return rc;
     }
 

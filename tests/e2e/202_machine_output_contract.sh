@@ -39,14 +39,27 @@ check() { # description  expected_rc  cmd...
     fi
 }
 
-# An option this command does not have.
-check "unknown option (cache list)" 2 "$MCPP" cache list --format json
-check "unknown option (self env)"   2 "$MCPP" self env --format json
+# An option that does not exist. This is the path a client hits when it probes
+# an older mcpp for a capability -- the most common machine-facing failure,
+# and the one that used to print to stdout.
+check "unknown option (cache list)" 2 "$MCPP" cache list --no-such-option
+check "unknown option (self env)"   2 "$MCPP" self env --no-such-option
 check "unknown option (top level)"  2 "$MCPP" --no-such-option
 
-# A value this command does not accept. Already correct today; asserted so it
-# stays that way while the option path is changed around it.
-check "unknown value (pack)" 2 "$MCPP" pack --format bogus
+# A value the command does not accept. `--format` exists on these now, so this
+# is the branch that answers "I know the option, not that value".
+check "unsupported value (self env)"   2 "$MCPP" self env --format yaml
+check "unsupported value (cache list)" 2 "$MCPP" cache list --format yaml
+check "unsupported value (pack)"       2 "$MCPP" pack --format bogus
+
+# And the supported ones must still be JSON on stdout. Asserted here because
+# every check above is about what does NOT happen; without this, deleting the
+# feature entirely would leave the file green.
+for cmd in "self env" "cache list"; do
+    out=$($MCPP $cmd --format json 2>/dev/null) || { echo "FAIL: $cmd --format json exited non-zero"; fail=1; }
+    echo "$out" | grep -q '"schemaVersion"' || { echo "FAIL: $cmd --format json has no schemaVersion"; fail=1; }
+    echo "$out" | grep -q '"kind"'          || { echo "FAIL: $cmd --format json has no kind"; fail=1; }
+done
 
 [[ "$fail" -eq 0 ]] || exit 1
 echo "PASS: usage errors stay off stdout and exit 2"

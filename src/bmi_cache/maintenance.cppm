@@ -309,31 +309,45 @@ export int cache_dir() {
 }
 
 // `mcpp cache list [--json]`.
-export int cache_list(bool asJson) {
+// The legacy `--json` payload, as a value.
+//
+// Split out so `--format json` can put the SAME object inside an envelope
+// without the two drifting. The two spellings are not the same output --
+// `--json` has shipped with `{root, entries}` at the top level and this
+// repository's e2e asserts those keys, so it keeps that shape for ever --
+// but they must always describe the same cache.
+export nlohmann::json cache_list_json() {
     auto entries = walk_pkg_entries();
     auto stds    = walk_std_entries();
-
-    if (asJson) {
-        nlohmann::json j;
-        j["root"] = mcpp::home::cache_root().string();
-        j["entries"] = nlohmann::json::array();
-        for (auto* set : {&entries, &stds}) {
-            for (auto& e : *set) {
-                j["entries"].push_back({
-                    {"kind", e.kind},
-                    {"label", e.label},
-                    {"key", e.key},
-                    {"dir", e.dir.string()},
-                    {"bytes", e.size},
-                    {"files", e.fileCount},
-                    {"accessed", e.accessed},
-                    {"complete", e.complete},
-                });
-            }
+    nlohmann::json j;
+    j["root"] = mcpp::home::cache_root().string();
+    j["entries"] = nlohmann::json::array();
+    for (auto* set : {&entries, &stds}) {
+        for (auto const& e : *set) {
+            j["entries"].push_back({
+                {"kind",     e.kind},
+                {"label",    e.label},
+                {"key",      e.key},
+                {"dir",      e.dir.string()},
+                {"bytes",    e.size},
+                {"files",    e.fileCount},
+                {"accessed", e.accessed},
+                {"complete", e.complete},
+            });
         }
-        std::println("{}", j.dump(2));
+    }
+    return j;
+}
+
+export int cache_list(bool asJson) {
+    if (asJson) {
+        // The legacy shape, from the same producer as the enveloped one --
+        // two spellings of one answer, never two answers.
+        std::println("{}", cache_list_json().dump(2));
         return 0;
     }
+    auto entries = walk_pkg_entries();
+    auto stds    = walk_std_entries();
 
     if (entries.empty() && stds.empty()) {
         std::println("(build cache is empty)");
