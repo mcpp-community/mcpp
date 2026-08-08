@@ -320,11 +320,35 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     // cross-compile resolves by what it builds FOR.
     if (is_msvc_target(tc) || is_mingw_target(tc)) return lm;
 
+    // The compiler's OWN runtime lives beside it, not in the C library:
+    // libgcc_s.so.1 for GCC. A produced binary links it whether or not the
+    // build ever mentions it, so its directory has to be on the artifact's
+    // RUNPATH -- and gcc's patched specs used to put it there, which is
+    // exactly why removing that rewrite has to put it back.
+    //
+    // Both modes need this, and only one got it at first. PayloadFirst
+    // artifacts came out with a single RUNPATH entry (the glibc payload) and
+    // resolved libgcc_s.so.1 from the HOST -- or, on a machine without one,
+    // not at all: `error while loading shared libraries: libgcc_s.so.1`. This
+    // developer machine has a usable sysroot, so every local build took the
+    // other branch and the gap only surfaced on CI (e2e 29).
+    //
+    // Not for musl (self-contained sysroot, static world) and not for clang,
+    // which brings compiler-rt and libunwind instead.
+    auto add_compiler_runtime_dir = [&] {
+        if (is_musl_target(tc) || lm.clangDriver || tc.binaryPath.empty()) return;
+        std::error_code lec;
+        auto gccLib = tc.binaryPath.parent_path().parent_path() / "lib64";
+        if (std::filesystem::exists(gccLib, lec))
+            lm.libDirs.push_back(gccLib);
+    };
+
     auto payload_first = [&] {
         auto& pp = *tc.payloadPaths;
         lm.mode   = CLibMode::PayloadFirst;
         lm.crtDir = pp.glibcLib;
         lm.libDirs.push_back(pp.glibcLib);
+        add_compiler_runtime_dir();
         lm.systemIncludes.push_back(pp.glibcInclude);
         if (!pp.linuxInclude.empty())
             lm.systemIncludes.push_back(pp.linuxInclude);
@@ -358,12 +382,7 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
             lm.loader = resolve_loader(tc.payloadPaths->glibcLib, tc.targetTriple);
             lm.libDirs.push_back(tc.payloadPaths->glibcLib);
         }
-        if (!is_musl_target(tc) && !tc.binaryPath.empty()) {
-            std::error_code lec;
-            auto gccLib = tc.binaryPath.parent_path().parent_path() / "lib64";
-            if (std::filesystem::exists(gccLib, lec))
-                lm.libDirs.push_back(gccLib);
-        }
+        add_compiler_runtime_dir();
         // Supplement kernel headers when the sysroot lacks them (glibc's
         // local_lim.h needs <linux/limits.h>). Self-contained musl sysroots
         // ship their own; a cross target must not see host-arch headers.
