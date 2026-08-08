@@ -7,6 +7,24 @@ using namespace mcpp::build;
 
 namespace {
 
+struct TempDir {
+    std::filesystem::path path = std::filesystem::temp_directory_path()
+        / std::format("mcpp-compile-commands-{}",
+                      std::chrono::steady_clock::now().time_since_epoch().count());
+
+    TempDir() { std::filesystem::create_directories(path); }
+
+    ~TempDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+};
+
+std::string read_file(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    return {std::istreambuf_iterator<char>(in), {}};
+}
+
 // Build a single CDB entry as JSON text. `flag` is a marker we can grep for.
 std::string entry(std::string_view file, std::string_view flag) {
     // Keep the file path out of `arguments` so it appears exactly once (in
@@ -91,4 +109,60 @@ TEST(CompileCommandsMerge, MalformedExistingFallsBackToFresh) {
 
     EXPECT_NE(merged.find("src/main.cpp"), std::string::npos) << merged;
     EXPECT_NE(merged.find("-O2"), std::string::npos) << merged;
+}
+
+TEST(CompileCommandsMerge, SortsFinalEntriesByFile) {
+    auto fresh = cdb({entry("/p/z.cpp", "-DZ"), entry("/p/a.cpp", "-DA")});
+    auto merged = merge_compile_commands(
+        fresh, "[]", [](const std::filesystem::path&) { return true; });
+
+    EXPECT_LT(merged.find("/p/a.cpp"), merged.find("/p/z.cpp"));
+}
+
+TEST(CompileCommandsWriter, RejectsNonArrayFreshJson) {
+    TempDir temp;
+    auto result = publish_compile_commands(
+        temp.path / "compile_commands.json", R"({"file":"not-an-array"})",
+        [](const std::filesystem::path&) { return true; });
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().message.find("JSON array"), std::string::npos);
+}
+
+TEST(CompileCommandsWriter, UnchangedContentKeepsMtime) {
+    TempDir temp;
+    auto path = temp.path / "compile_commands.json";
+    auto content = cdb({entry((temp.path / "a.cpp").string(), "-DOK")});
+    std::ofstream(path) << content;
+    auto before = std::filesystem::last_write_time(path);
+
+    auto result = publish_compile_commands(
+        path, content, [](const std::filesystem::path&) { return true; });
+
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_FALSE(result->changed);
+    EXPECT_EQ(std::filesystem::last_write_time(path), before);
+}
+
+TEST(CompileCommandsWriter, ReplacementFailurePreservesOldDatabase) {
+    TempDir temp;
+    auto path = temp.path / "compile_commands.json";
+    auto oldContent = cdb({entry((temp.path / "old.cpp").string(), "-DOLD")});
+    auto newContent = cdb({entry((temp.path / "new.cpp").string(), "-DNEW")});
+    std::ofstream(path) << oldContent;
+    auto failReplace = [](const std::filesystem::path&,
+                          const std::filesystem::path&,
+                          std::error_code& ec) {
+        ec = std::make_error_code(std::errc::permission_denied);
+        return false;
+    };
+
+    auto result = publish_compile_commands(
+        path, newContent, [](const std::filesystem::path&) { return true; },
+        failReplace);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(read_file(path), oldContent);
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(temp.path),
+                            std::filesystem::directory_iterator{}), 1);
 }
