@@ -18,6 +18,7 @@ import mcpp.build.ninja;
 import mcpp.bmi_cache;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
+import mcpp.toolchain.post_install;
 import mcpp.toolchain.stdmod;
 import mcpp.xlings;
 import mcpp.xlings.subos_info;
@@ -374,6 +375,23 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     if (coldBuild) {
         std::error_code ec;
         std::filesystem::remove_all(ctx.outputDir, ec);
+    }
+
+    // The generated `*link:` spec lives in the output directory, and the line
+    // above is allowed to delete that directory. prepare wrote the file before
+    // this point, so a cold build reached ninja with a link command naming a
+    // spec that no longer existed -- `g++: fatal error: cannot read spec file`,
+    // on every `--no-cache` build with gcc.
+    //
+    // Regenerating here rather than reordering: the invariant worth holding is
+    // "the spec exists when ninja runs", and stating it as an invariant
+    // survives the next thing that clears target/ (a user with `rm -rf`, for
+    // one). The write is idempotent, so the warm path costs one stat.
+    if (!ctx.plan.gccCleanSpecs.empty()) {
+        std::error_code ec;
+        if (!std::filesystem::exists(ctx.plan.gccCleanSpecs, ec))
+            ctx.plan.gccCleanSpecs = mcpp::toolchain::write_clean_link_specs(
+                ctx.tc.binaryPath, ctx.outputDir);
     }
 
     auto be = mcpp::build::make_ninja_backend();

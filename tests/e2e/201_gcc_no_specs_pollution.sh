@@ -35,6 +35,14 @@ EOF
 
 "$MCPP" build > "$TMP/build.log" 2>&1 || { cat "$TMP/build.log"; echo "build failed"; exit 1; }
 
+# A cold build, because the generated spec lives in target/ and a cold build
+# deletes target/. Written the obvious way -- generate during prepare, consume
+# during the build -- gcc got a `-specs=` naming a file that had been removed
+# in between, and EVERY `--no-cache` build failed with `cannot read spec file`.
+# The warm path above cannot see that: the file is still there from last time.
+"$MCPP" build --no-cache > "$TMP/cold.log" 2>&1 || {
+    cat "$TMP/cold.log"; echo "cold build failed"; exit 1; }
+
 bin=$(find target -type f -name prog -path '*/bin/*' | head -1)
 [[ -n "$bin" ]] || { echo "no binary produced"; exit 1; }
 
