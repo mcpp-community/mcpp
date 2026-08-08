@@ -966,6 +966,17 @@ build needs (`make`/`cmake`/`protoc`/…), pin tool versions per project, or set
 build-time env vars — without hand-editing `.xlings.json`. `[toolchain]` (§2.7) remains
 the ergonomic shorthand for the compiler; `[xlings.workspace]` is the general form.
 
+`subos` carries a second meaning on Linux: it selects **which C runtime the
+build binds against**. A subos describes its own runtime (xlings 2026.8.5.1+),
+and mcpp takes that as the authority rather than looking around for a libc — so
+`subos = "el8"` and `subos = "trixie"` in two projects on one machine produce
+artifacts targeting each one's glibc, with the compile side and the run side
+guaranteed to agree. The binding is part of the toolchain fingerprint, so
+switching it rebuilds rather than reusing the other subos' objects. A subos
+older than that (or none at all) falls back to whatever the toolchain itself
+was installed against; `mcpp build -v` prints which of the two happened. See
+docs/08-toolchain-internals.md §2.1.
+
 ### 2.14 Host tools from a dependency (mcpp 2026.8.5.1+)
 
 A package can build a binary its consumers need *at build time* — `protoc`, a

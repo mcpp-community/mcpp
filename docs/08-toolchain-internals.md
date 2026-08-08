@@ -15,6 +15,9 @@ resolve payload (xim:gcc / xim:llvm / xim:musl-gcc xpkg under the sandbox)
         ▼
 ensure_post_install_fixup()      ← idempotent convergence (marker-gated)
         ▼
+resolve runtime binding          ← which libc the artifact will load (§2.1) — an
+                                   answer, not a search
+        ▼
 detect / probe                   ← triple, sysroot, payload paths (glibc, linux-headers)
         ▼
 ToolchainLinkModel (single resolver for the C-library axis)
@@ -65,11 +68,43 @@ is resolved/auto-installed via the xlings backend into the sandbox
 |---|---|
 | `targetTriple` | `<compiler> -dumpmachine` |
 | `sysroot` | `-print-sysroot` (validated: must actually carry libc headers), with a remap fallback for xlings-built GCC whose baked build-time path doesn't exist locally |
-| `payloadPaths` | sibling xpkg discovery: glibc payload (`include/` + `lib64|lib/`) and linux-headers payload — the *payload-first* fine-grained sysroot |
+| `payloadPaths` | the resolved runtime binding (§2.1) names the glibc payload exactly; linux-headers is still discovered as a sibling. No binding ⇒ no payload-first, by design |
 | runtime dirs | toolchain-private lib dirs for produced binaries' `-L`/`-rpath` |
 
 Note the probe deliberately does **not** mine the clang cfg for `--sysroot`
 anymore: the cfg is an output of this machinery, not an input (§5).
+
+### 2.1 The runtime binding — which libc, decided once
+
+A payload-first build links against a specific glibc, and *which* one is a
+fact about the environment, not something to be inferred. mcpp resolves it in
+order:
+
+1. `[xlings] subos = "<name>"` — the named subos, a sibling of the active one,
+   describes its own runtime in the `subos_info` block of its `.xlings.json`
+   (xlings 2026.8.5.1+).
+2. The active subos, same block.
+3. *Compatibility.* A subos created before that block existed cannot answer.
+   The value baked into the toolchain itself then stands in — gcc's specs,
+   clang's cfg. This is the value the artifact **would** load, so compile side
+   and run side still agree; it retires itself the moment the subos can speak.
+
+No binding is a **refusal**, not a default: `CLibMode::PayloadFirst` is
+declined rather than picking a libc.
+
+The rule this replaced asked a directory for "the glibc" and took the first
+entry `readdir` yielded. With one glibc installed that is always right, so
+nothing forced it to be correct — and a dependency carrying `xim:glibc@>=2.38`
+is enough to install a second one. When that happened in mcpp-index, the
+compile side took 2.44 while the artifact's interpreter, frozen in gcc's specs
+at install time, still named 2.39; binaries referenced `GLIBC_2.42` symbols
+against a runtime without them, and the failures surfaced on packages
+unrelated to the dependency that pulled the second glibc in. Directory order
+is not a decision procedure.
+
+Because the binding decides what the artifact loads, it is part of the
+toolchain fingerprint (11 fields, not 10) — two builds differing only in
+runtime must not share a cache entry.
 
 ## 3. The link model (`src/toolchain/linkmodel.cppm`)
 
@@ -86,6 +121,10 @@ CLibMode::PayloadFirst   glibc/linux-headers xpkgs found (the normal bundled-LLV
                                     -L <glibcLib> [+ -rpath + --dynamic-linker for clang]
 CLibMode::Sysroot        a usable --sysroot (GCC include-fixed world, self-contained
                          musl sysroots, the macOS SDK)
+                           link:    --sysroot, plus --dynamic-linker and -L/-rpath
+                                    for the payload when one is known — the
+                                    sysroot says where headers live, not which
+                                    loader runs the result
 CLibMode::None           nothing usable — host defaults apply; the hermetic
                          check (§6) rejects that leakage unless an explicit
                          host-library exception is in effect
@@ -110,12 +149,14 @@ itself as its first consumer; mcpp can then re-add a reader.
 
 ## 4. The unified post-install fixup pipeline (`src/toolchain/post_install.cppm`)
 
-Sandbox payloads are prebuilt ELF trees. Two kinds of paths baked into them
-are unknowable at packaging time and must be aligned to the *local* sandbox:
-`PT_INTERP`/`RUNPATH` inside binaries, and the loader/rpath lines inside GCC
-specs. `ensure_post_install_fixup(cfg, payloadRoot, pkg)` is the **single
-entry** for that alignment, called from all three entry paths (explicit
-install, default auto-install, manifest auto-install).
+Sandbox payloads are prebuilt ELF trees whose baked `PT_INTERP`/`RUNPATH` are
+unknowable at packaging time and must be aligned to the *local* sandbox.
+`ensure_post_install_fixup(cfg, payloadRoot, pkg)` is the **single entry** for
+that alignment, called from all three entry paths (explicit install, default
+auto-install, manifest auto-install).
+
+> This pipeline used to rewrite GCC's `specs` file as well, so that produced
+> binaries got a loader and an rpath. That is no longer done, and §5 is why.
 
 > Historical note: before 0.0.83 each path remembered — or forgot — its own
 > subset. The manifest path ran *nothing*, which is how a freshly
@@ -146,7 +187,7 @@ mcpp's sight — trust-but-verify is the only reliable semantic.
 
 | kind | actions |
 |---|---|
-| `gcc` (glibc) | patchelf walk over the gcc payload **and the shared binutils payload** (PT_INTERP → sandbox loader, RUNPATH → glibc+gcc lib dirs); specs rewrite (baked loader/rpath → payload glibc, specs-grammar-aware — `%{...}` conditionals must never be corrupted) |
+| `gcc` (glibc) | patchelf walk over the gcc payload **and the shared binutils payload** (PT_INTERP → sandbox loader, RUNPATH → glibc+gcc lib dirs) — so that *gcc itself* runs. Nothing is written into `specs` |
 | `llvm` | patchelf walk over `lib/` only (runtime `.so` RUNPATH; `bin/` is left alone to preserve xlings-set RUNPATHs); deterministic cfg regeneration (§5) |
 | `musl-gcc` | nothing — self-contained sysroot, static world |
 
@@ -162,8 +203,7 @@ mcpp's sight — trust-but-verify is the only reliable semantic.
   (symlink-inherited from another `MCPP_HOME`) are never patched — their
   owner already converged them, and patching through the symlink would brick
   the owner's toolchain.
-- Specs rewriting is content-aware (already-aligned specs are skipped).
-  Extending the same check to the patchelf walk (compare
+- Extending content-awareness to the patchelf walk (compare
   `--print-interpreter`/`--print-rpath` before writing, so an already-aligned
   payload converges with **zero writes**) is a known follow-up.
 - The long-term direction is for the *installer* (xlings) to own all
@@ -171,11 +211,42 @@ mcpp's sight — trust-but-verify is the only reliable semantic.
   mcpp read-only + verification. The pipeline here is the compatibility
   layer until then, and the self-healing mechanism for drift either way.
 
-## 5. The clang cfg: direct-invocation support only
+## 5. The compiler is a capability, not a configuration
+
+A payload ships two separable things: the ability to compile, and an opinion
+about how to link. mcpp wants the first and supplies the second itself — the
+link line is where a build's decisions belong, because it is the thing that
+varies per build. Both compilers now follow that rule; only the mechanism
+differs.
+
+**clang** — `--no-default-config` on every mcpp invocation.
+
+**gcc** — `-specs=` with a generated file. `<compiler> -dumpspecs` prints the
+**built-in** specs (unaffected by anything on disk); mcpp extracts the `*link:`
+body, drops the loader and rpath lines from it, and writes the result to the
+build directory. A `-specs=` file without a leading `+` *replaces* the rule it
+names, so the payload's own opinion is overridden without the payload being
+touched. Two consequences worth stating: it is per-build, so a second project
+on the same machine is unaffected; and it needs no write access to the
+toolchain, so an inherited or read-only payload works.
+
+Removing gcc's baked `*link:` also removes what it provided. mcpp therefore
+supplies `--dynamic-linker` and every rpath entry explicitly on the link
+line — the loader, the glibc lib dir, and gcc's own `lib64` (libgcc_s). Each
+of those was found by removing the specs and watching what broke.
+
+Why not keep rewriting `specs`? Because the file is shared and the value is
+per-build. The rewrite had a single-path needle and a two-path replacement, so
+every home that ever ran it left one entry behind: **68** stale `RUNPATH`
+entries, all naming deleted `mktemp` directories, in every gcc artifact one
+developer machine produced. Nothing detected them, because a dead RUNPATH
+entry costs only search time. e2e `201_gcc_no_specs_pollution.sh` asserts on
+the artifact, not the specs file — what a user ships is what matters.
+
+### 5.1 The clang cfg
 
 `bin/clang++.cfg` exists so that direct invocations of the bundled
-`clang++` (outside mcpp) get a working, hermetic compiler configuration. mcpp's own builds never read it
-(`--no-default-config` always). The fixup pipeline **regenerates** it
+`clang++` (outside mcpp) get a working, hermetic compiler configuration. The fixup pipeline **regenerates** it
 deterministically from the link model — same payload ⇒ byte-identical cfg on
 every machine and install path — rather than line-patching whatever an
 install produced. On Linux that means CRT discovery (`-B`), payload loader +

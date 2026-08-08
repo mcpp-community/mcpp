@@ -14,6 +14,8 @@ mcpp.toml [toolchain]  /  全局默认  /  `mcpp toolchain install`
         ▼
 ensure_post_install_fixup()      ← 幂等收敛(marker 闸门)
         ▼
+解析 runtime binding             ← 产物将加载哪个 libc(§2.1)——是答案,不是搜索
+        ▼
 detect / probe                   ← triple、sysroot、payload 路径(glibc、linux-headers)
         ▼
 ToolchainLinkModel(C 库轴的唯一解析器)
@@ -56,8 +58,33 @@ xlings 后端解析/自动安装到沙箱
 |---|---|
 | `targetTriple` | `<compiler> -dumpmachine` |
 | `sysroot` | `-print-sysroot`(校验必须真带 libc 头);xlings 构建的 GCC 烙的是构建机路径,有 remap 回退 |
-| `payloadPaths` | 兄弟 xpkg 发现:glibc payload(`include/` + `lib64|lib/`)与 linux-headers payload——即 *payload 优先* 的细粒度 sysroot |
+| `payloadPaths` | 由解析出的 runtime binding(§2.1)**精确指名** glibc payload;linux-headers 仍按兄弟 xpkg 发现。没有 binding 就不走 payload-first——这是设计,不是缺陷 |
 | 运行库目录 | 工具链私有 lib 目录,用于产物的 `-L`/`-rpath` |
+
+### 2.1 runtime binding:绑哪个 libc,只决定一次
+
+payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是关于环境的事实,
+不该靠推断。mcpp 按顺序解析:
+
+1. `[xlings] subos = "<name>"` —— 该 subos(活动 subos 的兄弟)在自己
+   `.xlings.json` 的 `subos_info` 块里自述 runtime(xlings 2026.8.5.1 起)。
+2. 活动 subos,同一个块。
+3. *兼容路径。* 在该块出现之前创建的 subos 无法作答,此时以工具链自身烙入的值
+   顶上——gcc 的 specs、clang 的 cfg。这正是产物**将会**加载的那个值,故编译期
+   与运行期仍然一致;一旦 subos 能作答,这条自动退场。
+
+没有 binding 是**拒绝**而不是取默认值:`CLibMode::PayloadFirst` 会被放弃,而不是
+去挑一个 libc。
+
+被它取代的旧规则是:向某个目录问"那个 glibc",然后拿 `readdir` 吐出的第一项。
+只装了一个 glibc 时它永远正确,所以从来没有东西逼它正确——而一条带
+`xim:glibc@>=2.38` 的依赖就足以装进第二个。这在 mcpp-index 上真实发生过:编译侧
+取了 2.44,而产物的 interpreter(装机时冻结在 gcc specs 里)仍指向 2.39;二进制
+引用了 `GLIBC_2.42` 符号,却跑在没有这些符号的运行时上,且报错落在与"拉进第二个
+glibc 的那条依赖"毫无关系的包上。目录顺序不是决策依据。
+
+因为 binding 决定产物加载什么,它计入工具链指纹(11 个字段,不是 10 个)——只在
+runtime 上不同的两次构建绝不能共用同一条缓存。
 
 注意:probe 已**不再**从 clang cfg 挖 `--sysroot`——cfg 是这套机制的输出,
 不是输入(见 §5)。
@@ -95,11 +122,14 @@ CLibMode::None           无可用来源——落宿主默认;除非显式允许
 
 ## 4. 统一 post-install fixup 管线(`src/toolchain/post_install.cppm`)
 
-沙箱 payload 是预编译 ELF 树。有两类打包期不可能预知、必须对齐到**本机沙箱**的
-路径:二进制里的 `PT_INTERP`/`RUNPATH`,以及 GCC specs 里的 loader/rpath 行。
+沙箱 payload 是预编译 ELF 树,其烙入的 `PT_INTERP`/`RUNPATH` 在打包期不可能预知,
+必须对齐到**本机沙箱**。
 `ensure_post_install_fixup(cfg, payloadRoot, pkg)` 是这次对齐的**唯一入口**,
 由三条入口路径(显式 install、默认 auto-install、manifest auto-install)共同
 调用。
+
+> 本管线曾同时重写 GCC 的 `specs` 文件,以便产物拿到 loader 和 rpath。现已不再
+> 这样做,原因见 §5。
 
 > 历史注记:0.0.83 之前各路径各自记得——或忘记——自己那份 fixup。manifest
 > 路径什么都不跑:刚 auto-install 的 llvm 因此保留着陈旧、随装机环境漂移的
@@ -125,7 +155,7 @@ glibc、payload 从别的 home 继承而来)发生在 mcpp 视野之外,trust-bu
 
 | kind | 动作 |
 |---|---|
-| `gcc`(glibc)| 对 gcc payload **及共享的 binutils payload** 做 patchelf 遍历(PT_INTERP → 沙箱 loader,RUNPATH → glibc+gcc lib);specs 重写(烙入的 loader/rpath → payload glibc,**必须感知 specs 语法**——`%{...}` 条件块绝不能被破坏)|
+| `gcc`(glibc)| 对 gcc payload **及共享的 binutils payload** 做 patchelf 遍历(PT_INTERP → 沙箱 loader,RUNPATH → glibc+gcc lib)——目的是让 *gcc 自己* 能跑起来。不往 `specs` 里写任何东西 |
 | `llvm` | 只遍历 `lib/`(运行库 `.so` 的 RUNPATH;`bin/` 不碰,保留 xlings 设置的 RUNPATH);确定性再生 cfg(§5)|
 | `musl-gcc` | 无——自包含 sysroot,静态世界 |
 
@@ -137,17 +167,43 @@ glibc、payload 从别的 home 继承而来)发生在 mcpp 视野之外,trust-bu
   `rename` 让新内容拿新 inode,活进程保有旧 inode。
 - **所有权护栏。** 解析到本 home registry 之外的 payload(从别的 `MCPP_HOME`
   symlink 继承)一律不碰——属主已收敛过,隔着 symlink 改写会毁掉属主的工具链。
-- specs 重写是内容感知的(已对齐即跳过)。把同样的检查扩展到 patchelf 遍历
+- 把内容感知扩展到 patchelf 遍历
   (写前比对 `--print-interpreter`/`--print-rpath`,已对齐的 payload **零写入**
   收敛)是已知的后续项。
 - 长期方向:全部写入由**安装器**(xlings)持有——装机时、以及 payload 进入
   新 home 时——mcpp 退为只读 + 校验。本管线在那之前是兼容层,也是双向漂移的
   自愈机制。
 
-## 5. clang cfg:仅服务直接调用场景
+## 5. 编译器是能力,不是配置
+
+一个 payload 交付两样可分离的东西:编译的**能力**,以及关于如何链接的**主张**。
+mcpp 要前者,后者自己给——链接行才是构建决策该待的地方,因为它是逐次构建而变的
+那一个。现在两个编译器都遵循这条规则,只是机制不同。
+
+**clang** —— mcpp 每次调用都带 `--no-default-config`。
+
+**gcc** —— 用生成的文件走 `-specs=`。`<compiler> -dumpspecs` 打印的是**内建**
+specs(不受磁盘上任何文件影响);mcpp 从中取出 `*link:` 的正文,删掉其中的 loader
+与 rpath 行,把结果写进构建目录。不带前导 `+` 的 `-specs=` 文件是**替换**它所命名的
+规则,于是 payload 自己的主张被覆盖,而 payload 本身分毫未动。两条推论值得写明:
+它是逐构建的,所以同机器上的另一个项目不受影响;它不需要对工具链的写权限,所以
+继承来的、或只读的 payload 都能用。
+
+删掉 gcc 烙入的 `*link:`,也就删掉了它提供的东西。因此 mcpp 在链接行上显式补齐
+`--dynamic-linker` 与每一条 rpath——loader、glibc lib 目录、以及 gcc 自己的
+`lib64`(libgcc_s)。这三条都是把 specs 拿掉后、看什么先坏掉而逐一找出来的。
+
+为什么不继续重写 `specs`?因为那个文件是共享的,而值是逐构建的。旧的重写用的是
+单路径的 needle 配双路径的 replacement,于是每个跑过它的 home 都会漏下一条:一台
+开发机产出的**每一个** gcc 产物里都带着 **68** 条陈旧 `RUNPATH`,全部指向已被删除的
+`mktemp` 目录。没有任何东西发现它们,因为一条死 RUNPATH 只多花一点搜索时间。e2e
+`201_gcc_no_specs_pollution.sh` 断言的是**产物**而不是 specs 文件——用户最终交付的
+是产物。
+
+### 5.1 clang cfg
 
 `bin/clang++.cfg` 的职责是:直接调用打包内 `clang++`(不经由 mcpp)时,
-获得可用且 hermetic 的编译器配置。mcpp 自己的构建从不读它(永远 `--no-default-config`)。
+获得可用且 hermetic 的编译器配置。
 fixup 管线从链接模型**确定性再生**它——同一 payload ⇒ 任何机器、任何安装路径
 产出字节一致的 cfg——而不是对装机产物做行级补丁。Linux 上内容为:CRT 发现
 (`-B`)、payload loader + rpath、lld/compiler-rt/libunwind、C++ 驱动附加

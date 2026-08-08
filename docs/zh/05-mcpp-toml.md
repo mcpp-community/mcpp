@@ -724,6 +724,13 @@ OPENBLAS_NUM_THREADS = "1"
 host 工具(`make`/`cmake`/`protoc`…)、按项目固定工具版本、或设构建期环境变量——无需手改
 `.xlings.json`。`[toolchain]`(§2.7)仍是编译器的便捷简写;`[xlings.workspace]` 是其通用形式。
 
+在 Linux 上 `subos` 还有第二重含义:它决定**构建绑定到哪个 C 运行时**。subos 会自述其
+runtime(xlings 2026.8.5.1 起),mcpp 以此为权威,而不是去四处找一个 libc——所以同一台机器
+上 `subos = "el8"` 与 `subos = "trixie"` 两个项目各自产出面向自己 glibc 的产物,且编译期与
+运行期保证一致。该绑定计入工具链指纹,故切换它会重新构建,而不会复用另一个 subos 的目标文件。
+更旧的 subos(或没有 subos)则回落到工具链自身安装时所对应的运行时;`mcpp build -v` 会打印
+实际走了哪一条。参见 docs/08-toolchain-internals.md §2.1。
+
 ### 2.14 依赖产出的 host 工具(mcpp 2026.8.5.1+)
 
 一个包能构建出消费者在**构建期**需要的二进制 —— `protoc`、`grpc_cpp_plugin`、

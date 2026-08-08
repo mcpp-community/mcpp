@@ -3,6 +3,71 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.8.2] — 2026-08-08
+
+编译器交付的是**能力**,不是配置。设计与实测证据见
+`.agents/docs/2026-08-08-payload-version-and-contract-drift-design.md`。
+
+### 修复
+
+- **产物加载哪个 glibc,现在有权威,不再靠目录顺序。**
+
+  payload-first 的构建要链接到某个具体 glibc。旧规则是问目录"那个 glibc"、
+  取 `readdir` 的第一项——只装了一个时它永远对,所以从没有东西逼它对。一条带
+  `xim:glibc@>=2.38` 的依赖就足以装进第二个:编译侧取了 2.44,而产物的
+  interpreter(装机时冻结在 gcc specs 里)仍是 2.39,于是二进制引用
+  `GLIBC_2.42` 符号却跑在没有它的运行时上,报错还落在与那条依赖无关的包上。
+
+  现在由 subos 自述的 runtime 作答(`[xlings] subos` 可指定),没有答案就**拒绝**
+  走 payload-first,而不是挑一个。该绑定计入工具链指纹(11 字段),两次只在
+  runtime 上不同的构建不再共用缓存。旧 subos 回落到工具链自身烙入的值。
+
+- **不再改写 GCC 的 `specs`,产物也不再带别人机器的死路径。**
+
+  旧的 specs 重写用单路径 needle 配双路径 replacement,每个跑过它的 home 都漏下
+  一条:一台开发机产出的每个 gcc 产物里都有 **68** 条陈旧 `RUNPATH`,全指向已删除
+  的 `mktemp` 目录。改为 `-specs=` 一份逐构建生成的干净文件(`-dumpspecs` 取内建
+  `*link:`,去掉 loader/rpath),loader 与 rpath 由 mcpp 显式写在链接行上。逐构建、
+  不需写权限,继承来的只读 payload 也能用。e2e `201_gcc_no_specs_pollution.sh`
+  断言的是产物而非 specs 文件。
+
+- **落后于 pin 的 vendored xlings 会被替换——但只在替换品确实更新时。**
+
+  `acquire_xlings_binary` 过去见到文件存在就返回,于是一个 home 会永远留着它第一次
+  获取的 xlings(实测 2026.8.2.1 对 pin 2026.8.6.3)。`subos_info` 是 2026.8.5.1
+  才有的,所以那台机器上 subos 的自述一直被一个太旧的客户端丢弃。修复的第一版直接
+  删了重取,结果把 2026.8.2.1 换成了系统的 0.4.51——更旧,且同样没有那个特性;现在
+  先给替换品定价再动手。
+
+- **`--sysroot` 的判据从"存在"改为"归属"。** gcc 把
+  `--sysroot=<...>/.xlings/subos/default` 当字符串烙进去,而一台机器上有很多同名
+  目录,所以那条烙入的路径经常存在、却属于另一个 checkout(实测:mcpp 里的构建解析
+  到了无关仓库下的 sysroot)。
+
+### 其他
+
+- `mcpp self doctor` 新增两条检查:vendored xlings 落后于 pin;sysroot 既不属于本
+  mcpp home 也不属于当前项目。
+- xlings pin 提升到 2026.8.7.1。
+
+## [2026.8.8.1] — 2026-08-07
+
+xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
+`/proc/self/exe` 陷阱(#352、#375)。设计见
+`.agents/docs/2026-08-07-xlings-as-runtime-substrate-design.md`。
+
+### 修复
+
+- **subos 声明的环境变量现在真的到达被运行的程序(#352)。** 之前 mcpp 读的是自己
+  想象出来的 `subos_info.envs` 线格式(数组),而 xlings 写的是以 binding 为键的
+  对象,于是整条修复是空转的。现在按 xlings 实际写出的格式解析,并用逐字取自真实
+  xlings 输出的 fixture 钉住。
+- **升级后的 mcpp 会重放升级前的缓存,导致 subos 环境丢失。** 快路径命中时不带
+  subos 环境;该缺陷是靠一条"必须走快路径"的自证断言抓到的,而那条断言随即又抓到
+  第二个:缓存行写在 `profile=` 之前却在 `cacheMode=` 之后解析。
+- **self-contained 打包的 `/proc/self/exe` 陷阱(#375)。** 新增 `MCPP_BUNDLE_DIR`
+  契约。
+
 ## [2026.8.7.1] — 2026-08-07
 
 两处「模型比生态少一层」。设计与实测证据见 `.agents/docs/2026-08-07-windows-resources-and-version-identity-design.md`。
