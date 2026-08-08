@@ -92,9 +92,19 @@ echo "$out" | grep -q 'Hello' || { echo "unexpected output: $out"; exit 1; }
 #
 # Asking where each library actually came from makes the same defect visible
 # everywhere, host toolchain or not.
+# Only lines whose LEFT side is a bare soname count. ldd resolves the program
+# interpreter by running the host's loader, so it always reports the
+# interpreter as `<payload>/ld-linux-x86-64.so.2 => /lib64/ld-linux-x86-64.so.2`
+# -- a statement about ldd, not about the artifact, and a false positive that
+# failed this very check on CI. A real dependency has no slash on the left.
+host_lib_lines() {
+    ldd "$1" 2>/dev/null \
+        | grep -E '^[[:space:]]*[^/[:space:]]+ => +(/lib|/usr/lib|/lib64|/usr/lib64)/' \
+        || true
+}
+
 if command -v ldd > /dev/null 2>&1; then
-    host_libs=$(ldd "$bin" 2>/dev/null \
-                | grep -E '=> +(/lib|/usr/lib|/lib64|/usr/lib64)/' || true)
+    host_libs=$(host_lib_lines "$bin")
     if [[ -n "$host_libs" ]]; then
         echo "the artifact loads libraries from the host:"
         echo "$host_libs" | sed 's/^/  /'
@@ -147,8 +157,7 @@ EOF
 pfbin=$(find target -type f -name pf -path '*/bin/*' | head -1)
 [[ -n "$pfbin" ]] || { echo "no payload-first binary produced"; exit 1; }
 
-pf_host=$(ldd "$pfbin" 2>/dev/null \
-          | grep -E '=> +(/lib|/usr/lib|/lib64|/usr/lib64)/' || true)
+pf_host=$(host_lib_lines "$pfbin")
 if [[ -n "$pf_host" ]]; then
     echo "the payload-first artifact loads libraries from the host:"
     echo "$pf_host" | sed 's/^/  /'
