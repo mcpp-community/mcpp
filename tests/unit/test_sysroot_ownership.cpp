@@ -66,4 +66,22 @@ TEST(SysrootOwnership, SiblingPrefixIsNotContainment) {
         kRegistry, kProject));
 }
 
+// A directory whose NAME begins with two dots is not an escape. The first
+// version compared the relative path's text (`rfind("..", 0)`), which called
+// `/home/u/.mcpp/registry/..cache` an escape from the registry -- and did not
+// compile at all on Windows, where `native()` is a wstring. Containment is a
+// question about path components, so it is asked of components.
+TEST(SysrootOwnership, DotDotPrefixedNameIsNotAnEscape) {
+    EXPECT_FALSE(fb::sysroot_is_foreign(
+        kRegistry / "..cache" / "subos" / "default", kRegistry, kProject));
+}
+
+TEST(SysrootOwnership, PathIsUnderIsDirectlyTestable) {
+    EXPECT_TRUE(fb::path_is_under(kRegistry / "a" / "b", kRegistry));
+    EXPECT_TRUE(fb::path_is_under(kRegistry, kRegistry));
+    EXPECT_FALSE(fb::path_is_under(kRegistry.parent_path(), kRegistry));
+    EXPECT_FALSE(fb::path_is_under(kRegistry, {}));
+    EXPECT_FALSE(fb::path_is_under({}, kRegistry));
+}
+
 }  // namespace

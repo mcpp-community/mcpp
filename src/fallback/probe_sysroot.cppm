@@ -17,6 +17,22 @@ import mcpp.log;
 
 export namespace mcpp::fallback {
 
+// Does `child` sit under `anchor`?
+//
+// Spelled with path components rather than by inspecting the relative path's
+// text. `native()` is a wstring on Windows, so the obvious `rfind("..", 0)`
+// does not even compile there -- and where it does compile it is subtly wrong,
+// since a directory genuinely named `..cache` starts with those two
+// characters without escaping anything.
+bool path_is_under(const std::filesystem::path& child,
+                   const std::filesystem::path& anchor) {
+    if (anchor.empty() || child.empty()) return false;
+    auto rel = child.lexically_relative(anchor);
+    if (rel.empty()) return false;
+    static const std::filesystem::path kUp{".."};
+    return *rel.begin() != kUp;
+}
+
 // When GCC reports a baked "subos/default" sysroot that does not belong to
 // THIS toolchain's home, remap it to the equivalent sysroot under the
 // compiler's own xpkgs tree.
@@ -42,10 +58,8 @@ remap_xlings_baked_sysroot(std::string_view reportedPath,
         // Owned by this toolchain's registry? Then it is the right answer.
         auto registry = xpkgsOpt->parent_path().parent_path();
         std::error_code ec;
-        auto rel = std::filesystem::path(std::string(reportedPath))
-                       .lexically_relative(registry);
-        const bool inside = !rel.empty()
-                         && rel.native().rfind("..", 0) != 0;
+        const bool inside = path_is_under(
+            std::filesystem::path(std::string(reportedPath)), registry);
         if (inside && std::filesystem::exists(std::string(reportedPath), ec))
             return std::nullopt;
     }
@@ -58,6 +72,20 @@ remap_xlings_baked_sysroot(std::string_view reportedPath,
             return registrySysroot;
     }
     return std::nullopt;
+}
+
+// Does this sysroot belong to the same registry as the compiler that reported
+// it? Callers need this BEFORE deciding whether a usable sysroot is
+// acceptable: usability and ownership are independent, and a path can pass the
+// first while failing the second.
+bool sysroot_is_owned(std::string_view reportedPath,
+                      const std::filesystem::path& compilerBin) {
+    if (reportedPath.empty()) return false;
+    auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin);
+    // No registry to compare against -- nothing to contradict, so accept.
+    if (!xpkgs) return true;
+    return path_is_under(std::filesystem::path(std::string(reportedPath)),
+                         xpkgs->parent_path().parent_path());
 }
 
 // Is this sysroot foreign -- neither this mcpp home's registry nor a tree
@@ -76,12 +104,8 @@ bool sysroot_is_foreign(const std::filesystem::path& sysroot,
                         const std::filesystem::path& registryRoot,
                         const std::filesystem::path& projectRoot) {
     if (sysroot.empty()) return false;
-    auto under = [&](const std::filesystem::path& anchor) {
-        if (anchor.empty()) return false;
-        auto rel = sysroot.lexically_relative(anchor);
-        return !rel.empty() && rel.native().rfind("..", 0) != 0;
-    };
-    return !under(registryRoot) && !under(projectRoot);
+    return !path_is_under(sysroot, registryRoot)
+        && !path_is_under(sysroot, projectRoot);
 }
 
 // Parse a Clang .cfg file alongside the compiler binary for --sysroot=.

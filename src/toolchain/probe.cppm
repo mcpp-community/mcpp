@@ -291,20 +291,47 @@ probe_sysroot(const std::filesystem::path& compilerBin,
                                      mcpp::platform::null_redirect));
     if (r) {
         auto s = trim_line(*r);
-        if (!s.empty() && std::filesystem::exists(s)) {
-            if (usable(s)) return s;
+
+        // A usable sysroot that belongs to somebody else is still somebody
+        // else's. gcc records this path as a string when it is built and
+        // reports it forever after; on a machine with several checkouts the
+        // recorded one routinely exists AND carries headers, so accepting it
+        // on usability alone hands the build another project's tree. Measured
+        // right here: this repo's gcc reported a sysroot under an unrelated
+        // one, and every build took its headers.
+        //
+        // The ownership test lives inside remap_xlings_baked_sysroot, which is
+        // exactly why the order matters -- the early return below reached it
+        // only when the path was missing, so the case the remap exists for was
+        // the one case it never saw.
+        const bool ownedByThisHome =
+            !s.empty() && mcpp::fallback::sysroot_is_owned(s, compilerBin);
+
+        if (ownedByThisHome && usable(s)) return s;
+        if (!s.empty() && std::filesystem::exists(s) && !usable(s))
             mcpp::log::debug("probe", std::format(
                 "sysroot '{}' exists but lacks usr/include/stdlib.h — ignoring", s));
-        }
 
         // GCC bakes the build-time sysroot into the binary. For xlings-built
         // GCC this is a path like <buildhost>/.xlings/subos/default that
-        // doesn't exist on the user's machine. Remap via fallback module.
+        // doesn't exist on the user's machine -- or exists and belongs to a
+        // different one. Remap via fallback module.
         if (auto remapped = mcpp::fallback::remap_xlings_baked_sysroot(s, compilerBin)) {
             if (usable(*remapped)) return *remapped;
             mcpp::log::debug("probe", std::format(
                 "remapped sysroot '{}' lacks usr/include/stdlib.h — ignoring",
                 remapped->string()));
+        }
+
+        // Last resort: a foreign but usable sysroot beats no sysroot. This is
+        // the pre-existing behaviour, kept for machines that have no registry
+        // subos to remap to -- it is a worse answer, not a wrong one, and
+        // taking nothing here would break them outright.
+        if (!s.empty() && std::filesystem::exists(s) && usable(s)) {
+            mcpp::log::verbose("probe", std::format(
+                "using sysroot '{}', which is outside this toolchain's "
+                "registry — no equivalent found under it", s));
+            return std::filesystem::path(s);
         }
     }
 

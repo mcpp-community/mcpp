@@ -530,6 +530,66 @@ export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 }
 
 
+// PT_INTERP of an ELF, read directly.
+//
+// Not via `patchelf --print-interpreter`: this runs during prepare, where
+// patchelf is not guaranteed to be resolved, and a dependency on an external
+// tool for four fields of a header is a dependency that will be missing on
+// exactly the machine that needs the answer.
+std::string read_elf_interp(const std::filesystem::path& bin) {
+    std::ifstream is(bin, std::ios::binary);
+    if (!is) return {};
+    unsigned char ident[16]{};
+    is.read(reinterpret_cast<char*>(ident), sizeof ident);
+    if (!is || ident[0] != 0x7f || ident[1] != 'E'
+            || ident[2] != 'L' || ident[3] != 'F') return {};
+    const bool is64 = ident[4] == 2;
+    const bool le   = ident[5] == 1;
+    if (!is64 || !le) return {};   // the only shape payloads ship
+
+    auto u16 = [&](std::streamoff off) -> std::uint16_t {
+        is.seekg(off); unsigned char b[2]{};
+        is.read(reinterpret_cast<char*>(b), 2);
+        return static_cast<std::uint16_t>(b[0] | (b[1] << 8));
+    };
+    auto u64 = [&](std::streamoff off) -> std::uint64_t {
+        is.seekg(off); unsigned char b[8]{};
+        is.read(reinterpret_cast<char*>(b), 8);
+        std::uint64_t v = 0;
+        for (int i = 7; i >= 0; --i) v = (v << 8) | b[i];
+        return v;
+    };
+
+    const auto phoff     = u64(0x20);
+    const auto phentsize = u16(0x36);
+    const auto phnum     = u16(0x38);
+    if (!is || phoff == 0 || phentsize < 0x38 || phnum == 0) return {};
+
+    constexpr std::uint32_t kPtInterp = 3;
+    for (std::uint16_t i = 0; i < phnum; ++i) {
+        const auto ph = static_cast<std::streamoff>(phoff)
+                      + static_cast<std::streamoff>(i) * phentsize;
+        is.seekg(ph);
+        unsigned char t[4]{};
+        is.read(reinterpret_cast<char*>(t), 4);
+        if (!is) return {};
+        const std::uint32_t type =
+            static_cast<std::uint32_t>(t[0]) | (t[1] << 8)
+          | (t[2] << 16) | (static_cast<std::uint32_t>(t[3]) << 24);
+        if (type != kPtInterp) continue;
+        const auto offset = u64(ph + 0x08);
+        const auto filesz = u64(ph + 0x20);
+        if (filesz == 0 || filesz > 4096) return {};
+        std::string str(static_cast<std::size_t>(filesz), '\0');
+        is.seekg(static_cast<std::streamoff>(offset));
+        is.read(str.data(), static_cast<std::streamsize>(filesz));
+        if (!is) return {};
+        if (auto z = str.find('\0'); z != std::string::npos) str.resize(z);
+        return str;
+    }
+    return {};
+}
+
 std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
     if (compilerBin.empty()) return {};
     std::error_code ec;
@@ -568,6 +628,21 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
                 return r;
         }
     }
+
+    // The compiler's OWN interpreter.
+    //
+    // The two sources above are files mcpp used to write, and mcpp no longer
+    // writes them -- so on a machine where the toolchain was installed after
+    // that change they simply are not there, and the compatibility path that
+    // depends on them answers nothing. That is not hypothetical: it is what
+    // turned CI red while every existing developer machine, which still has
+    // the files from before, stayed green.
+    //
+    // PT_INTERP is produced by the patchelf walk, which still runs on every
+    // install, and it names the glibc payload this toolchain was aligned to --
+    // the same fact the specs held, from a mechanism that has not gone away.
+    if (auto r = from_text(read_elf_interp(compilerBin)); !r.empty())
+        return r;
     return {};
 }
 

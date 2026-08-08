@@ -712,14 +712,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // host's /lib or, on hosts without a system toolchain, passes bare names
     // that lld cannot open — issue #195), -L/-rpath for -lc/-lm, and the
     // payload's dynamic linker.
+    //
+    // Only for clang-with-cfg, and only in PayloadFirst. Every other
+    // combination already has these flags: the gcc branch above assigns
+    // `link_toolchain_flags = lm.link_flags(...)` for any mode but None, and
+    // the clang branch adds them for Sysroot. Emitting them here as well put
+    // the whole C-runtime group on the line twice -- harmless to correctness,
+    // but the link line has a hard 128KiB ceiling (MAX_ARG_STRLEN) that real
+    // workspaces already spend 43% of.
     std::string payload_ld;
-    if (lm.mode == mcpp::toolchain::CLibMode::PayloadFirst) {
-        // Emitted for gcc too now. It used to be gated on `isClangWithCfg`,
-        // which left gcc's run-side addressing to its install-time specs
-        // while the compile side moved per build.
-        if (isClangWithCfg || !lm.clangDriver)
-            payload_ld = lm.link_flags(ninjaEsc);
-    }
+    if (isClangWithCfg
+     && lm.mode == mcpp::toolchain::CLibMode::PayloadFirst)
+        payload_ld = lm.link_flags(ninjaEsc);
     // GCC: replace the payload's patched `*link:` with the pristine one, so
     // its accumulated rpath entries do not reach the artifact. Must come
     // BEFORE our own -Wl flags is not required (specs are processed by the
