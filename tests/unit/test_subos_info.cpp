@@ -249,4 +249,86 @@ TEST(SubosInfo, UnknownOpIsDroppedLikeXlingsDrops) {
     EXPECT_EQ(env[0].second, "/yes");
 }
 
+// A `set` is a default; an exported value wins.
+//
+// The resolved pairs REPLACE the variable in the child (they go in as
+// extraEnv), so a `set` that ignores the caller's environment overwrites it
+// silently. Recipes are written on the opposite assumption: xlings'
+// wsl-gl-host-link documents that a user who exports GALLIUM_DRIVER=llvmpipe
+// keeps it, and that escape hatch did not exist -- `export
+// GALLIUM_DRIVER=llvmpipe; mcpp run` still ran with the subos value and still
+// failed (mcpp#382).
+TEST(SubosResolveEnv, SetDoesNotOverrideAnExportedValue) {
+    Tmp t;
+    t.write(R"({"workspace":{},"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
+        "envs":{"glibc@2.39":[{"var":"GALLIUM_DRIVER","op":"set","value":"d3d12"}]}}})");
+    auto info = su::read(t.dir);
+    auto out = su::resolve_env(
+        info, t.dir, [](std::string_view v) -> std::optional<std::string> {
+            if (v == "GALLIUM_DRIVER") return std::string("llvmpipe");
+            return std::nullopt;
+        });
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].first, "GALLIUM_DRIVER");
+    EXPECT_EQ(out[0].second, "llvmpipe") << "the user's export must survive";
+}
+
+TEST(SubosResolveEnv, SetAppliesWhenNothingIsExported) {
+    Tmp t;
+    t.write(R"({"workspace":{},"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
+        "envs":{"glibc@2.39":[{"var":"GALLIUM_DRIVER","op":"set","value":"d3d12"}]}}})");
+    auto info = su::read(t.dir);
+    auto out = su::resolve_env(
+        info, t.dir, [](std::string_view) { return std::optional<std::string>{}; });
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].second, "d3d12");
+}
+
+// An empty export is not an export.
+TEST(SubosResolveEnv, EmptyAmbientDoesNotBlockASet) {
+    Tmp t;
+    t.write(R"({"workspace":{},"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
+        "envs":{"glibc@2.39":[{"var":"X","op":"set","value":"v"}]}}})");
+    auto info = su::read(t.dir);
+    auto out = su::resolve_env(
+        info, t.dir, [](std::string_view) { return std::optional<std::string>(""); });
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].second, "v");
+}
+
+// `prepend` prepends TO the caller's value rather than replacing it. Same
+// reason: the pair replaces the variable, so emitting the declared value alone
+// discards whatever search path the user had.
+TEST(SubosResolveEnv, PrependKeepsTheExportedValue) {
+    Tmp t;
+    t.write(R"({"workspace":{},"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
+        "envs":{"glibc@2.39":[{"var":"LD_LIBRARY_PATH","op":"prepend","value":"/sub/lib"}]}}})");
+    auto info = su::read(t.dir);
+    auto out = su::resolve_env(
+        info, t.dir, [](std::string_view v) -> std::optional<std::string> {
+            if (v == "LD_LIBRARY_PATH") return std::string("/user/lib");
+            return std::nullopt;
+        });
+    ASSERT_EQ(out.size(), 1u);
+    const auto sep = mcpp::platform::env::path_list_separator();
+    EXPECT_EQ(out[0].second, std::string("/sub/lib") + sep + "/user/lib");
+}
+
+// Already there: prepending again would grow the list on every nested run.
+TEST(SubosResolveEnv, PrependIsIdempotentAgainstTheExportedValue) {
+    Tmp t;
+    t.write(R"({"workspace":{},"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
+        "envs":{"glibc@2.39":[{"var":"LD_LIBRARY_PATH","op":"prepend","value":"/sub/lib"}]}}})");
+    auto info = su::read(t.dir);
+    const auto sep = mcpp::platform::env::path_list_separator();
+    const auto existing = std::string("/sub/lib") + sep + "/user/lib";
+    auto out = su::resolve_env(
+        info, t.dir, [&](std::string_view v) -> std::optional<std::string> {
+            if (v == "LD_LIBRARY_PATH") return existing;
+            return std::nullopt;
+        });
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].second, existing);
+}
+
 }  // namespace

@@ -361,7 +361,15 @@ compute_subos_env(const mcpp::build::BuildPlan& plan) {
     // diagnostic path in doctor.
     if (!info.note.empty())
         mcpp::log::verbose("subos", info.note);
-    return mcpp::xlings::subos::resolve_env(info, dir);
+    // Resolved AGAINST the caller's environment, not in a vacuum: these
+    // entries replace the variable in the child, so a `set` that ignores an
+    // exported value overwrites it and a `prepend` that ignores it drops it.
+    return mcpp::xlings::subos::resolve_env(
+        info, dir, [](std::string_view v) -> std::optional<std::string> {
+            if (const char* e = std::getenv(std::string(v).c_str()))
+                return std::string(e);
+            return std::nullopt;
+        });
 }
 
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
@@ -877,7 +885,13 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
         auto subosDir = subos_dir_for_run(std::filesystem::path(match->subosDir));
         if (!subosDir.empty()) {
             auto info = mcpp::xlings::subos::read(subosDir);
-            for (auto& kv : mcpp::xlings::subos::resolve_env(info, subosDir))
+            for (auto& kv : mcpp::xlings::subos::resolve_env(
+                     info, subosDir,
+                     [](std::string_view v) -> std::optional<std::string> {
+                         if (const char* e = std::getenv(std::string(v).c_str()))
+                             return std::string(e);
+                         return std::nullopt;
+                     }))
                 childEnv.push_back(std::move(kv));
         }
     }
