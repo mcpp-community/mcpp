@@ -78,6 +78,16 @@ jobs:
           "$MCPP" self config
           # Pin the global default so test 28 (default-toolchain path) gets a
           # deterministic GNU answer instead of an auto-install pick.
+          #
+          # Installed explicitly, not assumed. `toolchain default` requires the
+          # toolchain to be present, and nothing in this job puts it there:
+          # building mcpp above uses whatever first-run picks (llvm). It worked
+          # only because the sandbox cache happened to carry a gcc some earlier
+          # run had installed -- so the moment the cache key changed (an xlings
+          # pin bump moves the whole prefix), every e2e shard failed with
+          # `gcc@16.1.0 is not installed` before running a single test.
+          # Warm runs re-install nothing; this costs a lookup.
+          "$MCPP" toolchain install gcc 16.1.0
           "$MCPP" toolchain default gcc@16.1.0
           # Warm musl once so fresh-home e2e tests inherit the payload.
           "$MCPP" toolchain install gcc 16.1.0-musl
