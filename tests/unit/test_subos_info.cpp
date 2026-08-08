@@ -37,14 +37,14 @@ TEST(SubosInfo, ReadsRuntimeAndEnvDeclarations) {
       "subos_info": {
         "schema_version": 1,
         "runtime": "glibc@2.39",
-        "envs": [
-          { "binding": "mesa@25.0.7.1", "decls": [
+        "envs": {
+          "mesa@25.0.7.1": [
             { "var": "LIBGL_DRIVERS_PATH", "op": "prepend",
               "value": "${subosdir}/usr/lib/dri" },
             { "var": "XDG_DATA_DIRS", "op": "prepend",
               "value": "${subosdir}/share" }
-          ]}
-        ]
+          ]
+        }
       }
     })");
     auto info = su::read(t.dir);
@@ -64,8 +64,8 @@ TEST(SubosInfo, ReadsRuntimeAndEnvDeclarations) {
 TEST(SubosInfo, ResolvesSubosdirPlaceholder) {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
-      "envs":[{"binding":"mesa@1","decls":[
-        {"var":"LIBGL_DRIVERS_PATH","op":"prepend","value":"${subosdir}/usr/lib/dri"}]}]}})");
+      "envs":{"mesa@1":[
+        {"var":"LIBGL_DRIVERS_PATH","op":"prepend","value":"${subosdir}/usr/lib/dri"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
     EXPECT_EQ(env[0].first, "LIBGL_DRIVERS_PATH");
@@ -81,11 +81,9 @@ TEST(SubosInfo, ResolvesSubosdirPlaceholder) {
 // EGL vendor directory. `prepend` joins them; it must not drop either.
 TEST(SubosInfo, PrependJoinsProvidersInOrder) {
     Tmp t;
-    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":[
-      {"binding":"a-mesa@1","decls":[
-        {"var":"V","op":"prepend","value":"${subosdir}/one"}]},
-      {"binding":"b-vendor@1","decls":[
-        {"var":"V","op":"prepend","value":"${subosdir}/two"}]}]}})");
+    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
+      "a-mesa@1":[{"var":"V","op":"prepend","value":"${subosdir}/one"}],
+      "b-vendor@1":[{"var":"V","op":"prepend","value":"${subosdir}/two"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
     const auto sep = mcpp::platform::env::path_list_separator();
@@ -98,9 +96,9 @@ TEST(SubosInfo, PrependJoinsProvidersInOrder) {
 // would otherwise grow the variable without bound.
 TEST(SubosInfo, PrependDeduplicates) {
     Tmp t;
-    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":[
-      {"binding":"a@1","decls":[{"var":"V","op":"prepend","value":"${subosdir}/x"}]},
-      {"binding":"b@1","decls":[{"var":"V","op":"prepend","value":"${subosdir}/x"}]}]}})");
+    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
+      "a@1":[{"var":"V","op":"prepend","value":"${subosdir}/x"}],
+      "b@1":[{"var":"V","op":"prepend","value":"${subosdir}/x"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
     // One entry, not two. The de-duplication has to split on the PLATFORM's
@@ -114,9 +112,9 @@ TEST(SubosInfo, PrependDeduplicates) {
 // `set` replaces rather than joins — xlings's own precedence.
 TEST(SubosInfo, SetReplaces) {
     Tmp t;
-    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":[
-      {"binding":"a@1","decls":[{"var":"V","op":"prepend","value":"/one"}]},
-      {"binding":"b@1","decls":[{"var":"V","op":"set","value":"/two"}]}]}})");
+    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
+      "a@1":[{"var":"V","op":"prepend","value":"/one"}],
+      "b@1":[{"var":"V","op":"set","value":"/two"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
     EXPECT_EQ(env[0].second, "/two");
@@ -175,6 +173,80 @@ TEST(SubosInfo, FamilyOfMirrorsXlings) {
     EXPECT_EQ(su::family_of("nonsense@1"), "unknown");
     // No '@' at all is not a binding; it must not be read as one.
     EXPECT_EQ(su::family_of("glibc"), "linux-x86_64-glibc");
+}
+
+
+// A VERBATIM capture of what a real xlings wrote, after `xlings install
+// graphics` on an NVIDIA host. Reformatted for width and nothing else -- keys,
+// nesting and spelling are as found on disk.
+//
+// This test exists because its absence shipped a broken feature. The first
+// version of this file hand-wrote every fixture in a shape the reader also
+// expected and xlings never produces: `envs` as an array of {binding, decls}.
+// Ten tests passed against a format that does not exist, and against a real
+// subos the released build applied no variables at all -- silently, because
+// "no providers" and "nothing declared" look identical.
+//
+// A fixture composed from the same understanding as the parser cannot catch
+// that. Only one taken from the writer can.
+TEST(SubosInfo, RealXlingsCapture) {
+    Tmp t;
+    t.write(R"({
+      "subos_info": {
+        "created_at": "2026-08-08T01:40:00Z",
+        "created_by": "xlings 2026.8.7.1",
+        "runtime": "glibc@2.39",
+        "schema_version": 1,
+        "envs": {
+          "mesa@25.0.7.1": [
+            {"op": "prepend", "value": "${subosdir}/usr/lib/dri", "var": "LIBGL_DRIVERS_PATH"},
+            {"op": "prepend", "value": "${subosdir}/share/glvnd/egl_vendor.d", "var": "__EGL_VENDOR_LIBRARY_DIRS"},
+            {"op": "prepend", "value": "${subosdir}/share", "var": "XDG_DATA_DIRS"}
+          ],
+          "nvidia-gl-host-link@0.1.1": [
+            {"op": "prepend", "value": "${subosdir}/share/glvnd/egl_vendor.d", "var": "__EGL_VENDOR_LIBRARY_DIRS"}
+          ]
+        }
+      },
+      "workspace": {}
+    })");
+
+    auto info = su::read(t.dir);
+    ASSERT_TRUE(info.present);
+    EXPECT_EQ(info.runtime, "glibc@2.39");
+    ASSERT_EQ(info.providers.size(), 2u);
+    EXPECT_EQ(info.providers[0].binding, "mesa@25.0.7.1");
+    EXPECT_EQ(info.providers[1].binding, "nvidia-gl-host-link@0.1.1");
+
+    auto env = su::resolve_env(info, t.dir);
+    ASSERT_EQ(env.size(), 3u) << "all three graphics variables must be produced";
+
+    std::map<std::string, std::string> byVar;
+    for (auto& [k, v] : env) byVar[k] = v;
+    const auto sep = mcpp::platform::env::path_list_separator();
+    EXPECT_EQ(byVar["LIBGL_DRIVERS_PATH"], t.dir.string() + "/usr/lib/dri");
+    EXPECT_EQ(byVar["XDG_DATA_DIRS"],      t.dir.string() + "/share");
+    // Both providers name the same vendor directory; de-duplication must
+    // leave exactly one, or libglvnd sees it twice and enumerates the device
+    // twice -- which is a defect xlings hit on its own side.
+    EXPECT_EQ(byVar["__EGL_VENDOR_LIBRARY_DIRS"],
+              t.dir.string() + "/share/glvnd/egl_vendor.d");
+    EXPECT_EQ(byVar["__EGL_VENDOR_LIBRARY_DIRS"].find(sep), std::string::npos);
+}
+
+// xlings drops a declaration whose op it does not recognise. A reader more
+// permissive than its writer eventually applies something the writer meant to
+// reject, so this asserts the same refusal rather than a tolerant guess.
+TEST(SubosInfo, UnknownOpIsDroppedLikeXlingsDrops) {
+    Tmp t;
+    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
+      "a@1":[{"var":"V","op":"append","value":"/nope"},
+             {"var":"W","op":"prepend","value":"/yes"},
+             {"var":"","op":"prepend","value":"/no-name"}]}}})");
+    auto env = su::resolve_env(su::read(t.dir), t.dir);
+    ASSERT_EQ(env.size(), 1u);
+    EXPECT_EQ(env[0].first, "W");
+    EXPECT_EQ(env[0].second, "/yes");
 }
 
 }  // namespace

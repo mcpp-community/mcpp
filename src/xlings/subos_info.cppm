@@ -131,28 +131,39 @@ Info read(const std::filesystem::path& subosDir) {
     if (auto v = it->find("runtime"); v != it->end() && v->is_string())
         info.runtime = v->get<std::string>();
 
-    if (auto envs = it->find("envs"); envs != it->end() && envs->is_array()) {
-        for (auto const& p : *envs) {
-            if (!p.is_object()) continue;
+    // `envs` is an OBJECT keyed by binding, whose values are arrays of
+    // declarations:
+    //
+    //   "envs": { "mesa@25.0.7.1": [ {"var":…,"op":…,"value":…}, … ], … }
+    //
+    // Transcribed from xlings's own reader (core/subos/manifest.cppm), not
+    // from a model of it. The first version of this file expected an array of
+    // {binding, decls} objects — a shape xlings never writes — and its tests
+    // hand-wrote JSON in that same invented shape, so both agreed and both
+    // were wrong. Against a real subos the loop simply never ran and every
+    // variable came back unset, silently. That is why the fixture below is a
+    // verbatim capture of real output rather than something composed here.
+    if (auto envs = it->find("envs"); envs != it->end() && envs->is_object()) {
+        for (auto e = envs->begin(); e != envs->end(); ++e) {
+            if (!e.value().is_array()) continue;
             Provider prov;
-            if (auto b = p.find("binding"); b != p.end() && b->is_string())
-                prov.binding = b->get<std::string>();
-            if (auto ds = p.find("decls"); ds != p.end() && ds->is_array()) {
-                for (auto const& d : *ds) {
-                    if (!d.is_object()) continue;
-                    EnvDecl e;
-                    if (auto x = d.find("var");   x != d.end() && x->is_string())
-                        e.var = x->get<std::string>();
-                    if (auto x = d.find("op");    x != d.end() && x->is_string())
-                        e.op = x->get<std::string>();
-                    if (auto x = d.find("value"); x != d.end() && x->is_string())
-                        e.value = x->get<std::string>();
-                    // A declaration with no variable name is not a partial
-                    // declaration to be guessed at — it is malformed input,
-                    // and the right thing is to leave it out rather than
-                    // invent a name for it.
-                    if (!e.var.empty()) prov.decls.push_back(std::move(e));
-                }
+            prov.binding = e.key();
+            for (auto const& d : e.value()) {
+                if (!d.is_object()) continue;
+                EnvDecl decl;
+                if (auto x = d.find("var");   x != d.end() && x->is_string())
+                    decl.var = x->get<std::string>();
+                if (auto x = d.find("op");    x != d.end() && x->is_string())
+                    decl.op = x->get<std::string>();
+                if (auto x = d.find("value"); x != d.end() && x->is_string())
+                    decl.value = x->get<std::string>();
+                // xlings drops a declaration whose var is empty or whose op is
+                // neither "set" nor "prepend". Matched exactly: a reader that
+                // is more permissive than the writer will one day apply
+                // something the writer considers malformed.
+                if (decl.var.empty()) continue;
+                if (decl.op != "set" && decl.op != "prepend") continue;
+                prov.decls.push_back(std::move(decl));
             }
             info.providers.push_back(std::move(prov));
         }

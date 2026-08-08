@@ -68,6 +68,11 @@ struct BuildCacheEntry {
     // property and would otherwise be unknowable on the fast path -- which
     // has no toolchain to derive it from.
     std::string subosDir;
+    // Was the line present at all? An EMPTY subosDir is a legitimate answer
+    // (a system toolchain outside the xpkgs store has no subos), so it cannot
+    // stand in for "this cache predates the field" -- and those two need
+    // opposite treatment: the first runs, the second must rebuild once.
+    bool        subosRecorded = false;
     // The resolved profile this entry was built for. Entries used to be keyed
     // by target triple alone, and the fast paths only refuse to run when an
     // EXPLICIT --profile/--dev/--release is passed — so a bare `mcpp build`
@@ -154,7 +159,8 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
         // using the cache at all -- the program would work once and then
         // silently stop finding its runtime data.
         if (haveNextLine && line.starts_with("subos=")) {
-            e.subosDir = line.substr(6);
+            e.subosDir      = line.substr(6);
+            e.subosRecorded = true;
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
         // Optional profile line. Same back-compat contract as the two blocks
@@ -201,7 +207,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     // Insert at front (MRU).
     BuildCacheEntry newEntry{targetTriple, outputDir.string(), ninjaProgram, fingerprintHex,
                              runtimeEnvKey, runtimeEnvValue, std::move(runTargets),
-                             runEnvKey, runEnvValue, subosDir, profile, cacheMode};
+                             runEnvKey, runEnvValue, subosDir, /*subosRecorded=*/true,
+                             profile, cacheMode};
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -774,6 +781,18 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
         ninjaProgram = ninjaProgram.substr(1, ninjaProgram.size() - 2);
     if (match->runtimeEnvKey.empty())
         return std::nullopt; // old cache entry; go through prepare_build once
+    // Written before this mcpp knew about subos environments (mcpp#352). Taking
+    // the fast path here would run the program without them -- which is the
+    // defect this field exists to fix, surviving an upgrade.
+    //
+    // It survives it for a long time, too: the fast path's identity is the
+    // profile, the cache mode and the resource list, and its fingerprint check
+    // compares a cached entry against ITSELF. Neither notices that a different
+    // mcpp wrote the entry, so without this line an upgraded mcpp would reuse a
+    // pre-upgrade build until something else happened to invalidate it. Measured
+    // on a real upgrade from 2026.8.7.1, not reasoned about.
+    if (!match->subosRecorded)
+        return std::nullopt; // predates `subos=`; rebuild once, then it is there
 
     // P1: verify fingerprint matches the outputDir basename.
     if (!match->fingerprint.empty()) {
