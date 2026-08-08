@@ -177,6 +177,68 @@ RFC 说「envelope 的价值全在 `data` 被真正版本化和文档化上」,�
 
 ---
 
+## 4.5 追加优化项:CDB 的 `arguments` 带着 shell 引号(实测复现,不限 Windows)
+
+用户报告 Windows 上 CDB 里的 `-fmodule-file=` 带多余双引号,每次构建后要手工删掉才能
+配好 clangd。**是真问题,而且比报告的更严重** —— 在 Linux 上用带空格的项目路径复现了
+同一形状:
+
+```
+'-fmodule-file=std=/tmp/.../my project/.../std.pcm       <- 闭合引号没了
+'-fmodule-file=std.compat=/tmp/.../my project/.../
+'-fprebuilt-module-path=/tmp/.../my project/.../pcm.cache'
+```
+
+前两条的**闭合引号被切掉了**:一个参数被从中间劈成两半,还带着一个孤立的开引号。
+clangd 逐字 exec `arguments`(不经 shell),于是它拿到的是
+`'-fmodule-file=std=/tmp/.../my` 和 `project/.../std.pcm'` 两个参数。
+
+### 机制
+
+四步,每一步单独看都合理:
+
+1. `flags.cppm::shell_quote_arg` 的 `kNeedsQuote` 含反斜杠和空格 ——
+   **Windows 路径必然含反斜杠**,所以在 Windows 上*每个*带路径的 flag 都被加引号;
+   Linux 上只有路径含空格时才触发。这解释了为什么它被当成 Windows 专属问题。
+2. 加引号是为了让 flag 在 ninja 的 `sh -c "<整条命令>"` 里存活 —— 对 ninja 是**对的**。
+3. `compile_commands.cppm::split_flags` 把那条字符串重新切成 token,并撤销 ninja 的
+   `$ ` / `$:` / `$$` 转义。
+4. 但它**不认引号**:既不剥掉,也不把引号内的空格当作非分隔符。
+
+### 这是同一个「注释写对了一半」
+
+`split_flags` 自己的注释把原则写对了:
+
+> CDB consumers like clangd exec the `arguments` array literally — no ninja
+> involved — so escaped chars must be undone
+
+它识别出**ninja 转义**要撤销,却漏了**同一个理由下**的 shell 引号。代码实现了原则的
+一半。与本文档 §2 是同一形状。
+
+### 判据与修法
+
+**判据(必须是这个,不能是「clangd 能用了」)**:CDB 的 `arguments` 里,任何 token 都
+不得以引号开头或结尾;且带空格的路径必须是**一个** token。前者防引号泄漏,后者防这次
+发现的「劈成两半」。
+
+两条路:
+
+- **(a) 让 `split_flags` 认引号**(建议)。它本来就是那个分词器,分词器认引号是本分。
+  注意顺序:ninja 的 `$ ` 反转义必须发生在**引号内**,否则被引号包住的空格会先把 token
+  切断 —— 这正是现在发生的事。
+- (b) 让 CDB 不再从「拼好的 shell 字符串」重新分词,而是让 argv 以 `vector<string>`
+  一路传下来。更干净,但要动 `compute_flags` 的返回形状,范围大得多。
+
+**回归测试**:带空格路径的项目 + llvm 工具链(gcc 不发 `-fmodule-file`,覆盖不到),
+断言上述判据。这条在 Linux 上就能跑,不需要 Windows 机器 —— 而它至今没被发现,正是
+因为所有 e2e 的项目路径都不含空格。
+
+### 与本协议的关系
+
+CDB 是 mcpp 已经在发的**机器可读输出**,只是没走 envelope。它今天就在破坏一个真实
+客户端(clangd),而且用户在手工修补它。**建议把它排在阶段 1 之前**:协议做得再好,
+也救不了一个内容本身就坏掉的出口。
+
 ## 5. 与 #372 的关系
 
 同意 RFC §五 的 A/B/C 拆分。补充一点:A 部分里的
@@ -190,7 +252,12 @@ RFC 说「envelope 的价值全在 `data` 被真正版本化和文档化上」,�
 1. **`mcpplibs.cmdline` 的解析错误改走 stderr** —— 这是跨包改动且影响所有使用者,
    是否接受?若不动依赖,替代方案是 mcpp 不用 `App::run()` 的内建错误打印、自己接管
    `ParseResult`(mcpp 侧约 20 行,但要覆盖每个命令入口)。
-2. 未知格式**走 stderr + rc=2**(本文 §3 阶段 0.2)还是 RFC 原案的 **stdout +
-   envelope**?我倾向前者,理由见 §3;但若客户端强烈希望「任何情况下 stdout 都是
-   JSON」,后者也自洽 —— 需要先定,因为它决定 §2.2 的客户端规则怎么写。
-3. `destructive` 静态表放进 `--protocol-version` 输出 —— 是否接受(§2.3)?
+2. `destructive` 静态表放进 `--protocol-version` 输出 —— 是否接受(§2.3)?
+
+## 7. 已定(2026-08-08)
+
+- **未知格式走 stderr + rc=2**(不是 stdout + envelope)。客户端按 §2.2 的正向识别
+  规则,stdout 无 JSON 即判定为「不支持」,语义完整,且一个还不知道该输出什么格式的
+  请求不往协议通道写东西。
+- **`pack --format tar|dir` 声明为例外**,不加 `--layout` 别名。它没有 stdout 机器
+  输出,不参与本协议;为一个不存在的一致性付迁移成本不值。
