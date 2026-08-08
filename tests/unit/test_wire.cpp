@@ -158,4 +158,90 @@ TEST(WireFormat, LegacyJsonIsNotTheSameFormatAsJson) {
     EXPECT_NE(w::Format::LegacyJson, w::Format::Json);
 }
 
+// ── Golden shapes, one per kind ────────────────────────────────────────────
+//
+// docs/11-machine-output.md promises that within a kindVersion fields are
+// added and never removed or renamed. A promise nobody can break is the thing
+// this whole module was written against — `xlings interface --list` declares
+// 20 capabilities whose outputSchema is, for all 20, only
+// `{"exitCode": integer}`. So the promise is enforced here: these lists are
+// the published key set, and removing or renaming one turns this file red.
+//
+// Adding a field does NOT turn it red, deliberately — that is the one change
+// the contract allows.
+namespace {
+
+void expect_has_keys(const nlohmann::json& obj,
+                     std::initializer_list<const char*> keys,
+                     std::string_view what) {
+    for (auto k : keys)
+        EXPECT_TRUE(obj.contains(k))
+            << what << " lost published key '" << k
+            << "'. Removing or renaming one is a breaking change: bump the "
+               "kind's version in mcpp.wire and say so in "
+               "docs/11-machine-output.md.";
+}
+
+}  // namespace
+
+TEST(WireGolden, EnvelopeKeySet) {
+    auto j = w::to_json(w::Envelope{.kind = "mcpp.env"});
+    expect_has_keys(j, {"schemaVersion", "kind", "kindVersion", "effects",
+                        "mcpp", "data", "diagnostics"}, "the envelope");
+    expect_has_keys(j["mcpp"], {"version", "protocol"}, "envelope.mcpp");
+    expect_has_keys(j["mcpp"]["protocol"], {"min", "max"}, "envelope.mcpp.protocol");
+}
+
+TEST(WireGolden, DiagnosticKeySet) {
+    auto j = w::to_json(w::Envelope{
+        .kind = "mcpp.env",
+        .diagnostics = {{.code = "C", .message = "m", .path = "p",
+                         .range = w::Range{{1, 1}, {1, 2}}}}});
+    expect_has_keys(j["diagnostics"][0],
+                    {"code", "severity", "source", "message", "path", "range"},
+                    "a diagnostic");
+    expect_has_keys(j["diagnostics"][0]["range"], {"start", "end"}, "a range");
+    expect_has_keys(j["diagnostics"][0]["range"]["start"], {"line", "column"},
+                    "a position");
+}
+
+TEST(WireGolden, ProtocolDocumentKeySet) {
+    auto j = w::protocol_document({{"self env", {w::Effect::InitMcppHome}}});
+    expect_has_keys(j, {"schemaVersion", "kind", "mcpp", "envelope", "kinds",
+                        "commands"}, "the protocol document");
+    expect_has_keys(j["envelope"], {"min", "max"}, "protocol.envelope");
+    expect_has_keys(j["commands"]["self env"], {"effects"}, "a command entry");
+}
+
+// Every effect name is part of the contract: a client matches on these
+// strings, so renaming one silently changes what a gate lets through.
+TEST(WireGolden, EffectNamesAreStable) {
+    struct { w::Effect e; const char* name; } const expected[]{
+        {w::Effect::InitMcppHome,     "init-mcpp-home"},
+        {w::Effect::ReadProject,      "read-project"},
+        {w::Effect::WriteProject,     "write-project"},
+        {w::Effect::WriteGlobalCache, "write-global-cache"},
+        {w::Effect::Network,          "network"},
+        {w::Effect::ExecBuildScript,  "exec-build-script"},
+    };
+    for (auto const& x : expected)
+        EXPECT_EQ(w::effect_name(x.e), x.name)
+            << "effect names are matched by clients; renaming one changes "
+               "what an untrusted-workspace gate admits";
+}
+
+TEST(WireGolden, SeverityNamesAreStable) {
+    EXPECT_EQ(w::severity_name(w::Severity::Error),   "error");
+    EXPECT_EQ(w::severity_name(w::Severity::Warning), "warning");
+    EXPECT_EQ(w::severity_name(w::Severity::Note),    "note");
+}
+
+// The kinds this build claims to speak. A client reads this list to decide
+// whether to bother calling; dropping one silently is a breaking change.
+TEST(WireGolden, DeclaredKinds) {
+    auto j = w::protocol_document({});
+    expect_has_keys(j["kinds"], {"mcpp.env", "mcpp.xpkg", "mcpp.cache"},
+                    "the kind list");
+}
+
 }  // namespace
