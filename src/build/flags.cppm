@@ -315,10 +315,24 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // ninja-$-escape and shell-quote per token (#234) so an include dir
     // whose name contains a space can't silently split into two shell words
     // once ninja hands the resolved command line to the shell.
+    // The one place this file turns a manifest include entry into a path.
+    // make_preferred: a multi-segment TOML entry like `generated/inc` keeps
+    // its `/` on MSVC, and the bare `projectRoot / inc` join would be MIXED —
+    // reaching both the ninja command line and the CDB's arguments (via
+    // f.cxx → split_flags). Same rule as every other manifest-path ingestion
+    // point (#390); no-op on POSIX. ONE lambda because the same join is needed
+    // four times in this function — {include_dirs, include_dirs_after} × {the
+    // C/C++ token list, the NASM one} — and re-deriving it per site is how the
+    // two channels drifted apart in the first place.
+    auto abs_native = [&](const std::filesystem::path& inc) {
+        auto p = inc.has_root_path() ? inc : (plan.projectRoot / inc);
+        p.make_preferred();
+        return p;
+    };
+
     std::vector<std::string> includeTokens;
     for (auto& inc : plan.manifest.buildConfig.includeDirs) {
-        std::filesystem::path p = inc.has_root_path() ? inc : (plan.projectRoot / inc);
-        includeTokens.push_back(include_token(d, p));
+        includeTokens.push_back(include_token(d, abs_native(inc)));
     }
     // #249: `[build] include_dirs_after` — searched AFTER the toolchain's
     // system dirs via -idirafter (gcc+clang), so entries can't shadow
@@ -327,10 +341,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // (documented degradation; clang-MSVC uses the gnu dialect).
     const bool msvcInclude = d.includePrefix == std::string_view("/I");
     for (auto& inc : plan.manifest.buildConfig.includeDirsAfter) {
-        std::filesystem::path ip(inc);
-        std::filesystem::path p = ip.has_root_path() ? ip : (plan.projectRoot / ip);
         includeTokens.push_back(
-            include_token(d, p, msvcInclude ? "/I" : "-idirafter"));
+            include_token(d, abs_native(inc), msvcInclude ? "/I" : "-idirafter"));
     }
     std::string include_flags;
     for (auto& t : includeTokens) {
@@ -529,17 +541,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // re-spelt with -I regardless of dialect (nasm ≥2.14 inserts a missing
     // path separator itself); DWARF debug info exists on ELF only.
     if (!plan.nasmPath.empty()) {
+        // Same abs_native join as the C/C++ channel above — one decision, one
+        // implementation. Two knock-on effects, both wanted: the entry is now
+        // spelt with native separators (#390), and the "already rooted?" test
+        // becomes has_root_path() instead of is_absolute(), so a root-relative
+        // `/x` entry is left alone here exactly as it is for the C/C++ include
+        // list. The two predicates only differ on Windows, and only for that
+        // spelling — where NASM disagreeing with the compiler about the SAME
+        // `include_dirs` key was the bug, not the feature.
         std::string nasm_includes;
         for (auto& inc : plan.manifest.buildConfig.includeDirs) {
-            auto abs = inc.is_absolute() ? inc : (plan.projectRoot / inc);
-            nasm_includes += " -I" + escape_path(abs);
+            nasm_includes += " -I" + escape_path(abs_native(inc));
         }
         // #249: nasm has no system header dirs to defer to — after-dirs
         // degrade to plain -I appended at the end.
         for (auto& inc : plan.manifest.buildConfig.includeDirsAfter) {
-            std::filesystem::path ip(inc);
-            auto abs = ip.is_absolute() ? ip : (plan.projectRoot / ip);
-            nasm_includes += " -I" + escape_path(abs);
+            nasm_includes += " -I" + escape_path(abs_native(inc));
         }
         std::string nasm_debug;
         if (prof.debug && plan.nasmFormat.starts_with("elf"))

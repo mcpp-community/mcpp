@@ -97,8 +97,18 @@ TEST(BuildFlagsAtomic, StaticLinkEmittedWhenArchivePresent) {
 // BOTH the joined spelling (`-iquotehdr`) and the separated spelling
 // (`-isystem` followed by a standalone next element). All four of these
 // project-relative paths must resolve to the same "/proj/hdr" target.
+//
+// The expected spelling is NATIVE (#390): `-I/abs/hdr` written with forward
+// slashes keeps them on MSVC, and the old expectation `(root / "hdr").string()`
+// was itself the mixed `"/proj\hdr"` shape this family of bugs produced.
+// make_preferred() makes the expectation platform-correct on both sides.
 TEST(BuildFlags, NormalizeIncludeFlagsRewritesFullIncludeFamily) {
     std::filesystem::path root = "/proj";
+    auto expected = [](const std::filesystem::path& p) {
+        auto n = p;
+        n.make_preferred();
+        return n.string();
+    };
     std::vector<std::string> flags = {
         "-Ihdr", "-iquotehdr", "-isystem", "hdr", "-idirafterhdr",
     };
@@ -106,26 +116,32 @@ TEST(BuildFlags, NormalizeIncludeFlagsRewritesFullIncludeFamily) {
     mcpp::modgraph::normalize_include_flags(root, flags);
 
     ASSERT_EQ(flags.size(), 5u);
-    EXPECT_EQ(flags[0], "-I" + (root / "hdr").string());
-    EXPECT_EQ(flags[1], "-iquote" + (root / "hdr").string());
+    EXPECT_EQ(flags[0], "-I" + expected(root / "hdr"));
+    EXPECT_EQ(flags[1], "-iquote" + expected(root / "hdr"));
     EXPECT_EQ(flags[2], "-isystem");                       // prefix itself untouched
-    EXPECT_EQ(flags[3], (root / "hdr").string());          // separated element rewritten
-    EXPECT_EQ(flags[4], "-idirafter" + (root / "hdr").string());
+    EXPECT_EQ(flags[3], expected(root / "hdr"));           // separated element rewritten
+    EXPECT_EQ(flags[4], "-idirafter" + expected(root / "hdr"));
 }
 
 // Absolute paths and root-relative spellings are left alone (matches the
-// pre-#226 -I behavior), for both the joined and separated forms.
+// pre-#226 -I behavior), for both the joined and separated forms — only the
+// separator spelling is normalized to native (#390; a no-op on POSIX).
 TEST(BuildFlags, NormalizeIncludeFlagsLeavesAbsolutePathsAlone) {
     std::filesystem::path root = "/proj";
+    auto expected = [](const std::filesystem::path& p) {
+        auto n = p;
+        n.make_preferred();
+        return n.string();
+    };
     std::vector<std::string> flags = {
         "-I/abs/hdr", "-isystem", "/abs/hdr", "-DKEEP",
     };
 
     mcpp::modgraph::normalize_include_flags(root, flags);
 
-    EXPECT_EQ(flags[0], "-I/abs/hdr");
+    EXPECT_EQ(flags[0], "-I" + expected("/abs/hdr"));
     EXPECT_EQ(flags[1], "-isystem");
-    EXPECT_EQ(flags[2], "/abs/hdr");
+    EXPECT_EQ(flags[2], expected("/abs/hdr"));
     EXPECT_EQ(flags[3], "-DKEEP");
 }
 

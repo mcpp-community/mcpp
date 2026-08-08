@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.modgraph.glob;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
@@ -151,7 +152,7 @@ TEST(Scanner, GlobLiteralPrefixDerivation) {
     // Wildcard already in the first segment: no literal directory to bound to.
     EXPECT_EQ(glob_literal_prefix("**/*.c"), "");
     // No wildcard at all: the full parent directory path is the prefix.
-    EXPECT_EQ(glob_literal_prefix("a/b/c.cpp"), "a/b");
+    EXPECT_EQ(glob_literal_prefix("a/b/c.cpp").generic_string(), "a/b");
     // Truncate back to the last COMPLETE '/' before the first wildcard char —
     // "x*.cpp" is a partial segment, not a real directory named "x".
     EXPECT_EQ(glob_literal_prefix("src/x*.cpp"), "src");
@@ -159,6 +160,72 @@ TEST(Scanner, GlobLiteralPrefixDerivation) {
     // globs are desugared before reaching this helper — see its comment in
     // scanner.cppm), so the prefix truncates at the last '/' before it.
     EXPECT_EQ(glob_literal_prefix("a/{x,y}/z"), "a");
+}
+
+// MSVC's std::filesystem::path preserves the separators of the string it was
+// constructed from, so a raw `a/b` prefix stays generic and `root / p` turns
+// into a MIXED `root\a/b` — which used to leak into compile_commands.json
+// (`file` / `-c` for every source under a multi-segment glob) and break CLion.
+// glob_literal_prefix must return NATIVE separators so the walk and everything
+// downstream is native too. (The generic spelling is already locked down by
+// Scanner.GlobLiteralPrefixDerivation above.)
+TEST(Scanner, GlobLiteralPrefixUsesNativeSeparators) {
+    if constexpr (std::filesystem::path::preferred_separator == '\\') {
+        EXPECT_EQ(glob_literal_prefix("a/b/c.cpp").string(), "a\\b");
+        EXPECT_EQ(glob_literal_prefix("a/b/c.cpp").string().find('/'),
+                  std::string::npos);
+    }
+}
+
+// The exported converter itself — both spelling directions.
+TEST(Glob, NativePathFromGeneric) {
+    auto p = mcpp::modgraph::native_path_from_generic("a/b/c");
+    EXPECT_EQ(p.generic_string(), "a/b/c");
+    if constexpr (std::filesystem::path::preferred_separator == '\\') {
+        EXPECT_EQ(p.string(), "a\\b\\c");
+        // Already-native input is untouched.
+        EXPECT_EQ(mcpp::modgraph::native_path_from_generic("C:\\x\\y").string(),
+                  "C:\\x\\y");
+    }
+}
+
+// The end-to-end shape of the reported bug: a source under a multi-segment
+// glob (`generated/modules/**/*.cppm`) must come out of expand_glob with
+// NATIVE separators on Windows — the mixed `root\generated/modules\a.cppm`
+// was what compile_commands.json's `file` field showed before the fix.
+TEST(Scanner, ExpandGlobMultiSegmentPrefixUsesNativeSeparators) {
+    auto dir = make_tempdir("mcpp-scanner-multi");
+    write(dir / "generated" / "modules" / "a.cppm", "export module a;\n");
+
+    auto files = expand_glob(dir, "generated/modules/**/*.cppm");
+
+    ASSERT_EQ(files.size(), 1u);
+    if constexpr (std::filesystem::path::preferred_separator == '\\') {
+        EXPECT_EQ(files[0].string().find('/'), std::string::npos) << files[0];
+    }
+    EXPECT_EQ(files[0].generic_string(),
+              (dir / "generated" / "modules" / "a.cppm").generic_string());
+
+    std::filesystem::remove_all(dir);
+}
+
+// Same contract for the INCLUDE-DIR channel (expand_dir_glob): a multi-segment
+// `third_party/inc` entry must yield a native path or the CDB's -I carries the
+// mixed form.
+TEST(Scanner, ExpandDirGlobMultiSegmentUsesNativeSeparators) {
+    auto dir = make_tempdir("mcpp-scanner-dirglob");
+    std::filesystem::create_directories(dir / "third_party" / "inc");
+
+    auto dirs = expand_dir_glob(dir, "third_party/inc");
+
+    ASSERT_EQ(dirs.size(), 1u);
+    if constexpr (std::filesystem::path::preferred_separator == '\\') {
+        EXPECT_EQ(dirs[0].string().find('/'), std::string::npos) << dirs[0];
+    }
+    EXPECT_EQ(dirs[0].generic_string(),
+              (dir / "third_party" / "inc").generic_string());
+
+    std::filesystem::remove_all(dir);
 }
 
 // mcpp#225: expand_glob must bound its walk to the glob's literal directory
@@ -690,6 +757,9 @@ TEST(Scanner, PerGlobFlagsMatchBraceAlternation) {
 
 // G8b: relative -I flags are root-relative in the manifest but ninja runs
 // with cwd = output dir — the scanner absolutizes them on every unit.
+// The absolute spelling is NORMALIZED to native separators (#390): MSVC's
+// path keeps the input `/` verbatim, and `-I/abs/path` written with forward
+// slashes used to survive into the CDB's arguments as a mixed path.
 TEST(Scanner, RelativeIncludeFlagsAbsolutized) {
     auto dir = make_tempdir("mcpp-scanner-relinc");
     write(dir / "src" / "a.cpp", "int a();\n");
@@ -707,8 +777,11 @@ TEST(Scanner, RelativeIncludeFlagsAbsolutized) {
     ASSERT_EQ(res.graph.units.size(), 1u);
     auto& fl = res.graph.units[0].packageCxxflags;
     EXPECT_EQ(fl[0], "-I" + (dir / "inc").string());
-    EXPECT_EQ(fl[1], "-I/abs/path");   // absolute stays
-    EXPECT_EQ(fl[2], "-DKEEP");        // non-include untouched
+    if constexpr (std::filesystem::path::preferred_separator == '\\')
+        EXPECT_EQ(fl[1], "-I\\abs\\path");   // absolute stays, but native
+    else
+        EXPECT_EQ(fl[1], "-I/abs/path");     // absolute stays
+    EXPECT_EQ(fl[2], "-DKEEP");              // non-include untouched
 
     std::filesystem::remove_all(dir);
 }

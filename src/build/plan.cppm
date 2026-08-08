@@ -220,6 +220,14 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
          // simply makes those units uncacheable.
          const std::vector<std::filesystem::path>& storeRoots = {});
 
+// Expand one manifest `include_dirs` entry against the project root — the
+// #249 consistency join + the expand_dir_glob the dep path uses. Exported
+// (like modgraph's glob_literal_prefix) so unit tests can assert its
+// native-separator contract directly; see the definition below.
+std::vector<std::filesystem::path>
+expand_manifest_include_entry(const std::filesystem::path& root,
+                              const std::filesystem::path& inc);
+
 } // namespace mcpp::build
 
 namespace mcpp::build {
@@ -368,6 +376,8 @@ std::vector<std::string> shared_library_link_flags(
     return flags;
 }
 
+}  // namespace
+
 // #249 consistency fix: expand include_dirs entries with the same
 // `expand_dir_glob` the dep path (prepare.cppm) uses, so a main-manifest
 // `include_dirs = ["*/include"]` glob works identically here. For a literal
@@ -375,15 +385,33 @@ std::vector<std::string> shared_library_link_flags(
 // whereas this helper historically joined unconditionally — keep the plain
 // join as a fallback so an -I for a dir created later (e.g. by a build
 // step) isn't silently dropped.
+//
+// Deliberately OUTSIDE the anonymous namespace: it is exported for its unit
+// test (like modgraph's glob_literal_prefix), and the two
+// local_include_dirs_*_for_manifest consumers below ride along so a single
+// namespace split serves the whole trio.
 std::vector<std::filesystem::path>
 expand_manifest_include_entry(const std::filesystem::path& root,
                               const std::filesystem::path& inc)
 {
-    if (inc.is_absolute()) return { inc };
+    if (inc.is_absolute()) {
+        // A TOML value like `C:/SDL2/include` keeps its `/` on MSVC — make
+        // it native so the CDB's -I (via local_include_args) is uniform.
+        auto n = inc;
+        n.make_preferred();
+        return { std::move(n) };
+    }
     const auto glob = inc.generic_string();
     auto expanded = mcpp::modgraph::expand_dir_glob(root, glob);
-    if (expanded.empty() && glob.find('*') == std::string::npos)
-        expanded.push_back(root / inc);
+    if (expanded.empty() && glob.find('*') == std::string::npos) {
+        // Same native-spelling rule for the bare join (see above): `root / p`
+        // with a multi-segment `generated/inc` is MIXED on MSVC, and this
+        // fallback exists precisely for dirs like `generated/` that a later
+        // build step creates — the #390 shape.
+        auto joined = root / inc;
+        joined.make_preferred();
+        expanded.push_back(std::move(joined));
+    }
     return expanded;
 }
 
@@ -411,6 +439,8 @@ local_include_dirs_after_for_manifest(const std::filesystem::path& root,
     }
     return dirs;
 }
+
+namespace {
 
 void append_unique_path(std::vector<std::filesystem::path>& out,
                         std::filesystem::path path)

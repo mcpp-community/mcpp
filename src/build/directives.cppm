@@ -366,7 +366,10 @@ const Def* find_by_tag(std::string_view tag) {
 }
 
 std::string abs_against(const fs::path& base, std::string_view p) {
-    fs::path pp(p);
+    // Native spelling (see mcpp::modgraph::native_path_from_generic): a
+    // directive path like `generated/modules/x` would otherwise stay mixed
+    // on MSVC and leak into include flags / the CDB.
+    fs::path pp = mcpp::modgraph::native_path_from_generic(p);
     if (pp.is_relative()) pp = base / pp;
     return pp.lexically_normal().string();
 }

@@ -2,18 +2,31 @@
 
 import std;
 import mcpp.build.compile_commands;
+import mcpp.build.flags;
+import mcpp.build.plan;
+import mcpp.libs.json;
 
 using namespace mcpp::build;
 
 namespace {
 
 // Build a single CDB entry as JSON text. `flag` is a marker we can grep for.
+//
+// Serialized THROUGH nlohmann, never hand-formatted: a Windows `file` value
+// carries backslashes, and `\g` (from `...\generated\...`) is not a legal JSON
+// escape. A format-string version produced text that no parser accepts, which
+// merge_compile_commands answers by returning `fresh` verbatim — every
+// assertion below then passes without the code under test ever running.
 std::string entry(std::string_view file, std::string_view flag) {
     // Keep the file path out of `arguments` so it appears exactly once (in
     // "file") — lets tests count entries per file unambiguously.
-    return std::format(
-        R"({{"directory":"/p","file":"{}","arguments":["g++","{}","-c","src.cpp"],"output":"o"}})",
-        file, flag);
+    nlohmann::json e;
+    e["directory"] = "/p";
+    e["file"]      = std::string(file);
+    e["arguments"] = nlohmann::json::array(
+        { "g++", std::string(flag), "-c", "src.cpp" });
+    e["output"]    = "o";
+    return e.dump();
 }
 
 std::string cdb(std::initializer_list<std::string> entries) {
@@ -25,6 +38,12 @@ std::string cdb(std::initializer_list<std::string> entries) {
         first = false;
     }
     s += "\n]\n";
+    // A fixture that does not PARSE makes every merge test vacuously green
+    // (merge_compile_commands short-circuits to `fresh` on a discarded parse),
+    // so the fixture itself is checked here rather than trusted. Tests that
+    // WANT malformed input pass it directly, not through this builder.
+    EXPECT_FALSE(nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/false)
+                     .is_discarded()) << s;
     return s;
 }
 
@@ -91,6 +110,33 @@ TEST(CompileCommandsMerge, MalformedExistingFallsBackToFresh) {
 
     EXPECT_NE(merged.find("src/main.cpp"), std::string::npos) << merged;
     EXPECT_NE(merged.find("-O2"), std::string::npos) << merged;
+}
+
+// #390 self-heal: a CDB written BEFORE the mixed-separator fix spells the same
+// file differently from the way a fresh plan spells it. Because the merge key
+// is the NORMALIZED path, the stale entry is recognized as the same file and
+// dropped on the first build after upgrade — the user never has to delete
+// compile_commands.json by hand.
+//
+// The stale spelling deliberately differs from fresh on EVERY platform: the
+// `/./` segment needs lexically_normal to collapse (POSIX included), and on
+// Windows the `/` separators need make_preferred on top. A stale value of just
+// `p.generic_string()` would be byte-identical to fresh on POSIX, and the
+// literal-string key this test exists to replace would pass it unchanged.
+TEST(CompileCommandsMerge, NormalizedFileKeysHealStaleSeparatorSpellings) {
+    auto p = std::filesystem::path("/p") / "generated" / "modules" / "a.cpp";
+    auto stale = "/p/generated/./modules/a.cpp";
+    ASSERT_NE(p.string(), stale) << "fixture must differ from the fresh spelling";
+
+    auto fresh    = cdb({ entry(p.string(), "-O2-FRESH") });
+    auto existing = cdb({ entry(stale, "-O0-STALE") });
+
+    auto merged = merge_compile_commands(
+        fresh, existing, [](const std::filesystem::path&) { return true; });
+
+    EXPECT_EQ(count(merged, "generated"), 1u) << merged;
+    EXPECT_NE(merged.find("-O2-FRESH"), std::string::npos) << merged;
+    EXPECT_EQ(merged.find("-O0-STALE"), std::string::npos) << merged;
 }
 
 // ── CDB arguments must be argv, not shell words ─────────────────────────────
@@ -171,4 +217,62 @@ TEST(CompileCommandsArgs, InnerQuotesAreNotStripped) {
     ASSERT_EQ(out.size(), 1u);
     EXPECT_EQ(out[0], R"(-DGREETING="hi")");
     EXPECT_FALSE(is_quoted(out[0]));
+}
+
+// ── Emitted paths use native separators ─────────────────────────────────────
+//
+// The last line of the #390 defence: every ingestion point is normalized at
+// the source, but a path that still slips through with a mixed spelling
+// (MSVC keeps the input `/` verbatim) would land in the CDB and break CLion.
+//
+// Scope, precisely: the emitter owns the CDB schema's path fields (`file`,
+// `directory`, `output`) and the argv positions it builds itself (`-c`'s and
+// `-o`'s values, plus `-I`/`-idirafter` from localIncludeDirs). The flag
+// STRINGS — split_flags(f.cxx) and the package cflags/cxxflags — pass through
+// untouched and stay the ingestion points' responsibility; normalizing an
+// arbitrary flag payload is not safe (`-DPATH="/etc/x"` holds real slashes).
+TEST(CompileCommandsEmit, EmittedPathsUseNativeSeparators) {
+    BuildPlan plan;
+    plan.projectRoot = "/p";
+    plan.outputDir = "/p/target";
+    plan.compileUnits.push_back({
+        // Paths whose spelling carries `/` segments — what the manifest glob
+        // and the include_dirs channels used to produce on MSVC.
+        .source = std::filesystem::path("C:/Users/x/src/main.cpp"),
+        .object = std::filesystem::path("obj") / "main.o",
+        .packageName = "demo",
+        .localIncludeDirs      = { std::filesystem::path("C:/proj/generated/inc") },
+        .localIncludeDirsAfter = { std::filesystem::path("C:/proj/third_party/inc") },
+    });
+    CompileFlags flags;
+    flags.cxxBinary = std::filesystem::path("/usr/bin/g++");
+
+    auto j = nlohmann::json::parse(emit_compile_commands(plan, flags));
+    auto const& e = j[0];
+
+    // Assert on the two include tokens by name. The earlier shape of this
+    // test ("no `-`-prefixed argument may contain `/`") looked stronger but
+    // was vacuous — with no flags configured, the only `-` tokens are the
+    // bare `-c` and `-o`, which have no path in them at all.
+    auto arg_with = [&](std::string_view pre) {
+        for (auto const& a : e["arguments"]) {
+            auto s = a.get<std::string>();
+            if (s.starts_with(pre)) return s;
+        }
+        return std::string{};
+    };
+    const auto inc      = arg_with("-I");
+    const auto incAfter = arg_with("-idirafter");
+
+    if constexpr (std::filesystem::path::preferred_separator == '\\') {
+        EXPECT_EQ(e["file"].get<std::string>(), "C:\\Users\\x\\src\\main.cpp");
+        EXPECT_EQ(e["directory"].get<std::string>(), "\\p");
+        EXPECT_EQ(e["output"].get<std::string>(), "\\p\\target\\obj\\main.o");
+        EXPECT_EQ(inc,      "-IC:\\proj\\generated\\inc");
+        EXPECT_EQ(incAfter, "-idirafterC:\\proj\\third_party\\inc");
+    } else {
+        EXPECT_EQ(e["file"].get<std::string>(), "C:/Users/x/src/main.cpp");
+        EXPECT_EQ(inc,      "-IC:/proj/generated/inc");
+        EXPECT_EQ(incAfter, "-idirafterC:/proj/third_party/inc");
+    }
 }

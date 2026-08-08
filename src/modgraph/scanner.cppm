@@ -268,7 +268,12 @@ std::filesystem::path glob_literal_prefix(std::string_view glob) {
         ? glob : glob.substr(0, wildcard);
     auto slash = literal.find_last_of('/');
     if (slash == std::string_view::npos) return {};
-    return std::filesystem::path(literal.substr(0, slash));
+    // Native separators, not the raw generic form: MSVC keeps the input's
+    // `/` verbatim, and `root / p` plus the directory walk then propagate a
+    // MIXED `root\generated/modules` into every downstream path — which is
+    // what `compile_commands.json`'s `file` field showed on Windows for
+    // multi-segment globs. See mcpp::modgraph::native_path_from_generic.
+    return native_path_from_generic(literal.substr(0, slash));
 }
 
 // mcpp#228: `{a,b}` alternation, recursively. Finds the first top-level `{`,
@@ -442,7 +447,9 @@ std::vector<std::filesystem::path> expand_dir_glob(const std::filesystem::path& 
     // expand_glob) — include_dirs entries are meant to name one literal
     // directory each; a caller wanting alternatives lists multiple entries.
     if (glob.find('*') == std::string_view::npos) {
-        auto p = root / std::filesystem::path(glob);
+        // Native spelling (see native_path_from_generic — a raw `a/b` would
+        // come back mixed from .string() on MSVC).
+        auto p = root / native_path_from_generic(glob);
         if (std::filesystem::is_directory(p, ec)) out.push_back(p);
         return out;
     }
@@ -494,10 +501,24 @@ namespace {
 
 // has_root_path: leave absolute AND root-relative ("/x" on Windows)
 // spellings alone — only genuinely root-less paths are project-relative.
+// Both branches normalize to NATIVE separators: a `-Ithird_party/inc` cxxflag
+// would otherwise come back as `C:\proj\third_party/inc` on MSVC (path keeps
+// the input `/` verbatim) and reach the CDB's arguments via packageCxxflags.
 std::string rewrite_rel_copy(const std::string& p, const std::filesystem::path& root) {
     std::filesystem::path fp(p);
-    if (fp.has_root_path()) return p;
-    return (root / fp).string();
+    if (fp.has_root_path()) {
+        // Nothing to re-spell → hand back the ORIGINAL bytes rather than
+        // round-tripping them through path's narrow conversion, which throws
+        // std::system_error for names the ANSI codepage cannot express
+        // (mcpp#230 — see path_matches_glob). A rooted path with no '/' is
+        // already native on both platform families.
+        if (p.find('/') == std::string::npos) return p;
+        fp.make_preferred();
+        return fp.string();
+    }
+    auto joined = root / fp;
+    joined.make_preferred();
+    return joined.string();
 }
 
 void rewrite_rel(std::string& p, const std::filesystem::path& root) {
@@ -682,7 +703,14 @@ local_include_dirs_for(const std::filesystem::path& root,
     std::vector<std::filesystem::path> dirs;
     for (auto const& inc : manifest.buildConfig.includeDirs) {
         if (inc.is_absolute()) {
-            dirs.push_back(inc);
+            // A TOML value like `C:/SDL2/include` keeps its `/` on MSVC —
+            // normalize so the CDB's -I comes out native (mixed separators
+            // break CLion). Direct make_preferred, no generic_string round
+            // trip: the narrow conversion can throw for names the ANSI
+            // codepage cannot spell (mcpp#230).
+            auto n = inc;
+            n.make_preferred();
+            dirs.push_back(std::move(n));
             continue;
         }
         for (auto& d : expand_dir_glob(root, inc.generic_string())) {
@@ -701,7 +729,9 @@ local_include_dirs_after_for(const std::filesystem::path& root,
     std::vector<std::filesystem::path> dirs;
     for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
         if (inc.is_absolute()) {
-            dirs.push_back(inc);
+            auto n = inc;
+            n.make_preferred();
+            dirs.push_back(std::move(n));
             continue;
         }
         for (auto& d : expand_dir_glob(root, inc.generic_string())) {
@@ -738,7 +768,10 @@ void scan_one_into(ScanResult& result,
             // Literal absolute entry — e.g. a dependency build.mcpp's OUT_DIR
             // generated source, which lives OUTSIDE the (possibly read-only)
             // package root. No glob expansion; taken as-is when it exists.
-            if (std::filesystem::path gp(g); gp.is_absolute()) {
+            // Native spelling: a raw `C:/abs/x.cppm` would stay mixed on MSVC
+            // (see native_path_from_generic) and leak into the CDB.
+            auto gp = native_path_from_generic(g);
+            if (gp.is_absolute()) {
                 std::error_code aec;
                 if (std::filesystem::is_regular_file(gp, aec)) all_files.insert(gp);
                 continue;
