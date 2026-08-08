@@ -1230,7 +1230,9 @@ prepare_build(bool print_fingerprint,
     bool bootstrap_checked = false;
     auto get_cfg = [&](bool requireBootstrap = true) -> std::expected<mcpp::config::GlobalConfig*, std::string> {
         if (!cfg_opt) {
-            auto c = mcpp::config::load_or_init(/*quiet=*/false,
+            // IDE configure/JSON build 已通过 ui 设置静默；这里必须沿用该
+            // 状态，否则 fresh MCPP_HOME 的 xlings bootstrap 文本会污染协议 stdout。
+            auto c = mcpp::config::load_or_init(/*quiet=*/mcpp::ui::is_quiet(),
                 mcpp::fetcher::make_bootstrap_progress_callback());
             if (!c) return std::unexpected(c.error().message);
             cfg_opt = std::move(*c);
@@ -4518,8 +4520,10 @@ prepare_build(bool print_fingerprint,
                     // ninja's own progress and command echoes, which is right
                     // for a normal build and wrong when the question is "what
                     // did the inner build actually do".
+                    // 结构化命令的 stdout 必须保持机器可读；quiet 模式仍会在
+                    // 失败结果中携带诊断，但不能把成功的 Ninja 日志插入 NDJSON。
                     if (const char* v = std::getenv("MCPP_TOOL_BUILD_VERBOSE");
-                        v && *v && std::string_view(v) != "0")
+                        !mcpp::ui::is_quiet() && v && *v && std::string_view(v) != "0")
                         bopt.verbose = true;
                     auto br = be->build(subCtx->plan, bopt);
                     if (!br) {
@@ -4843,10 +4847,14 @@ prepare_build(bool print_fingerprint,
             if (f.enabled && !f.flags.empty()) dst += std::format(" ({})", f.flags);
             if (!f.enabled) dst += std::format(" ({})", f.reason);
         }
-        std::println("c++fly on {}: {}; enabled: {}; skipped: {}",
-                     tc->label(), stdFlagAndDialect,
-                     enabled.empty() ? "(none)" : enabled,
-                     skipped.empty() ? "(none)" : skipped);
+        // IDE configure 的 stdout 是 NDJSON；普通 build 仍保留这条
+        // 人类可读摘要，但 quiet 模式必须完全静默，避免污染协议。
+        if (!mcpp::ui::is_quiet()) {
+            std::println("c++fly on {}: {}; enabled: {}; skipped: {}",
+                         tc->label(), stdFlagAndDialect,
+                         enabled.empty() ? "(none)" : enabled,
+                         skipped.empty() ? "(none)" : skipped);
+        }
     }
     for (auto& f : mcpp::toolchain::cppfly::effective_dialect_flags(
              *tc, m->cppStandard.experimental,
@@ -4950,10 +4958,10 @@ prepare_build(bool print_fingerprint,
         // a std BMI built without it structurally lacks std::meta). Both
         // pieces were already in the fingerprint; this fixes the COMMAND
         // construction the fingerprint promised (stdFlagAndDialect above).
+        const auto deploymentTarget = mcpp::platform::macos::deployment_target(
+            m->buildConfig.macosDeploymentTarget);
         auto sm = mcpp::toolchain::ensure_built(
-            *tc, m->package.standard, stdFlagAndDialect,
-            mcpp::platform::macos::deployment_target(
-                m->buildConfig.macosDeploymentTarget));
+            *tc, m->package.standard, stdFlagAndDialect, deploymentTarget);
         if (!sm) return std::unexpected(sm.error().message);
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;

@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "kind": "mcpp.ide.snapshot",
+  "snapshotId": "fnv1a64:0000000000000000",
+  "state": "partial",
+  "mcpp": {
+    "version": "2026.8.5.2",
+    "protocol": {
+      "min": 1,
+      "max": 1
+    },
+    "capabilities": [
+      "workspace-inspection",
+      "manifest-diagnostics",
+      "compile-commands-location"
+    ]
+  },
+  "request": {
+    "root": "/workspace/app",
+    "mode": "read-only",
+    "selectors": {
+      "package": null,
+      "workspace": false,
+      "profile": null,
+      "target": null,
+      "features": [],
+      "capabilities": [],
+      "includeDevDependencies": false
+    }
+  },
+  "workspace": {
+    "root": "/workspace/app",
+    "manifest": "/workspace/app/mcpp.toml",
+    "members": [
+      {
+        "name": "app",
+        "version": "1.0.0",
+        "workspacePath": ".",
+        "root": "/workspace/app",
+        "manifest": "/workspace/app/mcpp.toml",
+        "targets": [
+          {
+            "name": "app",
+            "kind": "binary",
+            "main": "src/main.cpp"
+          }
+        ]
+      }
+    ],
+    "selectedMembers": [
+      "app"
+    ]
+  },
+  "artifacts": {
+    "state": "partial",
+    "compileCommands": [
+      {
+        "member": "app",
+        "path": "/workspace/app/compile_commands.json",
+        "state": "missing"
+      }
+    ]
+  },
+  "diagnostics": [
+    {
+      "code": "MCPP_IDE_ARTIFACTS_MISSING",
+      "severity": "warning",
+      "source": "mcpp",
+      "message": "Compile commands are unavailable for one or more selected members."
+    }
+  ]
+}

@@ -20,6 +20,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.cli.cmd_build;
 import mcpp.cli.cmd_cache;
+import mcpp.cli.cmd_ide;
 import mcpp.cli.cmd_new;
 import mcpp.cli.cmd_publish;
 import mcpp.cli.cmd_xpkg;
@@ -64,6 +65,8 @@ void print_usage() {
     std::println("  mcpp pack [--mode <m>]               Build + bundle a tarball (m: system|vendored|self-contained|static)");
     std::println("  mcpp emit xpkg [-V VER] [-o FILE]    Generate xpkg Lua entry");
     std::println("  mcpp xpkg parse <file.lua> [--json]  Validate an xpkg descriptor (resolver grammar)");
+    std::println("  mcpp ide snapshot [selectors]        Inspect workspace state for IDE clients");
+    std::println("  mcpp ide configure [selectors]       Resolve and publish a fresh IDE CDB");
     std::println("");
     std::println("Resource management:");
     std::println("  mcpp toolchain install|list|default  Manage mcpp's private toolchains");
@@ -384,6 +387,51 @@ int run(int argc, char** argv) {
                 return dispatch_sub("xpkg", p, {{"parse", cmd_xpkg_parse}});
             })))
 
+        // ─── IDE protocol (read-only snapshot) ──────────────────────────
+        .subcommand(cl::App("ide")
+            .description("Machine-readable IDE integration protocol")
+            .subcommand(cl::App("snapshot")
+                .description("Inspect workspace state without building or writing artifacts")
+                .option(cl::Option("package").short_name('p').takes_value().value_name("MEMBER")
+                    .help("Select one workspace member by relative path or basename"))
+                .option(cl::Option("workspace")
+                    .help("Select every workspace member"))
+                .option(cl::Option("profile").takes_value().value_name("NAME")
+                    .help("Echo the requested build profile"))
+                .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                    .help("Echo the requested target triple"))
+                .option(cl::Option("features").takes_value().value_name("LIST")
+                    .help("Echo comma-separated feature selectors"))
+                .option(cl::Option("cap").takes_value().value_name("LIST")
+                    .help("Echo comma-separated capability provider pins"))
+                .option(cl::Option("include-dev-dependencies")
+                    .help("Echo dev-dependency inclusion"))
+                .option(cl::Option("format").takes_value().value_name("FORMAT")
+                    .help("Output format (json)")))
+            .subcommand(cl::App("configure")
+                .description("Resolve the project and publish a fresh compile database")
+                .option(cl::Option("package").short_name('p').takes_value().value_name("MEMBER")
+                    .help("Select one workspace member"))
+                .option(cl::Option("workspace").help("Reserved for workspace fan-out"))
+                .option(cl::Option("profile").takes_value().value_name("NAME")
+                    .help("Build profile"))
+                .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                    .help("Target triple"))
+                .option(cl::Option("features").takes_value().value_name("LIST")
+                    .help("Comma-separated features"))
+                .option(cl::Option("cap").takes_value().value_name("LIST")
+                    .help("Comma-separated capability pins"))
+                .option(cl::Option("include-dev-dependencies")
+                    .help("Include development dependencies"))
+                .option(cl::Option("format").takes_value().value_name("FORMAT")
+                    .help("Output format (ndjson)")))
+            .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
+                return dispatch_sub("ide", p, {
+                    {"snapshot", cmd_ide_snapshot},
+                    {"configure", cmd_ide_configure},
+                });
+            })))
+
         // ─── resource management ───────────────────────────────────────
         .subcommand(cl::App("toolchain")
             .description("Install / list / select / remove C++ toolchains")
@@ -596,11 +644,11 @@ int run(int argc, char** argv) {
     {
         std::string_view first = argv[1];
         if (!first.starts_with('-')) {
-            static constexpr std::array<std::string_view, 23> known = {
+            static constexpr std::array<std::string_view, 24> known = {
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep", "why", "resolve", "stage",
+                "version", "dyndep", "why", "resolve", "stage", "ide",
             };
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }

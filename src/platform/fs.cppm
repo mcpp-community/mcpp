@@ -8,6 +8,7 @@
 //   3. FileLock         — RAII exclusive file lock (was in bmi_cache.cppm)
 
 module;
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #if defined(_WIN32)
@@ -62,6 +63,9 @@ public:
     // Try to acquire an exclusive lock on <dir>/.lock.
     // Returns nullopt if another process holds the lock.
     static std::optional<FileLock> try_acquire(const std::filesystem::path& dir);
+    // `ec` 为空表示锁竞争；非空表示目录、文件或系统锁操作失败。
+    static std::optional<FileLock> try_acquire(const std::filesystem::path& dir,
+                                               std::error_code& ec);
 
     ~FileLock();
     FileLock(FileLock&& o) noexcept;
@@ -79,6 +83,12 @@ private:
     explicit FileLock(int fd) : fd_(fd) {}
 #endif
 };
+
+// 不先删除旧目标就完成替换。Windows 的 std::filesystem::rename 不能覆盖
+// 已有文件，因此使用 MoveFileEx 保证发布失败时保留 last-known-good 内容。
+void replace_file(const std::filesystem::path& source,
+                  const std::filesystem::path& destination,
+                  std::error_code& ec) noexcept;
 
 } // namespace mcpp::platform::fs
 
@@ -141,17 +151,30 @@ std::optional<std::filesystem::path> which(std::string_view binary_name) {
 #if defined(_WIN32)
 
 std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir) {
-    std::error_code ec;
+    std::error_code ignored;
+    return try_acquire(dir, ignored);
+}
+
+std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir,
+                                              std::error_code& ec) {
+    ec.clear();
     std::filesystem::create_directories(dir, ec);
+    if (ec) return std::nullopt;
     auto lockPath = dir / ".lock";
     HANDLE h = CreateFileW(lockPath.wstring().c_str(),
         GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
         NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return std::nullopt;
+    if (h == INVALID_HANDLE_VALUE) {
+        ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+        return std::nullopt;
+    }
     OVERLAPPED ov = {};
     if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
                     0, 1, 0, &ov)) {
+        const auto error = GetLastError();
         CloseHandle(h);
+        if (error != ERROR_LOCK_VIOLATION)
+            ec = std::error_code(static_cast<int>(error), std::system_category());
         return std::nullopt;
     }
     return FileLock{h};
@@ -185,13 +208,26 @@ FileLock& FileLock::operator=(FileLock&& o) noexcept {
 #else // POSIX
 
 std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir) {
-    std::error_code ec;
+    std::error_code ignored;
+    return try_acquire(dir, ignored);
+}
+
+std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir,
+                                              std::error_code& ec) {
+    ec.clear();
     std::filesystem::create_directories(dir, ec);
+    if (ec) return std::nullopt;
     auto lockPath = dir / ".lock";
     int fd = ::open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
-    if (fd < 0) return std::nullopt;
+    if (fd < 0) {
+        ec = std::error_code(errno, std::generic_category());
+        return std::nullopt;
+    }
     if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        const auto error = errno;
         ::close(fd);
+        if (error != EWOULDBLOCK && error != EAGAIN)
+            ec = std::error_code(error, std::generic_category());
         return std::nullopt;
     }
     return FileLock{fd};
@@ -221,5 +257,21 @@ FileLock& FileLock::operator=(FileLock&& o) noexcept {
 }
 
 #endif
+
+void replace_file(const std::filesystem::path& source,
+                  const std::filesystem::path& destination,
+                  std::error_code& ec) noexcept {
+    ec.clear();
+#if defined(_WIN32)
+    // Windows 上 path::value_type 就是 wchar_t；直接使用原生缓冲区，避免
+    // noexcept 函数中的 wstring 临时分配抛出异常并触发 terminate。
+    if (!MoveFileExW(source.c_str(), destination.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+    }
+#else
+    std::filesystem::rename(source, destination, ec);
+#endif
+}
 
 } // namespace mcpp::platform::fs

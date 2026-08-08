@@ -19,8 +19,10 @@ import mcpp.config;
 import mcpp.pm.dep_spec;
 import mcpp.pm.index_refresh;
 import mcpp.pm.index_route;
+import mcpp.pm.index_snapshot;
 import mcpp.pm.index_spec;
 import mcpp.platform.axis;
+import mcpp.platform.env;
 import mcpp.xlings;
 
 namespace {
@@ -162,6 +164,32 @@ TEST(PmIndexRefresh, OfflineDoesNotMisreportAResolvableDependency) {
     mcpp::pm::RefreshPolicy offline; offline.offline = true;
     EXPECT_EQ(decide(route, version_dep("mcpplibs", "widget", "1.2.0"), reg.env(), offline),
               RefreshReason::None);
+}
+
+TEST(PmIndexRefresh, QuietIndexRecoveryKeepsSafetyNoticeOffProtocolStdout) {
+    FakeRegistry reg("quiet-recovery");
+    const auto idx = reg.index_dir();
+    auto write_index = [&](std::string_view floor, std::string_view marker) {
+        std::ofstream(idx / "index.toml")
+            << std::format("[index]\nspec = \"1\"\nmin_mcpp = \"{}\"\n", floor);
+        std::ofstream(idx / ".xlings-index-version") << marker;
+        std::ofstream(idx / "pkgs" / "z" / "zlib.lua") << "-- " << marker << "\n";
+    };
+
+    write_index("0.0.85", "known-good");
+    ASSERT_TRUE(mcpp::pm::index_snapshot::archive(reg.home / "data", idx));
+    write_index("9999.9.9.9", "too-new");
+
+    mcpp::platform::env::ScopedEnv offline("MCPP_OFFLINE", "1");
+    testing::internal::CaptureStdout();
+    testing::internal::CaptureStderr();
+    const auto rc = mcpp::xlings::update_index(reg.env(), /*quiet=*/true);
+    const auto output = testing::internal::GetCapturedStdout();
+    const auto errors = testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(rc, 0);
+    EXPECT_TRUE(output.empty()) << output;
+    EXPECT_NE(errors.find("Restored"), std::string::npos) << errors;
 }
 
 TEST(PmIndexRefresh, AutoRefreshOptOutSuppressesAGenuineMiss) {

@@ -1492,19 +1492,29 @@ int update_index(const Env& env, bool quiet) {
     // the index readable — must stay silent, or the notice becomes noise that
     // users learn to skip past, which is the same as not printing it.
     for (auto& dir : out.rolledBack) {
-        print_status("Kept", std::format(
+        const auto message = std::format(
             "previous index for `{}` — the refreshed one requires a newer mcpp",
-            dir.filename().string()));
-        if (!quiet) {
+            dir.filename().string());
+        if (quiet) {
+            // 结构化 IDE stdout 只能包含 NDJSON；安全事件仍必须可见，故在
+            // quiet 模式转到 stderr，而不是改变回滚通知本身的语义。
+            std::println(stderr, "Kept {}", message);
+        } else {
+            print_status("Kept", message);
             std::println("      Your build continues to work with the packages "
                          "it already describes.");
             std::println("      Upgrade to pick up newer packages:  xlings update mcpp");
         }
     }
     for (auto& dir : out.recovered) {
-        print_status("Restored", std::format(
+        const auto message = std::format(
             "index `{}` from a local snapshot this mcpp can read",
-            dir.filename().string()));
+            dir.filename().string());
+        if (quiet) {
+            std::println(stderr, "Restored {}", message);
+        } else {
+            print_status("Restored", message);
+        }
     }
     for (auto& dir : out.stillUnusable) {
         mcpp::log::verbose("index", std::format(
