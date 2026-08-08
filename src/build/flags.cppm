@@ -729,8 +729,20 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // BEFORE our own -Wl flags is not required (specs are processed by the
     // driver, not positionally against -Wl), but keeping it adjacent to the
     // payload flags keeps the C-runtime decisions in one place on the line.
+    //
+    // Quoted the way include_token quotes: `-specs=` and the path are ONE argv
+    // word, so the prefix is joined first and the whole token quoted after --
+    // quoting only the path would put the opening quote in the wrong place.
+    // `escape_path` alone is not enough here: it adds ninja's `$` escapes and
+    // nothing else, while ninja hands the command to `sh -c`. This path is the
+    // only payload flag that lives under the PROJECT rather than the payload,
+    // so it is the only one a spaced project directory splits:
+    // `cannot read spec file '/tmp/tmp.XXX/my'` for a project in `my project`
+    // (e2e 179, on CI -- no local path here has a space).
     if (!plan.gccCleanSpecs.empty())
-        payload_ld = " -specs=" + escape_path(plan.gccCleanSpecs) + payload_ld;
+        payload_ld = " " + shell_quote_arg(escape_ninja_chars(
+                               "-specs=" + plan.gccCleanSpecs.string()))
+                   + payload_ld;
 
     std::string link_extra;
     if (prof.lto)   link_extra += " -flto";

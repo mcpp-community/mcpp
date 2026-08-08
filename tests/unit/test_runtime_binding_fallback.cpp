@@ -103,7 +103,21 @@ TEST(RuntimeBindingFallback, RecordNamingAnAbsentPayloadIsSkipped) {
     EXPECT_EQ(tc::baked_runtime_binding(h.compiler), "glibc@2.44");
 }
 
+// Linux only, and not as an exemption -- the mechanism does not exist
+// elsewhere. detect_baked_loader parses GCC specs, whose loader paths are
+// POSIX and absolute, and its character whitelist deliberately excludes `\`
+// and `:` so that a `%{...}` spec body is never swallowed. A Windows temp
+// directory is `C:\Users\...`, so this fixture cannot be spelled there at
+// all: the scan stops at the first backslash and the result does not start
+// with `/`. Rightly so -- there are no glibc payloads or ld-linux loaders on
+// Windows for it to find.
+//
+// The other cases in this file are platform-neutral (they exercise the
+// payload set, not the parser) and keep running everywhere.
 TEST(RuntimeBindingFallback, RecordNamingAPresentPayloadWins) {
+    if constexpr (!std::filesystem::path::preferred_separator ||
+                  std::filesystem::path::preferred_separator != '/')
+        GTEST_SKIP() << "GCC specs loader paths are POSIX; no such record here";
     HomeWithSpecs h{{"2.39", "2.44"}, "2.39"};
     // Two installed, so the singleton rule cannot answer -- but the record
     // names one that IS there, and that is what the artifact would load.
