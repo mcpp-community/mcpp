@@ -142,12 +142,18 @@ std::vector<std::string> split_flags(std::string_view s) {
 
 namespace {
 
-// The CDB's path contract: NATIVE separators, unconditionally. Every
-// ingestion point (manifest globs, include_dirs, build.mcpp directives) is
-// normalized at the source, but this is the LAST line — a path that slips
-// through with a mixed `root\a/b` spelling (MSVC keeps input `/` verbatim)
-// breaks CLion, and no amount of "all ingestion points are covered" can be
-// proven. make_preferred() is a no-op on POSIX.
+// NATIVE separators for every path this emitter SPELLS ITSELF. Each ingestion
+// point (manifest globs, include_dirs, build.mcpp directives) is normalized at
+// the source, but this is the last line for the fields the CDB schema defines
+// — a path that slips through with a mixed `root\a/b` spelling (MSVC keeps
+// input `/` verbatim) breaks CLion, and "all ingestion points are covered" is
+// not a claim that can be proven once and stay true.
+//
+// It is NOT a whole-argv guarantee: the flag strings (split_flags(f.cxx), the
+// package cflags/cxxflags) pass through untouched, because normalizing an
+// arbitrary flag payload is unsafe — `-DPATH="/etc/x"` holds real slashes.
+// Those channels are normalized where they are ingested instead.
+// make_preferred() is a no-op on POSIX.
 std::string native_string(const std::filesystem::path& p) {
     auto n = p;
     n.make_preferred();

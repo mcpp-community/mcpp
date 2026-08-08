@@ -507,6 +507,12 @@ namespace {
 std::string rewrite_rel_copy(const std::string& p, const std::filesystem::path& root) {
     std::filesystem::path fp(p);
     if (fp.has_root_path()) {
+        // Nothing to re-spell → hand back the ORIGINAL bytes rather than
+        // round-tripping them through path's narrow conversion, which throws
+        // std::system_error for names the ANSI codepage cannot express
+        // (mcpp#230 — see path_matches_glob). A rooted path with no '/' is
+        // already native on both platform families.
+        if (p.find('/') == std::string::npos) return p;
         fp.make_preferred();
         return fp.string();
     }

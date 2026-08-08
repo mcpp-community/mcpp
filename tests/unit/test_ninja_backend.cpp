@@ -173,6 +173,32 @@ TEST(NinjaBackend, CxxFlagsIncludeBuildIncludeDirs) {
         << flags.cxx;
 }
 
+// #390: the NASM include list is built from the SAME `[build] include_dirs`
+// key as the C/C++ one, so it must absolutize and spell entries identically —
+// it used to re-derive the join on its own (and with a different "already
+// rooted?" predicate). Nothing here is nasm-specific except the channel: the
+// point is that one manifest key cannot produce two different paths.
+TEST(NinjaBackend, NasmIncludeDirsMatchTheCxxChannelSpelling) {
+    auto plan = minimal_plan();
+    plan.nasmPath = "/usr/bin/nasm";
+    plan.manifest.buildConfig.includeDirs      = {"third_party/imgui"};
+    plan.manifest.buildConfig.includeDirsAfter = {"generated/inc"};
+
+    auto flags = compute_flags(plan);
+
+    auto native = [](std::filesystem::path p) { p.make_preferred(); return p; };
+    auto imgui = native(plan.projectRoot / "third_party" / "imgui");
+    auto gen   = native(plan.projectRoot / "generated" / "inc");
+
+    // Absolutized against projectRoot, natively spelt, and -I for BOTH keys
+    // (nasm has no system-header chain to defer to, so after-dirs degrade).
+    EXPECT_NE(flags.nasm.find(escaped_include_flag(imgui)), std::string::npos)
+        << flags.nasm;
+    EXPECT_NE(flags.nasm.find(escaped_include_flag(gen)), std::string::npos)
+        << flags.nasm;
+    EXPECT_EQ(flags.nasm.find("-idirafter"), std::string::npos) << flags.nasm;
+}
+
 // #249: a compile unit's localIncludeDirsAfter emit as -idirafter into the
 // same $local_includes variable, APPENDED after the -I entries. -idirafter
 // dirs are searched after the toolchain's system dirs (gcc+clang), so a dep
