@@ -4974,6 +4974,14 @@ prepare_build(bool print_fingerprint,
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
     ctx.plan.compileDbPath = workRoot / "compile_commands.json";
+    // GCC: a clean `*link:` for this build, so the payload's specs cannot
+    // inject other homes' rpath entries into the artifact. AFTER the plan is
+    // moved in — an earlier assignment was silently overwritten by that move,
+    // which produced a generated file that nothing ever passed to the driver.
+    // Generated here rather than in compute_flags, which runs twice per build.
+    if (tc->compiler == mcpp::toolchain::CompilerId::GCC)
+        ctx.plan.gccCleanSpecs = mcpp::toolchain::write_clean_link_specs(
+            tc->binaryPath, ctx.outputDir);
 
     // ── Declared build-graph nodes → the plan ───────────────────────────────
     //

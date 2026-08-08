@@ -713,8 +713,20 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // that lld cannot open — issue #195), -L/-rpath for -lc/-lm, and the
     // payload's dynamic linker.
     std::string payload_ld;
-    if (isClangWithCfg && lm.mode == mcpp::toolchain::CLibMode::PayloadFirst)
-        payload_ld = lm.link_flags(ninjaEsc);
+    if (lm.mode == mcpp::toolchain::CLibMode::PayloadFirst) {
+        // Emitted for gcc too now. It used to be gated on `isClangWithCfg`,
+        // which left gcc's run-side addressing to its install-time specs
+        // while the compile side moved per build.
+        if (isClangWithCfg || !lm.clangDriver)
+            payload_ld = lm.link_flags(ninjaEsc);
+    }
+    // GCC: replace the payload's patched `*link:` with the pristine one, so
+    // its accumulated rpath entries do not reach the artifact. Must come
+    // BEFORE our own -Wl flags is not required (specs are processed by the
+    // driver, not positionally against -Wl), but keeping it adjacent to the
+    // payload flags keeps the C-runtime decisions in one place on the line.
+    if (!plan.gccCleanSpecs.empty())
+        payload_ld = " -specs=" + escape_path(plan.gccCleanSpecs) + payload_ld;
 
     std::string link_extra;
     if (prof.lto)   link_extra += " -flto";

@@ -180,7 +180,7 @@ TEST(LinkModel, GccSysrootSupplementsMissingKernelHeaders) {
     EXPECT_NE(lm.compile_flags(ident).find("-isystem"), std::string::npos);
 }
 
-TEST(LinkModel, GccPayloadUsesIdirafterAndNoLoader) {
+TEST(LinkModel, GccPayloadEmitsIdirafterAndItsOwnAddressing) {
     Tmp dir;
     auto glibcLib = dir.path / "glibc" / "lib64";
     touch(glibcLib / "ld-linux-x86-64.so.2");
@@ -194,12 +194,20 @@ TEST(LinkModel, GccPayloadUsesIdirafterAndNoLoader) {
     };
     auto lm = tc::resolve_link_model(t);
     EXPECT_EQ(lm.mode, tc::CLibMode::PayloadFirst);
+    // Headers still differ by driver: libstdc++'s #include_next wrappers need
+    // -idirafter, and that has not changed.
     EXPECT_NE(lm.compile_flags(ident).find("-idirafter"), std::string::npos);
+
+    // Addressing no longer differs. GCC used to be left to its install-time
+    // specs here, which made the RUN side a per-toolchain-install decision
+    // while the COMPILE side stayed per-build -- and the two named different
+    // glibc versions as soon as a second one was installed. mcpp already
+    // refuses to depend on clang's install-time cfg for exactly this reason.
     auto link = lm.link_flags(ident);
     EXPECT_NE(link.find(" -B"), std::string::npos);
-    // GCC's loader/rpath is owned by the specs fixup, not the command line.
-    EXPECT_EQ(link.find("dynamic-linker"), std::string::npos);
-    EXPECT_EQ(link.find("-rpath"), std::string::npos);
+    EXPECT_NE(link.find("--dynamic-linker=" + lm.loader.string()),
+              std::string::npos);
+    EXPECT_NE(link.find("-Wl,-rpath," + glibcLib.string()), std::string::npos);
 }
 
 TEST(LinkModel, NothingUsableYieldsNoneAndEmptyFlags) {

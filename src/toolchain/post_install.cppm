@@ -182,6 +182,26 @@ export void patchelf_walk(const std::filesystem::path& dir,
 // (.../xim-x-glibc/<ver>/lib64), which is the only place it is written down.
 export std::string baked_runtime_binding(const std::filesystem::path& compilerBin);
 
+// Write a specs file that REPLACES gcc's `*link:` with the pristine built-in
+// one, and return its path (empty when not applicable or on failure).
+//
+// Why this exists: `-rpath` accumulates. mcpp emitting its own does not remove
+// what the payload's specs already inject, and that file has been patched by
+// every home that ever installed against this shared payload -- one stale
+// entry per run, forever. Replacing the spec is the only way to stop them
+// reaching a user's artifact, and it works on machines already polluted.
+//
+// The pristine `*link:` comes from `g++ -dumpspecs`, which prints the specs
+// COMPILED INTO the binary and is unaffected by the file on disk. So the
+// original is always recoverable and the payload is never touched -- an
+// earlier plan to reinstall the toolchain was unnecessary.
+//
+// `-specs=<file>` whose definition does not begin with `+` replaces rather
+// than appends; both properties were measured before this was written.
+export std::filesystem::path write_clean_link_specs(
+    const std::filesystem::path& compilerBin,
+    const std::filesystem::path& outputDir);
+
 export std::string detect_baked_loader(const std::string& specsContent) {
     // Path-character whitelist. Specs embed loader paths inside %-spec
     // syntax (`%{mmusl:...;:/baked/dir/ld-linux-x86-64.so.2}`), so scanning
@@ -215,65 +235,30 @@ export std::string detect_baked_loader(const std::string& specsContent) {
     return "";
 }
 
-void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
-                     const std::filesystem::path& glibcLibDir,
-                     const std::filesystem::path& gccLibDir,
-                     const std::filesystem::path& fenceRoot)
-{
-    // #273 fence: a payload reached through a symlink is a foreign
-    // installation — its specs file must not be rewritten either.
-    if (escapes_containment(gccPkgRoot, fenceRoot)) {
-        mcpp::log::verbose("toolchain",
-            "fixup_gcc_specs: skip (payload outside sandbox, #273 fence)");
-        return;
-    }
-    std::filesystem::path specsParent;
-    std::error_code ec;
-    for (auto it = std::filesystem::directory_iterator(gccPkgRoot / "lib" / "gcc", ec);
-         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
-        if (it->is_directory(ec)) { specsParent = it->path(); break; }
-    }
-    if (specsParent.empty()) return;
+// fixup_gcc_specs is GONE.
+//
+// It wrote the loader and the rpath into the gcc payload's `specs` at install
+// time. Both are now emitted per build by mcpp.toolchain.linkmodel, which
+// removes an answerer rather than adding a path:
+//
+//   - the RUN side was a per-toolchain-install decision while the COMPILE
+//     side was per-build, and they named different glibc versions the moment
+//     a second one was installed;
+//   - the substitution had a one-path needle and a two-path replacement, so
+//     every home that patched the SHARED payload left one entry behind. 68 on
+//     a developer machine, all pointing at deleted mktemp directories, in
+//     every gcc artifact it produced.
+//
+// The payload is no longer written to at all, which restores what R6 asks of
+// it: immutable, and independent of any particular home. A build that needs
+// a clean `*link:` gets one generated into its own build directory (see
+// write_clean_link_specs) -- the pristine spec comes from `g++ -dumpspecs`,
+// which prints what is compiled into the binary and is therefore always
+// recoverable.
+//
+// patchelf_walk stays: making the compiler itself runnable is a different
+// question from what the compiler produces.
 
-    auto loaderReplacement = resolve_loader(glibcLibDir, /*targetTriple=*/{}).string();
-    if (loaderReplacement.empty()) return;
-    auto rpathReplacement  = std::format("{}:{}",
-                                         glibcLibDir.string(),
-                                         gccLibDir.string());
-
-    auto replace_all = [](std::string& s, std::string_view needle,
-                          std::string_view rep)
-    {
-        for (std::size_t pos = 0;
-             (pos = s.find(needle, pos)) != std::string::npos;) {
-            s.replace(pos, needle.size(), rep);
-            pos += rep.size();
-        }
-    };
-
-    for (auto& sub : std::filesystem::directory_iterator(specsParent)) {
-        auto specs = sub.path() / "specs";
-        if (!std::filesystem::exists(specs)) continue;
-
-        std::ifstream is(specs);
-        std::stringstream ss;  ss << is.rdbuf();
-        std::string content = ss.str();
-
-        auto bakedLoader = detect_baked_loader(content);
-        if (bakedLoader.empty()) continue;
-        auto bakedDir = std::filesystem::path(bakedLoader).parent_path().string();
-        // Already pointing at the right place — no fixup needed.
-        if (bakedDir == glibcLibDir.string()) continue;
-
-        // Order matters: replace the full loader file path first so the
-        // shorter dir pattern doesn't eat its prefix.
-        replace_all(content, bakedLoader, loaderReplacement);
-        replace_all(content, bakedDir,    rpathReplacement);
-
-        std::ofstream os(specs);
-        os << content;
-    }
-}
 
 // Regenerate the clang driver cfg files after the LLVM payload landed in the
 // sandbox. The cfg xlings authored at install time is a per-machine,
@@ -290,7 +275,7 @@ void fixup_gcc_specs(const std::filesystem::path& gccPkgRoot,
 export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
                      const std::filesystem::path& glibcLibDir,
                      const std::filesystem::path& fenceRoot) {
-    // #273 fence — same rule as fixup_gcc_specs above.
+    // #273 fence — same rule the removed gcc specs fixup used.
     if (escapes_containment(payloadRoot, fenceRoot)) {
         mcpp::log::verbose("toolchain",
             "fixup_clang_cfg: skip (payload outside sandbox, #273 fence)");
@@ -435,9 +420,6 @@ void gcc_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
         }
         patchelf_walk(payloadRoot, loader, rpath, patchelfBin, fence);
 
-        mcpp::log::verbose("toolchain", "gcc fixup: fixup_gcc_specs");
-        fixup_gcc_specs(payloadRoot, glibcLibDir, gccLibDir,
-                        containment_root(cfg.registryDir));
     } else {
         mcpp::ui::warning(
             "could not locate sandbox glibc/gcc/patchelf paths; "
@@ -587,6 +569,41 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
         }
     }
     return {};
+}
+
+
+std::filesystem::path write_clean_link_specs(
+    const std::filesystem::path& compilerBin,
+    const std::filesystem::path& outputDir)
+{
+    if (compilerBin.empty() || outputDir.empty()) return {};
+    std::error_code ec;
+    auto out = outputDir / "mcpp-clean-link.specs";
+    // Idempotent: the pristine spec is a property of the compiler binary, so
+    // regenerating it every build would spawn a process for a constant.
+    if (std::filesystem::exists(out, ec)) return out;
+
+    auto r = mcpp::platform::process::capture(std::format(
+        "{} -dumpspecs 2>/dev/null",
+        mcpp::platform::shell::quote(compilerBin.string())));
+    if (r.exit_code != 0 || r.output.empty()) return {};
+
+    // `*link:` is a section header on its own line; its body is the next line.
+    constexpr std::string_view kHead = "*link:\n";
+    auto pos = r.output.find(kHead);
+    if (pos == std::string::npos) return {};
+    auto bodyStart = pos + kHead.size();
+    auto bodyEnd   = r.output.find('\n', bodyStart);
+    if (bodyEnd == std::string::npos) return {};
+    auto body = r.output.substr(bodyStart, bodyEnd - bodyStart);
+    if (body.empty()) return {};
+
+    std::filesystem::create_directories(outputDir, ec);
+    std::ofstream os(out);
+    if (!os) return {};
+    os << "*link:\n" << body << "\n\n";
+    os.close();
+    return out;
 }
 
 } // namespace mcpp::toolchain

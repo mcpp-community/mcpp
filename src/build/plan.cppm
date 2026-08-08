@@ -112,6 +112,11 @@ struct BuildPlan {
     // (possibly read-only) registry directory, and deriving the path would put
     // an IDE database there. Empty → projectRoot, the historical default.
     std::filesystem::path           compileDbPath;
+    // GCC only: a specs file that replaces the pristine `*link:`, so the
+    // payload's own (patched by every home that ever installed against it)
+    // cannot inject rpath entries into this build's artifacts. Empty for
+    // clang, which bypasses its cfg with --no-default-config instead.
+    std::filesystem::path           gccCleanSpecs;
     std::filesystem::path           stdBmiPath;      // absolute path to prebuilt std.gcm
     std::filesystem::path           stdObjectPath;   // absolute path to prebuilt std.o
     std::filesystem::path           stdCompatBmiPath;    // absolute path to prebuilt std.compat.pcm
