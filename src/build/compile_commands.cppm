@@ -329,15 +329,46 @@ publish_compile_commands(
             "fresh compile database for '{}' is not a JSON array", path.string())));
     }
 
-    std::optional<std::string> existing;
-    if (std::ifstream is(path, std::ios::binary); is) {
-        std::stringstream ss;
-        ss << is.rdbuf();
-        if (is.bad()) {
+    std::filesystem::path publishPath = path;
+    std::error_code statusEc;
+    const bool isLink = std::filesystem::is_symlink(path, statusEc);
+    if (statusEc) {
+        return std::unexpected(write_error(std::format(
+            "cannot inspect compile database '{}': {}", path.string(),
+            statusEc.message())));
+    }
+    if (isLink) {
+        auto target = std::filesystem::read_symlink(path, statusEc);
+        if (statusEc) {
             return std::unexpected(write_error(std::format(
-                "cannot read existing compile database '{}'", path.string())));
+                "cannot resolve compile database link '{}': {}", path.string(),
+                statusEc.message())));
+        }
+        publishPath = target.is_absolute() ? target : path.parent_path() / target;
+    }
+
+    std::optional<std::string> existing;
+    std::ifstream input(publishPath, std::ios::binary);
+    if (input) {
+        std::stringstream ss;
+        ss << input.rdbuf();
+        if (input.bad()) {
+            return std::unexpected(write_error(std::format(
+                "cannot read existing compile database '{}'", publishPath.string())));
         }
         existing = ss.str();
+    } else {
+        std::error_code existsEc;
+        auto exists = std::filesystem::exists(publishPath, existsEc);
+        if (existsEc) {
+            return std::unexpected(write_error(std::format(
+                "cannot inspect existing compile database '{}': {}",
+                publishPath.string(), existsEc.message())));
+        }
+        if (exists) {
+            return std::unexpected(write_error(std::format(
+                "cannot read existing compile database '{}'", publishPath.string())));
+        }
     }
 
     // 完全相同的有效输入不重写文件，避免 clangd 因 mtime 变化重复索引。
@@ -364,9 +395,12 @@ publish_compile_commands(
     }
 
     static std::atomic<std::uint64_t> sequence{0};
-    auto temp = path.parent_path()
-        / std::format(".{}.tmp.{}.{}", path.filename().string(),
+    const auto nonce = std::random_device{}();
+    // 临时文件和链接目标同目录，避免 rename 跨文件系统；随机量降低跨进程碰撞概率。
+    auto temp = publishPath.parent_path()
+        / std::format(".{}.tmp.{}.{}.{}", publishPath.filename().string(),
                       std::chrono::steady_clock::now().time_since_epoch().count(),
+                      static_cast<unsigned long long>(nonce),
                       sequence.fetch_add(1, std::memory_order_relaxed));
     auto cleanup_temp = [&] {
         std::error_code cleanupEc;
@@ -394,10 +428,10 @@ publish_compile_commands(
     }
 
     std::error_code ec;
-    if (!replaceFile(temp, path, ec)) {
+    if (!replaceFile(temp, publishPath, ec)) {
         cleanup_temp();
         return std::unexpected(write_error(std::format(
-            "cannot replace '{}': {}", path.string(), ec.message())));
+            "cannot replace '{}': {}", publishPath.string(), ec.message())));
     }
 
     return CompileCommandsWriteResult{true, finalJson.size()};

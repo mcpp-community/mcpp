@@ -132,6 +132,7 @@ CDB 发布前，并保留旧 CDB。项目自身模块或未缓存依赖模块保
 
 - POSIX 使用同文件系统 `rename`；
 - Windows 使用 `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`；
+- Windows 遇到短暂 sharing violation 时有限退避重试；
 - 不先删除 destination；
 - 函数为 `noexcept` 风格，通过 `error_code` 报错。
 
@@ -140,9 +141,10 @@ CDB 写入流程：
 1. 生成并解析 JSON，要求顶层为数组。
 2. 与现有有效条目合并并删除已不存在源文件的旧条目。
 3. 内容未变化时不写文件，避免无意义触发 clangd 重索引。
-4. 在同目录完成唯一临时文件写入和 flush。
-5. 通过 `replace_file` 原子替换目标。
-6. 替换失败时清理临时文件，返回错误，旧文件保持不变。
+4. 若根 CDB 是文件符号链接，解析并原子更新其目标，保留链接本身。
+5. 在同目录完成带跨进程随机量的临时文件写入和 flush。
+6. 通过 `replace_file` 原子替换目标。
+7. 替换失败时清理临时文件，返回错误，旧文件保持不变。
 
 `write_compile_commands()` 改为返回结构化成功或错误。为保持普通构建兼容性：
 

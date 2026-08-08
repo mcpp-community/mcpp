@@ -145,13 +145,23 @@ bool replace_file(const std::filesystem::path& source,
                   const std::filesystem::path& destination,
                   std::error_code& ec) {
 #if defined(_WIN32)
-    // 直接替换已有文件，不能先删除 last-known-good CDB。
-    if (MoveFileExW(source.wstring().c_str(), destination.wstring().c_str(),
-                    MOVEFILE_REPLACE_EXISTING)) {
-        ec.clear();
-        return true;
+    // 直接替换已有文件，不能先删除 last-known-good CDB。编辑器或杀毒软件
+    // 可能短暂占用目标文件，sharing violation 仅做有限退避后再报告失败。
+    auto delay = std::chrono::milliseconds{50};
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        if (MoveFileExW(source.wstring().c_str(), destination.wstring().c_str(),
+                        MOVEFILE_REPLACE_EXISTING)) {
+            ec.clear();
+            return true;
+        }
+        const auto error = GetLastError();
+        if (error != ERROR_SHARING_VIOLATION || attempt == 3) {
+            ec = std::error_code(static_cast<int>(error), std::system_category());
+            return false;
+        }
+        std::this_thread::sleep_for(delay);
+        delay *= 3;
     }
-    ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
     return false;
 #else
     // 临时文件与目标文件位于同一文件系统时，rename 提供原子替换。

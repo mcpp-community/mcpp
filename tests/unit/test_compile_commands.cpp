@@ -349,4 +349,50 @@ TEST(CompileCommandsEmit, EmittedPathsUseNativeSeparators) {
         EXPECT_EQ(inc,      "-IC:/proj/generated/inc");
         EXPECT_EQ(incAfter, "-idirafterC:/proj/third_party/inc");
     }
+TEST(CompileCommandsWriter, ReplacesSymlinkTargetWithoutRemovingLink) {
+    TempDir temp;
+    auto target = temp.path / "build" / "compile_commands.json";
+    auto link = temp.path / "compile_commands.json";
+    std::filesystem::create_directories(target.parent_path());
+    auto oldContent = cdb({entry((temp.path / "old.cpp").string(), "-DOLD")});
+    auto newContent = cdb({entry((temp.path / "new.cpp").string(), "-DNEW")});
+    std::ofstream(target) << oldContent;
+    std::error_code symlinkEc;
+    std::filesystem::create_symlink(target, link, symlinkEc);
+    if (symlinkEc) GTEST_SKIP() << "symlink unavailable: " << symlinkEc.message();
+
+    auto result = publish_compile_commands(
+        link, newContent, [](const std::filesystem::path&) { return false; });
+
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_TRUE(std::filesystem::is_symlink(link));
+    auto published = read_file(target);
+    EXPECT_NE(published.find("-DNEW"), std::string::npos);
+    EXPECT_EQ(published.find("-DOLD"), std::string::npos);
+}
+
+TEST(CompileCommandsWriter, ExistingUnreadableDatabaseIsNotOverwritten) {
+    TempDir temp;
+    auto path = temp.path / "compile_commands.json";
+    std::ofstream(path) << "last-known-good";
+    std::error_code permissionEc;
+    std::filesystem::permissions(
+        path, std::filesystem::perms::owner_read,
+        std::filesystem::perm_options::remove, permissionEc);
+    if (permissionEc) GTEST_SKIP() << "cannot change permissions: " << permissionEc.message();
+    std::ifstream probe(path);
+    if (probe) {
+        std::filesystem::permissions(path, std::filesystem::perms::owner_all,
+                                     std::filesystem::perm_options::replace, permissionEc);
+        GTEST_SKIP() << "test user can still read restricted file";
+    }
+
+    auto result = publish_compile_commands(
+        path, cdb({entry((temp.path / "new.cpp").string(), "-DNEW")}),
+        [](const std::filesystem::path&) { return true; });
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().message.find("read existing"), std::string::npos);
+    std::filesystem::permissions(path, std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::replace, permissionEc);
 }
