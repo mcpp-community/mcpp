@@ -929,14 +929,36 @@ std::string resolve_runtime_binding(const mcpp::manifest::Manifest& m,
     auto runtime_of = [](const std::filesystem::path& dir) -> std::string {
         return mcpp::xlings::subos::read(dir).runtime;
     };
+    // A declaration can only be honoured while the payload it names is still
+    // installed. Subos descriptions are written once and the payloads beneath
+    // them are replaced independently -- upgraded, garbage-collected -- so a
+    // subos can go on saying `glibc@2.39` on a machine that now has only 2.44.
+    //
+    // Taking that at face value is not conservative, it is worse than any
+    // substitution: the exact-match probe finds nothing, no loader reaches the
+    // link line, and the artifact ends up on the HOST loader -- outside the
+    // sandbox entirely. Measured on CI, three rounds running.
+    //
+    // So a declaration naming an absent payload is passed over rather than
+    // returned, and resolution carries on to something that can be honoured.
+    auto usable = [&](const std::string& binding) {
+        if (binding.empty()) return false;
+        if (compilerBin.empty()) return true;   // cannot check yet; caller re-asks
+        if (mcpp::toolchain::probe_payload_paths(compilerBin, binding))
+            return true;
+        mcpp::log::verbose("probe", std::format(
+            "subos declares runtime {}, but that payload is not installed here "
+            "— looking for one that is", binding));
+        return false;
+    };
     if (auto active = mcpp::xlings::paths::subos_dir_of(compilerBin)) {
         // 1 — the project names a subos; it is a sibling of the active one.
         if (!m.xlings.subos.empty()) {
             auto named = active->parent_path() / m.xlings.subos;
-            if (auto r = runtime_of(named); !r.empty()) return r;
+            if (auto r = runtime_of(named); usable(r)) return r;
         }
         // 2 — whatever is active.
-        if (auto r = runtime_of(*active); !r.empty()) return r;
+        if (auto r = runtime_of(*active); usable(r)) return r;
     }
 
     // 3 — COMPATIBILITY: the value this toolchain already has baked in.
@@ -1705,12 +1727,18 @@ prepare_build(bool print_fingerprint,
     auto runtimeBinding = resolve_runtime_binding(*m, {});
     auto tc = mcpp::toolchain::detect(explicit_compiler, runtimeBinding);
     if (!tc) return std::unexpected(tc.error().message);
-    // The binding may only be discoverable from the compiler's own home
-    // (an inherited toolchain resolves into its owner). Re-resolve once we
-    // know where the compiler is, then re-probe if that changed the answer.
-    if (runtimeBinding.empty()) {
+    // The first pass has no compiler, so it can neither discover a binding
+    // that only the compiler's own home knows (an inherited toolchain resolves
+    // into its owner) nor check that a declared one is still installed. Both
+    // failures look identical from here: no payload paths. Re-ask with the
+    // compiler in hand whenever that is what happened.
+    //
+    // The old condition was `runtimeBinding.empty()`, which meant a subos
+    // naming a payload that had since been upgraded away won on the first pass
+    // and the second pass never ran.
+    if (!tc->payloadPaths) {
         auto fromCompiler = resolve_runtime_binding(*m, tc->binaryPath);
-        if (!fromCompiler.empty()) {
+        if (!fromCompiler.empty() && fromCompiler != runtimeBinding) {
             tc = mcpp::toolchain::detect(explicit_compiler, fromCompiler);
             if (!tc) return std::unexpected(tc.error().message);
         }
