@@ -17,17 +17,40 @@ import mcpp.log;
 
 export namespace mcpp::fallback {
 
-// When GCC reports a sysroot ending in "subos/default" that doesn't exist
-// on the current machine (baked build-time path), remap it to the
-// equivalent sysroot relative to the compiler's own xpkgs directory.
+// When GCC reports a baked "subos/default" sysroot that does not belong to
+// THIS toolchain's home, remap it to the equivalent sysroot under the
+// compiler's own xpkgs tree.
+//
+// The predicate used to be "does not exist", which is the wrong axis. A
+// developer machine has more than one project-local `.xlings/subos/default`,
+// and gcc's baked path can name one of them: it exists, so the remap was
+// skipped and every build in an unrelated project inherited another
+// project's sysroot. Measured -- a build in mcpp resolved
+// `--sysroot=<other-repo>/.xlings/subos/default`.
+//
+// Existence says nothing about ownership. What matters is whether the path is
+// under the same registry as the compiler, and a path that is not gets
+// remapped whether or not something happens to be there.
 std::optional<std::filesystem::path>
 remap_xlings_baked_sysroot(std::string_view reportedPath,
                            const std::filesystem::path& compilerBin) {
     if (reportedPath.empty()) return std::nullopt;
     if (!reportedPath.ends_with("subos/default")) return std::nullopt;
-    if (std::filesystem::exists(std::string(reportedPath))) return std::nullopt;
 
-    if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
+    auto xpkgsOpt = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin);
+    if (xpkgsOpt) {
+        // Owned by this toolchain's registry? Then it is the right answer.
+        auto registry = xpkgsOpt->parent_path().parent_path();
+        std::error_code ec;
+        auto rel = std::filesystem::path(std::string(reportedPath))
+                       .lexically_relative(registry);
+        const bool inside = !rel.empty()
+                         && rel.native().rfind("..", 0) != 0;
+        if (inside && std::filesystem::exists(std::string(reportedPath), ec))
+            return std::nullopt;
+    }
+
+    if (auto xpkgs = std::move(xpkgsOpt)) {
         // xpkgs is <registry>/data/xpkgs -> registry = xpkgs/../..
         auto registrySysroot = xpkgs->parent_path().parent_path()
                                / "subos" / "default";
@@ -35,6 +58,30 @@ remap_xlings_baked_sysroot(std::string_view reportedPath,
             return registrySysroot;
     }
     return std::nullopt;
+}
+
+// Is this sysroot foreign -- neither this mcpp home's registry nor a tree
+// belonging to the project being built?
+//
+// The hazard is specific and was measured: gcc bakes `--sysroot=<...>/.xlings/
+// subos/default` as a STRING at build time, and a developer machine has many
+// directories by that name. The baked one therefore frequently EXISTS while
+// belonging to an unrelated checkout, and headers silently come from a tree
+// this build never declared. remap_xlings_baked_sysroot repairs the case it
+// can see; this predicate is what reports the case it cannot.
+//
+// Both anchors are required. Registry alone would flag every legitimate
+// project-local tree; project alone would flag every payload sysroot.
+bool sysroot_is_foreign(const std::filesystem::path& sysroot,
+                        const std::filesystem::path& registryRoot,
+                        const std::filesystem::path& projectRoot) {
+    if (sysroot.empty()) return false;
+    auto under = [&](const std::filesystem::path& anchor) {
+        if (anchor.empty()) return false;
+        auto rel = sysroot.lexically_relative(anchor);
+        return !rel.empty() && rel.native().rfind("..", 0) != 0;
+    };
+    return !under(registryRoot) && !under(projectRoot);
 }
 
 // Parse a Clang .cfg file alongside the compiler binary for --sysroot=.

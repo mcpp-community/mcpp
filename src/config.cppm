@@ -600,7 +600,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 
     // 6. Acquire xlings binary if needed
     if (cfg.xlingsBinaryMode == "bundled") {
-        auto xbin = mcpp::fallback::acquire_xlings_binary(cfg.xlingsBinary, quiet);
+        auto xbin = mcpp::fallback::acquire_xlings_binary(
+            cfg.xlingsBinary, quiet, kXlingsPinnedVersion);
         if (!xbin) return std::unexpected(ConfigError{xbin.error()});
     } else if (cfg.xlingsBinaryMode == "system") {
         auto sysPath = mcpp::platform::fs::which(

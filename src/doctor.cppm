@@ -14,6 +14,8 @@ import mcpp.bmi_cache.maintenance;
 import mcpp.build.prepare;
 import mcpp.build.plan;
 import mcpp.config;
+import mcpp.fallback.probe_sysroot;
+import mcpp.fallback.xlings_binary;
 import mcpp.fallback.install_integrity;
 import mcpp.fetcher.progress;
 import mcpp.home;
@@ -69,6 +71,7 @@ export std::vector<std::string> parse_readelf_runpath(std::string_view dump) {
 // `mcpp self env`.
 export int env_report() {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
+
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
     mcpp::config::print_env(*cfg);
@@ -98,6 +101,7 @@ export int doctor_report() {
         err(std::format("toolchain detection failed: {}", tc.error().message));
     } else {
         ok(std::format("{} at {}", tc->label(), tc->binaryPath.string()));
+
     }
 
     // Windows: report the system MSVC (msvc@system). Absence is a warning,
@@ -204,6 +208,28 @@ export int doctor_report() {
 
     mcpp::ui::status("Checking", "registry");
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
+
+    // Whose sysroot is this? gcc bakes `--sysroot=<...>/subos/default`
+    // at build time, and that path is a string, not a reference -- it
+    // keeps naming wherever the compiler was built no matter which
+    // project it now serves. A developer machine has many directories by
+    // that name, so the baked one frequently EXISTS while belonging to an
+    // unrelated checkout, and headers then come from a tree this build
+    // never declared. Existence is not ownership.
+    if (tc && cfg) {
+        std::error_code cwdEc;
+        auto project = std::filesystem::current_path(cwdEc);
+        if (mcpp::fallback::sysroot_is_foreign(
+                tc->sysroot, (*cfg).registryDir,
+                cwdEc ? std::filesystem::path{} : project))
+            warn(std::format(
+                "sysroot {} belongs to neither this mcpp home ({}) nor "
+                "this project — headers would come from a tree nothing "
+                "here declared. mcpp remaps a baked sysroot when it can "
+                "find the equivalent under the registry; seeing it here "
+                "means it could not",
+                tc->sysroot.string(), (*cfg).registryDir.string()));
+    }
     if (!cfg) {
         err(cfg.error().message);
     } else {
@@ -365,6 +391,33 @@ export int doctor_report() {
             ok("all installed toolchain RUNPATH dirs present");
         else if (!sawAny)
             ok("no installed toolchains to check");
+
+        // The vendored xlings, against the version this mcpp expects.
+        //
+        // Nothing else surfaces this. `mcpp self env` prints both numbers and
+        // says nothing about the gap, and a home that acquired its xlings once
+        // never revisited it -- so a machine could sit years behind while every
+        // command looked healthy. What goes missing is silent by nature:
+        // features mcpp reads FROM xlings (the subos_info block, for one)
+        // simply never appear, and the code that consumes them degrades
+        // quietly because a missing block is also a legitimate state.
+        {
+            auto have = mcpp::fallback::vendored_xlings_version((*cfg).xlingsBinary);
+            const auto want = std::string(mcpp::config::kXlingsPinnedVersion);
+            if (have.empty()) {
+                warn(std::format("cannot read the vendored xlings version at {}",
+                                 (*cfg).xlingsBinary.string()));
+            } else if (mcpp::fallback::version_is_older(have, want)) {
+                warn(std::format(
+                    "vendored xlings is {} but this mcpp expects {} — features "
+                    "mcpp reads from xlings may be silently absent (the subos "
+                    "self-description arrived in 2026.8.5.1). It is replaced "
+                    "automatically on the next `mcpp self init`",
+                    have, want));
+            } else {
+                ok(std::format("vendored xlings {} (pinned {})", have, want));
+            }
+        }
 
         // Dangling symlinks under registry/subos/default/lib — these point
         // into xim payload lib dirs; a removed package leaves them broken.
