@@ -11,6 +11,7 @@ export module mcpp.build.execute;
 import std;
 import mcpp.build.build_program;   // #359 glob inputs the mtime sweep cannot see
 import mcpp.build.prepare;
+import mcpp.build.test_targets;
 import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.build.backend;
@@ -1073,72 +1074,18 @@ export int run_tests(std::span<const std::string> passthrough,
         return 2;
     }
 
-    // Workspace scoping: discovery must run against the MEMBER, not the
-    // workspace root — otherwise `tests/**/*.cpp` globs every member's tests
-    // together (two `tests/main.cpp` → "duplicate test name 'main'"). When a
-    // member is selected (via -p, threaded as package_filter), glob from its
-    // dir; prepare_build below resolves the SAME member, so the two agree.
-    // (--workspace fans out over members at the cmd layer, one call per member.)
-    auto testRoot = *root;
-    if (auto rm = mcpp::manifest::load(*root / "mcpp.toml"); rm) {
-        auto member = mcpp::project::resolve_member_dir(*rm, *root, overrides.package_filter);
-        if (!member) { mcpp::ui::error(member.error()); return 2; }
-        if (!member->empty()) testRoot = *member;
+    auto discovered = mcpp::build::discover_test_targets(
+        *root, overrides.package_filter);
+    if (!discovered) {
+        mcpp::ui::error(discovered.error());
+        return 2;
     }
-
-    // 1. Discover test files (scoped to the member/package).
-    auto testFiles = mcpp::modgraph::expand_glob(testRoot, "tests/**/*.cpp");
-    if (testFiles.empty()) {
+    auto testRoot = discovered->packageRoot;
+    auto testTargets = std::move(discovered->targets);
+    if (testTargets.empty()) {
         std::println("no tests found in tests/");
         return 0;
     }
-
-    // [build].flags globs also cover tests: a glob names files — whether they
-    // are scanned sources or test TUs is orthogonal. Matched entries ride the
-    // per-target flag channel (issue #131) on the synthesized test target.
-    // (Feature-folded entries are prepare-time state; tests take the base
-    // [build].flags — sufficient for per-test compile options.)
-    struct TestGlobFlags {
-        mcpp::manifest::GlobFlags       gf;
-        std::set<std::filesystem::path> files;
-    };
-    std::vector<TestGlobFlags> testGlobFlags;
-    if (auto mm = mcpp::manifest::load(testRoot / "mcpp.toml")) {
-        for (auto const& gf : mm->buildConfig.globFlags) {
-            auto hits = mcpp::modgraph::expand_glob(testRoot, gf.glob);
-            testGlobFlags.push_back({gf, {hits.begin(), hits.end()}});
-        }
-    }
-
-    // 2. Synthesize a Target for each test file.
-    //    Name = path relative to tests/, extension dropped, '/' separators —
-    //    so tests/00-a/0.cpp and tests/01-b/0.cpp coexist as '00-a/0' and
-    //    '01-b/0' (stems alone would collide). Flat layouts keep their old
-    //    names ('tests/smoke.cpp' → 'smoke').
-    std::vector<mcpp::manifest::Target> testTargets;
-    std::set<std::string> seenNames;
-    for (auto& f : testFiles) {
-        auto rel  = std::filesystem::relative(f, testRoot / "tests");
-        auto name = rel.replace_extension("").generic_string();
-        if (!seenNames.insert(name).second) {
-            mcpp::ui::error(std::format(
-                "duplicate test name '{}' (two test files map to the same name)", name));
-            return 2;
-        }
-        mcpp::manifest::Target t;
-        t.name = name;
-        t.kind = mcpp::manifest::Target::TestBinary;
-        // Relative to the member/package root prepare_build will operate on.
-        t.main = std::filesystem::relative(f, testRoot).string();
-        for (auto const& tgf : testGlobFlags) {
-            if (!tgf.files.contains(f)) continue;
-            for (auto const& d  : tgf.gf.defines)  t.defines.push_back(d);
-            for (auto const& fl : tgf.gf.cflags)   t.cflags.push_back(fl);
-            for (auto const& fl : tgf.gf.cxxflags) t.cxxflags.push_back(fl);
-        }
-        testTargets.push_back(std::move(t));
-    }
-
     // --list: enumerate (filtered) tests and stop — no toolchain resolution,
     // no build. Names/paths come straight from discovery, so this also works
     // on tests that do not currently compile.
