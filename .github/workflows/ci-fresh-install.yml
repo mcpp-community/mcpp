@@ -9,6 +9,13 @@ name: ci-fresh-install
 #
 # This workflow tests released mcpp, not PR code.
 # It runs on release publish, manual trigger, and daily schedule.
+#
+# Every job is gated with `github.repository == 'mcpp-community/mcpp'`: the
+# schedule trigger runs on the repository's DEFAULT branch, so a fork that
+# renamed its default branch would otherwise burn its Actions quota on the
+# daily/weekly cron for no value (fresh-install only tests released mcpp).
+# PRs against upstream are unaffected — they run the self-host suites
+# (ci-linux / ci-macos / ci-windows).
 
 on:
   # NOTE: `release: published` never fires from the release pipeline — the
@@ -69,7 +76,7 @@ jobs:
   # Non-workflow_run triggers (manual, cron, PR) skip the wait.
   wait-index:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.repository == 'mcpp-community/mcpp' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     timeout-minutes: 20
     outputs:
       version: ${{ steps.resolve.outputs.version }}
@@ -135,7 +142,7 @@ jobs:
   linux-fresh:
     needs: [wait-index]
     name: Linux fresh install
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.repository == 'mcpp-community/mcpp' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -245,7 +252,7 @@ jobs:
   linux-distro-matrix:
     needs: [wait-index]
     name: Linux distro (${{ matrix.distro }})
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.repository == 'mcpp-community/mcpp' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-24.04
     container:
       image: ${{ matrix.image }}
@@ -338,7 +345,7 @@ jobs:
   macos-fresh:
     needs: [wait-index]
     name: macOS fresh install
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.repository == 'mcpp-community/mcpp' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     # macos-14: the support floor (mcpp ≥0.0.50 / xlings ≥0.4.50 ship
     # minos=14.0 static-libc++ binaries). A fresh install passing here
     # is the continuous proof of the macOS 14 floor — and of host-tool
@@ -416,7 +423,7 @@ jobs:
   windows-fresh:
     needs: [wait-index]
     name: Windows fresh install (${{ matrix.image }})
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.repository == 'mcpp-community/mcpp' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ${{ matrix.image }}
     timeout-minutes: 30
     strategy:
@@ -499,7 +506,7 @@ jobs:
   windows-nomsvc-fresh:
     needs: [wait-index]
     name: Windows fresh install (no Visual Studio)
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.repository == 'mcpp-community/mcpp' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: windows-2025
     timeout-minutes: 30
     env:

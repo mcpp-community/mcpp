@@ -11,6 +11,10 @@ name: ci-aarch64-fresh-install
 # Validates that every published aarch64 asset (xlings, mcpp, musl-gcc) lines
 # up and that mcpp can build & run a real `import std` program natively on
 # aarch64 — no cross, no qemu. Runs on GitHub's native ARM64 runner.
+#
+# The job is gated with `github.repository == 'mcpp-community/mcpp'`: the
+# weekly schedule runs on the repository's DEFAULT branch, so forks with a
+# renamed default branch would otherwise burn their Actions quota on the cron.
 
 on:
   workflow_dispatch:
@@ -38,6 +42,7 @@ concurrency:
 jobs:
   fresh-install:
     name: fresh install + native build (aarch64 / glibc)
+    if: ${{ github.repository == 'mcpp-community/mcpp' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     env:
