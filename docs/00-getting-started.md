@@ -84,6 +84,27 @@ mcpp run
 
 The first build downloads the host-aware default toolchain, showing progress and speed along the way. Once downloaded, all mcpp projects share the same sandbox.
 
+### Configure an editor before the first successful build
+
+If the source is not buildable yet, generate the compilation database without
+compiling ordinary translation units or linking final targets:
+
+```bash
+mcpp build --configure-only
+# Configured hello (... compile commands)
+```
+
+The command resolves the same package, workspace member, profile, features,
+capability providers, target and toolchain as a real build. Its
+`compile_commands.json` covers regular sources and `tests/**/*.cpp`, including
+test-only dependencies and matching `[build].flags`, so clangd/ccls can index
+the project while it is still being edited. It is a configuration operation,
+not a read-only operation: `build.mcpp`, missing dependencies or toolchains,
+lock/resolution metadata and build-directory metadata may still be updated.
+Run it only in a trusted workspace. The process exit code and the resulting
+`compile_commands.json` are the stable integration contract; stdout remains
+human-readable.
+
 ## Incremental Compilation and Testing
 
 ```bash

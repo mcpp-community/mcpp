@@ -82,6 +82,23 @@ mcpp run
 
 首次构建需下载随宿主选择的默认工具链,期间显示进度与速度。下载完成后,所有 mcpp 项目共用同一份沙盒。
 
+### 在首次成功构建前配置 IDE
+
+源码尚未可构建时,可以先生成编译数据库,而不编译普通翻译单元或链接最终目标:
+
+```bash
+mcpp build --configure-only
+# Configured hello (... compile commands)
+```
+
+该命令与普通构建使用相同的包、workspace member、profile、feature、capability、
+target 和 toolchain 解析结果。生成的 `compile_commands.json` 同时覆盖普通源码与
+`tests/**/*.cpp`,并把测试专用依赖及匹配的 `[build].flags` 带入测试 TU,因此 clangd/ccls
+可以在代码尚未编译通过时索引工程。它是“只配置”而不是只读操作:`build.mcpp`、缺失的
+依赖或 toolchain、lock/resolution 元数据以及构建目录元数据仍可能被更新,只能在可信
+workspace 中运行。插件稳定依赖进程退出码和生成的 `compile_commands.json`,标准输出仍是
+面向人的文本,不作为机器协议。
+
 ## 增量编译与测试
 
 ```bash
