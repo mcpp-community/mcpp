@@ -24,6 +24,44 @@ FingerprintInputs baseline() {
     return in;
 }
 
+
+// Two builds that differ ONLY in which libc they target must not share a
+// fingerprint -- and therefore must not share `target/<fp>/`.
+//
+// Without this, switching subos leaves the build directory untouched: ninja
+// sees the same graph, the objects inside were compiled against the other
+// glibc, and the link succeeds. What comes out references symbols the
+// interpreter cannot provide, and nothing along the way said anything. This
+// is the prerequisite for building the same project under two subos, not a
+// refinement of it.
+TEST(Fingerprint, RuntimeBindingIsPartOfTheIdentity) {
+    mcpp::toolchain::FingerprintInputs a;
+    a.toolchain.compiler     = mcpp::toolchain::CompilerId::GCC;
+    a.toolchain.version      = "16.1.0";
+    a.toolchain.targetTriple = "x86_64-linux-gnu";
+    a.toolchain.runtimeBinding = "glibc@2.39";
+
+    auto b = a;
+    b.toolchain.runtimeBinding = "glibc@2.44";
+
+    EXPECT_NE(mcpp::toolchain::compute_fingerprint(a).hex,
+              mcpp::toolchain::compute_fingerprint(b).hex)
+        << "same toolchain, same triple, different libc — sharing target/<fp>/ "
+           "would replay objects compiled against the other one";
+}
+
+// ...and an unset binding is its own identity, not a collision with any
+// particular version.
+TEST(Fingerprint, EmptyRuntimeBindingIsDistinct) {
+    mcpp::toolchain::FingerprintInputs a;
+    a.toolchain.targetTriple   = "x86_64-linux-gnu";
+    a.toolchain.runtimeBinding = "glibc@2.39";
+    auto b = a;
+    b.toolchain.runtimeBinding.clear();
+    EXPECT_NE(mcpp::toolchain::compute_fingerprint(a).hex,
+              mcpp::toolchain::compute_fingerprint(b).hex);
+}
+
 } // namespace
 
 TEST(Fingerprint, DeterministicForSameInputs) {

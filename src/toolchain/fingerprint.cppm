@@ -1,11 +1,18 @@
-// mcpp.toolchain.fingerprint — 10-field fingerprint that gates BMI cache safety.
+// mcpp.toolchain.fingerprint — 11-field fingerprint that gates BMI cache safety.
 //
-// Per docs/06-toolchain-and-fingerprint.md, the fingerprint MUST cover:
+// Per docs/08-toolchain-internals.md, the fingerprint MUST cover:
 //   1.  compiler id           2.  compiler version
 //   3.  compiler driver identity  4.  target triple
 //   5.  stdlib id+version     6.  C++ standard
 //   7.  compile flags hash    8.  mcpp version
 //   9.  dependency lock hash  10. std module BMI hash
+//   11. runtime binding (which libc this targets)
+//
+// Field 11 is the prerequisite for building one project under two subos. The
+// target triple says `x86_64-linux-gnu` for both glibc 2.39 and 2.44, so
+// without it switching subos leaves `target/<fp>/` untouched: ninja replays a
+// graph whose objects were compiled against the other libc, the link
+// succeeds, and the result references symbols the interpreter cannot provide.
 //
 // MVP uses FNV-1a 64-bit (deterministic, collision-rare-enough for cache
 // invalidation); spec calls for SHA-256 but for "did anything change?"
@@ -35,7 +42,7 @@ struct FingerprintInputs {
 
 struct Fingerprint {
     std::string                     hex;                 // 16 hex chars
-    std::array<std::string, 10>     parts;               // each field's stringified form
+    std::array<std::string, 11>     parts;               // each field's stringified form
 };
 
 std::string hash_file(const std::filesystem::path& p);     // returns 16 hex
@@ -108,6 +115,7 @@ Fingerprint compute_fingerprint(const FingerprintInputs& in) {
     fp.parts[7] = std::string(MCPP_VERSION);
     fp.parts[8] = in.dependencyLockHash;
     fp.parts[9] = in.stdBmiHash;
+    fp.parts[10] = tc.runtimeBinding;
 
     // Combine all parts deterministically.
     std::uint64_t h = 0xcbf29ce484222325ull;
