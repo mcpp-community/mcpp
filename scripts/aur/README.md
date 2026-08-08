@@ -1,18 +1,20 @@
 # AUR packaging
 
-Arch Linux packaging for mcpp. Two packages, same runtime layout:
+Arch Linux packaging for mcpp. Three packages, same runtime layout:
 
 | Package | What it installs | Pick it when |
 | --- | --- | --- |
 | [`mcpp-bin`](mcpp-bin/) | the **prebuilt** release binary (what [`install.sh`](../../install.sh) downloads) | you just want mcpp, fast |
-| [`mcpp-m`](mcpp-m/) | mcpp **built from source**, bootstrapped with `mcpp-bin` | you want a from-source build |
+| [`mcpp-m`](mcpp-m/) | mcpp **built from source**, bootstrapped with `mcpp-bin` | you want a from-source build of a release |
+| [`mcpp-git`](mcpp-git/) | mcpp **built from the git master**, bootstrapped with `mcpp-bin` | you want to track master (rolling) and never lag the index floor |
 
 ```sh
 yay -S mcpp-bin      # prebuilt
 yay -S mcpp-m        # from source (pulls mcpp-bin as a build dep)
+yay -S mcpp-git      # from git master (pulls mcpp-bin as a build dep)
 ```
 
-The two `conflict` with each other, so only one can be installed at a time.
+The three `conflict` with each other, so only one can be installed at a time.
 Supported architectures: `x86_64`, `aarch64`.
 
 ### Why not just `mcpp`?
@@ -20,9 +22,10 @@ Supported architectures: `x86_64`, `aarch64`.
 The name `mcpp` is already taken by **`extra/mcpp`** — Matsui's C preprocessor,
 an unrelated long-standing official Arch package that owns `/usr/bin/mcpp`. The
 AUR refuses to host any package whose `pkgname` (or `provides`) collides with an
-official-repo package, so our packages are `mcpp-bin` / `mcpp-m`. They still
-install the `mcpp` command at `/usr/bin/mcpp`, so both `conflicts=('mcpp')` with
-that preprocessor — you can have our mcpp or the preprocessor, not both.
+official-repo package, so our packages are `mcpp-bin` / `mcpp-m` / `mcpp-git`.
+They still install the `mcpp` command at `/usr/bin/mcpp`, so all three
+`conflicts=('mcpp')` with that preprocessor — you can have our mcpp or the
+preprocessor, not both.
 
 ## Layout & why the wrapper exists
 
@@ -52,30 +55,39 @@ user already exported, so a custom home or xlings still works.
 First `mcpp build`/`mcpp run` bootstraps the sandbox (downloads ninja, patchelf
 and the default toolchain into `~/.mcpp`) — expected, and only once per user.
 
-### How the `mcpp-m` source package builds
+### How the `mcpp-m` / `mcpp-git` source packages build
 
-mcpp is self-hosting. The `mcpp-m` PKGBUILD uses the installed `mcpp-bin` as the
-bootstrap compiler and runs `mcpp build --target <arch>-linux-musl` — the same
+mcpp is self-hosting. Both source PKGBUILDs use the installed `mcpp-bin` as the
+bootstrap compiler and run `mcpp build --target <arch>-linux-musl` — the same
 path [`release.yml`](../../.github/workflows/release.yml) ships. mcpp downloads
 its own pinned toolchain (it does **not** use the host gcc), so the build needs
 network access, like the upstream release build.
+
+`mcpp-m` builds a pinned release tarball; `mcpp-git` checks out `master` from
+the official repo (`source = mcpp::git+…`, `sha256sums = SKIP`) and derives a
+monotonic `pkgver` from `git describe` (tag + commit distance). Because it
+tracks master, `mcpp-git` can never lag the index floor the way `mcpp-bin` does
+between releases — at the cost of tracking bleeding-edge master.
 
 ## Files
 
 ```
 scripts/aur/
   README.md            this file
-  update.sh            bump BOTH packages to a release version
+  update.sh            bump the release-pinned packages (mcpp-bin, mcpp-m)
   mcpp-bin/{PKGBUILD, .SRCINFO, mcpp.sh}
   mcpp-m/{PKGBUILD, .SRCINFO, mcpp.sh}
+  mcpp-git/{PKGBUILD, .SRCINFO, mcpp.sh}
 ```
 
-`mcpp.sh` is identical in both dirs (each AUR repo must be self-contained);
-`update.sh` keeps them in sync.
+`mcpp.sh` is identical in all three dirs (each AUR repo must be self-contained);
+`update.sh` keeps `mcpp-bin`/`mcpp-m` in sync. `mcpp-git` has no checksums to
+bump (VCS source) and is not touched by `update.sh`.
 
 ## Releasing a new version
 
-After a GitHub release is published (and mirrored), bump both packages:
+After a GitHub release is published (and mirrored), bump the release-pinned
+packages (`mcpp-bin`, `mcpp-m`; `mcpp-git` tracks master and needs no bump):
 
 ```sh
 scripts/aur/update.sh            # uses [package].version from mcpp.toml

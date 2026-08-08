@@ -14,6 +14,31 @@ TEST(IndexContract, FloorViolationOrdering) {
     EXPECT_NE(v->find("0.0.85"), std::string::npos);
 }
 
+// The Upgrade advice must tell the user which install method THEY have. A
+// single hardcoded install.sh one-liner misleads distro (AUR) users into
+// installing a second copy that does not update the running binary.
+TEST(IndexContract, E0006MessageSwitchesUpgradeAdviceByLayout) {
+    using mcpp::pm::floor_violation;
+    using mcpp::pm::e0006_message;
+    auto violation = floor_violation("2026.8.3.3", "2026.7.28.2");
+    ASSERT_TRUE(violation.has_value());
+
+    // Non-distro (install.sh / xlings) layout keeps the install.sh one-liner
+    // and always appends the recommended-installer note.
+    auto script = e0006_message(*violation, /*distroManaged=*/false);
+    EXPECT_NE(script.find("install.sh"), std::string::npos);
+    EXPECT_EQ(script.find("distro-managed"), std::string::npos);
+    EXPECT_NE(script.find("xlings update mcpp"), std::string::npos);
+    EXPECT_NE(script.find("E0006"), std::string::npos);
+
+    // Distro (AUR) layout swaps in the package-manager advice.
+    auto distro = e0006_message(*violation, /*distroManaged=*/true);
+    EXPECT_NE(distro.find("distro-managed"), std::string::npos);
+    EXPECT_EQ(distro.find("re-run the install.sh one-liner"), std::string::npos);
+    EXPECT_NE(distro.find("xlings update mcpp"), std::string::npos);
+    EXPECT_NE(distro.find("E0006"), std::string::npos);
+}
+
 // The floor compares mcpp's OWN version, so the date scheme (YYYY.M.D.N) has
 // to be ordered on all four segments. While parse_version truncated at three,
 // every release of a given day compared equal and the floor let a too-old mcpp
