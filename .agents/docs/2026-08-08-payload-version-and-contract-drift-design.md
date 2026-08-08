@@ -313,3 +313,27 @@ workspace 已经用掉 43%。`payload_ld` 现在只服务 clang-with-cfg 的 Pay
 `rel.native().rfind("..", 0)` 在 Windows 上**编译不过**(`native()` 是 `wstring`),所有
 Windows job 直接挂;而且它在能编译的地方语义也错 —— 名叫 `..cache` 的目录并不是逃逸。
 包含关系是**路径分量**的问题,`path_is_under` 按分量问。
+
+### 9.6 「拒绝」的边界:一个 payload 是答案,两个才是问题
+
+§3.2 把判据写成「没有权威就拒绝走 payload-first」。落地后发现这条**收得过紧**。
+
+所有兼容来源(gcc 的 `specs`、clang 的 `.cfg`、编译器自身的 `PT_INTERP`)都是**某个更早
+的机制写出来的东西**,而一台机器可以合法地一个都没有。这时按 §3.2 的字面判据就该拒绝,
+产物于是拿宿主 loader —— 比「猜错版本」更糟,因为它连沙箱都出去了。
+
+真正的轴不是「mcpp 能不能去看 payload 目录」,而是**有没有得选**:
+
+- **恰好一个 glibc payload** ⇒ 没有选择可言。它是这套工具链产出的任何产物唯一可能绑定的
+  运行时,拒绝等于拒答一个只有一个答案的问题。
+- **两个或以上** ⇒ 沉默。这正是事故本身的形状,必须由 subos 来定。
+
+这与被移除的旧规则的区别是决定性的:旧规则在**有得选**的时候按 `readdir` 顺序选,而且
+一直到装进第二个 payload 之前都看起来是对的。
+
+另外,记录下来的 loader 路径可能指向 subos **视图**(`<home>/subos/default/lib/ld-linux-…`)
+而不是 payload —— 视图路径里根本没有版本段。解析前先 canonical 化(R6:产物绑 payload,
+不绑可变视图)。
+
+验证方式:把 gcc 的 `specs` 挪开**并且**把 gcc 自身的 `PT_INTERP` 改指宿主 loader,即三条
+兼容来源全部失效,binding 仍解析得出,产物仍拿 payload loader。
