@@ -17,6 +17,10 @@ struct EnvVar {
     std::string value;
 };
 
+// The runtime this toolchain builds AGAINST, in xlings's spelling
+// ("glibc@2.39"). Resolved before payload probing, from `--runtime` or the
+// active subos's `subos_info.runtime`. Empty means no authority was found,
+// and payload resolution then declines rather than guessing.
 struct PayloadPaths {
     std::filesystem::path glibcInclude;     // glibc headers (features.h, bits/)
     std::filesystem::path glibcLib;          // glibc runtime (libc.so, crt*.o, ld-linux)
@@ -29,6 +33,16 @@ struct Toolchain {
     std::filesystem::path               binaryPath;
     std::string                         driverIdent;        // normalized --version output
     std::string                         targetTriple;       // "x86_64-linux-gnu"
+    // The runtime this toolchain builds AGAINST, in xlings's own spelling
+    // ("glibc@2.39"). Resolved BEFORE payload probing, from `--runtime` or
+    // the active subos's `subos_info.runtime`.
+    //
+    // Empty is a refusal, not a default: payload resolution declines rather
+    // than picking a libc by directory order. That guess is what let the
+    // compile side and the artifact's interpreter name different glibc
+    // versions, with nothing in the resulting binary looking wrong until it
+    // loaded a library built against the other one.
+    std::string                         runtimeBinding;
     std::string                         stdlibId;           // "libstdc++"
     std::string                         stdlibVersion;
     std::filesystem::path               stdModuleSource;    // bits/std.cc / std.cppm

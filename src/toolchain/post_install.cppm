@@ -170,6 +170,18 @@ export void patchelf_walk(const std::filesystem::path& dir,
 // gcc specs file. xim bakes the installing user's XLINGS_HOME into specs at
 // install time, so the DIR varies per machine, and the loader NAME varies
 // per arch — detect both instead of hardcoding either.
+// The runtime binding a toolchain was INSTALLED against, read back out of
+// what mcpp itself wrote: gcc's specs, clang's cfg.
+//
+// Compatibility only. The authority is the subos's `subos_info.runtime`; this
+// answers for machines whose subos predates that block, and it answers with
+// the version the artifact will actually load -- so compile and run still
+// agree, which is the invariant that matters.
+//
+// Returns "glibc@<ver>" or empty. The version comes from the payload path
+// (.../xim-x-glibc/<ver>/lib64), which is the only place it is written down.
+export std::string baked_runtime_binding(const std::filesystem::path& compilerBin);
+
 export std::string detect_baked_loader(const std::string& specsContent) {
     // Path-character whitelist. Specs embed loader paths inside %-spec
     // syntax (`%{mmusl:...;:/baked/dir/ld-linux-x86-64.so.2}`), so scanning
@@ -533,6 +545,48 @@ export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 
     std::ofstream os(markerPath);
     os << expected.dump(2) << "\n";
+}
+
+
+std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
+    if (compilerBin.empty()) return {};
+    std::error_code ec;
+
+    auto from_text = [](const std::string& text) -> std::string {
+        auto loader = detect_baked_loader(text);
+        if (loader.empty()) return {};
+        // .../xim-x-glibc/<ver>/lib64/ld-linux-... — the version is the
+        // grandparent of the lib dir.
+        auto dir = std::filesystem::path(loader).parent_path();   // lib64
+        auto ver = dir.parent_path().filename().string();          // <ver>
+        auto pkg = dir.parent_path().parent_path().filename().string();
+        if (ver.empty() || pkg.find("glibc") == std::string::npos) return {};
+        return "glibc@" + ver;
+    };
+
+    auto read_file = [&](const std::filesystem::path& p) -> std::string {
+        if (!std::filesystem::exists(p, ec)) return {};
+        std::ifstream is(p);
+        std::stringstream ss; ss << is.rdbuf();
+        return ss.str();
+    };
+
+    // clang: the sibling <driver>.cfg.
+    auto cfg = compilerBin.parent_path()
+             / (compilerBin.stem().string() + ".cfg");
+    if (auto r = from_text(read_file(cfg)); !r.empty()) return r;
+
+    // gcc: lib/gcc/<triple>/<ver>/specs, one level of globbing each.
+    auto gccRoot = compilerBin.parent_path().parent_path();
+    for (auto t = std::filesystem::directory_iterator(gccRoot / "lib" / "gcc", ec);
+         !ec && t != std::filesystem::directory_iterator{}; t.increment(ec)) {
+        for (auto v = std::filesystem::directory_iterator(t->path(), ec);
+             !ec && v != std::filesystem::directory_iterator{}; v.increment(ec)) {
+            if (auto r = from_text(read_file(v->path() / "specs")); !r.empty())
+                return r;
+        }
+    }
+    return {};
 }
 
 } // namespace mcpp::toolchain

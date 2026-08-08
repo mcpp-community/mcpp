@@ -43,6 +43,8 @@ import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.lockfile;
 import mcpp.config;
 import mcpp.xlings;
+import mcpp.xlings.subos_info;
+import mcpp.toolchain.post_install;
 import mcpp.platform;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
@@ -907,9 +909,66 @@ std::string with_index_cause(std::string msg) {
         msg += "\n" + hint;
     return msg;
 }
+// The runtime this build targets, in xlings's own spelling ("glibc@2.39").
+//
+// A degradation chain with every step explicit, and deliberately NO final
+// "otherwise pick something". Payload resolution declines without an
+// authority, because the guess it used to make is what let the compile side
+// and the artifact's interpreter name different glibc versions -- invisibly,
+// until the binary met a library built against the other one.
+//
+//   1. [xlings] subos -> that subos's subos_info.runtime
+//   2. the active subos's subos_info.runtime
+//   3. "" -- no authority, therefore no PayloadFirst
+//
+// `compilerBin` may be empty on the first call: the compiler has not been
+// probed yet, and an inherited toolchain resolves its subos from its OWNER
+// home. The caller re-resolves once it knows where the compiler is.
+std::string resolve_runtime_binding(const mcpp::manifest::Manifest& m,
+                                    const std::filesystem::path& compilerBin) {
+    auto runtime_of = [](const std::filesystem::path& dir) -> std::string {
+        return mcpp::xlings::subos::read(dir).runtime;
+    };
+    if (auto active = mcpp::xlings::paths::subos_dir_of(compilerBin)) {
+        // 1 — the project names a subos; it is a sibling of the active one.
+        if (!m.xlings.subos.empty()) {
+            auto named = active->parent_path() / m.xlings.subos;
+            if (auto r = runtime_of(named); !r.empty()) return r;
+        }
+        // 2 — whatever is active.
+        if (auto r = runtime_of(*active); !r.empty()) return r;
+    }
+
+    // 3 — COMPATIBILITY: the value this toolchain already has baked in.
+    //
+    // A subos created before xlings grew `subos_info` cannot answer, and that
+    // is the state of every machine installed before 2026.8.5.1 -- including
+    // mcpp's own sandbox, whose vendored xlings is never upgraded. Refusing
+    // there would break every existing user, so the toolchain's own baked
+    // value stands in.
+    //
+    // This is NOT the guess this design removed. The guess picked a version by
+    // directory order, unrelated to what the artifact would load. This reads
+    // the value the artifact WILL use -- gcc's specs, clang's cfg -- so the
+    // invariant that matters, compile side == run side, still holds. It is a
+    // migration path, and it goes away on its own: once the subos describes
+    // itself, step 1 or 2 answers first.
+    if (!compilerBin.empty()) {
+        if (auto r = mcpp::toolchain::baked_runtime_binding(compilerBin);
+            !r.empty()) {
+            mcpp::log::verbose("probe", std::format(
+                "subos does not describe itself; using the runtime this "
+                "toolchain was installed against ({}). `xlings self update` "
+                "and a fresh subos make this authoritative", r));
+            return r;
+        }
+    }
+    return {};
+}
 } // namespace
 
 export std::expected<BuildContext, std::string>
+
 prepare_build(bool print_fingerprint,
               bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
@@ -1641,8 +1700,21 @@ prepare_build(bool print_fingerprint,
         tcOrigin = TcOrigin::FirstRun;
     }
 
-    auto tc = mcpp::toolchain::detect(explicit_compiler);
+    // The authority for "which libc", resolved before the toolchain is
+    // probed: payload paths are addresses for a version this names.
+    auto runtimeBinding = resolve_runtime_binding(*m, {});
+    auto tc = mcpp::toolchain::detect(explicit_compiler, runtimeBinding);
     if (!tc) return std::unexpected(tc.error().message);
+    // The binding may only be discoverable from the compiler's own home
+    // (an inherited toolchain resolves into its owner). Re-resolve once we
+    // know where the compiler is, then re-probe if that changed the answer.
+    if (runtimeBinding.empty()) {
+        auto fromCompiler = resolve_runtime_binding(*m, tc->binaryPath);
+        if (!fromCompiler.empty()) {
+            tc = mcpp::toolchain::detect(explicit_compiler, fromCompiler);
+            if (!tc) return std::unexpected(tc.error().message);
+        }
+    }
 
     // ── Targeting the MSVC ABI without a usable MSVC ─────────────────────
     //
@@ -1737,7 +1809,7 @@ prepare_build(bool print_fingerprint,
 
         tcSpec   = std::string(pins::kFirstRunWinGnu);
         tcOrigin = TcOrigin::FirstRun;
-        tc = mcpp::toolchain::detect(explicit_compiler);
+        tc = mcpp::toolchain::detect(explicit_compiler, runtimeBinding);
         if (!tc) return std::unexpected(tc.error().message);
     }
 

@@ -16,7 +16,8 @@ export namespace mcpp::toolchain {
 // Detect toolchain. If explicit_compiler is given, use that binary path
 // directly. Otherwise fall back to $CXX, then PATH g++.
 std::expected<Toolchain, DetectError>
-detect(const std::filesystem::path& explicit_compiler = {});
+detect(const std::filesystem::path& explicit_compiler = {},
+       std::string_view runtimeBinding = {});
 
 // Compatibility helper for older call sites/tests: GCC std module lookup now
 // lives in the GCC provider.
@@ -33,7 +34,8 @@ std::optional<std::filesystem::path> find_std_module_source(
 }
 
 std::expected<Toolchain, DetectError>
-detect(const std::filesystem::path& explicit_compiler) {
+detect(const std::filesystem::path& explicit_compiler,
+       std::string_view runtimeBinding) {
     auto bin_r = probe_compiler_binary(explicit_compiler);
     if (!bin_r) return std::unexpected(bin_r.error());
 
@@ -111,7 +113,8 @@ detect(const std::filesystem::path& explicit_compiler) {
 
     // Probe fine-grained payload paths from sibling xpkgs (glibc, linux-headers).
     // When available, flags are assembled from these paths instead of --sysroot.
-    tc.payloadPaths = probe_payload_paths(tc.binaryPath);
+    tc.runtimeBinding = std::string(runtimeBinding);
+    tc.payloadPaths = probe_payload_paths(tc.binaryPath, tc.runtimeBinding);
 
     // For GCC: ensure the probed sysroot has complete headers by symlinking
     // missing content (linux kernel headers, glibc) from payload xpkgs.
