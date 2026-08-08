@@ -14,6 +14,7 @@ struct TestTargetSet {
     std::vector<mcpp::manifest::Target> targets;
 };
 
+// 损坏 manifest 时仅提供 best-effort 文件清单；严格调用方仍须走 prepare/validate。
 std::expected<TestTargetSet, std::string>
 discover_test_targets(const std::filesystem::path& manifestRoot,
                       std::string_view packageFilter) {
@@ -46,8 +47,26 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
     result.targets.reserve(testFiles.size());
     std::set<std::string> seenNames;
     for (auto const& file : testFiles) {
-        auto relative = std::filesystem::relative(file, packageRoot / "tests");
-        auto name = relative.replace_extension("").generic_string();
+        auto lexical_relative = [&](const std::filesystem::path& base,
+                                    std::string_view boundary)
+            -> std::expected<std::filesystem::path, std::string> {
+            auto relative = file.lexically_relative(base);
+            auto first = relative.begin();
+            if (relative.empty() || relative.is_absolute()
+                || (first != relative.end() && *first == "..")) {
+                return std::unexpected(std::format(
+                    "test file '{}' escapes {} '{}'",
+                    file.string(), boundary, base.string()));
+            }
+            return relative;
+        };
+
+        auto testRelative = lexical_relative(packageRoot / "tests", "tests root");
+        if (!testRelative) return std::unexpected(testRelative.error());
+        auto mainRelative = lexical_relative(packageRoot, "package root");
+        if (!mainRelative) return std::unexpected(mainRelative.error());
+
+        auto name = testRelative->replace_extension("").generic_string();
         if (!seenNames.insert(name).second) {
             return std::unexpected(std::format(
                 "duplicate test name '{}' (two test files map to the same name)", name));
@@ -56,7 +75,7 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         mcpp::manifest::Target target;
         target.name = name;
         target.kind = mcpp::manifest::Target::TestBinary;
-        target.main = std::filesystem::relative(file, packageRoot).string();
+        target.main = mainRelative->string();
         for (std::size_t i = 0; i < globFlags.size(); ++i) {
             if (!globHits[i].contains(file)) continue;
             for (auto const& define : globFlags[i].defines)
