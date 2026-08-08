@@ -255,12 +255,17 @@ publish_compile_commands(
 
     std::filesystem::path publishPath = path;
     std::error_code statusEc;
-    const bool isLink = std::filesystem::is_symlink(path, statusEc);
-    if (statusEc) {
+    const auto linkStatus = std::filesystem::symlink_status(path, statusEc);
+    // A first build has no prior CDB to inspect. symlink_status reports the
+    // missing path with type()==not_found on libstdc++/libc++/MSVC (the error
+    // code category differs: generic ENOENT vs system ERROR_FILE_NOT_FOUND),
+    // so that is the normal fresh-workspace case, not an error.
+    if (statusEc && linkStatus.type() != std::filesystem::file_type::not_found) {
         return std::unexpected(write_error(std::format(
             "cannot inspect compile database '{}': {}", path.string(),
             statusEc.message())));
     }
+    const bool isLink = linkStatus.type() == std::filesystem::file_type::symlink;
     if (isLink) {
         auto target = std::filesystem::read_symlink(path, statusEc);
         if (statusEc) {
@@ -272,28 +277,30 @@ publish_compile_commands(
     }
 
     std::optional<std::string> existing;
-    std::ifstream input(publishPath, std::ios::binary);
-    if (input) {
-        std::stringstream ss;
-        ss << input.rdbuf();
-        if (input.bad()) {
-            return std::unexpected(write_error(std::format(
-                "cannot read existing compile database '{}'", publishPath.string())));
+    {
+        std::ifstream input(publishPath, std::ios::binary);
+        if (input) {
+            std::stringstream ss;
+            ss << input.rdbuf();
+            if (input.bad()) {
+                return std::unexpected(write_error(std::format(
+                    "cannot read existing compile database '{}'", publishPath.string())));
+            }
+            existing = ss.str();
+        } else {
+            std::error_code existsEc;
+            auto exists = std::filesystem::exists(publishPath, existsEc);
+            if (existsEc) {
+                return std::unexpected(write_error(std::format(
+                    "cannot inspect existing compile database '{}': {}",
+                    publishPath.string(), existsEc.message())));
+            }
+            if (exists) {
+                return std::unexpected(write_error(std::format(
+                    "cannot read existing compile database '{}'", publishPath.string())));
+            }
         }
-        existing = ss.str();
-    } else {
-        std::error_code existsEc;
-        auto exists = std::filesystem::exists(publishPath, existsEc);
-        if (existsEc) {
-            return std::unexpected(write_error(std::format(
-                "cannot inspect existing compile database '{}': {}",
-                publishPath.string(), existsEc.message())));
-        }
-        if (exists) {
-            return std::unexpected(write_error(std::format(
-                "cannot read existing compile database '{}'", publishPath.string())));
-        }
-    }
+    }  // input closed before the atomic replace: Windows cannot replace an open file.
 
     // 完全相同的有效输入不重写文件，避免 clangd 因 mtime 变化重复索引。
     if (existing && *existing == fresh) {

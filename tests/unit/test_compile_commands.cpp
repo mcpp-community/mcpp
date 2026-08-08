@@ -29,9 +29,18 @@ std::string read_file(const std::filesystem::path& path) {
 std::string entry(std::string_view file, std::string_view flag) {
     // Keep the file path out of `arguments` so it appears exactly once (in
     // "file") — lets tests count entries per file unambiguously.
+    // The path is embedded in JSON, so backslashes (Windows) must be escaped:
+    // `C:\Users\...` would otherwise be rejected as invalid JSON (`\U` is
+    // not an escape) and every CDB-parsing test would fail on Windows.
+    std::string fileJson;
+    fileJson.reserve(file.size());
+    for (char c : file) {
+        if (c == '\\') fileJson += "\\\\";
+        else fileJson += c;
+    }
     return std::format(
         R"({{"directory":"/p","file":"{}","arguments":["g++","{}","-c","src.cpp"],"output":"o"}})",
-        file, flag);
+        fileJson, flag);
 }
 
 std::string cdb(std::initializer_list<std::string> entries) {
@@ -129,11 +138,28 @@ TEST(CompileCommandsWriter, RejectsNonArrayFreshJson) {
     EXPECT_NE(result.error().message.find("JSON array"), std::string::npos);
 }
 
+TEST(CompileCommandsWriter, PublishesFreshDatabaseWhenNoneExists) {
+    TempDir temp;
+    auto path = temp.path / "compile_commands.json";  // deliberately absent
+    auto content = cdb({entry("/p/src/main.cpp", "-O2")});
+
+    auto result = publish_compile_commands(
+        path, content, [](const std::filesystem::path&) { return true; });
+
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_TRUE(result->changed);
+    // The file is re-serialised via nlohmann (sorted + 2-space indent), so
+    // assert on content, not on byte-equality with the raw input.
+    auto published = read_file(path);
+    EXPECT_NE(published.find("/p/src/main.cpp"), std::string::npos) << published;
+    EXPECT_NE(published.find("-O2"), std::string::npos) << published;
+}
+
 TEST(CompileCommandsWriter, UnchangedContentKeepsMtime) {
     TempDir temp;
     auto path = temp.path / "compile_commands.json";
     auto content = cdb({entry((temp.path / "a.cpp").string(), "-DOK")});
-    std::ofstream(path) << content;
+    std::ofstream(path, std::ios::binary) << content;
     auto before = std::filesystem::last_write_time(path);
 
     auto result = publish_compile_commands(
