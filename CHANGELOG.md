@@ -3,6 +3,50 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.8.4] — 2026-08-08
+
+机器可读输出有契约了。设计与实测见
+`.agents/docs/2026-08-08-machine-readable-output-protocol-design.md`,用户文档见
+`docs/11-machine-output.md`。
+
+### 新增
+
+- **`--format json`:统一的输出信封(`mcpp.wire`)。** 覆盖 `self env`、`xpkg parse`、
+  `cache list`,含 `schemaVersion` / `kind` / `kindVersion` / `effects` / `data` /
+  `diagnostics`。信封与 kind 的版本**分开** —— 单一全局版本号会让给 `mcpp.env` 加一个
+  字段推高客户端为 `mcpp.xpkg` 读到的版本。
+
+- **`mcpp --protocol-version`。** 回本 build 支持的信封版本、各 kind 版本,以及
+  **命令 → 效应**的静态表。它是优化而非地基:在它出现之前的每个 mcpp 上,它自己就是
+  未知选项,失败与成功同走 stdout —— 所以客户端的判据只能是**正向识别**(stdout 解析
+  得出 `schemaVersion` + `kind`)。这条写进了文档的第一节。
+
+- **效应集合,不是 `destructive` 布尔。** 实测:全新 `MCPP_HOME` 上 `xpkg parse` 与
+  `cache list` 什么都不建,`self env` 建 6 项。布尔分不开「mcpp 给自己做初始化」和
+  「执行工作区里的代码」,而 IDE 的 untrusted 门只在乎后者。
+
+- **`mcpp self env --format json` 走独立只读路径。** 不调 `load_or_init`:客户端问
+  「东西在哪」不该成为把东西放到那儿的原因。全新 home 上返回完整路径 +
+  `initialized: false`,创建项数 0(人类路径不变,仍会初始化)。
+
+### 修复
+
+- **CDB 的 `arguments` 带着 shell 引号。** 消费者(clangd)逐字 exec 它,不经 shell,
+  于是带引号的 token 不是 flag 而是不存在的文件名。Windows 上每个带路径的 flag 都中招
+  (`shell_quote_arg` 的触发集含反斜杠);带空格的路径上更糟 —— token 在引号**内部**
+  被切断,一个参数变成两个,其中一个带着永不闭合的开引号。
+
+- **usage 错误不再进 stdout。** 未知选项过去打在 stdout、rc=1、stderr 为空,于是
+  `mcpp cache list --format json | jq` 拿到的是人类文本。现在未知选项与不支持的值
+  统一 stderr + rc=2,stdout 一字不写。
+
+### 兼容
+
+- **`--json` 永久保留它的 payload,不打 deprecation 警告。** 拼写兼容不等于 payload
+  兼容:`cache list --json` 顶层是 `{root, entries}` 且本仓库 e2e 已断言。两种拼写由
+  同一来源产出,不会漂移。
+- `pack --format tar|dir` 是产物形态而非输出格式,**声明为本协议的例外**。
+
 ## [2026.8.8.3] — 2026-08-08
 
 ### 修复
