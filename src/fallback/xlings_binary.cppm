@@ -6,6 +6,7 @@
 //   3. Fail with user-facing instructions
 
 module;
+#include <cstdio>
 #include <cstdlib>
 #include <cctype>
 
@@ -68,15 +69,22 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet = false,
         // restore. Look before leaping.
         auto candidate = candidate_source_version();
         if (candidate.empty() || !version_is_older(have, candidate)) {
+            // stderr, not stdout. This is a remark about the environment,
+            // not output of the command that happens to be running -- and
+            // `mcpp test --json` promises every stdout line is NDJSON, a
+            // promise this line broke the moment a machine fell behind the
+            // pin (e2e 155).
             if (!quiet)
-                std::println("{:>12} vendored xlings {} is older than the "
+                std::println(stderr,
+                             "{:>12} vendored xlings {} is older than the "
                              "pinned {}, but no newer source is available "
                              "(keeping it; run `xlings self update`)",
                              "Note", have, pinnedVersion);
             return destBin;
         }
         if (!quiet)
-            std::println("{:>12} vendored xlings {} -> {} (pinned {})",
+            std::println(stderr,
+                         "{:>12} vendored xlings {} -> {} (pinned {})",
                          "Updating", have, candidate, pinnedVersion);
         std::error_code rec;
         std::filesystem::remove(destBin, rec);

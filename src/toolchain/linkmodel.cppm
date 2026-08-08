@@ -344,11 +344,21 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
         // point — the baked copy was a per-toolchain-install decision that no
         // longer matched the per-build one, and it accumulated one dead entry
         // per home that ever touched the shared payload.
-        if (tc.payloadPaths && !tc.payloadPaths->glibcLib.empty()) {
+        //
+        // Never for a musl target. Its sysroot is self-contained -- it brings
+        // its own libc, CRT and loader -- and the glibc payload here belongs
+        // to the HOST toolchain, which merely happens to be probed alongside.
+        // Putting it on the link path let ld pull glibc's static libc.a into a
+        // musl link: `undefined reference to _DYNAMIC`, `hidden symbol
+        // _DYNAMIC isn't defined`, from dl-reloc-static-pie.o. The musl branch
+        // below already says this about headers; it holds for libraries and
+        // the loader too.
+        if (!is_musl_target(tc)
+            && tc.payloadPaths && !tc.payloadPaths->glibcLib.empty()) {
             lm.loader = resolve_loader(tc.payloadPaths->glibcLib, tc.targetTriple);
             lm.libDirs.push_back(tc.payloadPaths->glibcLib);
         }
-        if (!tc.binaryPath.empty()) {
+        if (!is_musl_target(tc) && !tc.binaryPath.empty()) {
             std::error_code lec;
             auto gccLib = tc.binaryPath.parent_path().parent_path() / "lib64";
             if (std::filesystem::exists(gccLib, lec))

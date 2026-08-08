@@ -614,6 +614,34 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
         return "glibc@" + ver;
     };
 
+    // Which glibc payloads are actually installed. Every source below is
+    // checked against this, because all of them are RECORDS of a past state:
+    // specs and cfg were written at some install, PT_INTERP at some fixup. A
+    // payload can be replaced afterwards -- upgraded, garbage-collected -- and
+    // the record keeps naming what used to be there.
+    //
+    // That is not hypothetical. CI resolved `glibc@2.39` from a record while
+    // the only payload on disk was 2.44, so the exact-match probe correctly
+    // refused, no payload paths resolved, and the artifact fell through to the
+    // host loader. A fossil that names something no longer present is not an
+    // authority; it is just old.
+    std::vector<std::string> installed;
+    if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
+        for (auto it = std::filesystem::directory_iterator(*xpkgs / "xim-x-glibc", ec);
+             !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+            if (!it->is_directory(ec)) continue;
+            auto v = it->path().filename().string();
+            if (!v.empty() && v.front() != '.') installed.push_back(v);
+        }
+    }
+    auto still_there = [&](const std::string& binding) {
+        if (binding.empty()) return false;
+        const auto at = binding.find('@');
+        if (at == std::string::npos) return false;
+        auto ver = binding.substr(at + 1);
+        return std::ranges::find(installed, ver) != installed.end();
+    };
+
     auto read_file = [&](const std::filesystem::path& p) -> std::string {
         if (!std::filesystem::exists(p, ec)) return {};
         std::ifstream is(p);
@@ -624,7 +652,7 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
     // clang: the sibling <driver>.cfg.
     auto cfg = compilerBin.parent_path()
              / (compilerBin.stem().string() + ".cfg");
-    if (auto r = from_text(read_file(cfg)); !r.empty()) return r;
+    if (auto r = from_text(read_file(cfg)); still_there(r)) return r;
 
     // gcc: lib/gcc/<triple>/<ver>/specs, one level of globbing each.
     auto gccRoot = compilerBin.parent_path().parent_path();
@@ -632,7 +660,7 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
          !ec && t != std::filesystem::directory_iterator{}; t.increment(ec)) {
         for (auto v = std::filesystem::directory_iterator(t->path(), ec);
              !ec && v != std::filesystem::directory_iterator{}; v.increment(ec)) {
-            if (auto r = from_text(read_file(v->path() / "specs")); !r.empty())
+            if (auto r = from_text(read_file(v->path() / "specs")); still_there(r))
                 return r;
         }
     }
@@ -649,7 +677,7 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
     // PT_INTERP is produced by the patchelf walk, which still runs on every
     // install, and it names the glibc payload this toolchain was aligned to --
     // the same fact the specs held, from a mechanism that has not gone away.
-    if (auto r = from_text(read_elf_interp(compilerBin)); !r.empty())
+    if (auto r = from_text(read_elf_interp(compilerBin)); still_there(r))
         return r;
 
     // Last: the installed payload set, but ONLY when it is a singleton.
@@ -664,26 +692,17 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
     //
     // Two or more and this stays silent. That is the case the incident was,
     // and it is the case the subos must answer.
-    if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
-        std::vector<std::string> versions;
-        for (auto it = std::filesystem::directory_iterator(*xpkgs / "xim-x-glibc", ec);
-             !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
-            if (!it->is_directory(ec)) continue;
-            auto v = it->path().filename().string();
-            if (!v.empty() && v.front() != '.') versions.push_back(v);
-        }
-        if (versions.size() == 1) {
-            mcpp::log::verbose("probe", std::format(
-                "runtime binding glibc@{} — the only glibc payload installed, "
-                "so there is nothing to choose between", versions[0]));
-            return "glibc@" + versions[0];
-        }
-        if (versions.size() > 1)
-            mcpp::log::verbose("probe", std::format(
-                "{} glibc payloads installed and nothing declares which one "
-                "this build binds; declining rather than picking",
-                versions.size()));
+    if (installed.size() == 1) {
+        mcpp::log::verbose("probe", std::format(
+            "runtime binding glibc@{} — the only glibc payload installed, so "
+            "there is nothing to choose between", installed[0]));
+        return "glibc@" + installed[0];
     }
+    if (installed.size() > 1)
+        mcpp::log::verbose("probe", std::format(
+            "{} glibc payloads installed and nothing still present declares "
+            "which one this build binds; declining rather than picking",
+            installed.size()));
     return {};
 }
 
