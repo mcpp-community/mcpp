@@ -261,3 +261,144 @@ CDB 是 mcpp 已经在发的**机器可读输出**,只是没走 envelope。它�
   请求不往协议通道写东西。
 - **`pack --format tar|dir` 声明为例外**,不加 `--layout` 别名。它没有 stdout 机器
   输出,不参与本协议;为一个不存在的一致性付迁移成本不值。
+
+---
+
+# 第二轮 review(2026-08-08,综合 @wellwei / @Ximiaw 反馈)
+
+## R0. 先承认一件事:第一轮**没有做需求侧分析**
+
+第一轮全部是供给侧 —— 核对 mcpp 现在的行为,找实现层缺陷。**没有**读
+mcpp-vscode#8 / #5 的实际需求,也没有验证「提议的接口是否闭合了它们」。
+
+wellwei 指出的四条里,**两条正是需求侧分析才会抓到、而第一轮漏掉的**(R1、R3)。
+这一节存在的意义不是自责,而是记下判据:**契约设计里,「我方能提供什么」和
+「对方需要什么」是两次独立的核对,做了前者不等于做了后者。**
+
+## R1. `--json` 的 payload 兼容 —— 第一轮把它当纯拼写别名,错了
+
+实测:
+
+```
+mcpp cache list --json   顶层键 = ["entries", "root"]        ← 没有 envelope
+mcpp xpkg parse --json   顶层 = {"namespace","name","form"}  ← 没有 envelope
+```
+
+第一轮跟着 RFC 写「入口一处归一化,核心只见 `--format`」,默认了**拼写兼容 ⇒ payload
+兼容**。不成立:如果核心随后统一输出 `{schemaVersion, kind, data, diagnostics}`,任何
+依赖旧顶层结构的消费者都会断,**包括本仓库的 e2e**。
+
+**修正 —— 三选一必须先定,否则 wire v1 不能冻结:**
+
+| 方案 | 含义 | 代价 |
+|---|---|---|
+| **(A) `--json` 永久 legacy payload,`--format json` 才是 envelope** | 两条出口,语义不同 | 每个命令两份序列化;但**没有任何现存消费者会断** |
+| (B) 老命令保留旧顶层,只做增量字段;envelope 只用于新命令 | 老命令永远拿不到 `schemaVersion` | mcpp-vscode#8 §7.1 的请求落空 |
+| (C) 有意 breaking,给迁移窗口 | 干净 | 与「`--json` 永久保留、不打警告」的既定纪律冲突 |
+
+**倾向 (A)**,理由是它与本仓库既有范式一致(`compat.cppm`:旧拼写永久接受,核心只见
+规范形式),而这里要永久接受的是**旧 payload**,不是旧拼写。代价是明确且有界的。
+
+## R2. `destructive` —— 与第一轮结论一致,但 wellwei 补了一刀
+
+第一轮已指出它做不了 preflight 门(§2.3),wellwei 独立确认,并补充:
+**单个 bool 也不够** —— 「只写 CDB」「写全局缓存」「可能触网」「执行工作区代码」是四种
+不同的边界,VSCode 的门需要区分。
+
+**修正**:`--protocol-version` 的静态表不是 `destructive: bool`,而是**效应集合**:
+
+```jsonc
+"commands": {
+  "self env":       { "effects": [] },
+  "xpkg parse":     { "effects": [] },
+  "metadata":       { "effects": ["read-project"] },
+  "metadata --resolved": { "effects": ["read-project","write-cache","network"] },
+  "build --configure-only": { "effects": ["read-project","write-project","write-cache","exec-build-script"] }
+}
+```
+
+`exec-build-script` 单独成项,因为 `build.mcpp` 会执行工作区里的代码 —— 那是 untrusted
+门唯一真正在乎的一条。
+
+## R3. `self env` 首次运行会初始化 —— 不是「每次都写」,但对契约是同一件事
+
+wellwei 指出 `doctor.cppm::env_report()` 调 `config::load_or_init()`,不是只读。核实。
+
+**第一次测法不足以定责**:我只在全新 `MCPP_HOME` 上跑了一次 `self env`,看到 6 个文件
+就下了结论 —— 但那没有排除「任何 mcpp 命令的首次初始化」。分离之后:
+
+| 测法 | 结果 |
+|---|---|
+| 全新 home + `mcpp --version` | **目录都没创建** |
+| 全新 home + `mcpp self env` | 创建 `config.toml` `registry` `cache` `bin` `build-cache` `log` |
+| **已初始化** home + `mcpp self env` | **无变化,只读** |
+
+所以准确的表述是:**`self env` 不是每次都写,而是首次运行时触发一次性初始化**;
+`--version` 不走那条路径,所以「所有命令都这样」不成立。
+
+**这改变修法,不改变结论:**
+
+- 标 `destructive: false` 仍然是错的 —— 在一台新机器上它是谎,而 untrusted-workspace
+  门恰恰在新机器上最需要生效。契约按**最坏情况**写。
+- 但要拆的不是「读 vs 写」——`env_report()` 在已初始化的机器上本来就只读。
+- 要拆的是**「读 vs 首次初始化」**:JSON 路径用一个只计算路径、只读已存在配置的
+  resolver,未初始化时返回推导值 + `initialized: false`,**不建目录、不 bootstrap、
+  不触网**。人类输出保持现状(用户对 `mcpp self env` 顺带初始化是有预期的)。
+
+顺带记下这次的方法教训:**「跑一次,看有没有文件」不足以给副作用定责** —— 必须有一个
+不走同一路径的对照命令。这条不是这一处的技巧,是所有「某命令有无副作用」的判定通法。
+
+## R4. 阶段 0 的边界比第一轮画的更宽
+
+实测退出码:
+
+```
+未知子命令      rc=127   (cli.cppm:610,stderr,正确)
+未知选项        rc=2     ← 本轮 W1 已修(原 rc=1 + stdout)
+未知值(pack)   rc=2     (stderr,原本就对)
+未捕获异常      rc=70    (main.cpp,stderr)
+```
+
+W1 修掉了最坏的一条。但 wellwei 说得对:**光接管 parse error 不够**,还要把
+usage / runtime / internal 的 rc 映射写成契约,并覆盖异常边界 —— 否则客户端仍然要靠
+猜。这条现在是 `docs/spec/` 的内容,不是代码。
+
+## R5. 全局 `schemaVersion` 把不相关的 kind 耦合在一起
+
+wellwei 的观察成立。一个全局版本号意味着 `mcpp.env` 的字段变更会推高 `mcpp.xpkg` 的
+版本,客户端无从判断哪个 kind 真的变了。
+
+**修正**:envelope 版本与 kind 数据版本分开;并且 `--protocol-version` 不能只回
+`{min,max}`,要回**它支持哪些 kind 及各自版本**:
+
+```jsonc
+{ "envelope": { "min": 1, "max": 1 },
+  "kinds": { "mcpp.env": 1, "mcpp.xpkg": 1, "mcpp.cache": 1 } }
+```
+
+## R6. Ximiaw 的实测修正:supported-key 词汇表只覆盖部分段
+
+他实测 24 段 + 源码核对,结论是「parser 已掌握每段 supported keys」**只对少数段成立**:
+
+- 有白名单的:`[build]`、`[resources]` 等 6 处常量(`src/manifest/toml.cppm`)
+- 开放词汇段(dependencies / indices / toolchain …):无键清单,只校验值形态
+- **其余固定段(package / profile / runtime / xlings / workspace / pack):未知键被静默
+  吞掉**,合法键散在解析逻辑里
+
+所以「顺带导出词汇表」不是现成的序列化。**但第三档的收敛有独立价值**:把「打错键名
+毫无提示」变成警告,对 mcpp 自身就是健壮性收益 —— 这一条应当独立于本协议推进,不该
+被 wire v1 阻塞。
+
+## R7. 修正后的范围
+
+| | 第一轮 | 本轮修正 |
+|---|---|---|
+| W0 CDB 引号 | 做 | **不变**(已完成) |
+| W1 stdout 归属 | 做 | **已完成**,但 rc 映射契约要补进 spec(R4) |
+| W2 `mcpp.wire` | envelope + `destructive: bool` | envelope + **效应集合**;`--protocol-version` 回 **kinds 及各自版本**(R2/R5) |
+| W3 `--format` 归一 | 纯拼写别名 | **先定 payload 兼容策略(R1),否则不能冻结 v1** |
+| W4 接入 | self env ~15 行 | **先拆只读 resolver**(R3);`cache list` / `xpkg parse` 按 R1 的结论决定走哪条 |
+| 新增 | — | manifest 固定段的 supported-key 收敛(R6),**独立推进** |
+
+**结论:W2/W3/W4 在 R1 定案前不应动手** —— 那是唯一会决定 wire v1 形状的分叉。W0 与
+W1 与它正交,已完成。

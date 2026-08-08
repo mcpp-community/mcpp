@@ -612,8 +612,30 @@ int run(int argc, char** argv) {
         }
     }
 
-    auto app_rc = app.run(trimmed_argc, trimmed_argp);
-    if (app_rc != 0) return app_rc;
+    // Parse and dispatch separately, rather than `app.run(argc, argv)`.
+    //
+    // `App::run` prints its parse errors with `std::println` -- to STDOUT --
+    // and returns 1. stdout is the channel a machine-readable request owns, so
+    // a client doing `mcpp cache list --format json | jq` got
+    // `Error: unknown option: --format` fed to its parser, with nothing to
+    // distinguish "this mcpp is too old" from "the command failed". stderr was
+    // empty.
+    //
+    // That print lives in mcpplibs.cmdline, a published dependency. Taking the
+    // ParseResult here fixes it without a cross-package release, and keeps one
+    // rule for the whole CLI: anything mcpp says ABOUT ITSELF goes to stderr.
+    //
+    // Exit 2 for a usage error, matching `pack --format bogus` -- which was
+    // already right, and was the only one of the two that was.
+    auto parsed = app.parse(trimmed_argc, trimmed_argp);
+    if (!parsed) {
+        // `--help` / `--version` come back as a non-error "failure": the
+        // parser handled them and printed. Nothing to add, nothing to report.
+        if (!parsed.error().is_error()) return 0;
+        mcpp::ui::error(parsed.error().message);
+        return 2;
+    }
+    app.run(*parsed);
     return action_rc;
 }
 
