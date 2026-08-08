@@ -89,7 +89,28 @@ file "$binary" | grep -q 'statically linked' && {
     echo "first-run default unexpectedly produced a static binary (glibc default expected)"
     exit 1
 }
-"$binary" >/dev/null 2>&1 || { echo "first-run binary did not run"; exit 1; }
+# Say WHY when it does not. "did not run" alone is unactionable: an ELF fails
+# to start for exactly a few reasons -- a missing interpreter, an unresolvable
+# RUNPATH entry, a symbol the runtime does not have -- and which one it is is
+# the whole answer. This assertion sat here reporting none of them while CI
+# failed on it and every local run passed.
+if ! out=$("$binary" 2>&1); then
+    rc=$?
+    echo "first-run binary did not run (exit $rc): $out"
+    interp=$(file "$binary" | sed -n 's/.*interpreter \([^,]*\).*/\1/p')
+    echo "  PT_INTERP: ${interp:-<none>}"
+    [[ -n "$interp" ]] && { [[ -e "$interp" ]] && echo "    exists" \
+                                              || echo "    MISSING"; }
+    rp=$(readelf -d "$binary" 2>/dev/null \
+         | sed -n 's/.*R\(UN\)\?PATH.*\[\(.*\)\]/\2/p')
+    echo "  RUNPATH: ${rp:-<none>}"
+    while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        [[ -d "$d" ]] && echo "    ok      $d" || echo "    MISSING $d"
+    done <<< "$(echo "$rp" | tr ':' '\n')"
+    ldd "$binary" 2>&1 | sed 's/^/  ldd: /' | head -12
+    exit 1
+fi
 
 # Second build should be silent on toolchain — no re-install banner.
 "$MCPP" build > "$TMP/secondrun.log" 2>&1 || {
