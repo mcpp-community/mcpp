@@ -1,19 +1,24 @@
 # Maintainer: mcpp-community <x.d2learn.org@gmail.com>
 #
-# mcpp-m — mcpp built from source, bootstrapped with the prebuilt `mcpp-bin`.
-# mcpp is self-hosting: the mcpp-bin compiler builds this release's own
-# source (the same `mcpp build --target <arch>-linux-musl` path release.yml
-# ships). For the prebuilt-only package, install `mcpp-bin` instead.
+# mcpp-git — mcpp built from the upstream git repository (rolling master),
+# bootstrapped with the prebuilt `mcpp-bin`. Same self-hosted build as
+# `mcpp-m`, but tracks master instead of a pinned release — so it can never
+# lag the index floor (E0006) the way `mcpp-bin` does between releases.
+#
+# Rolling master is bleeding-edge: prefer `mcpp-bin` for stable use.
 #
 # NB: the AUR/official name `mcpp` is taken by Matsui's C preprocessor
-# (extra/mcpp), so this package is `mcpp-m`. It still installs the `mcpp`
+# (extra/mcpp), so this package is `mcpp-git`. It still installs the `mcpp`
 # command at /usr/bin/mcpp, hence the conflict with that preprocessor.
 # See scripts/aur/README.md.
 
-pkgname=mcpp-m
+pkgname=mcpp-git
+# Static seed only — real builds override it via pkgver() below. Kept at the
+# current release so the AUR listing doesn't look ancient; actual version is
+# whatever master reports at build time.
 pkgver=2026.8.8.4
 pkgrel=1
-pkgdesc="Modern C++ build & package management tool (built from source)"
+pkgdesc="Modern C++ build & package management tool (git master)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/mcpp-community/mcpp"
 license=('Apache-2.0')
@@ -22,23 +27,33 @@ depends=('git')
 # mcpp-bin is the bootstrap compiler; it also supplies the bundled xlings we
 # ship at runtime. git is needed for toolchain/index sync during the build.
 makedepends=('mcpp-bin' 'git')
-# mcpp-bin = same tool (mutually exclusive); mcpp = the C preprocessor that
-# also owns /usr/bin/mcpp.
-conflicts=('mcpp-bin' 'mcpp')
+# mcpp-bin / mcpp-m = the same tool (mutually exclusive); mcpp = the C
+# preprocessor that also owns /usr/bin/mcpp.
+conflicts=('mcpp-bin' 'mcpp-m' 'mcpp')
 # We strip the built ELF ourselves; don't let makepkg re-strip the vendored
 # xlings binary (a prebuilt third-party artifact).
 options=('!strip')
 
-source=("mcpp-${pkgver}.tar.gz::https://github.com/mcpp-community/mcpp/archive/v${pkgver}.tar.gz"
+source=("mcpp::git+https://github.com/mcpp-community/mcpp.git"
         "mcpp.sh")
-sha256sums=('07f8233d3f18565c52607816a82c9facda3a7ed11c67d3772e42bd84cb54476a'
+sha256sums=('SKIP'
             'SKIP')
+
+# Rolling master has no stable release number. Pacman only needs a
+# monotonically increasing pkgver, so derive one from the closest tag plus the
+# commit distance (AUR -git convention): v2026.8.8.4-5-g<hash> →
+# 2026.8.8.4.5.g<hash>. The binary's own version comes from the checked-out
+# source (src/version.cppm), independent of pkgver.
+pkgver() {
+    cd "${srcdir}/mcpp"
+    git describe --long --tags | sed 's/^v//; s/-/./g'
+}
 
 # mcpp downloads its own pinned toolchain (gcc/ninja/patchelf) into the build
 # sandbox — it does not use the host gcc. This needs network access at build
 # time, like the upstream release build.
 build() {
-    cd "${srcdir}/mcpp-${pkgver}"
+    cd "${srcdir}/mcpp"
 
     case "$CARCH" in
         x86_64)  _target=x86_64-linux-musl  ;;
@@ -67,15 +82,15 @@ build() {
 }
 
 package() {
-    # Same /opt + wrapper layout as mcpp-bin (see scripts/aur/README.md for
-    # why the per-user wrapper exists instead of a /usr/bin symlink).
+    # Same /opt + wrapper layout as mcpp-bin / mcpp-m (see scripts/aur/README.md
+    # for why the per-user wrapper exists instead of a /usr/bin symlink).
     install -Dm755 "${srcdir}/stage/bin/mcpp"            "${pkgdir}/opt/mcpp/bin/mcpp"
     install -Dm755 "${srcdir}/stage/registry/bin/xlings" "${pkgdir}/opt/mcpp/registry/bin/xlings"
 
     install -Dm755 "${srcdir}/mcpp.sh" "${pkgdir}/usr/bin/mcpp"
 
-    install -Dm644 "${srcdir}/mcpp-${pkgver}/LICENSE" \
+    install -Dm644 "${srcdir}/mcpp/LICENSE" \
         "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-    install -Dm644 "${srcdir}/mcpp-${pkgver}/README.md" \
+    install -Dm644 "${srcdir}/mcpp/README.md" \
         "${pkgdir}/usr/share/doc/${pkgname}/README.md"
 }

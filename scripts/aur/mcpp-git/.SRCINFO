@@ -1,0 +1,21 @@
+pkgbase = mcpp-git
+	pkgdesc = Modern C++ build & package management tool (git master)
+	pkgver = 2026.8.8.4
+	pkgrel = 1
+	url = https://github.com/mcpp-community/mcpp
+	arch = x86_64
+	arch = aarch64
+	license = Apache-2.0
+	makedepends = mcpp-bin
+	makedepends = git
+	depends = git
+	conflicts = mcpp-bin
+	conflicts = mcpp-m
+	conflicts = mcpp
+	options = !strip
+	source = mcpp::git+https://github.com/mcpp-community/mcpp.git
+	source = mcpp.sh
+	sha256sums = SKIP
+	sha256sums = SKIP
+
+pkgname = mcpp-git
