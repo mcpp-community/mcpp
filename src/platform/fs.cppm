@@ -52,6 +52,11 @@ std::filesystem::path self_exe_path();
 //   POSIX:   `command -v <name>`
 std::optional<std::filesystem::path> which(std::string_view binary_name);
 
+// 不先删除目标文件，避免发布失败时丢失最后一份可用的编译数据库。
+bool replace_file(const std::filesystem::path& source,
+                  const std::filesystem::path& destination,
+                  std::error_code& ec);
+
 // ── FileLock ──────────────────────────────────────────────────────────────
 //
 // RAII exclusive non-blocking file lock.
@@ -134,6 +139,25 @@ std::optional<std::filesystem::path> which(std::string_view binary_name) {
     if (rc != 0 || out.empty()) return std::nullopt;
     if (!std::filesystem::exists(out)) return std::nullopt;
     return std::filesystem::path(out);
+}
+
+bool replace_file(const std::filesystem::path& source,
+                  const std::filesystem::path& destination,
+                  std::error_code& ec) {
+#if defined(_WIN32)
+    // 直接替换已有文件，不能先删除 last-known-good CDB。
+    if (MoveFileExW(source.wstring().c_str(), destination.wstring().c_str(),
+                    MOVEFILE_REPLACE_EXISTING)) {
+        ec.clear();
+        return true;
+    }
+    ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+    return false;
+#else
+    // 临时文件与目标文件位于同一文件系统时，rename 提供原子替换。
+    std::filesystem::rename(source, destination, ec);
+    return !ec;
+#endif
 }
 
 // ── FileLock ──────────────────────────────────────────────────────────────
