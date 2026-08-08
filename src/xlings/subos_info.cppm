@@ -256,18 +256,26 @@ resolve_env(const Info& info, const std::filesystem::path& subosDir,
             if (!hit) {
                 auto amb = ambient_of(d.var);
                 if (d.op == "set") {
-                    // A `set` is a DEFAULT, not an order. If the caller
-                    // already exported the variable, that wins.
+                    // `set` wins, ambient or not.
                     //
-                    // Recipes document this as the escape hatch -- xlings'
-                    // wsl-gl-host-link says in so many words that a user who
-                    // exports GALLIUM_DRIVER=llvmpipe keeps it. Before this,
-                    // the subos value overwrote it and the hatch did not
-                    // exist: `export GALLIUM_DRIVER=llvmpipe; mcpp run` still
-                    // ran with d3d12 and still failed (mcpp#382). An
-                    // environment a user set deliberately is the one piece of
-                    // input a build environment must not quietly overrule.
-                    if (amb && !amb->empty()) { out.emplace_back(d.var, *amb); continue; }
+                    // Deliberately NOT "yield to an exported value". That
+                    // reading was written here first and withdrawn: `set` and
+                    // "default" are two different intentions, and a subos has
+                    // real need of the first -- a variable naming its own
+                    // loader configuration must not be overridable by a stale
+                    // value in the caller's shell. Collapsing them here would
+                    // remove the ability to express it.
+                    //
+                    // It is also not mcpp's vocabulary to redefine. `envs` is
+                    // xlings' wire format; a consumer that quietly gives an op
+                    // a second meaning makes the same subos behave differently
+                    // depending on which tool launched the program.
+                    //
+                    // The escape hatch mcpp#382 asks for (a recipe declaring a
+                    // DEFAULT the user can override) therefore wants a new op
+                    // from xlings, not a reinterpretation of this one. When it
+                    // exists, it is honoured here -- unknown ops are dropped
+                    // today, which is why it has to arrive on both sides.
                     out.emplace_back(d.var, value);
                     continue;
                 }
