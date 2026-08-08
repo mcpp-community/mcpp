@@ -597,6 +597,14 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
     auto from_text = [](const std::string& text) -> std::string {
         auto loader = detect_baked_loader(text);
         if (loader.empty()) return {};
+        // The recorded path may name a subos VIEW (`<home>/subos/default/lib/
+        // ld-linux-...`), which is a symlink into the payload. R6: artifacts
+        // bind the payload, never the mutable view -- so resolve to the
+        // payload before reading a version off it. A view path has no version
+        // component at all, and parsing one yields nothing.
+        std::error_code cec;
+        if (auto real = std::filesystem::canonical(loader, cec); !cec)
+            loader = real.string();
         // .../xim-x-glibc/<ver>/lib64/ld-linux-... — the version is the
         // grandparent of the lib dir.
         auto dir = std::filesystem::path(loader).parent_path();   // lib64
@@ -643,6 +651,39 @@ std::string baked_runtime_binding(const std::filesystem::path& compilerBin) {
     // the same fact the specs held, from a mechanism that has not gone away.
     if (auto r = from_text(read_elf_interp(compilerBin)); !r.empty())
         return r;
+
+    // Last: the installed payload set, but ONLY when it is a singleton.
+    //
+    // This is not the rule this design removed. That rule asked a directory
+    // for "the glibc" and took whatever `readdir` yielded first -- a CHOICE,
+    // made by something with no bearing on what the artifact would load, and
+    // silently wrong the moment a second payload appeared. Where exactly one
+    // payload is installed there is no choice to make: it is the only glibc
+    // any artifact from this toolchain could bind, and declining would refuse
+    // a question that has a single answer.
+    //
+    // Two or more and this stays silent. That is the case the incident was,
+    // and it is the case the subos must answer.
+    if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
+        std::vector<std::string> versions;
+        for (auto it = std::filesystem::directory_iterator(*xpkgs / "xim-x-glibc", ec);
+             !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+            if (!it->is_directory(ec)) continue;
+            auto v = it->path().filename().string();
+            if (!v.empty() && v.front() != '.') versions.push_back(v);
+        }
+        if (versions.size() == 1) {
+            mcpp::log::verbose("probe", std::format(
+                "runtime binding glibc@{} — the only glibc payload installed, "
+                "so there is nothing to choose between", versions[0]));
+            return "glibc@" + versions[0];
+        }
+        if (versions.size() > 1)
+            mcpp::log::verbose("probe", std::format(
+                "{} glibc payloads installed and nothing declares which one "
+                "this build binds; declining rather than picking",
+                versions.size()));
+    }
     return {};
 }
 
