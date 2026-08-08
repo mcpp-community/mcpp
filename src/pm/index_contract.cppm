@@ -21,6 +21,7 @@ export module mcpp.pm.index_contract;
 
 import std;
 import mcpp.libs.toml;
+import mcpp.platform.fs;          // self_exe_path (distro-layout detection)
 import mcpp.version_req;
 import mcpp.version;                 // MCPP_VERSION (leaf — see that module)
 
@@ -43,6 +44,13 @@ read_index_contract(const std::filesystem::path& indexRoot);
 // client by being malformed).
 std::optional<std::string>
 floor_violation(std::string_view minMcpp, std::string_view ownVersion);
+
+// Pure: E0006 message with the Upgrade advice suited to the install layout
+// (`distroManaged` is detected once by the caller via self_exe_path). The
+// plain one-liner misleads users of the other install methods — an AUR install
+// plus the install.sh command installs a second copy that does not update the
+// running binary.
+std::string e0006_message(std::string violation, bool distroManaged);
 
 // Pure predicate — no reporting, no registration, no dedup. For callers that
 // need to ask "would this tree be usable?" without the side effects of
@@ -118,6 +126,26 @@ read_index_contract(const std::filesystem::path& indexRoot)
     return c;
 }
 
+// Upgrade advice embedded in the E0006 message. mcpp supports several install
+// methods (xlings is the recommended default; install.sh / AUR / Homebrew are
+// alternatives), and each lands in a different place. A single hardcoded
+// one-liner misleads users of the other methods — e.g. an AUR install plus the
+// install.sh command installs a SECOND copy that does not update the running
+// binary. So the message names the method and how to upgrade IT.
+namespace {
+constexpr std::string_view kInstallShUpgrade =
+    "  Upgrade:  re-run the install.sh one-liner\n"
+    "             curl -fsSL https://github.com/mcpp-community/mcpp/"
+    "releases/latest/download/install.sh | bash\n";
+constexpr std::string_view kDistroUpgrade =
+    "  Upgrade:  this is a distro-managed install (AUR) — update the package\n"
+    "             with your AUR helper (e.g. 'paru -Syu mcpp-bin' or\n"
+    "             'yay -Syu mcpp-bin'). The install.sh one-liner installs a\n"
+    "             separate copy and will NOT update this one.\n";
+constexpr std::string_view kXlingsUpgrade =
+    "  Upgrade:  'xlings update mcpp' (recommended default installer)\n";
+} // namespace
+
 std::optional<std::string>
 floor_violation(std::string_view minMcpp, std::string_view ownVersion)
 {
@@ -128,11 +156,37 @@ floor_violation(std::string_view minMcpp, std::string_view ownVersion)
     if (*have >= *need) return std::nullopt;
     return std::format(
         "index requires mcpp >= {} but this is mcpp {} [E0006]\n"
-        "  Upgrade:  curl -fsSL https://github.com/mcpp-community/mcpp/"
-        "releases/latest/download/install.sh | bash\n"
+        "{}"
         "  Details:  mcpp explain E0006   "
         "(override for debugging: MCPP_INDEX_FLOOR=ignore)",
-        minMcpp, ownVersion);
+        minMcpp, ownVersion, kInstallShUpgrade);
+}
+
+// Pure: swap the Upgrade advice for the install layout the caller detected.
+std::string e0006_message(std::string violation, bool distroManaged)
+{
+    if (distroManaged) {
+        auto pos = violation.find(kInstallShUpgrade);
+        if (pos != std::string::npos)
+            violation.replace(pos, kInstallShUpgrade.size(), kDistroUpgrade);
+    }
+    // Append the recommended installer note to every layout.
+    violation += kXlingsUpgrade;
+    return violation;
+}
+
+// Impure (reads /proc/self/exe): true when the running binary sits under the
+// distro-managed tree (/opt/mcpp — the AUR layout). install.sh / xlings
+// installs keep the binary inside $MCPP_HOME (~/.mcpp) instead.
+bool distro_managed_install()
+{
+#if defined(_WIN32) || defined(__APPLE__)
+    return false;
+#else
+    std::error_code ec;
+    auto self = mcpp::platform::fs::self_exe_path();
+    return self.string().find("/opt/mcpp/") != std::string::npos;
+#endif
 }
 
 bool index_usable(const std::filesystem::path& indexRoot)
@@ -192,15 +246,17 @@ check_index_floor(const std::filesystem::path& indexRoot)
     auto violation = floor_violation(c->minMcpp, mcpp::MCPP_VERSION);
     if (!violation) return std::nullopt;
 
+    auto message = e0006_message(*violation, distro_managed_install());
+
     // Record BEFORE the dedup return: the fact must be queryable no matter how
     // many times this root is opened, while the message is printed only once.
     // Deriving "was anything unusable?" from "did we print?" is what made the
     // second and later reads indistinguishable from an ordinary miss.
     if (!index_marked_unusable(indexRoot))
-        unusable_registry().push_back({indexRoot, *violation});
+        unusable_registry().push_back({indexRoot, message});
     else
         return std::nullopt;          // already reported — stay quiet
-    return violation;
+    return message;
 }
 
 } // namespace mcpp::pm
