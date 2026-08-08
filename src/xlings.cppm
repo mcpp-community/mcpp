@@ -716,7 +716,16 @@ find_sibling_tool(const std::filesystem::path& compilerBin,
     std::error_code ec;
     if (!std::filesystem::exists(root, ec)) return std::nullopt;
 
-    // Return the first (highest) version dir that exists.
+    // The first version dir readdir yields. ORDER IS UNDEFINED -- this does
+    // NOT return the highest, and the comment that said so was wrong for as
+    // long as it stood. With two versions installed the answer varies by
+    // filesystem, so a caller that needs a SPECIFIC version must name it;
+    // see probe.cppm, where the version comes from the resolved runtime
+    // binding rather than from this scan.
+    //
+    // A test asserting the old "highest" claim was attempted and removed: it
+    // passed or failed by directory order, which makes both outcomes
+    // uninformative.
     for (auto& v : std::filesystem::directory_iterator(root, ec)) {
         if (v.is_directory(ec)) return v.path();
     }

@@ -212,4 +212,20 @@ TEST(LinkModel, NothingUsableYieldsNoneAndEmptyFlags) {
     EXPECT_TRUE(lm.link_flags(ident).empty());
 }
 
+
+// 关于 `find_sibling_tool` 的顺序:**不在这里测**。
+//
+// 它的注释曾写着 "Return the first (highest) version dir",而代码只是取
+// directory_iterator 的第一项 —— 没有排序。为它写一条断言的尝试失败了:
+// 结果取决于 readdir 顺序,所以那条测试在本机通过、在别的机器上可能失败,
+// **通过和失败都不说明问题**。
+//
+// 正确的做法不是把不确定性钉住,而是让它不再被用于选版本:版本由权威
+// (`--runtime` / subos 的 `subos_info.runtime`)给出,`find_sibling_tool`
+// 只负责定位包根。确定性的判据在 test_toolchain_probe.cpp —— 给定
+// `glibc@2.39`,即使 home 里同时有 2.44,也必须返回 2.39。
+//
+// 注释本身已改为陈述事实(顺序未定义,调用方不得依赖)。
+// 设计:.agents/docs/2026-08-08-payload-version-and-contract-drift-design.md §3.2
+
 }  // namespace

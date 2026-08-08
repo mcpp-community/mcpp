@@ -158,7 +158,14 @@ export void patchelf_walk(const std::filesystem::path& dir,
 //   - Dynamically detects the baked-in loader path from the specs file
 //   - Replaces it with the sandbox glibc payload's loader
 //   - Replaces the rpath with <glibc_lib>:<gcc_lib64>
-// Idempotent — skips if already pointing at the correct glibc.
+// NOT idempotent across homes -- and that is a defect, not a caveat. The
+// needle is one path (the baked glibc dir) while the replacement is two
+// (glibc + gccLib), so a second home patching the same shared payload leaves
+// the first home's gccLib entry behind: it never appears in any later needle.
+// One stale rpath per run, forever. Measured at 68 on a developer machine,
+// all of them gccLib, none glibc -- a distribution only this mechanism
+// produces. See 2026-08-08-payload-version-and-contract-drift-design.md §2.1;
+// this function is slated for deletion, with the flags moving to the build.
 // Extract the baked-in glibc loader path (".../ld-linux-<arch>.so.N") from a
 // gcc specs file. xim bakes the installing user's XLINGS_HOME into specs at
 // install time, so the DIR varies per machine, and the loader NAME varies
