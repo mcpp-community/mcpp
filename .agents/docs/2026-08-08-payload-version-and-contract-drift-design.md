@@ -337,3 +337,43 @@ Windows job 直接挂;而且它在能编译的地方语义也错 —— 名叫 `
 
 验证方式:把 gcc 的 `specs` 挪开**并且**把 gcc 自身的 `PT_INTERP` 改指宿主 loader,即三条
 兼容来源全部失效,binding 仍解析得出,产物仍拿 payload loader。
+
+### 9.7 兼容来源是**记录**,不是权威
+
+§9.6 补上单例回落后 CI 依然红,日志直说了原因:
+
+```
+probe: runtime 'glibc@2.39' is not installed in this home
+```
+
+那台机器上只有一个 glibc payload:**2.44**;而兼容记录烙的是 **2.39**。
+
+三条兼容来源(`specs`、`.cfg`、`PT_INTERP`)都是**过去某个时刻的记录** —— 装机时写的、
+fixup 时写的 —— 而 payload 被替换(升级、回收)时**没有任何东西回头去改它们**。§3.2 的
+「精确匹配、绝不回落」于是如实地拒绝了 2.39,结果是没有 payloadPaths、没有
+`--dynamic-linker`、产物拿宿主 loader。
+
+**判据要补一句:一条记录只有在它指的东西还在,才算数。**
+
+现在每条记录都对「实际安装了哪些 payload」核对一遍:
+
+- 记录指的 payload **还在** ⇒ 采信(即使装了多个,它就是产物会加载的那个)
+- 记录指的 payload **不在了** ⇒ 跳过,继续往下(单例回落往往能答)
+- 什么都答不上来 ⇒ 沉默
+
+这条与 §9.6 是同一件事的两面:**§9.6 说「没得选就不算猜」,§9.7 说「化石不算权威」。**
+两条都是在收窄「拒绝」的适用范围 —— 拒绝该留给**真正有歧义**的情况。
+
+### 9.8 musl 目标不碰 glibc payload
+
+`sysroot_mode` 里补 loader / lib 目录时漏了 musl 护栏。musl 的 sysroot 是自包含的,而
+同时被探测到的 glibc payload 属于**宿主**工具链 —— 把它放进链接路径后,ld 会把 glibc 的
+静态 `libc.a` 拉进一次 musl 链接:
+
+```
+undefined reference to `_DYNAMIC'      (dl-reloc-static-pie.o)
+hidden symbol `_DYNAMIC' isn't defined
+```
+
+同一函数里紧接着的 header 分支**本来就有** `is_musl_target` 判断 —— 那句话对库和 loader
+一样成立,只是当时没写上。由 e2e 103 抓到,同样是全量跑扫出来的。
