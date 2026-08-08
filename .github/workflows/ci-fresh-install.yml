@@ -152,7 +152,7 @@ jobs:
         env:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.7.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.8.1
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror
@@ -292,7 +292,7 @@ jobs:
 
       - name: Install xlings + mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.7.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.8.1
           # Deliberately NOT writing to $GITHUB_PATH here. On container
           # images that declare no PATH in their config (opensuse/
           # tumbleweed), appending a single dir to GITHUB_PATH makes the
@@ -363,7 +363,7 @@ jobs:
           #             (older ones carry minos=15 and refuse to start).
           #   v0.4.51+: in-process sha256 — this image has no sha256sum
           #             binary, so pinned fetches failed before it.
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.7.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.8.1
           echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
 
       - name: Install mcpp and config mirror

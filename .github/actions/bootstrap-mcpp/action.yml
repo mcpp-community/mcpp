@@ -25,7 +25,7 @@ inputs:
     # `package.name`, so one of the two was simply unreachable — and which one
     # depended on the machine, which is why CI failed on `compat:lua` on
     # Windows and `mcpplibs.capi:lua` on Linux. Never pin below that.
-    default: '2026.8.7.1'
+    default: '2026.8.8.1'
   cache-target:
     description: also restore/save target/ (build artifacts + BMIs)
     required: false

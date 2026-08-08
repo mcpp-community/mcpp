@@ -17,7 +17,7 @@ jobs:
       # Dormant (workflow_dispatch only), but kept in step with the rest —
       # check_version_pins.sh holds it there. Floor: 0.4.69, below which the
       # index cannot resolve two packages that share a short name.
-      XLINGS_VERSION: '2026.8.7.1'
+      XLINGS_VERSION: '2026.8.8.1'
     steps:
       - uses: actions/checkout@v4
 
