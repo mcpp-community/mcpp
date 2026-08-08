@@ -18,6 +18,7 @@ import std;
 import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.libs.json;
+import mcpp.platform.fs;
 
 export namespace mcpp::build {
 
@@ -47,8 +48,28 @@ std::string merge_compile_commands(
     std::string_view existing,
     const std::function<bool(const std::filesystem::path&)>& fileExists);
 
-// Write compile_commands.json to the project root.
-void write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
+struct CompileCommandsWriteResult {
+    bool changed = false;
+    std::size_t commandCount = 0;
+};
+
+struct CompileCommandsWriteError {
+    std::string message;
+};
+
+using ReplaceFile = std::function<bool(const std::filesystem::path&,
+                                       const std::filesystem::path&,
+                                       std::error_code&)>;
+
+std::expected<CompileCommandsWriteResult, CompileCommandsWriteError>
+publish_compile_commands(
+    const std::filesystem::path& path,
+    std::string_view fresh,
+    const std::function<bool(const std::filesystem::path&)>& fileExists,
+    ReplaceFile replaceFile = mcpp::platform::fs::replace_file);
+
+std::expected<CompileCommandsWriteResult, CompileCommandsWriteError>
+write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 
 }  // namespace mcpp::build
 
@@ -184,6 +205,21 @@ std::vector<std::string> package_flag_args(const CompileUnit& cu, bool isCSource
     return split_flags(joined);
 }
 
+void sort_entries_by_file(nlohmann::json& entries) {
+    std::stable_sort(entries.begin(), entries.end(), [](auto const& lhs, auto const& rhs) {
+        auto file = [](auto const& entry) {
+            return entry.contains("file") && entry["file"].is_string()
+                ? entry["file"].template get<std::string>()
+                : std::string{};
+        };
+        return file(lhs) < file(rhs);
+    });
+}
+
+CompileCommandsWriteError write_error(std::string message) {
+    return CompileCommandsWriteError{std::move(message)};
+}
+
 }  // namespace
 
 std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
@@ -276,35 +312,107 @@ std::string merge_compile_commands(
         }
     }
 
+    sort_entries_by_file(merged);
+
     return merged.dump(2) + "\n";
 }
 
-void write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
-    auto content = emit_compile_commands(plan, flags);
+std::expected<CompileCommandsWriteResult, CompileCommandsWriteError>
+publish_compile_commands(
+    const std::filesystem::path& path,
+    std::string_view fresh,
+    const std::function<bool(const std::filesystem::path&)>& fileExists,
+    ReplaceFile replaceFile) {
+    auto freshJson = nlohmann::json::parse(fresh, nullptr, /*allow_exceptions=*/false);
+    if (freshJson.is_discarded() || !freshJson.is_array()) {
+        return std::unexpected(write_error(std::format(
+            "fresh compile database for '{}' is not a JSON array", path.string())));
+    }
+
+    std::optional<std::string> existing;
+    if (std::ifstream is(path, std::ios::binary); is) {
+        std::stringstream ss;
+        ss << is.rdbuf();
+        if (is.bad()) {
+            return std::unexpected(write_error(std::format(
+                "cannot read existing compile database '{}'", path.string())));
+        }
+        existing = ss.str();
+    }
+
+    // 完全相同的有效输入不重写文件，避免 clangd 因 mtime 变化重复索引。
+    if (existing && *existing == fresh) {
+        return CompileCommandsWriteResult{false, freshJson.size()};
+    }
+
+    std::string content(fresh);
+    if (existing) {
+        // 保留仍存在但当前 plan 未覆盖的条目，主要是之前 test 生成的 TU。
+        content = merge_compile_commands(content, *existing, fileExists);
+    }
+
+    auto finalJson = nlohmann::json::parse(content, nullptr, /*allow_exceptions=*/false);
+    if (finalJson.is_discarded() || !finalJson.is_array()) {
+        return std::unexpected(write_error(std::format(
+            "final compile database for '{}' is not a JSON array", path.string())));
+    }
+    sort_entries_by_file(finalJson);
+    content = finalJson.dump(2) + "\n";
+
+    if (existing && *existing == content) {
+        return CompileCommandsWriteResult{false, finalJson.size()};
+    }
+
+    static std::atomic<std::uint64_t> sequence{0};
+    auto temp = path.parent_path()
+        / std::format(".{}.tmp.{}.{}", path.filename().string(),
+                      std::chrono::steady_clock::now().time_since_epoch().count(),
+                      sequence.fetch_add(1, std::memory_order_relaxed));
+    auto cleanup_temp = [&] {
+        std::error_code cleanupEc;
+        std::filesystem::remove(temp, cleanupEc);
+    };
+
+    std::ofstream output(temp, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        return std::unexpected(write_error(std::format(
+            "cannot open temporary compile database '{}'", temp.string())));
+    }
+    output << content;
+    output.flush();
+    if (!output) {
+        output.close();
+        cleanup_temp();
+        return std::unexpected(write_error(std::format(
+            "cannot write temporary compile database '{}'", temp.string())));
+    }
+    output.close();
+    if (!output) {
+        cleanup_temp();
+        return std::unexpected(write_error(std::format(
+            "cannot close temporary compile database '{}'", temp.string())));
+    }
+
+    std::error_code ec;
+    if (!replaceFile(temp, path, ec)) {
+        cleanup_temp();
+        return std::unexpected(write_error(std::format(
+            "cannot replace '{}': {}", path.string(), ec.message())));
+    }
+
+    return CompileCommandsWriteResult{true, finalJson.size()};
+}
+
+std::expected<CompileCommandsWriteResult, CompileCommandsWriteError>
+write_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
     auto path = plan.compileDbPath.empty()
         ? plan.projectRoot / "compile_commands.json"
         : plan.compileDbPath;
-
-    if (std::filesystem::exists(path)) {
-        std::ifstream is(path);
-        std::stringstream ss;
-        ss << is.rdbuf();
-        auto existing = ss.str();
-
-        // Preserve still-valid prior entries this plan doesn't cover — chiefly
-        // tests/ entries a previous `mcpp test` wrote — so a plain `mcpp build`
-        // doesn't wipe clangd's coverage of test files. Offline-safe: no extra
-        // dependency resolution, just a merge of real prior plans.
-        content = merge_compile_commands(content, existing,
-            [](const std::filesystem::path& p) { return std::filesystem::exists(p); });
-
-        // Only write if content changed (avoid triggering clangd re-index).
-        if (existing == content)
-            return;
-    }
-
-    std::ofstream os(path);
-    os << content;
+    return publish_compile_commands(
+        path, emit_compile_commands(plan, flags),
+        [](const std::filesystem::path& candidate) {
+            return std::filesystem::exists(candidate);
+        });
 }
 
 }  // namespace mcpp::build

@@ -12,6 +12,7 @@ enum class BackendKind { Ninja, Native };
 struct BuildOptions {
     bool                        verbose       = false;
     bool                        dryRun       = false;
+    bool                        requireCompileDatabase = false;
     std::size_t                 parallelJobs = 0;
     // Explicit ninja goal targets (LinkUnit::output paths, relative to the
     // plan's outputDir). Empty = build the full plan (default behavior).
@@ -38,6 +39,7 @@ struct BuildResult {
     std::chrono::milliseconds               elapsed { 0 };
     std::size_t                             cacheHits   = 0;
     std::size_t                             cacheMisses = 0;
+    std::size_t                             compileCommands = 0;
     std::string                             ninjaProgram;     // P0: cached for fast-path rebuilds
     std::string                             runtimeEnvKey;    // cached for fast-path rebuilds
     std::string                             runtimeEnvValue;  // cached for fast-path rebuilds
