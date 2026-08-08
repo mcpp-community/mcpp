@@ -55,12 +55,12 @@ out=$($MCPP build --configure-only 2>&1) || {
     exit 1
 }
 
-grep -q 'src[\/]main.cpp' compile_commands.json || {
+grep -q 'src[\/][\/]*main.cpp' compile_commands.json || {
     echo "CDB is missing the ordinary source TU"
     cat compile_commands.json
     exit 1
 }
-grep -q 'tests[\/]test_smoke.cpp' compile_commands.json || {
+grep -q 'tests[\/][\/]*test_smoke.cpp' compile_commands.json || {
     echo "CDB is missing the test TU"
     cat compile_commands.json
     exit 1
@@ -118,16 +118,16 @@ cd "$TMP/ws"
 for member in a b; do
     cdb="$member/compile_commands.json"
     [[ -s "$cdb" ]] || { echo "missing $cdb"; exit 1; }
-    grep -q "src[\\/]main.cpp" "$cdb" || { cat "$cdb"; exit 1; }
-    grep -q "tests[\\/]main.cpp" "$cdb" || { cat "$cdb"; exit 1; }
+    grep -q "src[\\/][\\/]*main.cpp" "$cdb" || { cat "$cdb"; exit 1; }
+    grep -q "tests[\\/][\\/]*main.cpp" "$cdb" || { cat "$cdb"; exit 1; }
 done
 rm -f a/compile_commands.json
 "$MCPP" build --configure-only -p a > configure-member.log 2>&1 || {
     cat configure-member.log
     exit 1
 }
-grep -q 'src[\/]main.cpp' a/compile_commands.json || { cat a/compile_commands.json; exit 1; }
-if grep -q 'b[\/]src[\/]main.cpp' a/compile_commands.json; then
+grep -q 'src[\/][\/]*main.cpp' a/compile_commands.json || { cat a/compile_commands.json; exit 1; }
+if grep -q 'b[\/][\/]*src[\/][\/]*main.cpp' a/compile_commands.json; then
     echo "-p a leaked member b into the CDB"
     cat a/compile_commands.json
     exit 1
