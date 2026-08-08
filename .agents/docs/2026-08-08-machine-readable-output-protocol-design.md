@@ -320,33 +320,40 @@ mcpp xpkg parse --json   顶层 = {"namespace","name","form"}  ← 没有 envelo
 `exec-build-script` 单独成项,因为 `build.mcpp` 会执行工作区里的代码 —— 那是 untrusted
 门唯一真正在乎的一条。
 
-## R3. `self env` 首次运行会初始化 —— 不是「每次都写」,但对契约是同一件事
+## R3. `self env` 首次运行会初始化 —— 真问题是**作用域**,不是真假
 
-wellwei 指出 `doctor.cppm::env_report()` 调 `config::load_or_init()`,不是只读。核实。
+wellwei 指出 `env_report()` 调 `config::load_or_init()`,不是只读。核实,并把两次测法
+都记下来,因为**第一次测法不足以定责**。
 
-**第一次测法不足以定责**:我只在全新 `MCPP_HOME` 上跑了一次 `self env`,看到 6 个文件
-就下了结论 —— 但那没有排除「任何 mcpp 命令的首次初始化」。分离之后:
+第一次:只在全新 `MCPP_HOME` 上跑一次 `self env`,看到 6 个文件就下结论 —— 没有排除
+「任何 mcpp 命令的首次初始化」。加对照后:
 
-| 测法 | 结果 |
+| 命令 | 全新 home 上创建项数 |
 |---|---|
-| 全新 home + `mcpp --version` | **目录都没创建** |
-| 全新 home + `mcpp self env` | 创建 `config.toml` `registry` `cache` `bin` `build-cache` `log` |
-| **已初始化** home + `mcpp self env` | **无变化,只读** |
+| `mcpp --version` | 0 |
+| **`mcpp xpkg parse <f> --json`** | **0** |
+| **`mcpp cache list --json`** | **0** |
+| `mcpp self env` | **6**(`config.toml` `registry` `cache` `bin` `build-cache` `log`) |
+| 已初始化 home + `self env` | **无变化,只读** |
 
-所以准确的表述是:**`self env` 不是每次都写,而是首次运行时触发一次性初始化**;
-`--version` 不走那条路径,所以「所有命令都这样」不成立。
+两条结论:
 
-**这改变修法,不改变结论:**
+1. **「首次运行必然初始化」不成立。** mcpp-vscode#8 实际消费的两个命令
+   (`xpkg parse` / `cache list`)**什么都不建**。所以按「任何写盘都算」的口径,
+   `destructive` **仍然携带信息** —— 它不会退化成恒真。
+2. `self env` 是首次运行触发一次性初始化,**不是每次都写**。
 
-- 标 `destructive: false` 仍然是错的 —— 在一台新机器上它是谎,而 untrusted-workspace
-  门恰恰在新机器上最需要生效。契约按**最坏情况**写。
-- 但要拆的不是「读 vs 写」——`env_report()` 在已初始化的机器上本来就只读。
-- 要拆的是**「读 vs 首次初始化」**:JSON 路径用一个只计算路径、只读已存在配置的
-  resolver,未初始化时返回推导值 + `initialized: false`,**不建目录、不 bootstrap、
-  不触网**。人类输出保持现状(用户对 `mcpp self env` 顺带初始化是有预期的)。
+**因此真正的分叉是作用域,不是真假。** untrusted-workspace 门在乎的是「碰不碰用户的
+项目」「执不执行项目代码」;mcpp 建**自己的 home** 不属于这一类。两条路:
 
-顺带记下这次的方法教训:**「跑一次,看有没有文件」不足以给副作用定责** —— 必须有一个
-不走同一路径的对照命令。这条不是这一处的技巧,是所有「某命令有无副作用」的判定通法。
+- **(a) 效应集合,作用域写在名字里**(倾向)。`self env` = `["init-mcpp-home"]`,
+  客户端自己决定要不要在意;既不把它打成「危险」,也不让 `false` 被读成「什么都不写」。
+- (b) 直接定「作用域 = 工作区」,`self env` 标 `false`。更简单,但 spec 必须写死
+  「本字段不涵盖 mcpp 自身 home 的初始化」,否则 `false` 有歧义。
+
+方法教训单独记:**「跑一次看有没有文件」不足以给副作用定责,必须有一个不走同一路径的
+对照命令。** 这一处若不加对照,就会得出「所有命令都会初始化,所以这个字段没意义」——
+一个由测法而非事实支撑的结论。
 
 ## R4. 阶段 0 的边界比第一轮画的更宽
 
