@@ -142,16 +142,28 @@ std::vector<std::string> split_flags(std::string_view s) {
 
 namespace {
 
+// The CDB's path contract: NATIVE separators, unconditionally. Every
+// ingestion point (manifest globs, include_dirs, build.mcpp directives) is
+// normalized at the source, but this is the LAST line — a path that slips
+// through with a mixed `root\a/b` spelling (MSVC keeps input `/` verbatim)
+// breaks CLion, and no amount of "all ingestion points are covered" can be
+// proven. make_preferred() is a no-op on POSIX.
+std::string native_string(const std::filesystem::path& p) {
+    auto n = p;
+    n.make_preferred();
+    return n.string();
+}
+
 std::vector<std::string> local_include_args(const CompileUnit& cu) {
     std::vector<std::string> args;
     args.reserve(cu.localIncludeDirs.size());
     for (auto const& inc : cu.localIncludeDirs) {
-        args.push_back("-I" + inc.string());
+        args.push_back("-I" + native_string(inc));
     }
     // #249: after-dirs keep their -idirafter spelling in the compile DB so
     // tooling (clangd) reproduces the compiler's search order.
     for (auto const& inc : cu.localIncludeDirsAfter) {
-        args.push_back("-idirafter" + inc.string());
+        args.push_back("-idirafter" + native_string(inc));
     }
     return args;
 }
@@ -186,7 +198,7 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
                             : isCSource   ? flags.cc
                                           : flags.cxx;
 
-        auto output_path = (plan.outputDir / cu.object).string();
+        auto output_path = native_string(plan.outputDir / cu.object);
 
         // Build arguments array.
         nlohmann::json args = nlohmann::json::array();
@@ -198,13 +210,13 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
         for (auto& f : package_flag_args(cu, isCSource))
             args.push_back(std::move(f));
         args.push_back("-c");
-        args.push_back(cu.source.string());
+        args.push_back(native_string(cu.source));
         args.push_back("-o");
         args.push_back(output_path);
 
         nlohmann::json entry;
-        entry["directory"] = plan.projectRoot.string();
-        entry["file"] = cu.source.string();
+        entry["directory"] = native_string(plan.projectRoot);
+        entry["file"] = native_string(cu.source);
         entry["arguments"] = std::move(args);
         entry["output"] = output_path;
 
@@ -222,11 +234,25 @@ std::string merge_compile_commands(
     if (freshJ.is_discarded() || !freshJ.is_array())
         return std::string(fresh);
 
+    // Dedup key = the file's PATH, spelled the way a fresh plan spells it
+    // (native separators). A prior CDB written before the mixed-separator
+    // fix (#390) carries `root\generated/modules\x.cppm` entries that are
+    // the SAME file as the fresh `root\generated\modules\x.cppm` — a literal
+    // string comparison would keep both and the user's upgrade would not
+    // visibly fix anything. Normalizing makes the merge self-healing: the
+    // stale mixed entry is skipped on the first `mcpp build` after upgrade.
+    // fileExists still probes the raw spelling — Windows accepts both.
+    auto norm_key = [](std::string_view f) {
+        auto p = std::filesystem::path(std::string(f)).lexically_normal();
+        p.make_preferred();
+        return p.string();
+    };
+
     // Files the current plan already covers — those entries are authoritative.
     std::set<std::string> freshFiles;
     for (auto const& e : freshJ) {
         if (e.contains("file") && e["file"].is_string())
-            freshFiles.insert(e["file"].get<std::string>());
+            freshFiles.insert(norm_key(e["file"].get<std::string>()));
     }
 
     // Keep fresh order, then append still-valid prior entries the plan doesn't
@@ -238,7 +264,7 @@ std::string merge_compile_commands(
         for (auto const& e : existingJ) {
             if (!e.contains("file") || !e["file"].is_string()) continue;
             auto f = e["file"].get<std::string>();
-            if (freshFiles.contains(f)) continue;             // fresh wins
+            if (freshFiles.contains(norm_key(f))) continue;       // fresh wins
             if (!fileExists(std::filesystem::path(f))) continue;  // pruned
             merged.push_back(e);
         }

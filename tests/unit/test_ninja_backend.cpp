@@ -5,6 +5,7 @@ import mcpp.build.compile_commands;
 import mcpp.build.flags;
 import mcpp.build.ninja;
 import mcpp.build.plan;
+import mcpp.libs.json;
 import mcpp.manifest;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.model;
@@ -163,8 +164,11 @@ TEST(NinjaBackend, CxxFlagsIncludeBuildIncludeDirs) {
     EXPECT_NE(flags.cxx.find(escaped_include_flag(plan.projectRoot / "include")),
               std::string::npos)
         << flags.cxx;
-    EXPECT_NE(flags.cxx.find(escaped_include_flag(
-                  plan.projectRoot / std::filesystem::path{"third_party/imgui"})),
+    // #390: a multi-segment entry is normalized to NATIVE separators before
+    // the -I token is built (a mixed `...\third_party/imgui` used to reach
+    // the CDB through f.cxx). Build the expected path natively too.
+    auto imgui = plan.projectRoot / "third_party" / "imgui";
+    EXPECT_NE(flags.cxx.find(escaped_include_flag(imgui)),
               std::string::npos)
         << flags.cxx;
 }
@@ -1148,8 +1152,22 @@ TEST(NinjaBackend, CachedUnitsStillAppearInCompileCommands) {
     auto flags = compute_flags(plan);
     auto cdb = emit_compile_commands(plan, flags);
 
-    EXPECT_NE(cdb.find("/store/dep/src/dep.c"), std::string::npos) << cdb;
-    EXPECT_NE(cdb.find("src/main.cpp"), std::string::npos) << cdb;
+    // #390: the emitter spells every path natively, so the expected source
+    // spelling is make_preferred'ed (a no-op on POSIX). Compared on the
+    // DECODED file field — the raw JSON text doubles every backslash.
+    auto dep = std::filesystem::path("/store/dep/src/dep.c");
+    dep.make_preferred();
+    auto main = std::filesystem::path("src/main.cpp");
+    main.make_preferred();
+    auto j = nlohmann::json::parse(cdb);
+    bool sawDep = false, sawMain = false;
+    for (auto const& e : j) {
+        auto f = e["file"].get<std::string>();
+        sawDep  = sawDep  || f == dep.string();
+        sawMain = sawMain || f == main.string();
+    }
+    EXPECT_TRUE(sawDep) << cdb;
+    EXPECT_TRUE(sawMain) << cdb;
 }
 
 // Replacing a package's compile edges with stage edges also removes the ordering
@@ -1227,4 +1245,32 @@ TEST(NinjaBackend, NoStagedPhonyWhenNothingIsCached) {
     });
     auto ninja = emit_ninja_string(plan);
     EXPECT_EQ(ninja.find("_mcpp_staged_cache"), std::string::npos) << ninja;
+}
+
+// #390: the main-manifest include channel's fallback join — `root / inc` for
+// a directory a build step will create LATER (the `generated/inc` shape) —
+// must spell its result NATIVELY on Windows. MSVC keeps the `/` of a TOML
+// `generated/inc` verbatim, so the bare join yields `C:\proj\generated/inc`,
+// which reaches the CDB's -I via local_include_args and breaks CLion. Same
+// rule for an absolute entry written with forward slashes (`C:/SDL2/include`).
+// (The existing-directory path runs through expand_dir_glob, covered by
+// Scanner.ExpandDirGlobMultiSegmentUsesNativeSeparators.)
+TEST(Plan, ExpandManifestIncludeEntryNativeSpelling) {
+    namespace fs = std::filesystem;
+    auto root = fs::temp_directory_path() / "mcpp-plan-inc-entry";
+    fs::remove_all(root);
+    fs::create_directories(root);   // generated/inc deliberately does NOT exist
+
+    auto fb = expand_manifest_include_entry(root, fs::path("generated/inc"));
+    ASSERT_EQ(fb.size(), 1u);
+    if constexpr (fs::path::preferred_separator == '\\')
+        EXPECT_EQ(fb[0].string().find('/'), std::string::npos) << fb[0];
+    EXPECT_EQ(fb[0], root / "generated" / "inc");
+
+    auto abs = expand_manifest_include_entry(root, fs::path("C:/SDL2/include"));
+    ASSERT_EQ(abs.size(), 1u);
+    if constexpr (fs::path::preferred_separator == '\\')
+        EXPECT_EQ(abs[0].string(), "C:\\SDL2\\include");
+
+    fs::remove_all(root);
 }

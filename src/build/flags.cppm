@@ -317,7 +317,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // once ninja hands the resolved command line to the shell.
     std::vector<std::string> includeTokens;
     for (auto& inc : plan.manifest.buildConfig.includeDirs) {
-        std::filesystem::path p = inc.has_root_path() ? inc : (plan.projectRoot / inc);
+        // make_preferred: a multi-segment TOML entry like `generated/inc`
+        // keeps its `/` on MSVC, and the bare `projectRoot / inc` join would
+        // be MIXED — reaching both the ninja command line and the CDB's
+        // arguments (via f.cxx → split_flags). Same rule as every other
+        // manifest-path ingestion point (#390); no-op on POSIX.
+        auto p = inc.has_root_path() ? inc : (plan.projectRoot / inc);
+        p.make_preferred();
         includeTokens.push_back(include_token(d, p));
     }
     // #249: `[build] include_dirs_after` — searched AFTER the toolchain's
@@ -327,8 +333,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // (documented degradation; clang-MSVC uses the gnu dialect).
     const bool msvcInclude = d.includePrefix == std::string_view("/I");
     for (auto& inc : plan.manifest.buildConfig.includeDirsAfter) {
-        std::filesystem::path ip(inc);
-        std::filesystem::path p = ip.has_root_path() ? ip : (plan.projectRoot / ip);
+        auto p = inc.has_root_path() ? inc : (plan.projectRoot / inc);
+        p.make_preferred();
         includeTokens.push_back(
             include_token(d, p, msvcInclude ? "/I" : "-idirafter"));
     }

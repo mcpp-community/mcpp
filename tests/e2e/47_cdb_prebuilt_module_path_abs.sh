@@ -22,6 +22,17 @@ cd app
 cdb=compile_commands.json
 [[ -f "$cdb" ]] || { echo "FAIL: no $cdb generated"; exit 1; }
 
+# jq-independent early guard for the stray-quote bug: before the CDB
+# splitter understood shell quoting, flags.cppm's ninja-side quoting leaked
+# into the raw JSON as `\"-fprebuilt-module-path=...` (Windows) / `'-...`
+# (POSIX). The GCC flow emits no such flag at all, so no-match is the
+# expected pass there.
+if grep -q '\\"-fprebuilt-module-path' "$cdb" \
+    || grep -q "'-fprebuilt-module-path" "$cdb"; then
+    echo "FAIL: -fprebuilt-module-path retains shell quoting in raw CDB"
+    exit 1
+fi
+
 command -v jq >/dev/null 2>&1 || {
     echo "SKIP: jq not on PATH (preinstalled on GitHub-hosted runners)"
     exit 0
@@ -60,6 +71,16 @@ while IFS= read -r v; do
     # → clangd fails to find the BMI.
     if [[ "$v" == *'$:'* || "$v" == *'$ '* || "$v" == *'$$'* ]]; then
         echo "FAIL: value retains ninja escape sequence ('\$:' / '\$ ' / '\$\$') — must be plain path in CDB"
+        fail=1
+    fi
+
+    # Nor shell quoting: the flags string is assembled for the NINJA command
+    # line, where shell_quote_arg wraps every token containing a Windows `\`
+    # in double quotes — and those quotes used to land VERBATIM in the CDB
+    # (`"-fprebuilt-module-path=C:\...\pcm.cache"`), which clangd execs
+    # literally and cannot resolve. The CDB splitter must have undone them.
+    if [[ "$v" == '"'* || "$v" == "'"* || "$v" == *'"' || "$v" == *"'" ]]; then
+        echo "FAIL: value retains shell quoting: '$v'"
         fail=1
     fi
 

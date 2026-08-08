@@ -2,6 +2,9 @@
 
 import std;
 import mcpp.build.compile_commands;
+import mcpp.build.flags;
+import mcpp.build.plan;
+import mcpp.libs.json;
 
 using namespace mcpp::build;
 
@@ -93,6 +96,27 @@ TEST(CompileCommandsMerge, MalformedExistingFallsBackToFresh) {
     EXPECT_NE(merged.find("-O2"), std::string::npos) << merged;
 }
 
+// #390 self-heal: a CDB written BEFORE the mixed-separator fix spells the
+// same file with the generic `/` spelling (`/p/generated/modules/a.cpp` —
+// on Windows this is exactly `root\generated/modules\a.cpp` vs the native
+// `root\generated\modules\a.cpp`). The merge key is the NORMALIZED path, so
+// the stale entry is recognized as the same file and dropped on the first
+// build after upgrade — the user never has to delete compile_commands.json
+// by hand. (On POSIX the two spellings are byte-identical; the test then
+// still verifies the plain fresh-wins contract.)
+TEST(CompileCommandsMerge, NormalizedFileKeysHealStaleSeparatorSpellings) {
+    auto p = std::filesystem::path("/p") / "generated" / "modules" / "a.cpp";
+    auto fresh    = cdb({ entry(p.string(), "-O2-FRESH") });
+    auto existing = cdb({ entry(p.generic_string(), "-O0-STALE") });
+
+    auto merged = merge_compile_commands(
+        fresh, existing, [](const std::filesystem::path&) { return true; });
+
+    EXPECT_EQ(count(merged, "generated"), 1u) << merged;
+    EXPECT_NE(merged.find("-O2-FRESH"), std::string::npos) << merged;
+    EXPECT_EQ(merged.find("-O0-STALE"), std::string::npos) << merged;
+}
+
 // ── CDB arguments must be argv, not shell words ─────────────────────────────
 //
 // A consumer (clangd) execs `arguments` LITERALLY — no shell. So a token that
@@ -171,4 +195,40 @@ TEST(CompileCommandsArgs, InnerQuotesAreNotStripped) {
     ASSERT_EQ(out.size(), 1u);
     EXPECT_EQ(out[0], R"(-DGREETING="hi")");
     EXPECT_FALSE(is_quoted(out[0]));
+}
+
+// ── Emitted paths use native separators, unconditionally ────────────────────
+//
+// The last line of the #390 defence: every ingestion point is normalized at
+// the source, but a path that still slips through with a mixed spelling
+// (MSVC keeps the input `/` verbatim) would land in `file`/`-c`/`-o`/`-I`
+// and break CLion. emit_compile_commands therefore makes ALL of them native
+// — make_preferred(), a no-op on POSIX.
+TEST(CompileCommandsEmit, EmittedPathsUseNativeSeparators) {
+    BuildPlan plan;
+    plan.projectRoot = "/p";
+    plan.outputDir = "/p/target";
+    plan.compileUnits.push_back({
+        // A path whose spelling carries `/` segments (what the manifest
+        // glob ingestion used to produce on MSVC).
+        .source = std::filesystem::path("C:/Users/x/src/main.cpp"),
+        .object = std::filesystem::path("obj") / "main.o",
+        .packageName = "demo",
+    });
+    CompileFlags flags;
+    flags.cxxBinary = std::filesystem::path("/usr/bin/g++");
+
+    auto j = nlohmann::json::parse(emit_compile_commands(plan, flags));
+    auto const& e = j[0];
+    if constexpr (std::filesystem::path::preferred_separator == '\\') {
+        EXPECT_EQ(e["file"].get<std::string>(), "C:\\Users\\x\\src\\main.cpp");
+        EXPECT_EQ(e["directory"].get<std::string>(), "\\p");
+        EXPECT_EQ(e["output"].get<std::string>(), "\\p\\target\\obj\\main.o");
+        for (auto const& a : e["arguments"]) {
+            if (a.is_string() && a.get<std::string>().starts_with("-"))
+                EXPECT_EQ(a.get<std::string>().find('/'), std::string::npos);
+        }
+    } else {
+        EXPECT_EQ(e["file"].get<std::string>(), "C:/Users/x/src/main.cpp");
+    }
 }
