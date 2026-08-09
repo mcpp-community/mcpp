@@ -197,6 +197,8 @@ TEST(RuntimePayload, MissingOrMalformedBindingIsAnError) {
 }
 
 TEST(ElfRuntime, ParsesProgramDynamicAndGnuVersionTablesInternally) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF table inspection is exercised on native Linux";
     Tmp t;
     auto parsed = elf::inspect_elf_runtime(write_elf_fixture(t.path / "fixture"));
     ASSERT_TRUE(parsed.has_value()) << parsed.error();
@@ -212,6 +214,8 @@ TEST(ElfRuntime, ParsesProgramDynamicAndGnuVersionTablesInternally) {
 }
 
 TEST(ElfRuntime, RejectsUnsupportedOrTruncatedElfWithoutGuessing) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF table inspection is exercised on native Linux";
     Tmp t;
     std::ofstream(t.path / "text") << "not an ELF";
     auto text = elf::inspect_elf_runtime(t.path / "text");
