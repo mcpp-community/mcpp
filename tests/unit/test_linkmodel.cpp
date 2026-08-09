@@ -42,6 +42,8 @@ TEST(LoaderFilename, TripleMap) {
     EXPECT_EQ(tc::loader_filename("aarch64-linux-gnu"), "ld-linux-aarch64.so.1");
     EXPECT_EQ(tc::loader_filename("x86_64-linux-musl"), "ld-musl-x86_64.so.1");
     EXPECT_EQ(tc::loader_filename("aarch64-linux-musl"), "ld-musl-aarch64.so.1");
+    EXPECT_EQ(tc::loader_filename("riscv64-linux-musl"), "ld-musl-riscv64.so.1");
+    EXPECT_EQ(tc::loader_filename("riscv64-linux-gnu"), "ld-linux-riscv64-lp64d.so.1");
     EXPECT_EQ(tc::loader_filename("wasm32-unknown-unknown"), "");
 }
 

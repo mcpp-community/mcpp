@@ -106,7 +106,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", true  },
     { "x86_64-windows-msvc",   "verified",  "PE",  "",           false },
     { "aarch64-macos",         "verified",  "",    "",           false },
-    { "riscv64-linux-musl",    "planned",   "",    "",           true  },
+    { "riscv64-linux-musl",    "verified",  "",    "gcc@16.1.0", true  },
     { "aarch64-linux-gnu",     "planned",   "",    "",           false },
     { "x86_64-macos",          "planned",   "",    "",           false },
 };

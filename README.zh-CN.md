@@ -303,7 +303,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine 实测)(*无 Visual Studio 时的 Windows 默认*) | ✅ |
 | `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*有 Visual Studio 时的 Windows 默认*) | ✅ |
 | `aarch64-macos`       | llvm(*macOS 默认*) | ✅ |
-| `riscv64-linux-musl`  | — | 🔄 |
+| `riscv64-linux-musl`  | gcc 16,全静态——x86_64 交叉(qemu 实测);基础 `rv64gc`/`lp64d` ISA,可选扩展(`-march=rv64gcv`、Zb*)自行指定 | ✅ |
 | `aarch64-linux-gnu`   | — | 🔄 |
 | `x86_64-macos`        | — | 🔄 |
 

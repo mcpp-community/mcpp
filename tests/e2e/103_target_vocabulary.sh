@@ -26,7 +26,7 @@ grep -q "did you mean 'x86_64-linux-musl'" "$TMP/typo.log" || {
     echo "FAIL: missing did-you-mean suggestion"; cat "$TMP/typo.log"; exit 1; }
 
 # ── 2. planned tier: registered but unsupported → error, not a host build ───
-if "$MCPP" build --target riscv64-linux-musl > "$TMP/planned.log" 2>&1; then
+if "$MCPP" build --target aarch64-linux-gnu > "$TMP/planned.log" 2>&1; then
     echo "FAIL: planned-tier target built"; cat "$TMP/planned.log"; exit 1
 fi
 grep -q "not yet supported" "$TMP/planned.log" || {

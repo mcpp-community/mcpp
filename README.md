@@ -308,7 +308,7 @@ the right toolchain payload is resolved and installed automatically.
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) *(Windows default without Visual Studio)* | ✅ |
 | `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | ✅ |
 | `aarch64-macos`       | llvm *(macOS default)* | ✅ |
-| `riscv64-linux-musl`  | — | 🔄 |
+| `riscv64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu-verified); base `rv64gc`/`lp64d` ISA, optional extensions (`-march=rv64gcv`, Zb*) pass through | ✅ |
 | `aarch64-linux-gnu`   | — | 🔄 |
 | `x86_64-macos`        | — | 🔄 |
 

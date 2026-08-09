@@ -11,6 +11,7 @@ name: cross-build-test
 #   target                | toolchain                        | host→target   | run
 #   ----------------------|----------------------------------|---------------|-----
 #   aarch64-linux-musl    | aarch64-linux-musl-gcc@16.1.0    | x86_64→arm64  | qemu
+#   riscv64-linux-musl    | riscv64-linux-musl-gcc@16.1.0    | x86_64→riscv64| qemu
 #   x86_64-w64-mingw32    | mingw-cross-gcc@16.1.0 (MSVCRT)  | linux→windows | wine
 #   x86_64-linux-musl     | x86_64-linux-musl-gcc@16.1.0     | windows→linux | linux job
 #
@@ -44,8 +45,6 @@ name: cross-build-test
 #                         yet inject `-target <triple>` + a cross sysroot for a
 #                         clang toolchain; cross `--target` resolves to gcc musl
 #                         only. Wire the clang cross path first, then add a row.
-#   * riscv64-linux-musl: add once xim:riscv64-linux-musl-gcc ships to
-#                         xlings-res + xim-pkgindex.
 
 on:
   push:
@@ -70,6 +69,9 @@ jobs:
           - target: aarch64-linux-musl
             file_arch: "ARM aarch64"
             qemu_bin: qemu-aarch64-static
+          - target: riscv64-linux-musl
+            file_arch: "UCB RISC-V"
+            qemu_bin: qemu-riscv64-static
     env:
       MCPP_HOME: /home/runner/.mcpp
       # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm).
