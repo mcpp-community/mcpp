@@ -61,12 +61,29 @@ if printf '%s' "$line" | grep -q 'xim-x-glibc'; then
     exit 1
 fi
 
-# ── The other half: when a dlopen-reachable dependency library DOES exist,
-# the payload dir must still be there. Without this, a later change could drop
-# the entry entirely and the negative assertion above would happily pass.
+# ── The other half. This test used to require the OPPOSITE here: with a
+# dlopen-reachable dependency library present, the payload dir had to BE on
+# LD_LIBRARY_PATH, "because dlopen'd libraries do not consult the executable's
+# RUNPATH". The guard was right to exist — it stopped anyone from "fixing"
+# mcpp#291 by deleting the entry and quietly breaking dlopen — but it asserted
+# the MECHANISM instead of the capability, and the mechanism was wrong:
+#
+#   * a dlopen() performed by the executable DOES consult the executable's
+#     DT_RUNPATH, and the link model already puts the payload glibc there
+#     (measured: the artifact's RUNPATH is byte-identical with and without the
+#     environment entry);
+#   * so the entry bought nothing, while reaching every descendant process —
+#     and on a payload whose GLIBC_PRIVATE needs match its own loader, that
+#     kills /bin/sh outright (mcpp#401, glibc 2.44).
+#
+# The capability it was really protecting now lives in
+# 208_private_libc_stays_in_the_binary.sh, which asserts the dlopen actually
+# resolves and that the directory is in the artifact RUNPATH. What belongs
+# here is the rule this test is named for, applied to BOTH shapes: the private
+# libc is never handed to the process environment.
 GLIBC_STORE=$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/xim-x-glibc/*/ 2>/dev/null | head -1)
 if [ -z "$GLIBC_STORE" ]; then
-    echo "SKIP (positive half): no private glibc payload installed"
+    echo "SKIP (second half): no private glibc payload installed"
     echo OK
     exit 0
 fi
@@ -85,14 +102,26 @@ library_dirs = ["runtime"]
 EOF
 cp ../pkg/src/main.cpp src/main.cpp
 
-out2=$("$MCPP" run 2>&1) || { echo "FAIL: mcpp run failed (positive half)"; echo "$out2"; exit 1; }
+out2=$("$MCPP" run 2>&1) || { echo "FAIL: mcpp run failed (second half)"; echo "$out2"; exit 1; }
 line2=$(printf '%s\n' "$out2" | grep -oE 'LDLP=\[[^]]*\]' | head -1)
 echo "observed (with [runtime] library_dirs): $line2"
 
-printf '%s' "$line2" | grep -q 'xim-x-glibc' || {
-    echo "FAIL: a build WITH a dlopen-reachable dependency library dir lost the"
-    echo "      private glibc payload from LD_LIBRARY_PATH. dlopen'd libraries do"
-    echo "      not consult the executable's RUNPATH, so they need it here."
+if printf '%s' "$line2" | grep -q 'xim-x-glibc'; then
+    echo "FAIL: a build WITH a dlopen-reachable dependency library dir still put"
+    echo "      the private glibc payload on LD_LIBRARY_PATH. That variable"
+    echo "      reaches every descendant process, including host shells the host"
+    echo "      loader loads — see mcpp#401."
+    echo "      $line2"
+    exit 1
+fi
+
+# The project's own runtime dir is a plain shared-library directory with no
+# loader coupling, so it keeps its environment scope. Losing it here would mean
+# the entry was dropped wholesale rather than narrowed to the private libc.
+printf '%s' "$line2" | grep -q 'runtime' || {
+    echo "FAIL: the project's own [runtime] library_dirs entry disappeared too."
+    echo "      Only the private libc is binary-scoped; ordinary dependency"
+    echo "      runtime dirs still belong in the environment."
     echo "      $line2"
     exit 1; }
 
