@@ -57,6 +57,9 @@ jobs:
         env:
           TRIGGER: ${{ github.event_name }}
           MANUAL_PUBLISH: ${{ inputs.publish }}
+          # Repository variable, absent until a human has watched one publish
+          # succeed. See "Arming the automatic triggers" in scripts/aur/README.md.
+          AUTOPUBLISH: ${{ vars.AUR_AUTOPUBLISH }}
         run: |
           args=(
             --trigger "$TRIGGER"
@@ -66,11 +69,27 @@ jobs:
           [[ -z "$REQUESTED_TAG" ]] || args+=(--tag "$REQUESTED_TAG")
           python3 scripts/aur/reconcile_mcpp_bin.py "${args[@]}"
 
-          if [[ "$TRIGGER" == workflow_run || "$TRIGGER" == schedule ]]; then
-            publish=true
-          else
-            publish=${MANUAL_PUBLISH:-false}
-          fi
+          # An unattended push to a third-party service must be ARMED, not
+          # inherited from a merge. `schedule` fires every six hours off the
+          # default branch, so merging this workflow used to be enough to make
+          # mcpp start writing to the AUR on its own — before anyone had seen
+          # the reconciler complete a real push even once. Both automatic
+          # triggers therefore plan-and-report until AUR_AUTOPUBLISH is set;
+          # `workflow_dispatch` keeps its explicit per-run switch, which is how
+          # that first push is meant to happen.
+          case "$TRIGGER" in
+              workflow_run | schedule)
+                  if [[ "${AUTOPUBLISH:-}" == "true" ]]; then
+                      publish=true
+                  else
+                      publish=false
+                      echo "::notice::AUR_AUTOPUBLISH is not set — reporting the desired state without publishing."
+                  fi
+                  ;;
+              *)
+                  publish=${MANUAL_PUBLISH:-false}
+                  ;;
+          esac
           echo "needs_publish=$(jq -r '.needs_publish' "$RUNNER_TEMP/aur-plan.json")" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
 

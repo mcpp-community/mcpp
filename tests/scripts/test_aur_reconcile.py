@@ -6,6 +6,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -321,6 +323,67 @@ class AurReconcileTests(unittest.TestCase):
             reconcile.AUR_COMMIT_EMAIL,
             "speak-agent@users.noreply.github.com",
         )
+
+    def _publish_decision(
+        self,
+        trigger: str,
+        autopublish: str = "",
+        manual: str = "",
+    ) -> str:
+        """Run the workflow's own publish-decision shell, not a paraphrase of it."""
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "aur-publish.yml"
+        ).read_text(encoding="utf-8")
+        match = re.search(r'^\s*case "\$TRIGGER" in$.*?^\s*esac$',
+                          workflow, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match, "publish decision block not found")
+        # The block also emits a `::notice::` line, so mark the value rather
+        # than reading whatever happens to be on stdout.
+        script = f'{match.group(0)}\nprintf "<publish>%s</publish>" "$publish"'
+        result = subprocess.run(
+            ["bash", "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "TRIGGER": trigger,
+                "AUTOPUBLISH": autopublish,
+                "MANUAL_PUBLISH": manual,
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = re.search(r"<publish>(.*?)</publish>", result.stdout)
+        self.assertIsNotNone(value, result.stdout)
+        return value.group(1)
+
+    def test_automatic_triggers_do_not_publish_until_armed(self) -> None:
+        # Merging a workflow is a decision about code. Pushing to the AUR is a
+        # decision about the outside world. `schedule` runs every six hours off
+        # the default branch, so without this gate the two are the same act:
+        # merge, wait six hours, and mcpp has written to a third-party service
+        # with nobody watching — on a path that had never completed a real push.
+        for trigger in ("workflow_run", "schedule"):
+            with self.subTest(trigger=trigger, armed=False):
+                self.assertEqual(self._publish_decision(trigger), "false")
+            with self.subTest(trigger=trigger, armed=True):
+                self.assertEqual(
+                    self._publish_decision(trigger, autopublish="true"), "true")
+            # Anything other than an exact "true" leaves it disarmed, so a typo
+            # in the repository variable fails closed.
+            with self.subTest(trigger=trigger, armed="typo"):
+                self.assertEqual(
+                    self._publish_decision(trigger, autopublish="yes"), "false")
+
+        # Manual dispatch keeps its explicit per-run switch: that is how the
+        # first, watched publish is meant to happen.
+        self.assertEqual(self._publish_decision("workflow_dispatch"), "false")
+        self.assertEqual(
+            self._publish_decision("workflow_dispatch", manual="true"), "true")
+        # …and arming the automatic triggers must not silently arm dispatch.
+        self.assertEqual(
+            self._publish_decision("workflow_dispatch", autopublish="true"),
+            "false")
 
     def test_workflow_uses_pinned_host_key_and_recovery_triggers(self) -> None:
         workflow = (

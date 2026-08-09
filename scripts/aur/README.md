@@ -128,9 +128,11 @@ mcpp --version
 
 [`.github/workflows/aur-publish.yml`](../../.github/workflows/aur-publish.yml)
 reconciles `mcpp-bin` only. It runs after a successful `release` workflow, every
-six hours to recover from transient AUR outages, and on manual dispatch. Event
-and schedule runs publish automatically; manual dispatch defaults to dry-run
-and requires `publish=true` to push.
+six hours to recover from transient AUR outages, and on manual dispatch. Manual
+dispatch defaults to dry-run and requires `publish=true` to push; the two
+automatic triggers plan and report but do **not** push until the repository
+variable `AUR_AUTOPUBLISH` is set — see
+[Arming the automatic triggers](#arming-the-automatic-triggers).
 
 Every trigger follows the same state machine:
 
@@ -182,6 +184,32 @@ manifest/assets. The private key is not loaded during the inspect/dry-run step.
 The server host key is checked against the vendored ED25519 key sourced from
 Arch Linux's infrastructure repository; the workflow never uses
 `ssh-keyscan` as a trust decision.
+
+### Arming the automatic triggers
+
+`schedule` fires every six hours off the default branch. That means merging
+this workflow is, by itself, enough to start writing to a third-party service
+unattended — potentially before anyone has watched the reconciler complete a
+real push even once. Merging is a decision about code; publishing to the AUR is
+a decision about the outside world, and the two should not be the same act.
+
+So both automatic triggers (`workflow_run` after a release, and `schedule`)
+stop after the plan-and-report step unless the repository variable
+`AUR_AUTOPUBLISH` is set to `true`. Dry runs still validate payloads, render
+`.SRCINFO`, query the AUR and print the exact diff, so the reporting value is
+unchanged — only the push is withheld.
+
+To arm it, once:
+
+1. Run the workflow manually with `publish=false` and read the summary: it must
+   show the intended version and a clean diff.
+2. Run it manually with `publish=true` and confirm the push, the AUR RPC row,
+   and a clean install in an Arch container.
+3. Only then set *Settings → Secrets and variables → Actions → Variables →*
+   `AUR_AUTOPUBLISH = true`.
+
+Unsetting the variable is the kill switch: automatic runs immediately fall back
+to reporting without publishing, with no code change and no revert.
 
 ### First publish
 
