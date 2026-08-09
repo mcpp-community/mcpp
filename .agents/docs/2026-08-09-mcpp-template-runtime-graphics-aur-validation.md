@@ -249,11 +249,13 @@ Task 8 focused local evidence:
 ### 5.8 mcpp-bin-only AUR reconciliation (Task 9)
 
 - State-machine/contract suite: `python3 -m unittest tests/scripts/test_aur_reconcile.py`
-  passes **11/11**. It covers no-op/upgrade/repair/RPC-lag/refused-downgrade,
+  passes **12/12**. It covers no-op/upgrade/repair/RPC-lag/refused-downgrade,
   missing or mismatched release material, bounded maintenance retry, permanent
   auth failure, failed known-package clone without repo initialization, exact
   latest-complete release selection, workflow recovery triggers, and the pinned
-  AUR ED25519 fingerprint.
+  AUR ED25519 fingerprint. It also requires both the rendered `mcpp-bin`
+  maintainer and reconciler commits to use the public `speak-agent` GitHub
+  noreply identity rather than a personal address.
 - Release fixture: the real public `v2026.8.8.4` payloads/sidecars and locally
   generated immutable manifest validate as desired `2026.8.8.4-1`; both Linux
   digests match manifest and sidecar. The first Arch render attempt classified
@@ -322,9 +324,11 @@ documentation-only handoff commit re-queued latest-head CI:
 
 The xlings boundary is tracked by
 [openxlings/xlings#521](https://github.com/openxlings/xlings/pull/521), whose
-eight native/cross checks pass. It remains Draft and REVIEW_REQUIRED. The
-documentation-only handoff commit `9f6161a` is now the latest mcpp PR head, so
-its re-queued matrix must reach terminal state before any latest-head claim.
+eight native/cross checks pass. It remains Draft and REVIEW_REQUIRED. After the
+handoff (`9f6161a`) and validation-ledger (`6e42d6c`) commits, privacy review
+produced `cf39cb2`: the AUR reconciler and rendered `mcpp-bin` now use the public
+`speak-agent` noreply identity, with a RED/GREEN contract regression. That
+latest-head matrix must reach terminal state before any latest-head claim.
 
 The Chinese operator handoff is
 `.agents/docs/2026-08-09-pr400-handoff-zh.md`. It records implementation scope,
