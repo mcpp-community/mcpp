@@ -37,7 +37,7 @@ under a root-owned system prefix.
 mcpp resolves `MCPP_HOME` from the running binary's *real* path
 (`/proc/self/exe`, which resolves symlinks). A plain `/usr/bin/mcpp` symlink
 would therefore make `MCPP_HOME` resolve into the read-only install dir and
-every command would fail to write. So both packages split the tree:
+every command would fail to write. So all three packages split the tree:
 
 | Path | Contents | Mode |
 | --- | --- | --- |
@@ -74,29 +74,47 @@ between releases — at the cost of tracking bleeding-edge master.
 ```
 scripts/aur/
   README.md            this file
-  update.sh            bump the release-pinned packages (mcpp-bin, mcpp-m)
+  update.sh            render + verify mcpp-bin from mcpp-release.json
+  render_mcpp_bin.py   pure manifest-to-PKGBUILD renderer
+  reconcile_mcpp_bin.py desired/observed-state reconciler
+  aur.archlinux.org.known_hosts pinned production host key
   mcpp-bin/{PKGBUILD, .SRCINFO, mcpp.sh}
   mcpp-m/{PKGBUILD, .SRCINFO, mcpp.sh}
   mcpp-git/{PKGBUILD, .SRCINFO, mcpp.sh}
 ```
 
-`mcpp.sh` is identical in all three dirs (each AUR repo must be self-contained);
-`update.sh` keeps `mcpp-bin`/`mcpp-m` in sync. `mcpp-git` has no checksums to
-bump (VCS source) and is not touched by `update.sh`.
+`mcpp.sh` is currently identical in all three dirs because each AUR repo must
+be self-contained. Automation in this phase owns **only `mcpp-bin`**.
+`mcpp-m` is frozen and is neither read, rendered, staged, nor pushed by the
+reconciler; `mcpp-git` is also outside this release workflow.
 
 ## Releasing a new version
 
-After a GitHub release is published (and mirrored), bump the release-pinned
-packages (`mcpp-bin`, `mcpp-m`; `mcpp-git` tracks master and needs no bump):
+Every complete stable GitHub release publishes immutable `mcpp-release.json`.
+Render the checked-in `mcpp-bin` package from that desired state (Docker is
+required so `.SRCINFO` comes from a non-root Arch `makepkg`, not a handwritten
+fallback):
 
 ```sh
-scripts/aur/update.sh            # uses [package].version from mcpp.toml
-# or pin: scripts/aur/update.sh 0.0.66
+scripts/aur/update.sh                 # latest complete stable release
+scripts/aur/update.sh 2026.8.9.1      # accepted only if it is that exact latest tag
 ```
 
-`update.sh` pulls the per-arch `.sha256` sidecars (for `mcpp-bin`) and hashes
-the source archive (for `mcpp-m`), rewrites `pkgver` + checksums, resets
-`pkgrel=1`, and regenerates both `.SRCINFO` files.
+The renderer downloads both Linux payloads and sidecars, recomputes their
+SHA256 values against the manifest, rewrites only `mcpp-bin`, runs
+`makepkg --printsrcinfo`, and then runs `makepkg --verifysource`. There is no
+version-from-worktree fallback and no downgrade override.
+
+For a read-only live reconciliation (including AUR RPC and HTTPS git state):
+
+```sh
+python3 scripts/aur/reconcile_mcpp_bin.py \
+  --trigger local \
+  --report-json /tmp/mcpp-aur-report.json
+```
+
+Without `--publish`, an upgrade is rendered, source-verified, and shown as an
+exact dry-run diff but never pushed.
 
 ### Test locally (on Arch)
 
@@ -109,10 +127,29 @@ mcpp --version
 ## Automated publishing (CI)
 
 [`.github/workflows/aur-publish.yml`](../../.github/workflows/aur-publish.yml)
-publishes both packages automatically. It runs when the `release` workflow
-**completes successfully** (not on `release: published` — the aarch64 asset the
-`mcpp-bin` checksum needs is uploaded by a later release job), refreshes the
-PKGBUILDs via `update.sh`, and pushes each package to its AUR git repo over SSH.
+reconciles `mcpp-bin` only. It runs after a successful `release` workflow, every
+six hours to recover from transient AUR outages, and on manual dispatch. Event
+and schedule runs publish automatically; manual dispatch defaults to dry-run
+and requires `publish=true` to push.
+
+Every trigger follows the same state machine:
+
+1. Select the latest complete, non-draft, non-prerelease manifest.
+2. Validate both Linux payloads and sidecars and render in a clean directory.
+3. Generate `.SRCINFO` and verify sources as a non-root user in Arch.
+4. Query AUR RPC and clone the known `mcpp-bin` repo over HTTPS.
+5. Compare versions with Arch `vercmp` and print the exact diff before the SSH
+   secret is loaded.
+6. Refuse downgrades; otherwise use a normal fast-forward SSH push with bounded
+   maintenance retry and a pinned AUR host key.
+7. Verify public git HEAD, bounded-poll RPC, then install and run
+   `mcpp --version` in a clean Arch container.
+
+The result is classified as `noop`, `updated`, `transient`, `permanent`, or
+`refused-downgrade`, and the Actions summary records versions, hashes, commit,
+retry count, and drift age. AUR runs are downstream workflows: a failure is
+visible and retried by schedule but cannot rewrite the completed GitHub release
+conclusion.
 
 > The AUR has no "watch upstream" feature — packages only update when their git
 > repo is pushed. This workflow is that push.
@@ -120,7 +157,7 @@ PKGBUILDs via `update.sh`, and pushes each package to its AUR git repo over SSH.
 ### One-time setup you need to do
 
 1. **AUR account** — sign in at <https://aur.archlinux.org> with the account
-   that will own `mcpp-bin` / `mcpp-m`.
+   that owns `mcpp-bin`.
 
 2. **Generate a dedicated SSH key** (no passphrase, it's for CI):
 
@@ -139,22 +176,28 @@ PKGBUILDs via `update.sh`, and pushes each package to its AUR git repo over SSH.
 
    Then delete the local `aur_ci` / `aur_ci.pub` files.
 
-That's the only secret required — AUR auth is SSH-key based, there is **no API
-token**. The default `GITHUB_TOKEN` is *not* used (we push to the AUR, not to
-GitHub).
+That's the only publishing secret required — AUR auth is SSH-key based, there
+is **no API token**. GitHub's read-only token is used only to fetch the release
+manifest/assets. The private key is not loaded during the inspect/dry-run step.
+The server host key is checked against the vendored ED25519 key sourced from
+Arch Linux's infrastructure repository; the workflow never uses
+`ssh-keyscan` as a trust decision.
 
 ### First publish
 
-The first time, the package names must be free. The workflow auto-creates each
-AUR repo on first push (AUR does this for a valid, available name). If you
-prefer to claim them by hand first, push an initial commit manually:
+The reconciler treats `mcpp-bin` as a known existing package. A failed clone or
+missing RPC row is an error and **never** becomes an empty-repository first
+publish. If a new package ever needs to be claimed, do that explicitly and
+review the initial history by hand:
 
 ```sh
 git clone ssh://aur@aur.archlinux.org/mcpp-bin.git
 cp scripts/aur/mcpp-bin/{PKGBUILD,.SRCINFO,mcpp.sh} mcpp-bin/ && cd mcpp-bin
-git add -A && git commit -m "initial mcpp-bin" && git push   # repeat for mcpp-m
+git add PKGBUILD .SRCINFO mcpp.sh
+git commit -m "initial mcpp-bin" && git push
 ```
 
-After that, every release publishes both packages with no manual step. You can
-also run it on demand from the Actions tab (*aur-publish → Run workflow*,
-optional version input).
+After the known repository exists, the reconciler never force-pushes or
+reinitializes it. Manual recovery is available from *aur-publish → Run
+workflow*: first leave `publish=false` to inspect, then set `publish=true` only
+for the exact latest complete stable tag.
