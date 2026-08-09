@@ -257,14 +257,18 @@ Task 8 focused local evidence:
 - Release fixture: the real public `v2026.8.8.4` payloads/sidecars and locally
   generated immutable manifest validate as desired `2026.8.8.4-1`; both Linux
   digests match manifest and sidecar. The first Arch render attempt classified
-  the Docker Hub registry-header timeout as **transient**, not success.
+  the Docker Hub registry-header timeout as **transient**, not success. A later
+  real Arch run completed `makepkg --printsrcinfo` and non-root
+  `makepkg --verifysource`; the rendered `.SRCINFO` and both source payloads
+  verified successfully.
 - `bash -n scripts/aur/update.sh`, Python compilation/tests, Ruby/Psych workflow
   parse, and `git diff --check`: PASS.
 - Protected `scripts/aur/mcpp-m/**` aggregate before/after remains
   `afb8a647e04483a86985119e07086016f49d55f177ee6257094c336d226113c6`.
-- The remaining real Arch `makepkg --printsrcinfo` / `--verifysource` gate is
-  not claimed locally while the image pull is blocked; it remains an explicit
-  validation/CI item.
+- No AUR publish was performed. The public package remains an observed
+  `2026.8.1.1-1` while the verified desired fixture is `2026.8.8.4-1`; release
+  publication must later exercise the reconciler from a fixed merged
+  main/release state.
 
 ### 5.9 latest pin, version, and user contract docs (Task 10)
 
@@ -282,12 +286,51 @@ Task 8 focused local evidence:
 ## 6. Pull request and CI
 
 Draft PR [#400](https://github.com/mcpp-community/mcpp/pull/400) was opened from
-`feat/template-runtime-graphics-aur`. Initial head `234a4df` exposed two real
-boundaries: stale declared glibc identity versus the resolved SubOS view on
-Linux, and Linux-only runtime-physics assertions executing on macOS/Windows.
-Both received focused regressions and were pushed at head `dae4384`; the new
-latest-head matrix was queued as runs `31317342625` through `31317342775`.
-Terminal conclusions are not yet claimed.
+`feat/template-runtime-graphics-aur`. Every logical change is a separate pushed
+commit followed by a PR checkpoint comment. Branch history is not rewritten;
+the PR remains Draft until explicit user review.
+
+Initial head `234a4df` exposed two real boundaries: stale declared glibc
+identity versus the resolved SubOS view on Linux, and Linux-only
+runtime-physics assertions executing on macOS/Windows. Both received focused
+regressions at `dae4384`. Subsequent native and local review exposed and fixed:
+
+- exact namespace inheritance and dependency-owner retention;
+- ELF SONAME reuse and exact-miss diagnostic cause retention;
+- truthful runtime contracts in fake xlings fixtures;
+- macOS BMI-settling scope;
+- Windows open-stream cleanup;
+- isolated `MCPP_HOME` use in the libc poison fixture;
+- lexical workspace-root anchoring for inherited relative indices on Windows.
+
+At implementation head `ed4cf64`, the complete latest-source local C++ gate is
+**72/72**. One isolated Linux full-E2E audit produced **186 pass, 1 fixture
+failure, 19 platform/capability skips**; the only failure was the wrong state
+root in E2E 156, and its exact rerun passes after `0cc6a2a`. Exact E2E 12 also
+passes after `ed4cf64`. This is deliberately not restated as a full latest-head
+206-case rerun.
+
+The native `ed4cf64` matrix produced the following terminal evidence before the
+documentation-only handoff commit re-queued latest-head CI:
+
+- PASS: hermetic Linux E2E, macOS ARM64 E2E, musl + LLVM, MinGW
+  Linux-to-Windows + Wine, Windows-to-Linux cross-build and Linux artifact run;
+- FAIL at one known cross-repository boundary: Linux xlings integration, macOS
+  xlings LLVM E2E, aarch64 mcpp + xlings, and Windows xlings regressions all
+  encounter xlings' bare `ftxui` declaration under exact selection;
+- the remaining jobs were still pending and therefore are not claimed as pass.
+
+The xlings boundary is tracked by
+[openxlings/xlings#521](https://github.com/openxlings/xlings/pull/521), whose
+eight native/cross checks pass. It remains Draft and REVIEW_REQUIRED. The
+documentation-only handoff commit `9f6161a` is now the latest mcpp PR head, so
+its re-queued matrix must reach terminal state before any latest-head claim.
+
+The Chinese operator handoff is
+`.agents/docs/2026-08-09-pr400-handoff-zh.md`. It records implementation scope,
+all pushed commits, diagnosed failures, honest validation boundaries, remaining
+release/ecosystem work, and the mandatory Draft/commit/checkpoint/privacy
+workflow.
 
 ## 7. Merge and release
 
@@ -300,9 +343,46 @@ Current live snapshot from the preceding audit:
 - GitHub desired release: `v2026.8.8.4`.
 - AUR observed `mcpp-bin`: `2026.8.1.1-1`.
 - latest failed AUR run: `31254088758`, after version and both checksums resolved, then AUR SSH returned maintenance.
+- public replay manifest SHA256:
+  `6614ba2db65c8c28cb5a9d3466bd6cf3007634221da76d25216785061c647edb`.
+- real Arch dry-run: `.SRCINFO`, non-root `makepkg --verifysource`, and both
+  Linux source checksums PASS for desired `2026.8.8.4-1`.
 
 No old failed run will be rerun. Recovery uses the reconciler from a fixed main/release state. `mcpp-m` is outside every verdict and publish path.
 
 ## 9. Cross-repository and public ecosystem verification
 
-Not started. This section will record mcpp-index/xim/xlings PRs and commits, index artifact hashes, GitCode ranged/full downloads, cold-home package lifecycle, canonical template build/run, multiple SubOS/glibc bindings, and graphics PASS/FAIL/NOT_EXERCISED provenance.
+### 9.1 mcpp-index exact identity bridge
+
+- Issue [mcpplibs/mcpp-index#196](https://github.com/mcpplibs/mcpp-index/issues/196)
+  is closed by merged PR
+  [mcpplibs/mcpp-index#197](https://github.com/mcpplibs/mcpp-index/pull/197).
+- Merge commit: `b974cbba5a5ab7da7908422e44ff8e4b63243dc3`.
+- The immutable `mcpplibs.capi.lua@0.0.3` payload remains unchanged; an
+  index-side Form-B bridge declares the actual `compat.lua@5.4.7` dependency.
+- All ten PR checks passed, including descriptor lint/select, Linux/macOS/
+  Windows workspace consumers, mirror reachability, graphics side-effect
+  isolation, and timings.
+
+### 9.2 xlings exact compatibility identities
+
+- Issue [openxlings/xlings#520](https://github.com/openxlings/xlings/issues/520)
+  and Draft PR
+  [openxlings/xlings#521](https://github.com/openxlings/xlings/pull/521)
+  carry the xlings repository boundary.
+- Head `0ff9e502f6857b5d1a48657dfeeb94244e322cb9` declares
+  `compat.ftxui@6.1.9` and test-only `compat.gtest@1.15.2`, then refreshes the
+  lock so the transitive Lua C library retains exact identity.
+- All eight Linux/macOS/Windows/aarch64 checks pass. The PR remains Draft,
+  MERGEABLE but REVIEW_REQUIRED; no admin/bypass merge is authorized.
+- Current xlings release `2026.8.9.2` predates this fix. After review and normal
+  merge, a separate xlings version bump/release is required before updating the
+  mcpp pin.
+
+### 9.3 Still pending
+
+GitCode ranged/full resource publication, any required xim-pkgindex update,
+fresh-home package lifecycle, the canonical template build/run, multiple
+SubOS/glibc bindings, and OpenGL/Vulkan provider
+PASS/FAIL/NOT_EXERCISED provenance remain release-follow-through work. None is
+claimed from source-only or local Linux evidence.
