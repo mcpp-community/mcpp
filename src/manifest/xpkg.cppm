@@ -146,11 +146,9 @@ xpkg_name_form_violation_from_lua(std::string_view luaContent);
 // WHY THIS IS ONE FUNCTION — the rule it enforces is "the descriptor the
 // identity gate accepted supplies BOTH halves of the address". Deriving the
 // name from the descriptor while taking the namespace from the request is what
-// made every bare-name dependency served by a `compat` descriptor
-// uninstallable the moment the index migrated to short names: the gate
-// accepted `(compat, gtest)` (a bare request resolves against the default
-// namespace AND `compat`, see `xpkg_lua_identity_matches`), but the wire target
-// went out as `mcpplibs:gtest`, which no index is keyed by. The old spelling
+// made an explicitly selected `compat` descriptor uninstallable when request
+// and descriptor identity drifted: the wire target went out as
+// `mcpplibs:gtest`, which no index is keyed by. The old spelling
 // only ever worked because the literal `name` happened to read `compat.gtest`,
 // so a hardcoded `compat.<short>` retry caught it.
 //
@@ -290,6 +288,20 @@ std::string closest_known_xpkg_key(std::string_view unknownKey) {
 //  table and read a short list of typed fields out of it.
 
 namespace {
+
+std::expected<mcpp::pm::DependencySelector, ManifestError>
+parse_xpkg_dependency_selector(std::string_view spelling,
+                               const std::filesystem::path& sourcePath)
+{
+    auto parsed = mcpp::pm::parse_package_selector(spelling);
+    if (!parsed) {
+        return std::unexpected(ManifestError{
+            parsed.error().message, sourcePath, 0, 0});
+    }
+    auto coordinate = mcpp::pm::normalize_package_selector(*parsed);
+    return mcpp::pm::make_direct_dependency_selector(
+        coordinate.namespace_, coordinate.shortName, spelling);
+}
 
 struct LuaCursor {
     std::string_view text;
@@ -803,13 +815,12 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
     // derives the namespace from the descriptor, so a name match is enough.
     if (ns.empty()) return true;
 
-    // Unqualified / default-namespace request: resolve the name against the
-    // default namespace search path — the default namespace itself, then the
-    // `compat` wrapper namespace (`kCompatNamespace`, shared with the candidate
-    // generator). A legacy no-namespace descriptor is admitted under the flag.
+    // Namespace omission has already normalized to the one default namespace.
+    // A `compat` package is a different identity and must be selected
+    // explicitly. A legacy no-namespace descriptor is admitted only under the
+    // compatibility flag because old default-index descriptors omitted ns.
     if (ns == kDefaultNamespace) {
         return id.ns == kDefaultNamespace
-            || id.ns == kCompatNamespace
             || (allowLegacyBareDefault && id.ns.empty());
     }
 
@@ -1508,15 +1519,21 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             auto dver = cur.read_string();
                             DependencySpec spec;
                             spec.version = dver;
-                            auto selector = mcpp::pm::resolve_dependency_selector(
-                                dname,
-                                mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                            if (!selector.candidates.empty()) {
-                                spec.namespace_ = selector.candidates.front().namespace_;
-                                spec.shortName  = selector.candidates.front().shortName;
-                                spec.candidates = std::move(selector.candidates);
-                                m.featureDeps[fname][selector.stableMapKey] = std::move(spec);
-                            }
+                            auto selector = parse_xpkg_dependency_selector(
+                                dname, m.sourcePath);
+                            if (!selector)
+                                return std::unexpected(selector.error());
+                            spec.namespace_ =
+                                selector->candidates.front().namespace_;
+                            spec.shortName =
+                                selector->candidates.front().shortName;
+                            spec.candidates = std::move(selector->candidates);
+                            spec.legacyCandidateSearch =
+                                dname.find('.') != std::string::npos
+                                && !dname.starts_with(std::string(
+                                    mcpp::pm::kDefaultNamespace) + ".");
+                            m.featureDeps[fname][selector->stableMapKey] =
+                                std::move(spec);
                             cur.skip_ws_and_comments();
                         }
                         cur.consume('}');
@@ -1668,15 +1685,18 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     spec.tools      = std::move(dtools);
                     spec.hostModule = dhostModule;
                     spec.reexport   = dreexport;
-                    auto selector = mcpp::pm::resolve_dependency_selector(
-                        dname,
-                        mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                    if (!selector.candidates.empty()) {
-                        spec.namespace_ = selector.candidates.front().namespace_;
-                        spec.shortName = selector.candidates.front().shortName;
-                        spec.candidates = std::move(selector.candidates);
-                        m.dependencies[selector.stableMapKey] = std::move(spec);
-                    }
+                    auto selector = parse_xpkg_dependency_selector(
+                        dname, m.sourcePath);
+                    if (!selector)
+                        return std::unexpected(selector.error());
+                    spec.namespace_ = selector->candidates.front().namespace_;
+                    spec.shortName = selector->candidates.front().shortName;
+                    spec.candidates = std::move(selector->candidates);
+                    spec.legacyCandidateSearch =
+                        dname.find('.') != std::string::npos
+                        && !dname.starts_with(std::string(
+                            mcpp::pm::kDefaultNamespace) + ".");
+                    m.dependencies[selector->stableMapKey] = std::move(spec);
                 }
                 cur.skip_ws_and_comments();
             }

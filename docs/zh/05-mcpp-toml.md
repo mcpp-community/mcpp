@@ -340,18 +340,17 @@ path = "src/capi/lua.cppm"    # 覆盖默认的 lib-root 位置
 ```toml
 # 默认包空间(mcpplibs)下的包
 [dependencies]
-gtest   = "1.15.2"              # 精确版本
-mbedtls = "3.6.1"
-ftxui   = "6.1.9"
+cmdline   = "0.0.2"              # 精确版本
+templates = "0.0.1"
 
-# dotted selector: 先匹配 mcpplibs.<path>, 找不到再匹配同级 peer root。
-# 例如 imgui.core 会按顺序尝试 mcpplibs.imgui/core, imgui/core。
-[dependencies]
-capi.lua = "0.0.3"
+# dotted selector 是单一精确身份:最后一段是包名,之前所有段都是 namespace。
 compat.gtest = "1.15.2"
 imgui.core = "0.0.1"
 imgui.backend.glfw_opengl3 = "0.0.1"
+mcpplibs.capi.lua = "0.0.3"
+```
 
+```toml
 # 命名空间子表写法
 [dependencies.mcpplibs]
 cmdline   = "0.0.2"
@@ -359,17 +358,23 @@ tinyhttps = "0.2.2"
 llmapi    = "0.2.5"
 
 [dependencies.compat]
-glfw = "3.4"                    # 显式 namespace, 不走 mcpplibs 优先候选
+glfw = "3.4"                    # 显式 namespace,无回退搜索
+```
 
+```toml
 # 路径依赖(本地开发)
 [dependencies]
 mylib = { path = "../mylib" }
+```
 
+```toml
 # Git 依赖 —— tag / branch / rev 三选一
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
+```
 
+```toml
 # 长式 dep spec:features 与 backend 旋钮
 [dependencies]
 imgui = { version = "0.0.3", features = ["docking"] }   # 请求该依赖的 feature
@@ -408,22 +413,18 @@ qux = ">=1.0, <2.0" # 范围组合
 
 #### 命名空间解析规则
 
-每个包的身份是**命名空间 + 名字**二元组。依赖 key 的写法决定 mcpp 到哪些命名空间里找。
+每个包的身份是**命名空间 + 名字**二元组。每个 selector 都只规范化成一个身份:
 
-**裸名只在三个地方解析**,按序:
+- `cmdline` → `(mcpplibs, cmdline)`;省略 namespace 只表示默认 `mcpplibs`。
+- `compat.gtest` → `(compat, gtest)`。
+- `mcpplibs.capi.lua` → `(mcpplibs.capi, lua)`。
 
-| # | 命名空间 | 示例 |
-|---|---|---|
-| 1 | `mcpplibs` — 默认命名空间 | `cmdline = "0.0.2"` |
-| 2 | `compat` — 第三方 C/C++ 库的包装命名空间 | `gtest = "1.15.2"` → `compat.gtest` |
-| 3 | 完全没有声明命名空间的上游包 | `opencv = "4.10.0"` |
-
-**其他命名空间一律必须写全。** 不存在按短名的全索引模糊搜索:
+不存在有序回退或按短名的全索引模糊搜索:
 
 ```toml
 # ✅ 正确 —— 点式选择器
 [dependencies]
-"chriskohlhoff.asio" = "1.38.1"
+chriskohlhoff.asio = "1.38.1"
 
 # ✅ 正确 —— 命名空间子表(同一组织有多个包时更推荐)
 [dependencies.chriskohlhoff]
@@ -434,9 +435,9 @@ asio = "1.38.1"
 asio = "1.38.1"
 ```
 
-第三种写法会明确报错,并列出搜索过的命名空间;若该短名的包存在于别处,错误信息会直接给出应当改写成的那一行。
+第三种写法会明确报错,指出实际尝试的 `(mcpplibs, asio)`;若该短名存在于别处,错误信息会给出可直接复制的显式 selector。
 
-**为什么不让裸名跨所有命名空间去找?** 因为依赖解析必须可复现。全域短名搜索意味着:(a) 两个命名空间拥有同名包时,胜负由索引顺序决定;(b) **新增一个索引可能悄悄改变某个既有依赖解析到的包**。要求写出命名空间,才能让同一份 `mcpp.toml` 在每台机器上解析到相同的包。
+**为什么只允许一个身份?** 因为依赖解析必须可复现。候选搜索会让同短名包受索引状态影响,新增索引还可能悄悄重定向既有依赖。
 
 **给 xpkg 作者:** 索引描述符里,身份是 `(package.namespace, package.name)` 二元组。命名空间是点分路径,**`name` 是单一原子段**:
 
@@ -454,7 +455,7 @@ package = {
 
 文件名只是提示 —— 描述符按声明的身份被发现,所以 `pkgs/c/chriskohlhoff.asio.lua` 与 `pkgs/z/anything.lua` 解析结果完全相同。推荐 `<name>.lua` 或 `<namespace>.<name>.lua`(命中 mcpp 的快路径),但不强制。
 
-旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。需要 mcpp >= 0.0.106 与 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
+旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。描述符身份需要 mcpp >= 0.0.106,精确 selector 需要 mcpp >= 2026.8.9.1,两者使用 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
 #### 表形式 —— 让 feature 贡献的不止是隐含 feature
 
 `[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature
@@ -1022,7 +1023,7 @@ version = "1.0.0"
 [targets.mymath]
 kind = "lib"
 
-[dev-dependencies]
+[dev-dependencies.compat]
 gtest = "1.15.2"
 ```
 
@@ -1130,7 +1131,7 @@ mcpp build --target x86_64-linux-musl
 | 静态 stdlib | `true` | 便携二进制 |
 | 头文件 | `include/`(如果存在） | 自动加到 `-I` |
 | 测试 | `tests/**/*.cpp` | `mcpp test` 自动发现 |
-| 依赖命名空间 | `mcpp`（默认) | 平铺写法走默认 ns |
+| 依赖命名空间 | `mcpplibs`(默认) | 裸 selector 只表示该精确 ns |
 
 ### 4.1 旧 `[language]` 兼容层
 

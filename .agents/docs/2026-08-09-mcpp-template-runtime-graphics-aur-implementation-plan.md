@@ -48,10 +48,26 @@
 - Modify: `src/manifest/toml.cppm`
 - Modify: `src/manifest/xpkg.cppm`
 - Modify: `src/pm/dep_spec.cppm`
+- Modify: `src/pm/index_route.cppm`
+- Modify: `src/build/prepare.cppm`
+- Modify: `src/cli.cppm`
 - Modify: `tests/unit/test_pm_compat.cpp`
 - Modify: `tests/unit/test_pm_index_route.cpp`
+- Modify: `tests/unit/test_manifest.cpp`
+- Modify: `tests/unit/test_pm_package_fetcher.cpp`
 - Modify: `tests/e2e/12_add_command.sh`
 - Modify: `tests/e2e/27_namespace_dependencies.sh`
+- Modify: `tests/e2e/62_dotted_dependency_selector_priority.sh`
+- Modify: `tests/e2e/63_bare_dependency_peer_root_priority.sh`
+- Modify: `tests/e2e/78_test_main_combinations.sh`
+- Modify: `tests/e2e/79_gtest_regular_dep_feature_main.sh`
+- Modify: `tests/e2e/162_bare_name_namespace_scope.sh`
+- Modify: `tests/e2e/165_bare_name_cross_namespace_wire_address.sh`
+- Add: `tests/e2e/203_exact_selector_lock_migration.sh`
+- Modify: `docs/05-mcpp-toml.md`
+- Modify: `docs/zh/05-mcpp-toml.md`
+- Modify: `docs/06-workspace.md`
+- Modify: `docs/zh/06-workspace.md`
 - Modify: `docs/spec/package-identity.md`
 
 **Interfaces:**
@@ -61,14 +77,14 @@
 - `normalize_package_selector(PackageSelector, defaultNs="mcpplibs") -> DependencyCoordinate`
 - `format_package_selector(DependencyCoordinate) -> dotted selector`
 
-- [ ] RED: add unit rows proving `lua -> (mcpplibs,lua)`, `capi.lua -> (capi,lua)`, `mcpplibs.capi.lua -> (mcpplibs.capi,lua)`, and rejection of empty/double-dot/control segments.
-- [ ] RED: update add E2E so `mcpp add capi.lua@5.4.7` probes/writes exact `capi:lua`, not `mcpplibs.capi:lua`; prove a same-short-name sibling cannot win.
-- [ ] Implement the O(length), no-I/O shared parser/normalizer and return one exact coordinate after default namespace filling.
-- [ ] Route `mcpp add`, dependency TOML parsing, feature dependency parsing, and xpkg dependency parsing through the same normalized coordinate.
-- [ ] Preserve already-parsed/locked identities; during the migration release, emit a warning only when an old dotted candidate exists and differs from the new exact coordinate, with both copyable selectors.
-- [ ] Update existence-gate and not-found diagnostics to show the normalized PackageId and explicitly mention default `mcpplibs` when namespace was omitted.
-- [ ] GREEN: run the focused unit and namespace/add E2E tests, then `git diff --check`.
-- [ ] Commit exact selector normalization and identity documentation.
+- [x] RED: add unit rows proving `lua -> (mcpplibs,lua)`, `capi.lua -> (capi,lua)`, `mcpplibs.capi.lua -> (mcpplibs.capi,lua)`, and rejection of empty/double-dot/control segments.
+- [x] RED: update add E2E so `mcpp add capi.lua@5.4.7` probes/writes exact `capi:lua`, not `mcpplibs.capi:lua`; prove a same-short-name sibling cannot win.
+- [x] Implement the O(length), no-I/O shared parser/normalizer and return one exact coordinate after default namespace filling.
+- [x] Route `mcpp add`, dependency TOML parsing, feature dependency parsing, and xpkg dependency parsing through the same normalized coordinate.
+- [x] Preserve already-parsed/locked identities; during the migration release, emit a warning only when an old dotted candidate exists and differs from the new exact coordinate, with both copyable selectors.
+- [x] Update existence-gate and not-found diagnostics to show the normalized PackageId and explicitly mention default `mcpplibs` when namespace was omitted.
+- [x] GREEN: run the focused unit and namespace/add E2E tests, then `git diff --check`.
+- [x] Commit exact selector normalization and identity documentation.
 
 ## Task 3: Make TemplateSpec Typed, Namespace-Aware, and Deterministic
 
@@ -110,7 +126,7 @@
 - Modify: `src/scaffold/create.cppm`
 - Modify: `src/manifest/toml.cppm`
 - Modify: `tests/unit/test_scaffold.cpp`
-- Add: `tests/e2e/202_new_transactional_scaffold.sh`
+- Add: `tests/e2e/204_new_transactional_scaffold.sh`
 
 **Interfaces:**
 
@@ -146,7 +162,7 @@
 - Add: `tests/unit/test_runtime_selection.cpp`
 - Modify: `tests/unit/test_subos_info.cpp`
 - Modify: `tests/unit/test_fingerprint.cpp`
-- Add: `tests/e2e/203_root_local_subos.sh`
+- Add: `tests/e2e/205_root_local_subos.sh`
 
 **Interfaces:**
 
@@ -179,7 +195,7 @@
 - Modify: `src/build/execute.cppm`
 - Modify: `src/doctor.cppm`
 - Add: `tests/unit/test_elf_runtime.cpp`
-- Add: `tests/e2e/204_runtime_binding_physics.sh`
+- Add: `tests/e2e/206_runtime_binding_physics.sh`
 
 **Interfaces:**
 

@@ -69,9 +69,9 @@ struct Lookup {
     bool conclusive = true;
 };
 
-// Walk ordered candidates and return the first descriptor that DECLARES the
-// requested identity, applying the same two rules prepare's dependency
-// disambiguation applies.
+// Resolve the supplied coordinate list and return the first descriptor that
+// DECLARES the requested identity. Canonical selectors supply exactly one;
+// the vector shape remains for migration callers carrying an older lock.
 Lookup lookup_descriptor(const IndexRoute& route,
                          const std::vector<DependencyCoordinate>& candidates);
 

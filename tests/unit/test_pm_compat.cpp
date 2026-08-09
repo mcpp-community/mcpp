@@ -47,36 +47,28 @@ TEST(PmCompat, NormalizeNestedNamespaceSkipsCanonicalNamespacedDeps) {
     EXPECT_EQ(shortName, "lua.extra");
 }
 
-TEST(DependencySelector, DottedSelectorBuildsOmittedMcpplibsPriorityCandidates) {
+TEST(DependencySelector, DottedSelectorIsOneExactNamespace) {
     auto selector = mcpp::pm::resolve_dependency_selector(
-        "imgui.backend.glfw_opengl3",
-        mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+        "imgui.backend.glfw_opengl3");
 
     EXPECT_EQ(selector.stableMapKey, "imgui.backend.glfw_opengl3");
-    ASSERT_EQ(selector.candidates.size(), 2u);
-    EXPECT_EQ(selector.candidates[0].namespace_, "mcpplibs.imgui.backend");
+    ASSERT_EQ(selector.candidates.size(), 1u);
+    EXPECT_EQ(selector.candidates[0].namespace_, "imgui.backend");
     EXPECT_EQ(selector.candidates[0].shortName, "glfw_opengl3");
-    EXPECT_EQ(selector.candidates[1].namespace_, "imgui.backend");
-    EXPECT_EQ(selector.candidates[1].shortName, "glfw_opengl3");
 }
 
-TEST(DependencySelector, BareSelectorBuildsOmittedMcpplibsThenPeerRootCandidates) {
-    auto selector = mcpp::pm::resolve_dependency_selector(
-        "imgui",
-        mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+TEST(DependencySelector, BareSelectorUsesOnlyDefaultNamespace) {
+    auto selector = mcpp::pm::resolve_dependency_selector("imgui");
 
     EXPECT_EQ(selector.stableMapKey, "imgui");
-    ASSERT_EQ(selector.candidates.size(), 2u);
+    ASSERT_EQ(selector.candidates.size(), 1u);
     EXPECT_EQ(selector.candidates[0].namespace_, "mcpplibs");
     EXPECT_EQ(selector.candidates[0].shortName, "imgui");
-    EXPECT_EQ(selector.candidates[1].namespace_, "");
-    EXPECT_EQ(selector.candidates[1].shortName, "imgui");
 }
 
 TEST(DependencySelector, ExplicitMcpplibsPrefixDoesNotAddPeerFallback) {
     auto selector = mcpp::pm::resolve_dependency_selector(
-        "mcpplibs.capi.lua",
-        mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+        "mcpplibs.capi.lua");
 
     EXPECT_EQ(selector.stableMapKey, "mcpplibs.capi.lua");
     ASSERT_EQ(selector.candidates.size(), 1u);
@@ -92,6 +84,77 @@ TEST(DependencySelector, ExplicitRootSelectorHasOnlyThatRoot) {
     ASSERT_EQ(selector.candidates.size(), 1u);
     EXPECT_EQ(selector.candidates[0].namespace_, "compat");
     EXPECT_EQ(selector.candidates[0].shortName, "gtest");
+}
+
+TEST(DependencySelector, SharedParserNormalizesBareAndDottedSelectors) {
+    auto bare = mcpp::pm::parse_package_selector("lua");
+    ASSERT_TRUE(bare.has_value());
+    EXPECT_FALSE(bare->namespace_.has_value());
+    EXPECT_EQ(bare->name, "lua");
+    EXPECT_EQ(bare->spelling, "lua");
+
+    auto bareCoord = mcpp::pm::normalize_package_selector(*bare);
+    EXPECT_EQ(bareCoord.namespace_, "mcpplibs");
+    EXPECT_EQ(bareCoord.shortName, "lua");
+    EXPECT_EQ(mcpp::pm::format_package_selector(bareCoord), "lua");
+
+    auto nested = mcpp::pm::parse_package_selector("mcpplibs.capi.lua");
+    ASSERT_TRUE(nested.has_value());
+    ASSERT_TRUE(nested->namespace_.has_value());
+    EXPECT_EQ(*nested->namespace_, "mcpplibs.capi");
+    EXPECT_EQ(nested->name, "lua");
+
+    auto nestedCoord = mcpp::pm::normalize_package_selector(*nested);
+    EXPECT_EQ(nestedCoord.namespace_, "mcpplibs.capi");
+    EXPECT_EQ(nestedCoord.shortName, "lua");
+    EXPECT_EQ(mcpp::pm::format_package_selector(nestedCoord),
+              "mcpplibs.capi.lua");
+}
+
+TEST(DependencySelector, SharedParserRejectsAmbiguousOrUnsafeSegments) {
+    const std::vector<std::string> invalid{
+        "",
+        ".imgui",
+        "ocornut..imgui",
+        "imgui.",
+        "acme/widget",
+        "acme\\widget",
+        "acme widget",
+        "acme[widget",
+        "acme=widget",
+        "acme\"widget",
+        "acme#widget",
+        "acme@widget",
+        "acme:widget",
+        std::string("acme\x1fwidget", 11),
+    };
+    for (auto const& spelling : invalid) {
+        auto parsed = mcpp::pm::parse_package_selector(spelling);
+        EXPECT_FALSE(parsed.has_value()) << spelling;
+        if (!parsed)
+            EXPECT_FALSE(parsed.error().message.empty()) << spelling;
+    }
+}
+
+TEST(DependencySelector, LegacyDottedPrimaryIsExplicitAndNeverImplicitlyUsed) {
+    auto capi = mcpp::pm::parse_package_selector("capi.lua");
+    ASSERT_TRUE(capi.has_value());
+    auto legacy = mcpp::pm::legacy_prefixed_coordinate(
+        mcpp::pm::normalize_package_selector(*capi));
+    ASSERT_TRUE(legacy.has_value());
+    EXPECT_EQ(legacy->namespace_, "mcpplibs.capi");
+    EXPECT_EQ(legacy->shortName, "lua");
+
+    auto explicitDefault = mcpp::pm::parse_package_selector(
+        "mcpplibs.capi.lua");
+    ASSERT_TRUE(explicitDefault.has_value());
+    EXPECT_FALSE(mcpp::pm::legacy_prefixed_coordinate(
+        mcpp::pm::normalize_package_selector(*explicitDefault)).has_value());
+
+    auto bare = mcpp::pm::parse_package_selector("lua");
+    ASSERT_TRUE(bare.has_value());
+    EXPECT_FALSE(mcpp::pm::legacy_prefixed_coordinate(
+        mcpp::pm::normalize_package_selector(*bare)).has_value());
 }
 
 // ─── descriptor_coordinates (package-template fetch) ────────────────

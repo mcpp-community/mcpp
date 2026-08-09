@@ -1534,7 +1534,7 @@ version = "0.1.0"
     EXPECT_TRUE(s.legacyDottedKey);
 }
 
-TEST(Manifest, DependenciesDottedSelectorPreservesUserKeyAndCandidates) {
+TEST(Manifest, DependenciesDottedSelectorIsOneExactIdentity) {
     constexpr auto src = R"(
 [package]
 name    = "x"
@@ -1548,15 +1548,34 @@ capi.lua = "0.0.3"
     ASSERT_EQ(m->dependencies.size(), 1u);
 
     auto& s = m->dependencies.at("capi.lua");
-    EXPECT_EQ(s.namespace_, "mcpplibs.capi");
+    EXPECT_EQ(s.namespace_, "capi");
     EXPECT_EQ(s.shortName,  "lua");
     EXPECT_EQ(s.version,    "0.0.3");
     EXPECT_FALSE(s.legacyDottedKey);
-    ASSERT_EQ(s.candidates.size(), 2u);
-    EXPECT_EQ(s.candidates[0].namespace_, "mcpplibs.capi");
+    EXPECT_TRUE(s.legacyCandidateSearch);
+    ASSERT_EQ(s.candidates.size(), 1u);
+    EXPECT_EQ(s.candidates[0].namespace_, "capi");
     EXPECT_EQ(s.candidates[0].shortName, "lua");
-    EXPECT_EQ(s.candidates[1].namespace_, "capi");
-    EXPECT_EQ(s.candidates[1].shortName, "lua");
+}
+
+TEST(Manifest, DependencySelectorsRejectUnsafeOrAmbiguousSegments) {
+    const std::vector<std::string> invalid{
+        "acme/widget", "acme widget", "acme[widget",
+        "acme=widget", "acme#widget", "acme..widget",
+    };
+    for (auto const& selector : invalid) {
+        auto src = std::format(R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+"{}" = "1.0.0"
+)", selector);
+        auto m = mcpp::manifest::parse_string(src);
+        EXPECT_FALSE(m.has_value()) << selector;
+        if (!m) EXPECT_NE(m.error().message.find("invalid package selector"),
+                          std::string::npos) << m.error().format();
+    }
 }
 
 TEST(Manifest, DependenciesNamespacedSubtableNestedDottedKeyIsCanonical) {
@@ -1577,6 +1596,7 @@ capi.lua = "0.0.3"
     EXPECT_EQ(s.shortName,  "lua");
     EXPECT_EQ(s.version,    "0.0.3");
     EXPECT_FALSE(s.legacyDottedKey);
+    EXPECT_FALSE(s.legacyCandidateSearch);
     ASSERT_EQ(s.candidates.size(), 1u);
     EXPECT_EQ(s.candidates[0].namespace_, "mcpplibs.capi");
     EXPECT_EQ(s.candidates[0].shortName, "lua");
@@ -1644,7 +1664,7 @@ package = {
     EXPECT_EQ(b.version,    "0.0.2");
 }
 
-TEST(SynthesizeFromXpkgLua, DepsDottedSelectorsUseManifestRules) {
+TEST(SynthesizeFromXpkgLua, DepsDottedSelectorsAreExact) {
     constexpr auto src = R"(
 package = {
     spec = "1",
@@ -1666,28 +1686,50 @@ package = {
     ASSERT_EQ(m->dependencies.size(), 3u);
 
     auto& lua = m->dependencies.at("capi.lua");
-    EXPECT_EQ(lua.namespace_, "mcpplibs.capi");
+    EXPECT_EQ(lua.namespace_, "capi");
     EXPECT_EQ(lua.shortName, "lua");
     EXPECT_EQ(lua.version, "0.0.3");
-    ASSERT_EQ(lua.candidates.size(), 2u);
-    EXPECT_EQ(lua.candidates[1].namespace_, "capi");
-    EXPECT_EQ(lua.candidates[1].shortName, "lua");
+    EXPECT_TRUE(lua.legacyCandidateSearch);
+    ASSERT_EQ(lua.candidates.size(), 1u);
+    EXPECT_EQ(lua.candidates[0].namespace_, "capi");
+    EXPECT_EQ(lua.candidates[0].shortName, "lua");
 
     auto& imgui = m->dependencies.at("imgui.core");
-    EXPECT_EQ(imgui.namespace_, "mcpplibs.imgui");
+    EXPECT_EQ(imgui.namespace_, "imgui");
     EXPECT_EQ(imgui.shortName, "core");
     EXPECT_EQ(imgui.version, "0.0.1");
-    ASSERT_EQ(imgui.candidates.size(), 2u);
-    EXPECT_EQ(imgui.candidates[1].namespace_, "imgui");
-    EXPECT_EQ(imgui.candidates[1].shortName, "core");
+    EXPECT_TRUE(imgui.legacyCandidateSearch);
+    ASSERT_EQ(imgui.candidates.size(), 1u);
+    EXPECT_EQ(imgui.candidates[0].namespace_, "imgui");
+    EXPECT_EQ(imgui.candidates[0].shortName, "core");
 
     auto& gtest = m->dependencies.at("compat.gtest");
-    EXPECT_EQ(gtest.namespace_, "mcpplibs.compat");
+    EXPECT_EQ(gtest.namespace_, "compat");
     EXPECT_EQ(gtest.shortName, "gtest");
     EXPECT_EQ(gtest.version, "1.15.2");
-    ASSERT_EQ(gtest.candidates.size(), 2u);
-    EXPECT_EQ(gtest.candidates[1].namespace_, "compat");
-    EXPECT_EQ(gtest.candidates[1].shortName, "gtest");
+    EXPECT_TRUE(gtest.legacyCandidateSearch);
+    ASSERT_EQ(gtest.candidates.size(), 1u);
+    EXPECT_EQ(gtest.candidates[0].namespace_, "compat");
+    EXPECT_EQ(gtest.candidates[0].shortName, "gtest");
+}
+
+TEST(SynthesizeFromXpkgLua, InvalidDependencySelectorIsAnError) {
+    constexpr auto src = R"(
+package = {
+    spec = "1",
+    name = "consumer",
+    xpm  = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = {
+        sources = { "*/src/*.cppm" },
+        deps = { ["acme/widget"] = "1.0.0" },
+    },
+}
+)";
+    auto m = mcpp::manifest::synthesize_from_xpkg_lua(
+        src, "consumer", "1.0.0", mcpp::platform::HostPlatform::current());
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("invalid package selector"),
+              std::string::npos) << m.error().format();
 }
 
 TEST(Manifest, WorkspaceSectionParsed) {
@@ -1718,7 +1760,7 @@ mbedtls = "3.6.1"
     EXPECT_EQ(gt.namespace_, "compat");
 }
 
-TEST(Manifest, WorkspaceDependenciesUseDottedSelectorRules) {
+TEST(Manifest, WorkspaceDependenciesUseExactDottedSelectors) {
     constexpr auto src = R"(
 [workspace]
 members = ["libs/core"]
@@ -1734,33 +1776,37 @@ mcpplibs.templates = "0.0.1"
     ASSERT_EQ(m->workspace.dependencies.size(), 4u);
 
     auto& lua = m->workspace.dependencies.at("capi.lua");
-    EXPECT_EQ(lua.namespace_, "mcpplibs.capi");
+    EXPECT_EQ(lua.namespace_, "capi");
     EXPECT_EQ(lua.shortName, "lua");
     EXPECT_EQ(lua.version, "0.0.3");
-    ASSERT_EQ(lua.candidates.size(), 2u);
-    EXPECT_EQ(lua.candidates[1].namespace_, "capi");
-    EXPECT_EQ(lua.candidates[1].shortName, "lua");
+    EXPECT_TRUE(lua.legacyCandidateSearch);
+    ASSERT_EQ(lua.candidates.size(), 1u);
+    EXPECT_EQ(lua.candidates[0].namespace_, "capi");
+    EXPECT_EQ(lua.candidates[0].shortName, "lua");
 
     auto& imgui = m->workspace.dependencies.at("imgui.core");
-    EXPECT_EQ(imgui.namespace_, "mcpplibs.imgui");
+    EXPECT_EQ(imgui.namespace_, "imgui");
     EXPECT_EQ(imgui.shortName, "core");
     EXPECT_EQ(imgui.version, "0.0.1");
-    ASSERT_EQ(imgui.candidates.size(), 2u);
-    EXPECT_EQ(imgui.candidates[1].namespace_, "imgui");
-    EXPECT_EQ(imgui.candidates[1].shortName, "core");
+    EXPECT_TRUE(imgui.legacyCandidateSearch);
+    ASSERT_EQ(imgui.candidates.size(), 1u);
+    EXPECT_EQ(imgui.candidates[0].namespace_, "imgui");
+    EXPECT_EQ(imgui.candidates[0].shortName, "core");
 
     auto& gt = m->workspace.dependencies.at("compat.gtest");
-    EXPECT_EQ(gt.namespace_, "mcpplibs.compat");
+    EXPECT_EQ(gt.namespace_, "compat");
     EXPECT_EQ(gt.shortName, "gtest");
     EXPECT_EQ(gt.version, "1.15.2");
-    ASSERT_EQ(gt.candidates.size(), 2u);
-    EXPECT_EQ(gt.candidates[1].namespace_, "compat");
-    EXPECT_EQ(gt.candidates[1].shortName, "gtest");
+    EXPECT_TRUE(gt.legacyCandidateSearch);
+    ASSERT_EQ(gt.candidates.size(), 1u);
+    EXPECT_EQ(gt.candidates[0].namespace_, "compat");
+    EXPECT_EQ(gt.candidates[0].shortName, "gtest");
 
     auto& tmpl = m->workspace.dependencies.at("mcpplibs.templates");
     EXPECT_EQ(tmpl.namespace_, "mcpplibs");
     EXPECT_EQ(tmpl.shortName, "templates");
     EXPECT_EQ(tmpl.version, "0.0.1");
+    EXPECT_FALSE(tmpl.legacyCandidateSearch);
     ASSERT_EQ(tmpl.candidates.size(), 1u);
     EXPECT_EQ(tmpl.candidates[0].namespace_, "mcpplibs");
     EXPECT_EQ(tmpl.candidates[0].shortName, "templates");
@@ -2162,15 +2208,14 @@ package = { namespace = "mcpplibs", name = "mcpplibs.llmapi", version = "0.2.8" 
     EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(llmapi, "", "zlib"));
 }
 
-TEST(XpkgIdentity, DefaultNamespaceRequestMatchesCompatAlias) {
-    // Regression for the CI break: the dev-dep `gtest` is a bare/default-namespace
-    // request, but the descriptor is `compat.gtest` (namespace="compat"). A
-    // default-namespace request must accept its compat alias.
+TEST(XpkgIdentity, DefaultNamespaceRequestDoesNotMatchCompatPackage) {
+    // Namespace omission now means exactly mcpplibs. A compat package must be
+    // selected as `compat.gtest`, never smuggled through an identity alias.
     constexpr std::string_view compatGtest =
         R"(package = { namespace = "compat", name = "compat.gtest", version = "1.15.2" })";
-    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(
+    EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(
         compatGtest, "mcpplibs", "gtest"));
-    EXPECT_TRUE(mcpp::manifest::xpkg_lua_identity_matches(
+    EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(
         compatGtest, "mcpplibs", "gtest", /*allowLegacyBareDefault=*/false));
     // But a different default-ns name does not match it.
     EXPECT_FALSE(mcpp::manifest::xpkg_lua_identity_matches(
@@ -2180,19 +2225,17 @@ TEST(XpkgIdentity, DefaultNamespaceRequestMatchesCompatAlias) {
 // ─── xpkg_wire_address — the address xlings is asked to install ─────
 //
 // REGRESSION LOCK for the 2026-07-25 CI break (6 of 7 workflows red on main).
-// The identity gate accepts a `compat` descriptor for a bare/default-namespace
-// request (`gtest = "1.15.2"` must resolve to compat.gtest). The wire address
-// then has to come from THAT descriptor — both halves. Taking the name from the
+// Once a descriptor is selected by an explicit `compat.gtest` request, the
+// wire address has to come from THAT descriptor — both halves. Taking the name from the
 // descriptor and the namespace from the request emitted `mcpplibs:gtest`, which
 // no index is keyed by; it only ever worked because the literal name used to
 // read `compat.gtest`, so a hardcoded `compat.<short>` retry caught it. The
 // index's SPEC-001 short-name migration removed that coincidence.
 
-TEST(XpkgWireAddress, CompatDescriptorUnderBareRequestAddressesCompat) {
-    // THE BUG. Bare `gtest` request, served by a short-name compat descriptor.
+TEST(XpkgWireAddress, CompatDescriptorAddressesCompat) {
     constexpr std::string_view compatGtest =
         R"(package = { namespace = "compat", name = "gtest", version = "1.15.2" })";
-    auto addr = mcpp::manifest::xpkg_wire_address(compatGtest, "mcpplibs", "gtest");
+    auto addr = mcpp::manifest::xpkg_wire_address(compatGtest, "compat", "gtest");
     EXPECT_EQ(addr.ns, "compat");
     EXPECT_EQ(addr.name, "gtest");
     EXPECT_EQ(addr.target, "compat:gtest");   // NOT "mcpplibs:gtest"
@@ -2304,11 +2347,9 @@ TEST(XpkgNameForm, NoNameIsClean) {
 }
 
 TEST(XpkgNameForm, CompatAliasIsClean) {
-    // REGRESSION LOCK. The predicate must stay narrow ("declared ns non-empty
-    // AND name lacks the `<ns>.` prefix"). Written as the general comparison
-    // "literal name != derived fqname" it would flag this descriptor — a bare
-    // `gtest` request derives fqname `gtest` while the literal is `compat.gtest`
-    // — and break the working compat-alias path for every bare dependency.
+    // Legacy descriptors repeat the declared namespace in package.name. That
+    // source shape remains valid even though consumers now select compat
+    // explicitly.
     EXPECT_FALSE(mcpp::manifest::xpkg_name_form_violation("compat", "compat.gtest")
                      .has_value());
 }

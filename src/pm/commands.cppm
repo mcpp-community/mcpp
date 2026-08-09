@@ -75,60 +75,88 @@ export namespace mcpp::pm::commands {
 inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string spec = parsed.positional(0);
     if (spec.empty()) {
-        mcpp::ui::error("usage: mcpp add [<ns>:]<pkg>[@<ver>]");
+        mcpp::ui::error("usage: mcpp add [<ns>.]<pkg>@<version>");
         return 2;
     }
 
-    // Split @<version> tail.
-    std::string nameSpec, version;
-    if (auto at = spec.find('@'); at == std::string::npos) {
-        nameSpec = spec;
+    // Split exactly one optional @<version> tail before doing config or index
+    // I/O. Multiple delimiters are never reinterpreted as part of a package
+    // identity or version.
+    std::string rawNameSpec, version;
+    auto at = spec.find('@');
+    if (at == std::string::npos) {
+        rawNameSpec = spec;
     } else {
-        nameSpec = spec.substr(0, at);
-        version  = spec.substr(at + 1);
+        if (spec.find('@', at + 1) != std::string::npos) {
+            mcpp::ui::error(std::format(
+                "invalid package spec '{}': multiple '@' delimiters", spec));
+            return 2;
+        }
+        rawNameSpec = spec.substr(0, at);
+        version = spec.substr(at + 1);
     }
 
-    // Split <ns>:<name>. The colon form is explicit namespace syntax and is
-    // written as [dependencies.<ns>]. Without a colon, keep the user's
-    // selector spelling in the single [dependencies] table; dotted selectors
-    // are resolved later by the manifest parser's candidate rules.
-    std::string ns, shortName;
-    bool explicitNamespace = false;
-    if (auto col = nameSpec.find(':'); col != std::string::npos) {
-        explicitNamespace = true;
-        ns        = nameSpec.substr(0, col);
-        shortName = nameSpec.substr(col + 1);
-    } else {
-        ns        = std::string{mcpp::manifest::kDefaultNamespace};
-        shortName = nameSpec;
-    }
-    if (shortName.empty()) {
-        mcpp::ui::error(std::format("invalid spec '{}': empty package name", spec));
+    if (version.empty()) {
+        mcpp::ui::error(std::format(
+            "package version required: `mcpp add {}@<version>` (M2 supports exact-version only)",
+            rawNameSpec));
         return 2;
+    }
+    for (unsigned char ch : version) {
+        if (ch < 0x20 || ch == 0x7f || ch == '"' || ch == '\\') {
+            mcpp::ui::error(std::format(
+                "invalid package version in '{}': unsafe TOML string character",
+                spec));
+            return 2;
+        }
+    }
+
+    // Canonical CLI syntax is `[ns.]name@version`. Keep the historical
+    // `ns:name@version` form for one migration release, but normalize it
+    // before validation, lookup, diagnostics, or manifest mutation.
+    bool legacyColon = false;
+    std::string selectorSpelling = rawNameSpec;
+    if (auto col = rawNameSpec.find(':'); col != std::string::npos) {
+        if (rawNameSpec.find(':', col + 1) != std::string::npos
+            || col == 0 || col + 1 == rawNameSpec.size()) {
+            mcpp::ui::error(std::format(
+                "invalid package spec '{}': expected <namespace>:<name>", spec));
+            return 2;
+        }
+        legacyColon = true;
+        selectorSpelling = std::format("{}.{}",
+            rawNameSpec.substr(0, col), rawNameSpec.substr(col + 1));
+    }
+
+    auto parsedSelector = mcpp::pm::parse_package_selector(selectorSpelling);
+    if (!parsedSelector) {
+        mcpp::ui::error(parsedSelector.error().message);
+        return 2;
+    }
+    auto coordinate = mcpp::pm::normalize_package_selector(*parsedSelector);
+    const std::string canonicalSelector =
+        mcpp::pm::format_package_selector(coordinate);
+    const std::string& ns = coordinate.namespace_;
+    const std::string& shortName = coordinate.shortName;
+
+    if (legacyColon) {
+        mcpp::ui::warning(std::format(
+            "package selector '{}' is deprecated; use `mcpp add {}@{}`",
+            rawNameSpec, canonicalSelector, version));
     }
 
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) { mcpp::ui::error("no mcpp.toml in current dir or parents"); return 2; }
     auto manifestPath = *root / "mcpp.toml";
 
-    if (version.empty()) {
-        mcpp::ui::error(std::format(
-            "package version required: `mcpp add {}@<version>` (M2 supports exact-version only)",
-            spec));
-        return 2;
-    }
-
     // ── Existence gate (#305) ──────────────────────────────────────────
     // Refuse to write a dependency no index can serve, so a typo fails here
     // instead of halfway into the next `mcpp build`. Two rules keep the gate
     // from refusing packages that are perfectly real:
     //
-    //   • It probes the SAME candidates the manifest parser will derive from
-    //     the key about to be written. A dotted selector is a namespace path,
-    //     not a name: `capi.lua` means `(mcpplibs.capi, lua)` then
-    //     `(capi, lua)`, and a literal `(mcpplibs, "capi.lua")` probe can
-    //     never match one — `package.name` is a single atomic segment
-    //     (SPEC-001 §3.2), so nothing in any index is named "capi.lua".
+    //   • It probes the SAME exact coordinate the manifest parser will derive
+    //     from the key about to be written. A dotted selector is a namespace
+    //     path, not an ordered search: `capi.lua` means only `(capi, lua)`.
     //   • It reads through mcpp.pm.index_route, the same routing
     //     `mcpp.build.prepare` resolves dependencies with. A package served by
     //     a project `[indices]` entry therefore counts as present, and a
@@ -136,11 +164,8 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     //     rather than rejected: refusing an add is only correct when absence
     //     was actually proven.
     {
-        auto selector = explicitNamespace
-            ? mcpp::pm::make_direct_dependency_selector(ns, shortName, nameSpec)
-            : mcpp::pm::resolve_dependency_selector(
-                  nameSpec,
-                  mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+        auto selector = mcpp::pm::make_direct_dependency_selector(
+            ns, shortName, canonicalSelector);
 
         auto cfg = mcpp::config::load_or_init(
             /*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
@@ -151,6 +176,29 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
         auto indices = mcpp::pm::effective_indices(*root);
         mcpp::pm::IndexRoute route{ &indices, *root, &*cfg };
+
+        // One release train of diagnostics for the former dotted-candidate
+        // rule. The old primary is never appended to the real lookup: its
+        // presence only earns a warning with two copyable exact selectors.
+        if (auto old = mcpp::pm::legacy_prefixed_coordinate(coordinate)) {
+            auto oldSelector = mcpp::pm::make_direct_dependency_selector(
+                old->namespace_, old->shortName,
+                mcpp::pm::format_package_selector(*old));
+            auto oldFound = mcpp::pm::lookup_descriptor(
+                route, oldSelector.candidates);
+            if (oldFound.hit) {
+                mcpp::ui::warning(std::format(
+                    "package selector '{}' now resolves exactly to '{}'; an "
+                    "older mcpp would select the existing package '{}'. Use "
+                    "'{}' to keep the old identity or keep '{}' for the new "
+                    "exact identity",
+                    selectorSpelling, canonicalSelector,
+                    mcpp::pm::format_package_selector(*old),
+                    mcpp::pm::format_package_selector(*old),
+                    canonicalSelector));
+            }
+        }
+
         auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
 
         // Does the shared registry answer for any identity we tried? It is the
@@ -170,7 +218,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
         if (!found.hit && found.conclusive && registryInvolved) {
             auto xlEnv = mcpp::config::make_xlings_env(*cfg);
             auto d = mcpp::pm::decide_for_miss(
-                mcpp::pm::policy_for(*cfg), xlEnv, nameSpec);
+                mcpp::pm::policy_for(*cfg), xlEnv, canonicalSelector);
             if (auto r = mcpp::pm::apply(d, xlEnv); !r)
                 mcpp::ui::warning(r.error());
             if (d.shouldRefresh)
@@ -195,15 +243,17 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
             }
             mcpp::ui::error(std::format(
                 "package '{}' not found in any configured index\n  tried: {}{}",
-                nameSpec, detail::format_tried(selector.candidates), hint));
+                canonicalSelector, detail::format_tried(selector.candidates),
+                hint));
             return 2;
         }
         if (!found.hit) {
             mcpp::ui::warning(std::format(
                 "'{}' could not be verified — no readable index covers that "
-                "namespace yet; adding it unchecked", nameSpec));
+                "namespace yet; adding it unchecked", canonicalSelector));
         } else {
-            detail::warn_unpublished_version(found.hit->lua, nameSpec, version);
+            detail::warn_unpublished_version(
+                found.hit->lua, canonicalSelector, version);
         }
     }
 
@@ -219,30 +269,76 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // `mcpp test`, never linked into `mcpp build` app binaries).
     const bool dev = parsed.is_flag_set("dev");
     const std::string table = dev ? "dev-dependencies" : "dependencies";
-    const bool isDefaultNs = !explicitNamespace
-        || ns == mcpp::manifest::kDefaultNamespace;
+    const bool isDefaultNs = ns == mcpp::manifest::kDefaultNamespace;
     const std::string section = isDefaultNs
         ? std::format("[{}]", table)
         : std::format("[{}.{}]", table, ns);
-    const std::string key = explicitNamespace ? shortName : nameSpec;
+    const std::string key = shortName;
+
+    // Before writing the canonical namespace-subtable form, remove an
+    // equivalent retained flat spelling from the exact base table. Leaving
+    // both would make one PackageId appear twice in source and let TOML table
+    // traversal order decide which version wins. A same-short bare key is a
+    // different default-namespace package and is deliberately untouched.
+    if (!isDefaultNs) {
+        const auto baseSection = std::format("[{}]", table);
+        if (auto basePos = text.find(baseSection);
+            basePos != std::string::npos) {
+            auto bodyStart = text.find('\n', basePos);
+            if (bodyStart == std::string::npos) bodyStart = text.size();
+            auto sectionEnd = text.find("\n[", bodyStart);
+            if (sectionEnd == std::string::npos) sectionEnd = text.size();
+            for (const auto& needle : {
+                     std::format("\n{} = ", canonicalSelector),
+                     std::format("\n\"{}\" = ", canonicalSelector),
+                 }) {
+                auto entry = text.find(needle, bodyStart);
+                if (entry == std::string::npos || entry >= sectionEnd) continue;
+                auto lineEnd = text.find('\n', entry + 1);
+                if (lineEnd == std::string::npos) lineEnd = text.size();
+                text.erase(entry, lineEnd - entry);
+                break;
+            }
+        }
+    }
+
     auto pos = text.find(section);
     if (pos == std::string::npos) {
         if (!text.empty() && text.back() != '\n') text += "\n";
         text += std::format("\n{}\n{} = \"{}\"\n", section, key, version);
     } else {
-        auto nl = text.find('\n', pos);
-        if (nl == std::string::npos) nl = text.size();
-        text.insert(nl, std::format("\n{} = \"{}\"", key, version));
+        auto bodyStart = text.find('\n', pos);
+        if (bodyStart == std::string::npos) bodyStart = text.size();
+        auto sectionEnd = text.find("\n[", bodyStart);
+        if (sectionEnd == std::string::npos) sectionEnd = text.size();
+
+        bool replaced = false;
+        for (const auto& needle : {
+                 std::format("\n{} = ", key),
+                 std::format("\n\"{}\" = ", key),
+             }) {
+            auto entry = text.find(needle, bodyStart);
+            if (entry == std::string::npos || entry >= sectionEnd) continue;
+            auto lineStart = entry + 1;
+            auto lineEnd = text.find('\n', lineStart);
+            if (lineEnd == std::string::npos) lineEnd = text.size();
+            text.replace(lineStart, lineEnd - lineStart,
+                         std::format("{} = \"{}\"", key, version));
+            replaced = true;
+            break;
+        }
+        if (!replaced) {
+            text.insert(bodyStart,
+                        std::format("\n{} = \"{}\"", key, version));
+        }
     }
     {
         std::ofstream os(manifestPath);
         os << text;
     }
 
-    std::string display = explicitNamespace
-        ? (isDefaultNs ? shortName : std::format("{}:{}", ns, shortName))
-        : nameSpec;
-    mcpp::ui::status("Adding", std::format("{} v{} to {}", display, version, table));
+    mcpp::ui::status("Adding", std::format(
+        "{} v{} to {}", canonicalSelector, version, table));
     std::println("");
     std::println("Run `mcpp build` to fetch and build with the new dependency.");
     return 0;
@@ -263,20 +359,40 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::stringstream ss; ss << in.rdbuf();
     std::string text = ss.str();
 
-    // Accept the same forms as `mcpp add`: bare/dotted selector in the single
-    // [dependencies] table, or explicit `<ns>:<name>` subtable syntax.
-    std::string ns, shortName;
-    bool explicitNamespace = false;
+    // Accept the same canonical selector as `mcpp add`; retain `ns:name` as a
+    // one-release migration alias.
+    bool legacyColon = false;
+    std::string selectorSpelling = name;
     if (auto col = name.find(':'); col != std::string::npos) {
-        explicitNamespace = true;
-        ns = name.substr(0, col);  shortName = name.substr(col + 1);
-    } else {
-        ns = std::string{mcpp::manifest::kDefaultNamespace};
-        shortName = name;
+        if (name.find(':', col + 1) != std::string::npos
+            || col == 0 || col + 1 == name.size()) {
+            mcpp::ui::error(std::format(
+                "invalid package selector '{}': expected <namespace>:<name>",
+                name));
+            return 2;
+        }
+        legacyColon = true;
+        selectorSpelling = std::format(
+            "{}.{}", name.substr(0, col), name.substr(col + 1));
     }
-    const bool isDefaultNs = !explicitNamespace
-        || ns == mcpp::manifest::kDefaultNamespace;
-    const std::string singleTableKey = explicitNamespace ? shortName : name;
+    auto parsedSelector = mcpp::pm::parse_package_selector(selectorSpelling);
+    if (!parsedSelector) {
+        mcpp::ui::error(parsedSelector.error().message);
+        return 2;
+    }
+    auto coordinate = mcpp::pm::normalize_package_selector(*parsedSelector);
+    const auto canonicalSelector =
+        mcpp::pm::format_package_selector(coordinate);
+    const auto& ns = coordinate.namespace_;
+    const auto& shortName = coordinate.shortName;
+    const bool isDefaultNs = ns == mcpp::manifest::kDefaultNamespace;
+    const std::string singleTableKey = isDefaultNs
+        ? shortName : canonicalSelector;
+    if (legacyColon) {
+        mcpp::ui::warning(std::format(
+            "package selector '{}' is deprecated; use `mcpp remove {}`",
+            name, canonicalSelector));
+    }
 
     bool changed = false;
     auto erase_line_at = [&](std::size_t p) {
@@ -288,16 +404,24 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
         changed = true;
     };
 
-    // Try bare `<short> = ` and quoted `"<short>" = ` (default-ns flat form).
-    if (isDefaultNs) {
+    // Try the flat form first: a bare default key or a retained quoted dotted
+    // key from an older manifest. Search only the exact [dependencies] body;
+    // a global line match can otherwise delete a same-name dev/build dep that
+    // happens to appear earlier in the file.
+    if (auto headerPos = text.find("[dependencies]");
+        headerPos != std::string::npos) {
+        auto bodyStart = text.find('\n', headerPos);
+        if (bodyStart == std::string::npos) bodyStart = text.size();
+        auto sectionEnd = text.find("\n[", bodyStart);
+        if (sectionEnd == std::string::npos) sectionEnd = text.size();
         for (const auto& needle : {
-            std::format("\n{} = ", singleTableKey),
-            std::format("\n\"{}\" = ", singleTableKey),
-        }) {
-            if (auto p = text.find(needle); p != std::string::npos) {
-                erase_line_at(p + 1);
-                break;
-            }
+                 std::format("\n{} = ", singleTableKey),
+                 std::format("\n\"{}\" = ", singleTableKey),
+             }) {
+            auto p = text.find(needle, bodyStart);
+            if (p == std::string::npos || p >= sectionEnd) continue;
+            erase_line_at(p + 1);
+            break;
         }
     }
 
@@ -358,15 +482,6 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
         erase_from_subtable(ns, shortName);
     }
 
-    // Backward-compatible removal: before dotted selectors were preserved in
-    // the single table, `mcpp add acme.util` wrote `[dependencies.acme] util`.
-    // Keep `mcpp remove acme.util` able to clean that old shape.
-    if (!changed && !explicitNamespace) {
-        if (auto dot = name.find('.'); dot != std::string::npos) {
-            erase_from_subtable(name.substr(0, dot), name.substr(dot + 1));
-        }
-    }
-
     // Legacy: `[dependencies.<name>] ...` — pre-namespace inline-spec subtable
     // shape (e.g. when path/git deps were authored as their own subtable). We
     // only honour this for the default-ns input form to avoid colliding with
@@ -385,18 +500,20 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     if (!changed) {
-        mcpp::ui::error(std::format("no dependency '{}' in mcpp.toml", name));
+        mcpp::ui::error(std::format(
+            "no dependency '{}' in mcpp.toml", canonicalSelector));
         return 1;
     }
     std::ofstream os(manifestPath);
     os << text;
-    mcpp::ui::status("Removing", std::format("{} from dependencies", name));
+    mcpp::ui::status("Removing", std::format(
+        "{} from dependencies", canonicalSelector));
     // Also clean lockfile entry if present
     auto lockPath = *root / "mcpp.lock";
     if (std::filesystem::exists(lockPath)) {
         if (auto lock = mcpp::lockfile::load(lockPath); lock) {
             std::erase_if(lock->packages,
-                [&](const auto& p) { return p.name == name; });
+                [&](const auto& p) { return p.name == canonicalSelector; });
             (void)mcpp::lockfile::write(*lock, lockPath);
         }
     }

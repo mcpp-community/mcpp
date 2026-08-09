@@ -99,7 +99,25 @@ Each behavior entry is appended with:
 4. GREEN exit code and relevant assertions;
 5. refactor/full-gate result.
 
-No RED/GREEN evidence has been claimed yet.
+### 5.1 Exact PackageSelector and dependency identity (Task 2)
+
+| Gate | RED evidence | Production change | GREEN evidence |
+|---|---|---|---|
+| shared parser | Selector tests initially could not compile because `PackageSelector` / `parse_package_selector` did not exist; unsafe-segment rows then exposed missing character validation | Added one O(length), no-I/O parser, default `mcpplibs` normalization, dotted formatter, and diagnostic-only legacy coordinate helper | `test_pm_compat`: 17 tests passed, including bare/dotted/nested/invalid rows |
+| manifest/xpkg parsing | Updated manifest expectations produced 3 failures under ordered-candidate behavior; invalid TOML/xpkg selectors were previously not hard parse failures | Routed direct, nested, feature, target and xpkg dependency inputs through the shared exact parser | `test_manifest`: 148 passed; `test_pm_index_route`: 7 passed; `test_pm_package_fetcher`: 10 passed |
+| add/exact sibling | `12_add_command.sh` first showed `capi.lua` written/resolved with the old default-prefix candidate and no migration diagnostic; a later RED left both legacy `"acme.util"` and canonical `[dependencies.acme] util` rows | `mcpp add` now accepts canonical `[ns.]name@version`, retains `ns:name` as a warned one-release alias, probes only one PackageId, removes an equivalent legacy flat row, and writes/upserts the canonical table | `12_add_command.sh`: `capi.lua` cannot be stolen by `(mcpplibs.capi,lua)`; warning names both exact selectors; legacy source shape becomes one canonical row; malformed input leaves TOML byte-stable |
+| scoped remove | Added same-name `[dev-dependencies]` before `[dependencies]`; RED removed the dev row and left the regular row | Limited flat removal to the exact `[dependencies]` body and kept nested namespace removal exact | Rebuilt source binary; the same E2E preserves the dev row and removes only the regular dependency |
+| exact build miss | `162_bare_name_namespace_scope.sh` initially passed an exact miss into install-time compatibility retries | Every version dependency is identity-validated before install; miss reports the exact coordinate and did-you-mean remains diagnostic-only | `162`: bare gtest stays `(mcpplibs,gtest)` while explicit `(compat,gtest)` resolves; `165` proves the descriptor supplies the exact wire namespace |
+| lock migration | New `203_exact_selector_lock_migration.sh` first failed because Form-B synthesis received the ambiguous manifest map key instead of the resolved short name | Existing v2 lock identity anchors an old dotted selection for one release train; unlocked selection never falls back; Form-B synthesis uses canonical short name | `203`: warning names old/new selectors, build/run use the locked old identity, rewritten lock retains its namespace |
+
+Task 2 refactor/full gates on the isolated source binary
+`target/x86_64-linux-gnu/aee81584bf66d3f8/bin/mcpp`:
+
+- `mcpp build --no-cache`: PASS, release build completed in 64.12s.
+- `mcpp test --no-cache`: PASS, **68 passed; 0 failed**, 86.37s.
+- focused E2E set `12, 27, 62, 63, 78, 79, 162, 165, 203`: all PASS/OK.
+- changed shell scripts `bash -n`: PASS.
+- `git diff --check`: PASS.
 
 ## 6. Pull request and CI
 

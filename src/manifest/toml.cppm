@@ -6,7 +6,6 @@ import mcpp.manifest.types;
 import std;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
-import mcpp.pm.compat;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.platform;
@@ -664,11 +663,27 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         return {};
     };
 
+    auto parse_dep_selector = [&](std::string_view section,
+                                  std::string_view selectorText,
+                                  std::string_view stableMapKey)
+        -> std::expected<mcpp::pm::DependencySelector, ManifestError>
+    {
+        auto parsed = mcpp::pm::parse_package_selector(selectorText);
+        if (!parsed) {
+            return std::unexpected(error(origin, std::format(
+                "[{}] {}", section, parsed.error().message)));
+        }
+        auto coordinate = mcpp::pm::normalize_package_selector(*parsed);
+        return mcpp::pm::make_direct_dependency_selector(
+            coordinate.namespace_, coordinate.shortName, stableMapKey);
+    };
+
     auto assign_dep = [&](std::string_view section,
                           std::map<std::string, DependencySpec>& out,
                           const mcpp::pm::DependencySelector& selector,
                           const t::Value& value,
-                          bool legacyDottedKey)
+                          bool legacyDottedKey,
+                          bool legacyCandidateSearch)
         -> std::expected<void, ManifestError>
     {
         if (selector.candidates.empty()) {
@@ -682,6 +697,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         spec.shortName = selector.candidates.front().shortName;
         spec.candidates = selector.candidates;
         spec.legacyDottedKey = legacyDottedKey;
+        spec.legacyCandidateSearch = legacyCandidateSearch;
 
         auto key = selector.stableMapKey;
         if (value.is_string()) {
@@ -734,9 +750,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 auto mapKey = mapPrefix.empty()
                     ? k
                     : std::format("{}.{}", mapPrefix, k);
-                auto selector = mcpp::pm::make_direct_dependency_selector(
-                    ns, k, mapKey);
-                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                auto selectorText = std::format("{}.{}", ns, k);
+                auto selector = parse_dep_selector(
+                    section, selectorText, mapKey);
+                if (!selector) return std::unexpected(selector.error());
+                if (auto r = assign_dep(
+                        section, out, *selector, v, false, false); !r)
                     return r;
                 continue;
             }
@@ -774,10 +793,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 : std::format("{}.{}", selectorPrefix, k);
             if (v.is_string() ||
                 (v.is_table() && looks_like_inline_dep_spec(v.as_table()))) {
-                auto selector = mcpp::pm::resolve_dependency_selector(
-                    selectorText,
-                    mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                auto selector = parse_dep_selector(
+                    section, selectorText, selectorText);
+                if (!selector) return std::unexpected(selector.error());
+                if (auto r = assign_dep(
+                        section, out, *selector, v, false, true); !r)
                     return r;
                 continue;
             }
@@ -803,21 +823,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         -> std::expected<void, ManifestError>
     {
         for (auto& [k, v] : tt) {
-            // (1) string value → flat default-ns short version, or
-            // (3) legacy "ns.name" = "ver" (dotted key).
+            // A string value is either a bare default-namespace selector or a
+            // quoted dotted selector. Both go through the same exact parser;
+            // quoted dotted syntax is retained only as a source-shape marker.
             if (v.is_string()) {
-                if (k.find('.') != std::string::npos) {
-                    auto legacyKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                    auto selector = mcpp::pm::make_direct_dependency_selector(
-                        legacyKey.namespace_, legacyKey.shortName, k);
-                    if (auto r = assign_dep(section, out, selector, v,
-                                            legacyKey.legacyDottedKey); !r)
-                        return r;
-                    continue;
-                }
-                auto selector = mcpp::pm::resolve_dependency_selector(
-                    k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                auto selector = parse_dep_selector(section, k, k);
+                if (!selector) return std::unexpected(selector.error());
+                const bool quotedDotted = k.find('.') != std::string::npos;
+                if (auto r = assign_dep(
+                        section, out, *selector, v, quotedDotted, false); !r)
                     return r;
                 continue;
             }
@@ -832,20 +846,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // (1') inline dep spec under the default namespace, e.g.
             //         frob = { path = "..." }     or
             //         "mcpplibs.cmdline" = { version = "0.0.2" }
-            // The latter is the legacy dotted-key form; same treatment as (3).
+            // The latter is the legacy quoted source shape, but carries the
+            // same exact PackageId as every other selector surface.
             if (looks_like_inline_dep_spec(sub)) {
-                if (k.find('.') != std::string::npos) {
-                    auto legacyKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                    auto selector = mcpp::pm::make_direct_dependency_selector(
-                        legacyKey.namespace_, legacyKey.shortName, k);
-                    if (auto r = assign_dep(section, out, selector, v,
-                                            legacyKey.legacyDottedKey); !r)
-                        return r;
-                    continue;
-                }
-                auto selector = mcpp::pm::resolve_dependency_selector(
-                    k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                auto selector = parse_dep_selector(section, k, k);
+                if (!selector) return std::unexpected(selector.error());
+                const bool quotedDotted = k.find('.') != std::string::npos;
+                if (auto r = assign_dep(
+                        section, out, *selector, v, quotedDotted, false); !r)
                     return r;
                 continue;
             }
@@ -853,9 +861,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // (2) namespaced or nested subtable.
             //
             // Explicit tables such as `[dependencies.acme]` are namespace
-            // roots. Dotted keys written inside the single dependency table,
-            // such as `[dependencies] capi.lua = "0.0.3"`, are ordered
-            // selectors: mcpplibs.capi/lua first, then capi/lua.
+            // roots. Dotted keys inside the single dependency table are exact
+            // selectors too: `capi.lua` means only `(capi, lua)`.
             if (is_namespace_table(section, k)) {
                 if (auto r = load_nested_dep_table(section, out, k, k, sub); !r)
                     return r;
@@ -1306,23 +1313,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto* wdeps = doc->get_table("workspace.dependencies")) {
             for (auto& [k, v] : *wdeps) {
                 if (v.is_string()) {
-                    if (k.find('.') != std::string::npos) {
-                        auto depKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                        auto selector = mcpp::pm::make_direct_dependency_selector(
-                            depKey.namespace_, depKey.shortName, k);
-                        if (auto r = assign_dep("workspace.dependencies",
-                                                m.workspace.dependencies,
-                                                selector, v,
-                                                depKey.legacyDottedKey); !r) {
-                            return std::unexpected(r.error());
-                        }
-                        continue;
-                    }
-                    auto selector = mcpp::pm::resolve_dependency_selector(
-                        k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                    auto selector = parse_dep_selector(
+                        "workspace.dependencies", k, k);
+                    if (!selector) return std::unexpected(selector.error());
                     if (auto r = assign_dep("workspace.dependencies",
                                             m.workspace.dependencies,
-                                            selector, v, false); !r) {
+                                            *selector, v,
+                                            k.find('.') != std::string::npos,
+                                            false); !r) {
                         return std::unexpected(r.error());
                     }
                     continue;
@@ -1338,23 +1336,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // selector path components and silently mis-files the entry
                 // under a key like "ylib.path" instead of "ylib".
                 if (looks_like_inline_dep_spec(sub)) {
-                    if (k.find('.') != std::string::npos) {
-                        auto depKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                        auto selector = mcpp::pm::make_direct_dependency_selector(
-                            depKey.namespace_, depKey.shortName, k);
-                        if (auto r = assign_dep("workspace.dependencies",
-                                                m.workspace.dependencies,
-                                                selector, v,
-                                                depKey.legacyDottedKey); !r) {
-                            return std::unexpected(r.error());
-                        }
-                        continue;
-                    }
-                    auto selector = mcpp::pm::resolve_dependency_selector(
-                        k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                    auto selector = parse_dep_selector(
+                        "workspace.dependencies", k, k);
+                    if (!selector) return std::unexpected(selector.error());
                     if (auto r = assign_dep("workspace.dependencies",
                                             m.workspace.dependencies,
-                                            selector, v, false); !r) {
+                                            *selector, v,
+                                            k.find('.') != std::string::npos,
+                                            false); !r) {
                         return std::unexpected(r.error());
                     }
                     continue;

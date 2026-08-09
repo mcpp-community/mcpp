@@ -57,6 +57,7 @@ import mcpp.pm.index_refresh;
 import mcpp.pm.mangle;
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
+import mcpp.pm.dependency_selector;
 import mcpp.pm.lock_io;
 import mcpp.version_req;
 import mcpp.ui;
@@ -1174,13 +1175,18 @@ prepare_build(bool print_fingerprint,
     // fetched. Keyed by package name — the same key the writer at the end of
     // this function emits, both taken from the root manifest's [dependencies].
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
+    std::map<std::string, std::string> packageIdentityLockAnchors;
     {
         auto lockPath = workRoot / "mcpp.lock";
         if (std::filesystem::exists(lockPath)) {
             if (auto lock = mcpp::pm::load(lockPath); lock) {
-                for (auto const& p : lock->packages)
+                for (auto const& p : lock->packages) {
+                    if (!p.namespace_.empty())
+                        packageIdentityLockAnchors.emplace(
+                            p.name, p.namespace_);
                     if (auto parsed = mcpp::pm::parse_git_source(p.source); parsed)
                         gitLockAnchors.emplace(p.name, std::move(*parsed));
+                }
             } else {
                 // Degraded, not a plain warning: the engine silently does less
                 // than asked — every git branch dep falls back to `ls-remote`
@@ -2210,6 +2216,8 @@ prepare_build(bool print_fingerprint,
             return out;
         };
 
+    std::set<std::string> selectorMigrationWarnings;
+
     auto selectDependencyCandidate =
         [&](mcpp::manifest::DependencySpec& spec,
             const std::string& depName) -> std::expected<void, std::string>
@@ -2221,9 +2229,65 @@ prepare_build(bool print_fingerprint,
                     "dependency '{}' has no lookup candidates", depName)));
         }
 
+        // One release train of migration support for the former dotted
+        // candidate search. A lockfile records the identity an existing
+        // project already selected, so keep that identity stable until the
+        // user rewrites the selector explicitly. Without a lock anchor, never
+        // fall back: only diagnose a valid old-primary package and continue
+        // with the new exact coordinate.
+        if (spec.legacyCandidateSearch) {
+            const auto exact = candidates.front();
+            bool lockExpressesIntent = false;
+            if (auto locked = packageIdentityLockAnchors.find(depName);
+                locked != packageIdentityLockAnchors.end()) {
+                lockExpressesIntent = true;
+                if (locked->second != exact.namespace_) {
+                    mcpp::pm::DependencyCoordinate lockedCoordinate{
+                        .namespace_ = locked->second,
+                        .shortName = exact.shortName,
+                    };
+                    if (selectorMigrationWarnings.insert(depName).second) {
+                        mcpp::ui::warning(std::format(
+                            "dependency selector '{}' now means exact package "
+                            "'{}', but mcpp.lock records '{}'; keeping the "
+                            "locked identity for this migration release. "
+                            "Write '{}' to keep it explicitly, or remove the "
+                            "lock and keep '{}' to migrate",
+                            depName,
+                            mcpp::pm::format_package_selector(exact),
+                            mcpp::pm::format_package_selector(lockedCoordinate),
+                            mcpp::pm::format_package_selector(lockedCoordinate),
+                            mcpp::pm::format_package_selector(exact)));
+                    }
+                    candidates.assign(1, std::move(lockedCoordinate));
+                }
+            }
+
+            if (!lockExpressesIntent && spec.isVersion()) {
+                if (auto old = mcpp::pm::legacy_prefixed_coordinate(exact)) {
+                    auto oldLua = readStrictLuaForCandidate(*old);
+                    if (oldLua && xpkgLuaMatchesCandidate(
+                            *old, *oldLua,
+                            /*allowLegacyBareDefault=*/false)
+                        && selectorMigrationWarnings.insert(depName).second) {
+                        mcpp::ui::warning(std::format(
+                            "dependency selector '{}' now resolves exactly to "
+                            "'{}'; an older mcpp would select the existing "
+                            "package '{}'. Write '{}' to keep the old identity "
+                            "or keep '{}' for the new exact identity",
+                            depName,
+                            mcpp::pm::format_package_selector(exact),
+                            mcpp::pm::format_package_selector(*old),
+                            mcpp::pm::format_package_selector(*old),
+                            mcpp::pm::format_package_selector(exact)));
+                    }
+                }
+            }
+        }
+
         auto selected = candidates.front();
         bool matched  = false;
-        if (spec.isVersion() && candidates.size() > 1) {
+        if (spec.isVersion()) {
             for (auto& candidate : candidates) {
                 auto lua = readStrictLuaForCandidate(candidate);
                 if (!lua || !xpkgLuaMatchesCandidate(
@@ -2279,11 +2343,9 @@ prepare_build(bool print_fingerprint,
                     return index_route().lazy_git(c.namespace_);
                 });
 
-            // T9 (#278) — no candidate resolved. This used to fall through to
-            // `candidates.front()` SILENTLY, so mcpp carried on with a namespace
-            // it had invented, and the user met the failure much later (during
-            // download/install) wrapped around that invented name. Fail here,
-            // and say exactly which identities were tried.
+            // An exact coordinate that a readable index cannot serve fails at
+            // resolution. Never carry it into install-time compatibility
+            // retries, which would reintroduce cross-namespace guessing.
             if (!matched && !anyLazyGitIndex) {
                 std::string tried;
                 for (auto& c : candidates) {
@@ -2304,21 +2366,19 @@ prepare_build(bool print_fingerprint,
                         hint += "\n  a package with this name exists under "
                                 "another namespace:";
                         for (auto& fqn : fqns) hint += "\n    " + fqn;
-                        hint += std::format(
-                            "\n  bare names only resolve to the `{}` / `{}` "
-                            "namespaces. write it out:"
-                            "\n    [dependencies]"
-                            "\n    \"{}\" = \"{}\""
-                            "\n  or:"
-                            "\n    [dependencies.{}]"
-                            "\n    {} = \"{}\"",
-                            mcpp::pm::kDefaultNamespace,
-                            mcpp::pm::kCompatNamespace,
-                            fqns.front(), spec.version.empty() ? "<version>"
-                                                              : spec.version,
-                            fqns.front().substr(0, fqns.front().rfind('.')),
-                            fqns.front().substr(fqns.front().rfind('.') + 1),
-                            spec.version.empty() ? "<version>" : spec.version);
+                        if (auto suggested = mcpp::pm::parse_package_selector(
+                                fqns.front()); suggested
+                            && suggested->namespace_) {
+                            hint += std::format(
+                                "\n  namespace omission means `{}`. write the "
+                                "exact package:"
+                                "\n    [dependencies.{}]"
+                                "\n    {} = \"{}\"",
+                                mcpp::pm::kDefaultNamespace,
+                                *suggested->namespace_, suggested->name,
+                                spec.version.empty() ? "<version>"
+                                                     : spec.version);
+                        }
                     }
                 }
 
@@ -2334,8 +2394,8 @@ prepare_build(bool print_fingerprint,
                             mcpp::config::make_xlings_env(**cfgA)));
                 }
                 return std::unexpected(std::format(
-                    "dependency '{}': no package found under the namespaces "
-                    "mcpp searched\n  tried: {}{}",
+                    "dependency '{}': no package found for exact selector"
+                    "\n  tried: {}{}",
                     depName, tried, hint));
             }
         }
@@ -2413,7 +2473,7 @@ prepare_build(bool print_fingerprint,
             }
             if (field.kind == mcpp::manifest::McppField::TableBody) {
                 auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
-                    *luaContent, depName, version, targetPlatform);
+                    *luaContent, shortName, version, targetPlatform);
                 if (!dm) return false;
                 for (auto const& [generatedPath, _] : dm->buildConfig.generatedFiles) {
                     if (!generatedPath.empty()) return true;
@@ -2477,7 +2537,7 @@ prepare_build(bool print_fingerprint,
                 auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
                 if (field.kind == mcpp::manifest::McppField::TableBody) {
                     auto depManifest = mcpp::manifest::synthesize_from_xpkg_lua(
-                        *luaContent, depName, version, targetPlatform);
+                        *luaContent, shortName, version, targetPlatform);
                     if (!depManifest) {
                         return std::unexpected(std::format(
                             "dependency '{}': {}", depName, depManifest.error().format()));
@@ -2713,7 +2773,7 @@ prepare_build(bool print_fingerprint,
             if (auto r = loadFrom(matches.front()); !r) return std::unexpected(r.error());
         } else if (field.kind == mcpp::manifest::McppField::TableBody) {
             auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
-                *luaContent, depName, version, targetPlatform);
+                *luaContent, shortName, version, targetPlatform);
             if (!dm) return std::unexpected(std::format(
                 "dependency '{}': {}", depName, dm.error().format()));
             warn_unknown_xpkg_keys(*dm, depName);

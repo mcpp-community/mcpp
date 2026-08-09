@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # requires:
 # 162_bare_name_namespace_scope.sh — INV-RESOLVE (#278): a bare dependency name
-# resolves in exactly three places (mcpplibs, compat, no-namespace upstream);
-# every other namespace must be written out.
+# resolves in exactly one place (mcpplibs); every other namespace must be
+# written out.
 #
 # Before this, a bare name that matched nothing fell through to the FIRST
 # candidate SILENTLY, so mcpp carried on with a namespace it had invented and
@@ -56,7 +56,7 @@ widget = "1.0.0"'
 if "$MCPP" build > bare.out 2>&1; then
     echo "FAIL: a bare name must not reach the acme namespace"; cat bare.out; exit 1
 fi
-grep -q "no package found under the namespaces mcpp searched" bare.out || {
+grep -q "no package found for exact selector" bare.out || {
     echo "FAIL: expected the explicit not-found error"; cat bare.out; exit 1; }
 # The identities actually attempted must be listed — the old silent fallback
 # reported a namespace the user never wrote.
@@ -74,7 +74,7 @@ write_manifest '[dependencies]
 "$MCPP" build > dotted.out 2>&1 || true
 # The asset URL is a sentinel, so the fetch fails — but resolution must have
 # gotten far enough to ADDRESS the package, which is what this asserts.
-if grep -q "no package found under the namespaces" dotted.out; then
+if grep -q "no package found for exact selector" dotted.out; then
     echo "FAIL: dotted selector must resolve to (acme, widget)"; cat dotted.out; exit 1
 fi
 
@@ -82,14 +82,13 @@ fi
 write_manifest '[dependencies.acme]
 widget = "1.0.0"'
 "$MCPP" build > subtable.out 2>&1 || true
-if grep -q "no package found under the namespaces" subtable.out; then
+if grep -q "no package found for exact selector" subtable.out; then
     echo "FAIL: sub-table form must resolve to (acme, widget)"; cat subtable.out; exit 1
 fi
 
-# ── 5. the default-namespace search path still works ────────────────
-# `gtest` is a bare request served by the `compat.gtest` descriptor. This is
-# the regression lock for the compat alias: narrowing the discovery rung must
-# not touch the mcpplibs/compat search path.
+# ── 5. namespace omission is exactly mcpplibs ───────────────────────
+# A bare gtest request must not cross into compat. The explicit dotted selector
+# then proves the package remains reachable without ambiguity.
 #
 # Asserted on RESOLUTION, not on a successful build: whether the asset actually
 # downloads depends on network/cache state, but "did the bare name reach the
@@ -98,9 +97,14 @@ fi
 write_manifest '[dependencies]
 gtest = "1.15.2"'
 "$MCPP" build > compat.out 2>&1 || true
-if grep -q "no package found under the namespaces" compat.out; then
-    echo "FAIL: bare gtest must still resolve via the compat search path"
-    cat compat.out; exit 1
+grep -q "no package found for exact selector" compat.out || {
+    echo "FAIL: bare gtest must remain inside mcpplibs"; cat compat.out; exit 1; }
+
+write_manifest '[dependencies.compat]
+gtest = "1.15.2"'
+"$MCPP" build > compat-explicit.out 2>&1 || true
+if grep -q "no package found for exact selector" compat-explicit.out; then
+    echo "FAIL: explicit compat.gtest must resolve"; cat compat-explicit.out; exit 1
 fi
 
 echo "PASS 162_bare_name_namespace_scope"

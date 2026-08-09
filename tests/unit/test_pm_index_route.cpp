@@ -64,17 +64,17 @@ TEST(PmIndexRoute, LocalPathIndexIsAuthoritative) {
     EXPECT_TRUE(route.authoritative_for("acme"));
 }
 
-// The regression behind #305/#307: a dotted selector is a NAMESPACE PATH, so it
-// only resolves through the candidates the manifest parser derives. Probing the
+// The regression behind #305/#307: a dotted selector is one exact NAMESPACE
+// PATH, so it resolves through the coordinate the manifest parser derives. Probing the
 // literal short name can never match — `package.name` is a single atomic
 // segment, so nothing in any index is named "acme.util".
-TEST(PmIndexRoute, DottedSelectorResolvesThroughItsCandidates) {
+TEST(PmIndexRoute, DottedSelectorResolvesThroughItsExactCoordinate) {
     LocalIndex idx("dotted");
     auto indices = local_map(idx);
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
 
-    auto selector = mcpp::pm::resolve_dependency_selector(
-        "acme.util", mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
+    ASSERT_EQ(selector.candidates.size(), 1u);
     auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
 
     ASSERT_TRUE(found.hit.has_value());

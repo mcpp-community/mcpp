@@ -375,18 +375,18 @@ Default convention: `src/<last segment of package name>.cppm` (e.g. package name
 ```toml
 # Packages under the default package namespace (mcpplibs)
 [dependencies]
-gtest   = "1.15.2"              # Exact version
-mbedtls = "3.6.1"
-ftxui   = "6.1.9"
+cmdline   = "0.0.2"              # Exact version
+templates = "0.0.1"
 
-# Dotted selector: try mcpplibs.<path> first, then fall back to the sibling peer root.
-# For example, imgui.core is tried in order as mcpplibs.imgui/core, then imgui/core.
-[dependencies]
-capi.lua = "0.0.3"
+# Dotted selector: one exact identity. Everything before the final dot is the
+# namespace; the final segment is the package name.
 compat.gtest = "1.15.2"
 imgui.core = "0.0.1"
 imgui.backend.glfw_opengl3 = "0.0.1"
+mcpplibs.capi.lua = "0.0.3"
+```
 
+```toml
 # Namespace sub-table form
 [dependencies.mcpplibs]
 cmdline   = "0.0.2"
@@ -394,17 +394,23 @@ tinyhttps = "0.2.2"
 llmapi    = "0.2.5"
 
 [dependencies.compat]
-glfw = "3.4"                    # Explicit namespace, skips the mcpplibs-first candidate
+glfw = "3.4"                    # Explicit namespace; no fallback search
+```
 
+```toml
 # Path dependency (local development)
 [dependencies]
 mylib = { path = "../mylib" }
+```
 
+```toml
 # Git dependency — pick exactly one of tag / branch / rev
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
+```
 
+```toml
 # Long-form dep spec: features and backend knobs
 [dependencies]
 imgui = { version = "0.0.3", features = ["docking"] }   # Request a feature of this dependency
@@ -449,24 +455,20 @@ qux = ">=1.0, <2.0" # Range combination
 
 #### Namespace resolution rules
 
-Every package has a two-part identity: a **namespace** and a **name**. How you write
-a dependency key decides which namespaces mcpp will look in.
+Every package has a two-part identity: a **namespace** and a **name**. Every
+selector normalizes to exactly one identity:
 
-**A bare name resolves in exactly three places**, in order:
+- `cmdline` → `(mcpplibs, cmdline)`; omitting the namespace means the
+  `mcpplibs` default, and nothing else.
+- `compat.gtest` → `(compat, gtest)`.
+- `mcpplibs.capi.lua` → `(mcpplibs.capi, lua)`.
 
-| # | Namespace | Example |
-|---|---|---|
-| 1 | `mcpplibs` — the default namespace | `cmdline = "0.0.2"` |
-| 2 | `compat` — the wrapper namespace for third-party C/C++ libraries | `gtest = "1.15.2"` → `compat.gtest` |
-| 3 | upstream packages that declare no namespace at all | `opencv = "4.10.0"` |
-
-**Any other namespace must be written out in full.** There is no fuzzy, index-wide
-search by short name:
+There is no ordered fallback or fuzzy, index-wide search by short name:
 
 ```toml
 # ✅ Correct — dotted selector
 [dependencies]
-"chriskohlhoff.asio" = "1.38.1"
+chriskohlhoff.asio = "1.38.1"
 
 # ✅ Correct — namespace sub-table (preferred when you have several from one org)
 [dependencies.chriskohlhoff]
@@ -477,14 +479,13 @@ asio = "1.38.1"
 asio = "1.38.1"
 ```
 
-The third form fails with an error that lists the namespaces that were searched and,
-when a package with that short name exists elsewhere, the exact line to write instead.
+The third form fails with an error that names the exact `(mcpplibs, asio)`
+identity that was tried and, when the short name exists elsewhere, gives a
+copyable explicit selector.
 
-**Why not resolve bare names across every namespace?** Because dependency resolution
-has to be reproducible. A global short-name search would mean that (a) two namespaces
-owning the same short name are settled by index ordering, and (b) **adding an index
-could silently change which package an existing dependency resolves to**. Requiring
-the namespace keeps a `mcpp.toml` resolving to the same packages on every machine.
+**Why one identity?** Dependency resolution has to be reproducible. Candidate
+search would let two namespaces with the same short name be settled by index
+state, and adding an index could silently retarget an existing dependency.
 
 **For xpkg authors:** in an index descriptor, identity is the pair
 `(package.namespace, package.name)`. The namespace is the dotted path; **`name` is
@@ -509,8 +510,9 @@ path) but not required.
 
 The older fully-qualified spelling (`name = "chriskohlhoff.asio"`) is still
 accepted, so already-published descriptors keep working. `mcpp xpkg parse`
-enforces the rule — run it in your index CI. Requires mcpp >= 0.0.106 and
-xlings >= 0.4.69; full normative text in `docs/spec/package-identity.md`.
+enforces the descriptor rule — run it in your index CI. Descriptor identity
+requires mcpp >= 0.0.106; exact selectors require mcpp >= 2026.8.9.1; both use
+xlings >= 0.4.69. Full normative text is in `docs/spec/package-identity.md`.
 
 #### When mcpp refreshes the package index
 
@@ -547,7 +549,7 @@ Run any command with `-v` to see the decision for each dependency and why.
 ### 2.6 `[dev-dependencies]` — Test Dependencies
 
 ```toml
-[dev-dependencies]
+[dev-dependencies.compat]
 gtest = "1.15.2"
 ```
 
@@ -1309,7 +1311,7 @@ version = "1.0.0"
 [targets.mymath]
 kind = "lib"
 
-[dev-dependencies]
+[dev-dependencies.compat]
 gtest = "1.15.2"
 ```
 
@@ -1417,7 +1419,7 @@ mcpp build --target x86_64-linux-musl
 | Static stdlib | `true` | Portable binary |
 | Headers | `include/` (if present) | Added to `-I` automatically |
 | Tests | `tests/**/*.cpp` | Discovered automatically by `mcpp test` |
-| Dependency namespace | `mcpp` (default) | The flat form uses the default ns |
+| Dependency namespace | `mcpplibs` (default) | A bare selector means only this exact namespace |
 
 ### 4.1 Legacy `[language]` Compatibility Layer
 
