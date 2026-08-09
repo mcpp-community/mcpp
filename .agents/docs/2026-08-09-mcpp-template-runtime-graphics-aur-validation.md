@@ -312,23 +312,39 @@ root in E2E 156, and its exact rerun passes after `0cc6a2a`. Exact E2E 12 also
 passes after `ed4cf64`. This is deliberately not restated as a full latest-head
 206-case rerun.
 
-The native `ed4cf64` matrix produced the following terminal evidence before the
-documentation-only handoff commit re-queued latest-head CI:
+The native `ed4cf64` matrix is terminal with 12 successes, five failures and one
+concurrency cancellation:
 
 - PASS: hermetic Linux E2E, macOS ARM64 E2E, musl + LLVM, MinGW
-  Linux-to-Windows + Wine, Windows-to-Linux cross-build and Linux artifact run;
+  Linux-to-Windows + Wine, Windows-to-Linux cross-build and Linux artifact run,
+  Linux unit/cold-GCC/both E2E shards, Windows build/unit/package and Windows
+  E2E 1/2;
 - FAIL at one known cross-repository boundary: Linux xlings integration, macOS
   xlings LLVM E2E, aarch64 mcpp + xlings, and Windows xlings regressions all
   encounter xlings' bare `ftxui` declaration under exact selection;
-- the remaining jobs were still pending and therefore are not claimed as pass.
+- FAIL independently in Windows E2E 2/2 (run `31321961040`, job
+  `93266267511`): workspace-member `mcpp add acme.util@2.0.0` cannot read its
+  root-owned local index even though the corresponding native unit passes;
+- CANCELLED: the bare-Windows/no-Visual-Studio job was superseded by a later
+  push and is not counted as pass.
+
+The exact Windows artifact succeeds for both a hand-authored member and `mcpp
+new m1` under an isolated Wine reproduction. That narrows the remaining failure
+to native Git Bash/process/workspace state, but does not prove it fixed.
+Commit `9a47ccf` therefore adds a permanent, privacy-safe `route:` error line
+that reports only local-index root/`pkgs` presence. Its TDD cycle is RED on the
+missing API, then GREEN for `PmIndexRoute` 12/12 and real E2E 12. The next native
+Windows run remains the authority for the root cause; no latest-head full-suite
+claim is made yet.
 
 The xlings boundary is tracked by
 [openxlings/xlings#521](https://github.com/openxlings/xlings/pull/521), whose
 eight native/cross checks pass. It remains Draft and REVIEW_REQUIRED. After the
 handoff (`9f6161a`) and validation-ledger (`6e42d6c`) commits, privacy review
 produced `cf39cb2`: the AUR reconciler and rendered `mcpp-bin` now use the public
-`speak-agent` noreply identity, with a RED/GREEN contract regression. That
-latest-head matrix must reach terminal state before any latest-head claim.
+`speak-agent` noreply identity, with a RED/GREEN contract regression. `189c6d1`
+records that 12/12 contract result. The current diagnostic head `9a47ccf` must
+reach terminal state before any latest-head claim.
 
 The Chinese operator handoff is
 `.agents/docs/2026-08-09-pr400-handoff-zh.md`. It records implementation scope,
