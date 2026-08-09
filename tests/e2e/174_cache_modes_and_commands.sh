@@ -17,6 +17,7 @@
 # WRITTEN — so a dependency that hit on every build looked as stale as one
 # nobody had touched in a month. `gc` reads entry.json's `accessed` stamp.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -25,6 +26,7 @@ export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/m"
 cat > "$INDEX_DIR/pkgs/m/mode-lib.lua" <<'EOF'
 package = {
@@ -68,7 +70,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 "local-dev.mode-lib" = "1.0.0"

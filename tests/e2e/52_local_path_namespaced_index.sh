@@ -3,6 +3,7 @@
 # Local path indices must use the same namespace-aware filename candidates
 # as cloned/builtin indices, e.g. pkgs/c/compat.foo.lua.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -16,6 +17,7 @@ SUBOS_INFO_SEED="$MCPP_HOME/registry/subos/default/.xlings.json"
 }
 
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/c"
 cat > "$INDEX_DIR/pkgs/c/compat.cfg.lua" <<'EOF'
 package = {
@@ -66,7 +68,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-compat = { path = "$INDEX_DIR" }
+compat = { path = "$INDEX_DIR_HOST" }
 
 [dependencies.compat]
 cfg = "1.0.0"
@@ -215,7 +217,7 @@ name = "clean"
 version = "0.1.0"
 
 [indices]
-compat = { path = "$INDEX_DIR" }
+compat = { path = "$INDEX_DIR_HOST" }
 
 [dependencies.compat]
 cfg = "1.0.0"

@@ -4,6 +4,7 @@
 # and `mcpp index pin` / `mcpp index unpin` CLI commands.
 # No network access required — uses local path indices and synthetic lockfiles.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -13,6 +14,7 @@ export MCPP_HOME="$TMP/mcpp-home"
 
 # ── 1. Create a fake local index directory ──────────────────────────────
 INDEX_DIR="$TMP/my-local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/t"
 cat > "$INDEX_DIR/pkgs/t/test-pkg.lua" <<'EOF'
 package = {
@@ -42,7 +44,7 @@ name    = "myapp"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 acme = { url = "git@gitlab.example.com:platform/mcpp-index.git" }
 
 [targets.myapp]

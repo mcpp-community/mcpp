@@ -21,6 +21,7 @@
 # The legacy fully-qualified spelling must keep working throughout — every
 # currently published descriptor uses it.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -60,13 +61,15 @@ mkidx() {  # mkidx <dir> <relpath> <namespace> <name>
 
 mkapp() {  # mkapp <dir> <indexname> <indexpath> <ns> <short>
     mkdir -p "$1/src"
+    local index_host
+    index_host="$(host_path "$3")"
     cat > "$1/mcpp.toml" <<EOF
 [package]
 name    = "app"
 version = "0.1.0"
 
 [indices]
-$2 = { path = "$3" }
+$2 = { path = "$index_host" }
 
 [dependencies.$4]
 $5 = "1.38.1"

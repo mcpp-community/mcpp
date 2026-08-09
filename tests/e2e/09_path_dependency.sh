@@ -4,6 +4,7 @@
 #   [dependencies.A] path = "../A"
 # Verifies the multi-package scanner + linker pipeline.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -81,6 +82,7 @@ grep -q 'mcpp.cache/mylibA.greet.gcm\|gcm.cache/mylibA.greet.gcm' "$ninja_file" 
 
 # Path-resolution error reporting: declared name mismatch
 TMP2=$(mktemp -d)
+TMP2_HOST="$(host_path "$TMP2")"
 cp -r "$TMP/mylibA" "$TMP2/wrongname"
 sed -i.bak 's/name        = "mylibA"/name        = "differentname"/' "$TMP2/wrongname/mcpp.toml" && rm -f "$TMP2/wrongname/mcpp.toml.bak"
 cat > mcpp.toml <<EOF
@@ -97,7 +99,7 @@ sources = ["src/**/*.cppm", "src/**/*.cpp"]
 kind = "bin"
 main = "src/main.cpp"
 [dependencies.mylibA]
-path = "$TMP2/wrongname"
+path = "$TMP2_HOST/wrongname"
 EOF
 
 err=$("$MCPP" build 2>&1) && { echo "expected name-mismatch error"; exit 1; }

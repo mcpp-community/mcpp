@@ -4,6 +4,7 @@
 #   imgui.core -> (imgui, core), and never mcpplibs.imgui/core.
 # This test provides that exact package and verifies the build stays offline.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -12,6 +13,7 @@ export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
 INDEX_DIR="$TMP/imgui-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/i"
 cat > "$INDEX_DIR/pkgs/i/imgui.core.lua" <<'EOF'
 package = {
@@ -65,7 +67,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-imgui = { path = "$INDEX_DIR" }
+imgui = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 imgui.core = "1.0.0"

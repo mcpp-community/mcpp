@@ -4,6 +4,7 @@
 # member/dependency declarations are non-transitive and active shell state is
 # never a selector.
 set -euo pipefail
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -116,6 +117,7 @@ standalone_hash=$(field11 <<<"$standalone_out")
 # A dependency's own SubOS declaration is not consulted. It remains source
 # distributed and is built inside the consumer root's selected environment.
 dep="$TMP/dep"
+dep_host="$(host_path "$dep")"
 app="$TMP/consumer"
 mkdir -p "$dep/src" "$app/src"
 cat >"$dep/mcpp.toml" <<'EOF'
@@ -142,7 +144,7 @@ name = "consumer"
 version = "0.1.0"
 
 [dependencies.localdep]
-path = "$dep"
+path = "$dep_host"
 EOF
 cat >"$app/src/main.cpp" <<'EOF'
 import localdep.value;

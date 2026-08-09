@@ -5,6 +5,7 @@
 # without the lock, the selector is exact. Both identities exist here so index
 # order cannot accidentally make the assertion pass.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -13,6 +14,7 @@ export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
 INDEX_DIR="$TMP/index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 APP="$TMP/app"
 mkdir -p "$INDEX_DIR/pkgs/c" "$INDEX_DIR/pkgs/m" "$APP/src"
 
@@ -70,8 +72,8 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-default = { path = "$INDEX_DIR" }
-capi = { path = "$INDEX_DIR" }
+default = { path = "$INDEX_DIR_HOST" }
+capi = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 capi.lua = "1.0.0"

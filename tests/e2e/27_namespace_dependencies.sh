@@ -5,8 +5,10 @@
 # Also verifies that the legacy `"<ns>.<name>" = "..."` quoted form still
 # round-trips through the manifest parser.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
+TMP_HOST="$(host_path "$TMP")"
 trap "rm -rf $TMP" EXIT
 
 export MCPP_HOME="$TMP/mcpp-home"
@@ -49,7 +51,7 @@ name    = "app"
 version = "0.1.0"
 
 [dependencies.acme]
-util = { path = "$TMP/util-pkg/util" }
+util = { path = "$TMP_HOST/util-pkg/util" }
 EOF
 
 "$MCPP" build > build.log 2>&1 || { cat build.log; echo "build failed"; exit 1; }
@@ -63,7 +65,7 @@ name    = "app"
 version = "0.1.0"
 
 [dependencies]
-"acme.util" = { path = "$TMP/util-pkg/util" }
+"acme.util" = { path = "$TMP_HOST/util-pkg/util" }
 EOF
 rm -rf target
 "$MCPP" build > build-legacy.log 2>&1 || { cat build-legacy.log; echo "legacy form build failed"; exit 1; }
@@ -103,7 +105,7 @@ name    = "app"
 version = "0.1.0"
 
 [dependencies]
-util2 = { path = "$TMP/util2-pkg/util2" }
+util2 = { path = "$TMP_HOST/util2-pkg/util2" }
 EOF
 rm -rf target
 "$MCPP" build > build-flat.log 2>&1 || { cat build-flat.log; echo "flat form build failed"; exit 1; }

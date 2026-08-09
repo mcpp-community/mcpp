@@ -8,6 +8,7 @@
 # Locked end-to-end here; per-leg merge semantics are unit-tested via
 # osOverride (test_manifest.cpp PerOsFeaturesAdditiveMerge).
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -24,6 +25,7 @@ case "$(uname -s)" in
 esac
 
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/o"
 cat > "$INDEX_DIR/pkgs/o/osfeat.lua" <<EOF
 package = {
@@ -111,7 +113,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 "local-dev.osfeat" = { version = "1.0.0", features = ["accel"] }
@@ -137,7 +139,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 "local-dev.osfeat" = "1.0.0"

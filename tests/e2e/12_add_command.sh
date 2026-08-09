@@ -15,8 +15,10 @@
 # sandbox bootstrap (xlings, index fetch, patchelf, ninja) on a test that is
 # otherwise pure local file manipulation.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
+TMP_HOST="$(host_path "$TMP")"
 trap "rm -rf $TMP" EXIT
 
 cd "$TMP"
@@ -247,7 +249,7 @@ name = "upsert"
 version = "0.1.0"
 
 [indices]
-acme = { path = "$TMP/myapp/index" }
+acme = { path = "$TMP_HOST/myapp/index" }
 
 [dependencies]
 "acme.util" = "1.0.0"

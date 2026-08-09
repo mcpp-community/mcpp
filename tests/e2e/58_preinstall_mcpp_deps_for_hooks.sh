@@ -4,6 +4,7 @@
 # before the package install hook runs. Library deps belong in mcpp.deps; only
 # hook-time tools should be declared as xpm deps.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -17,6 +18,7 @@ SUBOS_INFO_SEED="$MCPP_HOME/registry/subos/default/.xlings.json"
 }
 
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/c"
 
 cat > "$INDEX_DIR/pkgs/c/compat.proto.lua" <<'EOF'
@@ -193,7 +195,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-compat = { path = "$INDEX_DIR" }
+compat = { path = "$INDEX_DIR_HOST" }
 
 [dependencies.compat]
 appdep = "1.0.0"

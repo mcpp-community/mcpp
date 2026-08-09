@@ -10,6 +10,7 @@
 # registry location), so a build that still fell through to the builtin
 # short-circuit would fail to resolve it.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -20,6 +21,7 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 # A local index directory, deliberately NOT under $MCPP_HOME — it must be
 # reached only via the [indices] default = {...} redirect.
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/g"
 cat > "$INDEX_DIR/pkgs/g/gizmo.lua" <<'EOF'
 package = {
@@ -72,7 +74,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-default = { path = "$INDEX_DIR" }
+default = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 gizmo = "1.0.0"
@@ -118,7 +120,7 @@ name = "app2"
 version = "0.1.0"
 
 [indices]
-"" = { path = "$INDEX_DIR" }
+"" = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 gizmo = "1.0.0"
