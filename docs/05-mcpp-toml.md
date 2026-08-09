@@ -514,6 +514,14 @@ enforces the descriptor rule — run it in your index CI. Descriptor identity
 requires mcpp >= 0.0.106; exact selectors require mcpp >= 2026.8.9.1; both use
 xlings >= 0.4.69. Full normative text is in `docs/spec/package-identity.md`.
 
+`mcpp new --template` deliberately reuses this identity model instead of
+creating another package grammar: `[ns.]name[@version][:tname]`. A bare name
+there also means only `mcpplibs`; version and template may be omitted
+independently. Omitted `tname` selects the sole explicit default, or the only
+template when no `default = true` is present. Multiple unmarked templates are
+an error, never a directory-order choice. See the normative template rows in
+`docs/spec/package-identity.md` §4.4.
+
 #### When mcpp refreshes the package index
 
 `mcpp build` / `run` / `test` refresh the package index **only when a dependency

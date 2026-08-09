@@ -141,6 +141,8 @@ yay -S mcpp-m        # or build from source (bootstrapped with mcpp-bin)
 Installs the `mcpp` command system-wide; per-user data still lives in `~/.mcpp/`.
 On Arch the name `mcpp` is an unrelated C preprocessor, so the packages are
 `mcpp-bin` / `mcpp-m` (see [`scripts/aur/`](scripts/aur/)).
+Stable-release automation reconciles `mcpp-bin` only; `mcpp-m` and `mcpp-git`
+remain manually maintained and may intentionally lag.
 
 </details>
 
@@ -274,7 +276,7 @@ import mcpplibs.cmdline;
 <details>
 <summary><b>Developer experience</b></summary>
 
-- `mcpp new` — create a modular project; `--template <pkg>[@ver][:<tmpl>]` uses a **library-provided template** (e.g. `--template imgui`); `--list-templates <pkg>` lists them
+- `mcpp new` — create a modular project; `--template [ns.]name[@version][:tname]` uses a **package-provided template** with the same exact identity style as `mcpp add`. A sole template is the default even without `default = true`; `--list-templates [ns.]name[@version]` lists ambiguous sets
 - `mcpp run [-- args]` — build and run
 - `mcpp test [pattern] [-- args]` — auto-discover and run tests (filter by name; `--list`, `--timeout <s>`, `--message-format json`)
 - `mcpp search` — search package indices

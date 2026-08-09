@@ -102,6 +102,14 @@ On Linux the snapshot also records the canonical selected loader/libc directory
 and the optional creation-host glibc floor. These are evidence used by the
 post-link validator, not another selection mechanism.
 
+The resolved SubOS view is authoritative when it canonically names one managed
+glibc payload. Older xlings state may retain `runtime = "glibc@2.39"` after the
+view has atomically moved to the managed 2.44 payload; mcpp records the physical
+2.44 identity and path in that case. If an older view contains a broken link,
+mcpp may resolve only the exact payload named by `runtime`; it never enumerates
+installed versions or chooses a nearest/newest one. Both paths consume xlings
+facts and preserve one RuntimeBinding rather than introducing an mcpp policy.
+
 No binding is a **refusal**, not a default: `CLibMode::PayloadFirst` is
 declined rather than picking a libc.
 

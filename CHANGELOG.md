@@ -3,6 +3,47 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.9.1] — 2026-08-09
+
+包身份、开发运行时与发布链收敛为同一组可验证事实。完整设计与验证记录见
+`.agents/docs/2026-08-09-mcpp-template-runtime-graphics-aur-focused-design.md` 与
+`.agents/docs/2026-08-09-mcpp-template-runtime-graphics-aur-validation.md`。
+
+### 新增
+
+- **模板 selector 与 `mcpp add` 同源。** `mcpp new --template` 统一为
+  `[namespace.]name[@version][:tname]`；省略 namespace 只表示 `mcpplibs`，不再做
+  全索引短名搜索。未写 `tname` 时选择唯一显式 default；若只有一个模板且没有
+  `default = true`，该单模板自动成为默认。多模板歧义明确失败并提示
+  `--list-templates`，不引入 `--variant`。
+- **事务化 scaffold。** 包身份、版本、模板、变量与 hook 全部在 sibling 临时目录中
+  完成解析/渲染/校验，成功后才提交目标目录；失败不会留下半成品。
+- **根项目级 RuntimeBinding。** 未声明 `[xlings].subos` 使用 mcpp 初始化并经 release
+  验证的 `McppDefault`；也可在 `mcpp.toml` 选择命名 SubOS。无 CLI/env override，
+  workspace root 决定整体环境，member/dependency 的 SubOS 不传递。不同 SubOS/glibc
+  contract 进入独立构建指纹，可在同一机器并存。
+- **provider-neutral 图形运行时契约。** mcpp-index 描述通用 requirement，xlings/xim
+  选择 OpenGL/Vulkan、Mesa/NVIDIA、WSL、ICD/driver provenance；mcpp 只消费已解析的
+  RuntimeBinding/LinkIntent、记录 resolution，并做平台通用链接与闭包校验，绝不探测 GPU。
+- **不可变 release manifest。** 全平台资产完成后生成 `mcpp-release.json`，逐项重算
+  SHA256，并在公开 GitHub inventory 上重放比较；它是下游发布的唯一 desired state。
+- **`mcpp-bin` AUR reconciler。** 校验 manifest、双 Linux 资产/sidecar、AUR RPC/git 与
+  Arch `vercmp`，先 dry-run exact diff，再以固定 host key 做普通 fast-forward push，
+  有界重试并验证 RPC/公开 HEAD/干净 Arch 安装。定时恢复瞬时故障；`mcpp-m`、
+  `mcpp-git` 不在自动化作用域。
+
+### 修复
+
+- RuntimeBinding 不再把 stale 的声明文本误当成实际 payload：有效 SubOS view 可规范化到
+  唯一受管 payload 时记录真实身份；旧 view 断链时只解析声明精确指名的 payload，
+  仍绝不枚举目录挑版本。
+- Linux ELF/glibc 闭包规则的单测只在 Linux 断言相应物理语义；macOS/Windows 原生 CI
+  固定验证 typed no-op 边界，不再拿 Linux 结果误判其他平台。
+
+### 其他
+
+- xlings pin 统一提升到 `2026.8.9.2`；自举 mcpp pin 提升到已发布的 `2026.8.8.4`。
+
 ## [2026.8.8.4] — 2026-08-08
 
 机器可读输出有契约了。设计与实测见

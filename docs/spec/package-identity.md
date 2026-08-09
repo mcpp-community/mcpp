@@ -204,6 +204,31 @@ error: dependency 'asio': no package found
 
 迁移 release 对旧的 compact dotted 搜索做两件事:已有 lock 继续固定已记录身份;无 lock 时若旧的 `mcpplibs.<ns>` primary 确实存在,warning 同时显示旧/新完整 selector,但仍不回退。
 
+### 4.4 `mcpp new --template` 的同源 selector
+
+模板不拥有第二套包身份。`--template` 与 `--list-templates` 复用 §4 的精确
+`PackageSelector`，只在包身份/版本之后增加模板名轴:
+
+| 输入 | 规范结果 |
+|---|---|
+| `pkg` | `(mcpplibs, pkg)` + latest stable + default/单模板 |
+| `pkg@1.2.0` | `(mcpplibs, pkg)` + `1.2.0` + default/单模板 |
+| `acme.widget` | `(acme, widget)` + latest stable + default/单模板 |
+| `acme.widget@1.2.0:docking` | `(acme, widget)` + `1.2.0` + `docking` |
+
+完整文法为 **`[namespace.]name[@version][:tname]`**。namespace、version、tname
+分别可省略；namespace 的省略语义与依赖完全一致，只表示默认 `mcpplibs`。模板默认
+规则按以下顺序且必须唯一:
+
+1. 正好一个 template 声明 `default = true`，选择它；
+2. 没有显式 default，但当前已解析包版本只有一个 template，选择该单模板；
+3. 多个 template 且没有 default，hard error 并提示 `--list-templates`。
+
+模板目录顺序、索引顺序和本机缓存都不得参与选择。`--variant` 不属于词汇表。
+scaffold 必须先解析完整 PackageId/version/template，再以 sibling 临时目录事务生成；
+失败不得留下目标目录。旧 `pkg:` 的“列举模板”含义仅保留一个 release train 的迁移
+warning，规范列举命令是 `mcpp new --list-templates pkg`。
+
 ---
 
 ## 5. 匹配机制

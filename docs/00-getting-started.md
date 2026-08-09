@@ -71,6 +71,27 @@ int main() {
 }
 ```
 
+### Creating from a package template
+
+`mcpp new --template` uses the same exact package-selector style as `mcpp add`:
+
+```bash
+mcpp new gui-demo --template ocornut.imgui@1.92.8:docking
+mcpp new --list-templates ocornut.imgui@1.92.8
+```
+
+The grammar is `[namespace.]name[@version][:template]`. The namespace, version,
+and template name are independently optional; omitting the namespace means the
+single default namespace `mcpplibs`, not an index-wide short-name search. If the
+template name is omitted, mcpp uses the sole `default = true` declaration, or
+automatically uses the package's only template when none is explicitly marked.
+Multiple templates without one default are an error that points to
+`--list-templates`. There is no separate `--variant` vocabulary.
+
+The package identity, version, and template are fully resolved before the
+destination is committed. A failed download, render, hook, or validation leaves
+no half-created project directory.
+
 ## Building and Running
 
 ```bash
@@ -149,8 +170,9 @@ For the differences between the four modes and their artifact layouts, see [02 â
 
 ## More Entry Points
 
-- GUI quickstart: `mcpp new myapp --template imgui` (templates are distributed with the imgui library and their versions are aligned automatically;
-  run `mcpp new --list-templates imgui` to see all templates the library provides, or use `--template imgui:docking` to select a specific one).
+- GUI quickstart: `mcpp new myapp --template ocornut.imgui@1.92.8:docking`
+  (templates are distributed with the package; omit `:docking` for its declared
+  default/sole template, or run `mcpp new --list-templates ocornut.imgui@1.92.8`).
 - Explaining default decisions: `mcpp why [toolchain|runtime|deps]`; host capability checkup: `mcpp self doctor`;
   machine-readable resolution manifest: the build artifact `target/<triple>/<fp>/resolution.json`.
 - Offline operation: `mcpp --offline` or `MCPP_OFFLINE=1` prevents index refreshes, downloads, and toolchain installation.

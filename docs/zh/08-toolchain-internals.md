@@ -80,6 +80,12 @@ workspace 构建由 workspace root 选择;member 与 dependency 声明不合并�
 Linux snapshot 还记录所选 loader/libc 目录的规范路径及可选的创建宿主 glibc floor;
 它们是链接后校验的证据,不是新的选择入口。
 
+当解析后的 SubOS view 可规范化到一个受管 glibc payload 时，该真实 view 是权威事实。
+旧 xlings 状态可能在 view 已原子切到受管 2.44 后仍保留 `runtime = "glibc@2.39"`；此时
+mcpp 在同一 binding 中记录真实的 2.44 身份与路径。若旧 view 是断链，mcpp 只允许解析
+`runtime` 精确指名的 payload；不会枚举已安装版本，也不会挑“最近/最新”版本。两条路径
+都只消费 xlings 给出的事实，不引入 mcpp 自己的运行时选择策略。
+
 没有 binding 是**拒绝**而不是取默认值:`CLibMode::PayloadFirst` 会被放弃,而不是
 去挑一个 libc。
 

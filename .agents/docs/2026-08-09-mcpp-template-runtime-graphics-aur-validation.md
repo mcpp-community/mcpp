@@ -246,9 +246,48 @@ Task 8 focused local evidence:
 - Workflow structure: Ruby/Psych parses `.github/workflows/release.yml`; all six jobs are present and ecosystem publication is gated by the immutable manifest job.
 - Public GitHub upload/refetch and eventual-consistency polling cannot be truthfully claimed from local fixtures; they remain explicit latest-HEAD release CI evidence.
 
+### 5.8 mcpp-bin-only AUR reconciliation (Task 9)
+
+- State-machine/contract suite: `python3 -m unittest tests/scripts/test_aur_reconcile.py`
+  passes **11/11**. It covers no-op/upgrade/repair/RPC-lag/refused-downgrade,
+  missing or mismatched release material, bounded maintenance retry, permanent
+  auth failure, failed known-package clone without repo initialization, exact
+  latest-complete release selection, workflow recovery triggers, and the pinned
+  AUR ED25519 fingerprint.
+- Release fixture: the real public `v2026.8.8.4` payloads/sidecars and locally
+  generated immutable manifest validate as desired `2026.8.8.4-1`; both Linux
+  digests match manifest and sidecar. The first Arch render attempt classified
+  the Docker Hub registry-header timeout as **transient**, not success.
+- `bash -n scripts/aur/update.sh`, Python compilation/tests, Ruby/Psych workflow
+  parse, and `git diff --check`: PASS.
+- Protected `scripts/aur/mcpp-m/**` aggregate before/after remains
+  `afb8a647e04483a86985119e07086016f49d55f177ee6257094c336d226113c6`.
+- The remaining real Arch `makepkg --printsrcinfo` / `--verifysource` gate is
+  not claimed locally while the image pull is blocked; it remains an explicit
+  validation/CI item.
+
+### 5.9 latest pin, version, and user contract docs (Task 10)
+
+- Live GitHub release API on 2026-08-09: newest stable xlings is
+  `v2026.8.9.2`; newest stable mcpp is `v2026.8.8.4`, so the next unused mcpp
+  version is `2026.8.9.1`.
+- Live `openxlings/xim-pkgindex` main identifies `2026.8.8.4` as the current
+  mcpp latest for Linux/macOS/Windows; `.xlings.json` now bootstraps that
+  published version rather than the previous stale `2026.8.6.2`.
+- `.github/tools/check_version_pins.sh` passes with every xlings pin at
+  `2026.8.9.2`, build version `2026.8.9.1`, and bootstrap mcpp `2026.8.8.4`.
+- English/Chinese README, getting-started, manifest, toolchain, identity, AUR,
+  and changelog text now state the same template/SubOS/graphics/AUR boundaries.
+
 ## 6. Pull request and CI
 
-Not published yet. This section will record PR URL, local/remote HEAD, review state, all latest-head job IDs and terminal conclusions.
+Draft PR [#400](https://github.com/mcpp-community/mcpp/pull/400) was opened from
+`feat/template-runtime-graphics-aur`. Initial head `234a4df` exposed two real
+boundaries: stale declared glibc identity versus the resolved SubOS view on
+Linux, and Linux-only runtime-physics assertions executing on macOS/Windows.
+Both received focused regressions and were pushed at head `dae4384`; the new
+latest-head matrix was queued as runs `31317342625` through `31317342775`.
+Terminal conclusions are not yet claimed.
 
 ## 7. Merge and release
 

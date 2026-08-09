@@ -456,6 +456,12 @@ package = {
 文件名只是提示 —— 描述符按声明的身份被发现,所以 `pkgs/c/chriskohlhoff.asio.lua` 与 `pkgs/z/anything.lua` 解析结果完全相同。推荐 `<name>.lua` 或 `<namespace>.<name>.lua`(命中 mcpp 的快路径),但不强制。
 
 旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。描述符身份需要 mcpp >= 0.0.106,精确 selector 需要 mcpp >= 2026.8.9.1,两者使用 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
+
+`mcpp new --template` 刻意复用同一身份模型，而不是另造包文法:
+`[ns.]name[@version][:tname]`。其中裸名同样只表示 `mcpplibs`，version 与模板名可分别
+省略。省略 `tname` 时选择唯一显式 default；若未写 `default = true` 且只有一个模板，
+该单模板自动成为默认。多个未标默认的模板会报错，绝不按目录顺序选择。规范表见
+`docs/spec/package-identity.md` §4.4。
 #### 表形式 —— 让 feature 贡献的不止是隐含 feature
 
 `[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature

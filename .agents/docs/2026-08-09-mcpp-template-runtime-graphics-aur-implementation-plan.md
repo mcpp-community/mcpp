@@ -306,17 +306,17 @@
 - exit classification `noop | updated | transient | permanent | refused-downgrade`
 - manual inputs `publish=false|true`, optional exact latest stable tag only; no downgrade override in this phase.
 
-- [ ] RED: fixture tests cover desired==observed no-op, upgrade, late old event refusal, missing/hash-mismatched asset, AUR maintenance retry, auth/permanent failure, RPC lag after git update, and known clone failure not becoming first publish.
-- [ ] RED: assert the reconciler never opens, hashes, copies, stages, or addresses `scripts/aur/mcpp-m/**`; compare pre/post tree hashes.
-- [ ] Split `update.sh` into an mcpp-bin-only compatibility wrapper around the renderer; remove all mcpp-m reads/writes without editing mcpp-m files.
-- [ ] Render PKGBUILD from `mcpp-release.json`; regenerate `.SRCINFO` with non-root Arch `makepkg --printsrcinfo`, then `makepkg --verifysource`.
-- [ ] Query AUR RPC and HTTPS git, compare versions with Arch `vercmp`, validate both Linux assets/sidecars, and produce a dry-run diff before secrets are loaded.
-- [ ] Publish only by normal fast-forward SSH push with pinned AUR host key and bounded exponential retry for maintenance/timeouts; never force or initialize a missing known package.
-- [ ] Verify remote git head, bounded-poll RPC, then install in a clean Arch container and assert `mcpp --version`.
-- [ ] Change workflow triggers to successful release workflow_run + six-hour schedule + workflow_dispatch; all call the same latest-stable reconciler. Remove the mcpp-m publish leg.
-- [ ] Emit Actions summary with trigger, desired/observed versions, hashes, remote commit, retry count, classification, and drift age; AUR failure must not alter GitHub release conclusion.
+- [x] RED: fixture tests cover desired==observed no-op, upgrade, late old event refusal, missing/hash-mismatched asset, AUR maintenance retry, auth/permanent failure, RPC lag after git update, and known clone failure not becoming first publish.
+- [x] RED: assert the reconciler never opens, hashes, copies, stages, or addresses `scripts/aur/mcpp-m/**`; compare pre/post tree hashes.
+- [x] Split `update.sh` into an mcpp-bin-only compatibility wrapper around the renderer; remove all mcpp-m reads/writes without editing mcpp-m files.
+- [x] Render PKGBUILD from `mcpp-release.json`; regenerate `.SRCINFO` with non-root Arch `makepkg --printsrcinfo`, then `makepkg --verifysource`.
+- [x] Query AUR RPC and HTTPS git, compare versions with Arch `vercmp`, validate both Linux assets/sidecars, and produce a dry-run diff before secrets are loaded.
+- [x] Publish only by normal fast-forward SSH push with pinned AUR host key and bounded exponential retry for maintenance/timeouts; never force or initialize a missing known package.
+- [x] Verify remote git head, bounded-poll RPC, then install in a clean Arch container and assert `mcpp --version`.
+- [x] Change workflow triggers to successful release workflow_run + six-hour schedule + workflow_dispatch; all call the same latest-stable reconciler. Remove the mcpp-m publish leg.
+- [x] Emit Actions summary with trigger, desired/observed versions, hashes, remote commit, retry count, classification, and drift age; AUR failure must not alter GitHub release conclusion.
 - [ ] GREEN: run Python tests, shell lint, dry-run against current latest release, and an Arch container source verification.
-- [ ] Commit mcpp-bin-only AUR reconciliation and verify mcpp-m byte hashes are unchanged.
+- [x] Commit mcpp-bin-only AUR reconciliation and verify mcpp-m byte hashes are unchanged.
 
 ## Task 10: Pin Latest xlings, Version mcpp, and Update User Documentation
 
@@ -338,13 +338,13 @@
 - Modify: `docs/spec/package-identity.md`
 - Modify: `scripts/aur/README.md`
 
-- [ ] Re-query latest non-draft/non-prerelease xlings immediately before pinning; pin the exact version and verify every authoritative pin site matches.
-- [ ] Choose the next unused calendar version (expected `2026.8.9.1` after live tag check), update `mcpp.toml`, and leave AUR snapshots to release-time generation.
-- [ ] Document `[ns.]name[@version][:tname]`, default `mcpplibs`, exact dotted namespaces, sole-template default, and legacy list migration.
-- [ ] Document McppDefault vs root/workspace-root `[xlings].subos`, no CLI override, non-transitive dependency semantics, coexistence across glibc bindings, and prebuilt ABI metadata boundary.
-- [ ] Document xlings/xim ownership of OpenGL/Vulkan providers and that mcpp never probes GPU/driver/ICD.
-- [ ] Document mcpp-bin-only eventual AUR reconciliation and explicitly state mcpp-m/mcpp-git are outside automation.
-- [ ] Update English and Chinese examples together; regenerate command reference if CLI help changed.
+- [x] Re-query latest non-draft/non-prerelease xlings immediately before pinning; pin the exact version and verify every authoritative pin site matches.
+- [x] Choose the next unused calendar version (expected `2026.8.9.1` after live tag check), update `mcpp.toml`, and leave AUR snapshots to release-time generation.
+- [x] Document `[ns.]name[@version][:tname]`, default `mcpplibs`, exact dotted namespaces, sole-template default, and legacy list migration.
+- [x] Document McppDefault vs root/workspace-root `[xlings].subos`, no CLI override, non-transitive dependency semantics, coexistence across glibc bindings, and prebuilt ABI metadata boundary.
+- [x] Document xlings/xim ownership of OpenGL/Vulkan providers and that mcpp never probes GPU/driver/ICD.
+- [x] Document mcpp-bin-only eventual AUR reconciliation and explicitly state mcpp-m/mcpp-git are outside automation.
+- [x] Update English and Chinese examples together; regenerate command reference if CLI help changed.
 - [ ] GREEN: run pin tests, docs example tests, generated command reference tests, `git diff --check`, and forbidden-vocabulary/boundary scans.
 - [ ] Commit version, xlings pin, and documentation.
 
