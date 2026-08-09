@@ -44,6 +44,21 @@ struct RuntimeHome {
             "host_glibc": "2.43",
             "envs": {{
               "mesa@25": [{{"var":"DRIVERS","op":"prepend","value":"{}"}}]
+            }},
+            "runtime_contract": {{
+              "providers": [{{
+                "capability": "render.demo",
+                "provider": {{"namespace":"xim","name":"renderer",
+                  "version":"4.0.0","source":"xim-pkgindex@rev"}}
+              }}],
+              "artifacts": [{{
+                "role":"driver",
+                "provider": {{"namespace":"xim","name":"renderer",
+                  "version":"4.0.0","source":"xim-pkgindex@rev"}},
+                "path":"${{subosdir}}/runtime/renderer.bin",
+                "provenance":"subos_view","abi":"fixture-v1",
+                "digest":"sha256:def","host_fingerprint":"host-2"
+              }}]
             }}
           }},
           "workspace": {{}}
@@ -122,6 +137,11 @@ TEST(RuntimeBinding, DefaultAlwaysUsesConfiguredMcppHomeDefault) {
     EXPECT_EQ(binding->libc, std::optional<std::string>("glibc@2.39"));
     EXPECT_EQ(binding->provenance, "mcpp_default");
     EXPECT_FALSE(binding->contractHash.empty());
+    ASSERT_EQ(binding->runtimeProviders.size(), 1u);
+    EXPECT_EQ(binding->runtimeProviders[0].provider.name, "renderer");
+    ASSERT_EQ(binding->runtimeArtifacts.size(), 1u);
+    EXPECT_EQ(binding->runtimeArtifacts[0].path,
+              (expected / "runtime/renderer.bin").lexically_normal());
 }
 
 TEST(RuntimeBinding, ExplicitDefaultUsesGlobalDefaultButKeepsNamedIdentity) {
@@ -188,6 +208,10 @@ TEST(RuntimeBinding, NamedEnvironmentsHaveDistinctContractsAndRoundTrip) {
     EXPECT_EQ(decoded->subosDir, el8->subosDir);
     ASSERT_EQ(decoded->environment.size(), 1u);
     EXPECT_EQ(decoded->environment[0].var, "DRIVERS");
+    ASSERT_EQ(decoded->runtimeProviders.size(), 1u);
+    EXPECT_EQ(decoded->runtimeProviders[0].provider.namespace_, "xim");
+    ASSERT_EQ(decoded->runtimeArtifacts.size(), 1u);
+    EXPECT_EQ(decoded->runtimeArtifacts[0].hostFingerprint, "host-2");
 }
 
 } // namespace

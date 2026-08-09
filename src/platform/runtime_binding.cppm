@@ -32,6 +32,8 @@ struct RuntimeBinding {
     std::vector<mcpp::xlings::subos::EnvDecl> environment;
     std::vector<std::string> providerBindings;
     std::vector<std::string> capabilities;
+    std::vector<mcpp::xlings::subos::CapabilityProvider> runtimeProviders;
+    std::vector<mcpp::xlings::subos::RuntimeArtifact> runtimeArtifacts;
     std::string provenance;
     std::filesystem::path subosDir;
     mcpp::xlings::runtime::RuntimeSelection selection;
@@ -87,6 +89,25 @@ std::string canonical_contract(const RuntimeBinding& binding) {
     }
     for (auto const& capability : binding.capabilities)
         append_field(out, capability);
+    for (auto const& provider : binding.runtimeProviders) {
+        append_field(out, provider.capability);
+        append_field(out, provider.provider.namespace_);
+        append_field(out, provider.provider.name);
+        append_field(out, provider.provider.version);
+        append_field(out, provider.provider.source);
+    }
+    for (auto const& artifact : binding.runtimeArtifacts) {
+        append_field(out, artifact.role);
+        append_field(out, artifact.provider.namespace_);
+        append_field(out, artifact.provider.name);
+        append_field(out, artifact.provider.version);
+        append_field(out, artifact.provider.source);
+        append_field(out, artifact.path.generic_string());
+        append_field(out, artifact.provenance);
+        append_field(out, artifact.abi);
+        append_field(out, artifact.digest);
+        append_field(out, artifact.hostFingerprint);
+    }
     return out;
 }
 
@@ -190,6 +211,10 @@ resolve_runtime_binding(
         for (auto const& decl : provider.decls)
             out.environment.push_back(decl);
     }
+    out.runtimeProviders = info.runtimeProviders;
+    out.runtimeArtifacts = info.runtimeArtifacts;
+    for (auto const& provider : out.runtimeProviders)
+        out.capabilities.push_back(provider.capability);
     std::sort(out.capabilities.begin(), out.capabilities.end());
     out.capabilities.erase(
         std::unique(out.capabilities.begin(), out.capabilities.end()),
@@ -218,6 +243,35 @@ std::string serialize_runtime_binding(const RuntimeBinding& binding) {
             {"var", decl.var}, {"op", decl.op}, {"value", decl.value}});
     j["provider_bindings"] = binding.providerBindings;
     j["capabilities"] = binding.capabilities;
+    j["runtime_providers"] = nlohmann::json::array();
+    for (auto const& provider : binding.runtimeProviders) {
+        j["runtime_providers"].push_back({
+            {"capability", provider.capability},
+            {"provider", {
+                {"namespace", provider.provider.namespace_},
+                {"name", provider.provider.name},
+                {"version", provider.provider.version},
+                {"source", provider.provider.source},
+            }},
+        });
+    }
+    j["runtime_artifacts"] = nlohmann::json::array();
+    for (auto const& artifact : binding.runtimeArtifacts) {
+        j["runtime_artifacts"].push_back({
+            {"role", artifact.role},
+            {"provider", {
+                {"namespace", artifact.provider.namespace_},
+                {"name", artifact.provider.name},
+                {"version", artifact.provider.version},
+                {"source", artifact.provider.source},
+            }},
+            {"path", artifact.path.generic_string()},
+            {"provenance", artifact.provenance},
+            {"abi", artifact.abi},
+            {"digest", artifact.digest},
+            {"host_fingerprint", artifact.hostFingerprint},
+        });
+    }
     j["provenance"] = binding.provenance;
     j["subos_dir"] = binding.subosDir.generic_string();
     j["selection"] = {
@@ -267,6 +321,45 @@ deserialize_runtime_binding(std::string_view encoded) {
             "provider_bindings", std::vector<std::string>{});
         out.capabilities = j.value(
             "capabilities", std::vector<std::string>{});
+        auto read_identity = [](const nlohmann::json& value) {
+            mcpp::xlings::subos::PackageIdentity id;
+            if (!value.is_object()) return id;
+            id.namespace_ = value.value("namespace", "");
+            id.name = value.value("name", "");
+            id.version = value.value("version", "");
+            id.source = value.value("source", "");
+            return id;
+        };
+        if (auto it = j.find("runtime_providers");
+            it != j.end() && it->is_array()) {
+            for (auto const& value : *it) {
+                if (!value.is_object()) continue;
+                mcpp::xlings::subos::CapabilityProvider provider;
+                provider.capability = value.value("capability", "");
+                if (auto identity = value.find("provider"); identity != value.end())
+                    provider.provider = read_identity(*identity);
+                if (!provider.capability.empty() && !provider.provider.name.empty())
+                    out.runtimeProviders.push_back(std::move(provider));
+            }
+        }
+        if (auto it = j.find("runtime_artifacts");
+            it != j.end() && it->is_array()) {
+            for (auto const& value : *it) {
+                if (!value.is_object()) continue;
+                mcpp::xlings::subos::RuntimeArtifact artifact;
+                artifact.role = value.value("role", "");
+                if (auto identity = value.find("provider"); identity != value.end())
+                    artifact.provider = read_identity(*identity);
+                artifact.path = value.value("path", "");
+                artifact.provenance = value.value("provenance", "");
+                artifact.abi = value.value("abi", "");
+                artifact.digest = value.value("digest", "");
+                artifact.hostFingerprint = value.value("host_fingerprint", "");
+                if (!artifact.role.empty() && !artifact.provider.name.empty()
+                    && !artifact.path.empty() && !artifact.provenance.empty())
+                    out.runtimeArtifacts.push_back(std::move(artifact));
+            }
+        }
         out.provenance = j.value("provenance", "");
         out.subosDir = j.value("subos_dir", "");
         auto s = j.at("selection");

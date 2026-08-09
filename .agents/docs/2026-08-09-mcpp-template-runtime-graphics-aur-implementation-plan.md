@@ -232,10 +232,23 @@
 - Modify: `src/build/plan.cppm`
 - Modify: `src/build/flags.cppm`
 - Modify: `src/build/prepare.cppm`
+- Modify: `src/build/runtime_validation.cppm`
 - Modify: `src/doctor.cppm`
+- Modify: `src/platform/runtime_binding.cppm`
+- Modify: `src/xlings/subos_info.cppm`
 - Add: `tests/unit/test_runtime_contract.cpp`
 - Modify: `tests/unit/test_link_model_runtime_dirs.cpp`
+- Modify: `tests/unit/test_runtime_selection.cpp`
+- Modify: `tests/unit/test_subos_info.cpp`
 - Modify: `tests/e2e/62_runtime_library_dirs.sh`
+- Modify: `tests/e2e/66_runtime_provides.sh`
+- Modify: `tests/e2e/200_subos_env_reaches_program.sh`
+- Modify: `tests/e2e/205_root_local_subos.sh`
+- Add: `tests/e2e/207_runtime_contract_provenance.sh`
+- Modify: `docs/05-mcpp-toml.md`
+- Modify: `docs/zh/05-mcpp-toml.md`
+- Modify: `docs/08-toolchain-internals.md`
+- Modify: `docs/zh/08-toolchain-internals.md`
 
 **Interfaces:**
 
@@ -243,16 +256,16 @@
 - `RuntimeArtifact { role; canonical provider PackageId; path; provenance; abi; digest; hostFingerprint; }`
 - `LinkIntent { libraries; linkLibraryDirs; transitiveNeededDirs; runtimeSearchDirs; frameworks; deployFiles; }`
 
-- [ ] RED: same-short-name providers in two namespaces remain distinguishable in runtime resolution JSON and `mcpp why runtime`.
-- [ ] RED: required capabilities and provided capabilities are separate; a requester cannot become its own provider merely because it requires a capability.
-- [ ] RED: runtime search dirs do not enter `-L`; Linux transitive-needed dirs use `-Wl,-rpath-link`, macOS emits rpath/install-name semantics, and Windows uses explicit deploy files.
-- [ ] Introduce structured generic requirement/artifact/provenance values while keeping legacy descriptor fields readable for one compatibility train.
-- [ ] Populate requester/provider from the resolved package identity, including namespace/version/index provenance; never use bare `package.name` as provider identity.
-- [ ] Write the resolved RuntimeBinding, requirements, artifacts, search mechanism, and validation verdict into `resolution.json`.
-- [ ] Make `mcpp why runtime` a pure interpreter of stored generic facts; GPU/driver diagnostics point to xlings and never probe hardware.
-- [ ] Add a static ownership gate that rejects new mcpp source branches containing provider-specific GPU/ICD selection vocabulary outside docs/tests.
-- [ ] GREEN: run runtime-contract unit/E2E tests and prove the build hot path launches no GL/Vulkan probe.
-- [ ] Commit provider-neutral runtime contract and link-intent separation.
+- [x] RED: same-short-name providers in two namespaces remain distinguishable in runtime resolution JSON and `mcpp why runtime`.
+- [x] RED: required capabilities and provided capabilities are separate; a requester cannot become its own provider merely because it requires a capability.
+- [x] RED: runtime search dirs do not enter `-L`; Linux transitive-needed dirs use `-Wl,-rpath-link`, macOS emits rpath/install-name semantics, and Windows uses explicit deploy files.
+- [x] Introduce structured generic requirement/artifact/provenance values while keeping legacy descriptor fields readable for one compatibility train.
+- [x] Populate requester/provider from the resolved package identity, including namespace/version/index provenance; never use bare `package.name` as provider identity.
+- [x] Write the resolved RuntimeBinding, requirements, artifacts, search mechanism, and validation verdict into `resolution.json`.
+- [x] Make `mcpp why runtime` a pure interpreter of stored generic facts; GPU/driver diagnostics point to xlings and never probe hardware.
+- [x] Add a static ownership gate that rejects new mcpp source branches containing provider-specific GPU/ICD selection vocabulary outside docs/tests.
+- [x] GREEN: run runtime-contract unit/E2E tests and prove the build hot path launches no GL/Vulkan probe.
+- [x] Commit provider-neutral runtime contract and link-intent separation.
 
 ## Task 8: Generate an Immutable Release Manifest
 

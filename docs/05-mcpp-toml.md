@@ -907,31 +907,79 @@ exactly that: an entry's object paths are now addressed relative to the
 populate the entry first. `mcpp cache verify` additionally reports any entry
 whose recorded addresses escape it, so a recurrence is auditable offline.
 
-### 2.11 `[runtime]` — Host Runtime Capabilities
+### 2.11 `[runtime]` — Provider-neutral runtime contract
 
 ```toml
 [runtime]
-library_dirs = ["vendor/lib"]            # Directories baked into the artifact's RUNPATH (relative to the package root)
-dlopen_libs  = ["libGL.so.1"]            # sonames dlopen'd at runtime (validated by doctor)
-capabilities = ["opengl.glx.driver"]     # Host capabilities required (open namespace)
-provides     = ["opengl.glx.driver"]     # Explicitly declares capabilities this package fulfills (strong provider)
+requirements = [
+  { kind = "capability", value = "display.present", phase = "run", required = true },
+  { kind = "soname", value = "libwidget.so.1", phase = "link", required = false },
+]
+provides = ["display.present"]
+artifacts = [
+  { role = "library", path = "runtime/libwidget.so.1", provenance = "payload", abi = "elf-x86_64", digest = "sha256:...", host_fingerprint = "host-1" },
+]
 
-# Explicit provider override (the "explicit" notch of the three-way knob)
-[runtime."opengl.glx.driver"]
-provider = "compat.glx-runtime"
+# Platform-neutral LinkIntent. Paths are relative to this package root.
+libraries                = ["widget"]
+link_library_dirs        = ["lib"]
+transitive_needed_dirs   = ["runtime/closure"]
+runtime_search_dirs      = ["runtime"]
+frameworks               = ["WindowKit"]
+deploy_files             = ["bin/widget.dll"]
+
+# Use an exact canonical identity when multiple providers exist.
+[runtime."display.present"]
+provider = "acme.widget-runtime@2.0.0"
 ```
 
-- **Provider selection**: a package that declares `provides` (strong) takes precedence
-  over one that merely lists a capability under `capabilities` (weak, backward
-  compatible); `[runtime.<cap>] provider=` is an explicit override with the highest
-  precedence, and pointing at a provider not present in the dependency graph produces
-  a warning.
-- The resolved result can be inspected via `mcpp why runtime`, `mcpp self doctor`, and
-  the build artifact `target/<triple>/<fp>/resolution.json` (it is not magic by
-  default).
-- Capability naming convention: layered lowercase `domain.sub.role` (e.g.
-  `opengl.glx.driver`, `x11.display`) and prefix-style `abi:<name>` (e.g. `abi:glibc`,
-  which participates in toolchain ABI enforcement).
+`requirements` records a non-empty `kind`/`value`, a `link` or `run` phase,
+and whether the requirement is mandatory (`required` defaults to `true`).
+Optional requirements remain visible provenance but do not become hard ABI or
+doctor inputs. A `libraries` entry that is an explicit relative file path is
+resolved against the declaring package root; a bare logical name remains a
+platform-spelled library name.
+`artifacts` requires `role`, `path`, and `provenance`; `abi`, `digest`, and
+`host_fingerprint` are optional evidence. The resolver, not the descriptor,
+stamps every requirement with the exact requester PackageId and every artifact
+with the exact declaring provider PackageId, including namespace, version, and
+source/index provenance. A descriptor therefore cannot spoof another package,
+and `alpha.backend` never collapses into `beta.backend`.
+
+Only `provides` creates a descriptor-owned provider fact. Merely requiring a
+capability never makes the requester its own provider. An explicit
+`[runtime.<capability>] provider=` override accepts a canonical
+`namespace.name@version` (or an unambiguous compatibility spelling); missing or
+same-short-name ambiguous providers are hard errors. Provider/artifact facts
+already selected by the xlings SubOS precede descriptor fallbacks. xlings/xim
+owns graphics-stack, driver, ICD, WSL, and host provenance selection; mcpp
+records and consumes the generic result and never probes GPU hardware.
+
+Link intent keeps discovery stages separate:
+
+| Field | ELF | Mach-O | PE/Windows |
+|---|---|---|---|
+| `link_library_dirs` | `-L` | `-L` | `-L` or `/LIBPATH:` |
+| `transitive_needed_dirs` | `-Wl,-rpath-link` | no flag | no flag |
+| `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag |
+| `frameworks` | no flag | `-framework` | no flag |
+| `deploy_files` | copy edge | copy edge | copy beside the output; never a linker flag |
+
+For one compatibility train, `library_dirs` maps only to runtime search,
+`dlopen_libs` maps to required run-phase soname requirements, and
+`capabilities` maps to required run-phase capability requirements. None of
+these legacy fields creates a provider.
+
+`target/<triple>/<fp>/resolution.json` schema 2 stores the RuntimeBinding,
+canonical requirements/providers/artifacts, LinkIntent, platform search
+mechanism, and post-link verdict. `mcpp why runtime` is a pure interpreter of
+the latest stored file: it neither re-resolves the manifest nor launches a
+graphics/hardware probe. Use `xlings doctor` when the selected host provider
+itself needs re-diagnosis.
+
+Capability names use layered lowercase `domain.sub.role` (for example
+`display.present`) and prefix-style `abi:<name>` (for example `abi:glibc`, which
+participates in toolchain ABI enforcement).
 
 ### 2.12 `[package] platforms` — Platform Declaration
 

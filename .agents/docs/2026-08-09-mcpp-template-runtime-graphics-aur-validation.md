@@ -203,6 +203,31 @@ Task 6 focused local evidence on source binary
 - `bash -n` for changed E2E and `git diff --check`: PASS.
 - #392/#396 remain open until the merged release artifact repeats the exact acceptance E2E; local source evidence alone is not closure evidence.
 
+### 5.6 Provider-neutral runtime provenance and LinkIntent (Task 7)
+
+| Gate | RED evidence | Production change | GREEN evidence |
+|---|---|---|---|
+| structured descriptor contract | `test_runtime_contract` initially failed to compile because `RuntimeRequirement`, `RuntimeArtifact`, `LinkIntent`, canonical `PackageId`, and the resolver API did not exist; the first xpkg GREEN attempt then exposed a dangling `string_view` over a temporary parser body; review RED proved an explicit relative library file remained relative to the consumer instead of its declaring package | TOML and xpkg descriptors now read the same typed requirement/artifact/link-intent grammar; explicit library paths resolve at the declaring package; legacy `library_dirs`, `dlopen_libs`, and `capabilities` remain readable for one train and normalize only to runtime-search/requirement facts | `test_runtime_contract` TOML/xpkg rows pass and assert every structured channel, package-root path anchoring, plus retained legacy fields |
+| exact ownership | The old runtime model retained only short provider strings and treated a requirement as a weak provider candidate | Build-plan resolution stamps every requirement/artifact/provider with namespace, name, version, and source provenance; only `provides` creates a descriptor provider; an explicit override is exact or uniquely compatible and missing/ambiguous cases hard-fail | Unit rows keep `alpha.backend@2.0.0` and `beta.backend@3.0.0` distinct and prove the requester is never self-promoted; E2E 66 rejects the legacy weak-requester override |
+| xlings-selected facts | RuntimeBinding had no generic provider/artifact payload and its hash/cache could not preserve a host selection; review RED then proved equal-prefix facts were not ordered by source/provenance/digest and could make the contract hash input-order-dependent | Optional schema-1 `subos_info.runtime_contract` facts resolve `${subosdir}`/relative paths once, sort by their complete identity into RuntimeBinding, participate in its hash/serialization, and precede descriptor fallback facts in BuildPlan | `test_subos_info` and `test_runtime_selection` round-trip provider identity, artifact provenance, digest and host fingerprint; the full-fact ordering row and merge row prove deterministic selected-before-fallback behavior |
+| link/search separation | Legacy `library_dirs` entered both `-L` and rpath; there was no typed seam to assert all output formats | Added a pure four-flavor LinkIntent renderer: runtime dirs never enter link lookup, ELF alone gets `-rpath-link`, Mach-O gets rpath/frameworks, PE gets link dirs while deploy files remain copy edges | `test_link_model_runtime_dirs` passes all flavor assertions; E2E 62 inspects a real Linux link and finds RUNPATH without the forbidden `-L` token |
+| durable explanation | Runtime explanation could resolve again and provider provenance was not present in the stored schema; an added RED also showed `required=false` ABI facts were incorrectly promoted into hard compatibility constraints | `resolution.json` schema 2 stores the exact binding, canonical requirements/providers/artifacts, link intent, search mechanism, and synchronized post-link verdict; optional requirements remain recorded but stay out of hard ABI/doctor projections; `mcpp why runtime` reads only the newest stored file | E2E 207 builds successfully with an intentionally mismatched optional `abi:musl`, preserves same-short identities/artifact provenance, corrupts `mcpp.toml`, installs fake probe commands, then proves `why runtime` still succeeds without launching them |
+| ownership boundary | No automated fence prevented mcpp from acquiring graphics-provider or hardware-probe policy | Added a source gate over executable code branches and process-launch neighborhoods; diagnostics redirect provider/host re-diagnosis to `xlings doctor` | Static gate passes over the complete `src/` tree; E2E 207 proves the live why path is probe-free |
+| runtime-physics compatibility | Synthetic named SubOS fixtures contained only metadata, which became physically false after Task 6 began enforcing loader/libc closure | E2E 200/205 now reuse the managed default's exact libc/loader view while varying only environment and root ownership; no product fallback was introduced | E2E 200, 205, and 206 pass with truthful bindings; Task 6 Rule A/B enforcement remains intact |
+
+Task 7 focused local evidence on the latest self-hosted source binary
+`target/x86_64-linux-gnu/4091fed9f558ec8a/bin/mcpp`:
+
+- self-host source builds: PASS; initial RuntimeBinding implementation completed in 68.66s and the post-review deterministic/optional/path refinement rebuild completed in 78.83s.
+- focused units: `test_runtime_contract` **5/5**, `test_link_model_runtime_dirs` **5/5**, `test_runtime_selection` **10/10**, and `test_subos_info` **18/18** PASS.
+- focused E2E `62_runtime_library_dirs.sh`, `66_runtime_provides.sh`, and `207_runtime_contract_provenance.sh`: PASS/`OK`.
+- RuntimeBinding regressions `200_subos_env_reaches_program.sh`, `205_root_local_subos.sh`, and `206_runtime_binding_physics.sh`: PASS.
+- full no-cache unit gate: PASS, **72 test binaries passed; 0 failed**, 109.40s (107.48s build + 1.78s run); after the review refinements, the complete latest-source refactor gate repeated **72/72** in 14.58s (12.98s build + 1.48s run).
+- changed shell scripts `bash -n`, executable mode for E2E 207, and `git diff --check`: PASS.
+- `mcpp-m` aggregate remains `afb8a647e04483a86985119e07086016f49d55f177ee6257094c336d226113c6`.
+- host xlings config aggregate remains `f218aadf3792ee815c8535ce0ca0bb53f634fecbdbc5d0d47db442052d786d1b`.
+- Linux semantics are locally exercised. Mach-O and PE flag spelling has pure unit coverage on Linux; native macOS/Windows compilation and behavior remain latest-HEAD PR CI gates, not inferred passes.
+
 ## 6. Pull request and CI
 
 Not published yet. This section will record PR URL, local/remote HEAD, review state, all latest-head job IDs and terminal conclusions.

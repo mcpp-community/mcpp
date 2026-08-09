@@ -45,6 +45,21 @@ TEST(SubosInfo, ReadsRuntimeAndEnvDeclarations) {
             { "var": "XDG_DATA_DIRS", "op": "prepend",
               "value": "${subosdir}/share" }
           ]
+        },
+        "runtime_contract": {
+          "providers": [
+            { "capability": "render.demo",
+              "provider": { "namespace": "xim", "name": "renderer",
+                "version": "4.0.0", "source": "xim-pkgindex@rev" } }
+          ],
+          "artifacts": [
+            { "role": "driver",
+              "provider": { "namespace": "xim", "name": "renderer",
+                "version": "4.0.0", "source": "xim-pkgindex@rev" },
+              "path": "${subosdir}/runtime/renderer.bin",
+              "provenance": "subos_view", "abi": "fixture-v1",
+              "digest": "sha256:def", "host_fingerprint": "host-2" }
+          ]
         }
       }
     })");
@@ -57,7 +72,43 @@ TEST(SubosInfo, ReadsRuntimeAndEnvDeclarations) {
     EXPECT_EQ(info.providers[0].binding, "mesa@25.0.7.1");
     ASSERT_EQ(info.providers[0].decls.size(), 2u);
     EXPECT_EQ(info.providers[0].decls[0].var, "LIBGL_DRIVERS_PATH");
+    ASSERT_EQ(info.runtimeProviders.size(), 1u);
+    EXPECT_EQ(info.runtimeProviders[0].capability, "render.demo");
+    EXPECT_EQ(info.runtimeProviders[0].provider.namespace_, "xim");
+    EXPECT_EQ(info.runtimeProviders[0].provider.name, "renderer");
+    ASSERT_EQ(info.runtimeArtifacts.size(), 1u);
+    EXPECT_EQ(info.runtimeArtifacts[0].path,
+              (t.dir / "runtime/renderer.bin").lexically_normal());
+    EXPECT_EQ(info.runtimeArtifacts[0].hostFingerprint, "host-2");
     EXPECT_TRUE(info.note.empty());
+}
+
+TEST(SubosInfo, OrdersGenericContractByTheCompleteFactIdentity) {
+    Tmp t;
+    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
+      "runtime_contract":{
+        "providers":[
+          {"capability":"render.demo","provider":{"namespace":"xim",
+            "name":"renderer","version":"1","source":"z-index"}},
+          {"capability":"render.demo","provider":{"namespace":"xim",
+            "name":"renderer","version":"1","source":"a-index"}}
+        ],
+        "artifacts":[
+          {"role":"driver","provider":{"namespace":"xim","name":"renderer",
+            "version":"1","source":"same"},"path":"runtime/driver",
+            "provenance":"z-view","digest":"sha256:z"},
+          {"role":"driver","provider":{"namespace":"xim","name":"renderer",
+            "version":"1","source":"same"},"path":"runtime/driver",
+            "provenance":"a-view","digest":"sha256:a"}
+        ]
+      }}})");
+    auto info = su::read(t.dir);
+    ASSERT_EQ(info.runtimeProviders.size(), 2u);
+    EXPECT_EQ(info.runtimeProviders[0].provider.source, "a-index");
+    EXPECT_EQ(info.runtimeProviders[1].provider.source, "z-index");
+    ASSERT_EQ(info.runtimeArtifacts.size(), 2u);
+    EXPECT_EQ(info.runtimeArtifacts[0].provenance, "a-view");
+    EXPECT_EQ(info.runtimeArtifacts[1].provenance, "z-view");
 }
 
 // `${subosdir}` expands against the subos the block was read FROM, not

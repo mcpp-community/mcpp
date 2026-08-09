@@ -165,12 +165,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "build.flags",
         "features.*.flags",   // #253 — the middle segment is the feature name
         "target.*.build.flags",  // #258 — middle segment is the cfg predicate
+        "runtime.requirements",
+        "runtime.artifacts",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
             "[[{}]] (array-of-tables) is not allowed for section '{}'; "
-            "array-of-tables syntax is only supported for [[build.flags]] "
-            "and [[features.<name>.flags]]",
+            "array-of-tables syntax is only supported for [[build.flags]], "
+            "[[features.<name>.flags]], [[runtime.requirements]], and "
+            "[[runtime.artifacts]]",
             *badPath, *badPath)));
     }
 
@@ -1071,6 +1074,126 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.runtimeConfig.capabilities = *v;
     if (auto v = doc->get_string_array("runtime.provides"))
         m.runtimeConfig.provides = *v;
+    auto read_runtime_paths = [&](std::string_view key,
+                                  std::vector<std::filesystem::path>& out) {
+        if (auto v = doc->get_string_array(key))
+            for (auto& s : *v) out.emplace_back(s);
+    };
+    if (auto v = doc->get_string_array("runtime.libraries"))
+        m.runtimeConfig.linkIntent.libraries = *v;
+    read_runtime_paths("runtime.link_library_dirs",
+                       m.runtimeConfig.linkIntent.linkLibraryDirs);
+    read_runtime_paths("runtime.transitive_needed_dirs",
+                       m.runtimeConfig.linkIntent.transitiveNeededDirs);
+    read_runtime_paths("runtime.runtime_search_dirs",
+                       m.runtimeConfig.linkIntent.runtimeSearchDirs);
+    if (auto v = doc->get_string_array("runtime.frameworks"))
+        m.runtimeConfig.linkIntent.frameworks = *v;
+    read_runtime_paths("runtime.deploy_files",
+                       m.runtimeConfig.linkIntent.deployFiles);
+
+    auto table_string = [&](const t::Table& table, std::string_view key,
+                            std::string& out) -> bool {
+        auto it = table.find(std::string(key));
+        if (it == table.end()) return true;
+        if (!it->second.is_string()) return false;
+        out = it->second.as_string();
+        return true;
+    };
+    if (auto* requirements = doc->get("runtime.requirements")) {
+        if (!requirements->is_array()) {
+            return std::unexpected(error(origin,
+                "runtime.requirements must be an array of tables"));
+        }
+        std::size_t index = 0;
+        for (auto const& value : requirements->as_array()) {
+            ++index;
+            if (!value.is_table()) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.requirements[{}] must be a table", index)));
+            }
+            RuntimeRequirement requirement;
+            auto const& table = value.as_table();
+            for (auto const& [key, _] : table) {
+                if (key != "kind" && key != "value" && key != "phase"
+                    && key != "required") {
+                    return std::unexpected(error(origin, std::format(
+                        "runtime.requirements[{}] has unsupported key '{}'",
+                        index, key)));
+                }
+            }
+            if (!table_string(table, "kind", requirement.kind)
+                || !table_string(table, "value", requirement.value)
+                || !table_string(table, "phase", requirement.phase)) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.requirements[{}] kind/value/phase must be strings",
+                    index)));
+            }
+            if (auto it = table.find("required"); it != table.end()) {
+                if (!it->second.is_bool()) {
+                    return std::unexpected(error(origin, std::format(
+                        "runtime.requirements[{}].required must be a boolean",
+                        index)));
+                }
+                requirement.required = it->second.as_bool();
+            }
+            if (requirement.kind.empty() || requirement.value.empty()) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.requirements[{}] requires non-empty kind and value",
+                    index)));
+            }
+            if (requirement.phase != "link" && requirement.phase != "run") {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.requirements[{}].phase must be 'link' or 'run'",
+                    index)));
+            }
+            m.runtimeConfig.requirements.push_back(std::move(requirement));
+        }
+    }
+    if (auto* artifacts = doc->get("runtime.artifacts")) {
+        if (!artifacts->is_array()) {
+            return std::unexpected(error(origin,
+                "runtime.artifacts must be an array of tables"));
+        }
+        std::size_t index = 0;
+        for (auto const& value : artifacts->as_array()) {
+            ++index;
+            if (!value.is_table()) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.artifacts[{}] must be a table", index)));
+            }
+            RuntimeArtifact artifact;
+            std::string path;
+            auto const& table = value.as_table();
+            for (auto const& [key, _] : table) {
+                if (key != "role" && key != "path" && key != "provenance"
+                    && key != "abi" && key != "digest"
+                    && key != "host_fingerprint") {
+                    return std::unexpected(error(origin, std::format(
+                        "runtime.artifacts[{}] has unsupported key '{}'",
+                        index, key)));
+                }
+            }
+            if (!table_string(table, "role", artifact.role)
+                || !table_string(table, "path", path)
+                || !table_string(table, "provenance", artifact.provenance)
+                || !table_string(table, "abi", artifact.abi)
+                || !table_string(table, "digest", artifact.digest)
+                || !table_string(table, "host_fingerprint",
+                                 artifact.hostFingerprint)) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.artifacts[{}] fields must be strings", index)));
+            }
+            if (artifact.role.empty() || path.empty()
+                || artifact.provenance.empty()) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.artifacts[{}] requires role, path, and provenance",
+                    index)));
+            }
+            artifact.path = std::move(path);
+            m.runtimeConfig.artifacts.push_back(std::move(artifact));
+        }
+    }
     // [runtime.<capability>] provider = "<pkg>" — explicit provider override.
     if (auto* rt = doc->get_table("runtime"); rt && !rt->empty()) {
         for (auto& [rk, rv] : *rt) {

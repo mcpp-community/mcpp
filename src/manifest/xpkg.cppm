@@ -1780,6 +1780,146 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     rc.consume('}');
                     return {};
                 };
+                auto read_requirement_list = [&]()
+                    -> std::expected<void, ManifestError>
+                {
+                    if (!rc.consume('{')) {
+                        return std::unexpected(ManifestError{
+                            "expected '{' after `runtime.requirements =`",
+                            m.sourcePath, 0, 0});
+                    }
+                    rc.skip_ws_and_comments();
+                    std::size_t index = 0;
+                    while (!rc.eof() && rc.peek() != '}') {
+                        ++index;
+                        if (rc.peek() != '{') {
+                            return std::unexpected(ManifestError{
+                                std::format("runtime.requirements[{}] must be a table",
+                                            index),
+                                m.sourcePath, 0, 0});
+                        }
+                        auto entryBody = rc.read_table_body();
+                        LuaCursor entry{entryBody};
+                        RuntimeRequirement requirement;
+                        entry.skip_ws_and_comments();
+                        while (!entry.eof()) {
+                            auto field = entry.read_key();
+                            if (field.empty()) {
+                                entry.skip_ws_and_comments();
+                                if (!entry.eof()) ++entry.pos;
+                                continue;
+                            }
+                            if (!entry.consume('=')) {
+                                return std::unexpected(ManifestError{
+                                    std::format("runtime.requirements[{}].{} is malformed",
+                                                index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            if (field == "kind") requirement.kind = entry.read_string();
+                            else if (field == "value") requirement.value = entry.read_string();
+                            else if (field == "phase") requirement.phase = entry.read_string();
+                            else if (field == "required") {
+                                auto raw = entry.read_bareword();
+                                if (raw != "true" && raw != "false") {
+                                    return std::unexpected(ManifestError{
+                                        std::format(
+                                            "runtime.requirements[{}].required must be boolean",
+                                            index),
+                                        m.sourcePath, 0, 0});
+                                }
+                                requirement.required = raw == "true";
+                            } else {
+                                return std::unexpected(ManifestError{
+                                    std::format(
+                                        "runtime.requirements[{}] has unsupported key '{}'",
+                                        index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            entry.skip_ws_and_comments();
+                        }
+                        if (requirement.kind.empty() || requirement.value.empty()
+                            || (requirement.phase != "link"
+                                && requirement.phase != "run")) {
+                            return std::unexpected(ManifestError{
+                                std::format(
+                                    "runtime.requirements[{}] requires kind/value and phase link|run",
+                                    index),
+                                m.sourcePath, 0, 0});
+                        }
+                        m.runtimeConfig.requirements.push_back(std::move(requirement));
+                        rc.skip_ws_and_comments();
+                    }
+                    rc.consume('}');
+                    return {};
+                };
+                auto read_artifact_list = [&]()
+                    -> std::expected<void, ManifestError>
+                {
+                    if (!rc.consume('{')) {
+                        return std::unexpected(ManifestError{
+                            "expected '{' after `runtime.artifacts =`",
+                            m.sourcePath, 0, 0});
+                    }
+                    rc.skip_ws_and_comments();
+                    std::size_t index = 0;
+                    while (!rc.eof() && rc.peek() != '}') {
+                        ++index;
+                        if (rc.peek() != '{') {
+                            return std::unexpected(ManifestError{
+                                std::format("runtime.artifacts[{}] must be a table",
+                                            index),
+                                m.sourcePath, 0, 0});
+                        }
+                        auto entryBody = rc.read_table_body();
+                        LuaCursor entry{entryBody};
+                        RuntimeArtifact artifact;
+                        std::string path;
+                        entry.skip_ws_and_comments();
+                        while (!entry.eof()) {
+                            auto field = entry.read_key();
+                            if (field.empty()) {
+                                entry.skip_ws_and_comments();
+                                if (!entry.eof()) ++entry.pos;
+                                continue;
+                            }
+                            if (!entry.consume('=')) {
+                                return std::unexpected(ManifestError{
+                                    std::format("runtime.artifacts[{}].{} is malformed",
+                                                index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            std::string value = entry.read_string();
+                            if      (field == "role") artifact.role = std::move(value);
+                            else if (field == "path") path = std::move(value);
+                            else if (field == "provenance") artifact.provenance = std::move(value);
+                            else if (field == "abi") artifact.abi = std::move(value);
+                            else if (field == "digest") artifact.digest = std::move(value);
+                            else if (field == "host_fingerprint")
+                                artifact.hostFingerprint = std::move(value);
+                            else {
+                                return std::unexpected(ManifestError{
+                                    std::format(
+                                        "runtime.artifacts[{}] has unsupported key '{}'",
+                                        index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            entry.skip_ws_and_comments();
+                        }
+                        if (artifact.role.empty() || path.empty()
+                            || artifact.provenance.empty()) {
+                            return std::unexpected(ManifestError{
+                                std::format(
+                                    "runtime.artifacts[{}] requires role, path, and provenance",
+                                    index),
+                                m.sourcePath, 0, 0});
+                        }
+                        artifact.path = std::move(path);
+                        m.runtimeConfig.artifacts.push_back(std::move(artifact));
+                        rc.skip_ws_and_comments();
+                    }
+                    rc.consume('}');
+                    return {};
+                };
                 if (sub == "library_dirs") {
                     std::vector<std::string> dirs;
                     if (auto r = read_string_list(dirs); !r) return std::unexpected(r.error());
@@ -1792,6 +1932,35 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         return std::unexpected(r.error());
                 } else if (sub == "provides") {
                     if (auto r = read_string_list(m.runtimeConfig.provides); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "requirements") {
+                    if (auto r = read_requirement_list(); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "artifacts") {
+                    if (auto r = read_artifact_list(); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "libraries") {
+                    if (auto r = read_string_list(
+                            m.runtimeConfig.linkIntent.libraries); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "link_library_dirs"
+                        || sub == "transitive_needed_dirs"
+                        || sub == "runtime_search_dirs"
+                        || sub == "deploy_files") {
+                    std::vector<std::string> paths;
+                    if (auto r = read_string_list(paths); !r)
+                        return std::unexpected(r.error());
+                    auto* destination = sub == "link_library_dirs"
+                        ? &m.runtimeConfig.linkIntent.linkLibraryDirs
+                        : sub == "transitive_needed_dirs"
+                            ? &m.runtimeConfig.linkIntent.transitiveNeededDirs
+                            : sub == "runtime_search_dirs"
+                                ? &m.runtimeConfig.linkIntent.runtimeSearchDirs
+                                : &m.runtimeConfig.linkIntent.deployFiles;
+                    for (auto& path : paths) destination->emplace_back(std::move(path));
+                } else if (sub == "frameworks") {
+                    if (auto r = read_string_list(
+                            m.runtimeConfig.linkIntent.frameworks); !r)
                         return std::unexpected(r.error());
                 } else {
                     rc.skip_ws_and_comments();

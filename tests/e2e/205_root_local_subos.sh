@@ -11,6 +11,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 default_manifest="$MCPP_HOME/registry/subos/default/.xlings.json"
 [[ -f "$default_manifest" ]] || fail "mcpp default SubOS is missing"
+default_subos=$(dirname "$default_manifest")
 runtime=$(sed -n 's/.*"runtime"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
     "$default_manifest" | head -1)
 [[ -n "$runtime" ]] || fail "default SubOS has no runtime identity"
@@ -18,6 +19,9 @@ runtime=$(sed -n 's/.*"runtime"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
 write_contract() {
     local dir=$1 marker=$2
     mkdir -p "$dir"
+    # Selection tests still need a truthful physical RuntimeBinding. Reuse the
+    # same libc/loader payload while varying only root ownership and metadata.
+    ln -s "$default_subos/lib" "$dir/lib"
     cat >"$dir/.xlings.json" <<EOF
 { "workspace": {}, "subos_info": { "schema_version": 1,
   "runtime": "$runtime", "envs": { "$marker@1": [

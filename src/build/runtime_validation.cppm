@@ -212,6 +212,65 @@ void store_artifact(nlohmann::json& doc,
     };
 }
 
+void sync_resolution_verdict(const mcpp::build::BuildPlan& plan,
+                             const nlohmann::json& cache) {
+    const auto path = plan.outputDir / "resolution.json";
+    std::ifstream input(path);
+    auto resolution = nlohmann::json::parse(input, nullptr, false);
+    if (resolution.is_discarded() || !resolution.is_object()) return;
+    auto runtime = resolution.find("runtime");
+    if (runtime == resolution.end() || !runtime->is_object()) return;
+
+    nlohmann::json checked = nlohmann::json::array();
+    using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+    Status summary = Status::Pass;
+    bool any = false;
+    if (auto artifacts = cache.find("artifacts");
+        artifacts != cache.end() && artifacts->is_object()) {
+        for (auto it = artifacts->begin(); it != artifacts->end(); ++it) {
+            if (!it.value().is_object()) continue;
+            any = true;
+            auto status = parse_status(it.value().value("status", "inconclusive"));
+            if (status == Status::ProvenMismatch
+                || (status == Status::Inconclusive && summary == Status::Pass))
+                summary = status;
+            checked.push_back({
+                {"path", (plan.outputDir / it.key()).lexically_normal().generic_string()},
+                {"status", status_name(status)},
+                {"diagnostics", it.value().value(
+                    "diagnostics", std::vector<std::string>{})},
+                {"fingerprint", it.value().value("fingerprint", "")},
+            });
+        }
+    }
+    const bool hasCheckableOutput = std::ranges::any_of(
+        plan.linkUnits, [](auto const& unit) {
+            return unit.kind != mcpp::build::LinkUnit::StaticLibrary;
+        });
+    (*runtime)["validation"] = {
+        {"status", any ? status_name(summary)
+                       : hasCheckableOutput ? "pending" : "not_exercised"},
+        {"source", "post_link"},
+        {"contract_hash", plan.runtimeBinding.contractHash},
+        {"artifacts", std::move(checked)},
+    };
+
+    std::error_code ec;
+    auto tmp = path;
+    tmp += ".tmp";
+    if (std::ofstream output(tmp); output) {
+        output << resolution.dump(2) << '\n';
+        output.close();
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) {
+            ec.clear();
+            std::filesystem::remove(path, ec);
+            ec.clear();
+            std::filesystem::rename(tmp, path, ec);
+        }
+    }
+}
+
 } // namespace
 
 ArtifactSnapshot snapshot_link_artifacts(const mcpp::build::BuildPlan& plan) {
@@ -288,6 +347,7 @@ ValidationReport validate_changed_artifacts(
         report.artifacts.push_back(std::move(validated));
     }
     if (changedCache) write_cache(plan.outputDir, doc);
+    sync_resolution_verdict(plan, doc);
     return report;
 }
 

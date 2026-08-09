@@ -120,6 +120,53 @@ contract hash is field 11 of the toolchain fingerprint — two named SubOS
 environments that happen to use the same libc still must not share a cache
 entry when their providers or environment declarations differ.
 
+### 2.2 Generic runtime providers and artifacts
+
+`RuntimeBinding` also carries the provider-neutral facts selected by xlings for
+the chosen development OS. `subos_info.runtime_contract` is an optional,
+additive schema-1 block:
+
+```json
+{
+  "providers": [
+    {"capability": "display.present", "provider": {
+      "namespace": "xim", "name": "display-runtime", "version": "1.0.0",
+      "source": "xim-pkgindex@<revision>"}}
+  ],
+  "artifacts": [
+    {"role": "driver", "provider": {
+      "namespace": "xim", "name": "display-runtime", "version": "1.0.0",
+      "source": "xim-pkgindex@<revision>"},
+     "path": "${subosdir}/lib/runtime/provider.so",
+     "provenance": "subos_view", "abi": "elf-x86_64",
+     "digest": "sha256:...", "host_fingerprint": "..."}
+  ]
+}
+```
+
+The binding parser resolves `${subosdir}` and relative artifact paths once,
+sorts the facts, and includes them in the contract hash and cache snapshot. In
+the build plan these selected provider facts precede descriptor-declared
+fallbacks. Descriptor requirements and artifacts are independently stamped
+with their resolved requester's/provider's canonical PackageId, so equal short
+names in different namespaces remain distinct end to end.
+
+The ownership boundary is deliberate: mcpp-index expresses generic runtime
+requirements; xlings/xim chooses and diagnoses the host graphics/runtime stack;
+mcpp consumes only the selected provider/artifact facts and generic LinkIntent.
+mcpp has no hardware, driver-vendor, WSL, or ICD selection path. Its source gate
+rejects introducing such provider-specific branches or coupling those terms to
+a launched probe.
+
+`LinkIntent` keeps `linkLibraryDirs`, `transitiveNeededDirs`, and
+`runtimeSearchDirs` separate. The last category is never rendered as `-L`:
+ELF receives rpath plus `-rpath-link` only for the transitive category, Mach-O
+receives rpath/framework flags, and PE receives link-library paths plus explicit
+deploy-file copy edges. The exact RuntimeBinding, canonical identities, link
+intent, search mechanism, and post-link verdict are persisted in
+`resolution.json` schema 2. `mcpp why runtime` only interprets that stored file;
+re-diagnosis belongs to `xlings doctor`.
+
 ## 3. The link model (`src/toolchain/linkmodel.cppm`)
 
 `ToolchainLinkModel` answers exactly one question — *how do we compile and
@@ -404,6 +451,9 @@ everything §3–§4 does for ELF.
 | link model + loader resolution | `src/toolchain/linkmodel.cppm` |
 | unified fixup pipeline (patchelf/specs/cfg, marker) | `src/toolchain/post_install.cppm` |
 | install/lifecycle entry | `src/toolchain/lifecycle.cppm`; auto-install entries in `src/build/prepare.cppm` |
+| root runtime selection/binding | `src/xlings/runtime_selection.cppm`, `src/platform/runtime_binding.cppm`, `src/xlings/subos_info.cppm` |
+| generic runtime contract + LinkIntent | `src/manifest/types.cppm`, `src/build/plan.cppm`, `src/build/flags.cppm` |
+| stored resolution explanation | `src/build/prepare.cppm`, `src/build/runtime_validation.cppm`, `src/doctor.cppm` |
 | flag assembly (main build) | `src/build/flags.cppm` |
 | `import std;` precompile | `src/toolchain/stdmod.cppm` |
 | build.mcpp host flags | `src/build/build_program.cppm` |

@@ -96,6 +96,46 @@ glibc 的那条依赖"毫无关系的包上。目录顺序不是决策依据。
 注意:probe 已**不再**从 clang cfg 挖 `--sysroot`——cfg 是这套机制的输出,
 不是输入(见 §5)。
 
+### 2.2 通用运行时 provider 与 artifact
+
+`RuntimeBinding` 还携带 xlings 为所选开发 OS 解析好的 provider-neutral fact。
+`subos_info.runtime_contract` 是 schema 1 上可选、可加的 block:
+
+```json
+{
+  "providers": [
+    {"capability": "display.present", "provider": {
+      "namespace": "xim", "name": "display-runtime", "version": "1.0.0",
+      "source": "xim-pkgindex@<revision>"}}
+  ],
+  "artifacts": [
+    {"role": "driver", "provider": {
+      "namespace": "xim", "name": "display-runtime", "version": "1.0.0",
+      "source": "xim-pkgindex@<revision>"},
+     "path": "${subosdir}/lib/runtime/provider.so",
+     "provenance": "subos_view", "abi": "elf-x86_64",
+     "digest": "sha256:...", "host_fingerprint": "..."}
+  ]
+}
+```
+
+binding parser 只解析一次 `${subosdir}` 和相对 artifact 路径,排序 fact,并把它们纳入
+contract hash 与 cache snapshot。进入 BuildPlan 后,所选 provider fact 排在描述符
+fallback 前。描述符 requirement/artifact 则由 resolver 分别用 requester/provider 的
+canonical PackageId 盖章,所以不同 namespace 下相同短名不会在任何环节碰撞。
+
+所有权边界是刻意的:mcpp-index 表达通用 runtime requirement;xlings/xim 选择并诊断
+宿主图形/运行时栈;mcpp 只消费已选 provider/artifact fact 与通用 LinkIntent。
+mcpp 不含硬件、driver vendor、WSL 或 ICD 选择路径;源码 gate 会拒绝引入这类
+provider-specific 分支,也拒绝把相关词汇与外部 probe 启动耦合。
+
+`LinkIntent` 分开 `linkLibraryDirs`、`transitiveNeededDirs` 和
+`runtimeSearchDirs`;最后一类绝不渲染为 `-L`。ELF 只为 runtime 目录发 rpath,
+且仅为 transitive 类发 `-rpath-link`;Mach-O 发 rpath/framework;PE 发链接库路径并
+用显式 deploy-file copy edge。精确 RuntimeBinding、canonical identity、LinkIntent、
+搜索机制与链接后 verdict 写入 `resolution.json` schema 2。
+`mcpp why runtime` 只解释该存储文件;重新诊断由 `xlings doctor` 负责。
+
 ## 3. 链接模型(`src/toolchain/linkmodel.cppm`)
 
 `ToolchainLinkModel` 只回答一个问题——*如何对该工具链的 C 库编译与链接*——
@@ -330,6 +370,9 @@ mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 �
 | 链接模型 + loader 解析 | `src/toolchain/linkmodel.cppm` |
 | 统一 fixup 管线(patchelf/specs/cfg、marker)| `src/toolchain/post_install.cppm` |
 | install/lifecycle 入口 | `src/toolchain/lifecycle.cppm`;auto-install 入口在 `src/build/prepare.cppm` |
+| root runtime 选择/binding | `src/xlings/runtime_selection.cppm`、`src/platform/runtime_binding.cppm`、`src/xlings/subos_info.cppm` |
+| 通用 runtime contract + LinkIntent | `src/manifest/types.cppm`、`src/build/plan.cppm`、`src/build/flags.cppm` |
+| 存储 resolution 解释 | `src/build/prepare.cppm`、`src/build/runtime_validation.cppm`、`src/doctor.cppm` |
 | flag 组装(主构建)| `src/build/flags.cppm` |
 | `import std;` 预编译 | `src/toolchain/stdmod.cppm` |
 | build.mcpp 宿主 flags | `src/build/build_program.cppm` |

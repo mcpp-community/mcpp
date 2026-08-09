@@ -16,6 +16,7 @@ import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.triple;
 import mcpp.platform;
 import mcpp.platform.runtime_binding;
+import mcpp.xlings.subos_info;
 
 export namespace mcpp::build {
 
@@ -95,6 +96,24 @@ struct ResourceUnit {
     std::vector<std::filesystem::path> implicitInputs;
 };
 
+struct RuntimeCapabilityProvider {
+    std::string                       capability;
+    mcpp::manifest::PackageId         provider;
+};
+
+struct ResolvedRuntimeContract {
+    std::vector<mcpp::manifest::RuntimeRequirement> requirements;
+    std::vector<mcpp::manifest::RuntimeArtifact>    artifacts;
+    mcpp::manifest::LinkIntent                      linkIntent;
+    std::vector<RuntimeCapabilityProvider>           providers;
+};
+
+// Normalize structured and legacy runtime metadata and stamp every fact with
+// the exact package identity that supplied it.  Exported as a pure seam for
+// contract tests and machine-readable tooling; it performs no host probing.
+ResolvedRuntimeContract resolve_runtime_contract(
+    const std::vector<mcpp::modgraph::PackageRoot>& packages);
+
 struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      toolchain;
@@ -155,6 +174,9 @@ struct BuildPlan {
     // binary's RUNPATH (e.g. compat.glx-runtime). Kept separate so static/musl
     // links don't pull the glibc payload dir.
     std::vector<std::filesystem::path> depRuntimeLibraryDirs;
+    std::vector<mcpp::manifest::RuntimeRequirement> runtimeRequirements;
+    std::vector<mcpp::manifest::RuntimeArtifact>    runtimeArtifacts;
+    mcpp::manifest::LinkIntent                      linkIntent;
     // Windows runtime-DLL deployment. On PE (`supports_rpath` is false) a
     // directly-launched .exe cannot RUNPATH-locate a dependency's DLL, so each
     // *.dll found in a dependency's [runtime] library_dir is copied beside the
@@ -176,12 +198,15 @@ struct BuildPlan {
     // (capability, provider package). A named aggregate instead of std::pair:
     // musl-gcc 15.1 modules failed to emit vector<pair<string,string>>'s
     // move-ctor instantiation across the module boundary (release link error).
-    struct CapabilityProvider {
-        std::string capability;
-        std::string provider;
-    };
-    std::vector<CapabilityProvider>    runtimeProviders;
+    std::vector<RuntimeCapabilityProvider> runtimeProviders;
 };
+
+// Merge the generic facts exported by the already-selected xlings
+// RuntimeBinding.  This is data ingestion only: xlings has already selected
+// providers and materialized artifacts before mcpp sees this snapshot.
+void merge_runtime_binding_contract(
+    BuildPlan& plan,
+    const mcpp::platform::runtime::RuntimeBinding& binding);
 
 // Is `p` inside one of `roots`, judged LEXICALLY?
 //
@@ -457,6 +482,167 @@ void append_unique_path(std::vector<std::filesystem::path>& out,
 
 } // namespace
 
+ResolvedRuntimeContract resolve_runtime_contract(
+    const std::vector<mcpp::modgraph::PackageRoot>& packages)
+{
+    ResolvedRuntimeContract out;
+    auto append_string = [](std::vector<std::string>& values, std::string value) {
+        if (!value.empty() && std::ranges::find(values, value) == values.end())
+            values.push_back(std::move(value));
+    };
+    auto absolute_from = [](const std::filesystem::path& root,
+                            const std::filesystem::path& value) {
+        return (value.is_absolute() ? value : root / value).lexically_normal();
+    };
+    auto append_requirement = [&](mcpp::manifest::RuntimeRequirement value) {
+        const bool duplicate = std::ranges::any_of(out.requirements,
+            [&](auto const& existing) {
+                return existing.kind == value.kind
+                    && existing.value == value.value
+                    && existing.phase == value.phase
+                    && existing.requester == value.requester
+                    && existing.required == value.required;
+            });
+        if (!duplicate) out.requirements.push_back(std::move(value));
+    };
+
+    for (auto const& package : packages) {
+        const auto id = mcpp::manifest::package_id(package.manifest.package);
+        auto const& runtime = package.manifest.runtimeConfig;
+
+        for (auto requirement : runtime.requirements) {
+            requirement.requester = id;
+            append_requirement(std::move(requirement));
+        }
+        // One compatibility train: old soname/capability lists are normalized
+        // into the structured requirement shape.  They do NOT imply provider
+        // ownership; only `provides` below creates a provider fact.
+        for (auto const& soname : runtime.dlopenLibs) {
+            append_requirement({
+                .kind = "soname", .value = soname, .phase = "run",
+                .requester = id, .required = true,
+            });
+        }
+        for (auto const& capability : runtime.capabilities) {
+            append_requirement({
+                .kind = "capability", .value = capability, .phase = "run",
+                .requester = id, .required = true,
+            });
+        }
+
+        for (auto artifact : runtime.artifacts) {
+            artifact.provider = id;
+            artifact.path = absolute_from(package.root, artifact.path);
+            const bool duplicate = std::ranges::any_of(out.artifacts,
+                [&](auto const& existing) {
+                    return existing.role == artifact.role
+                        && existing.provider == artifact.provider
+                        && existing.path == artifact.path
+                        && existing.provenance == artifact.provenance
+                        && existing.abi == artifact.abi
+                        && existing.digest == artifact.digest
+                        && existing.hostFingerprint == artifact.hostFingerprint;
+                });
+            if (!duplicate) out.artifacts.push_back(std::move(artifact));
+        }
+
+        for (auto const& capability : runtime.provides) {
+            const bool duplicate = std::ranges::any_of(out.providers,
+                [&](auto const& existing) {
+                    return existing.capability == capability
+                        && existing.provider == id;
+                });
+            if (!duplicate) out.providers.push_back({capability, id});
+        }
+
+        for (auto const& library : runtime.linkIntent.libraries) {
+            const std::filesystem::path asPath(library);
+            const bool explicitPath = !library.starts_with('-')
+                && (asPath.is_absolute() || asPath.has_parent_path()
+                    || asPath.has_extension());
+            append_string(out.linkIntent.libraries,
+                explicitPath ? absolute_from(package.root, asPath).string()
+                             : library);
+        }
+        for (auto const& framework : runtime.linkIntent.frameworks)
+            append_string(out.linkIntent.frameworks, framework);
+        auto append_paths = [&](auto const& input, auto& output) {
+            for (auto const& path : input)
+                append_unique_path(output, absolute_from(package.root, path));
+        };
+        append_paths(runtime.linkIntent.linkLibraryDirs,
+                     out.linkIntent.linkLibraryDirs);
+        append_paths(runtime.linkIntent.transitiveNeededDirs,
+                     out.linkIntent.transitiveNeededDirs);
+        append_paths(runtime.linkIntent.runtimeSearchDirs,
+                     out.linkIntent.runtimeSearchDirs);
+        append_paths(runtime.linkIntent.deployFiles,
+                     out.linkIntent.deployFiles);
+        // Legacy library_dirs means run-time discovery only.  It deliberately
+        // does not enter linkLibraryDirs; callers that need -L must opt into
+        // the structured field.
+        append_paths(runtime.libraryDirs, out.linkIntent.runtimeSearchDirs);
+    }
+    return out;
+}
+
+void merge_runtime_binding_contract(
+    BuildPlan& plan,
+    const mcpp::platform::runtime::RuntimeBinding& binding) {
+    auto package_id = [](const mcpp::xlings::subos::PackageIdentity& value) {
+        return mcpp::manifest::PackageId{
+            .namespace_ = value.namespace_,
+            .name = value.name,
+            .version = value.version,
+            .sourceProvenance = value.source,
+        };
+    };
+
+    std::vector<RuntimeCapabilityProvider> selected;
+    for (auto const& provider : binding.runtimeProviders) {
+        RuntimeCapabilityProvider value{
+            .capability = provider.capability,
+            .provider = package_id(provider.provider),
+        };
+        if (std::ranges::none_of(selected, [&](auto const& existing) {
+                return existing.capability == value.capability
+                    && existing.provider == value.provider;
+            }))
+            selected.push_back(std::move(value));
+    }
+    // xlings' selected providers are authoritative and therefore precede
+    // descriptor-declared fallback/provider facts.
+    for (auto it = selected.rbegin(); it != selected.rend(); ++it) {
+        if (std::ranges::none_of(plan.runtimeProviders, [&](auto const& existing) {
+                return existing.capability == it->capability
+                    && existing.provider == it->provider;
+            }))
+            plan.runtimeProviders.insert(plan.runtimeProviders.begin(), *it);
+    }
+
+    for (auto const& artifact : binding.runtimeArtifacts) {
+        mcpp::manifest::RuntimeArtifact value{
+            .role = artifact.role,
+            .provider = package_id(artifact.provider),
+            .path = artifact.path.lexically_normal(),
+            .provenance = artifact.provenance,
+            .abi = artifact.abi,
+            .digest = artifact.digest,
+            .hostFingerprint = artifact.hostFingerprint,
+        };
+        if (std::ranges::none_of(plan.runtimeArtifacts, [&](auto const& existing) {
+                return existing.role == value.role
+                    && existing.provider == value.provider
+                    && existing.path == value.path
+                    && existing.provenance == value.provenance
+                    && existing.abi == value.abi
+                    && existing.digest == value.digest
+                    && existing.hostFingerprint == value.hostFingerprint;
+            }))
+            plan.runtimeArtifacts.push_back(std::move(value));
+    }
+}
+
 // True if `src` defines a top-level `int main(` / `auto main(` entry point.
 // Comments and string/char/raw-string literals are stripped first, so test
 // fixtures that embed `"int main() {...}"` or R"(int main(){})" don't
@@ -633,56 +819,65 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.stdBmiPath     = stdBmiPath;
     plan.stdObjectPath  = stdObjectPath;
 
-    for (auto const& package : packages) {
-        for (auto const& dir : package.manifest.runtimeConfig.libraryDirs) {
-            auto abs = dir.is_absolute() ? dir : package.root / dir;
-            append_unique_path(plan.runtimeLibraryDirs, abs);
-            append_unique_path(plan.depRuntimeLibraryDirs, abs);
-            // Windows runtime-DLL deployment: stage each *.dll from this dir
-            // beside the produced executable (bin/). The *.dll filter — not a
-            // platform guard — keeps this inert for real .so/.dylib deps, so
-            // non-Windows builds are unchanged. See BuildPlan::DeployFile.
-            std::error_code dirEc;
-            if (std::filesystem::is_directory(abs, dirEc)) {
-                for (auto const& entry :
-                         std::filesystem::directory_iterator(abs, dirEc)) {
-                    if (!entry.is_regular_file()) continue;
-                    auto ext = entry.path().extension().string();
-                    std::ranges::transform(ext, ext.begin(),
-                        [](unsigned char c){ return std::tolower(c); });
-                    if (ext != ".dll") continue;
-                    std::filesystem::path dest =
-                        std::filesystem::path("bin") / entry.path().filename();
-                    if (std::ranges::none_of(plan.runtimeDeployFiles,
-                            [&](auto const& d){ return d.dest == dest; }))
-                        plan.runtimeDeployFiles.push_back({entry.path(), dest});
-                }
+    auto runtimeContract = resolve_runtime_contract(packages);
+    plan.runtimeRequirements = std::move(runtimeContract.requirements);
+    plan.runtimeArtifacts = std::move(runtimeContract.artifacts);
+    plan.linkIntent = std::move(runtimeContract.linkIntent);
+    plan.runtimeProviders = std::move(runtimeContract.providers);
+
+    for (auto const& dir : plan.linkIntent.runtimeSearchDirs) {
+        append_unique_path(plan.runtimeLibraryDirs, dir);
+        append_unique_path(plan.depRuntimeLibraryDirs, dir);
+    }
+    for (auto const& requirement : plan.runtimeRequirements) {
+        // Optional requirements remain first-class provenance in
+        // resolution.json, but they cannot become hard ABI/doctor inputs.
+        if (!requirement.required) continue;
+        if (requirement.kind == "soname") {
+            if (std::ranges::find(plan.runtimeDlopenLibs, requirement.value)
+                == plan.runtimeDlopenLibs.end())
+                plan.runtimeDlopenLibs.push_back(requirement.value);
+        } else if (requirement.kind == "capability") {
+            if (std::ranges::find(plan.runtimeCapabilities, requirement.value)
+                == plan.runtimeCapabilities.end())
+                plan.runtimeCapabilities.push_back(requirement.value);
+        }
+    }
+
+    auto add_deploy = [&](const std::filesystem::path& source)
+        -> std::optional<std::string> {
+        const auto normalized = source.lexically_normal();
+        const auto dest = std::filesystem::path("bin") / source.filename();
+        auto existing = std::ranges::find_if(plan.runtimeDeployFiles,
+            [&](auto const& value) { return value.dest == dest; });
+        if (existing != plan.runtimeDeployFiles.end()) {
+            if (existing->source.lexically_normal() != normalized) {
+                return std::format(
+                    "runtime deploy collision: '{}' and '{}' both target '{}'",
+                    existing->source.string(), normalized.string(), dest.string());
             }
+            return std::nullopt;
         }
-        for (auto const& lib : package.manifest.runtimeConfig.dlopenLibs) {
-            if (std::ranges::find(plan.runtimeDlopenLibs, lib) == plan.runtimeDlopenLibs.end())
-                plan.runtimeDlopenLibs.push_back(lib);
-        }
-        for (auto const& cap : package.manifest.runtimeConfig.capabilities) {
-            if (std::ranges::find(plan.runtimeCapabilities, cap) == plan.runtimeCapabilities.end())
-                plan.runtimeCapabilities.push_back(cap);
-        }
+        plan.runtimeDeployFiles.push_back({normalized, dest});
+        return std::nullopt;
+    };
+    // Structured deploy files are explicit and platform-neutral.  Legacy
+    // library_dirs keeps its one-train DLL discovery behavior below.
+    for (auto const& source : plan.linkIntent.deployFiles) {
+        if (auto collision = add_deploy(source))
+            return std::unexpected(std::move(*collision));
     }
-    // Provider mapping (capability -> package), strongest first: packages
-    // that explicitly `provides` a capability win over packages that merely
-    // list it in `capabilities` (weak/back-compat providers). Downstream
-    // lookups take the first match.
-    for (auto const& package : packages) {
-        for (auto const& cap : package.manifest.runtimeConfig.provides)
-            plan.runtimeProviders.push_back({cap, package.manifest.package.name});
-    }
-    for (auto const& package : packages) {
-        for (auto const& cap : package.manifest.runtimeConfig.capabilities) {
-            bool dup = false;
-            for (auto& pr : plan.runtimeProviders)
-                if (pr.capability == cap
-                    && pr.provider == package.manifest.package.name) { dup = true; break; }
-            if (!dup) plan.runtimeProviders.push_back({cap, package.manifest.package.name});
+    for (auto const& dir : plan.linkIntent.runtimeSearchDirs) {
+        std::error_code dirEc;
+        if (!std::filesystem::is_directory(dir, dirEc)) continue;
+        for (auto const& entry : std::filesystem::directory_iterator(dir, dirEc)) {
+            if (!entry.is_regular_file()) continue;
+            auto ext = entry.path().extension().string();
+            std::ranges::transform(ext, ext.begin(),
+                [](unsigned char c){ return std::tolower(c); });
+            if (ext != ".dll") continue;
+            if (auto collision = add_deploy(entry.path()))
+                return std::unexpected(std::move(*collision));
         }
     }
     // The same private runtime directories embedded as executable RUNPATH are

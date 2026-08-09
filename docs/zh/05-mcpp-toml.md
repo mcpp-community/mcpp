@@ -671,27 +671,69 @@ mcpp cache clean [--deps|--std|--all|--legacy]
 `mcpp cache verify` 另外会报告任何逃出条目的记录地址,
 使这条不变量可以离线审计。
 
-### 2.11 `[runtime]` — 主机运行时能力
+### 2.11 `[runtime]` — provider-neutral 运行时契约
 
 ```toml
 [runtime]
-library_dirs = ["vendor/lib"]            # 烤进产物 RUNPATH 的目录(相对包根)
-dlopen_libs  = ["libGL.so.1"]            # 运行期 dlopen 的 soname(doctor 校验)
-capabilities = ["opengl.glx.driver"]     # 需要的主机能力(开放命名空间)
-provides     = ["opengl.glx.driver"]     # 显式声明本包兑现的能力(强 provider)
+requirements = [
+  { kind = "capability", value = "display.present", phase = "run", required = true },
+  { kind = "soname", value = "libwidget.so.1", phase = "link", required = false },
+]
+provides = ["display.present"]
+artifacts = [
+  { role = "library", path = "runtime/libwidget.so.1", provenance = "payload", abi = "elf-x86_64", digest = "sha256:...", host_fingerprint = "host-1" },
+]
 
-# 显式 provider 覆盖(三档旋钮的"显式"档)
-[runtime."opengl.glx.driver"]
-provider = "compat.glx-runtime"
+# 平台无关 LinkIntent;路径相对本包根目录。
+libraries                = ["widget"]
+link_library_dirs        = ["lib"]
+transitive_needed_dirs   = ["runtime/closure"]
+runtime_search_dirs      = ["runtime"]
+frameworks               = ["WindowKit"]
+deploy_files             = ["bin/widget.dll"]
+
+# 多 provider 时使用精确 canonical identity。
+[runtime."display.present"]
+provider = "acme.widget-runtime@2.0.0"
 ```
 
-- **provider 选择**:声明 `provides` 的包(强)优先于仅在 `capabilities` 列出
-  能力的包(弱,向后兼容);`[runtime.<cap>] provider=` 显式覆盖最优先,
-  指向依赖图中不存在的 provider 时给出 warning。
-- 解析结果可经 `mcpp why runtime`、`mcpp self doctor` 与构建产物
-  `target/<triple>/<fp>/resolution.json` 查看(默认不是魔法)。
-- 能力命名约定:分层小写 `domain.sub.role`(如 `opengl.glx.driver`、
-  `x11.display`)与前缀类 `abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
+`requirements` 记录非空 `kind`/`value`、`link` 或 `run` 阶段,以及是否强制
+(`required` 默认 `true`)。`artifacts` 必须含 `role`、`path`、`provenance`;
+可选 requirement 仍保留为 provenance,但不会进入硬 ABI/doctor 输入。
+`libraries` 中显式的相对文件路径按声明包根目录解析;裸逻辑名仍按目标平台拼成库名。
+`abi`、`digest`、`host_fingerprint` 是可选证据。requester/provider 身份不由描述符
+填写:resolver 会用含 namespace、version、source/index provenance 的精确 PackageId
+给 requirement 和 artifact 盖章。因此描述符不能冒充别的包,
+`alpha.backend` 也不会与 `beta.backend` 混同。
+
+只有 `provides` 会创建描述符侧 provider fact;需要某能力绝不会让 requester 自动
+成为 provider。显式 `[runtime.<capability>] provider=` 接受 canonical
+`namespace.name@version`(或唯一无歧义的兼容拼写);不存在或同短名歧义都会 hard error。
+xlings SubOS 已选择的 provider/artifact fact 排在描述符 fallback 前。图形栈、driver、
+ICD、WSL 与 host provenance 选择由 xlings/xim 负责;mcpp 只记录、消费通用结果,
+不探测 GPU 硬件。
+
+LinkIntent 把不同发现阶段分开:
+
+| 字段 | ELF | Mach-O | PE/Windows |
+|---|---|---|---|
+| `link_library_dirs` | `-L` | `-L` | `-L` 或 `/LIBPATH:` |
+| `transitive_needed_dirs` | `-Wl,-rpath-link` | 无 flag | 无 flag |
+| `runtime_search_dirs` | 只进 RUNPATH/rpath,绝不进 `-L` | 只进 rpath | 无 flag |
+| `frameworks` | 无 flag | `-framework` | 无 flag |
+| `deploy_files` | copy edge | copy edge | 复制到产物旁,绝不成为 linker flag |
+
+一个兼容发布周期内仍读取旧字段:`library_dirs` 只映射到运行期搜索;
+`dlopen_libs` 映射为必需的 run-phase soname requirement;`capabilities` 映射为必需的
+run-phase capability requirement。这些旧字段都不会创建 provider。
+
+`target/<triple>/<fp>/resolution.json` schema 2 持久化 RuntimeBinding、canonical
+requirements/providers/artifacts、LinkIntent、平台搜索机制与链接后 verdict。
+`mcpp why runtime` 只是最新存储文件的纯解释器:不重新解析 manifest,也不启动图形/
+硬件 probe。需要重新诊断所选 host provider 时使用 `xlings doctor`。
+
+能力名使用分层小写 `domain.sub.role`(如 `display.present`)和前缀类
+`abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
 
 ### 2.12 `[package] platforms` — 平台声明
 

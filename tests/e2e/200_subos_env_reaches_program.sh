@@ -13,6 +13,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # truthful; the fixture changes only environment declarations.
 default_manifest="$MCPP_HOME/registry/subos/default/.xlings.json"
 [[ -f "$default_manifest" ]] || fail "mcpp default SubOS is missing"
+default_subos=$(dirname "$default_manifest")
 runtime=$(sed -n 's/.*"runtime"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
     "$default_manifest" | head -1)
 [[ -n "$runtime" ]] || fail "default SubOS has no runtime identity"
@@ -37,6 +38,10 @@ EOF
 
 subos="$PWD/.mcpp/.xlings/subos/probe"
 mkdir -p "$subos/usr/lib/dri"
+# A named SubOS is a physical development-OS view, not only metadata. Reuse
+# the managed default's exact runtime payload so this fixture varies only the
+# selected environment declarations.
+ln -s "$default_subos/lib" "$subos/lib"
 write_contract() {
     local suffix=$1
     cat >"$subos/.xlings.json" <<EOF

@@ -44,6 +44,12 @@ struct Package {
     std::vector<std::string>    authors;
     std::string                 repo;
     std::vector<std::string>    platforms;     // declared supported platforms (CI matrix hint)
+    // Resolution source carried into machine-readable runtime provenance.
+    // Version dependencies use `index+<name>@<snapshot>`; path/git packages
+    // use their corresponding immutable-or-local source spelling.  Parsing a
+    // standalone manifest leaves this empty; prepare_build fills it once the
+    // resolver knows which index/source actually answered.
+    std::string                 sourceProvenance;
 };
 
 struct Language {
@@ -452,18 +458,95 @@ struct BuildConfig : BuildInputs {
     std::string                         cacheMode;
 };
 
-// `[runtime]` — requirements needed when launching built binaries.
+// Canonical package identity used by runtime requirements/artifacts.  A short
+// name is never sufficient here: two indices may legitimately contain the
+// same name, and provenance must still be attributable after the build.
+struct PackageId {
+    std::string namespace_;
+    std::string name;
+    std::string version;
+    std::string sourceProvenance;
+
+    std::string canonical() const {
+        std::string out;
+        if (!namespace_.empty()) {
+            out += namespace_;
+            out += '.';
+        }
+        out += name;
+        if (!version.empty()) {
+            out += '@';
+            out += version;
+        }
+        return out;
+    }
+
+    auto operator<=>(const PackageId&) const = default;
+};
+
+inline PackageId package_id(const Package& package) {
+    PackageId out;
+    out.namespace_ = package.namespace_.empty()
+        ? std::string(kDefaultNamespace) : package.namespace_;
+    out.name = package.name;
+    const auto prefix = out.namespace_ + ".";
+    if (out.name.starts_with(prefix) && out.name.size() > prefix.size())
+        out.name.erase(0, prefix.size());
+    out.version = package.version;
+    out.sourceProvenance = package.sourceProvenance;
+    return out;
+}
+
+// Provider-neutral runtime facts.  `requester`/`provider` are resolver-owned:
+// descriptors declare the generic fact, then BuildPlan stamps the exact
+// PackageId that supplied it.  This prevents a package from spoofing another
+// package's identity and keeps same-short-name providers distinguishable.
+struct RuntimeRequirement {
+    std::string kind;
+    std::string value;
+    std::string phase = "run";       // link | run
+    PackageId   requester;
+    bool        required = true;
+};
+
+struct RuntimeArtifact {
+    std::string           role;
+    PackageId             provider;
+    std::filesystem::path path;
+    std::string           provenance;
+    std::string           abi;
+    std::string           digest;
+    std::string           hostFingerprint;
+};
+
+// Platform-neutral link intent.  Platform spelling belongs to flags.cppm;
+// notably runtimeSearchDirs are not link-library search paths.
+struct LinkIntent {
+    std::vector<std::string>           libraries;
+    std::vector<std::filesystem::path> linkLibraryDirs;
+    std::vector<std::filesystem::path> transitiveNeededDirs;
+    std::vector<std::filesystem::path> runtimeSearchDirs;
+    std::vector<std::string>           frameworks;
+    std::vector<std::filesystem::path> deployFiles;
+};
+
+// `[runtime]` — requirements needed when linking/launching built binaries.
 struct RuntimeConfig {
     std::vector<std::filesystem::path> libraryDirs;   // relative to package root
     std::vector<std::string>           dlopenLibs;    // runtime-loaded sonames
     std::vector<std::string>           capabilities;  // host/system capabilities REQUIRED
-    // Capabilities this package explicitly FULFILS (strong provider claim).
-    // Packages that merely list a capability in `capabilities` are weak
-    // providers (back-compat); provides-declarers win provider selection.
+    // Capabilities this package explicitly FULFILS. Only this field creates a
+    // descriptor-owned provider fact; legacy `capabilities` is a requirement
+    // and can never promote its requester into a provider.
     std::vector<std::string>           provides;
     // [runtime.<capability>] provider = "<pkg>" — explicit provider selection
     // (the three-tier knob: default/auto → explicit override).
     std::map<std::string, std::string> providerOverrides;
+    // New structured contract.  The four legacy vectors above remain readable
+    // for one compatibility train and are normalized by BuildPlan.
+    std::vector<RuntimeRequirement> requirements;
+    std::vector<RuntimeArtifact>    artifacts;
+    LinkIntent                      linkIntent;
 };
 
 // `[xlings]` — the project's build ENVIRONMENT (L-1). The subsection names mirror

@@ -20,6 +20,7 @@ import mcpp.fallback.xlings_binary;
 import mcpp.fallback.install_integrity;
 import mcpp.fetcher.progress;
 import mcpp.home;
+import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.platform.elf_runtime;
@@ -329,7 +330,7 @@ export int doctor_report() {
             for (auto& cap : plan.runtimeCapabilities) {
                 std::string provider;
                 for (auto& [c, p] : plan.runtimeProviders)
-                    if (c == cap) { provider = p; break; }
+                    if (c == cap) { provider = p.canonical(); break; }
                 ok(std::format("{}: required (provider {})",
                                cap, provider.empty() ? "?" : provider));
             }
@@ -482,14 +483,166 @@ export int doctor_report() {
     return errors ? 2 : (warns ? 1 : 0);
 }
 
+std::optional<std::pair<std::filesystem::path, nlohmann::json>>
+latest_runtime_resolution(const std::filesystem::path& projectRoot) {
+    const auto target = projectRoot / "target";
+    std::error_code ec;
+    if (!std::filesystem::is_directory(target, ec)) return std::nullopt;
+    std::filesystem::path newest;
+    std::filesystem::file_time_type newestTime{};
+    bool found = false;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             target, std::filesystem::directory_options::skip_permission_denied, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator{};
+         it.increment(ec)) {
+        if (!it->is_regular_file(ec)
+            || it->path().filename() != "resolution.json") continue;
+        auto time = it->last_write_time(ec);
+        if (ec) { ec.clear(); continue; }
+        if (!found || time > newestTime
+            || (time == newestTime && it->path() < newest)) {
+            found = true;
+            newest = it->path();
+            newestTime = time;
+        }
+    }
+    if (!found) return std::nullopt;
+    std::ifstream input(newest);
+    auto doc = nlohmann::json::parse(input, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) return std::nullopt;
+    return std::pair{std::move(newest), std::move(doc)};
+}
+
+int print_stored_runtime_resolution() {
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    if (!root) {
+        std::println(stderr,
+            "error: no mcpp.toml found; `mcpp why runtime` only reads a project's stored resolution");
+        return 2;
+    }
+    auto stored = latest_runtime_resolution(*root);
+    if (!stored) {
+        std::println(stderr,
+            "error: no stored runtime resolution; run `mcpp build` once");
+        return 2;
+    }
+    auto const& [path, doc] = *stored;
+    auto runtime = doc.find("runtime");
+    if (runtime == doc.end() || !runtime->is_object()) {
+        std::println(stderr, "error: {} has no runtime object", path.string());
+        return 2;
+    }
+    std::println("runtime resolution: {}", path.string());
+    if (auto binding = runtime->find("binding");
+        binding != runtime->end() && binding->is_object()) {
+        std::println("binding: {} via {} (contract {})",
+            binding->value("runtime_id", "?"),
+            binding->value("provider_id", "?"),
+            binding->value("contract_hash", "?"));
+    }
+
+    std::println("requirements:");
+    auto requirements = runtime->find("requirements");
+    if (requirements == runtime->end() || !requirements->is_array()
+        || requirements->empty()) {
+        std::println("  (none)");
+    } else {
+        for (auto const& requirement : *requirements) {
+            if (!requirement.is_object()) continue;
+            std::string requester = "?";
+            if (auto id = requirement.find("requester");
+                id != requirement.end() && id->is_object())
+                requester = id->value("canonical", "?");
+            std::println("  - {}:{} [{}] <- {} ({})",
+                requirement.value("kind", "?"),
+                requirement.value("value", "?"),
+                requirement.value("phase", "?"), requester,
+                requirement.value("required", true) ? "required" : "optional");
+        }
+    }
+
+    std::println("providers:");
+    auto providers = runtime->find("providers");
+    if (providers == runtime->end() || !providers->is_array()
+        || providers->empty()) {
+        std::println("  (none resolved)");
+    } else {
+        for (auto const& entry : *providers) {
+            if (!entry.is_object()) continue;
+            std::string provider = "?";
+            std::string source;
+            if (auto id = entry.find("provider");
+                id != entry.end() && id->is_object()) {
+                provider = id->value("canonical", "?");
+                source = id->value("source", "");
+            }
+            std::println("  - {} -> {}{}{}{}", entry.value("capability", "?"),
+                provider, source.empty() ? "" : " [", source,
+                source.empty() ? "" : "]");
+        }
+    }
+
+    std::println("artifacts:");
+    auto artifacts = runtime->find("artifacts");
+    if (artifacts == runtime->end() || !artifacts->is_array()
+        || artifacts->empty()) {
+        std::println("  (none declared)");
+    } else {
+        for (auto const& artifact : *artifacts) {
+            if (!artifact.is_object()) continue;
+            std::string provider = "?";
+            if (auto id = artifact.find("provider");
+                id != artifact.end() && id->is_object())
+                provider = id->value("canonical", "?");
+            std::println("  - {} {} <- {} [{}; abi={}]",
+                artifact.value("role", "?"), artifact.value("path", "?"),
+                provider, artifact.value("provenance", "?"),
+                artifact.value("abi", "?"));
+        }
+    }
+
+    if (auto search = runtime->find("search");
+        search != runtime->end() && search->is_object()) {
+        std::println("search: format={} link={} transitive={} runtime={}",
+            search->value("format", "?"), search->value("link_library", "?"),
+            search->value("transitive_needed", "?"),
+            search->value("runtime", "?"));
+    }
+    if (auto validation = runtime->find("validation");
+        validation != runtime->end() && validation->is_object()) {
+        std::println("validation: {} (source {})",
+            validation->value("status", "?"),
+            validation->value("source", "?"));
+        if (auto checked = validation->find("artifacts");
+            checked != validation->end() && checked->is_array()) {
+            for (auto const& artifact : *checked) {
+                if (!artifact.is_object()) continue;
+                std::println("  - {}: {}", artifact.value("path", "?"),
+                             artifact.value("status", "?"));
+                if (auto diagnostics = artifact.find("diagnostics");
+                    diagnostics != artifact.end() && diagnostics->is_array())
+                    for (auto const& diagnostic : *diagnostics)
+                        if (diagnostic.is_string())
+                            std::println("      {}", diagnostic.get<std::string>());
+            }
+        }
+    }
+    std::println("provider and host-service re-diagnostics are owned by xlings; run `xlings doctor`");
+    return 0;
+}
+
 // `mcpp why [topic]` / `mcpp resolve --explain`.
 export int why_report(const std::string& topic) {
     const bool all = topic.empty() || topic == "all";
 
+    // The dedicated runtime view is a pure interpreter of the build's stored
+    // facts: no dependency resolution, xlings invocation, hardware query, or
+    // artifact re-parse is allowed on this path.
+    if (topic == "runtime") return print_stored_runtime_resolution();
+
     auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
     auto& tc   = ctx->tc;
-    auto& plan = ctx->plan;
 
     if (all || topic == "toolchain") {
         const auto prof = mcpp::toolchain::abi_profile(tc);
@@ -506,28 +659,7 @@ export int why_report(const std::string& topic) {
             std::println("  declared platforms: {}  (CI matrix hint)", ps);
         }
     }
-    if (all || topic == "runtime") {
-        std::println("runtime library dirs (baked into binary RUNPATH):");
-        if (plan.runtimeLibraryDirs.empty()) std::println("  (none)");
-        for (auto& d : plan.runtimeLibraryDirs) {
-            auto s = d.string();
-            std::string note;
-            if (s.find("glx_runtime") != std::string::npos)
-                note = "   <- host GL/GLX runtime (compat.glx-runtime)";
-            else if (s.find("glibc") != std::string::npos) note = "   <- glibc";
-            else if (s.find("xim-x-gcc") != std::string::npos
-                  || s.find("xim-x-llvm") != std::string::npos) note = "   <- toolchain";
-            std::println("  - {}{}", s, note);
-        }
-        if (!plan.runtimeCapabilities.empty()) {
-            std::println("runtime capabilities (provider):");
-            for (auto& cap : plan.runtimeCapabilities) {
-                std::string prov;
-                for (auto& [c, p] : plan.runtimeProviders) if (c == cap) { prov = p; break; }
-                std::println("  - {}  -> {}", cap, prov.empty() ? "?" : prov);
-            }
-        }
-    }
+    if (all) (void)print_stored_runtime_resolution();
     if (all || topic == "deps") {
         // Which index answered, and how stale it is. Since #315 a build only
         // refreshes on a resolution miss, so "why did I get this version"

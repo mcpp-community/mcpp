@@ -14,6 +14,7 @@ export module mcpp.build.flags;
 import std;
 import mcpp.build.distribution;
 import mcpp.build.plan;
+import mcpp.manifest.types;
 import mcpp.modgraph.scanner;
 import mcpp.platform;
 import mcpp.toolchain.clang;
@@ -63,6 +64,15 @@ struct CompileFlags {
         return ldStdlibByRole[static_cast<std::size_t>(r)];
     }
 };
+
+enum class LinkIntentFlavor { Elf, MachO, PeGnu, PeMsvc };
+
+// Spell a provider-neutral LinkIntent for one output format.  Kept pure so
+// every platform contract can be asserted on every CI host.  deployFiles are
+// intentionally absent: the backend emits copy edges, never linker flags.
+std::string render_link_intent_flags(
+    const mcpp::manifest::LinkIntent& intent,
+    LinkIntentFlavor flavor);
 
 CompileFlags compute_flags(const BuildPlan& plan);
 
@@ -268,6 +278,62 @@ std::string shell_quote_arg(std::string_view arg) {
     }
 }
 
+std::string render_link_intent_flags(
+    const mcpp::manifest::LinkIntent& intent,
+    LinkIntentFlavor flavor) {
+    std::string out;
+    auto token = [](std::string value) {
+        return shell_quote_arg(escape_ninja_chars(value));
+    };
+    auto path_token = [&](std::string_view prefix,
+                          const std::filesystem::path& path) {
+        return token(std::string(prefix) + path.string());
+    };
+
+    for (auto const& dir : intent.linkLibraryDirs) {
+        out += ' ';
+        out += path_token(flavor == LinkIntentFlavor::PeMsvc
+                             ? "/LIBPATH:" : "-L", dir);
+    }
+    if (flavor == LinkIntentFlavor::Elf) {
+        for (auto const& dir : intent.transitiveNeededDirs) {
+            out += ' ';
+            out += path_token("-Wl,-rpath-link,", dir);
+        }
+    }
+    if (flavor == LinkIntentFlavor::Elf
+        || flavor == LinkIntentFlavor::MachO) {
+        for (auto const& dir : intent.runtimeSearchDirs) {
+            out += ' ';
+            out += path_token("-Wl,-rpath,", dir);
+        }
+    }
+
+    for (auto const& library : intent.libraries) {
+        if (library.empty()) continue;
+        out += ' ';
+        const std::filesystem::path asPath(library);
+        const bool explicitToken = library.starts_with('-')
+            || library.starts_with('/') || asPath.has_parent_path()
+            || asPath.has_extension();
+        if (explicitToken) {
+            out += token(library);
+        } else if (flavor == LinkIntentFlavor::PeMsvc) {
+            out += token(library + ".lib");
+        } else {
+            out += token("-l" + library);
+        }
+    }
+    if (flavor == LinkIntentFlavor::MachO) {
+        for (auto const& framework : intent.frameworks) {
+            if (framework.empty()) continue;
+            out += " -framework ";
+            out += token(framework);
+        }
+    }
+    return out;
+}
+
 CompileFlags compute_flags(const BuildPlan& plan) {
     CompileFlags f;
 
@@ -415,6 +481,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // is only assemblable by its own x86_64-w64-mingw32-as.
     bool isMuslTc  = mcpp::toolchain::is_musl_target(plan.toolchain);
     bool isMingwTc = mcpp::toolchain::is_mingw_target(plan.toolchain);
+    const auto linkIntentFlavor = [&] {
+        if (isMingwTc) return LinkIntentFlavor::PeGnu;
+        if (isMsvcDialect) return LinkIntentFlavor::PeMsvc;
+        auto triple = plan.toolchain.targetTriple;
+        std::ranges::transform(triple, triple.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        if (triple.find("darwin") != std::string::npos
+            || triple.find("apple") != std::string::npos)
+            return LinkIntentFlavor::MachO;
+        if (triple.find("windows") != std::string::npos
+            || triple.find("mingw") != std::string::npos)
+            return LinkIntentFlavor::PeGnu;
+        if (triple.empty()) {
+            if constexpr (mcpp::platform::is_windows)
+                return LinkIntentFlavor::PeGnu;
+            if constexpr (mcpp::platform::needs_explicit_libcxx)
+                return LinkIntentFlavor::MachO;
+        }
+        return LinkIntentFlavor::Elf;
+    }();
+    const std::string link_intent_ld =
+        render_link_intent_flags(plan.linkIntent, linkIntentFlavor);
     std::filesystem::path binutilsBin;
     if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++") {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
@@ -713,14 +801,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             runtime_dirs += " -L" + escape_path(dir);
             runtime_dirs += " -Wl,-rpath," + escape_path(dir);
         }
-        // ...plus dependency packages' [runtime] library_dirs (e.g.
-        // compat.glx-runtime's host-GL passthrough), so dlopen()'d host libs
-        // (libGL/libGLX) are reachable at run time. Only the dep dirs — NOT the
-        // glibc payload dir — so static/musl links stay clean.
-        for (auto& dir : plan.depRuntimeLibraryDirs) {
-            runtime_dirs += " -L" + escape_path(dir);
-            runtime_dirs += " -Wl,-rpath," + escape_path(dir);
-        }
+        // Dependency/runtime provider search comes from LinkIntent and is
+        // rendered separately.  In particular runtimeSearchDirs contributes
+        // RUNPATH only; it must never become a link-time -L path.
     }
 
     // For Clang with payload paths: the payload C runtime — -B so the driver
@@ -778,7 +861,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string mingw_stdexp;
         if (caps.stdlib_id == "libstdc++")
             mingw_stdexp = " -lstdc++exp";
-        f.ld = std::format("{}{}{}", user_ldflags, mingw_stdexp, link_extra);
+        f.ld = std::format("{}{}{}{}", link_intent_ld, user_ldflags,
+                           mingw_stdexp, link_extra);
         return f;
     }
 
@@ -789,10 +873,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // ldflags pass through verbatim; GNU link_extra (-flto/-s) does
             // not apply.
             f.ldBinary = mcpp::toolchain::link_tool(plan.toolchain);
-            std::string libpaths;
-            for (auto& dir : plan.depRuntimeLibraryDirs)
-                libpaths += " /LIBPATH:" + escape_path(dir);
-            f.ld = libpaths + user_ldflags;
+            f.ld = link_intent_ld + user_ldflags;
             return f;
         }
         // PE link, MSVC-ABI Clang (native MinGW is handled by the target-keyed
@@ -832,7 +913,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //
         // Native cl.exe (isMsvcDialect, returned above) keeps link.exe: there
         // the response file is ours, and 2026.8.5.3 already fixed it.
-        f.ld = std::format(" -fuse-ld=lld{}{}", user_ldflags, link_extra);
+        f.ld = std::format(" -fuse-ld=lld{}{}{}", link_intent_ld,
+                           user_ldflags, link_extra);
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         // macOS. The C++ runtime itself is decided by the contract table above
         // (dist::Format::MachO) and rides unit_ldflags; what is left here is
@@ -871,8 +953,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string macos_sdk;
         if (auto sdk = mcpp::platform::macos::sdk_path())
             macos_sdk = " -isysroot " + escape_path(*sdk);
-        f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}", full_static,
-                           b_flag, macos_sdk, version_min, user_ldflags, link_extra);
+        f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}{}", full_static,
+                           b_flag, macos_sdk, version_min, link_intent_ld,
+                           user_ldflags, link_extra);
     } else {
         // libatomic: 16-byte / oversized std::atomic needs the out-of-line
         // __atomic_* libcalls from libatomic, which the driver won't add on
@@ -881,8 +964,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // actually being present (see atomic_link_flag).
         std::string atomic_ld = atomic_link_flag(plan.toolchain.linkRuntimeDirs,
                                                  !full_static.empty());
-        f.ld = std::format("{}{}{}{}{}{}{}{}", full_static, link_toolchain_flags, b_flag,
-                           runtime_dirs, atomic_ld, payload_ld, user_ldflags, link_extra);
+        f.ld = std::format("{}{}{}{}{}{}{}{}{}", full_static,
+                           link_toolchain_flags, b_flag, runtime_dirs,
+                           link_intent_ld, atomic_ld, payload_ld,
+                           user_ldflags, link_extra);
     }
 
     return f;

@@ -308,6 +308,55 @@ std::string canonical_package_build_metadata(
         s += pkg.manifest.package.name;
         s += "@";
         s += pkg.manifest.package.version;
+        s += " source=";
+        s += pkg.manifest.package.sourceProvenance;
+        auto const& runtime = pkg.manifest.runtimeConfig;
+        for (auto const& requirement : runtime.requirements) {
+            s += " runtime-need:";
+            s += requirement.kind;
+            s += ':';
+            s += requirement.value;
+            s += ':';
+            s += requirement.phase;
+            s += requirement.required ? ":required" : ":optional";
+        }
+        for (auto const& artifact : runtime.artifacts) {
+            s += " runtime-artifact:";
+            s += artifact.role;
+            s += ':';
+            s += artifact.path.generic_string();
+            s += ':';
+            s += artifact.provenance;
+            s += ':';
+            s += artifact.abi;
+            s += ':';
+            s += artifact.digest;
+            s += ':';
+            s += artifact.hostFingerprint;
+        }
+        for (auto const& value : runtime.linkIntent.libraries)
+            s += " link-library:" + value;
+        for (auto const& value : runtime.linkIntent.linkLibraryDirs)
+            s += " link-dir:" + value.generic_string();
+        for (auto const& value : runtime.linkIntent.transitiveNeededDirs)
+            s += " needed-dir:" + value.generic_string();
+        for (auto const& value : runtime.linkIntent.runtimeSearchDirs)
+            s += " runtime-dir:" + value.generic_string();
+        for (auto const& value : runtime.linkIntent.frameworks)
+            s += " framework:" + value;
+        for (auto const& value : runtime.linkIntent.deployFiles)
+            s += " deploy:" + value.generic_string();
+        // Legacy fields remain fingerprinted while they are readable.
+        for (auto const& value : runtime.libraryDirs)
+            s += " legacy-runtime-dir:" + value.generic_string();
+        for (auto const& value : runtime.dlopenLibs)
+            s += " legacy-soname:" + value;
+        for (auto const& value : runtime.capabilities)
+            s += " legacy-capability:" + value;
+        for (auto const& value : runtime.provides)
+            s += " legacy-provides:" + value;
+        for (auto const& [capability, provider] : runtime.providerOverrides)
+            s += " provider-override:" + capability + '=' + provider;
         if (!pkg.manifest.buildConfig.cStandard.empty()) {
             s += " c_standard=";
             s += pkg.manifest.buildConfig.cStandard;
@@ -1081,6 +1130,10 @@ prepare_build(bool print_fingerprint,
     {
         std::error_code wdEc;
         std::filesystem::create_directories(workRoot, wdEc);
+    }
+    if (m->package.sourceProvenance.empty()) {
+        m->package.sourceProvenance =
+            "path+" + root->lexically_normal().generic_string();
     }
 
     // A `compat`-form (Form B) package's sources live under a wrap directory
@@ -3588,6 +3641,12 @@ prepare_build(bool print_fingerprint,
                     // must be prefixed by package name") accepts the
                     // rewritten sources.
                     stagedManifest.package.name = mangled;
+                    if (stagedManifest.package.namespace_.empty()) {
+                        stagedManifest.package.namespace_ = key.ns.empty()
+                            ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
+                    }
+                    stagedManifest.package.sourceProvenance = std::format(
+                        "index+{}@{}", cache_index_name(key.ns), spec.version);
                     // Absolutize secondary's include_dirs against its original
                     // install root so the staged copy still finds headers.
                     for (auto& inc : stagedManifest.buildConfig.includeDirs) {
@@ -3682,6 +3741,12 @@ prepare_build(bool print_fingerprint,
                             expectedShort));
                     }
                 }
+                if (newManifest.package.namespace_.empty()) {
+                    newManifest.package.namespace_ = key.ns.empty()
+                        ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
+                }
+                newManifest.package.sourceProvenance = std::format(
+                    "index+{}@{}", cache_index_name(key.ns), *merged);
 
                 removeLinkFlags(it->second.linkFlagsAdded);
                 auto linkFlagsAdded = propagateLinkFlags(newRoot, newManifest);
@@ -3955,6 +4020,26 @@ prepare_build(bool print_fingerprint,
                     "dependency '{}' resolved to package '{}' (mismatch with declared name '{}')",
                     name, dep_manifest->package.name, expectedShort));
             }
+        }
+
+        // Stamp the identity with the resolver's exact coordinate and source.
+        // A descriptor that omitted namespace inherits the coordinate that
+        // answered it; otherwise two indices containing the same short name
+        // collapse in runtime provenance even though resolution distinguished
+        // them correctly.
+        if (dep_manifest->package.namespace_.empty()) {
+            dep_manifest->package.namespace_ = key.ns.empty()
+                ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
+        }
+        if (sourceKind == "version") {
+            dep_manifest->package.sourceProvenance = std::format(
+                "index+{}@{}", cache_index_name(key.ns), spec.version);
+        } else if (sourceKind == "git") {
+            dep_manifest->package.sourceProvenance = std::format(
+                "git+{}#{}={}", spec.git, spec.gitRefKind, spec.gitRev);
+        } else {
+            dep_manifest->package.sourceProvenance =
+                "path+" + dep_root.lexically_normal().generic_string();
         }
 
         // Stage 2a: merge this dependency's active feature-deps into its own
@@ -5063,6 +5148,8 @@ prepare_build(bool print_fingerprint,
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
     ctx.plan.runtimeBinding = runtimeBindingSnapshot;
+    mcpp::build::merge_runtime_binding_contract(
+        ctx.plan, runtimeBindingSnapshot);
     ctx.plan.compileDbPath = workRoot / "compile_commands.json";
     // GCC: a clean `*link:` for this build, so the payload's specs cannot
     // inject other homes' rpath entries into the artifact. AFTER the plan is
@@ -5987,23 +6074,47 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    // Apply [runtime.<capability>] provider = "<pkg>" overrides: prefer the
-    // named provider for matching capabilities (capability name prefix match).
-    // Warn if the named provider isn't in the dependency graph.
+    // Apply [runtime.<capability>] provider = "<pkg>" overrides. Canonical
+    // identity wins; the old short spelling is accepted only when it denotes
+    // exactly one provider.  A same-short-name collision is never guessed.
     for (auto& [capKey, prov] : ctx.manifest.runtimeConfig.providerOverrides) {
-        bool found = false;
+        std::vector<mcpp::manifest::PackageId> candidates;
+        for (auto const& entry : ctx.plan.runtimeProviders) {
+            if (!entry.capability.starts_with(capKey)) continue;
+            const auto withoutVersion = entry.provider.namespace_.empty()
+                ? entry.provider.name
+                : entry.provider.namespace_ + "." + entry.provider.name;
+            if (entry.provider.canonical() == prov || withoutVersion == prov)
+                candidates = {entry.provider};
+        }
+        if (candidates.empty()) {
+            for (auto const& entry : ctx.plan.runtimeProviders) {
+                if (entry.capability.starts_with(capKey)
+                    && entry.provider.name == prov)
+                    candidates.push_back(entry.provider);
+            }
+        }
+        std::ranges::sort(candidates);
+        candidates.erase(std::ranges::unique(candidates).begin(), candidates.end());
+        if (candidates.empty()) {
+            return std::unexpected(std::format(
+                "[runtime.{}] provider = \"{}\" does not name a provider in "
+                "the resolved dependency graph", capKey, prov));
+        }
+        if (candidates.size() != 1) {
+            std::string choices;
+            for (auto const& candidate : candidates)
+                choices += (choices.empty() ? "" : ", ") + candidate.canonical();
+            return std::unexpected(std::format(
+                "[runtime.{}] provider = \"{}\" is ambiguous; use one exact "
+                "canonical identity: [{}]", capKey, prov, choices));
+        }
+        const auto selected = candidates.front();
         std::stable_partition(ctx.plan.runtimeProviders.begin(),
                               ctx.plan.runtimeProviders.end(),
                               [&](const auto& pr) {
-            bool match = pr.capability.rfind(capKey, 0) == 0 && pr.provider == prov;
-            found = found || match;
-            return match;
+            return pr.capability.starts_with(capKey) && pr.provider == selected;
         });
-        if (!found) {
-            std::println(stderr,
-                "warning: [runtime.{}] provider = \"{}\" — no such provider in the "
-                "dependency graph for that capability", capKey, prov);
-        }
     }
 
     // Capability-driven ABI enforcement, dimensional (see src/toolchain/abi.cppm
@@ -6022,7 +6133,7 @@ prepare_build(bool print_fingerprint,
         for (auto& cap : ctx.plan.runtimeCapabilities) {
             std::string provider;
             for (auto& [c, p] : ctx.plan.runtimeProviders)
-                if (c == cap) { provider = p; break; }
+                if (c == cap) { provider = p.canonical(); break; }
             if (auto con = mcpp::toolchain::parse_abi_capability(
                     cap, provider.empty() ? std::string_view{"?"} : std::string_view{provider}))
                 constraints.push_back(std::move(*con));
@@ -6041,35 +6152,132 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    // Per-build resolution manifest artifact: a machine-readable record of the
-    // resolved plan (toolchain/abi, runtime closure, capabilities+providers,
-    // deps) written next to the build outputs. Same data as `mcpp why`; usable
-    // by CI/tooling. (capability -> plan, serialized.)
+    // Per-build resolution manifest: the durable, provider-neutral facts that
+    // `mcpp why runtime` interprets without resolving again or probing the
+    // current host.  The post-link validator replaces `validation.pending`
+    // with the exact artifact verdict produced at the link seam.
     {
         const std::string tcAbi =
             ctx.tc.targetTriple.find("musl") != std::string::npos ? "musl"
             : ctx.tc.stdlibId == "libc++"                          ? "libc++"
             : ctx.tc.compiler == mcpp::toolchain::CompilerId::MSVC ? "msvc"
             :                                                         "glibc";
+        auto package_json = [](const mcpp::manifest::PackageId& id) {
+            return nlohmann::json{
+                {"canonical", id.canonical()},
+                {"namespace", id.namespace_},
+                {"name", id.name},
+                {"version", id.version},
+                {"source", id.sourceProvenance},
+            };
+        };
+        auto path_array = [](auto const& paths) {
+            nlohmann::json values = nlohmann::json::array();
+            for (auto const& path : paths)
+                values.push_back(path.lexically_normal().generic_string());
+            return values;
+        };
         nlohmann::json j;
+        j["schema_version"] = 2;
         j["toolchain"] = {
             {"spec", ctx.tc.label()}, {"abi", tcAbi},
             {"triple", ctx.tc.targetTriple}, {"stdlib", ctx.tc.stdlibId},
         };
         nlohmann::json dirs = nlohmann::json::array();
         for (auto& d : ctx.plan.runtimeLibraryDirs) dirs.push_back(d.string());
-        nlohmann::json caps = nlohmann::json::array();
+        nlohmann::json legacyCaps = nlohmann::json::array();
+        nlohmann::json providers = nlohmann::json::array();
         for (auto& [cap, prov] : ctx.plan.runtimeProviders)
-            caps.push_back({{"capability", cap}, {"provider", prov}});
+        {
+            legacyCaps.push_back({{"capability", cap},
+                                  {"provider", prov.canonical()}});
+            providers.push_back({{"capability", cap},
+                                 {"provider", package_json(prov)}});
+        }
+        nlohmann::json requirements = nlohmann::json::array();
+        for (auto const& requirement : ctx.plan.runtimeRequirements) {
+            requirements.push_back({
+                {"kind", requirement.kind},
+                {"value", requirement.value},
+                {"phase", requirement.phase},
+                {"requester", package_json(requirement.requester)},
+                {"required", requirement.required},
+            });
+        }
+        nlohmann::json artifacts = nlohmann::json::array();
+        for (auto const& artifact : ctx.plan.runtimeArtifacts) {
+            artifacts.push_back({
+                {"role", artifact.role},
+                {"provider", package_json(artifact.provider)},
+                {"path", artifact.path.lexically_normal().generic_string()},
+                {"provenance", artifact.provenance},
+                {"abi", artifact.abi},
+                {"digest", artifact.digest},
+                {"host_fingerprint", artifact.hostFingerprint},
+            });
+        }
+        nlohmann::json binding = nlohmann::json::parse(
+            mcpp::platform::runtime::serialize_runtime_binding(
+                ctx.plan.runtimeBinding), nullptr, false);
+        if (binding.is_discarded()) binding = nlohmann::json::object();
+
+        auto triple = ctx.tc.targetTriple;
+        std::ranges::transform(triple, triple.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        const bool pe = triple.find("windows") != std::string::npos
+                     || triple.find("mingw") != std::string::npos;
+        const bool macho = triple.find("darwin") != std::string::npos
+                        || triple.find("apple") != std::string::npos;
+        std::string format = pe ? "pe" : macho ? "macho" : "elf";
+        nlohmann::json search = {
+            {"format", format},
+            {"link_library", pe ? "libpath" : "library_path"},
+            {"transitive_needed", format == "elf" ? "rpath_link" : "none"},
+            {"runtime", format == "pe" ? "deploy"
+                         : format == "macho" ? "loader_rpath" : "runpath"},
+        };
         j["runtime"] = {
             {"library_dirs", dirs},
             {"dlopen_libs", ctx.plan.runtimeDlopenLibs},
-            {"capabilities", caps},
+            {"capabilities", legacyCaps},
+            {"binding", binding},
+            {"requirements", requirements},
+            {"artifacts", artifacts},
+            {"providers", providers},
+            {"link_intent", {
+                {"libraries", ctx.plan.linkIntent.libraries},
+                {"link_library_dirs",
+                    path_array(ctx.plan.linkIntent.linkLibraryDirs)},
+                {"transitive_needed_dirs",
+                    path_array(ctx.plan.linkIntent.transitiveNeededDirs)},
+                {"runtime_search_dirs",
+                    path_array(ctx.plan.linkIntent.runtimeSearchDirs)},
+                {"frameworks", ctx.plan.linkIntent.frameworks},
+                {"deploy_files", path_array(ctx.plan.linkIntent.deployFiles)},
+            }},
+            {"search", search},
+            {"validation", {
+                {"status", format == "elf" ? "pending" : "not_exercised"},
+                {"source", "post_link"},
+                {"artifacts", nlohmann::json::array()},
+            }},
         };
         std::error_code ec;
         std::filesystem::create_directories(ctx.plan.outputDir, ec);
-        if (std::ofstream js(ctx.plan.outputDir / "resolution.json"); js)
+        auto path = ctx.plan.outputDir / "resolution.json";
+        auto tmp = path;
+        tmp += ".tmp";
+        if (std::ofstream js(tmp); js) {
             js << j.dump(2) << "\n";
+            js.close();
+            std::filesystem::rename(tmp, path, ec);
+            if (ec) {
+                ec.clear();
+                std::filesystem::remove(path, ec);
+                ec.clear();
+                std::filesystem::rename(tmp, path, ec);
+            }
+        }
     }
 
     return ctx;
