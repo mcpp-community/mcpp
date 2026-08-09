@@ -34,6 +34,11 @@ export namespace mcpp::pm {
 // confuse partition-style readings later).
 std::string mangle_name(std::string_view base, std::string_view version);
 
+// Primary module roots declared by source text, in first-seen order. Partition
+// declarations return their owning root; imports, global module fragments and
+// bare partition declarations are ignored.
+std::vector<std::string> declared_module_roots(std::string_view source);
+
 // Rewrite a single .cppm file's module / import declarations:
 //   * `(export )?module N;`     → `(export )?module rename[N];`
 //   * `(export )?module N:P;`   → `(export )?module rename[N]:P;`
@@ -105,6 +110,36 @@ read_name(std::string_view s, std::size_t i)
 }
 
 } // namespace
+
+std::vector<std::string> declared_module_roots(std::string_view source) {
+    std::vector<std::string> roots;
+    std::size_t lineStart = 0;
+    while (lineStart < source.size()) {
+        auto eol = source.find('\n', lineStart);
+        if (eol == std::string_view::npos) eol = source.size();
+        auto line = source.substr(lineStart, eol - lineStart);
+
+        auto cur = skip_ws(line, 0);
+        if (auto p = consume_keyword(line, cur, "export");
+            p != std::string::npos) {
+            cur = skip_ws(line, p);
+        }
+        auto afterModule = consume_keyword(line, cur, "module");
+        if (afterModule != std::string::npos) {
+            cur = skip_ws(line, afterModule);
+            if (cur < line.size() && line[cur] != ';' && line[cur] != ':') {
+                auto [nameEnd, name] = read_name(line, cur);
+                if (nameEnd != std::string::npos
+                    && std::ranges::find(roots, name) == roots.end()) {
+                    roots.emplace_back(name);
+                }
+            }
+        }
+        if (eol == source.size()) break;
+        lineStart = eol + 1;
+    }
+    return roots;
+}
 
 std::string rewrite_module_decls(
     std::string_view source,

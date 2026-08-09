@@ -11,6 +11,18 @@ TEST(Mangle, NameFormat) {
     EXPECT_EQ(mangle_name("a", "0"),                "a__v0__mcpp");
 }
 
+TEST(Mangle, DiscoversAuthoredModuleRootsWithoutPackageNameAssumptions) {
+    auto roots = declared_module_roots(
+        "module;\n"
+        "export module mcpplibs.cmdline;\n"
+        "export module mcpplibs.cmdline:options;\n"
+        "module mcpplibs.cmdline:impl;\n"
+        "import unrelated;\n"
+        "export module vendor.extra;\n");
+    EXPECT_EQ(roots, (std::vector<std::string>{
+        "mcpplibs.cmdline", "vendor.extra"}));
+}
+
 TEST(Mangle, RewriteEmpty) {
     std::map<std::string, std::string> table;
     EXPECT_EQ(rewrite_module_decls("", table), "");

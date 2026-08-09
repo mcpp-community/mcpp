@@ -3294,25 +3294,11 @@ prepare_build(bool print_fingerprint,
         }
     };
 
-    // Stage a dep's source files into a fresh directory, rewriting their
-    // module / import declarations against `rename`. Used by the multi-
-    // version mangling fallback (Level 1) so two cross-major copies of
-    // the same package can coexist with distinct module names.
-    //
-    // Headers (referenced via `[build].include_dirs`) are NOT staged —
-    // those keep pointing at the original install dir via absolutized
-    // include paths.
-    auto stage_with_rewrite = [](const std::filesystem::path& srcRoot,
-                                  const std::filesystem::path& dstRoot,
-                                  const mcpp::manifest::Manifest& depManifest,
-                                  const std::map<std::string, std::string>& rename)
-        -> std::expected<void, std::string>
+    auto package_source_files = [](
+        const std::filesystem::path& srcRoot,
+        const mcpp::manifest::Manifest& depManifest)
+        -> std::expected<std::set<std::filesystem::path>, std::string>
     {
-        std::error_code ec;
-        std::filesystem::create_directories(dstRoot, ec);
-        if (ec) return std::unexpected(std::format(
-            "stage: cannot create '{}': {}", dstRoot.string(), ec.message()));
-
         // Resolve the source globs against the original root, falling
         // back to the convention default if the manifest didn't set any.
         std::vector<std::string> globs = depManifest.modules.sources;
@@ -3338,8 +3324,32 @@ prepare_build(bool print_fingerprint,
                 "stage: no source files found under '{}' (globs={})",
                 srcRoot.string(), globs.size()));
         }
+        return sourceFiles;
+    };
 
-        for (auto const& f : sourceFiles) {
+    // Stage a dep's source files into a fresh directory, rewriting their
+    // module / import declarations against `rename`. Used by the multi-
+    // version mangling fallback (Level 1) so two cross-major copies of
+    // the same package can coexist with distinct module names.
+    //
+    // Headers (referenced via `[build].include_dirs`) are NOT staged —
+    // those keep pointing at the original install dir via absolutized
+    // include paths.
+    auto stage_with_rewrite = [&](const std::filesystem::path& srcRoot,
+                                  const std::filesystem::path& dstRoot,
+                                  const mcpp::manifest::Manifest& depManifest,
+                                  const std::map<std::string, std::string>& rename)
+        -> std::expected<void, std::string>
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(dstRoot, ec);
+        if (ec) return std::unexpected(std::format(
+            "stage: cannot create '{}': {}", dstRoot.string(), ec.message()));
+
+        auto sources = package_source_files(srcRoot, depManifest);
+        if (!sources) return std::unexpected(sources.error());
+
+        for (auto const& f : *sources) {
             auto rel = std::filesystem::relative(f, srcRoot, ec);
             if (ec) return std::unexpected(std::format(
                 "stage: cannot relativize '{}': {}", f.string(), ec.message()));
@@ -3359,6 +3369,29 @@ prepare_build(bool print_fingerprint,
             os << out;
         }
         return {};
+    };
+
+    auto declared_modules_for = [&](const std::filesystem::path& srcRoot,
+                                    const mcpp::manifest::Manifest& depManifest)
+        -> std::expected<std::vector<std::string>, std::string>
+    {
+        auto sources = package_source_files(srcRoot, depManifest);
+        if (!sources) return std::unexpected(sources.error());
+        std::vector<std::string> modules;
+        for (auto const& file : *sources) {
+            std::ifstream is(file);
+            if (!is) return std::unexpected(std::format(
+                "mangle: cannot read '{}'", file.string()));
+            std::stringstream buf; buf << is.rdbuf();
+            for (auto& name : mcpp::pm::declared_module_roots(buf.str())) {
+                if (std::ranges::find(modules, name) == modules.end())
+                    modules.push_back(std::move(name));
+            }
+        }
+        if (modules.empty()) return std::unexpected(std::format(
+            "mangle: package '{}' declares no named C++ module to rewrite",
+            depManifest.package.name));
+        return modules;
     };
 
     // Stage 2a — feature-activated optional dependencies. Defined as local
@@ -3612,14 +3645,22 @@ prepare_build(bool print_fingerprint,
                             spec.version));
                     }
 
-                    // Module names in the source files use the dep's full
-                    // [package].name (e.g. "mcpplibs.cmdline"), not the
-                    // namespaced-subtable shortName. Use that for the
-                    // rename key so the rewriter actually matches what the
-                    // .cppm sources declare.
-                    const std::string moduleName = secondaryManifest.package.name;
-                    std::string mangled =
-                        mcpp::pm::mangle_name(moduleName, spec.version);
+                    // Module names are authored API and are not required to
+                    // mirror package identity. Discover every provided module
+                    // root from the secondary's source text, then rewrite the
+                    // same map in both the secondary and its consumer.
+                    auto moduleNames = declared_modules_for(
+                        secondaryRoot, secondaryManifest);
+                    if (!moduleNames) return std::unexpected(moduleNames.error());
+                    std::map<std::string, std::string> rename;
+                    for (auto const& module : *moduleNames) {
+                        rename.emplace(module,
+                            mcpp::pm::mangle_name(module, spec.version));
+                    }
+                    const auto& moduleName = moduleNames->front();
+                    const auto& mangledModule = rename.at(moduleName);
+                    const std::string mangledPackage = mcpp::pm::mangle_name(
+                        key.shortName, spec.version);
 
                     // Stage layout:
                     //   <root>/target/.mangled/<consumerPkg>/<dep>__<version>/    ← rewritten secondary source
@@ -3629,10 +3670,9 @@ prepare_build(bool print_fingerprint,
                     auto stageBase         = *root / "target" / ".mangled"
                                              / consumerManifest.package.name;
                     auto secStage          = stageBase
-                                             / std::format("{}__{}", moduleName, spec.version);
+                                             / std::format("{}__{}", key.shortName, spec.version);
                     auto consumerStage     = stageBase / "__self__";
 
-                    std::map<std::string, std::string> rename{ {moduleName, mangled} };
                     if (auto r = stage_with_rewrite(secondaryRoot, secStage,
                                                      secondaryManifest, rename); !r)
                         return std::unexpected(r.error());
@@ -3649,11 +3689,10 @@ prepare_build(bool print_fingerprint,
                     // exact (ns, mangled) pair dedup cleanly. The original
                     // primary entry (it->second) is untouched.
                     auto stagedManifest = secondaryManifest;
-                    // Update [package].name to the mangled module name so
-                    // the modgraph validator (which checks "exported module
-                    // must be prefixed by package name") accepts the
-                    // rewritten sources.
-                    stagedManifest.package.name = mangled;
+                    // Give the staged package a distinct atomic identity too;
+                    // authored module names remain independent and are carried
+                    // exclusively by the rename map above.
+                    stagedManifest.package.name = mangledPackage;
                     if (stagedManifest.package.namespace_.empty()) {
                         stagedManifest.package.namespace_ = key.ns.empty()
                             ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
@@ -3673,7 +3712,7 @@ prepare_build(bool print_fingerprint,
                         std::make_unique<mcpp::manifest::Manifest>(std::move(stagedManifest)));
                     dep_cache_identities.push_back({
                         .indexName   = cache_index_name(key.ns),
-                        .packageName = mangled,
+                        .packageName = mangledPackage,
                         .version     = spec.version,
                         .sourceKind  = "version",
                     });
@@ -3682,7 +3721,7 @@ prepare_build(bool print_fingerprint,
                     recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec);
                     auto linkFlagsAdded = propagateLinkFlags(secStage, *dep_manifests.back());
 
-                    ResolvedKey mangledKey{key.ns, mangled};
+                    ResolvedKey mangledKey{key.ns, mangledPackage};
                     resolved[mangledKey] = ResolvedRecord{
                         .version           = spec.version,
                         .constraint        = item.originalConstraint,
@@ -3695,7 +3734,8 @@ prepare_build(bool print_fingerprint,
 
                     mcpp::ui::info("Mangled",
                         std::format("{} v{} ↔ v{} → {} (cross-major fallback)",
-                            moduleName, it->second.version, spec.version, mangled));
+                            moduleName, it->second.version, spec.version,
+                            mangledModule));
                     continue;
                 }
 
