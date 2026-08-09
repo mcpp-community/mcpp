@@ -82,6 +82,26 @@ TEST(PmIndexRoute, DottedSelectorResolvesThroughItsExactCoordinate) {
     EXPECT_EQ(found.hit->coord.shortName, "util");
 }
 
+TEST(PmIndexRoute, NameOnlyDescriptorInheritsOwningLocalIndexNamespace) {
+    LocalIndex idx("name-only");
+    std::ofstream(idx.root / "pkgs" / "a" / "acme.util.lua") << R"(
+package = {
+    spec = "1",
+    name = "util",
+    type = "package",
+}
+)";
+    auto indices = local_map(idx);
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
+
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
+    auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+
+    ASSERT_TRUE(found.hit.has_value());
+    EXPECT_EQ(found.hit->coord.namespace_, "acme");
+    EXPECT_EQ(found.hit->coord.shortName, "util");
+}
+
 TEST(PmIndexRoute, LiteralDottedShortNameNeverMatches) {
     LocalIndex idx("literal");
     auto indices = local_map(idx);

@@ -159,9 +159,16 @@ Lookup lookup_descriptor(const IndexRoute& route,
         // BareDefault=false` matches prepare's disambiguation: a descriptor
         // with no namespace is reached through the explicit `(∅, name)` rung
         // below, not by being waved through on the default-namespace rung.
+        // A descriptor served by one declared project index inherits that
+        // index's namespace when it omits package.namespace.  Pass the owning
+        // index explicitly; leaving this empty turns valid name-only local
+        // descriptors into false misses (including [indices] default).
+        const auto* owner = route.find_for_ns(candidate.namespace_);
+        const std::string_view ownerNs = owner
+            ? std::string_view{owner->name} : std::string_view{};
         if (!mcpp::manifest::xpkg_lua_identity_matches(
                 *lua, candidate.namespace_, candidate.shortName,
-                /*allowLegacyBareDefault=*/false)) {
+                /*allowLegacyBareDefault=*/false, ownerNs)) {
             continue;
         }
         auto declaredNs = mcpp::manifest::extract_xpkg_namespace(*lua);
