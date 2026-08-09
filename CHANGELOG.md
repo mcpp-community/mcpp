@@ -3,7 +3,7 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [2026.8.9.1] — 2026-08-09
+## [2026.8.10.1] — 2026-08-10
 
 包身份、开发运行时与发布链收敛为同一组可验证事实。完整设计与验证记录见
 `.agents/docs/2026-08-09-mcpp-template-runtime-graphics-aur-focused-design.md` 与
@@ -34,15 +34,37 @@
 
 ### 修复
 
+- **私有 glibc 不再泄漏进子进程环境（#401）。** `mcpp run` 曾把私有 glibc 目录放进
+  `LD_LIBRARY_PATH`，而该变量会被程序派生的**每一个**进程继承；`/bin/sh` 由**宿主**
+  loader 加载（`PT_INTERP` 写死在可执行文件里，任何环境变量都改不了），于是在重定位
+  阶段就死于 `undefined symbol: __pointer_chk_guard, version GLIBC_PRIVATE`。
+  该目录本来只为「可执行文件 DT_NEEDED 闭包覆盖不到的 dlopen」而存在，而产物的
+  RUNPATH 已经覆盖了它（link model 在 `--dynamic-linker` 旁就发了
+  `-Wl,-rpath,<glibc>`，改动前后产物 RUNPATH 逐字节相同），所以这条环境项没有收益、
+  只有代价。决策收敛在 `mcpp.platform.runtime_env_contract`：私有 libc 是
+  **binary 作用域**，不是 environment 作用域。
 - RuntimeBinding 不再把 stale 的声明文本误当成实际 payload：有效 SubOS view 可规范化到
   唯一受管 payload 时记录真实身份；旧 view 断链时只解析声明精确指名的 payload，
   仍绝不枚举目录挑版本。
 - Linux ELF/glibc 闭包规则的单测只在 Linux 断言相应物理语义；macOS/Windows 原生 CI
   固定验证 typed no-op 边界，不再拿 Linux 结果误判其他平台。
 
+### 迁移
+
+- **省略 namespace 的依赖获得一个版本的过渡期。** 省略 namespace 依然精确表示
+  `mcpplibs`，但当精确坐标未命中时，`compat.<name>` 与「不声明 namespace 的上游
+  descriptor」两级会再被尝试一次；命中会打印弃用警告、给出可直接粘贴的 manifest
+  片段，并把**规范身份**写入 lock/install/cache（歧义拼写只留在用户 manifest 里）。
+  `mcpp add <裸名>` 直接把规范点分形式写回 `mcpp.toml`。
+  写明的身份（如 `mcpplibs.gtest`）不进入过渡期，未命中即失败；第三方 namespace 仍
+  不可被裸名触达。该过渡期在 `2026.9` 移除。
+  - 理由：索引里已发布的 `compat.*` 包与既有用户 manifest 全部使用裸名写法。
+    「已发布的数据不得让程序失效」与「已发布的程序不得让既有数据失效」是同一条判据，
+    两个方向都必须降级而不是变砖。#278 修掉的缺陷是**静默**回退，不是回退本身。
+
 ### 其他
 
-- xlings pin 统一提升到 `2026.8.9.2`；自举 mcpp pin 提升到已发布的 `2026.8.8.4`。
+- xlings pin 统一提升到 `2026.8.10.1`；自举 mcpp pin 提升到已发布的 `2026.8.8.4`。
 
 ## [2026.8.8.4] — 2026-08-08
 

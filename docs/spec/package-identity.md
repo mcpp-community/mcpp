@@ -7,7 +7,7 @@
 | **状态** | **评审中(Review)** —— 已实现 |
 | **版本** | 1.2 |
 | **最后修改** | 2026-08-09 |
-| **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.9.1**(xlings >= 0.4.69) |
+| **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
 | **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
@@ -30,7 +30,7 @@
 | ⚠️ **部分实现** | 已有实现,但语义或覆盖面与本规范有差异(差异已注明) |
 | ❌ **未实现** | 本规范要求但尚未支持;当前行为已注明 |
 
-> 描述符身份规则自 mcpp 0.0.106 起实现;唯一精确 selector 自 2026.8.9.1
+> 描述符身份规则自 mcpp 0.0.106 起实现;唯一精确 selector 自 2026.8.10.1
 > 起实现。0.0.105 及更早版本要求的过渡形态(`name` 必须写成
 > `<namespace>.<name>`)仍被接受为**兼容写法**,见 §8。
 
@@ -172,7 +172,7 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 
 例如 gtest 必须写成 `compat.gtest` 或 `[dependencies.compat] gtest = ...`;裸 `gtest` 请求的是不同身份 `(mcpplibs, gtest)`。
 
-✅ **已实现**(2026.8.9.1)。默认 namespace 的依赖身份门禁不再接纳 `compat` 或无 namespace descriptor。
+✅ **已实现**(2026.8.10.1)。默认 namespace 的依赖身份门禁不再接纳 `compat` 或无 namespace descriptor。
 
 **设计理由**:全域按短名搜索会让解析结果取决于「本机装了哪些索引」——
 1. 两个命名空间拥有同名包时,胜负由索引顺序决定,而用户 `[indices]` 添加的索引之间**没有全序**;
@@ -181,11 +181,38 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 
 依赖解析的**可复现性**优先于书写便捷性。
 
+#### 4.2.1 过渡期（`2026.8.10.1` 起，`2026.9` 移除）
+
+索引里已发布的 `compat.*` 包与既有用户 `mcpp.toml` **全部**使用裸名写法。
+让它们在一次 mcpp 升级后直接失败，等于「发布一个程序，让已经发布、且无法追溯修改的
+数据失效」——这与「索引抬高 floor 不得让旧客户端变砖」是同一条判据的两个方向，
+两边都必须**降级**而不是变砖。
+
+所以省略 namespace 的 selector 在一个版本内保留一条**出口坡道**：
+
+1. 先精确解析 `(mcpplibs, name)`；
+2. **仅在未命中时**，再依次尝试 `(compat, name)` 与「descriptor 自己不声明 namespace」
+   这一级；
+3. 命中即打印弃用警告，内容包含实际选中的完整身份与可直接粘贴的 manifest 片段；
+4. 写入 lock、install 与 cache 的是**规范身份**（`compat.gtest`），歧义拼写只留在
+   用户 manifest 里，直到用户改它；
+5. `mcpp add <裸名>` 直接把规范点分形式写回 `mcpp.toml`——碰一次就迁移一次。
+
+不适用的情形（**不是**过渡期的一部分）：
+
+- 写明了 namespace 的 selector（`mcpplibs.gtest`、`[dependencies.mcpplibs]`）——
+  那是一个身份声明，未命中就是未命中；
+- 第三方 namespace——裸名从来、且仍然不可触达（§4.2 的供应链理由不变）。
+
+> #278 修掉的缺陷是**静默**：mcpp 带着一个用户从未写过的 namespace 继续往下走，
+> 并且不说。一条带完整身份的警告已经消灭了「静默」，同时保住了已发布的数据。
+> 同一个版本对 `ns:name → ns.name` 用的也是同一套过渡期处理。
+
 ### 4.3 解析失败时的诊断
 
 唯一身份落空时,mcpp **必须**明确失败并列出该身份;若同短名存在于其他 namespace,**应当**只在诊断中给出可复制的显式 selector,禁止把提示结果回灌解析。
 
-✅ **已实现**(2026.8.9.1):
+✅ **已实现**(2026.8.10.1):
 
 ```
 error: dependency 'asio': no package found
@@ -417,5 +444,5 @@ lua = "0.0.3"
 
 ---
 
-> 描述符身份规则自 mcpp 0.0.106 起实现;精确 selector 自 2026.8.9.1 起实现。当前实现符合本规范,状态为「评审中」。
+> 描述符身份规则自 mcpp 0.0.106 起实现;精确 selector 自 2026.8.10.1 起实现。当前实现符合本规范,状态为「评审中」。
 > 英文版待补(`docs/spec/` 顶层按仓库惯例为英文,本文档先以中文成稿)。

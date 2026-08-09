@@ -97,7 +97,7 @@ fallback):
 
 ```sh
 scripts/aur/update.sh                 # latest complete stable release
-scripts/aur/update.sh 2026.8.9.1      # accepted only if it is that exact latest tag
+scripts/aur/update.sh 2026.8.10.1      # accepted only if it is that exact latest tag
 ```
 
 The renderer downloads both Linux payloads and sidecars, recomputes their

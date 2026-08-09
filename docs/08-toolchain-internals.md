@@ -383,6 +383,36 @@ Post-install alignment follows the same identity rule: `glibc@2.44` resolves
 only `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`. A missing/stale exact payload is an
 error; another installed version is never a fallback.
 
+### 6.2 Where a runtime search path is allowed to live (`runtime_env_contract.cppm`)
+
+There are two ways to tell a loader where to look, and they differ by blast
+radius, not by convenience:
+
+| | reaches | |
+| --- | --- | --- |
+| `DT_RUNPATH` | the one object that carries it, and its `dlopen()` | per-binary |
+| `LD_LIBRARY_PATH` | the process **and every process it ever spawns** | inherited, forever |
+
+That second row is why the private libc payload is **binary-scoped**. A glibc's
+`libc.so.6` and its `ld.so` are version-locked through `GLIBC_PRIVATE`: 2.44's
+libc carries an undefined `__pointer_chk_guard` that only 2.44's own loader
+exports. An mcpp-built program is fine — `PT_INTERP` names the private loader.
+`/bin/sh` is not: its `PT_INTERP` names the **host** loader and no environment
+variable can override it, so a `popen()`/`system()` child dies during
+relocation, before `main`, with no output (mcpp#401; mcpp#291 is the same shape
+one hop closer in, killing mcpp's own nested host tools).
+
+So mcpp never publishes the private libc directory through the environment. It
+does not need to: wherever a payload exists the link model already emits
+`-Wl,-rpath,<glibc>` beside `--dynamic-linker`, which covers the case the
+directory exists for — a `dlopen()` whose own `DT_NEEDED` closure does not
+consult the executable's RUNPATH.
+
+This is a scope, not a condition. "Only export it when a dependency might
+`dlopen()`" still exports it, and the child that dies does not care why. Plain
+dependency runtime directories keep their environment scope: they have no
+loader coupling, so a host binary that stumbles onto them is at worst confused.
+
 ## 7. Extending the machinery
 
 ### 7.1 Adding a new toolchain (new compiler family or distribution)

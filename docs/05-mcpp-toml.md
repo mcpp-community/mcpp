@@ -483,6 +483,34 @@ The third form fails with an error that names the exact `(mcpplibs, asio)`
 identity that was tried and, when the short name exists elsewhere, gives a
 copyable explicit selector.
 
+##### Migration window for bare names (`2026.8.10.1` → removed in `2026.9`)
+
+Every published `compat.*` package and every manifest written before exact
+identity spells its dependency bare — `gtest = "1.15.2"`. Failing those
+outright on upgrade would break builds against data that is already published
+and cannot be edited retroactively, so for one release a bare name that misses
+`mcpplibs` still reaches `compat.<name>`, and a descriptor that declares no
+namespace at all still answers to its bare name.
+
+It is not quiet about it:
+
+```
+warning: dependency 'gtest' resolved to 'compat.gtest' through the deprecated
+bare-name search; namespace omission means `mcpplibs` only. Write the exact
+package:
+    [dependencies.compat]
+    gtest = "1.15.2"
+  (or run `mcpp add compat.gtest@1.15.2`). This fallback is removed in 2026.9.
+```
+
+What reaches `mcpp.lock`, the install layer and the cache is the canonical
+identity, so the ambiguous spelling lives in exactly one place — your manifest
+— until you change it. `mcpp add gtest@1.15.2` changes it for you.
+
+The window does **not** apply to a selector that states a namespace
+(`mcpplibs.gtest` misses and stays missed), and a bare name still never reaches
+a third-party namespace.
+
 **Why one identity?** Dependency resolution has to be reproducible. Candidate
 search would let two namespaces with the same short name be settled by index
 state, and adding an index could silently retarget an existing dependency.
@@ -511,7 +539,7 @@ path) but not required.
 The older fully-qualified spelling (`name = "chriskohlhoff.asio"`) is still
 accepted, so already-published descriptors keep working. `mcpp xpkg parse`
 enforces the descriptor rule — run it in your index CI. Descriptor identity
-requires mcpp >= 0.0.106; exact selectors require mcpp >= 2026.8.9.1; both use
+requires mcpp >= 0.0.106; exact selectors require mcpp >= 2026.8.10.1; both use
 xlings >= 0.4.69. Full normative text is in `docs/spec/package-identity.md`.
 
 `mcpp new --template` deliberately reuses this identity model instead of

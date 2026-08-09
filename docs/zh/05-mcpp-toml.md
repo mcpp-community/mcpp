@@ -437,6 +437,30 @@ asio = "1.38.1"
 
 第三种写法会明确报错,指出实际尝试的 `(mcpplibs, asio)`;若该短名存在于别处,错误信息会给出可直接复制的显式 selector。
 
+##### 裸名过渡期(`2026.8.10.1` 起,`2026.9` 移除)
+
+索引里已发布的 `compat.*` 包与既有 manifest **全部**写成裸名(`gtest = "1.15.2"`)。
+升级后直接失败,等于让一次程序发布把**已经发布、且无法追溯修改**的数据作废,
+所以有一个版本的过渡期:裸名在 `mcpplibs` 未命中时仍可到达 `compat.<name>`,
+不声明 namespace 的 descriptor 也仍可被裸名解析。
+
+但它不再静默:
+
+```
+warning: dependency 'gtest' resolved to 'compat.gtest' through the deprecated
+bare-name search; namespace omission means `mcpplibs` only. Write the exact
+package:
+    [dependencies.compat]
+    gtest = "1.15.2"
+  (or run `mcpp add compat.gtest@1.15.2`). This fallback is removed in 2026.9.
+```
+
+写进 `mcpp.lock`、install 与 cache 的是**规范身份**,歧义拼写只存在于你的
+`mcpp.toml` 里,直到你改它;`mcpp add gtest@1.15.2` 会替你改。
+
+过渡期**不适用于**写明 namespace 的 selector(`mcpplibs.gtest` 未命中就是未命中),
+裸名也**仍然**到不了第三方 namespace。
+
 **为什么只允许一个身份?** 因为依赖解析必须可复现。候选搜索会让同短名包受索引状态影响,新增索引还可能悄悄重定向既有依赖。
 
 **给 xpkg 作者:** 索引描述符里,身份是 `(package.namespace, package.name)` 二元组。命名空间是点分路径,**`name` 是单一原子段**:
@@ -455,7 +479,7 @@ package = {
 
 文件名只是提示 —— 描述符按声明的身份被发现,所以 `pkgs/c/chriskohlhoff.asio.lua` 与 `pkgs/z/anything.lua` 解析结果完全相同。推荐 `<name>.lua` 或 `<namespace>.<name>.lua`(命中 mcpp 的快路径),但不强制。
 
-旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。描述符身份需要 mcpp >= 0.0.106,精确 selector 需要 mcpp >= 2026.8.9.1,两者使用 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
+旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。描述符身份需要 mcpp >= 0.0.106,精确 selector 需要 mcpp >= 2026.8.10.1,两者使用 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
 
 `mcpp new --template` 刻意复用同一身份模型，而不是另造包文法:
 `[ns.]name[@version][:tname]`。其中裸名同样只表示 `mcpplibs`，version 与模板名可分别

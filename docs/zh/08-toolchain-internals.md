@@ -310,6 +310,30 @@ verdict 以 `.mcpp-runtime-verdicts.json` 存在 `build.ninja` 旁,键包含产�
 `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`。精确 payload 缺失/陈旧就是错误,其他已安装版本
 永远不是回退项。
 
+### 6.2 一条运行时搜索路径可以住在哪里(`runtime_env_contract.cppm`)
+
+告诉 loader「去哪找」有两条通道,差别不在便利性,而在**波及范围**:
+
+| | 波及到 | |
+| --- | --- | --- |
+| `DT_RUNPATH` | 携带它的那**一个**对象,及其 `dlopen()` | 逐二进制 |
+| `LD_LIBRARY_PATH` | 本进程**以及它派生的每一个进程** | 继承,且一直传下去 |
+
+第二行就是私有 libc 目录必须是 **binary 作用域**的原因。glibc 的 `libc.so.6` 与它的
+`ld.so` 通过 `GLIBC_PRIVATE` 版本锁死:2.44 的 libc 里 `__pointer_chk_guard` 是未定义
+引用,只有 2.44 自己的 loader 导出它。mcpp 构建出来的程序没事——`PT_INTERP` 指向私有
+loader;`/bin/sh` 有事:它的 `PT_INTERP` 指向**宿主** loader,而且任何环境变量都改不了,
+于是 `popen()`/`system()` 的子进程在重定位阶段就死掉,连 `main` 都进不去,也没有任何
+输出(#401;#291 是同一形状往内一跳,杀掉的是 mcpp 自己的嵌套宿主工具)。
+
+所以 mcpp 不会把私有 libc 目录发布到环境里。也不需要:只要存在 payload,link model
+就已经在 `--dynamic-linker` 旁发了 `-Wl,-rpath,<glibc>`,恰好覆盖这个目录存在的唯一
+理由——某个 `dlopen()` 的 `DT_NEEDED` 闭包看不到可执行文件的 RUNPATH。
+
+这是**作用域**,不是条件判断。「只在依赖可能 dlopen 时才导出」仍然是导出,而死掉的
+子进程不关心原因。普通依赖运行时目录保留环境作用域:它们没有 loader 耦合,宿主二进制
+撞上去最多是困惑,不会死。
+
 ## 7. 扩充指南
 
 ### 7.1 新增一个工具链(新编译器家族或发行版)
