@@ -32,7 +32,7 @@ def load_module(name: str, path: Path):
 render = load_module("render_mcpp_bin", AUR_DIR / "render_mcpp_bin.py")
 reconcile = load_module("reconcile_mcpp_bin", AUR_DIR / "reconcile_mcpp_bin.py")
 
-VERSION = "2026.8.9.1"
+VERSION = "2026.8.10.1"
 TAG = f"v{VERSION}"
 COMMIT = "c" * 40
 
@@ -280,7 +280,7 @@ class AurReconcileTests(unittest.TestCase):
     def test_only_latest_complete_stable_tag_can_be_selected(self) -> None:
         releases = [
             {
-                "tag_name": "v2026.8.9.2",
+                "tag_name": "v2026.8.10.2",
                 "draft": False,
                 "prerelease": False,
                 "assets": [{"name": "still-uploading.tar.gz"}],

@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "release" / "generate_manifest.py"
-VERSION = "2026.8.9.1"
+VERSION = "2026.8.10.1"
 TAG = f"v{VERSION}"
 COMMIT = "a" * 40
 PRIMARY_ASSETS = (
@@ -186,7 +186,7 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assert_failed(self.fixture.run(tag="vreally-wrong"), "tag/version")
 
     def test_asset_version_must_match_manifest_version(self) -> None:
-        new_version = "2026.8.9.2"
+        new_version = "2026.8.10.2"
         self.fixture.release["tag_name"] = f"v{new_version}"
         self.fixture.write_release()
         self.assert_failed(
