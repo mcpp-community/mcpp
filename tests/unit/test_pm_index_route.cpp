@@ -218,9 +218,13 @@ version = "0.1.0"
 
     auto indices = mcpp::pm::effective_indices(root / "member");
     ASSERT_TRUE(indices.contains("acme"));
-    EXPECT_EQ(indices.at("acme").path,
-              (root / "index").lexically_normal());
 
+    // Assert the CAPABILITY (the member can read the root's index), not the
+    // path SPELLING. The first version of this test compared the stored path
+    // against `(root / "index").lexically_normal()`, which passes for any
+    // anchoring rule that happens to produce that string and says nothing
+    // about whether the index is reachable — which is why it stayed green
+    // while the Windows suite was red.
     mcpp::pm::IndexRoute route{ &indices, root / "member", nullptr };
     EXPECT_EQ(route.describe("acme"),
               "local index 'acme': root present, pkgs present");
@@ -229,4 +233,85 @@ version = "0.1.0"
     ASSERT_TRUE(found.hit.has_value());
     EXPECT_EQ(found.hit->coord.namespace_, "acme");
     EXPECT_EQ(found.hit->coord.shortName, "util");
+}
+
+// Why `inherit_workspace_indices` anchors with `lexically_normal` and not
+// `weakly_canonical`.
+//
+// Anchoring answers "WHICH directory did the workspace author mean", and the
+// answer must stay inside the tree the author addressed. `weakly_canonical`
+// answers a different question — "what is this path after every symlink is
+// resolved" — and a workspace reached through a symlinked parent therefore
+// gets relocated into a tree the author never wrote. That is observable:
+// `prepare` reports a missing descriptor as "not found in local index at
+// '<path>'", and this project deliberately keeps such diagnostics inside the
+// user's own declared locations.
+//
+// (Recorded because the original motivation given for this change — a Windows
+// short-name alias — turned out NOT to be the cause of the red Windows suite;
+// that was a fixture writing an MSYS path into mcpp.toml. The change survives
+// on this invariant, which is why the invariant is now a test.)
+TEST(PmIndexRoute, InheritedIndexStaysInsideTheDeclaredWorkspaceTree) {
+#ifdef _WIN32
+    GTEST_SKIP() << "directory symlinks need elevation on Windows";
+#else
+    auto base = std::filesystem::temp_directory_path()
+              / "mcpp-index-route-workspace-symlink";
+    std::filesystem::remove_all(base);
+    struct Cleanup {
+        std::filesystem::path base;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(base, ec);
+        }
+    } cleanup{base};
+
+    const auto real = base / "real";
+    const auto link = base / "link";
+    std::filesystem::create_directories(real / "index" / "pkgs" / "a");
+    std::filesystem::create_directories(real / "member");
+    std::ofstream(real / "index" / "pkgs" / "a" / "acme.util.lua") << R"(
+package = {
+    spec = "1",
+    namespace = "acme",
+    name = "util",
+    type = "package",
+}
+)";
+    std::ofstream(real / "mcpp.toml") << R"(
+[workspace]
+members = ["member"]
+
+[indices]
+acme = { path = "index" }
+)";
+    std::ofstream(real / "member" / "mcpp.toml") << R"(
+[package]
+name = "member"
+version = "0.1.0"
+)";
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(real, link, ec);
+    if (ec) GTEST_SKIP() << "symlinks unavailable here: " << ec.message();
+
+    auto indices = mcpp::pm::effective_indices(link / "member");
+    ASSERT_TRUE(indices.contains("acme"));
+
+    // The declared tree is preserved: the anchored path is still addressed
+    // through `link`, not rewritten to `real`.
+    const auto anchored = indices.at("acme").path.string();
+    EXPECT_TRUE(anchored.starts_with(link.string()))
+        << "anchoring relocated the index out of the declared tree: "
+        << anchored;
+
+    // …and it is still readable through that spelling. Preserving identity is
+    // only correct if the index remains reachable.
+    mcpp::pm::IndexRoute route{ &indices, link / "member", nullptr };
+    EXPECT_EQ(route.describe("acme"),
+              "local index 'acme': root present, pkgs present");
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
+    auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+    ASSERT_TRUE(found.hit.has_value());
+    EXPECT_EQ(found.hit->coord.namespace_, "acme");
+#endif
 }
