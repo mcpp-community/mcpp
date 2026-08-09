@@ -363,10 +363,13 @@ widget = "1.0.0"
     auto injected = mcpp::scaffold::inject_self_dependency(
         manifest, vars, {"gui"});
     ASSERT_TRUE(injected.has_value()) << injected.error();
-    std::ifstream is(manifest);
-    std::stringstream ss;
-    ss << is.rdbuf();
-    auto text = ss.str();
+    std::string text;
+    {
+        std::ifstream is(manifest);
+        std::stringstream ss;
+        ss << is.rdbuf();
+        text = ss.str();
+    }
     EXPECT_NE(text.find("[dependencies.acme]\nwidget = { version = \"2.0.0\", features = [\"gui\"] }"),
               std::string::npos);
     EXPECT_NE(text.find("[dependencies.compat]\nwidget = \"1.0.0\""),
@@ -375,10 +378,12 @@ widget = "1.0.0"
     auto again = mcpp::scaffold::inject_self_dependency(
         manifest, vars, {"gui"});
     ASSERT_TRUE(again.has_value()) << again.error();
-    std::ifstream is2(manifest);
-    std::stringstream ss2;
-    ss2 << is2.rdbuf();
-    EXPECT_EQ(ss2.str(), text);
+    {
+        std::ifstream is(manifest);
+        std::stringstream ss;
+        ss << is.rdbuf();
+        EXPECT_EQ(ss.str(), text);
+    }
     std::filesystem::remove_all(root);
 }
 
