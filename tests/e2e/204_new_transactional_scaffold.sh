@@ -194,7 +194,9 @@ cat > "$PKG/templates/symlinked/mcpp.toml.in" <<'EOF'
 name = "{{project.name}}"
 version = "0.1.0"
 EOF
-if ln -s mcpp.toml.in "$PKG/templates/symlinked/escape-link" 2>/dev/null; then
+symlink_path="$PKG/templates/symlinked/escape-link"
+if ln -s mcpp.toml.in "$symlink_path" 2>/dev/null \
+    && [[ -L "$symlink_path" ]]; then
     if "$MCPP" new fail-symlink \
         --template acme.tx-template@2.0.0:symlinked \
         > symlink.log 2>&1; then
@@ -205,6 +207,11 @@ if ln -s mcpp.toml.in "$PKG/templates/symlinked/escape-link" 2>/dev/null; then
         || { cat symlink.log; fail "symlink rejection diagnostic missing"; }
     [[ ! -e fail-symlink ]] || fail "symlink failure left final target"
     assert_no_stage "$WORK"
+else
+    # Some restricted Windows shells report success from `ln -s` without
+    # creating a symbolic link. Do not turn that environment quirk into a
+    # false assertion about scaffold behavior.
+    rm -f -- "$symlink_path"
 fi
 
 echo OK

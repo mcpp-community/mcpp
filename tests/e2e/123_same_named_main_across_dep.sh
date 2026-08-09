@@ -73,8 +73,10 @@ ninja_file="$(find target -name build.ninja | head -1)"
 # the first fix rather than the property: back then the consumer's main WAS
 # renamed, because disambiguation was decided by a census over the whole build
 # dir, so a dependency's same-named file dragged the consumer along with it.
-# Since mcpp#344 a dependency's objects live under obj/<pkg>/, cross-package
-# collisions cannot happen, and the consumer's own main correctly stays flat.
+# Since mcpp#344 a dependency's objects live under
+# obj/<namespace>_<pkg>/, cross-package collisions cannot happen, and the
+# consumer's own main correctly stays flat.  The namespace component is part
+# of exact package identity and prevents same-short packages from colliding.
 # Both layouts satisfy #240; only "produced by some edge" distinguishes a fixed
 # tree from a broken one.
 link_line="$(grep -E '^build bin/consumer *:' "$ninja_file")"
@@ -91,7 +93,7 @@ done
 
 # And the dependency's same-named source must have gotten its own object rather
 # than silently overwriting the consumer's.
-grep -qE '^build obj/mydep/.*main\.o *:' "$ninja_file" || {
+grep -qE '^build obj/mcpplibs_mydep/.*main\.o *:' "$ninja_file" || {
     echo "FAIL: the dependency's src/main.cpp has no object of its own"
     grep -n 'main\.o' "$ninja_file"
     exit 1
