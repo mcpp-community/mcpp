@@ -16,6 +16,8 @@ export module mcpp.scaffold;
 
 import std;
 import mcpp.libs.toml;
+import mcpp.manifest;
+import mcpp.platform.scaffold_fs;
 import mcpp.pm.dependency_selector;
 
 export namespace mcpp::scaffold {
@@ -214,8 +216,31 @@ list_templates(const std::filesystem::path& packageRoot) {
     }
     std::vector<TemplateEntry> out;
     std::error_code ec;
-    for (auto& e : std::filesystem::directory_iterator(dir, ec)) {
-        if (!e.is_directory()) continue;
+    std::filesystem::directory_iterator iterator(dir, ec), end;
+    if (ec) {
+        return std::unexpected(std::format(
+            "cannot enumerate package templates: {}", ec.message()));
+    }
+    while (iterator != end) {
+        const auto e = *iterator;
+        auto status = e.symlink_status(ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "cannot inspect template provider entry '{}': {}",
+                e.path().string(), ec.message()));
+        }
+        if (std::filesystem::is_symlink(status)) {
+            return std::unexpected(std::format(
+                "template provider entry '{}' is a symlink", e.path().string()));
+        }
+        if (!std::filesystem::is_directory(status)) {
+            iterator.increment(ec);
+            if (ec) {
+                return std::unexpected(std::format(
+                    "cannot enumerate package templates: {}", ec.message()));
+            }
+            continue;
+        }
         auto templateName = e.path().filename().string();
         auto parsedName = mcpp::pm::parse_package_selector(templateName);
         if (!parsedName || parsedName->namespace_) {
@@ -226,10 +251,11 @@ list_templates(const std::filesystem::path& packageRoot) {
         auto meta = load_meta(e.path());
         if (!meta) return std::unexpected(meta.error());
         out.push_back({std::move(templateName), std::move(*meta)});
-    }
-    if (ec) {
-        return std::unexpected(std::format(
-            "cannot enumerate package templates: {}", ec.message()));
+        iterator.increment(ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "cannot enumerate package templates: {}", ec.message()));
+        }
     }
     std::ranges::sort(out, {}, &TemplateEntry::name);
     int defaults = 0;
@@ -242,110 +268,335 @@ list_templates(const std::filesystem::path& packageRoot) {
     return out;
 }
 
-// The placeholder vocabulary is deliberately minimal and mcpp-owned;
-// template variability comes from packages shipping multiple templates,
-// not from growing the renderer into a programming language.
+// The placeholder vocabulary is deliberately minimal and mcpp-owned. Values
+// are appended by a single-pass renderer and are never scanned as template
+// source again.
 struct RenderVars {
     std::string projectName;
-    std::string selfName;
-    std::string selfVersion;
+    std::string projectNamespace;
+    std::string projectQualifiedName;
+    std::string templatePackageNamespace;
+    std::string templatePackageName;
+    std::string templatePackageSelector;
+    std::string templatePackageVersion;
+    std::string templateName;
 };
 
-std::string render_text(std::string text, const RenderVars& vars) {
-    auto replace_all = [&](std::string_view from, std::string_view to) {
-        std::size_t pos = 0;
-        while ((pos = text.find(from, pos)) != std::string::npos) {
-            text.replace(pos, from.size(), to);
-            pos += to.size();
-        }
+struct RenderError {
+    std::string message;
+};
+
+std::expected<std::string, RenderError>
+render_tokens(std::string_view input, const RenderVars& vars) {
+    auto value_for = [&](std::string_view token)
+        -> std::optional<std::string_view> {
+        if (token == "project.name") return vars.projectName;
+        if (token == "project.namespace") return vars.projectNamespace;
+        if (token == "project.qualifiedName") return vars.projectQualifiedName;
+        if (token == "template.package.namespace")
+            return vars.templatePackageNamespace;
+        if (token == "template.package.name") return vars.templatePackageName;
+        if (token == "template.package.selector")
+            return vars.templatePackageSelector;
+        if (token == "template.package.version")
+            return vars.templatePackageVersion;
+        if (token == "template.name") return vars.templateName;
+        // One compatibility train for existing template packages.
+        if (token == "self.name") return vars.templatePackageSelector;
+        if (token == "self.version") return vars.templatePackageVersion;
+        return std::nullopt;
     };
-    replace_all("{{project.name}}", vars.projectName);
-    replace_all("{{self.name}}",    vars.selfName);
-    replace_all("{{self.version}}", vars.selfVersion);
-    return text;
+
+    std::string out;
+    out.reserve(input.size());
+    std::size_t cursor = 0;
+    while (cursor < input.size()) {
+        auto open = input.find("{{", cursor);
+        if (open == std::string_view::npos) {
+            out.append(input.substr(cursor));
+            break;
+        }
+        out.append(input.substr(cursor, open - cursor));
+        auto close = input.find("}}", open + 2);
+        if (close == std::string_view::npos) {
+            return std::unexpected(RenderError{std::format(
+                "unterminated template token at byte {}", open)});
+        }
+        auto token = input.substr(open + 2, close - open - 2);
+        auto value = value_for(token);
+        if (!value) {
+            return std::unexpected(RenderError{std::format(
+                "unknown template token '{{{{{}}}}}'", token)});
+        }
+        out.append(*value); // intentionally never rescanned
+        cursor = close + 2;
+    }
+    return out;
+}
+
+class ScaffoldTransaction {
+    std::filesystem::path finalPath_;
+    std::filesystem::path stagingPath_;
+    bool committed_ = false;
+
+    ScaffoldTransaction(std::filesystem::path finalPath,
+                        std::filesystem::path stagingPath)
+        : finalPath_(std::move(finalPath)),
+          stagingPath_(std::move(stagingPath)) {}
+
+public:
+    ScaffoldTransaction(const ScaffoldTransaction&) = delete;
+    ScaffoldTransaction& operator=(const ScaffoldTransaction&) = delete;
+    ScaffoldTransaction(ScaffoldTransaction&& other) noexcept
+        : finalPath_(std::move(other.finalPath_)),
+          stagingPath_(std::move(other.stagingPath_)),
+          committed_(other.committed_) {
+        other.committed_ = true;
+        other.stagingPath_.clear();
+    }
+    ScaffoldTransaction& operator=(ScaffoldTransaction&&) = delete;
+
+    ~ScaffoldTransaction() {
+        if (committed_ || stagingPath_.empty()) return;
+        std::error_code ec;
+        std::filesystem::remove_all(stagingPath_, ec);
+    }
+
+    static std::expected<ScaffoldTransaction, std::string>
+    begin(const std::filesystem::path& parent, std::string_view name) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(parent, ec) || ec) {
+            return std::unexpected(std::format(
+                "scaffold parent '{}' is not a readable directory",
+                parent.string()));
+        }
+        auto finalPath = parent / std::string(name);
+        if (std::filesystem::exists(finalPath, ec) || ec) {
+            return std::unexpected(std::format(
+                "'{}' already exists", finalPath.string()));
+        }
+
+        std::random_device random;
+        for (int attempt = 0; attempt < 32; ++attempt) {
+            const auto nonce = (static_cast<std::uint64_t>(random()) << 32)
+                ^ static_cast<std::uint64_t>(random())
+                ^ static_cast<std::uint64_t>(
+                    std::chrono::steady_clock::now().time_since_epoch().count());
+            auto stagingPath = parent / std::format(
+                ".mcpp-new-{:016x}", nonce);
+            ec.clear();
+            if (std::filesystem::create_directory(stagingPath, ec)) {
+                return ScaffoldTransaction{
+                    std::move(finalPath), std::move(stagingPath)};
+            }
+            if (ec && ec != std::errc::file_exists) {
+                return std::unexpected(std::format(
+                    "cannot create scaffold staging directory in '{}': {}",
+                    parent.string(), ec.message()));
+            }
+        }
+        return std::unexpected(std::format(
+            "cannot allocate a unique scaffold staging directory in '{}'",
+            parent.string()));
+    }
+
+    const std::filesystem::path& staging_path() const { return stagingPath_; }
+    const std::filesystem::path& final_path() const { return finalPath_; }
+
+    std::expected<void, std::string> commit() {
+        if (committed_) return {};
+        if (auto synced = mcpp::platform::sync_directory(stagingPath_);
+            !synced) {
+            return synced;
+        }
+        auto renamed = mcpp::platform::atomic_rename_directory_no_replace(
+            stagingPath_, finalPath_);
+        if (!renamed) return renamed;
+        committed_ = true;
+        // Once the no-replace rename commits, the operation has succeeded.
+        // Persist its parent entry where supported; an exotic filesystem that
+        // refuses this post-commit sync must not turn a visible project into a
+        // reported failure/partial-output contradiction.
+        (void)mcpp::platform::sync_directory(finalPath_.parent_path());
+        return {};
+    }
+};
+
+std::expected<void, std::string>
+write_text_file(const std::filesystem::path& path, std::string_view content) {
+    std::ofstream os(path, std::ios::binary | std::ios::trunc);
+    if (!os) {
+        return std::unexpected(std::format(
+            "cannot open '{}' for writing", path.string()));
+    }
+    os.write(content.data(), static_cast<std::streamsize>(content.size()));
+    os.flush();
+    if (!os) {
+        return std::unexpected(std::format(
+            "write '{}' failed", path.string()));
+    }
+    os.close();
+    if (!os) {
+        return std::unexpected(std::format(
+            "close '{}' failed", path.string()));
+    }
+    return mcpp::platform::sync_regular_file(path);
 }
 
 // Instantiate templateDir into destDir: `.in` files are rendered (suffix
 // stripped), everything else copied verbatim; template.toml is metadata
 // only and never copied.
-std::optional<std::string>
+std::expected<void, std::string>
 instantiate(const std::filesystem::path& templateDir,
             const std::filesystem::path& destDir,
             const RenderVars& vars) {
     std::error_code ec;
-    for (auto& e : std::filesystem::recursive_directory_iterator(templateDir, ec)) {
+    std::filesystem::recursive_directory_iterator iterator(templateDir, ec);
+    if (ec) {
+        return std::unexpected(std::format(
+            "cannot enumerate template '{}': {}",
+            templateDir.string(), ec.message()));
+    }
+    std::filesystem::recursive_directory_iterator end;
+    while (iterator != end) {
+        const auto e = *iterator;
+        auto status = e.symlink_status(ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "cannot inspect template entry '{}': {}",
+                e.path().string(), ec.message()));
+        }
+        if (std::filesystem::is_symlink(status)) {
+            return std::unexpected(std::format(
+                "template entry '{}' is a symlink; template payloads must be "
+                "self-contained data", e.path().string()));
+        }
         auto rel = std::filesystem::relative(e.path(), templateDir, ec);
-        if (rel == "template.toml") continue;
-        auto dest = destDir / rel;
-        if (e.is_directory()) {
-            std::filesystem::create_directories(dest, ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "cannot relativize template entry '{}': {}",
+                e.path().string(), ec.message()));
+        }
+        if (rel == "template.toml") {
+            iterator.increment(ec);
+            if (ec) {
+                return std::unexpected(std::format(
+                    "enumerating template '{}' failed: {}",
+                    templateDir.string(), ec.message()));
+            }
             continue;
         }
+        auto dest = destDir / rel;
+        if (std::filesystem::is_directory(status)) {
+            std::filesystem::create_directories(dest, ec);
+            if (ec) {
+                return std::unexpected(std::format(
+                    "create directory '{}' failed: {}",
+                    dest.string(), ec.message()));
+            }
+            iterator.increment(ec);
+            if (ec) {
+                return std::unexpected(std::format(
+                    "enumerating template '{}' failed: {}",
+                    templateDir.string(), ec.message()));
+            }
+            continue;
+        }
+        if (!std::filesystem::is_regular_file(status)) {
+            return std::unexpected(std::format(
+                "template entry '{}' is not a regular file", rel.string()));
+        }
         std::filesystem::create_directories(dest.parent_path(), ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "create directory '{}' failed: {}",
+                dest.parent_path().string(), ec.message()));
+        }
         if (rel.extension() == ".in") {
-            std::ifstream is(e.path());
-            std::stringstream ss; ss << is.rdbuf();
-            auto rendered = render_text(ss.str(), vars);
+            std::ifstream is(e.path(), std::ios::binary);
+            if (!is) {
+                return std::unexpected(std::format(
+                    "cannot read template input '{}'", rel.string()));
+            }
+            std::stringstream ss;
+            ss << is.rdbuf();
+            if (is.bad()) {
+                return std::unexpected(std::format(
+                    "read template input '{}' failed", rel.string()));
+            }
+            auto rendered = render_tokens(ss.str(), vars);
+            if (!rendered) return std::unexpected(rendered.error().message);
             dest.replace_extension();      // strip ".in"
-            std::ofstream os(dest);
-            os << rendered;
+            if (auto written = write_text_file(dest, *rendered); !written)
+                return written;
         } else {
+            ec.clear();
             std::filesystem::copy_file(
                 e.path(), dest,
                 std::filesystem::copy_options::overwrite_existing, ec);
             if (ec) {
-                return std::format("copy '{}' failed: {}",
-                                   rel.string(), ec.message());
+                return std::unexpected(std::format(
+                    "copy '{}' failed: {}", rel.string(), ec.message()));
             }
+            if (auto synced = mcpp::platform::sync_regular_file(dest); !synced)
+                return synced;
+        }
+        iterator.increment(ec);
+        if (ec) {
+            return std::unexpected(std::format(
+                "enumerating template '{}' failed: {}",
+                templateDir.string(), ec.message()));
         }
     }
-    return std::nullopt;
+    return {};
 }
 
 // Ensure the generated manifest depends on the template's own package.
 // If the template already declares it (typically via {{self.version}}),
 // nothing is injected — template wins.
-std::optional<std::string>
+std::expected<void, std::string>
 inject_self_dependency(const std::filesystem::path& manifestPath,
                        const RenderVars& vars,
                        const std::vector<std::string>& features) {
-    std::ifstream is(manifestPath);
-    if (!is) return std::format("cannot read '{}'", manifestPath.string());
-    std::stringstream ss; ss << is.rdbuf();
+    std::ifstream is(manifestPath, std::ios::binary);
+    if (!is) return std::unexpected(std::format(
+        "cannot read '{}'", manifestPath.string()));
+    std::stringstream ss;
+    ss << is.rdbuf();
+    if (is.bad()) return std::unexpected(std::format(
+        "read '{}' failed", manifestPath.string()));
     std::string content = ss.str();
     is.close();
 
-    if (content.find(vars.selfName + " =") != std::string::npos
-        || content.find(vars.selfName + "=") != std::string::npos) {
-        return std::nullopt;   // already declared by the template
-    }
-
-    std::string depLine;
-    if (features.empty()) {
-        depLine = std::format("{} = \"{}\"\n", vars.selfName, vars.selfVersion);
-    } else {
-        std::string flist;
-        for (auto& f : features) {
-            if (!flist.empty()) flist += ", ";
-            flist += std::format("\"{}\"", f);
+    auto parsed = mcpp::manifest::parse_string(content, manifestPath);
+    if (!parsed) return std::unexpected(std::format(
+        "generated manifest is invalid: {}", parsed.error().format()));
+    for (auto const& [mapKey, dep] : parsed->dependencies) {
+        const auto shortName = dep.shortName.empty() ? mapKey : dep.shortName;
+        if (dep.namespace_ == vars.templatePackageNamespace
+            && shortName == vars.templatePackageName) {
+            return {}; // template already declared this exact PackageId
         }
-        depLine = std::format("{} = {{ version = \"{}\", features = [{}] }}\n",
-                              vars.selfName, vars.selfVersion, flist);
     }
 
-    constexpr std::string_view header = "[dependencies]";
-    if (auto pos = content.find(header); pos != std::string::npos) {
-        auto eol = content.find('\n', pos);
-        if (eol == std::string::npos) content += "\n" + depLine;
-        else content.insert(eol + 1, depLine);
-    } else {
-        if (!content.empty() && content.back() != '\n') content += '\n';
-        content += "\n[dependencies]\n" + depLine;
+    auto selector = mcpp::pm::parse_package_selector(
+        vars.templatePackageSelector);
+    if (!selector) return std::unexpected(selector.error().message);
+    auto coordinate = mcpp::pm::normalize_package_selector(*selector);
+    if (coordinate.namespace_ != vars.templatePackageNamespace
+        || coordinate.shortName != vars.templatePackageName) {
+        return std::unexpected(
+            "template self-dependency selector disagrees with resolved PackageId");
     }
 
-    std::ofstream os(manifestPath);
-    os << content;
-    return std::nullopt;
+    auto edited = mcpp::manifest::upsert_dependency_text(content, {
+        .namespace_ = vars.templatePackageNamespace,
+        .shortName = vars.templatePackageName,
+        .version = vars.templatePackageVersion,
+        .features = features,
+    });
+    if (!edited) return std::unexpected(edited.error());
+    return write_text_file(manifestPath, *edited);
 }
 
 } // namespace mcpp::scaffold

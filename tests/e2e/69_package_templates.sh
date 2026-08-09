@@ -264,7 +264,8 @@ grep -qi "inline build recipe" out7.log \
     || { cat out-acme.log; echo "exact acme template failed"; exit 1; }
 grep -q 'fixture-marker=acme-solo' app-acme/mcpp.toml \
     || { cat app-acme/mcpp.toml; echo "default sibling stole acme selector"; exit 1; }
-grep -q '^acme\.tpl-demo = "3\.0\.0"$' app-acme/mcpp.toml \
+grep -q '^\[dependencies\.acme\]$' app-acme/mcpp.toml \
+    && grep -q '^tpl-demo = "3\.0\.0"$' app-acme/mcpp.toml \
     || { cat app-acme/mcpp.toml; echo "canonical self dependency lost namespace"; exit 1; }
 grep -q 'namespace=acme name=tpl-demo' out-acme.log \
     || { cat out-acme.log; echo "resolved output lost PackageId"; exit 1; }
@@ -278,7 +279,8 @@ grep -q 'acme.tpl-demo@3.0.0:solo' out-acme.log \
     || { cat out-lua.log; echo "nested namespace template failed"; exit 1; }
 grep -q 'fixture-marker=nested-lua' app-lua/mcpp.toml \
     || { cat app-lua/mcpp.toml; echo "nested template payload missing"; exit 1; }
-grep -q '^mcpplibs\.capi\.lua = "5\.4\.7"$' app-lua/mcpp.toml \
+grep -q '^\[dependencies\.mcpplibs\.capi\]$' app-lua/mcpp.toml \
+    && grep -q '^lua = "5\.4\.7"$' app-lua/mcpp.toml \
     || { cat app-lua/mcpp.toml; echo "nested PackageId lost during injection"; exit 1; }
 grep -q 'namespace=mcpplibs.capi name=lua' out-lua.log \
     || { cat out-lua.log; echo "nested resolved identity missing"; exit 1; }

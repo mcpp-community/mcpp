@@ -18,6 +18,7 @@ import mcpp.pm.index_route;
 import mcpp.platform.axis;
 import mcpp.pm.resolver;
 import mcpp.scaffold;
+import mcpp.scaffold.project_name;
 import mcpp.ui;
 
 namespace mcpp::scaffold {
@@ -194,8 +195,20 @@ export int list_package_templates(const mcpp::scaffold::TemplateSpec& spec) {
 }
 
 export int new_from_package_template(
-    const std::string& name,
+    const mcpp::scaffold::PortableProjectName& project,
     const mcpp::scaffold::TemplateSpec& spec) {
+    const auto parent = std::filesystem::current_path();
+    const auto finalPath = parent / project.directoryName;
+    std::error_code existenceError;
+    if (std::filesystem::exists(finalPath, existenceError)
+        || existenceError) {
+        mcpp::ui::error(existenceError
+            ? std::format("cannot inspect '{}': {}", finalPath.string(),
+                          existenceError.message())
+            : std::format("'{}' already exists", finalPath.string()));
+        return 1;
+    }
+
     auto pkg = fetch_template_package(spec);
     if (!pkg) { mcpp::ui::error(pkg.error()); return 1; }
     auto entries = mcpp::scaffold::list_templates(pkg->root);
@@ -215,36 +228,57 @@ export int new_from_package_template(
     }
     const auto* chosen = *chosenResult;
 
-    std::filesystem::path root = std::filesystem::current_path() / name;
-    if (std::filesystem::exists(root)) {
-        mcpp::ui::error(std::format("'{}' already exists", root.string()));
+    auto transaction = mcpp::scaffold::ScaffoldTransaction::begin(
+        parent, project.directoryName);
+    if (!transaction) {
+        mcpp::ui::error(transaction.error());
         return 1;
     }
-    std::error_code ec;
-    std::filesystem::create_directories(root, ec);
-    if (ec) {
-        mcpp::ui::error(std::format("cannot create '{}': {}",
-                                    root.string(), ec.message()));
+    auto tx = std::move(*transaction);
+    const auto& root = tx.staging_path();
+
+    // Keep both identities fully typed through rendering and dependency
+    // injection; a same-short-name package in another namespace is distinct.
+    mcpp::scaffold::RenderVars vars{
+        .projectName = project.name,
+        .projectNamespace = project.namespace_,
+        .projectQualifiedName = project.qualifiedName,
+        .templatePackageNamespace = pkg->id.namespace_,
+        .templatePackageName = pkg->id.shortName,
+        .templatePackageSelector = pkg->selector,
+        .templatePackageVersion = pkg->version,
+        .templateName = chosen->name,
+    };
+    auto instantiated = mcpp::scaffold::instantiate(
+        pkg->root / "templates" / chosen->name, root, vars);
+    if (!instantiated) {
+        mcpp::ui::error(instantiated.error());
+        return 1;
+    }
+    auto injected = mcpp::scaffold::inject_self_dependency(
+        root / "mcpp.toml", vars, chosen->meta.injectSelfFeatures);
+    if (!injected) {
+        mcpp::ui::error(injected.error());
         return 1;
     }
 
-    // Keep the complete resolved PackageId through rendering/injection. The
-    // current renderer's `self.name` surface is the canonical selector; Task 4
-    // expands this into separately addressable namespace/name variables.
-    mcpp::scaffold::RenderVars vars{name, pkg->selector, pkg->version};
-    if (auto err = mcpp::scaffold::instantiate(
-            pkg->root / "templates" / chosen->name, root, vars)) {
-        mcpp::ui::error(*err);
+    // Parsing the completed manifest is the final semantic gate. Nothing is
+    // user-visible until the same-filesystem rename below succeeds.
+    auto generated = mcpp::manifest::load(root / "mcpp.toml");
+    if (!generated) {
+        mcpp::ui::error(std::format(
+            "generated manifest validation failed: {}",
+            generated.error().format()));
         return 1;
     }
-    if (auto err = mcpp::scaffold::inject_self_dependency(
-            root / "mcpp.toml", vars, chosen->meta.injectSelfFeatures)) {
-        mcpp::ui::error(*err);
+    if (auto committed = tx.commit(); !committed) {
+        mcpp::ui::error(committed.error());
         return 1;
     }
 
     mcpp::ui::status("Created", std::format(
-        "{} (template {}@{}:{})", name, pkg->selector, pkg->version,
+        "{} (template {}@{}:{})", project.qualifiedName,
+        pkg->selector, pkg->version,
         chosen->name));
     std::println("Resolved template package: namespace={} name={} route={} "
                  "descriptor={} payload={}",
@@ -257,49 +291,61 @@ export int new_from_package_template(
 }
 
 // Builtin `mcpp new` skeleton (bin, plus the transitional gui alias).
-export int create_builtin_project(const std::string& name, bool gui) {
-    std::filesystem::path root = std::filesystem::current_path() / name;
-    if (std::filesystem::exists(root)) {
-        std::println(stderr, "error: '{}' already exists", root.string());
+export int create_builtin_project(
+    const mcpp::scaffold::PortableProjectName& project, bool gui) {
+    auto transaction = mcpp::scaffold::ScaffoldTransaction::begin(
+        std::filesystem::current_path(), project.directoryName);
+    if (!transaction) {
+        mcpp::ui::error(transaction.error());
         return 1;
     }
+    auto tx = std::move(*transaction);
+    const auto& root = tx.staging_path();
+
     std::error_code ec;
     std::filesystem::create_directories(root / "src", ec);
     if (ec) {
-        std::println(stderr, "error: cannot create '{}': {}", root.string(), ec.message());
+        mcpp::ui::error(std::format(
+            "cannot create scaffold source directory: {}", ec.message()));
         return 1;
     }
 
     // mcpp.toml
     {
-        std::ofstream os(root / "mcpp.toml");
-        os << mcpp::manifest::default_template(name);
+        std::string manifest = mcpp::manifest::default_template(
+            project.qualifiedName);
         if (gui) {
             // The GUI template depends on the imgui module package. It does not
             // pin a toolchain — mcpp resolves the environment/default toolchain
             // and the GL runtime is closed by the ecosystem (compat.glx-runtime).
-            os << "\n[dependencies]\nimgui = \"0.0.5\"\n";
+            manifest += "\n[dependencies]\nimgui = \"0.0.5\"\n";
+        }
+        if (auto written = mcpp::scaffold::write_text_file(
+                root / "mcpp.toml", manifest); !written) {
+            mcpp::ui::error(written.error());
+            return 1;
         }
     }
-    // src/main.cpp — template with PROJECT placeholder, replaced with `name`.
+    // src/main.cpp — rendered once; values are never rescanned as template
+    // source.
     {
-        std::string body = gui ? R"GUI(// PROJECT — generated by `mcpp new --template gui`
+        std::string_view source = gui ? R"GUI(// {{project.name}} — generated by `mcpp new --template gui`
 // Tier-0 zero-boilerplate window via the imgui.app facade. No #include.
 import imgui.core;
 import imgui.app;
 
 int main() {
     return ImGui::App::run([] {
-        ImGui::Begin("PROJECT");
+        ImGui::Begin("{{project.name}}");
         ImGui::TextUnformatted("Hello from mcpp + imgui (imgui.app facade)");
         ImGui::End();
     });
 }
-)GUI" : R"(// PROJECT — generated by `mcpp new`
+)GUI" : R"(// {{project.name}} — generated by `mcpp new`
 import std;
 
 int main(int argc, char* argv[]) {
-    std::println("Hello from PROJECT!");
+    std::println("Hello from {{project.name}}!");
     std::println("Built with import std + std::println on modular C++23.");
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) std::println("  arg[{}] = {}", i, argv[i]);
@@ -307,18 +353,32 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 )";
-        std::size_t pos;
-        while ((pos = body.find("PROJECT")) != std::string::npos) {
-            body.replace(pos, 7, name);
+        mcpp::scaffold::RenderVars vars{
+            .projectName = project.name,
+            .projectNamespace = project.namespace_,
+            .projectQualifiedName = project.qualifiedName,
+            .templateName = gui ? "gui" : "bin",
+        };
+        auto body = mcpp::scaffold::render_tokens(source, vars);
+        if (!body) {
+            mcpp::ui::error(body.error().message);
+            return 1;
         }
-        std::ofstream os(root / "src" / "main.cpp");
-        os << body;
+        if (auto written = mcpp::scaffold::write_text_file(
+                root / "src" / "main.cpp", *body); !written) {
+            mcpp::ui::error(written.error());
+            return 1;
+        }
     }
     // tests/test_smoke.cpp — bundled smoke test (`mcpp test` works out-of-the-box).
     {
         std::filesystem::create_directories(root / "tests", ec);
-        std::ofstream os(root / "tests" / "test_smoke.cpp");
-        os << R"(// Smoke test — verifies the project compiles + a binary runs.
+        if (ec) {
+            mcpp::ui::error(std::format(
+                "cannot create scaffold test directory: {}", ec.message()));
+            return 1;
+        }
+        constexpr std::string_view smoke = R"(// Smoke test — verifies the project compiles + a binary runs.
 // Add more tests as tests/test_*.cpp files; mcpp test discovers them
 // automatically (one binary per file).
 import std;
@@ -328,17 +388,39 @@ int main() {
     return 0;
 }
 )";
+        if (auto written = mcpp::scaffold::write_text_file(
+                root / "tests" / "test_smoke.cpp", smoke); !written) {
+            mcpp::ui::error(written.error());
+            return 1;
+        }
     }
     // .gitignore
     {
-        std::ofstream os(root / ".gitignore");
         // `.mcpp/` is the per-project xlings sandbox (and, when no MCPP_HOME
         // can be resolved, the local BMI cache) — build state, never sources.
-        os << "target/\n.mcpp/\n";
+        if (auto written = mcpp::scaffold::write_text_file(
+                root / ".gitignore", "target/\n.mcpp/\n"); !written) {
+            mcpp::ui::error(written.error());
+            return 1;
+        }
     }
 
-    std::println("Created {} package '{}' at {}", gui ? "gui" : "bin", name, root.string());
-    std::println("Next: cd {} && mcpp build && mcpp run  (or `mcpp test`)", name);
+    auto generated = mcpp::manifest::load(root / "mcpp.toml");
+    if (!generated) {
+        mcpp::ui::error(std::format(
+            "generated manifest validation failed: {}",
+            generated.error().format()));
+        return 1;
+    }
+    if (auto committed = tx.commit(); !committed) {
+        mcpp::ui::error(committed.error());
+        return 1;
+    }
+
+    std::println("Created {} package '{}' at {}", gui ? "gui" : "bin",
+                 project.qualifiedName, tx.final_path().string());
+    std::println("Next: cd {} && mcpp build && mcpp run  (or `mcpp test`)",
+                 project.directoryName);
     return 0;
 }
 

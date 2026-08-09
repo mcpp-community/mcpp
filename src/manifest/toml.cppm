@@ -19,6 +19,21 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path);
 // For `mcpp new` scaffolding.
 std::string default_template(std::string_view packageName);
 
+// Shared source-preserving editor used by both `mcpp add` and scaffold
+// self-dependency injection. Identity is structured; formatting is emitted in
+// the canonical default table / namespace-subtable form.
+struct DependencyTextEdit {
+    std::string              namespace_;
+    std::string              shortName;
+    std::string              version;
+    std::vector<std::string> features;
+    bool                     dev = false;
+};
+
+std::expected<std::string, std::string>
+upsert_dependency_text(std::string_view source,
+                       const DependencyTextEdit& edit);
+
 } // namespace mcpp::manifest
 
 namespace mcpp::manifest {
@@ -1550,6 +1565,217 @@ version     = "0.1.0"
 description = "A modular C++23 package"
 license     = "Apache-2.0"
 )", packageName);
+}
+
+std::expected<std::string, std::string>
+upsert_dependency_text(std::string_view source,
+                       const DependencyTextEdit& edit) {
+    auto original = parse_string(source);
+    if (!original) {
+        return std::unexpected(std::format(
+            "invalid manifest before dependency edit: {}",
+            original.error().format()));
+    }
+
+    if (edit.namespace_.empty()) {
+        return std::unexpected(
+            "dependency edit requires a canonical non-empty namespace");
+    }
+    const auto spelling = edit.namespace_ == kDefaultNamespace
+        ? edit.shortName
+        : std::format("{}.{}", edit.namespace_, edit.shortName);
+    auto selector = mcpp::pm::parse_package_selector(spelling);
+    if (!selector) return std::unexpected(selector.error().message);
+    auto coordinate = mcpp::pm::normalize_package_selector(*selector);
+    if (coordinate.namespace_ != edit.namespace_
+        || coordinate.shortName != edit.shortName) {
+        return std::unexpected(std::format(
+            "dependency edit identity ({}, {}) is not canonical",
+            edit.namespace_, edit.shortName));
+    }
+    if (edit.version.empty()) {
+        return std::unexpected("dependency edit version is empty");
+    }
+    for (unsigned char ch : edit.version) {
+        if (ch < 0x20 || ch == 0x7f || ch == '"' || ch == '\\') {
+            return std::unexpected(
+                "dependency edit version contains an unsafe TOML character");
+        }
+    }
+    for (auto const& featureName : edit.features) {
+        auto feature = mcpp::pm::parse_package_selector(featureName);
+        if (!feature || feature->namespace_) {
+            return std::unexpected(std::format(
+                "dependency feature '{}' must be one safe atom", featureName));
+        }
+    }
+
+    std::string value;
+    if (edit.features.empty()) {
+        value = std::format("\"{}\"", edit.version);
+    } else {
+        std::string featureList;
+        for (auto const& feature : edit.features) {
+            if (!featureList.empty()) featureList += ", ";
+            featureList += std::format("\"{}\"", feature);
+        }
+        value = std::format(
+            "{{ version = \"{}\", features = [{}] }}",
+            edit.version, featureList);
+    }
+
+    struct SectionSpan {
+        std::size_t headerStart;
+        std::size_t headerEnd;
+        std::size_t bodyStart;
+        std::size_t sectionEnd;
+    };
+
+    auto trim = [](std::string_view line) {
+        while (!line.empty()
+               && (line.front() == ' ' || line.front() == '\t')) {
+            line.remove_prefix(1);
+        }
+        while (!line.empty()
+               && (line.back() == ' ' || line.back() == '\t'
+                   || line.back() == '\r')) {
+            line.remove_suffix(1);
+        }
+        return line;
+    };
+
+    auto section_header_matches = [&](std::string_view line,
+                                      std::string_view header) {
+        line = trim(line);
+        if (!line.starts_with(header)) return false;
+        line.remove_prefix(header.size());
+        line = trim(line);
+        return line.empty() || line.front() == '#';
+    };
+
+    auto find_section = [&](std::string_view text,
+                            std::string_view header)
+        -> std::optional<SectionSpan> {
+        std::optional<SectionSpan> result;
+        std::size_t lineStart = 0;
+        while (lineStart <= text.size()) {
+            auto newline = text.find('\n', lineStart);
+            auto lineEnd = newline == std::string_view::npos
+                ? text.size() : newline;
+            auto line = text.substr(lineStart, lineEnd - lineStart);
+            if (!result && section_header_matches(line, header)) {
+                result = SectionSpan{
+                    .headerStart = lineStart,
+                    .headerEnd = lineEnd,
+                    .bodyStart = newline == std::string_view::npos
+                        ? lineEnd : lineEnd + 1,
+                    .sectionEnd = text.size(),
+                };
+            } else if (result) {
+                auto stripped = trim(line);
+                if (!stripped.empty() && stripped.front() == '[') {
+                    result->sectionEnd = lineStart;
+                    break;
+                }
+            }
+            if (newline == std::string_view::npos) break;
+            lineStart = newline + 1;
+        }
+        return result;
+    };
+
+    auto key_line_span = [&](std::string_view text,
+                             const SectionSpan& section,
+                             std::string_view key)
+        -> std::optional<std::pair<std::size_t, std::size_t>> {
+        const auto quotedKey = std::format("\"{}\"", key);
+        std::size_t lineStart = section.bodyStart;
+        while (lineStart < section.sectionEnd) {
+            auto newline = text.find('\n', lineStart);
+            auto lineEnd = newline == std::string_view::npos
+                ? text.size() : newline;
+            if (lineEnd > section.sectionEnd) lineEnd = section.sectionEnd;
+            auto line = trim(text.substr(lineStart, lineEnd - lineStart));
+            auto assignment_for = [&](std::string_view candidate) {
+                if (!line.starts_with(candidate)) return false;
+                auto rest = line.substr(candidate.size());
+                while (!rest.empty()
+                       && (rest.front() == ' ' || rest.front() == '\t')) {
+                    rest.remove_prefix(1);
+                }
+                return !rest.empty() && rest.front() == '=';
+            };
+            if (!line.starts_with('#')
+                && (assignment_for(key) || assignment_for(quotedKey))) {
+                return std::pair{lineStart, lineEnd};
+            }
+            if (newline == std::string_view::npos
+                || newline >= section.sectionEnd) break;
+            lineStart = newline + 1;
+        }
+        return std::nullopt;
+    };
+
+    std::string text(source);
+    const std::string table = edit.dev
+        ? "dev-dependencies" : "dependencies";
+    const std::string baseHeader = std::format("[{}]", table);
+    const bool defaultNamespace = edit.namespace_ == kDefaultNamespace;
+
+    // Retained flat dotted spellings are removed before canonical namespace
+    // subtable emission. The parsed identity gate above ensures this edits the
+    // exact PackageId, not a short-name substring match.
+    if (!defaultNamespace) {
+        if (auto base = find_section(text, baseHeader)) {
+            if (auto legacy = key_line_span(text, *base, spelling)) {
+                auto eraseEnd = legacy->second;
+                if (eraseEnd < text.size() && text[eraseEnd] == '\n')
+                    ++eraseEnd;
+                text.erase(legacy->first, eraseEnd - legacy->first);
+            }
+        }
+    }
+
+    const std::string sectionHeader = defaultNamespace
+        ? baseHeader
+        : std::format("[{}.{}]", table, edit.namespace_);
+    const std::string line = std::format("{} = {}", edit.shortName, value);
+    if (auto section = find_section(text, sectionHeader)) {
+        if (auto existing = key_line_span(text, *section, edit.shortName)) {
+            text.replace(existing->first, existing->second - existing->first,
+                         line);
+        } else if (section->bodyStart == section->headerEnd) {
+            text.insert(section->bodyStart, "\n" + line);
+        } else {
+            text.insert(section->bodyStart, line + "\n");
+        }
+    } else {
+        if (!text.empty() && text.back() != '\n') text += '\n';
+        text += std::format("\n{}\n{}\n", sectionHeader, line);
+    }
+
+    auto reparsed = parse_string(text);
+    if (!reparsed) {
+        return std::unexpected(std::format(
+            "dependency edit produced invalid manifest: {}",
+            reparsed.error().format()));
+    }
+    auto const& dependencies = edit.dev
+        ? reparsed->devDependencies : reparsed->dependencies;
+    auto exact = std::ranges::find_if(
+        dependencies, [&](auto const& item) {
+            auto const& dep = item.second;
+            return dep.namespace_ == edit.namespace_
+                && dep.shortName == edit.shortName;
+        });
+    if (exact == dependencies.end()
+        || exact->second.version != edit.version
+        || exact->second.features != edit.features) {
+        return std::unexpected(std::format(
+            "dependency edit did not materialize exact PackageId ({}, {})",
+            edit.namespace_, edit.shortName));
+    }
+    return text;
 }
 
 } // namespace mcpp::manifest

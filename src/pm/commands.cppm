@@ -258,83 +258,54 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     std::ifstream in(manifestPath);
-    std::stringstream ss; ss << in.rdbuf();
-    std::string text = ss.str();
+    if (!in) {
+        mcpp::ui::error(std::format(
+            "cannot read '{}'", manifestPath.string()));
+        return 2;
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    if (in.bad()) {
+        mcpp::ui::error(std::format(
+            "read '{}' failed", manifestPath.string()));
+        return 2;
+    }
 
-    // Insertion strategy:
-    //   - Default namespace → `[dependencies] ... name = "version"` (no quotes).
-    //   - Other namespace   → `[dependencies.<ns>] ... name = "version"`,
-    //                         creating the subtable if absent.
-    // --dev → [dev-dependencies] (test-only deps like gtest; consumed by
-    // `mcpp test`, never linked into `mcpp build` app binaries).
+    // `mcpp add` and scaffold injection share one structured, source-preserving
+    // editor. Default identities go under [dependencies]; foreign/nested
+    // identities use [dependencies.<namespace>] with the short key.
     const bool dev = parsed.is_flag_set("dev");
     const std::string table = dev ? "dev-dependencies" : "dependencies";
-    const bool isDefaultNs = ns == mcpp::manifest::kDefaultNamespace;
-    const std::string section = isDefaultNs
-        ? std::format("[{}]", table)
-        : std::format("[{}.{}]", table, ns);
-    const std::string key = shortName;
-
-    // Before writing the canonical namespace-subtable form, remove an
-    // equivalent retained flat spelling from the exact base table. Leaving
-    // both would make one PackageId appear twice in source and let TOML table
-    // traversal order decide which version wins. A same-short bare key is a
-    // different default-namespace package and is deliberately untouched.
-    if (!isDefaultNs) {
-        const auto baseSection = std::format("[{}]", table);
-        if (auto basePos = text.find(baseSection);
-            basePos != std::string::npos) {
-            auto bodyStart = text.find('\n', basePos);
-            if (bodyStart == std::string::npos) bodyStart = text.size();
-            auto sectionEnd = text.find("\n[", bodyStart);
-            if (sectionEnd == std::string::npos) sectionEnd = text.size();
-            for (const auto& needle : {
-                     std::format("\n{} = ", canonicalSelector),
-                     std::format("\n\"{}\" = ", canonicalSelector),
-                 }) {
-                auto entry = text.find(needle, bodyStart);
-                if (entry == std::string::npos || entry >= sectionEnd) continue;
-                auto lineEnd = text.find('\n', entry + 1);
-                if (lineEnd == std::string::npos) lineEnd = text.size();
-                text.erase(entry, lineEnd - entry);
-                break;
-            }
-        }
-    }
-
-    auto pos = text.find(section);
-    if (pos == std::string::npos) {
-        if (!text.empty() && text.back() != '\n') text += "\n";
-        text += std::format("\n{}\n{} = \"{}\"\n", section, key, version);
-    } else {
-        auto bodyStart = text.find('\n', pos);
-        if (bodyStart == std::string::npos) bodyStart = text.size();
-        auto sectionEnd = text.find("\n[", bodyStart);
-        if (sectionEnd == std::string::npos) sectionEnd = text.size();
-
-        bool replaced = false;
-        for (const auto& needle : {
-                 std::format("\n{} = ", key),
-                 std::format("\n\"{}\" = ", key),
-             }) {
-            auto entry = text.find(needle, bodyStart);
-            if (entry == std::string::npos || entry >= sectionEnd) continue;
-            auto lineStart = entry + 1;
-            auto lineEnd = text.find('\n', lineStart);
-            if (lineEnd == std::string::npos) lineEnd = text.size();
-            text.replace(lineStart, lineEnd - lineStart,
-                         std::format("{} = \"{}\"", key, version));
-            replaced = true;
-            break;
-        }
-        if (!replaced) {
-            text.insert(bodyStart,
-                        std::format("\n{} = \"{}\"", key, version));
-        }
+    auto edited = mcpp::manifest::upsert_dependency_text(ss.str(), {
+        .namespace_ = ns,
+        .shortName = shortName,
+        .version = version,
+        .dev = dev,
+    });
+    if (!edited) {
+        mcpp::ui::error(edited.error());
+        return 2;
     }
     {
-        std::ofstream os(manifestPath);
-        os << text;
+        std::ofstream os(manifestPath, std::ios::binary | std::ios::trunc);
+        if (!os) {
+            mcpp::ui::error(std::format(
+                "cannot open '{}' for writing", manifestPath.string()));
+            return 2;
+        }
+        os.write(edited->data(), static_cast<std::streamsize>(edited->size()));
+        os.flush();
+        if (!os) {
+            mcpp::ui::error(std::format(
+                "write '{}' failed", manifestPath.string()));
+            return 2;
+        }
+        os.close();
+        if (!os) {
+            mcpp::ui::error(std::format(
+                "close '{}' failed", manifestPath.string()));
+            return 2;
+        }
     }
 
     mcpp::ui::status("Adding", std::format(

@@ -122,10 +122,14 @@
 
 - Add: `src/scaffold/project_name.cppm`
 - Add: `src/platform/project_name.cppm`
+- Add: `src/platform/scaffold_fs.cppm`
 - Modify: `src/scaffold/template.cppm`
 - Modify: `src/scaffold/create.cppm`
 - Modify: `src/manifest/toml.cppm`
+- Modify: `src/pm/commands.cppm`
 - Modify: `tests/unit/test_scaffold.cpp`
+- Modify: `tests/unit/test_manifest.cpp`
+- Modify: `tests/e2e/69_package_templates.sh`
 - Add: `tests/e2e/204_new_transactional_scaffold.sh`
 
 **Interfaces:**
@@ -134,15 +138,15 @@
 - `render_tokens(string_view, RenderVars) -> expected<string, RenderError>`
 - `ScaffoldTransaction::begin(parent,name)`, `commit()`, destructor rollback.
 
-- [ ] RED: reject empty, absolute, separators, `.`, `..`, C0/DEL, Windows reserved device names, trailing dot/space, quote/tab and names containing the legacy `PROJECT` marker before target creation.
-- [ ] RED: prove inserted values containing placeholder-like text are not rescanned and all RenderVars render canonical project/template identities.
-- [ ] RED: inject read/write/copy/rename failures and assert neither final target nor sibling temporary directory remains.
-- [ ] Implement shared portable project-name validation with platform-specific reserved-name rules isolated under `src/platform/project_name.cppm`.
-- [ ] Replace repeated string substitution with a single-pass token renderer that never rescans inserted values.
-- [ ] Extend RenderVars with project namespace/qualified name and template package namespace/name/selector/version/template.
-- [ ] Replace substring dependency detection with structured manifest editing keyed by canonical PackageId; exact resolved version and features must be idempotent across same short names in different namespaces.
-- [ ] Generate builtin and package templates in a same-parent temporary directory, check every filesystem/stream operation, fsync/close as supported, and atomically rename only after validation.
-- [ ] GREEN: run scaffold unit/E2E tests, reproduce #380 cases with timeouts, and confirm no path escape or partial output.
+- [x] RED: reject empty, absolute, separators, `.`, `..`, C0/DEL, Windows reserved device names, trailing dot/space, quote/tab and names containing the legacy `PROJECT` marker before target creation.
+- [x] RED: prove inserted values containing placeholder-like text are not rescanned and all RenderVars render canonical project/template identities.
+- [x] RED: inject read/write/copy/rename failures and assert neither final target nor sibling temporary directory remains.
+- [x] Implement shared portable project-name validation with platform-specific reserved-name rules isolated under `src/platform/project_name.cppm`.
+- [x] Replace repeated string substitution with a single-pass token renderer that never rescans inserted values.
+- [x] Extend RenderVars with project namespace/qualified name and template package namespace/name/selector/version/template.
+- [x] Replace substring dependency detection with structured manifest editing keyed by canonical PackageId; exact resolved version and features must be idempotent across same short names in different namespaces.
+- [x] Generate builtin and package templates in a same-parent temporary directory, check every filesystem/stream operation, fsync/close as supported, and atomically rename only after validation.
+- [x] GREEN: run scaffold unit/E2E tests, reproduce #380 cases with timeouts, and confirm no path escape or partial output.
 - [ ] Commit transactional scaffold and close #380 from the final PR only after CI.
 
 ## Task 5: Introduce Root-Local RuntimeSelection and One RuntimeBinding Snapshot

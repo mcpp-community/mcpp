@@ -138,6 +138,27 @@ Task 3 local gates on source binary
 - `69_package_templates.sh`: PASS with exact/default/nested/alias/provider/wire assertions.
 - `bash -n tests/e2e/69_package_templates.sh` and `git diff --check`: PASS.
 
+### 5.3 Portable, durable, transactional scaffolding (Task 4 / #380)
+
+| Gate | RED evidence | Production change | GREEN evidence |
+|---|---|---|---|
+| portable project name | New scaffold tests failed to compile because `mcpp.scaffold.project_name` did not exist | Added an ASCII package/directory validator and isolated Windows device-basename policy under `mcpp.platform.project_name`; `cmd_new` validates before config/index/network/staging work | Unit rows accept bare/qualified names and reject empty, absolute, separators, dot components, C0/DEL, Windows-invalid/device names, trailing dot/space, and the legacy `PROJECT` marker |
+| single-pass rendering | Baseline only repeatedly replaced the literal `PROJECT`/two legacy variables | Added the complete eight-field `RenderVars` vocabulary, strict unknown/unterminated-token diagnostics, and append-only single-pass rendering | Unit test proves every canonical project/provider identity renders and an inserted `{{template.name}}` sequence is not rescanned; E2E renders qualified/nested identities |
+| exact dependency edit | New manifest-editor tests failed to compile because `upsert_dependency_text` did not exist; baseline scaffold used substring presence/insertion | Added one parsed, source-preserving dependency editor shared by `mcpp add` and scaffold injection; it writes default tables or `[dependencies.<namespace>]` plus short key and reparses/verifies the exact PackageId/version/features | `test_manifest` 150/150; same-short `compat.widget` survives while exact `acme.widget` is injected idempotently; add E2E remains green |
+| transaction and I/O | Baseline created the final directory before rendering and ignored several stream/filesystem results; exclusive platform rename API was absent | Both builtin/package paths write a same-parent `.mcpp-new-*` tree, close+sync files, validate the complete manifest, then commit with Linux `renameat2(RENAME_NOREPLACE)`, macOS exclusive rename, or Windows write-through no-replace move | 18 scaffold tests cover rollback plus deterministic read/write/copy/rename failures; E2E 204 covers path escape, unknown token, type collision, symlink rejection, no final tree, and no staging residue |
+
+Task 4 focused local evidence on source binary
+`target/x86_64-linux-gnu/94da92f90aedbe7f/bin/mcpp`:
+
+- source build: PASS, release rebuild completed in 47.89s after the shared manifest editor change.
+- full unit suite: PASS, **69 test binaries passed; 0 failed**, 16.77s cached refactor gate.
+- `test_scaffold`: **18/18** behavior tests PASS; `test_manifest`: **150/150** PASS.
+- `02_new_build_run.sh`: PASS, generated builtin project builds and runs.
+- `12_add_command.sh`, `69_package_templates.sh`, and `204_new_transactional_scaffold.sh`: all PASS/`OK`.
+- `mcpp-m` aggregate remains `afb8a647e04483a86985119e07086016f49d55f177ee6257094c336d226113c6`.
+- host xlings config aggregate remains `f218aadf3792ee815c8535ce0ca0bb53f634fecbdbc5d0d47db442052d786d1b`.
+- macOS/Windows native compilation and filesystem semantics remain pending latest-HEAD PR CI; they are not inferred from this Linux run.
+
 ## 6. Pull request and CI
 
 Not published yet. This section will record PR URL, local/remote HEAD, review state, all latest-head job IDs and terminal conclusions.

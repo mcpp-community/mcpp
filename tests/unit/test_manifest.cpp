@@ -337,6 +337,64 @@ TEST(Manifest, DefaultTemplateRoundTrip) {
     EXPECT_EQ(m->package.name, "hello");
 }
 
+TEST(ManifestEditor, UpsertsCanonicalDependencyByExactPackageId) {
+    constexpr std::string_view source = R"([package]
+name = "app"
+version = "0.1.0"
+
+[dependencies.compat]
+widget = "1.0.0"
+)";
+    auto edited = mcpp::manifest::upsert_dependency_text(source, {
+        .namespace_ = "acme",
+        .shortName = "widget",
+        .version = "2.0.0",
+        .features = {"gui", "vulkan"},
+    });
+    ASSERT_TRUE(edited.has_value()) << edited.error();
+    EXPECT_NE(edited->find("[dependencies.acme]\nwidget = { version = \"2.0.0\", features = [\"gui\", \"vulkan\"] }"),
+              std::string::npos);
+    auto parsed = mcpp::manifest::parse_string(*edited);
+    ASSERT_TRUE(parsed.has_value()) << parsed.error().format();
+    ASSERT_EQ(parsed->dependencies.size(), 2u);
+    EXPECT_EQ(parsed->dependencies.at("acme.widget").namespace_, "acme");
+    EXPECT_EQ(parsed->dependencies.at("acme.widget").shortName, "widget");
+    EXPECT_EQ(parsed->dependencies.at("acme.widget").version, "2.0.0");
+    EXPECT_EQ(parsed->dependencies.at("acme.widget").features,
+              (std::vector<std::string>{"gui", "vulkan"}));
+    EXPECT_EQ(parsed->dependencies.at("compat.widget").version, "1.0.0");
+}
+
+TEST(ManifestEditor, ReplacesCanonicalEntryAndRejectsInvalidSource) {
+    constexpr std::string_view source = R"([package]
+name = "app"
+version = "0.1.0"
+
+[dependencies.acme]
+widget = "1.0.0"
+)";
+    auto edited = mcpp::manifest::upsert_dependency_text(source, {
+        .namespace_ = "acme",
+        .shortName = "widget",
+        .version = "3.0.0",
+    });
+    ASSERT_TRUE(edited.has_value()) << edited.error();
+    auto parsed = mcpp::manifest::parse_string(*edited);
+    ASSERT_TRUE(parsed.has_value()) << parsed.error().format();
+    EXPECT_EQ(parsed->dependencies.at("acme.widget").version, "3.0.0");
+    EXPECT_EQ(std::ranges::count(*edited, '\n'),
+              std::ranges::count(source, '\n'));
+
+    auto invalid = mcpp::manifest::upsert_dependency_text(
+        "[package\nname = \"broken\"", {
+            .namespace_ = "acme",
+            .shortName = "widget",
+            .version = "1.0.0",
+        });
+    ASSERT_FALSE(invalid.has_value());
+    EXPECT_NE(invalid.error().find("invalid manifest"), std::string::npos);
+}
+
 TEST(ListXpkgVersions, MultipleEntriesAcrossPlatforms) {
     constexpr auto src = R"(
 package = {

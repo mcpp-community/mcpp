@@ -11,6 +11,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.scaffold;
 import mcpp.scaffold.create;
+import mcpp.scaffold.project_name;
 import mcpp.ui;
 
 namespace mcpp::cli {
@@ -43,6 +44,15 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
 
+    // Validate before parsing configuration, consulting an index, starting a
+    // download, or creating even a staging directory.  A project name is both
+    // a package identity and one portable directory component.
+    auto project = mcpp::scaffold::validate_project_name(name);
+    if (!project) {
+        mcpp::ui::error(project.error().message);
+        return 2;
+    }
+
     // `--template` exact package SPEC:
     //   builtin registry (frozen: bin; gui = transitional alias), else a
     //   package template: [ns.]pkg | [ns.]pkg:tmpl | [ns.]pkg@ver:tmpl.
@@ -66,9 +76,10 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 tmpl.substr(0, tmpl.size() - 1)));
             return mcpp::scaffold::list_package_templates(*spec);
         }
-        return mcpp::scaffold::new_from_package_template(name, *spec);
+        return mcpp::scaffold::new_from_package_template(*project, *spec);
     }
-    return mcpp::scaffold::create_builtin_project(name, /*gui=*/tmpl == "gui");
+    return mcpp::scaffold::create_builtin_project(
+        *project, /*gui=*/tmpl == "gui");
 }
 
 } // namespace mcpp::cli
