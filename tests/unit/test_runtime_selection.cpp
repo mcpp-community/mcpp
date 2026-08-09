@@ -41,6 +41,7 @@ struct RuntimeHome {
           "subos_info": {{
             "schema_version": 1,
             "runtime": "{}",
+            "host_glibc": "2.43",
             "envs": {{
               "mesa@25": [{{"var":"DRIVERS","op":"prepend","value":"{}"}}]
             }}
@@ -182,6 +183,8 @@ TEST(RuntimeBinding, NamedEnvironmentsHaveDistinctContractsAndRoundTrip) {
     auto decoded = mcpp::platform::runtime::deserialize_runtime_binding(encoded);
     ASSERT_TRUE(decoded.has_value()) << decoded.error();
     EXPECT_EQ(decoded->contractHash, el8->contractHash);
+    ASSERT_TRUE(decoded->hostLibc.has_value());
+    EXPECT_EQ(*decoded->hostLibc, "2.43");
     EXPECT_EQ(decoded->subosDir, el8->subosDir);
     ASSERT_EQ(decoded->environment.size(), 1u);
     EXPECT_EQ(decoded->environment[0].var, "DRIVERS");

@@ -15,6 +15,7 @@ import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.build.backend;
 import mcpp.build.ninja;
+import mcpp.build.runtime_validation;
 import mcpp.bmi_cache;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
@@ -754,12 +755,20 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     // instead of a hand-rolled recursive_directory_iterator over src/.
     if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts)) return std::nullopt;
 
+    auto validatedBefore =
+        mcpp::build::runtime_validation::validated_artifact_snapshot(
+            outputDir, *match->runtimeBinding);
+    if (!validatedBefore) return std::nullopt;
+
     // All inputs are older than build.ninja → fast-path: just run ninja.
     std::chrono::milliseconds elapsed{};
     auto rc = run_ninja_fast(ninjaProgram, outputDir, ninjaPath, verbose,
                              runtimeEnvKey, runtimeEnvValue, &elapsed);
     if (!rc) return std::nullopt;
     if (*rc != 0) return rc;
+    if (!mcpp::build::runtime_validation::artifact_snapshot_unchanged(
+            *validatedBefore))
+        return std::nullopt; // relinked: full path reconstructs + validates closure
 
     mcpp::ui::finished(want->profile, elapsed);
     return 0;
@@ -845,12 +854,20 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
 
     if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts)) return std::nullopt;
 
+    auto validatedBefore =
+        mcpp::build::runtime_validation::validated_artifact_snapshot(
+            outputDir, *match->runtimeBinding);
+    if (!validatedBefore) return std::nullopt;
+
     // Fresh → run ninja (picks up any incremental object/link work) then
     // exec the cached exe path directly.
     auto rc = run_ninja_fast(ninjaProgram, outputDir, ninjaPath, /*verbose=*/false,
                              match->runtimeEnvKey, match->runtimeEnvValue);
     if (!rc) return std::nullopt;
     if (*rc != 0) return rc;
+    if (!mcpp::build::runtime_validation::artifact_snapshot_unchanged(
+            *validatedBefore))
+        return std::nullopt; // never execute an artifact not validated for this binding
 
     auto exe = outputDir / chosen->second;
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, projectRoot);

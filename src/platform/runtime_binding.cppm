@@ -27,6 +27,7 @@ struct RuntimeBinding {
     std::string contractHash;
     std::optional<std::filesystem::path> loader;
     std::optional<std::string> libc;
+    std::optional<std::string> hostLibc;
     std::vector<std::filesystem::path> libraryDirs;
     std::vector<mcpp::xlings::subos::EnvDecl> environment;
     std::vector<std::string> providerBindings;
@@ -74,6 +75,7 @@ std::string canonical_contract(const RuntimeBinding& binding) {
     append_field(out, binding.provenance);
     append_field(out, binding.loader ? binding.loader->generic_string() : "");
     append_field(out, binding.libc.value_or(""));
+    append_field(out, binding.hostLibc.value_or(""));
     for (auto const& p : binding.libraryDirs)
         append_field(out, p.generic_string());
     for (auto const& provider : binding.providerBindings)
@@ -147,7 +149,41 @@ resolve_runtime_binding(
 
     // libc/ELF are Linux concepts.  macOS and Windows still carry the same
     // provider/environment contract without inventing a glibc field.
-    if constexpr (mcpp::platform::is_linux) out.libc = info.runtime;
+    if constexpr (mcpp::platform::is_linux) {
+        out.libc = info.runtime;
+        if (!info.hostGlibc.empty()) out.hostLibc = info.hostGlibc;
+
+        // Resolve the selected SubOS VIEW to its immutable payload.  The view
+        // already embodies RuntimeSelection, so following these exact links is
+        // not payload discovery and cannot choose another installed version.
+        std::vector<std::filesystem::path> candidates{
+            out.subosDir / "lib64", out.subosDir / "lib"};
+        for (auto const& candidate : candidates) {
+            std::error_code lec;
+            auto libc = candidate / "libc.so.6";
+            if (!std::filesystem::is_regular_file(libc, lec)) continue;
+            auto realLibc = std::filesystem::canonical(libc, lec);
+            auto libDir = lec ? candidate.lexically_normal()
+                              : realLibc.parent_path();
+            out.libraryDirs.push_back(libDir);
+
+            std::vector<std::filesystem::path> loaders;
+            lec.clear();
+            for (auto it = std::filesystem::directory_iterator(candidate, lec);
+                 !lec && it != std::filesystem::directory_iterator{};
+                 it.increment(lec)) {
+                auto name = it->path().filename().string();
+                if (name.starts_with("ld-linux-") && name.find(".so") != std::string::npos)
+                    loaders.push_back(it->path());
+            }
+            std::sort(loaders.begin(), loaders.end());
+            if (loaders.size() == 1) {
+                auto realLoader = std::filesystem::canonical(loaders.front(), lec);
+                out.loader = lec ? loaders.front().lexically_normal() : realLoader;
+            }
+            break;
+        }
+    }
 
     for (auto const& provider : info.providers) {
         out.providerBindings.push_back(provider.binding);
@@ -172,6 +208,7 @@ std::string serialize_runtime_binding(const RuntimeBinding& binding) {
     j["contract_hash"] = binding.contractHash;
     j["loader"] = binding.loader ? binding.loader->generic_string() : "";
     j["libc"] = binding.libc.value_or("");
+    j["host_libc"] = binding.hostLibc.value_or("");
     j["library_dirs"] = nlohmann::json::array();
     for (auto const& path : binding.libraryDirs)
         j["library_dirs"].push_back(path.generic_string());
@@ -211,6 +248,7 @@ deserialize_runtime_binding(std::string_view encoded) {
         out.contractHash = j.value("contract_hash", "");
         if (auto v = j.value("loader", ""); !v.empty()) out.loader = v;
         if (auto v = j.value("libc", ""); !v.empty()) out.libc = v;
+        if (auto v = j.value("host_libc", ""); !v.empty()) out.hostLibc = v;
         if (auto it = j.find("library_dirs"); it != j.end() && it->is_array())
             for (auto const& v : *it) if (v.is_string())
                 out.libraryDirs.emplace_back(v.get<std::string>());

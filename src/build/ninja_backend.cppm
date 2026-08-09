@@ -24,6 +24,8 @@ import mcpp.build.distribution;
 import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.build.hermetic;
+import mcpp.build.runtime_validation;
+import mcpp.platform.elf_runtime;
 import mcpp.build.compile_commands;
 import mcpp.build.cmdlimits;
 import mcpp.diag;
@@ -1521,6 +1523,11 @@ std::optional<std::string> check_inline_command_lengths(const std::string& manif
 std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan,
                                                            const BuildOptions& opts) {
     auto t0 = std::chrono::steady_clock::now();
+    // Captured before ninja touches any link output.  The post-build runtime
+    // validator compares this snapshot, so a hot no-op performs zero ELF
+    // parses and an output rebuilt behind an unchanged build.ninja is caught.
+    auto runtimeBefore =
+        mcpp::build::runtime_validation::snapshot_link_artifacts(plan);
 
     std::error_code ec;
     std::filesystem::create_directories(plan.outputDir, ec);
@@ -1685,6 +1692,33 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         std::chrono::steady_clock::now() - t0);
 
     if (ok) {
+        auto runtimeReport =
+            mcpp::build::runtime_validation::validate_changed_artifacts(
+                plan, runtimeBefore);
+        std::string runtimeFailure;
+        std::filesystem::path runtimeFailureArtifact;
+        for (auto const& checked : runtimeReport.artifacts) {
+            using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+            auto explanation = checked.verdict.explain();
+            if (checked.verdict.status == Status::ProvenMismatch) {
+                if (runtimeFailure.empty()) {
+                    runtimeFailureArtifact = checked.artifact;
+                    runtimeFailure = std::move(explanation);
+                } else if (!explanation.empty()) {
+                    runtimeFailure += "\n" + explanation;
+                }
+            } else if (checked.verdict.status == Status::Inconclusive) {
+                mcpp::ui::warning(std::format(
+                    "runtime closure validation is inconclusive for {}{}{}",
+                    checked.artifact.string(), explanation.empty() ? "" : ":\n",
+                    explanation));
+            }
+        }
+        if (!runtimeFailure.empty()) {
+            return std::unexpected(BuildError{
+                "runtime closure validation failed (proven Linux ELF mismatch)",
+                runtimeFailureArtifact, std::move(runtimeFailure)});
+        }
         if (opts.verbose && !out.empty())
             std::fputs(out.c_str(), stdout);
         std::set<std::string> want(opts.ninjaTargets.begin(), opts.ninjaTargets.end());

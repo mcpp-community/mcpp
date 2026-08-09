@@ -193,31 +193,34 @@
 **Files:**
 
 - Modify: `src/toolchain/post_install.cppm`
+- Modify: `src/toolchain/lifecycle.cppm`
 - Add: `src/platform/elf_runtime.cppm`
+- Modify: `src/platform/runtime_binding.cppm`
 - Add: `src/build/runtime_validation.cppm`
 - Modify: `src/build/ninja_backend.cppm`
 - Modify: `src/build/execute.cppm`
 - Modify: `src/doctor.cppm`
+- Modify: `src/xlings/subos_info.cppm`
 - Add: `tests/unit/test_elf_runtime.cpp`
 - Add: `tests/e2e/206_runtime_binding_physics.sh`
 
 **Interfaces:**
 
-- `ElfRuntimeFacts { interp; runpaths; needed; requiredGlibcVersions; resolvedLibc; resolvedObjects; }`
+- `ElfRuntimeFacts { artifact; interp; runpaths; needed; requiredGlibcVersions; definedGlibcVersions; resolvedLibc; resolvedObjects; }`
 - `validate_runtime_artifact(path, RuntimeBinding, RuntimeResolution) -> RuntimeVerdict`
 - `RuntimeVerdict { Pass | ProvenMismatch | Inconclusive; diagnostics[]; }`
 
-- [ ] RED: select the glibc payload named by RuntimeBinding, never the first directory entry; stale/absent payload is an explicit error.
-- [ ] RED: fixture ELFs prove Rule B rejects interpreter/libc from different payloads and accepts same-payload paths.
-- [ ] RED: fixture version tables prove a required GLIBC symbol floor above the selected libc exports is a hard proven mismatch; a lower/equal floor passes; unavailable closure data is inconclusive, not falsely green.
-- [ ] Implement semantic exact payload lookup in post-install fixup and bump the fixup revision so existing toolchains repair against the selected binding.
-- [ ] Implement internal ELF64 little-endian parsing for PT_INTERP, DT_RPATH/RUNPATH, DT_NEEDED and GNU version need/definition sections under `src/platform/elf_runtime.cppm`; no shell parsing on the build hot path.
-- [ ] Validate only newly linked Linux ELF outputs; cache the verdict by artifact stat/link fingerprint so hot no-op performs zero parses.
-- [ ] Emit canonical requester/provider/artifact paths and a copyable SubOS remediation; hard-fail proven Rule B/A mismatches, classify unresolvable host/hardware closure as inconclusive with an explicit diagnostic.
-- [ ] Ensure macOS/Windows validators compile to a typed no-op and never apply Linux glibc rules.
-- [ ] Extend doctor/runtime explanation to reuse stored verdict rather than re-probe or guess.
-- [ ] GREEN: run ELF unit fixtures, form-X E2E, current #392 reproduction shape, and a safe host-DSO control.
-- [ ] Commit runtime physics validation; only close #392/#396 if the final released E2E proves their exact acceptance cases.
+- [x] RED: select the glibc payload named by RuntimeBinding, never the first directory entry; stale/absent payload is an explicit error.
+- [x] RED: fixture ELFs prove Rule B rejects interpreter/libc from different payloads and accepts same-payload paths.
+- [x] RED: fixture version tables prove a required GLIBC symbol floor above the selected libc exports is a hard proven mismatch; a lower/equal floor passes; unavailable closure data is inconclusive, not falsely green.
+- [x] Implement semantic exact payload lookup in post-install fixup and bump the fixup revision so existing toolchains repair against the selected binding.
+- [x] Implement internal ELF64 little-endian parsing for PT_INTERP, DT_RPATH/RUNPATH, DT_NEEDED and GNU version need/definition sections under `src/platform/elf_runtime.cppm`; no shell parsing on the build hot path.
+- [x] Validate only newly linked Linux ELF outputs; cache the verdict by artifact stat/link fingerprint so hot no-op performs zero parses.
+- [x] Emit canonical requester/provider/artifact paths and a copyable SubOS remediation; hard-fail proven Rule B/A mismatches, classify unresolvable host/hardware closure as inconclusive with an explicit diagnostic.
+- [x] Ensure macOS/Windows validators compile to a typed no-op and never apply Linux glibc rules.
+- [x] Extend doctor/runtime explanation to reuse stored verdict rather than re-probe or guess.
+- [x] GREEN: run ELF unit fixtures, form-X E2E, current #392 reproduction shape, and a safe host-DSO control.
+- [x] Commit runtime physics validation; only close #392/#396 if the final released E2E proves their exact acceptance cases.
 
 ## Task 7: Carry Provider-Neutral Graphics Runtime Provenance
 

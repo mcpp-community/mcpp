@@ -37,6 +37,7 @@ TEST(SubosInfo, ReadsRuntimeAndEnvDeclarations) {
       "subos_info": {
         "schema_version": 1,
         "runtime": "glibc@2.39",
+        "host_glibc": "2.43",
         "envs": {
           "mesa@25.0.7.1": [
             { "var": "LIBGL_DRIVERS_PATH", "op": "prepend",
@@ -51,6 +52,7 @@ TEST(SubosInfo, ReadsRuntimeAndEnvDeclarations) {
     EXPECT_TRUE(info.present);
     EXPECT_EQ(info.schema, 1);
     EXPECT_EQ(info.runtime, "glibc@2.39");
+    EXPECT_EQ(info.hostGlibc, "2.43");
     ASSERT_EQ(info.providers.size(), 1u);
     EXPECT_EQ(info.providers[0].binding, "mesa@25.0.7.1");
     ASSERT_EQ(info.providers[0].decls.size(), 2u);

@@ -13,6 +13,7 @@ import std;
 import mcpp.bmi_cache.maintenance;
 import mcpp.build.prepare;
 import mcpp.build.plan;
+import mcpp.build.runtime_validation;
 import mcpp.config;
 import mcpp.fallback.probe_sysroot;
 import mcpp.fallback.xlings_binary;
@@ -21,7 +22,9 @@ import mcpp.fetcher.progress;
 import mcpp.home;
 import mcpp.platform;
 import mcpp.platform.process;
+import mcpp.platform.elf_runtime;
 import mcpp.pm.index_refresh;   // staleness_note for `mcpp why deps`
+import mcpp.project;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
@@ -251,6 +254,36 @@ export int doctor_report() {
                          mcpp::bmi_cache::human_bytes(sz)));
     } else {
         ok(std::format("build cache size = {}", mcpp::bmi_cache::human_bytes(sz)));
+    }
+
+    // Reuse the verdict produced at the link seam.  Doctor deliberately does
+    // not parse the artifact or inspect the current host: either would answer
+    // a different question after a SubOS/driver update and could contradict
+    // the exact RuntimeBinding the build used.
+    mcpp::ui::status("Checking", "last runtime closure verdict");
+    if (auto projectRoot = mcpp::project::find_manifest_root(
+            std::filesystem::current_path())) {
+        auto stored = mcpp::build::runtime_validation::latest_stored_verdict(
+            *projectRoot / "target");
+        if (!stored) {
+            ok("no linked ELF verdict stored yet (created on the next Linux link)");
+        } else {
+            using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+            auto detail = stored->verdict.explain();
+            auto subject = std::format("{} (RuntimeBinding {})",
+                stored->artifact.string(), stored->contractHash);
+            if (stored->verdict.status == Status::Pass) {
+                ok(std::format("{}: pass", subject));
+            } else if (stored->verdict.status == Status::Inconclusive) {
+                warn(std::format("{}: inconclusive{}{}", subject,
+                    detail.empty() ? "" : "\n", detail));
+            } else {
+                err(std::format("{}: proven mismatch{}{}", subject,
+                    detail.empty() ? "" : "\n", detail));
+            }
+        }
+    } else {
+        ok("not in an mcpp project; no project runtime verdict to report");
     }
     // The pre-v1 cache was keyed by whole-project fingerprint, which folded in
     // the consumer's own name and version — so it accumulated one copy of every

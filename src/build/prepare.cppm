@@ -1204,6 +1204,25 @@ prepare_build(bool print_fingerprint,
         return &*cfg_opt;
     };
 
+    // Resolve one exact runtime contract before resolving/fixing a toolchain.
+    // The fixup is itself a consumer of RuntimeBinding: doing it first would
+    // recreate #392 by letting directory order choose a libc and only later
+    // discovering what the project selected.
+    mcpp::platform::runtime::RuntimeBinding runtimeBindingSnapshot;
+    if (overrides.inherited_runtime_binding) {
+        runtimeBindingSnapshot = *overrides.inherited_runtime_binding;
+    } else {
+        auto cfgRuntime = get_cfg();
+        if (!cfgRuntime) return std::unexpected(cfgRuntime.error());
+        auto resolved = mcpp::platform::runtime::resolve_runtime_binding(
+            runtimeSelection, {}, **cfgRuntime);
+        if (!resolved) return std::unexpected(resolved.error());
+        runtimeBindingSnapshot = std::move(*resolved);
+    }
+    const auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
+    const auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
+        ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
+
     constexpr std::string_view kCurrentPlatform = mcpp::platform::name;
 
     // M5.5: toolchain resolution priority:
@@ -1499,7 +1518,11 @@ prepare_build(bool print_fingerprint,
         // Same post-install fixup as `mcpp toolchain install` — this manifest
         // [toolchain] path previously ran none, so a freshly auto-installed
         // payload kept its stale install-time cfg / unpatched runtime libs.
-        mcpp::toolchain::ensure_post_install_fixup(**cfg, payload->root, pkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                **cfg, payload->root, pkg,
+                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+            return std::unexpected(std::format(
+                "toolchain post-install fixup: {}", fixed.error()));
         // Canonical rendering, whatever spelling the manifest/config used:
         // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
         mcpp::ui::info("Resolved",
@@ -1644,7 +1667,11 @@ prepare_build(bool print_fingerprint,
         // `mcpp toolchain install` performs — without it a fresh sandbox
         // gcc cannot find the C library (stdlib.h: No such file or
         // directory) and a fresh llvm keeps its stale install-time cfg.
-        mcpp::toolchain::ensure_post_install_fixup(**cfg, payload->root, defaultPkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                **cfg, payload->root, defaultPkg,
+                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+            return std::unexpected(std::format(
+                "default toolchain post-install fixup: {}", fixed.error()));
 
         // Persist the default so we don't ask again next time.
         if (auto wr = mcpp::config::write_default_toolchain(**cfg, defaultSpec); wr) {
@@ -1677,20 +1704,6 @@ prepare_build(bool print_fingerprint,
         tcOrigin = TcOrigin::FirstRun;
     }
 
-    // Resolve one exact runtime contract before probing payloads. No compiler
-    // home, active SubOS or dependency manifest may revise this selection.
-    mcpp::platform::runtime::RuntimeBinding runtimeBindingSnapshot;
-    if (overrides.inherited_runtime_binding) {
-        runtimeBindingSnapshot = *overrides.inherited_runtime_binding;
-    } else {
-        auto cfgRuntime = get_cfg();
-        if (!cfgRuntime) return std::unexpected(cfgRuntime.error());
-        auto resolved = mcpp::platform::runtime::resolve_runtime_binding(
-            runtimeSelection, {}, **cfgRuntime);
-        if (!resolved) return std::unexpected(resolved.error());
-        runtimeBindingSnapshot = std::move(*resolved);
-    }
-    const auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
     auto tc = mcpp::toolchain::detect(
         explicit_compiler, runtimePayload, runtimeBindingSnapshot.contractHash);
     if (!tc) return std::unexpected(tc.error().message);
@@ -1778,7 +1791,11 @@ prepare_build(bool print_fingerprint,
                 "MinGW-w64 payload {} has no known C++ frontend in {}",
                 gnuPkg.target(), payloadR->binDir.string()));
         }
-        mcpp::toolchain::ensure_post_install_fixup(**cfgR, payloadR->root, gnuPkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                **cfgR, payloadR->root, gnuPkg,
+                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+            return std::unexpected(std::format(
+                "MinGW toolchain post-install fixup: {}", fixed.error()));
 
         // Persist both axes so the repair happens once, not on every build.
         if (mcpp::config::write_default_toolchain(**cfgR, pins::kFirstRunWinGnu))
@@ -1884,7 +1901,11 @@ prepare_build(bool print_fingerprint,
                 "host toolchain payload '{}' has no known C++ frontend in {}",
                 pkg.target(), payload->binDir.string()));
         }
-        mcpp::toolchain::ensure_post_install_fixup(**cfgH, payload->root, pkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                **cfgH, payload->root, pkg,
+                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+            return std::unexpected(std::format(
+                "host toolchain post-install fixup: {}", fixed.error()));
         auto htc = mcpp::toolchain::detect(frontend);
         if (!htc) return std::unexpected(htc.error().message);
         mcpp::ui::info("Resolved", std::format(

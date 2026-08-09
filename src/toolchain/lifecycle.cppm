@@ -584,7 +584,12 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // Post-install fixup (patchelf / specs / cfg regeneration) — ONE
         // pipeline shared by every toolchain install path, dispatched and
         // made idempotent inside ensure_post_install_fixup.
-        mcpp::toolchain::ensure_post_install_fixup(cfg, payload->root, pkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                cfg, payload->root, pkg); !fixed) {
+            mcpp::ui::error(std::format(
+                "post-install fixup failed: {}", fixed.error()));
+            return 1;
+        }
 
         mcpp::ui::status("Installed",
             std::format("{} → {}", pkg.display_spec(), bin.string()));

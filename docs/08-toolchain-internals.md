@@ -8,15 +8,14 @@
 ## 1. The model in one picture
 
 ```
-mcpp.toml [toolchain]  /  global default  /  `mcpp toolchain install`
-        │  (three entry paths — ONE shared pipeline)
-        ▼
-resolve payload (xim:gcc / xim:llvm / xim:musl-gcc xpkg under the sandbox)
-        ▼
-ensure_post_install_fixup()      ← idempotent convergence (marker-gated)
+mcpp.toml [xlings].subos / mcpp-managed default runtime
         ▼
 resolve runtime binding          ← which libc the artifact will load (§2.1) — an
                                    answer, not a search
+        ▼
+resolve toolchain payload        ← project/default/install paths share one pipeline
+        ▼
+ensure_post_install_fixup()      ← exact glibc@version, marker-gated; never readdir-first
         ▼
 detect / probe                   ← triple, sysroot, payload paths (glibc, linux-headers)
         ▼
@@ -27,6 +26,8 @@ ToolchainLinkModel (single resolver for the C-library axis)
         └──► cfg regeneration  (the human-facing clang++.cfg)
         ▼
 hermetic link check (`-###` dry-run)  ← checks sandbox CRT/loader resolution
+        ▼
+link → internal ELF physics check    ← validates the artifact and resolved closure (§6.1)
 ```
 
 Two principles run through everything:
@@ -97,6 +98,9 @@ named environment or missing/incompatible contract is a hard error, never a
 fallback to default/active/compiler-baked state. mcpp reads it once into a
 `RuntimeBinding` snapshot, feeds its libc identity into payload probing, and
 reuses the same snapshot for configure/link/run/test and the fast-path cache.
+On Linux the snapshot also records the canonical selected loader/libc directory
+and the optional creation-host glibc floor. These are evidence used by the
+post-link validator, not another selection mechanism.
 
 No binding is a **refusal**, not a default: `CLibMode::PayloadFirst` is
 declined rather than picking a libc.
@@ -283,6 +287,46 @@ CI keeps this honest with a job that has **no host toolchain at all**
 class that faithfully reproduces the clean-machine failure mode, plus e2e
 `86_llvm_hermetic_link.sh` which re-checks the `-###` resolution on every
 machine.
+
+### 6.1 Post-link Linux runtime physics (`elf_runtime.cppm`)
+
+The hermetic check answers a pre-link question: what does the driver appear to
+resolve? The runtime-physics check answers the stronger post-link question:
+what did the newly produced ELF actually record and what will its closure
+load? `[build] allow_host_libs = true` deliberately relaxes the first check;
+it does not suppress physical impossibilities in the second.
+
+For each newly linked Linux executable/shared object, mcpp parses ELF64
+little-endian program/dynamic/GNU-version tables internally—no `readelf`,
+`patchelf`, or `ldd` subprocess on the build path—and records `PT_INTERP`,
+`DT_RPATH`/`DT_RUNPATH`, `DT_NEEDED`, and required/defined `GLIBC_*` versions.
+It resolves the declared closure using the artifact search paths, selected
+runtime/toolchain directories, and known host library directories, then applies:
+
+- **Rule B (same source):** `PT_INTERP` and every resolved `libc.so.6` must be
+  the canonical payload selected by `RuntimeBinding`. A host loader plus private
+  libc, or two private libc payloads, is a proven pre-main failure.
+- **Rule A (version floor):** every closure request for `GLIBC_x.y` must be no
+  newer than the selected libc's exported GNU version definitions. Linking a
+  host DSO is allowed when this holds; mcpp is checking physics, not imposing a
+  no-host-library policy.
+
+Verdicts are typed: `Pass`, `ProvenMismatch`, or `Inconclusive`. Proven A/B
+mismatches fail the build with canonical requester/provider/artifact paths and
+a copyable SubOS remediation. Missing loader-cache/hardware closure data is
+reported as inconclusive, never relabelled green. macOS and Windows use the
+same interface as a typed no-op and never receive ELF/glibc rules.
+
+The verdict is stored as `.mcpp-runtime-verdicts.json` beside `build.ninja`,
+keyed by artifact stat fingerprint plus the complete runtime contract hash.
+Hot no-op builds require a current passing record, compare artifact stats
+before/after Ninja, and perform zero ELF parses. An unexpected relink drops to
+the full path before success or execution. `mcpp self doctor` reports the same
+stored verdict rather than re-probing a potentially different current host.
+
+Post-install alignment follows the same identity rule: `glibc@2.44` resolves
+only `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`. A missing/stale exact payload is an
+error; another installed version is never a fallback.
 
 ## 7. Extending the machinery
 

@@ -7,14 +7,13 @@
 ## 1. 一张图看全模型
 
 ```
-mcpp.toml [toolchain]  /  全局默认  /  `mcpp toolchain install`
-        │  (三条入口路径 —— 共享同一条管线)
-        ▼
-解析 payload(沙箱里的 xim:gcc / xim:llvm / xim:musl-gcc xpkg)
-        ▼
-ensure_post_install_fixup()      ← 幂等收敛(marker 闸门)
+mcpp.toml [xlings].subos / mcpp 管理的默认运行时
         ▼
 解析 runtime binding             ← 产物将加载哪个 libc(§2.1)——是答案,不是搜索
+        ▼
+解析工具链 payload               ← 项目/default/install 入口共享同一管线
+        ▼
+ensure_post_install_fixup()      ← 精确 glibc@version、marker 闸门,不取 readdir 首项
         ▼
 detect / probe                   ← triple、sysroot、payload 路径(glibc、linux-headers)
         ▼
@@ -25,6 +24,8 @@ ToolchainLinkModel(C 库轴的唯一解析器)
         └──► cfg 再生          (供人类直接使用的 clang++.cfg)
         ▼
 hermetic 链接校验(`-###` 干跑)  ← 校验沙箱 CRT/loader 的解析结果
+        ▼
+链接 → 内部 ELF 物理校验        ← 校验真实产物及解析闭包(§6.1)
 ```
 
 贯穿一切的两条原则:
@@ -76,6 +77,8 @@ workspace 构建由 workspace root 选择;member 与 dependency 声明不合并�
 所选 SubOS 必须提供受支持的 `subos_info`:环境不存在或 contract 缺失/不兼容会 hard error,
 绝不回退 default/active/编译器烙入状态。该 contract 只读取一次形成 `RuntimeBinding` snapshot,
 由 configure/link/run/test 与 fast-path cache 共同使用。
+Linux snapshot 还记录所选 loader/libc 目录的规范路径及可选的创建宿主 glibc floor;
+它们是链接后校验的证据,不是新的选择入口。
 
 没有 binding 是**拒绝**而不是取默认值:`CLibMode::PayloadFirst` 会被放弃,而不是
 去挑一个 libc。
@@ -228,6 +231,38 @@ C++ 运行时的链接交由主构建的平台专属处理)。
 CI 用一个**完全没有宿主工具链**的 job(`debian:stable-slim`,无 gcc、无宿主
 `Scrt1.o`)守住这一切——那是唯一能忠实复现干净机器故障模式的环境类;另有 e2e
 `86_llvm_hermetic_link.sh` 在任何机器上复核 `-###` 的解析结果。
+
+### 6.1 链接后的 Linux 运行时物理校验(`elf_runtime.cppm`)
+
+hermetic 校验回答的是链接前问题:driver 看起来会解析到什么。运行时物理校验回答更强的
+链接后问题:新 ELF 真正记录了什么,其闭包实际会加载什么。
+`[build] allow_host_libs = true` 会有意放宽前者,但不会屏蔽后者已经可证明的物理矛盾。
+
+对每个新链接的 Linux executable/shared object,mcpp 在进程内解析 ELF64 little-endian
+program/dynamic/GNU version 表;构建路径不启动 `readelf`、`patchelf` 或 `ldd`。读取内容包括
+`PT_INTERP`、`DT_RPATH`/`DT_RUNPATH`、`DT_NEEDED` 以及所需/导出的 `GLIBC_*` 版本。
+随后按产物搜索路径、所选 runtime/toolchain 目录和已知宿主库目录解析闭包,并执行:
+
+- **规则 B(同源):** `PT_INTERP` 和闭包中每个 `libc.so.6` 必须都来自
+  `RuntimeBinding` 选定的规范 payload。宿主 loader + 私有 libc,或两个私有 libc payload,
+  都是可证明的 pre-main 故障。
+- **规则 A(版本 floor):** 闭包请求的每个 `GLIBC_x.y` 都不得高于所选 libc 的 GNU
+  version definitions。满足条件时链接宿主 DSO 完全允许;mcpp 校验的是物理事实,不是
+  强加“禁止宿主库”策略。
+
+判定是类型化的:`Pass`、`ProvenMismatch`、`Inconclusive`。可证明的 A/B 冲突会 hard fail,
+诊断给出规范化 requester/provider/artifact 路径与可复制的 SubOS 修复步骤。无法取得
+loader cache/硬件闭包时明确报告 inconclusive,绝不伪装成绿色。macOS/Windows 复用同一
+类型接口但为 no-op,不会套用 ELF/glibc 规则。
+
+verdict 以 `.mcpp-runtime-verdicts.json` 存在 `build.ninja` 旁,键包含产物 stat 指纹与
+完整 runtime contract hash。热 no-op 必须已有当前 `pass` 记录,比较 Ninja 前后产物 stat,
+并执行零次 ELF 解析;若 Ninja 意外重链则先退回完整路径重新校验,之后才允许成功/运行。
+`mcpp self doctor` 复用同一存档 verdict,不会拿已经变化的当前宿主重新猜一次。
+
+装后 fixup 同样按精确身份收敛:`glibc@2.44` 只解析
+`<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`。精确 payload 缺失/陈旧就是错误,其他已安装版本
+永远不是回退项。
 
 ## 7. 扩充指南
 

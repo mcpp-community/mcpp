@@ -181,6 +181,28 @@ Task 5 local gates on source binary
 - host xlings config aggregate remains `f218aadf3792ee815c8535ce0ca0bb53f634fecbdbc5d0d47db442052d786d1b`.
 - Linux behavior is locally exercised. The platform-native branch stores `runtimeId` while leaving `libc`/ELF fields empty off Linux; native macOS/Windows compilation remains a latest-HEAD PR CI gate, not a local claim.
 
+### 5.5 Exact runtime payload and Linux ELF physics (Task 6 / #392 / #396)
+
+| Gate | RED evidence | Production change | GREEN evidence |
+|---|---|---|---|
+| exact payload | `test_elf_runtime` initially failed to compile because `mcpp.platform.elf_runtime` did not exist; the old post-install helper returned the first loader-bearing glibc directory | Added exact `glibc@<version>` parsing/lookup, explicit malformed/missing/stale errors and fixup revision `hermetic-4-exact-runtime`; RuntimeBinding now carries canonical loader/lib dir and optional `host_glibc` | RuntimePayload unit rows prove 2.44 wins with 2.39 also installed and every malformed/absent identity refuses instead of falling back |
+| internal ELF facts | The same RED had no typed artifact facts or GNU version-table reader | Added bounded ELF64-LE parsing of PT_INTERP, PT_DYNAMIC, DT_RPATH/RUNPATH/NEEDED and GNU verneed/verdef, preserving loader search order and invoking no shell tool | Synthetic stripped-shape fixture returns exact interpreter, ordered runpaths, needed soname, `GLIBC_2.40` need and `GLIBC_2.44` definition; text/truncated inputs refuse |
+| Rule B | No post-link seam compared the emitted interpreter with the libc actually resolved through the closure | Closure resolution canonicalizes artifacts/providers and rejects host/private or multi-private libc mixtures against the selected RuntimeBinding | Unit rows reject interpreter/libc and transitive two-libc mixtures and accept one selected payload; E2E 206 forces host PT_INTERP + private libc and gets a canonical Rule-B hard failure |
+| Rule A | No code compared a host DSO's GNU symbol floor with the selected libc exports | Validator compares every requester `GLIBC_*` need to the selected libc definitions; proven higher floors fail, missing closure data is typed inconclusive | Unit rows reject 2.42 > 2.39, accept equal/lower, and keep missing GPU closure inconclusive; E2E 206 links real host `libtinfo` under glibc 2.44 as the safe #392-shaped control |
+| cache/doctor | A hot fast path could not know whether its artifact had ever been checked; doctor reparsing would observe a different current host | Stored verdict is keyed by artifact stat plus RuntimeBinding contract; hot paths require current PASS and compare pre/post-Ninja stats; mismatch/inconclusive records remain sticky without reparsing; doctor reads the stored record | Self-host artifact verdict is `pass`; bare build finishes in 0.01s with artifact/verdict stat unchanged; E2E 206 proves PASS no-op, cached mismatch remains red with unchanged verdict, and doctor prints the stored PASS |
+| platform boundary | Linux-specific rules had no typed cross-platform seam | Validator compiles as a typed no-op off Linux; RuntimeBinding leaves ELF/libc-only data absent on macOS/Windows | Linux unit/E2E pass; native macOS/Windows compile/behavior remains an explicit PR CI gate, not inferred locally |
+
+Task 6 focused local evidence on source binary
+`target/x86_64-linux-gnu/665e89fc782f5d0f/bin/mcpp`:
+
+- two-stage self-host: first new implementation build PASS; RuntimeBinding-aware rebuild PASS in 65.06s with canonical glibc 2.44 loader/lib directory and host floor 2.39.
+- `test_elf_runtime`: **10/10** tests PASS (exact payload, parser, Rule A/B, inconclusive).
+- `206_runtime_binding_physics.sh`: PASS for real host-DSO control, post-link mismatch, sticky cached mismatch, doctor reuse, and hot zero-rewrite cache.
+- regressions `200_subos_env_reaches_program.sh`, `205_root_local_subos.sh`, and `02_new_build_run.sh`: PASS/PASS/OK.
+- full unit/refactor gate: PASS, **71 test binaries passed; 0 failed**, 50.99s (49.30s build + 1.54s run).
+- `bash -n` for changed E2E and `git diff --check`: PASS.
+- #392/#396 remain open until the merged release artifact repeats the exact acceptance E2E; local source evidence alone is not closure evidence.
+
 ## 6. Pull request and CI
 
 Not published yet. This section will record PR URL, local/remote HEAD, review state, all latest-head job IDs and terminal conclusions.

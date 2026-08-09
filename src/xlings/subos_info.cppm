@@ -64,6 +64,7 @@ struct Provider {
 struct Info {
     int                   schema = 0;
     std::string           runtime;    // "glibc@2.39"
+    std::string           hostGlibc;  // optional creation-host floor, e.g. "2.43"
     std::vector<Provider> providers;  // sorted by binding
     bool                  present = false;
     // Non-empty ⇒ the caller MUST surface it. Never an error: a missing or
@@ -130,6 +131,8 @@ Info read(const std::filesystem::path& subosDir) {
         info.schema = v->get<int>();
     if (auto v = it->find("runtime"); v != it->end() && v->is_string())
         info.runtime = v->get<std::string>();
+    if (auto v = it->find("host_glibc"); v != it->end() && v->is_string())
+        info.hostGlibc = v->get<std::string>();
 
     // `envs` is an OBJECT keyed by binding, whose values are arrays of
     // declarations:

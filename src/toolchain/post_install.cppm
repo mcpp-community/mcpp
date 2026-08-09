@@ -20,6 +20,7 @@ import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
 import mcpp.ui;
 import mcpp.xlings;
+import mcpp.xlings.subos_info;
 
 namespace mcpp::toolchain {
 
@@ -375,17 +376,52 @@ export void fixup_clang_cfg(const std::filesystem::path& payloadRoot,
     }
 }
 
-// Locate the sandbox glibc payload's lib dir (the newest installed version
-// that actually carries a dynamic loader). Shared by the gcc and llvm fixups.
-std::filesystem::path find_sandbox_glibc_lib(const mcpp::xlings::Env& xlEnv) {
-    auto glibcRoot = mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc");
-    std::error_code ec;
-    for (auto it = std::filesystem::directory_iterator(glibcRoot, ec);
-         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
-        if (auto lib = payload_lib_dir_with_loader(it->path()); !lib.empty())
-            return lib;
+// Resolve one glibc payload from the RuntimeBinding identity.  This is a
+// semantic exact lookup, never a directory-order choice: glibc@2.44 means the
+// `2.44` directory and no other.  Exported so the #392 regression stays pinned
+// by a pure unit test without installing a toolchain.
+export std::expected<std::filesystem::path, std::string>
+select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
+                         std::string_view runtimeId) {
+    constexpr std::string_view prefix = "glibc@";
+    if (!runtimeId.starts_with(prefix)) {
+        return std::unexpected(std::format(
+            "selected RuntimeBinding '{}' is not a glibc payload identity "
+            "(expected glibc@<version>)", runtimeId));
     }
-    return {};
+    auto version = runtimeId.substr(prefix.size());
+    if (version.empty() || version == "." || version == ".."
+        || version.find('/') != std::string_view::npos
+        || version.find('\\') != std::string_view::npos
+        || version.find('@') != std::string_view::npos) {
+        return std::unexpected(std::format(
+            "selected RuntimeBinding '{}' has an invalid glibc version",
+            runtimeId));
+    }
+
+    auto payload = glibcRoot / std::string(version);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(payload, ec)) {
+        return std::unexpected(std::format(
+            "selected RuntimeBinding {} requires payload '{}', but it is not "
+            "installed; mcpp will not fall back to another directory entry",
+            runtimeId, payload.string()));
+    }
+    auto lib = payload_lib_dir_with_loader(payload);
+    if (lib.empty()) {
+        return std::unexpected(std::format(
+            "selected RuntimeBinding {} payload '{}' is stale/incomplete: no "
+            "dynamic loader was found under lib64/ or lib/",
+            runtimeId, payload.string()));
+    }
+    return lib;
+}
+
+std::expected<std::filesystem::path, std::string>
+find_sandbox_glibc_lib(const mcpp::xlings::Env& xlEnv,
+                       std::string_view runtimeId) {
+    return select_glibc_payload_lib(
+        mcpp::xlings::paths::xim_tool_root(xlEnv, "glibc"), runtimeId);
 }
 
 // Post-install fixup for a freshly-installed GNU gcc payload: patchelf
@@ -469,16 +505,19 @@ void llvm_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 // runtime libs. Idempotent via a content-fingerprinted marker.
 //
 // Bump when the fixup logic changes so existing installs re-run it.
-constexpr std::string_view kFixupRev = "hermetic-3";
+constexpr std::string_view kFixupRev = "hermetic-4-exact-runtime";
 
-export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
-                                      const std::filesystem::path& payloadRoot,
-                                      const XimToolchainPackage& pkg) {
+export std::expected<void, std::string>
+ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
+                          const std::filesystem::path& payloadRoot,
+                          const XimToolchainPackage& pkg,
+                          std::string_view runtimeId = {},
+                          const std::filesystem::path& selectedRuntimeLibDir = {}) {
     std::string kind;
     if (pkg.needsGccPostInstallFixup) kind = "gcc";
     else if (pkg.ximName == "llvm")   kind = "llvm";
-    else return;
-    if constexpr (mcpp::platform::is_windows) return;  // PE world: no fixups
+    else return {};
+    if constexpr (mcpp::platform::is_windows) return {};  // PE world: no fixups
 
     // Ownership guard: payloads inherited via symlink from another MCPP_HOME
     // are not ours to patch — their owner already ran the fixup, and patching
@@ -494,13 +533,50 @@ export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
             "skip {} fixup: payload '{}' resolves outside this home — "
             "inherited payload, owner is responsible for its fixup",
             kind, payloadRoot.string()));
-        return;
+        return {};
     }
 
     auto xlEnv = mcpp::config::make_xlings_env(cfg);
     std::filesystem::path glibcLibDir;
-    if constexpr (mcpp::platform::is_linux)
-        glibcLibDir = find_sandbox_glibc_lib(xlEnv);
+    if constexpr (mcpp::platform::is_linux) {
+        std::string selected(runtimeId);
+        if (selected.empty()) {
+            auto info = mcpp::xlings::subos::read(
+                cfg.xlingsHome() / "subos" / "default");
+            if (!info.present || info.runtime.empty()) {
+                return std::unexpected(std::format(
+                    "cannot fix up {} toolchain '{}': default SubOS has no "
+                    "RuntimeBinding identity ({})",
+                    kind, payloadRoot.string(), info.note));
+            }
+            selected = std::move(info.runtime);
+        }
+        if (!selectedRuntimeLibDir.empty()) {
+            constexpr std::string_view prefix = "glibc@";
+            auto version = selected.starts_with(prefix)
+                ? std::string_view(selected).substr(prefix.size())
+                : std::string_view{};
+            auto payload = selectedRuntimeLibDir.parent_path();
+            auto discovered = payload_lib_dir_with_loader(payload);
+            std::error_code dec, sec;
+            auto discoveredReal = std::filesystem::weakly_canonical(discovered, dec);
+            auto selectedReal = std::filesystem::weakly_canonical(
+                selectedRuntimeLibDir, sec);
+            if (version.empty() || payload.filename() != version
+                || discovered.empty() || dec || sec
+                || discoveredReal != selectedReal) {
+                return std::unexpected(std::format(
+                    "selected RuntimeBinding {} points at incompatible/stale "
+                    "runtime directory '{}'; expected the exact payload version",
+                    selected, selectedRuntimeLibDir.string()));
+            }
+            glibcLibDir = selectedRuntimeLibDir;
+        } else {
+            auto exact = find_sandbox_glibc_lib(xlEnv, selected);
+            if (!exact) return std::unexpected(exact.error());
+            glibcLibDir = std::move(*exact);
+        }
+    }
 
     // Content-fingerprinted marker: a marker whose INPUTS drifted (different
     // glibc payload, newer fixup logic) re-runs the fixup — "a process once
@@ -517,7 +593,7 @@ export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
             try {
                 nlohmann::json actual;
                 is >> actual;
-                if (actual == expected) return;  // fixup already applied
+                if (actual == expected) return {};  // fixup already applied
             } catch (...) { /* corrupt marker → re-run */ }
         }
     }
@@ -527,6 +603,7 @@ export void ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 
     std::ofstream os(markerPath);
     os << expected.dump(2) << "\n";
+    return {};
 }
 
 
