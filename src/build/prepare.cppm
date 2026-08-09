@@ -2229,14 +2229,21 @@ prepare_build(bool print_fingerprint,
     };
 
     auto xpkgLuaMatchesCandidate =
-        [](const mcpp::pm::DependencyCoordinate& coord,
-           std::string_view luaContent,
-           bool allowLegacyBareDefault) {
+        [&](const mcpp::pm::DependencyCoordinate& coord,
+            std::string_view luaContent,
+            bool allowLegacyBareDefault) {
             // Single source of truth: the descriptor identity gate lives in
-            // mcpp.manifest and is shared with the read_xpkg_lua family.
+            // mcpp.manifest and is shared with the read_xpkg_lua family.  A
+            // descriptor served by a declared project index inherits that
+            // index's namespace when package.namespace is omitted; preserve
+            // the same owner context during this second, stricter check.
+            const auto route = index_route();
+            const auto* owner = route.find_for_ns(coord.namespace_);
+            const std::string_view ownerNs = owner
+                ? std::string_view{owner->name} : std::string_view{};
             return mcpp::manifest::xpkg_lua_identity_matches(
                 luaContent, coord.namespace_, coord.shortName,
-                allowLegacyBareDefault);
+                allowLegacyBareDefault, ownerNs);
         };
 
     auto dependencyCoordinates =
