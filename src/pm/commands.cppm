@@ -134,7 +134,11 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
     auto coordinate = mcpp::pm::normalize_package_selector(*parsedSelector);
-    const std::string canonicalSelector =
+    const bool namespaceOmitted = !parsedSelector->namespace_.has_value();
+    // Not const: a namespace-omitted selector that only the deprecated
+    // bare-name rungs can serve is MIGRATED here, so what lands in mcpp.toml
+    // is the canonical identity rather than the spelling that is going away.
+    std::string canonicalSelector =
         mcpp::pm::format_package_selector(coordinate);
     const std::string& ns = coordinate.namespace_;
     const std::string& shortName = coordinate.shortName;
@@ -230,6 +234,43 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (!found.error.empty()) {
                 mcpp::ui::error(found.error);
                 return 2;
+            }
+        }
+
+        // One-release bare-name migration, mirroring build-time resolution.
+        // `mcpp add` is the cheapest place a user can be moved off the old
+        // spelling, because it can perform the edit for them: the warning here
+        // is followed by the canonical identity actually being written.
+        if (!found.hit && namespaceOmitted) {
+            for (auto& legacy : mcpp::pm::legacy_bare_candidates(coordinate)) {
+                auto legacySelector = mcpp::pm::make_direct_dependency_selector(
+                    legacy.namespace_, legacy.shortName,
+                    mcpp::pm::format_package_selector(legacy));
+                auto legacyFound = mcpp::pm::lookup_descriptor(
+                    route, legacySelector.candidates);
+                if (!legacyFound.hit) continue;
+
+                auto resolved = legacyFound.hit->coord;
+                if (resolved.namespace_.empty())
+                    resolved.namespace_ = legacyFound.hit->declaredNs;
+                const auto previous = canonicalSelector;
+                coordinate = resolved;
+                canonicalSelector =
+                    mcpp::pm::format_package_selector(coordinate);
+                found = std::move(legacyFound);
+                // The namespace-less rung can resolve to the same spelling the
+                // user typed (an upstream package that declares no namespace at
+                // all). Nothing is being migrated there, so say nothing.
+                if (canonicalSelector != previous) {
+                    mcpp::ui::warning(std::format(
+                        "'{}' matched no package; namespace omission means `{}` "
+                        "only. '{}' does exist, so it is being written instead "
+                        "— the deprecated bare-name search is removed in {}.",
+                        previous, mcpp::pm::kDefaultNamespace,
+                        canonicalSelector,
+                        mcpp::pm::kBareNameFallbackRemovedIn));
+                }
+                break;
             }
         }
 

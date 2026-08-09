@@ -101,6 +101,11 @@ struct DependencySpec {
     // search (`capi.lua` tried mcpplibs.capi before capi). New exact selectors
     // written as namespace subtables never set this bit.
     bool                        legacyCandidateSearch = false;
+    // The selector was written WITHOUT a namespace (`gtest = "1.15.2"`), so
+    // `namespace_` above is the substituted default rather than something the
+    // author wrote. Only such a selector is eligible for the one-release
+    // bare-name fallback: `mcpplibs.gtest` states an identity and must miss.
+    bool                        namespaceOmitted = false;
 
     bool isPath()    const { return !path.empty(); }
     bool isGit()     const { return !git.empty(); }
@@ -115,5 +120,10 @@ inline constexpr std::string_view kDefaultNamespace = "mcpplibs";
 // compat.gtest, …). It must be selected explicitly; the constant remains
 // centralized for filename/store compatibility helpers.
 inline constexpr std::string_view kCompatNamespace = "compat";
+
+// The release in which a namespace-omitted selector stops reaching `compat`
+// and the namespace-less discovery rung. Named once so the warning text, the
+// docs and the removal commit cannot drift apart.
+inline constexpr std::string_view kBareNameFallbackRemovedIn = "2026.9";
 
 } // namespace mcpp::pm

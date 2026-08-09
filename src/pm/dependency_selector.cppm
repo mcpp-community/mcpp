@@ -11,6 +11,11 @@ export namespace mcpp::pm {
 struct DependencySelector {
     std::vector<DependencyCoordinate> candidates;
     std::string stableMapKey;
+    // The spelling carried no namespace, so `candidates.front().namespace_` is
+    // the substituted default. Consumers that offer the one-release bare-name
+    // fallback need to tell "the author omitted it" from "the author wrote
+    // mcpplibs"; the coordinate alone cannot.
+    bool namespaceOmitted = false;
 };
 
 struct PackageSelector {
@@ -51,10 +56,12 @@ inline std::string join_dependency_segments(const std::vector<std::string>& segm
 inline DependencySelector make_direct_dependency_selector(
     std::string_view ns,
     std::string_view shortName,
-    std::string_view stableMapKey)
+    std::string_view stableMapKey,
+    bool             namespaceOmitted = false)
 {
     DependencySelector out;
     out.stableMapKey = std::string(stableMapKey);
+    out.namespaceOmitted = namespaceOmitted;
     out.candidates.push_back(DependencyCoordinate{
         .namespace_ = std::string(ns),
         .shortName = std::string(shortName),
@@ -126,6 +133,40 @@ format_package_selector(const DependencyCoordinate& coordinate)
     }
     return std::format("{}.{}", coordinate.namespace_,
                        coordinate.shortName);
+}
+
+// The rungs a pre-exact-identity mcpp searched when the namespace was omitted:
+// `gtest` reached `compat.gtest`, and a descriptor that declares no namespace
+// at all was reachable by its bare name. Both are how every published
+// `compat.*` package and every existing user manifest spell their dependency,
+// so removing them outright turns an mcpp upgrade into a broken build for data
+// that is already published and cannot be edited retroactively.
+//
+// These are NEVER part of the exact candidate list. They are consulted only
+// after the exact coordinate has missed, the hit is announced with a
+// deprecation warning naming the canonical selector, and what gets recorded
+// downstream (spec, lockfile, install) is the canonical identity — so the
+// ambiguous spelling exists in exactly one place, the user's manifest, and
+// only until they run `mcpp add` or take the warning's advice.
+//
+// Removed in kBareNameFallbackRemovedIn.
+inline std::vector<DependencyCoordinate>
+legacy_bare_candidates(const DependencyCoordinate& exact)
+{
+    if (exact.namespace_ != kDefaultNamespace) return {};
+    return {
+        DependencyCoordinate{
+            .namespace_ = std::string(kCompatNamespace),
+            .shortName  = exact.shortName,
+        },
+        // The "upstream package that declares no namespace" rung. The caller
+        // must still reject a descriptor that DOES declare one, or this
+        // becomes the cross-namespace wildcard #278 removed.
+        DependencyCoordinate{
+            .namespace_ = {},
+            .shortName  = exact.shortName,
+        },
+    };
 }
 
 // During the one-release exact-selector migration, this is the coordinate an

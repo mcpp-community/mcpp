@@ -693,7 +693,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
         auto coordinate = mcpp::pm::normalize_package_selector(*parsed);
         return mcpp::pm::make_direct_dependency_selector(
-            coordinate.namespace_, coordinate.shortName, stableMapKey);
+            coordinate.namespace_, coordinate.shortName, stableMapKey,
+            /*namespaceOmitted=*/!parsed->namespace_.has_value());
     };
 
     auto assign_dep = [&](std::string_view section,
@@ -716,6 +717,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         spec.candidates = selector.candidates;
         spec.legacyDottedKey = legacyDottedKey;
         spec.legacyCandidateSearch = legacyCandidateSearch;
+        spec.namespaceOmitted = selector.namespaceOmitted;
 
         auto key = selector.stableMapKey;
         if (value.is_string()) {

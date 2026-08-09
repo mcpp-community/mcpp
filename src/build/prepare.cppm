@@ -2381,6 +2381,70 @@ prepare_build(bool print_fingerprint,
                 break;
             }
 
+            // One-release bare-name migration. Namespace omission means exactly
+            // `mcpplibs`, but every published `compat.*` package and every user
+            // manifest written before this release spells the dependency bare —
+            // `gtest = "1.15.2"`, `ftxui = "6.1.9"`. Making that an immediate
+            // hard error means an mcpp upgrade breaks builds against data that
+            // is already published and cannot be edited retroactively; the
+            // symmetric rule ("published data must not break the program") is
+            // why the index floor degrades instead of bricking.
+            //
+            // The defect #278 removed was the SILENCE, not the reach: mcpp used
+            // to continue with a namespace the user never wrote and never say
+            // so. A hit here is announced, is recorded downstream under its
+            // canonical identity, and names the exact edit that removes the
+            // warning. Only a selector whose namespace was OMITTED is eligible —
+            // `mcpplibs.gtest` states an identity and must still miss.
+            if (!matched && spec.isVersion() && spec.namespaceOmitted) {
+                for (auto& legacy :
+                         mcpp::pm::legacy_bare_candidates(candidates.front())) {
+                    auto lua = readStrictLuaForCandidate(legacy);
+                    if (!lua) continue;
+                    if (mcpp::manifest::xpkg_name_form_violation_from_lua(*lua))
+                        continue;
+                    if (!xpkgLuaMatchesCandidate(
+                            legacy, *lua, /*allowLegacyBareDefault=*/false))
+                        continue;
+                    auto declaredNs =
+                        mcpp::manifest::extract_xpkg_namespace(*lua);
+                    // Same narrowing as the exact loop: the namespace-less rung
+                    // is "upstream package that declares no namespace", not a
+                    // cross-namespace wildcard.
+                    if (legacy.namespace_.empty() && !declaredNs.empty())
+                        continue;
+
+                    selected = legacy;
+                    if (selected.namespace_.empty())
+                        selected.namespace_ = declaredNs;
+                    matched = true;
+                    // Downstream — lock, install, cache label — must see the
+                    // canonical identity, so the ambiguous spelling survives in
+                    // exactly one place: the user's manifest, until they edit it.
+                    candidates.assign(1, selected);
+
+                    if (selectorMigrationWarnings.insert(depName).second) {
+                        mcpp::ui::warning(std::format(
+                            "dependency '{}' resolved to '{}' through the "
+                            "deprecated bare-name search; namespace omission "
+                            "means `{}` only. Write the exact package:"
+                            "\n    [dependencies.{}]"
+                            "\n    {} = \"{}\""
+                            "\n  (or run `mcpp add {}@{}`). This fallback is "
+                            "removed in {}.",
+                            depName,
+                            mcpp::pm::format_package_selector(selected),
+                            mcpp::pm::kDefaultNamespace,
+                            selected.namespace_, selected.shortName,
+                            spec.version,
+                            mcpp::pm::format_package_selector(selected),
+                            spec.version,
+                            mcpp::pm::kBareNameFallbackRemovedIn));
+                    }
+                    break;
+                }
+            }
+
             // A custom GIT index is cloned lazily by xlings during install, so
             // at selection time its descriptors may legitimately not be on disk
             // yet. "Not found" is therefore not conclusive for those namespaces
