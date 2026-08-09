@@ -10,7 +10,7 @@
 
 The mcpp implementation is developed in one branch and one pull request:
 
-- worktree: `/home/speak/.config/superpowers/worktrees/mcpp/template-runtime-graphics-aur`
+- worktree: isolated feature worktree; local path intentionally omitted
 - branch: `feat/template-runtime-graphics-aur`
 - base: `mcpp-community/mcpp main@80291ca01a982c1e8c00e43bfa97ffe68516e6d7`
 - focused issue: `mcpp-community/mcpp#398`
@@ -18,7 +18,7 @@ The mcpp implementation is developed in one branch and one pull request:
 
 External repositories retain their own history and review boundaries. Their implementation, if required after the mcpp release, uses separate repository PRs; it does not create a second mcpp implementation PR.
 
-The main mcpp checkout contains user-owned untracked design/triage files. This worktree was created from `origin/main`; no tracked or untracked file in the main checkout is moved or deleted.
+The implementation worktree was created from `origin/main`; pre-existing checkout state was left untouched.
 
 ## 2. Live baseline
 
@@ -65,14 +65,14 @@ Approved design hashes:
 
 Host xlings configuration snapshot:
 
-- scope: sorted SHA256 rows for `/home/speak/.xlings/.xlings.json` and `subos/*/.xlings.json`; contents were not copied.
+- scope: sorted SHA256 rows for `$XLINGS_HOME/.xlings.json` and `$XLINGS_HOME/subos/*/.xlings.json`; contents were not copied.
 - aggregate: `f218aadf3792ee815c8535ce0ca0bb53f634fecbdbc5d0d47db442052d786d1b`.
 
 All stateful verification uses a separate temporary root and must reproduce both aggregate hashes before completion.
 
 ## 4. Baseline verification
 
-Isolated root: `/tmp/mcpp-focused-398.XVUEhz`.
+Isolated root: disposable task root; exact local path intentionally omitted.
 
 | Gate | Command shape | Status | Evidence |
 |---|---|---|---|
@@ -85,9 +85,9 @@ Isolated root: `/tmp/mcpp-focused-398.XVUEhz`.
 
 ### Baseline fixture diagnosis
 
-The first #201 run exited 1 because the isolated `MCPP_HOME` itself was `/tmp/mcpp-focused-398.XVUEhz/.mcpp`. The test intentionally rejects every RUNPATH beginning with `/tmp/` as evidence of another temporary home, so it classified the current, valid isolated home as pollution. The observed two paths were the current glibc and gcc payload directories, not a stale foreign home.
+The first #201 run exited 1 because the isolated `MCPP_HOME` itself was below the system temporary directory. The test intentionally rejects every RUNPATH beginning with that directory as evidence of another temporary home, so it classified the current, valid isolated home as pollution. The observed two paths were the current glibc and gcc payload directories, not a stale foreign home.
 
-The hypothesis was tested by hard-link cloning the disposable state into the non-`/tmp` isolated root `/home/speak/.cache/mcpp-focused-398.IE23if`, letting the normal fixup rebind paths, and running the unmodified script again. It exited 0 and proved both link modes load nothing from the host. No product or test source was changed for this baseline result.
+The hypothesis was tested by hard-link cloning the disposable state into a non-temporary isolated root, letting the normal fixup rebind paths, and running the unmodified script again. It exited 0 and proved both link modes load nothing from the host. No product or test source was changed for this baseline result.
 
 ## 5. RED/GREEN ledger
 
@@ -291,7 +291,7 @@ Terminal conclusions are not yet claimed.
 
 ## 7. Merge and release
 
-Not started. This section will record the authorized bypass squash commit, tag, GitHub release, release workflow/job IDs, asset inventory, checksums, `mcpp-release.json`, and GitCode mirror evidence.
+Not started. After explicit user review, this section will record the normal merge commit, tag, GitHub release, release workflow/job IDs, asset inventory, checksums, `mcpp-release.json`, and GitCode mirror evidence. Admin/bypass merge is outside the approved workflow.
 
 ## 8. AUR mcpp-bin
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在一张 mcpp PR 中落地已冻结的模板 selector、项目级 RuntimeSelection/RuntimeBinding、provider-neutral 图形运行时契约与仅管理 mcpp-bin 的 AUR reconciler；随后完成 squash/bypass 合入、release、mcpp-index/GitCode 对接和隔离环境下的 xlings 全生态验证。
+**Goal:** 在一张 mcpp Draft PR 中落地已冻结的模板 selector、项目级 RuntimeSelection/RuntimeBinding、provider-neutral 图形运行时契约与仅管理 mcpp-bin 的 AUR reconciler；随后完成 review-gated 普通合入、release、mcpp-index/GitCode 对接和隔离环境下的 xlings 全生态验证。
 
 **Architecture:** CLI 和 mcpp.toml 共用一个 exact dotted PackageSelector；scaffold 在任何落盘前解析出完整 PackageId/version/template，并在 sibling 临时目录事务生成。运行时只允许 McppDefault 或 root/workspace-root NamedSubos，两者解析成一次性 RuntimeBinding snapshot，进入构建指纹并由 build/run/test 复用，dependency/member 的 SubOS 不传递。mcpp-index 声明图形 RuntimeRequirement，xlings/xim 解析 provider，mcpp 仅记录 canonical requester/provider/artifact provenance 和执行平台通用链接/运行验证。GitHub Release manifest 是 AUR desired state，mcpp-bin reconciler 单调、幂等、校验实物并只做 fast-forward push。
 
@@ -12,7 +12,8 @@
 
 - [ ] 所有行为改动遵循 RED → GREEN → refactor；每个 RED 命令和预期失败原因写入提交/验证台账。
 - [ ] mcpp 实现只使用一张 PR，基于最新 `origin/main`；不直接 push main，不 force-push，不 amend/rebase 历史。
-- [ ] 最终按用户授权使用 admin/bypass squash merge；只有最新 PR HEAD 的 required checks 全部终态成功后执行。
+- [ ] 所有改动先形成可审阅的独立 commit，立即 push 到 Draft PR，并追加验证/checkpoint 评论；不在提交、PR 或日志摘录中记录本地用户名、绝对工作区路径或私有信息。
+- [ ] Draft PR 经用户 review 后才可转 ready；不使用 admin/bypass，只有最新 PR HEAD 的 required checks 全部终态成功后才进行普通 merge。
 - [ ] `mcpp-m` 边界为字节级不变：不修改 `scripts/aur/mcpp-m/**`，不读取/生成/发布其内容，不访问其 AUR remote。
 - [ ] 不增加 `--variant`、`--subos` 或其他顶层 CLI；不在 mcpp 中出现 GPU vendor、Mesa、NVIDIA、WSL 或 ICD 选择分支。
 - [ ] SubOS 只来自本次构建 root/workspace root 的 `mcpp.toml`，不写入 dependency requirement/lock identity，不从 dependency/member 继承。
@@ -360,17 +361,18 @@
 - [ ] Run sanitizers/static checks available in repository CI, `git diff --check origin/main...HEAD`, forbidden mcpp-m diff, and explicit scope inventory.
 - [ ] Measure hot no-op build and template parse against baseline; require no material regression and zero xlings/GPU subprocess on hot no-op.
 - [ ] Rebase is forbidden; if origin/main advanced, merge origin/main normally, rerun all affected gates, and preserve visible history.
-- [ ] Push the branch and open one non-draft PR with `Closes #398`, related issue notes, architecture decisions, RED/GREEN evidence, boundary proof, version/pin, and cross-repo follow-up plan.
+- [x] Push the branch and open one Draft PR with `Closes #398`, related issue notes, architecture decisions, RED/GREEN evidence, boundary proof, version/pin, and cross-repo follow-up plan.
+- [ ] After every logical commit, push immediately and append a checkpoint with commit id, focused evidence, remaining failures, and cross-repository boundary.
 - [ ] Request review using the repository review workflow and address feedback with fresh evidence.
 
-## Task 12: Native GitHub Actions, Squash/Bypass Merge, and Release
+## Task 12: Native GitHub Actions, Review-Gated Merge, and Release
 
 **Skills required at this task:** `mcpp-release`, `superpowers:verification-before-completion`, and `superpowers:finishing-a-development-branch`.
 
 - [ ] Wait for all latest-HEAD checks to reach terminal success across Linux, macOS, Windows, cross/QEMU aarch64, native aarch64, fresh install, release manifest, and AUR dry-run lanes.
 - [ ] Treat skipped native/runtime hardware rows as NOT_EXERCISED, not pass; create an isolated temporary CI lane if a required platform gate is absent.
 - [ ] Verify remote PR HEAD equals local HEAD, branch diff is clean, no unresolved reviews, no conflict, and `scripts/aur/mcpp-m/**` is unchanged.
-- [ ] Use the explicitly authorized admin/bypass squash merge; verify the squash commit is on main and PR/issue states are correct.
+- [ ] After explicit user review, mark the Draft ready and use the repository's normal merge path without admin/bypass; verify the merge commit is on main and PR/issue states are correct.
 - [ ] Follow `mcpp-release`: verify version strings, create/push the release tag, monitor every release job, asset, checksum, `mcpp-release.json`, GitCode mirror, and GitHub release until terminal success.
 - [ ] Do not block/rollback the GitHub release for an AUR transient; dispatch the fixed latest-stable mcpp-bin reconciler and record its exact terminal state.
 - [ ] Close #380/#392/#396 only when their released acceptance paths are proven; otherwise comment with delivered subset and keep the residual open.
@@ -379,10 +381,10 @@
 
 **Repositories:**
 
-- `/home/speak/workspace/github/mcpplibs/mcpp-index`
-- `/home/speak/workspace/github/openxlings/xim-pkgindex`
-- `/home/speak/workspace/github/openxlings/xlings`
-- local GitCode helper/config already used by release workflow
+- `mcpplibs/mcpp-index`
+- `openxlings/xim-pkgindex`
+- `openxlings/xlings`
+- GitCode helper/config already used by the release workflow
 
 - [ ] In isolated repo-specific worktrees, update mcpp-index minimum/current mcpp pins and template descriptors to canonical selectors and sole/default template lint.
 - [ ] Refactor ImGui features/templates to core/headless, backend-glfw-opengl3, backend-vulkan, app, docking, and viewports without making core pull graphics unconditionally.

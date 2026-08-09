@@ -438,7 +438,7 @@ home = ""
 - 全局 config 决定“使用哪一个 xlings 实例和 home”。
 - 项目 <code>mcpp.toml</code> 决定“在该实例中使用 default 还是哪个 named SubOS”。
 
-这样团队可以提交 <code>subos = "el8"</code>，而不提交某位开发者的 <code>/home/user/.xlings</code>。
+这样团队可以提交 <code>subos = "el8"</code>，而不提交某位开发者的本地 <code>XLINGS_HOME</code> 路径。
 
 ### 6.5 选择优先级
 
