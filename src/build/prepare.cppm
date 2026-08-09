@@ -2437,10 +2437,10 @@ prepare_build(bool print_fingerprint,
                         mcpp::pm::staleness_note(
                             mcpp::config::make_xlings_env(**cfgA)));
                 }
-                return std::unexpected(std::format(
+                return std::unexpected(with_index_cause(std::format(
                     "dependency '{}': no package found for exact selector"
                     "\n  tried: {}{}",
-                    depName, tried, hint));
+                    depName, tried, hint)));
             }
         }
 
