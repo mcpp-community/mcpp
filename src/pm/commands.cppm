@@ -249,6 +249,10 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 hint += "\n  hint: `mcpp index update` if it was published "
                         "recently";
             }
+            if (!selector.candidates.empty()) {
+                hint += "\n  route: " +
+                    route.describe(selector.candidates.front().namespace_);
+            }
             mcpp::ui::error(std::format(
                 "package '{}' not found in any configured index\n  tried: {}{}",
                 canonicalSelector, detail::format_tried(selector.candidates),

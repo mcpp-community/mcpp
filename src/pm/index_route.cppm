@@ -59,6 +59,11 @@ struct IndexRoute {
     bool lazy_git(std::string_view ns) const;
     // Can a miss in this namespace be taken as proof of absence?
     bool authoritative_for(std::string_view ns) const;
+    // Privacy-safe route state for a failed exact lookup.  This deliberately
+    // omits filesystem paths: CI and user diagnostics need to distinguish a
+    // missing declaration from a missing local checkout without publishing
+    // workstation-specific locations.
+    std::string describe(std::string_view ns) const;
     // Read the descriptor for one coordinate through the right transport.
     std::optional<std::string> read(const DependencyCoordinate& coord) const;
 };
@@ -132,6 +137,35 @@ bool IndexRoute::authoritative_for(std::string_view ns) const {
     if (ns.empty()) return true;
     if (ns == kDefaultNamespace || ns == kCompatNamespace) return true;
     return ns.starts_with(std::string(kDefaultNamespace) + ".");
+}
+
+std::string IndexRoute::describe(std::string_view ns) const {
+    auto* idx = find_for_ns(ns);
+    if (!idx) {
+        return std::format(
+            "builtin index for namespace '{}': registry {}",
+            ns, cfg ? "available" : "unavailable");
+    }
+    if (idx->is_local()) {
+        const auto root = mcpp::config::resolve_project_index_path(
+            projectRoot, *idx);
+        std::error_code ec;
+        const bool rootPresent = std::filesystem::is_directory(root, ec);
+        ec.clear();
+        const bool pkgsPresent =
+            std::filesystem::is_directory(root / "pkgs", ec);
+        const auto label = idx->name.empty() ? std::string(ns) : idx->name;
+        return std::format(
+            "local index '{}': root {}, pkgs {}", label,
+            rootPresent ? "present" : "absent",
+            pkgsPresent ? "present" : "absent");
+    }
+    if (idx->is_builtin()) {
+        return std::format(
+            "builtin index '{}': registry {}", idx->name,
+            cfg ? "available" : "unavailable");
+    }
+    return std::format("git index '{}': checkout pending", idx->name);
 }
 
 std::optional<std::string>

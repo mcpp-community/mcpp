@@ -193,6 +193,10 @@ diff -q "$TMP/before" mcpp.toml || { cat mcpp.toml; echo "mcpp.toml mutated for 
 # (11) Same for an explicitly-namespaced miss in a readable index.
 err=$("$MCPP" add acme.nope@1.0.0 2>&1) && { echo "expected error for missing acme package"; exit 1; }
 [[ "$err" == *"(acme, nope)"* ]] || { echo "wrong error: $err"; exit 1; }
+[[ "$err" == *"route: local index 'acme': root present, pkgs present"* ]] || {
+    echo "missing privacy-safe local-index route state: $err"
+    exit 1
+}
 diff -q "$TMP/before" mcpp.toml || { cat mcpp.toml; echo "mcpp.toml mutated for missing package"; exit 1; }
 
 # (12) A namespace no readable index covers cannot be refuted, so the add goes

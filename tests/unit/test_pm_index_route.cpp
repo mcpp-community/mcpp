@@ -64,6 +64,26 @@ TEST(PmIndexRoute, LocalPathIndexIsAuthoritative) {
     EXPECT_TRUE(route.authoritative_for("acme"));
 }
 
+TEST(PmIndexRoute, RouteDescriptionDoesNotExposeItsLocalPath) {
+    LocalIndex idx("diagnostic-privacy");
+    auto indices = local_map(idx);
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
+
+    const auto description = route.describe("acme");
+    EXPECT_EQ(description, "local index 'acme': root present, pkgs present");
+    EXPECT_EQ(description.find(idx.root.string()), std::string::npos);
+}
+
+TEST(PmIndexRoute, RouteDescriptionDistinguishesAMissingLocalRoot) {
+    mcpp::pm::IndexMap indices;
+    indices["acme"] = mcpp::pm::IndexSpec{
+        .name = "acme", .path = "missing-local-index" };
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
+
+    EXPECT_EQ(route.describe("acme"),
+              "local index 'acme': root absent, pkgs absent");
+}
+
 // The regression behind #305/#307: a dotted selector is one exact NAMESPACE
 // PATH, so it resolves through the coordinate the manifest parser derives. Probing the
 // literal short name can never match — `package.name` is a single atomic
@@ -202,6 +222,8 @@ version = "0.1.0"
               (root / "index").lexically_normal());
 
     mcpp::pm::IndexRoute route{ &indices, root / "member", nullptr };
+    EXPECT_EQ(route.describe("acme"),
+              "local index 'acme': root present, pkgs present");
     auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
     auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
     ASSERT_TRUE(found.hit.has_value());
