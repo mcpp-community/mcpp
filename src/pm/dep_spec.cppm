@@ -90,27 +90,40 @@ struct DependencySpec {
     bool                        defaultFeatures = true; // consumer opt-out: `default-features = false`
                                                         // suppresses the dep's own [features].default seed
                                                         // (Cargo parity). Explicit `features = [...]` still apply.
-    std::vector<DependencyCoordinate> candidates; // ordered lookup candidates
+    // Canonical dependency parsing writes exactly one coordinate. Kept as a
+    // vector for lock/source compatibility with already-materialized legacy
+    // manifests during the migration release.
+    std::vector<DependencyCoordinate> candidates;
 
     bool                        inheritWorkspace = false;  // .workspace = true
     bool                        legacyDottedKey = false;   // parsed from legacy "ns.name" flat key
+    // One-release migration marker for the former unquoted dotted-selector
+    // search (`capi.lua` tried mcpplibs.capi before capi). New exact selectors
+    // written as namespace subtables never set this bit.
+    bool                        legacyCandidateSearch = false;
+    // The selector was written WITHOUT a namespace (`gtest = "1.15.2"`), so
+    // `namespace_` above is the substituted default rather than something the
+    // author wrote. Only such a selector is eligible for the one-release
+    // bare-name fallback: `mcpplibs.gtest` states an identity and must miss.
+    bool                        namespaceOmitted = false;
 
     bool isPath()    const { return !path.empty(); }
     bool isGit()     const { return !git.empty(); }
     bool isVersion() const { return !isPath() && !isGit() && !version.empty(); }
 };
 
-// Default namespace for packages declared without an explicit one — the
-// mcpplibs "root". Bare `gtest = "1.15.2"` becomes `(mcpp, gtest)`.
+// Default namespace for selectors written without an explicit one. Bare
+// `cmdline = "0.0.2"` becomes exactly `(mcpplibs, cmdline)`.
 inline constexpr std::string_view kDefaultNamespace = "mcpplibs";
 
 // The `compat` namespace holds upstream-library wrappers (compat.zlib,
-// compat.gtest, …). It is the one non-default namespace that an unqualified
-// (default-namespace) dependency name reaches: bare `gtest` → `compat.gtest`.
-// Centralized here so the candidate generator (xpkg_lua_candidates) and the
-// identity gate (xpkg_lua_identity_matches) share one source of truth instead
-// of each hard-coding the literal "compat". See the design doc's §4.1 for the
-// fuller "unqualified namespace search path" direction this is a seed of.
+// compat.gtest, …). It must be selected explicitly; the constant remains
+// centralized for filename/store compatibility helpers.
 inline constexpr std::string_view kCompatNamespace = "compat";
+
+// The release in which a namespace-omitted selector stops reaching `compat`
+// and the namespace-less discovery rung. Named once so the warning text, the
+// docs and the removal commit cannot drift apart.
+inline constexpr std::string_view kBareNameFallbackRemovedIn = "2026.9";
 
 } // namespace mcpp::pm

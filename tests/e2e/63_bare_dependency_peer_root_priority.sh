@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # requires: gcc fresh-sandbox
-# Bare selectors try mcpplibs first, then an independent peer-root package.
-# This test provides only an independent root `imgui` package in the default
-# index and verifies `imgui = "1.0.0"` does not resolve as mcpplibs.imgui.
+# Bare selectors mean exactly the default mcpplibs namespace. This test
+# provides mcpplibs:imgui and verifies `imgui = "1.0.0"` records that identity.
 set -e
 
 TMP=$(mktemp -d)
@@ -19,8 +18,9 @@ printf 'ok\n' > "$INDEX_DIR/.mcpp-index-updated"
 cat > "$INDEX_DIR/pkgs/i/imgui.lua" <<'EOF'
 package = {
     spec = "1",
+    namespace = "mcpplibs",
     name = "imgui",
-    description = "Independent bare selector fallback test package",
+    description = "Default-namespace exact selector test package",
     licenses = {"MIT"},
     type = "package",
     xpm = {
@@ -90,9 +90,9 @@ grep -q '\[package."imgui"\]' mcpp.lock || {
     exit 1
 }
 
-if grep -q 'namespace = "mcpplibs"' mcpp.lock; then
+if ! grep -q 'namespace = "mcpplibs"' mcpp.lock; then
     cat mcpp.lock
-    echo "bare independent package should not lock as mcpplibs"
+    echo "bare package must lock as the default mcpplibs namespace"
     exit 1
 fi
 

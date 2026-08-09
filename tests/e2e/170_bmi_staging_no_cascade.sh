@@ -97,11 +97,20 @@ cmp "$SRC" "$(dirname "$NINJA")/$DST" \
   || { echo "FAIL: staged BMI differs from the cache after staging"; exit 1; }
 
 # And the edge must not stay dirty forever: ninja's restat bookkeeping settles
-# it on the next run. (-v so ninja's own line reaches the log — mcpp only
-# forwards captured output on failure otherwise.)
+# it on the next run. Check the staging edge itself rather than requiring the
+# whole graph to print "no work to do": macOS may legitimately rebuild its
+# generated iOS init object and relink without touching the settled BMI edge.
+# (-v so ninja's own lines reach the log — mcpp only forwards captured output
+# on failure otherwise.)
 "$MCPP" build -v > build3.log 2>&1 || { cat build3.log; echo "FAIL: third build"; exit 1; }
-grep -q "no work to do" build3.log || {
+if grep -qE "stage .*--output" build3.log; then
     cat build3.log
-    echo "FAIL: staging edge stayed dirty after a settled re-stage"; exit 1; }
+    echo "FAIL: staging edge stayed dirty after a settled re-stage"; exit 1
+fi
+if grep -qE '(-c|/c) .*main\.cpp' build3.log; then
+    cat build3.log
+    echo "FAIL: settled staging edge recompiled main.cpp on the third build"
+    exit 1
+fi
 
 echo "OK"

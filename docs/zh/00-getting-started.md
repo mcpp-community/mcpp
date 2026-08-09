@@ -69,6 +69,24 @@ int main() {
 }
 ```
 
+### 从包模板创建项目
+
+`mcpp new --template` 与 `mcpp add` 使用同一种精确包 selector 风格:
+
+```bash
+mcpp new gui-demo --template ocornut.imgui@1.92.8:docking
+mcpp new --list-templates ocornut.imgui@1.92.8
+```
+
+文法是 `[namespace.]name[@version][:template]`，namespace、version 与模板名可分别
+省略。省略 namespace 只表示唯一默认命名空间 `mcpplibs`，不会按短名扫描整个索引。
+省略模板名时，mcpp 使用唯一的 `default = true`；若包只有一个模板且未显式声明
+default，该单模板自动成为默认。多个模板却没有 default 会明确报错并提示
+`--list-templates`。不再引入另一套 `--variant` 词汇。
+
+包身份、版本与模板会在提交目标目录前全部解析完成；下载、渲染、hook 或校验失败时，
+不会留下半成品项目目录。
+
 ## 构建与运行
 
 ```bash
@@ -143,8 +161,9 @@ mcpp pack --mode self-contained    # 打包 loader、libc 与依赖
 
 ## 更多入口
 
-- GUI 起步:`mcpp new myapp --template imgui`(模板随 imgui 库分发、版本自动对齐;
-  `mcpp new --list-templates imgui` 查看库提供的全部模板,`--template imgui:docking` 选指定模板)。
+- GUI 起步:`mcpp new myapp --template ocornut.imgui@1.92.8:docking`(模板随包分发；
+  省略 `:docking` 使用已声明 default/唯一模板，或运行
+  `mcpp new --list-templates ocornut.imgui@1.92.8`)。
 - 解释默认决策:`mcpp why [toolchain|runtime|deps]`;主机能力体检:`mcpp self doctor`;
   机器可读解析清单:构建产物 `target/<triple>/<fp>/resolution.json`。
 - 离线运行:`mcpp --offline` 或 `MCPP_OFFLINE=1` 可阻止索引刷新、下载和工具链安装。

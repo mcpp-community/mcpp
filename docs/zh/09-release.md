@@ -37,10 +37,43 @@ POSIX `sh`/dash 解析不了 —— `sh check_version_pins.sh` 会在第 95 行�
 ```
 四平台构建（linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64）
   → GitHub Release v<version>，含 tarball 与 .sha256 边车文件
+  → 重新计算每个载荷的哈希并发布不可变 mcpp-release.json
   → 镜像到 xlings-res/mcpp 的 GitHub 与 GitCode 双端
   → 向 openxlings/xim-pkgindex 开版本 bump PR
   → workflow_run 钩子触发 ci-fresh-install
 ```
+
+### 2.1 不可变 release manifest
+
+`release-manifest` 会等待四个平台上传 job 全部结束，然后下载最终的非 draft、
+非 prerelease GitHub Release，重新计算每个带版本平台载荷的 SHA256，校验对应的
+`.sha256` 边车文件，并发布 schema 1 的 `mcpp-release.json`：
+
+```json
+{
+  "schema": 1,
+  "version": "<version>",
+  "tag": "v<version>",
+  "commit": "<tag-所指完整-commit>",
+  "assets": [
+    {
+      "platform": "linux",
+      "arch": "x86_64",
+      "name": "mcpp-<version>-linux-x86_64.tar.gz",
+      "sha256": "<重新计算的-sha256>"
+    }
+  ]
+}
+```
+
+数组按平台、架构、名称排序，包含所有带版本的平台载荷；其中 Linux x86_64、
+Linux aarch64、macOS ARM64、Windows x86_64 四项是硬性要求。无版本别名和源码包
+刻意不进入 desired-state 行。
+
+workflow 随后会再次下载公开 release、重新生成 manifest，并要求逐字节一致。
+重跑 workflow 时，已有 manifest 只有在字节完全相同时才会被接受；同一 tag 下
+绝不以不同内容覆盖。下游发布消费者（尤其 `mcpp-bin` AUR reconciler）必须消费
+该 manifest，不能从会变化的工作区或部分 release 资产猜测发布是否完整。
 
 两步**没有**自动化：
 
@@ -65,6 +98,27 @@ done
 curl -fsSL -o /tmp/p.tgz "https://github.com/xlings-res/mcpp/releases/download/$V/mcpp-$V-linux-x86_64.tar.gz"
 sha256sum /tmp/p.tgz   # 与 xim-pkgindex 的 pkgs/m/mcpp.lua 对照
 ```
+
+要在本地针对 GitHub 公开资产重放 release gate：
+
+```bash
+V=<version>
+TAG="v$V"
+AUDIT=$(mktemp -d)
+mkdir -p "$AUDIT/assets"
+gh api "repos/mcpp-community/mcpp/releases/tags/$TAG" > "$AUDIT/release.json"
+gh release download "$TAG" -R mcpp-community/mcpp --dir "$AUDIT/assets"
+python3 scripts/release/generate_manifest.py \
+  --release-json "$AUDIT/release.json" \
+  --assets-dir "$AUDIT/assets" \
+  --version "$V" \
+  --tag "$TAG" \
+  --commit "$(git rev-list -n 1 "$TAG")" \
+  --output "$AUDIT/expected.json"
+cmp "$AUDIT/assets/mcpp-release.json" "$AUDIT/expected.json"
+```
+
+这个命令会重新计算载荷哈希，不会从已发布 manifest 抄哈希，也不会盲信边车文件。
 
 然后在 **clean-room `XLINGS_HOME`** 里真装一次 —— 绝不要用本机的 `~/.xlings`，
 它的缓存状态会把一个坏掉的索引掩盖过去：
@@ -133,7 +187,8 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 [ ] `bash .github/tools/check_version_pins.sh` 通过（校验 `mcpp.toml` = `MCPP_VERSION`，且 `.xlings.json` 未领先）
 [ ] 合入 main，CI 全绿
 [ ] gh workflow run release.yml --ref main
-[ ] release.yml 全绿（4 个构建 + publish-ecosystem）
+[ ] release.yml 全绿（4 个构建 + 不可变 manifest + publish-ecosystem）
+[ ] 下载的 mcpp-release.json 能从公开资产逐字节重新生成
 [ ] 双端都服务四个平台，sha256 重新算过
 [ ] 合并 xim-pkgindex 的 bump PR
 [ ] clean-room XLINGS_HOME：xlings install mcpp@<version> 成功

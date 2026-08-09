@@ -1,102 +1,138 @@
 name: aur-publish
 
-# Publish the `mcpp-bin` and `mcpp` AUR packages after a release.
-#
-# Triggers on COMPLETION of the `release` workflow (not on `release:
-# published`): release.yml creates the GitHub Release in its first job but
-# uploads the aarch64 / macOS / Windows assets in LATER jobs, so the aarch64
-# .sha256 that mcpp-bin needs only exists once the whole workflow finishes.
-#
-# Requires one repository secret:
-#   AUR_SSH_PRIVATE_KEY — private key whose public half is registered on the
-#                         AUR account that owns mcpp / mcpp-bin.
-# See scripts/aur/README.md → "Automated publishing" for the full setup.
+# Reconcile only mcpp-bin.  This workflow is downstream of `release`, so its
+# failure is visible without changing the already-terminal release conclusion.
 on:
   workflow_run:
     workflows: [release]
     types: [completed]
+  schedule:
+    - cron: '17 */6 * * *'
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to publish (default: [package].version in mcpp.toml)"
+      publish:
+        description: 'Publish the validated diff (false performs a dry-run only)'
+        type: boolean
+        required: true
+        default: false
+      tag:
+        description: 'Optional exact latest complete stable tag (no downgrade override)'
+        type: string
         required: false
 
 concurrency:
-  group: aur-publish
+  group: aur-mcpp-bin-reconcile
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  publish:
-    runs-on: ubuntu-latest
-    # On the workflow_run trigger, only proceed if the release actually
-    # succeeded (skip failed/cancelled release runs).
+  reconcile:
+    name: reconcile mcpp-bin
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      REQUESTED_TAG: ${{ inputs.tag }}
     steps:
-      - name: Checkout released commit
+      - name: Checkout reconciler source
         uses: actions/checkout@v4
         with:
-          # workflow_run: the exact commit the release was built from.
-          # workflow_dispatch: default ref (HEAD of the branch).
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
-      - name: Refresh both PKGBUILDs to the release version
-        id: refresh
+      - name: Reconciler contract tests
+        run: python3 tests/scripts/test_aur_reconcile.py
+
+      # This phase has no SSH private key in its environment.  It downloads the
+      # immutable manifest and both Linux payload/sidecars, recomputes hashes,
+      # runs makepkg as non-root in Arch, inspects RPC + HTTPS git, and emits the
+      # exact diff before any publishing secret is loaded.
+      - name: Inspect and validate desired state
+        id: plan
         env:
-          # CI runs as root; force update.sh's template .SRCINFO path.
-          MCPP_AUR_NO_MAKEPKG: "1"
+          TRIGGER: ${{ github.event_name }}
+          MANUAL_PUBLISH: ${{ inputs.publish }}
+          # Repository variable, absent until a human has watched one publish
+          # succeed. See "Arming the automatic triggers" in scripts/aur/README.md.
+          AUTOPUBLISH: ${{ vars.AUR_AUTOPUBLISH }}
         run: |
-          VER="${{ github.event.inputs.version }}"
-          if [ -z "$VER" ]; then
-            # mcpp.toml at the released commit carries the right version.
-            VER=$(grep -m1 -E '^\s*version\s*=' mcpp.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          fi
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          ./scripts/aur/update.sh "$VER"
+          args=(
+            --trigger "$TRIGGER"
+            --report-json "$RUNNER_TEMP/aur-plan.json"
+            --summary "$GITHUB_STEP_SUMMARY"
+          )
+          [[ -z "$REQUESTED_TAG" ]] || args+=(--tag "$REQUESTED_TAG")
+          python3 scripts/aur/reconcile_mcpp_bin.py "${args[@]}"
 
-      - name: Configure AUR SSH
-        run: |
-          install -dm700 ~/.ssh
-          printf '%s\n' "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          ssh-keyscan -t rsa,ed25519 aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
-          cat > ~/.ssh/config <<'EOF'
-          Host aur.archlinux.org
-            User aur
-            IdentityFile ~/.ssh/aur
-            IdentitiesOnly yes
-          EOF
+          # An unattended push to a third-party service must be ARMED, not
+          # inherited from a merge. `schedule` fires every six hours off the
+          # default branch, so merging this workflow used to be enough to make
+          # mcpp start writing to the AUR on its own — before anyone had seen
+          # the reconciler complete a real push even once. Both automatic
+          # triggers therefore plan-and-report until AUR_AUTOPUBLISH is set;
+          # `workflow_dispatch` keeps its explicit per-run switch, which is how
+          # that first push is meant to happen.
+          case "$TRIGGER" in
+              workflow_run | schedule)
+                  if [[ "${AUTOPUBLISH:-}" == "true" ]]; then
+                      publish=true
+                  else
+                      publish=false
+                      echo "::notice::AUR_AUTOPUBLISH is not set — reporting the desired state without publishing."
+                  fi
+                  ;;
+              *)
+                  publish=${MANUAL_PUBLISH:-false}
+                  ;;
+          esac
+          echo "needs_publish=$(jq -r '.needs_publish' "$RUNNER_TEMP/aur-plan.json")" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
-      - name: Push to the AUR
+      - name: Configure pinned AUR SSH identity
+        if: steps.plan.outputs.needs_publish == 'true' && steps.plan.outputs.publish == 'true'
         env:
-          VER: ${{ steps.refresh.outputs.version }}
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
         run: |
-          set -eu
-          git config --global user.name  "mcpp-ci"
-          git config --global user.email "x.d2learn.org@gmail.com"
+          test -n "$AUR_SSH_PRIVATE_KEY" || { echo 'AUR_SSH_PRIVATE_KEY is empty'; exit 1; }
+          install -dm700 "$HOME/.ssh"
+          install -m600 /dev/null "$HOME/.ssh/aur"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur"
+          install -m600 scripts/aur/aur.archlinux.org.known_hosts "$HOME/.ssh/known_hosts"
+          ssh-keygen -lf "$HOME/.ssh/known_hosts" -E sha256 \
+            | grep -F 'SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4'
+          install -m600 /dev/null "$HOME/.ssh/config"
+          printf '%s\n' \
+            'Host aur.archlinux.org' \
+            '  User aur' \
+            '  IdentityFile ~/.ssh/aur' \
+            '  IdentitiesOnly yes' \
+            '  StrictHostKeyChecking yes' \
+            '  UserKnownHostsFile ~/.ssh/known_hosts' \
+            > "$HOME/.ssh/config"
 
-          publish() {  # $1 = package name (= dir under scripts/aur/)
-            pkg="$1"; src="scripts/aur/${pkg}"; work="/tmp/aur-${pkg}"
-            # Clone the existing AUR repo; if the package doesn't exist yet
-            # (first publish), start an empty repo — AUR creates it on push.
-            if git clone "ssh://aur@aur.archlinux.org/${pkg}.git" "$work" 2>/dev/null \
-               && [ -e "$work/.git" ]; then :; else
-              rm -rf "$work"; mkdir -p "$work"
-              git -C "$work" init -q
-              git -C "$work" remote add origin "ssh://aur@aur.archlinux.org/${pkg}.git"
-            fi
-            # AUR repos contain only PKGBUILD, .SRCINFO and local sources.
-            cp "$src/PKGBUILD" "$src/.SRCINFO" "$src/mcpp.sh" "$work/"
-            git -C "$work" add -A
-            if git -C "$work" diff --cached --quiet; then
-              echo ":: ${pkg}: no changes, skipping"
-              return 0
-            fi
-            git -C "$work" commit -q -m "${pkg} ${VER}"
-            git -C "$work" push origin HEAD:master
-            echo ":: ${pkg}: published ${VER}"
-          }
+      - name: Fast-forward publish and verify convergence
+        if: steps.plan.outputs.needs_publish == 'true' && steps.plan.outputs.publish == 'true'
+        env:
+          TRIGGER: ${{ github.event_name }}
+        run: |
+          args=(
+            --publish
+            --trigger "$TRIGGER"
+            --report-json "$RUNNER_TEMP/aur-final.json"
+            --summary "$GITHUB_STEP_SUMMARY"
+          )
+          [[ -z "$REQUESTED_TAG" ]] || args+=(--tag "$REQUESTED_TAG")
+          python3 scripts/aur/reconcile_mcpp_bin.py "${args[@]}"
 
-          publish mcpp-bin
-          publish mcpp-m
+      - name: Preserve reconciliation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aur-mcpp-bin-reconciliation
+          path: ${{ runner.temp }}/aur-*.json
+          if-no-files-found: error

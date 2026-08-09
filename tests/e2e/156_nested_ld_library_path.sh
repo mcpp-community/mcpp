@@ -7,7 +7,11 @@
 # dynamic linker (trace signature: bare `__vdso_time` line).
 set -e
 
-GLIBC_LIB=$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/xim-x-glibc/*/lib64 2>/dev/null | head -1)
+# The selected mcpp state may be intentionally isolated from HOME. Poison with
+# a libc from that same state so mcpp itself can start; the regression begins
+# when the nested host tools inherit the private loader path.
+MCPP_STATE_HOME=${MCPP_HOME:-"$HOME/.mcpp"}
+GLIBC_LIB=$(ls -d "$MCPP_STATE_HOME"/registry/data/xpkgs/xim-x-glibc/*/lib64 2>/dev/null | head -1)
 if [[ -z "$GLIBC_LIB" ]]; then
     echo "SKIP: no private glibc payload installed"
     exit 0

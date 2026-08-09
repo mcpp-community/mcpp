@@ -340,18 +340,17 @@ path = "src/capi/lua.cppm"    # 覆盖默认的 lib-root 位置
 ```toml
 # 默认包空间(mcpplibs)下的包
 [dependencies]
-gtest   = "1.15.2"              # 精确版本
-mbedtls = "3.6.1"
-ftxui   = "6.1.9"
+cmdline   = "0.0.2"              # 精确版本
+templates = "0.0.1"
 
-# dotted selector: 先匹配 mcpplibs.<path>, 找不到再匹配同级 peer root。
-# 例如 imgui.core 会按顺序尝试 mcpplibs.imgui/core, imgui/core。
-[dependencies]
-capi.lua = "0.0.3"
+# dotted selector 是单一精确身份:最后一段是包名,之前所有段都是 namespace。
 compat.gtest = "1.15.2"
 imgui.core = "0.0.1"
 imgui.backend.glfw_opengl3 = "0.0.1"
+mcpplibs.capi.lua = "0.0.3"
+```
 
+```toml
 # 命名空间子表写法
 [dependencies.mcpplibs]
 cmdline   = "0.0.2"
@@ -359,17 +358,23 @@ tinyhttps = "0.2.2"
 llmapi    = "0.2.5"
 
 [dependencies.compat]
-glfw = "3.4"                    # 显式 namespace, 不走 mcpplibs 优先候选
+glfw = "3.4"                    # 显式 namespace,无回退搜索
+```
 
+```toml
 # 路径依赖(本地开发)
 [dependencies]
 mylib = { path = "../mylib" }
+```
 
+```toml
 # Git 依赖 —— tag / branch / rev 三选一
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
+```
 
+```toml
 # 长式 dep spec:features 与 backend 旋钮
 [dependencies]
 imgui = { version = "0.0.3", features = ["docking"] }   # 请求该依赖的 feature
@@ -408,22 +413,18 @@ qux = ">=1.0, <2.0" # 范围组合
 
 #### 命名空间解析规则
 
-每个包的身份是**命名空间 + 名字**二元组。依赖 key 的写法决定 mcpp 到哪些命名空间里找。
+每个包的身份是**命名空间 + 名字**二元组。每个 selector 都只规范化成一个身份:
 
-**裸名只在三个地方解析**,按序:
+- `cmdline` → `(mcpplibs, cmdline)`;省略 namespace 只表示默认 `mcpplibs`。
+- `compat.gtest` → `(compat, gtest)`。
+- `mcpplibs.capi.lua` → `(mcpplibs.capi, lua)`。
 
-| # | 命名空间 | 示例 |
-|---|---|---|
-| 1 | `mcpplibs` — 默认命名空间 | `cmdline = "0.0.2"` |
-| 2 | `compat` — 第三方 C/C++ 库的包装命名空间 | `gtest = "1.15.2"` → `compat.gtest` |
-| 3 | 完全没有声明命名空间的上游包 | `opencv = "4.10.0"` |
-
-**其他命名空间一律必须写全。** 不存在按短名的全索引模糊搜索:
+不存在有序回退或按短名的全索引模糊搜索:
 
 ```toml
 # ✅ 正确 —— 点式选择器
 [dependencies]
-"chriskohlhoff.asio" = "1.38.1"
+chriskohlhoff.asio = "1.38.1"
 
 # ✅ 正确 —— 命名空间子表(同一组织有多个包时更推荐)
 [dependencies.chriskohlhoff]
@@ -434,9 +435,33 @@ asio = "1.38.1"
 asio = "1.38.1"
 ```
 
-第三种写法会明确报错,并列出搜索过的命名空间;若该短名的包存在于别处,错误信息会直接给出应当改写成的那一行。
+第三种写法会明确报错,指出实际尝试的 `(mcpplibs, asio)`;若该短名存在于别处,错误信息会给出可直接复制的显式 selector。
 
-**为什么不让裸名跨所有命名空间去找?** 因为依赖解析必须可复现。全域短名搜索意味着:(a) 两个命名空间拥有同名包时,胜负由索引顺序决定;(b) **新增一个索引可能悄悄改变某个既有依赖解析到的包**。要求写出命名空间,才能让同一份 `mcpp.toml` 在每台机器上解析到相同的包。
+##### 裸名过渡期(`2026.8.10.1` 起,`2026.9` 移除)
+
+索引里已发布的 `compat.*` 包与既有 manifest **全部**写成裸名(`gtest = "1.15.2"`)。
+升级后直接失败,等于让一次程序发布把**已经发布、且无法追溯修改**的数据作废,
+所以有一个版本的过渡期:裸名在 `mcpplibs` 未命中时仍可到达 `compat.<name>`,
+不声明 namespace 的 descriptor 也仍可被裸名解析。
+
+但它不再静默:
+
+```
+warning: dependency 'gtest' resolved to 'compat.gtest' through the deprecated
+bare-name search; namespace omission means `mcpplibs` only. Write the exact
+package:
+    [dependencies.compat]
+    gtest = "1.15.2"
+  (or run `mcpp add compat.gtest@1.15.2`). This fallback is removed in 2026.9.
+```
+
+写进 `mcpp.lock`、install 与 cache 的是**规范身份**,歧义拼写只存在于你的
+`mcpp.toml` 里,直到你改它;`mcpp add gtest@1.15.2` 会替你改。
+
+过渡期**不适用于**写明 namespace 的 selector(`mcpplibs.gtest` 未命中就是未命中),
+裸名也**仍然**到不了第三方 namespace。
+
+**为什么只允许一个身份?** 因为依赖解析必须可复现。候选搜索会让同短名包受索引状态影响,新增索引还可能悄悄重定向既有依赖。
 
 **给 xpkg 作者:** 索引描述符里,身份是 `(package.namespace, package.name)` 二元组。命名空间是点分路径,**`name` 是单一原子段**:
 
@@ -454,7 +479,13 @@ package = {
 
 文件名只是提示 —— 描述符按声明的身份被发现,所以 `pkgs/c/chriskohlhoff.asio.lua` 与 `pkgs/z/anything.lua` 解析结果完全相同。推荐 `<name>.lua` 或 `<namespace>.<name>.lua`(命中 mcpp 的快路径),但不强制。
 
-旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。需要 mcpp >= 0.0.106 与 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
+旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。描述符身份需要 mcpp >= 0.0.106,精确 selector 需要 mcpp >= 2026.8.10.1,两者使用 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
+
+`mcpp new --template` 刻意复用同一身份模型，而不是另造包文法:
+`[ns.]name[@version][:tname]`。其中裸名同样只表示 `mcpplibs`，version 与模板名可分别
+省略。省略 `tname` 时选择唯一显式 default；若未写 `default = true` 且只有一个模板，
+该单模板自动成为默认。多个未标默认的模板会报错，绝不按目录顺序选择。规范表见
+`docs/spec/package-identity.md` §4.4。
 #### 表形式 —— 让 feature 贡献的不止是隐含 feature
 
 `[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature
@@ -670,27 +701,69 @@ mcpp cache clean [--deps|--std|--all|--legacy]
 `mcpp cache verify` 另外会报告任何逃出条目的记录地址,
 使这条不变量可以离线审计。
 
-### 2.11 `[runtime]` — 主机运行时能力
+### 2.11 `[runtime]` — provider-neutral 运行时契约
 
 ```toml
 [runtime]
-library_dirs = ["vendor/lib"]            # 烤进产物 RUNPATH 的目录(相对包根)
-dlopen_libs  = ["libGL.so.1"]            # 运行期 dlopen 的 soname(doctor 校验)
-capabilities = ["opengl.glx.driver"]     # 需要的主机能力(开放命名空间)
-provides     = ["opengl.glx.driver"]     # 显式声明本包兑现的能力(强 provider)
+requirements = [
+  { kind = "capability", value = "display.present", phase = "run", required = true },
+  { kind = "soname", value = "libwidget.so.1", phase = "link", required = false },
+]
+provides = ["display.present"]
+artifacts = [
+  { role = "library", path = "runtime/libwidget.so.1", provenance = "payload", abi = "elf-x86_64", digest = "sha256:...", host_fingerprint = "host-1" },
+]
 
-# 显式 provider 覆盖(三档旋钮的"显式"档)
-[runtime."opengl.glx.driver"]
-provider = "compat.glx-runtime"
+# 平台无关 LinkIntent;路径相对本包根目录。
+libraries                = ["widget"]
+link_library_dirs        = ["lib"]
+transitive_needed_dirs   = ["runtime/closure"]
+runtime_search_dirs      = ["runtime"]
+frameworks               = ["WindowKit"]
+deploy_files             = ["bin/widget.dll"]
+
+# 多 provider 时使用精确 canonical identity。
+[runtime."display.present"]
+provider = "acme.widget-runtime@2.0.0"
 ```
 
-- **provider 选择**:声明 `provides` 的包(强)优先于仅在 `capabilities` 列出
-  能力的包(弱,向后兼容);`[runtime.<cap>] provider=` 显式覆盖最优先,
-  指向依赖图中不存在的 provider 时给出 warning。
-- 解析结果可经 `mcpp why runtime`、`mcpp self doctor` 与构建产物
-  `target/<triple>/<fp>/resolution.json` 查看(默认不是魔法)。
-- 能力命名约定:分层小写 `domain.sub.role`(如 `opengl.glx.driver`、
-  `x11.display`)与前缀类 `abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
+`requirements` 记录非空 `kind`/`value`、`link` 或 `run` 阶段,以及是否强制
+(`required` 默认 `true`)。`artifacts` 必须含 `role`、`path`、`provenance`;
+可选 requirement 仍保留为 provenance,但不会进入硬 ABI/doctor 输入。
+`libraries` 中显式的相对文件路径按声明包根目录解析;裸逻辑名仍按目标平台拼成库名。
+`abi`、`digest`、`host_fingerprint` 是可选证据。requester/provider 身份不由描述符
+填写:resolver 会用含 namespace、version、source/index provenance 的精确 PackageId
+给 requirement 和 artifact 盖章。因此描述符不能冒充别的包,
+`alpha.backend` 也不会与 `beta.backend` 混同。
+
+只有 `provides` 会创建描述符侧 provider fact;需要某能力绝不会让 requester 自动
+成为 provider。显式 `[runtime.<capability>] provider=` 接受 canonical
+`namespace.name@version`(或唯一无歧义的兼容拼写);不存在或同短名歧义都会 hard error。
+xlings SubOS 已选择的 provider/artifact fact 排在描述符 fallback 前。图形栈、driver、
+ICD、WSL 与 host provenance 选择由 xlings/xim 负责;mcpp 只记录、消费通用结果,
+不探测 GPU 硬件。
+
+LinkIntent 把不同发现阶段分开:
+
+| 字段 | ELF | Mach-O | PE/Windows |
+|---|---|---|---|
+| `link_library_dirs` | `-L` | `-L` | `-L` 或 `/LIBPATH:` |
+| `transitive_needed_dirs` | `-Wl,-rpath-link` | 无 flag | 无 flag |
+| `runtime_search_dirs` | 只进 RUNPATH/rpath,绝不进 `-L` | 只进 rpath | 无 flag |
+| `frameworks` | 无 flag | `-framework` | 无 flag |
+| `deploy_files` | copy edge | copy edge | 复制到产物旁,绝不成为 linker flag |
+
+一个兼容发布周期内仍读取旧字段:`library_dirs` 只映射到运行期搜索;
+`dlopen_libs` 映射为必需的 run-phase soname requirement;`capabilities` 映射为必需的
+run-phase capability requirement。这些旧字段都不会创建 provider。
+
+`target/<triple>/<fp>/resolution.json` schema 2 持久化 RuntimeBinding、canonical
+requirements/providers/artifacts、LinkIntent、平台搜索机制与链接后 verdict。
+`mcpp why runtime` 只是最新存储文件的纯解释器:不重新解析 manifest,也不启动图形/
+硬件 probe。需要重新诊断所选 host provider 时使用 `xlings doctor`。
+
+能力名使用分层小写 `domain.sub.role`(如 `display.present`)和前缀类
+`abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
 
 ### 2.12 `[package] platforms` — 平台声明
 
@@ -724,12 +797,15 @@ OPENBLAS_NUM_THREADS = "1"
 host 工具(`make`/`cmake`/`protoc`…)、按项目固定工具版本、或设构建期环境变量——无需手改
 `.xlings.json`。`[toolchain]`(§2.7)仍是编译器的便捷简写;`[xlings.workspace]` 是其通用形式。
 
-在 Linux 上 `subos` 还有第二重含义:它决定**构建绑定到哪个 C 运行时**。subos 会自述其
-runtime(xlings 2026.8.5.1 起),mcpp 以此为权威,而不是去四处找一个 libc——所以同一台机器
-上 `subos = "el8"` 与 `subos = "trixie"` 两个项目各自产出面向自己 glibc 的产物,且编译期与
-运行期保证一致。该绑定计入工具链指纹,故切换它会重新构建,而不会复用另一个 subos 的目标文件。
-更旧的 subos(或没有 subos)则回落到工具链自身安装时所对应的运行时;`mcpp build -v` 会打印
-实际走了哪一条。参见 docs/08-toolchain-internals.md §2.1。
+`subos` 选择根项目用于 build/run 的**本地开发 OS 环境**。未声明该键时固定使用 mcpp 已初始化、
+经 release 验证的 `McppDefault`;`subos = "default"` 则仍是显式的
+`NamedSubos("default")`。没有 CLI/环境变量 override,也不会隐式跟随 xlings active/current。
+
+在 Linux 上,所选环境同时固定 loader/libc contract,所以 `el8`、`trixie` 可在同一机器共存,
+并进入不同构建指纹。workspace 整体构建时由 workspace root 覆盖 member 声明;member/依赖中的
+SubOS 不传递——库只有作为独立 root 开发时才使用自己的声明,作为别人的源码依赖时使用消费者
+root 的环境。指定的命名 SubOS 不存在、缺少或使用不兼容 runtime contract 都会直接报错,不会
+回退 default/active/编译器烙入状态。参见 docs/08-toolchain-internals.md §2.1。
 
 ### 2.14 依赖产出的 host 工具(mcpp 2026.8.5.1+)
 
@@ -1022,7 +1098,7 @@ version = "1.0.0"
 [targets.mymath]
 kind = "lib"
 
-[dev-dependencies]
+[dev-dependencies.compat]
 gtest = "1.15.2"
 ```
 
@@ -1130,7 +1206,7 @@ mcpp build --target x86_64-linux-musl
 | 静态 stdlib | `true` | 便携二进制 |
 | 头文件 | `include/`(如果存在） | 自动加到 `-I` |
 | 测试 | `tests/**/*.cpp` | `mcpp test` 自动发现 |
-| 依赖命名空间 | `mcpp`（默认) | 平铺写法走默认 ns |
+| 依赖命名空间 | `mcpplibs`(默认) | 裸 selector 只表示该精确 ns |
 
 ### 4.1 旧 `[language]` 兼容层
 

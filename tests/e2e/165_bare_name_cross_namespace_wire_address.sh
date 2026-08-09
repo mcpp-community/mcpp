@@ -5,12 +5,9 @@
 #
 # THE INCIDENT THIS LOCKS DOWN (2026-07-25, 6 of 7 workflows red on main):
 #
-# A bare dependency (`gtest = "1.15.2"`) resolves to the DEFAULT namespace
-# (`mcpplibs`), but the identity gate deliberately also accepts a `compat`
-# descriptor for it — that is how every `compat.*` package is consumable
-# without writing the namespace out. mcpp then took the wire NAME from that
-# descriptor and the wire NAMESPACE from the request, emitting
-# `mcpplibs:gtest`, which no index is keyed by.
+# An explicitly selected compat dependency must carry the descriptor's
+# namespace into the xlings wire address. The historical bug mixed the request
+# and descriptor halves and emitted `mcpplibs:gtest`.
 #
 # It passed for months by coincidence: the literal `package.name` used to read
 # `compat.gtest`, so the hardcoded `compat.<short>` retry caught it. When
@@ -38,9 +35,9 @@ if [ ! -f "$SRC" ]; then
     exit 0
 fi
 
-# A `compat`-namespaced package named by its SPEC-001 short name. Filed under
-# the `compat.<short>.lua` filename a bare request probes as a fallback
-# candidate — exactly the live index's layout for all 34 compat packages.
+# A `compat`-namespaced package named by its SPEC-001 short name. The
+# `compat.<short>.lua` filename mirrors the live index, but selection is by the
+# descriptor's exact declared identity, never by a bare-name fallback.
 mkdir -p idx/pkgs/c
 sed -e 's/^\( *namespace *= *\)"[^"]*"/\1"compat"/' \
     -e 's/^\( *name *= *\)"[^"]*"/\1"widget"/' \
@@ -50,9 +47,8 @@ grep -qE '^ *namespace *= *"compat"' idx/pkgs/c/compat.widget.lua || {
 grep -qE '^ *name *= *"widget"' idx/pkgs/c/compat.widget.lua || {
     echo "FAIL: fixture name rewrite missed (upstream descriptor shape changed?)"; exit 1; }
 
-# The consumer writes the dependency BARE — no namespace. `[indices] mcpplibs`
-# points the default namespace at the fixture index (findIndexForNs routes the
-# default namespace through this entry), so the whole thing stays offline.
+# The consumer writes the compat namespace explicitly and routes it to the
+# fixture index, so the whole thing stays offline.
 mkdir -p app/src
 cat > app/mcpp.toml <<'EOF'
 [package]
@@ -60,9 +56,9 @@ name    = "app"
 version = "0.1.0"
 
 [indices]
-mcpplibs = { path = "../idx" }
+compat = { path = "../idx" }
 
-[dependencies]
+[dependencies.compat]
 widget = "1.38.1"
 EOF
 echo 'int main() { return 0; }' > app/src/main.cpp

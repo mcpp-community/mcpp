@@ -45,6 +45,8 @@ import mcpp.lockfile;
 import mcpp.config;
 import mcpp.xlings;
 import mcpp.xlings.subos_info;
+import mcpp.xlings.runtime_selection;
+import mcpp.platform.runtime_binding;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
 import mcpp.fetcher;
@@ -57,6 +59,7 @@ import mcpp.pm.index_refresh;
 import mcpp.pm.mangle;
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
+import mcpp.pm.dependency_selector;
 import mcpp.pm.lock_io;
 import mcpp.version_req;
 import mcpp.ui;
@@ -305,6 +308,55 @@ std::string canonical_package_build_metadata(
         s += pkg.manifest.package.name;
         s += "@";
         s += pkg.manifest.package.version;
+        s += " source=";
+        s += pkg.manifest.package.sourceProvenance;
+        auto const& runtime = pkg.manifest.runtimeConfig;
+        for (auto const& requirement : runtime.requirements) {
+            s += " runtime-need:";
+            s += requirement.kind;
+            s += ':';
+            s += requirement.value;
+            s += ':';
+            s += requirement.phase;
+            s += requirement.required ? ":required" : ":optional";
+        }
+        for (auto const& artifact : runtime.artifacts) {
+            s += " runtime-artifact:";
+            s += artifact.role;
+            s += ':';
+            s += artifact.path.generic_string();
+            s += ':';
+            s += artifact.provenance;
+            s += ':';
+            s += artifact.abi;
+            s += ':';
+            s += artifact.digest;
+            s += ':';
+            s += artifact.hostFingerprint;
+        }
+        for (auto const& value : runtime.linkIntent.libraries)
+            s += " link-library:" + value;
+        for (auto const& value : runtime.linkIntent.linkLibraryDirs)
+            s += " link-dir:" + value.generic_string();
+        for (auto const& value : runtime.linkIntent.transitiveNeededDirs)
+            s += " needed-dir:" + value.generic_string();
+        for (auto const& value : runtime.linkIntent.runtimeSearchDirs)
+            s += " runtime-dir:" + value.generic_string();
+        for (auto const& value : runtime.linkIntent.frameworks)
+            s += " framework:" + value;
+        for (auto const& value : runtime.linkIntent.deployFiles)
+            s += " deploy:" + value.generic_string();
+        // Legacy fields remain fingerprinted while they are readable.
+        for (auto const& value : runtime.libraryDirs)
+            s += " legacy-runtime-dir:" + value.generic_string();
+        for (auto const& value : runtime.dlopenLibs)
+            s += " legacy-soname:" + value;
+        for (auto const& value : runtime.capabilities)
+            s += " legacy-capability:" + value;
+        for (auto const& value : runtime.provides)
+            s += " legacy-provides:" + value;
+        for (auto const& [capability, provider] : runtime.providerOverrides)
+            s += " provider-override:" + capability + '=' + provider;
         if (!pkg.manifest.buildConfig.cStandard.empty()) {
             s += " c_standard=";
             s += pkg.manifest.buildConfig.cStandard;
@@ -712,6 +764,8 @@ export struct BuildContext {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      tc;
     mcpp::toolchain::Fingerprint    fp;
+    mcpp::xlings::runtime::RuntimeSelection runtimeSelection;
+    mcpp::platform::runtime::RuntimeBinding runtimeBinding;
     std::filesystem::path           projectRoot;
     std::filesystem::path           outputDir;
     std::filesystem::path           stdBmi;
@@ -838,6 +892,12 @@ export struct BuildOverrides {
     // mcpp.build.execute imported it). A pointer keeps the exported layout
     // trivial, and it also avoids copying the manifest per tool build.
     std::shared_ptr<const mcpp::manifest::Manifest> preloaded_manifest;
+    // Nested source/tool builds inherit the consumer root's local development
+    // OS. A dependency's own [xlings].subos is never consulted or propagated.
+    std::shared_ptr<const mcpp::xlings::runtime::RuntimeSelection>
+        inherited_runtime_selection;
+    std::shared_ptr<const mcpp::platform::runtime::RuntimeBinding>
+        inherited_runtime_binding;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
@@ -910,84 +970,6 @@ std::string with_index_cause(std::string msg) {
         msg += "\n" + hint;
     return msg;
 }
-// The runtime this build targets, in xlings's own spelling ("glibc@2.39").
-//
-// A degradation chain with every step explicit, and deliberately NO final
-// "otherwise pick something". Payload resolution declines without an
-// authority, because the guess it used to make is what let the compile side
-// and the artifact's interpreter name different glibc versions -- invisibly,
-// until the binary met a library built against the other one.
-//
-//   1. [xlings] subos -> that subos's subos_info.runtime
-//   2. the active subos's subos_info.runtime
-//   3. "" -- no authority, therefore no PayloadFirst
-//
-// `compilerBin` may be empty on the first call: the compiler has not been
-// probed yet, and an inherited toolchain resolves its subos from its OWNER
-// home. The caller re-resolves once it knows where the compiler is.
-std::string resolve_runtime_binding(const mcpp::manifest::Manifest& m,
-                                    const std::filesystem::path& compilerBin) {
-    auto runtime_of = [](const std::filesystem::path& dir) -> std::string {
-        return mcpp::xlings::subos::read(dir).runtime;
-    };
-    // A declaration can only be honoured while the payload it names is still
-    // installed. Subos descriptions are written once and the payloads beneath
-    // them are replaced independently -- upgraded, garbage-collected -- so a
-    // subos can go on saying `glibc@2.39` on a machine that now has only 2.44.
-    //
-    // Taking that at face value is not conservative, it is worse than any
-    // substitution: the exact-match probe finds nothing, no loader reaches the
-    // link line, and the artifact ends up on the HOST loader -- outside the
-    // sandbox entirely. Measured on CI, three rounds running.
-    //
-    // So a declaration naming an absent payload is passed over rather than
-    // returned, and resolution carries on to something that can be honoured.
-    auto usable = [&](const std::string& binding) {
-        if (binding.empty()) return false;
-        if (compilerBin.empty()) return true;   // cannot check yet; caller re-asks
-        if (mcpp::toolchain::probe_payload_paths(compilerBin, binding))
-            return true;
-        mcpp::log::verbose("probe", std::format(
-            "subos declares runtime {}, but that payload is not installed here "
-            "— looking for one that is", binding));
-        return false;
-    };
-    if (auto active = mcpp::xlings::paths::subos_dir_of(compilerBin)) {
-        // 1 — the project names a subos; it is a sibling of the active one.
-        if (!m.xlings.subos.empty()) {
-            auto named = active->parent_path() / m.xlings.subos;
-            if (auto r = runtime_of(named); usable(r)) return r;
-        }
-        // 2 — whatever is active.
-        if (auto r = runtime_of(*active); usable(r)) return r;
-    }
-
-    // 3 — COMPATIBILITY: the value this toolchain already has baked in.
-    //
-    // A subos created before xlings grew `subos_info` cannot answer, and that
-    // is the state of every machine installed before 2026.8.5.1 -- including
-    // mcpp's own sandbox, whose vendored xlings is never upgraded. Refusing
-    // there would break every existing user, so the toolchain's own baked
-    // value stands in.
-    //
-    // This is NOT the guess this design removed. The guess picked a version by
-    // directory order, unrelated to what the artifact would load. This reads
-    // the value the artifact WILL use -- gcc's specs, clang's cfg -- so the
-    // invariant that matters, compile side == run side, still holds. It is a
-    // migration path, and it goes away on its own: once the subos describes
-    // itself, step 1 or 2 answers first.
-    if (!compilerBin.empty()) {
-        if (auto r = mcpp::toolchain::baked_runtime_binding(compilerBin);
-            !r.empty()) {
-            mcpp::log::verbose("probe", std::format(
-                "subos does not describe itself; using the runtime this "
-                "toolchain was installed against ({}). `xlings self update` "
-                "and a fresh subos make this authoritative", r));
-            return r;
-        }
-    }
-    return {};
-}
 } // namespace
 
 export std::expected<BuildContext, std::string>
@@ -1027,6 +1009,7 @@ prepare_build(bool print_fingerprint,
     // If the manifest has [workspace] and is a virtual workspace (no [package]),
     // or if -p filter is set, switch to the target member's manifest.
     std::optional<mcpp::manifest::Manifest> wsManifest;  // keep workspace manifest alive
+    std::filesystem::path runtimeWorkspaceRoot;
     if (m->workspace.present) {
         std::string targetMember;
 
@@ -1070,6 +1053,7 @@ prepare_build(bool print_fingerprint,
                 return std::unexpected(std::format(
                     "workspace member '{}' has no mcpp.toml", targetMember));
             }
+            runtimeWorkspaceRoot = *root;
             wsManifest = std::move(*m);  // preserve workspace manifest
             m = mcpp::manifest::load(memberDir / "mcpp.toml");
             if (!m) return std::unexpected(std::format(
@@ -1105,21 +1089,35 @@ prepare_build(bool print_fingerprint,
         if (!wsRoot.empty()) {
             auto wsm = mcpp::manifest::load(wsRoot / "mcpp.toml");
             if (wsm && wsm->workspace.present) {
+                runtimeWorkspaceRoot = wsRoot;
+                wsManifest = std::move(*wsm);
                 // #224: anchor relative `path`/`[indices].path` to the
                 // workspace root, not this member's own directory.
-                mcpp::project::merge_workspace_deps(*m, *wsm, wsRoot);
+                mcpp::project::merge_workspace_deps(*m, *wsManifest, wsRoot);
                 if (m->toolchain.byPlatform.empty()) {
-                    m->toolchain = wsm->toolchain;
+                    m->toolchain = wsManifest->toolchain;
                 }
-                for (auto& [triple, entry] : wsm->targetOverrides) {
+                for (auto& [triple, entry] : wsManifest->targetOverrides) {
                     if (!m->targetOverrides.contains(triple)) {
                         m->targetOverrides[triple] = entry;
                     }
                 }
                 // Inherit workspace indices if member doesn't define any
-                mcpp::project::inherit_workspace_indices(*m, *wsm, wsRoot);
+                mcpp::project::inherit_workspace_indices(*m, *wsManifest, wsRoot);
             }
         }
+    }
+
+    mcpp::xlings::runtime::RuntimeSelection runtimeSelection;
+    if (overrides.inherited_runtime_selection) {
+        runtimeSelection = *overrides.inherited_runtime_selection;
+    } else {
+        std::optional<std::reference_wrapper<const mcpp::manifest::Manifest>> wsRef;
+        if (wsManifest) wsRef = std::cref(*wsManifest);
+        auto selected = mcpp::xlings::runtime::select_runtime(
+            *m, wsRef, *root, runtimeWorkspaceRoot);
+        if (!selected) return std::unexpected(selected.error());
+        runtimeSelection = std::move(*selected);
     }
 
     // Where mcpp WRITES — derived here because `root` is only final now: the
@@ -1132,6 +1130,10 @@ prepare_build(bool print_fingerprint,
     {
         std::error_code wdEc;
         std::filesystem::create_directories(workRoot, wdEc);
+    }
+    if (m->package.sourceProvenance.empty()) {
+        m->package.sourceProvenance =
+            "path+" + root->lexically_normal().generic_string();
     }
 
     // A `compat`-form (Form B) package's sources live under a wrap directory
@@ -1174,13 +1176,18 @@ prepare_build(bool print_fingerprint,
     // fetched. Keyed by package name — the same key the writer at the end of
     // this function emits, both taken from the root manifest's [dependencies].
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
+    std::map<std::string, std::string> packageIdentityLockAnchors;
     {
         auto lockPath = workRoot / "mcpp.lock";
         if (std::filesystem::exists(lockPath)) {
             if (auto lock = mcpp::pm::load(lockPath); lock) {
-                for (auto const& p : lock->packages)
+                for (auto const& p : lock->packages) {
+                    if (!p.namespace_.empty())
+                        packageIdentityLockAnchors.emplace(
+                            p.name, p.namespace_);
                     if (auto parsed = mcpp::pm::parse_git_source(p.source); parsed)
                         gitLockAnchors.emplace(p.name, std::move(*parsed));
+                }
             } else {
                 // Degraded, not a plain warning: the engine silently does less
                 // than asked — every git branch dep falls back to `ls-remote`
@@ -1249,6 +1256,25 @@ prepare_build(bool print_fingerprint,
         }
         return &*cfg_opt;
     };
+
+    // Resolve one exact runtime contract before resolving/fixing a toolchain.
+    // The fixup is itself a consumer of RuntimeBinding: doing it first would
+    // recreate #392 by letting directory order choose a libc and only later
+    // discovering what the project selected.
+    mcpp::platform::runtime::RuntimeBinding runtimeBindingSnapshot;
+    if (overrides.inherited_runtime_binding) {
+        runtimeBindingSnapshot = *overrides.inherited_runtime_binding;
+    } else {
+        auto cfgRuntime = get_cfg();
+        if (!cfgRuntime) return std::unexpected(cfgRuntime.error());
+        auto resolved = mcpp::platform::runtime::resolve_runtime_binding(
+            runtimeSelection, {}, **cfgRuntime);
+        if (!resolved) return std::unexpected(resolved.error());
+        runtimeBindingSnapshot = std::move(*resolved);
+    }
+    const auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
+    const auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
+        ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
 
     constexpr std::string_view kCurrentPlatform = mcpp::platform::name;
 
@@ -1545,7 +1571,11 @@ prepare_build(bool print_fingerprint,
         // Same post-install fixup as `mcpp toolchain install` — this manifest
         // [toolchain] path previously ran none, so a freshly auto-installed
         // payload kept its stale install-time cfg / unpatched runtime libs.
-        mcpp::toolchain::ensure_post_install_fixup(**cfg, payload->root, pkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                **cfg, payload->root, pkg,
+                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+            return std::unexpected(std::format(
+                "toolchain post-install fixup: {}", fixed.error()));
         // Canonical rendering, whatever spelling the manifest/config used:
         // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
         mcpp::ui::info("Resolved",
@@ -1690,7 +1720,11 @@ prepare_build(bool print_fingerprint,
         // `mcpp toolchain install` performs — without it a fresh sandbox
         // gcc cannot find the C library (stdlib.h: No such file or
         // directory) and a fresh llvm keeps its stale install-time cfg.
-        mcpp::toolchain::ensure_post_install_fixup(**cfg, payload->root, defaultPkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                **cfg, payload->root, defaultPkg,
+                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+            return std::unexpected(std::format(
+                "default toolchain post-install fixup: {}", fixed.error()));
 
         // Persist the default so we don't ask again next time.
         if (auto wr = mcpp::config::write_default_toolchain(**cfg, defaultSpec); wr) {
@@ -1723,27 +1757,9 @@ prepare_build(bool print_fingerprint,
         tcOrigin = TcOrigin::FirstRun;
     }
 
-    // The authority for "which libc", resolved before the toolchain is
-    // probed: payload paths are addresses for a version this names.
-    auto runtimeBinding = resolve_runtime_binding(*m, {});
-    auto tc = mcpp::toolchain::detect(explicit_compiler, runtimeBinding);
+    auto tc = mcpp::toolchain::detect(
+        explicit_compiler, runtimePayload, runtimeBindingSnapshot.contractHash);
     if (!tc) return std::unexpected(tc.error().message);
-    // The first pass has no compiler, so it can neither discover a binding
-    // that only the compiler's own home knows (an inherited toolchain resolves
-    // into its owner) nor check that a declared one is still installed. Both
-    // failures look identical from here: no payload paths. Re-ask with the
-    // compiler in hand whenever that is what happened.
-    //
-    // The old condition was `runtimeBinding.empty()`, which meant a subos
-    // naming a payload that had since been upgraded away won on the first pass
-    // and the second pass never ran.
-    if (!tc->payloadPaths) {
-        auto fromCompiler = resolve_runtime_binding(*m, tc->binaryPath);
-        if (!fromCompiler.empty() && fromCompiler != runtimeBinding) {
-            tc = mcpp::toolchain::detect(explicit_compiler, fromCompiler);
-            if (!tc) return std::unexpected(tc.error().message);
-        }
-    }
 
     // ── Targeting the MSVC ABI without a usable MSVC ─────────────────────
     //
@@ -1828,7 +1844,11 @@ prepare_build(bool print_fingerprint,
                 "MinGW-w64 payload {} has no known C++ frontend in {}",
                 gnuPkg.target(), payloadR->binDir.string()));
         }
-        mcpp::toolchain::ensure_post_install_fixup(**cfgR, payloadR->root, gnuPkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                **cfgR, payloadR->root, gnuPkg,
+                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+            return std::unexpected(std::format(
+                "MinGW toolchain post-install fixup: {}", fixed.error()));
 
         // Persist both axes so the repair happens once, not on every build.
         if (mcpp::config::write_default_toolchain(**cfgR, pins::kFirstRunWinGnu))
@@ -1838,7 +1858,9 @@ prepare_build(bool print_fingerprint,
 
         tcSpec   = std::string(pins::kFirstRunWinGnu);
         tcOrigin = TcOrigin::FirstRun;
-        tc = mcpp::toolchain::detect(explicit_compiler, runtimeBinding);
+        tc = mcpp::toolchain::detect(
+            explicit_compiler, runtimePayload,
+            runtimeBindingSnapshot.contractHash);
         if (!tc) return std::unexpected(tc.error().message);
     }
 
@@ -1932,7 +1954,11 @@ prepare_build(bool print_fingerprint,
                 "host toolchain payload '{}' has no known C++ frontend in {}",
                 pkg.target(), payload->binDir.string()));
         }
-        mcpp::toolchain::ensure_post_install_fixup(**cfgH, payload->root, pkg);
+        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                **cfgH, payload->root, pkg,
+                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+            return std::unexpected(std::format(
+                "host toolchain post-install fixup: {}", fixed.error()));
         auto htc = mcpp::toolchain::detect(frontend);
         if (!htc) return std::unexpected(htc.error().message);
         mcpp::ui::info("Resolved", std::format(
@@ -1998,15 +2024,32 @@ prepare_build(bool print_fingerprint,
     // [xlings] build environment (L-1). This creates .mcpp/.xlings.json with
     // custom non-builtin index entries (so xlings can clone them) plus the
     // [xlings] deps/workspace/subos/envs materialized verbatim.
-    if (!m->indices.empty() || !m->xlings.empty()) {
+    const auto& runtimeOwnerManifest = wsManifest ? *wsManifest : *m;
+    const bool materializeRootRuntime =
+        !overrides.inherited_runtime_binding && !runtimeOwnerManifest.xlings.empty();
+    if (!m->indices.empty() || materializeRootRuntime) {
         auto cfg2 = get_cfg();
         if (cfg2) {
             mcpp::xlings::ProjectEnv penv;
-            penv.deps  = m->xlings.deps;
-            penv.subos = m->xlings.subos;
-            for (auto const& [k, v] : m->xlings.workspace) penv.workspace.emplace_back(k, v);
-            for (auto const& [k, v] : m->xlings.envs)      penv.envs.emplace_back(k, v);
-            mcpp::config::ensure_project_index_dir(**cfg2, workRoot, m->indices, penv);
+            if (materializeRootRuntime) {
+                penv.deps  = runtimeOwnerManifest.xlings.deps;
+                penv.subos = runtimeOwnerManifest.xlings.subos;
+                for (auto const& [k, v] : runtimeOwnerManifest.xlings.workspace)
+                    penv.workspace.emplace_back(k, v);
+                for (auto const& [k, v] : runtimeOwnerManifest.xlings.envs)
+                    penv.envs.emplace_back(k, v);
+            }
+            if (runtimeSelection.ownerRoot == workRoot) {
+                mcpp::config::ensure_project_index_dir(
+                    **cfg2, workRoot, m->indices, penv);
+            } else {
+                if (!m->indices.empty())
+                    mcpp::config::ensure_project_index_dir(
+                        **cfg2, workRoot, m->indices, {});
+                if (materializeRootRuntime)
+                    mcpp::config::ensure_project_index_dir(
+                        **cfg2, runtimeSelection.ownerRoot, {}, penv);
+            }
 
             // On first build, the project index data root may be empty because
             // ensure_project_index_dir only writes .xlings.json but does not
@@ -2186,14 +2229,21 @@ prepare_build(bool print_fingerprint,
     };
 
     auto xpkgLuaMatchesCandidate =
-        [](const mcpp::pm::DependencyCoordinate& coord,
-           std::string_view luaContent,
-           bool allowLegacyBareDefault) {
+        [&](const mcpp::pm::DependencyCoordinate& coord,
+            std::string_view luaContent,
+            bool allowLegacyBareDefault) {
             // Single source of truth: the descriptor identity gate lives in
-            // mcpp.manifest and is shared with the read_xpkg_lua family.
+            // mcpp.manifest and is shared with the read_xpkg_lua family.  A
+            // descriptor served by a declared project index inherits that
+            // index's namespace when package.namespace is omitted; preserve
+            // the same owner context during this second, stricter check.
+            const auto route = index_route();
+            const auto* owner = route.find_for_ns(coord.namespace_);
+            const std::string_view ownerNs = owner
+                ? std::string_view{owner->name} : std::string_view{};
             return mcpp::manifest::xpkg_lua_identity_matches(
                 luaContent, coord.namespace_, coord.shortName,
-                allowLegacyBareDefault);
+                allowLegacyBareDefault, ownerNs);
         };
 
     auto dependencyCoordinates =
@@ -2210,6 +2260,8 @@ prepare_build(bool print_fingerprint,
             return out;
         };
 
+    std::set<std::string> selectorMigrationWarnings;
+
     auto selectDependencyCandidate =
         [&](mcpp::manifest::DependencySpec& spec,
             const std::string& depName) -> std::expected<void, std::string>
@@ -2221,12 +2273,74 @@ prepare_build(bool print_fingerprint,
                     "dependency '{}' has no lookup candidates", depName)));
         }
 
+        // One release train of migration support for the former dotted
+        // candidate search. A lockfile records the identity an existing
+        // project already selected, so keep that identity stable until the
+        // user rewrites the selector explicitly. Without a lock anchor, never
+        // fall back: only diagnose a valid old-primary package and continue
+        // with the new exact coordinate.
+        if (spec.legacyCandidateSearch) {
+            const auto exact = candidates.front();
+            bool lockExpressesIntent = false;
+            if (auto locked = packageIdentityLockAnchors.find(depName);
+                locked != packageIdentityLockAnchors.end()) {
+                lockExpressesIntent = true;
+                if (locked->second != exact.namespace_) {
+                    mcpp::pm::DependencyCoordinate lockedCoordinate{
+                        .namespace_ = locked->second,
+                        .shortName = exact.shortName,
+                    };
+                    if (selectorMigrationWarnings.insert(depName).second) {
+                        mcpp::ui::warning(std::format(
+                            "dependency selector '{}' now means exact package "
+                            "'{}', but mcpp.lock records '{}'; keeping the "
+                            "locked identity for this migration release. "
+                            "Write '{}' to keep it explicitly, or remove the "
+                            "lock and keep '{}' to migrate",
+                            depName,
+                            mcpp::pm::format_package_selector(exact),
+                            mcpp::pm::format_package_selector(lockedCoordinate),
+                            mcpp::pm::format_package_selector(lockedCoordinate),
+                            mcpp::pm::format_package_selector(exact)));
+                    }
+                    candidates.assign(1, std::move(lockedCoordinate));
+                }
+            }
+
+            if (!lockExpressesIntent && spec.isVersion()) {
+                if (auto old = mcpp::pm::legacy_prefixed_coordinate(exact)) {
+                    auto oldLua = readStrictLuaForCandidate(*old);
+                    if (oldLua && xpkgLuaMatchesCandidate(
+                            *old, *oldLua,
+                            /*allowLegacyBareDefault=*/false)
+                        && selectorMigrationWarnings.insert(depName).second) {
+                        mcpp::ui::warning(std::format(
+                            "dependency selector '{}' now resolves exactly to "
+                            "'{}'; an older mcpp would select the existing "
+                            "package '{}'. Write '{}' to keep the old identity "
+                            "or keep '{}' for the new exact identity",
+                            depName,
+                            mcpp::pm::format_package_selector(exact),
+                            mcpp::pm::format_package_selector(*old),
+                            mcpp::pm::format_package_selector(*old),
+                            mcpp::pm::format_package_selector(exact)));
+                    }
+                }
+            }
+        }
+
         auto selected = candidates.front();
         bool matched  = false;
-        if (spec.isVersion() && candidates.size() > 1) {
+        if (spec.isVersion()) {
             for (auto& candidate : candidates) {
                 auto lua = readStrictLuaForCandidate(candidate);
-                if (!lua || !xpkgLuaMatchesCandidate(
+                if (!lua) continue;
+                if (auto violation = mcpp::manifest::
+                        xpkg_name_form_violation_from_lua(*lua)) {
+                    return std::unexpected(std::format(
+                        "dependency '{}': {}", depName, *violation));
+                }
+                if (!xpkgLuaMatchesCandidate(
                         candidate, *lua, /*allowLegacyBareDefault=*/false)) {
                     continue;
                 }
@@ -2267,6 +2381,70 @@ prepare_build(bool print_fingerprint,
                 break;
             }
 
+            // One-release bare-name migration. Namespace omission means exactly
+            // `mcpplibs`, but every published `compat.*` package and every user
+            // manifest written before this release spells the dependency bare —
+            // `gtest = "1.15.2"`, `ftxui = "6.1.9"`. Making that an immediate
+            // hard error means an mcpp upgrade breaks builds against data that
+            // is already published and cannot be edited retroactively; the
+            // symmetric rule ("published data must not break the program") is
+            // why the index floor degrades instead of bricking.
+            //
+            // The defect #278 removed was the SILENCE, not the reach: mcpp used
+            // to continue with a namespace the user never wrote and never say
+            // so. A hit here is announced, is recorded downstream under its
+            // canonical identity, and names the exact edit that removes the
+            // warning. Only a selector whose namespace was OMITTED is eligible —
+            // `mcpplibs.gtest` states an identity and must still miss.
+            if (!matched && spec.isVersion() && spec.namespaceOmitted) {
+                for (auto& legacy :
+                         mcpp::pm::legacy_bare_candidates(candidates.front())) {
+                    auto lua = readStrictLuaForCandidate(legacy);
+                    if (!lua) continue;
+                    if (mcpp::manifest::xpkg_name_form_violation_from_lua(*lua))
+                        continue;
+                    if (!xpkgLuaMatchesCandidate(
+                            legacy, *lua, /*allowLegacyBareDefault=*/false))
+                        continue;
+                    auto declaredNs =
+                        mcpp::manifest::extract_xpkg_namespace(*lua);
+                    // Same narrowing as the exact loop: the namespace-less rung
+                    // is "upstream package that declares no namespace", not a
+                    // cross-namespace wildcard.
+                    if (legacy.namespace_.empty() && !declaredNs.empty())
+                        continue;
+
+                    selected = legacy;
+                    if (selected.namespace_.empty())
+                        selected.namespace_ = declaredNs;
+                    matched = true;
+                    // Downstream — lock, install, cache label — must see the
+                    // canonical identity, so the ambiguous spelling survives in
+                    // exactly one place: the user's manifest, until they edit it.
+                    candidates.assign(1, selected);
+
+                    if (selectorMigrationWarnings.insert(depName).second) {
+                        mcpp::ui::warning(std::format(
+                            "dependency '{}' resolved to '{}' through the "
+                            "deprecated bare-name search; namespace omission "
+                            "means `{}` only. Write the exact package:"
+                            "\n    [dependencies.{}]"
+                            "\n    {} = \"{}\""
+                            "\n  (or run `mcpp add {}@{}`). This fallback is "
+                            "removed in {}.",
+                            depName,
+                            mcpp::pm::format_package_selector(selected),
+                            mcpp::pm::kDefaultNamespace,
+                            selected.namespace_, selected.shortName,
+                            spec.version,
+                            mcpp::pm::format_package_selector(selected),
+                            spec.version,
+                            mcpp::pm::kBareNameFallbackRemovedIn));
+                    }
+                    break;
+                }
+            }
+
             // A custom GIT index is cloned lazily by xlings during install, so
             // at selection time its descriptors may legitimately not be on disk
             // yet. "Not found" is therefore not conclusive for those namespaces
@@ -2279,11 +2457,9 @@ prepare_build(bool print_fingerprint,
                     return index_route().lazy_git(c.namespace_);
                 });
 
-            // T9 (#278) — no candidate resolved. This used to fall through to
-            // `candidates.front()` SILENTLY, so mcpp carried on with a namespace
-            // it had invented, and the user met the failure much later (during
-            // download/install) wrapped around that invented name. Fail here,
-            // and say exactly which identities were tried.
+            // An exact coordinate that a readable index cannot serve fails at
+            // resolution. Never carry it into install-time compatibility
+            // retries, which would reintroduce cross-namespace guessing.
             if (!matched && !anyLazyGitIndex) {
                 std::string tried;
                 for (auto& c : candidates) {
@@ -2304,21 +2480,19 @@ prepare_build(bool print_fingerprint,
                         hint += "\n  a package with this name exists under "
                                 "another namespace:";
                         for (auto& fqn : fqns) hint += "\n    " + fqn;
-                        hint += std::format(
-                            "\n  bare names only resolve to the `{}` / `{}` "
-                            "namespaces. write it out:"
-                            "\n    [dependencies]"
-                            "\n    \"{}\" = \"{}\""
-                            "\n  or:"
-                            "\n    [dependencies.{}]"
-                            "\n    {} = \"{}\"",
-                            mcpp::pm::kDefaultNamespace,
-                            mcpp::pm::kCompatNamespace,
-                            fqns.front(), spec.version.empty() ? "<version>"
-                                                              : spec.version,
-                            fqns.front().substr(0, fqns.front().rfind('.')),
-                            fqns.front().substr(fqns.front().rfind('.') + 1),
-                            spec.version.empty() ? "<version>" : spec.version);
+                        if (auto suggested = mcpp::pm::parse_package_selector(
+                                fqns.front()); suggested
+                            && suggested->namespace_) {
+                            hint += std::format(
+                                "\n  namespace omission means `{}`. write the "
+                                "exact package:"
+                                "\n    [dependencies.{}]"
+                                "\n    {} = \"{}\"",
+                                mcpp::pm::kDefaultNamespace,
+                                *suggested->namespace_, suggested->name,
+                                spec.version.empty() ? "<version>"
+                                                     : spec.version);
+                        }
                     }
                 }
 
@@ -2333,10 +2507,10 @@ prepare_build(bool print_fingerprint,
                         mcpp::pm::staleness_note(
                             mcpp::config::make_xlings_env(**cfgA)));
                 }
-                return std::unexpected(std::format(
-                    "dependency '{}': no package found under the namespaces "
-                    "mcpp searched\n  tried: {}{}",
-                    depName, tried, hint));
+                return std::unexpected(with_index_cause(std::format(
+                    "dependency '{}': no package found for exact selector"
+                    "\n  tried: {}{}",
+                    depName, tried, hint)));
             }
         }
 
@@ -2413,7 +2587,7 @@ prepare_build(bool print_fingerprint,
             }
             if (field.kind == mcpp::manifest::McppField::TableBody) {
                 auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
-                    *luaContent, depName, version, targetPlatform);
+                    *luaContent, shortName, version, targetPlatform);
                 if (!dm) return false;
                 for (auto const& [generatedPath, _] : dm->buildConfig.generatedFiles) {
                     if (!generatedPath.empty()) return true;
@@ -2477,7 +2651,7 @@ prepare_build(bool print_fingerprint,
                 auto field = mcpp::manifest::extract_mcpp_field(*luaContent);
                 if (field.kind == mcpp::manifest::McppField::TableBody) {
                     auto depManifest = mcpp::manifest::synthesize_from_xpkg_lua(
-                        *luaContent, depName, version, targetPlatform);
+                        *luaContent, shortName, version, targetPlatform);
                     if (!depManifest) {
                         return std::unexpected(std::format(
                             "dependency '{}': {}", depName, depManifest.error().format()));
@@ -2713,7 +2887,7 @@ prepare_build(bool print_fingerprint,
             if (auto r = loadFrom(matches.front()); !r) return std::unexpected(r.error());
         } else if (field.kind == mcpp::manifest::McppField::TableBody) {
             auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
-                *luaContent, depName, version, targetPlatform);
+                *luaContent, shortName, version, targetPlatform);
             if (!dm) return std::unexpected(std::format(
                 "dependency '{}': {}", depName, dm.error().format()));
             warn_unknown_xpkg_keys(*dm, depName);
@@ -3184,25 +3358,11 @@ prepare_build(bool print_fingerprint,
         }
     };
 
-    // Stage a dep's source files into a fresh directory, rewriting their
-    // module / import declarations against `rename`. Used by the multi-
-    // version mangling fallback (Level 1) so two cross-major copies of
-    // the same package can coexist with distinct module names.
-    //
-    // Headers (referenced via `[build].include_dirs`) are NOT staged —
-    // those keep pointing at the original install dir via absolutized
-    // include paths.
-    auto stage_with_rewrite = [](const std::filesystem::path& srcRoot,
-                                  const std::filesystem::path& dstRoot,
-                                  const mcpp::manifest::Manifest& depManifest,
-                                  const std::map<std::string, std::string>& rename)
-        -> std::expected<void, std::string>
+    auto package_source_files = [](
+        const std::filesystem::path& srcRoot,
+        const mcpp::manifest::Manifest& depManifest)
+        -> std::expected<std::set<std::filesystem::path>, std::string>
     {
-        std::error_code ec;
-        std::filesystem::create_directories(dstRoot, ec);
-        if (ec) return std::unexpected(std::format(
-            "stage: cannot create '{}': {}", dstRoot.string(), ec.message()));
-
         // Resolve the source globs against the original root, falling
         // back to the convention default if the manifest didn't set any.
         std::vector<std::string> globs = depManifest.modules.sources;
@@ -3228,8 +3388,32 @@ prepare_build(bool print_fingerprint,
                 "stage: no source files found under '{}' (globs={})",
                 srcRoot.string(), globs.size()));
         }
+        return sourceFiles;
+    };
 
-        for (auto const& f : sourceFiles) {
+    // Stage a dep's source files into a fresh directory, rewriting their
+    // module / import declarations against `rename`. Used by the multi-
+    // version mangling fallback (Level 1) so two cross-major copies of
+    // the same package can coexist with distinct module names.
+    //
+    // Headers (referenced via `[build].include_dirs`) are NOT staged —
+    // those keep pointing at the original install dir via absolutized
+    // include paths.
+    auto stage_with_rewrite = [&](const std::filesystem::path& srcRoot,
+                                  const std::filesystem::path& dstRoot,
+                                  const mcpp::manifest::Manifest& depManifest,
+                                  const std::map<std::string, std::string>& rename)
+        -> std::expected<void, std::string>
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(dstRoot, ec);
+        if (ec) return std::unexpected(std::format(
+            "stage: cannot create '{}': {}", dstRoot.string(), ec.message()));
+
+        auto sources = package_source_files(srcRoot, depManifest);
+        if (!sources) return std::unexpected(sources.error());
+
+        for (auto const& f : *sources) {
             auto rel = std::filesystem::relative(f, srcRoot, ec);
             if (ec) return std::unexpected(std::format(
                 "stage: cannot relativize '{}': {}", f.string(), ec.message()));
@@ -3249,6 +3433,29 @@ prepare_build(bool print_fingerprint,
             os << out;
         }
         return {};
+    };
+
+    auto declared_modules_for = [&](const std::filesystem::path& srcRoot,
+                                    const mcpp::manifest::Manifest& depManifest)
+        -> std::expected<std::vector<std::string>, std::string>
+    {
+        auto sources = package_source_files(srcRoot, depManifest);
+        if (!sources) return std::unexpected(sources.error());
+        std::vector<std::string> modules;
+        for (auto const& file : *sources) {
+            std::ifstream is(file);
+            if (!is) return std::unexpected(std::format(
+                "mangle: cannot read '{}'", file.string()));
+            std::stringstream buf; buf << is.rdbuf();
+            for (auto& name : mcpp::pm::declared_module_roots(buf.str())) {
+                if (std::ranges::find(modules, name) == modules.end())
+                    modules.push_back(std::move(name));
+            }
+        }
+        if (modules.empty()) return std::unexpected(std::format(
+            "mangle: package '{}' declares no named C++ module to rewrite",
+            depManifest.package.name));
+        return modules;
     };
 
     // Stage 2a — feature-activated optional dependencies. Defined as local
@@ -3502,14 +3709,22 @@ prepare_build(bool print_fingerprint,
                             spec.version));
                     }
 
-                    // Module names in the source files use the dep's full
-                    // [package].name (e.g. "mcpplibs.cmdline"), not the
-                    // namespaced-subtable shortName. Use that for the
-                    // rename key so the rewriter actually matches what the
-                    // .cppm sources declare.
-                    const std::string moduleName = secondaryManifest.package.name;
-                    std::string mangled =
-                        mcpp::pm::mangle_name(moduleName, spec.version);
+                    // Module names are authored API and are not required to
+                    // mirror package identity. Discover every provided module
+                    // root from the secondary's source text, then rewrite the
+                    // same map in both the secondary and its consumer.
+                    auto moduleNames = declared_modules_for(
+                        secondaryRoot, secondaryManifest);
+                    if (!moduleNames) return std::unexpected(moduleNames.error());
+                    std::map<std::string, std::string> rename;
+                    for (auto const& module : *moduleNames) {
+                        rename.emplace(module,
+                            mcpp::pm::mangle_name(module, spec.version));
+                    }
+                    const auto& moduleName = moduleNames->front();
+                    const auto& mangledModule = rename.at(moduleName);
+                    const std::string mangledPackage = mcpp::pm::mangle_name(
+                        key.shortName, spec.version);
 
                     // Stage layout:
                     //   <root>/target/.mangled/<consumerPkg>/<dep>__<version>/    ← rewritten secondary source
@@ -3519,10 +3734,9 @@ prepare_build(bool print_fingerprint,
                     auto stageBase         = *root / "target" / ".mangled"
                                              / consumerManifest.package.name;
                     auto secStage          = stageBase
-                                             / std::format("{}__{}", moduleName, spec.version);
+                                             / std::format("{}__{}", key.shortName, spec.version);
                     auto consumerStage     = stageBase / "__self__";
 
-                    std::map<std::string, std::string> rename{ {moduleName, mangled} };
                     if (auto r = stage_with_rewrite(secondaryRoot, secStage,
                                                      secondaryManifest, rename); !r)
                         return std::unexpected(r.error());
@@ -3539,11 +3753,16 @@ prepare_build(bool print_fingerprint,
                     // exact (ns, mangled) pair dedup cleanly. The original
                     // primary entry (it->second) is untouched.
                     auto stagedManifest = secondaryManifest;
-                    // Update [package].name to the mangled module name so
-                    // the modgraph validator (which checks "exported module
-                    // must be prefixed by package name") accepts the
-                    // rewritten sources.
-                    stagedManifest.package.name = mangled;
+                    // Give the staged package a distinct atomic identity too;
+                    // authored module names remain independent and are carried
+                    // exclusively by the rename map above.
+                    stagedManifest.package.name = mangledPackage;
+                    if (stagedManifest.package.namespace_.empty()) {
+                        stagedManifest.package.namespace_ = key.ns.empty()
+                            ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
+                    }
+                    stagedManifest.package.sourceProvenance = std::format(
+                        "index+{}@{}", cache_index_name(key.ns), spec.version);
                     // Absolutize secondary's include_dirs against its original
                     // install root so the staged copy still finds headers.
                     for (auto& inc : stagedManifest.buildConfig.includeDirs) {
@@ -3557,7 +3776,7 @@ prepare_build(bool print_fingerprint,
                         std::make_unique<mcpp::manifest::Manifest>(std::move(stagedManifest)));
                     dep_cache_identities.push_back({
                         .indexName   = cache_index_name(key.ns),
-                        .packageName = mangled,
+                        .packageName = mangledPackage,
                         .version     = spec.version,
                         .sourceKind  = "version",
                     });
@@ -3566,7 +3785,7 @@ prepare_build(bool print_fingerprint,
                     recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec);
                     auto linkFlagsAdded = propagateLinkFlags(secStage, *dep_manifests.back());
 
-                    ResolvedKey mangledKey{key.ns, mangled};
+                    ResolvedKey mangledKey{key.ns, mangledPackage};
                     resolved[mangledKey] = ResolvedRecord{
                         .version           = spec.version,
                         .constraint        = item.originalConstraint,
@@ -3579,7 +3798,8 @@ prepare_build(bool print_fingerprint,
 
                     mcpp::ui::info("Mangled",
                         std::format("{} v{} ↔ v{} → {} (cross-major fallback)",
-                            moduleName, it->second.version, spec.version, mangled));
+                            moduleName, it->second.version, spec.version,
+                            mangledModule));
                     continue;
                 }
 
@@ -3638,6 +3858,12 @@ prepare_build(bool print_fingerprint,
                             expectedShort));
                     }
                 }
+                if (newManifest.package.namespace_.empty()) {
+                    newManifest.package.namespace_ = key.ns.empty()
+                        ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
+                }
+                newManifest.package.sourceProvenance = std::format(
+                    "index+{}@{}", cache_index_name(key.ns), *merged);
 
                 removeLinkFlags(it->second.linkFlagsAdded);
                 auto linkFlagsAdded = propagateLinkFlags(newRoot, newManifest);
@@ -3911,6 +4137,26 @@ prepare_build(bool print_fingerprint,
                     "dependency '{}' resolved to package '{}' (mismatch with declared name '{}')",
                     name, dep_manifest->package.name, expectedShort));
             }
+        }
+
+        // Stamp the identity with the resolver's exact coordinate and source.
+        // A descriptor that omitted namespace inherits the coordinate that
+        // answered it; otherwise two indices containing the same short name
+        // collapse in runtime provenance even though resolution distinguished
+        // them correctly.
+        if (dep_manifest->package.namespace_.empty()) {
+            dep_manifest->package.namespace_ = key.ns.empty()
+                ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
+        }
+        if (sourceKind == "version") {
+            dep_manifest->package.sourceProvenance = std::format(
+                "index+{}@{}", cache_index_name(key.ns), spec.version);
+        } else if (sourceKind == "git") {
+            dep_manifest->package.sourceProvenance = std::format(
+                "git+{}#{}={}", spec.git, spec.gitRefKind, spec.gitRev);
+        } else {
+            dep_manifest->package.sourceProvenance =
+                "path+" + dep_root.lexically_normal().generic_string();
         }
 
         // Stage 2a: merge this dependency's active feature-deps into its own
@@ -4471,6 +4717,12 @@ prepare_build(bool print_fingerprint,
                         sub.preloaded_manifest =
                             std::make_shared<const mcpp::manifest::Manifest>(
                                 *dep_manifests[depIdx - 1]);
+                    sub.inherited_runtime_selection = std::make_shared<
+                        const mcpp::xlings::runtime::RuntimeSelection>(
+                            runtimeSelection);
+                    sub.inherited_runtime_binding = std::make_shared<
+                        const mcpp::platform::runtime::RuntimeBinding>(
+                            runtimeBindingSnapshot);
                     sub.tool_chain    = overrides.tool_chain.empty()
                         ? std::format("root → {}:{}", depName, toolName)
                         : std::format("{} → {}:{}", overrides.tool_chain, depName,
@@ -4983,6 +5235,8 @@ prepare_build(bool print_fingerprint,
     ctx.manifest    = *m;
     ctx.tc          = *tc;
     ctx.fp          = fp;
+    ctx.runtimeSelection = runtimeSelection;
+    ctx.runtimeBinding = runtimeBindingSnapshot;
     ctx.profile     = effectiveProfile;
     ctx.cacheMode   = cacheMode;
     ctx.projectRoot= *root;
@@ -5010,6 +5264,9 @@ prepare_build(bool print_fingerprint,
                                              stdBmiPath, stdObjectPath, storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
+    ctx.plan.runtimeBinding = runtimeBindingSnapshot;
+    mcpp::build::merge_runtime_binding_contract(
+        ctx.plan, runtimeBindingSnapshot);
     ctx.plan.compileDbPath = workRoot / "compile_commands.json";
     // GCC: a clean `*link:` for this build, so the payload's specs cannot
     // inject other homes' rpath entries into the artifact. AFTER the plan is
@@ -5934,23 +6191,47 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    // Apply [runtime.<capability>] provider = "<pkg>" overrides: prefer the
-    // named provider for matching capabilities (capability name prefix match).
-    // Warn if the named provider isn't in the dependency graph.
+    // Apply [runtime.<capability>] provider = "<pkg>" overrides. Canonical
+    // identity wins; the old short spelling is accepted only when it denotes
+    // exactly one provider.  A same-short-name collision is never guessed.
     for (auto& [capKey, prov] : ctx.manifest.runtimeConfig.providerOverrides) {
-        bool found = false;
+        std::vector<mcpp::manifest::PackageId> candidates;
+        for (auto const& entry : ctx.plan.runtimeProviders) {
+            if (!entry.capability.starts_with(capKey)) continue;
+            const auto withoutVersion = entry.provider.namespace_.empty()
+                ? entry.provider.name
+                : entry.provider.namespace_ + "." + entry.provider.name;
+            if (entry.provider.canonical() == prov || withoutVersion == prov)
+                candidates = {entry.provider};
+        }
+        if (candidates.empty()) {
+            for (auto const& entry : ctx.plan.runtimeProviders) {
+                if (entry.capability.starts_with(capKey)
+                    && entry.provider.name == prov)
+                    candidates.push_back(entry.provider);
+            }
+        }
+        std::ranges::sort(candidates);
+        candidates.erase(std::ranges::unique(candidates).begin(), candidates.end());
+        if (candidates.empty()) {
+            return std::unexpected(std::format(
+                "[runtime.{}] provider = \"{}\" does not name a provider in "
+                "the resolved dependency graph", capKey, prov));
+        }
+        if (candidates.size() != 1) {
+            std::string choices;
+            for (auto const& candidate : candidates)
+                choices += (choices.empty() ? "" : ", ") + candidate.canonical();
+            return std::unexpected(std::format(
+                "[runtime.{}] provider = \"{}\" is ambiguous; use one exact "
+                "canonical identity: [{}]", capKey, prov, choices));
+        }
+        const auto selected = candidates.front();
         std::stable_partition(ctx.plan.runtimeProviders.begin(),
                               ctx.plan.runtimeProviders.end(),
                               [&](const auto& pr) {
-            bool match = pr.capability.rfind(capKey, 0) == 0 && pr.provider == prov;
-            found = found || match;
-            return match;
+            return pr.capability.starts_with(capKey) && pr.provider == selected;
         });
-        if (!found) {
-            std::println(stderr,
-                "warning: [runtime.{}] provider = \"{}\" — no such provider in the "
-                "dependency graph for that capability", capKey, prov);
-        }
     }
 
     // Capability-driven ABI enforcement, dimensional (see src/toolchain/abi.cppm
@@ -5969,7 +6250,7 @@ prepare_build(bool print_fingerprint,
         for (auto& cap : ctx.plan.runtimeCapabilities) {
             std::string provider;
             for (auto& [c, p] : ctx.plan.runtimeProviders)
-                if (c == cap) { provider = p; break; }
+                if (c == cap) { provider = p.canonical(); break; }
             if (auto con = mcpp::toolchain::parse_abi_capability(
                     cap, provider.empty() ? std::string_view{"?"} : std::string_view{provider}))
                 constraints.push_back(std::move(*con));
@@ -5988,35 +6269,132 @@ prepare_build(bool print_fingerprint,
         }
     }
 
-    // Per-build resolution manifest artifact: a machine-readable record of the
-    // resolved plan (toolchain/abi, runtime closure, capabilities+providers,
-    // deps) written next to the build outputs. Same data as `mcpp why`; usable
-    // by CI/tooling. (capability -> plan, serialized.)
+    // Per-build resolution manifest: the durable, provider-neutral facts that
+    // `mcpp why runtime` interprets without resolving again or probing the
+    // current host.  The post-link validator replaces `validation.pending`
+    // with the exact artifact verdict produced at the link seam.
     {
         const std::string tcAbi =
             ctx.tc.targetTriple.find("musl") != std::string::npos ? "musl"
             : ctx.tc.stdlibId == "libc++"                          ? "libc++"
             : ctx.tc.compiler == mcpp::toolchain::CompilerId::MSVC ? "msvc"
             :                                                         "glibc";
+        auto package_json = [](const mcpp::manifest::PackageId& id) {
+            return nlohmann::json{
+                {"canonical", id.canonical()},
+                {"namespace", id.namespace_},
+                {"name", id.name},
+                {"version", id.version},
+                {"source", id.sourceProvenance},
+            };
+        };
+        auto path_array = [](auto const& paths) {
+            nlohmann::json values = nlohmann::json::array();
+            for (auto const& path : paths)
+                values.push_back(path.lexically_normal().generic_string());
+            return values;
+        };
         nlohmann::json j;
+        j["schema_version"] = 2;
         j["toolchain"] = {
             {"spec", ctx.tc.label()}, {"abi", tcAbi},
             {"triple", ctx.tc.targetTriple}, {"stdlib", ctx.tc.stdlibId},
         };
         nlohmann::json dirs = nlohmann::json::array();
         for (auto& d : ctx.plan.runtimeLibraryDirs) dirs.push_back(d.string());
-        nlohmann::json caps = nlohmann::json::array();
+        nlohmann::json legacyCaps = nlohmann::json::array();
+        nlohmann::json providers = nlohmann::json::array();
         for (auto& [cap, prov] : ctx.plan.runtimeProviders)
-            caps.push_back({{"capability", cap}, {"provider", prov}});
+        {
+            legacyCaps.push_back({{"capability", cap},
+                                  {"provider", prov.canonical()}});
+            providers.push_back({{"capability", cap},
+                                 {"provider", package_json(prov)}});
+        }
+        nlohmann::json requirements = nlohmann::json::array();
+        for (auto const& requirement : ctx.plan.runtimeRequirements) {
+            requirements.push_back({
+                {"kind", requirement.kind},
+                {"value", requirement.value},
+                {"phase", requirement.phase},
+                {"requester", package_json(requirement.requester)},
+                {"required", requirement.required},
+            });
+        }
+        nlohmann::json artifacts = nlohmann::json::array();
+        for (auto const& artifact : ctx.plan.runtimeArtifacts) {
+            artifacts.push_back({
+                {"role", artifact.role},
+                {"provider", package_json(artifact.provider)},
+                {"path", artifact.path.lexically_normal().generic_string()},
+                {"provenance", artifact.provenance},
+                {"abi", artifact.abi},
+                {"digest", artifact.digest},
+                {"host_fingerprint", artifact.hostFingerprint},
+            });
+        }
+        nlohmann::json binding = nlohmann::json::parse(
+            mcpp::platform::runtime::serialize_runtime_binding(
+                ctx.plan.runtimeBinding), nullptr, false);
+        if (binding.is_discarded()) binding = nlohmann::json::object();
+
+        auto triple = ctx.tc.targetTriple;
+        std::ranges::transform(triple, triple.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        const bool pe = triple.find("windows") != std::string::npos
+                     || triple.find("mingw") != std::string::npos;
+        const bool macho = triple.find("darwin") != std::string::npos
+                        || triple.find("apple") != std::string::npos;
+        std::string format = pe ? "pe" : macho ? "macho" : "elf";
+        nlohmann::json search = {
+            {"format", format},
+            {"link_library", pe ? "libpath" : "library_path"},
+            {"transitive_needed", format == "elf" ? "rpath_link" : "none"},
+            {"runtime", format == "pe" ? "deploy"
+                         : format == "macho" ? "loader_rpath" : "runpath"},
+        };
         j["runtime"] = {
             {"library_dirs", dirs},
             {"dlopen_libs", ctx.plan.runtimeDlopenLibs},
-            {"capabilities", caps},
+            {"capabilities", legacyCaps},
+            {"binding", binding},
+            {"requirements", requirements},
+            {"artifacts", artifacts},
+            {"providers", providers},
+            {"link_intent", {
+                {"libraries", ctx.plan.linkIntent.libraries},
+                {"link_library_dirs",
+                    path_array(ctx.plan.linkIntent.linkLibraryDirs)},
+                {"transitive_needed_dirs",
+                    path_array(ctx.plan.linkIntent.transitiveNeededDirs)},
+                {"runtime_search_dirs",
+                    path_array(ctx.plan.linkIntent.runtimeSearchDirs)},
+                {"frameworks", ctx.plan.linkIntent.frameworks},
+                {"deploy_files", path_array(ctx.plan.linkIntent.deployFiles)},
+            }},
+            {"search", search},
+            {"validation", {
+                {"status", format == "elf" ? "pending" : "not_exercised"},
+                {"source", "post_link"},
+                {"artifacts", nlohmann::json::array()},
+            }},
         };
         std::error_code ec;
         std::filesystem::create_directories(ctx.plan.outputDir, ec);
-        if (std::ofstream js(ctx.plan.outputDir / "resolution.json"); js)
+        auto path = ctx.plan.outputDir / "resolution.json";
+        auto tmp = path;
+        tmp += ".tmp";
+        if (std::ofstream js(tmp); js) {
             js << j.dump(2) << "\n";
+            js.close();
+            std::filesystem::rename(tmp, path, ec);
+            if (ec) {
+                ec.clear();
+                std::filesystem::remove(path, ec);
+                ec.clear();
+                std::filesystem::rename(tmp, path, ec);
+            }
+        }
     }
 
     return ctx;

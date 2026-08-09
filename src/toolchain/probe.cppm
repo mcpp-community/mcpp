@@ -388,8 +388,8 @@ payload_root_for_binding(const std::filesystem::path& compilerBin,
     return std::nullopt;
 }
 
-// `runtimeBinding` is the AUTHORITY -- `--runtime`, else the active subos's
-// `subos_info.runtime`. Empty is a refusal, not a licence to guess: a guess
+// `runtimeBinding` is the libc identity from the root-selected immutable
+// RuntimeBinding snapshot. Empty is a refusal, not a licence to guess: a guess
 // here is how the compile side and the artifact's interpreter came to name
 // different glibc versions, and nothing about the resulting binary looks
 // wrong until it loads a library built against the other one.

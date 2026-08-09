@@ -57,8 +57,8 @@ void print_usage() {
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
     std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --build-timeout, --message-format json)");
     std::println("  mcpp clean [--bmi-cache]             Remove target/ (and optionally the build cache)");
-    std::println("  mcpp add <pkg>[@<ver>]               Add a dependency to mcpp.toml");
-    std::println("  mcpp remove <pkg>                    Remove a dependency from mcpp.toml");
+    std::println("  mcpp add [ns.]pkg@ver                Add an exact dependency to mcpp.toml");
+    std::println("  mcpp remove [ns.]pkg                 Remove an exact dependency from mcpp.toml");
     std::println("  mcpp update [pkg]                    Re-resolve deps and rewrite mcpp.lock");
     std::println("  mcpp search <keyword>                Search packages in registries");
     std::println("  mcpp publish [--dry-run]             Publish package to default registry");
@@ -82,7 +82,7 @@ void print_usage() {
     std::println("Build options:");
     std::println("  --verbose, -v                        Verbose compiler output");
     std::println("  --quiet, -q                          Suppress status output");
-    std::println("  --print-fingerprint                  Show toolchain fingerprint and 10 inputs");
+    std::println("  --print-fingerprint                  Show toolchain fingerprint and 11 inputs");
     std::println("  --cache <MODE>                       Dependency cache: global (default) | local | off");
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
@@ -229,14 +229,14 @@ int run(int argc, char** argv) {
             // (cmd_new validates presence for project creation itself).
             .arg(cl::Arg("name").help("Package directory name"))
             .option(cl::Option("template").short_name('t').takes_value().value_name("SPEC")
-                .help("bin (default) | <pkg>[@ver][:<template>] — package-shipped template"))
+                .help("bin (default) | [ns.]pkg[@ver][:template] — exact package template"))
             .option(cl::Option("list-templates").takes_value().value_name("PKG")
-                .help("List the templates a package ships (PKG[@ver])"))
+                .help("List templates from exact [ns.]pkg[@ver]"))
             .action(wrap_rc(cmd_new)))
         .subcommand(cl::App("build")
             .description("Build the current package")
             .option(cl::Option("print-fingerprint")
-                .help("Show toolchain fingerprint and 10 inputs"))
+                .help("Show toolchain fingerprint and 11 inputs"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
@@ -321,13 +321,15 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_why)))
         .subcommand(cl::App("add")
             .description("Add a dependency to mcpp.toml")
-            .arg(cl::Arg("pkg").help("Package spec, e.g. foo@1.0.0").required())
+            .arg(cl::Arg("pkg").help(
+                "Exact package spec, e.g. foo@1.0.0 or compat.gtest@1.15.2")
+                .required())
             .option(cl::Option("dev").help(
-                "Add to [dev-dependencies] (test-only, e.g. gtest)"))
+                "Add to [dev-dependencies] (test-only, e.g. compat.gtest)"))
             .action(wrap_rc(mcpp::pm::commands::cmd_add)))
         .subcommand(cl::App("remove")
             .description("Remove a dependency from mcpp.toml")
-            .arg(cl::Arg("pkg").help("Package name").required())
+            .arg(cl::Arg("pkg").help("Exact package selector [ns.]name").required())
             .action(wrap_rc(mcpp::pm::commands::cmd_remove)))
         .subcommand(cl::App("update")
             .description("Re-resolve dependencies and rewrite mcpp.lock")

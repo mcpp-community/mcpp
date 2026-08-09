@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # requires:
 # 79_gtest_regular_dep_feature_main.sh — gtest as a REGULAR dependency
-# (`[dependencies]`, via `mcpp add gtest`) must NOT inject gtest_main into a
+# (`[dependencies.compat]`, via `mcpp add compat.gtest`) must NOT inject gtest_main into a
 # `mcpp build` app that has its own main. Regression for issue #168
 # (`gtest_main.o : error LNK2005: main already defined in main.o`).
 #
@@ -22,8 +22,8 @@ cd app
 
 # (1) #168: gtest in [dependencies] + app's own main → build must succeed, and
 #     gtest_main must NOT be linked.
-"$MCPP" add gtest@1.15.2 > /dev/null
-grep -q '^\[dependencies\]' mcpp.toml || { echo "FAIL: add did not write [dependencies]"; cat mcpp.toml; exit 1; }
+"$MCPP" add compat.gtest@1.15.2 > /dev/null
+grep -q '^\[dependencies\.compat\]' mcpp.toml || { echo "FAIL: add did not write [dependencies.compat]"; cat mcpp.toml; exit 1; }
 "$MCPP" build > /dev/null || { echo "FAIL: #168 — build with regular-dep gtest failed"; exit 1; }
 nj=$(find target -name build.ninja | xargs ls -t 2>/dev/null | head -1)
 if grep -q 'gtest_main' "$nj"; then
@@ -38,7 +38,7 @@ cat > mcpp.toml <<'EOF'
 name = "app"
 version = "0.1.0"
 
-[dependencies]
+[dependencies.compat]
 gtest = { version = "1.15.2", features = ["main"] }
 EOF
 cat > src/main.cpp <<'EOF'
@@ -53,7 +53,7 @@ grep -q 'gtest_main' "$nj" || { echo "FAIL: features=[main] did not link gtest_m
 cd "$TMP"
 "$MCPP" new libapp > /dev/null
 cd libapp
-"$MCPP" add --dev gtest@1.15.2 > /dev/null
-grep -q '^\[dev-dependencies\]' mcpp.toml || { echo "FAIL: add --dev did not write [dev-dependencies]"; cat mcpp.toml; exit 1; }
+"$MCPP" add --dev compat.gtest@1.15.2 > /dev/null
+grep -q '^\[dev-dependencies\.compat\]' mcpp.toml || { echo "FAIL: add --dev did not write [dev-dependencies.compat]"; cat mcpp.toml; exit 1; }
 
 echo "OK"

@@ -6,6 +6,7 @@
 #   3. Pin/unpin still works after all changes
 #   4. Lockfile writes deterministic hashes (not placeholder)
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -16,6 +17,7 @@ export MCPP_NO_AUTO_INSTALL=1
 
 # ── 1. Local path index with real xpkg.lua ────────────────────────────
 INDEX_DIR="$TMP/my-local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/h"
 cat > "$INDEX_DIR/pkgs/h/hello-lib.lua" <<'EOF'
 package = {
@@ -48,7 +50,7 @@ name    = "myapp"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 acme = { url = "https://github.com/example/fake-index.git" }
 
 [targets.myapp]
@@ -75,7 +77,7 @@ cat > mcpp.toml <<EOF
 members = ["member-a"]
 
 [indices]
-corp-index = { path = "$INDEX_DIR" }
+corp-index = { path = "$INDEX_DIR_HOST" }
 EOF
 
 # Member manifest without [indices]
@@ -155,7 +157,7 @@ name    = "myapp"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 acme = { url = "https://github.com/example/fake-index.git" }
 
 [targets.myapp]

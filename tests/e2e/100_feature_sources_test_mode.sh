@@ -30,7 +30,7 @@ cat > mcpp.toml <<'EOF'
 name = "app"
 version = "0.1.0"
 
-[dependencies]
+[dependencies.compat]
 cjson = { version = "1.7.19", features = ["utils"] }
 EOF
 
@@ -81,7 +81,7 @@ cat > mcpp.toml <<'EOF'
 name = "app"
 version = "0.1.0"
 
-[dependencies]
+[dependencies.compat]
 cjson = "1.7.19"
 EOF
 cat > src/main.cpp <<'EOF'

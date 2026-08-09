@@ -23,6 +23,7 @@
 # has ZERO compile edges for the dependency's sources". Read from build.ninja,
 # not from the log: a status line is exactly what lied before.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -32,6 +33,7 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 
 # ── an offline path index serving one library package ────────────────────────
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/s"
 cat > "$INDEX_DIR/pkgs/s/shared-lib.lua" <<'EOF'
 package = {
@@ -80,7 +82,7 @@ name = "$name"
 version = "$version"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 "local-dev.shared-lib" = "1.0.0"

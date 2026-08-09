@@ -3,14 +3,21 @@
 # Local path indices must use the same namespace-aware filename candidates
 # as cloned/builtin indices, e.g. pkgs/c/compat.foo.lua.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
+SUBOS_INFO_SEED="$MCPP_HOME/registry/subos/default/.xlings.json"
+[[ -f "$SUBOS_INFO_SEED" ]] || {
+    echo "FAIL: inherited toolchain has no default SubOS runtime contract"
+    exit 1
+}
 
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/c"
 cat > "$INDEX_DIR/pkgs/c/compat.cfg.lua" <<'EOF'
 package = {
@@ -61,7 +68,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-compat = { path = "$INDEX_DIR" }
+compat = { path = "$INDEX_DIR_HOST" }
 
 [dependencies.compat]
 cfg = "1.0.0"
@@ -113,7 +120,8 @@ set -e
 
 if [[ "${1:-}" == "self" && "${2:-}" == "init" ]]; then
     mkdir -p "${XLINGS_HOME:?}/subos/default"
-    printf '{}\n' > "$XLINGS_HOME/subos/default/.xlings.json"
+    cp "${FAKE_XLINGS_SUBOS_INFO:?}" \
+       "$XLINGS_HOME/subos/default/.xlings.json"
     exit 0
 fi
 
@@ -209,7 +217,7 @@ name = "clean"
 version = "0.1.0"
 
 [indices]
-compat = { path = "$INDEX_DIR" }
+compat = { path = "$INDEX_DIR_HOST" }
 
 [dependencies.compat]
 cfg = "1.0.0"
@@ -222,6 +230,7 @@ UPDATE_LOG="$TMP/fake-xlings-update.log"
 if ! FAKE_XLINGS_LOG="$FAKE_LOG" \
      FAKE_XLINGS_DIRECT_LOG="$FAKE_DIRECT_LOG" \
      FAKE_XLINGS_UPDATE_LOG="$UPDATE_LOG" \
+     FAKE_XLINGS_SUBOS_INFO="$SUBOS_INFO_SEED" \
      "$MCPP" build > fetch.log 2>&1; then
     echo "FAIL: clean local path dependency install failed"
     cat fetch.log

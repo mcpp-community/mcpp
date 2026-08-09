@@ -375,18 +375,18 @@ Default convention: `src/<last segment of package name>.cppm` (e.g. package name
 ```toml
 # Packages under the default package namespace (mcpplibs)
 [dependencies]
-gtest   = "1.15.2"              # Exact version
-mbedtls = "3.6.1"
-ftxui   = "6.1.9"
+cmdline   = "0.0.2"              # Exact version
+templates = "0.0.1"
 
-# Dotted selector: try mcpplibs.<path> first, then fall back to the sibling peer root.
-# For example, imgui.core is tried in order as mcpplibs.imgui/core, then imgui/core.
-[dependencies]
-capi.lua = "0.0.3"
+# Dotted selector: one exact identity. Everything before the final dot is the
+# namespace; the final segment is the package name.
 compat.gtest = "1.15.2"
 imgui.core = "0.0.1"
 imgui.backend.glfw_opengl3 = "0.0.1"
+mcpplibs.capi.lua = "0.0.3"
+```
 
+```toml
 # Namespace sub-table form
 [dependencies.mcpplibs]
 cmdline   = "0.0.2"
@@ -394,17 +394,23 @@ tinyhttps = "0.2.2"
 llmapi    = "0.2.5"
 
 [dependencies.compat]
-glfw = "3.4"                    # Explicit namespace, skips the mcpplibs-first candidate
+glfw = "3.4"                    # Explicit namespace; no fallback search
+```
 
+```toml
 # Path dependency (local development)
 [dependencies]
 mylib = { path = "../mylib" }
+```
 
+```toml
 # Git dependency — pick exactly one of tag / branch / rev
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
+```
 
+```toml
 # Long-form dep spec: features and backend knobs
 [dependencies]
 imgui = { version = "0.0.3", features = ["docking"] }   # Request a feature of this dependency
@@ -449,24 +455,20 @@ qux = ">=1.0, <2.0" # Range combination
 
 #### Namespace resolution rules
 
-Every package has a two-part identity: a **namespace** and a **name**. How you write
-a dependency key decides which namespaces mcpp will look in.
+Every package has a two-part identity: a **namespace** and a **name**. Every
+selector normalizes to exactly one identity:
 
-**A bare name resolves in exactly three places**, in order:
+- `cmdline` → `(mcpplibs, cmdline)`; omitting the namespace means the
+  `mcpplibs` default, and nothing else.
+- `compat.gtest` → `(compat, gtest)`.
+- `mcpplibs.capi.lua` → `(mcpplibs.capi, lua)`.
 
-| # | Namespace | Example |
-|---|---|---|
-| 1 | `mcpplibs` — the default namespace | `cmdline = "0.0.2"` |
-| 2 | `compat` — the wrapper namespace for third-party C/C++ libraries | `gtest = "1.15.2"` → `compat.gtest` |
-| 3 | upstream packages that declare no namespace at all | `opencv = "4.10.0"` |
-
-**Any other namespace must be written out in full.** There is no fuzzy, index-wide
-search by short name:
+There is no ordered fallback or fuzzy, index-wide search by short name:
 
 ```toml
 # ✅ Correct — dotted selector
 [dependencies]
-"chriskohlhoff.asio" = "1.38.1"
+chriskohlhoff.asio = "1.38.1"
 
 # ✅ Correct — namespace sub-table (preferred when you have several from one org)
 [dependencies.chriskohlhoff]
@@ -477,14 +479,41 @@ asio = "1.38.1"
 asio = "1.38.1"
 ```
 
-The third form fails with an error that lists the namespaces that were searched and,
-when a package with that short name exists elsewhere, the exact line to write instead.
+The third form fails with an error that names the exact `(mcpplibs, asio)`
+identity that was tried and, when the short name exists elsewhere, gives a
+copyable explicit selector.
 
-**Why not resolve bare names across every namespace?** Because dependency resolution
-has to be reproducible. A global short-name search would mean that (a) two namespaces
-owning the same short name are settled by index ordering, and (b) **adding an index
-could silently change which package an existing dependency resolves to**. Requiring
-the namespace keeps a `mcpp.toml` resolving to the same packages on every machine.
+##### Migration window for bare names (`2026.8.10.1` → removed in `2026.9`)
+
+Every published `compat.*` package and every manifest written before exact
+identity spells its dependency bare — `gtest = "1.15.2"`. Failing those
+outright on upgrade would break builds against data that is already published
+and cannot be edited retroactively, so for one release a bare name that misses
+`mcpplibs` still reaches `compat.<name>`, and a descriptor that declares no
+namespace at all still answers to its bare name.
+
+It is not quiet about it:
+
+```
+warning: dependency 'gtest' resolved to 'compat.gtest' through the deprecated
+bare-name search; namespace omission means `mcpplibs` only. Write the exact
+package:
+    [dependencies.compat]
+    gtest = "1.15.2"
+  (or run `mcpp add compat.gtest@1.15.2`). This fallback is removed in 2026.9.
+```
+
+What reaches `mcpp.lock`, the install layer and the cache is the canonical
+identity, so the ambiguous spelling lives in exactly one place — your manifest
+— until you change it. `mcpp add gtest@1.15.2` changes it for you.
+
+The window does **not** apply to a selector that states a namespace
+(`mcpplibs.gtest` misses and stays missed), and a bare name still never reaches
+a third-party namespace.
+
+**Why one identity?** Dependency resolution has to be reproducible. Candidate
+search would let two namespaces with the same short name be settled by index
+state, and adding an index could silently retarget an existing dependency.
 
 **For xpkg authors:** in an index descriptor, identity is the pair
 `(package.namespace, package.name)`. The namespace is the dotted path; **`name` is
@@ -509,8 +538,17 @@ path) but not required.
 
 The older fully-qualified spelling (`name = "chriskohlhoff.asio"`) is still
 accepted, so already-published descriptors keep working. `mcpp xpkg parse`
-enforces the rule — run it in your index CI. Requires mcpp >= 0.0.106 and
-xlings >= 0.4.69; full normative text in `docs/spec/package-identity.md`.
+enforces the descriptor rule — run it in your index CI. Descriptor identity
+requires mcpp >= 0.0.106; exact selectors require mcpp >= 2026.8.10.1; both use
+xlings >= 0.4.69. Full normative text is in `docs/spec/package-identity.md`.
+
+`mcpp new --template` deliberately reuses this identity model instead of
+creating another package grammar: `[ns.]name[@version][:tname]`. A bare name
+there also means only `mcpplibs`; version and template may be omitted
+independently. Omitted `tname` selects the sole explicit default, or the only
+template when no `default = true` is present. Multiple unmarked templates are
+an error, never a directory-order choice. See the normative template rows in
+`docs/spec/package-identity.md` §4.4.
 
 #### When mcpp refreshes the package index
 
@@ -547,7 +585,7 @@ Run any command with `-v` to see the decision for each dependency and why.
 ### 2.6 `[dev-dependencies]` — Test Dependencies
 
 ```toml
-[dev-dependencies]
+[dev-dependencies.compat]
 gtest = "1.15.2"
 ```
 
@@ -905,31 +943,79 @@ exactly that: an entry's object paths are now addressed relative to the
 populate the entry first. `mcpp cache verify` additionally reports any entry
 whose recorded addresses escape it, so a recurrence is auditable offline.
 
-### 2.11 `[runtime]` — Host Runtime Capabilities
+### 2.11 `[runtime]` — Provider-neutral runtime contract
 
 ```toml
 [runtime]
-library_dirs = ["vendor/lib"]            # Directories baked into the artifact's RUNPATH (relative to the package root)
-dlopen_libs  = ["libGL.so.1"]            # sonames dlopen'd at runtime (validated by doctor)
-capabilities = ["opengl.glx.driver"]     # Host capabilities required (open namespace)
-provides     = ["opengl.glx.driver"]     # Explicitly declares capabilities this package fulfills (strong provider)
+requirements = [
+  { kind = "capability", value = "display.present", phase = "run", required = true },
+  { kind = "soname", value = "libwidget.so.1", phase = "link", required = false },
+]
+provides = ["display.present"]
+artifacts = [
+  { role = "library", path = "runtime/libwidget.so.1", provenance = "payload", abi = "elf-x86_64", digest = "sha256:...", host_fingerprint = "host-1" },
+]
 
-# Explicit provider override (the "explicit" notch of the three-way knob)
-[runtime."opengl.glx.driver"]
-provider = "compat.glx-runtime"
+# Platform-neutral LinkIntent. Paths are relative to this package root.
+libraries                = ["widget"]
+link_library_dirs        = ["lib"]
+transitive_needed_dirs   = ["runtime/closure"]
+runtime_search_dirs      = ["runtime"]
+frameworks               = ["WindowKit"]
+deploy_files             = ["bin/widget.dll"]
+
+# Use an exact canonical identity when multiple providers exist.
+[runtime."display.present"]
+provider = "acme.widget-runtime@2.0.0"
 ```
 
-- **Provider selection**: a package that declares `provides` (strong) takes precedence
-  over one that merely lists a capability under `capabilities` (weak, backward
-  compatible); `[runtime.<cap>] provider=` is an explicit override with the highest
-  precedence, and pointing at a provider not present in the dependency graph produces
-  a warning.
-- The resolved result can be inspected via `mcpp why runtime`, `mcpp self doctor`, and
-  the build artifact `target/<triple>/<fp>/resolution.json` (it is not magic by
-  default).
-- Capability naming convention: layered lowercase `domain.sub.role` (e.g.
-  `opengl.glx.driver`, `x11.display`) and prefix-style `abi:<name>` (e.g. `abi:glibc`,
-  which participates in toolchain ABI enforcement).
+`requirements` records a non-empty `kind`/`value`, a `link` or `run` phase,
+and whether the requirement is mandatory (`required` defaults to `true`).
+Optional requirements remain visible provenance but do not become hard ABI or
+doctor inputs. A `libraries` entry that is an explicit relative file path is
+resolved against the declaring package root; a bare logical name remains a
+platform-spelled library name.
+`artifacts` requires `role`, `path`, and `provenance`; `abi`, `digest`, and
+`host_fingerprint` are optional evidence. The resolver, not the descriptor,
+stamps every requirement with the exact requester PackageId and every artifact
+with the exact declaring provider PackageId, including namespace, version, and
+source/index provenance. A descriptor therefore cannot spoof another package,
+and `alpha.backend` never collapses into `beta.backend`.
+
+Only `provides` creates a descriptor-owned provider fact. Merely requiring a
+capability never makes the requester its own provider. An explicit
+`[runtime.<capability>] provider=` override accepts a canonical
+`namespace.name@version` (or an unambiguous compatibility spelling); missing or
+same-short-name ambiguous providers are hard errors. Provider/artifact facts
+already selected by the xlings SubOS precede descriptor fallbacks. xlings/xim
+owns graphics-stack, driver, ICD, WSL, and host provenance selection; mcpp
+records and consumes the generic result and never probes GPU hardware.
+
+Link intent keeps discovery stages separate:
+
+| Field | ELF | Mach-O | PE/Windows |
+|---|---|---|---|
+| `link_library_dirs` | `-L` | `-L` | `-L` or `/LIBPATH:` |
+| `transitive_needed_dirs` | `-Wl,-rpath-link` | no flag | no flag |
+| `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag |
+| `frameworks` | no flag | `-framework` | no flag |
+| `deploy_files` | copy edge | copy edge | copy beside the output; never a linker flag |
+
+For one compatibility train, `library_dirs` maps only to runtime search,
+`dlopen_libs` maps to required run-phase soname requirements, and
+`capabilities` maps to required run-phase capability requirements. None of
+these legacy fields creates a provider.
+
+`target/<triple>/<fp>/resolution.json` schema 2 stores the RuntimeBinding,
+canonical requirements/providers/artifacts, LinkIntent, platform search
+mechanism, and post-link verdict. `mcpp why runtime` is a pure interpreter of
+the latest stored file: it neither re-resolves the manifest nor launches a
+graphics/hardware probe. Use `xlings doctor` when the selected host provider
+itself needs re-diagnosis.
+
+Capability names use layered lowercase `domain.sub.role` (for example
+`display.present`) and prefix-style `abi:<name>` (for example `abi:glibc`, which
+participates in toolchain ABI enforcement).
 
 ### 2.12 `[package] platforms` — Platform Declaration
 
@@ -966,15 +1052,18 @@ build needs (`make`/`cmake`/`protoc`/…), pin tool versions per project, or set
 build-time env vars — without hand-editing `.xlings.json`. `[toolchain]` (§2.7) remains
 the ergonomic shorthand for the compiler; `[xlings.workspace]` is the general form.
 
-`subos` carries a second meaning on Linux: it selects **which C runtime the
-build binds against**. A subos describes its own runtime (xlings 2026.8.5.1+),
-and mcpp takes that as the authority rather than looking around for a libc — so
-`subos = "el8"` and `subos = "trixie"` in two projects on one machine produce
-artifacts targeting each one's glibc, with the compile side and the run side
-guaranteed to agree. The binding is part of the toolchain fingerprint, so
-switching it rebuilds rather than reusing the other subos' objects. A subos
-older than that (or none at all) falls back to whatever the toolchain itself
-was installed against; `mcpp build -v` prints which of the two happened. See
+`subos` selects the root project's **local build/run OS environment**. If the
+key is absent, mcpp uses its initialized, release-verified `McppDefault` SubOS;
+`subos = "default"` is an explicit `NamedSubos("default")` selection. There is
+no CLI/environment override and no implicit following of xlings active/current.
+
+On Linux the selected environment also fixes the loader/libc contract, so
+`subos = "el8"` and `subos = "trixie"` can coexist and produce separately
+fingerprinted objects. A workspace root overrides member declarations during a
+workspace build. Dependency/member SubOS declarations are non-transitive: a
+library's declaration applies when it is an independent root, not when its
+sources are consumed by another root. A missing named SubOS or missing/
+incompatible runtime contract is an error, never a fallback. See
 docs/08-toolchain-internals.md §2.1.
 
 ### 2.14 Host tools from a dependency (mcpp 2026.8.5.1+)
@@ -1309,7 +1398,7 @@ version = "1.0.0"
 [targets.mymath]
 kind = "lib"
 
-[dev-dependencies]
+[dev-dependencies.compat]
 gtest = "1.15.2"
 ```
 
@@ -1417,7 +1506,7 @@ mcpp build --target x86_64-linux-musl
 | Static stdlib | `true` | Portable binary |
 | Headers | `include/` (if present) | Added to `-I` automatically |
 | Tests | `tests/**/*.cpp` | Discovered automatically by `mcpp test` |
-| Dependency namespace | `mcpp` (default) | The flat form uses the default ns |
+| Dependency namespace | `mcpplibs` (default) | A bare selector means only this exact namespace |
 
 ### 4.1 Legacy `[language]` Compatibility Layer
 

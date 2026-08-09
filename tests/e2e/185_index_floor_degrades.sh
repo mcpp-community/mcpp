@@ -20,6 +20,7 @@
 # Both assertions below are about what the user READS, because that is what was
 # broken. `mcpp explain E0006` and the floor predicate were fine throughout.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -60,7 +61,9 @@ EOF
 }
 
 GOOD_INDEX="$TMP/good-index"
+GOOD_INDEX_HOST="$(host_path "$GOOD_INDEX")"
 NEW_INDEX="$TMP/too-new-index"
+NEW_INDEX_HOST="$(host_path "$NEW_INDEX")"
 make_index "$GOOD_INDEX" ""            goodlib
 make_index "$NEW_INDEX"  "9999.9.9.9"  newlib
 
@@ -78,7 +81,7 @@ name = "floorproj"
 version = "0.1.0"
 
 [indices]
-toonew = { path = "$NEW_INDEX" }
+toonew = { path = "$NEW_INDEX_HOST" }
 
 [dependencies]
 "toonew.newlib" = "1.0.0"
@@ -141,8 +144,8 @@ name = "floorproj"
 version = "0.1.0"
 
 [indices]
-toonew = { path = "$NEW_INDEX" }
-good   = { path = "$GOOD_INDEX" }
+toonew = { path = "$NEW_INDEX_HOST" }
+good   = { path = "$GOOD_INDEX_HOST" }
 
 [targets.floorproj]
 kind = "bin"
@@ -171,7 +174,7 @@ name = "floorproj"
 version = "0.1.0"
 
 [indices]
-toonew = { path = "$NEW_INDEX" }
+toonew = { path = "$NEW_INDEX_HOST" }
 
 [targets.floorproj]
 kind = "bin"

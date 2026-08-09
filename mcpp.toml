@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "2026.8.8.4"
+version     = "2026.8.10.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -47,7 +47,8 @@ linkage = "static"
 mcpplibs.cmdline = "0.0.1"
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
-[dev-dependencies]
+# Namespace omission means exactly mcpplibs, so the compat wrapper is explicit.
+[dev-dependencies.compat]
 gtest = "1.15.2"
 
 # Everything else uses M5.0 conventions:

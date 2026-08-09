@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # requires: gcc fresh-sandbox
-# Dotted selectors in a single [dependencies] table use ordered candidates:
-#   imgui.core -> mcpplibs.imgui/core, then imgui/core.
-# This test provides only the peer-root imgui/core package and verifies the
-# build resolves through that fallback without network access.
+# Dotted selectors in a single [dependencies] table are exact:
+#   imgui.core -> (imgui, core), and never mcpplibs.imgui/core.
+# This test provides that exact package and verifies the build stays offline.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -13,13 +13,14 @@ export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
 INDEX_DIR="$TMP/imgui-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/i"
 cat > "$INDEX_DIR/pkgs/i/imgui.core.lua" <<'EOF'
 package = {
     spec = "1",
     namespace = "imgui",
     name = "imgui.core",
-    description = "Dotted selector fallback test package",
+    description = "Exact dotted selector test package",
     licenses = {"MIT"},
     type = "package",
     xpm = {
@@ -66,7 +67,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-imgui = { path = "$INDEX_DIR" }
+imgui = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 imgui.core = "1.0.0"

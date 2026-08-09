@@ -7,14 +7,13 @@
 ## 1. 一张图看全模型
 
 ```
-mcpp.toml [toolchain]  /  全局默认  /  `mcpp toolchain install`
-        │  (三条入口路径 —— 共享同一条管线)
-        ▼
-解析 payload(沙箱里的 xim:gcc / xim:llvm / xim:musl-gcc xpkg)
-        ▼
-ensure_post_install_fixup()      ← 幂等收敛(marker 闸门)
+mcpp.toml [xlings].subos / mcpp 管理的默认运行时
         ▼
 解析 runtime binding             ← 产物将加载哪个 libc(§2.1)——是答案,不是搜索
+        ▼
+解析工具链 payload               ← 项目/default/install 入口共享同一管线
+        ▼
+ensure_post_install_fixup()      ← 精确 glibc@version、marker 闸门,不取 readdir 首项
         ▼
 detect / probe                   ← triple、sysroot、payload 路径(glibc、linux-headers)
         ▼
@@ -25,6 +24,8 @@ ToolchainLinkModel(C 库轴的唯一解析器)
         └──► cfg 再生          (供人类直接使用的 clang++.cfg)
         ▼
 hermetic 链接校验(`-###` 干跑)  ← 校验沙箱 CRT/loader 的解析结果
+        ▼
+链接 → 内部 ELF 物理校验        ← 校验真实产物及解析闭包(§6.1)
 ```
 
 贯穿一切的两条原则:
@@ -63,15 +64,27 @@ xlings 后端解析/自动安装到沙箱
 
 ### 2.1 runtime binding:绑哪个 libc,只决定一次
 
-payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是关于环境的事实,
-不该靠推断。mcpp 按顺序解析:
+payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是根项目本地开发 OS 的事实,
+不该从编译器路径或 shell 状态推断。mcpp 只有两种选择:
 
-1. `[xlings] subos = "<name>"` —— 该 subos(活动 subos 的兄弟)在自己
-   `.xlings.json` 的 `subos_info` 块里自述 runtime(xlings 2026.8.5.1 起)。
-2. 活动 subos,同一个块。
-3. *兼容路径。* 在该块出现之前创建的 subos 无法作答,此时以工具链自身烙入的值
-   顶上——gcc 的 specs、clang 的 cfg。这正是产物**将会**加载的那个值,故编译期
-   与运行期仍然一致;一旦 subos 能作答,这条自动退场。
+1. 未声明 `[xlings].subos`:使用全局 mcpp 配置所选 xlings home 中已初始化的
+   `McppDefault` (`subos/default`)。
+2. `[xlings] subos = "<name>"`:使用 `NamedSubos(name)`;显式 `"default"`
+   仍保留命名选择身份,其他名称解析到根项目的本地 xlings scope。
+
+workspace 构建由 workspace root 选择;member 与 dependency 声明不合并、不传递。
+`XLINGS_ACTIVE_SUBOS`、current、编译器 owner home 以及 CLI/环境 override 都不是第三层。
+所选 SubOS 必须提供受支持的 `subos_info`:环境不存在或 contract 缺失/不兼容会 hard error,
+绝不回退 default/active/编译器烙入状态。该 contract 只读取一次形成 `RuntimeBinding` snapshot,
+由 configure/link/run/test 与 fast-path cache 共同使用。
+Linux snapshot 还记录所选 loader/libc 目录的规范路径及可选的创建宿主 glibc floor;
+它们是链接后校验的证据,不是新的选择入口。
+
+当解析后的 SubOS view 可规范化到一个受管 glibc payload 时，该真实 view 是权威事实。
+旧 xlings 状态可能在 view 已原子切到受管 2.44 后仍保留 `runtime = "glibc@2.39"`；此时
+mcpp 在同一 binding 中记录真实的 2.44 身份与路径。若旧 view 是断链，mcpp 只允许解析
+`runtime` 精确指名的 payload；不会枚举已安装版本，也不会挑“最近/最新”版本。两条路径
+都只消费 xlings 给出的事实，不引入 mcpp 自己的运行时选择策略。
 
 没有 binding 是**拒绝**而不是取默认值:`CLibMode::PayloadFirst` 会被放弃,而不是
 去挑一个 libc。
@@ -83,11 +96,51 @@ payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是�
 引用了 `GLIBC_2.42` 符号,却跑在没有这些符号的运行时上,且报错落在与"拉进第二个
 glibc 的那条依赖"毫无关系的包上。目录顺序不是决策依据。
 
-因为 binding 决定产物加载什么,它计入工具链指纹(11 个字段,不是 10 个)——只在
-runtime 上不同的两次构建绝不能共用同一条缓存。
+因为 binding 决定产物加载什么,完整规范化 contract hash 是工具链指纹第 11 个字段——
+即使两个命名 SubOS 都使用同一 glibc,只要 provider 或环境声明不同也绝不能共用缓存。
 
 注意:probe 已**不再**从 clang cfg 挖 `--sysroot`——cfg 是这套机制的输出,
 不是输入(见 §5)。
+
+### 2.2 通用运行时 provider 与 artifact
+
+`RuntimeBinding` 还携带 xlings 为所选开发 OS 解析好的 provider-neutral fact。
+`subos_info.runtime_contract` 是 schema 1 上可选、可加的 block:
+
+```json
+{
+  "providers": [
+    {"capability": "display.present", "provider": {
+      "namespace": "xim", "name": "display-runtime", "version": "1.0.0",
+      "source": "xim-pkgindex@<revision>"}}
+  ],
+  "artifacts": [
+    {"role": "driver", "provider": {
+      "namespace": "xim", "name": "display-runtime", "version": "1.0.0",
+      "source": "xim-pkgindex@<revision>"},
+     "path": "${subosdir}/lib/runtime/provider.so",
+     "provenance": "subos_view", "abi": "elf-x86_64",
+     "digest": "sha256:...", "host_fingerprint": "..."}
+  ]
+}
+```
+
+binding parser 只解析一次 `${subosdir}` 和相对 artifact 路径,排序 fact,并把它们纳入
+contract hash 与 cache snapshot。进入 BuildPlan 后,所选 provider fact 排在描述符
+fallback 前。描述符 requirement/artifact 则由 resolver 分别用 requester/provider 的
+canonical PackageId 盖章,所以不同 namespace 下相同短名不会在任何环节碰撞。
+
+所有权边界是刻意的:mcpp-index 表达通用 runtime requirement;xlings/xim 选择并诊断
+宿主图形/运行时栈;mcpp 只消费已选 provider/artifact fact 与通用 LinkIntent。
+mcpp 不含硬件、driver vendor、WSL 或 ICD 选择路径;源码 gate 会拒绝引入这类
+provider-specific 分支,也拒绝把相关词汇与外部 probe 启动耦合。
+
+`LinkIntent` 分开 `linkLibraryDirs`、`transitiveNeededDirs` 和
+`runtimeSearchDirs`;最后一类绝不渲染为 `-L`。ELF 只为 runtime 目录发 rpath,
+且仅为 transitive 类发 `-rpath-link`;Mach-O 发 rpath/framework;PE 发链接库路径并
+用显式 deploy-file copy edge。精确 RuntimeBinding、canonical identity、LinkIntent、
+搜索机制与链接后 verdict 写入 `resolution.json` schema 2。
+`mcpp why runtime` 只解释该存储文件;重新诊断由 `xlings doctor` 负责。
 
 ## 3. 链接模型(`src/toolchain/linkmodel.cppm`)
 
@@ -225,6 +278,62 @@ CI 用一个**完全没有宿主工具链**的 job(`debian:stable-slim`,无 gcc�
 `Scrt1.o`)守住这一切——那是唯一能忠实复现干净机器故障模式的环境类;另有 e2e
 `86_llvm_hermetic_link.sh` 在任何机器上复核 `-###` 的解析结果。
 
+### 6.1 链接后的 Linux 运行时物理校验(`elf_runtime.cppm`)
+
+hermetic 校验回答的是链接前问题:driver 看起来会解析到什么。运行时物理校验回答更强的
+链接后问题:新 ELF 真正记录了什么,其闭包实际会加载什么。
+`[build] allow_host_libs = true` 会有意放宽前者,但不会屏蔽后者已经可证明的物理矛盾。
+
+对每个新链接的 Linux executable/shared object,mcpp 在进程内解析 ELF64 little-endian
+program/dynamic/GNU version 表;构建路径不启动 `readelf`、`patchelf` 或 `ldd`。读取内容包括
+`PT_INTERP`、`DT_RPATH`/`DT_RUNPATH`、`DT_NEEDED` 以及所需/导出的 `GLIBC_*` 版本。
+随后按产物搜索路径、所选 runtime/toolchain 目录和已知宿主库目录解析闭包,并执行:
+
+- **规则 B(同源):** `PT_INTERP` 和闭包中每个 `libc.so.6` 必须都来自
+  `RuntimeBinding` 选定的规范 payload。宿主 loader + 私有 libc,或两个私有 libc payload,
+  都是可证明的 pre-main 故障。
+- **规则 A(版本 floor):** 闭包请求的每个 `GLIBC_x.y` 都不得高于所选 libc 的 GNU
+  version definitions。满足条件时链接宿主 DSO 完全允许;mcpp 校验的是物理事实,不是
+  强加“禁止宿主库”策略。
+
+判定是类型化的:`Pass`、`ProvenMismatch`、`Inconclusive`。可证明的 A/B 冲突会 hard fail,
+诊断给出规范化 requester/provider/artifact 路径与可复制的 SubOS 修复步骤。无法取得
+loader cache/硬件闭包时明确报告 inconclusive,绝不伪装成绿色。macOS/Windows 复用同一
+类型接口但为 no-op,不会套用 ELF/glibc 规则。
+
+verdict 以 `.mcpp-runtime-verdicts.json` 存在 `build.ninja` 旁,键包含产物 stat 指纹与
+完整 runtime contract hash。热 no-op 必须已有当前 `pass` 记录,比较 Ninja 前后产物 stat,
+并执行零次 ELF 解析;若 Ninja 意外重链则先退回完整路径重新校验,之后才允许成功/运行。
+`mcpp self doctor` 复用同一存档 verdict,不会拿已经变化的当前宿主重新猜一次。
+
+装后 fixup 同样按精确身份收敛:`glibc@2.44` 只解析
+`<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`。精确 payload 缺失/陈旧就是错误,其他已安装版本
+永远不是回退项。
+
+### 6.2 一条运行时搜索路径可以住在哪里(`runtime_env_contract.cppm`)
+
+告诉 loader「去哪找」有两条通道,差别不在便利性,而在**波及范围**:
+
+| | 波及到 | |
+| --- | --- | --- |
+| `DT_RUNPATH` | 携带它的那**一个**对象,及其 `dlopen()` | 逐二进制 |
+| `LD_LIBRARY_PATH` | 本进程**以及它派生的每一个进程** | 继承,且一直传下去 |
+
+第二行就是私有 libc 目录必须是 **binary 作用域**的原因。glibc 的 `libc.so.6` 与它的
+`ld.so` 通过 `GLIBC_PRIVATE` 版本锁死:2.44 的 libc 里 `__pointer_chk_guard` 是未定义
+引用,只有 2.44 自己的 loader 导出它。mcpp 构建出来的程序没事——`PT_INTERP` 指向私有
+loader;`/bin/sh` 有事:它的 `PT_INTERP` 指向**宿主** loader,而且任何环境变量都改不了,
+于是 `popen()`/`system()` 的子进程在重定位阶段就死掉,连 `main` 都进不去,也没有任何
+输出(#401;#291 是同一形状往内一跳,杀掉的是 mcpp 自己的嵌套宿主工具)。
+
+所以 mcpp 不会把私有 libc 目录发布到环境里。也不需要:只要存在 payload,link model
+就已经在 `--dynamic-linker` 旁发了 `-Wl,-rpath,<glibc>`,恰好覆盖这个目录存在的唯一
+理由——某个 `dlopen()` 的 `DT_NEEDED` 闭包看不到可执行文件的 RUNPATH。
+
+这是**作用域**,不是条件判断。「只在依赖可能 dlopen 时才导出」仍然是导出,而死掉的
+子进程不关心原因。普通依赖运行时目录保留环境作用域:它们没有 loader 耦合,宿主二进制
+撞上去最多是困惑,不会死。
+
 ## 7. 扩充指南
 
 ### 7.1 新增一个工具链(新编译器家族或发行版)
@@ -291,6 +400,9 @@ mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 �
 | 链接模型 + loader 解析 | `src/toolchain/linkmodel.cppm` |
 | 统一 fixup 管线(patchelf/specs/cfg、marker)| `src/toolchain/post_install.cppm` |
 | install/lifecycle 入口 | `src/toolchain/lifecycle.cppm`;auto-install 入口在 `src/build/prepare.cppm` |
+| root runtime 选择/binding | `src/xlings/runtime_selection.cppm`、`src/platform/runtime_binding.cppm`、`src/xlings/subos_info.cppm` |
+| 通用 runtime contract + LinkIntent | `src/manifest/types.cppm`、`src/build/plan.cppm`、`src/build/flags.cppm` |
+| 存储 resolution 解释 | `src/build/prepare.cppm`、`src/build/runtime_validation.cppm`、`src/doctor.cppm` |
 | flag 组装(主构建)| `src/build/flags.cppm` |
 | `import std;` 预编译 | `src/toolchain/stdmod.cppm` |
 | build.mcpp 宿主 flags | `src/build/build_program.cppm` |

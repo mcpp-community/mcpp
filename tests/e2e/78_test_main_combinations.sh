@@ -23,7 +23,7 @@ cd combo
 
 cat >> mcpp.toml <<'EOF'
 
-[dev-dependencies]
+[dev-dependencies.compat]
 gtest = "1.15.2"
 EOF
 

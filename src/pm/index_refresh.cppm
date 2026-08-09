@@ -62,6 +62,7 @@ enum class RefreshReason {
     SuppressedDebounce,     // refreshed moments ago; upstream simply lacks it
     SuppressedInconclusive, // a miss here proves nothing (see header)
     SuppressedIndexUnusable,// the index that would answer is too new to read
+    SuppressedMalformedDescriptor, // local bytes exist but violate identity
 };
 
 struct RefreshPolicy {
@@ -190,6 +191,8 @@ std::string_view reason_text(RefreshReason r) {
         case RefreshReason::SuppressedInconclusive: return "no index can refute this";
         case RefreshReason::SuppressedIndexUnusable:
             return "an index requires a newer mcpp — refreshing cannot help";
+        case RefreshReason::SuppressedMalformedDescriptor:
+            return "descriptor identity is malformed — refreshing cannot help";
     }
     return "";
 }
@@ -220,6 +223,10 @@ RefreshDecision decide_for_dependency(const IndexRoute&               route,
 
     // 3. INV-3: a miss only counts when the index could have refuted it.
     auto found = lookup_descriptor(route, coords);
+    if (!found.error.empty()) {
+        d.reason = RefreshReason::SuppressedMalformedDescriptor;
+        return d;
+    }
     if (!found.hit && !found.conclusive) {
         d.reason = RefreshReason::SuppressedInconclusive;
         return d;

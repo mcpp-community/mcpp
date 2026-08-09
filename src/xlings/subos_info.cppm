@@ -61,10 +61,38 @@ struct Provider {
     std::vector<EnvDecl> decls;
 };
 
+struct PackageIdentity {
+    std::string namespace_;
+    std::string name;
+    std::string version;
+    std::string source;
+};
+
+struct CapabilityProvider {
+    std::string     capability;
+    PackageIdentity provider;
+};
+
+struct RuntimeArtifact {
+    std::string           role;
+    PackageIdentity       provider;
+    std::filesystem::path path;
+    std::string           provenance;
+    std::string           abi;
+    std::string           digest;
+    std::string           hostFingerprint;
+};
+
 struct Info {
     int                   schema = 0;
     std::string           runtime;    // "glibc@2.39"
+    std::string           hostGlibc;  // optional creation-host floor, e.g. "2.43"
     std::vector<Provider> providers;  // sorted by binding
+    // Optional generic contract exported by xlings after it resolves provider
+    // recipes.  mcpp interprets these facts and never performs provider/hardware
+    // discovery itself.
+    std::vector<CapabilityProvider> runtimeProviders;
+    std::vector<RuntimeArtifact>    runtimeArtifacts;
     bool                  present = false;
     // Non-empty ⇒ the caller MUST surface it. Never an error: a missing or
     // newer block degrades the experience; it does not invalidate a build.
@@ -130,6 +158,8 @@ Info read(const std::filesystem::path& subosDir) {
         info.schema = v->get<int>();
     if (auto v = it->find("runtime"); v != it->end() && v->is_string())
         info.runtime = v->get<std::string>();
+    if (auto v = it->find("host_glibc"); v != it->end() && v->is_string())
+        info.hostGlibc = v->get<std::string>();
 
     // `envs` is an OBJECT keyed by binding, whose values are arrays of
     // declarations:
@@ -169,6 +199,82 @@ Info read(const std::filesystem::path& subosDir) {
         }
     }
 
+    // Generic runtime provider/artifact contract.  This block is additive to
+    // schema 1 so older SubOS manifests remain valid and simply expose no
+    // provider provenance.  All identities are structured on the wire; a bare
+    // display name would reintroduce cross-namespace collisions.
+    if (auto contract = it->find("runtime_contract");
+        contract != it->end() && contract->is_object()) {
+        auto read_identity = [](const nlohmann::json& value) {
+            PackageIdentity id;
+            if (!value.is_object()) return id;
+            id.namespace_ = value.value("namespace", "");
+            id.name = value.value("name", "");
+            id.version = value.value("version", "");
+            id.source = value.value("source", "");
+            return id;
+        };
+        auto append_note = [&](std::string message) {
+            if (!info.note.empty()) info.note += "\n";
+            info.note += std::move(message);
+        };
+        if (auto providers = contract->find("providers");
+            providers != contract->end() && providers->is_array()) {
+            for (auto const& value : *providers) {
+                if (!value.is_object()) continue;
+                CapabilityProvider provider;
+                provider.capability = value.value("capability", "");
+                if (auto identity = value.find("provider"); identity != value.end())
+                    provider.provider = read_identity(*identity);
+                if (provider.capability.empty() || provider.provider.name.empty()) {
+                    append_note("subos runtime_contract contains an incomplete provider entry");
+                    continue;
+                }
+                info.runtimeProviders.push_back(std::move(provider));
+            }
+        }
+        if (auto artifacts = contract->find("artifacts");
+            artifacts != contract->end() && artifacts->is_array()) {
+            for (auto const& value : *artifacts) {
+                if (!value.is_object()) continue;
+                RuntimeArtifact artifact;
+                artifact.role = value.value("role", "");
+                if (auto identity = value.find("provider"); identity != value.end())
+                    artifact.provider = read_identity(*identity);
+                auto path = value.value("path", "");
+                artifact.provenance = value.value("provenance", "");
+                artifact.abi = value.value("abi", "");
+                artifact.digest = value.value("digest", "");
+                artifact.hostFingerprint = value.value("host_fingerprint", "");
+                constexpr std::string_view marker = "${subosdir}";
+                for (auto pos = path.find(marker); pos != std::string::npos;
+                     pos = path.find(marker, pos + subosDir.string().size()))
+                    path.replace(pos, marker.size(), subosDir.string());
+                artifact.path = path;
+                if (artifact.path.is_relative()) artifact.path = subosDir / artifact.path;
+                artifact.path = artifact.path.lexically_normal();
+                if (artifact.role.empty() || artifact.provider.name.empty()
+                    || path.empty() || artifact.provenance.empty()) {
+                    append_note("subos runtime_contract contains an incomplete artifact entry");
+                    continue;
+                }
+                info.runtimeArtifacts.push_back(std::move(artifact));
+            }
+        }
+        std::ranges::sort(info.runtimeProviders, {}, [](auto const& value) {
+            return std::tuple{value.capability, value.provider.namespace_,
+                              value.provider.name, value.provider.version,
+                              value.provider.source};
+        });
+        std::ranges::sort(info.runtimeArtifacts, {}, [](auto const& value) {
+            return std::tuple{value.role, value.provider.namespace_,
+                              value.provider.name, value.provider.version,
+                              value.provider.source, value.path.generic_string(),
+                              value.provenance, value.abi, value.digest,
+                              value.hostFingerprint};
+        });
+    }
+
     // Sorted by binding, matching xlings's own ordering, so two reads of one
     // subos produce the same environment in the same order. Ordering is not
     // cosmetic here: it decides which provider wins a list variable, and
@@ -178,11 +284,13 @@ Info read(const std::filesystem::path& subosDir) {
                   return a.binding < b.binding;
               });
 
-    if (info.schema > kSupportedSchema)
-        info.note = std::format(
+    if (info.schema > kSupportedSchema) {
+        if (!info.note.empty()) info.note += "\n";
+        info.note += std::format(
             "subos '{}' declares schema {}, newer than the {} this mcpp "
             "understands; reading the fields it knows and ignoring the rest",
             subosDir.string(), info.schema, kSupportedSchema);
+    }
     return info;
 }
 
@@ -256,27 +364,10 @@ resolve_env(const Info& info, const std::filesystem::path& subosDir,
             if (!hit) {
                 auto amb = ambient_of(d.var);
                 if (d.op == "set") {
-                    // `set` wins, ambient or not.
-                    //
-                    // Deliberately NOT "yield to an exported value". That
-                    // reading was written here first and withdrawn: `set` and
-                    // "default" are two different intentions, and a subos has
-                    // real need of the first -- a variable naming its own
-                    // loader configuration must not be overridable by a stale
-                    // value in the caller's shell. Collapsing them here would
-                    // remove the ability to express it.
-                    //
-                    // It is also not mcpp's vocabulary to redefine. `envs` is
-                    // xlings' wire format; a consumer that quietly gives an op
-                    // a second meaning makes the same subos behave differently
-                    // depending on which tool launched the program.
-                    //
-                    // The escape hatch mcpp#382 asks for (a recipe declaring a
-                    // DEFAULT the user can override) therefore wants a new op
-                    // from xlings, not a reinterpretation of this one. When it
-                    // exists, it is honoured here -- unknown ops are dropped
-                    // today, which is why it has to arrive on both sides.
-                    out.emplace_back(d.var, value);
+                    // xlings's presence semantics: `set` fills an absent
+                    // variable, but any caller-provided value wins.  An
+                    // explicitly empty value is PRESENT and must stay empty.
+                    out.emplace_back(d.var, amb ? *amb : value);
                     continue;
                 }
                 // `prepend` against the ambient value, not instead of it.
@@ -292,7 +383,11 @@ resolve_env(const Info& info, const std::filesystem::path& subosDir,
                     out.emplace_back(d.var, value);
                 continue;
             }
-            if (d.op == "set") { hit->second = value; continue; }
+            if (d.op == "set") {
+                auto amb = ambient_of(d.var);
+                hit->second = amb ? *amb : value;
+                continue;
+            }
             if (!contains_element(hit->second, value))
                 hit->second = value + sep + hit->second;
         }

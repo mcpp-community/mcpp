@@ -115,7 +115,8 @@ Fingerprint compute_fingerprint(const FingerprintInputs& in) {
     fp.parts[7] = std::string(MCPP_VERSION);
     fp.parts[8] = in.dependencyLockHash;
     fp.parts[9] = in.stdBmiHash;
-    fp.parts[10] = tc.runtimeBinding;
+    fp.parts[10] = tc.runtimeContractHash.empty()
+        ? tc.runtimeBinding : tc.runtimeContractHash;
 
     // Combine all parts deterministically.
     std::uint64_t h = 0xcbf29ce484222325ull;

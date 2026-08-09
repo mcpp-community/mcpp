@@ -64,22 +64,84 @@ TEST(PmIndexRoute, LocalPathIndexIsAuthoritative) {
     EXPECT_TRUE(route.authoritative_for("acme"));
 }
 
-// The regression behind #305/#307: a dotted selector is a NAMESPACE PATH, so it
-// only resolves through the candidates the manifest parser derives. Probing the
+TEST(PmIndexRoute, RouteDescriptionDoesNotExposeItsLocalPath) {
+    LocalIndex idx("diagnostic-privacy");
+    auto indices = local_map(idx);
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
+
+    const auto description = route.describe("acme");
+    EXPECT_EQ(description, "local index 'acme': root present, pkgs present");
+    EXPECT_EQ(description.find(idx.root.string()), std::string::npos);
+}
+
+TEST(PmIndexRoute, RouteDescriptionDistinguishesAMissingLocalRoot) {
+    mcpp::pm::IndexMap indices;
+    indices["acme"] = mcpp::pm::IndexSpec{
+        .name = "acme", .path = "missing-local-index" };
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
+
+    EXPECT_EQ(route.describe("acme"),
+              "local index 'acme': root absent, pkgs absent");
+}
+
+// The regression behind #305/#307: a dotted selector is one exact NAMESPACE
+// PATH, so it resolves through the coordinate the manifest parser derives. Probing the
 // literal short name can never match — `package.name` is a single atomic
 // segment, so nothing in any index is named "acme.util".
-TEST(PmIndexRoute, DottedSelectorResolvesThroughItsCandidates) {
+TEST(PmIndexRoute, DottedSelectorResolvesThroughItsExactCoordinate) {
     LocalIndex idx("dotted");
     auto indices = local_map(idx);
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
 
-    auto selector = mcpp::pm::resolve_dependency_selector(
-        "acme.util", mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
+    ASSERT_EQ(selector.candidates.size(), 1u);
     auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
 
     ASSERT_TRUE(found.hit.has_value());
     EXPECT_EQ(found.hit->coord.namespace_, "acme");
     EXPECT_EQ(found.hit->coord.shortName, "util");
+}
+
+TEST(PmIndexRoute, NameOnlyDescriptorInheritsOwningLocalIndexNamespace) {
+    LocalIndex idx("name-only");
+    std::ofstream(idx.root / "pkgs" / "a" / "acme.util.lua") << R"(
+package = {
+    spec = "1",
+    name = "util",
+    type = "package",
+}
+)";
+    auto indices = local_map(idx);
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
+
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
+    auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+
+    ASSERT_TRUE(found.hit.has_value());
+    EXPECT_EQ(found.hit->coord.namespace_, "acme");
+    EXPECT_EQ(found.hit->coord.shortName, "util");
+}
+
+TEST(PmIndexRoute, MalformedCandidateIsAnErrorNotANotFoundMiss) {
+    LocalIndex idx("malformed");
+    std::ofstream(idx.root / "pkgs" / "a" / "acme.util.lua") << R"(
+package = {
+    spec = "1",
+    namespace = "acme",
+    name = "nested.util",
+    type = "package",
+}
+)";
+    auto indices = local_map(idx);
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
+
+    // The filename matches no candidate for this exact coordinate, so the
+    // identity scan must attribute the malformed dotted name diagnostically.
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.nested.util");
+    auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+
+    EXPECT_FALSE(found.hit.has_value());
+    EXPECT_NE(found.error.find("single atomic segment"), std::string::npos);
 }
 
 TEST(PmIndexRoute, LiteralDottedShortNameNeverMatches) {
@@ -117,4 +179,139 @@ TEST(PmIndexRoute, MissBehindAnUnreadableIndexIsNotConclusive) {
     auto found = mcpp::pm::lookup_descriptor(route, missing);
     EXPECT_FALSE(found.hit.has_value());
     EXPECT_FALSE(found.conclusive);
+}
+
+TEST(PmIndexRoute, WorkspaceMemberReadsRootAnchoredRelativeIndex) {
+    auto root = std::filesystem::temp_directory_path()
+              / "mcpp-index-route-workspace-relative";
+    std::filesystem::remove_all(root);
+    struct Cleanup {
+        std::filesystem::path root;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(root, ec);
+        }
+    } cleanup{root};
+
+    std::filesystem::create_directories(root / "index" / "pkgs" / "a");
+    std::filesystem::create_directories(root / "member");
+    std::ofstream(root / "index" / "pkgs" / "a" / "acme.util.lua") << R"(
+package = {
+    spec = "1",
+    namespace = "acme",
+    name = "util",
+    type = "package",
+}
+)";
+    std::ofstream(root / "mcpp.toml") << R"(
+[workspace]
+members = ["member"]
+
+[indices]
+acme = { path = "index" }
+)";
+    std::ofstream(root / "member" / "mcpp.toml") << R"(
+[package]
+name = "member"
+version = "0.1.0"
+)";
+
+    auto indices = mcpp::pm::effective_indices(root / "member");
+    ASSERT_TRUE(indices.contains("acme"));
+
+    // Assert the CAPABILITY (the member can read the root's index), not the
+    // path SPELLING. The first version of this test compared the stored path
+    // against `(root / "index").lexically_normal()`, which passes for any
+    // anchoring rule that happens to produce that string and says nothing
+    // about whether the index is reachable — which is why it stayed green
+    // while the Windows suite was red.
+    mcpp::pm::IndexRoute route{ &indices, root / "member", nullptr };
+    EXPECT_EQ(route.describe("acme"),
+              "local index 'acme': root present, pkgs present");
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
+    auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+    ASSERT_TRUE(found.hit.has_value());
+    EXPECT_EQ(found.hit->coord.namespace_, "acme");
+    EXPECT_EQ(found.hit->coord.shortName, "util");
+}
+
+// Why `inherit_workspace_indices` anchors with `lexically_normal` and not
+// `weakly_canonical`.
+//
+// Anchoring answers "WHICH directory did the workspace author mean", and the
+// answer must stay inside the tree the author addressed. `weakly_canonical`
+// answers a different question — "what is this path after every symlink is
+// resolved" — and a workspace reached through a symlinked parent therefore
+// gets relocated into a tree the author never wrote. That is observable:
+// `prepare` reports a missing descriptor as "not found in local index at
+// '<path>'", and this project deliberately keeps such diagnostics inside the
+// user's own declared locations.
+//
+// (Recorded because the original motivation given for this change — a Windows
+// short-name alias — turned out NOT to be the cause of the red Windows suite;
+// that was a fixture writing an MSYS path into mcpp.toml. The change survives
+// on this invariant, which is why the invariant is now a test.)
+TEST(PmIndexRoute, InheritedIndexStaysInsideTheDeclaredWorkspaceTree) {
+#ifdef _WIN32
+    GTEST_SKIP() << "directory symlinks need elevation on Windows";
+#else
+    auto base = std::filesystem::temp_directory_path()
+              / "mcpp-index-route-workspace-symlink";
+    std::filesystem::remove_all(base);
+    struct Cleanup {
+        std::filesystem::path base;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(base, ec);
+        }
+    } cleanup{base};
+
+    const auto real = base / "real";
+    const auto link = base / "link";
+    std::filesystem::create_directories(real / "index" / "pkgs" / "a");
+    std::filesystem::create_directories(real / "member");
+    std::ofstream(real / "index" / "pkgs" / "a" / "acme.util.lua") << R"(
+package = {
+    spec = "1",
+    namespace = "acme",
+    name = "util",
+    type = "package",
+}
+)";
+    std::ofstream(real / "mcpp.toml") << R"(
+[workspace]
+members = ["member"]
+
+[indices]
+acme = { path = "index" }
+)";
+    std::ofstream(real / "member" / "mcpp.toml") << R"(
+[package]
+name = "member"
+version = "0.1.0"
+)";
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(real, link, ec);
+    if (ec) GTEST_SKIP() << "symlinks unavailable here: " << ec.message();
+
+    auto indices = mcpp::pm::effective_indices(link / "member");
+    ASSERT_TRUE(indices.contains("acme"));
+
+    // The declared tree is preserved: the anchored path is still addressed
+    // through `link`, not rewritten to `real`.
+    const auto anchored = indices.at("acme").path.string();
+    EXPECT_TRUE(anchored.starts_with(link.string()))
+        << "anchoring relocated the index out of the declared tree: "
+        << anchored;
+
+    // …and it is still readable through that spelling. Preserving identity is
+    // only correct if the index remains reachable.
+    mcpp::pm::IndexRoute route{ &indices, link / "member", nullptr };
+    EXPECT_EQ(route.describe("acme"),
+              "local index 'acme': root present, pkgs present");
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
+    auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+    ASSERT_TRUE(found.hit.has_value());
+    EXPECT_EQ(found.hit->coord.namespace_, "acme");
+#endif
 }

@@ -33,6 +33,7 @@ import mcpp.config;
 import mcpp.fetcher;
 import mcpp.manifest;
 import mcpp.pm.dep_spec;
+import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.project;
 
@@ -58,20 +59,28 @@ struct IndexRoute {
     bool lazy_git(std::string_view ns) const;
     // Can a miss in this namespace be taken as proof of absence?
     bool authoritative_for(std::string_view ns) const;
+    // Privacy-safe route state for a failed exact lookup.  This deliberately
+    // omits filesystem paths: CI and user diagnostics need to distinguish a
+    // missing declaration from a missing local checkout without publishing
+    // workstation-specific locations.
+    std::string describe(std::string_view ns) const;
     // Read the descriptor for one coordinate through the right transport.
     std::optional<std::string> read(const DependencyCoordinate& coord) const;
 };
 
 struct Lookup {
     std::optional<DescriptorHit> hit;
+    // A candidate descriptor was present but malformed. This is neither a
+    // miss nor a reason to refresh; callers surface the author-facing cause.
+    std::string error;
     // false → at least one candidate lives behind an index that cannot refute
     // it, so "no hit" says nothing and the caller must not hard-fail.
     bool conclusive = true;
 };
 
-// Walk ordered candidates and return the first descriptor that DECLARES the
-// requested identity, applying the same two rules prepare's dependency
-// disambiguation applies.
+// Resolve the supplied coordinate list and return the first descriptor that
+// DECLARES the requested identity. Canonical selectors supply exactly one;
+// the vector shape remains for migration callers carrying an older lock.
 Lookup lookup_descriptor(const IndexRoute& route,
                          const std::vector<DependencyCoordinate>& candidates);
 
@@ -130,6 +139,35 @@ bool IndexRoute::authoritative_for(std::string_view ns) const {
     return ns.starts_with(std::string(kDefaultNamespace) + ".");
 }
 
+std::string IndexRoute::describe(std::string_view ns) const {
+    auto* idx = find_for_ns(ns);
+    if (!idx) {
+        return std::format(
+            "builtin index for namespace '{}': registry {}",
+            ns, cfg ? "available" : "unavailable");
+    }
+    if (idx->is_local()) {
+        const auto root = mcpp::config::resolve_project_index_path(
+            projectRoot, *idx);
+        std::error_code ec;
+        const bool rootPresent = std::filesystem::is_directory(root, ec);
+        ec.clear();
+        const bool pkgsPresent =
+            std::filesystem::is_directory(root / "pkgs", ec);
+        const auto label = idx->name.empty() ? std::string(ns) : idx->name;
+        return std::format(
+            "local index '{}': root {}, pkgs {}", label,
+            rootPresent ? "present" : "absent",
+            pkgsPresent ? "present" : "absent");
+    }
+    if (idx->is_builtin()) {
+        return std::format(
+            "builtin index '{}': registry {}", idx->name,
+            cfg ? "available" : "unavailable");
+    }
+    return std::format("git index '{}': checkout pending", idx->name);
+}
+
 std::optional<std::string>
 IndexRoute::read(const DependencyCoordinate& coord) const {
     auto* idx = find_for_ns(coord.namespace_);
@@ -155,13 +193,27 @@ Lookup lookup_descriptor(const IndexRoute& route,
 
         auto lua = route.read(candidate);
         if (!lua) continue;
+        if (auto violation =
+                mcpp::manifest::xpkg_name_form_violation_from_lua(*lua)) {
+            out.error = std::format(
+                "package descriptor for exact selector '{}': {}",
+                mcpp::pm::format_package_selector(candidate), *violation);
+            break;
+        }
         // The descriptor must DECLARE the requested identity. `allowLegacy-
         // BareDefault=false` matches prepare's disambiguation: a descriptor
         // with no namespace is reached through the explicit `(∅, name)` rung
         // below, not by being waved through on the default-namespace rung.
+        // A descriptor served by one declared project index inherits that
+        // index's namespace when it omits package.namespace.  Pass the owning
+        // index explicitly; leaving this empty turns valid name-only local
+        // descriptors into false misses (including [indices] default).
+        const auto* owner = route.find_for_ns(candidate.namespace_);
+        const std::string_view ownerNs = owner
+            ? std::string_view{owner->name} : std::string_view{};
         if (!mcpp::manifest::xpkg_lua_identity_matches(
                 *lua, candidate.namespace_, candidate.shortName,
-                /*allowLegacyBareDefault=*/false)) {
+                /*allowLegacyBareDefault=*/false, ownerNs)) {
             continue;
         }
         auto declaredNs = mcpp::manifest::extract_xpkg_namespace(*lua);

@@ -3,6 +3,7 @@
 # Regression test for dependency BMI cache population when a custom-index
 # package produces object files under collision-avoidance subdirectories.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -11,6 +12,7 @@ export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/c"
 cat > "$INDEX_DIR/pkgs/c/collision-lib.lua" <<'EOF'
 package = {
@@ -69,7 +71,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 "local-dev.collision-lib" = "1.0.0"

@@ -88,9 +88,7 @@ TEST(PmPackageFetcher, ForeignBareZlibAloneDoesNotSatisfyCompatRequest) {
     std::filesystem::remove_all(project);
 }
 
-TEST(PmPackageFetcher, DefaultNamespaceRequestResolvesCompatAliasDescriptor) {
-    // The CI break: dev-dep `gtest` (bare → default namespace "mcpplibs") must
-    // resolve to the `compat.gtest` descriptor that actually lives in the index.
+TEST(PmPackageFetcher, DefaultNamespaceCannotResolveCompatDescriptor) {
     auto project = make_tempdir("mcpp-fetcher-compat-alias");
     auto dataRoot = project / ".mcpp" / "data";
 
@@ -105,11 +103,14 @@ package = {
     write_file(dataRoot / "mcpplibs" / "pkgs" / "c" / "compat.gtest.lua",
                compatGtest);
 
-    auto lua = mcpp::pm::Fetcher::read_xpkg_lua_from_project_data(
+    auto defaultLua = mcpp::pm::Fetcher::read_xpkg_lua_from_project_data(
         project, "mcpplibs", "gtest");
+    EXPECT_FALSE(defaultLua.has_value());
 
-    ASSERT_TRUE(lua.has_value()) << "default-ns request must find its compat alias";
-    EXPECT_NE(lua->find("compat.gtest"), std::string::npos);
+    auto explicitLua = mcpp::pm::Fetcher::read_xpkg_lua_from_project_data(
+        project, "compat", "gtest");
+    ASSERT_TRUE(explicitLua.has_value());
+    EXPECT_NE(explicitLua->find("compat.gtest"), std::string::npos);
 
     std::filesystem::remove_all(project);
 }

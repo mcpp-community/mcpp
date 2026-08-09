@@ -5,6 +5,7 @@
 # short form, long form, and local path indices without requiring any
 # network access.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -14,6 +15,7 @@ export MCPP_HOME="$TMP/mcpp-home"
 
 # ── 1. Create a fake local index directory ──────────────────────────────
 INDEX_DIR="$TMP/my-local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/t"
 cat > "$INDEX_DIR/pkgs/t/test-pkg.lua" <<'EOF'
 package = {
@@ -43,7 +45,7 @@ name    = "myapp"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 acme = "git@gitlab.example.com:platform/mcpp-index.git"
 acme-stable = { url = "git@gitlab.example.com:stable.git", tag = "v2.0" }
 

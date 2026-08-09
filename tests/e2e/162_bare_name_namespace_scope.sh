@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # requires:
 # 162_bare_name_namespace_scope.sh — INV-RESOLVE (#278): a bare dependency name
-# resolves in exactly three places (mcpplibs, compat, no-namespace upstream);
-# every other namespace must be written out.
+# resolves in exactly one place (mcpplibs); every other namespace must be
+# written out.
 #
 # Before this, a bare name that matched nothing fell through to the FIRST
 # candidate SILENTLY, so mcpp carried on with a namespace it had invented and
@@ -20,15 +20,29 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
-# A path index owning namespace `acme`. Note the descriptor is FQN-correct —
-# this test is about the CONSUMER's spelling, not the descriptor's.
-mkdir -p idx/pkgs/a
+# A path index owning namespaces `acme` and `compat`. Note the acme descriptor
+# is FQN-correct — this test is about the CONSUMER's spelling, not the
+# descriptor's.
+mkdir -p idx/pkgs/a idx/pkgs/c
 cat > idx/pkgs/a/acme.widget.lua <<'EOF'
 package = {
     spec = "1", namespace = "acme", name = "acme.widget",
     xpm = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } },
             macosx = { ["1.0.0"] = { url = "u", sha256 = "h" } },
             windows = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+    mcpp = { schema = "0.1", sources = { "*.cpp" } },
+}
+EOF
+# The compat wrapper shape every published `compat.*` package uses. Served from
+# the fixture rather than the shared registry so section 5 asserts the same
+# property offline that it used to assert against whatever gtest happened to be
+# installed.
+cat > idx/pkgs/c/compat.gadget.lua <<'EOF'
+package = {
+    spec = "1", namespace = "compat", name = "gadget",
+    xpm = { linux = { ["2.0.0"] = { url = "u", sha256 = "h" } },
+            macosx = { ["2.0.0"] = { url = "u", sha256 = "h" } },
+            windows = { ["2.0.0"] = { url = "u", sha256 = "h" } } },
     mcpp = { schema = "0.1", sources = { "*.cpp" } },
 }
 EOF
@@ -44,6 +58,7 @@ version = "0.1.0"
 
 [indices]
 acme = { path = "../idx" }
+compat = { path = "../idx" }
 
 $1
 EOF
@@ -56,7 +71,7 @@ widget = "1.0.0"'
 if "$MCPP" build > bare.out 2>&1; then
     echo "FAIL: a bare name must not reach the acme namespace"; cat bare.out; exit 1
 fi
-grep -q "no package found under the namespaces mcpp searched" bare.out || {
+grep -q "no package found for exact selector" bare.out || {
     echo "FAIL: expected the explicit not-found error"; cat bare.out; exit 1; }
 # The identities actually attempted must be listed — the old silent fallback
 # reported a namespace the user never wrote.
@@ -74,7 +89,7 @@ write_manifest '[dependencies]
 "$MCPP" build > dotted.out 2>&1 || true
 # The asset URL is a sentinel, so the fetch fails — but resolution must have
 # gotten far enough to ADDRESS the package, which is what this asserts.
-if grep -q "no package found under the namespaces" dotted.out; then
+if grep -q "no package found for exact selector" dotted.out; then
     echo "FAIL: dotted selector must resolve to (acme, widget)"; cat dotted.out; exit 1
 fi
 
@@ -82,25 +97,65 @@ fi
 write_manifest '[dependencies.acme]
 widget = "1.0.0"'
 "$MCPP" build > subtable.out 2>&1 || true
-if grep -q "no package found under the namespaces" subtable.out; then
+if grep -q "no package found for exact selector" subtable.out; then
     echo "FAIL: sub-table form must resolve to (acme, widget)"; cat subtable.out; exit 1
 fi
 
-# ── 5. the default-namespace search path still works ────────────────
-# `gtest` is a bare request served by the `compat.gtest` descriptor. This is
-# the regression lock for the compat alias: narrowing the discovery rung must
-# not touch the mcpplibs/compat search path.
+# ── 5. namespace omission means mcpplibs, with a one-release exit ramp ──
 #
-# Asserted on RESOLUTION, not on a successful build: whether the asset actually
-# downloads depends on network/cache state, but "did the bare name reach the
-# compat descriptor" does not. Keeping the assertion at the resolution layer is
-# both the property under test and what makes this test hermetic.
+# Every published `compat.*` package and every manifest written before exact
+# identity spells its dependency bare. Turning that into an immediate hard
+# error would make an mcpp upgrade break builds against data that is already
+# published and can no longer be edited — the mirror image of the rule that
+# keeps a raised index floor from bricking older clients.
+#
+# So a bare name still REACHES compat for one release, but it can no longer do
+# so quietly: that silence, not the reach, was the #278 defect. The hit is
+# announced, it names the exact replacement, and the canonical identity is what
+# travels downstream.
+#
+# Asserted on RESOLUTION, not on a successful build: whether the sentinel asset
+# downloads is irrelevant to whether the bare name addressed the package.
 write_manifest '[dependencies]
-gtest = "1.15.2"'
+gadget = "2.0.0"'
 "$MCPP" build > compat.out 2>&1 || true
-if grep -q "no package found under the namespaces" compat.out; then
-    echo "FAIL: bare gtest must still resolve via the compat search path"
+if grep -q "no package found for exact selector" compat.out; then
+    echo "FAIL: bare gadget must still reach compat during the migration window"
     cat compat.out; exit 1
 fi
+grep -q "deprecated bare-name search" compat.out || {
+    echo "FAIL: the bare-name fallback must announce itself"; cat compat.out; exit 1; }
+grep -q "compat.gadget" compat.out || {
+    echo "FAIL: the warning must name the exact replacement"; cat compat.out; exit 1; }
+grep -q "\[dependencies.compat\]" compat.out || {
+    echo "FAIL: the warning must show the manifest edit"; cat compat.out; exit 1; }
+
+# The explicit spelling resolves the same package and says nothing: a user who
+# has already migrated must not be nagged.
+write_manifest '[dependencies.compat]
+gadget = "2.0.0"'
+"$MCPP" build > compat-explicit.out 2>&1 || true
+if grep -q "no package found for exact selector" compat-explicit.out; then
+    echo "FAIL: explicit compat.gadget must resolve"; cat compat-explicit.out; exit 1
+fi
+if grep -q "deprecated bare-name search" compat-explicit.out; then
+    echo "FAIL: an already-exact selector must not warn"
+    cat compat-explicit.out; exit 1
+fi
+
+# ── 6. the exit ramp is not a wildcard ──────────────────────────────
+# The fallback reaches `compat` and the namespace-less rung. It must NOT reach
+# a third-party namespace — section 1 already proved bare `widget` fails, and
+# it must keep failing now that a fallback exists at all. Stating the exact
+# namespace is likewise not eligible: it is an identity, not an omission.
+write_manifest '[dependencies.mcpplibs]
+gadget = "2.0.0"'
+if "$MCPP" build > explicit-default.out 2>&1; then
+    echo "FAIL: mcpplibs.gadget states an identity and must not reach compat"
+    cat explicit-default.out; exit 1
+fi
+grep -q "no package found for exact selector" explicit-default.out || {
+    echo "FAIL: expected the explicit not-found error"
+    cat explicit-default.out; exit 1; }
 
 echo "PASS 162_bare_name_namespace_scope"

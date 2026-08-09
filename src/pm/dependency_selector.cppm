@@ -1,5 +1,5 @@
-// mcpp.pm.dependency_selector — parse user dependency selectors into
-// ordered package-coordinate candidates.
+// mcpp.pm.dependency_selector — parse user dependency selectors into one
+// canonical package coordinate.
 
 export module mcpp.pm.dependency_selector;
 
@@ -8,13 +8,24 @@ import mcpp.pm.dep_spec;
 
 export namespace mcpp::pm {
 
-enum class DependencySelectorMode {
-    OmittedMcpplibsPriority,
-};
-
 struct DependencySelector {
     std::vector<DependencyCoordinate> candidates;
     std::string stableMapKey;
+    // The spelling carried no namespace, so `candidates.front().namespace_` is
+    // the substituted default. Consumers that offer the one-release bare-name
+    // fallback need to tell "the author omitted it" from "the author wrote
+    // mcpplibs"; the coordinate alone cannot.
+    bool namespaceOmitted = false;
+};
+
+struct PackageSelector {
+    std::optional<std::string> namespace_;
+    std::string                name;
+    std::string                spelling;
+};
+
+struct SelectorError {
+    std::string message;
 };
 
 inline std::vector<std::string> split_dependency_selector(std::string_view selector)
@@ -45,15 +56,137 @@ inline std::string join_dependency_segments(const std::vector<std::string>& segm
 inline DependencySelector make_direct_dependency_selector(
     std::string_view ns,
     std::string_view shortName,
-    std::string_view stableMapKey)
+    std::string_view stableMapKey,
+    bool             namespaceOmitted = false)
 {
     DependencySelector out;
     out.stableMapKey = std::string(stableMapKey);
+    out.namespaceOmitted = namespaceOmitted;
     out.candidates.push_back(DependencyCoordinate{
         .namespace_ = std::string(ns),
         .shortName = std::string(shortName),
     });
     return out;
+}
+
+inline std::expected<PackageSelector, SelectorError>
+parse_package_selector(std::string_view spelling)
+{
+    if (spelling.empty()) {
+        return std::unexpected(SelectorError{
+            .message = "package selector is empty",
+        });
+    }
+
+    auto segments = split_dependency_selector(spelling);
+    for (auto const& segment : segments) {
+        if (segment.empty()) {
+            return std::unexpected(SelectorError{
+                .message = std::format(
+                    "invalid package selector '{}': empty dotted segment",
+                    spelling),
+            });
+        }
+        for (unsigned char ch : segment) {
+            const bool bareKeyChar = (ch >= 'a' && ch <= 'z')
+                || (ch >= 'A' && ch <= 'Z')
+                || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+            if (!bareKeyChar) {
+                return std::unexpected(SelectorError{
+                    .message = std::format(
+                        "invalid package selector '{}': segment '{}' may only "
+                        "contain ASCII letters, digits, '-' and '_'",
+                        spelling, segment),
+                });
+            }
+        }
+    }
+
+    PackageSelector out{
+        .name = segments.back(),
+        .spelling = std::string(spelling),
+    };
+    if (segments.size() > 1) {
+        out.namespace_ = join_dependency_segments(
+            segments, 0, segments.size() - 1);
+    }
+    return out;
+}
+
+inline DependencyCoordinate normalize_package_selector(
+    const PackageSelector& selector,
+    std::string_view defaultNamespace = kDefaultNamespace)
+{
+    return DependencyCoordinate{
+        .namespace_ = selector.namespace_.value_or(
+            std::string(defaultNamespace)),
+        .shortName = selector.name,
+    };
+}
+
+inline std::string
+format_package_selector(const DependencyCoordinate& coordinate)
+{
+    if (coordinate.namespace_.empty()
+        || coordinate.namespace_ == kDefaultNamespace) {
+        return coordinate.shortName;
+    }
+    return std::format("{}.{}", coordinate.namespace_,
+                       coordinate.shortName);
+}
+
+// The rungs a pre-exact-identity mcpp searched when the namespace was omitted:
+// `gtest` reached `compat.gtest`, and a descriptor that declares no namespace
+// at all was reachable by its bare name. Both are how every published
+// `compat.*` package and every existing user manifest spell their dependency,
+// so removing them outright turns an mcpp upgrade into a broken build for data
+// that is already published and cannot be edited retroactively.
+//
+// These are NEVER part of the exact candidate list. They are consulted only
+// after the exact coordinate has missed, the hit is announced with a
+// deprecation warning naming the canonical selector, and what gets recorded
+// downstream (spec, lockfile, install) is the canonical identity — so the
+// ambiguous spelling exists in exactly one place, the user's manifest, and
+// only until they run `mcpp add` or take the warning's advice.
+//
+// Removed in kBareNameFallbackRemovedIn.
+inline std::vector<DependencyCoordinate>
+legacy_bare_candidates(const DependencyCoordinate& exact)
+{
+    if (exact.namespace_ != kDefaultNamespace) return {};
+    return {
+        DependencyCoordinate{
+            .namespace_ = std::string(kCompatNamespace),
+            .shortName  = exact.shortName,
+        },
+        // The "upstream package that declares no namespace" rung. The caller
+        // must still reject a descriptor that DOES declare one, or this
+        // becomes the cross-namespace wildcard #278 removed.
+        DependencyCoordinate{
+            .namespace_ = {},
+            .shortName  = exact.shortName,
+        },
+    };
+}
+
+// During the one-release exact-selector migration, this is the coordinate an
+// older mcpp would have tried first for a compact dotted selector. It is
+// diagnostic/lock-compatibility data only; normal resolution never appends it
+// to the exact candidate list.
+inline std::optional<DependencyCoordinate>
+legacy_prefixed_coordinate(const DependencyCoordinate& exact)
+{
+    if (exact.namespace_.empty()
+        || exact.namespace_ == kDefaultNamespace
+        || exact.namespace_.starts_with(
+            std::string(kDefaultNamespace) + ".")) {
+        return std::nullopt;
+    }
+    return DependencyCoordinate{
+        .namespace_ = std::format("{}.{}", kDefaultNamespace,
+                                  exact.namespace_),
+        .shortName = exact.shortName,
+    };
 }
 
 // #243 Cargo dep/feat forwarding. Split a `[features]` implied-feature token:
@@ -75,48 +208,14 @@ split_feature_forward_token(std::string_view token)
     return std::pair{std::string(depKey), std::string(depFeat)};
 }
 
-inline DependencySelector resolve_dependency_selector(
-    std::string_view selector,
-    DependencySelectorMode)
+inline DependencySelector resolve_dependency_selector(std::string_view selector)
 {
     DependencySelector out;
     out.stableMapKey = std::string(selector);
 
-    auto segments = split_dependency_selector(selector);
-    if (segments.empty()) return out;
-
-    if (segments.size() == 1) {
-        out.candidates.push_back(DependencyCoordinate{
-            .namespace_ = std::string(kDefaultNamespace),
-            .shortName = segments.front(),
-        });
-        out.candidates.push_back(DependencyCoordinate{
-            .namespace_ = {},
-            .shortName = segments.front(),
-        });
-        return out;
-    }
-
-    const auto shortName = segments.back();
-    const auto nsWithoutShort = join_dependency_segments(
-        segments, 0, segments.size() - 1);
-
-    if (segments.front() == kDefaultNamespace) {
-        out.candidates.push_back(DependencyCoordinate{
-            .namespace_ = nsWithoutShort,
-            .shortName = shortName,
-        });
-        return out;
-    }
-
-    out.candidates.push_back(DependencyCoordinate{
-        .namespace_ = std::format("{}.{}", kDefaultNamespace, nsWithoutShort),
-        .shortName = shortName,
-    });
-    out.candidates.push_back(DependencyCoordinate{
-        .namespace_ = nsWithoutShort,
-        .shortName = shortName,
-    });
+    auto parsed = parse_package_selector(selector);
+    if (!parsed) return out;
+    out.candidates.push_back(normalize_package_selector(*parsed));
     return out;
 }
 

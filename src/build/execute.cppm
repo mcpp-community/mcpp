@@ -15,6 +15,7 @@ import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.build.backend;
 import mcpp.build.ninja;
+import mcpp.build.runtime_validation;
 import mcpp.bmi_cache;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
@@ -22,6 +23,7 @@ import mcpp.toolchain.post_install;
 import mcpp.toolchain.stdmod;
 import mcpp.xlings;
 import mcpp.xlings.subos_info;
+import mcpp.platform.runtime_binding;
 import mcpp.log;
 import mcpp.platform;
 import mcpp.fetcher.progress;
@@ -88,6 +90,9 @@ struct BuildCacheEntry {
     // said not to use — and ruling the cache out is `local`'s entire purpose.
     // Same back-compat contract as `profile`: empty ⇒ miss.
     std::string cacheMode;
+    // Exact immutable snapshot used by the build. Optional distinguishes a
+    // current cache from one written by an older mcpp (or a corrupt payload).
+    std::optional<mcpp::platform::runtime::RuntimeBinding> runtimeBinding;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -164,6 +169,12 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             e.subosRecorded = true;
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        if (haveNextLine && line.starts_with("runtimeBinding=")) {
+            auto decoded = mcpp::platform::runtime::deserialize_runtime_binding(
+                line.substr(15));
+            if (decoded) e.runtimeBinding = std::move(*decoded);
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         // Optional profile line. Same back-compat contract as the two blocks
         // above: absent ⇒ e.profile stays empty ⇒ every fast path treats the
         // entry as a miss and falls through to prepare_build.
@@ -193,7 +204,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::string& runEnvValue = "",
                        const std::string& profile = "",
                        const std::string& cacheMode = "",
-                       const std::string& subosDir = "") {
+                       const mcpp::platform::runtime::RuntimeBinding& runtimeBinding = {}) {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -208,8 +219,10 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     // Insert at front (MRU).
     BuildCacheEntry newEntry{targetTriple, outputDir.string(), ninjaProgram, fingerprintHex,
                              runtimeEnvKey, runtimeEnvValue, std::move(runTargets),
-                             runEnvKey, runEnvValue, subosDir, /*subosRecorded=*/true,
+                             runEnvKey, runEnvValue, runtimeBinding.subosDir.string(),
+                             /*subosRecorded=*/true,
                              profile, cacheMode};
+    newEntry.runtimeBinding = runtimeBinding;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -238,6 +251,10 @@ void write_build_cache(const std::filesystem::path& projectRoot,
         f << "runEnv=" << e.runEnvKey << '\n';
         f << e.runEnvValue << '\n';
         f << "subos=" << e.subosDir << '\n';
+        if (e.runtimeBinding)
+            f << "runtimeBinding="
+              << mcpp::platform::runtime::serialize_runtime_binding(*e.runtimeBinding)
+              << '\n';
         f << "profile=" << e.profile << '\n';
         f << "cacheMode=" << e.cacheMode << '\n';
     }
@@ -315,8 +332,7 @@ compute_run_env(const mcpp::build::BuildPlan& plan) {
     return {key, value};
 }
 
-// The environment the active subos declares for the programs it hosts
-// (mcpp#352).
+// The environment captured by this build's selected RuntimeBinding (mcpp#352).
 //
 // A GL application needs three things and mcpp only ever supplied two: the
 // binary links (bootstrap), it finds its libraries (RPATH), and then it has to
@@ -326,46 +342,18 @@ compute_run_env(const mcpp::build::BuildPlan& plan) {
 // launched — `xlings subos use` applied them, `mcpp run` did not. Hence a
 // binary that links fine and exits 255 with no output.
 //
-// Resolved at RUN time, deliberately not cached with the build: these values
-// belong to the subos, not to the build, and a user who switches subos between
-// `mcpp build` and `mcpp run` must get the new one. It is a file read.
+// The declarations are snapshotted with the build and serialized into the
+// fast-path cache. A changed SubOS manifest invalidates that cache and causes a
+// fresh prepare; no invocation mixes newly read run state with old objects.
 //
 // mcpp does not know what any of these variables MEAN, and that is the design:
 // when the ecosystem gains a Vulkan loader or a new driver bridge, the
 // declaration changes and this code does not.
-// The subos a RUN should use: an explicit override if the caller set one,
-// otherwise the subos this build belongs to.
-//
-// The override lives HERE and not in the derivation, because the derivation's
-// answer is cached and this one must not be: MCPP_SUBOS_DIR says "for this
-// invocation". It exists so tests can exercise this path without touching a
-// developer's real subos — an earlier e2e wrote through a symlink and
-// permanently broke a real toolchain — and so a user can point one run at
-// another subos without switching the active one.
-std::filesystem::path subos_dir_for_run(const std::filesystem::path& buildSubos) {
-    if (const char* e = std::getenv("MCPP_SUBOS_DIR"); e && *e)
-        return std::filesystem::path(e);
-    return buildSubos;
-}
-
 std::vector<std::pair<std::string, std::string>>
 compute_subos_env(const mcpp::build::BuildPlan& plan) {
-    auto built = mcpp::xlings::paths::subos_dir_of(plan.toolchain.binaryPath);
-    auto dir = subos_dir_for_run(built ? *built : std::filesystem::path{});
-    if (dir.empty()) return {};
-    auto info = mcpp::xlings::subos::read(dir);
-    // The note is a `verbose` line rather than a warning: a subos with no
-    // self-description is the normal state of every machine whose subos
-    // predates the block, and a warning on every run would train people to
-    // ignore it. It becomes loud only where it explains a failure — the GL
-    // diagnostic path in doctor.
-    if (!info.note.empty())
-        mcpp::log::verbose("subos", info.note);
-    // Resolved AGAINST the caller's environment, not in a vacuum: these
-    // entries replace the variable in the child, so a `set` that ignores an
-    // exported value overwrites it and a `prepend` that ignores it drops it.
-    return mcpp::xlings::subos::resolve_env(
-        info, dir, [](std::string_view v) -> std::optional<std::string> {
+    return mcpp::platform::runtime::resolve_runtime_environment(
+        plan.runtimeBinding,
+        [](std::string_view v) -> std::optional<std::string> {
             if (const char* e = std::getenv(std::string(v).c_str()))
                 return std::string(e);
             return std::nullopt;
@@ -500,14 +488,13 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         auto fpHex = ctx.outputDir.filename().string();
         auto runTargets = compute_run_targets(ctx.plan);
         auto [runEnvKey, runEnvValue] = compute_run_env(ctx.plan);
-        auto subosDir = mcpp::xlings::paths::subos_dir_of(ctx.plan.toolchain.binaryPath);
         write_build_cache(ctx.projectRoot, ctx.outputDir, r->ninjaProgram,
                           std::string(targetOverride), fpHex,
                           r->runtimeEnvKey.empty() ? "-" : r->runtimeEnvKey,
                           r->runtimeEnvValue,
                           std::move(runTargets), runEnvKey, runEnvValue,
                           ctx.profile, std::string(cache_mode_name(ctx.cacheMode)),
-                          subosDir ? subosDir->string() : std::string{});
+                          ctx.plan.runtimeBinding);
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -724,6 +711,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
         }
     }
     if (!match) return std::nullopt;
+    if (!match->runtimeBinding) return std::nullopt;
 
     auto outputDirStr = match->outputDir;
     auto ninjaProgram = match->ninjaProgram;
@@ -754,6 +742,10 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     auto ninjaTime = std::filesystem::last_write_time(ninjaPath, ec);
     if (ec) return std::nullopt;
 
+    auto runtimeManifest = match->runtimeBinding->subosDir / ".xlings.json";
+    auto runtimeTime = std::filesystem::last_write_time(runtimeManifest, ec);
+    if (ec || runtimeTime > ninjaTime) return std::nullopt;
+
     // Check mcpp.toml
     auto tomlPath = projectRoot / "mcpp.toml";
     auto tomlTime = std::filesystem::last_write_time(tomlPath, ec);
@@ -763,12 +755,20 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     // instead of a hand-rolled recursive_directory_iterator over src/.
     if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts)) return std::nullopt;
 
+    auto validatedBefore =
+        mcpp::build::runtime_validation::validated_artifact_snapshot(
+            outputDir, *match->runtimeBinding);
+    if (!validatedBefore) return std::nullopt;
+
     // All inputs are older than build.ninja → fast-path: just run ninja.
     std::chrono::milliseconds elapsed{};
     auto rc = run_ninja_fast(ninjaProgram, outputDir, ninjaPath, verbose,
                              runtimeEnvKey, runtimeEnvValue, &elapsed);
     if (!rc) return std::nullopt;
     if (*rc != 0) return rc;
+    if (!mcpp::build::runtime_validation::artifact_snapshot_unchanged(
+            *validatedBefore))
+        return std::nullopt; // relinked: full path reconstructs + validates closure
 
     mcpp::ui::finished(want->profile, elapsed);
     return 0;
@@ -817,8 +817,8 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // mcpp wrote the entry, so without this line an upgraded mcpp would reuse a
     // pre-upgrade build until something else happened to invalidate it. Measured
     // on a real upgrade from 2026.8.7.1, not reasoned about.
-    if (!match->subosRecorded)
-        return std::nullopt; // predates `subos=`; rebuild once, then it is there
+    if (!match->runtimeBinding)
+        return std::nullopt; // predates the immutable snapshot; rebuild once
 
     // P1: verify fingerprint matches the outputDir basename.
     if (!match->fingerprint.empty()) {
@@ -844,11 +844,20 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     auto ninjaTime = std::filesystem::last_write_time(ninjaPath, ec);
     if (ec) return std::nullopt;
 
+    auto runtimeManifest = match->runtimeBinding->subosDir / ".xlings.json";
+    auto runtimeTime = std::filesystem::last_write_time(runtimeManifest, ec);
+    if (ec || runtimeTime > ninjaTime) return std::nullopt;
+
     auto tomlPath = projectRoot / "mcpp.toml";
     auto tomlTime = std::filesystem::last_write_time(tomlPath, ec);
     if (ec || tomlTime > ninjaTime) return std::nullopt;
 
     if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts)) return std::nullopt;
+
+    auto validatedBefore =
+        mcpp::build::runtime_validation::validated_artifact_snapshot(
+            outputDir, *match->runtimeBinding);
+    if (!validatedBefore) return std::nullopt;
 
     // Fresh → run ninja (picks up any incremental object/link work) then
     // exec the cached exe path directly.
@@ -856,6 +865,9 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                              match->runtimeEnvKey, match->runtimeEnvValue);
     if (!rc) return std::nullopt;
     if (*rc != 0) return rc;
+    if (!mcpp::build::runtime_validation::artifact_snapshot_unchanged(
+            *validatedBefore))
+        return std::nullopt; // never execute an artifact not validated for this binding
 
     auto exe = outputDir / chosen->second;
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, projectRoot);
@@ -870,31 +882,18 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     std::vector<std::pair<std::string, std::string>> childEnv;
     if (!match->runEnvKey.empty() && !match->runEnvValue.empty())
         childEnv.emplace_back(match->runEnvKey, match->runEnvValue);
-    // ...and the subos's declared environment, re-READ here rather than taken
-    // from the cache. Which subos is a build property (cached above); what it
-    // declares is the subos's own, and a user who installs a graphics stack
-    // between two runs must get it without rebuilding.
-    //
-    // This is the half that a fast path is most likely to lose, and losing it
-    // would be invisible in the worst way: the first `mcpp run` after a build
-    // takes the full path and works, every later one takes this path and does
-    // not. A GL program would run once and then stop finding its driver.
-    {
-        // Same rule as the full path, through the same helper: an override
-        // for this invocation, else the subos this build was recorded against.
-        auto subosDir = subos_dir_for_run(std::filesystem::path(match->subosDir));
-        if (!subosDir.empty()) {
-            auto info = mcpp::xlings::subos::read(subosDir);
-            for (auto& kv : mcpp::xlings::subos::resolve_env(
-                     info, subosDir,
-                     [](std::string_view v) -> std::optional<std::string> {
-                         if (const char* e = std::getenv(std::string(v).c_str()))
-                             return std::string(e);
-                         return std::nullopt;
-                     }))
-                childEnv.push_back(std::move(kv));
-        }
-    }
+    // ...and exactly the environment declaration snapshot used by the build.
+    // Installing/changing a provider invalidates the fast path via the SubOS
+    // manifest mtime check; this invocation never mixes a new run contract
+    // with objects built under the old one.
+    for (auto& kv : mcpp::platform::runtime::resolve_runtime_environment(
+             *match->runtimeBinding,
+             [](std::string_view v) -> std::optional<std::string> {
+                 if (const char* e = std::getenv(std::string(v).c_str()))
+                     return std::string(e);
+                 return std::nullopt;
+             }))
+        childEnv.push_back(std::move(kv));
 
     return mcpp::platform::process::run_exec(argv, childEnv) == 0 ? 0 : 1;
 }

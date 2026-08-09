@@ -6,8 +6,10 @@
 #   * the grandchild's [build].include_dirs propagate so its headers
 #     are visible while compiling its parent.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
+TMP_HOST="$(host_path "$TMP")"
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0 source "$(dirname "$0")/_inherit_toolchain.sh"
@@ -65,7 +67,7 @@ version = "0.1.0"
 kind = "lib"
 
 [dependencies]
-gc = { path = "$TMP/grandchild/gc" }
+gc = { path = "$TMP_HOST/grandchild/gc" }
 EOF
 
 # ── 3. Top: depends ONLY on child. Should still pull grandchild
@@ -87,7 +89,7 @@ name    = "top"
 version = "0.1.0"
 
 [dependencies]
-ch = { path = "$TMP/child/ch" }
+ch = { path = "$TMP_HOST/child/ch" }
 EOF
 
 "$MCPP" build > build.log 2>&1 || { cat build.log; echo "transitive build failed"; exit 1; }
@@ -110,8 +112,8 @@ name    = "top2"
 version = "0.1.0"
 
 [dependencies]
-ch = { path = "$TMP/child/ch" }
-gc = { path = "$TMP/grandchild/gc" }
+ch = { path = "$TMP_HOST/child/ch" }
+gc = { path = "$TMP_HOST/grandchild/gc" }
 EOF
 "$MCPP" build > build-top2.log 2>&1 || { cat build-top2.log; echo "duplicate-but-consistent dep failed"; exit 1; }
 

@@ -3,6 +3,7 @@
 # Cached dependency status must use the canonical dependency key, not only the
 # short package name embedded in the dependency's own mcpp.toml.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -11,6 +12,7 @@ export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 
 INDEX_DIR="$TMP/local-index"
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/c"
 cat > "$INDEX_DIR/pkgs/c/compat.widget.lua" <<'EOF'
 package = {
@@ -67,7 +69,7 @@ name = "app"
 version = "0.1.0"
 
 [indices]
-compat = { path = "$INDEX_DIR" }
+compat = { path = "$INDEX_DIR_HOST" }
 
 [dependencies.compat]
 widget = "1.0.0"

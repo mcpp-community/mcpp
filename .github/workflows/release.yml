@@ -96,7 +96,7 @@ jobs:
           # Pin xlings to a known-good version. The upstream install
           # script always grabs `latest` (no version override), so we
           # download + self-install manually to avoid broken releases.
-          XLINGS_VERSION: '2026.8.8.1'
+          XLINGS_VERSION: '2026.8.9.2'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
@@ -288,7 +288,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '2026.8.8.1'
+          XLINGS_VERSION: '2026.8.9.2'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           curl -fsSL -o "/tmp/${tarball}" \
@@ -358,11 +358,11 @@ jobs:
           # below are pinned to the same version as XLINGS_VERSION; they are
           # NOT interpolated from it, so check_version_pins.sh scans for them
           # explicitly (they were absent from the old lock-step comment).
-          XLA="xlings-2026.8.8.1-linux-aarch64.tar.gz"
+          XLA="xlings-2026.8.9.2-linux-aarch64.tar.gz"
           if curl -fsSL -o "/tmp/$XLA" \
-               "https://github.com/openxlings/xlings/releases/download/v2026.8.8.1/$XLA"; then
+               "https://github.com/openxlings/xlings/releases/download/v2026.8.9.2/$XLA"; then
             tar -xzf "/tmp/$XLA" -C /tmp
-            XLBIN=$(find /tmp/xlings-2026.8.8.1-linux-aarch64 -path '*/bin/xlings' -type f | head -1)
+            XLBIN=$(find /tmp/xlings-2026.8.9.2-linux-aarch64 -path '*/bin/xlings' -type f | head -1)
             if [ -n "$XLBIN" ]; then
               mkdir -p "$STAGING/$WRAPPER/registry/bin"
               cp "$XLBIN" "$STAGING/$WRAPPER/registry/bin/xlings"
@@ -440,7 +440,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '2026.8.8.1'
+          XLINGS_VERSION: '2026.8.9.2'
         run: |
           if [ ! -x "$HOME/.xlings/subos/default/bin/xlings" ]; then
             WORK=$(mktemp -d)
@@ -622,7 +622,7 @@ jobs:
         shell: bash
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '2026.8.8.1'
+          XLINGS_VERSION: '2026.8.9.2'
         run: |
           # Captured before the `cd` below, in POSIX form: this step never
           # returns to the workspace, and GITHUB_WORKSPACE is a backslash
@@ -725,16 +725,116 @@ jobs:
             dist/mcpp-windows-x86_64.zip
             dist/mcpp-windows-x86_64.zip.sha256
 
+  # Seal the complete, non-draft release inventory only after every platform
+  # uploader has finished.  The manifest is desired state for downstream
+  # reconcilers: a rerun may reproduce it byte-for-byte, but may never replace
+  # it with different bytes for the same tag.
+  release-manifest:
+    name: validate + seal release manifest
+    needs: [build-release, build-linux-aarch64, build-macos, build-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve immutable release identity
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            VERSION=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)
+            test -n "$VERSION" || { echo 'failed to read [package].version from mcpp.toml'; exit 1; }
+            TAG="v$VERSION"
+          fi
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          COMMIT=$(git rev-list -n 1 "refs/tags/$TAG")
+          test -n "$COMMIT"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT"   >> "$GITHUB_OUTPUT"
+
+      - name: Generate, upload once, and refetch manifest
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          VERSION="${{ steps.resolve.outputs.version }}"
+          COMMIT="${{ steps.resolve.outputs.commit }}"
+          AUDIT_ROOT=$(mktemp -d)
+          mkdir -p "$AUDIT_ROOT/assets" "$AUDIT_ROOT/publish"
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" \
+            > "$AUDIT_ROOT/release.json"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --dir "$AUDIT_ROOT/assets"
+          python3 scripts/release/generate_manifest.py \
+            --release-json "$AUDIT_ROOT/release.json" \
+            --assets-dir "$AUDIT_ROOT/assets" \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --commit "$COMMIT" \
+            --output "$AUDIT_ROOT/publish/mcpp-release.json"
+
+          if [ -f "$AUDIT_ROOT/assets/mcpp-release.json" ]; then
+            cmp "$AUDIT_ROOT/assets/mcpp-release.json" \
+                "$AUDIT_ROOT/publish/mcpp-release.json"
+            echo "Existing manifest is byte-identical; leaving it untouched."
+          else
+            gh release upload "$TAG" \
+              "$AUDIT_ROOT/publish/mcpp-release.json" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+          # Do not trust the upload command alone. Fetch the final public
+          # inventory into a clean directory, recompute every payload digest,
+          # regenerate desired state, and compare the published bytes.
+          MANIFEST_VISIBLE=false
+          for attempt in {1..12}; do
+            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" \
+                 --jq '.assets[].name' | grep -Fxq mcpp-release.json; then
+              MANIFEST_VISIBLE=true
+              break
+            fi
+            echo "Waiting for mcpp-release.json API visibility ($attempt/12)"
+            sleep 5
+          done
+          test "$MANIFEST_VISIBLE" = true
+          mkdir -p "$AUDIT_ROOT/final-assets"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" \
+            > "$AUDIT_ROOT/final-release.json"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --dir "$AUDIT_ROOT/final-assets"
+          test -f "$AUDIT_ROOT/final-assets/mcpp-release.json"
+          python3 scripts/release/generate_manifest.py \
+            --release-json "$AUDIT_ROOT/final-release.json" \
+            --assets-dir "$AUDIT_ROOT/final-assets" \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --commit "$COMMIT" \
+            --output "$AUDIT_ROOT/final-expected.json"
+          cmp "$AUDIT_ROOT/final-assets/mcpp-release.json" \
+              "$AUDIT_ROOT/final-expected.json"
+          cat "$AUDIT_ROOT/final-assets/mcpp-release.json"
+
   # Publish this release into the xlings ecosystem, after ALL platform builds
-  # have uploaded their assets:
+  # have uploaded their assets and the immutable manifest gate has passed:
   #   ① mirror binaries → xlings-res/mcpp (GitHub + GitCode) so XLINGS_RES
   #      downloads resolve on every platform (incl. the CN/GitCode path);
   #   ② open a PR against openxlings/xim-pkgindex bumping mcpp to this version
   #      (a maintainer merges it — index git source is not on the critical path).
-  # Best-effort / non-blocking: a failure here never fails the release.
+  # These publication steps are required for ecosystem completeness: their
+  # failure leaves the GitHub Release object available but keeps this workflow
+  # red, so post-release verification cannot report a complete release.
   # Shared vendored scripts live in .github/tools/ (kept in sync with xlings).
   publish-ecosystem:
-    needs: [build-release, build-linux-aarch64, build-macos, build-windows]
+    needs: release-manifest
     runs-on: ubuntu-latest
     # A4 hardening: a single stuck upload once held this job >1h (6h default
     # ceiling). The mirror script has per-file timeouts and (post-0.0.89)

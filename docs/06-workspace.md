@@ -100,7 +100,7 @@ Declare dependency versions centrally under `[workspace.dependencies]`; members 
 # root mcpp.toml
 [workspace.dependencies]
 cmdline = "0.0.2"
-capi.lua = "0.0.3"       # dotted selector: mcpplibs.capi/lua, then capi/lua
+mcpplibs.capi.lua = "0.0.3"  # exact selector: (mcpplibs.capi, lua)
 
 [workspace.dependencies.compat]
 mbedtls = "3.6.1"

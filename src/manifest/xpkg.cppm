@@ -35,6 +35,7 @@ McppField extract_mcpp_field(std::string_view luaContent);
 struct XpkgVersionEntry {
     std::string version;          // the literal key, as written
     bool        alias = false;    // entry carries `ref = "..."`
+    std::string sha256;           // payload digest when declared at entry level
 };
 
 // Extract the version entries for `platform` (e.g. "linux", "macosx",
@@ -146,11 +147,9 @@ xpkg_name_form_violation_from_lua(std::string_view luaContent);
 // WHY THIS IS ONE FUNCTION — the rule it enforces is "the descriptor the
 // identity gate accepted supplies BOTH halves of the address". Deriving the
 // name from the descriptor while taking the namespace from the request is what
-// made every bare-name dependency served by a `compat` descriptor
-// uninstallable the moment the index migrated to short names: the gate
-// accepted `(compat, gtest)` (a bare request resolves against the default
-// namespace AND `compat`, see `xpkg_lua_identity_matches`), but the wire target
-// went out as `mcpplibs:gtest`, which no index is keyed by. The old spelling
+// made an explicitly selected `compat` descriptor uninstallable when request
+// and descriptor identity drifted: the wire target went out as
+// `mcpplibs:gtest`, which no index is keyed by. The old spelling
 // only ever worked because the literal `name` happened to read `compat.gtest`,
 // so a hardcoded `compat.<short>` retry caught it.
 //
@@ -290,6 +289,20 @@ std::string closest_known_xpkg_key(std::string_view unknownKey) {
 //  table and read a short list of typed fields out of it.
 
 namespace {
+
+std::expected<mcpp::pm::DependencySelector, ManifestError>
+parse_xpkg_dependency_selector(std::string_view spelling,
+                               const std::filesystem::path& sourcePath)
+{
+    auto parsed = mcpp::pm::parse_package_selector(spelling);
+    if (!parsed) {
+        return std::unexpected(ManifestError{
+            parsed.error().message, sourcePath, 0, 0});
+    }
+    auto coordinate = mcpp::pm::normalize_package_selector(*parsed);
+    return mcpp::pm::make_direct_dependency_selector(
+        coordinate.namespace_, coordinate.shortName, spelling);
+}
 
 struct LuaCursor {
     std::string_view text;
@@ -803,13 +816,12 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
     // derives the namespace from the descriptor, so a name match is enough.
     if (ns.empty()) return true;
 
-    // Unqualified / default-namespace request: resolve the name against the
-    // default namespace search path — the default namespace itself, then the
-    // `compat` wrapper namespace (`kCompatNamespace`, shared with the candidate
-    // generator). A legacy no-namespace descriptor is admitted under the flag.
+    // Namespace omission has already normalized to the one default namespace.
+    // A `compat` package is a different identity and must be selected
+    // explicitly. A legacy no-namespace descriptor is admitted only under the
+    // compatibility flag because old default-index descriptors omitted ns.
     if (ns == kDefaultNamespace) {
         return id.ns == kDefaultNamespace
-            || id.ns == kCompatNamespace
             || (allowLegacyBareDefault && id.ns.empty());
     }
 
@@ -1028,6 +1040,8 @@ list_xpkg_version_entries(std::string_view luaContent,
             const auto entry_end = find_table_end(v);
             if (entry_end != std::string_view::npos && entry_end <= plat_end) {
                 e.alias = entry_is_alias(v, entry_end);
+                e.sha256 = top_level_string_value_for_key(
+                    luaContent.substr(v + 1, entry_end - v - 1), "sha256");
                 versions.push_back(std::move(e));
                 q = entry_end + 1;
                 continue;
@@ -1508,15 +1522,21 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             auto dver = cur.read_string();
                             DependencySpec spec;
                             spec.version = dver;
-                            auto selector = mcpp::pm::resolve_dependency_selector(
-                                dname,
-                                mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                            if (!selector.candidates.empty()) {
-                                spec.namespace_ = selector.candidates.front().namespace_;
-                                spec.shortName  = selector.candidates.front().shortName;
-                                spec.candidates = std::move(selector.candidates);
-                                m.featureDeps[fname][selector.stableMapKey] = std::move(spec);
-                            }
+                            auto selector = parse_xpkg_dependency_selector(
+                                dname, m.sourcePath);
+                            if (!selector)
+                                return std::unexpected(selector.error());
+                            spec.namespace_ =
+                                selector->candidates.front().namespace_;
+                            spec.shortName =
+                                selector->candidates.front().shortName;
+                            spec.candidates = std::move(selector->candidates);
+                            spec.legacyCandidateSearch =
+                                dname.find('.') != std::string::npos
+                                && !dname.starts_with(std::string(
+                                    mcpp::pm::kDefaultNamespace) + ".");
+                            m.featureDeps[fname][selector->stableMapKey] =
+                                std::move(spec);
                             cur.skip_ws_and_comments();
                         }
                         cur.consume('}');
@@ -1668,15 +1688,18 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     spec.tools      = std::move(dtools);
                     spec.hostModule = dhostModule;
                     spec.reexport   = dreexport;
-                    auto selector = mcpp::pm::resolve_dependency_selector(
-                        dname,
-                        mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                    if (!selector.candidates.empty()) {
-                        spec.namespace_ = selector.candidates.front().namespace_;
-                        spec.shortName = selector.candidates.front().shortName;
-                        spec.candidates = std::move(selector.candidates);
-                        m.dependencies[selector.stableMapKey] = std::move(spec);
-                    }
+                    auto selector = parse_xpkg_dependency_selector(
+                        dname, m.sourcePath);
+                    if (!selector)
+                        return std::unexpected(selector.error());
+                    spec.namespace_ = selector->candidates.front().namespace_;
+                    spec.shortName = selector->candidates.front().shortName;
+                    spec.candidates = std::move(selector->candidates);
+                    spec.legacyCandidateSearch =
+                        dname.find('.') != std::string::npos
+                        && !dname.starts_with(std::string(
+                            mcpp::pm::kDefaultNamespace) + ".");
+                    m.dependencies[selector->stableMapKey] = std::move(spec);
                 }
                 cur.skip_ws_and_comments();
             }
@@ -1757,6 +1780,146 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     rc.consume('}');
                     return {};
                 };
+                auto read_requirement_list = [&]()
+                    -> std::expected<void, ManifestError>
+                {
+                    if (!rc.consume('{')) {
+                        return std::unexpected(ManifestError{
+                            "expected '{' after `runtime.requirements =`",
+                            m.sourcePath, 0, 0});
+                    }
+                    rc.skip_ws_and_comments();
+                    std::size_t index = 0;
+                    while (!rc.eof() && rc.peek() != '}') {
+                        ++index;
+                        if (rc.peek() != '{') {
+                            return std::unexpected(ManifestError{
+                                std::format("runtime.requirements[{}] must be a table",
+                                            index),
+                                m.sourcePath, 0, 0});
+                        }
+                        auto entryBody = rc.read_table_body();
+                        LuaCursor entry{entryBody};
+                        RuntimeRequirement requirement;
+                        entry.skip_ws_and_comments();
+                        while (!entry.eof()) {
+                            auto field = entry.read_key();
+                            if (field.empty()) {
+                                entry.skip_ws_and_comments();
+                                if (!entry.eof()) ++entry.pos;
+                                continue;
+                            }
+                            if (!entry.consume('=')) {
+                                return std::unexpected(ManifestError{
+                                    std::format("runtime.requirements[{}].{} is malformed",
+                                                index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            if (field == "kind") requirement.kind = entry.read_string();
+                            else if (field == "value") requirement.value = entry.read_string();
+                            else if (field == "phase") requirement.phase = entry.read_string();
+                            else if (field == "required") {
+                                auto raw = entry.read_bareword();
+                                if (raw != "true" && raw != "false") {
+                                    return std::unexpected(ManifestError{
+                                        std::format(
+                                            "runtime.requirements[{}].required must be boolean",
+                                            index),
+                                        m.sourcePath, 0, 0});
+                                }
+                                requirement.required = raw == "true";
+                            } else {
+                                return std::unexpected(ManifestError{
+                                    std::format(
+                                        "runtime.requirements[{}] has unsupported key '{}'",
+                                        index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            entry.skip_ws_and_comments();
+                        }
+                        if (requirement.kind.empty() || requirement.value.empty()
+                            || (requirement.phase != "link"
+                                && requirement.phase != "run")) {
+                            return std::unexpected(ManifestError{
+                                std::format(
+                                    "runtime.requirements[{}] requires kind/value and phase link|run",
+                                    index),
+                                m.sourcePath, 0, 0});
+                        }
+                        m.runtimeConfig.requirements.push_back(std::move(requirement));
+                        rc.skip_ws_and_comments();
+                    }
+                    rc.consume('}');
+                    return {};
+                };
+                auto read_artifact_list = [&]()
+                    -> std::expected<void, ManifestError>
+                {
+                    if (!rc.consume('{')) {
+                        return std::unexpected(ManifestError{
+                            "expected '{' after `runtime.artifacts =`",
+                            m.sourcePath, 0, 0});
+                    }
+                    rc.skip_ws_and_comments();
+                    std::size_t index = 0;
+                    while (!rc.eof() && rc.peek() != '}') {
+                        ++index;
+                        if (rc.peek() != '{') {
+                            return std::unexpected(ManifestError{
+                                std::format("runtime.artifacts[{}] must be a table",
+                                            index),
+                                m.sourcePath, 0, 0});
+                        }
+                        auto entryBody = rc.read_table_body();
+                        LuaCursor entry{entryBody};
+                        RuntimeArtifact artifact;
+                        std::string path;
+                        entry.skip_ws_and_comments();
+                        while (!entry.eof()) {
+                            auto field = entry.read_key();
+                            if (field.empty()) {
+                                entry.skip_ws_and_comments();
+                                if (!entry.eof()) ++entry.pos;
+                                continue;
+                            }
+                            if (!entry.consume('=')) {
+                                return std::unexpected(ManifestError{
+                                    std::format("runtime.artifacts[{}].{} is malformed",
+                                                index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            std::string value = entry.read_string();
+                            if      (field == "role") artifact.role = std::move(value);
+                            else if (field == "path") path = std::move(value);
+                            else if (field == "provenance") artifact.provenance = std::move(value);
+                            else if (field == "abi") artifact.abi = std::move(value);
+                            else if (field == "digest") artifact.digest = std::move(value);
+                            else if (field == "host_fingerprint")
+                                artifact.hostFingerprint = std::move(value);
+                            else {
+                                return std::unexpected(ManifestError{
+                                    std::format(
+                                        "runtime.artifacts[{}] has unsupported key '{}'",
+                                        index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            entry.skip_ws_and_comments();
+                        }
+                        if (artifact.role.empty() || path.empty()
+                            || artifact.provenance.empty()) {
+                            return std::unexpected(ManifestError{
+                                std::format(
+                                    "runtime.artifacts[{}] requires role, path, and provenance",
+                                    index),
+                                m.sourcePath, 0, 0});
+                        }
+                        artifact.path = std::move(path);
+                        m.runtimeConfig.artifacts.push_back(std::move(artifact));
+                        rc.skip_ws_and_comments();
+                    }
+                    rc.consume('}');
+                    return {};
+                };
                 if (sub == "library_dirs") {
                     std::vector<std::string> dirs;
                     if (auto r = read_string_list(dirs); !r) return std::unexpected(r.error());
@@ -1769,6 +1932,35 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         return std::unexpected(r.error());
                 } else if (sub == "provides") {
                     if (auto r = read_string_list(m.runtimeConfig.provides); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "requirements") {
+                    if (auto r = read_requirement_list(); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "artifacts") {
+                    if (auto r = read_artifact_list(); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "libraries") {
+                    if (auto r = read_string_list(
+                            m.runtimeConfig.linkIntent.libraries); !r)
+                        return std::unexpected(r.error());
+                } else if (sub == "link_library_dirs"
+                        || sub == "transitive_needed_dirs"
+                        || sub == "runtime_search_dirs"
+                        || sub == "deploy_files") {
+                    std::vector<std::string> paths;
+                    if (auto r = read_string_list(paths); !r)
+                        return std::unexpected(r.error());
+                    auto* destination = sub == "link_library_dirs"
+                        ? &m.runtimeConfig.linkIntent.linkLibraryDirs
+                        : sub == "transitive_needed_dirs"
+                            ? &m.runtimeConfig.linkIntent.transitiveNeededDirs
+                            : sub == "runtime_search_dirs"
+                                ? &m.runtimeConfig.linkIntent.runtimeSearchDirs
+                                : &m.runtimeConfig.linkIntent.deployFiles;
+                    for (auto& path : paths) destination->emplace_back(std::move(path));
+                } else if (sub == "frameworks") {
+                    if (auto r = read_string_list(
+                            m.runtimeConfig.linkIntent.frameworks); !r)
                         return std::unexpected(r.error());
                 } else {
                     rc.skip_ws_and_comments();

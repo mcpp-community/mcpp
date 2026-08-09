@@ -41,10 +41,47 @@ tag from `mcpp.toml`) does all of this:
 ```
 build ×4 (linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64)
   → GitHub Release v<version> with tarballs + .sha256 sidecars
+  → recompute every payload hash and publish immutable mcpp-release.json
   → mirror to xlings-res/mcpp on BOTH GitHub and GitCode
   → open the version-bump PR against openxlings/xim-pkgindex
   → workflow_run hook fires ci-fresh-install
 ```
+
+### 2.1 The immutable release manifest
+
+`release-manifest` waits for all four platform upload jobs. It downloads the
+final non-draft, non-prerelease GitHub Release, recomputes each versioned
+platform payload's SHA256, verifies the corresponding `.sha256` sidecar, and
+publishes `mcpp-release.json` schema 1:
+
+```json
+{
+  "schema": 1,
+  "version": "<version>",
+  "tag": "v<version>",
+  "commit": "<full-tag-commit>",
+  "assets": [
+    {
+      "platform": "linux",
+      "arch": "x86_64",
+      "name": "mcpp-<version>-linux-x86_64.tar.gz",
+      "sha256": "<recomputed-sha256>"
+    }
+  ]
+}
+```
+
+The array is sorted by platform, architecture, and name. It contains every
+versioned platform payload, including the required Linux x86_64, Linux aarch64,
+macOS ARM64, and Windows x86_64 assets. Versionless aliases and the source
+archive are intentionally not desired-state rows.
+
+The workflow then downloads the public release again, regenerates the manifest,
+and requires a byte-for-byte match. A workflow rerun accepts an existing
+manifest only when it is already byte-identical; it never overwrites different
+bytes for the same tag. Downstream release consumers (notably the `mcpp-bin`
+AUR reconciler) must consume this manifest instead of guessing completeness
+from a moving workspace or from a subset of release assets.
 
 Two steps are **not** automated:
 
@@ -70,6 +107,28 @@ done
 curl -fsSL -o /tmp/p.tgz "https://github.com/xlings-res/mcpp/releases/download/$V/mcpp-$V-linux-x86_64.tar.gz"
 sha256sum /tmp/p.tgz   # compare against pkgs/m/mcpp.lua in xim-pkgindex
 ```
+
+To repeat the release gate locally against the public GitHub inventory:
+
+```bash
+V=<version>
+TAG="v$V"
+AUDIT=$(mktemp -d)
+mkdir -p "$AUDIT/assets"
+gh api "repos/mcpp-community/mcpp/releases/tags/$TAG" > "$AUDIT/release.json"
+gh release download "$TAG" -R mcpp-community/mcpp --dir "$AUDIT/assets"
+python3 scripts/release/generate_manifest.py \
+  --release-json "$AUDIT/release.json" \
+  --assets-dir "$AUDIT/assets" \
+  --version "$V" \
+  --tag "$TAG" \
+  --commit "$(git rev-list -n 1 "$TAG")" \
+  --output "$AUDIT/expected.json"
+cmp "$AUDIT/assets/mcpp-release.json" "$AUDIT/expected.json"
+```
+
+This command recomputes payload hashes; it does not copy hashes out of the
+published manifest or blindly trust the sidecars.
 
 Then a real install, in a **clean-room `XLINGS_HOME`** — never the machine's own
 `~/.xlings`, which can mask a broken index with cached state:
@@ -163,7 +222,8 @@ would again let the index guard and the installed version drift apart.
 [ ] `bash .github/tools/check_version_pins.sh` passes (verifies `mcpp.toml` = `MCPP_VERSION`, and `.xlings.json` is not newer)
 [ ] merge to main, CI green
 [ ] gh workflow run release.yml --ref main
-[ ] release.yml green (4 builds + publish-ecosystem)
+[ ] release.yml green (4 builds + immutable manifest + publish-ecosystem)
+[ ] downloaded mcpp-release.json regenerates byte-identically from public assets
 [ ] mirrors serve all four platforms on BOTH hosts, sha256 recomputed
 [ ] merge the xim-pkgindex bump PR
 [ ] clean-room XLINGS_HOME: xlings install mcpp@<version> succeeds

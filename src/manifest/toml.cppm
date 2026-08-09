@@ -6,7 +6,6 @@ import mcpp.manifest.types;
 import std;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
-import mcpp.pm.compat;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.platform;
@@ -19,6 +18,21 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path);
 
 // For `mcpp new` scaffolding.
 std::string default_template(std::string_view packageName);
+
+// Shared source-preserving editor used by both `mcpp add` and scaffold
+// self-dependency injection. Identity is structured; formatting is emitted in
+// the canonical default table / namespace-subtable form.
+struct DependencyTextEdit {
+    std::string              namespace_;
+    std::string              shortName;
+    std::string              version;
+    std::vector<std::string> features;
+    bool                     dev = false;
+};
+
+std::expected<std::string, std::string>
+upsert_dependency_text(std::string_view source,
+                       const DependencyTextEdit& edit);
 
 } // namespace mcpp::manifest
 
@@ -151,12 +165,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "build.flags",
         "features.*.flags",   // #253 — the middle segment is the feature name
         "target.*.build.flags",  // #258 — middle segment is the cfg predicate
+        "runtime.requirements",
+        "runtime.artifacts",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
             "[[{}]] (array-of-tables) is not allowed for section '{}'; "
-            "array-of-tables syntax is only supported for [[build.flags]] "
-            "and [[features.<name>.flags]]",
+            "array-of-tables syntax is only supported for [[build.flags]], "
+            "[[features.<name>.flags]], [[runtime.requirements]], and "
+            "[[runtime.artifacts]]",
             *badPath, *badPath)));
     }
 
@@ -664,11 +681,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         return {};
     };
 
+    auto parse_dep_selector = [&](std::string_view section,
+                                  std::string_view selectorText,
+                                  std::string_view stableMapKey)
+        -> std::expected<mcpp::pm::DependencySelector, ManifestError>
+    {
+        auto parsed = mcpp::pm::parse_package_selector(selectorText);
+        if (!parsed) {
+            return std::unexpected(error(origin, std::format(
+                "[{}] {}", section, parsed.error().message)));
+        }
+        auto coordinate = mcpp::pm::normalize_package_selector(*parsed);
+        return mcpp::pm::make_direct_dependency_selector(
+            coordinate.namespace_, coordinate.shortName, stableMapKey,
+            /*namespaceOmitted=*/!parsed->namespace_.has_value());
+    };
+
     auto assign_dep = [&](std::string_view section,
                           std::map<std::string, DependencySpec>& out,
                           const mcpp::pm::DependencySelector& selector,
                           const t::Value& value,
-                          bool legacyDottedKey)
+                          bool legacyDottedKey,
+                          bool legacyCandidateSearch)
         -> std::expected<void, ManifestError>
     {
         if (selector.candidates.empty()) {
@@ -682,6 +716,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         spec.shortName = selector.candidates.front().shortName;
         spec.candidates = selector.candidates;
         spec.legacyDottedKey = legacyDottedKey;
+        spec.legacyCandidateSearch = legacyCandidateSearch;
+        spec.namespaceOmitted = selector.namespaceOmitted;
 
         auto key = selector.stableMapKey;
         if (value.is_string()) {
@@ -734,9 +770,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 auto mapKey = mapPrefix.empty()
                     ? k
                     : std::format("{}.{}", mapPrefix, k);
-                auto selector = mcpp::pm::make_direct_dependency_selector(
-                    ns, k, mapKey);
-                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                auto selectorText = std::format("{}.{}", ns, k);
+                auto selector = parse_dep_selector(
+                    section, selectorText, mapKey);
+                if (!selector) return std::unexpected(selector.error());
+                if (auto r = assign_dep(
+                        section, out, *selector, v, false, false); !r)
                     return r;
                 continue;
             }
@@ -774,10 +813,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 : std::format("{}.{}", selectorPrefix, k);
             if (v.is_string() ||
                 (v.is_table() && looks_like_inline_dep_spec(v.as_table()))) {
-                auto selector = mcpp::pm::resolve_dependency_selector(
-                    selectorText,
-                    mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                auto selector = parse_dep_selector(
+                    section, selectorText, selectorText);
+                if (!selector) return std::unexpected(selector.error());
+                if (auto r = assign_dep(
+                        section, out, *selector, v, false, true); !r)
                     return r;
                 continue;
             }
@@ -803,21 +843,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         -> std::expected<void, ManifestError>
     {
         for (auto& [k, v] : tt) {
-            // (1) string value → flat default-ns short version, or
-            // (3) legacy "ns.name" = "ver" (dotted key).
+            // A string value is either a bare default-namespace selector or a
+            // quoted dotted selector. Both go through the same exact parser;
+            // quoted dotted syntax is retained only as a source-shape marker.
             if (v.is_string()) {
-                if (k.find('.') != std::string::npos) {
-                    auto legacyKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                    auto selector = mcpp::pm::make_direct_dependency_selector(
-                        legacyKey.namespace_, legacyKey.shortName, k);
-                    if (auto r = assign_dep(section, out, selector, v,
-                                            legacyKey.legacyDottedKey); !r)
-                        return r;
-                    continue;
-                }
-                auto selector = mcpp::pm::resolve_dependency_selector(
-                    k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                auto selector = parse_dep_selector(section, k, k);
+                if (!selector) return std::unexpected(selector.error());
+                const bool quotedDotted = k.find('.') != std::string::npos;
+                if (auto r = assign_dep(
+                        section, out, *selector, v, quotedDotted, false); !r)
                     return r;
                 continue;
             }
@@ -832,20 +866,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // (1') inline dep spec under the default namespace, e.g.
             //         frob = { path = "..." }     or
             //         "mcpplibs.cmdline" = { version = "0.0.2" }
-            // The latter is the legacy dotted-key form; same treatment as (3).
+            // The latter is the legacy quoted source shape, but carries the
+            // same exact PackageId as every other selector surface.
             if (looks_like_inline_dep_spec(sub)) {
-                if (k.find('.') != std::string::npos) {
-                    auto legacyKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                    auto selector = mcpp::pm::make_direct_dependency_selector(
-                        legacyKey.namespace_, legacyKey.shortName, k);
-                    if (auto r = assign_dep(section, out, selector, v,
-                                            legacyKey.legacyDottedKey); !r)
-                        return r;
-                    continue;
-                }
-                auto selector = mcpp::pm::resolve_dependency_selector(
-                    k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
-                if (auto r = assign_dep(section, out, selector, v, false); !r)
+                auto selector = parse_dep_selector(section, k, k);
+                if (!selector) return std::unexpected(selector.error());
+                const bool quotedDotted = k.find('.') != std::string::npos;
+                if (auto r = assign_dep(
+                        section, out, *selector, v, quotedDotted, false); !r)
                     return r;
                 continue;
             }
@@ -853,9 +881,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // (2) namespaced or nested subtable.
             //
             // Explicit tables such as `[dependencies.acme]` are namespace
-            // roots. Dotted keys written inside the single dependency table,
-            // such as `[dependencies] capi.lua = "0.0.3"`, are ordered
-            // selectors: mcpplibs.capi/lua first, then capi/lua.
+            // roots. Dotted keys inside the single dependency table are exact
+            // selectors too: `capi.lua` means only `(capi, lua)`.
             if (is_namespace_table(section, k)) {
                 if (auto r = load_nested_dep_table(section, out, k, k, sub); !r)
                     return r;
@@ -987,7 +1014,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 
     // [xlings] — build environment (L-1). Subsections mirror .xlings.json 1:1.
     if (auto v = doc->get_string_array("xlings.deps"))  m.xlings.deps = *v;
-    if (auto v = doc->get_string("xlings.subos"))       m.xlings.subos = *v;
+    if (doc->get("xlings.subos")) {
+        m.xlings.subosDeclared = true;
+        if (auto v = doc->get_string("xlings.subos")) m.xlings.subos = *v;
+    }
     if (auto* wt = doc->get_table("xlings.workspace"))
         for (auto& [k, val] : *wt)
             if (val.is_string()) m.xlings.workspace[k] = val.as_string();
@@ -1046,6 +1076,126 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.runtimeConfig.capabilities = *v;
     if (auto v = doc->get_string_array("runtime.provides"))
         m.runtimeConfig.provides = *v;
+    auto read_runtime_paths = [&](std::string_view key,
+                                  std::vector<std::filesystem::path>& out) {
+        if (auto v = doc->get_string_array(key))
+            for (auto& s : *v) out.emplace_back(s);
+    };
+    if (auto v = doc->get_string_array("runtime.libraries"))
+        m.runtimeConfig.linkIntent.libraries = *v;
+    read_runtime_paths("runtime.link_library_dirs",
+                       m.runtimeConfig.linkIntent.linkLibraryDirs);
+    read_runtime_paths("runtime.transitive_needed_dirs",
+                       m.runtimeConfig.linkIntent.transitiveNeededDirs);
+    read_runtime_paths("runtime.runtime_search_dirs",
+                       m.runtimeConfig.linkIntent.runtimeSearchDirs);
+    if (auto v = doc->get_string_array("runtime.frameworks"))
+        m.runtimeConfig.linkIntent.frameworks = *v;
+    read_runtime_paths("runtime.deploy_files",
+                       m.runtimeConfig.linkIntent.deployFiles);
+
+    auto table_string = [&](const t::Table& table, std::string_view key,
+                            std::string& out) -> bool {
+        auto it = table.find(std::string(key));
+        if (it == table.end()) return true;
+        if (!it->second.is_string()) return false;
+        out = it->second.as_string();
+        return true;
+    };
+    if (auto* requirements = doc->get("runtime.requirements")) {
+        if (!requirements->is_array()) {
+            return std::unexpected(error(origin,
+                "runtime.requirements must be an array of tables"));
+        }
+        std::size_t index = 0;
+        for (auto const& value : requirements->as_array()) {
+            ++index;
+            if (!value.is_table()) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.requirements[{}] must be a table", index)));
+            }
+            RuntimeRequirement requirement;
+            auto const& table = value.as_table();
+            for (auto const& [key, _] : table) {
+                if (key != "kind" && key != "value" && key != "phase"
+                    && key != "required") {
+                    return std::unexpected(error(origin, std::format(
+                        "runtime.requirements[{}] has unsupported key '{}'",
+                        index, key)));
+                }
+            }
+            if (!table_string(table, "kind", requirement.kind)
+                || !table_string(table, "value", requirement.value)
+                || !table_string(table, "phase", requirement.phase)) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.requirements[{}] kind/value/phase must be strings",
+                    index)));
+            }
+            if (auto it = table.find("required"); it != table.end()) {
+                if (!it->second.is_bool()) {
+                    return std::unexpected(error(origin, std::format(
+                        "runtime.requirements[{}].required must be a boolean",
+                        index)));
+                }
+                requirement.required = it->second.as_bool();
+            }
+            if (requirement.kind.empty() || requirement.value.empty()) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.requirements[{}] requires non-empty kind and value",
+                    index)));
+            }
+            if (requirement.phase != "link" && requirement.phase != "run") {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.requirements[{}].phase must be 'link' or 'run'",
+                    index)));
+            }
+            m.runtimeConfig.requirements.push_back(std::move(requirement));
+        }
+    }
+    if (auto* artifacts = doc->get("runtime.artifacts")) {
+        if (!artifacts->is_array()) {
+            return std::unexpected(error(origin,
+                "runtime.artifacts must be an array of tables"));
+        }
+        std::size_t index = 0;
+        for (auto const& value : artifacts->as_array()) {
+            ++index;
+            if (!value.is_table()) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.artifacts[{}] must be a table", index)));
+            }
+            RuntimeArtifact artifact;
+            std::string path;
+            auto const& table = value.as_table();
+            for (auto const& [key, _] : table) {
+                if (key != "role" && key != "path" && key != "provenance"
+                    && key != "abi" && key != "digest"
+                    && key != "host_fingerprint") {
+                    return std::unexpected(error(origin, std::format(
+                        "runtime.artifacts[{}] has unsupported key '{}'",
+                        index, key)));
+                }
+            }
+            if (!table_string(table, "role", artifact.role)
+                || !table_string(table, "path", path)
+                || !table_string(table, "provenance", artifact.provenance)
+                || !table_string(table, "abi", artifact.abi)
+                || !table_string(table, "digest", artifact.digest)
+                || !table_string(table, "host_fingerprint",
+                                 artifact.hostFingerprint)) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.artifacts[{}] fields must be strings", index)));
+            }
+            if (artifact.role.empty() || path.empty()
+                || artifact.provenance.empty()) {
+                return std::unexpected(error(origin, std::format(
+                    "runtime.artifacts[{}] requires role, path, and provenance",
+                    index)));
+            }
+            artifact.path = std::move(path);
+            m.runtimeConfig.artifacts.push_back(std::move(artifact));
+        }
+    }
     // [runtime.<capability>] provider = "<pkg>" — explicit provider override.
     if (auto* rt = doc->get_table("runtime"); rt && !rt->empty()) {
         for (auto& [rk, rv] : *rt) {
@@ -1306,23 +1456,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto* wdeps = doc->get_table("workspace.dependencies")) {
             for (auto& [k, v] : *wdeps) {
                 if (v.is_string()) {
-                    if (k.find('.') != std::string::npos) {
-                        auto depKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                        auto selector = mcpp::pm::make_direct_dependency_selector(
-                            depKey.namespace_, depKey.shortName, k);
-                        if (auto r = assign_dep("workspace.dependencies",
-                                                m.workspace.dependencies,
-                                                selector, v,
-                                                depKey.legacyDottedKey); !r) {
-                            return std::unexpected(r.error());
-                        }
-                        continue;
-                    }
-                    auto selector = mcpp::pm::resolve_dependency_selector(
-                        k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                    auto selector = parse_dep_selector(
+                        "workspace.dependencies", k, k);
+                    if (!selector) return std::unexpected(selector.error());
                     if (auto r = assign_dep("workspace.dependencies",
                                             m.workspace.dependencies,
-                                            selector, v, false); !r) {
+                                            *selector, v,
+                                            k.find('.') != std::string::npos,
+                                            false); !r) {
                         return std::unexpected(r.error());
                     }
                     continue;
@@ -1338,23 +1479,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // selector path components and silently mis-files the entry
                 // under a key like "ylib.path" instead of "ylib".
                 if (looks_like_inline_dep_spec(sub)) {
-                    if (k.find('.') != std::string::npos) {
-                        auto depKey = mcpp::pm::compat::split_legacy_dependency_key(k);
-                        auto selector = mcpp::pm::make_direct_dependency_selector(
-                            depKey.namespace_, depKey.shortName, k);
-                        if (auto r = assign_dep("workspace.dependencies",
-                                                m.workspace.dependencies,
-                                                selector, v,
-                                                depKey.legacyDottedKey); !r) {
-                            return std::unexpected(r.error());
-                        }
-                        continue;
-                    }
-                    auto selector = mcpp::pm::resolve_dependency_selector(
-                        k, mcpp::pm::DependencySelectorMode::OmittedMcpplibsPriority);
+                    auto selector = parse_dep_selector(
+                        "workspace.dependencies", k, k);
+                    if (!selector) return std::unexpected(selector.error());
                     if (auto r = assign_dep("workspace.dependencies",
                                             m.workspace.dependencies,
-                                            selector, v, false); !r) {
+                                            *selector, v,
+                                            k.find('.') != std::string::npos,
+                                            false); !r) {
                         return std::unexpected(r.error());
                     }
                     continue;
@@ -1561,6 +1693,217 @@ version     = "0.1.0"
 description = "A modular C++23 package"
 license     = "Apache-2.0"
 )", packageName);
+}
+
+std::expected<std::string, std::string>
+upsert_dependency_text(std::string_view source,
+                       const DependencyTextEdit& edit) {
+    auto original = parse_string(source);
+    if (!original) {
+        return std::unexpected(std::format(
+            "invalid manifest before dependency edit: {}",
+            original.error().format()));
+    }
+
+    if (edit.namespace_.empty()) {
+        return std::unexpected(
+            "dependency edit requires a canonical non-empty namespace");
+    }
+    const auto spelling = edit.namespace_ == kDefaultNamespace
+        ? edit.shortName
+        : std::format("{}.{}", edit.namespace_, edit.shortName);
+    auto selector = mcpp::pm::parse_package_selector(spelling);
+    if (!selector) return std::unexpected(selector.error().message);
+    auto coordinate = mcpp::pm::normalize_package_selector(*selector);
+    if (coordinate.namespace_ != edit.namespace_
+        || coordinate.shortName != edit.shortName) {
+        return std::unexpected(std::format(
+            "dependency edit identity ({}, {}) is not canonical",
+            edit.namespace_, edit.shortName));
+    }
+    if (edit.version.empty()) {
+        return std::unexpected("dependency edit version is empty");
+    }
+    for (unsigned char ch : edit.version) {
+        if (ch < 0x20 || ch == 0x7f || ch == '"' || ch == '\\') {
+            return std::unexpected(
+                "dependency edit version contains an unsafe TOML character");
+        }
+    }
+    for (auto const& featureName : edit.features) {
+        auto feature = mcpp::pm::parse_package_selector(featureName);
+        if (!feature || feature->namespace_) {
+            return std::unexpected(std::format(
+                "dependency feature '{}' must be one safe atom", featureName));
+        }
+    }
+
+    std::string value;
+    if (edit.features.empty()) {
+        value = std::format("\"{}\"", edit.version);
+    } else {
+        std::string featureList;
+        for (auto const& feature : edit.features) {
+            if (!featureList.empty()) featureList += ", ";
+            featureList += std::format("\"{}\"", feature);
+        }
+        value = std::format(
+            "{{ version = \"{}\", features = [{}] }}",
+            edit.version, featureList);
+    }
+
+    struct SectionSpan {
+        std::size_t headerStart;
+        std::size_t headerEnd;
+        std::size_t bodyStart;
+        std::size_t sectionEnd;
+    };
+
+    auto trim = [](std::string_view line) {
+        while (!line.empty()
+               && (line.front() == ' ' || line.front() == '\t')) {
+            line.remove_prefix(1);
+        }
+        while (!line.empty()
+               && (line.back() == ' ' || line.back() == '\t'
+                   || line.back() == '\r')) {
+            line.remove_suffix(1);
+        }
+        return line;
+    };
+
+    auto section_header_matches = [&](std::string_view line,
+                                      std::string_view header) {
+        line = trim(line);
+        if (!line.starts_with(header)) return false;
+        line.remove_prefix(header.size());
+        line = trim(line);
+        return line.empty() || line.front() == '#';
+    };
+
+    auto find_section = [&](std::string_view text,
+                            std::string_view header)
+        -> std::optional<SectionSpan> {
+        std::optional<SectionSpan> result;
+        std::size_t lineStart = 0;
+        while (lineStart <= text.size()) {
+            auto newline = text.find('\n', lineStart);
+            auto lineEnd = newline == std::string_view::npos
+                ? text.size() : newline;
+            auto line = text.substr(lineStart, lineEnd - lineStart);
+            if (!result && section_header_matches(line, header)) {
+                result = SectionSpan{
+                    .headerStart = lineStart,
+                    .headerEnd = lineEnd,
+                    .bodyStart = newline == std::string_view::npos
+                        ? lineEnd : lineEnd + 1,
+                    .sectionEnd = text.size(),
+                };
+            } else if (result) {
+                auto stripped = trim(line);
+                if (!stripped.empty() && stripped.front() == '[') {
+                    result->sectionEnd = lineStart;
+                    break;
+                }
+            }
+            if (newline == std::string_view::npos) break;
+            lineStart = newline + 1;
+        }
+        return result;
+    };
+
+    auto key_line_span = [&](std::string_view text,
+                             const SectionSpan& section,
+                             std::string_view key)
+        -> std::optional<std::pair<std::size_t, std::size_t>> {
+        const auto quotedKey = std::format("\"{}\"", key);
+        std::size_t lineStart = section.bodyStart;
+        while (lineStart < section.sectionEnd) {
+            auto newline = text.find('\n', lineStart);
+            auto lineEnd = newline == std::string_view::npos
+                ? text.size() : newline;
+            if (lineEnd > section.sectionEnd) lineEnd = section.sectionEnd;
+            auto line = trim(text.substr(lineStart, lineEnd - lineStart));
+            auto assignment_for = [&](std::string_view candidate) {
+                if (!line.starts_with(candidate)) return false;
+                auto rest = line.substr(candidate.size());
+                while (!rest.empty()
+                       && (rest.front() == ' ' || rest.front() == '\t')) {
+                    rest.remove_prefix(1);
+                }
+                return !rest.empty() && rest.front() == '=';
+            };
+            if (!line.starts_with('#')
+                && (assignment_for(key) || assignment_for(quotedKey))) {
+                return std::pair{lineStart, lineEnd};
+            }
+            if (newline == std::string_view::npos
+                || newline >= section.sectionEnd) break;
+            lineStart = newline + 1;
+        }
+        return std::nullopt;
+    };
+
+    std::string text(source);
+    const std::string table = edit.dev
+        ? "dev-dependencies" : "dependencies";
+    const std::string baseHeader = std::format("[{}]", table);
+    const bool defaultNamespace = edit.namespace_ == kDefaultNamespace;
+
+    // Retained flat dotted spellings are removed before canonical namespace
+    // subtable emission. The parsed identity gate above ensures this edits the
+    // exact PackageId, not a short-name substring match.
+    if (!defaultNamespace) {
+        if (auto base = find_section(text, baseHeader)) {
+            if (auto legacy = key_line_span(text, *base, spelling)) {
+                auto eraseEnd = legacy->second;
+                if (eraseEnd < text.size() && text[eraseEnd] == '\n')
+                    ++eraseEnd;
+                text.erase(legacy->first, eraseEnd - legacy->first);
+            }
+        }
+    }
+
+    const std::string sectionHeader = defaultNamespace
+        ? baseHeader
+        : std::format("[{}.{}]", table, edit.namespace_);
+    const std::string line = std::format("{} = {}", edit.shortName, value);
+    if (auto section = find_section(text, sectionHeader)) {
+        if (auto existing = key_line_span(text, *section, edit.shortName)) {
+            text.replace(existing->first, existing->second - existing->first,
+                         line);
+        } else if (section->bodyStart == section->headerEnd) {
+            text.insert(section->bodyStart, "\n" + line);
+        } else {
+            text.insert(section->bodyStart, line + "\n");
+        }
+    } else {
+        if (!text.empty() && text.back() != '\n') text += '\n';
+        text += std::format("\n{}\n{}\n", sectionHeader, line);
+    }
+
+    auto reparsed = parse_string(text);
+    if (!reparsed) {
+        return std::unexpected(std::format(
+            "dependency edit produced invalid manifest: {}",
+            reparsed.error().format()));
+    }
+    auto const& dependencies = edit.dev
+        ? reparsed->devDependencies : reparsed->dependencies;
+    auto exact = std::ranges::find_if(
+        dependencies, [&](auto const& item) {
+            auto const& dep = item.second;
+            return dep.namespace_ == edit.namespace_
+                && dep.shortName == edit.shortName;
+        });
+    if (exact == dependencies.end()
+        || exact->second.version != edit.version
+        || exact->second.features != edit.features) {
+        return std::unexpected(std::format(
+            "dependency edit did not materialize exact PackageId ({}, {})",
+            edit.namespace_, edit.shortName));
+    }
+    return text;
 }
 
 } // namespace mcpp::manifest

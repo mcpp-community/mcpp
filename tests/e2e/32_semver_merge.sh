@@ -7,8 +7,10 @@
 #   * Non-overlapping pins still hard-error (Level-1 mangling fallback
 #     is a follow-up).
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
+TMP_HOST="$(host_path "$TMP")"
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
@@ -77,7 +79,7 @@ name    = "app"
 version = "0.1.0"
 
 [dependencies]
-mylib = { path = "$TMP/mylib/mylib" }
+mylib = { path = "$TMP_HOST/mylib/mylib" }
 
 [dependencies.mcpplibs]
 cmdline = ">=0.0.1, <1"

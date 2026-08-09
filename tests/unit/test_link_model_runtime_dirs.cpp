@@ -23,6 +23,8 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.build.flags;
+import mcpp.manifest.types;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
 
@@ -117,6 +119,39 @@ TEST(LinkModelRuntimeDirs, BothModesNameTheInterpreter) {
                   std::string::npos)
             << "withSysroot=" << withSysroot << "\n" << line;
     }
+}
+
+TEST(LinkIntent, KeepsLinkSearchTransitiveSearchAndRuntimeSearchSeparate) {
+    mcpp::manifest::LinkIntent intent;
+    intent.libraries = {"widget"};
+    intent.linkLibraryDirs = {"/contract/link"};
+    intent.transitiveNeededDirs = {"/contract/needed"};
+    intent.runtimeSearchDirs = {"/contract/run"};
+    intent.frameworks = {"WindowKit"};
+    intent.deployFiles = {"/contract/bin/widget.dll"};
+
+    auto elf = mcpp::build::render_link_intent_flags(
+        intent, mcpp::build::LinkIntentFlavor::Elf);
+    EXPECT_NE(elf.find("-L/contract/link"), std::string::npos) << elf;
+    EXPECT_NE(elf.find("-Wl,-rpath-link,/contract/needed"), std::string::npos)
+        << elf;
+    EXPECT_NE(elf.find("-Wl,-rpath,/contract/run"), std::string::npos) << elf;
+    EXPECT_EQ(elf.find("-L/contract/run"), std::string::npos) << elf;
+    EXPECT_EQ(elf.find("widget.dll"), std::string::npos) << elf;
+
+    auto macho = mcpp::build::render_link_intent_flags(
+        intent, mcpp::build::LinkIntentFlavor::MachO);
+    EXPECT_NE(macho.find("-Wl,-rpath,/contract/run"), std::string::npos)
+        << macho;
+    EXPECT_NE(macho.find("-framework WindowKit"), std::string::npos) << macho;
+    EXPECT_EQ(macho.find("rpath-link"), std::string::npos) << macho;
+
+    auto pe = mcpp::build::render_link_intent_flags(
+        intent, mcpp::build::LinkIntentFlavor::PeMsvc);
+    EXPECT_NE(pe.find("/LIBPATH$:/contract/link"), std::string::npos) << pe;
+    EXPECT_EQ(pe.find("rpath"), std::string::npos) << pe;
+    EXPECT_EQ(pe.find("/contract/run"), std::string::npos) << pe;
+    EXPECT_EQ(pe.find("widget.dll"), std::string::npos) << pe;
 }
 
 }  // namespace

@@ -107,6 +107,11 @@ case "$OS" in
     Linux|Darwin) CAPS+=(symlink) ;;
 esac
 
+# python3: a small number of E2E assertions inspect JSON structurally.  Keep
+# this explicit so those tests skip honestly on minimal local runners instead
+# of either failing at runtime or declaring an unknown capability.
+command -v python3 &>/dev/null && CAPS+=(python3)
+
 # nasm: the x86 assembler for .asm sources (PATH — including the xlings
 # subos shim — or the mcpp sandbox tool dir).
 if command -v nasm &>/dev/null \
@@ -143,7 +148,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
 KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx macos mingw-cross msvc
-            musl nasm no-msvc pack patchelf scan-deps symlink unix-shell
+            musl nasm no-msvc pack patchelf python3 scan-deps symlink unix-shell
             windows wine)
 
 bad_tokens=0

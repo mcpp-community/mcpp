@@ -8,15 +8,14 @@
 ## 1. The model in one picture
 
 ```
-mcpp.toml [toolchain]  /  global default  /  `mcpp toolchain install`
-        │  (three entry paths — ONE shared pipeline)
-        ▼
-resolve payload (xim:gcc / xim:llvm / xim:musl-gcc xpkg under the sandbox)
-        ▼
-ensure_post_install_fixup()      ← idempotent convergence (marker-gated)
+mcpp.toml [xlings].subos / mcpp-managed default runtime
         ▼
 resolve runtime binding          ← which libc the artifact will load (§2.1) — an
                                    answer, not a search
+        ▼
+resolve toolchain payload        ← project/default/install paths share one pipeline
+        ▼
+ensure_post_install_fixup()      ← exact glibc@version, marker-gated; never readdir-first
         ▼
 detect / probe                   ← triple, sysroot, payload paths (glibc, linux-headers)
         ▼
@@ -27,6 +26,8 @@ ToolchainLinkModel (single resolver for the C-library axis)
         └──► cfg regeneration  (the human-facing clang++.cfg)
         ▼
 hermetic link check (`-###` dry-run)  ← checks sandbox CRT/loader resolution
+        ▼
+link → internal ELF physics check    ← validates the artifact and resolved closure (§6.1)
 ```
 
 Two principles run through everything:
@@ -77,17 +78,37 @@ anymore: the cfg is an output of this machinery, not an input (§5).
 ### 2.1 The runtime binding — which libc, decided once
 
 A payload-first build links against a specific glibc, and *which* one is a
-fact about the environment, not something to be inferred. mcpp resolves it in
-order:
+fact about the root project's local development OS, not something to infer
+from a compiler path or shell. mcpp has exactly two selection modes:
 
-1. `[xlings] subos = "<name>"` — the named subos, a sibling of the active one,
-   describes its own runtime in the `subos_info` block of its `.xlings.json`
-   (xlings 2026.8.5.1+).
-2. The active subos, same block.
-3. *Compatibility.* A subos created before that block existed cannot answer.
-   The value baked into the toolchain itself then stands in — gcc's specs,
-   clang's cfg. This is the value the artifact **would** load, so compile side
-   and run side still agree; it retires itself the moment the subos can speak.
+1. No `[xlings].subos`: `McppDefault`, the initialized `subos/default` in the
+   xlings home selected by global mcpp configuration.
+2. `[xlings] subos = "<name>"`: `NamedSubos(name)`. Explicit `"default"`
+   remains a named selection; other names resolve in the root project's local
+   xlings scope.
+
+The workspace root owns the selection during a workspace build. Member and
+dependency declarations do not merge or propagate; the same member's
+declaration applies only when that source is an independent root. Neither
+`XLINGS_ACTIVE_SUBOS`, `current`, the compiler's owner home, nor a CLI/env
+override is a third selection rung.
+
+The selected SubOS must provide the supported `subos_info` contract. A missing
+named environment or missing/incompatible contract is a hard error, never a
+fallback to default/active/compiler-baked state. mcpp reads it once into a
+`RuntimeBinding` snapshot, feeds its libc identity into payload probing, and
+reuses the same snapshot for configure/link/run/test and the fast-path cache.
+On Linux the snapshot also records the canonical selected loader/libc directory
+and the optional creation-host glibc floor. These are evidence used by the
+post-link validator, not another selection mechanism.
+
+The resolved SubOS view is authoritative when it canonically names one managed
+glibc payload. Older xlings state may retain `runtime = "glibc@2.39"` after the
+view has atomically moved to the managed 2.44 payload; mcpp records the physical
+2.44 identity and path in that case. If an older view contains a broken link,
+mcpp may resolve only the exact payload named by `runtime`; it never enumerates
+installed versions or chooses a nearest/newest one. Both paths consume xlings
+facts and preserve one RuntimeBinding rather than introducing an mcpp policy.
 
 No binding is a **refusal**, not a default: `CLibMode::PayloadFirst` is
 declined rather than picking a libc.
@@ -102,9 +123,57 @@ against a runtime without them, and the failures surfaced on packages
 unrelated to the dependency that pulled the second glibc in. Directory order
 is not a decision procedure.
 
-Because the binding decides what the artifact loads, it is part of the
-toolchain fingerprint (11 fields, not 10) — two builds differing only in
-runtime must not share a cache entry.
+Because the binding decides what the artifact loads, the complete canonical
+contract hash is field 11 of the toolchain fingerprint — two named SubOS
+environments that happen to use the same libc still must not share a cache
+entry when their providers or environment declarations differ.
+
+### 2.2 Generic runtime providers and artifacts
+
+`RuntimeBinding` also carries the provider-neutral facts selected by xlings for
+the chosen development OS. `subos_info.runtime_contract` is an optional,
+additive schema-1 block:
+
+```json
+{
+  "providers": [
+    {"capability": "display.present", "provider": {
+      "namespace": "xim", "name": "display-runtime", "version": "1.0.0",
+      "source": "xim-pkgindex@<revision>"}}
+  ],
+  "artifacts": [
+    {"role": "driver", "provider": {
+      "namespace": "xim", "name": "display-runtime", "version": "1.0.0",
+      "source": "xim-pkgindex@<revision>"},
+     "path": "${subosdir}/lib/runtime/provider.so",
+     "provenance": "subos_view", "abi": "elf-x86_64",
+     "digest": "sha256:...", "host_fingerprint": "..."}
+  ]
+}
+```
+
+The binding parser resolves `${subosdir}` and relative artifact paths once,
+sorts the facts, and includes them in the contract hash and cache snapshot. In
+the build plan these selected provider facts precede descriptor-declared
+fallbacks. Descriptor requirements and artifacts are independently stamped
+with their resolved requester's/provider's canonical PackageId, so equal short
+names in different namespaces remain distinct end to end.
+
+The ownership boundary is deliberate: mcpp-index expresses generic runtime
+requirements; xlings/xim chooses and diagnoses the host graphics/runtime stack;
+mcpp consumes only the selected provider/artifact facts and generic LinkIntent.
+mcpp has no hardware, driver-vendor, WSL, or ICD selection path. Its source gate
+rejects introducing such provider-specific branches or coupling those terms to
+a launched probe.
+
+`LinkIntent` keeps `linkLibraryDirs`, `transitiveNeededDirs`, and
+`runtimeSearchDirs` separate. The last category is never rendered as `-L`:
+ELF receives rpath plus `-rpath-link` only for the transitive category, Mach-O
+receives rpath/framework flags, and PE receives link-library paths plus explicit
+deploy-file copy edges. The exact RuntimeBinding, canonical identities, link
+intent, search mechanism, and post-link verdict are persisted in
+`resolution.json` schema 2. `mcpp why runtime` only interprets that stored file;
+re-diagnosis belongs to `xlings doctor`.
 
 ## 3. The link model (`src/toolchain/linkmodel.cppm`)
 
@@ -274,6 +343,76 @@ class that faithfully reproduces the clean-machine failure mode, plus e2e
 `86_llvm_hermetic_link.sh` which re-checks the `-###` resolution on every
 machine.
 
+### 6.1 Post-link Linux runtime physics (`elf_runtime.cppm`)
+
+The hermetic check answers a pre-link question: what does the driver appear to
+resolve? The runtime-physics check answers the stronger post-link question:
+what did the newly produced ELF actually record and what will its closure
+load? `[build] allow_host_libs = true` deliberately relaxes the first check;
+it does not suppress physical impossibilities in the second.
+
+For each newly linked Linux executable/shared object, mcpp parses ELF64
+little-endian program/dynamic/GNU-version tables internally—no `readelf`,
+`patchelf`, or `ldd` subprocess on the build path—and records `PT_INTERP`,
+`DT_RPATH`/`DT_RUNPATH`, `DT_NEEDED`, and required/defined `GLIBC_*` versions.
+It resolves the declared closure using the artifact search paths, selected
+runtime/toolchain directories, and known host library directories, then applies:
+
+- **Rule B (same source):** `PT_INTERP` and every resolved `libc.so.6` must be
+  the canonical payload selected by `RuntimeBinding`. A host loader plus private
+  libc, or two private libc payloads, is a proven pre-main failure.
+- **Rule A (version floor):** every closure request for `GLIBC_x.y` must be no
+  newer than the selected libc's exported GNU version definitions. Linking a
+  host DSO is allowed when this holds; mcpp is checking physics, not imposing a
+  no-host-library policy.
+
+Verdicts are typed: `Pass`, `ProvenMismatch`, or `Inconclusive`. Proven A/B
+mismatches fail the build with canonical requester/provider/artifact paths and
+a copyable SubOS remediation. Missing loader-cache/hardware closure data is
+reported as inconclusive, never relabelled green. macOS and Windows use the
+same interface as a typed no-op and never receive ELF/glibc rules.
+
+The verdict is stored as `.mcpp-runtime-verdicts.json` beside `build.ninja`,
+keyed by artifact stat fingerprint plus the complete runtime contract hash.
+Hot no-op builds require a current passing record, compare artifact stats
+before/after Ninja, and perform zero ELF parses. An unexpected relink drops to
+the full path before success or execution. `mcpp self doctor` reports the same
+stored verdict rather than re-probing a potentially different current host.
+
+Post-install alignment follows the same identity rule: `glibc@2.44` resolves
+only `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`. A missing/stale exact payload is an
+error; another installed version is never a fallback.
+
+### 6.2 Where a runtime search path is allowed to live (`runtime_env_contract.cppm`)
+
+There are two ways to tell a loader where to look, and they differ by blast
+radius, not by convenience:
+
+| | reaches | |
+| --- | --- | --- |
+| `DT_RUNPATH` | the one object that carries it, and its `dlopen()` | per-binary |
+| `LD_LIBRARY_PATH` | the process **and every process it ever spawns** | inherited, forever |
+
+That second row is why the private libc payload is **binary-scoped**. A glibc's
+`libc.so.6` and its `ld.so` are version-locked through `GLIBC_PRIVATE`: 2.44's
+libc carries an undefined `__pointer_chk_guard` that only 2.44's own loader
+exports. An mcpp-built program is fine — `PT_INTERP` names the private loader.
+`/bin/sh` is not: its `PT_INTERP` names the **host** loader and no environment
+variable can override it, so a `popen()`/`system()` child dies during
+relocation, before `main`, with no output (mcpp#401; mcpp#291 is the same shape
+one hop closer in, killing mcpp's own nested host tools).
+
+So mcpp never publishes the private libc directory through the environment. It
+does not need to: wherever a payload exists the link model already emits
+`-Wl,-rpath,<glibc>` beside `--dynamic-linker`, which covers the case the
+directory exists for — a `dlopen()` whose own `DT_NEEDED` closure does not
+consult the executable's RUNPATH.
+
+This is a scope, not a condition. "Only export it when a dependency might
+`dlopen()`" still exports it, and the child that dies does not care why. Plain
+dependency runtime directories keep their environment scope: they have no
+loader coupling, so a host binary that stumbles onto them is at worst confused.
+
 ## 7. Extending the machinery
 
 ### 7.1 Adding a new toolchain (new compiler family or distribution)
@@ -350,6 +489,9 @@ everything §3–§4 does for ELF.
 | link model + loader resolution | `src/toolchain/linkmodel.cppm` |
 | unified fixup pipeline (patchelf/specs/cfg, marker) | `src/toolchain/post_install.cppm` |
 | install/lifecycle entry | `src/toolchain/lifecycle.cppm`; auto-install entries in `src/build/prepare.cppm` |
+| root runtime selection/binding | `src/xlings/runtime_selection.cppm`, `src/platform/runtime_binding.cppm`, `src/xlings/subos_info.cppm` |
+| generic runtime contract + LinkIntent | `src/manifest/types.cppm`, `src/build/plan.cppm`, `src/build/flags.cppm` |
+| stored resolution explanation | `src/build/prepare.cppm`, `src/build/runtime_validation.cppm`, `src/doctor.cppm` |
 | flag assembly (main build) | `src/build/flags.cppm` |
 | `import std;` precompile | `src/toolchain/stdmod.cppm` |
 | build.mcpp host flags | `src/build/build_program.cppm` |

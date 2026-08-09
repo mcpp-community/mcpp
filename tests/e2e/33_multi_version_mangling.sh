@@ -11,8 +11,10 @@
 # stages cmdline 0.0.2 + libB under `target/.mangled/` with rewritten
 # `module/import` declarations and the build proceeds.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
+TMP_HOST="$(host_path "$TMP")"
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 source "$(dirname "$0")/_inherit_toolchain.sh"
@@ -95,8 +97,8 @@ name    = "app"
 version = "0.1.0"
 
 [dependencies]
-libA = { path = "$TMP/libA/libA" }
-libB = { path = "$TMP/libB/libB" }
+libA = { path = "$TMP_HOST/libA/libA" }
+libB = { path = "$TMP_HOST/libB/libB" }
 EOF
 
 "$MCPP" build > build.log 2>&1 || {

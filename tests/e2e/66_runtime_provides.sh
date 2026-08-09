@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 66_runtime_provides.sh — [runtime] provides: a package that explicitly
-# `provides` a capability wins provider selection over a package that merely
-# lists it in `capabilities` (weak provider). Surfaced via resolution.json.
+# 66_runtime_provides.sh — [runtime] requirements and providers are disjoint:
+# only an explicit `provides` claim can own a capability. Merely requiring it
+# through legacy `capabilities` never turns the requester into its own provider.
 set -e
 
 TMP=$(mktemp -d)
@@ -27,7 +27,7 @@ export int ${1}_id() { return 1; }
 EOF
 }
 
-# weakdep only LISTS the capability; strongdep explicitly PROVIDES it.
+# weakdep only REQUIRES the capability; strongdep explicitly PROVIDES it.
 mk_dep weakdep   'capabilities = ["test.cap.demo"]'
 mk_dep strongdep 'capabilities = ["test.cap.demo"]
 provides     = ["test.cap.demo"]'
@@ -55,32 +55,38 @@ cd app
 RES=$(find target -name resolution.json | head -1)
 [[ -n "$RES" ]] || { echo "no resolution.json produced"; exit 1; }
 
-# First provider entry for test.cap.demo must be the provides-declarer.
+# The only provider entry must be the provides-declarer, with canonical ID.
 python3 - "$RES" <<'PY'
 import json, sys
 plan = json.load(open(sys.argv[1]))
-caps = plan["runtime"]["capabilities"]
-first = next(c for c in caps if c["capability"] == "test.cap.demo")
-assert first["provider"] == "strongdep", \
-    f"expected strong provider 'strongdep' first, got {first['provider']}"
+providers = [p for p in plan["runtime"]["providers"]
+             if p["capability"] == "test.cap.demo"]
+assert len(providers) == 1, providers
+provider = providers[0]["provider"]
+assert provider["canonical"] == "mcpplibs.strongdep@0.1.0", provider
+requirements = plan["runtime"]["requirements"]
+weak = [r for r in requirements
+        if r["value"] == "test.cap.demo"
+        and r["requester"]["canonical"] == "mcpplibs.weakdep@0.1.0"]
+assert len(weak) == 1, requirements
 PY
 
-# Explicit override back to the weak provider must be honoured.
+# An override cannot promote the requester into a provider.
 cat >> mcpp.toml <<'EOF'
 
 [runtime."test.cap.demo"]
 provider = "weakdep"
 EOF
 rm -rf target
-"$MCPP" build > build2.log 2>&1 || { cat build2.log; echo "override build failed"; exit 1; }
-RES=$(find target -name resolution.json | head -1)
-python3 - "$RES" <<'PY'
-import json, sys
-plan = json.load(open(sys.argv[1]))
-caps = plan["runtime"]["capabilities"]
-first = next(c for c in caps if c["capability"] == "test.cap.demo")
-assert first["provider"] == "weakdep", \
-    f"override to weakdep not honoured, got {first['provider']}"
-PY
+if "$MCPP" build > build2.log 2>&1; then
+    cat build2.log
+    echo "weak requester was incorrectly promoted to provider"
+    exit 1
+fi
+grep -q 'does not name a provider' build2.log || {
+    cat build2.log
+    echo "missing exact provider diagnostic"
+    exit 1
+}
 
 echo "OK"

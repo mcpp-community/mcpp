@@ -5,9 +5,9 @@
 | **规范编号** | SPEC-001 |
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
-| **版本** | 1.1 |
-| **最后修改** | 2026-08-03 |
-| **最低实现版本** | mcpp **0.0.106**(xlings >= 0.4.69) |
+| **版本** | 1.2 |
+| **最后修改** | 2026-08-09 |
+| **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
 | **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
@@ -26,12 +26,12 @@
 
 | 标记 | 含义 |
 |---|---|
-| ✅ **已实现** | 自 mcpp 0.0.106 起的行为与本规范一致 |
+| ✅ **已实现** | 自对应“最低实现版本”起的行为与本规范一致 |
 | ⚠️ **部分实现** | 已有实现,但语义或覆盖面与本规范有差异(差异已注明) |
 | ❌ **未实现** | 本规范要求但尚未支持;当前行为已注明 |
 
-> **本规范所需行为自 mcpp 0.0.106 起已全部实现，当前实现继续符合。** 索引作者按 §3
-> 书写即可。0.0.105 及更早版本要求的过渡形态(`name` 必须写成
+> 描述符身份规则自 mcpp 0.0.106 起实现;唯一精确 selector 自 2026.8.10.1
+> 起实现。0.0.105 及更早版本要求的过渡形态(`name` 必须写成
 > `<namespace>.<name>`)仍被接受为**兼容写法**,见 §8。
 
 ---
@@ -42,7 +42,7 @@
 
 - 索引描述符(`.lua`)中 `package.namespace` / `package.name` 的语义与形态
 - `mcpp.toml` 中 `[dependencies]`(及 `[dev-dependencies]` / `[build-dependencies]` / `[feature-deps.*]`)的书写文法
-- 从用户书写 → 候选身份 → 描述符发现 → 身份校验 → 安装目标的完整匹配机制
+- 从用户书写 → 唯一身份 → 描述符发现 → 身份校验 → 安装目标的完整匹配机制
 
 ### 1.2 边界:mcpp 不改动 xlings 规范
 
@@ -119,7 +119,7 @@ package = { namespace = "compat", name = "compat.zlib" }   -- legacy,短名 = "z
 
 ✅ **规范如此**。
 
-✅ **已实现**。xlings **0.4.69** 起索引按 `(effectiveNamespace, name)` 建键([#381](https://github.com/openxlings/xlings/issues/381)),同一索引内两个同短名不同命名空间的包各自可寻址;裸名请求多候选时报 ambiguity 并列出候选。
+✅ **已实现**。xlings **0.4.69** 起索引按 `(effectiveNamespace, name)` 建键([#381](https://github.com/openxlings/xlings/issues/381)),同一索引内两个同短名不同命名空间的包各自可寻址;mcpp 始终传入唯一精确身份。
 
 e2e `163_identity_first_resolution.sh` 端到端锁住:同一 path 索引内 `(alpha, widget)` 与 `(beta, widget)` 各自安装到 `alpha-x-widget` / `beta-x-widget`。
 
@@ -149,30 +149,30 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 
 ## 4. 消费侧规范:`[dependencies]` 书写文法
 
-用户写的**不是身份,而是选择器(selector)** —— 它展开为一个**有序候选身份列表**,按序尝试,首个满足者胜出。
+用户写的是 selector;它必须在 O(输入长度)、无 I/O 的解析阶段规范化成**唯一一个** `(namespace, name)`。索引状态、候选顺序或已安装内容不得参与身份决定。
 
 ### 4.1 四种书写形式
 
-| # | 写法 | 展开为候选(按序) | 语义 |
+| # | 写法 | 规范化身份 | 语义 |
 |---|---|---|---|
-| 1 | `[dependencies]`<br>`gtest = "1.15.2"` | ① `(mcpplibs, gtest)`<br>② `(∅, gtest)` | **裸名**。只解析默认命名空间搜索路径(§5.2) |
-| 2 | `[dependencies]`<br>`acme.widget = "1.0"` | ① `(mcpplibs.acme, widget)`<br>② `(acme, widget)` | **点式选择器**。先试默认命名空间下的同名子空间,再试同级 peer root |
-| 3 | `[dependencies.acme]`<br>`widget = "1.0"` | ① `(acme, widget)` | **命名空间子表**。权威、单候选、无猜测 —— **推荐用于第三方命名空间** |
-| 4 | `[dependencies]`<br>`"acme.widget" = "1.0"` | ① `(acme, widget)` | **引号点式键**(legacy)。单候选,等价于 #3 |
+| 1 | `[dependencies]`<br>`cmdline = "0.0.2"` | `(mcpplibs, cmdline)` | **裸名**。省略 namespace 只表示默认 `mcpplibs` |
+| 2 | `[dependencies]`<br>`acme.widget = "1.0"` | `(acme, widget)` | **点式选择器**。最后一段是 name,之前所有段是 namespace |
+| 3 | `[dependencies.acme]`<br>`widget = "1.0"` | `(acme, widget)` | **命名空间子表**。与 #2 完全等价,多个同 namespace 包时更清晰 |
+| 4 | `[dependencies]`<br>`"acme.widget" = "1.0"` | `(acme, widget)` | **引号点式键**(legacy source shape)。身份仍与 #2/#3 相同 |
 
-✅ **已实现**(`resolve_dependency_selector` / `make_direct_dependency_selector`)。
+✅ **已实现**(`parse_package_selector` / `normalize_package_selector` / `make_direct_dependency_selector`)。
 
-**#2 与 #3 的区别很重要**:`[dependencies.acme]` 是**显式 TOML 表**,mcpp 视其为命名空间根,直接产出单候选;而 `[dependencies]` 里的点式键是**有序猜测**,会先试 `mcpplibs.` 前缀。
-
-判定「是否命名空间根」的条件:该路径是 TOML **显式表**(`[dependencies.acme]` 被真实书写过),**或**键名恰为默认命名空间 `mcpplibs`。
+**#2 与 #3 只有 TOML 版式差异,没有解析差异。** 新增索引或同短名 sibling 不能改变其身份。
 
 多级命名空间同理,`ns` 逐层累积:`[dependencies.mcpplibs.capi]` + `lua = "0.0.3"` → 单候选 `(mcpplibs.capi, lua)`。
 
-### 4.2 裸名的解析域是封闭的
+### 4.2 裸名就是默认 mcpplibs
 
-> **裸名(#1)只解析三类包:`mcpplibs`(默认命名空间)、`compat`(包装命名空间)、无 `namespace` 声明的上游包。任何声明了第三方命名空间的包,禁止用裸名请求。**
+> **裸名(#1)只能表示 `(mcpplibs, name)`。`compat`、第三方 namespace 与无 namespace 包都不会成为隐式候选。**
 
-✅ **已实现**(0.0.105)。裸名请求命中一个声明了非空第三方 `namespace` 的描述符时,该候选被拒绝。
+例如 gtest 必须写成 `compat.gtest` 或 `[dependencies.compat] gtest = ...`;裸 `gtest` 请求的是不同身份 `(mcpplibs, gtest)`。
+
+✅ **已实现**(2026.8.10.1)。默认 namespace 的依赖身份门禁不再接纳 `compat` 或无 namespace descriptor。
 
 **设计理由**:全域按短名搜索会让解析结果取决于「本机装了哪些索引」——
 1. 两个命名空间拥有同名包时,胜负由索引顺序决定,而用户 `[indices]` 添加的索引之间**没有全序**;
@@ -181,18 +181,45 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 
 依赖解析的**可复现性**优先于书写便捷性。
 
+#### 4.2.1 过渡期（`2026.8.10.1` 起，`2026.9` 移除）
+
+索引里已发布的 `compat.*` 包与既有用户 `mcpp.toml` **全部**使用裸名写法。
+让它们在一次 mcpp 升级后直接失败，等于「发布一个程序，让已经发布、且无法追溯修改的
+数据失效」——这与「索引抬高 floor 不得让旧客户端变砖」是同一条判据的两个方向，
+两边都必须**降级**而不是变砖。
+
+所以省略 namespace 的 selector 在一个版本内保留一条**出口坡道**：
+
+1. 先精确解析 `(mcpplibs, name)`；
+2. **仅在未命中时**，再依次尝试 `(compat, name)` 与「descriptor 自己不声明 namespace」
+   这一级；
+3. 命中即打印弃用警告，内容包含实际选中的完整身份与可直接粘贴的 manifest 片段；
+4. 写入 lock、install 与 cache 的是**规范身份**（`compat.gtest`），歧义拼写只留在
+   用户 manifest 里，直到用户改它；
+5. `mcpp add <裸名>` 直接把规范点分形式写回 `mcpp.toml`——碰一次就迁移一次。
+
+不适用的情形（**不是**过渡期的一部分）：
+
+- 写明了 namespace 的 selector（`mcpplibs.gtest`、`[dependencies.mcpplibs]`）——
+  那是一个身份声明，未命中就是未命中；
+- 第三方 namespace——裸名从来、且仍然不可触达（§4.2 的供应链理由不变）。
+
+> #278 修掉的缺陷是**静默**：mcpp 带着一个用户从未写过的 namespace 继续往下走，
+> 并且不说。一条带完整身份的警告已经消灭了「静默」，同时保住了已发布的数据。
+> 同一个版本对 `ns:name → ns.name` 用的也是同一套过渡期处理。
+
 ### 4.3 解析失败时的诊断
 
-候选全部落空时,mcpp **必须**明确失败,并列出尝试过的身份;若该短名存在于其他命名空间,**应当**给出可直接抄写的正确写法。
+唯一身份落空时,mcpp **必须**明确失败并列出该身份;若同短名存在于其他 namespace,**应当**只在诊断中给出可复制的显式 selector,禁止把提示结果回灌解析。
 
-✅ **已实现**(0.0.105):
+✅ **已实现**(2026.8.10.1):
 
 ```
-error: dependency 'asio': no package found under the namespaces mcpp searched
-  tried: (mcpplibs, asio), (no namespace, asio)
+error: dependency 'asio': no package found
+  tried: (mcpplibs, asio)
   a package with this name exists under another namespace:
     chriskohlhoff.asio
-  bare names only resolve to the `mcpplibs` / `compat` namespaces. write it out:
+  namespace omission means `mcpplibs`; write the exact package:
     [dependencies]
     "chriskohlhoff.asio" = "1.38.1"
   or:
@@ -200,7 +227,34 @@ error: dependency 'asio': no package found under the namespaces mcpp searched
     asio = "1.38.1"
 ```
 
-该 did-you-mean 扫描**仅**在已失败路径触发,结果**只进错误文案**,禁止回灌解析、lockfile 或安装层 —— 否则就退化成 §4.2 否决的全域模糊匹配。
+该 did-you-mean 扫描**仅**在已失败路径触发,结果**只进错误文案**,禁止回灌解析、lockfile 或安装层。
+
+迁移 release 对旧的 compact dotted 搜索做两件事:已有 lock 继续固定已记录身份;无 lock 时若旧的 `mcpplibs.<ns>` primary 确实存在,warning 同时显示旧/新完整 selector,但仍不回退。
+
+### 4.4 `mcpp new --template` 的同源 selector
+
+模板不拥有第二套包身份。`--template` 与 `--list-templates` 复用 §4 的精确
+`PackageSelector`，只在包身份/版本之后增加模板名轴:
+
+| 输入 | 规范结果 |
+|---|---|
+| `pkg` | `(mcpplibs, pkg)` + latest stable + default/单模板 |
+| `pkg@1.2.0` | `(mcpplibs, pkg)` + `1.2.0` + default/单模板 |
+| `acme.widget` | `(acme, widget)` + latest stable + default/单模板 |
+| `acme.widget@1.2.0:docking` | `(acme, widget)` + `1.2.0` + `docking` |
+
+完整文法为 **`[namespace.]name[@version][:tname]`**。namespace、version、tname
+分别可省略；namespace 的省略语义与依赖完全一致，只表示默认 `mcpplibs`。模板默认
+规则按以下顺序且必须唯一:
+
+1. 正好一个 template 声明 `default = true`，选择它；
+2. 没有显式 default，但当前已解析包版本只有一个 template，选择该单模板；
+3. 多个 template 且没有 default，hard error 并提示 `--list-templates`。
+
+模板目录顺序、索引顺序和本机缓存都不得参与选择。`--variant` 不属于词汇表。
+scaffold 必须先解析完整 PackageId/version/template，再以 sibling 临时目录事务生成；
+失败不得留下目标目录。旧 `pkg:` 的“列举模板”含义仅保留一个 release train 的迁移
+warning，规范列举命令是 `mcpp new --list-templates pkg`。
 
 ---
 
@@ -212,34 +266,33 @@ error: dependency 'asio': no package found under the namespaces mcpp searched
 用户书写(selector)
    │  §4.1 展开
    ▼
-有序候选身份列表  [(ns₁,n₁), (ns₂,n₂), …]
-   │  逐个尝试
+唯一身份 (ns,name)
+   │  精确查询
    ▼
 ① 发现:先探测推荐文件名，落空后按声明身份扫描描述符（§3.4）
 ② 校验:xpkg_lua_identity_matches 复核声明身份  ← §5.2
-③ 收敛:INV-RESOLVE 拒绝裸名命中第三方 ns      ← §4.2
-④ 回填:用描述符**声明的** namespace 定身份     ← §5.3
-   │  首个通过者胜出;全部落空 → §4.3 报错
+③ 验证:descriptor 身份必须精确相等              ← §5.2
+   │  落空 → §4.3 报错
    ▼
 选定身份 (ns, name) → 派生 wire key / store dir(§6)
 ```
 
 ### 5.2 身份校验规则
 
-给定候选 `(ns, shortName)` 与一个描述符,`xpkg_lua_identity_matches` 的判定:
+给定请求 `(ns, shortName)` 与一个描述符,`xpkg_lua_identity_matches` 的判定:
 
-| 候选 `ns` | 判定 |
+| 请求 `ns` | 判定 |
 |---|---|
 | 描述符无 `name` | **接受**(无从校验,宽松) |
-| `ns` 为空(discovery) | 短名相等即可 |
-| `ns == "mcpplibs"`(默认命名空间) | 描述符身份的 ns ∈ **{`mcpplibs`, `compat`}**,或(旧式)无 ns |
+| `ns` 为空(仅内部 legacy discovery) | 短名相等即可;不得进入依赖 selector 主路径 |
+| `ns == "mcpplibs"`(默认命名空间) | 依赖 selector 主路径要求描述符身份必须为 `mcpplibs`;底层 legacy API 的 `allowLegacyBareDefault` 只供非 selector 兼容调用 |
 | 其他具体 ns | **精确相等** |
 
-✅ **已实现**。第三行即**默认命名空间搜索路径**:裸 `gtest` 能命中 `compat.gtest`,正是这条。
+✅ **已实现**。`compat.gtest` 与 `mcpplibs.gtest` 是两个不同身份。
 
-### 5.3 空命名空间的回填(P3)
+### 5.3 空命名空间的兼容边界(P3)
 
-候选 `(∅, name)` 命中后,**必须**用描述符**声明的** `namespace` 作为最终身份,而不是候选的空值。
+旧 discovery 调用 `(∅, name)` 命中后,**必须**用描述符**声明的** `namespace` 作为最终身份,而不是候选的空值。新的依赖 selector 已先填充默认 namespace,不使用 discovery；模板 selector 在切换到同一共享解析链后也必须遵守该规则。
 
 若描述符本身未声明 `namespace`(上游裸包如 `opencv`),则**空命名空间就是它的合法身份**,不得强行填充。
 
@@ -347,18 +400,16 @@ asio = "1.38.1"
 
 **错误写法**:`[dependencies]` + `asio = "1.38.1"` —— 裸名不解析第三方命名空间(§4.2),报错并给出上述两种正确写法。
 
-### 9.2 裸名经 compat 搜索路径
+### 9.2 compat 必须显式选择
 
 ```toml
-[dependencies]
+[dependencies.compat]
 gtest = "1.15.2"
 ```
 
 ```
-选择器 gtest → 候选 ① (mcpplibs, gtest)  ② (∅, gtest)
-候选①:探测 gtest.lua / mcpplibs.gtest.lua / compat.gtest.lua
-       命中 compat.gtest.lua,声明 (compat, compat.gtest) → 归一 (compat, gtest)
-       校验:候选 ns 为默认命名空间 → 允许 ns ∈ {mcpplibs, compat} → ✓
+选择器 compat.gtest → 唯一身份 (compat, gtest)
+探测 compat.gtest.lua,声明 (compat, compat.gtest) → 归一 (compat, gtest) → ✓
 身份 (compat, gtest) → store dir compat-x-compat.gtest
 ```
 
@@ -381,6 +432,7 @@ lua = "0.0.3"
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.2 | 2026-08-09 | selector 收敛为唯一精确 PackageId:裸名只表示默认 mcpplibs,dotted 以最后一段为 name;移除 compat/空 namespace 隐式候选,加入 lock 保持与一个 release train 的双 selector 迁移 warning |
 | 1.1 | 2026-08-03 | 按当前实现复核：澄清文件名发现是快路径加身份回退扫描，修正 legacy `package.name` 的 wire key 示例，并将 0.0.106 明确为最低实现版本 |
 | 0.1 | 2026-07-25 | 首版草案。整合 #278 的双向验证结论:确立「身份 = `(namespace, name)`、层级归 `namespace`、`name` 为原子段」为规范形态,并如实标注 0.0.105 的过渡形态(强制 FQN)与全部待实现项 |
 | 1.0 | 2026-07-25 | **mcpp 0.0.106 全部实现**:身份归一化去 split-on-last-dot、target 用字面 `name`、store 目录、文件名自由(快路径+身份扫描)、`name` 形态校验反转。xlings 0.4.69 修好 #381 后 §3.3 的 `(namespace, name)` 唯一自然成立。状态 草案 → 评审中 |
@@ -392,5 +444,5 @@ lua = "0.0.3"
 
 ---
 
-> **本规范所需行为自 mcpp 0.0.106 起已全部实现，当前实现仍符合**，状态为「评审中」。
+> 描述符身份规则自 mcpp 0.0.106 起实现;精确 selector 自 2026.8.10.1 起实现。当前实现符合本规范,状态为「评审中」。
 > 英文版待补(`docs/spec/` 顶层按仓库惯例为英文,本文档先以中文成稿)。
