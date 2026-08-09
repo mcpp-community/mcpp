@@ -117,7 +117,13 @@ export void inherit_workspace_indices(mcpp::manifest::Manifest& member,
     member.indices = workspace.indices;
     for (auto& [_, idx] : member.indices) {
         if (idx.is_local() && idx.path.is_relative()) {
-            idx.path = std::filesystem::weakly_canonical(wsRoot / idx.path);
+            // This is an ownership/anchoring operation, not a request to
+            // resolve filesystem aliases.  weakly_canonical can rewrite a
+            // Windows short/case-preserving workspace path into a different
+            // spelling before the inherited index is opened.  Keep the path
+            // rooted exactly where the workspace manifest declared it; the
+            // normal reader remains responsible for existence/readability.
+            idx.path = (wsRoot / idx.path).lexically_normal();
         }
     }
 }

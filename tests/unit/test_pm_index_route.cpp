@@ -160,3 +160,51 @@ TEST(PmIndexRoute, MissBehindAnUnreadableIndexIsNotConclusive) {
     EXPECT_FALSE(found.hit.has_value());
     EXPECT_FALSE(found.conclusive);
 }
+
+TEST(PmIndexRoute, WorkspaceMemberReadsRootAnchoredRelativeIndex) {
+    auto root = std::filesystem::temp_directory_path()
+              / "mcpp-index-route-workspace-relative";
+    std::filesystem::remove_all(root);
+    struct Cleanup {
+        std::filesystem::path root;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(root, ec);
+        }
+    } cleanup{root};
+
+    std::filesystem::create_directories(root / "index" / "pkgs" / "a");
+    std::filesystem::create_directories(root / "member");
+    std::ofstream(root / "index" / "pkgs" / "a" / "acme.util.lua") << R"(
+package = {
+    spec = "1",
+    namespace = "acme",
+    name = "util",
+    type = "package",
+}
+)";
+    std::ofstream(root / "mcpp.toml") << R"(
+[workspace]
+members = ["member"]
+
+[indices]
+acme = { path = "index" }
+)";
+    std::ofstream(root / "member" / "mcpp.toml") << R"(
+[package]
+name = "member"
+version = "0.1.0"
+)";
+
+    auto indices = mcpp::pm::effective_indices(root / "member");
+    ASSERT_TRUE(indices.contains("acme"));
+    EXPECT_EQ(indices.at("acme").path,
+              (root / "index").lexically_normal());
+
+    mcpp::pm::IndexRoute route{ &indices, root / "member", nullptr };
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
+    auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+    ASSERT_TRUE(found.hit.has_value());
+    EXPECT_EQ(found.hit->coord.namespace_, "acme");
+    EXPECT_EQ(found.hit->coord.shortName, "util");
+}

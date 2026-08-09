@@ -212,6 +212,10 @@ grep -qE '^widget = "9\.9\.9"$' mcpp.toml || { cat mcpp.toml; echo "widget@9.9.9
 mkdir -p "$TMP/ws"
 cd "$TMP/ws"
 cp -r "$TMP/myapp/index" index
+[[ -f index/pkgs/a/acme.util.lua ]] || {
+    echo "workspace index fixture copy is incomplete"
+    exit 1
+}
 cat > mcpp.toml <<'EOF'
 [workspace]
 members = ["m1"]
@@ -221,7 +225,11 @@ acme = { path = "index" }
 EOF
 "$MCPP" new m1 > /dev/null
 cd m1
-"$MCPP" add acme.util@2.0.0 > /dev/null
+workspace_add=$("$MCPP" add acme.util@2.0.0 2>&1) || {
+    echo "$workspace_add"
+    echo "workspace member could not read its root-owned local index"
+    exit 1
+}
 grep -qE '^util = "2\.0\.0"$' mcpp.toml || { cat mcpp.toml; echo "member should inherit workspace [indices]"; exit 1; }
 err=$("$MCPP" add acme.nope@1.0.0 2>&1) && { echo "expected error inside workspace member"; exit 1; }
 [[ "$err" == *"(acme, nope)"* ]] || { echo "wrong error: $err"; exit 1; }
