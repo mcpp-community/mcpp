@@ -3,6 +3,7 @@
 import std;
 import mcpp.config;
 import mcpp.manifest;
+import mcpp.platform;
 import mcpp.platform.runtime_binding;
 import mcpp.xlings.runtime_selection;
 
@@ -63,6 +64,27 @@ struct RuntimeHome {
           }},
           "workspace": {{}}
         }})", runtimeName, envValue);
+    }
+
+    void point_default_glibc_view_at(std::string_view version) const {
+        auto payload = install_glibc_payload(version);
+        auto view = cfg.xlingsHome() / "subos" / "default" / "lib";
+        std::filesystem::create_directories(view);
+        std::filesystem::create_symlink(
+            payload / "libc.so.6", view / "libc.so.6");
+        std::filesystem::create_symlink(
+            payload / "ld-linux-x86-64.so.2",
+            view / "ld-linux-x86-64.so.2");
+    }
+
+    std::filesystem::path install_glibc_payload(
+        std::string_view version) const {
+        auto payload = cfg.xlingsHome() / "data" / "xpkgs"
+                     / "xim-x-glibc" / version / "lib";
+        std::filesystem::create_directories(payload);
+        std::ofstream(payload / "libc.so.6") << "fixture libc";
+        std::ofstream(payload / "ld-linux-x86-64.so.2") << "fixture loader";
+        return payload;
     }
 };
 
@@ -134,7 +156,10 @@ TEST(RuntimeBinding, DefaultAlwaysUsesConfiguredMcppHomeDefault) {
     ASSERT_TRUE(binding.has_value()) << binding.error();
     EXPECT_EQ(binding->subosDir, expected);
     EXPECT_EQ(binding->runtimeId, "glibc@2.39");
-    EXPECT_EQ(binding->libc, std::optional<std::string>("glibc@2.39"));
+    if constexpr (mcpp::platform::is_linux)
+        EXPECT_EQ(binding->libc, std::optional<std::string>("glibc@2.39"));
+    else
+        EXPECT_FALSE(binding->libc.has_value());
     EXPECT_EQ(binding->provenance, "mcpp_default");
     EXPECT_FALSE(binding->contractHash.empty());
     ASSERT_EQ(binding->runtimeProviders.size(), 1u);
@@ -157,6 +182,59 @@ TEST(RuntimeBinding, ExplicitDefaultUsesGlobalDefaultButKeepsNamedIdentity) {
     EXPECT_EQ(binding->subosDir, expected);
     EXPECT_EQ(binding->provenance, "named_subos");
     EXPECT_EQ(binding->selection.mode, runtime::RuntimeSelection::Mode::NamedSubos);
+}
+
+TEST(RuntimeBinding, PhysicalSubosViewReconcilesAStaleDeclaredGlibcIdentity) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "glibc SubOS views only exist on Linux";
+
+    RuntimeHome h;
+    const auto subos = h.cfg.xlingsHome() / "subos" / "default";
+    h.write(subos, "glibc@2.39");
+    h.point_default_glibc_view_at("2.44");
+
+    mcpp::manifest::Manifest root;
+    auto selection = runtime::select_runtime(root, std::nullopt, h.dir / "repo");
+    ASSERT_TRUE(selection);
+    auto binding = mcpp::platform::runtime::resolve_runtime_binding(
+        *selection, {}, h.cfg);
+    ASSERT_TRUE(binding.has_value()) << binding.error();
+
+    EXPECT_EQ(binding->runtimeId, "glibc@2.44");
+    EXPECT_EQ(binding->libc, std::optional<std::string>("glibc@2.44"));
+    ASSERT_EQ(binding->libraryDirs.size(), 1u);
+    EXPECT_EQ(binding->libraryDirs.front(),
+              h.cfg.xlingsHome() / "data" / "xpkgs"
+                  / "xim-x-glibc" / "2.44" / "lib");
+}
+
+TEST(RuntimeBinding, BrokenSubosViewFallsBackOnlyToTheExactDeclaredPayload) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "glibc SubOS views only exist on Linux";
+
+    RuntimeHome h;
+    const auto subos = h.cfg.xlingsHome() / "subos" / "default";
+    h.write(subos, "glibc@2.44");
+    auto payload = h.install_glibc_payload("2.44");
+    auto view = subos / "lib";
+    std::filesystem::create_directories(view);
+    std::filesystem::create_symlink(
+        payload.parent_path() / "lib64" / "libc.so.6",
+        view / "libc.so.6");
+
+    mcpp::manifest::Manifest root;
+    auto selection = runtime::select_runtime(root, std::nullopt, h.dir / "repo");
+    ASSERT_TRUE(selection);
+    auto binding = mcpp::platform::runtime::resolve_runtime_binding(
+        *selection, {}, h.cfg);
+    ASSERT_TRUE(binding.has_value()) << binding.error();
+
+    EXPECT_EQ(binding->runtimeId, "glibc@2.44");
+    ASSERT_EQ(binding->libraryDirs.size(), 1u);
+    EXPECT_EQ(binding->libraryDirs.front(), payload);
+    EXPECT_EQ(binding->loader,
+              std::optional<std::filesystem::path>(
+                  payload / "ld-linux-x86-64.so.2"));
 }
 
 TEST(RuntimeBinding, NamedSubosIsOwnedByTheRootAndMissingIsHardError) {
@@ -203,8 +281,12 @@ TEST(RuntimeBinding, NamedEnvironmentsHaveDistinctContractsAndRoundTrip) {
     auto decoded = mcpp::platform::runtime::deserialize_runtime_binding(encoded);
     ASSERT_TRUE(decoded.has_value()) << decoded.error();
     EXPECT_EQ(decoded->contractHash, el8->contractHash);
-    ASSERT_TRUE(decoded->hostLibc.has_value());
-    EXPECT_EQ(*decoded->hostLibc, "2.43");
+    if constexpr (mcpp::platform::is_linux) {
+        ASSERT_TRUE(decoded->hostLibc.has_value());
+        EXPECT_EQ(*decoded->hostLibc, "2.43");
+    } else {
+        EXPECT_FALSE(decoded->hostLibc.has_value());
+    }
     EXPECT_EQ(decoded->subosDir, el8->subosDir);
     ASSERT_EQ(decoded->environment.size(), 1u);
     EXPECT_EQ(decoded->environment[0].var, "DRIVERS");

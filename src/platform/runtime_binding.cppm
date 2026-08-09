@@ -121,6 +121,79 @@ std::filesystem::path subos_path(
          / selection.subosName;
 }
 
+// `subos_info.runtime` is the provider's declared identity, while the SubOS
+// view is the provider's resolved result.  Older xlings states can retain the
+// declaration after a package transaction has atomically repointed the view
+// (observed in CI as runtime=glibc@2.39 with libc.so.6 resolving to the managed
+// 2.44 payload).  When the physical target can be proven to be one exact
+// provider payload, use that immutable identity.  This is not directory
+// discovery: the selected SubOS link supplies the one path, and mcpp merely
+// canonicalizes its provenance.
+std::optional<std::string> managed_glibc_identity(
+    const std::filesystem::path& libraryDir,
+    const std::filesystem::path& xlingsRoot) {
+    std::error_code bec, lec;
+    auto base = std::filesystem::weakly_canonical(
+        xlingsRoot / "data" / "xpkgs" / "xim-x-glibc", bec);
+    auto real = std::filesystem::weakly_canonical(libraryDir, lec);
+    if (bec || lec || base.empty() || real.empty()) return std::nullopt;
+
+    auto relative = real.lexically_relative(base);
+    if (relative.empty() || relative.is_absolute()) return std::nullopt;
+    std::vector<std::string> parts;
+    for (auto const& part : relative) parts.push_back(part.string());
+    if (parts.size() != 2 || (parts[1] != "lib" && parts[1] != "lib64"))
+        return std::nullopt;
+    auto const& version = parts[0];
+    if (version.empty() || version == "." || version == ".."
+        || version.find('@') != std::string::npos
+        || version.find('/') != std::string::npos
+        || version.find('\\') != std::string::npos)
+        return std::nullopt;
+    return "glibc@" + version;
+}
+
+struct ManagedGlibcPayload {
+    std::filesystem::path libraryDir;
+    std::filesystem::path loader;
+};
+
+std::optional<ManagedGlibcPayload> exact_declared_glibc_payload(
+    std::string_view runtimeId,
+    const std::filesystem::path& xlingsRoot) {
+    constexpr std::string_view prefix = "glibc@";
+    if (!runtimeId.starts_with(prefix)) return std::nullopt;
+    auto version = runtimeId.substr(prefix.size());
+    if (version.empty() || version == "." || version == ".."
+        || version.find('@') != std::string_view::npos
+        || version.find('/') != std::string_view::npos
+        || version.find('\\') != std::string_view::npos)
+        return std::nullopt;
+
+    auto payload = xlingsRoot / "data" / "xpkgs" / "xim-x-glibc"
+                 / std::string(version);
+    for (auto const& leaf : {"lib64", "lib"}) {
+        auto lib = payload / leaf;
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(lib / "libc.so.6", ec))
+            continue;
+        std::vector<std::filesystem::path> loaders;
+        ec.clear();
+        for (auto it = std::filesystem::directory_iterator(lib, ec);
+             !ec && it != std::filesystem::directory_iterator{};
+             it.increment(ec)) {
+            auto name = it->path().filename().string();
+            if (name.starts_with("ld-linux-") && name.find(".so") != std::string::npos
+                && it->is_regular_file(ec))
+                loaders.push_back(it->path());
+        }
+        std::sort(loaders.begin(), loaders.end());
+        if (loaders.size() == 1)
+            return ManagedGlibcPayload{lib, loaders.front()};
+    }
+    return std::nullopt;
+}
+
 } // namespace detail
 
 std::expected<RuntimeBinding, std::string>
@@ -187,6 +260,11 @@ resolve_runtime_binding(
             auto libDir = lec ? candidate.lexically_normal()
                               : realLibc.parent_path();
             out.libraryDirs.push_back(libDir);
+            if (auto physical = detail::managed_glibc_identity(
+                    libDir, out.subosDir.parent_path().parent_path())) {
+                out.runtimeId = *physical;
+                out.libc = *physical;
+            }
 
             std::vector<std::filesystem::path> loaders;
             lec.clear();
@@ -203,6 +281,13 @@ resolve_runtime_binding(
                 out.loader = lec ? loaders.front().lexically_normal() : realLoader;
             }
             break;
+        }
+        if (out.libraryDirs.empty()) {
+            if (auto exact = detail::exact_declared_glibc_payload(
+                    out.runtimeId, out.subosDir.parent_path().parent_path())) {
+                out.libraryDirs.push_back(exact->libraryDir);
+                out.loader = exact->loader;
+            }
         }
     }
 

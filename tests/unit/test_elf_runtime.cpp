@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.platform;
 import mcpp.platform.elf_runtime;
 import mcpp.platform.runtime_binding;
 import mcpp.toolchain.post_install;
@@ -224,6 +225,8 @@ TEST(ElfRuntime, RejectsUnsupportedOrTruncatedElfWithoutGuessing) {
 }
 
 TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -238,6 +241,8 @@ TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
 }
 
 TEST(RuntimePhysics, RuleBAcceptsSameSelectedPayload) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -251,6 +256,8 @@ TEST(RuntimePhysics, RuleBAcceptsSameSelectedPayload) {
 }
 
 TEST(RuntimePhysics, RuleBRejectsTwoLibcsAcrossTheResolvedClosure) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -269,6 +276,8 @@ TEST(RuntimePhysics, RuleBRejectsTwoLibcsAcrossTheResolvedClosure) {
 }
 
 TEST(RuntimePhysics, RuleARejectsRequiredFloorAboveSelectedLibcExports) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store", "2.39");
     elf::RuntimeResolution r;
@@ -285,6 +294,8 @@ TEST(RuntimePhysics, RuleARejectsRequiredFloorAboveSelectedLibcExports) {
 }
 
 TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -299,6 +310,8 @@ TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
 }
 
 TEST(RuntimePhysics, MissingClosureDataIsInconclusiveNotGreen) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -310,6 +323,21 @@ TEST(RuntimePhysics, MissingClosureDataIsInconclusiveNotGreen) {
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
     EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Inconclusive);
     EXPECT_NE(verdict.explain().find("libgpu-driver.so"), std::string::npos);
+}
+
+TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {
+    if constexpr (mcpp::platform::is_linux)
+        GTEST_SKIP() << "the non-Linux boundary is exercised on native runners";
+    Tmp t;
+    auto b = binding_for(t.path / "store");
+    elf::RuntimeResolution r;
+    r.artifact = facts(t.path / "app");
+    r.artifact.interp = "/deliberately/mismatched/loader";
+    r.unresolved = {"libgpu-driver.so"};
+
+    auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
+    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Pass);
+    EXPECT_NE(verdict.explain().find("non-Linux"), std::string::npos);
 }
 
 } // namespace
