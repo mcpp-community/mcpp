@@ -143,6 +143,10 @@ class AurReconcileTests(unittest.TestCase):
 
         pkgbuild = (output / "PKGBUILD").read_text(encoding="utf-8")
         self.assertIn(f"pkgver={VERSION}", pkgbuild)
+        self.assertIn(
+            "# Maintainer: mcpp-community <speak-agent@users.noreply.github.com>",
+            pkgbuild,
+        )
         self.assertIn(self.desired.asset("linux", "x86_64").sha256, pkgbuild)
         self.assertIn(self.desired.asset("linux", "aarch64").sha256, pkgbuild)
         self.assertEqual(
@@ -310,6 +314,13 @@ class AurReconcileTests(unittest.TestCase):
                 self.assertNotIn("scripts/aur/mcpp-m", text)
                 self.assertNotIn("publish mcpp-m", text)
                 self.assertNotIn("publish(mcpp-m", text)
+
+    def test_publish_uses_public_speak_agent_identity(self) -> None:
+        self.assertEqual(reconcile.AUR_COMMIT_NAME, "speak-agent")
+        self.assertEqual(
+            reconcile.AUR_COMMIT_EMAIL,
+            "speak-agent@users.noreply.github.com",
+        )
 
     def test_workflow_uses_pinned_host_key_and_recovery_triggers(self) -> None:
         workflow = (

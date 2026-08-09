@@ -34,6 +34,8 @@ AUR_SSH_URL = "ssh://aur@aur.archlinux.org/mcpp-bin.git"
 AUR_RPC_URL = "https://aur.archlinux.org/rpc/v5/info?arg[]=mcpp-bin"
 ARCH_IMAGE = "archlinux:base-devel"
 MANAGED_FILES = ("PKGBUILD", ".SRCINFO", "mcpp.sh")
+AUR_COMMIT_NAME = "speak-agent"
+AUR_COMMIT_EMAIL = "speak-agent@users.noreply.github.com"
 SIDECAR_RE = re.compile(r"^([0-9a-fA-F]{64})[ \t]+\*?(\S+)$")
 T = TypeVar("T")
 
@@ -727,12 +729,12 @@ def publish_staged_repo(
 ) -> tuple[str, int]:
     _run_or_classify(
         runner,
-        ["git", "config", "user.name", "mcpp-ci"],
+        ["git", "config", "user.name", AUR_COMMIT_NAME],
         cwd=clone_dir,
     )
     _run_or_classify(
         runner,
-        ["git", "config", "user.email", "x.d2learn.org@gmail.com"],
+        ["git", "config", "user.email", AUR_COMMIT_EMAIL],
         cwd=clone_dir,
     )
     _run_or_classify(
