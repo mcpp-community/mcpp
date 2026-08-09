@@ -83,6 +83,38 @@ main = "src/main.cpp"
     EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::Binary);
 }
 
+TEST(Manifest, XlingsSubosPreservesDeclarationPresence) {
+    auto absent = mcpp::manifest::parse_string(R"(
+[package]
+name = "absent"
+version = "0.1.0"
+)");
+    ASSERT_TRUE(absent.has_value()) << absent.error().format();
+    EXPECT_FALSE(absent->xlings.subosDeclared);
+
+    auto explicitDefault = mcpp::manifest::parse_string(R"(
+[package]
+name = "explicit"
+version = "0.1.0"
+[xlings]
+subos = "default"
+)");
+    ASSERT_TRUE(explicitDefault.has_value()) << explicitDefault.error().format();
+    EXPECT_TRUE(explicitDefault->xlings.subosDeclared);
+    EXPECT_EQ(explicitDefault->xlings.subos, "default");
+
+    auto empty = mcpp::manifest::parse_string(R"(
+[package]
+name = "bad"
+version = "0.1.0"
+[xlings]
+subos = ""
+)");
+    ASSERT_TRUE(empty.has_value()) << empty.error().format();
+    EXPECT_TRUE(empty->xlings.subosDeclared);
+    EXPECT_TRUE(empty->xlings.subos.empty());
+}
+
 TEST(Manifest, SharedTargetSoname) {
     constexpr auto src = R"(
 [package]

@@ -63,15 +63,19 @@ xlings 后端解析/自动安装到沙箱
 
 ### 2.1 runtime binding:绑哪个 libc,只决定一次
 
-payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是关于环境的事实,
-不该靠推断。mcpp 按顺序解析:
+payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是根项目本地开发 OS 的事实,
+不该从编译器路径或 shell 状态推断。mcpp 只有两种选择:
 
-1. `[xlings] subos = "<name>"` —— 该 subos(活动 subos 的兄弟)在自己
-   `.xlings.json` 的 `subos_info` 块里自述 runtime(xlings 2026.8.5.1 起)。
-2. 活动 subos,同一个块。
-3. *兼容路径。* 在该块出现之前创建的 subos 无法作答,此时以工具链自身烙入的值
-   顶上——gcc 的 specs、clang 的 cfg。这正是产物**将会**加载的那个值,故编译期
-   与运行期仍然一致;一旦 subos 能作答,这条自动退场。
+1. 未声明 `[xlings].subos`:使用全局 mcpp 配置所选 xlings home 中已初始化的
+   `McppDefault` (`subos/default`)。
+2. `[xlings] subos = "<name>"`:使用 `NamedSubos(name)`;显式 `"default"`
+   仍保留命名选择身份,其他名称解析到根项目的本地 xlings scope。
+
+workspace 构建由 workspace root 选择;member 与 dependency 声明不合并、不传递。
+`XLINGS_ACTIVE_SUBOS`、current、编译器 owner home 以及 CLI/环境 override 都不是第三层。
+所选 SubOS 必须提供受支持的 `subos_info`:环境不存在或 contract 缺失/不兼容会 hard error,
+绝不回退 default/active/编译器烙入状态。该 contract 只读取一次形成 `RuntimeBinding` snapshot,
+由 configure/link/run/test 与 fast-path cache 共同使用。
 
 没有 binding 是**拒绝**而不是取默认值:`CLibMode::PayloadFirst` 会被放弃,而不是
 去挑一个 libc。
@@ -83,8 +87,8 @@ payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是�
 引用了 `GLIBC_2.42` 符号,却跑在没有这些符号的运行时上,且报错落在与"拉进第二个
 glibc 的那条依赖"毫无关系的包上。目录顺序不是决策依据。
 
-因为 binding 决定产物加载什么,它计入工具链指纹(11 个字段,不是 10 个)——只在
-runtime 上不同的两次构建绝不能共用同一条缓存。
+因为 binding 决定产物加载什么,完整规范化 contract hash 是工具链指纹第 11 个字段——
+即使两个命名 SubOS 都使用同一 glibc,只要 provider 或环境声明不同也绝不能共用缓存。
 
 注意:probe 已**不再**从 clang cfg 挖 `--sysroot`——cfg 是这套机制的输出,
 不是输入(见 §5)。

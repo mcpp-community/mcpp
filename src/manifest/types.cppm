@@ -477,10 +477,14 @@ struct XlingsConfig {
     std::vector<std::string>           deps;       // → .xlings.json "deps"
     std::map<std::string, std::string> workspace;  // → "workspace" (tool → version)
     std::string                        subos;      // → "subos" (named project sandbox)
+    // Presence is semantic: an absent key selects McppDefault, while an
+    // explicitly written `subos = "default"` selects NamedSubos("default").
+    // A string alone cannot distinguish absence from an invalid empty value.
+    bool                               subosDeclared = false;
     std::map<std::string, std::string> envs;       // → "envs" (env var → value)
 
     bool empty() const {
-        return deps.empty() && workspace.empty() && subos.empty() && envs.empty();
+        return deps.empty() && workspace.empty() && !subosDeclared && envs.empty();
     }
 };
 

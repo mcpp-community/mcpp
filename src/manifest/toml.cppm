@@ -1009,7 +1009,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 
     // [xlings] — build environment (L-1). Subsections mirror .xlings.json 1:1.
     if (auto v = doc->get_string_array("xlings.deps"))  m.xlings.deps = *v;
-    if (auto v = doc->get_string("xlings.subos"))       m.xlings.subos = *v;
+    if (doc->get("xlings.subos")) {
+        m.xlings.subosDeclared = true;
+        if (auto v = doc->get_string("xlings.subos")) m.xlings.subos = *v;
+    }
     if (auto* wt = doc->get_table("xlings.workspace"))
         for (auto& [k, val] : *wt)
             if (val.is_string()) m.xlings.workspace[k] = val.as_string();

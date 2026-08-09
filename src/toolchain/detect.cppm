@@ -17,7 +17,8 @@ export namespace mcpp::toolchain {
 // directly. Otherwise fall back to $CXX, then PATH g++.
 std::expected<Toolchain, DetectError>
 detect(const std::filesystem::path& explicit_compiler = {},
-       std::string_view runtimeBinding = {});
+       std::string_view runtimeBinding = {},
+       std::string_view runtimeContractHash = {});
 
 // Compatibility helper for older call sites/tests: GCC std module lookup now
 // lives in the GCC provider.
@@ -35,12 +36,17 @@ std::optional<std::filesystem::path> find_std_module_source(
 
 std::expected<Toolchain, DetectError>
 detect(const std::filesystem::path& explicit_compiler,
-       std::string_view runtimeBinding) {
+       std::string_view runtimeBinding,
+       std::string_view runtimeContractHash) {
     auto bin_r = probe_compiler_binary(explicit_compiler);
     if (!bin_r) return std::unexpected(bin_r.error());
 
     Toolchain tc;
     tc.binaryPath = *bin_r;
+    // Set before provider-specific early returns (notably native MSVC), so
+    // every platform carries the same RuntimeBinding cache identity.
+    tc.runtimeBinding = std::string(runtimeBinding);
+    tc.runtimeContractHash = std::string(runtimeContractHash);
 
     // MSVC cl.exe has no --version / -dumpmachine / -print-sysroot; classify
     // it by filename and take a dedicated enrich path (banner → version,
@@ -113,7 +119,6 @@ detect(const std::filesystem::path& explicit_compiler,
 
     // Probe fine-grained payload paths from sibling xpkgs (glibc, linux-headers).
     // When available, flags are assembled from these paths instead of --sysroot.
-    tc.runtimeBinding = std::string(runtimeBinding);
     tc.payloadPaths = probe_payload_paths(tc.binaryPath, tc.runtimeBinding);
 
     // For GCC: ensure the probed sysroot has complete headers by symlinking

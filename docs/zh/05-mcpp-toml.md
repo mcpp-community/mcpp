@@ -725,12 +725,15 @@ OPENBLAS_NUM_THREADS = "1"
 host 工具(`make`/`cmake`/`protoc`…)、按项目固定工具版本、或设构建期环境变量——无需手改
 `.xlings.json`。`[toolchain]`(§2.7)仍是编译器的便捷简写;`[xlings.workspace]` 是其通用形式。
 
-在 Linux 上 `subos` 还有第二重含义:它决定**构建绑定到哪个 C 运行时**。subos 会自述其
-runtime(xlings 2026.8.5.1 起),mcpp 以此为权威,而不是去四处找一个 libc——所以同一台机器
-上 `subos = "el8"` 与 `subos = "trixie"` 两个项目各自产出面向自己 glibc 的产物,且编译期与
-运行期保证一致。该绑定计入工具链指纹,故切换它会重新构建,而不会复用另一个 subos 的目标文件。
-更旧的 subos(或没有 subos)则回落到工具链自身安装时所对应的运行时;`mcpp build -v` 会打印
-实际走了哪一条。参见 docs/08-toolchain-internals.md §2.1。
+`subos` 选择根项目用于 build/run 的**本地开发 OS 环境**。未声明该键时固定使用 mcpp 已初始化、
+经 release 验证的 `McppDefault`;`subos = "default"` 则仍是显式的
+`NamedSubos("default")`。没有 CLI/环境变量 override,也不会隐式跟随 xlings active/current。
+
+在 Linux 上,所选环境同时固定 loader/libc contract,所以 `el8`、`trixie` 可在同一机器共存,
+并进入不同构建指纹。workspace 整体构建时由 workspace root 覆盖 member 声明;member/依赖中的
+SubOS 不传递——库只有作为独立 root 开发时才使用自己的声明,作为别人的源码依赖时使用消费者
+root 的环境。指定的命名 SubOS 不存在、缺少或使用不兼容 runtime contract 都会直接报错,不会
+回退 default/active/编译器烙入状态。参见 docs/08-toolchain-internals.md §2.1。
 
 ### 2.14 依赖产出的 host 工具(mcpp 2026.8.5.1+)
 

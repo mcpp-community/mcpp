@@ -81,12 +81,11 @@ namespace paths {
     // would let the two disagree — the "one question, several answerers" shape
     // that the same investigation found four times over on the xlings side.
     //
-    // A PURE derivation, with no environment override in it. That is not an
-    // omission: this value gets written into the build cache, and an override
-    // means "for this invocation", not "for this build from now on". Caching
-    // one would make a single `MCPP_SUBOS_DIR=… mcpp run` silently change
-    // where every later run looked. Which subos a RUN should use is a
-    // different question, answered in execute.cppm.
+    // A PURE legacy ownership derivation, with no environment override in it.
+    // Project runtime selection no longer calls this helper: it goes through
+    // RuntimeSelection -> RuntimeBinding, which is rooted in mcpp.toml and the
+    // configured xlings home. This remains useful for locating payload-adjacent
+    // tools owned by a compiler installation.
     //
     // Empty when the toolchain is not sandbox-resident — a system compiler is
     // the user's explicit choice of the host world, and there is no subos

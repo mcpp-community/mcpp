@@ -34,6 +34,13 @@ APP_BUILD_ENV = "1"
 EOF
 echo 'int main() { return 0; }' > app/src/main.cpp
 
+# A named SubOS is an exact, pre-existing local development environment. It
+# may not silently fall back to mcpp default/active, so seed this fixture from
+# the already bootstrapped default contract before the first build.
+mkdir -p app/.mcpp/.xlings/subos/dev
+cp "$MCPP_HOME/registry/subos/default/.xlings.json" \
+   app/.mcpp/.xlings/subos/dev/.xlings.json
+
 cd app
 "$MCPP" build > b.log 2>&1 || { cat b.log; echo "FAIL: build errored"; exit 1; }
 

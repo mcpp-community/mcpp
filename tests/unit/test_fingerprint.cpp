@@ -62,6 +62,17 @@ TEST(Fingerprint, EmptyRuntimeBindingIsDistinct) {
               mcpp::toolchain::compute_fingerprint(b).hex);
 }
 
+TEST(Fingerprint, FullRuntimeContractHashOverridesTheLibcLabel) {
+    mcpp::toolchain::FingerprintInputs a;
+    a.toolchain.targetTriple = "x86_64-linux-gnu";
+    a.toolchain.runtimeBinding = "glibc@2.39";
+    a.toolchain.runtimeContractHash = "subos-el8-contract";
+    auto b = a;
+    b.toolchain.runtimeContractHash = "subos-dev-contract";
+    EXPECT_NE(mcpp::toolchain::compute_fingerprint(a).hex,
+              mcpp::toolchain::compute_fingerprint(b).hex);
+}
+
 } // namespace
 
 TEST(Fingerprint, DeterministicForSameInputs) {

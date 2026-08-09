@@ -82,7 +82,7 @@ void print_usage() {
     std::println("Build options:");
     std::println("  --verbose, -v                        Verbose compiler output");
     std::println("  --quiet, -q                          Suppress status output");
-    std::println("  --print-fingerprint                  Show toolchain fingerprint and 10 inputs");
+    std::println("  --print-fingerprint                  Show toolchain fingerprint and 11 inputs");
     std::println("  --cache <MODE>                       Dependency cache: global (default) | local | off");
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
@@ -236,7 +236,7 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("build")
             .description("Build the current package")
             .option(cl::Option("print-fingerprint")
-                .help("Show toolchain fingerprint and 10 inputs"))
+                .help("Show toolchain fingerprint and 11 inputs"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")

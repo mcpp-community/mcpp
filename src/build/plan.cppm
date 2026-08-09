@@ -15,6 +15,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.triple;
 import mcpp.platform;
+import mcpp.platform.runtime_binding;
 
 export namespace mcpp::build {
 
@@ -98,6 +99,10 @@ struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      toolchain;
     mcpp::toolchain::Fingerprint    fingerprint;
+    // One immutable snapshot selected before workspace member substitution.
+    // Build/run/test and cache fast paths consume this value; none may re-read
+    // xlings active/current state.
+    mcpp::platform::runtime::RuntimeBinding runtimeBinding;
     std::string                     cppStandard = "c++23";
     std::string                     cppStandardFlag = "-std=c++23";
     // Module-graph-global dialect flags (issue #210), pre-joined with a

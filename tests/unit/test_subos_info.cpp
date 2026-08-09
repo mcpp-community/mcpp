@@ -109,8 +109,10 @@ TEST(SubosInfo, PrependDeduplicates) {
               std::string::npos);
 }
 
-// `set` replaces rather than joins — xlings's own precedence.
-TEST(SubosInfo, SetReplaces) {
+// `set` supplies a value only when the caller did not define the variable.
+// Presence — not non-emptiness — is the boundary, matching xlings: an
+// explicitly empty export is still an intentional caller value.
+TEST(SubosInfo, SetAppliesWhenAmbientIsAbsent) {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
       "a@1":[{"var":"V","op":"prepend","value":"/one"}],
@@ -118,6 +120,34 @@ TEST(SubosInfo, SetReplaces) {
     auto env = su::resolve_env(su::read(t.dir), t.dir);
     ASSERT_EQ(env.size(), 1u);
     EXPECT_EQ(env[0].second, "/two");
+}
+
+TEST(SubosInfo, SetPreservesPresentAmbientValue) {
+    Tmp t;
+    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
+      "a@1":[{"var":"V","op":"set","value":"/subos"}]}}})");
+    auto env = su::resolve_env(
+        su::read(t.dir), t.dir,
+        [](std::string_view var) -> std::optional<std::string> {
+            if (var == "V") return "/caller";
+            return std::nullopt;
+        });
+    ASSERT_EQ(env.size(), 1u);
+    EXPECT_EQ(env[0].second, "/caller");
+}
+
+TEST(SubosInfo, SetPreservesExplicitlyEmptyAmbientValue) {
+    Tmp t;
+    t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
+      "a@1":[{"var":"V","op":"set","value":"/subos"}]}}})");
+    auto env = su::resolve_env(
+        su::read(t.dir), t.dir,
+        [](std::string_view var) -> std::optional<std::string> {
+            if (var == "V") return std::string{};
+            return std::nullopt;
+        });
+    ASSERT_EQ(env.size(), 1u);
+    EXPECT_TRUE(env[0].second.empty());
 }
 
 // A subos made before xlings grew the block. Degrade, and SAY SO — this is
@@ -287,15 +317,10 @@ TEST(SubosResolveEnv, PrependIsIdempotentAgainstTheExportedValue) {
     EXPECT_EQ(out[0].second, existing);
 }
 
-// `set` wins over an exported value, and that is deliberate.
-//
-// This assertion exists to stop the opposite reading from being reintroduced
-// -- it was, once, as a fix for mcpp#382, and withdrawn: `set` and "a default
-// the user may override" are two intentions, and a subos needs the first for
-// variables naming its own configuration. The escape hatch that issue wants is
-// a NEW op from xlings, whose wire format this is, not a second meaning for
-// this one applied by one consumer.
-TEST(SubosResolveEnv, SetWinsOverAnExportedValue) {
+// xlings defines `set` as set-if-absent. mcpp must use the same presence
+// boundary or the exact same SubOS changes behaviour depending on which tool
+// launches the program.
+TEST(SubosResolveEnv, SetYieldsToAnExportedValue) {
     Tmp t;
     t.write(R"({"workspace":{},"subos_info":{"schema_version":1,
         "runtime":"glibc@2.39",
@@ -307,7 +332,7 @@ TEST(SubosResolveEnv, SetWinsOverAnExportedValue) {
             return std::nullopt;
         });
     ASSERT_EQ(out.size(), 1u);
-    EXPECT_EQ(out[0].second, "d3d12");
+    EXPECT_EQ(out[0].second, "llvmpipe");
 }
 
 }  // namespace

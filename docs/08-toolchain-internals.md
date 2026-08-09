@@ -77,17 +77,26 @@ anymore: the cfg is an output of this machinery, not an input (§5).
 ### 2.1 The runtime binding — which libc, decided once
 
 A payload-first build links against a specific glibc, and *which* one is a
-fact about the environment, not something to be inferred. mcpp resolves it in
-order:
+fact about the root project's local development OS, not something to infer
+from a compiler path or shell. mcpp has exactly two selection modes:
 
-1. `[xlings] subos = "<name>"` — the named subos, a sibling of the active one,
-   describes its own runtime in the `subos_info` block of its `.xlings.json`
-   (xlings 2026.8.5.1+).
-2. The active subos, same block.
-3. *Compatibility.* A subos created before that block existed cannot answer.
-   The value baked into the toolchain itself then stands in — gcc's specs,
-   clang's cfg. This is the value the artifact **would** load, so compile side
-   and run side still agree; it retires itself the moment the subos can speak.
+1. No `[xlings].subos`: `McppDefault`, the initialized `subos/default` in the
+   xlings home selected by global mcpp configuration.
+2. `[xlings] subos = "<name>"`: `NamedSubos(name)`. Explicit `"default"`
+   remains a named selection; other names resolve in the root project's local
+   xlings scope.
+
+The workspace root owns the selection during a workspace build. Member and
+dependency declarations do not merge or propagate; the same member's
+declaration applies only when that source is an independent root. Neither
+`XLINGS_ACTIVE_SUBOS`, `current`, the compiler's owner home, nor a CLI/env
+override is a third selection rung.
+
+The selected SubOS must provide the supported `subos_info` contract. A missing
+named environment or missing/incompatible contract is a hard error, never a
+fallback to default/active/compiler-baked state. mcpp reads it once into a
+`RuntimeBinding` snapshot, feeds its libc identity into payload probing, and
+reuses the same snapshot for configure/link/run/test and the fast-path cache.
 
 No binding is a **refusal**, not a default: `CLibMode::PayloadFirst` is
 declined rather than picking a libc.
@@ -102,9 +111,10 @@ against a runtime without them, and the failures surfaced on packages
 unrelated to the dependency that pulled the second glibc in. Directory order
 is not a decision procedure.
 
-Because the binding decides what the artifact loads, it is part of the
-toolchain fingerprint (11 fields, not 10) — two builds differing only in
-runtime must not share a cache entry.
+Because the binding decides what the artifact loads, the complete canonical
+contract hash is field 11 of the toolchain fingerprint — two named SubOS
+environments that happen to use the same libc still must not share a cache
+entry when their providers or environment declarations differ.
 
 ## 3. The link model (`src/toolchain/linkmodel.cppm`)
 

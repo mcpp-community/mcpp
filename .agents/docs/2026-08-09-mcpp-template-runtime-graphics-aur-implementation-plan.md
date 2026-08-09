@@ -162,7 +162,7 @@
 - Modify: `src/toolchain/model.cppm`
 - Modify: `src/toolchain/detect.cppm`
 - Modify: `src/toolchain/fingerprint.cppm`
-- Modify: `src/project.cppm`
+- Inspect (no change required; policy is owned by `runtime_selection`): `src/project.cppm`
 - Add: `tests/unit/test_runtime_selection.cpp`
 - Modify: `tests/unit/test_subos_info.cpp`
 - Modify: `tests/unit/test_fingerprint.cpp`
@@ -175,18 +175,18 @@
 - `select_runtime(rootManifest, optional workspaceManifest, rootPath) -> expected<RuntimeSelection,string>`
 - `resolve_runtime_binding(selection, compiler, GlobalConfig) -> expected<RuntimeBinding,string>`
 
-- [ ] RED: no `[xlings].subos` selects `McppDefault` even if active SubOS differs; an explicit `subos = "default"` is a NamedSubos selection.
-- [ ] RED: missing named SubOS is a hard error and cannot fall back to default/active/compiler-baked runtime.
-- [ ] RED: workspace root SubOS overrides member declaration during workspace build; a member declaration applies only when that member is built independently.
-- [ ] RED: dependency manifest SubOS never merges into the consumer, lockfile, or cache identity; the same sources under el8/trixie produce distinct RuntimeBinding contract hashes.
-- [ ] Implement selection before workspace member substitution and preserve its owner root; materialize project xlings config from the root/workspace-root selection only.
-- [ ] Define McppDefault as the mcpp-managed default SubOS/runtime in configured xlings home, independent of xlings active/current symlink; bootstrap it when absent.
-- [ ] Read one RuntimeBinding snapshot, canonicalize/sort its fields, compute contractHash, store it in BuildContext/BuildPlan/cache metadata, and feed it to toolchain detection/fingerprint.
-- [ ] Reuse that snapshot for run/test environment; remove build/run fast-path re-reads of active SubOS.
-- [ ] Match current xlings `op=set` presence semantics: preserve any ambient value, including an explicitly empty value, while `prepend` remains ordered and de-duplicated.
-- [ ] On macOS/Windows return platform-native bindings without invented glibc/ELF fields; platform-specific derivation stays in `src/platform/runtime_binding.cppm`.
-- [ ] GREEN: run unit tests, named/default/workspace/dependency SubOS E2E, and compare binding/fingerprint output.
-- [ ] Commit root-local runtime selection and shared binding snapshot.
+- [x] RED: no `[xlings].subos` selects `McppDefault` even if active SubOS differs; an explicit `subos = "default"` is a NamedSubos selection.
+- [x] RED: missing named SubOS is a hard error and cannot fall back to default/active/compiler-baked runtime.
+- [x] RED: workspace root SubOS overrides member declaration during workspace build; a member declaration applies only when that member is built independently.
+- [x] RED: dependency manifest SubOS never merges into the consumer, lockfile, or cache identity; the same sources under el8/trixie produce distinct RuntimeBinding contract hashes.
+- [x] Implement selection before workspace member substitution and preserve its owner root; materialize project xlings config from the root/workspace-root selection only.
+- [x] Define McppDefault as the mcpp-managed default SubOS/runtime in configured xlings home, independent of xlings active/current symlink; bootstrap it when absent.
+- [x] Read one RuntimeBinding snapshot, canonicalize/sort its fields, compute contractHash, store it in BuildContext/BuildPlan/cache metadata, and feed it to toolchain detection/fingerprint.
+- [x] Reuse that snapshot for run/test environment; remove build/run fast-path re-reads of active SubOS.
+- [x] Match current xlings `op=set` presence semantics: preserve any ambient value, including an explicitly empty value, while `prepend` remains ordered and de-duplicated.
+- [x] On macOS/Windows return platform-native bindings without invented glibc/ELF fields; platform-specific derivation stays in `src/platform/runtime_binding.cppm`.
+- [x] GREEN: run unit tests, named/default/workspace/dependency SubOS E2E, and compare binding/fingerprint output.
+- [x] Commit root-local runtime selection and shared binding snapshot.
 
 ## Task 6: Fix Runtime Payload Selection and Add Linux Artifact Physics (#392/#396)
 

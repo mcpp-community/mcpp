@@ -18,9 +18,9 @@ struct EnvVar {
 };
 
 // The runtime this toolchain builds AGAINST, in xlings's spelling
-// ("glibc@2.39"). Resolved before payload probing, from `--runtime` or the
-// active subos's `subos_info.runtime`. Empty means no authority was found,
-// and payload resolution then declines rather than guessing.
+// ("glibc@2.39"). Resolved before payload probing from the root-selected
+// RuntimeBinding snapshot. Empty means no libc payload applies, and payload
+// resolution then declines rather than guessing.
 struct PayloadPaths {
     std::filesystem::path glibcInclude;     // glibc headers (features.h, bits/)
     std::filesystem::path glibcLib;          // glibc runtime (libc.so, crt*.o, ld-linux)
@@ -34,8 +34,8 @@ struct Toolchain {
     std::string                         driverIdent;        // normalized --version output
     std::string                         targetTriple;       // "x86_64-linux-gnu"
     // The runtime this toolchain builds AGAINST, in xlings's own spelling
-    // ("glibc@2.39"). Resolved BEFORE payload probing, from `--runtime` or
-    // the active subos's `subos_info.runtime`.
+    // ("glibc@2.39"). Resolved BEFORE payload probing from the root-selected
+    // RuntimeBinding snapshot.
     //
     // Empty is a refusal, not a default: payload resolution declines rather
     // than picking a libc by directory order. That guess is what let the
@@ -43,6 +43,12 @@ struct Toolchain {
     // versions, with nothing in the resulting binary looking wrong until it
     // loaded a library built against the other one.
     std::string                         runtimeBinding;
+    // Hash of the complete immutable RuntimeBinding snapshot (selection,
+    // provider, runtime and environment), not merely its libc label. Two
+    // named SubOS environments may both say glibc@2.39 and still require
+    // different loader/driver contracts, so the build cache must separate
+    // them. Empty keeps compatibility for low-level detector unit tests.
+    std::string                         runtimeContractHash;
     std::string                         stdlibId;           // "libstdc++"
     std::string                         stdlibVersion;
     std::filesystem::path               stdModuleSource;    // bits/std.cc / std.cppm

@@ -159,6 +159,28 @@ Task 4 focused local evidence on source binary
 - host xlings config aggregate remains `f218aadf3792ee815c8535ce0ca0bb53f634fecbdbc5d0d47db442052d786d1b`.
 - macOS/Windows native compilation and filesystem semantics remain pending latest-HEAD PR CI; they are not inferred from this Linux run.
 
+### 5.4 Root-local RuntimeSelection and immutable RuntimeBinding (Task 5)
+
+| Gate | RED evidence | Production change | GREEN evidence |
+|---|---|---|---|
+| two-mode selection | `test_runtime_selection` first failed to compile because `mcpp.xlings.runtime_selection` did not exist | Added presence-preserving manifest parsing and one pure `McppDefault`/`NamedSubos` selector with portable name validation and an explicit owner root | 10 runtime selection/binding tests pass; absence, explicit `default`, workspace override, standalone member and invalid names are distinct |
+| exact binding | Binding tests then failed to compile because `mcpp.platform.runtime_binding` did not exist | Resolves only the configured default or exact root-owned named SubOS; missing directory, missing block, empty runtime and incompatible schema are hard errors; canonical provider/runtime/env snapshot gets a stable contract hash | Unit tests prove missing named cannot fall back, same-content `el8`/`dev` hashes differ, and serialized cache round-trip verifies its hash |
+| lifecycle/cache | Baseline execute path derived a compiler-owned SubOS, honored `MCPP_SUBOS_DIR`, and re-read `.xlings.json` independently on full/fast run | BuildContext/BuildPlan/toolchain/fingerprint/cache carry one snapshot; fast paths require it and invalidate on contract mtime; full and cached run/test resolve environment only from that snapshot | E2E 200 proves first/cached run equality, ignored legacy override, mutation-triggered rebuild, old-cache miss and missing-contract error |
+| root-local scope | A member/dependency declaration could become the manifest visible after workspace substitution or nested prepare | Selection happens before member substitution; workspace root materializes its own xlings config; dependency/tool sub-builds inherit the consumer snapshot and never consult their manifest SubOS | E2E 205 proves active-state independence, explicit-default identity, workspace-root ownership, standalone-member ownership and non-transitive path dependency behavior |
+| xlings env semantics | New tests showed `set` overwrote both a caller value and an explicitly empty variable | `set` now follows xlings presence semantics; `prepend` retains ordered element-wise de-duplication | `test_subos_info`: 17/17 pass, including caller/empty preservation |
+
+Task 5 local gates on source binary
+`target/x86_64-linux-gnu/e49880a389812d1b/bin/mcpp`:
+
+- source build: PASS, incremental release rebuild completed in 47.59s.
+- full unit suite: PASS, **70 test binaries passed; 0 failed**, 87.78s.
+- `test_manifest`: **151/151**; `test_runtime_selection`: **10/10**; `test_subos_info`: **17/17**; `test_fingerprint`: **8/8**.
+- E2E `02`, `88`, `200`, `205`, `12`, `69`, and `204`: all PASS/`OK`.
+- changed shell scripts `bash -n` and `git diff --check`: PASS.
+- `mcpp-m` aggregate remains `afb8a647e04483a86985119e07086016f49d55f177ee6257094c336d226113c6`.
+- host xlings config aggregate remains `f218aadf3792ee815c8535ce0ca0bb53f634fecbdbc5d0d47db442052d786d1b`.
+- Linux behavior is locally exercised. The platform-native branch stores `runtimeId` while leaving `libc`/ELF fields empty off Linux; native macOS/Windows compilation remains a latest-HEAD PR CI gate, not a local claim.
+
 ## 6. Pull request and CI
 
 Not published yet. This section will record PR URL, local/remote HEAD, review state, all latest-head job IDs and terminal conclusions.

@@ -45,6 +45,8 @@ import mcpp.lockfile;
 import mcpp.config;
 import mcpp.xlings;
 import mcpp.xlings.subos_info;
+import mcpp.xlings.runtime_selection;
+import mcpp.platform.runtime_binding;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
 import mcpp.fetcher;
@@ -713,6 +715,8 @@ export struct BuildContext {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      tc;
     mcpp::toolchain::Fingerprint    fp;
+    mcpp::xlings::runtime::RuntimeSelection runtimeSelection;
+    mcpp::platform::runtime::RuntimeBinding runtimeBinding;
     std::filesystem::path           projectRoot;
     std::filesystem::path           outputDir;
     std::filesystem::path           stdBmi;
@@ -839,6 +843,12 @@ export struct BuildOverrides {
     // mcpp.build.execute imported it). A pointer keeps the exported layout
     // trivial, and it also avoids copying the manifest per tool build.
     std::shared_ptr<const mcpp::manifest::Manifest> preloaded_manifest;
+    // Nested source/tool builds inherit the consumer root's local development
+    // OS. A dependency's own [xlings].subos is never consulted or propagated.
+    std::shared_ptr<const mcpp::xlings::runtime::RuntimeSelection>
+        inherited_runtime_selection;
+    std::shared_ptr<const mcpp::platform::runtime::RuntimeBinding>
+        inherited_runtime_binding;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
@@ -911,84 +921,6 @@ std::string with_index_cause(std::string msg) {
         msg += "\n" + hint;
     return msg;
 }
-// The runtime this build targets, in xlings's own spelling ("glibc@2.39").
-//
-// A degradation chain with every step explicit, and deliberately NO final
-// "otherwise pick something". Payload resolution declines without an
-// authority, because the guess it used to make is what let the compile side
-// and the artifact's interpreter name different glibc versions -- invisibly,
-// until the binary met a library built against the other one.
-//
-//   1. [xlings] subos -> that subos's subos_info.runtime
-//   2. the active subos's subos_info.runtime
-//   3. "" -- no authority, therefore no PayloadFirst
-//
-// `compilerBin` may be empty on the first call: the compiler has not been
-// probed yet, and an inherited toolchain resolves its subos from its OWNER
-// home. The caller re-resolves once it knows where the compiler is.
-std::string resolve_runtime_binding(const mcpp::manifest::Manifest& m,
-                                    const std::filesystem::path& compilerBin) {
-    auto runtime_of = [](const std::filesystem::path& dir) -> std::string {
-        return mcpp::xlings::subos::read(dir).runtime;
-    };
-    // A declaration can only be honoured while the payload it names is still
-    // installed. Subos descriptions are written once and the payloads beneath
-    // them are replaced independently -- upgraded, garbage-collected -- so a
-    // subos can go on saying `glibc@2.39` on a machine that now has only 2.44.
-    //
-    // Taking that at face value is not conservative, it is worse than any
-    // substitution: the exact-match probe finds nothing, no loader reaches the
-    // link line, and the artifact ends up on the HOST loader -- outside the
-    // sandbox entirely. Measured on CI, three rounds running.
-    //
-    // So a declaration naming an absent payload is passed over rather than
-    // returned, and resolution carries on to something that can be honoured.
-    auto usable = [&](const std::string& binding) {
-        if (binding.empty()) return false;
-        if (compilerBin.empty()) return true;   // cannot check yet; caller re-asks
-        if (mcpp::toolchain::probe_payload_paths(compilerBin, binding))
-            return true;
-        mcpp::log::verbose("probe", std::format(
-            "subos declares runtime {}, but that payload is not installed here "
-            "— looking for one that is", binding));
-        return false;
-    };
-    if (auto active = mcpp::xlings::paths::subos_dir_of(compilerBin)) {
-        // 1 — the project names a subos; it is a sibling of the active one.
-        if (!m.xlings.subos.empty()) {
-            auto named = active->parent_path() / m.xlings.subos;
-            if (auto r = runtime_of(named); usable(r)) return r;
-        }
-        // 2 — whatever is active.
-        if (auto r = runtime_of(*active); usable(r)) return r;
-    }
-
-    // 3 — COMPATIBILITY: the value this toolchain already has baked in.
-    //
-    // A subos created before xlings grew `subos_info` cannot answer, and that
-    // is the state of every machine installed before 2026.8.5.1 -- including
-    // mcpp's own sandbox, whose vendored xlings is never upgraded. Refusing
-    // there would break every existing user, so the toolchain's own baked
-    // value stands in.
-    //
-    // This is NOT the guess this design removed. The guess picked a version by
-    // directory order, unrelated to what the artifact would load. This reads
-    // the value the artifact WILL use -- gcc's specs, clang's cfg -- so the
-    // invariant that matters, compile side == run side, still holds. It is a
-    // migration path, and it goes away on its own: once the subos describes
-    // itself, step 1 or 2 answers first.
-    if (!compilerBin.empty()) {
-        if (auto r = mcpp::toolchain::baked_runtime_binding(compilerBin);
-            !r.empty()) {
-            mcpp::log::verbose("probe", std::format(
-                "subos does not describe itself; using the runtime this "
-                "toolchain was installed against ({}). `xlings self update` "
-                "and a fresh subos make this authoritative", r));
-            return r;
-        }
-    }
-    return {};
-}
 } // namespace
 
 export std::expected<BuildContext, std::string>
@@ -1028,6 +960,7 @@ prepare_build(bool print_fingerprint,
     // If the manifest has [workspace] and is a virtual workspace (no [package]),
     // or if -p filter is set, switch to the target member's manifest.
     std::optional<mcpp::manifest::Manifest> wsManifest;  // keep workspace manifest alive
+    std::filesystem::path runtimeWorkspaceRoot;
     if (m->workspace.present) {
         std::string targetMember;
 
@@ -1071,6 +1004,7 @@ prepare_build(bool print_fingerprint,
                 return std::unexpected(std::format(
                     "workspace member '{}' has no mcpp.toml", targetMember));
             }
+            runtimeWorkspaceRoot = *root;
             wsManifest = std::move(*m);  // preserve workspace manifest
             m = mcpp::manifest::load(memberDir / "mcpp.toml");
             if (!m) return std::unexpected(std::format(
@@ -1106,21 +1040,35 @@ prepare_build(bool print_fingerprint,
         if (!wsRoot.empty()) {
             auto wsm = mcpp::manifest::load(wsRoot / "mcpp.toml");
             if (wsm && wsm->workspace.present) {
+                runtimeWorkspaceRoot = wsRoot;
+                wsManifest = std::move(*wsm);
                 // #224: anchor relative `path`/`[indices].path` to the
                 // workspace root, not this member's own directory.
-                mcpp::project::merge_workspace_deps(*m, *wsm, wsRoot);
+                mcpp::project::merge_workspace_deps(*m, *wsManifest, wsRoot);
                 if (m->toolchain.byPlatform.empty()) {
-                    m->toolchain = wsm->toolchain;
+                    m->toolchain = wsManifest->toolchain;
                 }
-                for (auto& [triple, entry] : wsm->targetOverrides) {
+                for (auto& [triple, entry] : wsManifest->targetOverrides) {
                     if (!m->targetOverrides.contains(triple)) {
                         m->targetOverrides[triple] = entry;
                     }
                 }
                 // Inherit workspace indices if member doesn't define any
-                mcpp::project::inherit_workspace_indices(*m, *wsm, wsRoot);
+                mcpp::project::inherit_workspace_indices(*m, *wsManifest, wsRoot);
             }
         }
+    }
+
+    mcpp::xlings::runtime::RuntimeSelection runtimeSelection;
+    if (overrides.inherited_runtime_selection) {
+        runtimeSelection = *overrides.inherited_runtime_selection;
+    } else {
+        std::optional<std::reference_wrapper<const mcpp::manifest::Manifest>> wsRef;
+        if (wsManifest) wsRef = std::cref(*wsManifest);
+        auto selected = mcpp::xlings::runtime::select_runtime(
+            *m, wsRef, *root, runtimeWorkspaceRoot);
+        if (!selected) return std::unexpected(selected.error());
+        runtimeSelection = std::move(*selected);
     }
 
     // Where mcpp WRITES — derived here because `root` is only final now: the
@@ -1729,27 +1677,23 @@ prepare_build(bool print_fingerprint,
         tcOrigin = TcOrigin::FirstRun;
     }
 
-    // The authority for "which libc", resolved before the toolchain is
-    // probed: payload paths are addresses for a version this names.
-    auto runtimeBinding = resolve_runtime_binding(*m, {});
-    auto tc = mcpp::toolchain::detect(explicit_compiler, runtimeBinding);
-    if (!tc) return std::unexpected(tc.error().message);
-    // The first pass has no compiler, so it can neither discover a binding
-    // that only the compiler's own home knows (an inherited toolchain resolves
-    // into its owner) nor check that a declared one is still installed. Both
-    // failures look identical from here: no payload paths. Re-ask with the
-    // compiler in hand whenever that is what happened.
-    //
-    // The old condition was `runtimeBinding.empty()`, which meant a subos
-    // naming a payload that had since been upgraded away won on the first pass
-    // and the second pass never ran.
-    if (!tc->payloadPaths) {
-        auto fromCompiler = resolve_runtime_binding(*m, tc->binaryPath);
-        if (!fromCompiler.empty() && fromCompiler != runtimeBinding) {
-            tc = mcpp::toolchain::detect(explicit_compiler, fromCompiler);
-            if (!tc) return std::unexpected(tc.error().message);
-        }
+    // Resolve one exact runtime contract before probing payloads. No compiler
+    // home, active SubOS or dependency manifest may revise this selection.
+    mcpp::platform::runtime::RuntimeBinding runtimeBindingSnapshot;
+    if (overrides.inherited_runtime_binding) {
+        runtimeBindingSnapshot = *overrides.inherited_runtime_binding;
+    } else {
+        auto cfgRuntime = get_cfg();
+        if (!cfgRuntime) return std::unexpected(cfgRuntime.error());
+        auto resolved = mcpp::platform::runtime::resolve_runtime_binding(
+            runtimeSelection, {}, **cfgRuntime);
+        if (!resolved) return std::unexpected(resolved.error());
+        runtimeBindingSnapshot = std::move(*resolved);
     }
+    const auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
+    auto tc = mcpp::toolchain::detect(
+        explicit_compiler, runtimePayload, runtimeBindingSnapshot.contractHash);
+    if (!tc) return std::unexpected(tc.error().message);
 
     // ── Targeting the MSVC ABI without a usable MSVC ─────────────────────
     //
@@ -1844,7 +1788,9 @@ prepare_build(bool print_fingerprint,
 
         tcSpec   = std::string(pins::kFirstRunWinGnu);
         tcOrigin = TcOrigin::FirstRun;
-        tc = mcpp::toolchain::detect(explicit_compiler, runtimeBinding);
+        tc = mcpp::toolchain::detect(
+            explicit_compiler, runtimePayload,
+            runtimeBindingSnapshot.contractHash);
         if (!tc) return std::unexpected(tc.error().message);
     }
 
@@ -2004,15 +1950,32 @@ prepare_build(bool print_fingerprint,
     // [xlings] build environment (L-1). This creates .mcpp/.xlings.json with
     // custom non-builtin index entries (so xlings can clone them) plus the
     // [xlings] deps/workspace/subos/envs materialized verbatim.
-    if (!m->indices.empty() || !m->xlings.empty()) {
+    const auto& runtimeOwnerManifest = wsManifest ? *wsManifest : *m;
+    const bool materializeRootRuntime =
+        !overrides.inherited_runtime_binding && !runtimeOwnerManifest.xlings.empty();
+    if (!m->indices.empty() || materializeRootRuntime) {
         auto cfg2 = get_cfg();
         if (cfg2) {
             mcpp::xlings::ProjectEnv penv;
-            penv.deps  = m->xlings.deps;
-            penv.subos = m->xlings.subos;
-            for (auto const& [k, v] : m->xlings.workspace) penv.workspace.emplace_back(k, v);
-            for (auto const& [k, v] : m->xlings.envs)      penv.envs.emplace_back(k, v);
-            mcpp::config::ensure_project_index_dir(**cfg2, workRoot, m->indices, penv);
+            if (materializeRootRuntime) {
+                penv.deps  = runtimeOwnerManifest.xlings.deps;
+                penv.subos = runtimeOwnerManifest.xlings.subos;
+                for (auto const& [k, v] : runtimeOwnerManifest.xlings.workspace)
+                    penv.workspace.emplace_back(k, v);
+                for (auto const& [k, v] : runtimeOwnerManifest.xlings.envs)
+                    penv.envs.emplace_back(k, v);
+            }
+            if (runtimeSelection.ownerRoot == workRoot) {
+                mcpp::config::ensure_project_index_dir(
+                    **cfg2, workRoot, m->indices, penv);
+            } else {
+                if (!m->indices.empty())
+                    mcpp::config::ensure_project_index_dir(
+                        **cfg2, workRoot, m->indices, {});
+                if (materializeRootRuntime)
+                    mcpp::config::ensure_project_index_dir(
+                        **cfg2, runtimeSelection.ownerRoot, {}, penv);
+            }
 
             // On first build, the project index data root may be empty because
             // ensure_project_index_dir only writes .xlings.json but does not
@@ -4531,6 +4494,12 @@ prepare_build(bool print_fingerprint,
                         sub.preloaded_manifest =
                             std::make_shared<const mcpp::manifest::Manifest>(
                                 *dep_manifests[depIdx - 1]);
+                    sub.inherited_runtime_selection = std::make_shared<
+                        const mcpp::xlings::runtime::RuntimeSelection>(
+                            runtimeSelection);
+                    sub.inherited_runtime_binding = std::make_shared<
+                        const mcpp::platform::runtime::RuntimeBinding>(
+                            runtimeBindingSnapshot);
                     sub.tool_chain    = overrides.tool_chain.empty()
                         ? std::format("root → {}:{}", depName, toolName)
                         : std::format("{} → {}:{}", overrides.tool_chain, depName,
@@ -5043,6 +5012,8 @@ prepare_build(bool print_fingerprint,
     ctx.manifest    = *m;
     ctx.tc          = *tc;
     ctx.fp          = fp;
+    ctx.runtimeSelection = runtimeSelection;
+    ctx.runtimeBinding = runtimeBindingSnapshot;
     ctx.profile     = effectiveProfile;
     ctx.cacheMode   = cacheMode;
     ctx.projectRoot= *root;
@@ -5070,6 +5041,7 @@ prepare_build(bool print_fingerprint,
                                              stdBmiPath, stdObjectPath, storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
+    ctx.plan.runtimeBinding = runtimeBindingSnapshot;
     ctx.plan.compileDbPath = workRoot / "compile_commands.json";
     // GCC: a clean `*link:` for this build, so the payload's specs cannot
     // inject other homes' rpath entries into the artifact. AFTER the plan is
