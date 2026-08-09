@@ -274,18 +274,19 @@
 - Add: `scripts/release/generate_manifest.py`
 - Add: `tests/scripts/test_release_manifest.py`
 - Modify: `.github/workflows/release.yml`
-- Modify: `docs/10-distribution.md`
+- Modify: `docs/09-release.md`
+- Modify: `docs/zh/09-release.md`
 
 **Interface:**
 
 - Release asset `mcpp-release.json` schema 1 with version, tag, release commit, and exact name/SHA256 for Linux x86_64/aarch64 plus every shipped platform asset.
 
-- [ ] RED: fixtures reject duplicate platform/arch rows, missing sidecars, mismatched hashes, draft/prerelease input, wrong tag/version, and non-deterministic ordering.
-- [ ] Implement deterministic manifest generation from downloaded release artifacts and sidecars, recomputing every SHA256.
-- [ ] Wire the release workflow so the manifest is uploaded only after all required release assets exist and validation passes.
-- [ ] Add a release gate that downloads the uploaded manifest and compares it to the final GitHub release inventory.
-- [ ] GREEN: run manifest tests and a local fixture generation twice with byte-identical output.
-- [ ] Commit immutable release desired-state manifest.
+- [x] RED: fixtures reject duplicate platform/arch rows, missing sidecars, mismatched hashes, draft/prerelease input, wrong tag/version, and non-deterministic ordering.
+- [x] Implement deterministic manifest generation from downloaded release artifacts and sidecars, recomputing every SHA256.
+- [x] Wire the release workflow so the manifest is uploaded only after all required release assets exist and validation passes.
+- [x] Add a release gate that downloads the uploaded manifest and compares it to the final GitHub release inventory.
+- [x] GREEN: run manifest tests and a local fixture generation twice with byte-identical output.
+- [x] Commit immutable release desired-state manifest.
 
 ## Task 9: Replace Combined AUR Publishing with an mcpp-bin Reconciler
 

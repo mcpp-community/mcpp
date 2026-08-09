@@ -228,6 +228,24 @@ Task 7 focused local evidence on the latest self-hosted source binary
 - host xlings config aggregate remains `f218aadf3792ee815c8535ce0ca0bb53f634fecbdbc5d0d47db442052d786d1b`.
 - Linux semantics are locally exercised. Mach-O and PE flag spelling has pure unit coverage on Linux; native macOS/Windows compilation and behavior remain latest-HEAD PR CI gates, not inferred passes.
 
+### 5.7 Immutable release desired state (Task 8)
+
+| Gate | RED evidence | Production change | GREEN evidence |
+|---|---|---|---|
+| manifest contract | The initial 11-case suite produced 12 failing assertions because no generator existed; fixtures cover duplicate normalized platform/arch, missing sidecars, payload/sidecar hash disagreement, draft/prerelease releases, wrong tag/version, missing required assets, duplicate release names, and invalid commit identity | Added schema-1 generation from the GitHub release JSON plus downloaded payloads; four current platforms are mandatory, every additional versioned platform payload is included, every digest is recomputed, and output is sorted deterministically | `test_release_manifest.py` passes **12/12**; randomized release-API asset order produces byte-identical output and every manifest hash equals the independently recomputed fixture payload hash |
+| future platform closure | Review fixture added a valid FreeBSD/riscv64 versioned payload; the first implementation stayed green while silently omitting that row | Primary-platform discovery is provider-neutral and version-exact rather than a fixed four-platform allowlist; the four present release targets remain a required floor | The focused future-platform test changed RED-to-GREEN and asserts the complete row and SHA256 occur in the manifest |
+| immutable publication | Previously each platform uploaded independently and downstream jobs inferred completeness from timing and filenames | New `release-manifest` job waits for all four uploaders, validates non-draft/non-prerelease identity, uploads only when absent, refuses a byte-different existing manifest, polls public API visibility, then refetches all public assets and regenerates/compares the manifest | Ruby/Psych parses `release.yml` and confirms six jobs, `publish-ecosystem` depends on `release-manifest`, Python bytecode compilation passes, and `git diff --check` is clean; live GitHub upload/refetch remains a PR/release CI gate |
+| maintainer contract | Release docs had no machine-readable completeness boundary or reproducible local audit command | English and Chinese release docs define schema, row scope, immutability/rerun behavior, public refetch command, and checklist gates | Documentation examples invoke the same checked-in generator and explicitly recompute payload hashes rather than trusting manifest or sidecar values |
+
+Task 8 focused local evidence:
+
+- RED: missing generator yielded 12 assertion failures across 11 initial tests; the later additional-platform review row independently failed because FreeBSD/riscv64 was omitted.
+- GREEN: `python3 tests/scripts/test_release_manifest.py` reports **12 tests OK** in 0.309s; `python3 -m py_compile` succeeds for generator and tests.
+- Determinism: the complete fixture shuffles API inventory with seed 398, invokes the CLI twice to separate output files, and compares exact bytes.
+- Public-inventory replay: downloaded the eight real versioned payload/sidecar assets from stable `v2026.8.8.4`, resolved tag commit `55a39d90fe98b5475fc394ac8487fe6804b2b84f`, and generated twice byte-identically. The four-row manifest SHA256 is `6614ba2db65c8c28cb5a9d3466bd6cf3007634221da76d25216785061c647edb`; every real sidecar and recomputed payload digest agreed.
+- Workflow structure: Ruby/Psych parses `.github/workflows/release.yml`; all six jobs are present and ecosystem publication is gated by the immutable manifest job.
+- Public GitHub upload/refetch and eventual-consistency polling cannot be truthfully claimed from local fixtures; they remain explicit latest-HEAD release CI evidence.
+
 ## 6. Pull request and CI
 
 Not published yet. This section will record PR URL, local/remote HEAD, review state, all latest-head job IDs and terminal conclusions.
