@@ -804,6 +804,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // Dependency/runtime provider search comes from LinkIntent and is
         // rendered separately.  In particular runtimeSearchDirs contributes
         // RUNPATH only; it must never become a link-time -L path.
+        //
+        // The private libc directory is NOT emitted here: the link model
+        // already puts it in the artifact's RUNPATH wherever a payload exists
+        // (`-L<glibc> -Wl,-rpath,<glibc>` next to --dynamic-linker), and this
+        // link line has a hard 128KiB ceiling that real workspaces already
+        // spend 43% of. `208_private_libc_stays_in_the_binary.sh` asserts that
+        // coverage, so if a toolchain ever stops providing it the failure is a
+        // red test rather than a silent loss of dlopen() resolution.
     }
 
     // For Clang with payload paths: the payload C runtime — -B so the driver

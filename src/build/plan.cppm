@@ -16,6 +16,7 @@ import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.triple;
 import mcpp.platform;
 import mcpp.platform.runtime_binding;
+import mcpp.platform.runtime_env_contract;
 import mcpp.xlings.subos_info;
 
 export namespace mcpp::build {
@@ -887,29 +888,36 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     for (auto const& dir : tc.linkRuntimeDirs) {
         append_unique_path(plan.runtimeLibraryDirs, dir);
     }
-    // The private glibc payload is the ONE entry that is not also in the
-    // executable's RUNPATH (flags.cppm excludes it deliberately, so static and
-    // musl links stay clean). It is here purely so a dlopen()'d library — whose
-    // own DT_NEEDED closure never consults the main executable's RUNPATH — can
-    // still resolve the same libc the executable was linked against.
+    // The private glibc payload exists here for ONE reason: a dlopen()'d
+    // library, whose own DT_NEEDED closure never consults the main
+    // executable's RUNPATH, must still resolve the same libc the executable
+    // was linked against. So it is only published when this build actually has
+    // such a library.
     //
-    // So add it ONLY when this build actually has such a library. mcpp#291:
+    // It is published through the ARTIFACT — the link model already emits
+    // `-Wl,-rpath,<glibc>` alongside --dynamic-linker wherever a payload
+    // exists — and never through the environment.
     // LD_LIBRARY_PATH is inherited by the whole process subtree, and a child
-    // that is a HOST binary (/bin/sh, reached via a provider's popen()) loads
-    // the HOST loader — PT_INTERP is baked into the executable and no
-    // environment variable can override it — while this variable hands it the
-    // payload libc.so.6. libc and ld.so are version-locked to each other
-    // through GLIBC_PRIVATE, so on any host whose glibc differs from the
-    // payload's the shell dies of SIGSEGV inside the dynamic linker, before
-    // main, with empty stdout and no diagnostic. (It does NOT reproduce when
-    // host and payload glibc happen to match, which is why this survived.)
+    // that is a HOST binary (/bin/sh, reached via popen()) loads the HOST
+    // loader — PT_INTERP is baked in and no environment variable overrides it
+    // — while the variable hands it the payload libc.so.6. libc and ld.so are
+    // version-locked through GLIBC_PRIVATE, so the shell dies during
+    // relocation, before main: glibc 2.44's libc.so.6 needs
+    // `__pointer_chk_guard` from its own loader (mcpp#401), and older payloads
+    // segfault in the linker instead (mcpp#291). It does NOT reproduce when
+    // host and payload glibc happen to match, which is how it survived.
     //
     // process.cppm's strip_private_glibc already removes this entry from
-    // mcpp's OWN children. It cannot help one hop further out: mcpp sets the
-    // variable for the target deliberately, and what the target then spawns is
-    // beyond mcpp's reach. Not emitting it unless it is needed is.
-    if (tc.payloadPaths && !plan.depRuntimeLibraryDirs.empty()) {
-        append_unique_path(plan.runtimeLibraryDirs, tc.payloadPaths->glibcLib);
+    // mcpp's OWN children. It cannot help one hop further out — what the
+    // target spawns is beyond mcpp's reach. Putting the directory in the
+    // artifact's RUNPATH instead is: DT_RUNPATH reaches the object that
+    // carries it and the dlopen() it performs, and nothing else.
+    if constexpr (mcpp::platform::publishes_via_environment(
+                      mcpp::platform::kPrivateLibcSearchScope)) {
+        if (tc.payloadPaths && !plan.depRuntimeLibraryDirs.empty()) {
+            append_unique_path(plan.runtimeLibraryDirs,
+                               tc.payloadPaths->glibcLib);
+        }
     }
 
     // 1a. Object addressing.
