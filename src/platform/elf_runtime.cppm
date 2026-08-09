@@ -17,6 +17,7 @@ struct ElfRuntimeFacts {
     std::filesystem::path artifact;
     std::uint16_t elfType = 0;
     std::string interp;
+    std::string soname;
     std::vector<std::string> runpaths;
     std::vector<std::string> needed;
     std::vector<std::string> requiredGlibcVersions;
@@ -74,6 +75,7 @@ constexpr std::uint64_t kDtNeeded = 1;
 constexpr std::uint64_t kDtStrtab = 5;
 constexpr std::uint64_t kDtStrsz = 10;
 constexpr std::uint64_t kDtRpath = 15;
+constexpr std::uint64_t kDtSoname = 14;
 constexpr std::uint64_t kDtRunpath = 29;
 constexpr std::uint64_t kDtVerdef = 0x6ffffffc;
 constexpr std::uint64_t kDtVerdefnum = 0x6ffffffd;
@@ -382,6 +384,11 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
             if (!name || name->empty()) return std::unexpected(std::format(
                 "artifact '{}' has an invalid DT_NEEDED", artifact.string()));
             out.needed.push_back(std::move(*name));
+        } else if (tag == detail::kDtSoname) {
+            auto name = dynstr(value);
+            if (!name || name->empty()) return std::unexpected(std::format(
+                "artifact '{}' has an invalid DT_SONAME", artifact.string()));
+            out.soname = std::move(*name);
         } else if (tag == detail::kDtRpath || tag == detail::kDtRunpath) {
             auto path = dynstr(value);
             if (!path) return std::unexpected(std::format(
@@ -469,7 +476,9 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
     // Search order is loader physics, not presentation: sorting RUNPATH would
     // be capable of selecting a different libc than the process itself.
     detail::stable_unique(out.runpaths);
-    detail::sort_unique(out.needed);
+    // DT_NEEDED order is loader semantics. Reordering it can change which
+    // payload wins when two dependency search paths contain the same SONAME.
+    detail::stable_unique(out.needed);
     detail::sort_unique(out.requiredGlibcVersions);
     detail::sort_unique(out.definedGlibcVersions);
     return out;
@@ -492,16 +501,31 @@ RuntimeResolution resolve_runtime_closure(
     queue.push_back(resolution.artifact);
     std::set<std::filesystem::path> visited;
     visited.insert(detail::comparable_path(artifact));
+    // The ELF loader maintains one process-global loaded-object namespace.
+    // Once a SONAME has been mapped, a later requester reuses that object;
+    // its own RUNPATH does not load a second file with the same SONAME.
+    std::map<std::string, std::filesystem::path> loadedBySoname;
+    if (!resolution.artifact.interp.empty()) {
+        auto interp = detail::comparable_path(resolution.artifact.interp);
+        loadedBySoname.emplace(interp.filename().string(), std::move(interp));
+    }
     constexpr std::size_t kMaxClosureObjects = 512;
     while (!queue.empty() && resolution.objects.size() < kMaxClosureObjects) {
         auto requester = std::move(queue.front());
         queue.pop_front();
         for (auto const& soname : requester.needed) {
-            auto path = detail::resolve_needed(
-                soname, requester, binding, additionalSearchDirs);
-            if (!path) {
-                resolution.unresolved.push_back(soname);
-                continue;
+            std::optional<std::filesystem::path> path;
+            if (auto loaded = loadedBySoname.find(soname);
+                loaded != loadedBySoname.end()) {
+                path = loaded->second;
+            } else {
+                path = detail::resolve_needed(
+                    soname, requester, binding, additionalSearchDirs);
+                if (!path) {
+                    resolution.unresolved.push_back(soname);
+                    continue;
+                }
+                loadedBySoname.emplace(soname, *path);
             }
             if (soname == "libc.so.6") {
                 if (resolution.artifact.resolvedLibc.empty())
@@ -517,6 +541,18 @@ RuntimeResolution resolve_runtime_closure(
                 resolution.unresolved.push_back(std::format(
                     "{} ({})", soname, parsed.error()));
                 continue;
+            }
+            if (!parsed->soname.empty()) {
+                if (auto loaded = loadedBySoname.find(parsed->soname);
+                    loaded != loadedBySoname.end()
+                    && !detail::same_path(loaded->second, *path)) {
+                    // The file reached through this request aliases a SONAME
+                    // that is already mapped. Model the loader's reuse and do
+                    // not add a second closure object.
+                    loadedBySoname[soname] = loaded->second;
+                    continue;
+                }
+                loadedBySoname.emplace(parsed->soname, *path);
             }
             queue.push_back(*parsed);
             resolution.objects.push_back(std::move(*parsed));

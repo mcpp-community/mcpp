@@ -50,10 +50,18 @@ std::uint32_t append_string(std::vector<unsigned char>& b,
     return offset;
 }
 
+struct ElfFixtureSpec {
+    std::string interp = "/store/glibc/2.44/lib64/ld-linux-x86-64.so.2";
+    std::vector<std::string> needed = {"libc.so.6"};
+    std::string runpath = "/host/z:/host/a";
+};
+
 // One deliberately tiny ELF64-LE image. It has no executable code; the test
 // exercises the same program/dynamic/version tables real stripped binaries
 // retain, without depending on readelf, the host compiler or the host libc.
-std::filesystem::path write_elf_fixture(const std::filesystem::path& path) {
+std::filesystem::path write_elf_fixture(
+    const std::filesystem::path& path,
+    const ElfFixtureSpec& spec = {}) {
     constexpr std::uint64_t kVaddr = 0x400000;
     constexpr std::size_t kInterp = 0x200;
     constexpr std::size_t kDynamic = 0x300;
@@ -84,18 +92,23 @@ std::filesystem::path write_elf_fixture(const std::filesystem::path& path) {
         put64(b, p + 0x28, filesz);
     };
 
-    constexpr std::string_view interp = "/store/glibc/2.44/lib64/ld-linux-x86-64.so.2";
+    const std::string_view interp = spec.interp;
     std::copy(interp.begin(), interp.end(), b.begin() + kInterp);
     b[kInterp + interp.size()] = 0;
     ph(0, 1, 0, b.size());                       // PT_LOAD
     ph(1, 3, kInterp, interp.size() + 1);        // PT_INTERP
-    ph(2, 2, kDynamic, 11 * 16);                 // PT_DYNAMIC
+    ph(2, 2, kDynamic, 24 * 16);                 // PT_DYNAMIC
 
     std::size_t cursor = kDynstr;
     b[cursor++] = 0;
-    auto libc = append_string(b, kDynstr, cursor, "libc.so.6");
+    std::vector<std::uint32_t> needed;
+    for (auto const& name : spec.needed)
+        needed.push_back(append_string(b, kDynstr, cursor, name));
+    auto versionOwner = needed.empty()
+        ? append_string(b, kDynstr, cursor, "libc.so.6")
+        : needed.front();
     auto rpath = append_string(b, kDynstr, cursor, "/legacy/ignored");
-    auto runpath = append_string(b, kDynstr, cursor, "/host/z:/host/a");
+    auto runpath = append_string(b, kDynstr, cursor, spec.runpath);
     auto needVersion = append_string(b, kDynstr, cursor, "GLIBC_2.40");
     auto defVersion = append_string(b, kDynstr, cursor, "GLIBC_2.44");
     auto dynstrSize = cursor - kDynstr;
@@ -108,7 +121,7 @@ std::filesystem::path write_elf_fixture(const std::filesystem::path& path) {
     };
     dyn(5, kVaddr + kDynstr);            // DT_STRTAB
     dyn(10, dynstrSize);                 // DT_STRSZ
-    dyn(1, libc);                        // DT_NEEDED
+    for (auto offset : needed) dyn(1, offset); // DT_NEEDED
     dyn(15, rpath);                      // DT_RPATH (ignored when RUNPATH exists)
     dyn(29, runpath);                    // DT_RUNPATH
     dyn(0x6ffffffe, kVaddr + kVerneed);  // DT_VERNEED
@@ -120,7 +133,7 @@ std::filesystem::path write_elf_fixture(const std::filesystem::path& path) {
     // Elf64_Verneed + one Elf64_Vernaux.
     put16(b, kVerneed, 1);
     put16(b, kVerneed + 2, 1);
-    put32(b, kVerneed + 4, libc);
+    put32(b, kVerneed + 4, versionOwner);
     put32(b, kVerneed + 8, 16);
     put32(b, kVerneed + 12, 0);
     put32(b, kVerneed + 16, 0);
@@ -226,6 +239,43 @@ TEST(ElfRuntime, RejectsUnsupportedOrTruncatedElfWithoutGuessing) {
     tiny.close();
     auto truncated = elf::inspect_elf_runtime(t.path / "tiny");
     EXPECT_FALSE(truncated.has_value());
+}
+
+TEST(ElfRuntime, ReusesAnAlreadyLoadedSonameAcrossDependencyRunpaths) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto payload = t.path / "store";
+    auto glibc39 = payload / "2.39" / "lib64";
+    auto glibc44 = payload / "2.44" / "lib64";
+    auto shimDir = t.path / "shim";
+    std::filesystem::create_directories(glibc39);
+    std::filesystem::create_directories(glibc44);
+    std::filesystem::create_directories(shimDir);
+
+    write_elf_fixture(glibc39 / "libc.so.6", {
+        .needed = {"libc.so.6"},
+        .runpath = glibc39.string(),
+    });
+    write_elf_fixture(glibc44 / "libc.so.6", {
+        .needed = {"libc.so.6"},
+        .runpath = glibc44.string(),
+    });
+    write_elf_fixture(shimDir / "libshim.so", {
+        .needed = {"libc.so.6"},
+        .runpath = glibc39.string(),
+    });
+    auto app = write_elf_fixture(t.path / "app", {
+        .needed = {"libc.so.6", "libshim.so"},
+        .runpath = shimDir.string(),
+    });
+
+    auto resolution = elf::resolve_runtime_closure(app, binding_for(payload));
+    ASSERT_TRUE(resolution.unresolved.empty());
+    ASSERT_EQ(resolution.resolvedLibcs.size(), 1u)
+        << "a later dependency must reuse the process-global libc SONAME";
+    EXPECT_EQ(resolution.resolvedLibcs.front(),
+              std::filesystem::weakly_canonical(glibc44 / "libc.so.6"));
 }
 
 TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
