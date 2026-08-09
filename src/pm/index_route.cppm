@@ -33,6 +33,7 @@ import mcpp.config;
 import mcpp.fetcher;
 import mcpp.manifest;
 import mcpp.pm.dep_spec;
+import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.project;
 
@@ -64,6 +65,9 @@ struct IndexRoute {
 
 struct Lookup {
     std::optional<DescriptorHit> hit;
+    // A candidate descriptor was present but malformed. This is neither a
+    // miss nor a reason to refresh; callers surface the author-facing cause.
+    std::string error;
     // false → at least one candidate lives behind an index that cannot refute
     // it, so "no hit" says nothing and the caller must not hard-fail.
     bool conclusive = true;
@@ -155,6 +159,13 @@ Lookup lookup_descriptor(const IndexRoute& route,
 
         auto lua = route.read(candidate);
         if (!lua) continue;
+        if (auto violation =
+                mcpp::manifest::xpkg_name_form_violation_from_lua(*lua)) {
+            out.error = std::format(
+                "package descriptor for exact selector '{}': {}",
+                mcpp::pm::format_package_selector(candidate), *violation);
+            break;
+        }
         // The descriptor must DECLARE the requested identity. `allowLegacy-
         // BareDefault=false` matches prepare's disambiguation: a descriptor
         // with no namespace is reached through the explicit `(∅, name)` rung

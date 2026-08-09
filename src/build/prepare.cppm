@@ -2334,7 +2334,13 @@ prepare_build(bool print_fingerprint,
         if (spec.isVersion()) {
             for (auto& candidate : candidates) {
                 auto lua = readStrictLuaForCandidate(candidate);
-                if (!lua || !xpkgLuaMatchesCandidate(
+                if (!lua) continue;
+                if (auto violation = mcpp::manifest::
+                        xpkg_name_form_violation_from_lua(*lua)) {
+                    return std::unexpected(std::format(
+                        "dependency '{}': {}", depName, *violation));
+                }
+                if (!xpkgLuaMatchesCandidate(
                         candidate, *lua, /*allowLegacyBareDefault=*/false)) {
                     continue;
                 }

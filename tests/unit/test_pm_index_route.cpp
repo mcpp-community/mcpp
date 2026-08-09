@@ -102,6 +102,28 @@ package = {
     EXPECT_EQ(found.hit->coord.shortName, "util");
 }
 
+TEST(PmIndexRoute, MalformedCandidateIsAnErrorNotANotFoundMiss) {
+    LocalIndex idx("malformed");
+    std::ofstream(idx.root / "pkgs" / "a" / "acme.util.lua") << R"(
+package = {
+    spec = "1",
+    namespace = "acme",
+    name = "nested.util",
+    type = "package",
+}
+)";
+    auto indices = local_map(idx);
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
+
+    // The filename matches no candidate for this exact coordinate, so the
+    // identity scan must attribute the malformed dotted name diagnostically.
+    auto selector = mcpp::pm::resolve_dependency_selector("acme.nested.util");
+    auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+
+    EXPECT_FALSE(found.hit.has_value());
+    EXPECT_NE(found.error.find("single atomic segment"), std::string::npos);
+}
+
 TEST(PmIndexRoute, LiteralDottedShortNameNeverMatches) {
     LocalIndex idx("literal");
     auto indices = local_map(idx);

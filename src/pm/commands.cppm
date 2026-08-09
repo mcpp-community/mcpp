@@ -200,6 +200,10 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
 
         auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+        if (!found.error.empty()) {
+            mcpp::ui::error(found.error);
+            return 2;
+        }
 
         // Does the shared registry answer for any identity we tried? It is the
         // only index a refresh can do anything about — a project
@@ -223,6 +227,10 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 mcpp::ui::warning(r.error());
             if (d.shouldRefresh)
                 found = mcpp::pm::lookup_descriptor(route, selector.candidates);
+            if (!found.error.empty()) {
+                mcpp::ui::error(found.error);
+                return 2;
+            }
         }
 
         if (!found.hit && found.conclusive) {

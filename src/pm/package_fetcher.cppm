@@ -612,6 +612,38 @@ Fetcher::remove_repo(std::string_view name) {
 
 namespace {
 
+bool malformed_descriptor_targets(
+    std::string_view content,
+    std::string_view requestedNs,
+    std::string_view requestedShortName,
+    std::string_view indexDefaultNs)
+{
+    if (!mcpp::manifest::xpkg_name_form_violation_from_lua(content))
+        return false;
+
+    auto name = mcpp::manifest::extract_xpkg_name(content);
+    auto effectiveNs = mcpp::manifest::extract_xpkg_namespace(content);
+    if (effectiveNs.empty()) effectiveNs = std::string(indexDefaultNs);
+
+    // Diagnostic attribution only: reconstruct the coordinate the malformed
+    // dotted short name appears to spell so its author-facing error can be
+    // surfaced. The descriptor is never accepted as that package.
+    if (!effectiveNs.empty()) {
+        auto legacyPrefix = effectiveNs + ".";
+        if (name.starts_with(legacyPrefix))
+            name.erase(0, legacyPrefix.size());
+    }
+    auto dot = name.rfind('.');
+    if (dot == std::string::npos || dot == 0 || dot + 1 == name.size())
+        return false;
+
+    std::string apparentNs = effectiveNs;
+    if (!apparentNs.empty()) apparentNs.push_back('.');
+    apparentNs += name.substr(0, dot);
+    return apparentNs == requestedNs
+        && name.substr(dot + 1) == requestedShortName;
+}
+
 // Try candidate filenames (canonical first) in a single index's pkgs/ dir;
 // return the first hit whose DECLARED identity matches (ns, shortName).
 std::optional<std::string>
@@ -643,6 +675,16 @@ read_identity_verified_xpkg_lua(const std::filesystem::path& pkgsDir,
         std::ifstream is(candidate);
         std::stringstream ss; ss << is.rdbuf();
         auto content = ss.str();
+        // A candidate filename is enough to attribute a malformed descriptor
+        // to this lookup, even though malformed identity must never count as a
+        // successful package match. Return the bytes so the route/build layer
+        // can report the precise INV-NAME violation instead of degrading it to
+        // a misleading "not found". The index-wide fallback below remains
+        // selective: it attributes only a malformed name whose apparent
+        // coordinate is exactly the one requested, never an arbitrary bad file.
+        if (mcpp::manifest::xpkg_name_form_violation_from_lua(content)) {
+            return content;
+        }
         if (mcpp::manifest::xpkg_lua_identity_matches(
                 content, ns, shortName, /*allowLegacyBareDefault=*/true,
                 indexDefaultNs)) {
@@ -677,6 +719,10 @@ read_identity_verified_xpkg_lua(const std::filesystem::path& pkgsDir,
             if (!is) continue;
             std::stringstream ss; ss << is.rdbuf();
             auto content = ss.str();
+            if (malformed_descriptor_targets(
+                    content, ns, shortName, indexDefaultNs)) {
+                return content;
+            }
             if (mcpp::manifest::xpkg_lua_identity_matches(
                     content, ns, shortName, /*allowLegacyBareDefault=*/true,
                     indexDefaultNs)) {

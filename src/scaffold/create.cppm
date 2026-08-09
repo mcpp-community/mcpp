@@ -65,6 +65,7 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
         coordinate.namespace_, coordinate.shortName, selector);
     auto found = mcpp::pm::lookup_descriptor(
         registryOnly, direct.candidates);
+    if (!found.error.empty()) return std::unexpected(found.error);
     if (!found.hit) {
         auto defaultNote = spec.package.namespace_
             ? std::string{}
