@@ -119,6 +119,25 @@ Task 2 refactor/full gates on the isolated source binary
 - changed shell scripts `bash -n`: PASS.
 - `git diff --check`: PASS.
 
+### 5.2 Typed exact TemplateSpec and deterministic provider selection (Task 3)
+
+| Gate | RED evidence | Production change | GREEN evidence |
+|---|---|---|---|
+| grammar | New `test_scaffold` could not build because typed `parse_template_spec` / `select_template` APIs did not exist | Added fixed-order `:` then `@` parsing over the shared PackageSelector; exact safe version keys; atomic tname validation; one-release `pkg:` list marker | 9 scaffold tests pass for every valid design row and empty/double-delimiter/range/unsafe failures |
+| exact provider identity | Updated E2E is red on the baseline binary at the first new exact-identity diagnostic; baseline implementation probes empty/compat short names and cannot retain an explicit foreign/nested PackageId | Registry template fetch now uses one normalized coordinate through `IndexRoute::lookup_descriptor`; no short-name or compat probe remains | E2E same-short `(mcpplibs,tpl-demo)` / `(acme,tpl-demo)` selects acme exactly; nested `(mcpplibs.capi,lua)` survives output and injected selector |
+| deterministic version | Baseline accepted only its ad-hoc version flow and exposed no payload provenance | Shared SemVer resolver chooses latest stable, explicit prerelease is validated, indirect aliases are refused, and xpkg version entries retain declared SHA256 | E2E omits `2.0.0-rc.1` for default selection, accepts its exact pin, rejects `latest`, rejects unpublished `9.9.9`, and prints descriptor/payload provenance |
+| default template | Old code failed whenever no `default=true` existed, including a package with exactly one template | Shared selection implements sole-template auto-default, unique explicit default, explicit tname, and deterministic provider errors | Unit/E2E cover sole auto-default, multiple ambiguous choices, duplicate defaults, missing templates directory, and explicit disambiguation |
+| migration/CI surfaces | Legacy `pkg:` silently meant listing and native fresh-install only exercised a bare short name | `pkg:` warns with copyable `--list-templates`; fresh-install Linux/macOS/Windows lanes now use explicit `mcpplibs.imgui` and assert resolved identity | Local legacy-list E2E passes; native lanes are configured and remain pending PR/latest-head CI evidence |
+
+Task 3 local gates on source binary
+`target/x86_64-linux-gnu/94da92f90aedbe7f/bin/mcpp`:
+
+- source build: PASS, full release rebuild completed in 72.92s.
+- `mcpp test --no-cache`: PASS, **69 passed; 0 failed**, 33.07s.
+- `test_scaffold`: 9/9 behavior rows PASS; `test_manifest`: 148/148 PASS.
+- `69_package_templates.sh`: PASS with exact/default/nested/alias/provider/wire assertions.
+- `bash -n tests/e2e/69_package_templates.sh` and `git diff --check`: PASS.
+
 ## 6. Pull request and CI
 
 Not published yet. This section will record PR URL, local/remote HEAD, review state, all latest-head job IDs and terminal conclusions.

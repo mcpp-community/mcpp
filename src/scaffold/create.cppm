@@ -1,6 +1,5 @@
-// mcpp.scaffold.create — project creation: package-shipped templates
-// (fetch + instantiate) and the builtin bin/gui skeletons.
-// Bodies moved verbatim from the CLI layer. Zero behavior change.
+// mcpp.scaffold.create — project creation: exact package-shipped templates
+// (resolve + fetch + instantiate) and the builtin bin/gui skeletons.
 
 module;
 #include <cstdio>
@@ -13,7 +12,8 @@ import mcpp.config;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.manifest;
-import mcpp.pm.compat;
+import mcpp.pm.dep_spec;
+import mcpp.pm.dependency_selector;
 import mcpp.pm.index_route;
 import mcpp.platform.axis;
 import mcpp.pm.resolver;
@@ -22,16 +22,29 @@ import mcpp.ui;
 
 namespace mcpp::scaffold {
 
-// ─── Package-based templates (design v2: multi-level --template) ──────
+// ─── Package-based templates (exact [ns.]name[@ver][:tname]) ─────────
 //
 // Resolve SPEC's package@version through the index, ensure the package
 // sources are installed (same cache as dependencies), and return the
 // package root (the directory containing mcpp.toml).
 struct FetchedTemplatePackage {
-    std::filesystem::path root;
-    std::string           name;     // short package name (e.g. "imgui")
-    std::string           version;  // resolved exact version
+    std::filesystem::path          root;
+    mcpp::pm::DependencyCoordinate id;
+    std::string                    selector;
+    std::string                    version;
+    std::string                    indexRoute;
+    std::string                    descriptorDigest;
+    std::string                    payloadDigest;
 };
+
+std::string stable_text_digest(std::string_view text) {
+    std::uint64_t hash = 14695981039346656037ull;
+    for (unsigned char ch : text) {
+        hash ^= ch;
+        hash *= 1099511628211ull;
+    }
+    return std::format("fnv1a:{:016x}", hash);
+}
 
 std::expected<FetchedTemplatePackage, std::string>
 fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
@@ -40,50 +53,71 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
     if (!cfg) return std::unexpected(cfg.error().message);
     mcpp::pm::Fetcher fetcher(*cfg);
 
-    // Namespace candidates mirror dependency lookup: index root first,
-    // then the compat namespace.
-    std::optional<std::string> lua;
-    for (std::string cand : {std::string{}, std::string{"compat"}}) {
-        if (auto l = fetcher.read_xpkg_lua(cand, spec.pkg)) {
-            // Form B packages (mcpp = { ... }) are build recipes without
-            // a source tree — no physical mcpp.toml or templates/.
-            auto field = mcpp::manifest::extract_mcpp_field(*l);
-            if (field.kind == mcpp::manifest::McppField::TableBody) {
-                continue;
-            }
-            lua = std::move(*l);
+    const auto coordinate = mcpp::pm::normalize_package_selector(spec.package);
+    const auto selector = mcpp::pm::format_package_selector(coordinate);
+
+    // `mcpp new` has no target project manifest yet, so template packages come
+    // from the configured registry/mcpp-index. The lookup itself is still the
+    // same exact IndexRoute identity gate used by dependencies.
+    mcpp::pm::IndexRoute registryOnly{ nullptr, {}, &*cfg };
+    auto direct = mcpp::pm::make_direct_dependency_selector(
+        coordinate.namespace_, coordinate.shortName, selector);
+    auto found = mcpp::pm::lookup_descriptor(
+        registryOnly, direct.candidates);
+    if (!found.hit) {
+        auto defaultNote = spec.package.namespace_
+            ? std::string{}
+            : std::format(" (namespace omitted means '{}')",
+                          mcpp::pm::kDefaultNamespace);
+        auto namespaceHint = (!spec.package.namespace_ && spec.templateName)
+            ? std::format(
+                " ':' selects a template inside package '{}'; if you intended "
+                "a namespace, write '{}.{}'.",
+                spec.package.name, spec.package.name, *spec.templateName)
+            : std::string{};
+        return std::unexpected(std::format(
+            "template package '{}'{} not found for exact identity ({}, {}) "
+            "in mcpp-index (check the selector, or run `mcpp index update`).{}",
+            selector, defaultNote, coordinate.namespace_, coordinate.shortName,
+            namespaceHint));
+    }
+    auto lua = std::move(found.hit->lua);
+
+    // Form B packages are inline build recipes with no source tree, hence no
+    // physical templates directory. Report the provider error rather than
+    // pretending that a different namespace might satisfy the selector.
+    auto field = mcpp::manifest::extract_mcpp_field(lua);
+    if (field.kind == mcpp::manifest::McppField::TableBody) {
+        return std::unexpected(std::format(
+            "template package '{}' is an inline build recipe and ships no "
+            "source template payload", selector));
+    }
+
+    const std::string& ns = coordinate.namespace_;
+    const std::string& shortName = coordinate.shortName;
+    const auto constraint = spec.version
+        ? std::format("={}", *spec.version)
+        : std::string{"*"};
+    auto resolved = mcpp::pm::resolve_semver(
+        ns, shortName, constraint, registryOnly,
+        mcpp::platform::HostPlatform::current());
+    if (!resolved) return std::unexpected(resolved.error());
+    std::string version = std::move(*resolved);
+
+    std::string payloadDigest;
+    bool resolvedAlias = false;
+    for (auto const& entry : mcpp::manifest::list_xpkg_version_entries(
+             lua, mcpp::platform::HostPlatform::current())) {
+        if (entry.version == version) {
+            payloadDigest = entry.sha256;
+            resolvedAlias = entry.alias;
             break;
         }
     }
-    if (!lua) {
+    if (resolvedAlias) {
         return std::unexpected(std::format(
-            "template package '{}' not found in the index "
-            "(check the name, or run `mcpp index update`)", spec.pkg));
-    }
-
-    // The filename hit alone does not carry the namespace: a bare spec
-    // like "llmapi" finds pkgs/l/llmapi.lua even though the descriptor
-    // declares `namespace = "mcpplibs"`, and xlings resolves install
-    // targets by the descriptor's qualified name. Derive the structured
-    // (namespace, shortName) from the descriptor fields.
-    auto coords = mcpp::pm::compat::descriptor_coordinates(
-        spec.pkg,
-        mcpp::manifest::extract_xpkg_namespace(*lua),
-        mcpp::manifest::extract_xpkg_name(*lua));
-    const std::string& ns        = coords.namespace_;
-    const std::string& shortName = coords.shortName;
-
-    std::string version = spec.version;
-    if (version.empty()) {
-        // `mcpp add` has no target concept — the axis it means is the host,
-        // named explicitly rather than inherited from a default (#254).
-        // A template package is always a registry package — `mcpp new` has no
-        // project yet, so there are no `[indices]` to route through.
-        mcpp::pm::IndexRoute registryOnly{ nullptr, {}, &*cfg };
-        auto v = mcpp::pm::resolve_semver(ns, shortName, "*", registryOnly,
-                                          mcpp::platform::HostPlatform::current());
-        if (!v) return std::unexpected(v.error());
-        version = *v;
+            "template package '{}@{}' names a moving/indirect version alias; "
+            "pin the concrete version entry instead", selector, version));
     }
 
     auto installed = fetcher.install_path(ns, shortName, version);
@@ -94,7 +128,7 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
         // `name` fully-qualified — the short-name migration killed that, the
         // same way it killed the dependency path.
         auto fq = ns.empty() ? shortName : std::format("{}.{}", ns, shortName);
-        auto wireAddr = mcpp::manifest::xpkg_wire_address(*lua, ns, shortName);
+        auto wireAddr = mcpp::manifest::xpkg_wire_address(lua, ns, shortName);
         mcpp::ui::info("Downloading", std::format("{} v{}", fq, version));
         mcpp::fetcher::InstallProgressHandler progress;
         std::vector<std::string> targets{
@@ -124,21 +158,30 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
     }
     if (!std::filesystem::exists(root / "mcpp.toml")) {
         return std::unexpected(std::format(
-            "package '{}@{}' has no mcpp.toml", spec.pkg, version));
+            "package '{}@{}' has no mcpp.toml", selector, version));
     }
-    return FetchedTemplatePackage{root, shortName, version};
+    return FetchedTemplatePackage{
+        .root = std::move(root),
+        .id = coordinate,
+        .selector = selector,
+        .version = version,
+        .indexRoute = std::format("mcpp-index:{}", ns),
+        .descriptorDigest = stable_text_digest(lua),
+        .payloadDigest = std::move(payloadDigest),
+    };
 }
 
 void print_template_listing(const FetchedTemplatePackage& pkg,
                             const std::vector<mcpp::scaffold::TemplateEntry>& entries) {
-    std::println("Templates in {}@{}:", pkg.name, pkg.version);
+    std::println("Templates in {}@{}:", pkg.selector, pkg.version);
     for (auto& t : entries) {
         std::println("  {:<14}{}{}", t.name,
                      t.meta.isDefault ? "(default)  " : "           ",
                      t.meta.description);
     }
     std::println("");
-    std::println("usage: mcpp new <name> --template {}[@ver][:<template>]", pkg.name);
+    std::println("usage: mcpp new <name> --template {}[@ver][:<template>]",
+                 pkg.selector);
 }
 
 export int list_package_templates(const mcpp::scaffold::TemplateSpec& spec) {
@@ -150,35 +193,27 @@ export int list_package_templates(const mcpp::scaffold::TemplateSpec& spec) {
     return 0;
 }
 
-export int new_from_package_template(const std::string& name, const std::string& specStr) {
-    auto spec = mcpp::scaffold::parse_spec(specStr);
-    if (spec.listOnly) return list_package_templates(spec);
-
+export int new_from_package_template(
+    const std::string& name,
+    const mcpp::scaffold::TemplateSpec& spec) {
     auto pkg = fetch_template_package(spec);
     if (!pkg) { mcpp::ui::error(pkg.error()); return 1; }
     auto entries = mcpp::scaffold::list_templates(pkg->root);
     if (!entries) { mcpp::ui::error(entries.error()); return 1; }
 
-    const mcpp::scaffold::TemplateEntry* chosen = nullptr;
-    if (spec.tmpl.empty()) {
-        for (auto& t : *entries) if (t.meta.isDefault) { chosen = &t; break; }
-        if (!chosen) {
-            mcpp::ui::error(std::format(
-                "package '{}' declares no default template — pick one explicitly:",
-                pkg->name));
-            print_template_listing(*pkg, *entries);
-            return 1;
-        }
-    } else {
-        for (auto& t : *entries) if (t.name == spec.tmpl) { chosen = &t; break; }
-        if (!chosen) {
-            mcpp::ui::error(std::format(
-                "package '{}@{}' has no template '{}'",
-                pkg->name, pkg->version, spec.tmpl));
-            print_template_listing(*pkg, *entries);
-            return 1;
-        }
+    auto chosenResult = mcpp::scaffold::select_template(
+        *entries,
+        spec.templateName
+            ? std::optional<std::string_view>{*spec.templateName}
+            : std::nullopt);
+    if (!chosenResult) {
+        mcpp::ui::error(std::format(
+            "template package '{}@{}': {}",
+            pkg->selector, pkg->version, chosenResult.error()));
+        print_template_listing(*pkg, *entries);
+        return 1;
     }
+    const auto* chosen = *chosenResult;
 
     std::filesystem::path root = std::filesystem::current_path() / name;
     if (std::filesystem::exists(root)) {
@@ -193,7 +228,10 @@ export int new_from_package_template(const std::string& name, const std::string&
         return 1;
     }
 
-    mcpp::scaffold::RenderVars vars{name, pkg->name, pkg->version};
+    // Keep the complete resolved PackageId through rendering/injection. The
+    // current renderer's `self.name` surface is the canonical selector; Task 4
+    // expands this into separately addressable namespace/name variables.
+    mcpp::scaffold::RenderVars vars{name, pkg->selector, pkg->version};
     if (auto err = mcpp::scaffold::instantiate(
             pkg->root / "templates" / chosen->name, root, vars)) {
         mcpp::ui::error(*err);
@@ -206,7 +244,13 @@ export int new_from_package_template(const std::string& name, const std::string&
     }
 
     mcpp::ui::status("Created", std::format(
-        "{} (template {}@{}:{})", name, pkg->name, pkg->version, chosen->name));
+        "{} (template {}@{}:{})", name, pkg->selector, pkg->version,
+        chosen->name));
+    std::println("Resolved template package: namespace={} name={} route={} "
+                 "descriptor={} payload={}",
+                 pkg->id.namespace_, pkg->id.shortName, pkg->indexRoute,
+                 pkg->descriptorDigest,
+                 pkg->payloadDigest.empty() ? "unavailable" : pkg->payloadDigest);
     if (!chosen->meta.postMessage.empty())
         std::println("{}", chosen->meta.postMessage);
     return 0;

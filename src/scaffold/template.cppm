@@ -16,34 +16,98 @@ export module mcpp.scaffold;
 
 import std;
 import mcpp.libs.toml;
+import mcpp.pm.dependency_selector;
 
 export namespace mcpp::scaffold {
 
 // `--template` package-form SPEC:
-//   pkg | pkg:tmpl | pkg@ver | pkg@ver:tmpl | pkg:   (trailing ':' = list)
+//   [ns.]pkg | [ns.]pkg:tmpl | [ns.]pkg@ver | [ns.]pkg@ver:tmpl
+// A trailing ':' is accepted for one migration release as the old listing
+// alias; the canonical surface is `--list-templates [ns.]pkg[@ver]`.
 struct TemplateSpec {
-    std::string pkg;
-    std::string version;        // "" = latest
-    std::string tmpl;           // "" = the package's default template
-    bool        listOnly = false;
+    mcpp::pm::PackageSelector package;
+    std::optional<std::string> version;
+    std::optional<std::string> templateName;
+    bool                       legacyList = false;
 };
 
-TemplateSpec parse_spec(std::string_view s) {
-    TemplateSpec spec;
-    std::string_view left = s;
-    if (auto c = s.find(':'); c != std::string_view::npos) {
-        left = s.substr(0, c);
-        auto right = s.substr(c + 1);
-        if (right.empty()) spec.listOnly = true;
-        else               spec.tmpl = std::string(right);
+struct TemplateSpecError {
+    std::string message;
+};
+
+std::expected<TemplateSpec, TemplateSpecError>
+parse_template_spec(std::string_view spelling) {
+    std::string_view packageAndVersion = spelling;
+    std::optional<std::string> templateName;
+    bool legacyList = false;
+
+    // Delimiters are parsed outside-in in one fixed order. A second delimiter
+    // is always an error; it is never reinterpreted as package/version text.
+    if (auto colon = spelling.find(':'); colon != std::string_view::npos) {
+        if (spelling.find(':', colon + 1) != std::string_view::npos) {
+            return std::unexpected(TemplateSpecError{std::format(
+                "invalid template spec '{}': multiple ':' delimiters",
+                spelling)});
+        }
+        packageAndVersion = spelling.substr(0, colon);
+        auto requested = spelling.substr(colon + 1);
+        if (requested.empty()) {
+            legacyList = true;
+        } else {
+            auto parsedName = mcpp::pm::parse_package_selector(requested);
+            if (!parsedName || parsedName->namespace_) {
+                return std::unexpected(TemplateSpecError{std::format(
+                    "invalid template spec '{}': template name '{}' must be "
+                    "one atom containing only ASCII letters, digits, '-' or '_'",
+                    spelling, requested)});
+            }
+            templateName = std::string(requested);
+        }
     }
-    if (auto a = left.find('@'); a != std::string_view::npos) {
-        spec.pkg     = std::string(left.substr(0, a));
-        spec.version = std::string(left.substr(a + 1));
-    } else {
-        spec.pkg = std::string(left);
+
+    std::string_view packageSpelling = packageAndVersion;
+    std::optional<std::string> version;
+    if (auto at = packageAndVersion.find('@'); at != std::string_view::npos) {
+        if (packageAndVersion.find('@', at + 1) != std::string_view::npos) {
+            return std::unexpected(TemplateSpecError{std::format(
+                "invalid template spec '{}': multiple '@' delimiters",
+                spelling)});
+        }
+        packageSpelling = packageAndVersion.substr(0, at);
+        auto exact = packageAndVersion.substr(at + 1);
+        if (exact.empty()) {
+            return std::unexpected(TemplateSpecError{std::format(
+                "invalid template spec '{}': version after '@' is empty",
+                spelling)});
+        }
+        for (unsigned char ch : exact) {
+            const bool exactChar = (ch >= 'a' && ch <= 'z')
+                || (ch >= 'A' && ch <= 'Z')
+                || (ch >= '0' && ch <= '9')
+                || ch == '.' || ch == '-' || ch == '_' || ch == '+';
+            if (!exactChar) {
+                return std::unexpected(TemplateSpecError{std::format(
+                    "invalid template spec '{}': version '{}' must be an "
+                    "exact version key, not a range or unsafe value",
+                    spelling, exact)});
+            }
+        }
+        version = std::string(exact);
     }
-    return spec;
+
+    auto package = mcpp::pm::parse_package_selector(packageSpelling);
+    if (!package) {
+        return std::unexpected(TemplateSpecError{std::format(
+            "invalid template spec '{}': {}", spelling,
+            package.error().message)});
+    }
+
+    return TemplateSpec{
+        .package = std::move(*package),
+        .version = std::move(version),
+        .templateName = std::move(templateName),
+        .legacyList = legacyList,
+    };
 }
 
 struct TemplateMeta {
@@ -96,6 +160,51 @@ struct TemplateEntry {
     TemplateMeta meta;
 };
 
+std::string template_choice_list(
+    const std::vector<TemplateEntry>& entries) {
+    std::string choices;
+    for (auto const& entry : entries) {
+        if (!choices.empty()) choices += ", ";
+        choices += entry.name;
+    }
+    return choices;
+}
+
+std::expected<const TemplateEntry*, std::string>
+select_template(const std::vector<TemplateEntry>& entries,
+                std::optional<std::string_view> requested) {
+    if (entries.empty()) {
+        return std::unexpected(
+            "package provides no templates (templates/ is empty)");
+    }
+
+    std::size_t defaults = 0;
+    const TemplateEntry* explicitDefault = nullptr;
+    for (auto const& entry : entries) {
+        if (!entry.meta.isDefault) continue;
+        ++defaults;
+        explicitDefault = &entry;
+    }
+    if (defaults > 1) {
+        return std::unexpected(
+            "package declares more than one default template (template.toml "
+            "`default = true` must appear at most once)");
+    }
+
+    if (requested) {
+        for (auto const& entry : entries)
+            if (entry.name == *requested) return &entry;
+        return std::unexpected(std::format(
+            "no template '{}'; available templates: {}",
+            *requested, template_choice_list(entries)));
+    }
+    if (explicitDefault) return explicitDefault;
+    if (entries.size() == 1) return &entries.front();
+    return std::unexpected(std::format(
+        "package declares no default template; choose one explicitly: {}",
+        template_choice_list(entries)));
+}
+
 // Enumerate templates/<name>/ entries of a package root (sorted by name).
 std::expected<std::vector<TemplateEntry>, std::string>
 list_templates(const std::filesystem::path& packageRoot) {
@@ -107,9 +216,20 @@ list_templates(const std::filesystem::path& packageRoot) {
     std::error_code ec;
     for (auto& e : std::filesystem::directory_iterator(dir, ec)) {
         if (!e.is_directory()) continue;
+        auto templateName = e.path().filename().string();
+        auto parsedName = mcpp::pm::parse_package_selector(templateName);
+        if (!parsedName || parsedName->namespace_) {
+            return std::unexpected(std::format(
+                "template provider contains invalid template directory '{}': "
+                "name must be one ASCII atom", templateName));
+        }
         auto meta = load_meta(e.path());
         if (!meta) return std::unexpected(meta.error());
-        out.push_back({e.path().filename().string(), std::move(*meta)});
+        out.push_back({std::move(templateName), std::move(*meta)});
+    }
+    if (ec) {
+        return std::unexpected(std::format(
+            "cannot enumerate package templates: {}", ec.message()));
     }
     std::ranges::sort(out, {}, &TemplateEntry::name);
     int defaults = 0;

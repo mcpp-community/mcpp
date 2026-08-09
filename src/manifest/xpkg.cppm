@@ -35,6 +35,7 @@ McppField extract_mcpp_field(std::string_view luaContent);
 struct XpkgVersionEntry {
     std::string version;          // the literal key, as written
     bool        alias = false;    // entry carries `ref = "..."`
+    std::string sha256;           // payload digest when declared at entry level
 };
 
 // Extract the version entries for `platform` (e.g. "linux", "macosx",
@@ -1039,6 +1040,8 @@ list_xpkg_version_entries(std::string_view luaContent,
             const auto entry_end = find_table_end(v);
             if (entry_end != std::string_view::npos && entry_end <= plat_end) {
                 e.alias = entry_is_alias(v, entry_end);
+                e.sha256 = top_level_string_value_for_key(
+                    luaContent.substr(v + 1, entry_end - v - 1), "sha256");
                 versions.push_back(std::move(e));
                 q = entry_end + 1;
                 continue;

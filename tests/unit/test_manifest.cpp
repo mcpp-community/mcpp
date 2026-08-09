@@ -395,6 +395,9 @@ package = {
     EXPECT_EQ(e[0].version, "latest");      EXPECT_TRUE (e[0].alias);
     EXPECT_EQ(e[1].version, "25.0.4");      EXPECT_TRUE (e[1].alias);
     EXPECT_EQ(e[2].version, "25.0.4.7.1");  EXPECT_FALSE(e[2].alias);
+    EXPECT_TRUE(e[0].sha256.empty());
+    EXPECT_TRUE(e[1].sha256.empty());
+    EXPECT_EQ(e[2].sha256, "z");
 
     // The keys-only view is unchanged for every existing caller.
     auto keys = mcpp::manifest::list_xpkg_versions(

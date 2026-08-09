@@ -179,11 +179,12 @@ jobs:
       # Template packages exercise the sha256-pinned mcpp-index fetch
       # path (user report: `mcpp new ... --template imgui` failed with
       # fetch 'imgui@0.0.6' exit 1 on hosts without a sha256sum binary).
-      - name: "Template: mcpp new --template imgui (fetch path)"
+      - name: "Template: exact mcpplibs.imgui selector (fetch path)"
         run: |
           cd "$(mktemp -d)"
-          mcpp new abc1 --template imgui
+          mcpp new abc1 --template mcpplibs.imgui 2>&1 | tee template.log
           test -f abc1/mcpp.toml
+          grep -F 'namespace=mcpplibs name=imgui' template.log
 
       - name: "Default: build mcpp"
         run: |
@@ -391,11 +392,12 @@ jobs:
       # path — this is what broke on hosts without a sha256sum binary
       # (stock macOS / bare Windows) before xlings 0.4.51 hashed
       # in-process.
-      - name: "Template: mcpp new --template imgui (fetch path)"
+      - name: "Template: exact mcpplibs.imgui selector (fetch path)"
         run: |
           cd "$(mktemp -d)"
-          mcpp new abc1 --template imgui
+          mcpp new abc1 --template mcpplibs.imgui 2>&1 | tee template.log
           test -f abc1/mcpp.toml
+          grep -F 'namespace=mcpplibs name=imgui' template.log
 
       - name: "LLVM: build mcpp"
         run: |
@@ -466,13 +468,15 @@ jobs:
       # path (user report: `mcpp new abc1 --template imgui` failed with
       # fetch 'imgui@0.0.6' exit 1 on bare Windows — no sha256sum binary
       # outside git-bash; fixed by xlings 0.4.51 in-process hashing).
-      - name: "Template: mcpp new --template imgui (fetch path)"
+      - name: "Template: exact mcpplibs.imgui selector (fetch path)"
         shell: pwsh
         run: |
           $tmp = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
           Set-Location $tmp
-          mcpp new abc1 --template imgui
+          mcpp new abc1 --template mcpplibs.imgui 2>&1 | Tee-Object -Variable templateOutput
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (!(Test-Path abc1/mcpp.toml)) { exit 1 }
+          if (-not (($templateOutput -join "`n") -match 'namespace=mcpplibs name=imgui')) { exit 1 }
 
       - name: "LLVM: build mcpp"
         shell: pwsh

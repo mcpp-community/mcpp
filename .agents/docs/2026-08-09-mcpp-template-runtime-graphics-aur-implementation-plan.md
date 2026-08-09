@@ -105,16 +105,16 @@
 - `ResolvedTemplatePackage { DependencyCoordinate id; string version; string indexRoute; string descriptorDigest; string payloadDigest; path root; }`
 - `TemplateSelection { ResolvedTemplatePackage package; string templateName; }`
 
-- [ ] RED: unit-test every valid and invalid grammar row from focused design §5.1, including multiple `:`/`@`, empty components, exact dotted namespaces, and `pkg:` legacy list recognition.
-- [ ] RED: add E2E packages with `mcpplibs:widget`, `acme:widget`, and `mcpplibs.capi:lua`; prove template resolution uses the exact PackageId through `IndexRoute::lookup_descriptor`.
-- [ ] Implement TemplateSpec parsing in the fixed order template delimiter → version delimiter → shared PackageSelector; reject before config/network access.
-- [ ] Replace scaffold short-name/compat probing with `IndexRoute` exact lookup and keep canonical namespace, version, route, descriptor digest, payload digest, and root through fetch/render/output.
-- [ ] Reuse package-manager semver resolution for latest stable; omitted versions must not select prereleases, while explicit exact prerelease remains allowed.
-- [ ] RED: test default selection rules: one explicit default wins; one sole non-default auto-wins; multiple without default list choices and fail; multiple defaults fail validation; no templates directory reports provider error.
-- [ ] Implement the default rules and `pkg:` one-release warning pointing to `--list-templates`.
+- [x] RED: unit-test every valid and invalid grammar row from focused design §5.1, including multiple `:`/`@`, empty components, exact dotted namespaces, and `pkg:` legacy list recognition.
+- [x] RED: add E2E packages with `mcpplibs:widget`, `acme:widget`, and `mcpplibs.capi:lua`; prove template resolution uses the exact PackageId through `IndexRoute::lookup_descriptor`.
+- [x] Implement TemplateSpec parsing in the fixed order template delimiter → version delimiter → shared PackageSelector; reject before config/network access.
+- [x] Replace scaffold short-name/compat probing with `IndexRoute` exact lookup and keep canonical namespace, version, route, descriptor digest, payload digest, and root through fetch/render/output.
+- [x] Reuse package-manager semver resolution for latest stable; omitted versions must not select prereleases, while explicit exact prerelease remains allowed.
+- [x] RED: test default selection rules: one explicit default wins; one sole non-default auto-wins; multiple without default list choices and fail; multiple defaults fail validation; no templates directory reports provider error.
+- [x] Implement the default rules and `pkg:` one-release warning pointing to `--list-templates`.
 - [ ] Update human and machine output to include canonical selector, resolved namespace/name/version, template, and runtime selection.
 - [ ] GREEN: run new unit tests, template E2E, and three-platform fresh-install template lanes.
-- [ ] Commit typed TemplateSpec and exact template-package resolution.
+- [x] Commit typed TemplateSpec and exact template-package resolution.
 
 ## Task 4: Make Scaffolding Safe and Transactional (#380)
 
