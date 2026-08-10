@@ -61,6 +61,40 @@ How to choose:
 - Cross-distro / older glibc (legacy CentOS, Kylin) → `self-contained`
 - Single portable file, no host deps → `static`
 
+### A program that needs the HOST to provide something
+
+"Self-contained" has a floor. Some libraries can only come from the target
+machine: a graphics driver's user-space half is version-locked to the running
+kernel module, and for the proprietary stacks redistribution is not permitted.
+Declare those as run-phase capability requirements (§2.11 of
+`docs/05-mcpp-toml.md`), and the mode table gains a column:
+
+| Mode | Program needing a host-provided capability |
+|---|---|
+| `system` | ✅ |
+| `vendored` (default) | ✅ **the right default for these** |
+| `self-contained` | ❌ **refused at pack time** |
+| `static` | ❌ **refused at pack time** |
+
+The two refusals are the same fact: **a bundle that carries its own libc cannot
+consume a library the host supplies.** That `.so` arrives with its own
+requirements on the *target's* libc, and the process does not have that libc —
+measured in both directions as mcpp#392 / mcpp#401, where a private glibc
+meeting host-loaded objects dies during relocation, before `main`. Previously
+both modes linked and then failed at startup, or silently degraded (for
+graphics: software rendering, with nothing saying so).
+
+`vendored` packages such a program and writes a **`HOST-REQUIREMENTS`** file at
+the bundle root stating what the target must supply:
+
+```
+capability=opengl.glx.driver discovery=rpath-of-dispatch
+```
+
+`discovery` is the actionable half — the mechanisms are independent, so
+satisfying one does not satisfy another. It is written only when there is
+something to say: an empty file would be a *claim* that nothing is needed.
+
 ### Mode name compatibility
 
 Canonical names are shown above. The old names remain **permanent aliases**:

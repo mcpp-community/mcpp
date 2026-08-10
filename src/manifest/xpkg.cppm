@@ -1818,6 +1818,8 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             if (field == "kind") requirement.kind = entry.read_string();
                             else if (field == "value") requirement.value = entry.read_string();
                             else if (field == "phase") requirement.phase = entry.read_string();
+                            // Declared, not inferred — see RuntimeRequirement.
+                            else if (field == "discovery") requirement.discovery = entry.read_string();
                             else if (field == "required") {
                                 auto raw = entry.read_bareword();
                                 if (raw != "true" && raw != "false") {

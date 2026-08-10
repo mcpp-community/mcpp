@@ -20,7 +20,9 @@ module;
 export module mcpp.pack;
 
 import std;
+import mcpp.build.loader_contract;
 import mcpp.config;
+import mcpp.pack.host_requirements;
 import mcpp.platform;
 import mcpp.xlings;
 import mcpp.manifest;
@@ -54,6 +56,9 @@ struct Plan {
     std::vector<std::string>             excludeGlobs;
     std::vector<std::string>             alsoSkipLibs;
     std::vector<std::string>             forceBundleLibs;
+    // What the TARGET machine must provide. Derived once, in make_plan, from
+    // the same predicate `mcpp publish` uses — see mcpp.pack.host_requirements.
+    std::vector<HostRequirement>         hostRequirements;
 };
 
 struct Error { std::string message; };
@@ -172,6 +177,46 @@ make_plan(const mcpp::manifest::Manifest& manifest,
     p.packageName     = manifest.package.name;
     p.packageVersion  = manifest.package.version;
     p.triple          = std::string(triple);
+    p.hostRequirements = host_requirements_of(manifest.runtimeConfig);
+
+    // A MODE THAT CARRIES ITS OWN libc CANNOT CONSUME A HOST CAPABILITY.
+    //
+    // `static` has no libc to share and `self-contained` brings its own, and
+    // for a library the target must supply the consequence is identical: that
+    // .so arrives with its own requirements on the HOST's libc, and the
+    // process does not have that libc. The proprietary graphics stacks are the
+    // everyday case — they cannot be bundled (kernel lockstep, redistribution
+    // terms), so they are always the host's, and a self-contained bundle meets
+    // them with the wrong loader. Measured in both directions as mcpp#392 /
+    // mcpp#401: a private glibc meeting host-loaded objects dies during
+    // relocation, before main.
+    //
+    // Today both modes link and then fail at run time, or silently fall back
+    // to software rendering — worse than not building. The predicate is
+    // DECLARED data, not a list of driver names mcpp would have to maintain
+    // and would get wrong.
+    if (!p.hostRequirements.empty()
+        && (opts.mode == Mode::Static || opts.mode == Mode::BundleAll)) {
+        std::string names;
+        for (auto const& req : p.hostRequirements) {
+            if (!names.empty()) names += ", ";
+            names += req.capability;
+        }
+        return std::unexpected(Error{std::format(
+            "--mode {} cannot be used by a program that needs the host to "
+            "provide {}.\n"
+            "  That capability is satisfied at run time by a library on the "
+            "TARGET machine, and it\n"
+            "  arrives with its own requirements on the target's libc — which "
+            "a bundle carrying its\n"
+            "  own libc does not have. The result links and then fails at "
+            "startup, or silently\n"
+            "  degrades (mcpp#392, mcpp#401).\n"
+            "  use: --mode vendored — third-party .so travel with the "
+            "artifact; libc and the\n"
+            "       capability above both come from the host.",
+            mode_cli_name(opts.mode), names)});
+    }
 
     auto distDir = projectRoot / "target" / "dist";
     if (opts.output.empty()) {
@@ -337,21 +382,36 @@ sandbox_patchelf(const mcpp::config::GlobalConfig& cfg) {
     return {};
 }
 
-// Set RUNPATH (so the dynamic linker finds bundled libs in <prefix>/lib
-// from anywhere). $ORIGIN is the directory of the binary at load time,
-// so $ORIGIN/../lib is the bundled lib dir relative to <prefix>/bin/<exe>.
+// Set the search path (so the dynamic linker finds bundled libs in
+// <prefix>/lib from anywhere). $ORIGIN is the directory of the object at load
+// time, so $ORIGIN/../lib is the bundled lib dir relative to <prefix>/bin/<exe>
+// and $ORIGIN is it relative to <prefix>/lib/<soname>.
+//
+// WHICH TAG. `patchelf --set-rpath` writes DT_RUNPATH by default, and for an
+// EXECUTABLE that is wrong: DT_RUNPATH is consulted only for the object
+// carrying it, so a packaged program cannot reach its bundled libraries
+// through a dlopen() performed on its behalf by something else. That is the
+// same defect as the link-time one (mcpp.build.loader_contract), one layer
+// later, and it is why this takes the form from the shared contract instead of
+// deciding for itself. Libraries keep DT_RUNPATH — forcing DT_RPATH on a
+// library pushes its search path into every lookup below it.
 std::expected<void, std::string>
-set_runpath(const std::filesystem::path& binary,
-            std::string_view rpath,
-            const std::filesystem::path& patchelf)
+set_search_path(const std::filesystem::path& object,
+                std::string_view rpath,
+                mcpp::build::loader::Form form,
+                const std::filesystem::path& patchelf)
 {
     if (patchelf.empty() || !std::filesystem::exists(patchelf))
         return std::unexpected("patchelf not available in sandbox");
-    auto cmd = std::format("'{}' --set-rpath '{}' '{}'",
-        patchelf.string(), rpath, binary.string());
+    std::string extra;
+    if (auto flag = mcpp::build::loader::patchelf_flag(
+            mcpp::build::loader::required_tag(form)))
+        extra = std::format(" {}", *flag);
+    auto cmd = std::format("'{}' --set-rpath '{}'{} '{}'",
+        patchelf.string(), rpath, extra, object.string());
     int rc = run_silent(cmd);
     if (rc != 0) return std::unexpected(std::format(
-        "patchelf --set-rpath failed (exit {}): {}", rc, binary.string()));
+        "patchelf --set-rpath failed (exit {}): {}", rc, object.string()));
     return {};
 }
 
@@ -611,6 +671,22 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
     copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
 
+    // 3b. What the TARGET must provide.
+    //
+    // Only written when there is something to say — an empty file would be
+    // read as "nothing is needed", which is a claim, and for most programs the
+    // absence of the file is the honest form of it. When it IS written it is
+    // load-bearing: a bundle that omits the driver without saying so is a
+    // bundle that fails on the user's machine with no way to find out why.
+    if (!plan.hostRequirements.empty()) {
+        std::ofstream out(plan.stagingRoot / std::filesystem::path(kFileName));
+        if (!out) return std::unexpected(Error{std::format(
+            "cannot write {} into the bundle", kFileName)});
+        out << render(plan.hostRequirements);
+        if (!out) return std::unexpected(Error{std::format(
+            "failed writing {}", kFileName)});
+    }
+
     // 4. Library bundling for non-static modes.
     //
     //    BundleProject (default) — drop all manylinux-allowed system libs
@@ -645,14 +721,52 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
 
         auto patchelf = sandbox_patchelf(cfg);
         if (!patchelf.empty()) {
-            // RUNPATH: point at bundled libs (or clear if none).
+            // Search path: point at bundled libs (or clear if none).
             //   non-empty bundle → "$ORIGIN/../lib" so the binary finds them
             //   empty bundle      → clear the original dev-sandbox RUNPATH
             //                       (~/.mcpp/registry/... doesn't exist on
             //                       a user's target machine)
             const char* rpath = toBundle.empty() ? "" : "$ORIGIN/../lib";
-            if (auto r = set_runpath(bundledBinary, rpath, patchelf); !r)
+            if (auto r = set_search_path(bundledBinary, rpath,
+                                         mcpp::build::loader::Form::Executable,
+                                         patchelf); !r)
                 return std::unexpected(Error{r.error()});
+
+            // EVERY BUNDLED LIBRARY, not just the executable.
+            //
+            // A bundled .so keeps whatever RUNPATH it was built with, and on
+            // this ecosystem that is a set of ABSOLUTE paths into the BUILD
+            // MACHINE's xlings store. Measured on a graphics artifact:
+            //
+            //   <store>/xim-x-glibc/2.44/lib64 : <store>/xim-x-gcc/16.1.0/lib64
+            //   : <store>/compat-x-glx-runtime/…/lib : $ORIGIN
+            //
+            // Those directories do not exist on the target, and worse, if the
+            // target happens to be another developer's machine they exist with
+            // DIFFERENT contents. "Depends on the xlings ecosystem" would be a
+            // design choice; "depends on this one machine's store" is a defect,
+            // and it is invisible because the bundle runs fine where it was
+            // built. $ORIGIN is where its siblings actually are.
+            //
+            // EXCEPT THE DYNAMIC LOADER. `ld-linux-*.so` is not a shared
+            // library that gets searched for; it is the program that DOES the
+            // searching, and it is loaded by the kernel from an absolute path
+            // (PT_INTERP, or `run.sh`'s explicit invocation). Rewriting its
+            // own search path is meaningless, and patchelf rewriting it is
+            // destructive: Mode `self-contained` then segfaults before main,
+            // because the thing that was supposed to resolve the process's
+            // libraries no longer loads. Found by `30_pack_modes`.
+            auto loaderSoname = find_loader_soname(toBundle);
+            for (auto const& dep : toBundle) {
+                if (!loaderSoname.empty() && dep.soname == loaderSoname) continue;
+                auto staged = plan.stagingRoot / "lib" / dep.soname;
+                std::error_code ec;
+                if (!std::filesystem::is_regular_file(staged, ec)) continue;
+                if (auto r = set_search_path(
+                        staged, "$ORIGIN",
+                        mcpp::build::loader::Form::SharedLibrary, patchelf); !r)
+                    return std::unexpected(Error{r.error()});
+            }
 
             // PT_INTERP handling differs by mode:
             //   BundleProject → repoint to the target distro's loader

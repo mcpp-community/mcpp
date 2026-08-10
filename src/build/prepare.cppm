@@ -32,6 +32,8 @@ import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
+import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
+import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
 import mcpp.build.build_program;
 import mcpp.build.directives;   // directive table: mark / fold_private_tail
@@ -5264,6 +5266,15 @@ prepare_build(bool print_fingerprint,
                                              stdBmiPath, stdObjectPath, storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
+    // mcpp#407. Both callers that produce a non-plain graph arrive here the
+    // same way: dev-dependencies enabled, synthetic test targets appended. The
+    // resulting `default` line names the test binaries and omits the package's
+    // own target, and the output directory is shared with plain builds because
+    // the fingerprint covers neither input. Stamping it on the plan is what
+    // lets the graph say so about itself.
+    ctx.plan.graphShape = (includeDevDeps || !extraTargets.empty())
+        ? mcpp::build::GraphShape::WithTests
+        : mcpp::build::GraphShape::Normal;
     ctx.plan.runtimeBinding = runtimeBindingSnapshot;
     mcpp::build::merge_runtime_binding_contract(
         ctx.plan, runtimeBindingSnapshot);
@@ -6331,6 +6342,15 @@ prepare_build(bool print_fingerprint,
                 {"abi", artifact.abi},
                 {"digest", artifact.digest},
                 {"host_fingerprint", artifact.hostFingerprint},
+                // A requirement must land on a THING, and the thing must be
+                // the one that was declared. mcpp already enforces this for
+                // the private libc; recording it per artifact makes a stale
+                // binding visible instead of leaving `providers:` naming
+                // something nobody checked.
+                {"identity", std::string(
+                    mcpp::build::runtime_validation::to_string(
+                        mcpp::build::runtime_validation
+                            ::artifact_identity_verdict(artifact)))},
             });
         }
         nlohmann::json binding = nlohmann::json::parse(

@@ -1118,7 +1118,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             auto const& table = value.as_table();
             for (auto const& [key, _] : table) {
                 if (key != "kind" && key != "value" && key != "phase"
-                    && key != "required") {
+                    && key != "required" && key != "discovery") {
                     return std::unexpected(error(origin, std::format(
                         "runtime.requirements[{}] has unsupported key '{}'",
                         index, key)));
@@ -1131,6 +1131,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     "runtime.requirements[{}] kind/value/phase must be strings",
                     index)));
             }
+            table_string(table, "discovery", requirement.discovery);
             if (auto it = table.find("required"); it != table.end()) {
                 if (!it->second.is_bool()) {
                     return std::unexpected(error(origin, std::format(

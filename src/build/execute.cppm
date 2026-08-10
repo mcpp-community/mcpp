@@ -14,6 +14,7 @@ import mcpp.build.prepare;
 import mcpp.build.test_targets;
 import mcpp.diag;
 import mcpp.build.plan;
+import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
 import mcpp.build.runtime_validation;
@@ -193,9 +194,8 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
     return entries;
 }
 
-// Serialize the P3 format. Split out of write_build_cache so the invalidation
-// path (forget_build_cache_entry) can rewrite the file without inventing a
-// second spelling of it.
+// Serialize the P3 format. Declared ahead of its single caller so the reader
+// and the writer of this file sit next to each other.
 void write_build_cache_entries(const std::filesystem::path& path,
                                const std::vector<BuildCacheEntry>& entries);
 
@@ -269,40 +269,6 @@ void write_build_cache_entries(const std::filesystem::path& path,
         f << "profile=" << e.profile << '\n';
         f << "cacheMode=" << e.cacheMode << '\n';
     }
-}
-
-// Drop the fast-path entries that point at `outputDir`.
-//
-// The fast path's contract is "the build.ninja in this entry's outputDir is
-// still the graph a normal `mcpp build` would generate" — and it verifies that
-// by comparing mtimes against the SOURCES, never against the graph itself. So
-// any mode that rewrites build.ninja to something other than a normal build's
-// graph has to say so here, or the next `mcpp build` replays the wrong graph
-// and reports success for it. `--configure-only` is exactly such a mode: its
-// plan carries the test targets and dev-dependencies, so its `default` line is
-// the TEST binaries and does not contain the package's own target at all.
-//
-// Scoped to the one outputDir whose graph was rewritten, not the whole file:
-// the other (target, profile, cache mode) triples own different build dirs and
-// their graphs are untouched, so evicting them would only cost rebuilds.
-export void forget_build_cache_entry(const std::filesystem::path& projectRoot,
-                                     const std::filesystem::path& outputDir) {
-    auto path = projectRoot / kBuildCacheFile;
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec)) return;
-
-    auto entries = read_build_cache(projectRoot);
-    auto target = outputDir.lexically_normal();
-    auto removed = std::erase_if(entries, [&](const BuildCacheEntry& e) {
-        return std::filesystem::path(e.outputDir).lexically_normal() == target;
-    });
-    if (removed == 0) return;
-
-    if (entries.empty()) {
-        std::filesystem::remove(path, ec);
-        return;
-    }
-    write_build_cache_entries(path, entries);
 }
 
 std::vector<std::string> read_ninja_command_prefixes(const std::filesystem::path& ninjaPath) {
@@ -784,6 +750,16 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     auto ninjaPath = outputDir / "build.ninja";
     if (!std::filesystem::exists(ninjaPath, ec)) return std::nullopt;
 
+    // #407. Freshness is measured against the SOURCES, which says nothing
+    // about what kind of graph this is. `mcpp test` and
+    // `mcpp build --configure-only` write their plan — dev-deps, test targets,
+    // `default` naming the test binaries and NOT the package's target — into
+    // this same file, because the fingerprint covers neither input. Replaying
+    // that for a plain build linked the tests, never linked the target, and
+    // printed `Finished`; and a broken file under tests/ (never scanned here)
+    // failed a plain `mcpp build` outright.
+    if (!mcpp::build::is_plain_build_graph(ninjaPath)) return std::nullopt;
+
     auto ninjaTime = std::filesystem::last_write_time(ninjaPath, ec);
     if (ec) return std::nullopt;
 
@@ -886,6 +862,10 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     std::filesystem::path outputDir(outputDirStr);
     auto ninjaPath = outputDir / "build.ninja";
     if (!std::filesystem::exists(ninjaPath, ec)) return std::nullopt;
+    // #407, same reason as try_fast_build: a test-shaped graph does not build
+    // the run target at all, so running ninja against it would report success
+    // and then exec a stale (or absent) binary.
+    if (!mcpp::build::is_plain_build_graph(ninjaPath)) return std::nullopt;
     auto ninjaTime = std::filesystem::last_write_time(ninjaPath, ec);
     if (ec) return std::nullopt;
 
