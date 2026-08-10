@@ -99,7 +99,8 @@ Targets:
   *  x86_64-linux-musl       static                gcc 16.1.0        installed
      x86_64-windows-gnu      PE, static, cross     gcc 16.1.0        installed
      aarch64-linux-musl      static, cross         gcc 16.1.0        available
-     riscv64-linux-musl      static, cross         —                 planned
+     riscv64-linux-musl      static, cross         gcc 16.1.0        available
+     aarch64-linux-gnu       cross                 —                 planned
 
 Available toolchains (run `mcpp toolchain install <family> <version>`):
      gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0

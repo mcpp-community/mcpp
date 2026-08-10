@@ -26,11 +26,23 @@ grep -q "did you mean 'x86_64-linux-musl'" "$TMP/typo.log" || {
     echo "FAIL: missing did-you-mean suggestion"; cat "$TMP/typo.log"; exit 1; }
 
 # ── 2. planned tier: registered but unsupported → error, not a host build ───
-if "$MCPP" build --target aarch64-linux-gnu > "$TMP/planned.log" 2>&1; then
-    echo "FAIL: planned-tier target built"; cat "$TMP/planned.log"; exit 1
+# The target is read out of `toolchain list` rather than hardcoded: this
+# assertion is about the TIER, not about any particular triple, and every time a
+# target gets promoted the hardcoded spelling stops being planned and the check
+# silently becomes a test of something else (riscv64-linux-musl was the second
+# one to go that way).
+planned=$("$MCPP" toolchain list --no-color 2>/dev/null \
+          | awk '$NF == "planned" { print $1; exit }')
+if [[ -z "$planned" ]]; then
+    echo "(no planned-tier target registered — step 2 skipped)"
+else
+    if "$MCPP" build --target "$planned" > "$TMP/planned.log" 2>&1; then
+        echo "FAIL: planned-tier target '$planned' built"; cat "$TMP/planned.log"; exit 1
+    fi
+    grep -q "not yet supported" "$TMP/planned.log" || {
+        echo "FAIL: missing planned-tier error for '$planned'"
+        cat "$TMP/planned.log"; exit 1; }
 fi
-grep -q "not yet supported" "$TMP/planned.log" || {
-    echo "FAIL: missing planned-tier error"; cat "$TMP/planned.log"; exit 1; }
 
 # ── 3. escape hatch: custom triple with an explicit [target.X] section ──────
 # (pin the host gcc so resolution succeeds; the point is validation lets an
