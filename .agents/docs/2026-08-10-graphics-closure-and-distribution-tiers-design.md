@@ -8,6 +8,16 @@
 > (三层故障的分层)、xlings `2026-08-10-graphics-stack-design.md`(标签契约与 E1–E5)
 >
 > 本文所有"已验"结论都在本机跑过,命令与输出在正文里。凡未实测的一律标 **未验**。
+>
+> **实施状态(2026-08-10):A–J 全部已实施,PR #408,版本 `2026.8.10.2`。**
+> 实施计划见 `2026-08-10-graphics-closure-implementation-plan.md`,
+> 验收实测见 `2026-08-10-graphics-closure-acceptance.md`。
+> 与本文的两处出入,以实施为准:
+> - **§2.1 的 `.wiring` 增强没有做**。主判据(mcpp 自算路径身份)已实施并可独立成立;
+>   读别人一份条件语义未表达的记录属于净增耦合,收益不足以抵。
+> - **§3.F 的 `discovery` 不由 mcpp 推断**。第一版按能力名推断,被既有守卫
+>   `test_runtime_contract` 当场拦下 —— 那是把 provider 专属知识写进 mcpp。
+>   改为声明式(`[[runtime.requirements]] discovery`),未声明报 `unknown`。**守卫是对的。**
 
 ---
 
