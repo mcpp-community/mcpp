@@ -3,6 +3,29 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.10.3] — 2026-08-10
+
+### 修复
+
+- **宿主能力清单从「解析后的图」取,不再从根 manifest 取。** `2026.8.10.2` 引入的
+  「自带 libc 的档拒绝宿主能力」只在**根工程自己声明**能力时生效 —— 而几乎没有应用
+  会自己声明 `capability:opengl.glx.driver`,它依赖某个声明了的包(glfw / SDL 封装 /
+  GL runtime),resolver 会给每条需求盖上请求者身份。读根 manifest 回答的是
+  「作者写没写」(几乎总是没写),而该问的是「解析出来的图需不需要」。
+
+  实测:一个真实 imgui 工程的 `mcpp why runtime` 列着
+  `capability:opengl.glx.driver [run] <- compat.glfw@3.4 (required)`,
+  而 `mcpp pack --mode self-contained` **照打不误**。修复后它正确拒绝,并列出
+  `abi:glibc, opengl.glx.driver, x11.display` 三条;`--mode vendored` 正常打包
+  并把三条写进 `HOST-REQUIREMENTS`。
+
+  同一处也修好了 `mcpp pack` 的 `HOST-REQUIREMENTS`:此前对真实工程是空的
+  (空文件会被读成「什么都不需要」,而它现在根本不写空文件)。
+
+  **为什么原来的测试没抓到:它的 fixture 在根工程声明了能力 —— 恰恰是真实工程
+  唯一不具备的形态。** `216` 已改成依赖声明、消费方什么都不声明,并加了一条
+  前置断言:那条需求必须先出现在 `mcpp why runtime` 里,否则测试等于什么都没验。
+
 ## [2026.8.10.2] — 2026-08-10
 
 图形栈闭合与分发档位。完整设计与实施计划见

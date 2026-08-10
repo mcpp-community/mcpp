@@ -102,7 +102,11 @@ export int build_and_pack(Options opts, bool modeFromUser) {
 
     // ─── Build the plan + run ────────────────────────────────────────
     auto plan = mcpp::pack::make_plan(ctx->manifest, *cfg, opts,
-        mainBinary, ctx->projectRoot, ctx->tc.targetTriple);
+        mainBinary, ctx->projectRoot, ctx->tc.targetTriple,
+        // From the RESOLVED graph. `mcpp why runtime` on a real imgui project
+        // lists `capability:opengl.glx.driver <- compat.glfw@3.4` — none of
+        // which appears in the project's own manifest.
+        ctx->plan.runtimeRequirements);
     if (!plan) { mcpp::ui::error(plan.error().message); return 1; }
 
     mcpp::ui::info("Packing", std::format("{} v{} ({})",

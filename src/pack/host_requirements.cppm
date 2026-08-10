@@ -70,8 +70,22 @@ inline constexpr std::string_view kFileName = "HOST-REQUIREMENTS";
 // A requirement counts when it must be satisfied at RUN time by something
 // outside the artifact. Link-phase requirements are consumed during the build
 // and say nothing about the target machine.
+//
+// TAKES THE RESOLVED LIST, NOT A MANIFEST. Almost no application declares
+// `capability:opengl.glx.driver` itself — it depends on something that does
+// (glfw, an SDL wrapper, a GL runtime), and the resolver stamps each
+// requirement with the exact requester. Reading the ROOT manifest's `[runtime]`
+// therefore answers "did the author write it down", which is nearly always no,
+// while the honest question is "does the resolved graph need it".
+//
+// Measured: a real imgui project whose `mcpp why runtime` lists
+// `capability:opengl.glx.driver [run] <- compat.glfw@3.4 (required)` produced
+// an EMPTY list from its own manifest — so `--mode self-contained` packaged it
+// happily. The fixture-based test passed because the fixture declared the
+// capability at the root, which is the one shape real projects do not have.
 std::vector<HostRequirement>
-host_requirements_of(const mcpp::manifest::RuntimeConfig& runtime) {
+host_requirements_of(std::span<const mcpp::manifest::RuntimeRequirement> requirements,
+                     std::span<const std::string> legacyCapabilities = {}) {
     std::vector<HostRequirement> out;
     auto add = [&](std::string capability, std::string discovery, bool required) {
         if (capability.empty()) return;
@@ -80,7 +94,7 @@ host_requirements_of(const mcpp::manifest::RuntimeConfig& runtime) {
             return;
         out.push_back({std::move(capability), std::move(discovery), required});
     };
-    for (auto const& req : runtime.requirements) {
+    for (auto const& req : requirements) {
         if (req.phase != "run") continue;
         if (req.kind != "capability") continue;
         add(req.value, req.discovery, req.required);
@@ -89,10 +103,17 @@ host_requirements_of(const mcpp::manifest::RuntimeConfig& runtime) {
     // compatibility train; a package that has not migrated must not silently
     // produce an empty list. It has no place to declare a mechanism, so those
     // rows say `unknown` — accurately.
-    for (auto const& capability : runtime.capabilities)
+    for (auto const& capability : legacyCapabilities)
         add(capability, /*discovery=*/{}, /*required=*/true);
     std::ranges::sort(out, {}, &HostRequirement::capability);
     return out;
+}
+
+// Convenience for callers that only have a manifest (e.g. `mcpp emit xpkg`
+// describing the package's OWN declarations rather than a resolved graph).
+std::vector<HostRequirement>
+host_requirements_of(const mcpp::manifest::RuntimeConfig& runtime) {
+    return host_requirements_of(runtime.requirements, runtime.capabilities);
 }
 
 // Render. One requirement per line, `key=value` fields, so the format can be

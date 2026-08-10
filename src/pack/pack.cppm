@@ -72,7 +72,11 @@ make_plan(const mcpp::manifest::Manifest& manifest,
           const Options& opts,
           const std::filesystem::path& builtBinary,
           const std::filesystem::path& projectRoot,
-          std::string_view triple);
+          std::string_view triple,
+          // The RESOLVED run-time requirements, from BuildPlan. Not the root
+          // manifest's: an application almost never declares a host capability
+          // itself, it depends on something that does.
+          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements = {});
 
 // Execute the plan: copies binary + .so + extra files, runs patchelf,
 // writes the final tarball or directory.
@@ -167,7 +171,8 @@ make_plan(const mcpp::manifest::Manifest& manifest,
           const Options& opts,
           const std::filesystem::path& builtBinary,
           const std::filesystem::path& projectRoot,
-          std::string_view triple)
+          std::string_view triple,
+          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements)
 {
     Plan p;
     p.opts            = opts;
@@ -177,7 +182,12 @@ make_plan(const mcpp::manifest::Manifest& manifest,
     p.packageName     = manifest.package.name;
     p.packageVersion  = manifest.package.version;
     p.triple          = std::string(triple);
-    p.hostRequirements = host_requirements_of(manifest.runtimeConfig);
+    // Resolved graph first; the manifest's own declarations are the fallback
+    // for callers that have no plan (and remain covered by the legacy vector).
+    p.hostRequirements = resolvedRequirements.empty()
+        ? host_requirements_of(manifest.runtimeConfig)
+        : host_requirements_of(resolvedRequirements,
+                               manifest.runtimeConfig.capabilities);
 
     // A MODE THAT CARRIES ITS OWN libc CANNOT CONSUME A HOST CAPABILITY.
     //

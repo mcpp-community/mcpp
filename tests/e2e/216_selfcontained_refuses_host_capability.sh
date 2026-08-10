@@ -28,21 +28,97 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME=$HOME/.mcpp
 
-cd "$TMP"
-"$MCPP" new gfxapp > /dev/null
-cd gfxapp
-cat >> mcpp.toml <<'EOF'
-
-[[runtime.requirements]]
-kind      = "capability"
-value     = "opengl.glx.driver"
-phase     = "run"
-# DECLARED by the package, not inferred by mcpp: which mechanism a capability
-# uses is the provider's property. GLX is reached through the dispatch
-# library's own DT_RPATH; EGL through a JSON file holding an ABSOLUTE path — so
-# the two are not interchangeable, and a row without this is not actionable.
-discovery = "rpath-of-dispatch"
+# ── the capability comes from a DEPENDENCY, not from this project ───────────
+#
+# THIS IS THE SHAPE REAL PROJECTS HAVE, and getting it wrong is how the first
+# version of this gate shipped half-working. Almost no application declares
+# `capability:opengl.glx.driver` itself — it depends on glfw / an SDL wrapper /
+# a GL runtime that does, and the resolver stamps each requirement with its
+# requester. A gate that reads the ROOT manifest answers "did the author write
+# it down" (nearly always no) instead of "does the resolved graph need it".
+#
+# Measured on a real imgui project: `mcpp why runtime` listed
+# `capability:opengl.glx.driver [run] <- compat.glfw@3.4 (required)`, and
+# `--mode self-contained` packaged it happily — while THIS test passed, because
+# its fixture declared the capability at the root. The fixture had the one
+# shape real projects do not.
+INDEX_DIR="$TMP/local-index"
+mkdir -p "$INDEX_DIR/pkgs/g"
+cat > "$INDEX_DIR/pkgs/g/gfx-runtime.lua" <<'EOF'
+package = {
+    spec = "1",
+    name = "gfx-runtime",
+    description = "A dependency that needs the host to provide a driver",
+    licenses = {"MIT"},
+    type = "package",
+    xpm = {
+        linux = {
+            ["1.0.0"] = {
+                url = "https://example.invalid/gfx-runtime-1.0.0.tar.gz",
+                sha256 = "0000000000000000000000000000000000000000000000000000000000000000",
+            },
+        },
+    },
+    mcpp = {
+        language = "c++23",
+        import_std = true,
+        sources = { "src/**/*.cppm" },
+        targets = { ["gfx-runtime"] = { kind = "lib" } },
+        deps = {},
+        runtime = {
+            requirements = {
+                { kind = "capability", value = "opengl.glx.driver", phase = "run",
+                  required = true, discovery = "rpath-of-dispatch" },
+            },
+        },
+    },
+}
 EOF
+
+mkdir -p "$TMP/gfxapp/src"
+mkdir -p "$TMP/gfxapp/.mcpp/.xlings/data/xpkgs/local-dev.gfx-runtime/1.0.0/src"
+cd "$TMP/gfxapp"
+cat > .mcpp/.xlings/data/xpkgs/local-dev.gfx-runtime/1.0.0/src/lib.cppm <<'EOF'
+export module gfx.runtime;
+export int gfx_ready() { return 1; }
+EOF
+cat > src/main.cpp <<'EOF'
+import gfx.runtime;
+int main() { return gfx_ready() == 1 ? 0 : 1; }
+EOF
+# The application itself declares NOTHING. That is the point.
+cat > mcpp.toml <<EOF
+[package]
+name = "gfxapp"
+version = "0.1.0"
+
+[indices]
+local-dev = { path = "$INDEX_DIR" }
+
+[dependencies]
+"local-dev.gfx-runtime" = "1.0.0"
+
+[targets.gfxapp]
+kind = "bin"
+main = "src/main.cpp"
+EOF
+
+# Guard: if the requirement never reaches the resolved graph, everything below
+# would pass by refusing nothing — so assert it arrived first.
+"$MCPP" build > "$TMP/build.log" 2>&1 || { cat "$TMP/build.log"; exit 1; }
+"$MCPP" why runtime > "$TMP/why.log" 2>&1 || { cat "$TMP/why.log"; exit 1; }
+grep -q 'capability:opengl.glx.driver' "$TMP/why.log" || {
+    echo "FAIL: the dependency's capability never reached the resolved graph —"
+    echo "      this test would then prove nothing about the gate"
+    cat "$TMP/why.log"
+    exit 1
+}
+grep -q 'gfx-runtime' "$TMP/why.log" || {
+    echo "FAIL: the requirement is not attributed to the dependency"
+    cat "$TMP/why.log"
+    exit 1
+}
+echo "  requirement arrives from the dependency, not from this project"
 
 # ── the two modes that carry their own libc must refuse ─────────────────────
 for mode in self-contained static; do
