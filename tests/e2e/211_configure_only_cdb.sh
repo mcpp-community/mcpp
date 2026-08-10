@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # requires:
-# 202_configure_only_cdb.sh — `mcpp build --configure-only` must publish the
+# 211_configure_only_cdb.sh — `mcpp build --configure-only` must publish the
 # compile database before compiling source files. The generated database is
 # intended for clangd, so a broken source is deliberately part of the test.
 set -euo pipefail
@@ -43,7 +43,7 @@ cat > tests/test_smoke.cpp <<'EOF'
 int test_entry() { return 0; }
 EOF
 
-out=$($MCPP build --configure-only 2>&1) || {
+out=$("$MCPP" build --configure-only 2>&1) || {
     echo "configure-only failed unexpectedly:"
     echo "$out"
     exit 1
@@ -101,6 +101,46 @@ if find target -type f \( -name '*.o' -o -name '*.obj' \) -print -quit 2>/dev/nu
 fi
 [[ ! -d target/bin ]] || { echo "configure-only produced target/bin"; exit 1; }
 [[ ! -e target/.build_cache ]] || { echo "configure-only wrote target/.build_cache"; exit 1; }
+
+# Configuring an ALREADY-BUILT project must not poison the build fast path.
+# The backend writes build.ninja before it honors dryRun, and a configure plan's
+# graph is not a normal build's graph: it carries the test targets, so its
+# `default` line names the TEST binaries and the package's own target is not in
+# it at all. The fast path re-runs a cached build.ninja after comparing mtimes
+# against the SOURCES — it never looks at the graph — so a surviving cache entry
+# makes the next plain `mcpp build` link the tests, skip the target, and print
+# `Finished`. Do NOT delete the built binary before the second build: a missing
+# output makes ninja fail in a way the fast path reads as a stale graph and
+# falls back to a full prepare, which hides exactly the defect under test.
+mkdir -p "$TMP/fastpath/src" "$TMP/fastpath/tests"
+cat > "$TMP/fastpath/mcpp.toml" <<'EOF'
+[package]
+name = "fastpath"
+version = "0.1.0"
+EOF
+printf 'int main() { return 0; }\n' > "$TMP/fastpath/src/main.cpp"
+printf 'int main() { return 0; }\n' > "$TMP/fastpath/tests/smoke.cpp"
+cd "$TMP/fastpath"
+"$MCPP" build > build-1.log 2>&1 || { cat build-1.log; exit 1; }
+bindir=$(dirname "$(find target -type f -path '*/bin/fastpath' -print -quit)")
+[[ -n "$bindir" && -f "$bindir/fastpath" ]] || { echo "baseline build produced no binary"; exit 1; }
+
+"$MCPP" build --configure-only > configure-fastpath.log 2>&1 || {
+    cat configure-fastpath.log; exit 1; }
+[[ ! -e "$bindir/smoke" ]] || { echo "configure-only linked a test binary"; exit 1; }
+
+"$MCPP" build > build-2.log 2>&1 || { cat build-2.log; exit 1; }
+[[ ! -e "$bindir/smoke" ]] || {
+    echo "build after configure-only replayed the configure graph and linked the tests"
+    cat build-2.log
+    ls -la "$bindir"
+    exit 1
+}
+[[ -f "$bindir/fastpath" ]] || {
+    echo "build after configure-only lost the package target"
+    cat build-2.log
+    exit 1
+}
 
 # A virtual workspace is configured member-by-member, with each member's CDB
 # scoped to its own package. `-p` must select the same scope as normal build.

@@ -7,6 +7,7 @@ export module mcpp.build.configure;
 
 import std;
 import mcpp.build.backend;
+import mcpp.build.execute;
 import mcpp.build.ninja;
 import mcpp.build.plan;
 import mcpp.build.prepare;
@@ -88,6 +89,17 @@ int run_configure_plan(BuildContext& ctx, bool verbose) {
     options.verbose = verbose;
     options.dryRun = true;
     options.requireCompileDatabase = true;
+
+    // The backend writes build.ninja before it honors dryRun, and a configure
+    // plan's graph is NOT a normal build's graph: it carries the test targets
+    // and dev-dependencies, so its `default` line names the test binaries and
+    // omits the package's own target entirely. Drop the fast-path entry that
+    // still claims this build dir holds a normal graph — otherwise the next
+    // plain `mcpp build` replays it, links the tests, never links the target,
+    // and prints `Finished`. Invalidated BEFORE the backend runs so a failed
+    // configure cannot leave the stale claim standing either.
+    forget_build_cache_entry(ctx.projectRoot, ctx.outputDir);
+
     auto result = backend->build(ctx.plan, options);
     if (!result) {
         mcpp::ui::error(result.error().message);

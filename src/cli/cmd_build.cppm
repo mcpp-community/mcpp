@@ -65,16 +65,23 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     ov.strict = parsed.is_flag_set("strict");
     ov.force_static = parsed.is_flag_set("static");
 
-    auto configure_member = [&](mcpp::build::BuildOverrides memberOv) -> int {
+    // Fan-out prefixes every diagnostic with the member it came from; the
+    // single-package path has nothing to disambiguate and passes "".
+    auto configure_member = [&](mcpp::build::BuildOverrides memberOv,
+                                std::string_view label) -> int {
+        auto where = [&](std::string_view msg) {
+            if (label.empty()) std::println(stderr, "error: {}", msg);
+            else               std::println(stderr, "error: {}: {}", label, msg);
+        };
         auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
         if (!root) {
-            std::println(stderr, "error: no mcpp.toml found in current directory or any parent");
+            where("no mcpp.toml found in current directory or any parent");
             return 2;
         }
         auto discovered = mcpp::build::discover_test_targets(*root,
                                                               memberOv.package_filter);
         if (!discovered) {
-            std::println(stderr, "error: {}", discovered.error());
+            where(discovered.error());
             return 2;
         }
         // configure-only deliberately includes dev-dependencies and test TUs:
@@ -86,7 +93,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
             print_fp, includeDevDeps,
             std::move(discovered->targets), std::move(memberOv));
         if (!ctx) {
-            std::println(stderr, "error: {}", ctx.error());
+            where(ctx.error());
             return 2;
         }
         return mcpp::build::run_configure_plan(*ctx, verbose);
@@ -102,7 +109,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
             mcpp::build::BuildOverrides mo = ov;
             mo.package_filter = mp;
             if (configure_only) {
-                int r = configure_member(std::move(mo));
+                int r = configure_member(std::move(mo), mp);
                 if (r != 0) rc = r;
                 continue;
             }
@@ -116,7 +123,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     if (configure_only)
-        return configure_member(std::move(ov));
+        return configure_member(std::move(ov), "");
 
     // P0: try fast-path if inputs haven't changed. Any resolution-affecting
     // override (--profile/--features/--strict, like --target/--static) must

@@ -193,6 +193,12 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
     return entries;
 }
 
+// Serialize the P3 format. Split out of write_build_cache so the invalidation
+// path (forget_build_cache_entry) can rewrite the file without inventing a
+// second spelling of it.
+void write_build_cache_entries(const std::filesystem::path& path,
+                               const std::vector<BuildCacheEntry>& entries);
+
 void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::filesystem::path& outputDir,
                        const std::string& ninjaProgram,
@@ -230,7 +236,11 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     if ((int)entries.size() > kBuildCacheMaxEntries)
         entries.resize(kBuildCacheMaxEntries);
 
-    // Write P3 format.
+    write_build_cache_entries(path, entries);
+}
+
+void write_build_cache_entries(const std::filesystem::path& path,
+                               const std::vector<BuildCacheEntry>& entries) {
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
     std::ofstream f(path, std::ios::trunc);
@@ -259,6 +269,40 @@ void write_build_cache(const std::filesystem::path& projectRoot,
         f << "profile=" << e.profile << '\n';
         f << "cacheMode=" << e.cacheMode << '\n';
     }
+}
+
+// Drop the fast-path entries that point at `outputDir`.
+//
+// The fast path's contract is "the build.ninja in this entry's outputDir is
+// still the graph a normal `mcpp build` would generate" — and it verifies that
+// by comparing mtimes against the SOURCES, never against the graph itself. So
+// any mode that rewrites build.ninja to something other than a normal build's
+// graph has to say so here, or the next `mcpp build` replays the wrong graph
+// and reports success for it. `--configure-only` is exactly such a mode: its
+// plan carries the test targets and dev-dependencies, so its `default` line is
+// the TEST binaries and does not contain the package's own target at all.
+//
+// Scoped to the one outputDir whose graph was rewritten, not the whole file:
+// the other (target, profile, cache mode) triples own different build dirs and
+// their graphs are untouched, so evicting them would only cost rebuilds.
+export void forget_build_cache_entry(const std::filesystem::path& projectRoot,
+                                     const std::filesystem::path& outputDir) {
+    auto path = projectRoot / kBuildCacheFile;
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return;
+
+    auto entries = read_build_cache(projectRoot);
+    auto target = outputDir.lexically_normal();
+    auto removed = std::erase_if(entries, [&](const BuildCacheEntry& e) {
+        return std::filesystem::path(e.outputDir).lexically_normal() == target;
+    });
+    if (removed == 0) return;
+
+    if (entries.empty()) {
+        std::filesystem::remove(path, ec);
+        return;
+    }
+    write_build_cache_entries(path, entries);
 }
 
 std::vector<std::string> read_ninja_command_prefixes(const std::filesystem::path& ninjaPath) {
