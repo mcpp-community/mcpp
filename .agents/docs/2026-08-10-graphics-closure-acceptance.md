@@ -238,6 +238,65 @@ PASS: 215_pack_has_no_build_machine_paths.sh            ← shard 2
 
 ---
 
+---
+
+## 7. 生态验收(用**发布出去的**那份,不是本地构建)
+
+发布之后按生态路径重做了一遍 —— 因为「本地构建能跑」和「用户装到的能跑」是两个断言。
+
+```console
+$ xlings update && xlings install mcpp@2026.8.10.2 -y
+    ✓ xim:mcpp@2026.8.10.2       done
+  xim:mcpp@2026.8.10.2 installed, but 'mcpp' still resolves to 2026.8.8.2
+$ xlings use mcpp 2026.8.10.2
+[xlings] mcpp -> 2026.8.10.2  (xim:mcpp 2026.8.8.2 -> 2026.8.10.2)
+$ mcpp --version
+mcpp 2026.8.10.2
+```
+
+> ⚠️ `install` **不会**自动切换已装的旧版本,它会明说。只看 `install` 的成功输出
+> 就以为切过去了,是这一步最容易的误读。
+
+用这个生态装出来的 mcpp 重跑图形验收:
+
+| 项 | 结果 |
+|---|---|
+| imgui 模板 A(缓存 MISS) | ✅ |
+| imgui 模板 B(缓存 **HIT** —— #405 的那一格) | ✅ `Cached imgui v0.0.6 (9 units)` |
+| 产物标签 | ✅ 可执行 `DT_RPATH`,11 个库全 `DT_RUNPATH`,rule E 零 violation |
+| `artifacts` | `[]` —— 环境未声明,报 `NOT_DECLARED`(见 §3) |
+
+### 顺带验到 2026.8.10.2 的一个不足(已由 2026.8.10.3 修)
+
+同一个 imgui 工程,`mcpp pack --mode self-contained`:
+
+```console
+# 生态里的 2026.8.10.2
+      Packed b-0.1.0-x86_64-linux-gnu-bundle-all.tar.gz      ← 照打不误,也没有 HOST-REQUIREMENTS
+
+# 带 .3 修复的构建
+error: --mode self-contained cannot be used by a program that needs the host to
+       provide abi:glibc, opengl.glx.driver, x11.display.
+  use: --mode vendored — …
+```
+
+原因:`.2` 的那道门读的是**根 manifest**,而这条能力来自依赖
+(`capability:opengl.glx.driver <- compat.glfw@3.4`)。**真实工程恰恰是这个形态。**
+`216` 的 fixture 当时在根工程声明能力,所以它通过的理由比它声称的范围窄 ——
+这一轮反复写的那条判据,这次落在自己头上。已改成依赖声明 + 前置断言。
+
+### 身份判决的渲染也验了(环境没声明,就自己造一个)
+
+符号链接仍指向 `0.1.1`、声明 `xim:vendor@0.1.2`:
+
+```
+artifacts:
+  - library …/current/lib/libvendor.so <- … [xim:vendor@0.1.2; identity=mismatch]
+      ^ STALE BINDING: this resolves into a different version than the one declared.
+```
+
+正是设计里描述的那一格,而且是纯路径事实 —— 不需要认识 GL。
+
 ## 附:今天重复了三次的同一条
 
 > **要说"验过了",先说清楚验的是哪一片。**
