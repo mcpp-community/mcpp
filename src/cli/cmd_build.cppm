@@ -80,8 +80,10 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
         // configure-only deliberately includes dev-dependencies and test TUs:
         // clangd needs the same include/module surface as `mcpp test`, even
         // though Ninja is run in dry-run mode and compiles no object.
+        // 必须在移动 targets 前读取状态；函数实参的求值顺序未指定。
+        const bool includeDevDeps = !discovered->targets.empty();
         auto ctx = mcpp::build::prepare_build(
-            print_fp, /*includeDevDeps=*/!discovered->targets.empty(),
+            print_fp, includeDevDeps,
             std::move(discovered->targets), std::move(memberOv));
         if (!ctx) {
             std::println(stderr, "error: {}", ctx.error());
