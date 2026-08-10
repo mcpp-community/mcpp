@@ -202,7 +202,28 @@ libraries: … /home/speak/workspace/github/openxlings/xim-pkgindex-fromsource/.
 与记忆里 #293 同族。**因此本轮所有 ELF 判据都用原生解析,不 shell out** ——
 一个坏掉的 `readelf` 会让标签断言静默空转。
 
-**CI 是这部分的真判据**(干净机器,四平台)。
+**CI 是这部分的真判据**(干净机器,四平台)—— 结果回填:
+
+```
+e2e 1/2 (linux x86_64):  95 passed, 0 failed, 13 skipped
+e2e 2/2 (linux x86_64):  97 passed, 0 failed, 11 skipped
+```
+
+**192 通过、0 失败**,并且五条新用例逐条确认真的跑了(不是被 `# requires:` 跳过):
+
+```
+PASS: 212_cached_dep_std_is_ordered.sh
+PASS: 214_executable_carries_dt_rpath.sh
+PASS: 216_selfcontained_refuses_host_capability.sh      ← shard 1
+PASS: 213_build_after_test_is_not_the_test_graph.sh
+PASS: 215_pack_has_no_build_machine_paths.sh            ← shard 2
+```
+
+> **这一条特意查了**:`# requires:` 里一个不认识的 token 会让用例**从不运行**
+> 而不报错(记忆里 `65_*` 就这样从未在 CI 跑过)。所以不是看总数,
+> 是看这五个名字逐个出现在 `PASS:` 行上。
+
+18 项 PR 检查全绿,含 macOS 与 Windows —— 也就是说加载器契约没有扰动非 ELF 平台。
 
 ---
 
