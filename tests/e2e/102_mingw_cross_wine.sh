@@ -9,7 +9,28 @@
 set -e
 
 TMP=$(mktemp -d)
-trap "rm -rf $TMP" EXIT
+
+# `wine` leaves a wineserver running after the process it launched exits, and
+# that server keeps writing into $WINEPREFIX. A plain `rm -rf` in the EXIT trap
+# therefore races it and can fail with "Directory not empty" — AFTER the test
+# has already printed OK. Under `set -e` that failing trap becomes the script's
+# exit status, so a passing test reports as a red job (observed on main at
+# 0006ce6, run 31336526583: the log ends `OK` then `rm: cannot remove
+# '…/wineprefix': Directory not empty`).
+#
+# So: shut the server down first and wait for it, and never let cleanup decide
+# the verdict. By the time this runs the verdict is already printed; a failure
+# to delete a temp directory is not a statement about mcpp.
+cleanup() {
+    local status=$?
+    if [[ -n "${WINEPREFIX:-}" ]] && command -v wineserver >/dev/null 2>&1; then
+        wineserver -k >/dev/null 2>&1 || true
+        wineserver -w >/dev/null 2>&1 || true
+    fi
+    rm -rf "$TMP" 2>/dev/null || true
+    return $status
+}
+trap cleanup EXIT
 cd "$TMP"
 
 "$MCPP" new crosswin
