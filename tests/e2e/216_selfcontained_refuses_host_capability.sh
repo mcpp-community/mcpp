@@ -23,6 +23,7 @@
 # users route around; `vendored` is the mode that actually works here, and the
 # test asserts the message says so.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -43,6 +44,10 @@ export MCPP_HOME=$HOME/.mcpp
 # its fixture declared the capability at the root. The fixture had the one
 # shape real projects do not.
 INDEX_DIR="$TMP/local-index"
+# The manifest is read by mcpp, not by the shell, so the path has to be in HOST
+# spelling — an MSYS `/c/...` written into mcpp.toml is a path Windows cannot
+# open. `00_fixture_path_hygiene` enforces this statically.
+INDEX_DIR_HOST="$(host_path "$INDEX_DIR")"
 mkdir -p "$INDEX_DIR/pkgs/g"
 cat > "$INDEX_DIR/pkgs/g/gfx-runtime.lua" <<'EOF'
 package = {
@@ -93,7 +98,7 @@ name = "gfxapp"
 version = "0.1.0"
 
 [indices]
-local-dev = { path = "$INDEX_DIR" }
+local-dev = { path = "$INDEX_DIR_HOST" }
 
 [dependencies]
 "local-dev.gfx-runtime" = "1.0.0"
