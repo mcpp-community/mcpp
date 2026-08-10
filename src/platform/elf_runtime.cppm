@@ -13,17 +13,55 @@ import mcpp.platform.runtime_binding;
 
 export namespace mcpp::platform::elf {
 
+// WHICH dynamic tag carried the search path, kept separately from the path
+// list itself.
+//
+// `runpaths` below answers "where will the loader look"; this answers "how far
+// does that reach". They are different questions and only the first one used to
+// be recorded: both tags were folded into `runpaths` and the tag was dropped.
+//
+// DT_RUNPATH is consulted only for the object that carries it and for the
+// dlopen() that object performs ITSELF. DT_RPATH is consulted for every dlopen
+// anywhere in the process, at any depth. A GL program reaches its driver
+// through three to four dlopen() calls that IT does not make -- libGLX.so.0
+// makes them -- so with DT_RUNPATH the path is present and unreachable.
+// Measured: same paths, tag flipped, egl/gles2/egl-surfaceless move from
+// llvmpipe to the GPU.
+//
+// `Both` is a real state and must not silently read as `Rpath`: glibc ignores
+// DT_RPATH whenever DT_RUNPATH is also present, and DT_RPATH-first is the
+// common layout, so a reader that stops at the first hit reports the opposite
+// of what the loader will do.
+enum class SearchPathTag { None, Rpath, Runpath, Both };
+
+std::string_view to_string(SearchPathTag tag) {
+    switch (tag) {
+        case SearchPathTag::None:    return "none";
+        case SearchPathTag::Rpath:   return "DT_RPATH";
+        case SearchPathTag::Runpath: return "DT_RUNPATH";
+        case SearchPathTag::Both:    return "DT_RPATH+DT_RUNPATH";
+    }
+    return "none";
+}
+
 struct ElfRuntimeFacts {
     std::filesystem::path artifact;
     std::uint16_t elfType = 0;
     std::string interp;
     std::string soname;
     std::vector<std::string> runpaths;
+    SearchPathTag searchPathTag = SearchPathTag::None;
     std::vector<std::string> needed;
     std::vector<std::string> requiredGlibcVersions;
     std::vector<std::string> definedGlibcVersions;
     std::filesystem::path resolvedLibc;
     std::vector<std::filesystem::path> resolvedObjects;
+
+    // "Is this an executable" is PT_INTERP, not ET_EXEC: a PIE executable is
+    // ET_DYN and therefore indistinguishable from a shared library by type
+    // alone. The loader-tag contract splits exactly along this line, so the
+    // predicate lives with the facts rather than in each caller.
+    bool is_executable() const { return !interp.empty(); }
 };
 
 struct RuntimeResolution {
@@ -397,6 +435,18 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
                 tag == detail::kDtRunpath ? modernRunpaths : legacyRpaths, *path);
         }
     }
+    // Record WHICH tag was present before collapsing the two lists -- the
+    // collapse below is lossy and the lost bit is the one the loader-tag
+    // contract is about (see SearchPathTag). Presence is keyed on the tag
+    // having been seen, so a DT_RPATH holding an empty string still counts as
+    // present: the loader saw the tag either way.
+    if (!legacyRpaths.empty() && !modernRunpaths.empty())
+        out.searchPathTag = SearchPathTag::Both;
+    else if (!modernRunpaths.empty())
+        out.searchPathTag = SearchPathTag::Runpath;
+    else if (!legacyRpaths.empty())
+        out.searchPathTag = SearchPathTag::Rpath;
+
     // glibc ignores legacy DT_RPATH when DT_RUNPATH exists. Preserve that
     // effective distinction while exposing one ordered search-path vector.
     out.runpaths = modernRunpaths.empty()

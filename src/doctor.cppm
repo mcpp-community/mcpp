@@ -586,7 +586,13 @@ int print_stored_runtime_resolution() {
     auto artifacts = runtime->find("artifacts");
     if (artifacts == runtime->end() || !artifacts->is_array()
         || artifacts->empty()) {
-        std::println("  (none declared)");
+        // NOT "none". A provider can be resolved by name and still have no
+        // artifact behind it, and `(none declared)` read as a clean bill of
+        // health for exactly that state — the graphics stack sat there for
+        // weeks with `providers:` populated and nothing to check.
+        std::println("  (not declared by the environment — nothing to verify)");
+        std::println("  note: a resolved provider with no artifact is UNVERIFIED,");
+        std::println("        not verified-good");
     } else {
         for (auto const& artifact : *artifacts) {
             if (!artifact.is_object()) continue;
@@ -594,10 +600,20 @@ int print_stored_runtime_resolution() {
             if (auto id = artifact.find("provider");
                 id != artifact.end() && id->is_object())
                 provider = id->value("canonical", "?");
-            std::println("  - {} {} <- {} [{}; abi={}]",
+            auto identity = artifact.value("identity", "unverified");
+            std::println("  - {} {} <- {} [{}; abi={}; identity={}]",
                 artifact.value("role", "?"), artifact.value("path", "?"),
                 provider, artifact.value("provenance", "?"),
-                artifact.value("abi", "?"));
+                artifact.value("abi", "?"), identity);
+            if (identity == "mismatch") {
+                std::println("      ^ STALE BINDING: this resolves into a "
+                             "different version than the one declared.");
+                std::println("        The declaration is a promise about which "
+                             "payload the loader reaches;");
+                std::println("        a later install repointed it.");
+            } else if (identity == "missing") {
+                std::println("      ^ declared, but nothing is at that path");
+            }
         }
     }
 

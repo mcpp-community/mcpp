@@ -948,7 +948,8 @@ whose recorded addresses escape it, so a recurrence is auditable offline.
 ```toml
 [runtime]
 requirements = [
-  { kind = "capability", value = "display.present", phase = "run", required = true },
+  { kind = "capability", value = "display.present", phase = "run", required = true,
+    discovery = "rpath-of-dispatch" },
   { kind = "soname", value = "libwidget.so.1", phase = "link", required = false },
 ]
 provides = ["display.present"]
@@ -971,6 +972,17 @@ provider = "acme.widget-runtime@2.0.0"
 
 `requirements` records a non-empty `kind`/`value`, a `link` or `run` phase,
 and whether the requirement is mandatory (`required` defaults to `true`).
+
+`discovery` is optional and says **how the loader finds** whatever satisfies the
+requirement — e.g. `rpath-of-dispatch`, `json-dir`, `glvnd-dispatch`. It is
+**declared, never inferred**: which mechanism a capability uses is the
+provider's property and changes without mcpp, so mcpp carries the value and
+reports an undeclared one as `unknown` rather than guessing. It earns a field
+because the mechanisms are not interchangeable — one may be a search path baked
+into a dispatch library, another a JSON file holding an *absolute* path, so
+"copy the directory across" satisfies one and not the other. `mcpp pack` writes
+it into the bundle's `HOST-REQUIREMENTS` and `mcpp publish` projects it into
+the descriptor, from one derivation.
 Optional requirements remain visible provenance but do not become hard ABI or
 doctor inputs. A `libraries` entry that is an explicit relative file path is
 resolved against the declaring package root; a bare logical name remains a
@@ -1012,6 +1024,22 @@ mechanism, and post-link verdict. `mcpp why runtime` is a pure interpreter of
 the latest stored file: it neither re-resolves the manifest nor launches a
 graphics/hardware probe. Use `xlings doctor` when the selected host provider
 itself needs re-diagnosis.
+
+Each artifact also carries an `identity` verdict, computed from paths alone:
+
+| `identity` | meaning |
+|---|---|
+| `ok` | the declared path resolves (through symlinks) into the declared version |
+| `mismatch` | it resolves somewhere else — **the binding is stale**, a later install repointed it |
+| `missing` | declared, but nothing is at that path |
+| `unverified` | declared without a version to check against |
+
+This is the rule mcpp already applies to the private libc (`glibc@2.44` resolves
+that one payload; stale or missing is an error, never "whichever installed
+version looks usable"), generalised. It needs no knowledge of what the artifact
+does. `unverified` is deliberately not `ok`: a resolved provider with no
+artifact behind it has not been checked, and `mcpp why runtime` says
+`(not declared by the environment — nothing to verify)` rather than `(none)`.
 
 Capability names use layered lowercase `domain.sub.role` (for example
 `display.present`) and prefix-style `abi:<name>` (for example `abi:glibc`, which

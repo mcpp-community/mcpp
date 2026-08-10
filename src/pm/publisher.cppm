@@ -7,6 +7,7 @@ module;
 export module mcpp.pm.publisher;
 
 import std;
+import mcpp.pack.host_requirements;  // J: one derivation, two projections
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.platform;
@@ -189,6 +190,30 @@ std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
         out += std::format("            [{}] = {},\n", lua_escape(k), lua_escape(v.version));
     }
     out += "        },\n";
+
+    // What the TARGET machine must provide.
+    //
+    // THE SAME DERIVATION `mcpp pack` USES. A tarball can only DESCRIBE these
+    // (its HOST-REQUIREMENTS file); a descriptor can have them RESOLVED, by
+    // the xlings on the machine that installs the package. Two projections of
+    // one fact — so they come from one function. Deriving them separately is
+    // how they drift, and a drifted list is undetectable: each side looks
+    // reasonable on its own.
+    if (auto hostReqs = mcpp::pack::host_requirements_of(manifest.runtimeConfig);
+        !hostReqs.empty()) {
+        out += "        runtime = {\n";
+        out += "            requirements = {\n";
+        for (auto const& req : hostReqs) {
+            out += std::format(
+                "                {{ kind = \"capability\", value = {}, "
+                "phase = \"run\", required = {}, discovery = {} }},\n",
+                lua_escape(req.capability),
+                req.required ? "true" : "false",
+                lua_escape(req.discovery));
+        }
+        out += "            },\n";
+        out += "        },\n";
+    }
 
     out += "        manifest = \"mcpp.toml\",\n";
     out += "    },\n";

@@ -9,7 +9,9 @@
 export module mcpp.build.runtime_validation;
 
 import std;
+import mcpp.build.loader_contract;
 import mcpp.build.plan;
+import mcpp.manifest;
 import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.platform.elf_runtime;
@@ -69,6 +71,46 @@ std::optional<ArtifactSnapshot> validated_artifact_snapshot(
     const mcpp::platform::runtime::RuntimeBinding& binding);
 
 bool artifact_snapshot_unchanged(const ArtifactSnapshot& snapshot);
+
+// Does a declared runtime artifact actually resolve to the payload it claims?
+//
+// mcpp ALREADY enforces exactly this for the private libc: `glibc@2.44`
+// resolves that one payload, a stale or missing one is an error, and it never
+// picks "whichever installed version looks usable". Applying the same rule to
+// every declared runtime artifact is consistency, not a new mechanism — and it
+// is the whole check the graphics stack was missing, where a provider was
+// declared at one version while the symlink on disk still resolved into the
+// previous one. Nothing here knows what a driver is.
+//
+// FOUR-VALUED, and the last two are the point:
+//
+//   Ok          resolved real path lies under the declared version
+//   Mismatch    it resolves somewhere else -- the binding is stale
+//   Missing     declared, but nothing is there
+//   Unverified  declared without a version to check against
+//
+// A two-valued answer would report Unverified as a pass, which is the failure
+// mode this whole area keeps producing: "not checked" and "checked and fine"
+// must not look the same.
+enum class ArtifactVerdict { Ok, Mismatch, Missing, Unverified };
+
+std::string_view to_string(ArtifactVerdict verdict);
+
+ArtifactVerdict artifact_identity_verdict(
+    const mcpp::manifest::RuntimeArtifact& artifact);
+
+// Rule E — the loader-tag contract, evaluated on the artifacts this run
+// produced, and RECORDED rather than only warned about.
+//
+// The record is the point. A warning scrolls past; `resolution.json` is the
+// machine-readable answer to "what did the last build decide", so a tag
+// deviation can be read by CI, by `mcpp why runtime`, and by a test — without
+// anyone needing readelf on the box. It is also how "checked and compliant"
+// stays distinguishable from "never checked": both look identical when the
+// only output is the absence of a warning.
+std::vector<mcpp::build::loader::TagFinding>
+check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
+                             const ArtifactSnapshot& produced);
 
 } // namespace mcpp::build::runtime_validation
 
@@ -383,6 +425,109 @@ bool artifact_snapshot_unchanged(const ArtifactSnapshot& snapshot) {
     return std::ranges::all_of(snapshot, [](auto const& entry) {
         return stamp(entry.first) == entry.second;
     });
+}
+
+std::string_view to_string(ArtifactVerdict verdict) {
+    switch (verdict) {
+        case ArtifactVerdict::Ok:         return "ok";
+        case ArtifactVerdict::Mismatch:   return "mismatch";
+        case ArtifactVerdict::Missing:    return "missing";
+        case ArtifactVerdict::Unverified: return "unverified";
+    }
+    return "unverified";
+}
+
+ArtifactVerdict artifact_identity_verdict(
+    const mcpp::manifest::RuntimeArtifact& artifact) {
+    if (artifact.path.empty()) return ArtifactVerdict::Missing;
+
+    std::error_code ec;
+    if (!std::filesystem::exists(artifact.path, ec) || ec)
+        return ArtifactVerdict::Missing;
+
+    // The version the provenance CLAIMS. `<ns>:<name>@<version>` is the
+    // ecosystem's address form; without a version there is nothing to check
+    // against and the honest answer is Unverified.
+    auto at = artifact.provenance.rfind('@');
+    if (at == std::string::npos || at + 1 >= artifact.provenance.size())
+        return ArtifactVerdict::Unverified;
+    auto version = artifact.provenance.substr(at + 1);
+    if (version.empty()) return ArtifactVerdict::Unverified;
+
+    // FOLLOW THE SYMLINKS. The declaration is a promise about which payload
+    // the loader will reach, and a payload directory is normally reached
+    // through a symlink that some later install can silently repoint. Reading
+    // the declared path alone would confirm the promise against itself.
+    auto real = std::filesystem::weakly_canonical(artifact.path, ec);
+    if (ec) real = artifact.path;
+
+    // A path COMPONENT, not a substring: `0.1.1` must not satisfy `0.1.11`,
+    // and a version appearing inside a file name is not the store directory
+    // this is about.
+    for (auto const& part : real) {
+        if (part.string() == version) return ArtifactVerdict::Ok;
+    }
+    return ArtifactVerdict::Mismatch;
+}
+
+std::vector<mcpp::build::loader::TagFinding>
+check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
+                             const ArtifactSnapshot& produced) {
+    namespace loader = mcpp::build::loader;
+    std::vector<loader::TagFinding> findings;
+    if constexpr (!mcpp::platform::is_linux) return findings;
+
+    for (auto const& [artifact, ignored] : produced) {
+        (void)ignored;
+        auto finding = loader::check_artifact(artifact);
+        if (finding.form == loader::Form::NotElf) continue;
+        findings.push_back(std::move(finding));
+    }
+    if (findings.empty()) return findings;
+
+    const auto path = plan.outputDir / "resolution.json";
+    std::ifstream input(path);
+    auto resolution = nlohmann::json::parse(input, nullptr, false);
+    if (resolution.is_discarded() || !resolution.is_object()) return findings;
+    auto runtime = resolution.find("runtime");
+    if (runtime == resolution.end() || !runtime->is_object()) return findings;
+
+    nlohmann::json entries = nlohmann::json::array();
+    for (auto const& finding : findings) {
+        std::error_code ec;
+        auto relative = std::filesystem::relative(
+            finding.artifact, plan.outputDir, ec);
+        entries.push_back({
+            {"path", (ec ? finding.artifact : relative)
+                         .lexically_normal().generic_string()},
+            {"form", finding.form == loader::Form::Executable
+                         ? "executable" : "shared_library"},
+            {"required", loader::to_string(finding.required)},
+            {"actual", std::string(
+                mcpp::platform::elf::to_string(finding.actual))},
+            {"status", finding.status == loader::TagFinding::Status::Ok
+                           ? "ok"
+                     : finding.status == loader::TagFinding::Status::Violation
+                           ? "violation" : "not_checked"},
+        });
+    }
+    (*runtime)["loader_tags"] = std::move(entries);
+
+    std::error_code ec;
+    auto tmp = path;
+    tmp += ".tmp";
+    if (std::ofstream output(tmp); output) {
+        output << resolution.dump(2) << '\n';
+        output.close();
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) {
+            ec.clear();
+            std::filesystem::remove(path, ec);
+            ec.clear();
+            std::filesystem::rename(tmp, path, ec);
+        }
+    }
+    return findings;
 }
 
 std::optional<StoredRuntimeSummary>

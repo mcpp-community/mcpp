@@ -6,6 +6,8 @@
 export module mcpp.build.plan;
 
 import std;
+import mcpp.build.graph_shape;
+import mcpp.build.loader_contract;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
@@ -71,6 +73,12 @@ struct LinkUnit {
     std::vector<std::filesystem::path> objects;
     std::vector<std::filesystem::path> implicitInputs; // relative to plan.outputDir
     std::vector<std::string>        linkFlags;          // per-link edge flags
+    // The loader-tag flag for THIS unit's form (mcpp.build.loader_contract).
+    // Separate from linkFlags because its correctness is positional: gcc specs
+    // and clang config files hand ld `--enable-new-dtags`, last occurrence
+    // wins, so the emitter puts this after every other linker argument.
+    // Deciding it stays here; placing it is the emitter's business.
+    std::string                     loaderTagFlag;
     std::filesystem::path           output;            // relative to plan.outputDir
     std::string                     soname;            // ABI name for shared libraries
     std::vector<std::filesystem::path> runtimeAliases; // relative aliases, e.g. bin/libfoo.so.1
@@ -119,6 +127,11 @@ struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      toolchain;
     mcpp::toolchain::Fingerprint    fingerprint;
+    // Which graph this plan will write into build.ninja. The fingerprint does
+    // NOT cover dev-deps or test targets, so `mcpp build` and `mcpp test`
+    // share an output directory and overwrite each other's graph; this is what
+    // lets a fast path tell them apart (mcpp#407, mcpp.build.graph_shape).
+    GraphShape                      graphShape = GraphShape::Normal;
     // One immutable snapshot selected before workspace member substitution.
     // Build/run/test and cache fast paths consume this value; none may re-read
     // xlings active/current state.
@@ -767,6 +780,29 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     }();
     const auto naming = naming_for(tc);
 
+    // The loader-tag contract exists only where DT_RPATH/DT_RUNPATH do.
+    // Mach-O and PE have neither, so they get no flag rather than a branch in
+    // every consumer.
+    const bool elfTarget = targetTriple.empty()
+        ? bool(mcpp::platform::is_linux)
+        : (targetTriple.os != "macos" && targetTriple.os != "windows");
+    auto loader_tag_flag = [&](LinkUnit::Kind kind) -> std::string {
+        if (!elfTarget) return {};
+        using mcpp::build::loader::Form;
+        Form form;
+        switch (kind) {
+            case LinkUnit::Binary:
+            case LinkUnit::TestBinary:    form = Form::Executable; break;
+            case LinkUnit::SharedLibrary: form = Form::SharedLibrary; break;
+            // An archive has no dynamic section; whoever links it gets the
+            // tag for their own form.
+            case LinkUnit::StaticLibrary: return {};
+        }
+        auto flag = mcpp::build::loader::link_flag(
+            mcpp::build::loader::required_tag(form));
+        return flag ? std::string(*flag) : std::string{};
+    };
+
     // Shared libraries have never been verified end to end on PE or Mach-O:
     // every shared-library e2e declares `# requires: elf`, and run_all.sh only
     // grants that capability on Linux. The non-ELF paths through
@@ -1344,6 +1380,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.output     = dep.output;
         lu.soname     = dep.target.soname;
         lu.runtimeAliases = runtime_aliases_for_target(dep.target, naming);
+        lu.loaderTagFlag = loader_tag_flag(lu.kind);
         append_package_objects(lu, dep.packageName);
         append_direct_shared_deps(lu, dep.packageIndex);
         plan.linkUnits.push_back(std::move(lu));
@@ -1379,6 +1416,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         }
+        lu.loaderTagFlag = loader_tag_flag(lu.kind);
 
         // Include all module units' objects (they may be needed at runtime via global init).
         // For binary target, also include main.cpp's object if main is present.

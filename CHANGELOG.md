@@ -3,6 +3,77 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.10.2] — 2026-08-10
+
+图形栈闭合与分发档位。完整设计与实施计划见
+`.agents/docs/2026-08-10-graphics-closure-and-distribution-tiers-design.md` 与
+`.agents/docs/2026-08-10-graphics-closure-implementation-plan.md`。
+
+### 修复
+
+- **依赖 BMI 缓存命中时,被恢复的包传递依赖的 `std` 没进构建图([#405])。**
+  消费方自己不 `import std` 时,`gcm.cache/std.gcm` 的 stage 边没有任何消费者,
+  ninja 从不执行它,于是被恢复的 BMI 报 `No such file or directory` /
+  `Bad import dependency` —— 一条完全不指向缓存的错误。缓存 **miss** 时依赖在本地编译,
+  这个动作把 std 边带进图,所以**第一个构建它的人永远是好的、之后每个人都坏**,
+  看起来像升级回归。修法把 std BMI 放进 `_mcpp_staged_cache` 聚合 ——
+  那个聚合本来就是为「stage 边丢掉编译边携带的次序」而存在的。
+  不动 cache key、不改 entry schema,**现有缓存全部继续有效**。
+
+- **`mcpp build` 会重放 `mcpp test` 留下的构建图([#407])。** 三种模式写同一个
+  `build.ninja`(指纹不含 dev-deps 与 test targets),而快路径只比源码 mtime、
+  从不校验这张图是哪一种。于是 `build → test → build` 链测试、不链 target、
+  还报 `Finished`;改坏一个测试文件会让**普通 `mcpp build` 失败**,而 `src/` 一个字没动。
+  修法是让 `build.ninja` 自己声明形态(`# mcpp:graph=normal|test`),快路径校验它即将
+  重放的那张图。**这是读取侧不变式**:#387 那半边的写入侧修补被同时删掉了 ——
+  写入侧修补要求每一个未来的图重写者都记得调它,而这正是 `mcpp test` 那半边
+  在 `--configure-only` 修好之后仍然坏着的原因。
+
+### 新增
+
+- **加载器标签契约(`mcpp.build.loader_contract`)。** 可执行文件必须 **DT_RPATH**,
+  共享库保持 **DT_RUNPATH**。DT_RUNPATH 只对携带它的对象**自己发起**的 `dlopen` 生效;
+  图形程序到驱动要经三到四层 `dlopen`,而**这些 dlopen 都不是它发起的**,
+  是 `libGLX.so.0` / `libEGL.so.1` 代发的 —— 所以标签(不是路径)决定它能不能拿到 GPU。
+  同一路径只翻标签,egl / gles2 / egl-surfaceless 从 llvmpipe 变 NVIDIA。
+  反过来在**库**上强制 RPATH 有害(传递性会打断 `eglInitialize`),所以这是一分为二、
+  不是一起翻。链接期与 `mcpp pack` 的 patchelf 期读**同一条契约**。
+- **rule E:标签校验落在产物上,并写进 `resolution.json` 的 `loader_tags`。**
+  warn-first,与既有闭包规则同一推进节奏。记录而不只是告警 ——
+  一个只在沉默中通过的检查,和一个根本没跑的检查,输出完全相同。
+- **`mcpp pack`:产物里不再残留构建机路径。** 此前只有主二进制被重写,
+  bundle 进来的每个 `.so` 都保留着链接时的 RUNPATH,而在这个生态里那是一串指向
+  **构建机 xlings store** 的绝对路径。「依赖 xlings 生态」是设计选择,
+  「依赖这一台机器的这一份 store」是缺陷,而且它在构建它的机器上跑得好好的。
+  另外 `patchelf --set-rpath` 默认写 DT_RUNPATH —— 对可执行文件而言是同一个缺陷晚一层。
+- **`HOST-REQUIREMENTS`:自包含也有底。** 驱动类库只能来自目标机器
+  (与内核模块锁步,且专有栈禁止再分发),所以打包这类程序的诚实产出不是一个悄悄
+  少了它的 bundle,而是 bundle **加上一份声明**。带 `discovery` 一列,因为几种发现
+  机制互不通用 —— 一种是烙进派发库的搜索路径,另一种是 JSON 里的**绝对**路径,
+  「把目录搬过去」只满足其中一个。
+- **自带 libc 的档遇到宿主能力硬拒。** `--mode self-contained` 与 `--mode static`
+  在存在 run 期能力需求时于 plan 期失败,并指出改用 `--mode vendored`。
+  两者坏在同一件事上:那个 `.so` 带着对**宿主 libc** 的要求进来,而进程里没有那份
+  (#392 / #401 的两个方向)。此前两档都链得过去、然后运行时崩或静默降级。
+- **`[[runtime.requirements]] discovery`。** 声明式,**mcpp 绝不推断** ——
+  从能力名推断机制就是把 provider 专属知识写进 mcpp(`test_runtime_contract` 正是
+  为此设的门),而且它是 provider 的属性、会脱离 mcpp 变化。未声明报 `unknown`。
+- **声明的 runtime artifact 带身份判决。** `resolution.json` 每个 artifact 增加
+  `identity`:`ok` / `mismatch` / `missing` / `unverified`。这正是 mcpp **已经**
+  对私有 libc 执行的规则(`glibc@2.44` 只解析那一个载荷,陈旧即错误)的推广,
+  纯路径事实、跟随符号链接、不需要认识 GL。`mcpp why runtime` 的
+  `artifacts: (none declared)` 改为 `(not declared by the environment —
+  nothing to verify)`:一个有名无物的 provider 是**未验证**,不是验证通过。
+
+### 变更
+
+- **内带 xlings 升到 `2026.8.10.4`。** 其中 `2026.8.9.2` 的 semver 重写让四段版本可以
+  参与范围比较 —— `xim:libglvnd@>=1.7.0.1` 此前解析成 `package not found`,
+  这正是 mcpp-index 全量跑里 8 个图形成员全红的原因(不是数据缺陷)。
+
+[#405]: https://github.com/mcpp-community/mcpp/issues/405
+[#407]: https://github.com/mcpp-community/mcpp/issues/407
+
 ## [2026.8.10.1] — 2026-08-10
 
 包身份、开发运行时与发布链收敛为同一组可验证事实。完整设计与验证记录见

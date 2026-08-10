@@ -505,6 +505,18 @@ struct RuntimeRequirement {
     std::string kind;
     std::string value;
     std::string phase = "run";       // link | run
+    // How the loader finds whatever satisfies this, e.g. "rpath-of-dispatch",
+    // "json-dir", "glvnd-dispatch". DECLARED, never inferred by mcpp: the
+    // mechanism is a property of the provider's ecosystem, and inferring it
+    // from the capability name would put provider-specific knowledge in mcpp
+    // (`test_runtime_contract` gates exactly that).
+    //
+    // It earns its place because the mechanisms are not interchangeable: an
+    // EGL vendor is found through a JSON file whose library_path is ABSOLUTE,
+    // while GLX is found through the dispatch library's own DT_RPATH — so
+    // "copy the directory across" satisfies one and not the other. Empty means
+    // "not declared", which is reported as unknown rather than guessed.
+    std::string discovery;
     PackageId   requester;
     bool        required = true;
 };
