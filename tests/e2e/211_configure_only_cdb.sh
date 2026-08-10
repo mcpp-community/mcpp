@@ -122,21 +122,29 @@ printf 'int main() { return 0; }\n' > "$TMP/fastpath/src/main.cpp"
 printf 'int main() { return 0; }\n' > "$TMP/fastpath/tests/smoke.cpp"
 cd "$TMP/fastpath"
 "$MCPP" build > build-1.log 2>&1 || { cat build-1.log; exit 1; }
-bindir=$(dirname "$(find target -type f -path '*/bin/fastpath' -print -quit)")
-[[ -n "$bindir" && -f "$bindir/fastpath" ]] || { echo "baseline build produced no binary"; exit 1; }
+# Windows links `fastpath.exe`; the suffix is a host constant, so derive the
+# whole path from what the build actually produced instead of assuming either.
+target_bin=$(find target -type f \( -path '*/bin/fastpath' -o -path '*/bin/fastpath.exe' \) \
+             -print -quit)
+[[ -n "$target_bin" ]] || {
+    echo "baseline build produced no binary"; find target -type f -path '*/bin/*'; exit 1; }
+bindir=$(dirname "$target_bin")
+exe_suffix=""
+[[ "$target_bin" == *.exe ]] && exe_suffix=".exe"
+test_bin="$bindir/smoke$exe_suffix"
 
 "$MCPP" build --configure-only > configure-fastpath.log 2>&1 || {
     cat configure-fastpath.log; exit 1; }
-[[ ! -e "$bindir/smoke" ]] || { echo "configure-only linked a test binary"; exit 1; }
+[[ ! -e "$test_bin" ]] || { echo "configure-only linked a test binary"; exit 1; }
 
 "$MCPP" build > build-2.log 2>&1 || { cat build-2.log; exit 1; }
-[[ ! -e "$bindir/smoke" ]] || {
+[[ ! -e "$test_bin" ]] || {
     echo "build after configure-only replayed the configure graph and linked the tests"
     cat build-2.log
     ls -la "$bindir"
     exit 1
 }
-[[ -f "$bindir/fastpath" ]] || {
+[[ -f "$target_bin" ]] || {
     echo "build after configure-only lost the package target"
     cat build-2.log
     exit 1
