@@ -46,6 +46,11 @@ TEST(BuildOptions, BuildTimeoutDefaultsToUnbounded) {
     EXPECT_EQ(bo.buildTimeoutSecs, 0u);
 }
 
+TEST(BuildOptions, CompileDatabaseIsOptionalByDefault) {
+    BuildOptions options;
+    EXPECT_FALSE(options.requireCompileDatabase);
+}
+
 // The timeout verdict travels as a flag, not as a message prefix: run_tests
 // reports a timed-out compile differently from a broken one, and matching on
 // prose is exactly how that distinction rots silently.

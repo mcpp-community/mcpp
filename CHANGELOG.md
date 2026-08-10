@@ -31,6 +31,19 @@
   Arch `vercmp`，先 dry-run exact diff，再以固定 host key 做普通 fast-forward push，
   有界重试并验证 RPC/公开 HEAD/干净 Arch 安装。定时恢复瞬时故障；`mcpp-m`、
   `mcpp-git` 不在自动化作用域。
+- **`mcpp build --configure-only`:不编译也能拿到 `compile_commands.json`。** 走的是
+  真实 `prepare_build()` 与真实 `BuildPlan`,以 Ninja dry-run 收尾 —— 编译参数只有一条
+  推导路径,selector(`-p` / `--workspace` / `--profile` / `--target` / `--features` /
+  `--cap` / `--static`)与普通构建同解。CDB 同时覆盖普通源码与 `tests/**/*.cpp`,测试 TU
+  带 dev-dependencies 与匹配的 `[build].flags`,所以源码还编不过时 clangd 就已经能索引。
+  它**不是只读操作**:`build.mcpp`、缺失依赖/工具链、lock 与构建目录元数据仍可能被写,
+  只在可信 workspace 中运行。稳定契约只有退出码和 `compile_commands.json` 两项,
+  stdout 仍是面向人的文本。设计见 `.agents/docs/2026-08-08-configure-only-cdb-design.md`。
+- **CDB 改为原子发布。** 同目录临时文件 + `rename`/`MoveFileExW(MOVEFILE_REPLACE_EXISTING)`,
+  从不先删目标,所以发布失败时磁盘上留下的仍是上一份完整可用的 CDB —— clangd 不会读到
+  半截 JSON。符号链接形式的 CDB 替换的是链接目标而非链接本身。内容不变则不写,避免无谓
+  重索引。普通 build/test 遇到发布失败只警告并继续,`--configure-only` 则直接失败:
+  它唯一的产物就是那个文件。
 
 ### 修复
 

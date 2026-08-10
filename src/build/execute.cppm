@@ -11,6 +11,7 @@ export module mcpp.build.execute;
 import std;
 import mcpp.build.build_program;   // #359 glob inputs the mtime sweep cannot see
 import mcpp.build.prepare;
+import mcpp.build.test_targets;
 import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.build.backend;
@@ -192,6 +193,12 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
     return entries;
 }
 
+// Serialize the P3 format. Split out of write_build_cache so the invalidation
+// path (forget_build_cache_entry) can rewrite the file without inventing a
+// second spelling of it.
+void write_build_cache_entries(const std::filesystem::path& path,
+                               const std::vector<BuildCacheEntry>& entries);
+
 void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::filesystem::path& outputDir,
                        const std::string& ninjaProgram,
@@ -229,7 +236,11 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     if ((int)entries.size() > kBuildCacheMaxEntries)
         entries.resize(kBuildCacheMaxEntries);
 
-    // Write P3 format.
+    write_build_cache_entries(path, entries);
+}
+
+void write_build_cache_entries(const std::filesystem::path& path,
+                               const std::vector<BuildCacheEntry>& entries) {
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
     std::ofstream f(path, std::ios::trunc);
@@ -258,6 +269,40 @@ void write_build_cache(const std::filesystem::path& projectRoot,
         f << "profile=" << e.profile << '\n';
         f << "cacheMode=" << e.cacheMode << '\n';
     }
+}
+
+// Drop the fast-path entries that point at `outputDir`.
+//
+// The fast path's contract is "the build.ninja in this entry's outputDir is
+// still the graph a normal `mcpp build` would generate" — and it verifies that
+// by comparing mtimes against the SOURCES, never against the graph itself. So
+// any mode that rewrites build.ninja to something other than a normal build's
+// graph has to say so here, or the next `mcpp build` replays the wrong graph
+// and reports success for it. `--configure-only` is exactly such a mode: its
+// plan carries the test targets and dev-dependencies, so its `default` line is
+// the TEST binaries and does not contain the package's own target at all.
+//
+// Scoped to the one outputDir whose graph was rewritten, not the whole file:
+// the other (target, profile, cache mode) triples own different build dirs and
+// their graphs are untouched, so evicting them would only cost rebuilds.
+export void forget_build_cache_entry(const std::filesystem::path& projectRoot,
+                                     const std::filesystem::path& outputDir) {
+    auto path = projectRoot / kBuildCacheFile;
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return;
+
+    auto entries = read_build_cache(projectRoot);
+    auto target = outputDir.lexically_normal();
+    auto removed = std::erase_if(entries, [&](const BuildCacheEntry& e) {
+        return std::filesystem::path(e.outputDir).lexically_normal() == target;
+    });
+    if (removed == 0) return;
+
+    if (entries.empty()) {
+        std::filesystem::remove(path, ec);
+        return;
+    }
+    write_build_cache_entries(path, entries);
 }
 
 std::vector<std::string> read_ninja_command_prefixes(const std::filesystem::path& ninjaPath) {
@@ -1072,72 +1117,18 @@ export int run_tests(std::span<const std::string> passthrough,
         return 2;
     }
 
-    // Workspace scoping: discovery must run against the MEMBER, not the
-    // workspace root — otherwise `tests/**/*.cpp` globs every member's tests
-    // together (two `tests/main.cpp` → "duplicate test name 'main'"). When a
-    // member is selected (via -p, threaded as package_filter), glob from its
-    // dir; prepare_build below resolves the SAME member, so the two agree.
-    // (--workspace fans out over members at the cmd layer, one call per member.)
-    auto testRoot = *root;
-    if (auto rm = mcpp::manifest::load(*root / "mcpp.toml"); rm) {
-        auto member = mcpp::project::resolve_member_dir(*rm, *root, overrides.package_filter);
-        if (!member) { mcpp::ui::error(member.error()); return 2; }
-        if (!member->empty()) testRoot = *member;
+    auto discovered = mcpp::build::discover_test_targets(
+        *root, overrides.package_filter);
+    if (!discovered) {
+        mcpp::ui::error(discovered.error());
+        return 2;
     }
-
-    // 1. Discover test files (scoped to the member/package).
-    auto testFiles = mcpp::modgraph::expand_glob(testRoot, "tests/**/*.cpp");
-    if (testFiles.empty()) {
+    auto testRoot = discovered->packageRoot;
+    auto testTargets = std::move(discovered->targets);
+    if (testTargets.empty()) {
         std::println("no tests found in tests/");
         return 0;
     }
-
-    // [build].flags globs also cover tests: a glob names files — whether they
-    // are scanned sources or test TUs is orthogonal. Matched entries ride the
-    // per-target flag channel (issue #131) on the synthesized test target.
-    // (Feature-folded entries are prepare-time state; tests take the base
-    // [build].flags — sufficient for per-test compile options.)
-    struct TestGlobFlags {
-        mcpp::manifest::GlobFlags       gf;
-        std::set<std::filesystem::path> files;
-    };
-    std::vector<TestGlobFlags> testGlobFlags;
-    if (auto mm = mcpp::manifest::load(testRoot / "mcpp.toml")) {
-        for (auto const& gf : mm->buildConfig.globFlags) {
-            auto hits = mcpp::modgraph::expand_glob(testRoot, gf.glob);
-            testGlobFlags.push_back({gf, {hits.begin(), hits.end()}});
-        }
-    }
-
-    // 2. Synthesize a Target for each test file.
-    //    Name = path relative to tests/, extension dropped, '/' separators —
-    //    so tests/00-a/0.cpp and tests/01-b/0.cpp coexist as '00-a/0' and
-    //    '01-b/0' (stems alone would collide). Flat layouts keep their old
-    //    names ('tests/smoke.cpp' → 'smoke').
-    std::vector<mcpp::manifest::Target> testTargets;
-    std::set<std::string> seenNames;
-    for (auto& f : testFiles) {
-        auto rel  = std::filesystem::relative(f, testRoot / "tests");
-        auto name = rel.replace_extension("").generic_string();
-        if (!seenNames.insert(name).second) {
-            mcpp::ui::error(std::format(
-                "duplicate test name '{}' (two test files map to the same name)", name));
-            return 2;
-        }
-        mcpp::manifest::Target t;
-        t.name = name;
-        t.kind = mcpp::manifest::Target::TestBinary;
-        // Relative to the member/package root prepare_build will operate on.
-        t.main = std::filesystem::relative(f, testRoot).string();
-        for (auto const& tgf : testGlobFlags) {
-            if (!tgf.files.contains(f)) continue;
-            for (auto const& d  : tgf.gf.defines)  t.defines.push_back(d);
-            for (auto const& fl : tgf.gf.cflags)   t.cflags.push_back(fl);
-            for (auto const& fl : tgf.gf.cxxflags) t.cxxflags.push_back(fl);
-        }
-        testTargets.push_back(std::move(t));
-    }
-
     // --list: enumerate (filtered) tests and stop — no toolchain resolution,
     // no build. Names/paths come straight from discovery, so this also works
     // on tests that do not currently compile.
