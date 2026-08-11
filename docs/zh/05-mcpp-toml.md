@@ -255,8 +255,9 @@ cxx_runtime = "self-contained"          # 作用于所有目标(默认值)
 
 # 或者按角色分别指定:
 [build.cxx_runtime]
-default = "self-contained"              # 可执行文件与共享库
+default = "self-contained"              # 可执行文件
 tests   = "host-coupled"                # 测试二进制从不离开本机
+shared  = "self-contained"              # 共享库(见下 —— 默认值随目标格式而变)
 
 # 或者按目标三元组 —— 与 `linkage` 并列,因为它们是同一根轴:
 [target.x86_64-linux-gnu]
@@ -277,12 +278,27 @@ libc++/libc++abi —— 系统 libc++ 会把实际可运行版本钉死在构建
 libc++.a/libc++abi.a/libunwind.a。更低的 macOS floor(11–13)需自建 libc++
 归档(已验证可行,数据级切换,按需提供)。
 
+**共享库是唯一一个默认值随目标格式变化的角色**,因为危害本身随格式变化。
+`.so`/`.dylib`/`.dll` 不是一个小号可执行文件 —— 它被加载**进**一个已经有
+C++ 运行时的进程。
+
+| 目标格式 | `kind = "shared"` 的默认契约 | 原因 |
+|---|---|---|
+| ELF(Linux 等) | `toolchain-coupled` | ELF 只有一个全局符号命名空间,先加载的定义胜出。静态内嵌了 libstdc++ 的 `.so` 会把它**导出**,链接该库的可执行文件于是把自己的 `std::` 引用绑到那里 —— 它自己的 `self-contained` 契约静默变成空操作,它的 C++ 运行时变成"碰巧加载的那一份该库"。 |
+| Mach-O | `self-contained` | 那里的机制本来就是 `-load_hidden`(hidden 可见性),dyld 不会归一这些符号;而且 macOS 上根本没有 toolchain-coupled 这一档(见下文注)。 |
+| PE(Windows) | `self-contained` | PE 没有全局符号命名空间 —— 导入按 DLL 逐个按名解析,一个 DLL 的私有运行时不可能被别人捡走。 |
+
+在 ELF 上显式写 `shared = "self-contained"` 是支持的,而且就是字面意思:库会内嵌
+运行时。此时 mcpp 会额外发 `-Wl,--exclude-libs`(针对标准库归档),让内嵌的那份
+留在库的动态符号表之外,链接它的任何东西都捡不走。你自己代码产生的模板实例化
+(`std::string` 之类的 weak/COMDAT 符号)仍然会导出 —— 那是 C++ ABI 的预期行为,
+不是这里要防的泄漏。
+
+工程级的 `cxx_runtime = "…"`(或 `static_stdlib = false`)同样作用于共享库:
+有人写下了整个工程的承诺。只有在**没人写**的时候,随格式变化的默认值才生效。
+
 `static_stdlib` 是旧拼写,仍然有效:`true` 等价于 `self-contained`,`false`
 等价于 `host-coupled`。显式写了 `cxx_runtime` 时以后者为准。
-
-> **当前实现限制。** 解析器能识别 `cxx_runtime`，但当前 `[build]` 未知键白名单漏了
-> 它。因此普通构建可能输出 unsupported-key warning，`--strict` 会拒绝该 manifest。
-> 这是实现缺陷，不是另一种拼写或不同的运行时契约。
 
 **兑现不了的契约会被报出来,绝不静默降级。** 若工具链不带 `libc++.a`,或某个
 契约在该平台上没有对应机制(MSVC 运行时的 `self-contained` 需要 `/MT`,mcpp

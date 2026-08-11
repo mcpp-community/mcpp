@@ -13,14 +13,21 @@
 #
 # THE INVARIANT
 #
-#   payload directories first, the SubOS farm LAST
+#   payload directories first, the artifact's own directory next,
+#   the SubOS farm LAST — literally last, `$ORIGIN` included
 #
 # and it is about mutability, not taste. `<subos>/lib` is a symlink view
-# rewritten by every `xlings install`; a payload directory is written once.
-# Payload-first keeps libc / libm / libstdc++ resolving from the pinned payload
-# and leaves the farm to supply only what nothing else does. Farm-first would
-# let a later install silently change which libc an ALREADY LINKED artifact
-# loads — a failure that appears long after the build that caused it.
+# rewritten by every `xlings install`; a payload directory is written once and
+# the artifact's own directory holds the exact files this link resolved
+# against. Payload-first keeps libc / libm / libstdc++ resolving from the
+# pinned payload; `$ORIGIN` before the farm keeps the artifact running against
+# what it was built with; the farm supplies only what nothing else does.
+#
+# Farm-first lets a later install silently change which library an ALREADY
+# LINKED artifact loads — a failure that appears long after the build that
+# caused it, and one that actually shipped: with the farm ahead of `$ORIGIN` a
+# GLFW/imgui application linked against the libX11 mcpp had just built from
+# `compat.x11` sources and then LOADED the `xim:libX11` xlings had installed.
 #
 # WHY THIS ASSERTS THE ARTIFACT AND THE RECORD
 #
@@ -33,15 +40,50 @@ set -e
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
-mkdir -p "$TMP/proj/src"
+# THE PROJECT CONSUMES A SHARED LIBRARY FROM A DEPENDENCY, AND THAT IS THE POINT.
+#
+# A bare `int main()` produces an executable with NO `$ORIGIN` in its DT_RPATH,
+# so the ordering this test exists to check is not even present — the earlier
+# version of this test passed on a binary that could not exhibit the bug.
+#
+# A shared TARGET in the same package is not enough either: mcpp links that
+# package's module objects into the executable directly, so there is still no
+# `-l` and no `$ORIGIN`. It takes a DEPENDENCY that ships a shared library —
+# which is exactly the shape of the artifact that broke (an application whose
+# `compat.x11` dependency builds `libX11.so` into the artifact directory).
+mkdir -p "$TMP/greetdep/src" "$TMP/proj/src"
+cat > "$TMP/greetdep/mcpp.toml" <<'EOF'
+[package]
+name = "greetdep"
+version = "0.1.0"
+
+[targets.greetdep]
+kind = "shared"
+EOF
+# Interface and implementation are split so the call is a real cross-library
+# reference: an inline definition in the interface would be emitted into the
+# consumer and the dependency edge would vanish.
+cat > "$TMP/greetdep/src/greetdep.cppm" <<'EOF'
+export module greetdep;
+export int greet_value();
+EOF
+cat > "$TMP/greetdep/src/greetdep.cpp" <<'EOF'
+module greetdep;
+int greet_value() { return 7; }
+EOF
+
 cd "$TMP/proj"
 cat > mcpp.toml <<'EOF'
 [package]
 name = "closure"
 version = "0.1.0"
+
+[dependencies.greetdep]
+path = "../greetdep"
 EOF
 cat > src/main.cpp <<'EOF'
-int main() { return 0; }
+import greetdep;
+int main() { return greet_value() == 7 ? 0 : 1; }
 EOF
 
 "$MCPP" build > build.log 2>&1 || { cat build.log; exit 1; }
@@ -148,26 +190,53 @@ PY
 echo "DT_RPATH: $DT_RPATH"
 [[ -n "$DT_RPATH" ]] || { echo "FAIL: executable carries no DT_RPATH"; exit 1; }
 
-# The farm must be the last ABSOLUTE entry — not literally the last entry.
+# LITERALLY last, `$ORIGIN` included.
 #
-# `$ORIGIN`-relative entries are a different kind: they address the artifact's
-# own directory, not this machine, so they travel with it and their position
-# says nothing about which machine-local directory wins. A project with a shared
-# library dependency gets one appended after everything else, and an assertion
-# of "literally last" would fail on every such project while the invariant it
-# meant to check still held. (Measured on a real GLFW app, whose DT_RPATH ends
-# `… : <subos>/lib : $ORIGIN`.)
-RPATH_LAST_ABS="$(python3 -c "
-p = [x for x in '''$DT_RPATH'''.split(':') if x.startswith('/')]
-print(p[-1] if p else '')
+# An earlier version of this test filtered `$ORIGIN` out and asserted "the last
+# ABSOLUTE entry", on the reasoning that an artifact-relative entry travels with
+# the artifact and so "says nothing about which machine-local directory wins".
+# That reasoning is backwards, and the filtered assertion is blind to the exact
+# defect it was named after: with `… : <farm> : $ORIGIN` and with
+# `… : $ORIGIN : <farm>` the list of absolute entries is IDENTICAL, so it passed
+# on both. It reported "farm is last" on a binary whose farm was not last.
+#
+# What decides the winner is a SONAME present in two directories, and that is
+# routine here: mcpp builds `compat.x11` from source into the artifact's own
+# directory while xlings has `xim:libX11` in the farm. Farm-first meant an
+# application linked against one libX11 and loaded the other, dying before main
+# with `undefined symbol: _ZNKSt13runtime_error4whatEv`.
+RPATH_LAST="$(python3 -c "
+print('''$DT_RPATH'''.split(':')[-1])
 ")"
-[[ "$RPATH_LAST_ABS" == "$FARM" ]] || {
-    echo "FAIL: the farm is not the last absolute entry of DT_RPATH"
-    echo "      recorded farm:      $FARM"
-    echo "      last absolute entry: $RPATH_LAST_ABS"
-    echo "      full:               $DT_RPATH"
+[[ "$RPATH_LAST" == "$FARM" ]] || {
+    echo "FAIL: the farm is not the last entry of DT_RPATH"
+    echo "      recorded farm: $FARM"
+    echo "      last entry:    $RPATH_LAST"
+    echo "      full:          $DT_RPATH"
     exit 1
 }
+
+# ── invariant 2b: the artifact's own directory is ON the path, and ahead ─────
+#
+# Both halves are load-bearing. Without `$ORIGIN` the project under test cannot
+# exhibit the bug and every other assertion here is vacuous; with `$ORIGIN`
+# behind the farm, a mutable view outranks the exact files this link resolved
+# against.
+case ":$DT_RPATH:" in
+    *':$ORIGIN:'*) ;;
+    *) echo "FAIL: no \$ORIGIN in DT_RPATH — this project cannot exercise the"
+       echo "      ordering it is meant to check. full: $DT_RPATH"
+       exit 1 ;;
+esac
+python3 - <<PY || exit 1
+import sys
+p = '''$DT_RPATH'''.split(':')
+if p.index('\$ORIGIN') > p.index('''$FARM'''):
+    print("FAIL: the SubOS farm outranks \$ORIGIN, so this artifact can load a")
+    print("      different build of a library than it was linked against.")
+    print("      full: " + ':'.join(p))
+    sys.exit(1)
+PY
 
 # ── invariant 3: libc still comes from the payload, not the farm ────────────
 #
@@ -197,4 +266,46 @@ FIRST_POS=0
     exit 1
 }
 
-echo "PASS: search closure is payload-first / farm-last, and the artifact agrees"
+# ── invariant 4: the LOADER agrees, measured rather than inferred ───────────
+#
+# Everything above reads a data structure. This runs the program and watches
+# the dynamic linker walk the path, because the shape of DT_RPATH is a proxy
+# and the behaviour is the thing: which physical file does the process open?
+#
+# THIS ASSERTION MUST NOT DEPEND ON A CRASH. The defect it guards produced a
+# spectacular one (`undefined symbol: _ZNKSt13runtime_error4whatEv`), but that
+# symptom exists only while shared libraries statically embed libstdc++. Once
+# they stop, farm-first degrades from a crash to a SILENT version mismatch —
+# the artifact quietly running a different build than it linked against — and
+# an assertion written against the crash would go green for the wrong reason.
+# So it asserts the search itself.
+#
+# `libgreetdep.so` lives in the artifact's directory and nowhere else, so if
+# `$ORIGIN` is consulted first the farm is never tried for it at all. A farm
+# path appearing in this trace means the farm was consulted FIRST.
+LD_DEBUG=libs "$BIN" > "$TMP/run.log" 2> "$TMP/ld.log" || {
+    echo "FAIL: the built executable did not run"; tail -20 "$TMP/ld.log"; exit 1;
+}
+SONAME="$(ls "$(dirname "$BIN")" | grep -E '^libgreetdep\.so' | head -1)"
+[[ -n "$SONAME" ]] || {
+    echo "FAIL: no shared library was produced, so invariant 4 is vacuous"
+    ls -la "$(dirname "$BIN")"; exit 1;
+}
+awk -v soname="$SONAME" -v farm="$FARM" '
+    index($0, "find library=" soname) { inblock = 1; next }
+    inblock && /find library=/        { inblock = 0 }
+    inblock && index($0, "trying file=") {
+        if (index($0, farm "/")) { print; found = 1 }
+    }
+    END { exit found ? 1 : 0 }
+' "$TMP/ld.log" || {
+    echo "FAIL: the loader consulted the SubOS farm for $SONAME before the"
+    echo "      artifact's own directory. A mutable view is being searched"
+    echo "      ahead of the exact files this artifact was linked against."
+    echo "      farm: $FARM"
+    grep -A8 "find library=$SONAME" "$TMP/ld.log" | head -20
+    exit 1
+}
+
+echo "PASS: search closure is payload-first / farm-last, the artifact agrees,"
+echo "      and the loader resolves the artifact's own library from \$ORIGIN"

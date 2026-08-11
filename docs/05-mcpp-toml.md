@@ -285,8 +285,10 @@ cxx_runtime = "self-contained"          # applies to every target (the default)
 
 # or, per role:
 [build.cxx_runtime]
-default = "self-contained"              # binaries and shared libraries
+default = "self-contained"              # executables
 tests   = "host-coupled"                # test binaries never leave this machine
+shared  = "self-contained"              # shared libraries (see below — the
+                                        # default differs by target format)
 
 # or, per target triple — beside `linkage`, which is the same axis:
 [target.x86_64-linux-gnu]
@@ -309,13 +311,30 @@ libc++.a/libc++abi.a/libunwind.a explicitly. A lower macOS floor (11–13) requi
 self-built libc++ archive (already verified to work, a data-level switch, available
 on request).
 
+**Shared libraries are the one role whose default depends on the target format**,
+because the hazard does. A `.so`/`.dylib`/`.dll` is not a small executable — it is
+loaded *into* a process that already has a C++ runtime.
+
+| target | default for `kind = "shared"` | why |
+|---|---|---|
+| ELF (Linux, …) | `toolchain-coupled` | ELF has one global symbol namespace and the first definition loaded wins. A `.so` that statically embedded libstdc++ **exports** it, and the executable linking that library binds *its* `std::` references there — its own `self-contained` contract silently becomes a no-op, and its C++ runtime is whichever build of that library happens to load. |
+| Mach-O | `self-contained` | the mechanism there is already `-load_hidden`, i.e. hidden visibility, so dyld never unifies those symbols; and toolchain-coupled is not available on macOS at all (see the note below). |
+| PE (Windows) | `self-contained` | PE has no global symbol namespace — imports resolve per-DLL by name, so a DLL's private runtime cannot be picked up by anything else. |
+
+Setting `shared = "self-contained"` on ELF is supported and does exactly what it
+says: the library embeds the runtime. mcpp additionally passes
+`-Wl,--exclude-libs` for the standard-library archives, so the embedded copy stays
+out of the library's dynamic symbol table and cannot be picked up by anything that
+links it. Template instantiations your own code emits (weak/COMDAT `std::string`
+symbols and the like) are still exported — that is the intended C++ ABI behaviour
+and is not the leak this guards against.
+
+A project-wide `cxx_runtime = "…"` (or `static_stdlib = false`) applies to shared
+libraries too: a human said what the whole project promises. The format-specific
+default applies only when nobody said anything.
+
 `static_stdlib` is the older spelling and still works: `true` means
 `self-contained`, `false` means `host-coupled`. An explicit `cxx_runtime` wins.
-
-> **Current implementation limitation.** The parser recognizes `cxx_runtime`,
-> but the current `[build]` unknown-key allowlist omits it. A normal build can
-> therefore emit an unsupported-key warning, and `--strict` rejects the manifest.
-> This is an implementation defect, not a different spelling or contract.
 
 **A contract that cannot be honored is reported, never silently downgraded.** If a
 toolchain ships no `libc++.a`, or a contract has no mechanism on that platform

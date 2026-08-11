@@ -45,10 +45,27 @@ export namespace mcpp::build::dist {
 // a musl helper needs `-static` because of PT_INTERP, a PE helper because
 // DLLs resolve via PATH — not about the C++ runtime this module governs.
 enum class Role {
-    Distributable,  // Binary / SharedLibrary — leaves this machine
+    Distributable,  // Binary — leaves this machine as a program
     Test,           // TestBinary — runs here, right now, then is discarded
     Intermediate,   // StaticLibrary — carries no runtime, contract is vacuous
+    // SharedLibrary — loaded INTO a process that already has a C++ runtime.
+    //
+    // Split out of `Distributable` after a .so that carried its own static
+    // libstdc++ exported 2931 std symbols — 777 of them GLOBAL definitions
+    // that exist nowhere but libstdc++.a — and the executable linking it bound
+    // ITS std references to them, silently defeating the executable's own
+    // `-static-libstdc++`. "Leaves this machine" is true of both, but the
+    // HAZARD is not the same, and the hazard is what the contract is for.
+    //
+    // Appended rather than inserted: `CompileFlags::ldStdlibByRole` indexes by
+    // the enum value, so moving the existing three would silently re-map every
+    // stored contract.
+    SharedLibrary,
 };
+
+// One past the last role. The per-role arrays size themselves from this, so
+// adding a role cannot leave a stale `3` behind.
+inline constexpr std::size_t kRoleCount = 4;
 
 // ---------------------------------------------------------------- Layer 2
 
@@ -99,6 +116,7 @@ std::string_view to_string(Role r) {
         case Role::Distributable: return "distributable";
         case Role::Test:          return "test";
         case Role::Intermediate:  return "intermediate";
+        case Role::SharedLibrary: return "shared-library";
     }
     return "distributable";
 }
@@ -110,7 +128,20 @@ std::optional<Contract> parse_contract(std::string_view s) {
     return std::nullopt;
 }
 
-// The role -> contract policy, in one place.
+// The (role x format) -> default contract policy, in one place.
+//
+// THIS FUNCTION IS THE SOURCE. It used to have no caller at all — `flags.cppm`
+// derived the same policy a second time from the manifest — which is the exact
+// shape of debt this module's opening comment was written to retire, relocated
+// rather than removed. `compute_flags` now asks here.
+//
+// WHY FORMAT IS AN INPUT. A default is a judgement about a hazard, and the
+// hazard a shared library poses is format-specific. Folding it into the
+// mechanism table instead would have to spell the difference as a DEGRADATION,
+// and a degradation means "mcpp promised something it could not deliver" — it
+// prints a diagnostic. There is nothing broken about a self-contained .dylib;
+// it is simply the right answer there. Say so in the default rather than
+// apologising for it later.
 //
 // Test binaries default to SelfContained rather than the HostCoupled that
 // their role alone would suggest, and that is deliberate: on macOS a test
@@ -120,11 +151,41 @@ std::optional<Contract> parse_contract(std::string_view s) {
 // role model makes that trade visible instead of hard-coding it in the
 // emitter; a project that wants the other side of it writes
 // `cxx_runtime = { tests = "host-coupled" }` and now actually gets it.
-Contract default_contract(Role r) {
+Contract default_contract(Role r, Format f) {
     switch (r) {
         case Role::Distributable: return Contract::SelfContained;
         case Role::Test:          return Contract::SelfContained;
         case Role::Intermediate:  return Contract::SelfContained;
+        case Role::SharedLibrary:
+            // ELF has ONE global symbol namespace and the first definition
+            // loaded wins. A .so that statically embedded libstdc++ exports
+            // those symbols UNVERSIONED, and the linker then resolves
+            // the executable's own std references against that .so — because
+            // `-lfoo` precedes the driver's `-lstdc++`, so the archive member
+            // is never pulled. The executable's `-static-libstdc++` becomes a
+            // no-op and its C++ runtime is, in fact, whichever build of that
+            // .so happens to be loaded. Swap the .so for another build of the
+            // same SONAME and `std::runtime_error::what()` simply is not
+            // there. Coupling to the toolchain's libstdc++.so is the only
+            // spelling under which the executable keeps its own contract.
+            //
+            // The other two formats do not have that hazard, and their
+            // current behaviour is therefore correct and unchanged:
+            //
+            //   Mach-O  the self-contained mechanism already IS hiding —
+            //           `-Wl,-load_hidden,<archive>` gives the archive's
+            //           symbols hidden visibility precisely so dyld cannot
+            //           unify them (PR #117). ToolchainCoupled is also a
+            //           documented dead end there (#202): LLVM's macOS
+            //           libc++abi/libunwind dylibs upward-link /usr/lib/libc++
+            //           and a second libc++ loads alongside the toolchain's.
+            //
+            //   PE      no global symbol namespace at all — imports resolve
+            //           per-DLL by name, so a DLL's private CRT cannot be
+            //           picked up by anything else. `-static` is additionally
+            //           the standalone-DLL convention there.
+            return f == Format::Elf ? Contract::ToolchainCoupled
+                                    : Contract::SelfContained;
     }
     return Contract::SelfContained;
 }
@@ -196,6 +257,37 @@ namespace detail {
 
 inline bool is_libstdcxx(std::string_view id) { return id == "libstdc++"; }
 inline bool is_libcxx(std::string_view id)    { return id == "libc++"; }
+
+// Keep a statically linked standard library OUT of a shared object's dynamic
+// symbol table.
+//
+// Only a SHARED LIBRARY needs this, and only when it actually embedded the
+// runtime — which after `default_contract` happens on ELF exclusively through
+// an explicit `cxx_runtime = { shared = "self-contained" }`. An executable's
+// static libstdc++ is already local (ld exports only what a loaded object
+// references, and mcpp passes no `-rdynamic`); a .so exports every global it
+// defines, which is how a pure-C compat package came to publish 777 GLOBAL
+// libstdc++ definitions and become the executable's de-facto C++ runtime.
+//
+// It does NOT hide the weak/COMDAT template instantiations the library's own
+// code emits, and must not: unifying those across the process is the intended
+// C++ ABI behaviour, not a leak.
+//
+// The escape hatch has to stay usable, so it is guarded rather than refused.
+//
+// Archive BASENAMES — that is what `--exclude-libs` matches, and GNU ld and
+// lld agree on it. Listed by name rather than `ALL` so a user's own static
+// library linked into their .so keeps its exports.
+std::string hide_static_cxx_runtime(Role role,
+                                    std::initializer_list<std::string_view> archives) {
+    if (role != Role::SharedLibrary) return {};
+    std::string out;
+    for (auto archive : archives) {
+        out += " -Wl,--exclude-libs,";
+        out += archive;
+    }
+    return out;
+}
 
 }  // namespace detail
 
@@ -330,11 +422,18 @@ Mechanism resolve(const MechanismInput& in) {
     case Format::Elf:
     default: {
         if (detail::is_libstdcxx(in.stdlibId)) {
-            if (m.effective == Contract::SelfContained)
+            if (m.effective == Contract::SelfContained) {
                 m.unitFlags = " -static-libstdc++";
+                m.unitFlags += detail::hide_static_cxx_runtime(
+                    in.role, {"libstdc++.a"});
+            }
             // ToolchainCoupled and HostCoupled are the same emission on ELF
             // (no flag); they differ in the rpath the link already carries,
-            // which is the documented limit of this contract.
+            // which is the documented limit of this contract. For a shared
+            // library ToolchainCoupled is the DEFAULT (see `default_contract`)
+            // and "no flag" is the entire mechanism: the driver links
+            // libstdc++.so, and the toolchain's lib directory is already an
+            // `-L` and an rpath entry on this line.
             return m;
         }
         if (detail::is_libcxx(in.stdlibId)) {
@@ -355,8 +454,12 @@ Mechanism resolve(const MechanismInput& in) {
             // is part of the mechanism, not an optional extra.
             m.unitFlags = " -nostdlib++ " + in.libcxxArchive
                         + " " + in.libcxxAbiArchive;
+            m.unitFlags += detail::hide_static_cxx_runtime(
+                in.role, {"libc++.a", "libc++abi.a"});
             if (!in.libunwindArchive.empty()) {
                 m.unitFlags += " " + in.libunwindArchive;
+                m.unitFlags += detail::hide_static_cxx_runtime(
+                    in.role, {"libunwind.a"});
             } else {
                 m.degraded   = true;   // effective stays SelfContained: the C++
                                        // runtime IS embedded; the unwinder is not

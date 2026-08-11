@@ -424,6 +424,13 @@ struct BuildConfig : BuildInputs {
     // leave the build machine, so "link the host's runtime" is a defensible
     // choice there and an indefensible one for a shipped artifact.
     std::string                         cxxRuntimeTests;
+    // Per-role override for shared libraries. Empty = the role default, which
+    // on ELF is toolchain-coupled (see `dist::default_contract`): a .so that
+    // embeds its own libstdc++ exports it into the process's single global
+    // symbol namespace and becomes the executable's C++ runtime by accident.
+    // Setting this to "self-contained" is supported and additionally emits
+    // `--exclude-libs` so the escape hatch cannot re-open that.
+    std::string                         cxxRuntimeShared;
     // "" (default = dynamic), "static", "dynamic" — chosen at resolve
     // time from --static / --target / [target.<triple>].linkage. Wired
     // through to ninja backend as the `-static` link flag.

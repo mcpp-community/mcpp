@@ -3,6 +3,62 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.11.3] — 2026-08-11
+
+### 修复
+
+- **⚠️ 回归:产物加载的库不是它链接的那一份 —— `$ORIGIN` 被 SubOS 库视图遮蔽。**
+
+  `2026.8.11.2`(PR #413)首次把 SubOS 库视图(farm)写进产物的 `DT_RPATH`,但它
+  落在 **`$ORIGIN` 之前**。于是 imgui/GLFW 应用链接的是 mcpp 从 `compat.x11` 源码
+  构建、部署到产物目录的 `libX11.so`,运行期加载的却是 farm 里 xlings 装的
+  `xim:libX11` —— **链接期用 A,运行期加载 B**,程序在 main 之前就死:
+
+  ```
+  undefined symbol: _ZNKSt13runtime_error4whatEv
+  ```
+
+  真因不是「放错了位置」,而是**一条链接命令行的顺序由两个互不知情的生产者用
+  `+=` 决定**:`flags.cppm` 把 farm 拼进全局 ldflags(并注释「so it is LAST」),
+  `plan.cppm` 把 `$ORIGIN` 拼进 per-unit,而每条链接规则渲染的是
+  `$ldflags $unit_ldflags`。三处各自都对,合起来是错的。
+
+  新增 `mcpp.build.link_line`:把 per-unit 尾部声明成**具名槽位**,相对顺序写在
+  类型里、由单测钉死。新增一个生产者必须先选一个槽 —— 而"选"正是"在产物自己的
+  目录之前还是之后"这个问题被提出来的地方。
+
+- **⚠️ 共享库不再把自己的 C++ 运行时导出给别人(ELF)。**
+
+  `SharedLibrary` 此前与可执行文件共用 `Distributable` 角色,于是拿到同一份
+  self-contained 契约:`-static-libstdc++`。在 ELF 上这不是"私有一份" —— 只有一个
+  全局符号命名空间,共享对象会导出它定义的每一个全局符号。一个**纯 C** 的 compat 包
+  因此导出了 777 个 GLOBAL 标准库符号(`libXau.so`:39KB 的 Xau + 9.5MB 的 libstdc++)。
+
+  可执行文件链接时 `-lX11` 排在驱动的 `-lstdc++` 之前,ld 就用它满足了
+  `std::runtime_error::what()`,归档成员从不拉入 —— **可执行文件的
+  `-static-libstdc++` 变成空操作,它的 C++ 运行时事实上是那个 `.so`**。上一条的
+  库替换之所以致命,根源在这里。
+
+  共享库默认契约改为**按目标格式分档**:ELF `toolchain-coupled`,
+  Mach-O / PE 维持 `self-contained`(两者都没有这个危害 —— Mach-O 的机制本就是
+  `-load_hidden`,PE 没有全局命名空间)。显式 `cxx_runtime = { shared = "…" }`
+  仍可选回自包含,此时自动补 `-Wl,--exclude-libs`,让内嵌的运行时留在动态符号表之外。
+
+  实测(helloegui,imgui + GLFW + X11):`libXau.so` 9.5MB → 39KB,
+  `libX11.so` 导出 std 符号 2931 → 0,GUI 正常启动。
+
+### 内部
+
+- `dist::default_contract` 从**没有任何生产调用方**变成唯一真源:角色→契约的策略
+  此前在 `flags.cppm` 被第二次推导,而这正是 `distribution.cppm` 开篇声讨的那类债
+  (「used to be derived independently in five places」)换个位置复发。
+
+- e2e 219 的断言由「farm 是最后一个**绝对路径**条目」收紧为「**字面**最后一项」,
+  并补一条**行为**不变量(`LD_DEBUG=libs` 实测同名 SONAME 解析到 `$ORIGIN`)。
+  旧断言把 `$ORIGIN` 过滤掉了,对坏顺序与好顺序给出同一个结论 —— 它在一个 farm
+  并非最后的二进制上报告「farm is last」。测试工程也从 `int main()` 换成消费依赖
+  共享库,否则它连 `$ORIGIN` 都不产生,整条断言链是空转的。
+
 ## [2026.8.11.2] — 2026-08-11
 
 ### 修复

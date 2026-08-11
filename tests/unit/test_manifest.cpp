@@ -3423,3 +3423,56 @@ gtest = { version = "1.15.2", features = ["main"] }
     EXPECT_TRUE(got.contains("zlib"));
     EXPECT_TRUE(got.contains("gtest"));
 }
+
+// `cxx_runtime` gained a third role key. The table is validated by an explicit
+// whitelist, so a new spelling that nobody added there is rejected with a
+// message naming the key — which is the behaviour, not an accident.
+TEST(Manifest, CxxRuntimeAcceptsThePerRoleTableIncludingShared) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[build]
+cxx_runtime = { default = "self-contained", tests = "host-coupled", shared = "toolchain-coupled" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->buildConfig.cxxRuntime,       "self-contained");
+    EXPECT_EQ(m->buildConfig.cxxRuntimeTests,  "host-coupled");
+    EXPECT_EQ(m->buildConfig.cxxRuntimeShared, "toolchain-coupled");
+    // And it must not be reported as an unsupported [build] key. The whole
+    // feature is reachable only through this spelling, so a warning saying it
+    // is "ignored" would be both noisy and false.
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
+}
+
+TEST(Manifest, CxxRuntimeRejectsAnUnknownRoleKey) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[build]
+cxx_runtime = { sharedd = "self-contained" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("sharedd"), std::string::npos)
+        << m.error().format();
+}
+
+// The scalar spelling still means "every role", including shared libraries.
+TEST(Manifest, CxxRuntimeScalarStillAppliesToEveryRole) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[build]
+cxx_runtime = "host-coupled"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->buildConfig.cxxRuntime, "host-coupled");
+    EXPECT_TRUE(m->buildConfig.cxxRuntimeShared.empty());
+    EXPECT_TRUE(m->schemaWarnings.empty());
+}
