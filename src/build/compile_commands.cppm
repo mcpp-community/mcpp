@@ -15,6 +15,7 @@
 export module mcpp.build.compile_commands;
 
 import std;
+import mcpp.source_kind;
 import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.libs.json;
@@ -76,11 +77,6 @@ write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 namespace mcpp::build {
 
 namespace {
-
-bool is_c_source(const std::filesystem::path& src) {
-    auto ext = src.extension();
-    return ext == ".c" || ext == ".m";
-}
 
 }  // namespace
 
@@ -229,12 +225,11 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
         // NASM units carry a command line no CDB consumer (clangd, …) can
         // interpret — a bogus entry actively harms LSP diagnostics, so they
         // are excluded from the CDB entirely.
-        if (cu.source.extension() == ".asm") continue;
-        // Pick compiler + flags based on source type. GAS units (.S/.s) ride
+        if (cu.kind == mcpp::SourceKind::NasmAsm) continue;
+        // Pick compiler + flags based on source ROLE. GAS units (.S/.s) ride
         // the C driver with the asm-safe flag string, mirroring build.ninja.
-        const auto ext = cu.source.extension();
-        const bool isGasSource = ext == ".S" || ext == ".s";
-        const bool isCSource = is_c_source(cu.source) || isGasSource;
+        const bool isGasSource = cu.kind == mcpp::SourceKind::GasAsm;
+        const bool isCSource = cu.kind == mcpp::SourceKind::C || isGasSource;
         const auto& compiler = isCSource ? flags.ccBinary : flags.cxxBinary;
         const auto& flagStr = isGasSource ? flags.as
                             : isCSource   ? flags.cc

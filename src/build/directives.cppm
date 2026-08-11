@@ -38,55 +38,34 @@
 export module mcpp.build.directives;
 
 import std;
+import mcpp.build.program_protocol;
 import mcpp.libs.json;
 import mcpp.manifest;
+import mcpp.source_kind;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;   // hash_string for the glob fingerprint
 import mcpp.modgraph.glob;           // the one path-glob matcher
 
 export namespace mcpp::build::directives {
 
-// ── Protocol version ───────────────────────────────────────────────────────
+// ── Protocol terms ─────────────────────────────────────────────────────────
 //
-// The wire version this engine speaks. The bundled `mcpp` module announces the
-// version it was built against (`mcpp:protocol=<N>`) before main runs, so a
-// program and the engine that compiled it always agree — the announcement only
-// ever disagrees when a *cached* helper binary outlives an engine change, which
-// is precisely the case worth catching.
+// The protocol version, the cache epoch and the run bound have moved to
+// `mcpp.build.program_protocol`. They are the terms both sides agree on BEFORE
+// any directive is exchanged, they have consumers that need nothing else from
+// this file (hostprogram stamps the version; build_program applies the bound),
+// and keeping them here meant importing the whole directive table to ask one
+// number.
 //
-// Bump when the meaning of an existing directive changes, or when a new
-// directive is added that a program may rely on. An engine seeing a HIGHER
-// number than this must refuse: it cannot know what it is being asked to do,
-// and "warn and ignore" would turn that into a silently different build.
-// v2 (#359): adds `rerun-if-changed-glob`.
-inline constexpr int kProtocolVersion = 2;
-
-// ── Cache-format epoch ─────────────────────────────────────────────────────
-//
-// Bump ONLY when previously written build.mcpp.cache entries become unusable —
-// the record shape changed, or a directive's *interpretation* changed so that
-// replaying a cached value would no longer mean what it meant when written.
-// Deliberately NOT the mcpp release number: folding the whole version in would
-// re-run every build program on every release for nothing. Same discipline as
-// mcpp.build.cache_key::kCacheEpoch.
-// Epoch 2 (#359): entries gained `glob` records. An engine that does not know
-// them would replay a strict subset of the declared inputs and call a stale
-// build fresh, which is exactly the silent-wrong-answer this guard exists for.
-inline constexpr int kCacheEpoch = 2;
-
-// ── Run bound ──────────────────────────────────────────────────────────────
-//
-// How long a build program may RUN before mcpp kills it. The compile is
-// deliberately left unbounded — the same asymmetry `mcpp test` settled on
-// (run 300s / build 0): a long compile is usually legitimate (a first-run std
-// module build is minutes) and killing it produces a baffling failure, while a
-// long-running build PROGRAM is usually stuck, and without a bound the whole
-// build hangs with no diagnostic at all.
-//
-// MCPP_BUILD_PROGRAM_TIMEOUT overrides, in seconds; 0 disables the bound.
-inline constexpr int kDefaultRunTimeoutSecs = 600;
-
-std::chrono::milliseconds run_timeout();
+// Re-exported under the old names so existing readers (`dirs::kCacheEpoch` in
+// build_program.cppm, `dirs::kProtocolVersion` in the tests) keep working —
+// this is one contract seen through two namespaces, not two contracts.
+using mcpp::build::program_protocol::kProtocolVersion;
+using mcpp::build::program_protocol::kCacheEpoch;
+using mcpp::build::program_protocol::kDefaultRunTimeoutSecs;
+using mcpp::build::program_protocol::env_timeout_override;
+using mcpp::build::program_protocol::run_timeout;
+using mcpp::build::program_protocol::run_timeout_for;
 
 // ── The table ──────────────────────────────────────────────────────────────
 
@@ -309,7 +288,8 @@ void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
 //
 // The non-source outputs are still declared to ninja, so the edge still
 // produces them and anything that includes them still waits for the generator.
-bool is_compilable_output(const std::filesystem::path& p);
+bool is_compilable_output(const std::filesystem::path& p,
+                          const mcpp::ExtensionTable& t);
 
 // ── Private-scope fold (was prepare.cppm's DirectiveMark / fold pair) ──────
 //
@@ -372,18 +352,6 @@ std::string abs_against(const fs::path& base, std::string_view p) {
     fs::path pp = mcpp::modgraph::native_path_from_generic(p);
     if (pp.is_relative()) pp = base / pp;
     return pp.lexically_normal().string();
-}
-
-std::chrono::milliseconds run_timeout() {
-    int secs = kDefaultRunTimeoutSecs;
-    if (const char* v = std::getenv("MCPP_BUILD_PROGRAM_TIMEOUT")) {
-        std::string_view sv(v);
-        int parsed = 0;
-        if (std::from_chars(sv.data(), sv.data() + sv.size(), parsed).ec == std::errc{}
-            && parsed >= 0)
-            secs = parsed;
-    }
-    return std::chrono::milliseconds(static_cast<long long>(secs) * 1000);
 }
 
 namespace {
@@ -645,14 +613,16 @@ std::string action_error(const Directives& d) {
     return {};
 }
 
-bool is_compilable_output(const fs::path& p) {
-    auto ext = p.extension().string();
-    // The same set the plan treats as translation units, plus .cppm/.ixx for a
-    // generated module interface.
-    return ext == ".cpp" || ext == ".cc"  || ext == ".cxx" || ext == ".c"
-        || ext == ".m"   || ext == ".mm"
-        || ext == ".S"   || ext == ".s"   || ext == ".asm"
-        || ext == ".cppm" || ext == ".ixx";
+// Can a build program's declared output be fed to the compiler?
+//
+// This used to carry the fifth hand-written extension list — and the ONLY one
+// that mentioned `.ixx`, which is how a generated `.ixx` was accepted here and
+// then mis-handled by every stage after it. It now asks the classifier with
+// the OWNING PACKAGE's table, so "mcpp will compile this" and "mcpp knows what
+// this is" are the same question again.
+bool is_compilable_output(const fs::path& p, const mcpp::ExtensionTable& t) {
+    auto kind = mcpp::classify(p, t);
+    return kind != mcpp::SourceKind::Header && kind != mcpp::SourceKind::Other;
 }
 
 void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.source_kind;
 import mcpp.build.stage;
 
 using namespace mcpp::build::stage;

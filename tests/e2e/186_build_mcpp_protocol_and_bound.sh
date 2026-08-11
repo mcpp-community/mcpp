@@ -112,6 +112,52 @@ grep -q "time limit" b4.log || { cat b4.log; echo "FAIL: no timeout diagnostic";
 grep -q "'app'" b4.log || { cat b4.log; echo "FAIL: timeout error does not name the package"; exit 1; }
 grep -q "MCPP_BUILD_PROGRAM_TIMEOUT" b4.log || {
     cat b4.log; echo "FAIL: timeout error does not say how to change the bound"; exit 1; }
+# ...and WHICH mcpp.toml to edit. When a DEPENDENCY's build program times out,
+# the user's instinct is to edit their own manifest, which changes nothing.
+grep -q "mcpp.toml" b4.log || {
+    cat b4.log; echo "FAIL: timeout error does not name the manifest to edit"; exit 1; }
+
+# ── 4b. The bound is configurable from the manifest ─────────────────────────
+#
+# Deliberately 2 seconds, not something near the 600s default: the point is
+# that the KEY is read, and a long value would just make CI wait.
+cat >> mcpp.toml <<'EOF'
+
+[build]
+build_program_timeout = 2
+EOF
+fresh
+start=$(date +%s)
+if "$MCPP" build > b4b.log 2>&1; then
+    cat b4b.log; echo "FAIL: [build] build_program_timeout did not bound the run"; exit 1
+fi
+elapsed=$(( $(date +%s) - start ))
+[ "$elapsed" -lt 60 ] || { echo "FAIL: the manifest bound did not fire (took ${elapsed}s)"; exit 1; }
+grep -q "exceeded its 2s time limit" b4b.log || {
+    cat b4b.log; echo "FAIL: the manifest value is not the effective bound"; exit 1; }
+
+# The env var is a per-invocation override and must WIN over the manifest.
+fresh
+if MCPP_BUILD_PROGRAM_TIMEOUT=1 "$MCPP" build > b4c.log 2>&1; then
+    cat b4c.log; echo "FAIL: build succeeded under a 1s bound"; exit 1
+fi
+grep -q "exceeded its 1s time limit" b4c.log || {
+    cat b4c.log; echo "FAIL: MCPP_BUILD_PROGRAM_TIMEOUT did not override the manifest"; exit 1; }
+
+# A negative value is a manifest error, not a silently-ignored one: it would
+# otherwise read as "no bound" and remove the guard entirely.
+cp mcpp.toml mcpp.toml.bak
+sed -i.tmp 's/^build_program_timeout = 2$/build_program_timeout = -1/' mcpp.toml
+if "$MCPP" build > b4d.log 2>&1; then
+    cat b4d.log; echo "FAIL: a negative build_program_timeout was accepted"; exit 1
+fi
+grep -q "build_program_timeout" b4d.log || {
+    cat b4d.log; echo "FAIL: the error does not name the key"; exit 1; }
+mv mcpp.toml.bak mcpp.toml
+rm -f mcpp.toml.tmp
+
+# Restore a manifest with no bound override for the sections that follow.
+sed -i '/^\[build\]$/,$d' mcpp.toml
 
 # ── 5. Cache: the entry carries an epoch, and a foreign one invalidates it ──
 cat > build.mcpp <<'EOF'

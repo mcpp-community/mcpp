@@ -4,6 +4,7 @@ export module mcpp.manifest.toml;
 
 import mcpp.manifest.types;
 import std;
+import mcpp.source_kind;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
@@ -1006,6 +1007,37 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             return std::unexpected(error(origin, *err));
         }
     }
+    // [build] module_extensions — extra module-interface extensions. Parsed
+    // BEFORE apply_defaults_and_infer runs, because the convention default for
+    // `sources` is derived from it.
+    if (auto v = doc->get_string_array("build.module_extensions")) {
+        if (auto err = mcpp::validate_module_extensions(*v))
+            return std::unexpected(error(origin, *err));
+        m.buildConfig.moduleExtensions = *v;
+    }
+    // [build] build_program_timeout — seconds a build.mcpp may run; 0 = no
+    // limit. `optional` is load-bearing: with a plain int, "absent" and
+    // "explicitly 0" would be the same value, and every project that never
+    // mentions the key would silently lose its run bound.
+    if (auto* tv = doc->get("build.build_program_timeout")) {
+        if (!tv->is_int()) {
+            return std::unexpected(error(origin,
+                "[build].build_program_timeout must be an integer number of "
+                "seconds (0 = no limit)"));
+        }
+        auto secs = tv->as_int();
+        if (secs < 0) {
+            return std::unexpected(error(origin, std::format(
+                "[build].build_program_timeout is {} seconds; it cannot be "
+                "negative (0 = no limit)", secs)));
+        }
+        if (secs > std::numeric_limits<int>::max()) {
+            return std::unexpected(error(origin, std::format(
+                "[build].build_program_timeout is {} seconds, which does not "
+                "fit in the deadline; use 0 for no limit", secs)));
+        }
+        m.buildConfig.buildProgramTimeoutSecs = static_cast<int>(secs);
+    }
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
     if (auto v = doc->get_string("build.target"))         m.buildConfig.target = *v;
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
@@ -1037,11 +1069,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     //
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
     static constexpr std::string_view kKnownBuildKeys[] = {
-        "allow_host_libs", "c_standard", "cache", "cflags", "cxxflags",
-        "default-profile", "defines", "dialect_cxxflags", "flags",
-        "include_dirs", "include_dirs_after", "ldflags",
-        "macos_deployment_target", "profile", "sources", "static_stdlib",
-        "target",
+        "allow_host_libs", "build_program_timeout", "c_standard", "cache",
+        "cflags", "cxxflags", "default-profile", "defines", "dialect_cxxflags",
+        "flags", "include_dirs", "include_dirs_after", "ldflags",
+        "macos_deployment_target", "module_extensions", "profile", "sources",
+        "static_stdlib", "target",
     };
     if (auto* bt = doc->get_table("build")) {
         for (auto& [key, _] : *bt) {
@@ -1050,10 +1082,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (!known) {
                 m.schemaWarnings.push_back(std::format(
                     "[build] has unsupported key '{}' (ignored). Supported keys: "
-                    "sources, cflags, cxxflags, ldflags, defines, flags, "
-                    "include_dirs, include_dirs_after, dialect_cxxflags, "
-                    "c_standard, target, static_stdlib, allow_host_libs, cache, "
-                    "profile, macos_deployment_target.", key));
+                    "sources, module_extensions, cflags, cxxflags, ldflags, "
+                    "defines, flags, include_dirs, include_dirs_after, "
+                    "dialect_cxxflags, c_standard, target, static_stdlib, "
+                    "allow_host_libs, cache, profile, build_program_timeout, "
+                    "macos_deployment_target.", key));
             }
         }
     }
@@ -1605,18 +1638,16 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
     // Default sources glob (covers .cppm/.cpp/.cc/.c plus assembly under
     // src/). Assembly in the tree almost certainly wants building; a project
     // that vendors foreign-syntax .asm can `!`-exclude it.
+    const auto extTable =
+        mcpp::extension_table_for(m.buildConfig.moduleExtensions);
     if (m.buildConfig.sources.empty()) {
-        m.buildConfig.sources = {
-            "src/**/*.cppm",
-            "src/**/*.cpp",
-            "src/**/*.cc",
-            "src/**/*.c",
-            "src/**/*.S",
-            "src/**/*.s",
-            "src/**/*.asm",
-        };
+        // Derived from the extension table rather than written beside it —
+        // otherwise declaring `module_extensions = [".ixx"]` would change how
+        // `.ixx` is TREATED without changing whether it is FOUND, and the key
+        // would appear to do nothing.
+        m.buildConfig.sources = mcpp::default_source_globs(extTable);
         m.modules.sources = m.buildConfig.sources;   // legacy mirror
-        m.inferredNotes.push_back("sources [src/**/*.{cppm,cpp,cc,c,S,s,asm}]");
+        m.inferredNotes.push_back(mcpp::default_source_globs_note(extTable));
     }
 
     // Default include_dirs: ["include"] iff <root>/include/ exists.
@@ -1634,13 +1665,16 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
         auto mainCpp = root / "src" / "main.cpp";
         bool hasMain   = std::filesystem::exists(mainCpp, ec);
 
-        bool hasCppm = false;
+        // "Is there a module interface under src/" — asked through the table,
+        // so a library whose interfaces are all `.ixx` still infers a lib
+        // target instead of silently having none.
+        bool hasModuleInterface = false;
         if (std::filesystem::is_directory(root / "src", ec)) {
             for (auto& e : std::filesystem::recursive_directory_iterator(root / "src", ec)) {
                 if (ec) break;
                 if (e.is_regular_file(ec) && !ec
-                    && e.path().extension() == ".cppm") {
-                    hasCppm = true; break;
+                    && mcpp::produces_bmi(mcpp::classify(e.path(), extTable))) {
+                    hasModuleInterface = true; break;
                 }
             }
         }
@@ -1653,13 +1687,13 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
             m.targets.push_back(std::move(t));
             m.inferredNotes.push_back(
                 std::format("target {} (bin from src/main.cpp)", m.package.name));
-        } else if (hasCppm) {
+        } else if (hasModuleInterface) {
             Target t;
             t.name = m.package.name;
             t.kind = Target::Library;
             m.targets.push_back(std::move(t));
             m.inferredNotes.push_back(
-                std::format("target {} (lib from .cppm in src/)", m.package.name));
+                std::format("target {} (lib from module interface in src/)", m.package.name));
         }
         // If neither, no auto-target — caller will error if it needs one.
     }

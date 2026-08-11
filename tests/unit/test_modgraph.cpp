@@ -6,6 +6,7 @@ import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
 import mcpp.manifest;
+import mcpp.source_kind;
 
 using namespace mcpp::modgraph;
 
@@ -36,7 +37,7 @@ TEST(Scanner, ProvidesAndRequires) {
           "import bar;\n"
           "export int answer();\n");
 
-    auto u = scan_file(dir / "src" / "foo.cppm", "pkg");
+    auto u = scan_file(dir / "src" / "foo.cppm", "pkg", mcpp::builtin_extension_table());
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_TRUE(u->provides.has_value());
     EXPECT_EQ(u->provides->logicalName, "foo");
@@ -64,7 +65,7 @@ TEST(Scanner, IgnoresImportsInsideRawStringLiteral) {
           "import bar;\n"               // a real import AFTER the raw string
           "export void f();\n");
 
-    auto u = scan_file(dir / "src" / "gen.cppm", "pkg");
+    auto u = scan_file(dir / "src" / "gen.cppm", "pkg", mcpp::builtin_extension_table());
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_TRUE(u->provides.has_value());
     EXPECT_EQ(u->provides->logicalName, "gen");
@@ -88,7 +89,7 @@ TEST(Scanner, IgnoresImportInsideSingleLineRawString) {
           "const char* s = R\"(import nope;)\";\n"
           "import real;\n");
 
-    auto u = scan_file(dir / "src" / "one.cppm", "pkg");
+    auto u = scan_file(dir / "src" / "one.cppm", "pkg", mcpp::builtin_extension_table());
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_EQ(u->requires_.size(), 1u);
     EXPECT_EQ(u->requires_[0].logicalName, "real");
@@ -111,7 +112,7 @@ TEST(Scanner, AssemblySourcesSkipModuleScan) {
           ".text\n.globl asm_copy\nasm_copy:\n  ret\n");
 
     for (auto name : { "simd.asm", "copy.S" }) {
-        auto u = scan_file(dir / "src" / name, "pkg");
+        auto u = scan_file(dir / "src" / name, "pkg", mcpp::builtin_extension_table());
         ASSERT_TRUE(u.has_value()) << u.error().format();
         EXPECT_FALSE(u->provides.has_value()) << name;
         EXPECT_TRUE(u->requires_.empty()) << name;
@@ -377,7 +378,7 @@ TEST(Scanner, PartitionImportFromPrimaryInterface) {
     write(dir / "src" / "foo.cppm",
           "export module foo;\n"
           "import :tls;\n");
-    auto u = scan_file(dir / "src" / "foo.cppm", "pkg");
+    auto u = scan_file(dir / "src" / "foo.cppm", "pkg", mcpp::builtin_extension_table());
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_EQ(u->requires_.size(), 1u);
     EXPECT_EQ(u->requires_[0].logicalName, "foo:tls");
@@ -393,7 +394,7 @@ TEST(Scanner, PartitionImportFromAnotherPartition) {
           "export module foo:http;\n"
           "import :tls;\n"
           "import :socket;\n");
-    auto u = scan_file(dir / "src" / "http.cppm", "pkg");
+    auto u = scan_file(dir / "src" / "http.cppm", "pkg", mcpp::builtin_extension_table());
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_TRUE(u->provides.has_value());
     EXPECT_EQ(u->provides->logicalName, "foo:http");
@@ -410,7 +411,7 @@ TEST(Scanner, PartitionImportWithDottedModuleName) {
     write(dir / "src" / "http.cppm",
           "export module mcpplibs.tinyhttps:http;\n"
           "import :tls;\n");
-    auto u = scan_file(dir / "src" / "http.cppm", "pkg");
+    auto u = scan_file(dir / "src" / "http.cppm", "pkg", mcpp::builtin_extension_table());
     ASSERT_TRUE(u.has_value()) << u.error().format();
     ASSERT_EQ(u->requires_.size(), 1u);
     EXPECT_EQ(u->requires_[0].logicalName, "mcpplibs.tinyhttps:tls");
@@ -425,7 +426,7 @@ TEST(Scanner, RejectsConditionalImport) {
           "import x;\n"
           "#endif\n"
           "int main(){}");
-    auto r = scan_file(dir / "main.cpp", "pkg");
+    auto r = scan_file(dir / "main.cpp", "pkg", mcpp::builtin_extension_table());
     EXPECT_FALSE(r.has_value());
     EXPECT_NE(r.error().message.find("conditional"), std::string::npos);
     std::filesystem::remove_all(dir);
@@ -437,7 +438,7 @@ TEST(Scanner, RejectsHeaderUnit) {
           "import std;\n"
           "import \"x.h\";\n"
           "int main(){}");
-    auto r = scan_file(dir / "main.cpp", "pkg");
+    auto r = scan_file(dir / "main.cpp", "pkg", mcpp::builtin_extension_table());
     EXPECT_FALSE(r.has_value());
     EXPECT_NE(r.error().message.find("header units"), std::string::npos);
     std::filesystem::remove_all(dir);
@@ -449,7 +450,7 @@ TEST(Scanner, ObjectiveCSourceIsCLike) {
           "import Cocoa;\n"
           "int answer(void) { return 42; }\n");
 
-    auto u = scan_file(dir / "src" / "window.m", "pkg");
+    auto u = scan_file(dir / "src" / "window.m", "pkg", mcpp::builtin_extension_table());
     ASSERT_TRUE(u.has_value()) << u.error().format();
     EXPECT_FALSE(u->provides.has_value());
     EXPECT_TRUE(u->requires_.empty());

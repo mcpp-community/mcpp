@@ -20,6 +20,7 @@ export module mcpp.build.ninja;
 import std;
 import mcpp.build.backend;
 import mcpp.manifest;
+import mcpp.source_kind;
 import mcpp.build.distribution;
 import mcpp.build.graph_shape;
 import mcpp.build.loader_contract;
@@ -109,13 +110,13 @@ std::string escape_flag_path(const std::filesystem::path& p) {
     return out;
 }
 
-bool is_nasm_source(const std::filesystem::path& src) {
-    return src.extension() == ".asm";
+bool is_nasm_source(const CompileUnit& cu) {
+    return cu.kind == mcpp::SourceKind::NasmAsm;
 }
 
 std::string local_include_flags(const CompileUnit& cu,
                                 const mcpp::toolchain::CommandDialect& d) {
-    const bool nasmUnit    = is_nasm_source(cu.source);
+    const bool nasmUnit    = is_nasm_source(cu);
     const bool msvcDialect = d.includePrefix == std::string_view("/I");
     std::string flags;
     for (auto const& inc : cu.localIncludeDirs) {
@@ -231,21 +232,19 @@ std::filesystem::path mcpp_exe_path() {
     return mcpp::platform::fs::self_exe_path();
 }
 
-bool is_c_source(const std::filesystem::path& src) {
-    auto ext = src.extension();
-    return ext == ".c" || ext == ".m";
+bool is_c_source(const mcpp::build::CompileUnit& cu) {
+    return cu.kind == mcpp::SourceKind::C;
 }
 
-bool is_gas_source(const std::filesystem::path& src) {
-    auto ext = src.extension();
-    return ext == ".S" || ext == ".s";
+bool is_gas_source(const mcpp::build::CompileUnit& cu) {
+    return cu.kind == mcpp::SourceKind::GasAsm;
 }
 
 // TUs the P1689 module scan must skip: C-family and assembly units cannot
 // contain `import`/`module` declarations, and feeding them to the scanner
 // would route them through the C++ frontend.
-bool is_scan_exempt(const std::filesystem::path& src) {
-    return is_c_source(src) || is_gas_source(src) || is_nasm_source(src);
+bool is_scan_exempt(const mcpp::build::CompileUnit& cu) {
+    return mcpp::is_scan_exempt(cu.kind);
 }
 
 // Per-unit flags an assembler can take: the -D/-U/-I subset of the unit's C
@@ -415,9 +414,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     bool need_c_rule = false, need_asm_rule = false, need_nasm_rule = false;
     for (auto& cu : plan.compileUnits) {
-        if (is_c_source(cu.source))         need_c_rule = true;
-        else if (is_gas_source(cu.source))  need_asm_rule = true;
-        else if (is_nasm_source(cu.source)) need_nasm_rule = true;
+        if (is_c_source(cu))         need_c_rule = true;
+        else if (is_gas_source(cu))  need_asm_rule = true;
+        else if (is_nasm_source(cu)) need_nasm_rule = true;
     }
 
     // The macOS initializer-ordering shim (#336) is a C translation unit, so
@@ -662,9 +661,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append(std::format("  rspfile_content ={}\n", payload));
     };
 
-    // cl.exe needs /TP (our module interfaces are .cppm, unknown to cl) and
-    // /interface to treat the TU as a module interface unit.
-    const std::string module_src_flags = msvcDeps ? " /interface /TP" : "";
+    // Tell the driver, every time, that this TU is a module interface.
+    //
+    // The spelling is a property of the COMPILER FAMILY, not of the command
+    // dialect — gcc and clang share the gnu dialect but need different values
+    // — so it lives in BmiTraits. See the note there for the measurements
+    // that rule out the alternative of tracking which suffix each driver
+    // happens to know: that table expires with every compiler release, and
+    // getting it wrong is SILENT (Clang hands an unrecognized suffix to the
+    // linker, warns, and exits 0 having produced no BMI at all).
+    const std::string module_src_flags{traits.moduleInterfaceLangFlag};
     append("rule cxx_module\n");
     if constexpr (mcpp::platform::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
@@ -679,13 +685,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
                  "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
                "fi && "
-               "$cxx $local_includes $cxxflags $unit_cxxflags{} {}{}{} && "
+               // `-x c++` / `-x c++-module` is POSITIONAL on GNU drivers: it
+               // must precede `-c $in` (which compile_tail carries) or it
+               // applies to nothing.
+               "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}{}{} && "
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
                   "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
                  "mv \"$bmi_out.bak\" \"$bmi_out\"; "
                "else "
                  "rm -f \"$bmi_out.bak\"; "
-               "fi\n", module_output_flag, mmd_flag, compile_tail, mmd_filter));
+               "fi\n", module_output_flag, module_src_flags, mmd_flag,
+               compile_tail, mmd_filter));
         append_cxx_deps();
     }
     append("  description = MOD $out\n");
@@ -906,12 +916,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags "
                    "/scanDependencies $out /TP /c $in /Fo:$compile_target\n",
                    rsp_ref(scanPayload)));
+            // No $unit_lang here: /TP above already applies to every input,
+            // and cl has no per-suffix recognition problem to fix — a module
+            // interface is identified by /interface at COMPILE time, which
+            // the scan does not do.
         } else if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
             append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$compile_target "
-                   "-M -MM -MF $out.dep -E $in -o $compile_target\n",
+                   "-M -MM -MF $out.dep $unit_lang -E $in -o $compile_target\n",
                    rsp_ref(scanPayload)));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
@@ -923,7 +937,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // overruns (#261: 48 -I entries at a deep consumer path).
             append(std::format(
                    "  command = $scan_deps -format=p1689 -o $out -- "
-                   "$cxx{} $cxxflags $unit_cxxflags -c $in -o $compile_target\n",
+                   "$cxx{} $cxxflags $unit_cxxflags $unit_lang -c $in "
+                   "-o $compile_target\n",
                    rsp_ref(scanPayload)));
         }
         append_rspfile(scanPayload);
@@ -1002,19 +1017,26 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         return s;
     };
 
-    auto pick_rule = [](const std::filesystem::path& src) -> std::string {
-        auto ext = src.extension();
-        if (ext == ".cppm")
-            return "cxx_module";
-        if (ext == ".c" || ext == ".m")
-            return "c_object";
-        if (ext == ".S")
-            return "asm_object";
-        if (ext == ".s")
-            return "asm_object_raw";
-        if (ext == ".asm")
-            return "nasm_object";
-        return "cxx_object";
+    // Rule selection is a pure function of the unit's KIND — never of its
+    // extension. mcpp#272 fixed link-object collection while this stayed
+    // extension-keyed, which routed a `.ixx` module interface to `cxx_object`:
+    // the edge still DECLARED a BMI output (that line reads providesModule)
+    // while the command line lost `-fmodule-output=`, so ninja asked for an
+    // artifact the command was no longer told to produce.
+    //
+    // `.S` vs `.s` is the one extension test that survives, and deliberately:
+    // it selects between two compile modes of ONE role (preprocessed or not),
+    // which is not a role distinction.
+    auto pick_rule = [](const mcpp::build::CompileUnit& cu) -> std::string {
+        switch (cu.kind) {
+            case mcpp::SourceKind::ModuleInterface: return "cxx_module";
+            case mcpp::SourceKind::C:               return "c_object";
+            case mcpp::SourceKind::GasAsm:
+                return cu.source.extension() == ".S" ? "asm_object"
+                                                     : "asm_object_raw";
+            case mcpp::SourceKind::NasmAsm:         return "nasm_object";
+            default:                                return "cxx_object";
+        }
     };
 
     // ── Cache-served units: stage edges instead of compile edges ────────
@@ -1124,7 +1146,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         ddi_paths.reserve(plan.compileUnits.size());
         for (auto& cu : plan.compileUnits) {
             if (cu.servedFromCache) continue;   // staged, never scanned
-            if (is_scan_exempt(cu.source))
+            if (is_scan_exempt(cu))
                 continue;
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             ddi_paths.push_back(ddi);
@@ -1135,6 +1157,27 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 append(std::format("  local_includes ={}\n", includes));
             if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
                 append(std::format("  unit_cxxflags ={}\n", flags));
+            // The scan has the same suffix-recognition problem as the compile:
+            // a driver that does not know `.ixx` hands it to the linker and
+            // reports success with no .ddi. But unlike the compile rule this
+            // one is SHARED with implementation units, so the flag has to be
+            // per-edge — telling a plain `.cpp` it is `c++-module` would make
+            // Clang scan an implementation unit as an interface.
+            //
+            // ⚠️ The value is written WITHOUT its leading space and the
+            // separator lives in the rule's command string above. Ninja
+            // strips leading/trailing whitespace from a variable VALUE, so
+            // `-MF $out.dep$unit_lang` concatenated into
+            // `-MF foo.ddi.dep-x c++` and g++ then reported `c++` as a
+            // missing linker input. Same trap the stage_file `verify`
+            // variable documents a few hundred lines up.
+            if (mcpp::produces_bmi(cu.kind)
+                && !traits.moduleInterfaceLangFlag.empty()) {
+                auto lang = traits.moduleInterfaceLangFlag;
+                while (!lang.empty() && lang.front() == ' ')
+                    lang.remove_prefix(1);
+                append(std::format("  unit_lang = {}\n", lang));
+            }
         }
         append("\n");
 
@@ -1156,7 +1199,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::map<std::string, std::string> ddi_expect;
         for (auto& cu : plan.compileUnits) {
             if (cu.servedFromCache) continue;
-            if (is_scan_exempt(cu.source)) continue;
+            if (is_scan_exempt(cu)) continue;
             if (!cu.scanOverridden && !verifyAll) continue;
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             std::string exp;
@@ -1188,14 +1231,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // P2: module compile edges get a $bmi_out variable for BMI preservation.
         for (auto& cu : plan.compileUnits) {
             if (cu.servedFromCache) continue;   // a stage_file edge owns these outputs
-            std::string rule = pick_rule(cu.source);
+            std::string rule = pick_rule(cu);
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (cu.providesModule) {
                 out_line += " | " + bmi_path(*cu.providesModule);
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
-            if (!is_scan_exempt(cu.source)) {
+            if (!is_scan_exempt(cu)) {
                 auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
                 auto it = ddi_to_dd.find(ddi);
                 if (it != ddi_to_dd.end()) {
@@ -1215,10 +1258,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             }
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
-            if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
+            if (is_gas_source(cu) || is_nasm_source(cu)) {
                 if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
                     out_line += "  unit_asmflags =" + flags + "\n";
-            } else if (is_c_source(cu.source)) {
+            } else if (is_c_source(cu)) {
                 if (auto flags = join_flags(cu.packageCflags); !flags.empty())
                     out_line += "  unit_cflags =" + flags + "\n";
             } else {
@@ -1232,11 +1275,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // ── Static-deps mode (M3.2 and earlier). ────────────────────────
         for (auto& cu : plan.compileUnits) {
             if (cu.servedFromCache) continue;   // a stage_file edge owns these outputs
-            std::string rule = pick_rule(cu.source);
+            std::string rule = pick_rule(cu);
 
             std::string implicit;
             // C/asm files don't `import` modules; skip BMI implicit inputs.
-            if (!is_scan_exempt(cu.source)) {
+            if (!is_scan_exempt(cu)) {
                 for (auto& imp : cu.imports) {
                     if (imp == "std") {
                         if (has_std_artifacts)
@@ -1267,10 +1310,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             out_line += "\n";
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
-            if (is_gas_source(cu.source) || is_nasm_source(cu.source)) {
+            if (is_gas_source(cu) || is_nasm_source(cu)) {
                 if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
                     out_line += "  unit_asmflags =" + flags + "\n";
-            } else if (is_c_source(cu.source)) {
+            } else if (is_c_source(cu)) {
                 if (auto flags = join_flags(cu.packageCflags); !flags.empty())
                     out_line += "  unit_cflags =" + flags + "\n";
             } else {

@@ -763,17 +763,28 @@ std::expected<void, std::string> run_build_program(
     // whole build hangs with no diagnostic at all.
     mcpp::ui::info("build.mcpp", "running");
     bool timedOut = false;
+    // The bound comes from THIS package's manifest — a dependency's generator
+    // is bounded by the dependency's own declaration, because its author is
+    // the one who knows how long it takes.
+    const auto deadline =
+        dirs::run_timeout_for(m.buildConfig.buildProgramTimeoutSecs);
     auto rres = mcpp::platform::process::capture_exec_deadline(
-        {bin.string()}, childEnv, dirs::run_timeout(), &timedOut, root.string());
+        {bin.string()}, childEnv, deadline, &timedOut, root.string());
     if (timedOut) {
+        // Name the manifest to edit. Without this the user edits their OWN
+        // mcpp.toml when a dependency's build program is what timed out, and
+        // nothing changes — which is how issue #410 reads from the outside.
+        auto ownManifest = (root / "mcpp.toml").string();
         return std::unexpected(std::format(
             "build.mcpp for '{}' exceeded its {}s time limit and was killed.\n"
-            "       Raise or disable it with MCPP_BUILD_PROGRAM_TIMEOUT=<seconds> "
-            "(0 = no limit).\n"
+            "       Raise it in that package's own manifest:\n"
+            "         {}   ->  [build] build_program_timeout = <seconds>\n"
+            "       Or for this invocation only:\n"
+            "         MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>   (0 = no limit)\n"
             "       Output so far:\n{}",
             m.package.name.empty() ? std::string("<unnamed package>")
                                    : m.package.name,
-            dirs::run_timeout().count() / 1000, rres.output));
+            deadline.count() / 1000, ownManifest, rres.output));
     }
     if (rres.exit_code != 0) {
         return std::unexpected(std::format(
