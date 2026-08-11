@@ -46,10 +46,11 @@ import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.lockfile;
 import mcpp.config;
-import mcpp.xlings;
-import mcpp.xlings.subos_info;
-import mcpp.xlings.runtime_selection;
+import mcpp.platform.xlings;
+import mcpp.platform.xlings.subos_info;
+import mcpp.platform.xlings.runtime_selection;
 import mcpp.platform.runtime_binding;
+import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
 import mcpp.fetcher;
@@ -1293,6 +1294,12 @@ prepare_build(bool print_fingerprint,
             runtimeSelection, {}, **cfgRuntime);
         if (!resolved) return std::unexpected(resolved.error());
         runtimeBindingSnapshot = std::move(*resolved);
+        // A degradation that nobody prints is indistinguishable from no
+        // degradation, which is the failure this whole area keeps paying for.
+        // A note is not a warning: nothing is wrong with the build, some facts
+        // are simply unavailable — so it is reported once, at info level.
+        if (!runtimeBindingSnapshot.note.empty())
+            mcpp::ui::info("Runtime", runtimeBindingSnapshot.note);
     }
     const auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
     const auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
@@ -6394,12 +6401,29 @@ prepare_build(bool print_fingerprint,
         const bool macho = triple.find("darwin") != std::string::npos
                         || triple.find("apple") != std::string::npos;
         std::string format = pe ? "pe" : macho ? "macho" : "elf";
+        // The ORDERED run-time search closure with provenance. Order is
+        // semantics here, not presentation: it is what the loader will walk,
+        // and the mutable SubOS farm sitting last is the invariant that keeps
+        // libc resolving from the pinned payload. Recorded so "why does my GL
+        // program find its driver" is answerable without readelf, and so a
+        // regression in the ordering is visible to CI and to `mcpp why`.
+        nlohmann::json closure = nlohmann::json::array();
+        for (auto const& dir : ctx.plan.runtimeSearch) {
+            closure.push_back({
+                {"path", dir.path.generic_string()},
+                {"origin", std::string(
+                    mcpp::platform::search::to_string(dir.origin))},
+                {"machine_local",
+                    mcpp::platform::search::is_machine_local(dir.origin)},
+            });
+        }
         nlohmann::json search = {
             {"format", format},
             {"link_library", pe ? "libpath" : "library_path"},
             {"transitive_needed", format == "elf" ? "rpath_link" : "none"},
             {"runtime", format == "pe" ? "deploy"
                          : format == "macho" ? "loader_rpath" : "runpath"},
+            {"closure", closure},
         };
         j["runtime"] = {
             {"library_dirs", dirs},
