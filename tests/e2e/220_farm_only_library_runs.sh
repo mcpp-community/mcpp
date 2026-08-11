@@ -25,6 +25,87 @@ set -e
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
+# ── half 0: a farm this test OWNS ───────────────────────────────────────────
+#
+# The opportunistic half below can only measure what this machine happens to
+# have installed, and on a CI SubOS that is nothing the payloads do not already
+# provide — so it skips, and the decisive assertion never runs where it matters
+# most. This half builds the condition instead of hoping for it.
+#
+# A project-local named SubOS (`<project>/.mcpp/.xlings/subos/<name>`) is a real
+# SubOS as far as the binding is concerned, and it lives entirely inside this
+# test's temp directory. Nothing shared is written — writing a probe library
+# into the machine's actual SubOS would be the "one test's failure comes from
+# the previous run" defect this suite has already paid for once.
+#
+# `allow_host_libs` is required and is not a workaround: a SubOS with no
+# `subos_info` names no runtime, so mcpp declines payload-first rather than
+# guessing a libc, and the hermeticity check correctly reports the host
+# fallback. The declaration is what says "yes, I meant that".
+mkdir -p "$TMP/ownfarm/src" "$TMP/ownfarm/.mcpp/.xlings/subos/probe/lib"
+cd "$TMP/ownfarm"
+FARM_OWN="$TMP/ownfarm/.mcpp/.xlings/subos/probe/lib"
+
+# The probe library, built by mcpp itself so it matches the toolchain exactly.
+mkdir -p "$TMP/probelib/src"
+cat > "$TMP/probelib/mcpp.toml" <<'EOF'
+[package]
+name = "probelib"
+version = "0.1.0"
+
+[targets.mcppfarmprobe]
+kind = "shared"
+EOF
+cat > "$TMP/probelib/src/probe.cppm" <<'EOF'
+export module probelib.probe;
+export int mcpp_farm_probe() { return 42; }
+EOF
+( cd "$TMP/probelib" && "$MCPP" build > build.log 2>&1 ) || {
+    echo "FAIL: probe library build"; cat "$TMP/probelib/build.log"; exit 1; }
+PROBE_SO="$(ls "$TMP"/probelib/target/*/*/bin/libmcppfarmprobe.so | head -1)"
+[[ -n "$PROBE_SO" ]] || { echo "FAIL: no probe .so"; ls -R "$TMP/probelib/target" | head -20; exit 1; }
+cp "$PROBE_SO" "$FARM_OWN/libmcppfarmprobe.so"
+
+cat > mcpp.toml <<EOF
+[package]
+name = "ownfarm"
+version = "0.1.0"
+
+[xlings]
+subos = "probe"
+
+[build]
+allow_host_libs = true
+ldflags = ["-Wl,--no-as-needed", "-L$FARM_OWN", "-lmcppfarmprobe", "-Wl,--as-needed"]
+EOF
+echo 'int main() { return 0; }' > src/main.cpp
+"$MCPP" build > build.log 2>&1 || {
+    echo "FAIL: build against a SubOS-provided library"; cat build.log; exit 1; }
+
+OWN_BIN="$(ls target/*/*/bin/ownfarm | head -1)"
+[[ -n "$OWN_BIN" ]] || { echo "FAIL: no artifact"; exit 1; }
+
+# The library exists ONLY under the SubOS view. `-L` got it linked; only the
+# farm entry in DT_RPATH can get it loaded — nothing else on the search path
+# has ever heard of it.
+"$OWN_BIN"
+rc=$?
+[[ $rc -eq 0 ]] || {
+    echo "FAIL: an artifact could not load a library its own SubOS provides (exit $rc)"
+    echo "      farm: $FARM_OWN"
+    echo "      This is the run-time half of the closure: the SubOS is the"
+    echo "      sysroot at link time and must be on the search path at load time."
+    exit 1
+}
+echo "ran: exit 0 against a library only this SubOS provides"
+# Measured against the previous release (2026.8.10.3) this half fails at the
+# BINDING — an undeclared SubOS was a hard error there — so it exercises both
+# halves of this change together rather than isolating the farm. The half below
+# isolates the farm alone, when the machine has a populated SubOS to isolate it
+# with; on the machine this was written on, `-lEGL` linked and exited 127 before
+# the change and exits 0 after.
+cd "$TMP"
+
 # ── find a library only the farm provides ───────────────────────────────────
 #
 # Derived from the recorded closure rather than hardcoded to libGL: CI SubOSes
