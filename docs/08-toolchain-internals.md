@@ -225,7 +225,24 @@ so reported "resolved" for binaries that exited 127.
 The closure is recorded in `resolution.json` under `runtime.search.closure` and
 printed by `mcpp why runtime`. A `DT_NEEDED` that nothing on a hermetic
 artifact's path can satisfy is a **proven** failure (`unresolvable`), not an
-inconclusive one, and it fails the build.
+inconclusive one, and it fails the build. Measured with `LD_DEBUG=libs`: the
+private loader's built-in default path is the glibc payload's own *build-time*
+prefix, a directory that does not exist on the machine — `/usr/lib` is never
+consulted.
+
+Three things narrow that proof, and each of them is a case where mcpp knows less
+than the wording suggests:
+
+- **The artifact's format decides, not the binding's.** A cross build runs with
+  this host's binding while producing a PE or Mach-O. ELF rules do not apply to
+  the artifact whatever the binding says.
+- **Only an unfindable SONAME proves anything.** "I could not read this object"
+  and "I stopped after 512 objects" are statements about the *check*; a check
+  that could not look has proven nothing, so those stay inconclusive.
+- **`[build] allow_host_libs` opts out of both phases.** It already switches off
+  the link-time hermeticity check; once resolution is the user's responsibility
+  mcpp reports rather than blocks, because they may run under `LD_LIBRARY_PATH`
+  or on a machine where the library sits where the private loader looks.
 
 mcpp also declares `XLINGS_SUBOS_LD_PATHS=0` for every process it spawns. That
 is the opt-out from xlings' linker-wrapper path injection

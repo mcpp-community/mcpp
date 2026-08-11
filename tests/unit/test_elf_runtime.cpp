@@ -288,6 +288,7 @@ TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
     r.artifact.interp = b.loader->string();
     r.artifact.resolvedLibc = t.path / "store" / "2.39" / "lib64" / "libc.so.6";
@@ -304,6 +305,7 @@ TEST(RuntimePhysics, RuleBAcceptsSameSelectedPayload) {
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app", {"GLIBC_2.39"});
     r.artifact.interp = b.loader->string();
     r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
@@ -319,6 +321,7 @@ TEST(RuntimePhysics, RuleBRejectsTwoLibcsAcrossTheResolvedClosure) {
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
     r.artifact.interp = b.loader->string();
     r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
@@ -339,6 +342,7 @@ TEST(RuntimePhysics, RuleARejectsRequiredFloorAboveSelectedLibcExports) {
     Tmp t;
     auto b = binding_for(t.path / "store", "2.39");
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
     r.artifact.interp = b.loader->string();
     r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
@@ -357,6 +361,7 @@ TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
     r.artifact.interp = b.loader->string();
     r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
@@ -382,16 +387,100 @@ TEST(RuntimePhysics, UnresolvedNeededUnderHermeticBindingIsProven) {
     auto b = binding_for(t.path / "store");
     ASSERT_TRUE(b.hermetic()) << "this test's premise is a private loader";
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
     r.artifact.interp = b.loader->string();
     r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
     r.unresolved = {"libgpu-driver.so"};
+    r.unresolvedSonames = {"libgpu-driver.so"};   // a NEEDED nothing provides
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
     EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Unresolvable);
     EXPECT_TRUE(verdict.blocking())
         << "a proven-unstartable artifact must fail the build, not warn";
     EXPECT_NE(verdict.explain().find("libgpu-driver.so"), std::string::npos);
+}
+
+// `allow_host_libs` opts out of BOTH phases, or it means two different things.
+//
+// It already switches off the link-time hermeticity check. Once the user has
+// declared that this build reaches outside the sandbox, mcpp cannot also claim
+// the artifact is unstartable — they may run it under LD_LIBRARY_PATH, or where
+// the library is installed somewhere the private loader does look. It reports;
+// it does not block. (Without this, e2e 206's deliberate host-DSO control
+// failed its own build.)
+TEST(RuntimePhysics, AllowHostLibsDowngradesTheProofToAReport) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto b = binding_for(t.path / "store");
+    elf::RuntimeResolution r;
+    r.artifactIsElf = true;
+    r.artifact = facts(t.path / "app");
+    r.artifact.interp = b.loader->string();
+    r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
+    r.unresolved = {"libtinfo.so.6"};
+    r.unresolvedSonames = {"libtinfo.so.6"};
+
+    auto blocked = elf::validate_runtime_artifact(r.artifact.artifact, b, r,
+                                                  /*hostLibsAllowed=*/false);
+    EXPECT_EQ(blocked.status, elf::RuntimeVerdict::Status::Unresolvable);
+    EXPECT_TRUE(blocked.blocking());
+
+    auto reported = elf::validate_runtime_artifact(r.artifact.artifact, b, r,
+                                                   /*hostLibsAllowed=*/true);
+    EXPECT_EQ(reported.status, elf::RuntimeVerdict::Status::Inconclusive);
+    EXPECT_FALSE(reported.blocking());
+    EXPECT_NE(reported.explain().find("libtinfo.so.6"), std::string::npos);
+    EXPECT_NE(reported.explain().find("allow_host_libs"), std::string::npos)
+        << "a downgraded verdict must say what downgraded it";
+}
+
+// THE ARTIFACT'S FORMAT DECIDES, NOT THE BINDING'S.
+//
+// A Linux→Windows cross build runs with the HOST's binding — Linux, glibc, a
+// private loader, therefore hermetic — while producing a PE. The parse failure
+// ("not an ELF file") landed in `unresolved`, and the artifact was failed for a
+// missing shared library it could not possibly have. CI caught it; this pins it.
+TEST(RuntimePhysics, CrossBuiltNonElfArtifactIsNotJudgedByElfRules) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto b = binding_for(t.path / "store");
+    ASSERT_TRUE(b.hermetic());
+    elf::RuntimeResolution r;
+    r.artifactIsElf = true;
+    r.artifact = facts(t.path / "crosswin.exe");
+    r.artifactIsElf = false;                       // what the PE walk produces
+    r.unresolved = {"artifact 'crosswin.exe' is not ELF"};
+    // and crucially NO unresolvedSonames — nothing was ever looked for.
+
+    auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
+    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Pass);
+    EXPECT_FALSE(verdict.blocking());
+    EXPECT_NE(verdict.explain().find("not ELF"), std::string::npos);
+}
+
+// The narrower half of the same conflation. Even on a genuine ELF, "I could not
+// read one of the objects" or "I stopped after 512" are statements about the
+// CHECK — a check that could not look has proven nothing, so it stays
+// inconclusive no matter how hermetic the binding is.
+TEST(RuntimePhysics, UnreadableObjectIsInconclusiveEvenWhenHermetic) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto b = binding_for(t.path / "store");
+    elf::RuntimeResolution r;
+    r.artifactIsElf = true;
+    r.artifact = facts(t.path / "app");
+    r.artifact.interp = b.loader->string();
+    r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
+    r.unresolved = {"libweird.so.1 (truncated ELF header)"};   // read, not missing
+    // no unresolvedSonames: it WAS found, it just could not be parsed
+
+    auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
+    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Inconclusive);
+    EXPECT_FALSE(verdict.blocking());
 }
 
 // The other side of the same line. Without a private loader the artifact runs
@@ -406,6 +495,7 @@ TEST(RuntimePhysics, UnresolvedNeededWithoutAPrivateLoaderStaysInconclusive) {
     b.loader.reset();                       // host runtime: gcc@system and friends
     ASSERT_FALSE(b.hermetic());
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
     r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
     r.unresolved = {"libgpu-driver.so"};
@@ -429,6 +519,7 @@ TEST(RuntimePhysics, UndeclaredBindingIsInconclusiveNotNotApplicable) {
     b.runtimeId.clear();
     b.loader.reset();
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
@@ -443,6 +534,7 @@ TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
+    r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
     r.artifact.interp = "/deliberately/mismatched/loader";
     r.unresolved = {"libgpu-driver.so"};

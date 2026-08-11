@@ -47,6 +47,22 @@
   现在宿主默认目录只在**非 hermetic** binding 下参与;hermetic 产物上一个谁都提供
   不了的 `DT_NEEDED` 是**可证的**失败(新判决 `unresolvable`),会让构建变红并指名。
 
+  实测佐证(`LD_DEBUG=libs`):私有加载器的内建默认路径是 glibc 载荷**自己的构建期
+  前缀**(`…/fromsource-x-glibc/2.39/lib`),这台机器上根本不存在;`/usr/lib` **从不**
+  被查。因此 e2e `206` 里那条「安全的宿主 DSO 对照」此前报 `pass` 也是假绿 —— 它
+  刻意不运行产物,而产物其实 127。已改为断言 `inconclusive` 并说明原因。
+
+  **`[build] allow_host_libs` 同时退出两个阶段。** 它本就关掉链接期 hermeticity 检查;
+  既然用户已声明「我有意伸到沙箱外」,mcpp 就不能再断言产物起不来(他们可能用
+  `LD_LIBRARY_PATH` 跑,或装在私有加载器会看的地方)。⇒ 该档下未解析的 `NEEDED`
+  报 `inconclusive` 并指名,而不是变红。一条声明,一个含义。
+
+  另两处精度修正(CI 抓到的):`unresolved` 此前混装三种东西 ——「找不到的 SONAME」
+  「读不了的对象」「512 上限」。只有第一种可证,故拆出 `unresolvedSonames`;
+  且**产物的格式由产物决定,不由 binding 决定** —— Linux→Windows 交叉构建拿的是宿主
+  binding(hermetic),产物却是 PE,「不是 ELF」落进 `unresolved` 后被判成「缺库」,
+  让 `crosswin.exe` 构建失败。
+
 ### 变更
 
 - xlings 强相关模块归入 `src/platform/xlings/`:`mcpp.platform.xlings`、

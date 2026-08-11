@@ -185,7 +185,19 @@ farm 在前的话,一次 `xlings install` 就能在事后悄悄换掉一个**已
 
 闭包记录在 `resolution.json` 的 `runtime.search.closure`,并由 `mcpp why runtime`
 打印。hermetic 产物上一个谁都提供不了的 `DT_NEEDED` 是**可证的**失败
-(`unresolvable`),不是「没查过」,它会让构建变红。
+(`unresolvable`),不是「没查过」,它会让构建变红。`LD_DEBUG=libs` 实测:私有加载器的
+内建默认路径是 glibc 载荷**自己的构建期前缀**,该目录在本机并不存在 —— `/usr/lib`
+从不被查。
+
+有三件事收窄这个「可证」,每一件都是 mcpp 知道的比措辞暗示的少:
+
+- **产物的格式由产物决定,不由 binding 决定。** 交叉构建用的是本宿主的 binding,
+  产物却是 PE / Mach-O;无论 binding 怎么说,ELF 规则都不适用于它。
+- **只有「找不到的 SONAME」能证明什么。**「这个对象读不了」「我在 512 个之后停了」
+  都是关于**检查**的陈述;没能看的检查什么都没证明,故仍报 inconclusive。
+- **`[build] allow_host_libs` 同时退出两个阶段。** 它本就关掉链接期 hermeticity 检查;
+  既然解析责任已归用户,mcpp 就只报告不阻断 —— 他们可能用 `LD_LIBRARY_PATH` 跑,
+  或装在私有加载器确实会看的地方。
 
 mcpp 还会给它启动的每个进程声明 `XLINGS_SUBOS_LD_PATHS=0` —— 这是 xlings 链接器
 包装器路径注入的退出声明(openxlings/xlings#540):mcpp 要它的

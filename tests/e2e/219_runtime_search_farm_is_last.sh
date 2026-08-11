@@ -148,12 +148,24 @@ PY
 echo "DT_RPATH: $DT_RPATH"
 [[ -n "$DT_RPATH" ]] || { echo "FAIL: executable carries no DT_RPATH"; exit 1; }
 
-RPATH_LAST="${DT_RPATH##*:}"
-[[ "$RPATH_LAST" == "$FARM" ]] || {
-    echo "FAIL: DT_RPATH does not end with the farm"
-    echo "      recorded farm: $FARM"
-    echo "      DT_RPATH last: $RPATH_LAST"
-    echo "      full:          $DT_RPATH"
+# The farm must be the last ABSOLUTE entry — not literally the last entry.
+#
+# `$ORIGIN`-relative entries are a different kind: they address the artifact's
+# own directory, not this machine, so they travel with it and their position
+# says nothing about which machine-local directory wins. A project with a shared
+# library dependency gets one appended after everything else, and an assertion
+# of "literally last" would fail on every such project while the invariant it
+# meant to check still held. (Measured on a real GLFW app, whose DT_RPATH ends
+# `… : <subos>/lib : $ORIGIN`.)
+RPATH_LAST_ABS="$(python3 -c "
+p = [x for x in '''$DT_RPATH'''.split(':') if x.startswith('/')]
+print(p[-1] if p else '')
+")"
+[[ "$RPATH_LAST_ABS" == "$FARM" ]] || {
+    echo "FAIL: the farm is not the last absolute entry of DT_RPATH"
+    echo "      recorded farm:      $FARM"
+    echo "      last absolute entry: $RPATH_LAST_ABS"
+    echo "      full:               $DT_RPATH"
     exit 1
 }
 

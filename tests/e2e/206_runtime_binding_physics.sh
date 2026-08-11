@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # requires: elf gcc
 # 206_runtime_binding_physics.sh — a selected RuntimeBinding must become the
-# physical PT_INTERP/libc pair, and a host DSO whose GLIBC floor is satisfiable
-# must remain a supported control. Proven mismatches fail at link completion;
-# hot no-ops neither relink nor rewrite/re-probe the stored verdict.
+# physical PT_INTERP/libc pair, and a host DSO linked under `allow_host_libs`
+# must still BUILD (the declaration is honoured) while being reported honestly
+# (the private loader does not consult /usr/lib). Proven mismatches fail at link
+# completion; hot no-ops neither relink nor rewrite/re-probe the stored verdict.
 set -euo pipefail
 
 TMP=$(mktemp -d)
@@ -45,8 +46,36 @@ verdict="$output_dir/.mcpp-runtime-verdicts.json"
 [[ -x "$artifact" && -f "$verdict" ]] || fail "artifact/verdict missing"
 readelf -d "$artifact" | grep -q 'libtinfo\.so' \
     || fail "safe control did not retain host libtinfo in DT_NEEDED"
-[[ $(jq -r '.artifacts["bin/runtime-physics-safe"].status' "$verdict") == pass ]] \
-    || { cat "$verdict"; fail "safe host-DSO closure did not pass"; }
+
+# INCONCLUSIVE, not pass — and the change from `pass` is a correction, not a
+# relaxation.
+#
+# This artifact links a HOST libtinfo while carrying a PRIVATE PT_INTERP, and
+# measured with LD_DEBUG=libs the private loader's built-in default path is the
+# glibc payload's own build-time prefix (`…/fromsource-x-glibc/2.39/lib`) — a
+# directory that does not exist on this machine. /usr/lib is never consulted,
+# and the binary exits 127 with "libtinfo.so.6: cannot open shared object file".
+#
+# It used to report `pass` because the closure model fell back to the HOST's
+# default directories, where libtinfo of course is. The model was describing a
+# loader the artifact does not use — the same defect that shipped a GL program
+# as `validation: pass` while it exited 127. This file's own header note
+# ("execution is not part of this link-physics control") is what let the false
+# green stand: nothing ever ran it.
+#
+# `allow_host_libs` is still honoured, and that is the point of the state: the
+# user declared they are reaching outside the sandbox, so mcpp REPORTS rather
+# than blocks — resolution at run time (LD_LIBRARY_PATH, or installing where the
+# private loader looks) is theirs to arrange.
+status=$(jq -r '.artifacts["bin/runtime-physics-safe"].status' "$verdict")
+[[ "$status" == inconclusive ]] \
+    || { cat "$verdict"; fail "host-DSO closure status is '$status', expected inconclusive"; }
+jq -r '.artifacts["bin/runtime-physics-safe"].diagnostics[]' "$verdict" \
+    | grep -q 'libtinfo\.so\.6' \
+    || { cat "$verdict"; fail "the verdict does not name the library it could not resolve"; }
+jq -r '.artifacts["bin/runtime-physics-safe"].diagnostics[]' "$verdict" \
+    | grep -q 'allow_host_libs' \
+    || { cat "$verdict"; fail "the verdict does not say why it stopped short of a proof"; }
 
 artifact_before=$(stat -c '%y:%s' "$artifact")
 verdict_before=$(stat -c '%y:%s' "$verdict")
@@ -59,8 +88,8 @@ noop_out=$($MCPP build 2>&1) || { echo "$noop_out"; fail "hot no-op build"; }
 doctor_out=$($MCPP self doctor 2>&1 || true)
 grep -q 'last runtime closure verdict' <<<"$doctor_out" \
     || { echo "$doctor_out"; fail "doctor omitted stored runtime verdict"; }
-grep -q 'runtime-physics-safe.*pass' <<<"$doctor_out" \
-    || { echo "$doctor_out"; fail "doctor did not reuse passing verdict"; }
+grep -q 'runtime-physics-safe.*inconclusive' <<<"$doctor_out" \
+    || { echo "$doctor_out"; fail "doctor did not reuse the stored verdict"; }
 
 # Force form-X into a proven Rule-B mismatch: mcpp still supplies the selected
 # private libc RUNPATH, while the final user flag replaces PT_INTERP with the

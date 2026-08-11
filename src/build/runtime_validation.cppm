@@ -159,6 +159,18 @@ std::string status_name(mcpp::platform::elf::RuntimeVerdict::Status status) {
     return "inconclusive";
 }
 
+// Did this build declare that it reaches outside the sandbox?
+//
+// Spelled here exactly as `mcpp.build.hermetic` spells it — manifest key OR
+// environment variable — because the two checks must agree. A build whose link
+// was allowed to resolve host libraries and whose closure was then judged as if
+// it had not is the worst of both: it links, and mcpp calls it broken.
+bool host_libs_allowed(const mcpp::build::BuildPlan& plan) {
+    if (plan.manifest.buildConfig.allowHostLibs) return true;
+    const char* e = std::getenv("MCPP_ALLOW_HOST_LIBS");
+    return e && *e && *e != '0';
+}
+
 // How bad each state is, for rolling many artifacts into one summary.
 // `Unresolvable` sits above `Inconclusive` (it is proven, not unknown) and
 // below `ProvenMismatch` (mixing payloads is the more fundamental error, and
@@ -406,8 +418,12 @@ ValidationReport validate_changed_artifacts(
         validated.artifact = artifact;
         auto resolution = mcpp::platform::elf::resolve_runtime_closure(
             artifact, plan.runtimeBinding, searchDirs);
+        // The SAME opt-out the link-time hermeticity check honours, read the
+        // same way (manifest key or environment). A build that declared it is
+        // reaching outside the sandbox on purpose has taken responsibility for
+        // run-time resolution, so mcpp reports rather than blocks.
         validated.verdict = mcpp::platform::elf::validate_runtime_artifact(
-            artifact, plan.runtimeBinding, resolution);
+            artifact, plan.runtimeBinding, resolution, host_libs_allowed(plan));
         store_artifact(doc, key, fp, validated);
         changedCache = true;
         report.artifacts.push_back(std::move(validated));
