@@ -582,11 +582,15 @@ struct BoundedOutcome {
     std::string output;
 };
 
+// `capture == false` runs the child on the caller's stdio: live output, and a
+// real terminal for anything that checks. `run_exec_deadline` needs that; the
+// capturing variants need the pipe.
 BoundedOutcome dispatch_bounded(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
     std::string_view cwd,
-    std::chrono::milliseconds deadline)
+    std::chrono::milliseconds deadline,
+    bool capture)
 {
     BoundedOutcome outcome;
 
@@ -603,10 +607,14 @@ BoundedOutcome dispatch_bounded(
     const char* cwdArg = cwdStore.empty() ? nullptr : cwdStore.c_str();
     const auto ms = static_cast<long long>(deadline.count());
 
-    // One sink for both, appending into the outcome's own buffer.
-    const auto sink = +[](void* ctx, const char* data, unsigned long len) {
-        static_cast<std::string*>(ctx)->append(data, len);
-    };
+    // One sink for both, appending into the outcome's own buffer. Null when the
+    // caller wants the child on its own stdio.
+    using Sink = void (*)(void*, const char*, unsigned long);
+    const Sink sink = capture
+        ? +[](void* ctx, const char* data, unsigned long len) {
+              static_cast<std::string*>(ctx)->append(data, len);
+          }
+        : nullptr;
 
     if constexpr (mcpp::platform::is_windows) {
         const auto cmd = windows_command_from_argv(argv);
@@ -639,12 +647,13 @@ int run_exec_deadline(const std::vector<std::string>& argv,
     if (deadline.count() <= 0) return run_exec(argv, extraEnv);
     if (argv.empty()) return 127;
 
-    auto r = dispatch_bounded(argv, extraEnv, {}, deadline);
+    // capture=false: identical stdio behaviour to `run_exec` — the child writes
+    // straight to our terminal as it goes. `mcpp test`'s non-JSON path runs
+    // test binaries through here, and buffering their output until exit would
+    // undo the observability work that path exists for (and would hide gtest's
+    // colors by making its stdout a pipe).
+    auto r = dispatch_bounded(argv, extraEnv, {}, deadline, /*capture=*/false);
     if (!r.supported) return run_exec(argv, extraEnv);
-    // `run_exec` streams to the terminal; the bounded launchers capture. The
-    // output is replayed here rather than dropped — a bounded run that must
-    // ALSO stream live has no implementation and, today, no caller.
-    if (!r.output.empty()) std::fputs(r.output.c_str(), stdout);
     if (timed_out) *timed_out = r.timed_out;
     return r.exit_code;
 }
@@ -661,7 +670,7 @@ RunResult capture_exec_deadline(
     RunResult result;
     if (argv.empty()) { result.exit_code = 127; return result; }
 
-    auto r = dispatch_bounded(argv, extraEnv, cwd, deadline);
+    auto r = dispatch_bounded(argv, extraEnv, cwd, deadline, /*capture=*/true);
     // `supported == false` means the child COULD NOT BE SPAWNED — not that it
     // ran and failed. Reporting those the same way would hide a launcher
     // problem behind a child's exit code, so fall back to the untimed path and

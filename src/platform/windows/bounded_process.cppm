@@ -76,6 +76,12 @@ struct DeadlineRun {
 };
 
 // Receives stdout+stderr as it arrives. Called on the calling thread only.
+//
+// A NULL sink means "do not capture": the child inherits the caller's stdio and
+// is still bounded. Same contract as the POSIX peer, and for the same reason —
+// an uncaptured bounded run (`run_exec_deadline`) must keep its output LIVE and
+// keep the child's stdout a console, or console-detecting children drop their
+// colors and every line waits for exit.
 using OutputSink = void (*)(void* ctx, const char* data, unsigned long len);
 
 // `commandLine` is already quoted for CreateProcess (callers pass the output
@@ -176,16 +182,20 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
     DeadlineRun out;
     if (deadlineMs <= 0 || !commandLine || !*commandLine) return out;
 
+    const bool capture = (sink != nullptr);
+
     SECURITY_ATTRIBUTES sa{};
     sa.nLength        = sizeof(sa);
     sa.bInheritHandle = TRUE;
 
     Handle readEnd, writeEnd;
-    if (!::CreatePipe(&readEnd.h, &writeEnd.h, &sa, 0)) return out;
-    // Only the WRITE end may cross into the child. An inheritable read end
-    // there would keep the pipe alive past the child's exit and the drain
-    // below would never see EOF.
-    if (!::SetHandleInformation(readEnd.h, HANDLE_FLAG_INHERIT, 0)) return out;
+    if (capture) {
+        if (!::CreatePipe(&readEnd.h, &writeEnd.h, &sa, 0)) return out;
+        // Only the WRITE end may cross into the child. An inheritable read end
+        // there would keep the pipe alive past the child's exit and the drain
+        // below would never see EOF.
+        if (!::SetHandleInformation(readEnd.h, HANDLE_FLAG_INHERIT, 0)) return out;
+    }
 
     Handle job;
     job.h = ::CreateJobObjectA(nullptr, nullptr);
@@ -198,11 +208,14 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
     }
 
     STARTUPINFOA si{};
-    si.cb         = sizeof(si);
-    si.dwFlags    = STARTF_USESTDHANDLES;
-    si.hStdOutput = writeEnd.h;
-    si.hStdError  = writeEnd.h;
-    si.hStdInput  = ::GetStdHandle(STD_INPUT_HANDLE);
+    si.cb = sizeof(si);
+    if (capture) {
+        si.dwFlags    = STARTF_USESTDHANDLES;
+        si.hStdOutput = writeEnd.h;
+        si.hStdError  = writeEnd.h;
+        si.hStdInput  = ::GetStdHandle(STD_INPUT_HANDLE);
+    }
+    // else: no STARTF_USESTDHANDLES — the child inherits our console.
 
     PROCESS_INFORMATION pi{};
     std::string cmdBuf(commandLine);        // CreateProcessA may modify it
@@ -210,9 +223,12 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
 
     // CREATE_SUSPENDED so the child joins the job BEFORE it can spawn
     // anything — a grandchild created in that gap would escape the kill.
+    // CREATE_NO_WINDOW only when capturing: an uncaptured run is meant to be
+    // seen, and suppressing the console for it would hide the output this
+    // branch exists to show.
     BOOL ok = ::CreateProcessA(
         nullptr, cmdBuf.data(), nullptr, nullptr, /*bInheritHandles=*/TRUE,
-        CREATE_SUSPENDED | CREATE_NO_WINDOW,
+        CREATE_SUSPENDED | (capture ? CREATE_NO_WINDOW : 0u),
         envBlock.data(),
         (cwd && *cwd) ? cwd : nullptr,
         &si, &pi);
@@ -233,6 +249,7 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
     bool killed = false;
 
     auto drain_available = [&]() -> bool {
+        if (!capture) return false;
         DWORD avail = 0;
         if (!::PeekNamedPipe(readEnd.h, nullptr, 0, nullptr, &avail, nullptr))
             return false;

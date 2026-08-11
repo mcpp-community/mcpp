@@ -72,8 +72,12 @@ using OutputSink = void (*)(void* ctx, const char* data, unsigned long len);
 // `cwd` may be null. A non-positive `deadlineMs` is rejected with
 // supported=false: "no bound" belongs on the caller's untimed path.
 //
-// When `sink` is null the output is discarded but the child is still bounded —
-// that is the `run_exec_deadline` shape.
+// A NULL `sink` means "do not capture": the child INHERITS the caller's stdio
+// and is still bounded. That is not an optimization — it is the
+// `run_exec_deadline` contract. Routing an uncaptured run through a pipe would
+// (a) delay every line until the child exits, which is the opposite of what a
+// bounded `mcpp test` run is for, and (b) make the child's stdout a pipe
+// rather than a terminal, so gtest and friends silently drop their colors.
 DeadlineRun capture_with_deadline(const char* const* argvEntries,
                                   unsigned long      argvCount,
                                   const char* const* envEntries,
@@ -149,8 +153,9 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
         cargv.push_back(const_cast<char*>(argvEntries[i]));
     cargv.push_back(nullptr);
 
-    int fds[2];
-    if (::pipe(fds) != 0) return out;
+    const bool capture = (sink != nullptr);
+    int fds[2] = {-1, -1};
+    if (capture && ::pipe(fds) != 0) return out;
 
     posix_spawn_file_actions_t fa;
     ::posix_spawn_file_actions_init(&fa);
@@ -159,21 +164,26 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
     // silently move where a build program's relative writes go.
     if (cwd && *cwd)
         ::posix_spawn_file_actions_addchdir_np(&fa, cwd);
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);
-    ::posix_spawn_file_actions_addclose(&fa, fds[0]);
-    ::posix_spawn_file_actions_addclose(&fa, fds[1]);
+    if (capture) {
+        ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);
+        ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);
+        ::posix_spawn_file_actions_addclose(&fa, fds[0]);
+        ::posix_spawn_file_actions_addclose(&fa, fds[1]);
+    }
+    // else: no file actions for stdio at all — the child inherits ours, which
+    // keeps its output live AND keeps it a terminal.
 
     pid_t pid = 0;
     int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
     ::posix_spawn_file_actions_destroy(&fa);
-    ::close(fds[1]);
-    if (sp != 0) { ::close(fds[0]); return out; }
+    if (capture) ::close(fds[1]);
+    if (sp != 0) { if (capture) ::close(fds[0]); return out; }
 
     // Non-blocking reads so the deadline is still checked while the child is
     // quiet. A blocking read on a silent, hung child is exactly the hang this
     // whole mechanism exists to stop.
-    ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL, 0) | O_NONBLOCK);
+    if (capture)
+        ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL, 0) | O_NONBLOCK);
 
     const auto until = std::chrono::steady_clock::now()
                      + std::chrono::milliseconds(deadlineMs);
@@ -181,22 +191,23 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
     bool  killed = false;
     int   status = 0;
 
-    for (;;) {
+    auto drain = [&]() -> bool {
+        if (!capture) return false;
         ssize_t n;
-        bool drained = false;
+        bool any = false;
         while ((n = ::read(fds[0], buf.data(), buf.size())) > 0) {
-            if (sink) sink(ctx, buf.data(),
-                           static_cast<unsigned long>(n));
-            drained = true;
+            sink(ctx, buf.data(), static_cast<unsigned long>(n));
+            any = true;
         }
-        if (drained) continue;
+        return any;
+    };
+
+    for (;;) {
+        if (drain()) continue;
 
         pid_t r = ::waitpid(pid, &status, WNOHANG);
         if (r == pid) {
-            // Drain the tail: the child is gone, so this terminates.
-            while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
-                if (sink) sink(ctx, buf.data(),
-                               static_cast<unsigned long>(n));
+            while (drain()) { /* tail — the child is gone, so this ends */ }
             break;
         }
         if (r < 0 && errno != EINTR && errno != ECHILD) break;
@@ -209,7 +220,7 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
         struct timespec ts{0, 20'000'000};   // 20ms
         ::nanosleep(&ts, nullptr);
     }
-    ::close(fds[0]);
+    if (capture) ::close(fds[0]);
 
     out.exit_code = normalize_status(status);
     out.timed_out = killed;
