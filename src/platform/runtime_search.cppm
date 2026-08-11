@@ -117,14 +117,6 @@ std::string_view to_string(Origin origin) {
     return "unknown";
 }
 
-std::optional<Origin> parse_origin(std::string_view value) {
-    if (value == "payload")      return Origin::Payload;
-    if (value == "package")      return Origin::Package;
-    if (value == "subos_farm")   return Origin::SubosFarm;
-    if (value == "host_default") return Origin::HostDefault;
-    return std::nullopt;
-}
-
 struct Dir {
     std::filesystem::path path;
     Origin origin = Origin::Payload;
@@ -167,15 +159,6 @@ std::vector<Dir> ordered(std::vector<Dir> dirs) {
     }
     std::ranges::stable_sort(merged, {}, [](Dir const& d) { return rank(d.origin); });
     return merged;
-}
-
-// Just the paths, in contract order — for the callers that render a flag or
-// walk a search path and have no use for the provenance.
-std::vector<std::filesystem::path> paths_of(std::span<const Dir> dirs) {
-    std::vector<std::filesystem::path> out;
-    out.reserve(dirs.size());
-    for (auto const& dir : dirs) out.push_back(dir.path);
-    return out;
 }
 
 // The declarative exit from xlings' linker wrapper (openxlings/xlings#540).

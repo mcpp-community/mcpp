@@ -37,14 +37,15 @@ TEST(RuntimeSearch, MachineLocalIsEverythingButTheHostDefaults) {
     EXPECT_FALSE(search::is_machine_local(Origin::HostDefault));
 }
 
-TEST(RuntimeSearch, OriginNamesRoundTrip) {
-    for (auto origin : {Origin::Payload, Origin::Package,
-                        Origin::SubosFarm, Origin::HostDefault}) {
-        auto parsed = search::parse_origin(search::to_string(origin));
-        ASSERT_TRUE(parsed.has_value()) << search::to_string(origin);
-        EXPECT_EQ(*parsed, origin);
-    }
-    EXPECT_FALSE(search::parse_origin("something_else").has_value());
+// These strings are PUBLISHED — they are the `origin` field of every entry in
+// `resolution.json`'s `runtime.search.closure`, which CI, `mcpp why runtime` and
+// e2e 219 all read. Renaming one is a wire-format change, so it is pinned here
+// rather than left to whatever `to_string` happens to say.
+TEST(RuntimeSearch, OriginNamesArePublishedAndStable) {
+    EXPECT_EQ(search::to_string(Origin::Payload),     "payload");
+    EXPECT_EQ(search::to_string(Origin::Package),     "package");
+    EXPECT_EQ(search::to_string(Origin::SubosFarm),   "subos_farm");
+    EXPECT_EQ(search::to_string(Origin::HostDefault), "host_default");
 }
 
 TEST(RuntimeSearch, OrderedSortsByRankNotByInsertion) {
@@ -102,17 +103,6 @@ TEST(RuntimeSearch, OrderedNormalizesAndDropsEmpty) {
     auto out = search::ordered(input);
     ASSERT_EQ(out.size(), 1u);
     EXPECT_EQ(out[0].path, std::filesystem::path("/a/b"));
-}
-
-TEST(RuntimeSearch, PathsOfPreservesContractOrder) {
-    auto out = search::ordered({
-        {"/farm", Origin::SubosFarm},
-        {"/pay",  Origin::Payload},
-    });
-    auto paths = search::paths_of(out);
-    ASSERT_EQ(paths.size(), 2u);
-    EXPECT_EQ(paths[0], std::filesystem::path("/pay"));
-    EXPECT_EQ(paths[1], std::filesystem::path("/farm"));
 }
 
 // The opt-out is a CROSS-REPO name (openxlings/xlings#540). Pinning the
