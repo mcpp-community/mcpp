@@ -6,6 +6,7 @@
 >
 > **实施状态:已完成。** 实施过程中改动本计划的四处,均在对应小节以
 > **【实施修正】** 标出 —— 每一处都是被**实测**推翻的,不是改主意。
+> 落地后 CI 与自查又推翻三处,见 §12。
 
 ---
 
@@ -331,3 +332,65 @@ M1 契约模块 → M2 binding(降级+farm) → M3 闭包判据 → M4 链接期
 
 M2 的降级半边(§2.2)与图形无关,是正在阻塞 Windows 用户的回归 —— 它在同一个 PR 里,
 但**提交上独立成一个 commit**,以便必要时单独 cherry-pick。
+
+---
+
+## 12. 落地后被推翻的三处(CI 与自查)
+
+这一节是这轮最有价值的部分:**每一条都是「可证」被用得太宽**,而这份设计本身
+就是在修同一种病。方向对不代表范围对。
+
+### 12.1 ⚠️ CI 抓到:交叉产出的 PE 被 ELF 规则判死
+
+`mingw-cross linux→windows` 变红:
+
+```
+error: runtime closure validation failed
+runtime closure for …/crosswin.exe cannot be satisfied:
+  artifact '…/crosswin.exe' is not ELF not found on the search path …
+```
+
+三层错误叠在一起,每一层单独看都像对的:
+
+1. binding 是**宿主的**(Linux/glibc/私有加载器 ⇒ `hermetic()` 为真),产物却是 PE。
+   **产物的格式由产物决定,不由 binding 决定。**
+2. `resolution.unresolved` 是个**混装袋**:「找不到的 SONAME」「读不了的对象」
+   「512 上限」同住一个 vector。**只有第一种可证**;后两种是关于**检查本身**的陈述,
+   而没能看的检查什么都没证明。⇒ 拆出 `unresolvedSonames`,升级只看它。
+3. 于是「这不是 ELF」被读成了「你缺一个库」,报给一个连 `DT_NEEDED` 都没有的文件。
+
+### 12.2 ⚠️ CI 抓到:`206` 的「安全宿主 DSO 对照」本来就是假绿
+
+`e2e 206` 断言一个 `allow_host_libs` + `-ltinfo` 的产物 `status == pass`。
+`LD_DEBUG=libs` 实测:
+
+```
+search path=…/xim-x-glibc/2.39/lib64 : …/xim-x-gcc/16.1.0/lib64 : <subos>/lib   (RPATH)
+search path=/home/xlings/.xlings_data/xim/xpkgs/fromsource-x-glibc/2.39/lib      (system search path)
+                                                                                  ↑ 载荷自己的构建期前缀,本机不存在
+./tinfoprobe → libtinfo.so.6: cannot open shared object file  (127)
+```
+
+**私有加载器的内建默认路径是载荷自己的构建期前缀,`/usr/lib` 从不被查。**
+它此前报 pass,只是因为闭包模型回落到宿主目录 —— 与那个被当成 pass 的 GL 程序
+**同一形状,就在 mcpp 自己的测试套件里**。而这份文件自己的注释
+*"execution is not part of this link-physics control"* 正是让这条假绿站住的理由:
+**从来没人运行过它。**
+
+修法不是放回宿主目录,而是让 `[build] allow_host_libs` **同时退出两个阶段**:
+它本就关掉链接期 hermeticity 检查,既然解析责任已归用户,mcpp 就不能再断言产物
+起不来。⇒ 该档下报 `inconclusive` 并指名,不阻断。**一条声明,一个含义。**
+
+### 12.3 自查:三处「模型比产物宽」
+
+| 处 | 问题 | 修法 |
+|---|---|---|
+| `resolve_needed` | 直接读 `binding.searchDirs`,而**护栏在 plan 上** ⇒ 会拿宿主 x86_64 farm 解析 aarch64 产物的 `NEEDED`,报一个目标机不兑现的 pass | 经 `additionalSearchDirs` 从 `plan.runtimeSearch` 取,与发出去的逐条同源 |
+| farm 护栏 | 只看 os + arch。`x86_64-linux-musl` 两者都对,glibc farm 会落到 musl 程序上 | 补 libc 轴。**但「未声明」不等于「不匹配」** —— 第一版这么写,当场让 e2e 220 变红 |
+| `runtime_search.cppm` | `paths_of` / `parse_origin` 在 `src/` 下零消费者 | 删掉。导出面只有测试在撑,就是没有理由存在的导出面 |
+
+### 12.4 一条方法论
+
+> **`unresolved` 这种「混装袋」是这轮所有误判的共同结构。**
+> 一个 vector 里装了三种不同强度的事实,而消费者只能按最强的那种去解读它。
+> 拆开之后,每条判断的证据强度就写在类型上了。
