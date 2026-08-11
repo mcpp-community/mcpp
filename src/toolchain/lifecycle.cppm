@@ -22,7 +22,7 @@ import mcpp.toolchain.triple;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
 import mcpp.log;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 
 namespace mcpp::toolchain {
 

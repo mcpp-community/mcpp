@@ -4,7 +4,7 @@
 // WHY THIS MODULE EXISTS
 //
 // The answer used to be derived independently in five places, and two of them
-// disagreed. `mcpp.xlings`' xim gate (ensure_official_package_index_fresh) had
+// disagreed. `mcpp.platform.xlings`' xim gate (ensure_official_package_index_fresh) had
 // been offline-first for a while — it refreshes only when a requested package
 // is genuinely absent locally, and its comment says in so many words that a
 // TTL must NOT trigger a network sync, because that is what hangs a build on a
@@ -45,7 +45,7 @@ import mcpp.pm.index_contract;
 import mcpp.pm.index_route;
 import mcpp.pm.resolver;
 import mcpp.ui;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 
 export namespace mcpp::pm {
 

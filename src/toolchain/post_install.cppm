@@ -19,8 +19,8 @@ import mcpp.platform;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
 import mcpp.ui;
-import mcpp.xlings;
-import mcpp.xlings.subos_info;
+import mcpp.platform.xlings;
+import mcpp.platform.xlings.subos_info;
 
 namespace mcpp::toolchain {
 

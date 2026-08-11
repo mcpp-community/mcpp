@@ -25,7 +25,7 @@ import mcpp.pm.index_refresh;     // shared refresh policy (with mcpp.build.prep
 import mcpp.pm.resolver;          // is_version_constraint
 import mcpp.project;              // shared find_manifest_root
 import mcpp.ui;
-import mcpp.xlings;               // index freshness
+import mcpp.platform.xlings;               // index freshness
 import mcpplibs.cmdline;
 
 namespace mcpp::pm::commands::detail {

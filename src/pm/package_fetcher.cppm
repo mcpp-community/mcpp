@@ -22,7 +22,7 @@ import mcpp.pm.dep_spec;
 import mcpp.pm.index_contract;   // index.toml floor check (E0006)
 import mcpp.ui;
 import mcpp.pm.index_spec;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 import mcpp.libs.toml;       // re-used for tiny JSON-ish parsing? no — stick with manual
 import mcpp.fallback.xpkg_copy;
 import mcpp.fallback.install_integrity;

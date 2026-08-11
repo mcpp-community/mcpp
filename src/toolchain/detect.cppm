@@ -9,7 +9,7 @@ import std;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.msvc;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 
 export namespace mcpp::toolchain {
 

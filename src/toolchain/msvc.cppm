@@ -20,7 +20,7 @@ import std;
 import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 
 export namespace mcpp::toolchain::msvc {
 
