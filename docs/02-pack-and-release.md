@@ -61,6 +61,16 @@ How to choose:
 - Cross-distro / older glibc (legacy CentOS, Kylin) → `self-contained`
 - Single portable file, no host deps → `static`
 
+**No mode ships a build-machine path.** A development build addresses this
+machine on purpose: its `DT_RPATH` names the toolchain's payload directories and
+the SubOS library view (`<subos>/lib`), and its `PT_INTERP` names a private
+loader. Every mode rewrites both — `vendored`/`self-contained` to `$ORIGIN`
+relative paths, `system` by clearing the search path entirely and restoring the
+platform's standard interpreter. `system` is not "keep whatever the build had";
+it is "the target provides everything", which is a statement about the target
+and cannot be spelled with this machine's absolute paths. e2e 215 sweeps every
+ELF in the bundle for anything under `$MCPP_HOME` and fails on a hit.
+
 ### A program that needs the HOST to provide something
 
 "Self-contained" has a floor. Some libraries can only come from the target

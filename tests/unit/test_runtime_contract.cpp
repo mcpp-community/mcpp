@@ -9,7 +9,7 @@ import mcpp.modgraph.scanner;
 import mcpp.platform;
 import mcpp.platform.axis;
 import mcpp.platform.runtime_binding;
-import mcpp.xlings.subos_info;
+import mcpp.platform.xlings.subos_info;
 
 namespace build = mcpp::build;
 namespace mf = mcpp::manifest;

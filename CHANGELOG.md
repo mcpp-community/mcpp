@@ -3,6 +3,65 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.11.2] — 2026-08-11
+
+### 修复
+
+- **⚠️ 回归:SubOS 没有自我描述时,`mcpp build` / `mcpp test` 直接失败
+  ([xlings#543](https://github.com/openxlings/xlings/issues/543))。**
+
+  Windows 上 xlings 不写 `subos_info` 块,而 mcpp 把「缺声明」当成了错误,于是
+  **每一次构建都停在一条讲 GL 驱动的消息上** —— 在一台没有 ELF、没有 `PT_INTERP`、
+  没有私有 libc 的机器上。`2026.8.10.2` 引入(PR #400),`2026.8.8.4` 正常。
+
+  判据改为:**矛盾报错,缺席降级。** 点名的 SubOS 不存在仍是硬错误(该请求无法被
+  满足);SubOS 存在但没描述自己则记 `declared=false` + 一条必被打印的 note,
+  runtime 规则报 `inconclusive` 而不是给出判决,构建继续。
+
+  同一位置还有第二颗雷:schema 检查是 `!=`,而它的**读取器**明写着「更高的 schema
+  照读」。xlings 写出 schema 2 的那天,全平台所有构建会同时停摆。已改为上限语义 ——
+  **发布数据不得使读它的程序失效**。
+
+- **图形/系统库链得上却跑不起来:运行期搜索路径补上 SubOS 库视图。**
+
+  mcpp 在编译与链接两条线上都发 `--sysroot=<subos>`,所以 `-lGL` 零 flag 就解析得到;
+  但运行期的搜索路径是**另一套独立推导**(只有工具链载荷目录)。结果是
+  `mcpp build` rc=0、`./bin/app` 报 `libGL.so.1: cannot open shared object file`。
+
+  ```
+  $ readelf -d bin/app | grep RPATH
+  before:  [<store>/glibc/2.39/lib64 : <store>/gcc/16.1.0/lib64]
+  after:   [<store>/glibc/2.39/lib64 : <store>/gcc/16.1.0/lib64 : <subos>/lib]
+  ```
+
+  新增 `mcpp.platform.runtime_search` 契约模块:一条搜索目录有**来源**
+  (`payload` / `package` / `subos_farm` / `host_default`)、**次序**与**是否机器本地**。
+  **次序 = 不可变性递减,farm 在最后** —— 载荷目录装一次不再动,`<subos>/lib` 每次
+  `xlings install` 都重写;载荷在前,`libc`/`libstdc++` 永远从被 pin 的载荷解析。
+  交叉目标与非 ELF 格式不发 farm。
+
+- **`validation: pass` 曾对一个跑不起来的产物成立。**
+
+  闭包解析在搜完 rpath 后**回落到宿主默认目录**,而宿主通常自带 `libGL.so.1` ⇒
+  模型认为解析到了。但产物跑在**私有加载器**下,它的默认路径里没有宿主目录。
+  现在宿主默认目录只在**非 hermetic** binding 下参与;hermetic 产物上一个谁都提供
+  不了的 `DT_NEEDED` 是**可证的**失败(新判决 `unresolvable`),会让构建变红并指名。
+
+### 变更
+
+- xlings 强相关模块归入 `src/platform/xlings/`:`mcpp.platform.xlings`、
+  `mcpp.platform.xlings.subos_info`、`mcpp.platform.xlings.runtime_selection`
+  (命名空间不变)。`RuntimeBinding` 与 `runtime_search` 留在 `src/platform/` ——
+  它们是 provider 中立的契约类型,不是 xlings 专属。
+- `resolution.json` 的 `runtime.search` 增加 `closure` 数组(路径 + origin +
+  machine_local,**保序**);`mcpp why runtime` 按加载器次序打印它。
+- mcpp 为自己启动的每个进程声明 `XLINGS_SUBOS_LD_PATHS=0` —— xlings 链接器包装器
+  路径注入的退出声明([xlings#540](https://github.com/openxlings/xlings/issues/540))。
+  今天是无操作;它落地后 mcpp 的 DT_RPATH 仍只含 mcpp 自己决定的内容。
+  **不读 `$XLINGS_SUBOS_LIB`**:实测它指向当前 shell 的 subos,而 mcpp 有自己的
+  registry home,两者通常由**不同物理 glibc 载荷**支撑。
+- 内带 xlings pin → `2026.8.11.2`。
+
 ## [2026.8.11.1] — 2026-08-11
 
 ### 新增
