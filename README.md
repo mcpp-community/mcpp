@@ -128,6 +128,21 @@ macOS 14; per-user data lives in `~/.mcpp/`.
 Homebrew's `mcpp` is an unrelated C preprocessor, hence the `mcpp-m` formula
 name — the command it installs is still `mcpp`.
 
+**Homebrew 6 gates third-party taps.** The fully-qualified command above is
+read as explicit intent and works as-is, but every *other* spelling — the short
+`brew install mcpp-m`, the `mcpp` alias, and later upgrades — is refused with:
+
+```
+Refusing to load formula mcpp-community/mcpp/mcpp-m from untrusted tap
+mcpp-community/mcpp.
+```
+
+Trust the tap once and all of them work:
+
+```bash
+brew trust mcpp-community/mcpp
+```
+
 </details>
 
 <details>

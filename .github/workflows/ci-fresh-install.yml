@@ -405,6 +405,129 @@ jobs:
           mcpp run
 
   # ──────────────────────────────────────────────────────────────────
+  # macOS via HOMEBREW — the other fresh-install channel
+  #
+  # A SEPARATE JOB, not extra steps in macos-fresh: that job already has an
+  # mcpp on PATH from xlings, and a second one from brew would make every
+  # assertion below ambiguous about which binary it measured.
+  #
+  # It also does NOT need `wait-index`. Homebrew installs the GitHub release
+  # tarball directly, and the tap's own bump workflow lags the release by
+  # minutes — asserting the just-released version here would be racy for a
+  # reason that has nothing to do with mcpp. The version assertion is instead
+  # made SELF-CONSISTENT: whatever version the tapped formula declares is the
+  # version the installed binary must report.
+  #
+  # WHAT THIS EXISTS TO CATCH (measured on macOS 14.8.7 / 15.7.7 / 26.5.2,
+  # Homebrew 6.0.5 / 6.0.12 / 6.0.13):
+  #
+  #   Homebrew 6 refuses to load a formula from an untrusted third-party tap.
+  #   `brew install <user>/<repo>/<formula>` is exempt — it reads as explicit
+  #   intent — so the one-liner in README.md kept passing while EVERY other
+  #   spelling a user reaches for was broken:
+  #
+  #     brew install mcpp-m                      → exit 1, "untrusted tap"
+  #     brew install mcpp-community/mcpp/mcpp    → exit 1, "untrusted tap"
+  #
+  #   A CI job that only ran the documented one-liner would have reported this
+  #   channel healthy the entire time. So the trust gate itself is asserted
+  #   from BOTH sides: refused before `brew trust`, accepted after.
+  macos-brew-fresh:
+    name: macOS fresh install (Homebrew)
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # Same floor as macos-fresh: the formula declares `depends_on macos:
+    # :sonoma` + arm64, and macos-14 is the oldest image satisfying it.
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Environment
+        run: |
+          echo "macOS $(sw_vers -productVersion) | $(uname -m) | $(brew --version | head -1)"
+
+      # ① The command README.md documents, on a machine that has never tapped.
+      #    Fully qualified, so Homebrew treats it as explicit intent.
+      - name: "Documented one-liner installs"
+        run: brew install mcpp-community/mcpp/mcpp-m
+
+      # ② The launcher is the whole point of the formula: mcpp WRITES at
+      #    runtime, so a bare symlink into the Cellar would make MCPP_HOME the
+      #    versioned Cellar dir and `brew upgrade` would drop every installed
+      #    toolchain. Assert the binary on PATH is brew's and reports the
+      #    version the FORMULA declares — not a hardcoded one, which would go
+      #    stale on every release.
+      - name: "Installed binary is brew's, and agrees with the formula"
+        run: |
+          set -euo pipefail
+          which mcpp
+          case "$(which mcpp)" in
+            "$(brew --prefix)"/bin/mcpp) ;;
+            *) echo "FAIL: mcpp on PATH is not the brew one"; exit 1 ;;
+          esac
+          formula_version="$(brew info --json=v2 mcpp-community/mcpp/mcpp-m \
+                             | python3 -c 'import json,sys; print(json.load(sys.stdin)["formulae"][0]["versions"]["stable"])')"
+          echo "formula declares: $formula_version"
+          mcpp --version
+          mcpp --version | grep -Fq "$formula_version"
+
+      # ③ THE TRUST GATE, from the failing side first.
+      #
+      #    Asserted before the fix is applied, because "short form works" alone
+      #    cannot distinguish "the gate is handled" from "this Homebrew has no
+      #    gate" — and a test that cannot fail is indistinguishable from one
+      #    that is not running. If a future Homebrew drops the gate, this step
+      #    turns red and says so, rather than silently protecting nothing.
+      - name: "Untrusted tap: short form is refused (states its own premise)"
+        run: |
+          set +e
+          brew uninstall --force mcpp-m > /dev/null 2>&1
+          out="$(brew install mcpp-m 2>&1)"; rc=$?
+          echo "$out" | tail -5
+          if [ $rc -eq 0 ]; then
+            echo "NOTE: this Homebrew did not gate the tap — the trust step below"
+            echo "      is now a no-op and README's warning can be revisited."
+            exit 0
+          fi
+          echo "$out" | grep -Fq 'untrusted tap' || {
+            echo "FAIL: short-form install failed for some OTHER reason than the"
+            echo "      trust gate — that is a new bug, not the known one."
+            exit 1
+          }
+
+      # ④ …and from the working side. `brew trust` is what README tells users
+      #    to run, so it is what CI runs.
+      - name: "brew trust unlocks the short form, the alias, and upgrade"
+        run: |
+          set -euo pipefail
+          brew trust mcpp-community/mcpp
+          brew uninstall --force mcpp-m
+          brew install mcpp-m                       # short form
+          brew uninstall --force mcpp-m
+          brew install mcpp-community/mcpp/mcpp     # the `mcpp` alias
+          brew upgrade mcpp-m || true               # no-op when current; must not be refused
+
+      # ⑤ The only assertion a user actually cares about: it builds and runs.
+      #    Exercises the launcher's MCPP_HOME/MCPP_VENDORED_XLINGS pinning,
+      #    the bundled xlings, and a real toolchain bootstrap.
+      - name: "Real use: mcpp new → run (toolchain bootstrap)"
+        run: |
+          set -euo pipefail
+          cd "$(mktemp -d)"
+          mcpp new brewhello
+          cd brewhello
+          mcpp run | tee run.log
+          grep -Fq 'Hello from brewhello' run.log
+
+      # ⑥ Per-user state must live outside the Cellar, or `brew upgrade` takes
+      #    the user's toolchains with it. §⑤ just created it — prove where.
+      - name: "State lives in ~/.mcpp, not the Cellar"
+        run: |
+          set -euo pipefail
+          test -d "$HOME/.mcpp"
+          if find "$(brew --prefix)/Cellar/mcpp-m" -name 'toolchain*' -o -name 'xpkgs' 2>/dev/null | grep -q .; then
+            echo "FAIL: toolchain state landed inside the Cellar"; exit 1
+          fi
+
+  # ──────────────────────────────────────────────────────────────────
   # Windows WITH Visual Studio: llvm@20.1.7 + MSVC STL
   #
   # Two images, because the OS version is a real variable for a tool that

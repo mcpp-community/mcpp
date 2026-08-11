@@ -126,6 +126,21 @@ brew install mcpp-community/mcpp/mcpp-m
 Homebrew 上 `mcpp` 属于一个无关的 C 预处理器，所以公式名是 `mcpp-m`，
 装出来的命令仍然是 `mcpp`。
 
+**Homebrew 6 对第三方 tap 加了信任门。** 上面那条全限定命令会被当作显式意图、
+可以直接用；但**其它任何拼写**——短名 `brew install mcpp-m`、`mcpp` 别名、
+以及之后的升级——都会被拒：
+
+```
+Refusing to load formula mcpp-community/mcpp/mcpp-m from untrusted tap
+mcpp-community/mcpp.
+```
+
+信任这个 tap 一次，它们就都能用了：
+
+```bash
+brew trust mcpp-community/mcpp
+```
+
 </details>
 
 <details>
