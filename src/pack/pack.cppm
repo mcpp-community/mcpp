@@ -24,7 +24,7 @@ import mcpp.build.loader_contract;
 import mcpp.config;
 import mcpp.pack.host_requirements;
 import mcpp.platform;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 import mcpp.manifest;
 
 export namespace mcpp::pack {

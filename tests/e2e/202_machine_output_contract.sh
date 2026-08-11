@@ -55,10 +55,20 @@ check "unsupported value (pack)"       2 "$MCPP" pack --format bogus
 # And the supported ones must still be JSON on stdout. Asserted here because
 # every check above is about what does NOT happen; without this, deleting the
 # feature entirely would leave the file green.
+#
+# HERE-STRINGS, NOT PIPES. `set -o pipefail` is on, and `grep -q` exits the
+# moment it matches — so `echo "$out" | grep -q` leaves `echo` writing into a
+# closed pipe, takes SIGPIPE, and the pipeline reports 141 even though the
+# match SUCCEEDED. It only shows up once `$out` is big enough that echo has not
+# finished writing, which for `cache list` means "once this machine has built a
+# few things": measured 3-4 failures in 5 runs on a developer box with a warm
+# build cache, and zero on CI, with `grep -c` on the same string finding 153
+# matches. A test that fails on the size of an unrelated cache is a test that
+# will be read as a regression in whatever happens to be in flight.
 for cmd in "self env" "cache list"; do
     out=$($MCPP $cmd --format json 2>/dev/null) || { echo "FAIL: $cmd --format json exited non-zero"; fail=1; }
-    echo "$out" | grep -q '"schemaVersion"' || { echo "FAIL: $cmd --format json has no schemaVersion"; fail=1; }
-    echo "$out" | grep -q '"kind"'          || { echo "FAIL: $cmd --format json has no kind"; fail=1; }
+    grep -q '"schemaVersion"' <<<"$out" || { echo "FAIL: $cmd --format json has no schemaVersion"; fail=1; }
+    grep -q '"kind"'          <<<"$out" || { echo "FAIL: $cmd --format json has no kind"; fail=1; }
 done
 
 [[ "$fail" -eq 0 ]] || exit 1

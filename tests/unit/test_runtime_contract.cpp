@@ -9,7 +9,8 @@ import mcpp.modgraph.scanner;
 import mcpp.platform;
 import mcpp.platform.axis;
 import mcpp.platform.runtime_binding;
-import mcpp.xlings.subos_info;
+import mcpp.platform.runtime_search;
+import mcpp.platform.xlings.subos_info;
 
 namespace build = mcpp::build;
 namespace mf = mcpp::manifest;
@@ -277,6 +278,8 @@ TEST(RuntimeContract, XlingsSelectedFactsPrecedeDescriptorFallbacks) {
     });
 
     build::merge_runtime_binding_contract(plan, binding);
+    ASSERT_EQ(plan.runtimeSearch.size(), 0u)
+        << "a binding with no SubOS library view contributes no farm entry";
     ASSERT_EQ(plan.runtimeProviders.size(), 2u);
     EXPECT_EQ(plan.runtimeProviders.front().provider.canonical(),
               "xim.selected@4.0.0");
@@ -287,3 +290,83 @@ TEST(RuntimeContract, XlingsSelectedFactsPrecedeDescriptorFallbacks) {
 }
 
 }  // namespace
+
+// ── the farm's two guards, as a matrix ─────────────────────────────────────
+//
+// The farm belongs to THIS host's SubOS, so it may only reach an artifact that
+// will run here under this runtime. The guards are asserted directly because
+// each one costs a full cross toolchain to exercise end to end, and the failure
+// they prevent is silent: a path that is inert at best, and points at another
+// architecture's or another C library's objects at worst.
+namespace {
+
+build::BuildPlan plan_for(std::string targetTriple) {
+    build::BuildPlan plan;
+    plan.toolchain.targetTriple = std::move(targetTriple);
+    return plan;
+}
+
+mcpp::platform::runtime::RuntimeBinding host_binding_with_farm() {
+    mcpp::platform::runtime::RuntimeBinding b;
+    b.platform = "linux";
+    b.arch = "x86_64";
+    b.declared = true;
+    b.runtimeId = "glibc@2.39";
+    b.searchDirs = {"/home/u/.mcpp/registry/subos/default/lib"};
+    return b;
+}
+
+std::size_t farm_entries(const std::vector<mcpp::platform::search::Dir>& dirs) {
+    return static_cast<std::size_t>(std::ranges::count_if(dirs, [](auto const& d) {
+        return d.origin == mcpp::platform::search::Origin::SubosFarm;
+    }));
+}
+
+}  // namespace
+
+TEST(RuntimeSearchClosure, HostTargetGetsTheFarm) {
+    // An EXPLICIT Linux target is a farm target from anywhere, including a
+    // macOS or Windows runner: the guards read the target, not the runner.
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for("x86_64-linux-gnu"), host_binding_with_farm())), 1u);
+
+    // An EMPTY triple means "this host", so the answer is the host's format —
+    // and that is the point of the ELF guard, not an exception to it. Asserting
+    // 1 unconditionally is what failed on the macOS and Windows runners.
+    const std::size_t expectedForHost = mcpp::platform::is_linux ? 1u : 0u;
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for(""), host_binding_with_farm())), expectedForHost)
+        << "an empty triple must resolve to this host's format";
+}
+
+TEST(RuntimeSearchClosure, CrossTargetGetsNoFarm) {
+    // Another architecture: the farm holds x86_64 objects.
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for("aarch64-linux-gnu"), host_binding_with_farm())), 0u);
+    // Another C library: a glibc farm on a musl program's search path is the
+    // payload mixing rule B exists to prevent.
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for("x86_64-linux-musl"), host_binding_with_farm())), 0u);
+    // Another format: DT_RPATH does not exist there at all.
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for("x86_64-windows-gnu"), host_binding_with_farm())), 0u);
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for("aarch64-macos"), host_binding_with_farm())), 0u);
+}
+
+// A MISMATCH must be proven, not assumed. An undeclared SubOS has no runtime
+// identity, and refusing its own library view on that basis would be exactly
+// the absence-read-as-contradiction this release removes elsewhere. Caught by
+// e2e 220, which builds against a SubOS it creates and which therefore has no
+// `subos_info` to declare anything.
+TEST(RuntimeSearchClosure, UndeclaredBindingStillGetsItsOwnFarm) {
+    auto b = host_binding_with_farm();
+    b.declared = false;
+    b.runtimeId.clear();
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for("x86_64-linux-gnu"), b)), 1u);
+    // …but the architecture guard still applies: unknown libc is not a licence
+    // to ignore everything else.
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for("aarch64-linux-gnu"), b)), 0u);
+}

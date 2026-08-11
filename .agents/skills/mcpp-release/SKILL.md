@@ -59,7 +59,7 @@ unexpected`。那是调用它的 shell 的问题，不是脚本的缺陷 —— 
 `#!/usr/bin/env bash`，CI 也是用 `bash` 调的。别据此把这条 guard 当成坏的而跳过：
 它是唯一能机器化捕捉 pin 漂移的东西。
 
-也不要通过修改文档或 workflow 绕开动态 `MCPP_PIN` 设计。`src/xlings.cppm` 的
+也不要通过修改文档或 workflow 绕开动态 `MCPP_PIN` 设计。`src/platform/xlings/xlings.cppm` 的
 `pinned::kXlingsVersion` 仍是 xlings 版本的唯一真源。
 
 ## 发布步骤
@@ -259,7 +259,7 @@ gh workflow run bump-formula.yml -R mcpp-community/homebrew-mcpp
 | 自查 `--version` 显示旧版本，但源码已改 | `target/<triple>/<指纹>/` 的指纹随版本变，`ls \| head -1` 取到了上一次构建的目录 | 用 `ls -dt … \| head -1` 取最新构建 |
 | Smoke test 输出旧版本 | CI 缓存了旧的 sandbox/target | 删除 GitHub Actions cache 后重跑 |
 | e2e `01_help_and_version.sh` 挂 | 只改了 `mcpp.toml` 没改 `fingerprint.cppm`（它把两者交叉比对） | 同步两处正在构建的版本；注意这个 e2e 只在部分分片里跑，可能表现为"只有某个平台红" |
-| xlings bootstrap 失败 | xlings 版本不兼容 | 改 `src/xlings.cppm::kXlingsVersion`（唯一真源），再核对引用它的 workflow 与脚本；当前 pin-check 脚本修复前不能依赖它完成扫描 |
+| xlings bootstrap 失败 | xlings 版本不兼容 | 改 `src/platform/xlings/xlings.cppm::kXlingsVersion`（唯一真源），再核对引用它的 workflow 与脚本；当前 pin-check 脚本修复前不能依赖它完成扫描 |
 | macOS/Windows 构建失败 | 需要等 Linux job 先完成 | 检查 Linux job 是否成功 |
 | `slim: FAIL: ... still not stripped` | strip 工具没生效／被 pack 覆盖 | 别绕过断言——它就是为了拦住 34.8MB 的 tarball 再次发出去 |
 | mirror leg 报 `missing/unverified` | 资产没传上去或还没传播 | 先 GET 核验（**必须 GET，`curl -I` 会骗你**），gitcode 用 `gitcode.com` 直链而非 `api.` 主机；确认缺件后本地补传再 `gh run rerun --failed`（脚本幂等，已验证的资产会跳过） |
@@ -312,7 +312,7 @@ gh workflow run release.yml --ref "v$NEW_VERSION"
 | `src/version.cppm` | `MCPP_VERSION = "X.Y.Z"` — 编译期版本常量 |
 | `.xlings.json` | `workspace.mcpp` — CI bootstrap 装哪个 mcpp（发布**后**才 bump） |
 | `.github/workflows/ci-fresh-install.yml` | `MCPP_PIN` — 由 `wait-index` 从最新 release 推导，**从不手工 bump** |
-| `src/xlings.cppm` | `kXlingsVersion` — xlings pin 的**唯一真源** |
+| `src/platform/xlings/xlings.cppm` | `kXlingsVersion` — xlings pin 的**唯一真源** |
 | `.github/tools/check_version_pins.sh` | 版本/pin 校验 guard（**用 `bash` 跑，不能用 `sh`**） |
 | `.github/tools/slim_linux_payload.sh` | linux 载荷 strip + 断言 |
 | `.github/tools/mirror_res.sh` | 双端镜像（并发上传 + leg deadline + 完整性 gate） |

@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 import mcpp.platform.env;
 
 namespace {
@@ -23,7 +23,7 @@ std::filesystem::path make_tempdir(std::string_view name) {
 // `find_sandbox_nasm`, tested here) and a SEPARATE synchronous
 // provisioning step in mcpp.build.prepare that goes through the same
 // `Fetcher::resolve_xpkg_path` gate the compiler toolchain uses (that step
-// needs `mcpp.config`/`mcpp.fetcher`, which this LEAF module — mcpp.xlings
+// needs `mcpp.config`/`mcpp.fetcher`, which this LEAF module — mcpp.platform.xlings
 // — cannot import, so it isn't unit-testable from here without network;
 // see tests/e2e/105_asm_sources_nasm.sh for the end-to-end coverage).
 

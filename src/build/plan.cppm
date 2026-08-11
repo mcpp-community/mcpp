@@ -16,11 +16,13 @@ import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.triple;
 import mcpp.platform;
 import mcpp.platform.runtime_binding;
 import mcpp.platform.runtime_env_contract;
-import mcpp.xlings.subos_info;
+import mcpp.platform.runtime_search;
+import mcpp.platform.xlings.subos_info;
 
 export namespace mcpp::build {
 
@@ -202,6 +204,22 @@ struct BuildPlan {
     std::vector<mcpp::manifest::RuntimeRequirement> runtimeRequirements;
     std::vector<mcpp::manifest::RuntimeArtifact>    runtimeArtifacts;
     mcpp::manifest::LinkIntent                      linkIntent;
+    // The complete run-time search closure of the artifacts this plan will
+    // produce, in loader order and tagged with where each directory came from
+    // (`mcpp.platform.runtime_search`).
+    //
+    // This is the RECORD — what resolution.json publishes and `mcpp why
+    // runtime` explains. Emission is still owned by each origin's existing
+    // producer (payloads by the toolchain link model, package dirs by
+    // LinkIntent), with one exception: SubosFarm entries have no other
+    // producer, so `flags.cppm` renders them from here, appended last.
+    //
+    // ⚠️ The farm deliberately does NOT enter `runtimeLibraryDirs`. That
+    // vector becomes LD_LIBRARY_PATH for `mcpp run`, which is inherited by
+    // every child process including host binaries — measured to kill
+    // `xdg-open`/`notify-send` outright when a private libc is on it. The farm
+    // is reachable PER OBJECT (DT_RPATH) and must stay that way.
+    std::vector<mcpp::platform::search::Dir>        runtimeSearch;
     // Windows runtime-DLL deployment. On PE (`supports_rpath` is false) a
     // directly-launched .exe cannot RUNPATH-locate a dependency's DLL, so each
     // *.dll found in a dependency's [runtime] library_dir is copied beside the
@@ -231,6 +249,13 @@ struct BuildPlan {
 // providers and materialized artifacts before mcpp sees this snapshot.
 void merge_runtime_binding_contract(
     BuildPlan& plan,
+    const mcpp::platform::runtime::RuntimeBinding& binding);
+
+// The run-time search closure for this plan, in loader order and tagged with
+// provenance. Exported so a test can exercise the guards (cross target, non-ELF
+// format, undeclared SubOS) without linking a binary for each.
+std::vector<mcpp::platform::search::Dir> runtime_search_closure(
+    const BuildPlan& plan,
     const mcpp::platform::runtime::RuntimeBinding& binding);
 
 // Is `p` inside one of `roots`, judged LEXICALLY?
@@ -621,6 +646,96 @@ ResolvedRuntimeContract resolve_runtime_contract(
     return out;
 }
 
+// The run-time search closure of everything this plan will link, in the order
+// the loader will consult it, tagged with where each directory came from.
+//
+// ONE assembly, three producers. Payload directories come from the toolchain
+// link model, package directories from the resolved LinkIntent, and the SubOS
+// farm from the RuntimeBinding — and the farm is the addition that closes the
+// gap this whole change exists for: mcpp already passes `--sysroot=<subos>` on
+// the compile AND link lines, so `-lGL` resolves out of `<subos>/lib` with no
+// flags from the user, while the RUN-time path was derived from payload
+// directories alone. Link succeeded, the artifact could not start.
+//
+// FARM LAST, and it is the only invariant here. `<subos>/lib` is a symlink
+// view rewritten by every `xlings install`; payload directories are written
+// once and never touched. Payload-first keeps libc / libm / libstdc++ resolving
+// from the pinned payload and leaves the farm to supply only what nothing else
+// does. Farm-first would let a later install silently change which libc an
+// ALREADY LINKED artifact loads. `search::ordered` is what enforces it, and
+// e2e 219 asserts it on the produced ELF rather than on this code.
+std::vector<mcpp::platform::search::Dir> runtime_search_closure(
+    const BuildPlan& plan,
+    const mcpp::platform::runtime::RuntimeBinding& binding) {
+    using mcpp::platform::search::Dir;
+    using mcpp::platform::search::Origin;
+
+    // PAYLOAD DIRECTORIES COME FROM THE SAME FUNCTION THAT EMITS THEM.
+    //
+    // `resolve_link_model` is a pure function of the toolchain and is what
+    // `flags.cppm` renders as `-L`/`-Wl,-rpath` for the C runtime; asking it
+    // here is how the record and the artifact stay the same list. Deriving
+    // them a second way is what made the first version of this record show a
+    // one-entry closure while the artifact carried three — `linkRuntimeDirs`
+    // is populated for CLANG ONLY, so on GCC it is simply empty and the
+    // payloads arrive through the link model instead.
+    //
+    // Both are read, in the order `flags.cppm` concatenates them.
+    std::vector<Dir> closure;
+    for (auto const& dir : mcpp::toolchain::resolve_link_model(plan.toolchain).libDirs)
+        closure.push_back({dir, Origin::Payload});
+    for (auto const& dir : plan.toolchain.linkRuntimeDirs)
+        closure.push_back({dir, Origin::Payload});
+    for (auto const& dir : plan.linkIntent.runtimeSearchDirs)
+        closure.push_back({dir, Origin::Package});
+
+    // TWO GUARDS, both about "will this artifact ever run here".
+    //
+    //   format   DT_RPATH exists on ELF only. Mach-O and PE get nothing rather
+    //            than a branch in every consumer — the same shape
+    //            `loader_contract` uses for the tag half of this contract.
+    //   host     The farm belongs to THIS host's SubOS, and a SubOS is a
+    //            (os, arch, libc) triple's worth of libraries. A cross target
+    //            must match all three or the path is inert at best and points
+    //            at the wrong architecture's — or the wrong C library's —
+    //            objects at worst. `x86_64-linux-musl` is the case that makes
+    //            the libc axis load-bearing: same OS, same arch, and a glibc
+    //            farm on a musl program's search path is exactly the payload
+    //            mixing rule B exists to prevent. (Today that target is also
+    //            `linkage = "static"`, so the flag is inert — measured: no
+    //            dynamic section at all. The guard is for the day it is not.)
+    const auto triple = [&] {
+        auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return t ? *t : mcpp::toolchain::triple::Triple{};
+    }();
+    const bool elfTarget = triple.empty()
+        ? bool(mcpp::platform::is_linux)
+        : (triple.os != "macos" && triple.os != "windows");
+    // The binding names its libc as `<family>@<version>`; the triple names it
+    // as an ABI env (`gnu` ⇒ glibc). A MISMATCH must be PROVEN, not assumed:
+    // an undeclared SubOS has no runtime identity at all, and refusing its own
+    // library view because it did not describe itself would be the same
+    // absence-read-as-contradiction this change exists to remove. Unknown on
+    // either side ⇒ no evidence of a mismatch ⇒ the os/arch guards decide.
+    const auto bindingLibcFamily =
+        binding.runtimeId.substr(0, binding.runtimeId.find('@'));
+    const auto targetLibcFamily = triple.env.empty()
+        ? std::string{} : (triple.env == "gnu" ? "glibc" : triple.env);
+    const bool libcMismatch = !bindingLibcFamily.empty()
+        && !targetLibcFamily.empty()
+        && targetLibcFamily != bindingLibcFamily;
+    const bool hostTarget = binding.platform == "linux"
+        && !libcMismatch
+        && (triple.empty()
+            || (triple.os == "linux"
+                && (triple.arch.empty() || triple.arch == binding.arch)));
+    if (elfTarget && hostTarget)
+        for (auto const& dir : binding.searchDirs)
+            closure.push_back({dir, Origin::SubosFarm});
+
+    return mcpp::platform::search::ordered(std::move(closure));
+}
+
 void merge_runtime_binding_contract(
     BuildPlan& plan,
     const mcpp::platform::runtime::RuntimeBinding& binding) {
@@ -676,6 +791,8 @@ void merge_runtime_binding_contract(
             }))
             plan.runtimeArtifacts.push_back(std::move(value));
     }
+
+    plan.runtimeSearch = runtime_search_closure(plan, binding);
 }
 
 // True if `src` defines a top-level `int main(` / `auto main(` entry point.

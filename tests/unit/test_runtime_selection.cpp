@@ -5,7 +5,7 @@ import mcpp.config;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.platform.runtime_binding;
-import mcpp.xlings.runtime_selection;
+import mcpp.platform.xlings.runtime_selection;
 
 namespace runtime = mcpp::xlings::runtime;
 
@@ -294,6 +294,111 @@ TEST(RuntimeBinding, NamedEnvironmentsHaveDistinctContractsAndRoundTrip) {
     EXPECT_EQ(decoded->runtimeProviders[0].provider.namespace_, "xim");
     ASSERT_EQ(decoded->runtimeArtifacts.size(), 1u);
     EXPECT_EQ(decoded->runtimeArtifacts[0].hostFingerprint, "host-2");
+    EXPECT_TRUE(decoded->declared);
+}
+
+// ── absence degrades, contradiction fails (openxlings/xlings#543) ──────────
+//
+// A SubOS that says nothing used to make `resolve_runtime_binding` return an
+// error, which every caller of `mcpp build`/`mcpp test` propagated — stopping
+// the tool on Windows with a message about GL drivers, on a platform that has
+// no ELF, no PT_INTERP and no private libc. The rule the index-floor incident
+// already paid for applies here too: data that is missing or newer must not
+// invalidate the program that reads it.
+
+TEST(RuntimeBindingDegradation, UndeclaredSubosStillResolves) {
+    RuntimeHome h;
+    auto manifest = named("bare");
+    auto selection = runtime::select_runtime(manifest, std::nullopt,
+                                             h.dir / "repo");
+    ASSERT_TRUE(selection);
+    // Exists, describes nothing. The common state of a freshly created SubOS,
+    // and the permanent state on a platform whose xlings does not write the
+    // block at all.
+    std::filesystem::create_directories(
+        h.dir / "repo" / ".mcpp" / ".xlings" / "subos" / "bare");
+
+    auto binding = mcpp::platform::runtime::resolve_runtime_binding(
+        *selection, {}, h.cfg);
+    ASSERT_TRUE(binding.has_value())
+        << "absence must degrade, not fail: " << binding.error();
+    EXPECT_FALSE(binding->declared);
+    EXPECT_FALSE(binding->note.empty())
+        << "a degradation nobody reports is indistinguishable from none";
+    EXPECT_TRUE(binding->runtimeId.empty());
+    EXPECT_FALSE(binding->hermetic());
+}
+
+// The cache must survive it too. A degraded binding legitimately has schema 0
+// and no runtime identity, and a completeness check that demands those fields
+// would make every cached degraded binding undecodable — sending the build
+// back down the slow path on every single invocation, forever.
+TEST(RuntimeBindingDegradation, UndeclaredBindingRoundTrips) {
+    RuntimeHome h;
+    auto manifest = named("bare");
+    auto selection = runtime::select_runtime(manifest, std::nullopt,
+                                             h.dir / "repo");
+    ASSERT_TRUE(selection);
+    std::filesystem::create_directories(
+        h.dir / "repo" / ".mcpp" / ".xlings" / "subos" / "bare");
+    auto binding = mcpp::platform::runtime::resolve_runtime_binding(
+        *selection, {}, h.cfg);
+    ASSERT_TRUE(binding.has_value());
+
+    auto decoded = mcpp::platform::runtime::deserialize_runtime_binding(
+        mcpp::platform::runtime::serialize_runtime_binding(*binding));
+    ASSERT_TRUE(decoded.has_value()) << decoded.error();
+    EXPECT_EQ(decoded->contractHash, binding->contractHash);
+    EXPECT_FALSE(decoded->declared);
+    EXPECT_EQ(decoded->note, binding->note);
+}
+
+// A newer schema is read, not refused. `subos_info::read` already documents
+// this ("a HIGHER one on disk is still read"); the consumer used to demand
+// equality, so the day xlings writes schema 2 every build on every platform
+// would have stopped at once.
+TEST(RuntimeBindingDegradation, NewerSchemaIsReadNotRefused) {
+    RuntimeHome h;
+    auto manifest = named("future");
+    auto selection = runtime::select_runtime(manifest, std::nullopt,
+                                             h.dir / "repo");
+    ASSERT_TRUE(selection);
+    auto subos = h.dir / "repo" / ".mcpp" / ".xlings" / "subos" / "future";
+    std::filesystem::create_directories(subos);
+    std::ofstream(subos / ".xlings.json") << R"({
+      "subos_info": {
+        "schema_version": 99,
+        "runtime": "glibc@2.39",
+        "envs": {},
+        "a_field_from_the_future": true
+      }
+    })";
+
+    auto binding = mcpp::platform::runtime::resolve_runtime_binding(
+        *selection, {}, h.cfg);
+    ASSERT_TRUE(binding.has_value())
+        << "a newer contract must not invalidate an older mcpp: "
+        << binding.error();
+    EXPECT_TRUE(binding->declared);
+    EXPECT_EQ(binding->runtimeId, "glibc@2.39");
+    EXPECT_NE(binding->note.find("newer"), std::string::npos)
+        << "reading a newer schema silently is the other half of the defect";
+}
+
+// The boundary. A SubOS the user NAMED and that is not there cannot be
+// satisfied under any interpretation, and picking a different one would make
+// one mcpp.toml mean different ABIs on different machines.
+TEST(RuntimeBindingDegradation, MissingSubosStillFails) {
+    RuntimeHome h;
+    auto manifest = named("never-created");
+    auto selection = runtime::select_runtime(manifest, std::nullopt,
+                                             h.dir / "repo");
+    ASSERT_TRUE(selection);
+    auto binding = mcpp::platform::runtime::resolve_runtime_binding(
+        *selection, {}, h.cfg);
+    ASSERT_FALSE(binding.has_value())
+        << "a contradiction must be reported, not degraded";
+    EXPECT_NE(binding.error().find("does not exist"), std::string::npos);
 }
 
 } // namespace

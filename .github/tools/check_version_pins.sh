@@ -5,13 +5,13 @@
 # Two invariants that used to live only in a comment:
 #
 #   1. Every xlings version pinned anywhere in .github/ equals
-#      `pinned::kXlingsVersion` in src/xlings.cppm — which is the version
+#      `pinned::kXlingsVersion` in src/platform/xlings/xlings.cppm — which is the version
 #      `mcpp self env` reports and the one release.yml bundles into the
 #      tarball as <install>/registry/bin/xlings.
 #
 #   2. mcpp's own version is identical in all four places that carry it.
 #
-# Why this exists: src/xlings.cppm used to say "keep in lock-step with the
+# Why this exists: src/platform/xlings/xlings.cppm used to say "keep in lock-step with the
 # XLINGS_VERSION pins in release.yml / cross-build-test.yml / ci-linux-e2e.yml"
 # and that list was ALREADY incomplete — it omitted both composite actions,
 # which sat on 0.4.30 while everything else moved to 0.4.69. CI's sandbox
@@ -38,12 +38,12 @@ strip_comments() { sed 's/#.*//'; }
 
 # ── 1. xlings pins ────────────────────────────────────────────────────────
 
-XLINGS_EXPECTED=$(grep -oE 'kXlingsVersion[[:space:]]*=[[:space:]]*"[^"]+"' src/xlings.cppm \
+XLINGS_EXPECTED=$(grep -oE 'kXlingsVersion[[:space:]]*=[[:space:]]*"[^"]+"' src/platform/xlings/xlings.cppm \
                   | grep -oE '"[^"]+"' | tr -d '"' | head -1)
 [ -n "$XLINGS_EXPECTED" ] || {
-  echo "FAIL: could not read kXlingsVersion from src/xlings.cppm" >&2; exit 1; }
+  echo "FAIL: could not read kXlingsVersion from src/platform/xlings/xlings.cppm" >&2; exit 1; }
 
-note "expected xlings pin: $XLINGS_EXPECTED  (src/xlings.cppm)"
+note "expected xlings pin: $XLINGS_EXPECTED  (src/platform/xlings/xlings.cppm)"
 
 # Anchored patterns only — a bare "version-looking number on a line mentioning
 # xlings" would also match `xlings install llvm@20.1.7`, which pins LLVM, not

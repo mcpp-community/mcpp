@@ -93,9 +93,23 @@ declaration applies only when that source is an independent root. Neither
 `XLINGS_ACTIVE_SUBOS`, `current`, the compiler's owner home, nor a CLI/env
 override is a third selection rung.
 
-The selected SubOS must provide the supported `subos_info` contract. A missing
-named environment or missing/incompatible contract is a hard error, never a
-fallback to default/active/compiler-baked state. mcpp reads it once into a
+A named environment that does not exist is a hard error, never a fallback to
+default/active/compiler-baked state — the request cannot be satisfied, and
+substituting a different one would make one `mcpp.toml` mean different ABIs on
+different machines.
+
+A SubOS that exists but **does not describe itself** is a different case, and it
+degrades. `declared = false` is recorded with a note the caller prints; runtime
+rules report `inconclusive` instead of a verdict, and no payload-first binding is
+available (mcpp declines rather than guessing a libc version, so the hermeticity
+check will report the host fallback). The build is not stopped. Likewise a
+`subos_info` schema **newer** than this mcpp understands is read for the fields it
+knows, with a note — the same rule the reader itself documents: publishing data
+must not invalidate the program that reads it. Refusing outright is what stopped
+every `mcpp build` and `mcpp test` on Windows in 2026.8.10.2, where xlings writes
+no such block and the facts it carries do not exist (openxlings/xlings#543).
+
+mcpp reads the SubOS once into a
 `RuntimeBinding` snapshot, feeds its libc identity into payload probing, and
 reuses the same snapshot for configure/link/run/test and the fast-path cache.
 On Linux the snapshot also records the canonical selected loader/libc directory
@@ -174,6 +188,70 @@ deploy-file copy edges. The exact RuntimeBinding, canonical identities, link
 intent, search mechanism, and post-link verdict are persisted in
 `resolution.json` schema 2. `mcpp why runtime` only interprets that stored file;
 re-diagnosis belongs to `xlings doctor`.
+
+### 2.3 The run-time search closure (`src/platform/runtime_search.cppm`)
+
+mcpp passes `--sysroot=<subos>` on the compile **and** link lines, so a library
+the SubOS provides — `-lGL`, `-lX11`, `-lwayland-client` — resolves with no
+flags from the user. The run-time search path has to be derived from the same
+decision, or a link succeeds and the artifact cannot start.
+
+The closure is one ordered list, each entry tagged with where it came from:
+
+| origin | example | mutable? | ships? |
+|---|---|---|---|
+| `payload` | `<store>/xim-x-glibc/2.39/lib64` | no — written once at install | no |
+| `package` | a dependency's `[runtime]` dir | no | no |
+| `subos_farm` | `<subos>/lib` | **yes** — rewritten by every `xlings install` | no |
+| `host_default` | `/usr/lib/x86_64-linux-gnu` | n/a — the target's own | n/a |
+
+**Order is decreasing mutability, and the farm is last.** That is the whole
+invariant: payload-first keeps `libc` / `libm` / `libstdc++` resolving from the
+pinned payload, leaving the farm to supply only what nothing else does.
+Farm-first would let a later `xlings install` change which libc an *already
+linked* artifact loads.
+
+Two guards decide whether the farm applies at all. The format must have a
+search path (ELF; Mach-O and PE get nothing, matching the loader-tag contract),
+and the target must be this host's runtime — a cross target gets no farm, since
+it belongs to the host SubOS.
+
+`host_default` enters the *model* only when the artifact will really run under
+the host loader. A hermetic artifact's `PT_INTERP` names a private loader with
+different built-in defaults, so including `/usr/lib` there models the wrong
+loader — and since a developer machine usually has its own `libGL.so.1`, doing
+so reported "resolved" for binaries that exited 127.
+
+The closure is recorded in `resolution.json` under `runtime.search.closure` and
+printed by `mcpp why runtime`. A `DT_NEEDED` that nothing on a hermetic
+artifact's path can satisfy is a **proven** failure (`unresolvable`), not an
+inconclusive one, and it fails the build. Measured with `LD_DEBUG=libs`: the
+private loader's built-in default path is the glibc payload's own *build-time*
+prefix, a directory that does not exist on the machine — `/usr/lib` is never
+consulted.
+
+Three things narrow that proof, and each of them is a case where mcpp knows less
+than the wording suggests:
+
+- **The artifact's format decides, not the binding's.** A cross build runs with
+  this host's binding while producing a PE or Mach-O. ELF rules do not apply to
+  the artifact whatever the binding says.
+- **Only an unfindable SONAME proves anything.** "I could not read this object"
+  and "I stopped after 512 objects" are statements about the *check*; a check
+  that could not look has proven nothing, so those stay inconclusive.
+- **`[build] allow_host_libs` opts out of both phases.** It already switches off
+  the link-time hermeticity check; once resolution is the user's responsibility
+  mcpp reports rather than blocks, because they may run under `LD_LIBRARY_PATH`
+  or on a machine where the library sits where the private loader looks.
+
+mcpp also declares `XLINGS_SUBOS_LD_PATHS=0` for every process it spawns. That
+is the opt-out from xlings' linker-wrapper path injection
+(openxlings/xlings#540): mcpp wants the wrapper's `--disable-new-dtags` and
+must refuse its `-rpath "$XLINGS_SUBOS_LIB"`, because that variable names the
+*active shell's* SubOS — mcpp keeps its own xlings home under
+`<mcpp home>/registry`, so it generally points at a different farm backed by a
+different physical glibc payload. mcpp emits the farm entry it derived from the
+binding it actually selected.
 
 ## 3. The link model (`src/toolchain/linkmodel.cppm`)
 
@@ -489,7 +567,7 @@ everything §3–§4 does for ELF.
 | link model + loader resolution | `src/toolchain/linkmodel.cppm` |
 | unified fixup pipeline (patchelf/specs/cfg, marker) | `src/toolchain/post_install.cppm` |
 | install/lifecycle entry | `src/toolchain/lifecycle.cppm`; auto-install entries in `src/build/prepare.cppm` |
-| root runtime selection/binding | `src/xlings/runtime_selection.cppm`, `src/platform/runtime_binding.cppm`, `src/xlings/subos_info.cppm` |
+| root runtime selection/binding | `src/platform/xlings/runtime_selection.cppm`, `src/platform/runtime_binding.cppm`, `src/platform/xlings/subos_info.cppm` |
 | generic runtime contract + LinkIntent | `src/manifest/types.cppm`, `src/build/plan.cppm`, `src/build/flags.cppm` |
 | stored resolution explanation | `src/build/prepare.cppm`, `src/build/runtime_validation.cppm`, `src/doctor.cppm` |
 | flag assembly (main build) | `src/build/flags.cppm` |

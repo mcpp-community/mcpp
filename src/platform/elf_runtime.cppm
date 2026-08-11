@@ -68,13 +68,52 @@ struct RuntimeResolution {
     ElfRuntimeFacts artifact;
     std::vector<ElfRuntimeFacts> objects;
     std::vector<std::filesystem::path> resolvedLibcs;
+
+    // Everything that stopped the walk, as human-readable text. A mixed bag on
+    // purpose: an object that could not be parsed, a closure that hit the size
+    // cap, and a SONAME nothing provides all belong in the report.
     std::vector<std::string> unresolved;
+
+    // The strict subset that means "a DT_NEEDED nothing on the search path
+    // provides". SEPARATE because only this one is PROVABLE.
+    //
+    // `unresolved` also collects "I could not read this file" and "I stopped
+    // after 512 objects", which are statements about the CHECK, not about the
+    // artifact. Treating the whole bag as proof made a cross-built PE fail its
+    // build: `crosswin.exe` is not ELF, that fact landed in `unresolved`, and a
+    // "you are missing a library" verdict was issued for a file with no
+    // DT_NEEDED at all. Caught by CI, not by reading.
+    std::vector<std::string> unresolvedSonames;
+
+    // Did the artifact itself parse as ELF? False ⇒ the ELF rules do not apply
+    // to it, whatever the binding says. The binding describes the HOST; a cross
+    // build's artifact is a different format entirely.
+    bool artifactIsElf = false;
 };
 
 struct RuntimeVerdict {
-    enum class Status { Pass, ProvenMismatch, Inconclusive };
+    // FOUR-VALUED, and the third one is this round's addition.
+    //
+    //   Pass            every rule that applies was checked and held
+    //   ProvenMismatch  two runtime payloads are being mixed
+    //   Unresolvable    a DT_NEEDED cannot be found anywhere the artifact's
+    //                   loader will look — the artifact provably cannot start
+    //   Inconclusive    a rule that applies could not be evaluated
+    //
+    // `Unresolvable` used to be folded into `Inconclusive`, which reports a
+    // PROVEN failure as "not checked". Under a hermetic binding the artifact's
+    // PT_INTERP names a private loader whose search path mcpp computes in
+    // full, so "not found" is a measurement, not an absence of one.
+    enum class Status { Pass, ProvenMismatch, Unresolvable, Inconclusive };
     Status status = Status::Pass;
     std::vector<std::string> diagnostics;
+
+    // Does this verdict mean the artifact is known-bad? Both blocking states
+    // spelled once, so a caller cannot check for one and silently accept the
+    // other.
+    bool blocking() const {
+        return status == Status::ProvenMismatch || status == Status::Unresolvable;
+    }
 
     std::string explain() const {
         std::string out;
@@ -94,10 +133,19 @@ RuntimeResolution resolve_runtime_closure(
     const mcpp::platform::runtime::RuntimeBinding& binding,
     std::span<const std::filesystem::path> additionalSearchDirs = {});
 
+// `hostLibsAllowed` mirrors `[build] allow_host_libs` (and
+// `MCPP_ALLOW_HOST_LIBS`). It is the user's explicit statement that this build
+// reaches outside the sandbox on purpose, and it already switches off the
+// link-time hermeticity check. It has to switch off the RUN-time proof for the
+// same reason: once resolution is the user's responsibility, mcpp can no longer
+// claim the artifact is unstartable — they may run it under LD_LIBRARY_PATH, or
+// on a machine where the library is installed where the private loader looks.
+// One declaration, one meaning, both phases.
 RuntimeVerdict validate_runtime_artifact(
     const std::filesystem::path& artifact,
     const mcpp::platform::runtime::RuntimeBinding& binding,
-    const RuntimeResolution& resolution);
+    const RuntimeResolution& resolution,
+    bool hostLibsAllowed = false);
 
 } // namespace mcpp::platform::elf
 
@@ -279,7 +327,27 @@ std::optional<std::filesystem::path> resolve_needed(
         append_unique_path(dirs, expand_origin(raw, requester.artifact));
     for (auto const& dir : additionalSearchDirs) append_unique_path(dirs, dir);
     for (auto const& dir : binding.libraryDirs) append_unique_path(dirs, dir);
-    for (auto const& dir : host_library_dirs()) append_unique_path(dirs, dir);
+    // NOTE: the SubOS farm is NOT read from the binding here.
+    //
+    // It reaches this function through `additionalSearchDirs`, which the caller
+    // builds from the PLAN — and the plan is where the guards live (no farm for
+    // a cross target, none for a non-ELF format). Reading `binding.searchDirs`
+    // directly would put this host's x86_64 farm on the search path of an
+    // aarch64 artifact that has no such entry in its DT_RPATH, and report a
+    // pass the target machine will not honour. The model must look exactly
+    // where the artifact looks, no wider.
+    //
+    // The host loader's built-in defaults — ONLY when the artifact runs under
+    // the host loader.
+    //
+    // A hermetic artifact's PT_INTERP names a private loader compiled with a
+    // different default path, so adding /usr/lib here models the wrong loader.
+    // Measured: a GL program that cannot start was reported `validation: pass`
+    // because the HOST happened to have libGL.so.1 and the model found it
+    // there. When the model and the artifact disagree about which loader runs,
+    // the model wins the report and the artifact wins reality.
+    if (!binding.hermetic())
+        for (auto const& dir : host_library_dirs()) append_unique_path(dirs, dir);
 
     for (auto const& dir : dirs) {
         auto candidate = dir / named;
@@ -546,6 +614,7 @@ RuntimeResolution resolve_runtime_closure(
         return resolution;
     }
     resolution.artifact = std::move(*root);
+    resolution.artifactIsElf = true;
 
     std::deque<ElfRuntimeFacts> queue;
     queue.push_back(resolution.artifact);
@@ -573,6 +642,7 @@ RuntimeResolution resolve_runtime_closure(
                     soname, requester, binding, additionalSearchDirs);
                 if (!path) {
                     resolution.unresolved.push_back(soname);
+                    resolution.unresolvedSonames.push_back(soname);
                     continue;
                 }
                 loadedBySoname.emplace(soname, *path);
@@ -611,6 +681,7 @@ RuntimeResolution resolve_runtime_closure(
     if (!queue.empty())
         resolution.unresolved.push_back("runtime closure exceeds 512 ELF objects");
     detail::sort_unique(resolution.unresolved);
+    detail::sort_unique(resolution.unresolvedSonames);
     std::sort(resolution.artifact.resolvedObjects.begin(),
               resolution.artifact.resolvedObjects.end());
     resolution.artifact.resolvedObjects.erase(
@@ -623,7 +694,8 @@ RuntimeResolution resolve_runtime_closure(
 RuntimeVerdict validate_runtime_artifact(
     const std::filesystem::path& artifact,
     const mcpp::platform::runtime::RuntimeBinding& binding,
-    const RuntimeResolution& resolution) {
+    const RuntimeResolution& resolution,
+    bool hostLibsAllowed) {
     RuntimeVerdict verdict;
     const bool isGlibc = binding.runtimeId.starts_with("glibc@");
     if constexpr (!mcpp::platform::is_linux) {
@@ -632,6 +704,23 @@ RuntimeVerdict validate_runtime_artifact(
         return verdict;
     }
     if (binding.platform != "linux" || !isGlibc) {
+        // Two different reasons land here and they are not the same news.
+        //
+        //   declared, not glibc   the rules DO NOT APPLY (musl, macOS SDK,
+        //                         ucrt) — nothing to check, so Pass.
+        //   not declared          the rules CANNOT BE EVALUATED — the SubOS
+        //                         never said what it is, so Inconclusive.
+        //
+        // Reporting the second as the first sends the reader looking for a
+        // runtime they did not select, and quietly counts "unknown" as "fine".
+        if (!binding.declared) {
+            verdict.status = RuntimeVerdict::Status::Inconclusive;
+            verdict.diagnostics.push_back(std::format(
+                "runtime rules inconclusive: SubOS '{}' does not describe its "
+                "runtime, so there is no identity to check the artifact against",
+                binding.selection.subosName));
+            return verdict;
+        }
         verdict.diagnostics.push_back(
             "runtime physics: selected runtime is not Linux/glibc; rules A/B are not applicable");
         return verdict;
@@ -639,6 +728,22 @@ RuntimeVerdict validate_runtime_artifact(
 
     const auto artifactPath = detail::canonical_text(artifact);
     const auto& facts = resolution.artifact;
+
+    // THE ARTIFACT'S FORMAT DECIDES, NOT THE BINDING'S.
+    //
+    // The binding describes this HOST — Linux, glibc, a private loader. A cross
+    // build's artifact is a different format entirely, and ELF rules say
+    // nothing about it. Without this, a Linux→Windows cross build reached the
+    // ELF validator with `crosswin.exe`, the "not an ELF file" parse error sat
+    // in `unresolved`, and the build was failed for a missing library on a file
+    // that has no DT_NEEDED at all.
+    if (!resolution.artifactIsElf) {
+        verdict.diagnostics.push_back(std::format(
+            "runtime physics: {} is not ELF; ELF/glibc rules are not applicable",
+            artifactPath));
+        return verdict;
+    }
+
     // ET_REL and static ET_EXEC/ET_DYN files carry no dynamic closure.
     if (facts.interp.empty() && facts.needed.empty() && resolution.unresolved.empty())
         return verdict;
@@ -757,14 +862,59 @@ RuntimeVerdict validate_runtime_artifact(
 
     if (verdict.status != RuntimeVerdict::Status::ProvenMismatch
         && !resolution.unresolved.empty()) {
-        std::string names;
-        for (auto const& name : resolution.unresolved) {
-            if (!names.empty()) names += ", ";
-            names += name;
+        auto join = [](std::span<const std::string> values) {
+            std::string out;
+            for (auto const& value : values) {
+                if (!out.empty()) out += ", ";
+                out += value;
+            }
+            return out;
+        };
+        // PROVEN under a hermetic binding, merely UNKNOWN otherwise.
+        //
+        // Hermetic means the artifact's PT_INTERP is a private loader whose
+        // entire search path mcpp computed: RPATH/RUNPATH + payloads + farm,
+        // with no host defaults and no ld.so.cache. Nothing else will be
+        // consulted, so "not found here" is the same answer the loader will
+        // give — and the artifact cannot start. Saying `inconclusive` for that
+        // is reporting a measurement as the absence of one, and it is exactly
+        // how a GL program that exits 127 was shipped as `validation: pass`.
+        //
+        // A non-hermetic artifact runs under the host loader, which also
+        // consults `ld.so.cache` — something mcpp deliberately does not parse.
+        // There, unresolved really is unknown.
+        //
+        // And it must be an unfindable SONAME, not merely "something stopped
+        // the walk": an unreadable object or the 512-object cap are statements
+        // about the CHECK, and a check that could not look has proven nothing.
+        if (binding.hermetic() && !resolution.unresolvedSonames.empty()
+            && !hostLibsAllowed) {
+            verdict.status = RuntimeVerdict::Status::Unresolvable;
+            verdict.diagnostics.push_back(std::format(
+                "runtime closure for {} cannot be satisfied: {} not found on the "
+                "search path this artifact will actually use.\n"
+                "       Its PT_INTERP is a private loader, so the host's "
+                "/usr/lib is NOT consulted — the program will fail to start with "
+                "\"cannot open shared object file\".\n"
+                "       Fix: install the provider into the selected SubOS "
+                "(`xlings install <pkg>`), or declare the dependency so mcpp "
+                "resolves it.",
+                artifactPath, join(resolution.unresolvedSonames)));
+        } else if (hostLibsAllowed && !resolution.unresolvedSonames.empty()) {
+            inconclusive(std::format(
+                "runtime closure for {} is inconclusive: {} is not on the search "
+                "path this artifact will use, but [build] allow_host_libs is set "
+                "— resolution at run time is yours to arrange (e.g. "
+                "LD_LIBRARY_PATH, or installing it where the private loader "
+                "looks).\n"
+                "       Measured: this loader's built-in default path is the "
+                "glibc payload's own prefix, NOT /usr/lib.",
+                artifactPath, join(resolution.unresolvedSonames)));
+        } else {
+            inconclusive(std::format(
+                "runtime closure for {} is inconclusive; unresolved objects: {}",
+                artifactPath, join(resolution.unresolved)));
         }
-        inconclusive(std::format(
-            "runtime closure for {} is inconclusive; unresolved objects: {}",
-            artifactPath, names));
     }
     return verdict;
 }

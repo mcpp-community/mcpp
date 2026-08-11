@@ -30,6 +30,7 @@ import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.wire;
 import mcpp.platform.env;            // --offline → MCPP_OFFLINE
+import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
 import mcpp.ui;
 import mcpp.log;
 
@@ -114,6 +115,28 @@ int run(int argc, char** argv) {
         // it makes `MCPP_OFFLINE=1` and `--offline` literally the same switch.
         else if (a == "--offline") mcpp::platform::env::set("MCPP_OFFLINE", "1");
     }
+    // Decline xlings' linker-wrapper path injection, for this process and
+    // everything it spawns (openxlings/xlings#540).
+    //
+    // That wrapper appends `-rpath "$XLINGS_SUBOS_LIB"` to every link it sees.
+    // mcpp wants the TAG half of what it does and must refuse the PATH half:
+    // `$XLINGS_SUBOS_LIB` names the ACTIVE SHELL's SubOS, which is measurably
+    // not the one mcpp resolved — mcpp keeps its own xlings home under
+    // `<mcpp home>/registry`, so on an ordinary developer machine the variable
+    // points at a different farm backed by a DIFFERENT PHYSICAL glibc payload.
+    // Inheriting it would put a second libc on the artifact's search path,
+    // which is the one thing rule B exists to prevent. mcpp emits its own farm
+    // entry, derived from the binding it actually selected.
+    //
+    // Set here rather than per link command: the link line has a hard 128KiB
+    // ceiling that real workspaces already spend 43% of, and children inherit
+    // the environment for free. Declared BEFORE the wrapper ships, because
+    // "the exit must be declared, not inferred" is the rule that whole
+    // negotiation established — today this is a no-op.
+    mcpp::platform::env::set(
+        std::string(mcpp::platform::search::kLinkerPathInjectionOptOut),
+        std::string(mcpp::platform::search::kLinkerPathInjectionOptOutValue));
+
     // Env override (observability, esp. CI): MCPP_VERBOSE=<non-empty, not "0">
     // turns on verbose logging for EVERY mcpp invocation — including the ones
     // nested inside e2e test scripts that call $MCPP without flags. Lets a

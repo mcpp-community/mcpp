@@ -35,7 +35,7 @@ import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.abi;
 import mcpp.ui;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 
 namespace mcpp::doctor {
 
@@ -280,6 +280,9 @@ export int doctor_report() {
                 ok(std::format("{}: pass", subject));
             } else if (stored->verdict.status == Status::Inconclusive) {
                 warn(std::format("{}: inconclusive{}{}", subject,
+                    detail.empty() ? "" : "\n", detail));
+            } else if (stored->verdict.status == Status::Unresolvable) {
+                err(std::format("{}: unresolvable runtime closure{}{}", subject,
                     detail.empty() ? "" : "\n", detail));
             } else {
                 err(std::format("{}: proven mismatch{}{}", subject,
@@ -589,10 +592,19 @@ int print_stored_runtime_resolution() {
     std::println("runtime resolution: {}", path.string());
     if (auto binding = runtime->find("binding");
         binding != runtime->end() && binding->is_object()) {
-        std::println("binding: {} via {} (contract {})",
-            binding->value("runtime_id", "?"),
+        const bool declared = binding->value("declared", true);
+        std::println("binding: {} via {} (contract {}){}",
+            declared ? binding->value("runtime_id", "?") : "(undeclared)",
             binding->value("provider_id", "?"),
-            binding->value("contract_hash", "?"));
+            binding->value("contract_hash", "?"),
+            declared ? "" : "  — this SubOS did not describe itself");
+        // The note, when there is one. A degradation that only ever appeared
+        // once during the build it happened in is a degradation nobody can look
+        // up afterwards, and "why is my verdict inconclusive" is exactly the
+        // question this command exists to answer.
+        if (auto note = binding->value("note", std::string{}); !note.empty())
+            for (auto line : std::views::split(note, '\n'))
+                std::println("  {}", std::string_view(line));
     }
 
     std::println("requirements:");
@@ -677,6 +689,22 @@ int print_stored_runtime_resolution() {
             search->value("format", "?"), search->value("link_library", "?"),
             search->value("transitive_needed", "?"),
             search->value("runtime", "?"));
+        // The closure IN ORDER, with where each directory came from. Order is
+        // the answer to "why does my GL program find its driver" and to "why
+        // is my libc still the pinned one" — both invisible when the report
+        // says only which mechanism is used.
+        if (auto closure = search->find("closure");
+            closure != search->end() && closure->is_array() && !closure->empty()) {
+            std::println("  runtime search closure (loader order):");
+            for (auto const& dir : *closure) {
+                if (!dir.is_object()) continue;
+                std::println("    {:<12} {}{}",
+                    dir.value("origin", "?"), dir.value("path", "?"),
+                    dir.value("machine_local", false) ? "  [machine-local]" : "");
+            }
+            std::println("    note: the mutable SubOS farm is LAST on purpose — "
+                         "libc stays pinned to its payload");
+        }
     }
     if (auto validation = runtime->find("validation");
         validation != runtime->end() && validation->is_object()) {

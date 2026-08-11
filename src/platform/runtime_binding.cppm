@@ -11,8 +11,8 @@ import std;
 import mcpp.config;
 import mcpp.libs.json;
 import mcpp.platform;
-import mcpp.xlings.runtime_selection;
-import mcpp.xlings.subos_info;
+import mcpp.platform.xlings.runtime_selection;
+import mcpp.platform.xlings.subos_info;
 
 export namespace mcpp::platform::runtime {
 
@@ -28,7 +28,17 @@ struct RuntimeBinding {
     std::optional<std::filesystem::path> loader;
     std::optional<std::string> libc;
     std::optional<std::string> hostLibc;
+    // IMMUTABLE payload directories (`<store>/xim-x-glibc/2.39/lib64`).
     std::vector<std::filesystem::path> libraryDirs;
+    // The SubOS symlink farm (`<subos>/lib`) — a union view of everything
+    // installed into this environment, rewritten on every re-resolution.
+    //
+    // Deliberately a SECOND field rather than more entries in `libraryDirs`:
+    // merging them discards the immutability distinction, and that
+    // distinction is the whole of `mcpp.platform.runtime_search`'s ordering
+    // rule. A payload directory and a farm directory are not interchangeable
+    // even when they currently resolve to the same file.
+    std::vector<std::filesystem::path> searchDirs;
     std::vector<mcpp::xlings::subos::EnvDecl> environment;
     std::vector<std::string> providerBindings;
     std::vector<std::string> capabilities;
@@ -37,6 +47,32 @@ struct RuntimeBinding {
     std::string provenance;
     std::filesystem::path subosDir;
     mcpp::xlings::runtime::RuntimeSelection selection;
+
+    // Did the SubOS describe itself (does it carry a `subos_info` block)?
+    //
+    // FALSE IS NOT AN ERROR. A SubOS that says nothing leaves some facts
+    // unknown — rules A/B become inconclusive, declared environment is
+    // unavailable — and leaves everything else working. Treating absence as a
+    // failure is what stopped every `mcpp build` and `mcpp test` on Windows
+    // (openxlings/xlings#543), on a machine where the missing facts describe
+    // concepts (ELF, PT_INTERP, a private libc) that do not exist there.
+    //
+    // A CONTRADICTION still fails: naming a SubOS that is not present cannot
+    // be satisfied, so it is reported rather than degraded.
+    bool declared = false;
+
+    // Why something degraded. Non-empty ⇒ the caller MUST surface it. Never
+    // an error: "it did not happen" and "it succeeded" producing identical
+    // output is the property that made mcpp#352 expensive.
+    std::string note;
+
+    // Does this artifact run under a PRIVATE loader?
+    //
+    // The predicate the closure resolver needs: when PT_INTERP points into a
+    // payload, the HOST loader's built-in default directories are not part of
+    // the search path, and modelling them is how a binary that cannot start
+    // was reported as valid.
+    bool hermetic() const { return loader.has_value(); }
 };
 
 namespace detail {
@@ -79,6 +115,14 @@ std::string canonical_contract(const RuntimeBinding& binding) {
     append_field(out, binding.libc.value_or(""));
     append_field(out, binding.hostLibc.value_or(""));
     for (auto const& p : binding.libraryDirs)
+        append_field(out, p.generic_string());
+    // The farm participates in the hash because it participates in the
+    // artifact: it lands in DT_RPATH, so a build made against one farm is not
+    // interchangeable with a build made against another. `declared` is in for
+    // the same reason — a SubOS that gains self-description changes what the
+    // build knows, and the fast path must not reuse the older answer.
+    append_field(out, binding.declared ? "declared" : "undeclared");
+    for (auto const& p : binding.searchDirs)
         append_field(out, p.generic_string());
     for (auto const& provider : binding.providerBindings)
         append_field(out, provider);
@@ -213,22 +257,51 @@ resolve_runtime_binding(
             selection.subosName, out.subosDir.string()));
     }
 
+    // CONTRADICTION vs ABSENCE. The check above is a contradiction: the user
+    // named a SubOS that is not there, and no amount of degrading makes that
+    // request satisfiable. Everything below is absence — some facts are
+    // unavailable, the rest of the build is unaffected — so it degrades.
+    //
+    // The distinction is not academic. Collapsing it is what made every
+    // `mcpp build` and `mcpp test` on Windows fail with a message about GL
+    // drivers (openxlings/xlings#543), and it is the same shape as the index
+    // floor incident: DATA THAT IS MISSING OR NEWER MUST NOT INVALIDATE THE
+    // PROGRAM THAT READS IT.
+    auto note = [&](std::string message) {
+        if (!out.note.empty()) out.note += "\n";
+        out.note += std::move(message);
+    };
+
     auto info = mcpp::xlings::subos::read(out.subosDir);
+    out.declared = info.present;
     if (!info.present) {
-        return std::unexpected(std::format(
-            "selected SubOS '{}' cannot provide a RuntimeBinding: {}",
-            selection.subosName, info.note));
-    }
-    if (info.schema != mcpp::xlings::subos::kSupportedSchema) {
-        return std::unexpected(std::format(
-            "selected SubOS '{}' uses runtime contract schema {}, but this "
-            "mcpp requires schema {}; update xlings/mcpp before building",
+        note(std::format(
+            "SubOS '{}' does not describe itself: {}\n"
+            "       Runtime facts (identity, loader, declared environment) are "
+            "unavailable: runtime rules report `inconclusive` rather than a "
+            "verdict, and a program launched from here gets no environment this "
+            "SubOS declares.\n"
+            "       Where the C runtime comes from a payload, there is now no "
+            "declared runtime to bind to — mcpp declines to guess a version, so "
+            "the link falls back to the host and the hermeticity check will say "
+            "so. `xlings self update` writes the block.",
+            selection.subosName,
+            info.note.empty() ? "no `subos_info` block" : info.note));
+    } else if (info.schema > mcpp::xlings::subos::kSupportedSchema) {
+        // Mirrors `subos_info::read`, which already reads a HIGHER schema and
+        // says so. A consumer stricter than its own reader is a time bomb:
+        // the day xlings writes schema 2, an equality check stops every build
+        // on every platform.
+        note(std::format(
+            "SubOS '{}' declares runtime contract schema {}, newer than the {} "
+            "this mcpp understands; using the fields it knows",
             selection.subosName, info.schema,
             mcpp::xlings::subos::kSupportedSchema));
     }
-    if (info.runtime.empty()) {
-        return std::unexpected(std::format(
-            "selected SubOS '{}' has no runtime identity in subos_info.runtime",
+    if (info.present && info.runtime.empty()) {
+        note(std::format(
+            "SubOS '{}' has no runtime identity in subos_info.runtime; runtime "
+            "rules cannot be evaluated for artifacts built here",
             selection.subosName));
     }
 
@@ -247,11 +320,27 @@ resolve_runtime_binding(
         out.libc = info.runtime;
         if (!info.hostGlibc.empty()) out.hostLibc = info.hostGlibc;
 
-        // Resolve the selected SubOS VIEW to its immutable payload.  The view
-        // already embodies RuntimeSelection, so following these exact links is
-        // not payload discovery and cannot choose another installed version.
+        // ONE traversal, TWO answers.
+        //
+        //   searchDirs   the view directory itself — the farm, where every
+        //                library this environment installed is reachable by
+        //                SONAME (`-lGL` already resolves here, because
+        //                `--sysroot=<subos>` makes it the linker's default).
+        //   libraryDirs  the immutable payload the view's libc RESOLVES to.
+        //
+        // Deriving both here rather than in two places is the point: the
+        // layout knowledge (`lib64` before `lib`) exists exactly once.
+        //
+        // The view already embodies RuntimeSelection, so following these exact
+        // links is not payload discovery and cannot choose another installed
+        // version.
         std::vector<std::filesystem::path> candidates{
             out.subosDir / "lib64", out.subosDir / "lib"};
+        for (auto const& candidate : candidates) {
+            std::error_code fec;
+            if (std::filesystem::is_directory(candidate, fec))
+                out.searchDirs.push_back(candidate.lexically_normal());
+        }
         for (auto const& candidate : candidates) {
             std::error_code lec;
             auto libc = candidate / "libc.so.6";
@@ -322,6 +411,11 @@ std::string serialize_runtime_binding(const RuntimeBinding& binding) {
     j["library_dirs"] = nlohmann::json::array();
     for (auto const& path : binding.libraryDirs)
         j["library_dirs"].push_back(path.generic_string());
+    j["declared"] = binding.declared;
+    j["note"] = binding.note;
+    j["search_dirs"] = nlohmann::json::array();
+    for (auto const& path : binding.searchDirs)
+        j["search_dirs"].push_back(path.generic_string());
     j["environment"] = nlohmann::json::array();
     for (auto const& decl : binding.environment)
         j["environment"].push_back({
@@ -391,6 +485,11 @@ deserialize_runtime_binding(std::string_view encoded) {
         if (auto it = j.find("library_dirs"); it != j.end() && it->is_array())
             for (auto const& v : *it) if (v.is_string())
                 out.libraryDirs.emplace_back(v.get<std::string>());
+        out.declared = j.value("declared", false);
+        out.note = j.value("note", "");
+        if (auto it = j.find("search_dirs"); it != j.end() && it->is_array())
+            for (auto const& v : *it) if (v.is_string())
+                out.searchDirs.emplace_back(v.get<std::string>());
         if (auto it = j.find("environment"); it != j.end() && it->is_array()) {
             for (auto const& v : *it) {
                 if (!v.is_object()) continue;
@@ -456,8 +555,15 @@ deserialize_runtime_binding(std::string_view encoded) {
             : mcpp::xlings::runtime::RuntimeSelection::Source::DefaultPolicy;
         out.selection.subosName = s.value("name", "default");
         out.selection.ownerRoot = s.value("owner_root", "");
-        if (out.schema == 0 || out.runtimeId.empty()
-            || out.contractHash.empty() || out.subosDir.empty())
+        // Completeness is conditional on `declared`. An UNDECLARED binding
+        // legitimately has schema 0 and no runtime identity — that is what
+        // "the SubOS said nothing" looks like — so demanding those fields
+        // would make every cached degraded binding undecodable and send the
+        // build back down the slow path forever. The hash still has to match,
+        // which is what actually proves the record was not tampered with.
+        if (out.contractHash.empty() || out.subosDir.empty())
+            return std::unexpected("cached RuntimeBinding is incomplete");
+        if (out.declared && (out.schema == 0 || out.runtimeId.empty()))
             return std::unexpected("cached RuntimeBinding is incomplete");
         if (detail::hash_contract(detail::canonical_contract(out))
             != out.contractHash)

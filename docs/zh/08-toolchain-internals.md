@@ -74,8 +74,20 @@ payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是�
 
 workspace 构建由 workspace root 选择;member 与 dependency 声明不合并、不传递。
 `XLINGS_ACTIVE_SUBOS`、current、编译器 owner home 以及 CLI/环境 override 都不是第三层。
-所选 SubOS 必须提供受支持的 `subos_info`:环境不存在或 contract 缺失/不兼容会 hard error,
-绝不回退 default/active/编译器烙入状态。该 contract 只读取一次形成 `RuntimeBinding` snapshot,
+**矛盾报错,缺席降级。** 点名的环境不存在是 hard error —— 该请求无法被满足,
+换一个环境会让同一份 `mcpp.toml` 在不同机器上意味着不同 ABI,绝不回退
+default/active/编译器烙入状态。
+
+而「环境存在但没有自我描述」是另一回事,它**降级**:记 `declared = false` 与一条
+调用方必须打印的 note;runtime 规则报 `inconclusive` 而不是给出判决;没有可用的
+payload-first binding(mcpp 拒绝猜一个 libc 版本,因而 hermeticity 检查会如实报告
+回退到宿主)。**构建不被中止。** 同理,`subos_info` 的 schema **高于**本 mcpp 所理解的
+版本时,读懂的字段照用并附 note —— 这正是读取器自己写下的规矩:**发布数据不得使
+读它的程序失效**。直接拒绝就是 2026.8.10.2 在 Windows 上停掉每一次 `mcpp build` /
+`mcpp test` 的原因(那里 xlings 根本不写这个 block,它承载的事实也不存在,
+openxlings/xlings#543)。
+
+该 contract 只读取一次形成 `RuntimeBinding` snapshot,
 由 configure/link/run/test 与 fast-path cache 共同使用。
 Linux snapshot 还记录所选 loader/libc 目录的规范路径及可选的创建宿主 glibc floor;
 它们是链接后校验的证据,不是新的选择入口。
@@ -141,6 +153,58 @@ provider-specific 分支,也拒绝把相关词汇与外部 probe 启动耦合。
 用显式 deploy-file copy edge。精确 RuntimeBinding、canonical identity、LinkIntent、
 搜索机制与链接后 verdict 写入 `resolution.json` schema 2。
 `mcpp why runtime` 只解释该存储文件;重新诊断由 `xlings doctor` 负责。
+
+### 2.3 运行期搜索闭包(`src/platform/runtime_search.cppm`)
+
+mcpp 在**编译与链接**两条线上都发 `--sysroot=<subos>`,所以 subos 提供的库
+(`-lGL`、`-lX11`、`-lwayland-client`)零 flag 就能解析。运行期的搜索路径必须由
+**同一个决策**推导,否则就是「链得上、跑不起来」。
+
+闭包是一张有序表,每条带来源:
+
+| origin | 例子 | 可变? | 可随产物分发? |
+|---|---|---|---|
+| `payload` | `<store>/xim-x-glibc/2.39/lib64` | 否 —— 装一次不再动 | 否 |
+| `package` | 依赖描述符的 `[runtime]` 目录 | 否 | 否 |
+| `subos_farm` | `<subos>/lib` | **是** —— 每次 `xlings install` 重写 | 否 |
+| `host_default` | `/usr/lib/x86_64-linux-gnu` | 目标机自己的 | 不适用 |
+
+**次序 = 不可变性递减,farm 在最后。** 这是本模块唯一的不变式:载荷在前,
+`libc` / `libm` / `libstdc++` 永远从被 pin 的载荷解析,farm 只补没人提供的那些;
+farm 在前的话,一次 `xlings install` 就能在事后悄悄换掉一个**已经链接完成**的产物
+所加载的 libc。
+
+两条护栏决定 farm 是否适用:格式必须有搜索路径(ELF;Mach-O 与 PE 什么都不发,
+与加载器标签契约同一形状),且目标必须是本宿主的运行时 —— 交叉目标不发 farm,
+因为 farm 属于宿主 subos。
+
+`host_default` 只在产物**确实**跑在宿主加载器下时才进模型。hermetic 产物的
+`PT_INTERP` 指向私有加载器,它的内建默认路径不同;把 `/usr/lib` 算进去就是在模拟
+另一个加载器 —— 而开发机通常自带 `libGL.so.1`,于是「解析到了」会被报给一个
+退出 127 的产物。
+
+闭包记录在 `resolution.json` 的 `runtime.search.closure`,并由 `mcpp why runtime`
+打印。hermetic 产物上一个谁都提供不了的 `DT_NEEDED` 是**可证的**失败
+(`unresolvable`),不是「没查过」,它会让构建变红。`LD_DEBUG=libs` 实测:私有加载器的
+内建默认路径是 glibc 载荷**自己的构建期前缀**,该目录在本机并不存在 —— `/usr/lib`
+从不被查。
+
+有三件事收窄这个「可证」,每一件都是 mcpp 知道的比措辞暗示的少:
+
+- **产物的格式由产物决定,不由 binding 决定。** 交叉构建用的是本宿主的 binding,
+  产物却是 PE / Mach-O;无论 binding 怎么说,ELF 规则都不适用于它。
+- **只有「找不到的 SONAME」能证明什么。**「这个对象读不了」「我在 512 个之后停了」
+  都是关于**检查**的陈述;没能看的检查什么都没证明,故仍报 inconclusive。
+- **`[build] allow_host_libs` 同时退出两个阶段。** 它本就关掉链接期 hermeticity 检查;
+  既然解析责任已归用户,mcpp 就只报告不阻断 —— 他们可能用 `LD_LIBRARY_PATH` 跑,
+  或装在私有加载器确实会看的地方。
+
+mcpp 还会给它启动的每个进程声明 `XLINGS_SUBOS_LD_PATHS=0` —— 这是 xlings 链接器
+包装器路径注入的退出声明(openxlings/xlings#540):mcpp 要它的
+`--disable-new-dtags`,但必须拒绝它的 `-rpath "$XLINGS_SUBOS_LIB"`,因为那个变量
+指的是**当前 shell 的** subos,而 mcpp 有自己的 xlings home
+(`<mcpp home>/registry`),两者通常指向由**不同物理 glibc 载荷**支撑的不同 farm。
+mcpp 发的是自己从已选 binding 推导出来的那一条。
 
 ## 3. 链接模型(`src/toolchain/linkmodel.cppm`)
 
@@ -400,7 +464,7 @@ mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 �
 | 链接模型 + loader 解析 | `src/toolchain/linkmodel.cppm` |
 | 统一 fixup 管线(patchelf/specs/cfg、marker)| `src/toolchain/post_install.cppm` |
 | install/lifecycle 入口 | `src/toolchain/lifecycle.cppm`;auto-install 入口在 `src/build/prepare.cppm` |
-| root runtime 选择/binding | `src/xlings/runtime_selection.cppm`、`src/platform/runtime_binding.cppm`、`src/xlings/subos_info.cppm` |
+| root runtime 选择/binding | `src/platform/xlings/runtime_selection.cppm`、`src/platform/runtime_binding.cppm`、`src/platform/xlings/subos_info.cppm` |
 | 通用 runtime contract + LinkIntent | `src/manifest/types.cppm`、`src/build/plan.cppm`、`src/build/flags.cppm` |
 | 存储 resolution 解释 | `src/build/prepare.cppm`、`src/build/runtime_validation.cppm`、`src/doctor.cppm` |
 | flag 组装(主构建)| `src/build/flags.cppm` |

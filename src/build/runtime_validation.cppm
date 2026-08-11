@@ -16,6 +16,7 @@ import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.platform.elf_runtime;
 import mcpp.platform.runtime_binding;
+import mcpp.platform.runtime_search;
 
 export namespace mcpp::build::runtime_validation {
 
@@ -38,12 +39,14 @@ struct ValidatedArtifact {
 struct ValidationReport {
     std::vector<ValidatedArtifact> artifacts;
 
-    bool has_proven_mismatch() const {
-        return std::ranges::any_of(artifacts, [](auto const& artifact) {
-            return artifact.verdict.status
-                == mcpp::platform::elf::RuntimeVerdict::Status::ProvenMismatch;
-        });
-    }
+    // NOTE: there is deliberately no `has_blocking_failure()` here.
+    //
+    // There used to be a `has_proven_mismatch()`, and nothing ever called it —
+    // the real gate walks the artifacts in `ninja_backend` so it can name WHICH
+    // one failed and print its explanation. A second predicate that answers
+    // "did anything fail" from the same data is the same decision in two
+    // places, and the one with no callers is the one that silently stops
+    // agreeing. Ask `verdict.blocking()` per artifact.
 };
 
 struct StoredRuntimeSummary {
@@ -150,9 +153,37 @@ std::string status_name(mcpp::platform::elf::RuntimeVerdict::Status status) {
     switch (status) {
         case Status::Pass: return "pass";
         case Status::ProvenMismatch: return "proven_mismatch";
+        case Status::Unresolvable: return "unresolvable";
         case Status::Inconclusive: return "inconclusive";
     }
     return "inconclusive";
+}
+
+// Did this build declare that it reaches outside the sandbox?
+//
+// Spelled here exactly as `mcpp.build.hermetic` spells it — manifest key OR
+// environment variable — because the two checks must agree. A build whose link
+// was allowed to resolve host libraries and whose closure was then judged as if
+// it had not is the worst of both: it links, and mcpp calls it broken.
+bool host_libs_allowed(const mcpp::build::BuildPlan& plan) {
+    if (plan.manifest.buildConfig.allowHostLibs) return true;
+    const char* e = std::getenv("MCPP_ALLOW_HOST_LIBS");
+    return e && *e && *e != '0';
+}
+
+// How bad each state is, for rolling many artifacts into one summary.
+// `Unresolvable` sits above `Inconclusive` (it is proven, not unknown) and
+// below `ProvenMismatch` (mixing payloads is the more fundamental error, and
+// it is usually the CAUSE of anything unresolvable alongside it).
+int status_severity(mcpp::platform::elf::RuntimeVerdict::Status status) {
+    using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+    switch (status) {
+        case Status::Pass:           return 0;
+        case Status::Inconclusive:   return 1;
+        case Status::Unresolvable:   return 2;
+        case Status::ProvenMismatch: return 3;
+    }
+    return 1;
 }
 
 mcpp::platform::elf::RuntimeVerdict::Status
@@ -160,6 +191,9 @@ parse_status(std::string_view value) {
     using Status = mcpp::platform::elf::RuntimeVerdict::Status;
     if (value == "pass") return Status::Pass;
     if (value == "proven_mismatch") return Status::ProvenMismatch;
+    if (value == "unresolvable") return Status::Unresolvable;
+    // Anything unknown reads as `inconclusive`, never as `pass`: a record
+    // written by a newer mcpp must not be mistaken for a clean bill of health.
     return Status::Inconclusive;
 }
 
@@ -214,6 +248,17 @@ runtime_search_dirs(const mcpp::build::BuildPlan& plan) {
     append(plan.depRuntimeLibraryDirs);
     append(plan.toolchain.compilerRuntimeDirs);
     append(plan.runtimeBinding.libraryDirs);
+    // The SubOS farm comes from the PLAN's closure, not straight from the
+    // binding — because the plan is where the guards live. A cross target gets
+    // no farm entry in its DT_RPATH, so a model that consulted the binding
+    // directly would resolve an aarch64 DT_NEEDED out of this host's x86_64
+    // farm and report a pass the target machine will not honour. The model has
+    // to look exactly where the artifact looks.
+    for (auto const& dir : plan.runtimeSearch) {
+        if (dir.origin != mcpp::platform::search::Origin::SubosFarm) continue;
+        if (dir.path.empty() || std::ranges::find(out, dir.path) != out.end()) continue;
+        out.push_back(dir.path);
+    }
     return out;
 }
 
@@ -273,8 +318,10 @@ void sync_resolution_verdict(const mcpp::build::BuildPlan& plan,
             if (!it.value().is_object()) continue;
             any = true;
             auto status = parse_status(it.value().value("status", "inconclusive"));
-            if (status == Status::ProvenMismatch
-                || (status == Status::Inconclusive && summary == Status::Pass))
+            // Worst wins, by an explicit severity order rather than a chain of
+            // pairwise comparisons that has to be re-derived every time a
+            // state is added.
+            if (status_severity(status) > status_severity(summary))
                 summary = status;
             checked.push_back({
                 {"path", (plan.outputDir / it.key()).lexically_normal().generic_string()},
@@ -382,8 +429,12 @@ ValidationReport validate_changed_artifacts(
         validated.artifact = artifact;
         auto resolution = mcpp::platform::elf::resolve_runtime_closure(
             artifact, plan.runtimeBinding, searchDirs);
+        // The SAME opt-out the link-time hermeticity check honours, read the
+        // same way (manifest key or environment). A build that declared it is
+        // reaching outside the sandbox on purpose has taken responsibility for
+        // run-time resolution, so mcpp reports rather than blocks.
         validated.verdict = mcpp::platform::elf::validate_runtime_artifact(
-            artifact, plan.runtimeBinding, resolution);
+            artifact, plan.runtimeBinding, resolution, host_libs_allowed(plan));
         store_artifact(doc, key, fp, validated);
         changedCache = true;
         report.artifacts.push_back(std::move(validated));
