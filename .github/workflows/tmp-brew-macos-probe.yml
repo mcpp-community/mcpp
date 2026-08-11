@@ -2,94 +2,117 @@ name: tmp-brew-macos-probe
 
 # TEMPORARY. Delete before merging.
 #
-# Round 1 (macos-14, pre-tapped) passed end to end: install → mcpp new →
-# mcpp run → toolchain bootstrap → binary ran. So the reported breakage is not
-# "the formula is broken"; it is environment- or path-specific.
+# Round 2 found it. Homebrew 6.0.x gates third-party taps behind explicit
+# trust:
 #
-# Round 2 widens along the three axes that can differ from that green run:
-#   OS version   the runner was macOS 14; users are on 15 / 26
-#   arch         macos-13 is Intel — the formula REFUSES it by design, and
-#                this captures the exact message a user would see
-#   tap path     round 1 tapped first; the documented one-liner relies on
-#                `brew install <user>/<repo>/<formula>` AUTO-tapping, which is
-#                a different code path
+#   Refusing to load formula mcpp-community/mcpp/mcpp-m from untrusted tap
+#   mcpp-community/mcpp.
+#   Run `brew trust --formula …` or `brew trust mcpp-community/mcpp`.
 #
-# Every brew invocation records its own exit code. Note the trap round 1 fell
-# into: `cmd | tail -20` followed by `$?` reports TAIL's status, so a failing
-# command reads as success. Exit codes here are captured before any pipe.
+# macos-14 / 15 / 26 all hit it (Homebrew 6.0.5 / 6.0.12 / 6.0.13). The
+# documented one-liner still passes because `brew install <user>/<repo>/<f>`
+# on an UNTAPPED repo taps and installs in one go, and Homebrew reads that as
+# explicit intent. Everything after the tap exists is refused.
+#
+# Round 3 answers the two questions that decide the fix:
+#   1. WHICH user-facing paths are actually broken (short form, re-running the
+#      documented command, `brew upgrade`, the alias)
+#   2. Does `brew trust <tap>` actually repair all of them — i.e. is the fix
+#      "document one command", or something more
+#
+# Exit codes are captured before any pipe. Round 1 reported `cmd | tail` and
+# read tail's status, which turned a failure into a green line.
 
 on:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  brew-probe:
-    name: "brew ${{ matrix.os }}"
+  brew-trust:
+    name: "trust gate ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 30
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15, macos-26, macos-13]
+        os: [macos-14, macos-26]
     steps:
       - name: Environment
         run: |
-          echo "runner:      ${{ matrix.os }}"
-          echo "arch:        $(uname -m)"
-          echo "macOS:       $(sw_vers -productVersion)"
-          echo "brew:        $(brew --version | head -1)"
-          echo "brew prefix: $(brew --prefix)"
-          echo "tapped?      $(brew tap | grep -c mcpp || true)"
+          echo "runner: ${{ matrix.os }} | macOS $(sw_vers -productVersion) | $(uname -m)"
+          brew --version | head -1
+          echo "── does this brew even have \`trust\`? ──"
+          brew trust --help 2>&1 | head -25 || echo "(no brew trust subcommand)"
 
-      # EXACTLY the command README.md line 121 tells users to run — no prior
-      # `brew tap`. Auto-tapping is part of what is being tested.
-      - name: "brew install mcpp-community/mcpp/mcpp-m (documented one-liner)"
-        id: install
+      # ① the documented one-liner on a machine that has never tapped
+      - name: "1. documented one-liner (untapped machine)"
         run: |
           set +e
-          brew install mcpp-community/mcpp/mcpp-m > install.log 2>&1
-          rc=$?
-          echo "install_rc=$rc" >> "$GITHUB_OUTPUT"
-          echo "=== documented one-liner exit: $rc ==="
-          tail -40 install.log
-          exit 0
+          brew install mcpp-community/mcpp/mcpp-m > s1.log 2>&1
+          echo "STEP1_rc=$?"
+          tail -5 s1.log
 
-      - name: "Diagnose"
-        if: ${{ steps.install.outputs.install_rc != '0' }}
-        run: |
-          echo "── full log ──"
-          cat install.log
-          echo "── error-ish lines ──"
-          grep -nEi 'error|fail|cannot|no such|denied|unable|invalid|require' install.log | tail -40 || true
-          for f in ~/Library/Logs/Homebrew/mcpp-m/*; do
-            echo "===== $f ====="; cat "$f"
-          done 2>/dev/null || true
-
-      - name: "Post-install: launcher + real build"
-        if: ${{ steps.install.outputs.install_rc == '0' }}
-        run: |
-          set +e
-          which mcpp; ver_rc=0
-          mcpp --version > ver.log 2>&1 || ver_rc=$?
-          echo "--version exit=$ver_rc"; cat ver.log
-          cd "$(mktemp -d)"
-          mcpp new brewhello > new.log 2>&1; new_rc=$?
-          echo "new exit=$new_rc"; tail -10 new.log
-          [ $new_rc -eq 0 ] || exit 0
-          cd brewhello
-          mcpp run > run.log 2>&1; run_rc=$?
-          echo "run exit=$run_rc"; tail -40 run.log
-          exit 0
-
-      # The other spelling the tap README advertises (line 30). Installing
-      # through an alias is not the same code path as installing the formula.
-      - name: "Alias: brew install …/mcpp"
-        if: ${{ matrix.os != 'macos-13' }}
+      # ② the SAME documented command again, now that the tap exists. This is
+      #    what a user hits on their second machine-state, and what CI would
+      #    hit on a warm image.
+      - name: "2. documented one-liner AGAIN (tap now present)"
         run: |
           set +e
           brew uninstall --force mcpp-m > /dev/null 2>&1
-          brew install mcpp-community/mcpp/mcpp > alias.log 2>&1
-          echo "alias install exit=$?"
-          tail -25 alias.log
-          exit 0
+          brew install mcpp-community/mcpp/mcpp-m > s2.log 2>&1
+          echo "STEP2_rc=$?"
+          tail -5 s2.log
+
+      # ③ the short form the tap README advertises once tapped
+      - name: "3. short form: brew install mcpp-m"
+        run: |
+          set +e
+          brew uninstall --force mcpp-m > /dev/null 2>&1
+          brew install mcpp-m > s3.log 2>&1
+          echo "STEP3_rc=$?"
+          tail -5 s3.log
+
+      # ④ the alias spelling (tap README line 30)
+      - name: "4. alias: brew install …/mcpp"
+        run: |
+          set +e
+          brew uninstall --force mcpp-m > /dev/null 2>&1
+          brew install mcpp-community/mcpp/mcpp > s4.log 2>&1
+          echo "STEP4_rc=$?"
+          tail -5 s4.log
+
+      # ⑤ THE FIX, if it is one. Everything below must pass after this.
+      - name: "5. brew trust mcpp-community/mcpp"
+        run: |
+          set +e
+          brew trust mcpp-community/mcpp > s5.log 2>&1
+          echo "STEP5_rc=$?"
+          cat s5.log
+
+      - name: "6. after trust: short form"
+        run: |
+          set +e
+          brew uninstall --force mcpp-m > /dev/null 2>&1
+          brew install mcpp-m > s6.log 2>&1
+          echo "STEP6_rc=$?"
+          tail -5 s6.log
+
+      - name: "7. after trust: alias"
+        run: |
+          set +e
+          brew uninstall --force mcpp-m > /dev/null 2>&1
+          brew install mcpp-community/mcpp/mcpp > s7.log 2>&1
+          echo "STEP7_rc=$?"
+          tail -5 s7.log
+
+      - name: "8. after trust: upgrade path + the binary still works"
+        run: |
+          set +e
+          brew upgrade mcpp-m > s8.log 2>&1
+          echo "STEP8_rc=$?"
+          tail -5 s8.log
+          mcpp --version; echo "VERSION_rc=$?"
+          cd "$(mktemp -d)" && mcpp new t > /dev/null 2>&1; echo "NEW_rc=$?"
+          cd t && mcpp run > s8run.log 2>&1; echo "RUN_rc=$?"
+          tail -6 s8run.log
