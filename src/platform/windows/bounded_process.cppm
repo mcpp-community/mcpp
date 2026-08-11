@@ -207,13 +207,36 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
                                   &jeli, sizeof(jeli));
     }
 
+    // A CAPTURED child gets stdin from NUL, never from the console.
+    //
+    // This is not tidiness: mcpp's Windows launchers have always sealed stdin
+    // (see this file's peer, mcpp.platform.process, and the bug it names —
+    // xlings / xim / curl / git children blocking on terminal input during
+    // bootstrap, forcing the user to hammer Enter). The path this replaces
+    // went through `_popen` with `< NUL` appended, so inheriting the console's
+    // stdin here would quietly bring that hang back.
+    //
+    // An UNCAPTURED child keeps the real stdin, matching run_exec: `mcpp run`
+    // hands the terminal to the program on purpose.
+    Handle nulIn;
+    if (capture) {
+        nulIn.h = ::CreateFileA("NUL", GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                                OPEN_EXISTING, 0, nullptr);
+    }
+
     STARTUPINFOA si{};
     si.cb = sizeof(si);
     if (capture) {
         si.dwFlags    = STARTF_USESTDHANDLES;
         si.hStdOutput = writeEnd.h;
         si.hStdError  = writeEnd.h;
-        si.hStdInput  = ::GetStdHandle(STD_INPUT_HANDLE);
+        // If NUL could not be opened, fall back to the console handle rather
+        // than handing the child an invalid one — a child with no stdin at all
+        // fails in ways that look nothing like "stdin was not sealed".
+        si.hStdInput  = (nulIn.h && nulIn.h != INVALID_HANDLE_VALUE)
+                            ? nulIn.h
+                            : ::GetStdHandle(STD_INPUT_HANDLE);
     }
     // else: no STARTF_USESTDHANDLES — the child inherits our console.
 
