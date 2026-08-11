@@ -54,11 +54,21 @@ printf 'export module gshape.helper;\nimport std;\nexport auto helper() -> int {
 printf 'export module gshape.face;\nimport std;\nexport auto face() -> int { return 1; }\n'      > src/face.ixx
 printf 'import std;\nimport gshape.face;\nint main(){ std::println("{}", face()); }\n'           > src/main.cpp
 
-fp_dir() { find target -name build.ninja -printf '%h\n' | head -1; }
+# Ask mcpp for the fingerprint instead of inferring it from the build tree.
+#
+# ⚠️ The obvious `find target -name build.ninja | head -1` is WRONG here and was
+# flaky in exactly the way this test is meant to catch: after part 2 there are
+# TWO output dirs, and `head -1` picks whichever `find` happened to walk first.
+# It passed standalone and failed inside the suite. Assert on the value, not on
+# a directory listing.
+fingerprint() {
+    "$MCPP" build --print-fingerprint 2>&1 | sed -n 's/^Fingerprint: //p' | head -1
+}
 
 # ── 0. First build, then confirm the fast path actually engages ────────────
 "$MCPP" build > b0.log 2>&1 || { cat b0.log; echo "FAIL: first build"; exit 1; }
-FP_BEFORE="$(fp_dir)"
+FP_BEFORE="$(fingerprint)"
+[ -n "$FP_BEFORE" ] || { echo "FAIL: could not read the fingerprint"; exit 1; }
 
 "$MCPP" build > b1.log 2>&1 || { cat b1.log; echo "FAIL: no-change build"; exit 1; }
 grep -q "Compiling" b1.log && {
@@ -91,14 +101,14 @@ module_extensions = [".ixx", ".ccm"]
 EOF
 
 "$MCPP" build > b3.log 2>&1 || { cat b3.log; echo "FAIL: build after key change"; exit 1; }
-FP_AFTER="$(fp_dir)"
+FP_AFTER="$(fingerprint)"
 
 [[ "$FP_BEFORE" != "$FP_AFTER" ]] || {
     echo "FAIL: module_extensions changed but the output dir did not"
     echo "      before=$FP_BEFORE after=$FP_AFTER"
     echo "      (the key is missing from the canonical compile-flags string)"
     exit 1; }
-echo "  ok: the key is fingerprinted ($(basename "$FP_BEFORE") -> $(basename "$FP_AFTER"))"
+echo "  ok: the key is fingerprinted ($FP_BEFORE -> $FP_AFTER)"
 
 # ── 3. A dead entry is reported, not silently ignored ──────────────────────
 #
