@@ -108,9 +108,16 @@ TARBALL="$(ls target/dist/*.tar.gz | head -1)"
 [[ -n "$TARBALL" ]] || { echo "FAIL: no tarball"; cat "$TMP/pack.log"; exit 1; }
 mkdir -p "$TMP/x" && tar -xzf "$TARBALL" -C "$TMP/x"
 
-# The build machine's store prefix. Everything under it is machine-local by
-# construction, so its presence in a shipped artifact is the defect itself.
-STORE="$(cd "$MCPP_HOME/registry/data/xpkgs" 2>/dev/null && pwd || true)"
+# EVERYTHING under the mcpp home is machine-local, not just the store.
+#
+# This used to be `$MCPP_HOME/registry/data/xpkgs`, which is a SUBSET of what
+# the sweep claims to cover — and the gap was load-bearing. The SubOS farm
+# (`<home>/registry/subos/<name>/lib`) now lands in the artifact's DT_RPATH by
+# design, and it sits outside `data/xpkgs`, so a leaked farm path would have
+# walked straight past this guard while the file's own title says no
+# build-machine paths survive. A check narrower than its claim reports "clean"
+# for the one thing it cannot see.
+STORE="$(cd "$MCPP_HOME" 2>/dev/null && pwd || true)"
 
 fail=0
 found_exe=0
@@ -168,4 +175,35 @@ if find "$TMP/x" -name HOST-REQUIREMENTS | grep -q .; then
     exit 1
 fi
 
-echo "PASS: no build-machine paths survive packing, and every object carries its contract tag"
+# ── the mode that bundles NOTHING ───────────────────────────────────────────
+#
+# `--mode system` is the one mode that ships no libraries, and until now no
+# test packed with it — so nothing checked the one thing it must get right:
+# an artifact that carries no dependencies must also carry no addressing for
+# them. It links against a private glibc with the SubOS farm in its DT_RPATH,
+# and both of those are this machine's alone.
+"$MCPP" pack --mode system > "$TMP/pack-system.log" 2>&1 || {
+    cat "$TMP/pack-system.log"; exit 1; }
+SYSTAR="$(ls target/dist/*-system.tar.gz | head -1)"
+[[ -n "$SYSTAR" ]] || { echo "FAIL: no system-mode tarball"; exit 1; }
+mkdir -p "$TMP/xs" && tar -xzf "$SYSTAR" -C "$TMP/xs"
+
+sysfail=0
+sysfound=0
+while IFS= read -r obj; do
+    head -c4 "$obj" 2>/dev/null | grep -q $'\x7fELF' || continue
+    read -r form tag paths <<<"$(read_tag "$obj")"
+    [[ "$form" == "NOT-ELF64" ]] && continue
+    sysfound=1
+    printf '  [system] %-30s %-14s %s %s\n' "${obj#$TMP/xs/}" "$form" "$tag" "$paths"
+    if [[ -n "$STORE" && "$paths" == *"$STORE"* ]]; then
+        echo "FAIL: --mode system artifact points at the BUILD MACHINE"
+        echo "      $obj"
+        echo "      $paths"
+        sysfail=1
+    fi
+done < <(find "$TMP/xs" -type f)
+[[ "$sysfound" == "1" ]] || { echo "FAIL: --mode system swept no ELF"; exit 1; }
+[[ "$sysfail" == "0" ]] || exit 1
+
+echo "PASS: no build-machine paths survive packing (vendored or system), and every object carries its contract tag"

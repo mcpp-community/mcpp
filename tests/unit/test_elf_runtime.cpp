@@ -166,6 +166,10 @@ runtime::RuntimeBinding binding_for(const std::filesystem::path& payload,
     b.providerId = "xlings";
     b.platform = "linux";
     b.arch = "x86_64";
+    // A SubOS that described itself — which is what every fixture here means.
+    // Left at the default the two states would be indistinguishable in the
+    // fixtures, and "undeclared" carries its own verdict now.
+    b.declared = true;
     b.runtimeId = "glibc@" + version;
     b.libc = b.runtimeId;
     b.loader = payload / version / "lib64" / "ld-linux-x86-64.so.2";
@@ -363,11 +367,20 @@ TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
     EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Pass);
 }
 
-TEST(RuntimePhysics, MissingClosureDataIsInconclusiveNotGreen) {
+// UNDER A HERMETIC BINDING, "not found" IS A MEASUREMENT.
+//
+// The artifact's PT_INTERP names a private loader whose entire search path mcpp
+// computed — RPATH/RUNPATH, payloads, SubOS farm, and nothing else: no host
+// defaults and no ld.so.cache. So an unresolved DT_NEEDED is the same answer
+// the loader will give, and the program cannot start. Filing that under
+// `inconclusive` reports a proven failure as an absence of one, and it is how a
+// GL program that exited 127 was shipped as `validation: pass`.
+TEST(RuntimePhysics, UnresolvedNeededUnderHermeticBindingIsProven) {
     if constexpr (!mcpp::platform::is_linux)
         GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
     Tmp t;
     auto b = binding_for(t.path / "store");
+    ASSERT_TRUE(b.hermetic()) << "this test's premise is a private loader";
     elf::RuntimeResolution r;
     r.artifact = facts(t.path / "app");
     r.artifact.interp = b.loader->string();
@@ -375,8 +388,53 @@ TEST(RuntimePhysics, MissingClosureDataIsInconclusiveNotGreen) {
     r.unresolved = {"libgpu-driver.so"};
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Inconclusive);
+    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Unresolvable);
+    EXPECT_TRUE(verdict.blocking())
+        << "a proven-unstartable artifact must fail the build, not warn";
     EXPECT_NE(verdict.explain().find("libgpu-driver.so"), std::string::npos);
+}
+
+// The other side of the same line. Without a private loader the artifact runs
+// under the HOST's, which also consults `ld.so.cache` — something mcpp
+// deliberately does not parse. There, unresolved really is unknown, and
+// claiming otherwise would fail builds that work.
+TEST(RuntimePhysics, UnresolvedNeededWithoutAPrivateLoaderStaysInconclusive) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto b = binding_for(t.path / "store");
+    b.loader.reset();                       // host runtime: gcc@system and friends
+    ASSERT_FALSE(b.hermetic());
+    elf::RuntimeResolution r;
+    r.artifact = facts(t.path / "app");
+    r.artifact.resolvedLibc = b.libraryDirs.front() / "libc.so.6";
+    r.unresolved = {"libgpu-driver.so"};
+
+    auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
+    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Inconclusive);
+    EXPECT_FALSE(verdict.blocking());
+    EXPECT_NE(verdict.explain().find("libgpu-driver.so"), std::string::npos);
+}
+
+// An undeclared SubOS on Linux is not "some other runtime" — it is a runtime
+// nobody described, and the two must not print the same sentence. Reporting the
+// second as the first sends the reader looking for a runtime they did not
+// select, and quietly counts "unknown" as "fine".
+TEST(RuntimePhysics, UndeclaredBindingIsInconclusiveNotNotApplicable) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto b = binding_for(t.path / "store");
+    b.declared = false;
+    b.runtimeId.clear();
+    b.loader.reset();
+    elf::RuntimeResolution r;
+    r.artifact = facts(t.path / "app");
+
+    auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
+    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Inconclusive);
+    EXPECT_NE(verdict.explain().find("does not describe its runtime"),
+              std::string::npos);
 }
 
 TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {

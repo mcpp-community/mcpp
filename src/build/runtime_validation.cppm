@@ -38,10 +38,13 @@ struct ValidatedArtifact {
 struct ValidationReport {
     std::vector<ValidatedArtifact> artifacts;
 
-    bool has_proven_mismatch() const {
+    // Any artifact PROVEN bad — payloads mixed, or a DT_NEEDED that the
+    // artifact's own loader will not find. Asks the verdict rather than
+    // enumerating states here, so a fifth state cannot be added without this
+    // gate deciding what it means.
+    bool has_blocking_failure() const {
         return std::ranges::any_of(artifacts, [](auto const& artifact) {
-            return artifact.verdict.status
-                == mcpp::platform::elf::RuntimeVerdict::Status::ProvenMismatch;
+            return artifact.verdict.blocking();
         });
     }
 };
@@ -150,9 +153,25 @@ std::string status_name(mcpp::platform::elf::RuntimeVerdict::Status status) {
     switch (status) {
         case Status::Pass: return "pass";
         case Status::ProvenMismatch: return "proven_mismatch";
+        case Status::Unresolvable: return "unresolvable";
         case Status::Inconclusive: return "inconclusive";
     }
     return "inconclusive";
+}
+
+// How bad each state is, for rolling many artifacts into one summary.
+// `Unresolvable` sits above `Inconclusive` (it is proven, not unknown) and
+// below `ProvenMismatch` (mixing payloads is the more fundamental error, and
+// it is usually the CAUSE of anything unresolvable alongside it).
+int status_severity(mcpp::platform::elf::RuntimeVerdict::Status status) {
+    using Status = mcpp::platform::elf::RuntimeVerdict::Status;
+    switch (status) {
+        case Status::Pass:           return 0;
+        case Status::Inconclusive:   return 1;
+        case Status::Unresolvable:   return 2;
+        case Status::ProvenMismatch: return 3;
+    }
+    return 1;
 }
 
 mcpp::platform::elf::RuntimeVerdict::Status
@@ -160,6 +179,9 @@ parse_status(std::string_view value) {
     using Status = mcpp::platform::elf::RuntimeVerdict::Status;
     if (value == "pass") return Status::Pass;
     if (value == "proven_mismatch") return Status::ProvenMismatch;
+    if (value == "unresolvable") return Status::Unresolvable;
+    // Anything unknown reads as `inconclusive`, never as `pass`: a record
+    // written by a newer mcpp must not be mistaken for a clean bill of health.
     return Status::Inconclusive;
 }
 
@@ -273,8 +295,10 @@ void sync_resolution_verdict(const mcpp::build::BuildPlan& plan,
             if (!it.value().is_object()) continue;
             any = true;
             auto status = parse_status(it.value().value("status", "inconclusive"));
-            if (status == Status::ProvenMismatch
-                || (status == Status::Inconclusive && summary == Status::Pass))
+            // Worst wins, by an explicit severity order rather than a chain of
+            // pairwise comparisons that has to be re-derived every time a
+            // state is added.
+            if (status_severity(status) > status_severity(summary))
                 summary = status;
             checked.push_back({
                 {"path", (plan.outputDir / it.key()).lexically_normal().generic_string()},

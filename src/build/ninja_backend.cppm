@@ -37,7 +37,7 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
-import mcpp.xlings;
+import mcpp.platform.xlings;
 import mcpp.platform;
 import mcpp.ui;
 
@@ -1791,7 +1791,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         for (auto const& checked : runtimeReport.artifacts) {
             using Status = mcpp::platform::elf::RuntimeVerdict::Status;
             auto explanation = checked.verdict.explain();
-            if (checked.verdict.status == Status::ProvenMismatch) {
+            // `blocking()` rather than a state list: a proven payload mismatch
+            // and a DT_NEEDED the artifact's own loader will never find are
+            // both "this artifact is known bad", and enumerating them here is
+            // how one of them gets forgotten.
+            if (checked.verdict.blocking()) {
                 if (runtimeFailure.empty()) {
                     runtimeFailureArtifact = checked.artifact;
                     runtimeFailure = std::move(explanation);
@@ -1807,7 +1811,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         }
         if (!runtimeFailure.empty()) {
             return std::unexpected(BuildError{
-                "runtime closure validation failed (proven Linux ELF mismatch)",
+                "runtime closure validation failed (proven Linux ELF defect)",
                 runtimeFailureArtifact, std::move(runtimeFailure)});
         }
         // Rule E — the loader-tag contract, checked on what actually landed

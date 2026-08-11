@@ -72,9 +72,28 @@ struct RuntimeResolution {
 };
 
 struct RuntimeVerdict {
-    enum class Status { Pass, ProvenMismatch, Inconclusive };
+    // FOUR-VALUED, and the third one is this round's addition.
+    //
+    //   Pass            every rule that applies was checked and held
+    //   ProvenMismatch  two runtime payloads are being mixed
+    //   Unresolvable    a DT_NEEDED cannot be found anywhere the artifact's
+    //                   loader will look — the artifact provably cannot start
+    //   Inconclusive    a rule that applies could not be evaluated
+    //
+    // `Unresolvable` used to be folded into `Inconclusive`, which reports a
+    // PROVEN failure as "not checked". Under a hermetic binding the artifact's
+    // PT_INTERP names a private loader whose search path mcpp computes in
+    // full, so "not found" is a measurement, not an absence of one.
+    enum class Status { Pass, ProvenMismatch, Unresolvable, Inconclusive };
     Status status = Status::Pass;
     std::vector<std::string> diagnostics;
+
+    // Does this verdict mean the artifact is known-bad? Both blocking states
+    // spelled once, so a caller cannot check for one and silently accept the
+    // other.
+    bool blocking() const {
+        return status == Status::ProvenMismatch || status == Status::Unresolvable;
+    }
 
     std::string explain() const {
         std::string out;
@@ -279,7 +298,21 @@ std::optional<std::filesystem::path> resolve_needed(
         append_unique_path(dirs, expand_origin(raw, requester.artifact));
     for (auto const& dir : additionalSearchDirs) append_unique_path(dirs, dir);
     for (auto const& dir : binding.libraryDirs) append_unique_path(dirs, dir);
-    for (auto const& dir : host_library_dirs()) append_unique_path(dirs, dir);
+    // The SubOS farm. It is where `-lGL` resolved at link time (the SubOS is
+    // the sysroot), so a model that omits it reports libraries as missing
+    // that the artifact will in fact find.
+    for (auto const& dir : binding.searchDirs) append_unique_path(dirs, dir);
+    // The host loader's built-in defaults — ONLY when the artifact runs under
+    // the host loader.
+    //
+    // A hermetic artifact's PT_INTERP names a private loader compiled with a
+    // different default path, so adding /usr/lib here models the wrong loader.
+    // Measured: a GL program that cannot start was reported `validation: pass`
+    // because the HOST happened to have libGL.so.1 and the model found it
+    // there. When the model and the artifact disagree about which loader runs,
+    // the model wins the report and the artifact wins reality.
+    if (!binding.hermetic())
+        for (auto const& dir : host_library_dirs()) append_unique_path(dirs, dir);
 
     for (auto const& dir : dirs) {
         auto candidate = dir / named;
@@ -632,6 +665,23 @@ RuntimeVerdict validate_runtime_artifact(
         return verdict;
     }
     if (binding.platform != "linux" || !isGlibc) {
+        // Two different reasons land here and they are not the same news.
+        //
+        //   declared, not glibc   the rules DO NOT APPLY (musl, macOS SDK,
+        //                         ucrt) — nothing to check, so Pass.
+        //   not declared          the rules CANNOT BE EVALUATED — the SubOS
+        //                         never said what it is, so Inconclusive.
+        //
+        // Reporting the second as the first sends the reader looking for a
+        // runtime they did not select, and quietly counts "unknown" as "fine".
+        if (!binding.declared) {
+            verdict.status = RuntimeVerdict::Status::Inconclusive;
+            verdict.diagnostics.push_back(std::format(
+                "runtime rules inconclusive: SubOS '{}' does not describe its "
+                "runtime, so there is no identity to check the artifact against",
+                binding.selection.subosName));
+            return verdict;
+        }
         verdict.diagnostics.push_back(
             "runtime physics: selected runtime is not Linux/glibc; rules A/B are not applicable");
         return verdict;
@@ -762,9 +812,36 @@ RuntimeVerdict validate_runtime_artifact(
             if (!names.empty()) names += ", ";
             names += name;
         }
-        inconclusive(std::format(
-            "runtime closure for {} is inconclusive; unresolved objects: {}",
-            artifactPath, names));
+        // PROVEN under a hermetic binding, merely UNKNOWN otherwise.
+        //
+        // Hermetic means the artifact's PT_INTERP is a private loader whose
+        // entire search path mcpp computed: RPATH/RUNPATH + payloads + farm,
+        // with no host defaults and no ld.so.cache. Nothing else will be
+        // consulted, so "not found here" is the same answer the loader will
+        // give — and the artifact cannot start. Saying `inconclusive` for that
+        // is reporting a measurement as the absence of one, and it is exactly
+        // how a GL program that exits 127 was shipped as `validation: pass`.
+        //
+        // A non-hermetic artifact runs under the host loader, which also
+        // consults `ld.so.cache` — something mcpp deliberately does not parse.
+        // There, unresolved really is unknown.
+        if (binding.hermetic()) {
+            verdict.status = RuntimeVerdict::Status::Unresolvable;
+            verdict.diagnostics.push_back(std::format(
+                "runtime closure for {} cannot be satisfied: {} not found on the "
+                "search path this artifact will actually use.\n"
+                "       Its PT_INTERP is a private loader, so the host's "
+                "/usr/lib is NOT consulted — the program will fail to start with "
+                "\"cannot open shared object file\".\n"
+                "       Fix: install the provider into the selected SubOS "
+                "(`xlings install <pkg>`), or declare the dependency so mcpp "
+                "resolves it.",
+                artifactPath, names));
+        } else {
+            inconclusive(std::format(
+                "runtime closure for {} is inconclusive; unresolved objects: {}",
+                artifactPath, names));
+        }
     }
     return verdict;
 }

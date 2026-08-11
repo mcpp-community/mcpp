@@ -17,6 +17,7 @@ import mcpp.build.plan;
 import mcpp.manifest.types;
 import mcpp.modgraph.scanner;
 import mcpp.platform;
+import mcpp.platform.runtime_search;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
@@ -503,6 +504,26 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     }();
     const std::string link_intent_ld =
         render_link_intent_flags(plan.linkIntent, linkIntentFlavor);
+
+    // The SubOS farm tail — the only origin in `plan.runtimeSearch` with no
+    // other producer, appended after everything else so it is LAST in the
+    // artifact's DT_RPATH (see `runtime_search_closure`).
+    //
+    // RUNPATH ONLY, never `-L`. Link-time resolution already works: mcpp
+    // passes `--sysroot=<subos>`, which makes `<subos>/lib` the linker's
+    // default library directory. Emitting `-L` as well would be redundant on
+    // a link line that has a hard 128KiB ceiling real workspaces already spend
+    // 43% of. This is the same rule `runtimeSearchDirs` states for package
+    // dirs, applied to the origin that needed it most.
+    std::string farm_ld;
+    if (linkIntentFlavor == LinkIntentFlavor::Elf) {
+        for (auto const& dir : plan.runtimeSearch) {
+            if (dir.origin != mcpp::platform::search::Origin::SubosFarm) continue;
+            farm_ld += ' ';
+            farm_ld += shell_quote_arg(escape_ninja_chars(
+                "-Wl,-rpath," + dir.path.string()));
+        }
+    }
     std::filesystem::path binutilsBin;
     if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++") {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
@@ -972,9 +993,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // actually being present (see atomic_link_flag).
         std::string atomic_ld = atomic_link_flag(plan.toolchain.linkRuntimeDirs,
                                                  !full_static.empty());
-        f.ld = std::format("{}{}{}{}{}{}{}{}{}", full_static,
+        f.ld = std::format("{}{}{}{}{}{}{}{}{}{}", full_static,
                            link_toolchain_flags, b_flag, runtime_dirs,
-                           link_intent_ld, atomic_ld, payload_ld,
+                           link_intent_ld, farm_ld, atomic_ld, payload_ld,
                            user_ldflags, link_extra);
     }
 
