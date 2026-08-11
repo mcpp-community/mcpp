@@ -16,6 +16,7 @@ import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.platform.elf_runtime;
 import mcpp.platform.runtime_binding;
+import mcpp.platform.runtime_search;
 
 export namespace mcpp::build::runtime_validation {
 
@@ -248,6 +249,17 @@ runtime_search_dirs(const mcpp::build::BuildPlan& plan) {
     append(plan.depRuntimeLibraryDirs);
     append(plan.toolchain.compilerRuntimeDirs);
     append(plan.runtimeBinding.libraryDirs);
+    // The SubOS farm comes from the PLAN's closure, not straight from the
+    // binding — because the plan is where the guards live. A cross target gets
+    // no farm entry in its DT_RPATH, so a model that consulted the binding
+    // directly would resolve an aarch64 DT_NEEDED out of this host's x86_64
+    // farm and report a pass the target machine will not honour. The model has
+    // to look exactly where the artifact looks.
+    for (auto const& dir : plan.runtimeSearch) {
+        if (dir.origin != mcpp::platform::search::Origin::SubosFarm) continue;
+        if (dir.path.empty() || std::ranges::find(out, dir.path) != out.end()) continue;
+        out.push_back(dir.path);
+    }
     return out;
 }
 

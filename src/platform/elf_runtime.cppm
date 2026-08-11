@@ -327,10 +327,16 @@ std::optional<std::filesystem::path> resolve_needed(
         append_unique_path(dirs, expand_origin(raw, requester.artifact));
     for (auto const& dir : additionalSearchDirs) append_unique_path(dirs, dir);
     for (auto const& dir : binding.libraryDirs) append_unique_path(dirs, dir);
-    // The SubOS farm. It is where `-lGL` resolved at link time (the SubOS is
-    // the sysroot), so a model that omits it reports libraries as missing
-    // that the artifact will in fact find.
-    for (auto const& dir : binding.searchDirs) append_unique_path(dirs, dir);
+    // NOTE: the SubOS farm is NOT read from the binding here.
+    //
+    // It reaches this function through `additionalSearchDirs`, which the caller
+    // builds from the PLAN — and the plan is where the guards live (no farm for
+    // a cross target, none for a non-ELF format). Reading `binding.searchDirs`
+    // directly would put this host's x86_64 farm on the search path of an
+    // aarch64 artifact that has no such entry in its DT_RPATH, and report a
+    // pass the target machine will not honour. The model must look exactly
+    // where the artifact looks, no wider.
+    //
     // The host loader's built-in defaults — ONLY when the artifact runs under
     // the host loader.
     //
