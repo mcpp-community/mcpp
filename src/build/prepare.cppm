@@ -3159,18 +3159,18 @@ prepare_build(bool print_fingerprint,
         std::copy(fresh.begin(), fresh.end(),
                   mm.buildConfig.actions.begin()
                       + static_cast<std::ptrdiff_t>(firstNewAction));
+        // The package that DECLARED the outputs classifies them: a dependency
+        // generating a `.ixx` asks its own manifest, not the root project's.
+        // Built once per package, not once per output.
+        const auto pkgExtTable =
+            mcpp::extension_table_for(mm.buildConfig.moduleExtensions);
         for (auto const& a : fresh) {
             if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
             for (auto const& o : a.outputs) {
                 if (o.find("${mcpp.") != std::string::npos) continue;
                 // Companion outputs (protoc's .pb.h next to its .pb.cc) are
                 // produced by the edge but are NOT translation units.
-                // The package that DECLARED the output classifies it: a
-                // dependency generating a `.ixx` is asking its own manifest,
-                // not the root project's.
-                if (!mcpp::build::directives::is_compilable_output(
-                        o, mcpp::extension_table_for(
-                               mm.buildConfig.moduleExtensions)))
+                if (!mcpp::build::directives::is_compilable_output(o, pkgExtTable))
                     continue;
                 mm.buildConfig.sources.push_back(o);
                 mm.modules.sources.push_back(o);
