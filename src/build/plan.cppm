@@ -694,10 +694,16 @@ std::vector<mcpp::platform::search::Dir> runtime_search_closure(
     //   format   DT_RPATH exists on ELF only. Mach-O and PE get nothing rather
     //            than a branch in every consumer — the same shape
     //            `loader_contract` uses for the tag half of this contract.
-    //   host     The farm belongs to THIS host's SubOS. A cross target
-    //            (aarch64-musl, mingw, wasm) would receive a path that is inert
-    //            at best and points at the wrong architecture's libraries at
-    //            worst.
+    //   host     The farm belongs to THIS host's SubOS, and a SubOS is a
+    //            (os, arch, libc) triple's worth of libraries. A cross target
+    //            must match all three or the path is inert at best and points
+    //            at the wrong architecture's — or the wrong C library's —
+    //            objects at worst. `x86_64-linux-musl` is the case that makes
+    //            the libc axis load-bearing: same OS, same arch, and a glibc
+    //            farm on a musl program's search path is exactly the payload
+    //            mixing rule B exists to prevent. (Today that target is also
+    //            `linkage = "static"`, so the flag is inert — measured: no
+    //            dynamic section at all. The guard is for the day it is not.)
     const auto triple = [&] {
         auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
         return t ? *t : mcpp::toolchain::triple::Triple{};
@@ -705,7 +711,21 @@ std::vector<mcpp::platform::search::Dir> runtime_search_closure(
     const bool elfTarget = triple.empty()
         ? bool(mcpp::platform::is_linux)
         : (triple.os != "macos" && triple.os != "windows");
+    // The binding names its libc as `<family>@<version>`; the triple names it
+    // as an ABI env (`gnu` ⇒ glibc). A MISMATCH must be PROVEN, not assumed:
+    // an undeclared SubOS has no runtime identity at all, and refusing its own
+    // library view because it did not describe itself would be the same
+    // absence-read-as-contradiction this change exists to remove. Unknown on
+    // either side ⇒ no evidence of a mismatch ⇒ the os/arch guards decide.
+    const auto bindingLibcFamily =
+        binding.runtimeId.substr(0, binding.runtimeId.find('@'));
+    const auto targetLibcFamily = triple.env.empty()
+        ? std::string{} : (triple.env == "gnu" ? "glibc" : triple.env);
+    const bool libcMismatch = !bindingLibcFamily.empty()
+        && !targetLibcFamily.empty()
+        && targetLibcFamily != bindingLibcFamily;
     const bool hostTarget = binding.platform == "linux"
+        && !libcMismatch
         && (triple.empty()
             || (triple.os == "linux"
                 && (triple.arch.empty() || triple.arch == binding.arch)));
