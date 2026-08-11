@@ -118,6 +118,15 @@ struct PackageAxes {
     std::vector<std::string> includeDirs;   // store-relative, ordered
     std::vector<std::string> sourceGlobs;   // [build] sources, ordered
     std::vector<std::string> sources;       // package-root-relative, sorted
+    // [build] module_extensions — decides which of `sources` are module
+    // interfaces, i.e. which units emit a BMI and which objects link
+    // unconditionally. Different artifacts, so it belongs in the key.
+    //
+    // Not reachable today (a widened default glob already moves `sourceGlobs`,
+    // and an index descriptor is frozen per version so nothing else can move
+    // it) — which is exactly why it is easy to leave out and find later as a
+    // wrong cache hit. Cheap to close now.
+    std::vector<std::string> moduleExtensions;
     // F — keys of direct dependencies, sorted
     std::vector<std::string> upstreamKeys;
 };
@@ -221,6 +230,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"include_dirs", p.includeDirs},
         {"source_globs", p.sourceGlobs},
         {"sources", p.sources},
+        {"module_extensions", p.moduleExtensions},
     };
     j["upstream"] = p.upstreamKeys;
     return j;
@@ -262,6 +272,7 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put_list(s, "includes",  p.includeDirs);
     put_list(s, "srcglobs",  p.sourceGlobs);
     put_list(s, "sources",   p.sources);
+    put_list(s, "modexts",   p.moduleExtensions);
     // F
     put_list(s, "upstream",  p.upstreamKeys);
     return mcpp::toolchain::hash_string(s);
@@ -311,6 +322,7 @@ void fill_package_config(PackageAxes&                        out,
     out.ldflags     = bc.ldflags;
     out.defines     = bc.defines;
     out.sourceGlobs = bc.sources;
+    out.moduleExtensions = bc.moduleExtensions;
 
     if (!bc.cStandard.empty()) {
         // A package may pin its own C standard; it reaches its own C units.
