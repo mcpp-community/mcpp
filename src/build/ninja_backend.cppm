@@ -23,6 +23,7 @@ import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.build.distribution;
 import mcpp.build.graph_shape;
+import mcpp.build.link_line;
 import mcpp.build.loader_contract;
 import mcpp.build.plan;
 import mcpp.build.flags;
@@ -1404,16 +1405,23 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // the contract table's business, not this emitter's (#336 —
             // before, this switch WAS the policy, and `static_stdlib = false`
             // could not reach the test side of it).
-            std::string unit = join_flags(lu.linkFlags);
-            unit += flags.ldStdlibFor(role_of(lu.kind));
-            // LAST, after every other linker argument, because the loader tag
-            // is decided by the last `--enable-new-dtags`/`--disable-new-dtags`
-            // ld sees — and both gcc specs and clang config files supply the
-            // former. `$unit_ldflags` is itself the final expansion in every
-            // link rule above, so "last here" is "last on the line".
-            if (!lu.loaderTagFlag.empty())
-                unit += " " + lu.loaderTagFlag;
-            if (!unit.empty())
+            //
+            // The slots and their ORDER belong to `link_line::UnitTail` — see
+            // that module for why each one is where it is. This emitter says
+            // WHAT goes in each slot and never WHERE it lands; deciding that
+            // here by hand is exactly how the SubOS farm ended up ahead of
+            // `$ORIGIN` in DT_RPATH and an artifact loaded a different build
+            // of libX11 than it was linked against.
+            mcpp::build::link_line::UnitTail tail;
+            tail.dependencies = join_flags(lu.linkFlags);
+            tail.cxxRuntime   = flags.ldStdlibFor(role_of(lu.kind));
+            // An archive has no run-time search path of its own: `ar` never
+            // reads `$unit_ldflags`, so rpath flags there would be dead bytes
+            // in every graph that builds a static library.
+            if (lu.kind != LinkUnit::StaticLibrary)
+                tail.runtimeFallback = flags.ldRuntimeFallback;
+            tail.loaderTag = lu.loaderTagFlag;
+            if (auto unit = tail.render(); !unit.empty())
                 out_line += "  unit_ldflags =" + unit + "\n";
         }
         append(std::move(out_line));

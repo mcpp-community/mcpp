@@ -11,6 +11,7 @@ import mcpp.manifest;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.model;
 import mcpp.platform;
+import mcpp.platform.runtime_search;
 
 using namespace mcpp::build;
 
@@ -555,6 +556,96 @@ TEST(NinjaBackend, PlainFlagsPassThroughUnquoted) {
 
     EXPECT_NE(ninja.find("unit_cxxflags = -DFOO=1 -O2"), std::string::npos)
         << ninja;
+}
+
+// The SubOS farm must reach DT_RPATH AFTER the artifact's own directory.
+//
+// It did not, and the composition is why: the farm was appended to the GLOBAL
+// `$ldflags` while `$ORIGIN` rides the PER-UNIT `$unit_ldflags`, and every link
+// rule renders `$ldflags $unit_ldflags`. Each site read correctly on its own —
+// flags.cppm even commented "so it is LAST" — and the artifact loaded a
+// different build of libX11 than it had just been linked against.
+//
+// The assertion is on the EFFECTIVE line (global then unit, exactly as the
+// rule expands it), not on either variable alone: checking one of them is what
+// made the original mistake invisible.
+TEST(NinjaBackend, SubosFarmRpathFollowsTheArtifactsOwnDirectory) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "the SubOS farm rpath is emitted for ELF targets only";
+
+    const std::string farm = "/tmp/mcpp-ninja-test-farm/subos/default/lib";
+    auto plan = minimal_plan();
+    plan.runtimeSearch.push_back(
+        {farm, mcpp::platform::search::Origin::SubosFarm});
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/main.o",
+        .packageName = "farm_order_test",
+    });
+    plan.linkUnits.push_back({
+        .targetName = "app",
+        .kind = mcpp::build::LinkUnit::Binary,
+        .objects = {"obj/main.o"},
+        // What `shared_library_link_flags` produces for a shared-lib consumer.
+        .linkFlags = {"-Lbin", "-Wl,-rpath,'$$ORIGIN'", "-lgreet"},
+        .output = "bin/app",
+        .entryMain = "src/main.cpp",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    auto line_after = [&](std::string_view prefix) -> std::string {
+        auto at = ninja.find(prefix);
+        if (at == std::string::npos) return {};
+        at += prefix.size();
+        return ninja.substr(at, ninja.find('\n', at) - at);
+    };
+    // `$cxx $in -o $out $ldflags $unit_ldflags` — reproduce that expansion.
+    const std::string effective =
+        line_after("\nldflags   =") + " " + line_after("\n  unit_ldflags =");
+
+    auto origin = effective.find("$$ORIGIN");
+    auto fallback = effective.find(farm);
+    ASSERT_NE(origin, std::string::npos)   << effective;
+    ASSERT_NE(fallback, std::string::npos) << effective;
+    EXPECT_LT(origin, fallback)
+        << "the SubOS farm outranks $ORIGIN, so the artifact can load a "
+           "different build of a library than it linked against:\n" << effective;
+
+    // And it must have left the global channel entirely — leaving a copy there
+    // would restore the old order no matter what the unit tail says.
+    EXPECT_EQ(line_after("\nldflags   =").find(farm), std::string::npos) << ninja;
+}
+
+// An archive is produced by `ar`, whose rule never expands `$unit_ldflags`.
+// Emitting run-time search flags there would be dead bytes in every graph.
+TEST(NinjaBackend, StaticLibraryCarriesNoRuntimeFallback) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "the SubOS farm rpath is emitted for ELF targets only";
+
+    const std::string farm = "/tmp/mcpp-ninja-test-farm/subos/default/lib";
+    auto plan = minimal_plan();
+    plan.runtimeSearch.push_back(
+        {farm, mcpp::platform::search::Origin::SubosFarm});
+    plan.compileUnits.push_back({
+        .source = "src/lib.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/lib.o",
+        .packageName = "farm_order_test",
+    });
+    plan.linkUnits.push_back({
+        .targetName = "greet",
+        .kind = mcpp::build::LinkUnit::StaticLibrary,
+        .objects = {"obj/lib.o"},
+        .output = "lib/libgreet.a",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    auto at = ninja.find("build lib/libgreet.a");
+    ASSERT_NE(at, std::string::npos) << ninja;
+    auto stanza = ninja.substr(at, ninja.find("\nbuild ", at + 1) - at);
+    EXPECT_EQ(stanza.find(farm), std::string::npos) << stanza;
 }
 
 // Regression: mcpp-GENERATED per-unit LINK flags are already correctly

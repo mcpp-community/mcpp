@@ -61,14 +61,16 @@ TEST(Distribution, HostCoupledReachesTestBinariesOnMacos) {
 // re-open #202 (system libc++ dylib against toolchain libc++ headers →
 // undefined __hash_memory on libc++ 22), so it is asserted, not assumed.
 TEST(Distribution, TestsDefaultToSelfContained) {
-    EXPECT_EQ(dist::default_contract(dist::Role::Test),
-              dist::Contract::SelfContained);
-    EXPECT_EQ(dist::default_contract(dist::Role::Distributable),
-              dist::Contract::SelfContained);
+    for (auto fmt : {dist::Format::Elf, dist::Format::MachO, dist::Format::Pe}) {
+        EXPECT_EQ(dist::default_contract(dist::Role::Test, fmt),
+                  dist::Contract::SelfContained);
+        EXPECT_EQ(dist::default_contract(dist::Role::Distributable, fmt),
+                  dist::Contract::SelfContained);
+    }
 
     auto in = macos_input();
     in.role = dist::Role::Test;
-    in.requested = dist::default_contract(dist::Role::Test);
+    in.requested = dist::default_contract(dist::Role::Test, dist::Format::MachO);
     auto m = dist::resolve(in);
     EXPECT_NE(m.unitFlags.find("-load_hidden"), std::string::npos);
     EXPECT_TRUE(m.streamInitShim);
@@ -331,4 +333,117 @@ TEST(Distribution, ShimIsNotGeneratedWhenTheSymbolIsAbsent) {
     // The contract itself is still honored — only the ordering aid is gone.
     EXPECT_EQ(m.effective, dist::Contract::SelfContained);
     EXPECT_NE(m.unitFlags.find("-load_hidden"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Shared libraries.
+//
+// A .so is not a small executable: it is loaded INTO a process that already
+// has a C++ runtime. On ELF that matters because there is ONE global symbol
+// namespace and the first definition loaded wins — a .so that statically
+// embedded libstdc++ exports ~3000 std symbols unversioned, the linker
+// resolves the EXECUTABLE's std references against it (`-lfoo` precedes the
+// driver's `-lstdc++`, so the archive member is never pulled), and the
+// executable's own `-static-libstdc++` becomes a no-op. Swap that .so for
+// another build of the same SONAME and `std::runtime_error::what()` is gone.
+//
+// The whole table is asserted cell by cell rather than "the ELF case", because
+// the reason the other two formats keep the old answer is a real argument
+// about each of them and a regression there would be silent.
+TEST(Distribution, SharedLibraryDefaultIsFormatSpecific) {
+    EXPECT_EQ(dist::default_contract(dist::Role::SharedLibrary, dist::Format::Elf),
+              dist::Contract::ToolchainCoupled);
+    // Mach-O: self-contained ALREADY means hidden (-load_hidden), so dyld
+    // cannot unify the symbols; and toolchain-coupled is a documented dead end
+    // there (#202). PE: no global namespace at all, imports resolve per-DLL.
+    EXPECT_EQ(dist::default_contract(dist::Role::SharedLibrary, dist::Format::MachO),
+              dist::Contract::SelfContained);
+    EXPECT_EQ(dist::default_contract(dist::Role::SharedLibrary, dist::Format::Pe),
+              dist::Contract::SelfContained);
+}
+
+// The ELF mechanism for the new default: nothing. The driver links
+// libstdc++.so and the toolchain's lib directory is already an -L and an rpath
+// entry on the line. "No flag" has to be asserted or a future edit that adds
+// one back would look like an improvement.
+TEST(Distribution, SharedLibraryOnElfEmbedsNothing) {
+    auto in = linux_gcc_input();
+    in.role      = dist::Role::SharedLibrary;
+    in.requested = dist::default_contract(dist::Role::SharedLibrary, dist::Format::Elf);
+    auto m = dist::resolve(in);
+    EXPECT_EQ(m.effective, dist::Contract::ToolchainCoupled);
+    EXPECT_EQ(m.unitFlags, "");
+    EXPECT_FALSE(m.degraded);
+    EXPECT_TRUE(m.diagnostic.empty());
+}
+
+// The escape hatch stays usable — and is guarded. Asking for a self-contained
+// .so is legitimate; letting it export the embedded runtime is not.
+TEST(Distribution, ExplicitSelfContainedSharedLibraryHidesTheEmbeddedRuntime) {
+    auto in = linux_gcc_input();
+    in.role            = dist::Role::SharedLibrary;
+    in.requested       = dist::Contract::SelfContained;
+    in.explicitRequest = true;
+    auto m = dist::resolve(in);
+    EXPECT_EQ(m.effective, dist::Contract::SelfContained);
+    EXPECT_NE(m.unitFlags.find("-static-libstdc++"), std::string::npos) << m.unitFlags;
+    EXPECT_NE(m.unitFlags.find("-Wl,--exclude-libs,libstdc++.a"), std::string::npos)
+        << m.unitFlags;
+    // No diagnostic: this is honored exactly as asked, not degraded.
+    EXPECT_FALSE(m.degraded);
+}
+
+// The guard is for shared libraries only. An executable's static libstdc++ is
+// already local (ld exports only what a loaded object references and mcpp
+// passes no -rdynamic), so hiding it would be noise — and `--exclude-libs` on
+// an executable link is a flag whose absence is part of the contract.
+TEST(Distribution, ExecutablesDoNotGetTheExcludeLibsGuard) {
+    auto in = linux_gcc_input();
+    in.role      = dist::Role::Distributable;
+    in.requested = dist::Contract::SelfContained;
+    auto m = dist::resolve(in);
+    EXPECT_EQ(m.unitFlags, " -static-libstdc++");
+}
+
+// Same rule on the libc++/ELF path: the archives are linked by PATH, but
+// --exclude-libs matches the archive BASENAME, so the names are spelled out.
+TEST(Distribution, LibcxxSelfContainedSharedLibraryHidesItsArchives) {
+    dist::MechanismInput in;
+    in.format            = dist::Format::Elf;
+    in.stdlibId          = "libc++";
+    in.role              = dist::Role::SharedLibrary;
+    in.requested         = dist::Contract::SelfContained;
+    in.explicitRequest   = true;
+    in.libcxxArchive     = "/tc/lib/libc++.a";
+    in.libcxxAbiArchive  = "/tc/lib/libc++abi.a";
+    in.libunwindArchive  = "/tc/lib/libunwind.a";
+    auto m = dist::resolve(in);
+    for (auto needle : {"-Wl,--exclude-libs,libc++.a",
+                        "-Wl,--exclude-libs,libc++abi.a",
+                        "-Wl,--exclude-libs,libunwind.a"})
+        EXPECT_NE(m.unitFlags.find(needle), std::string::npos) << needle
+                                                               << " / " << m.unitFlags;
+}
+
+// An archive embeds no runtime, so the role returns before any mechanism runs.
+// Adding a fourth role must not have perturbed that early exit.
+TEST(Distribution, IntermediateStillCarriesNoMechanism) {
+    auto in = linux_gcc_input();
+    in.role      = dist::Role::Intermediate;
+    in.requested = dist::Contract::SelfContained;
+    auto m = dist::resolve(in);
+    EXPECT_EQ(m.unitFlags, "");
+    EXPECT_FALSE(m.degraded);
+}
+
+// `ldStdlibByRole` indexes by the enum value. If a role is ever inserted
+// rather than appended, every stored contract silently re-maps.
+TEST(Distribution, RoleCountCoversEveryRole) {
+    EXPECT_EQ(static_cast<std::size_t>(dist::Role::SharedLibrary) + 1,
+              dist::kRoleCount);
+    for (auto r : {dist::Role::Distributable, dist::Role::Test,
+                   dist::Role::Intermediate, dist::Role::SharedLibrary}) {
+        EXPECT_LT(static_cast<std::size_t>(r), dist::kRoleCount);
+        EXPECT_FALSE(dist::to_string(r).empty());
+    }
 }

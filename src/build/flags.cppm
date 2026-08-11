@@ -35,6 +35,13 @@ struct CompileFlags {
     std::string as;                   // asm-safe subset for .S/.s via the C driver
     std::string nasm;                 // NASM global flags (.asm; own spelling)
     std::string ld;                   // ldflags string
+    // The LAST-RESORT run-time search path (today: the SubOS library view).
+    // NOT part of `ld`, and that is the whole point: `ld` is rendered BEFORE
+    // the per-unit flags, and the per-unit flags are where the artifact's own
+    // directory (`$ORIGIN`) lives. Emitted here it outranked `$ORIGIN`, so an
+    // artifact loaded a different build of a library than it linked against.
+    // It reaches the line through `link_line::UnitTail::runtimeFallback`.
+    std::string ldRuntimeFallback;
     std::filesystem::path cxxBinary;  // g++ / clang++ / cl.exe
     std::filesystem::path ccBinary;   // gcc / clang (derived; cl.exe = same)
     std::filesystem::path arBinary;   // ar / llvm-ar / lib.exe (empty → PATH)
@@ -49,9 +56,10 @@ struct CompileFlags {
     // roles in one build may hold different contracts, which is precisely what
     // `static_stdlib = false` could not express for test binaries before #336.
     // Produced by exactly one call to `dist::resolve` per role.
-    std::array<std::string, 3> ldStdlibByRole{};
+    std::array<std::string, mcpp::build::dist::kRoleCount> ldStdlibByRole{};
     // The contract each role actually got (after any degradation).
-    std::array<mcpp::build::dist::Contract, 3> contractByRole{};
+    std::array<mcpp::build::dist::Contract,
+               mcpp::build::dist::kRoleCount> contractByRole{};
     // macOS + self-contained: link units need the initializer-ordering shim
     // object prepended to their inputs (issue #336).
     bool needsStreamInitShim = false;
@@ -84,8 +92,13 @@ constexpr mcpp::build::dist::Role role_of(LinkUnit::Kind k) {
     switch (k) {
         case LinkUnit::TestBinary:    return mcpp::build::dist::Role::Test;
         case LinkUnit::StaticLibrary: return mcpp::build::dist::Role::Intermediate;
-        case LinkUnit::Binary:
-        case LinkUnit::SharedLibrary: break;
+        // A shared library leaves this machine too, but it is LOADED INTO a
+        // process that already has a C++ runtime rather than being one. That
+        // is a different contract, not a different flavour of the same one —
+        // sharing `Distributable` with executables is what let a .so publish
+        // a whole static libstdc++ and take over the executable's runtime.
+        case LinkUnit::SharedLibrary: return mcpp::build::dist::Role::SharedLibrary;
+        case LinkUnit::Binary:        break;
     }
     return mcpp::build::dist::Role::Distributable;
 }
@@ -506,8 +519,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         render_link_intent_flags(plan.linkIntent, linkIntentFlavor);
 
     // The SubOS farm tail — the only origin in `plan.runtimeSearch` with no
-    // other producer, appended after everything else so it is LAST in the
-    // artifact's DT_RPATH (see `runtime_search_closure`).
+    // other producer, and the one that must be LAST in the artifact's
+    // DT_RPATH (see `runtime_search_closure`).
+    //
+    // IT DOES NOT GO INTO `f.ld`. That was the defect: `f.ld` is rendered as
+    // `$ldflags`, which every link rule places BEFORE `$unit_ldflags`, and
+    // `$unit_ldflags` is where `$ORIGIN` lives. "Appended last" inside `f.ld`
+    // is still ahead of the artifact's own directory, so a project with a
+    // shared-library dependency resolved `libX11.so.6` out of the mutable farm
+    // view instead of the `bin/` directory it had just been linked against.
+    // It now travels as `link_line::UnitTail::runtimeFallback`, which is
+    // after `$ORIGIN` by construction.
     //
     // RUNPATH ONLY, never `-L`. Link-time resolution already works: mcpp
     // passes `--sysroot=<subos>`, which makes `<subos>/lib` the linker's
@@ -524,6 +546,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                 "-Wl,-rpath," + dir.path.string()));
         }
     }
+    // Assigned HERE, not at the end: several target branches below return
+    // early, and every one of them is PE (where `farm_ld` is empty anyway).
+    // Filling the slot at its point of definition makes that a fact rather
+    // than something the reader has to re-derive from the return paths.
+    f.ldRuntimeFallback = farm_ld;
+
     std::filesystem::path binutilsBin;
     if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++") {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
@@ -698,15 +726,48 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         namespace dist = mcpp::build::dist;
         auto const& bc = plan.manifest.buildConfig;
 
+        // The output FORMAT is resolved first because the role defaults
+        // depend on it: what a shared library should promise is a judgement
+        // about a hazard, and the hazard is format-specific (see
+        // `dist::default_contract`).
+        //
+        // Target-keyed, not host-keyed: a Linux-hosted MinGW cross build
+        // produces a PE and must take the PE answer.
+        const dist::Format format = [&] {
+            if (isMingwTc) return dist::Format::Pe;
+            if constexpr (mcpp::platform::needs_explicit_libcxx)
+                return dist::Format::MachO;
+            else if constexpr (mcpp::platform::is_windows)
+                return dist::Format::Pe;
+            else
+                return dist::Format::Elf;
+        }();
+
         // `static_stdlib` is a faithful alias of the two ends of the contract:
         // its documented meaning has always been exactly self-contained vs the
         // dynamic system runtime. An explicit `cxx_runtime` wins.
+        //
+        // The role defaults come from `dist::default_contract` rather than
+        // being spelled again here. They were spelled again here, and that
+        // second derivation is why `default_contract` sat with no caller while
+        // this file quietly disagreed with it about shared libraries.
         const dist::Contract base =
             dist::parse_contract(bc.cxxRuntime).value_or(
-                bc.staticStdlib ? dist::Contract::SelfContained
-                                : dist::Contract::HostCoupled);
+                bc.staticStdlib
+                    ? dist::default_contract(dist::Role::Distributable, format)
+                    : dist::Contract::HostCoupled);
         const dist::Contract testsContract =
             dist::parse_contract(bc.cxxRuntimeTests).value_or(base);
+        // A project-wide statement (`cxx_runtime = "…"` or `static_stdlib =
+        // false`) applies to shared libraries too — a human said what the
+        // whole project promises. Only when nobody said anything does the
+        // role's own default apply, which is the case that changes on ELF.
+        const bool projectWideExplicit = !bc.cxxRuntime.empty() || !bc.staticStdlib;
+        const dist::Contract sharedContract =
+            dist::parse_contract(bc.cxxRuntimeShared).value_or(
+                projectWideExplicit
+                    ? base
+                    : dist::default_contract(dist::Role::SharedLibrary, format));
 
         // Archive lookup. LLVM lays these out either directly under lib/ (the
         // macOS packages) or under lib/<llvm-triple>/ (the Linux ones), so try
@@ -756,18 +817,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         mi.fullStaticLibc = (f.linkage == "static");
         mi.mingw          = isMingwTc;
         mi.macosFloor     = !macosDeploymentTarget.empty();
-        if constexpr (mcpp::platform::needs_explicit_libcxx) {
-            mi.format = dist::Format::MachO;
-        } else if constexpr (mcpp::platform::is_windows) {
-            mi.format = dist::Format::Pe;
-        }
-        // Target-keyed, not host-keyed: a Linux-hosted MinGW cross build
-        // produces a PE and must take the PE mechanism.
-        if (isMingwTc) mi.format = dist::Format::Pe;
+        mi.format         = format;
 
         const bool wantsArchives =
             (base == dist::Contract::SelfContained
-             || testsContract == dist::Contract::SelfContained)
+             || testsContract == dist::Contract::SelfContained
+             || sharedContract == dist::Contract::SelfContained)
             && caps.stdlib_id == "libc++";
         if (wantsArchives) {
             auto libcxxA    = find_archive("libc++.a");
@@ -789,13 +844,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
         // "Explicit" = a human wrote it down. `static_stdlib = false` counts:
         // nobody sets a flag to its default to get non-default behavior.
-        const bool explicitBase  = !bc.cxxRuntime.empty() || !bc.staticStdlib;
-        const bool explicitTests = explicitBase || !bc.cxxRuntimeTests.empty();
+        const bool explicitBase   = projectWideExplicit;
+        const bool explicitTests  = explicitBase || !bc.cxxRuntimeTests.empty();
+        const bool explicitShared = explicitBase || !bc.cxxRuntimeShared.empty();
+
+        // Report a role's degradation only if this build HAS that role.
+        //
+        // The contract is still RESOLVED for every role — `ldStdlibByRole` is
+        // indexed on demand and must be total. What is gated is the WARNING:
+        // telling a project with no shared library what its shared libraries
+        // promise is not information, and with four roles an unconditional
+        // report turns one honest warning into a wall of them.
+        auto role_is_built = [&](dist::Role r) {
+            return std::ranges::any_of(plan.linkUnits, [&](auto const& lu) {
+                return role_of(lu.kind) == r;
+            });
+        };
 
         for (auto [role, requested, wasAsked] : {
-                 std::tuple{dist::Role::Distributable, base,          explicitBase},
-                 std::tuple{dist::Role::Test,          testsContract, explicitTests},
-                 std::tuple{dist::Role::Intermediate,  base,          explicitBase}}) {
+                 std::tuple{dist::Role::Distributable, base,           explicitBase},
+                 std::tuple{dist::Role::Test,          testsContract,  explicitTests},
+                 std::tuple{dist::Role::Intermediate,  base,           explicitBase},
+                 std::tuple{dist::Role::SharedLibrary, sharedContract, explicitShared}}) {
             mi.role            = role;
             mi.requested       = requested;
             mi.explicitRequest = wasAsked;
@@ -804,7 +874,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             f.ldStdlibByRole[i] = r.unitFlags;
             f.contractByRole[i] = r.effective;
             if (r.streamInitShim) f.needsStreamInitShim = true;
-            if (!r.diagnostic.empty())
+            if (!r.diagnostic.empty() && role_is_built(role))
                 f.diagnostics.push_back(std::format(
                     "{} target: {}", dist::to_string(role), r.diagnostic));
         }
@@ -993,9 +1063,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // actually being present (see atomic_link_flag).
         std::string atomic_ld = atomic_link_flag(plan.toolchain.linkRuntimeDirs,
                                                  !full_static.empty());
-        f.ld = std::format("{}{}{}{}{}{}{}{}{}{}", full_static,
+        f.ld = std::format("{}{}{}{}{}{}{}{}{}", full_static,
                            link_toolchain_flags, b_flag, runtime_dirs,
-                           link_intent_ld, farm_ld, atomic_ld, payload_ld,
+                           link_intent_ld, atomic_ld, payload_ld,
                            user_ldflags, link_extra);
     }
 

@@ -931,8 +931,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // [build] — backend tunables
     if (auto v = doc->get_bool("build.static_stdlib")) m.buildConfig.staticStdlib = *v;
     // #336 — [build] cxx_runtime. Two spellings for one field, cargo-style:
-    //   cxx_runtime = "host-coupled"                       (all roles)
-    //   cxx_runtime = { default = "...", tests = "..." }   (per role)
+    //   cxx_runtime = "host-coupled"                                  (all roles)
+    //   cxx_runtime = { default = "...", tests = "...", shared = "..." }
+    //                                                                 (per role)
     // Rejecting an unknown value here is what lets flags.cppm parse it later
     // with `value_or` and no second validation path.
     {
@@ -953,18 +954,19 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 m.buildConfig.cxxRuntime = s;
             } else if (val->is_table()) {
                 for (auto& [key, v] : val->as_table()) {
-                    if (key != "default" && key != "tests")
+                    if (key != "default" && key != "tests" && key != "shared")
                         return std::unexpected(error(origin, std::format(
                             "[build].cxx_runtime has unsupported key '{}'; "
-                            "expected 'default' or 'tests'", key)));
+                            "expected 'default', 'tests' or 'shared'", key)));
                     if (!v.is_string())
                         return std::unexpected(error(origin, std::format(
                             "[build].cxx_runtime.{} must be a string", key)));
                     auto s = v.as_string();
                     if (auto e = check(std::format("[build].cxx_runtime.{}", key), s))
                         return std::unexpected(*e);
-                    (key == "tests" ? m.buildConfig.cxxRuntimeTests
-                                    : m.buildConfig.cxxRuntime) = s;
+                    if (key == "tests")       m.buildConfig.cxxRuntimeTests  = s;
+                    else if (key == "shared") m.buildConfig.cxxRuntimeShared = s;
+                    else                      m.buildConfig.cxxRuntime       = s;
                 }
             } else {
                 return std::unexpected(error(origin,
@@ -1070,10 +1072,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
     static constexpr std::string_view kKnownBuildKeys[] = {
         "allow_host_libs", "build_program_timeout", "c_standard", "cache",
-        "cflags", "cxxflags", "default-profile", "defines", "dialect_cxxflags",
-        "flags", "include_dirs", "include_dirs_after", "ldflags",
-        "macos_deployment_target", "module_extensions", "profile", "sources",
-        "static_stdlib", "target",
+        "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
+        "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
+        "ldflags", "macos_deployment_target", "module_extensions", "profile",
+        "sources", "static_stdlib", "target",
     };
     if (auto* bt = doc->get_table("build")) {
         for (auto& [key, _] : *bt) {
@@ -1085,8 +1087,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     "sources, module_extensions, cflags, cxxflags, ldflags, "
                     "defines, flags, include_dirs, include_dirs_after, "
                     "dialect_cxxflags, c_standard, target, static_stdlib, "
-                    "allow_host_libs, cache, profile, build_program_timeout, "
-                    "macos_deployment_target.", key));
+                    "cxx_runtime, allow_host_libs, cache, profile, "
+                    "build_program_timeout, macos_deployment_target.", key));
             }
         }
     }
