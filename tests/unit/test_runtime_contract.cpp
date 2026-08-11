@@ -325,10 +325,18 @@ std::size_t farm_entries(const std::vector<mcpp::platform::search::Dir>& dirs) {
 }  // namespace
 
 TEST(RuntimeSearchClosure, HostTargetGetsTheFarm) {
-    EXPECT_EQ(farm_entries(build::runtime_search_closure(
-        plan_for(""), host_binding_with_farm())), 1u);
+    // An EXPLICIT Linux target is a farm target from anywhere, including a
+    // macOS or Windows runner: the guards read the target, not the runner.
     EXPECT_EQ(farm_entries(build::runtime_search_closure(
         plan_for("x86_64-linux-gnu"), host_binding_with_farm())), 1u);
+
+    // An EMPTY triple means "this host", so the answer is the host's format —
+    // and that is the point of the ELF guard, not an exception to it. Asserting
+    // 1 unconditionally is what failed on the macOS and Windows runners.
+    const std::size_t expectedForHost = mcpp::platform::is_linux ? 1u : 0u;
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for(""), host_binding_with_farm())), expectedForHost)
+        << "an empty triple must resolve to this host's format";
 }
 
 TEST(RuntimeSearchClosure, CrossTargetGetsNoFarm) {
@@ -355,7 +363,8 @@ TEST(RuntimeSearchClosure, UndeclaredBindingStillGetsItsOwnFarm) {
     auto b = host_binding_with_farm();
     b.declared = false;
     b.runtimeId.clear();
-    EXPECT_EQ(farm_entries(build::runtime_search_closure(plan_for(""), b)), 1u);
+    EXPECT_EQ(farm_entries(build::runtime_search_closure(
+        plan_for("x86_64-linux-gnu"), b)), 1u);
     // …but the architecture guard still applies: unknown libc is not a licence
     // to ignore everything else.
     EXPECT_EQ(farm_entries(build::runtime_search_closure(

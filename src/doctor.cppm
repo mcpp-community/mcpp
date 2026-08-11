@@ -592,10 +592,19 @@ int print_stored_runtime_resolution() {
     std::println("runtime resolution: {}", path.string());
     if (auto binding = runtime->find("binding");
         binding != runtime->end() && binding->is_object()) {
-        std::println("binding: {} via {} (contract {})",
-            binding->value("runtime_id", "?"),
+        const bool declared = binding->value("declared", true);
+        std::println("binding: {} via {} (contract {}){}",
+            declared ? binding->value("runtime_id", "?") : "(undeclared)",
             binding->value("provider_id", "?"),
-            binding->value("contract_hash", "?"));
+            binding->value("contract_hash", "?"),
+            declared ? "" : "  — this SubOS did not describe itself");
+        // The note, when there is one. A degradation that only ever appeared
+        // once during the build it happened in is a degradation nobody can look
+        // up afterwards, and "why is my verdict inconclusive" is exactly the
+        // question this command exists to answer.
+        if (auto note = binding->value("note", std::string{}); !note.empty())
+            for (auto line : std::views::split(note, '\n'))
+                std::println("  {}", std::string_view(line));
     }
 
     std::println("requirements:");
