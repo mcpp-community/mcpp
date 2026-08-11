@@ -156,6 +156,8 @@ the package/feature boundary, not on an individual target.
 ```toml
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
+module_extensions = [".ixx"]      # Extra extensions your module INTERFACES use (§ below)
+build_program_timeout = 1800      # Seconds a build.mcpp may run; 0 = no limit (§ below)
 include_dirs = ["include", "third_party/include"]  # Header search paths
 include_dirs_after = ["*"]         # Header dirs searched AFTER system dirs (-idirafter)
 c_standard   = "c11"              # Standard for C source files (default c11)
@@ -193,6 +195,83 @@ cargo/rustc, cc, etc.) > this field (the project default, similar to SwiftPM's
 baseline, and 14.0 is the floor of LLVM's official static libraries themselves).
 This value enters the BMI fingerprint, so switching targets automatically rebuilds
 the module cache.
+
+### Module interface extensions (`module_extensions`)
+
+mcpp treats `.cppm` as a module interface unit. The C++ ecosystem has not
+converged on one spelling — Clang also recognizes `.ccm` and `.cxxm`, MSVC uses
+`.ixx` — so a project whose interfaces use another extension declares it:
+
+```toml
+[build]
+module_extensions = [".ixx", ".ccm"]
+```
+
+The list is **additive**: `.cppm` is always a module interface and cannot be
+removed. To stop a particular file from being built, `!`-exclude it in
+`sources`; that is what `sources` is for.
+
+Declaring an extension does three things at once, which is the point of having
+one key rather than several:
+
+1. the convention default for `sources` grows to match, so the files are
+   **found** (`src/**/*.ixx` joins the default glob);
+2. those units compile with the **module** rule — they emit a BMI and their
+   objects are linked unconditionally;
+3. the freshness fast path watches them, so adding an `import` to one
+   invalidates the build graph instead of silently reusing a stale one.
+
+Any extension is accepted **except** ones that already name a non-module role
+(`.cpp` `.cc` `.cxx` `.c` `.m` `.mm` `.h` `.hpp` `.hh` `.hxx` `.S` `.s`
+`.asm`); claiming one of those is a manifest error rather than a warning,
+because it would route (say) C files to the C++ module rule and fail somewhere
+that names neither the file nor this key.
+
+Extensions are matched **literally, without case folding** — `.S` and `.s` are
+different languages in this domain, so case is never ignored.
+
+mcpp always tells the compiler explicitly that a module interface unit is one
+(`-x c++-module` on Clang, `-x c++` on GCC, `/interface /TP` on MSVC), so an
+extension the compiler driver has never heard of works anyway. This is why any
+extension is allowed: mcpp does not need the compiler to recognize it.
+
+> **Publishing note.** An older mcpp does not know this key: it warns, ignores
+> it, and then compiles those files as ordinary translation units — a wrong
+> build rather than a clean failure. If you publish a package that uses
+> `module_extensions`, declare an mcpp version floor in its index descriptor.
+
+### Build-program timeout (`build_program_timeout`)
+
+A `build.mcpp` gets **600 seconds** by default, after which mcpp kills it and
+fails the build naming the package. A project whose build program legitimately
+runs longer (a large code-generation step) raises its own bound:
+
+```toml
+[build]
+build_program_timeout = 1800   # seconds; 0 = no limit
+```
+
+The value is read from **the manifest of the package that owns the
+`build.mcpp`** — a dependency's generator is bounded by the dependency's own
+declaration, because its author is the one who knows how long it takes. The
+precedence follows the same shape as `macos_deployment_target`:
+
+```
+MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>   (this invocation; highest)
+  > [build] build_program_timeout      (that package's manifest)
+  > 600                                (built-in default)
+```
+
+Leaving the key out is not the same as setting `0`: unset means "use the
+default bound", `0` means "no bound at all".
+
+This value is deliberately **not** part of the build fingerprint — it changes
+no edge in the graph, and folding it in would mean that raising a timeout
+rebuilt the whole project, which is the opposite of what someone raising a
+timeout wants.
+
+The **compile** phase is not bounded, only the build *program*. See
+[07-build-mcpp.md](07-build-mcpp.md) for why that asymmetry is deliberate.
 
 ### The C++ runtime contract (`cxx_runtime`)
 

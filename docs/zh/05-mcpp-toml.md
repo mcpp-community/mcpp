@@ -149,6 +149,8 @@ mcpp 刻意不在一次构建里把同一个共享源编译成两份:一个源�
 ```toml
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # 源文件 glob(默认: src/**/*.{cppm,cpp,cc,c,S,s,asm})
+module_extensions = [".ixx"]      # 模块**接口**额外使用的扩展名(见下节)
+build_program_timeout = 1800      # build.mcpp 的运行上限(秒);0 = 不限(见下节)
 include_dirs = ["include", "third_party/include"]  # 头文件搜索路径
 include_dirs_after = ["*"]         # 排在系统目录之后搜索的头文件目录(-idirafter)
 c_standard   = "c11"              # C 源文件的标准(默认 c11)
@@ -178,6 +180,69 @@ cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftP
 `platforms:`)> **内建默认 `14.0`**(rustc 风格——每个 target 都有基线,
 14.0 即 LLVM 官方静态库自身的下限)。该值会进入 BMI 指纹——切换 target
 会自动重建模块缓存。
+
+### 模块接口扩展名(`module_extensions`)
+
+mcpp 把 `.cppm` 视为模块接口单元。C++ 生态并没有收敛到一种拼法 —— Clang 还认
+`.ccm` 和 `.cxxm`,MSVC 用 `.ixx` —— 所以接口用别的扩展名的工程自己声明:
+
+```toml
+[build]
+module_extensions = [".ixx", ".ccm"]
+```
+
+这个列表是**追加**的:`.cppm` 永远是模块接口,不能删。要让某个文件不参与构建,
+用 `sources` 的 `!` 前缀 —— 那才是 `sources` 的职责。
+
+声明一个扩展名会同时做三件事,这正是「一个键而不是几个键」的理由:
+
+1. `sources` 的约定默认值跟着变宽,文件才**能被找到**(`src/**/*.ixx` 自动进入默认 glob);
+2. 这些单元用**模块**规则编译 —— 产出 BMI,其 `.o` 无条件进入链接;
+3. 新鲜度快路径会扫描它们,所以给其中一个加 `import` 会让构建图作废,
+   而不是静默复用一张过期的图。
+
+**任何扩展名都接受**,唯独拒绝那些已经代表其他角色的
+(`.cpp` `.cc` `.cxx` `.c` `.m` `.mm` `.h` `.hpp` `.hh` `.hxx` `.S` `.s` `.asm`)——
+这是 manifest **错误**而不是警告,因为它会把(比如)C 文件送进 C++ 模块规则,
+最终失败在一个既不提文件也不提这个键的地方。
+
+扩展名**按字面匹配,不做大小写折叠** —— 在这个领域里 `.S` 和 `.s` 是两种不同的语言,
+所以大小写从不被忽略。
+
+mcpp 每次都会**显式告诉编译器**这个单元是模块接口(Clang 用 `-x c++-module`,
+GCC 用 `-x c++`,MSVC 用 `/interface /TP`),所以即使编译器驱动从没听说过这个扩展名
+也能工作。这也是为什么任何扩展名都被允许:mcpp 不需要编译器认识它。
+
+> **发布须知**:旧版 mcpp 不认识这个键 —— 它会警告、忽略,然后把那些文件当作普通
+> 翻译单元编译,得到一个**错误的构建**而不是一次干净的失败。如果你要发布一个用了
+> `module_extensions` 的包,请在它的索引描述符里声明 mcpp 版本下限。
+
+### 构建程序超时(`build_program_timeout`)
+
+`build.mcpp` 默认有 **600 秒**,超时后 mcpp 杀掉它并让构建失败、点名是哪个包。
+构建程序确实需要跑更久的工程(大规模代码生成)自己抬高上限:
+
+```toml
+[build]
+build_program_timeout = 1800   # 秒;0 = 不限
+```
+
+这个值读的是**拥有该 `build.mcpp` 的那个包**的 manifest —— 依赖的生成器由依赖自己的
+声明来限制,因为只有它的作者知道要跑多久。优先级与 `macos_deployment_target` 同构:
+
+```
+MCPP_BUILD_PROGRAM_TIMEOUT=<秒>   本次调用(最高)
+  > [build] build_program_timeout  该包自己的 manifest
+  > 600                            内置默认
+```
+
+**不写这个键**与**写 `0`** 不是一回事:不写表示「用默认上限」,`0` 表示「完全不设上限」。
+
+这个值刻意**不进构建指纹** —— 它不改变图里的任何一条边,而把它折进指纹会让
+「抬高超时」触发全量重建,这恰好与抬高超时的人想要的相反。
+
+只有构建**程序**受限,**编译**不受限。原因见
+[07-build-mcpp.md](07-build-mcpp.md)。
 
 ### C++ 运行时契约(`cxx_runtime`)
 

@@ -16,6 +16,7 @@ import mcpp.platform.axis;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.manifest;
+import mcpp.source_kind;
 import mcpp.modgraph.glob;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
@@ -284,6 +285,18 @@ export std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
         for (auto const& f : gf.asmflags) { s += " gas:"; s += f; }
         for (auto const& f : gf.defines)  { s += " gd:";  s += f; }
     }
+    // [build] module_extensions changes WHICH FILES ARE MODULE INTERFACES,
+    // i.e. the shape of the graph: which units emit a BMI, which objects link
+    // unconditionally, which ninja rule each unit gets. That is a build
+    // variant, so it belongs in the fingerprint — mcpp.toml's mtime alone only
+    // protects the fast path within one output dir, not the BMI cache.
+    //
+    // Contrast [build] build_program_timeout, which is deliberately absent:
+    // it changes no edge. See BuildConfig::buildProgramTimeoutSecs.
+    for (auto const& e : m.buildConfig.moduleExtensions) {
+        s += " modext:";
+        s += e;
+    }
     // The resolved [profile] knobs. These are NOT in cflags/cxxflags: the
     // profile block (see the profile resolution below) lands them in
     // buildConfig.optLevel/debug/lto/strip and flags.cppm turns them into
@@ -388,6 +401,13 @@ std::string canonical_package_build_metadata(
             for (auto const& f : gf.cxxflags) { s += " gxx:"; s += f; }
             for (auto const& f : gf.asmflags) { s += " gas:"; s += f; }
             for (auto const& f : gf.defines)  { s += " gd:";  s += f; }
+        }
+        // Same reason as the root block, and it cannot be skipped on the
+        // grounds that "a descriptor is frozen per version": path and git
+        // dependencies are not frozen, and this key changes their products.
+        for (auto const& e : pkg.manifest.buildConfig.moduleExtensions) {
+            s += " modext:";
+            s += e;
         }
         if (pkg.usageResolved) {
             for (auto const& dir : pkg.privateBuild.includeDirs) {
@@ -3139,13 +3159,19 @@ prepare_build(bool print_fingerprint,
         std::copy(fresh.begin(), fresh.end(),
                   mm.buildConfig.actions.begin()
                       + static_cast<std::ptrdiff_t>(firstNewAction));
+        // The package that DECLARED the outputs classifies them: a dependency
+        // generating a `.ixx` asks its own manifest, not the root project's.
+        // Built once per package, not once per output.
+        const auto pkgExtTable =
+            mcpp::extension_table_for(mm.buildConfig.moduleExtensions);
         for (auto const& a : fresh) {
             if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
             for (auto const& o : a.outputs) {
                 if (o.find("${mcpp.") != std::string::npos) continue;
                 // Companion outputs (protoc's .pb.h next to its .pb.cc) are
                 // produced by the edge but are NOT translation units.
-                if (!mcpp::build::directives::is_compilable_output(o)) continue;
+                if (!mcpp::build::directives::is_compilable_output(o, pkgExtTable))
+                    continue;
                 mm.buildConfig.sources.push_back(o);
                 mm.modules.sources.push_back(o);
             }
@@ -3369,8 +3395,11 @@ prepare_build(bool print_fingerprint,
         // back to the convention default if the manifest didn't set any.
         std::vector<std::string> globs = depManifest.modules.sources;
         if (globs.empty()) {
-            globs = { "src/**/*.cppm", "src/**/*.cpp",
-                      "src/**/*.cc",   "src/**/*.c" };
+            // Was a fourth hand-written copy of the convention default, and it
+            // had already drifted: all three assembly extensions were missing,
+            // so staging a dependency with .S/.s/.asm silently dropped them.
+            globs = mcpp::default_source_globs(
+                mcpp::extension_table_for(depManifest.buildConfig.moduleExtensions));
         }
         // Glob exclusion (same as scan_one_into): `!` prefix removes.
         std::set<std::filesystem::path> sourceFiles;
@@ -5461,9 +5490,8 @@ prepare_build(bool print_fingerprint,
     {
         bool hasGas = false, hasNasm = false;
         for (auto& cu : ctx.plan.compileUnits) {
-            auto ext = cu.source.extension();
-            if (ext == ".S" || ext == ".s") hasGas = true;
-            else if (ext == ".asm")         hasNasm = true;
+            if (cu.kind == mcpp::SourceKind::GasAsm)       hasGas = true;
+            else if (cu.kind == mcpp::SourceKind::NasmAsm) hasNasm = true;
         }
         if (hasGas && mcpp::toolchain::dialect_for(*tc).id == "msvc") {
             return std::unexpected(std::string(

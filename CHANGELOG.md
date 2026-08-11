@@ -3,6 +3,85 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.11.1] — 2026-08-11
+
+### 新增
+
+- **`[build] module_extensions` —— 哪些扩展名是模块接口,由工程声明。**
+
+  ```toml
+  [build]
+  module_extensions = [".ixx", ".ccm"]
+  ```
+
+  追加到内置的 `.cppm`。声明一个扩展名会**同时**做三件事:默认 sources glob 跟着
+  变宽(文件才能被**找到**)、这些单元走**模块**规则(产 BMI、`.o` 无条件进链接)、
+  新鲜度快路径**扫描**它们(加 `import` 会让构建图作废)。一个键而不是三处配置。
+
+  任何扩展名都接受,唯独拒绝已代表其他角色的(`.cpp` `.c` `.h` `.S` …)——
+  manifest **错误**而非警告,因为宣称 `.c` 是模块接口会把 C 文件送进 C++ 模块规则,
+  最终失败在一个既不提文件也不提这个键的地方。
+
+  ⚠️ `.ccm`/`.cxxm`/`.ixx` **不进内置默认**。进了的话默认 glob 会跟着变宽,
+  于是 `src/` 下躺着 vendored MSVC-only `.ixx` 的**已发布包会在一次 mcpp 升级后
+  突然开始编译它** —— 而包作者改不了已经发出去的 tarball。
+
+- **`[build] build_program_timeout` —— `build.mcpp` 的运行上限可配置。**
+
+  优先级 `MCPP_BUILD_PROGRAM_TIMEOUT` > **该包自己的** manifest > 内置 600s,
+  与 `macos_deployment_target` 同构。超时报错**点名要改的那份 `mcpp.toml`** ——
+  依赖超时时改自己的那份不会有任何效果,这正是 [#410](https://github.com/mcpp-community/mcpp/issues/410)
+  从外面看到的样子。不写这个键与写 `0` 不是一回事:不写=用默认上限,`0`=不设上限。
+
+- **`mcpp self doctor` 报告构建策略。** 生效的模块接口扩展名表、生效的超时值
+  **及其来源**、以及本平台的 deadline 是否**真的**强制执行。
+  另外 `module_extensions` 里零命中的条目会告警 —— 否则打字错误(`.ixxx`)与
+  「这个工程还没有」无法区分。
+
+### 修复
+
+- **超时上限在 Windows 上从来就是空操作。** `capture_exec_deadline` 只在 POSIX
+  生效,其余平台直接回落到无界启动器 —— 于是 `mcpp test --timeout`、
+  `--build-timeout`、以及这个新键在 Windows 上**设了等于没设**。现在两侧各有实现:
+  Windows 把子进程放进 **Job 对象**并在到期时关闭它,杀掉的是**整棵进程树**而不只是
+  直接子进程(否则一个还攥着捕获管道的孙进程会让杀掉之后的读取一直挂住)。
+
+- **`.mm`(Objective-C++)的对象编了但永远不进链接** —— `is_implementation_source`
+  的清单漏了它。
+
+- **stage 一个含汇编的依赖会静默丢掉那些源文件** —— 兜底 glob 漏了全部三种汇编扩展名。
+
+### 架构
+
+- **「扩展名 → 角色」此前在 9 个文件 20 处推导,分成 8 份互不一致的清单**
+  (三份「什么算实现单元」、四份「什么算源文件」)。
+  [#272](https://github.com/mcpp-community/mcpp/pull/272) 修了链接侧,却漏了
+  `pick_rule` —— 边上**声明**了 BMI 产物(那行读 `providesModule`),命令行却丢了
+  `-fmodule-output=`。
+
+  收敛的形状不是「大家都调同一个函数」,而是**分类只发生一次**(文件进图时),
+  之后当数据传递(`SourceUnit::kind` → `CompileUnit::kind`)。扫描器手里本来就有
+  所属包的 manifest,所以这一步没有新增任何管道。
+
+- **mcpp 现在每次都显式告诉编译器某个单元是模块接口**(`-x c++` / `-x c++-module` /
+  `/interface /TP`),而不是去维护「哪个驱动认哪个后缀」。实测(GCC 16.1 / Clang 22.1):
+  **Clang 根本不认 `.ixx`** —— 把它当链接输入、警告、**退出码 0 且不产 BMI**;
+  而显式旗标在已识别后缀上**幂等**(Clang 的 `.cppm` BMI 逐字节相同)。
+  一张会过期、错了还静默的表不该存在。
+
+- `src/platform/` 拆成 `unix/ windows/ linux/ macos/`;`mcpp.platform.process`
+  对有界运行**单点 `if constexpr` 分派**,取代此前散落的平台分支。
+
+### 兼容性
+
+- 未配置时**构建图零差分**:同样的文件被编、同样的 BMI、同样的对象进链接、
+  同样的指纹目录。
+- `module_extensions` **进**指纹(它改图的形态);`build_program_timeout` **不进**
+  (它不改任何一条边 —— 进了会让「抬高超时」重建全世界)。
+- ⚠️ 旧版 mcpp 遇到 `module_extensions` 会警告+忽略,然后把那些文件当普通翻译单元
+  编译 —— **错误的构建**而不是干净的失败。发布用了这个键的包必须声明 mcpp 版本下限
+  (见 `docs/10-publishing-a-library.md`)。
+
 ## [2026.8.10.3] — 2026-08-10
 
 ### 修复

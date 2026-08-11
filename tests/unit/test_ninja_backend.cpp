@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.source_kind;
 import mcpp.build.compile_commands;
 import mcpp.build.flags;
 import mcpp.build.ninja;
@@ -56,6 +57,7 @@ TEST(NinjaBackend, ObjectiveCSourceUsesCObjectRuleAndCFlags) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/cocoa.m",
+        .kind = mcpp::SourceKind::C,
         .object = "obj/cocoa.o",
         .packageName = "objc_rule_test",
         .packageCflags = {"-DOBJ_C_BUILD=1"},
@@ -122,6 +124,7 @@ TEST(NinjaBackend, UsesPackageCppStandardForCxxFlags) {
     plan.cppStandardFlag = "-std=c++26";
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "cpp26_test",
     });
@@ -142,6 +145,7 @@ TEST(NinjaBackend, CompileCommandsUsesSameCppStandard) {
     plan.cppStandardFlag = "-std=c++26";
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "cpp26_test",
     });
@@ -211,6 +215,7 @@ TEST(NinjaBackend, LocalIncludeDirsAfterEmitIdirafterAppendedAfterDashI) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "after_test",
         .localIncludeDirs = {"/dep/include"},
@@ -244,6 +249,7 @@ TEST(NinjaBackend, MsvcDialectEmitsIncludeDirsAfterAsTrailingSlashI) {
     plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "after_test",
         .localIncludeDirs = {"/dep/include"},
@@ -279,6 +285,7 @@ TEST(NinjaBackend, LocalIncludeDirsWithSpacesAreShellQuoted) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "spaced",
         .localIncludeDirs = {"/opt/my dep/include"},
@@ -349,6 +356,7 @@ TEST(NinjaBackend, NasmUnitEmitsIncludeDirsAfterAsPlainDashI) {
     plan.nasmPath = "/usr/bin/nasm";
     plan.compileUnits.push_back({
         .source = "src/scale.asm",
+        .kind = mcpp::SourceKind::NasmAsm,
         .object = "obj/scale.asm.o",
         .packageName = "after_test",
         .localIncludeDirs = {"/dep/x86"},
@@ -409,6 +417,7 @@ TEST(NinjaBackend, GasSourceUsesAsmObjectRule) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/copy.S",
+        .kind = mcpp::SourceKind::GasAsm,
         .object = "obj/copy.S.o",
         .packageName = "asm_rule_test",
         // Only the -D/-U/-I subset may reach the assembler: -std/-O/-w on an
@@ -441,6 +450,7 @@ TEST(NinjaBackend, NasmSourceUsesNasmRuleWithDerivedFormat) {
     plan.nasmFormat = "elf64";
     plan.compileUnits.push_back({
         .source = "src/simd.asm",
+        .kind = mcpp::SourceKind::NasmAsm,
         .object = "obj/simd.asm.o",
         .packageName = "nasm_rule_test",
         .packageCflags = {"-DHAVE_AVX2=1", "-O2"},
@@ -461,6 +471,7 @@ TEST(NinjaBackend, NoAsmRulesWithoutAsmSources) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "plain_test",
     });
@@ -477,11 +488,13 @@ TEST(NinjaBackend, CompileCommandsSkipNasmAndCoverGas) {
     plan.nasmFormat = "elf64";
     plan.compileUnits.push_back({
         .source = "src/simd.asm",
+        .kind = mcpp::SourceKind::NasmAsm,
         .object = "obj/simd.asm.o",
         .packageName = "cdb_test",
     });
     plan.compileUnits.push_back({
         .source = "src/copy.S",
+        .kind = mcpp::SourceKind::GasAsm,
         .object = "obj/copy.S.o",
         .packageName = "cdb_test",
     });
@@ -507,6 +520,7 @@ TEST(NinjaBackend, QuotesFlagValueWithSpace) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.c",
+        .kind = mcpp::SourceKind::C,
         .object = "obj/main.o",
         .packageName = "quote_test",
         .packageCflags = {"-DT=long long"},
@@ -531,6 +545,7 @@ TEST(NinjaBackend, PlainFlagsPassThroughUnquoted) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "plain_flag_test",
         .packageCxxflags = {"-DFOO=1", "-O2"},
@@ -553,6 +568,7 @@ TEST(NinjaBackend, LinkFlagsAreNotReQuoted) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "rpath_test",
     });
@@ -585,6 +601,7 @@ TEST(NinjaBackend, RawMultiTokenFlagIsNotQuoted) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.c",
+        .kind = mcpp::SourceKind::C,
         .object = "obj/main.o",
         .packageName = "include_flag_test",
         .packageCflags = {"-include mcpp_lua_platform_config.h"},
@@ -642,6 +659,7 @@ TEST(NinjaBackend, RootPackageCxxflagsAreEmittedOncePerUnit) {
     plan.manifest.buildConfig.cxxflags = {"-DROOT_FLAG=1"};
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "root_flag_test",
         .packageCxxflags = {"-DROOT_FLAG=1"},
@@ -667,6 +685,7 @@ TEST(NinjaBackend, ClangScanRuleWritesViaDashOWithoutShellRedirection) {
     plan.scanDepsPath = "/usr/bin/clang-scan-deps";
     plan.compileUnits.push_back({
         .source = "src/m.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
         .object = "obj/m.o",
         .packageName = "objc_rule_test",
         .providesModule = "m",
@@ -698,6 +717,7 @@ TEST(NinjaBackend, NoRuleWrapsItsCommandInCmdSlashC) {
         }
         plan.compileUnits.push_back({
             .source = "src/m.cppm",
+            .kind = mcpp::SourceKind::ModuleInterface,
             .object = "obj/m.o",
             .packageName = "objc_rule_test",
             .providesModule = "m",
@@ -722,12 +742,14 @@ TEST(NinjaBackend, CompileAndScanRulesRouteFlagsThroughRspfileUnderMsvcDialect) 
     plan.toolchain.binaryPath = "cl.exe";
     plan.compileUnits.push_back({
         .source = "src/m.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
         .object = "obj/m.o",
         .packageName = "objc_rule_test",
         .providesModule = "m",
     });
     plan.compileUnits.push_back({
         .source = "src/a.c",
+        .kind = mcpp::SourceKind::C,
         .object = "obj/a.o",
         .packageName = "objc_rule_test",
     });
@@ -783,6 +805,7 @@ TEST(NinjaBackend, CompileRulesStayInlineOnPosixDrivers) {
         auto plan = minimal_plan();  // GCC → gnu dialect, non-msvc deps
         plan.compileUnits.push_back({
             .source = "src/a.c",
+            .kind = mcpp::SourceKind::C,
             .object = "obj/a.o",
             .packageName = "objc_rule_test",
         });
@@ -841,11 +864,13 @@ TEST(NinjaBackend, CAndAsmRulesAlsoTrackHeaderDeps) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/a.c",
+        .kind = mcpp::SourceKind::C,
         .object = "obj/a.o",
         .packageName = "objc_rule_test",
     });
     plan.compileUnits.push_back({
         .source = "src/b.S",
+        .kind = mcpp::SourceKind::GasAsm,
         .object = "obj/b.o",
         .packageName = "objc_rule_test",
     });
@@ -882,11 +907,13 @@ TEST(NinjaBackend, LowercaseAsmHasNoDepfileAndItsOwnRule) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/upper.S",
+        .kind = mcpp::SourceKind::GasAsm,
         .object = "obj/upper.o",
         .packageName = "objc_rule_test",
     });
     plan.compileUnits.push_back({
         .source = "src/lower.s",
+        .kind = mcpp::SourceKind::GasAsm,
         .object = "obj/lower.o",
         .packageName = "objc_rule_test",
     });
@@ -1055,6 +1082,7 @@ TEST(NinjaBackend, CachedUnitEmitsStageEdgeAndNoCompileEdge) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "/store/dep/src/dep.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
         .object = "obj/dep.m.o",
         .packageName = "dep",
         .providesModule = "dep",
@@ -1088,6 +1116,7 @@ TEST(NinjaBackend, CachedStageEdgesUseSizeVerification) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "/store/dep/src/a.c",
+        .kind = mcpp::SourceKind::C,
         .object = "obj/a.o",
         .packageName = "dep",
         .servedFromCache = true,
@@ -1105,6 +1134,7 @@ TEST(NinjaBackend, UncachedUnitsStillCompileAlongsideCachedOnes) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "/store/dep/src/dep.c",
+        .kind = mcpp::SourceKind::C,
         .object = "obj/dep.o",
         .packageName = "dep",
         .servedFromCache = true,
@@ -1112,6 +1142,7 @@ TEST(NinjaBackend, UncachedUnitsStillCompileAlongsideCachedOnes) {
     });
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "objc_rule_test",
     });
@@ -1129,6 +1160,7 @@ TEST(NinjaBackend, NoStageEdgesWithoutCachedUnits) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "objc_rule_test",
     });
@@ -1146,6 +1178,7 @@ TEST(NinjaBackend, CachedUnitWithoutCachedObjectPathIsStillCompiled) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "objc_rule_test",
         .servedFromCache = true,
@@ -1164,6 +1197,7 @@ TEST(NinjaBackend, CachedUnitsStillAppearInCompileCommands) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "/store/dep/src/dep.c",
+        .kind = mcpp::SourceKind::C,
         .object = "obj/dep.o",
         .packageName = "dep",
         .servedFromCache = true,
@@ -1171,6 +1205,7 @@ TEST(NinjaBackend, CachedUnitsStillAppearInCompileCommands) {
     });
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "objc_rule_test",
     });
@@ -1209,6 +1244,7 @@ TEST(NinjaBackend, NonCachedEdgesOrderAfterEveryStagedArtifact) {
     // A cached package with a primary interface and a partition.
     plan.compileUnits.push_back({
         .source = "/store/dep/src/dep.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
         .object = "obj/dep.m.o",
         .packageName = "dep",
         .providesModule = "dep",
@@ -1218,6 +1254,7 @@ TEST(NinjaBackend, NonCachedEdgesOrderAfterEveryStagedArtifact) {
     });
     plan.compileUnits.push_back({
         .source = "/store/dep/src/part.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
         .object = "obj/part.m.o",
         .packageName = "dep",
         .providesModule = "dep:part",
@@ -1228,6 +1265,7 @@ TEST(NinjaBackend, NonCachedEdgesOrderAfterEveryStagedArtifact) {
     // The consumer, which imports only the primary module.
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "objc_rule_test",
         .imports = {"dep"},
@@ -1266,6 +1304,7 @@ TEST(NinjaBackend, NoStagedPhonyWhenNothingIsCached) {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({
         .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
         .object = "obj/main.o",
         .packageName = "objc_rule_test",
     });

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import mcpp.source_kind;
 import mcpp.build.configure;
 import mcpp.build.plan;
 import mcpp.toolchain.model;

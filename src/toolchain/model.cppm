@@ -125,6 +125,31 @@ struct BmiTraits {
     std::string_view stdCompatBmiUsePrefix; // "" | " -fmodule-file=std.compat=" | " /reference std.compat="
     std::string_view moduleOutputPrefix;    // "" | " -fmodule-output=" | " /ifcOutput "
     std::string_view bmiSearchPrefix;       // "" | " -fprebuilt-module-path=" | " /ifcSearchDir "
+    // How this compiler is TOLD that a translation unit is a module interface.
+    // Emitted UNCONDITIONALLY on every module compile — mcpp never asks
+    // "does this driver recognize this extension?".
+    //
+    // WHY UNCONDITIONALLY. Every driver has a private, version-dependent
+    // suffix->language table, and the three disagree in both directions:
+    // measured 2026-08-11, Clang 22.1.8 does not recognize `.ixx` at all
+    // (it hands the file to the LINKER, warns, and exits 0 with no BMI —
+    // a silent no-op), while cl.exe does not recognize `.cppm`. Maintaining
+    // "who knows which suffix" would be a table that expires with every
+    // compiler release AND whose errors are silent.
+    //
+    // Saying it every time costs nothing: the flag is IDEMPOTENT on a suffix
+    // the driver already knows. Measured on the same day — Clang's `.cppm`
+    // BMI is byte-identical with and without `-x c++-module` (18896 bytes
+    // both); GCC's `.gcm` is unchanged too (its output is not byte-
+    // reproducible run to run, so the comparison is same-size plus a diff
+    // offset indistinguishable from the run-to-run noise).
+    //
+    // NOT interchangeable between families: `-x c++-module` makes GCC exit
+    // with "language c++-module not recognized", and `-x c++` makes Clang
+    // emit a 174-byte stub instead of a module BMI.
+    //
+    // Positional on GNU, so the emitter must place it before `-c $in`.
+    std::string_view moduleInterfaceLangFlag; // " -x c++" | " -x c++-module" | " /interface /TP"
 };
 
 BmiTraits bmi_traits(const Toolchain& tc);
@@ -203,6 +228,10 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             .stdCompatBmiUsePrefix = " /reference std.compat=",
             .moduleOutputPrefix = " /ifcOutput ",
             .bmiSearchPrefix = " /ifcSearchDir ",
+            // Pre-existing behaviour, unchanged: cl has always been told
+            // explicitly, because mcpp's interfaces are `.cppm` and cl does
+            // not know that suffix. The other two families now match it.
+            .moduleInterfaceLangFlag = " /interface /TP",
         };
     }
     if (is_clang(tc)) {
@@ -218,6 +247,7 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             .stdCompatBmiUsePrefix = " -fmodule-file=std.compat=",
             .moduleOutputPrefix = " -fmodule-output=",
             .bmiSearchPrefix = " -fprebuilt-module-path=",
+            .moduleInterfaceLangFlag = " -x c++-module",
         };
     }
     return {
@@ -234,6 +264,10 @@ BmiTraits bmi_traits(const Toolchain& tc) {
         .stdCompatBmiUsePrefix = "",
         .moduleOutputPrefix = "",
         .bmiSearchPrefix = "",
+        // GCC decides interface-ness from the content (`export module`), so
+        // it only needs to be told the LANGUAGE. `-x c++-module` is not a
+        // value GCC accepts.
+        .moduleInterfaceLangFlag = " -x c++",
     };
 }
 

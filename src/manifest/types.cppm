@@ -377,6 +377,29 @@ struct BuildConfig : BuildInputs {
     // on feature-off builds. Private per-TU flags — never propagate (contrast
     // featureDefines above, which are interface switches).
     std::map<std::string, std::vector<GlobFlags>> featureFlags;
+    // [build] module_extensions — extra file extensions this package's module
+    // INTERFACES use, on top of the built-in `.cppm`. Additive and opt-in:
+    // `.ccm` / `.cxxm` / `.ixx` are NOT built in, because widening the
+    // built-in set also widens the default source glob, which would make a
+    // published package with a vendored MSVC-only `.ixx` start compiling it on
+    // the next mcpp upgrade — a break its author cannot fix.
+    //
+    // Consumed through mcpp.source_kind (never read raw): the table it builds
+    // decides the graph shape, so this vector is part of the fingerprint.
+    // Scoped to the declaring package — a dependency is classified by its own
+    // manifest, never by its consumer's.
+    std::vector<std::string>            moduleExtensions;
+    // [build] build_program_timeout — seconds this package's build.mcpp may
+    // run before mcpp kills it. 0 = no limit; nullopt = use the built-in 600.
+    //
+    // `optional` is load-bearing, not style. With a plain `int` the default
+    // value would have to be 0, which MEANS "no limit" — so every project that
+    // never mentions the key would silently lose its run bound.
+    //
+    // Deliberately NOT part of the fingerprint: it changes no edge in the
+    // graph, and folding it in would make raising a timeout rebuild the whole
+    // project — the opposite of what someone raising a timeout wants.
+    std::optional<int>                  buildProgramTimeoutSecs;
     std::map<std::filesystem::path, std::string> generatedFiles; // Form B package-owned support files
     // Build-graph nodes declared by this package's build program
     // (`mcpp:action=`). Empty for every package that does not use one, so an

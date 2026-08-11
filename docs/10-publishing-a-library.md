@@ -131,6 +131,24 @@ mcpp's build sandbox is network-isolated, so `file://` and
 seeded one is the copy that will still be there when the publish silently
 failed.
 
+## Manifest keys that need a version floor
+
+Most `[build]` keys degrade cleanly on an older mcpp: it warns that the key is
+unsupported, ignores it, and the build either still works or fails with a clear
+message. `build_program_timeout` is one of those — an older mcpp falls back to
+the 600 s default and, if that is too short, says so.
+
+**`module_extensions` is not.** An older mcpp warns and ignores it, and then
+compiles those files as ordinary translation units — a *wrong build* rather
+than a clean failure: the module interface produces no BMI, and the failure
+surfaces later, somewhere that names neither the key nor the file.
+
+So if a package you publish uses `module_extensions`, declare an mcpp version
+floor in its index descriptor. The floor mechanism must **degrade**: a package
+that is unavailable because the client is too old has to be reported as
+*unavailable*, never as *absent* — a client told "no such package" will keep
+re-refreshing the index looking for it.
+
 ## Checklist
 
 - [ ] `mcpp.toml` version == git tag

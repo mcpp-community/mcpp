@@ -23,7 +23,9 @@ export module mcpp.modgraph.p1689;
 import std;
 import mcpp.modgraph.graph;
 import mcpp.platform;
+import mcpp.source_kind;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.model;
 
 export namespace mcpp::modgraph::p1689 {
 
@@ -50,7 +52,8 @@ scan_file(const std::filesystem::path&        source,
           const mcpp::toolchain::Toolchain&   tc,
           const std::filesystem::path&        tmpDir,
           const std::vector<std::filesystem::path>& includeDirs,
-          std::string_view                    cppStandardFlag);
+          std::string_view                    cppStandardFlag,
+          const mcpp::ExtensionTable&         extTable);
 
 } // namespace mcpp::modgraph::p1689
 
@@ -321,7 +324,8 @@ scan_file(const std::filesystem::path&        source,
           const mcpp::toolchain::Toolchain&   tc,
           const std::filesystem::path&        tmpDir,
           const std::vector<std::filesystem::path>& includeDirs,
-          std::string_view                    cppStandardFlag)
+          std::string_view                    cppStandardFlag,
+          const mcpp::ExtensionTable&         extTable)
 {
     std::error_code ec;
     std::filesystem::create_directories(tmpDir, ec);
@@ -347,8 +351,16 @@ scan_file(const std::filesystem::path&        source,
         include_flags += " -I";
         include_flags += shell_escape(dir);
     }
+    // Same suffix-recognition problem the ninja scan edge has: a driver that
+    // does not know this source's extension hands it to the linker and exits 0
+    // with no .ddi. Told explicitly for module interfaces, and only for them —
+    // an implementation unit must not be scanned as an interface.
+    std::string lang_flag;
+    if (mcpp::produces_bmi(mcpp::classify(source, extTable)))
+        lang_flag = std::string(mcpp::toolchain::bmi_traits(tc).moduleInterfaceLangFlag);
+
     std::string cmd = std::format(
-        "{} {} -fmodules{}{}"
+        "{} {} -fmodules{}{}{}"
         " -fdeps-format=p1689r5"
         " -fdeps-file={}"
         " -fdeps-target={}"
@@ -358,6 +370,7 @@ scan_file(const std::filesystem::path&        source,
         std_flag,
         sysroot_flag,
         include_flags,
+        lang_flag,
         shell_escape(ddi),
         shell_escape(obj),
         shell_escape(dep),
@@ -382,12 +395,9 @@ scan_file(const std::filesystem::path&        source,
     SourceUnit u;
     u.path        = source;
     u.packageName = packageName;
+    u.kind        = mcpp::classify(source, extTable);
     if (!rule->provides.empty()) {
-        u.provides           = ModuleId{ rule->provides.front().logicalName };
-        u.isModuleInterface = rule->provides.front().isInterface
-                                || source.extension() == ".cppm";
-    } else if (source.extension() == ".cpp" || source.extension() == ".cxx") {
-        u.isImplementation = true;
+        u.provides = ModuleId{ rule->provides.front().logicalName };
     }
     for (auto& r : rule->requires_) {
         u.requires_.push_back(ModuleId{ r });

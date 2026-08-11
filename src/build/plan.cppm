@@ -9,6 +9,7 @@ import std;
 import mcpp.build.graph_shape;
 import mcpp.build.loader_contract;
 import mcpp.manifest;
+import mcpp.source_kind;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.cppfly;
@@ -25,6 +26,16 @@ export namespace mcpp::build {
 
 struct CompileUnit {
     std::filesystem::path           source;
+    // The unit's ROLE. Copied from the SourceUnit the scanner classified, and
+    // read by the object namer, the link-object collectors, the ninja rule
+    // picker, the CDB emitter and the assembly dialect check — none of which
+    // look at the extension any more. See mcpp.source_kind.
+    //
+    // Declared second so a hand-built unit reads `.source` then `.kind`. There
+    // is no safe default: a unit whose kind was never set would route to the
+    // generic C++ rule, which is a silent misroute rather than an error. Any
+    // producer other than make_plan (i.e. a test) must state it.
+    mcpp::SourceKind                kind = mcpp::SourceKind::Other;
     std::filesystem::path           object;            // relative to plan.outputDir
     std::string                     packageName;
     std::vector<std::filesystem::path> localIncludeDirs;
@@ -290,19 +301,23 @@ std::string sanitize_for_path(std::string_view module_name) {
 
 std::string object_filename_for(const std::filesystem::path& src,
                                 std::string_view objExt = ".o") {
-    auto ext = src.extension();
-    // Assembly siblings of a C/C++ TU commonly share its stem (foo.c +
-    // foo.asm); keep the full extension in the object name so they can never
-    // collide — the per-package collision prefix can't help two same-stem
-    // files in the same directory.
-    if (ext == ".S" || ext == ".s" || ext == ".asm") {
-        return src.filename().string() + std::string(objExt);
+    // The naming POLICY lives in mcpp.source_kind (see ObjectNaming there for
+    // why every historical name is frozen and only new extensions get the
+    // collision-proof form). This function only formats it.
+    switch (mcpp::object_naming_for(src)) {
+        case mcpp::ObjectNaming::StemDotM:
+            return src.stem().string() + ".m" + std::string(objExt);
+        case mcpp::ObjectNaming::Stem:
+            return src.stem().string() + std::string(objExt);
+        case mcpp::ObjectNaming::FullFilename:
+            break;
     }
-    auto stem = src.stem().string();
-    // distinguish .cppm vs .cpp by extension prefix to avoid collisions
-    return stem + (ext == ".cppm"
-                       ? ".m" + std::string(objExt)
-                       : std::string(objExt));
+    // Assembly siblings of a C/C++ TU commonly share its stem (foo.c +
+    // foo.asm); keeping the full extension means they can never collide —
+    // the per-package collision prefix can't help two same-stem files in the
+    // same directory. Every extension a project adds via
+    // `[build] module_extensions` lands here for the same reason.
+    return src.filename().string() + std::string(objExt);
 }
 
 std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
@@ -385,10 +400,16 @@ std::vector<std::filesystem::path> runtime_aliases_for_target(
     return aliases;
 }
 
-bool is_implementation_source(const std::filesystem::path& source) {
-    auto ext = source.extension();
-    return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".c" || ext == ".m"
-        || ext == ".S" || ext == ".s" || ext == ".asm";
+// A unit whose object is linked because it CONTRIBUTES CODE, as opposed to a
+// module interface (linked unconditionally, because its global initializers
+// can matter even when no symbol of it is referenced).
+//
+// Kind-based rather than extension-based. One incidental fix comes with it:
+// `.mm` (Objective-C++) was missing from the old list, so an Objective-C++
+// object was compiled and then never linked.
+bool is_implementation_source(mcpp::SourceKind kind) {
+    return kind == mcpp::SourceKind::Cxx    || kind == mcpp::SourceKind::C
+        || kind == mcpp::SourceKind::GasAsm || kind == mcpp::SourceKind::NasmAsm;
 }
 
 // How a CONSUMER links against a shared library. Also a target property: PE has
@@ -769,6 +790,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.manifest         = manifest;
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
+
+    // The ROOT package's extension table. Only the synthesized entry main
+    // needs it — every scanned unit arrives with its kind already set by the
+    // scanner, using its OWN package's table.
+    const auto rootExtTable =
+        mcpp::extension_table_for(manifest.buildConfig.moduleExtensions);
 
     // Artifact naming and shared-library link shape are properties of the
     // TARGET. Resolved once here from tc.targetTriple (empty = host target, in
@@ -1154,6 +1181,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         CompileUnit cu;
         cu.source = u.path;
         cu.packageName = u.packageName;
+        cu.kind        = u.kind;
         cu.localIncludeDirs = u.localIncludeDirs;
         cu.localIncludeDirsAfter = u.localIncludeDirsAfter;
         cu.packageCflags = u.packageCflags;
@@ -1296,7 +1324,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     std::set<std::filesystem::path> depEntryMainSources;
     for (auto& cu : plan.compileUnits) {
         if (!devDepPackages.contains(cu.packageName)) continue;
-        if (!is_implementation_source(cu.source)) continue;
+        if (!is_implementation_source(cu.kind)) continue;
         if (source_defines_main(cu.source)) depEntryMainSources.insert(cu.source);
     }
 
@@ -1360,13 +1388,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     auto append_package_objects = [&](LinkUnit& lu, const std::string& packageName) {
         for (auto& cu : plan.compileUnits) {
             if (cu.packageName != packageName) continue;
-            if (cu.source.extension() == ".cppm") {
+            if (mcpp::links_unconditionally(cu.kind)) {
                 lu.objects.push_back(cu.object);
             }
         }
         for (auto& cu : plan.compileUnits) {
             if (cu.packageName != packageName) continue;
-            if (!is_implementation_source(cu.source)) continue;
+            if (!is_implementation_source(cu.kind)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;
             if (entryFilesAcrossTargets.contains(cu.source)) continue;
             lu.objects.push_back(cu.object);
@@ -1422,7 +1450,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // For binary target, also include main.cpp's object if main is present.
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
-            if (cu.source.extension() == ".cppm") {
+            if (mcpp::links_unconditionally(cu.kind)) {
                 lu.objects.push_back(cu.object);
             }
         }
@@ -1443,6 +1471,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             CompileUnit main_cu;
             main_cu.source = *lu.entryMain;
             main_cu.packageName = qualified_package_name(manifest);
+            // Synthesized outside the scanner, so it has no SourceUnit to copy
+            // from — classify it here with the ROOT package's table (an entry
+            // main is resolved against projectRoot by definition).
+            main_cu.kind = mcpp::classify(main_cu.source, rootExtTable);
             if (!packages.empty() && packages[0].usageResolved) {
                 main_cu.localIncludeDirs = packages[0].privateBuild.includeDirs;
                 main_cu.localIncludeDirsAfter = packages[0].privateBuild.includeDirsAfter;
@@ -1538,7 +1570,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // is exclusive to that binary).
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
-            if (!is_implementation_source(cu.source)) continue;
+            if (!is_implementation_source(cu.kind)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;     // own entry: already added above
             if (entryFilesAcrossTargets.contains(cu.source)) continue;     // foreign entry: skip
             // A dependency's own main-providing object (e.g. gtest_main.o): link

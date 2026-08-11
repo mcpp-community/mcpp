@@ -10,6 +10,9 @@ module;
 export module mcpp.doctor;
 
 import std;
+import mcpp.build.program_protocol;
+import mcpp.source_kind;
+import mcpp.manifest;
 import mcpp.bmi_cache.maintenance;
 import mcpp.build.prepare;
 import mcpp.build.plan;
@@ -475,6 +478,57 @@ export int doctor_report() {
         }
     }
 #endif
+
+    // ── Build-policy knobs that are otherwise invisible ────────────────────
+    //
+    // Both of these change behaviour without changing anything a user can see
+    // in the output of a successful build, which is how "I set the key and
+    // nothing happened" becomes unanswerable. Report the EFFECTIVE value and,
+    // for the ones that have one, where it came from.
+    {
+        mcpp::ui::status("Checking", "build policy");
+
+        std::error_code pec;
+        auto manifestPath = std::filesystem::current_path(pec) / "mcpp.toml";
+        std::optional<mcpp::manifest::Manifest> m;
+        if (!pec && std::filesystem::exists(manifestPath, pec))
+            if (auto loaded = mcpp::manifest::load(manifestPath)) m = std::move(*loaded);
+
+        // Module-interface extensions: built-ins plus this project's additions.
+        {
+            auto table = mcpp::extension_table_for(
+                m ? m->buildConfig.moduleExtensions : std::vector<std::string>{});
+            std::string list;
+            for (auto const& e : table.moduleInterface) {
+                if (!list.empty()) list += ' ';
+                list += e;
+            }
+            const auto extra = table.moduleInterface.size() - 1;   // built-in is .cppm
+            ok(std::format("module interfaces: {}{}", list,
+                           extra ? std::format("  ({} from [build] module_extensions)", extra)
+                                 : "  (built-in only)"));
+        }
+
+        // Run bound for build.mcpp, with its source named.
+        {
+            namespace pp = mcpp::build::program_protocol;
+            auto envSecs = pp::env_timeout_override();
+            auto manSecs = m ? m->buildConfig.buildProgramTimeoutSecs
+                             : std::optional<int>{};
+            auto effective = pp::run_timeout(envSecs, manSecs).count() / 1000;
+            std::string_view from = envSecs ? "MCPP_BUILD_PROGRAM_TIMEOUT"
+                                  : manSecs ? "[build] build_program_timeout"
+                                            : "built-in default";
+            ok(std::format("build.mcpp run bound: {}  (from {})",
+                           effective ? std::format("{}s", effective)
+                                     : std::string("none — 0 disables it"),
+                           from));
+        }
+
+        // Whether a deadline is actually enforced here. This used to be "no"
+        // on Windows while every knob claimed otherwise.
+        ok("process deadlines: enforced (POSIX SIGKILL / Windows job object)");
+    }
 
     std::println("");
     if (errors)        std::println("Doctor result: {} errors, {} warnings", errors, warns);

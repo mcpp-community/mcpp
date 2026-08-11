@@ -34,11 +34,9 @@ module;
 #include <unistd.h>    // pipe, dup2, close, read
 #include <sys/wait.h>  // waitpid
 #include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_* (incl. addchdir_np)
-#include <signal.h>    // kill, SIGKILL (deadline runners)
-#include <cerrno>      // errno, EINTR (deadline wait loop)
-#include <poll.h>      // poll (deadline capture)
-#include <fcntl.h>     // fcntl O_NONBLOCK (deadline capture)
-#include <time.h>      // nanosleep (deadline wait loop)
+// The deadline runners' headers (signal.h, errno, poll.h, fcntl.h, time.h)
+// left with them: bounded runs now live in mcpp.platform.unix.bounded_process
+// and mcpp.platform.windows.bounded_process, and this file only dispatches.
 #if defined(__APPLE__)
 #include <crt_externs.h>  // _NSGetEnviron — direct `environ` is only linkable
                           // from executables on Apple, not from dylibs
@@ -50,8 +48,11 @@ extern "C" char **environ;
 export module mcpp.platform.process;
 
 import std;
+import mcpp.platform.common;                    // is_windows, for the dispatch
 import mcpp.platform.env;
 import mcpp.platform.shell;
+import mcpp.platform.unix.bounded_process;
+import mcpp.platform.windows.bounded_process;
 
 export namespace mcpp::platform::process {
 
@@ -93,10 +94,19 @@ RunResult capture_exec(
     const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
     std::string_view cwd = {});
 
-// Deadline variants (POSIX): kill the child with SIGKILL once `deadline`
-// elapses and set *timed_out. A zero deadline means no limit. On Windows the
-// deadline is currently ignored (no supported kill-by-handle path in the
-// residual shell launcher) — callers must treat the timeout as best-effort.
+// Deadline variants: kill the child once `deadline` elapses and set
+// *timed_out. A zero deadline means no limit.
+//
+// The implementations live per platform — mcpp.platform.unix.bounded_process
+// (posix_spawn + SIGKILL) and mcpp.platform.windows.bounded_process
+// (CreateProcess + a Job object, so the kill takes the whole tree rather than
+// just the direct child). This file dispatches between them ONCE, in
+// dispatch_bounded below.
+//
+// BOTH are real bounds now. They were not: the Windows side used to fall
+// through to the unbounded launcher, so every timeout knob (`mcpp test
+// --timeout`, `--build-timeout`, `[build] build_program_timeout`) was a silent
+// no-op there — set, reported nowhere, and doing nothing.
 int run_exec_deadline(const std::vector<std::string>& argv,
                       const std::vector<std::pair<std::string, std::string>>& extraEnv,
                       std::chrono::milliseconds deadline,
@@ -552,6 +562,82 @@ RunResult capture_exec(
 #endif
 }
 
+// ─── The ONE place the platform question is asked for a bounded run ────────
+//
+// Both launchers answer the same contract behind a `std`-free interface (see
+// either module for the BMI corruption that forced that), so everything
+// platform-specific about a bounded child is this dispatch plus the two
+// implementations — instead of the branches that used to be spread through
+// both functions below, with the Windows half of them a silent no-op.
+//
+// The two calls differ in ONE way, and it is a real difference rather than an
+// abstraction leak: POSIX names a program with an argv array, Windows with a
+// single quoted command line. Flattening that would move the quoting rules
+// somewhere they could not be unit-tested — they are tested right here, via
+// windows_command_from_argv.
+struct BoundedOutcome {
+    bool        supported = false;
+    int         exit_code = 0;
+    bool        timed_out = false;
+    std::string output;
+};
+
+// `capture == false` runs the child on the caller's stdio: live output, and a
+// real terminal for anything that checks. `run_exec_deadline` needs that; the
+// capturing variants need the pipe.
+BoundedOutcome dispatch_bounded(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& extraEnv,
+    std::string_view cwd,
+    std::chrono::milliseconds deadline,
+    bool capture)
+{
+    BoundedOutcome outcome;
+
+    std::vector<std::string> envStore;
+    envStore.reserve(extraEnv.size());
+    for (auto const& [k, v] : extraEnv) envStore.push_back(k + "=" + v);
+    std::vector<const char*> envPtrs;
+    envPtrs.reserve(envStore.size());
+    for (auto const& e : envStore) envPtrs.push_back(e.c_str());
+    const char* const* envArg = envPtrs.empty() ? nullptr : envPtrs.data();
+    const auto envCount = static_cast<unsigned long>(envPtrs.size());
+
+    std::string cwdStore(cwd);
+    const char* cwdArg = cwdStore.empty() ? nullptr : cwdStore.c_str();
+    const auto ms = static_cast<long long>(deadline.count());
+
+    // One sink for both, appending into the outcome's own buffer. Null when the
+    // caller wants the child on its own stdio.
+    using Sink = void (*)(void*, const char*, unsigned long);
+    const Sink sink = capture
+        ? +[](void* ctx, const char* data, unsigned long len) {
+              static_cast<std::string*>(ctx)->append(data, len);
+          }
+        : nullptr;
+
+    if constexpr (mcpp::platform::is_windows) {
+        const auto cmd = windows_command_from_argv(argv);
+        auto r = mcpp::platform::winproc::capture_with_deadline(
+            cmd.c_str(), envArg, envCount, cwdArg, ms, sink, &outcome.output);
+        outcome.supported = r.supported;
+        outcome.exit_code = r.exit_code;
+        outcome.timed_out = r.timed_out;
+    } else {
+        std::vector<const char*> argvPtrs;
+        argvPtrs.reserve(argv.size());
+        for (auto const& a : argv) argvPtrs.push_back(a.c_str());
+        auto r = mcpp::platform::unixproc::capture_with_deadline(
+            argvPtrs.data(), static_cast<unsigned long>(argvPtrs.size()),
+            envArg, envCount, cwdArg, ms, sink, &outcome.output);
+        outcome.supported = r.supported;
+        outcome.exit_code = r.exit_code;
+        outcome.timed_out = r.timed_out;
+    }
+    return outcome;
+}
+
+
 int run_exec_deadline(const std::vector<std::string>& argv,
                       const std::vector<std::pair<std::string, std::string>>& extraEnv,
                       std::chrono::milliseconds deadline,
@@ -560,39 +646,16 @@ int run_exec_deadline(const std::vector<std::string>& argv,
     if (timed_out) *timed_out = false;
     if (deadline.count() <= 0) return run_exec(argv, extraEnv);
     if (argv.empty()) return 127;
-#if defined(__linux__) || defined(__APPLE__)
-    auto envStore = merged_environ(extraEnv);
-    std::vector<char*> envp;
-    for (auto& s : envStore) envp.push_back(s.data());
-    envp.push_back(nullptr);
-    std::vector<char*> cargv;
-    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-    cargv.push_back(nullptr);
 
-    pid_t pid = 0;
-    if (::posix_spawnp(&pid, cargv[0], nullptr, nullptr, cargv.data(), envp.data()) != 0)
-        return 127;
-
-    auto until = std::chrono::steady_clock::now() + deadline;
-    int status = 0;
-    for (;;) {
-        pid_t r = ::waitpid(pid, &status, WNOHANG);
-        if (r == pid) return normalize_exit_code(status);
-        if (r < 0 && errno != EINTR) return 127;
-        if (std::chrono::steady_clock::now() >= until) {
-            ::kill(pid, SIGKILL);
-            while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
-            if (timed_out) *timed_out = true;
-            return normalize_exit_code(status);
-        }
-        struct timespec ts{0, 20'000'000};   // 20ms
-        ::nanosleep(&ts, nullptr);
-    }
-#else
-    // Windows: the residual shell launcher has no kill-by-handle path yet —
-    // run untimed (documented best-effort semantics).
-    return run_exec(argv, extraEnv);
-#endif
+    // capture=false: identical stdio behaviour to `run_exec` — the child writes
+    // straight to our terminal as it goes. `mcpp test`'s non-JSON path runs
+    // test binaries through here, and buffering their output until exit would
+    // undo the observability work that path exists for (and would hide gtest's
+    // colors by making its stdout a pipe).
+    auto r = dispatch_bounded(argv, extraEnv, {}, deadline, /*capture=*/false);
+    if (!r.supported) return run_exec(argv, extraEnv);
+    if (timed_out) *timed_out = r.timed_out;
+    return r.exit_code;
 }
 
 RunResult capture_exec_deadline(
@@ -606,75 +669,17 @@ RunResult capture_exec_deadline(
     if (deadline.count() <= 0) return capture_exec(argv, extraEnv, cwd);
     RunResult result;
     if (argv.empty()) { result.exit_code = 127; return result; }
-#if defined(__linux__) || defined(__APPLE__)
-    int fds[2];
-    if (::pipe(fds) != 0) { result.exit_code = 127; return result; }
 
-    auto envStore = merged_environ(extraEnv);
-    std::vector<char*> envp;
-    for (auto& s : envStore) envp.push_back(s.data());
-    envp.push_back(nullptr);
-    std::vector<char*> cargv;
-    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
-    cargv.push_back(nullptr);
-
-    posix_spawn_file_actions_t fa;
-    ::posix_spawn_file_actions_init(&fa);
-    // Same cwd contract as capture_exec: a timed child must land in the same
-    // directory an untimed one would, or adding a timeout would silently
-    // change where a build program's relative writes go.
-    std::string cwdStore(cwd);
-    if (!cwdStore.empty())
-        ::posix_spawn_file_actions_addchdir_np(&fa, cwdStore.c_str());
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);
-    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 2);
-    ::posix_spawn_file_actions_addclose(&fa, fds[0]);
-    ::posix_spawn_file_actions_addclose(&fa, fds[1]);
-
-    pid_t pid = 0;
-    int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
-    ::posix_spawn_file_actions_destroy(&fa);
-    ::close(fds[1]);
-    if (sp != 0) {
-        ::close(fds[0]);
-        result.exit_code = 127;
-        result.output = spawn_failure(argv.front(), sp);
-        return result;
-    }
-
-    ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL) | O_NONBLOCK);
-
-    auto until = std::chrono::steady_clock::now() + deadline;
-    bool killed = false;
-    std::array<char, 4096> buf{};
-    for (;;) {
-        struct pollfd pfd{fds[0], POLLIN, 0};
-        ::poll(&pfd, 1, 50);
-        for (;;) {
-            ssize_t n = ::read(fds[0], buf.data(), buf.size());
-            if (n > 0) { result.output.append(buf.data(), static_cast<size_t>(n)); continue; }
-            break;
-        }
-        int status = 0;
-        pid_t r = ::waitpid(pid, &status, WNOHANG);
-        if (r == pid) {
-            // Drain whatever is left in the pipe after exit.
-            ssize_t n;
-            while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
-                result.output.append(buf.data(), static_cast<size_t>(n));
-            ::close(fds[0]);
-            result.exit_code = normalize_exit_code(status);
-            if (timed_out) *timed_out = killed;
-            return result;
-        }
-        if (!killed && std::chrono::steady_clock::now() >= until) {
-            ::kill(pid, SIGKILL);
-            killed = true;
-        }
-    }
-#else
-    return capture_exec(argv, extraEnv, cwd);
-#endif
+    auto r = dispatch_bounded(argv, extraEnv, cwd, deadline, /*capture=*/true);
+    // `supported == false` means the child COULD NOT BE SPAWNED — not that it
+    // ran and failed. Reporting those the same way would hide a launcher
+    // problem behind a child's exit code, so fall back to the untimed path and
+    // let it produce the real diagnostic.
+    if (!r.supported) return capture_exec(argv, extraEnv, cwd);
+    result.exit_code = r.exit_code;
+    result.output    = std::move(r.output);
+    if (timed_out) *timed_out = r.timed_out;
+    return result;
 }
 
 } // namespace mcpp::platform::process

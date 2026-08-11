@@ -3,6 +3,7 @@
 export module mcpp.modgraph.graph;
 
 import std;
+import mcpp.source_kind;
 
 export namespace mcpp::modgraph {
 
@@ -34,8 +35,20 @@ struct SourceUnit {
     std::vector<std::string>        packageAsmflags;   // per-glob asmflags (G4)
     std::optional<ModuleId>         provides;
     std::vector<ModuleId>           requires_;
-    bool                            isModuleInterface = false;   // .cppm with export module
-    bool                            isImplementation   = false;   // .cpp without export
+    // The unit's ROLE, decided once by the scanner from the owning package's
+    // extension table and carried from here on. Every downstream consumer
+    // (planner, backend, compile_commands, the asm dialect check) reads this
+    // instead of re-deriving it from the extension — see mcpp.source_kind for
+    // why that mattered.
+    mcpp::SourceKind                kind = mcpp::SourceKind::Other;
+    //
+    // `isModuleInterface` / `isImplementation` used to live here. They were
+    // WRITE-ONLY: three sites derived them (the scanner said `.cpp`, the p1689
+    // reader said `.cpp || .cxx`, the scan_overrides branch said "has
+    // provides"), the three disagreed, and nothing in src/ or tests/ ever read
+    // the result. Converging three derivations of a value nobody reads is
+    // still three derivations, so they are gone instead. `provides` answers
+    // "is this an interface"; `kind` answers the rest.
     // Unit built from a manifest scan_overrides declaration instead of a
     // real scan — plan-vs-ddi verification is mandatory for these.
     bool                            scanOverridden     = false;

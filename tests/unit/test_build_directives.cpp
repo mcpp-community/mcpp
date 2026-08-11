@@ -354,11 +354,41 @@ TEST(BuildDirectives, FoldIsIdempotentOnIncludeDirs) {
 
 // ── Run bound ──────────────────────────────────────────────────────────────
 
-TEST(BuildDirectives, RunTimeoutDefaultsToABoundAndIsOverridable) {
+// T-3. The precedence is a PURE function of two optionals, which is the whole
+// reason `run_timeout` was split from `env_timeout_override`: this table can
+// be walked without touching the process environment.
+//
+// Nine rows, and the two that matter most are the `nullopt` vs `0` pairs.
+// With a plain `int` those two would be the same value, and since 0 MEANS "no
+// limit", every project that never mentions the key would silently lose its
+// bound. That is why both levels are optionals all the way down.
+TEST(BuildDirectives, RunTimeoutPrecedenceIsEnvThenManifestThenDefault) {
+    using ms = std::chrono::milliseconds;
+    constexpr auto def = ms(dirs::kDefaultRunTimeoutSecs * 1000);
+    const std::optional<int> unset;
+
+    // env, manifest, expected
+    struct Row { std::optional<int> env, manifest; ms want; };
+    const Row rows[] = {
+        { unset, unset, def       },   // neither: the built-in bound
+        { unset, 1800,  ms(1800'000) },// manifest alone
+        { unset, 0,     ms(0)     },   // manifest asks for no bound
+        { 30,    unset, ms(30'000)},   // env alone
+        { 30,    1800,  ms(30'000)},   // env WINS over the manifest
+        { 0,     1800,  ms(0)     },   // env 0 wins too — "no bound, now"
+        { 30,    0,     ms(30'000)},   // ... and in the other direction
+        { 0,     unset, ms(0)     },
+        { 1,     1,     ms(1'000) },
+    };
+    for (auto const& r : rows) {
+        EXPECT_EQ(dirs::run_timeout(r.env, r.manifest), r.want)
+            << "env=" << (r.env ? std::to_string(*r.env) : "unset")
+            << " manifest=" << (r.manifest ? std::to_string(*r.manifest) : "unset");
+    }
+
     // Default: bounded. An unbounded build program is how a build hangs with
     // no diagnostic at all.
-    EXPECT_GT(dirs::run_timeout().count(), 0);
-    EXPECT_EQ(dirs::run_timeout().count(), dirs::kDefaultRunTimeoutSecs * 1000);
+    EXPECT_GT(dirs::run_timeout(unset, unset).count(), 0);
 }
 
 // ── Glob inputs (#359) ─────────────────────────────────────────────────────

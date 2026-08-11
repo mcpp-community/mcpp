@@ -14,6 +14,7 @@ import mcpp.manifest;
 import mcpp.modgraph.glob;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.p1689;
+import mcpp.source_kind;
 import mcpp.toolchain.detect;
 
 export namespace mcpp::modgraph {
@@ -56,9 +57,11 @@ std::filesystem::path glob_literal_prefix(std::string_view glob);
 // alternation transparently.
 std::vector<std::string> expand_braces(std::string_view glob);
 
-// Scan a single source file.
+// Scan a single source file. `extTable` is the OWNING PACKAGE's table — a
+// dependency is classified by its own manifest, never by the consumer's.
 std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file,
-                                               const std::string&           packageName);
+                                               const std::string&           packageName,
+                                               const mcpp::ExtensionTable&  extTable);
 
 // Scan the entire package: collects all sources via manifest globs and returns a Graph.
 struct ScanResult {
@@ -555,7 +558,8 @@ void normalize_include_flags(const std::filesystem::path& root,
 }
 
 std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file,
-                                               const std::string&           packageName)
+                                               const std::string&           packageName,
+                                               const mcpp::ExtensionTable&  extTable)
 {
     std::ifstream is(file);
     if (!is) return std::unexpected(ScanError{file, 0, "cannot open"});
@@ -563,6 +567,9 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     SourceUnit u;
     u.path         = file;
     u.packageName = packageName;
+    // The ONE place a source's role is decided. Everything downstream reads
+    // `u.kind`; nothing re-derives it from the extension.
+    u.kind         = mcpp::classify(file, extTable);
 
     // C-like files are not C++ modules: they cannot legally contain `module` / `import`
     // declarations, and we route them to the C-language compile rule (no
@@ -570,9 +577,7 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     // avoid any chance of a benign identifier (`import_foo`, `module_t`, ...)
     // being misparsed. Objective-C .m files use the same C-like path, and so
     // does assembly (.S/.s via the C driver, .asm via NASM).
-    auto sext = file.extension();
-    if (sext == ".c" || sext == ".m"
-        || sext == ".S" || sext == ".s" || sext == ".asm") {
+    if (mcpp::is_scan_exempt(u.kind)) {
         return u;
     }
 
@@ -634,7 +639,6 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
                                     u.provides->logicalName, name)});
                 }
                 u.provides = ModuleId{name};
-                u.isModuleInterface = true;
             } else {
                 // implementation unit (`module foo;`) — non-exporting.
                 // Don't claim ownership of `foo` (partition would be foo:part);
@@ -684,11 +688,6 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             u.requires_.push_back(ModuleId{name});
             continue;
         }
-    }
-
-    // Classify implementation .cpp (no provides + not a partition)
-    if (!u.provides && file.extension() == ".cpp") {
-        u.isImplementation = true;
     }
 
     return u;
@@ -752,6 +751,12 @@ void scan_one_into(ScanResult& result,
                    const std::vector<std::string>& packageCflags,
                    const std::vector<std::string>& packageCxxflags)
 {
+    // This package's own extension table. Built once per package, not per
+    // file, and taken from THIS manifest — a dependency is classified by its
+    // own `[build] module_extensions`, never by the consumer's.
+    const auto extTable =
+        mcpp::extension_table_for(manifest.buildConfig.moduleExtensions);
+
     // Glob exclusion: patterns starting with `!` remove files from the
     // include set (like .gitignore).
     //   sources = ["src/**/*.cpp", "!src/**/*_test.cpp"]
@@ -853,9 +858,11 @@ void scan_one_into(ScanResult& result,
             u.relPath        = std::filesystem::relative(f, root);
             u.packageName    = qualifiedName;
             u.scanOverridden = true;
+            // A declared unit still gets its role from the same classifier —
+            // scan_overrides overrides what was SCANNED, not what the file is.
+            u.kind           = mcpp::classify(f, extTable);
             if (!ov->provides.empty()) {
                 u.provides          = ModuleId{ov->provides.front()};
-                u.isModuleInterface = true;
                 if (ov->provides.size() > 1) {
                     result.errors.push_back(ScanError{f, 0,
                         "scan_overrides: a unit may declare at most one "
@@ -876,7 +883,7 @@ void scan_one_into(ScanResult& result,
             result.graph.units.push_back(std::move(u));
             continue;
         }
-        auto r = scan_file(f, qualifiedName);
+        auto r = scan_file(f, qualifiedName, extTable);
         if (!r) {
             result.errors.push_back(r.error());
             continue;
@@ -900,6 +907,27 @@ void scan_one_into(ScanResult& result,
             result.errors.push_back(ScanError{root, 0, std::format(
                 "scan_overrides glob '{}' matched no source file "
                 "(typo, or the glob is not covered by `sources`)", glob)});
+        }
+    }
+
+    // A `module_extensions` entry that matches nothing is dead config, and it
+    // is invisible otherwise: the build succeeds, the extension does nothing,
+    // and the author has no way to tell a typo (".ixxx") from "this project
+    // simply has none yet". A WARNING rather than an error — declaring an
+    // extension before the first file that uses it is legitimate, and a
+    // package whose `.ixx` sources are all behind an inactive feature would
+    // otherwise fail to build.
+    for (auto const& raw : manifest.buildConfig.moduleExtensions) {
+        auto ext = mcpp::normalize_extension(raw);
+        if (ext.empty()) continue;
+        bool seen = false;
+        for (auto const& f : all_files)
+            if (f.extension().string() == ext) { seen = true; break; }
+        if (!seen) {
+            result.warnings.push_back(ScanError{root, 0, std::format(
+                "[build] module_extensions declares '{}' but no source file "
+                "under `sources` has that extension (dead entry, or a typo)",
+                ext)});
         }
     }
     for (std::size_t i = 0; i < globFlagHits.size(); ++i) {
@@ -1005,6 +1033,9 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
 {
     ScanResult result;
     for (auto const& p : packages) {
+        // Same contract as scan_one_into: each package's own table.
+        const auto extTable =
+            mcpp::extension_table_for(p.manifest.buildConfig.moduleExtensions);
         std::set<std::filesystem::path> all_files;
         for (auto const& g : p.manifest.modules.sources) {
             for (auto& f : expand_glob(p.root, g)) all_files.insert(f);
@@ -1018,7 +1049,7 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
         for (auto const& f : all_files) {
             auto r = mcpp::modgraph::p1689::scan_file(
                 f, p.manifest.package.name, tc, tmpDir,
-                localIncludeDirs, cppStandardFlag);
+                localIncludeDirs, cppStandardFlag, extTable);
             if (!r) {
                 result.errors.push_back(ScanError{ f, 0, r.error() });
                 continue;

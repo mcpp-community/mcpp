@@ -20,6 +20,7 @@ import mcpp.build.ninja;
 import mcpp.build.runtime_validation;
 import mcpp.bmi_cache;
 import mcpp.manifest;
+import mcpp.source_kind;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.stdmod;
@@ -548,9 +549,14 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
 // lives elsewhere under the project root and gets swept in by some other
 // caller's broader glob; and it's the same choke-point fix as expand_glob
 // itself, see scanner.cppm).
+// `extTable` has no default ON PURPOSE. A default would let a future caller
+// sweep with the built-in table while the project classifies with a wider one
+// — the exact shape of the bug this converge is removing, reintroduced as a
+// parameter default. Callers must say where their table came from.
 bool sources_newer_than(const std::filesystem::path& projectRoot,
                         std::filesystem::file_time_type ninjaTime,
-                        const std::vector<std::filesystem::path>& resourceScripts = {}) {
+                        const std::vector<std::filesystem::path>& resourceScripts,
+                        const mcpp::ExtensionTable& extTable) {
     std::error_code ec;
     // The root build.mcpp is a build input too — its directives shape
     // build.ninja (flags, generated/selected sources). A changed program must
@@ -587,11 +593,18 @@ bool sources_newer_than(const std::filesystem::path& projectRoot,
         if (ec) { ec.clear(); continue; }   // missing → prepare_build reports it
         if (ft > ninjaTime) return true;
     }
+    // The one place classification is legitimately re-derived: this runs
+    // BEFORE prepare, so there is no plan to read a kind from. It uses the
+    // SAME table the scanner will use (this project's manifest), so the two
+    // cannot drift — which is exactly what the old hand-written list did.
+    //
+    // The question here is NOT "did a file change" (ninja answers that) but
+    // "could the SHAPE of the graph have changed". A `.ixx` missing from the
+    // old list meant a new `import` inside one never invalidated the fast
+    // path: ninja recompiled the object, the dyndep edges stayed stale, and
+    // nothing reported anything.
     for (auto& f : mcpp::modgraph::expand_glob(projectRoot, "src/**/*")) {
-        auto ext = f.extension().string();
-        if (ext != ".cppm" && ext != ".cpp" && ext != ".cc" &&
-            ext != ".cxx" && ext != ".c" && ext != ".h" && ext != ".hpp")
-            continue;
+        if (!mcpp::affects_graph_shape(mcpp::classify(f, extTable))) continue;
         auto ft = std::filesystem::last_write_time(f, ec);
         if (ec || ft > ninjaTime) return true;
     }
@@ -683,6 +696,10 @@ struct FastPathIdentity {
     // already parses the manifest — re-reading it to answer a second question
     // would be a second derivation of the same fact.
     std::vector<std::filesystem::path> resourceScripts;
+    // Same argument one field down: the freshness sweep has to know which
+    // extensions are module interfaces in THIS project, and this is already
+    // the only manifest read on the fast path.
+    mcpp::ExtensionTable extTable;
 };
 
 std::optional<FastPathIdentity>
@@ -695,6 +712,7 @@ fast_path_identity(const std::filesystem::path& projectRoot,
         std::string(mcpp::build::cache_mode_name(
             mcpp::build::resolve_cache_mode(*m, ""))),
         m->resources.files,
+        mcpp::extension_table_for(m->buildConfig.moduleExtensions),
     };
 }
 
@@ -774,7 +792,8 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
 
     // mcpp#225: bounded + vcs/build-dir-excluded walk (see sources_newer_than)
     // instead of a hand-rolled recursive_directory_iterator over src/.
-    if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts)) return std::nullopt;
+    if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts,
+                           want->extTable)) return std::nullopt;
 
     auto validatedBefore =
         mcpp::build::runtime_validation::validated_artifact_snapshot(
@@ -877,7 +896,8 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     auto tomlTime = std::filesystem::last_write_time(tomlPath, ec);
     if (ec || tomlTime > ninjaTime) return std::nullopt;
 
-    if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts)) return std::nullopt;
+    if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts,
+                           want->extTable)) return std::nullopt;
 
     auto validatedBefore =
         mcpp::build::runtime_validation::validated_artifact_snapshot(
