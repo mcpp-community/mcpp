@@ -39,15 +39,14 @@ struct ValidatedArtifact {
 struct ValidationReport {
     std::vector<ValidatedArtifact> artifacts;
 
-    // Any artifact PROVEN bad — payloads mixed, or a DT_NEEDED that the
-    // artifact's own loader will not find. Asks the verdict rather than
-    // enumerating states here, so a fifth state cannot be added without this
-    // gate deciding what it means.
-    bool has_blocking_failure() const {
-        return std::ranges::any_of(artifacts, [](auto const& artifact) {
-            return artifact.verdict.blocking();
-        });
-    }
+    // NOTE: there is deliberately no `has_blocking_failure()` here.
+    //
+    // There used to be a `has_proven_mismatch()`, and nothing ever called it —
+    // the real gate walks the artifacts in `ninja_backend` so it can name WHICH
+    // one failed and print its explanation. A second predicate that answers
+    // "did anything fail" from the same data is the same decision in two
+    // places, and the one with no callers is the one that silently stops
+    // agreeing. Ask `verdict.blocking()` per artifact.
 };
 
 struct StoredRuntimeSummary {
