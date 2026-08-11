@@ -1668,16 +1668,23 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
         // "Is there a module interface under src/" — asked through the table,
         // so a library whose interfaces are all `.ixx` still infers a lib
         // target instead of silently having none.
-        bool hasModuleInterface = false;
+        //
+        // The extension that answered is kept for the inferred-note: saying
+        // ".cppm" when the project's interfaces are `.ixx` would be a note that
+        // names the wrong thing, and a `.cppm` project still prints exactly
+        // what it always did.
+        std::string moduleInterfaceExt;
         if (std::filesystem::is_directory(root / "src", ec)) {
             for (auto& e : std::filesystem::recursive_directory_iterator(root / "src", ec)) {
                 if (ec) break;
                 if (e.is_regular_file(ec) && !ec
                     && mcpp::produces_bmi(mcpp::classify(e.path(), extTable))) {
-                    hasModuleInterface = true; break;
+                    moduleInterfaceExt = e.path().extension().string();
+                    break;
                 }
             }
         }
+        const bool hasModuleInterface = !moduleInterfaceExt.empty();
 
         if (hasMain) {
             Target t;
@@ -1693,7 +1700,7 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
             t.kind = Target::Library;
             m.targets.push_back(std::move(t));
             m.inferredNotes.push_back(
-                std::format("target {} (lib from module interface in src/)", m.package.name));
+                std::format("target {} (lib from {} in src/)", m.package.name, moduleInterfaceExt));
         }
         // If neither, no auto-target — caller will error if it needs one.
     }
