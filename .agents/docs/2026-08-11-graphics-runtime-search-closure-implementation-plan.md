@@ -267,11 +267,11 @@ mcpp 在**驱动 ninja 之前**把它设进自己的进程环境(子进程继承
 
 ## 7. M7 — 可观测性
 
-| 载体 | 补什么 |
-|---|---|
-| `resolution.json` | `runtime_search` 数组:`[{path, origin}]`,**保序** |
-| `mcpp why runtime` | `search:` 行按 origin 展开;binding 未声明时打印 `note` |
-| `mcpp doctor` | `declared=false` 作为 **info** 呈现并说明影响范围 |
+| 载体 | 补什么 | 实际落地 |
+|---|---|---|
+| `resolution.json` | `runtime_search` 数组:`[{path, origin}]`,**保序** | ✅ 位置是 `runtime.search.closure`,并多带一列 `machine_local` |
+| `mcpp why runtime` | `search:` 行按 origin 展开;binding 未声明时打印 `note` | ✅ 另加一行 `binding: (undeclared) … — this SubOS did not describe itself` |
+| `mcpp doctor` | `declared=false` 作为 **info** 呈现 | **改到 `mcpp why runtime`**。`doctor` 面向「这台机器健康吗」,而 binding 是**某一次构建**的决定 —— 它属于解释那次构建的命令。`doctor` 本轮只补了 `unresolvable` 那一支判决 |
 
 ---
 
