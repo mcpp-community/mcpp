@@ -2,10 +2,21 @@ name: tmp-brew-macos-probe
 
 # TEMPORARY. Delete before merging.
 #
-# Reproduces "brew install mcpp errors on macOS" on a real arm64 macOS runner
-# and prints enough to identify WHICH step fails. Every brew invocation is
-# allowed to fail and is followed by a diagnostic dump, because a job that dies
-# on the first non-zero exit tells us the command failed and nothing else.
+# Round 1 (macos-14, pre-tapped) passed end to end: install → mcpp new →
+# mcpp run → toolchain bootstrap → binary ran. So the reported breakage is not
+# "the formula is broken"; it is environment- or path-specific.
+#
+# Round 2 widens along the three axes that can differ from that green run:
+#   OS version   the runner was macOS 14; users are on 15 / 26
+#   arch         macos-13 is Intel — the formula REFUSES it by design, and
+#                this captures the exact message a user would see
+#   tap path     round 1 tapped first; the documented one-liner relies on
+#                `brew install <user>/<repo>/<formula>` AUTO-tapping, which is
+#                a different code path
+#
+# Every brew invocation records its own exit code. Note the trap round 1 fell
+# into: `cmd | tail -20` followed by `$?` reports TAIL's status, so a failing
+# command reads as success. Exit codes here are captured before any pipe.
 
 on:
   pull_request:
@@ -13,100 +24,72 @@ on:
 
 jobs:
   brew-probe:
-    name: brew install probe (macOS arm64)
-    runs-on: macos-14
+    name: "brew ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26, macos-13]
     steps:
-      - uses: actions/checkout@v4
-
       - name: Environment
         run: |
+          echo "runner:      ${{ matrix.os }}"
           echo "arch:        $(uname -m)"
           echo "macOS:       $(sw_vers -productVersion)"
           echo "brew:        $(brew --version | head -1)"
           echo "brew prefix: $(brew --prefix)"
-          echo "already installed mcpp? $(command -v mcpp || echo no)"
+          echo "tapped?      $(brew tap | grep -c mcpp || true)"
 
-      - name: Tap
-        run: |
-          set -x
-          brew tap mcpp-community/mcpp
-          brew tap-info mcpp-community/mcpp
-
-      # The formula as the tap publishes it. `brew info` first: it evaluates
-      # the ruby WITHOUT downloading, so a formula-level error (bad DSL, a
-      # requirement that cannot be satisfied on this runner) shows up here
-      # rather than being confused with a download/extract failure below.
-      - name: "brew info (evaluate formula only)"
-        run: |
-          set +e
-          brew info mcpp-community/mcpp/mcpp-m 2>&1 | tee info.log
-          echo "exit=$?"
-          echo "── ruby source as tapped ──"
-          cat "$(brew --repo mcpp-community/mcpp)/Formula/mcpp-m.rb"
-
-      - name: "brew install mcpp-m (verbose, failure tolerated)"
+      # EXACTLY the command README.md line 121 tells users to run — no prior
+      # `brew tap`. Auto-tapping is part of what is being tested.
+      - name: "brew install mcpp-community/mcpp/mcpp-m (documented one-liner)"
         id: install
         run: |
           set +e
-          brew install --verbose mcpp-community/mcpp/mcpp-m 2>&1 | tee install.log
-          rc=${PIPESTATUS[0]}
+          brew install mcpp-community/mcpp/mcpp-m > install.log 2>&1
+          rc=$?
           echo "install_rc=$rc" >> "$GITHUB_OUTPUT"
-          echo "=== install exit code: $rc ==="
+          echo "=== documented one-liner exit: $rc ==="
+          tail -40 install.log
           exit 0
 
-      - name: "Diagnose a failed install"
+      - name: "Diagnose"
         if: ${{ steps.install.outputs.install_rc != '0' }}
         run: |
-          echo "── last 60 lines ──"
-          tail -60 install.log
-          echo "── anything that looks like an error ──"
-          grep -nEi 'error|fail|cannot|no such|denied|unable|invalid' install.log | tail -40 || true
-          echo "── brew gist-logs (formula build logs) ──"
-          ls -la ~/Library/Logs/Homebrew/mcpp-m/ 2>/dev/null || echo "(no formula log dir)"
+          echo "── full log ──"
+          cat install.log
+          echo "── error-ish lines ──"
+          grep -nEi 'error|fail|cannot|no such|denied|unable|invalid|require' install.log | tail -40 || true
           for f in ~/Library/Logs/Homebrew/mcpp-m/*; do
             echo "===== $f ====="; cat "$f"
           done 2>/dev/null || true
 
-      - name: "Post-install: does the launcher work?"
-        if: ${{ steps.install.outputs.install_rc == '0' }}
-        run: |
-          set -x
-          brew list mcpp-community/mcpp/mcpp-m
-          which mcpp
-          mcpp --version
-          mcpp --help | head -5
-
-      # The alias path the formula's header comment promises. A user reading
-      # the README types `mcpp`, not `mcpp-m`, so this is a separate claim.
-      - name: "Alias: brew install …/mcpp resolves"
-        run: |
-          set +e
-          brew info mcpp-community/mcpp/mcpp 2>&1 | tail -20
-          echo "alias info exit=$?"
-
-      - name: "brew audit (formula hygiene)"
-        run: |
-          set +e
-          brew audit --strict --online mcpp-community/mcpp/mcpp-m 2>&1 | tail -40
-          echo "audit exit=$?"
-
-      - name: "brew test (the formula's own test block)"
+      - name: "Post-install: launcher + real build"
         if: ${{ steps.install.outputs.install_rc == '0' }}
         run: |
           set +e
-          brew test --verbose mcpp-community/mcpp/mcpp-m 2>&1 | tail -40
-          echo "test exit=$?"
-
-      # The real usability question, beyond "the files landed": a brew-installed
-      # mcpp must be able to bootstrap a toolchain and build something.
-      - name: "Real use: mcpp new → run"
-        if: ${{ steps.install.outputs.install_rc == '0' }}
-        run: |
-          set +e
+          which mcpp; ver_rc=0
+          mcpp --version > ver.log 2>&1 || ver_rc=$?
+          echo "--version exit=$ver_rc"; cat ver.log
           cd "$(mktemp -d)"
-          mcpp new brewhello 2>&1 | tail -20
-          echo "new exit=$?"
-          cd brewhello || exit 0
-          mcpp run 2>&1 | tail -40
-          echo "run exit=$?"
+          mcpp new brewhello > new.log 2>&1; new_rc=$?
+          echo "new exit=$new_rc"; tail -10 new.log
+          [ $new_rc -eq 0 ] || exit 0
+          cd brewhello
+          mcpp run > run.log 2>&1; run_rc=$?
+          echo "run exit=$run_rc"; tail -40 run.log
+          exit 0
+
+      # The other spelling the tap README advertises (line 30). Installing
+      # through an alias is not the same code path as installing the formula.
+      - name: "Alias: brew install …/mcpp"
+        if: ${{ matrix.os != 'macos-13' }}
+        run: |
+          set +e
+          brew uninstall --force mcpp-m > /dev/null 2>&1
+          brew install mcpp-community/mcpp/mcpp > alias.log 2>&1
+          echo "alias install exit=$?"
+          tail -25 alias.log
+          exit 0
