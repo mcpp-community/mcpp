@@ -360,11 +360,6 @@ struct BuildConfig : BuildInputs {
     // that actually runs: resolving it at parse time would freeze one machine's
     // core count into a value that then travels with the manifest.
     std::string jobs;
-    // `[build] schedule` — the module-edge shape: "auto" (default), "on",
-    // "off". Text for the same reason `jobs` is: the meaning of "auto" depends
-    // on the compiler doing the build, and resolving it at parse time would
-    // freeze one machine's answer into a manifest that travels.
-    std::string schedule;
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a

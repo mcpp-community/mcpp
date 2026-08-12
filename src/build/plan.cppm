@@ -145,18 +145,6 @@ struct BuildPlan {
     // share an output directory and overwrite each other's graph; this is what
     // lets a fast path tell them apart (mcpp#407, mcpp.build.graph_shape).
     GraphShape                      graphShape = GraphShape::Normal;
-    // The module-edge schedule this plan will emit, resolved ONCE (see
-    // mcpp.build.schedule.policy). The backend writes the graph in this shape,
-    // the graph records the tag, and the fast path compares against it — three
-    // readers, one derivation. Deriving it separately in the backend and in the
-    // executor is how the BMI-equivalence check and the job count drifted into
-    // disagreeing about what a module edge is.
-    std::string                     scheduleTag = "none";
-    // What to hand ninja. Under detach-codegen a compiler stops holding a slot
-    // when it publishes, so this must exceed the real compiler cap or the ready
-    // frontier starves — see the hazard note in schedule/detach_codegen.
-    int                             scheduleNinjaJobs = 0;
-    int                             scheduleCompilerCap = 0;
     // One immutable snapshot selected before workspace member substitution.
     // Build/run/test and cache fast paths consume this value; none may re-read
     // xlings active/current state.

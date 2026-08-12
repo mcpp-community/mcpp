@@ -407,7 +407,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // #407: the graph declares which mode produced it, because three modes
     // write this one file and the fast path has to know what it is about to
     // replay. Must stay within the first few lines — see read_shape.
-    append(mcpp::build::header_line(plan.graphShape, plan.scheduleTag) + "\n");
+    append(mcpp::build::header_line(plan.graphShape) + "\n");
     append("ninja_required_version = 1.11\n\n");
 
     // All compile/link flags are computed once via flags.cppm.

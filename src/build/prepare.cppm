@@ -33,7 +33,6 @@ import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
-import mcpp.build.schedule.policy;
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
@@ -5227,17 +5226,6 @@ prepare_build(bool print_fingerprint,
     fpi.cppStandard         = m->package.standard;
     fpi.compileFlags        = canonical_compile_flags(*m)
                               + canonical_package_build_metadata(packages);
-    // The module-edge schedule changes the SHAPE of build.ninja, and the fast
-    // path replays that file without a plan to compare against. Folding the
-    // switch into the fingerprint puts a differently-scheduled build in a
-    // different directory, which makes replaying the wrong shape structurally
-    // impossible instead of merely guarded. Only appended when non-default, so
-    // existing build directories keep their identity.
-    if (const auto sched = mcpp::build::schedule::requested_switch(*m);
-        sched != "auto") {
-        fpi.compileFlags += " #schedule=";
-        fpi.compileFlags += sched;
-    }
     if (m->cppStandard.experimental) {
         // c++fly gate flags are derived (not manifest-declared): fold them in
         // so a cppfly table change across mcpp versions re-fingerprints.
@@ -5323,24 +5311,6 @@ prepare_build(bool print_fingerprint,
     ctx.plan.graphShape = (includeDevDeps || !extraTargets.empty())
         ? mcpp::build::GraphShape::WithTests
         : mcpp::build::GraphShape::Normal;
-    // Resolve the module-edge schedule ONCE, here, where both the toolchain and
-    // the manifest are in hand. The backend writes the graph in this shape, the
-    // graph records the tag, and `mcpp build --verbose` prints the reason — all
-    // three read this, none of them re-derives it.
-    {
-        const auto decision = mcpp::build::schedule::decide(
-            ctx.plan.toolchain,
-            mcpp::build::schedule::requested_switch(*m),
-            mcpp::build::schedule::resolve_jobs(*m, [](std::string_view bad) {
-                mcpp::ui::warning(std::format(
-                    "ignoring invalid job count '{}' (expected a positive number or 'auto')", bad));
-            }));
-        ctx.plan.scheduleTag         = std::string(mcpp::build::schedule::to_string(decision.strategy));
-        ctx.plan.scheduleNinjaJobs   = decision.ninjaJobs;
-        ctx.plan.scheduleCompilerCap = decision.compilerCap;
-        mcpp::log::verbose("build", std::format("schedule: {} — {}",
-                                                ctx.plan.scheduleTag, decision.reason));
-    }
     ctx.plan.runtimeBinding = runtimeBindingSnapshot;
     mcpp::build::merge_runtime_binding_contract(
         ctx.plan, runtimeBindingSnapshot);
