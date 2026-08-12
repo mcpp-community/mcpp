@@ -20,16 +20,26 @@ name: bench
 # See bench/README.md for the measurement contract before quoting any number.
 
 on:
-  # Changes to the suite itself — including its own tests and the project
-  # descriptions it measures. Not `paths: ['**']`: the point is to fire where
-  # the numbers can move, not on every commit.
+  # Changes that can MOVE THE NUMBERS: the harness itself, the build
+  # descriptions of the projects it measures, and its own tests.
+  #
+  # Documentation and past results are excluded on purpose. A README edit cannot
+  # change a measurement, and running a two-hour matrix to prove that teaches
+  # everyone to ignore the check — which is how a benchmark stops being read.
+  # `bench/results/**` is excluded for the same reason AND a sharper one: this
+  # workflow's own artifacts land there, so including it would let a results
+  # commit trigger the run that produces the next results commit.
   push:
     paths:
       - 'bench/**'
+      - '!bench/**/*.md'
+      - '!bench/results/**'
       - '.github/workflows/bench.yml'
   pull_request:
     paths:
       - 'bench/**'
+      - '!bench/**/*.md'
+      - '!bench/results/**'
       - '.github/workflows/bench.yml'
   workflow_dispatch:
     inputs:
