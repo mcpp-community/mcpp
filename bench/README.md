@@ -406,20 +406,62 @@ the original analysis:
 
 ---
 
-## 9. The `xmake.lua` at the repository root
+## 9. Building mcpp itself — `bench/projects/mcpp/`
 
-Separate from the generated fixtures, the repo root carries an `xmake.lua` that
-builds **mcpp itself** — the control arm for "same real project, different
-engine". Synthetic fixtures cannot reproduce the dependency shape of a real
-137-module codebase, so both exist.
+Separate from the generated fixtures, `bench/projects/mcpp/` carries one build
+description per foreign engine for **mcpp itself** — the control arm for "same
+real project, different engine". Synthetic fixtures cannot reproduce the
+dependency shape of a real 138-module codebase, and the difference is not small:
+on the fixture mcpp's module cold build is 0.26x cmake, on mcpp's own source it
+is **0.85x**. Both arms exist because either alone misleads.
 
-It pins the compiler by reading `[toolchain] default` out of `mcpp.toml`, because
+```bash
+bench --project . --buildfiles bench/projects/mcpp \
+      --engines mcpp=<old>,mcpp=<new>,cmake,xmake \
+      --compiler <path to g++> --baseline cmake \
+      --hub src/platform/platform.cppm \
+      --leaf src/version.cppm \
+      --body src/build/stage.cppm
+```
+
+`--buildfiles` is what keeps these files **out of the repository root**. mcpp is
+built by mcpp; a CMakeLists.txt and an xmake.lua at the root are files every
+contributor has to learn to ignore, and one of them actively broke something:
+`scripts/bootstrap-macos.sh` generates its own root `xmake.lua` when none is
+present, and a bench-owned file at that path silently pre-empted it. cmake is
+pointed at the directory with `-S`, xmake with `-P`; mcpp reads the project's
+own manifest and ignores the flag. Copying the descriptions into the tree for
+the duration of a run was the alternative, and it writes into the user's
+repository, which this harness refuses to do.
+
+| engine | builds mcpp? |
+|---|---|
+| mcpp | yes — it is mcpp's own manifest |
+| cmake 4.0.2 | yes — needs `CMAKE_CXX_MODULE_STD 1` and the CMake-4.0 experimental UUID |
+| xmake 3.0.7 | yes |
+| meson 1.10.2 | no — no way to declare an interface unit, and no `import std;` |
+| bazel 9.2.0 | not in the gcc table. `import std;` **is** buildable (libc++ ships the std module as ordinary source — see `bench/projects/mcpp/MODULE.bazel` for the working recipe), but bazel's modules need clang, so a bazel column belongs in a clang-baselined table or it breaks invariant I1 |
+
+### The cmake description has two traps worth knowing
+
+* **`FILE_SET CXX_MODULES` requires every file under a base directory.** The
+  `mcpplibs.cmdline` dependency lives in the registry, outside the tree, so it
+  needs its own file set with an explicit `BASE_DIRS`.
+* **`add_compile_options()` does not reach the `std` module.** CMake generates
+  that target itself, so directory-scope options miss it: the std module then
+  compiles against the compiler's default libc headers while every mcpp unit
+  compiles against `--sysroot`, and the build dies on a type that exists in both
+  (`conflicting type for imported declaration 'char _IO_FILE::_unused2 [20]'`).
+  The error names neither the flag nor the target that is wrong. Use
+  `CMAKE_CXX_FLAGS`.
+
+The xmake description pins the compiler by reading `[toolchain] default` out of `mcpp.toml`, because
 the registry holds several GCCs and "newest directory wins" only *happens* to
 agree with the pin. Verify before quoting anything from it:
 
 ```bash
-xmake f -y -m release --toolchain=mcpp-gcc
-xmake show -t mcpp | grep 'compiler (cxx)'     # must be the same binary mcpp uses
+xmake f -P bench/projects/mcpp -y -m release --toolchain=mcpp-gcc
+xmake show -P bench/projects/mcpp -t mcpp | grep 'compiler (cxx)'   # must be mcpp's binary
 ```
 
 > An earlier revision called `set_toolchains()` unconditionally, which silently
