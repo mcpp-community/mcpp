@@ -71,9 +71,14 @@ echo "jobs option OK"
 #
 #     Asserted by OBSERVING THE RESOLUTION, not by timing: a timing assertion on
 #     CI measures the runner's mood.
-out=$("$MCPP" build --release --toolchain gcc@16.1.0 2>&1) \
-  || { echo "--toolchain gcc failed:"; echo "$out"; exit 1; }
-echo "$out" | grep -q 'Resolved gcc@16.1.0' \
+#     The spec comes from THIS platform's own resolution, not a hard-coded
+#     `gcc@16.1.0`: the fixture pins llvm on macOS and Windows, and asserting a
+#     compiler that is not installed there tests the payload index, not the flag.
+own=$("$MCPP" build --release 2>&1 | sed -n 's/.*Resolved \([^ ]*\) .*/\1/p' | head -1)
+[ -n "$own" ] || { echo "could not learn this platform's toolchain"; exit 1; }
+out=$("$MCPP" build --release --toolchain "$own" 2>&1) \
+  || { echo "--toolchain $own failed:"; echo "$out"; exit 1; }
+echo "$out" | grep -q "Resolved $own" \
   || { echo "--toolchain did not reach toolchain resolution:"; echo "$out"; exit 1; }
 
 # ...and it must BEAT the manifest, or it is not an override. The fixture pins
