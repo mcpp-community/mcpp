@@ -48,7 +48,12 @@ bad = []
 files = sorted(p for p in pathlib.Path(sys.argv[1]).iterdir()
                if p.suffix in (".yml", ".yaml"))
 for p in files:
-    text = p.read_text()
+    # encoding is NOT optional: Python on Windows defaults to the ANSI code
+    # page, and these files are UTF-8 (em dashes in the comments are enough).
+    # Without it the check dies with
+    #     UnicodeDecodeError: 'charmap' codec can't decode byte 0x8d
+    # on the runner and nowhere else.
+    text = p.read_text(encoding="utf-8")
     for n, line in enumerate(text.splitlines(), 1):
         if TRAILING_AFTER_QUOTED.match(line):
             bad.append(f"{p.name}:{n}: content after a quoted scalar: {line.strip()}")
