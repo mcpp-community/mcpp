@@ -1,19 +1,36 @@
 name: bench
 
-# Build-engine benchmark. MANUAL TRIGGER ONLY, and that is a design decision:
+# Build-engine benchmark. Runs on changes under `bench/` and on demand.
+#
+# WHY IT IS PATH-SCOPED RATHER THAN ON EVERY PUSH:
 #
 #   * it is heavy — a full matrix compiles the same fixture six ways per platform
 #   * it is noisy — cloud runners are shared, and the CPU model changes under you
 #   * it asserts nothing — no threshold, no pass/fail on timings
 #
-# Attaching it to every PR would drown the signal it exists to produce, and a
-# timing threshold on a shared runner turns normal variance into red crosses that
-# people learn to ignore. Results are uploaded as artifacts; comparing them is a
-# human act.
+# So it fires when the SUITE itself changes, where the question "did I break the
+# harness / did this shift the numbers" is actually being asked, and stays off
+# every unrelated PR. A timing threshold on a shared runner would turn normal
+# variance into red crosses people learn to ignore, so there is none: results
+# are uploaded as artifacts and comparing them is a human act.
+#
+# The matrix runs platforms in parallel and `fail-fast: false`, because one
+# platform missing an engine must not cancel the data from the others.
 #
 # See bench/README.md for the measurement contract before quoting any number.
 
 on:
+  # Changes to the suite itself — including its own tests and the project
+  # descriptions it measures. Not `paths: ['**']`: the point is to fire where
+  # the numbers can move, not on every commit.
+  push:
+    paths:
+      - 'bench/**'
+      - '.github/workflows/bench.yml'
+  pull_request:
+    paths:
+      - 'bench/**'
+      - '.github/workflows/bench.yml'
   workflow_dispatch:
     inputs:
       engines:
@@ -73,7 +90,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          want="${{ inputs.platforms }}"
+          # `inputs.*` is empty on a push/pull_request trigger, so every input needs
+          # a fallback here — an empty `platforms` would otherwise plan an empty
+          # matrix and the job would silently do nothing.
+          want="${{ inputs.platforms || 'linux,macos,windows' }}"
           entries=()
           case ",$want," in *,linux,*)   entries+=('{"os":"ubuntu-24.04","name":"linux"}');;  esac
           case ",$want," in *,macos,*)   entries+=('{"os":"macos-14","name":"macos"}');;      esac
@@ -137,16 +157,19 @@ jobs:
           # positive number. Passing raw numbers unconditionally would make every
           # run's size an accident of this file rather than a named, comparable
           # workload — and --preset must come first so the overrides still win.
-          args=( --preset "${{ inputs.preset }}" )
-          [ "${{ inputs.units }}" -gt 0 ] 2>/dev/null && args+=( --units "${{ inputs.units }}" )
-          [ "${{ inputs.fanin }}" -gt 0 ] 2>/dev/null && args+=( --fanin "${{ inputs.fanin }}" )
+          # Every `inputs.*` needs a fallback: on a push/pull_request trigger
+          # they are all EMPTY, and an empty --engines would run nothing while
+          # still reporting success.
+          args=( --preset "${{ inputs.preset || 'smoke' }}" )
+          [ "${{ inputs.units || 0 }}" -gt 0 ] 2>/dev/null && args+=( --units "${{ inputs.units }}" )
+          [ "${{ inputs.fanin || 0 }}" -gt 0 ] 2>/dev/null && args+=( --fanin "${{ inputs.fanin }}" )
           "$BENCH" \
-            --engines   '${{ inputs.engines }}' \
-            --variants  '${{ inputs.variants }}' \
-            --scenarios '${{ inputs.scenarios }}' \
-            --profile   '${{ inputs.profile }}' \
+            --engines   '${{ inputs.engines || 'mcpp,cmake,xmake,meson,bazel' }}' \
+            --variants  '${{ inputs.variants || 'headers,modules,modules-impl' }}' \
+            --scenarios '${{ inputs.scenarios || 'cold,noop,touch-hub,touch-leaf,edit-body,edit-comment' }}' \
+            --profile   '${{ inputs.profile || 'release' }}' \
             "${args[@]}" \
-            --runs      '${{ inputs.runs }}' \
+            --runs      '${{ inputs.runs || 0 }}' \
             --work      "$RUNNER_TEMP/bench-work" \
             --out       "bench-${{ matrix.name }}.json"
 
