@@ -4,4 +4,4 @@
     Inferred target mcpp (bin from src/main.cpp)
    Compiling mcpp v2026.8.12.1 (.)
       Cached mcpplibs.cmdline v0.0.1 (3 units)
-    Finished release [optimized] in 0.22s
+    Finished release [optimized] in 78.15s

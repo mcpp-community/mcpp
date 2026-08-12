@@ -21,7 +21,10 @@ BENCH="$REPO/bench/$BENCH"
 # 1. Availability listing must classify mcpp itself as present. If this fails the
 #    probe path is broken, and every later cell would be reported `unavailable`
 #    for the wrong reason.
-out=$("$BENCH" --list)
+# Engines are named by BINARY, not by PATH lookup: `$MCPP` is the build under
+# test, while a bare `mcpp` resolves to whatever the sandbox has — on CI that is
+# an xlings shim reporting "'mcpp' is not installed", which failed every cell.
+out=$("$BENCH" --list --engines "mcpp=$MCPP")
 # The label carries the version it discovered ("mcpp@2026.8.12.1"), which is what
 # makes a two-binary comparison legible; match the prefix, not the whole token.
 echo "$out" | grep -qE '^mcpp(@[^ ]+)? +yes' || { echo "mcpp not reported available:"; echo "$out"; exit 1; }
@@ -39,7 +42,7 @@ dump_child_logs() {
     done
 }
 
-"$BENCH" --engines mcpp --variants modules --scenarios cold,noop \
+"$BENCH" --engines "mcpp=$MCPP" --variants modules --scenarios cold,noop \
          --units 4 --fanin 2 --weight 2 --runs 1 \
          --work "$TMP/work" --out "$TMP/report.json" > "$TMP/stdout.txt" \
   || { echo "harness exited non-zero"; dump_child_logs; exit 1; }
@@ -80,7 +83,7 @@ PY
 # 6. The three fixture variants must all generate and differ in SHAPE, not just
 #    in file names: modules-impl is the variant whose whole point is that bodies
 #    live outside the interface unit.
-"$BENCH" --engines mcpp --variants headers,modules,modules-impl --scenarios noop \
+"$BENCH" --engines "mcpp=$MCPP" --variants headers,modules,modules-impl --scenarios noop \
          --units 3 --fanin 1 --weight 1 --runs 1 \
          --work "$TMP/w2" --out "$TMP/r2.json" > /dev/null
 # Directory names are slugged from the engine label, which carries a version, so
