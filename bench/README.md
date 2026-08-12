@@ -8,12 +8,23 @@ Written in C++23 and built by mcpp, so it runs identically on Linux, macOS and
 Windows — a shell-based harness cannot, and this suite replaced one that could
 only run on Linux.
 
-```
-bench --engines mcpp,mcpp-opt,cmake,xmake,meson,bazel \
+```bash
+# generated fixtures, across engines and source forms
+bench --engines mcpp,cmake,xmake,meson,bazel \
       --variants headers,modules,modules-impl \
       --scenarios cold,noop,touch-hub,edit-body \
       --compiler /path/to/g++ --jobs 32 --out report.json
+
+# a REAL project, measured in place — e.g. mcpp building itself,
+# comparing two mcpp binaries
+bench --project . --engines mcpp=/usr/bin/mcpp,mcpp=./target/*/*/bin/mcpp \
+      --scenarios noop,touch-hub --hub src/platform/platform.cppm
 ```
+
+Each `mcpp=<path>` engine labels itself from the version that binary reports
+(`mcpp@2026.8.12.1`), so two releases never collapse into one row. That is how
+"did this release get faster?" is answered — by running both, not by emulating
+one of them in the harness.
 
 ---
 
@@ -44,11 +55,31 @@ claim gets a number instead of an argument.
 | # | Invariant | How it is enforced |
 |---|---|---|
 | I1 | Identical compiler **binary** across engines | `--compiler <path>` is threaded into cmake (`-DCMAKE_CXX_COMPILER`), meson & xmake (`CXX`), bazel (`CC` + `--action_env`). mcpp uses its hermetic payload — a **declared asymmetry**, see §5. |
+| I0 | Optimisations are measured, never emulated | Engines are parameterised by BINARY (`mcpp=<path>`). The harness contains no "what if we also set X" mode: emulating a change measures the harness's idea of it and silently stops tracking the implementation. |
 | I2 | Identical source set | All variants come from one generator; no engine globs its own inputs. |
 | I3 | Identical language level | C++23 everywhere; `import std;` is **absent from every fixture** (see §5). |
 | I4 | Same parallelism | `--jobs N` is passed to every engine that accepts one. |
 | I5 | A failure can never look like a measurement | `status` and timings are separate protocol fields; a non-ok cell carries **no** median. |
 | I6 | A skip carries its reason | `unavailable` (not installed / cannot build this variant) is distinct from `failed`, and both require a note. |
+
+---
+
+## 2b. Two modes
+
+| mode | fixture | when |
+|---|---|---|
+| **generated** (default) | `--units/--fanin/--weight` synthesise the same project in three source forms | comparing **source forms**, and engines against each other on identical input |
+| **project** (`--project DIR`) | an existing tree, measured **in place** | comparing **engine binaries** on a real codebase — mcpp building itself is the base case |
+
+In project mode the variant axis collapses to `native`: the project is whatever
+it already is, and generating over it would destroy the thing being measured.
+Scenarios that perturb a file need to be told which one (`--hub`, `--leaf`,
+`--body`); without it they report `skipped` **with the reason** rather than
+picking a file and producing a number that looks valid.
+
+`edit-body` rewrites a source file. In project mode that file belongs to the
+user, so its exact bytes are captured before and restored afterwards — including
+when the build fails, which is precisely when a leftover edit would be missed.
 
 ---
 

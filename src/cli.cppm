@@ -604,6 +604,9 @@ int run(int argc, char** argv) {
             .option(cl::Option("verify").takes_value().value_name("MODE")
                 .help("Already-staged check: size (default) | content"))
             .action(wrap_rc(cmd_stage)))
+        .subcommand(cl::App("bmi-equal")
+            .description("(internal: invoked by ninja) Compare two BMIs ignoring the compiler's embedded timestamp")
+            .action(wrap_rc(cmd_bmi_equal)))
     ;
 
     // The bareword `mcpp help` and `mcpp` (no args) both print the
@@ -670,12 +673,15 @@ int run(int argc, char** argv) {
     {
         std::string_view first = argv[1];
         if (!first.starts_with('-')) {
-            static constexpr std::array<std::string_view, 23> known = {
+            // Size is deduced, not spelled: an explicit count turns "add a
+            // command" into "add a command AND remember to bump a number",
+            // and the compiler only catches the direction that overflows.
+            static constexpr std::array known = std::to_array<std::string_view>({
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep", "why", "resolve", "stage",
-            };
+                "version", "dyndep", "why", "resolve", "stage", "bmi-equal",
+            });
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }
             if (!ok) {

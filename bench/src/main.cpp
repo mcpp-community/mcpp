@@ -34,6 +34,8 @@ struct Options {
     std::filesystem::path work{"bench-work"};
     std::filesystem::path out{"bench-report.json"};
     std::filesystem::path analyze;   // profile an existing ninja build dir instead
+    std::filesystem::path project;   // measure an existing tree instead of a fixture
+    std::filesystem::path hub, leaf, body;   // what the scenarios perturb there
     bool list{false};
 };
 
@@ -68,6 +70,16 @@ void usage() {
     std::println("  --list             print engines and their availability, then exit");
     std::println("  --analyze DIR      profile an existing ninja build dir (work, makespan,");
     std::println("                     critical path, concurrency) instead of measuring");
+    std::println("");
+    std::println("Measuring a REAL project instead of a generated fixture:");
+    std::println("  --project DIR      build this tree as-is (e.g. mcpp itself)");
+    std::println("  --hub FILE         file with many dependents      (touch-hub)");
+    std::println("  --leaf FILE        file with no dependents        (touch-leaf)");
+    std::println("  --body FILE        file whose body gets edited    (edit-body)");
+    std::println("");
+    std::println("Comparing two mcpp builds is an engine spec, not a flag:");
+    std::println("  --engines mcpp=/usr/bin/mcpp,mcpp=./target/.../bin/mcpp");
+    std::println("  each labels itself from the version it reports, so rows stay distinct");
 }
 
 std::expected<Options, std::string> parse(int argc, char** argv) {
@@ -97,6 +109,10 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--runs")      { if (auto e = take_int(a, o.runs))         return std::unexpected(*e); }
         else if (a == "--list")      { o.list = true; }
         else if (a == "--analyze")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.analyze = *v; }
+        else if (a == "--project")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.project = *v; }
+        else if (a == "--hub")       { auto v = value(a); if (!v) return std::unexpected(v.error()); o.hub  = *v; }
+        else if (a == "--leaf")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.leaf = *v; }
+        else if (a == "--body")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.body = *v; }
         else if (a == "-h" || a == "--help") { return std::unexpected("help"); }
         else if (a == "--variants") {
             auto v = value(a); if (!v) return std::unexpected(v.error());
@@ -116,9 +132,14 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
             return std::unexpected(std::format("unknown argument '{}'", a));
         }
     }
-    if (o.variants.empty())
-        o.variants = {bench::Variant::Headers, bench::Variant::Modules,
-                      bench::Variant::ModulesImpl};
+    if (o.variants.empty()) {
+        // A real project has exactly one form — its own. Offering it the
+        // headers/modules axis would generate over the tree being measured.
+        o.variants = o.project.empty()
+            ? std::vector{bench::Variant::Headers, bench::Variant::Modules,
+                          bench::Variant::ModulesImpl}
+            : std::vector{bench::Variant::Native};
+    }
     if (o.scenarios.empty())
         o.scenarios = {bench::Scenario::Cold, bench::Scenario::Noop,
                        bench::Scenario::TouchHub, bench::Scenario::EditBody};
@@ -156,15 +177,15 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    auto engines = bench::all_engines();
-    if (!opts->engines.empty()) {
-        std::erase_if(engines, [&](const auto& e) {
-            return std::ranges::find(opts->engines, std::string(e->name())) == opts->engines.end();
-        });
-        if (engines.empty()) {
-            std::println(std::cerr, "bench: no engine matched --engines");
+    const auto specs = opts->engines.empty() ? bench::default_engine_specs() : opts->engines;
+    std::vector<std::unique_ptr<bench::engines::Engine>> engines;
+    for (const auto& spec : specs) {
+        auto e = bench::make_engine(spec);
+        if (!e) {
+            std::println(std::cerr, "bench: unknown engine '{}'", spec);
             return 2;
         }
+        engines.push_back(std::move(e));
     }
 
     if (opts->list) {
@@ -196,19 +217,26 @@ int main(int argc, char** argv) {
     report.started_at = bench::platform::iso_now();
 
     bench::RunOptions ro;
-    ro.work_root     = opts->work;
-    ro.shape         = opts->shape;
-    ro.jobs          = opts->jobs;
-    ro.runs_override = opts->runs;
+    ro.work_root       = opts->work;
+    ro.shape           = opts->shape;
+    ro.jobs            = opts->jobs;
+    ro.runs_override   = opts->runs;
+    ro.project         = opts->project;
+    ro.project_targets = bench::fixture::Targets{opts->hub, opts->leaf, opts->body};
     const bench::Runner runner(ro);
 
-    const auto fixture_name = std::format("synth-{}x{}", opts->shape.units, opts->shape.fanin);
+    const auto fixture_name = opts->project.empty()
+        ? std::format("synth-{}x{}", opts->shape.units, opts->shape.fanin)
+        : opts->project.filename().string();
 
     std::println("host   : {} {} · {} · {} logical / {} physical{}",
                  facts.os, facts.arch, facts.cpu_model, facts.logical_cores,
                  facts.physical_cores, facts.heterogeneous ? " (heterogeneous)" : "");
-    std::println("fixture: {} units, fanin {}, weight {}",
-                 opts->shape.units, opts->shape.fanin, opts->shape.weight);
+    if (opts->project.empty())
+        std::println("fixture: {} units, fanin {}, weight {}",
+                     opts->shape.units, opts->shape.fanin, opts->shape.weight);
+    else
+        std::println("project: {} (measured in place)", opts->project.string());
     std::println("");
 
     for (const auto& engine : engines) {

@@ -49,6 +49,10 @@ enum class Variant {
     Headers,      // classic headers + separate .cpp implementation
     Modules,      // module interface units carrying their implementations
     ModulesImpl,  // module interface units + separate implementation units
+    // An existing project measured as-is. The variant axis does not apply: the
+    // project is whatever it already is, and generating over it would destroy
+    // the very thing being measured.
+    Native,
 };
 
 constexpr std::string_view to_string(Variant v) {
@@ -56,6 +60,7 @@ constexpr std::string_view to_string(Variant v) {
         case Variant::Headers:     return "headers";
         case Variant::Modules:     return "modules";
         case Variant::ModulesImpl: return "modules-impl";
+        case Variant::Native:      return "native";
     }
     return "unknown";
 }
@@ -64,6 +69,7 @@ constexpr std::optional<Variant> variant_from(std::string_view s) {
     if (s == "headers")      return Variant::Headers;
     if (s == "modules")      return Variant::Modules;
     if (s == "modules-impl") return Variant::ModulesImpl;
+    if (s == "native")       return Variant::Native;
     return std::nullopt;
 }
 

@@ -1,10 +1,16 @@
-// bench.engines.mcpp — mcpp as a measured engine, including its optimised form.
+// bench.engines.mcpp — mcpp as a measured engine.
 //
-// Two engines live here because they differ by CONFIGURATION, not by code:
-// `mcpp` is the shipped behaviour, `mcpp-opt` additionally applies the
-// optimisations validated in the 2026-08-12 analysis. Keeping them as two
-// registry entries makes "before vs after" an ordinary axis of the matrix
-// instead of a separate experiment run by hand.
+// PARAMETERISED BY BINARY, not by a simulated flag. `--engines mcpp=/path/to/A,
+// mcpp=/path/to/B` registers two engines that differ only in which mcpp runs, and
+// each labels itself with the version it reports. That is how "did this release
+// get faster?" is answered: by running both releases, not by approximating one
+// of them.
+//
+// An earlier revision had an `mcpp-opt` engine that set SOURCE_DATE_EPOCH around
+// the build to emulate an optimisation. It was removed: emulating a change in
+// the harness measures the harness's idea of the change, and it silently stops
+// tracking the real implementation the moment the two diverge. Optimisations
+// belong in mcpp; the bench measures binaries.
 export module bench.engines.mcpp;
 
 import std;
@@ -17,16 +23,26 @@ namespace bench::engines {
 
 class McppEngine : public Engine {
 public:
-    explicit McppEngine(bool optimised) : optimised_(optimised) {}
+    // `program` may be a bare name resolved through PATH or an absolute path to
+    // a specific build. `label` is what appears in results; empty means "ask the
+    // binary", which is what makes a two-version comparison self-describing.
+    explicit McppEngine(std::string program = "mcpp", std::string label = {})
+        : program_(std::move(program)), label_(std::move(label)) {}
 
-    std::string_view name() const override { return optimised_ ? "mcpp-opt" : "mcpp"; }
-
-    Availability probe() const override {
-        return probe_program("mcpp", {"mcpp", "--version"});
+    std::string_view name() const override {
+        if (label_.empty()) label_ = discover_label();
+        return label_;
     }
 
-    // mcpp compiles plain .cpp as readily as modules, so every fixture variant
-    // is in scope.
+    Availability probe() const override {
+        const auto v = version_string();
+        if (v.empty())
+            return {false, std::format("{} not runnable", program_)};
+        return {true, v};
+    }
+
+    // mcpp compiles plain .cpp as readily as modules, and a Native project is
+    // whatever it already is, so every variant is in scope.
     bool supports(Variant) const override { return true; }
     std::string unsupported_reason(Variant) const override { return {}; }
 
@@ -36,40 +52,47 @@ public:
 
     platform::RunResult build(const Job& job) const override {
         const std::vector<std::string> argv{
-            "mcpp", "build", job.profile == "debug" ? "--dev" : "--release"};
-
-        // The optimisation under test is `SOURCE_DATE_EPOCH`. GCC stamps a wall
-        // clock into every BMI, so mcpp's content-comparison cascade
-        // suppression can never fire; pinning the epoch makes BMIs byte-stable
-        // and it fires — measured 73.0 s -> 0.22 s on touch-hub.
-        //
-        // A FIXED constant, not "now": the whole point is that two builds a
-        // minute apart produce identical bytes. The value is arbitrary but must
-        // not change within a comparison.
-        //
-        // Scoped, so the variable never leaks into the next cell — an
-        // unoptimised `mcpp` measurement running after an `mcpp-opt` one would
-        // otherwise silently inherit the optimisation and the two would tie.
-        if (optimised_) {
-            platform::ScopedEnv epoch("SOURCE_DATE_EPOCH", "1700000000");
-            return platform::run(argv, job.project_dir, job.log_path);
-        }
+            program_, "build", job.profile == "debug" ? "--dev" : "--release"};
         return platform::run(argv, job.project_dir, job.log_path);
     }
 
     void clean(const Job& job) const override {
         // Artifacts only. ~/.mcpp holds the toolchain and the dependency cache;
-        // deleting those would measure provisioning, which is a different
-        // question and would make "cold" mean something else for this engine
+        // removing those would measure provisioning, which is a different
+        // question, and would make "cold" mean something else for this engine
         // than for the others.
         platform::remove_tree(job.project_dir / "target");
     }
 
 private:
-    bool optimised_;
+    std::string         program_;
+    mutable std::string label_;
+
+    // `mcpp --version` prints "mcpp <version>". Empty means the binary could not
+    // be run at all — which probe() reports as unavailable rather than failed.
+    std::string version_string() const {
+        const auto out = platform::run_capture({program_, "--version"});
+        if (!out) return {};
+        auto line = *out;
+        if (const auto nl = line.find('\n'); nl != std::string::npos) line.resize(nl);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        return line;
+    }
+
+    std::string discover_label() const {
+        const auto v = version_string();          // e.g. "mcpp 2026.8.12.1"
+        if (v.empty()) return "mcpp";
+        const auto sp = v.rfind(' ');
+        if (sp == std::string::npos) return "mcpp";
+        // "mcpp@2026.8.12.1" — distinct per version, so two binaries never
+        // collapse into one row of the result table.
+        return std::format("mcpp@{}", v.substr(sp + 1));
+    }
 };
 
-export std::unique_ptr<Engine> make_mcpp()     { return std::make_unique<McppEngine>(false); }
-export std::unique_ptr<Engine> make_mcpp_opt() { return std::make_unique<McppEngine>(true); }
+export std::unique_ptr<Engine> make_mcpp(std::string program = "mcpp",
+                                         std::string label = {}) {
+    return std::make_unique<McppEngine>(std::move(program), std::move(label));
+}
 
 }  // namespace bench::engines

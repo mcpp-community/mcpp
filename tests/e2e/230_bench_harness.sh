@@ -22,19 +22,33 @@ BENCH="$REPO/bench/$BENCH"
 #    probe path is broken, and every later cell would be reported `unavailable`
 #    for the wrong reason.
 out=$("$BENCH" --list)
-echo "$out" | grep -qE '^mcpp +yes' || { echo "mcpp not reported available:"; echo "$out"; exit 1; }
+# The label carries the version it discovered ("mcpp@2026.8.12.1"), which is what
+# makes a two-binary comparison legible; match the prefix, not the whole token.
+echo "$out" | grep -qE '^mcpp(@[^ ]+)? +yes' || { echo "mcpp not reported available:"; echo "$out"; exit 1; }
 
 # 2. A real measurement over the modules variant. Tiny on purpose: 4 units still
 #    produce a module graph with depth, which is what the harness is for.
+# On failure the child's build log is the only thing that explains why — and the
+# trap deletes $TMP on exit, so a message that merely names the path is useless
+# in CI. Dump it here instead of leaving a dangling reference.
+dump_child_logs() {
+    echo "--- harness stdout ---"; cat "$TMP/stdout.txt" 2>/dev/null
+    for log in "$TMP"/work/*/bench-child.log; do
+        [ -f "$log" ] || continue
+        echo "--- $log ---"; tail -40 "$log"
+    done
+}
+
 "$BENCH" --engines mcpp --variants modules --scenarios cold,noop \
          --units 4 --fanin 2 --weight 2 --runs 1 \
-         --work "$TMP/work" --out "$TMP/report.json" > "$TMP/stdout.txt"
+         --work "$TMP/work" --out "$TMP/report.json" > "$TMP/stdout.txt" \
+  || { echo "harness exited non-zero"; dump_child_logs; exit 1; }
 
 # 3. The report must be a protocol-shaped document, not merely non-empty.
 grep -q '"protocol_version": 1' "$TMP/report.json" \
   || { echo "report is missing protocol_version"; cat "$TMP/report.json"; exit 1; }
 grep -q '"status": "ok"' "$TMP/report.json" \
-  || { echo "no cell succeeded"; cat "$TMP/report.json"; cat "$TMP/stdout.txt"; exit 1; }
+  || { echo "no cell succeeded"; cat "$TMP/report.json"; dump_child_logs; exit 1; }
 
 # 4. INVARIANT 1: a non-ok cell must never carry a timing. Asserted from BOTH
 #    sides — checking only that ok cells have medians would pass a harness that
@@ -69,13 +83,16 @@ PY
 "$BENCH" --engines mcpp --variants headers,modules,modules-impl --scenarios noop \
          --units 3 --fanin 1 --weight 1 --runs 1 \
          --work "$TMP/w2" --out "$TMP/r2.json" > /dev/null
-[ -f "$TMP/w2/mcpp-headers/include/unit_0.hpp" ]   || { echo "headers variant missing its header"; exit 1; }
-[ -f "$TMP/w2/mcpp-modules/src/unit_0.cppm" ]      || { echo "modules variant missing its interface"; exit 1; }
-[ -f "$TMP/w2/mcpp-modules-impl/src/unit_0_impl.cpp" ] \
-  || { echo "modules-impl variant has no implementation unit"; exit 1; }
-grep -q 'export int unit_0_value();' "$TMP/w2/mcpp-modules-impl/src/unit_0.cppm" \
+# Directory names are slugged from the engine label, which carries a version, so
+# resolve them by suffix instead of hard-coding the label.
+hdr=$(echo "$TMP"/w2/*-headers);      mods=$(echo "$TMP"/w2/*-modules)
+impl=$(echo "$TMP"/w2/*-modules-impl)
+[ -f "$hdr/include/unit_0.hpp" ]   || { echo "headers variant missing its header"; exit 1; }
+[ -f "$mods/src/unit_0.cppm" ]     || { echo "modules variant missing its interface"; exit 1; }
+[ -f "$impl/src/unit_0_impl.cpp" ] || { echo "modules-impl variant has no implementation unit"; exit 1; }
+grep -q 'export int unit_0_value();' "$impl/src/unit_0.cppm" \
   || { echo "modules-impl interface should DECLARE, not define"; exit 1; }
-grep -q 'export int unit_0_value() {' "$TMP/w2/mcpp-modules/src/unit_0.cppm" \
+grep -q 'export int unit_0_value() {' "$mods/src/unit_0.cppm" \
   || { echo "modules interface should DEFINE inline"; exit 1; }
 
 # 7. No fixture may say `import std;`. Engines differ wildly in std-module

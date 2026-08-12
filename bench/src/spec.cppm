@@ -54,14 +54,10 @@ struct Job {
     int                   jobs{0};              // 0 = let the engine decide
 };
 
-// Which source file each scenario perturbs. Filled by the fixture, because only
-// it knows its own shape — "hub" means something different in a 10-unit synthetic
-// project than in mcpp's 137-module graph.
-struct PerturbTargets {
-    std::filesystem::path hub;    // many importers
-    std::filesystem::path leaf;   // no importers
-    std::filesystem::path body;   // a file with a function body to edit
-};
+// NOTE: which file each scenario perturbs is NOT declared here. Only the fixture
+// knows its own shape — "hub" means something different in a 10-unit synthetic
+// project than in mcpp's 137-module graph — so `fixture::Targets` owns it and
+// this module stays free of any assumption about the project being measured.
 
 // Cold builds are expensive and their variance is low; incremental scenarios are
 // cheap and noisier, so they get more repetitions. Encoded here rather than in

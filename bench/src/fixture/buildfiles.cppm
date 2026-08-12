@@ -76,10 +76,17 @@ inline void emit_mcpp(const std::filesystem::path& root, Variant variant, const 
         "\n"
         "[build]\n"
         "default-profile = \"release\"\n";
-    if (variant != Variant::Headers)
-        toml += "include_dirs = [\"src\"]\n";
-    else
-        toml += "include_dirs = [\"include\"]\n";
+    toml += variant == Variant::Headers ? "include_dirs = [\"include\"]\n"
+                                        : "include_dirs = [\"src\"]\n";
+    // The toolchain is PINNED, matching every other mcpp project in this repo.
+    // Relying on the machine's global default makes the fixture build depend on
+    // ambient state — it works on a developer box that has one and fails on a
+    // fresh CI sandbox that does not, which is exactly how this surfaced: green
+    // locally, "seed build exited 1" on the runner.
+    toml += "\n[toolchain]\n"
+            "default = \"gcc@16.1.0\"\n"
+            "macos   = \"llvm@22.1.8\"\n"
+            "windows = \"llvm@20.1.7\"\n";
     detail::write(root / "mcpp.toml", toml);
 }
 

@@ -76,6 +76,29 @@ inline bool have_program(const std::vector<std::string>& version_argv) {
     return run(version_argv).started();
 }
 
+// Run argv and return its combined stdout+stderr, or nullopt if it could not be
+// started. Goes through a temp file rather than a pipe: a pipe needs
+// platform-specific plumbing on both sides, and the outputs captured here are
+// version banners — a few dozen bytes, once per engine.
+inline std::optional<std::string> run_capture(const std::vector<std::string>& argv,
+                                              const std::filesystem::path& cwd = {}) {
+    std::error_code ec;
+    auto tmp = std::filesystem::temp_directory_path(ec);
+    if (ec) return std::nullopt;
+    tmp /= std::format("bench-capture-{}.txt",
+                       std::chrono::steady_clock::now().time_since_epoch().count());
+
+    const auto r = run(argv, cwd, tmp);
+    if (!r.started()) { std::filesystem::remove(tmp, ec); return std::nullopt; }
+
+    std::ifstream in(tmp, std::ios::binary);
+    std::string text;
+    if (in) text.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::filesystem::remove(tmp, ec);
+    return text;
+}
+
 struct HostFacts {
     std::string   os;
     std::string   arch;
@@ -94,6 +117,9 @@ inline HostFacts host_facts() {
     f.physical_cores = platform_impl::cpu_physical();
     f.heterogeneous  = platform_impl::heterogeneous_cpu();
     f.ram_bytes      = platform_impl::ram_bytes();
+    // Architecture, unlike the OS, is not a partition concern: both partitions
+    // would carry an identical copy of this. It is a property of the build, so
+    // it is detected once, here.
 #if defined(__aarch64__) || defined(_M_ARM64)
     f.arch = "aarch64";
 #elif defined(__x86_64__) || defined(_M_X64)

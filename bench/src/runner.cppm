@@ -20,7 +20,12 @@ struct RunOptions {
     fixture::Shape        shape{};
     int                   jobs{0};
     int                   runs_override{0};   // 0 → per-scenario default
-    bool                  verbose{false};
+
+    // Project mode: measure an EXISTING tree instead of a generated fixture.
+    // This is how mcpp benchmarks itself, and how the suite is pointed at any
+    // real codebase — a synthetic graph cannot reproduce the shape of one.
+    std::filesystem::path project;            // empty → generate a fixture
+    fixture::Targets      project_targets{};  // which files the scenarios perturb
 };
 
 namespace detail {
@@ -67,7 +72,24 @@ public:
     };
 
     Instance materialise(std::string_view engine, Variant variant) const {
-        const auto dir = opt_.work_root / std::format("{}-{}", engine, to_string(variant));
+        // PROJECT MODE. The tree already exists and belongs to someone; nothing
+        // here may create or delete it. In particular the remove_tree below must
+        // never run against it — deleting the user's repository is the one
+        // failure mode this whole function has to make impossible.
+        if (!opt_.project.empty()) {
+            Instance inst;
+            inst.project_dir = opt_.project;
+            inst.build_dir   = opt_.project / "build";   // used by cmake/meson/xmake
+            inst.targets     = opt_.project_targets;
+            return inst;
+        }
+
+        // The engine LABEL can carry a version ("mcpp@2026.8.12.1"); the
+        // directory name must stay predictable and portable, so it is slugged.
+        std::string slug(engine);
+        for (char& c : slug)
+            if (c == '@' || c == '/' || c == '\\' || c == ':' || c == ' ') c = '-';
+        const auto dir = opt_.work_root / std::format("{}-{}", slug, to_string(variant));
         platform::remove_tree(dir);
         std::filesystem::create_directories(dir);
         Instance inst;
@@ -106,6 +128,15 @@ public:
             return cell;
         }
 
+        // A scenario that needs a file nobody named cannot be run. Reporting it
+        // as `skipped` with the reason beats perturbing an arbitrary file, which
+        // would produce a number that looks valid and measures something else.
+        if (const auto missing = unmet_target(inst, scenario); !missing.empty()) {
+            cell.status = Status::Skipped;
+            cell.note   = missing;
+            return cell;
+        }
+
         Job job;
         job.project_dir = inst.project_dir;
         job.build_dir   = inst.build_dir;
@@ -131,6 +162,12 @@ public:
                                       job.log_path.string());
             return cell;
         }
+
+        // edit-body rewrites a source file. In project mode that file belongs to
+        // the user, so its exact bytes are captured first and restored no matter
+        // how this function exits — including on a failed build.
+        const SourceGuard guard(scenario == Scenario::EditBody ? inst.targets.body
+                                                               : std::filesystem::path{});
 
         const int runs = opt_.runs_override > 0 ? opt_.runs_override : default_runs(scenario);
         for (int i = 0; i < runs; ++i) {
@@ -175,6 +212,50 @@ public:
 
 private:
     RunOptions opt_;
+
+    // Restores a file's exact bytes on destruction. Not a convenience: without
+    // it a benchmark run leaves edit markers in the measured repository, and a
+    // failed cell leaves them silently.
+    class SourceGuard {
+    public:
+        explicit SourceGuard(std::filesystem::path file) : file_(std::move(file)) {
+            if (file_.empty()) return;
+            std::ifstream in(file_, std::ios::binary);
+            if (!in) { file_.clear(); return; }
+            saved_.assign((std::istreambuf_iterator<char>(in)),
+                          std::istreambuf_iterator<char>());
+        }
+        ~SourceGuard() {
+            if (file_.empty()) return;
+            std::ofstream out(file_, std::ios::binary | std::ios::trunc);
+            out << saved_;
+        }
+        SourceGuard(const SourceGuard&)            = delete;
+        SourceGuard& operator=(const SourceGuard&) = delete;
+    private:
+        std::filesystem::path file_;
+        std::string           saved_;
+    };
+
+    // Which target a scenario needs, and whether it is present and real.
+    std::string unmet_target(const Instance& inst, Scenario scenario) const {
+        const std::filesystem::path* want = nullptr;
+        std::string_view which;
+        switch (scenario) {
+            case Scenario::TouchHub:  want = &inst.targets.hub;  which = "--hub";  break;
+            case Scenario::TouchLeaf: want = &inst.targets.leaf; which = "--leaf"; break;
+            case Scenario::EditBody:  want = &inst.targets.body; which = "--body"; break;
+            default: return {};
+        }
+        if (want->empty())
+            return std::format("scenario '{}' needs a file to perturb; pass {} <path>",
+                               to_string(scenario), which);
+        std::error_code ec;
+        if (!std::filesystem::exists(*want, ec))
+            return std::format("{} points at a file that does not exist: {}",
+                               which, want->string());
+        return {};
+    }
 
     bool perturb(engines::Engine& engine, const Job& job, const Instance& inst,
                  Scenario scenario, int nonce) const {

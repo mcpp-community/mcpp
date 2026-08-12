@@ -79,6 +79,40 @@ std::expected<StageOutcome, StageError> stage_file(const std::filesystem::path& 
 // unreadable or the sizes differ.
 bool same_content(const std::filesystem::path& a, const std::filesystem::path& b);
 
+// Are two BMIs equivalent for the purpose of "did this module's interface
+// change?" — i.e. identical except for the wall clock GCC stamps into them.
+//
+// WHY THIS EXISTS. The `cxx_module` rule keeps the previous BMI, recompiles,
+// and restores the old file when the new one has the same content, so ninja's
+// restat sees an unchanged output and does NOT rebuild the importers. That
+// mechanism was designed in 2026-05-12 and has NEVER ONCE FIRED, because GCC
+// writes
+//
+//     buildtime: 2026/08/12 02:25:01 UTC
+//     localtime: 2026/08/12 02:25:01 UTC
+//
+// INTO THE BMI CONTENT. Two compilations of identical source a second apart
+// differ by exactly four bytes, so a plain `cmp` always reports "changed".
+// Measured on this repository: touching a module with 46 importers and no
+// content change cost 73.0 s and re-ran 180 edges — indistinguishable from a
+// full rebuild.
+//
+// The earlier design note anticipated only that GCC would rewrite the FILE
+// (mtime churn) and prescribed a content compare as the fix; it did not
+// anticipate that the timestamp is part of the content, which is why the fix
+// as written could not work.
+//
+// Deliberately NOT solved with SOURCE_DATE_EPOCH: that pins the epoch for the
+// whole compilation and so changes what `__DATE__` and `__TIME__` expand to in
+// USER code. Masking the two fields here changes what mcpp considers equal and
+// nothing else.
+//
+// Conservative by construction: if the expected stamps are not found, or the
+// two files disagree about where they are, this falls back to a strict
+// comparison. It can report "different" for BMIs that are equivalent; it must
+// never report "same" for BMIs that are not.
+bool bmi_equivalent(const std::filesystem::path& a, const std::filesystem::path& b);
+
 // Parse a --verify / MCPP_STAGE_VERIFY value. Unknown values fall back to the
 // safe default (Content).
 Verify parse_verify(std::string_view value);
@@ -172,6 +206,76 @@ bool same_content(const std::filesystem::path& a, const std::filesystem::path& b
             return false;
     }
     return true;
+}
+
+namespace {
+
+// GCC writes the stamp as `<prefix>YYYY/MM/DD HH:MM:SS UTC`. Fixed width, so a
+// match can be masked without re-parsing.
+constexpr std::size_t kStampLen = std::string_view("2026/08/12 02:25:01 UTC").size();
+
+bool looks_like_stamp(std::string_view v) {
+    if (v.size() != kStampLen) return false;
+    auto digit = [&](std::size_t i) { return v[i] >= '0' && v[i] <= '9'; };
+    return digit(0) && digit(1) && digit(2) && digit(3) && v[4] == '/'
+        && digit(5) && digit(6) && v[7] == '/'
+        && digit(8) && digit(9) && v[10] == ' '
+        && digit(11) && digit(12) && v[13] == ':'
+        && digit(14) && digit(15) && v[16] == ':'
+        && digit(17) && digit(18) && v.substr(19) == " UTC";
+}
+
+// Byte spans to ignore, in ascending order. Only spans whose payload actually
+// looks like a timestamp are masked — a prefix that happens to appear in some
+// other position is left to compare strictly.
+std::vector<std::pair<std::size_t, std::size_t>> stamp_spans(std::string_view data) {
+    std::vector<std::pair<std::size_t, std::size_t>> spans;
+    for (std::string_view prefix : {"buildtime: ", "localtime: "}) {
+        for (std::size_t at = data.find(prefix); at != std::string_view::npos;
+             at = data.find(prefix, at + 1)) {
+            const auto start = at + prefix.size();
+            if (start + kStampLen > data.size()) continue;
+            if (!looks_like_stamp(data.substr(start, kStampLen))) continue;
+            spans.emplace_back(start, start + kStampLen);
+        }
+    }
+    std::ranges::sort(spans);
+    return spans;
+}
+
+std::optional<std::string> read_all(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return std::nullopt;
+    return std::string((std::istreambuf_iterator<char>(in)),
+                       std::istreambuf_iterator<char>());
+}
+
+} // namespace
+
+bool bmi_equivalent(const std::filesystem::path& a, const std::filesystem::path& b) {
+    auto da = read_all(a);
+    auto db = read_all(b);
+    if (!da || !db) return false;
+    // The stamps are fixed width, so equivalent BMIs always have equal size. A
+    // size difference is a real difference, never a maskable one.
+    if (da->size() != db->size()) return false;
+
+    const auto sa = stamp_spans(*da);
+    const auto sb = stamp_spans(*db);
+    // Disagreement about WHERE the stamps are is itself a structural
+    // difference; fall back to strict equality rather than guessing.
+    if (sa != sb) return *da == *db;
+    if (sa.empty()) return *da == *db;
+
+    std::size_t cursor = 0;
+    for (const auto& [start, end] : sa) {
+        if (start > cursor
+            && std::memcmp(da->data() + cursor, db->data() + cursor, start - cursor) != 0)
+            return false;
+        cursor = end;
+    }
+    return cursor >= da->size()
+        || std::memcmp(da->data() + cursor, db->data() + cursor, da->size() - cursor) == 0;
 }
 
 Verify parse_verify(std::string_view value) {

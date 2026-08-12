@@ -131,7 +131,7 @@ fixtures/synth-<N>x<D>/
 
 第三种变体直接对应上一轮分析的 **F4 / §6.3**:把实现移出接口单元。有了它,"改一行函数体"的代价差异就是**测出来的**,不是推断的。
 
-同时保留 `self` fixture —— 即 mcpp 自身(137 模块),因为真实工程的依赖形状不是合成器能编出来的。
+同时提供 **`--project <dir>` 模式**:直接就地测量一个已存在的工程(mcpp 自身即基础用例),因为真实工程的依赖形状不是合成器能编出来的。该模式下 variant 轴坍缩为 `native`,并且 `edit-body` 会在测量前后**逐字节保存并恢复**被改的源文件 —— 包括构建失败的路径,那正是遗留改动最容易被忽略的时候。
 
 ---
 
@@ -139,13 +139,15 @@ fixtures/synth-<N>x<D>/
 
 | 维度 | 取值 |
 |---|---|
-| engine | mcpp, mcpp-opt(优化后), cmake, xmake, meson, bazel |
+| engine | `mcpp=<binary>`(可给多个,自动按版本标注)、cmake、xmake、meson、bazel |
 | variant | headers, modules, modules-impl |
 | profile | release, debug |
 | scenario | cold, noop, touch-hub, edit-body, touch-leaf |
 | compiler | gcc, clang, msvc(平台可用者) |
 
-**`mcpp` vs `mcpp-opt`**:同一份源码、同一编译器,区别只在是否启用上一轮验证过的优化(BMI 时间戳归一 + BMI 落盘即释放)。这让"优化前后"成为矩阵里的**一个正交维度**,而不是另做一次实验。
+**"优化前后"用两个真实二进制表达,不用模拟。** `--engines mcpp=<旧>,mcpp=<新>` 会注册两个引擎,各自向自己的二进制询问版本并据此标注(`mcpp@2026.8.11.3` / `mcpp@2026.8.12.1`)。
+
+早期设计里有一个 `mcpp-opt` 引擎,靠在构建前后设 `SOURCE_DATE_EPOCH` 来**模拟**优化。已删除:**在 harness 里模拟一个改动,测的是 harness 对该改动的理解**,而且一旦真实实现与之分叉,它会静默地不再跟踪。优化属于 mcpp,基准测的是二进制。
 
 矩阵是笛卡尔积但**不是全跑**:`spec.cppm` 用显式的 include/exclude 规则裁剪,CI 默认跑一个小集合,`workflow_dispatch` 可放开。
 
