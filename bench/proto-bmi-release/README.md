@@ -1,3 +1,15 @@
+> **SUPERSEDED — read `.agents/docs/2026-08-12-cold-build-optimization-plan.md`
+> appendix A instead.** That appendix re-derives the same proposal from direct
+> measurements on mcpp's own 80 s cold build, and one thing it establishes here
+> matters: this prototype's headline number was distorted by the detached child
+> inheriting ninja's pipe (hazard 1 below), so any figure quoted from a run of
+> these scripts is suspect. What survives intact is the hazard list.
+>
+> The corrected evidence: the BMI is byte-identical to the finished one and
+> already usable at **15–39% (median ~22%)** of each compile — verified three
+> ways (size stabilises, `cmp` against the finished file, and a real downstream
+> importer compiles against the snapshot). Projected headroom **80 s → 25–35 s**.
+
 # Prototype: release importers at BMI-flush, not at compiler exit
 
 A throwaway, measurable prototype of the largest optimisation identified in
