@@ -111,10 +111,15 @@ grep -q 'schedule=detach-codegen\|schedule=two-phase\|schedule=none' "$ninja_fil
 # that a second build is a no-op. A schedule whose depfile target is wrong looks
 # exactly like success while recompiling everything — the symptom that cost the
 # most to find — and a no-op is what exposes it.
-before=$(find target -name '*.o' -newer "$TMP/sched.txt" | wc -l)
+# The reference mark is taken AFTER the first build, not from its stdout
+# redirect: that file's mtime is when the shell opened it, which is before the
+# objects exist, so every object counted as "newer" and the comparison measured
+# nothing but timestamp ordering.
+sleep 1
+touch "$TMP/mark"
 MCPP_BMI_SCHEDULE=on "$MCPP" build --release > /dev/null 2>&1
-after=$(find target -name '*.o' -newer "$TMP/sched.txt" | wc -l)
-[ "$after" -eq "$before" ] \
-  || { echo "second build under schedule=on recompiled ($before -> $after objects)"; exit 1; }
+rebuilt=$(find target -name '*.o' -newer "$TMP/mark" | wc -l)
+[ "$rebuilt" -eq 0 ] \
+  || { echo "second build under schedule=on recompiled $rebuilt object(s)"; exit 1; }
 
 echo "split schedule OK"
