@@ -71,6 +71,15 @@ public:
         fixture::Targets      targets;
     };
 
+    // Where child stdout/stderr is collected. Always under the work root, so it
+    // is disposable and never lands in the project being measured.
+    std::filesystem::path log_dir() const {
+        std::error_code ec;
+        auto d = opt_.work_root / "logs";
+        std::filesystem::create_directories(d, ec);
+        return d;
+    }
+
     Instance materialise(std::string_view engine, Variant variant) const {
         // PROJECT MODE. The tree already exists and belongs to someone; nothing
         // here may create or delete it. In particular the remove_tree below must
@@ -140,7 +149,12 @@ public:
         Job job;
         job.project_dir = inst.project_dir;
         job.build_dir   = inst.build_dir;
-        job.log_path    = inst.project_dir / "bench-child.log";
+        // The child log goes in the WORK directory, never inside the measured
+        // tree. In --project mode that tree is the user's repository, and a
+        // harness that drops files into it is one `git add -A` away from
+        // committing its own scratch (which is exactly what happened once).
+        job.log_path    = log_dir() / std::format("{}-{}.log", engine.name(),
+                                                  to_string(scenario));
         job.variant     = variant;
         job.profile     = std::string(profile);
         job.compiler    = std::string(compiler);

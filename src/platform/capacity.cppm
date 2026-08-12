@@ -30,6 +30,7 @@ module;
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <stdlib.h>   // malloc / free — clang does not get these from windows.h
 #elif defined(__APPLE__)
 #include <sys/sysctl.h>
 #include <sys/types.h>

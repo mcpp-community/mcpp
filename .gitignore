@@ -35,4 +35,6 @@ compile_commands.json
 /bench/bench-work/
 bench-report.json
 bench/bench-report.json
+# --project mode writes the measured build's stdout/stderr next to the project
+bench-child.log
 .mcpp.toml.bench-backup
