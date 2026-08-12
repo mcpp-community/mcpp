@@ -1,0 +1,16 @@
+# See MODULE.bazel: this cannot build mcpp today. `import std;` has no bazel
+# equivalent, and bazel will not glob sources from outside its workspace.
+#
+# The shape a working version would take is kept here so the gap is legible:
+#
+#   cc_binary(
+#       name = "mcpp",
+#       srcs = ["src/main.cpp"],
+#       module_interfaces = glob(["src/**/*.cppm"]),
+#       includes = ["src/libs/json"],
+#       copts = ["-std=c++23"],
+#       # ...plus whatever declares `import std;`, which does not exist yet.
+#   )
+#
+# built with:
+#   bazel build //:mcpp --experimental_cpp_modules --features=cpp_modules --force_pic

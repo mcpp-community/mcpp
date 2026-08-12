@@ -35,6 +35,7 @@ struct Options {
     std::filesystem::path out{"bench-report.json"};
     std::filesystem::path analyze;   // profile an existing ninja build dir instead
     std::filesystem::path project;   // measure an existing tree instead of a fixture
+    std::filesystem::path buildfiles;// foreign build descriptions for that tree
     std::filesystem::path hub, leaf, body;   // what the scenarios perturb there
     std::string baseline;                    // engine to normalise the summary against
     bool list{false};
@@ -81,6 +82,8 @@ void usage() {
     std::println("");
     std::println("Measuring a REAL project instead of a generated fixture:");
     std::println("  --project DIR      build this tree as-is (e.g. mcpp itself)");
+    std::println("  --buildfiles DIR   where cmake/xmake read their description from, when the");
+    std::println("                     project does not carry one (bench/projects/<name>/)");
     std::println("  --hub FILE         file with many dependents      (touch-hub)");
     std::println("  --leaf FILE        file with no dependents        (touch-leaf)");
     std::println("  --body FILE        file whose body gets edited    (edit-body)");
@@ -130,6 +133,7 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--list")      { o.list = true; }
         else if (a == "--analyze")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.analyze = *v; }
         else if (a == "--project")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.project = *v; }
+        else if (a == "--buildfiles"){ auto v = value(a); if (!v) return std::unexpected(v.error()); o.buildfiles = *v; }
         else if (a == "--hub")       { auto v = value(a); if (!v) return std::unexpected(v.error()); o.hub  = *v; }
         else if (a == "--leaf")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.leaf = *v; }
         else if (a == "--body")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.body = *v; }
@@ -248,6 +252,7 @@ int main(int argc, char** argv) {
     ro.jobs            = opts->jobs;
     ro.runs_override   = opts->runs;
     ro.compiler        = opts->compiler;
+    ro.buildfiles      = opts->buildfiles;
     ro.project         = opts->project;
     ro.project_targets = bench::fixture::Targets{opts->hub, opts->leaf, opts->body};
     const bench::Runner runner(ro);

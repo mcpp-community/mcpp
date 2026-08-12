@@ -23,12 +23,14 @@ public:
     platform::RunResult configure(const Job& job) const override {
         std::vector<std::string> argv{
             "xmake", "f", "-y",
+            // -P names the directory holding xmake.lua. For a fixture that is
+            // the tree itself; for a real project the description lives beside
+            // the bench and reaches back into the tree.
+            "-P", job.buildfile_dir.string(),
             "-m", job.profile == "debug" ? "debug" : "release",
             "-o", job.build_dir.string(),
         };
         if (job.compiler == "clang") argv.push_back("--toolchain=llvm");
-        // xmake is directory-oriented: it reads xmake.lua from the cwd, so the
-        // project dir is passed as cwd rather than as an argument.
         //
         // The driver is pinned through CXX so every engine compiles with the
         // SAME binary; without it xmake resolves whatever `g++` means on this
@@ -41,7 +43,7 @@ public:
     }
 
     platform::RunResult build(const Job& job) const override {
-        std::vector<std::string> argv{"xmake", "build"};
+        std::vector<std::string> argv{"xmake", "build", "-P", job.buildfile_dir.string()};
         if (job.jobs > 0) argv.push_back(std::format("-j{}", job.jobs));
         return platform::run(argv, job.project_dir, job.log_path);
     }

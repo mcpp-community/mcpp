@@ -1,5 +1,9 @@
 -- xmake build description for mcpp — a like-for-like counterpart to mcpp.toml.
 --
+-- Lives under bench/projects/mcpp/ rather than at the repository root: mcpp is
+-- built by mcpp, and a second build description at the root is something a
+-- contributor has to learn to ignore. It is used only by the benchmark.
+--
 -- Why this file exists: it is the control arm of the build-engine benchmark in
 -- tools/bench/. mcpp builds itself; this makes xmake build the exact same 137
 -- module interface units + src/main.cpp with the exact same compiler binary, so
@@ -12,9 +16,9 @@
 --   3. same source set        -- src/**.cppm + src/main.cpp + the cmdline dependency
 --   4. same link output kind  -- one binary, -static-libstdc++
 --
--- Usage (benchmark):
---   xmake f -y -m release --toolchain=mcpp-gcc
---   xmake build -j32
+-- Usage (benchmark), from the repository root:
+--   xmake f -P bench/projects/mcpp -y -m release --toolchain=mcpp-gcc
+--   xmake build -P bench/projects/mcpp -j32
 -- Usage (plain host toolchain, no pinning):
 --   xmake f -y -m release --pin_payload=n && xmake build
 
@@ -31,6 +35,10 @@ add_rules("mode.debug", "mode.release")
 -- full triple (compiler + binutils + sysroot) so xmake drives an identical
 -- process tree.
 -- ---------------------------------------------------------------------------
+-- The tree this file builds. os.scriptdir() is bench/projects/mcpp, so the
+-- repository root is three levels up; deriving it from the SCRIPT rather than
+-- from the working directory keeps `xmake -P` working from anywhere.
+local MCPP_ROOT   = path.normalize(path.join(os.scriptdir(), "..", "..", ".."))
 local MCPP_HOME   = os.getenv("MCPP_HOME") or path.join(os.getenv("HOME"), ".mcpp")
 local XPKGS       = path.join(MCPP_HOME, "registry", "data", "xpkgs")
 
@@ -81,7 +89,7 @@ if GCC_DIR and BINUTILS_DIR then
             -- Narrow the compiler to the version mcpp.toml pins, so both arms of
             -- the benchmark run the same binary by construction rather than by
             -- luck of directory ordering.
-            local manifest = path.join(os.projectdir(), "mcpp.toml")
+            local manifest = path.join(MCPP_ROOT, "mcpp.toml")
             if os.isfile(manifest) then
                 local in_toolchain = false
                 for _, line in ipairs((io.readfile(manifest) or ""):split("\n", {plain = true})) do
@@ -127,12 +135,12 @@ target("mcpp")
 
     -- Source set == mcpp.toml's inferred glob src/**/*.{cppm,cpp}. mcpp infers
     -- kind=bin from src/main.cpp; xmake needs it spelled out.
-    add_files("src/**.cppm")
-    add_files("src/main.cpp")
+    add_files(path.join(MCPP_ROOT, "src/**.cppm"))
+    add_files(path.join(MCPP_ROOT, "src/main.cpp"))
 
     -- mcpp.toml: include_dirs = ["src/libs/json"] — src/libs/json.cppm reaches
     -- for <json.hpp> from its global module fragment.
-    add_includedirs("src/libs/json")
+    add_includedirs(path.join(MCPP_ROOT, "src/libs/json"))
 
     -- mcpp.toml: [dependencies] mcpplibs.cmdline = "0.0.1".
     -- mcpp stages prebuilt objects for this out of its global build cache; xmake

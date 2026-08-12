@@ -24,6 +24,10 @@ struct RunOptions {
     // Project mode: measure an EXISTING tree instead of a generated fixture.
     // This is how mcpp benchmarks itself, and how the suite is pointed at any
     // real codebase — a synthetic graph cannot reproduce the shape of one.
+    // One directory holding the FOREIGN build descriptions for --project mode
+    // (CMakeLists.txt, xmake.lua, ...). Empty → each engine reads its
+    // description from the project tree, which is what a generated fixture does.
+    std::filesystem::path buildfiles;
     std::filesystem::path project;            // empty → generate a fixture
     fixture::Targets      project_targets{};  // which files the scenarios perturb
     // The requested compiler, so the generated mcpp manifest can pin the same
@@ -197,6 +201,9 @@ public:
 
         Job job;
         job.project_dir = inst.project_dir;
+        // mcpp reads its own manifest from the tree and ignores this; cmake and
+        // xmake are told to look here for their description.
+        job.buildfile_dir = opt_.buildfiles.empty() ? inst.project_dir : opt_.buildfiles;
         job.build_dir   = inst.build_dir;
         // The child log goes in the WORK directory, never inside the measured
         // tree. In --project mode that tree is the user's repository, and a

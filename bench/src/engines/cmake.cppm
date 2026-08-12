@@ -32,7 +32,7 @@ public:
 
     platform::RunResult configure(const Job& job) const override {
         std::vector<std::string> argv{
-            "cmake", "-S", job.project_dir.string(), "-B", job.build_dir.string(),
+            "cmake", "-S", job.buildfile_dir.string(), "-B", job.build_dir.string(),
             "-G", "Ninja",
             std::format("-DCMAKE_BUILD_TYPE={}", job.profile == "debug" ? "Debug" : "Release"),
         };

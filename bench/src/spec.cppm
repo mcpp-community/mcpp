@@ -57,6 +57,16 @@ constexpr std::optional<Scenario> scenario_from(std::string_view s) {
 // Everything an engine needs to act, and nothing about how it is timed.
 struct Job {
     std::filesystem::path project_dir;   // the fixture instance (holds the sources)
+    // Where THIS engine's build description lives. Equal to project_dir for a
+    // generated fixture, where the harness emits one file per engine into the
+    // tree it just created.
+    //
+    // For a REAL project they separate. mcpp is built by mcpp, so a CMakeLists
+    // and an xmake.lua at its root are files every contributor has to learn to
+    // ignore; they live in bench/projects/<name>/ instead and reach back into
+    // the tree. The alternative — copying them in for the duration of a run —
+    // writes into the user's repository, which this harness refuses to do.
+    std::filesystem::path buildfile_dir;
     std::filesystem::path build_dir;     // where this engine may write
     std::filesystem::path log_path;      // child stdout+stderr goes here
     Variant               variant{Variant::Modules};
