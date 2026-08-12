@@ -360,6 +360,10 @@ $mcpp bmi-equal "$bmi_out" "$bmi_out.bak"
 
 正确性由单测从**两侧**钉死(`tests/unit/test_bmi_equivalent.cpp`):真实接口变更仍完整级联。
 
+> **⚠️ 目前仅 POSIX。** `ninja_backend` 的 Windows 分支写着 *"skip BMI restat optimization (requires POSIX shell)"* —— 整套 backup/compare/restore 是用 shell 的 `if` / `cp` / `cmp` 拼的,cmd.exe 上没有对应写法,所以 **Windows 一直没有任何级联抑制**。
+>
+> 这个限制现在可以解除了:`bmi-equal` 已经是 mcpp 的子命令,把剩下的 backup/restore 也收进一个 `mcpp bmi-guard --bmi <path> -- <compile cmd>` 里,整个序列就变成**一个进程、零 shell**,两个平台共用同一条规则。这是本条优化的直接后续,不需要新的设计。
+
 **验证方式**:`bench/run.sh --scenario touch-hub`,并**必须同时验证**接口变更场景仍然级联——只测 touch 分不清"级联被正确抑制"和"级联坏了"。
 
 ### 6.2 【L1·最大收益】BMI 落盘即释放下游
