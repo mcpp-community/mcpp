@@ -55,21 +55,27 @@ units, and compiles them. **It does not link**, and the reason is worth having
 written down, because it is the honest limit of a hand-written foreign build
 description rather than a gap in effort:
 
-The dependencies themselves describe fine: every header they need is unpacked
-in mcpp's registry, and `CMakeLists.txt` finds all of them **transitively** —
-`mbedtls` arrives through mcpplibs `tinyhttps`, `lua` through `capi.lua`.
+**82 of 83 edges: every translation unit compiles; only the link fails.**
 
-The blocker is one level past that, and it is specific:
+Two things looked like boundaries and were not:
 
-```
-xpkg-executor.cppm:5  fatal error: unknown compiled module interface: no such module
-                      [mcpplibs.xpkg.lua_stdlib]
-```
+* **Transitive headers.** All of them are unpacked in mcpp's registry and
+  `CMakeLists.txt` finds them — `mbedtls` via mcpplibs `tinyhttps`, `lua` via
+  `capi.lua`.
+* **A generated module.** `mcpplibs.xpkg.lua_stdlib` is not checked in; libxpkg's
+  `build.mcpp` produces it. But all it does is embed eleven `.lua` files as
+  strings, so [`embed_lua_stdlib.cmake`](embed_lua_stdlib.cmake) reproduces it.
+  *"mcpp runs a build program"* is not by itself a boundary.
 
-`mcpplibs.xpkg.lua_stdlib` **is not a checked-in file**. That package generates
-it at build time with a `build.mcpp` program — mcpp's build-program protocol. No
-foreign build system can produce it without implementing that protocol, so this
-is not a gap in the description; it is the boundary of what a description can be.
+What is left is ordinary work rather than a wall: `ftxui`, `libarchive`, `lua`
+and `mbedtls` arrive as **source** and mcpp compiles them, so the link asks for
+symbols nobody built here (`undefined reference to archive_entry_pathname`, …).
+Each ships its own CMakeLists, so `add_subdirectory` finishes the arm.
+
+⚠️ The copied module list in the generator **already drifted once**: a first
+regex caught ten of eleven entries, and the failure surfaced three files away as
+`error: 'base64_lua' is not a member of ...detail`. The generator now fails on a
+missing `.lua` rather than trusting the list.
 
 **So the xlings arm compares mcpp against mcpp** (two releases, or two
 schedules). That is what a control target is for: it answers *"does this engine
