@@ -225,6 +225,13 @@ bool looks_like_stamp(std::string_view v) {
         && digit(17) && digit(18) && v.substr(19) == " UTC";
 }
 
+// GCC writes exactly one `buildtime:` and one `localtime:` into a BMI header —
+// verified across BMIs from 10 KiB to 645 KiB, always 2. Anything beyond that
+// came from somewhere else (a string literal in user code that happens to look
+// like a stamp), and masking it would hide a REAL difference. Finding more than
+// this many makes the comparison fall back to strict equality.
+constexpr std::size_t kMaxStampSpans = 2;
+
 // Byte spans to ignore, in ascending order. Only spans whose payload actually
 // looks like a timestamp are masked — a prefix that happens to appear in some
 // other position is left to compare strictly.
@@ -265,7 +272,7 @@ bool bmi_equivalent(const std::filesystem::path& a, const std::filesystem::path&
     // Disagreement about WHERE the stamps are is itself a structural
     // difference; fall back to strict equality rather than guessing.
     if (sa != sb) return *da == *db;
-    if (sa.empty()) return *da == *db;
+    if (sa.empty() || sa.size() > kMaxStampSpans) return *da == *db;
 
     std::size_t cursor = 0;
     for (const auto& [start, end] : sa) {

@@ -105,3 +105,29 @@ TEST(BmiEquivalent, MissingFileIsNotEquivalent) {
     auto a = write(d / "e1.gcm", bmi_like("2026/08/12 02:25:01 UTC"));
     EXPECT_FALSE(mcpp::build::stage::bmi_equivalent(a, d / "does-not-exist.gcm"));
 }
+
+// A real BMI carries exactly two stamps — one `buildtime:`, one `localtime:` —
+// checked across BMIs from 10 KiB to 645 KiB. A third one did not come from
+// GCC's header, so it is not mcpp's to ignore: masking a timestamp-shaped
+// string literal in user code would hide a change the importers must see.
+//
+// Asserted from BOTH sides. Checking only that the extra span is not masked
+// would also pass an implementation that masks nothing at all, which is the
+// bug this whole function exists to fix.
+TEST(BmiEquivalent, MoreStampsThanGccEmitsFallsBackToStrictCompare) {
+    const auto d = tmpdir();
+    // Two stamps: masked, so the differing clock does not count.
+    auto two_a = write(d / "t1.gcm", bmi_like("2026/08/12 02:25:01 UTC"));
+    auto two_b = write(d / "t2.gcm", bmi_like("2026/08/12 02:25:09 UTC"));
+    EXPECT_TRUE(mcpp::build::stage::bmi_equivalent(two_a, two_b));
+
+    // The same two, plus a third stamp-shaped string in the payload that
+    // differs. It must NOT be masked, so the two files are different.
+    auto three_a = write(d / "u1.gcm",
+                         bmi_like("2026/08/12 02:25:01 UTC",
+                                  "buildtime: 2020/01/01 00:00:00 UTC"));
+    auto three_b = write(d / "u2.gcm",
+                         bmi_like("2026/08/12 02:25:09 UTC",
+                                  "buildtime: 2020/01/02 00:00:00 UTC"));
+    EXPECT_FALSE(mcpp::build::stage::bmi_equivalent(three_a, three_b));
+}

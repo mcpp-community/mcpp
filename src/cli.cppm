@@ -106,6 +106,11 @@ int run(int argc, char** argv) {
     // the App below so they show up in --help and pass schema checks.
     for (int i = 1; i < argc; ++i) {
         std::string_view a = argv[i];
+        // Everything after a bare `--` belongs to the program being run or the
+        // test binary being invoked, not to mcpp. Without this, `mcpp run -- -j 4`
+        // reads the child's flag as mcpp's own concurrency setting — `-j` is a
+        // common enough flag that this is a matter of when, not whether.
+        if (a == "--") break;
         if      (a == "--quiet" || a == "-q") mcpp::ui::set_quiet(true);
         else if (a == "--no-color")           mcpp::ui::disable_color();
         else if (a == "--verbose" || a == "-v") mcpp::log::set_verbose(true);
