@@ -2,7 +2,7 @@
 //
 //   bench [--engines a,b] [--variants headers,modules,modules-impl]
 //         [--scenarios cold,noop,...] [--profile release|debug]
-//         [--compiler default|gcc|clang] [--units N] [--fanin N] [--weight N]
+//         [--compiler default|gcc|clang] [--preset NAME] [--units N] [--fanin N] [--weight N]
 //         [--jobs N] [--runs N] [--work DIR] [--out FILE] [--list]
 //
 // Writes a protocol-versioned JSON report to --out (default bench-report.json)
@@ -61,9 +61,14 @@ void usage() {
     std::println("  --scenarios LIST   cold,noop,touch-hub,touch-leaf,edit-body,edit-comment");
     std::println("  --profile NAME     release | debug                         (default: release)");
     std::println("  --compiler NAME    default | gcc | clang                   (default: default)");
-    std::println("  --units N          fixture translation units               (default: 40)");
+    std::println("  --preset NAME      smoke | standard | large  — a NAMED size, so two runs on");
+    std::println("                     two machines compare. standard is the default shape.");
+    std::println("                       smoke     4 units  / fan-in 2 / weight 1   (~2s, CI)");
+    std::println("                       standard 20 units  / fan-in 3 / weight 4   (~18s cold, mcpp)");
+    std::println("                       large    60 units  / fan-in 3 / weight 6");
+    std::println("  --units N          fixture translation units               (default: 20)");
     std::println("  --fanin N          dependencies per unit                   (default: 3)");
-    std::println("  --weight N         template instantiations per unit        (default: 6)");
+    std::println("  --weight N         distinct template blocks per unit       (default: 4)");
     std::println("  --jobs N           parallelism handed to each engine       (default: engine's)");
     std::println("  --runs N           repetitions per cell                    (default: per scenario)");
     std::println("  --work DIR         scratch directory                       (default: bench-work)");
@@ -105,6 +110,18 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--compiler")  { auto v = value(a); if (!v) return std::unexpected(v.error()); o.compiler = *v; }
         else if (a == "--work")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.work = *v; }
         else if (a == "--out")       { auto v = value(a); if (!v) return std::unexpected(v.error()); o.out = *v; }
+        // Presets come FIRST so an explicit --units/--weight after one still
+        // wins. A benchmark whose size is a free-form pair of numbers cannot be
+        // compared between two people who ran it; a named size can.
+        else if (a == "--preset") {
+            if (i + 1 >= argc) return std::unexpected(std::string("--preset needs a value"));
+            const std::string_view v = argv[++i];
+            if      (v == "smoke")    o.shape = {4, 2, 1};
+            else if (v == "standard") o.shape = {20, 3, 4};
+            else if (v == "large")    o.shape = {60, 3, 6};
+            else return std::unexpected(std::format(
+                "unknown preset '{}' (smoke | standard | large)", v));
+        }
         else if (a == "--units")     { if (auto e = take_int(a, o.shape.units))  return std::unexpected(*e); }
         else if (a == "--fanin")     { if (auto e = take_int(a, o.shape.fanin))  return std::unexpected(*e); }
         else if (a == "--weight")    { if (auto e = take_int(a, o.shape.weight)) return std::unexpected(*e); }

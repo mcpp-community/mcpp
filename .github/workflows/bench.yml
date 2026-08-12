@@ -31,10 +31,14 @@ on:
         # ever runs — `touch-leaf` was defined, documented and advertised, and
         # had never appeared in a single result file.
         default: 'cold,noop,touch-hub,touch-leaf,edit-body,edit-comment'
-      units:
-        description: 'fixture translation units'
+      preset:
+        description: 'named fixture size: smoke | standard | large (overridden by units/fanin/weight below)'
         required: false
-        default: '40'
+        default: 'standard'
+      units:
+        description: 'fixture translation units (0 = use the preset)'
+        required: false
+        default: '0'
       fanin:
         description: 'dependencies per unit (controls graph depth)'
         required: false
@@ -122,19 +126,26 @@ jobs:
 
       - name: Report engine availability
         shell: bash
-        run: "$BENCH" --list
+        run: |
+          "$BENCH" --list
 
       - name: Run benchmark
         shell: bash
         run: |
           set -euo pipefail
+          # The preset names the size; units/fanin override it only when set to a
+          # positive number. Passing raw numbers unconditionally would make every
+          # run's size an accident of this file rather than a named, comparable
+          # workload — and --preset must come first so the overrides still win.
+          args=( --preset "${{ inputs.preset }}" )
+          [ "${{ inputs.units }}" -gt 0 ] 2>/dev/null && args+=( --units "${{ inputs.units }}" )
+          [ "${{ inputs.fanin }}" -gt 0 ] 2>/dev/null && args+=( --fanin "${{ inputs.fanin }}" )
           "$BENCH" \
             --engines   '${{ inputs.engines }}' \
             --variants  '${{ inputs.variants }}' \
             --scenarios '${{ inputs.scenarios }}' \
             --profile   '${{ inputs.profile }}' \
-            --units     '${{ inputs.units }}' \
-            --fanin     '${{ inputs.fanin }}' \
+            "${args[@]}" \
             --runs      '${{ inputs.runs }}' \
             --work      "$RUNNER_TEMP/bench-work" \
             --out       "bench-${{ matrix.name }}.json"

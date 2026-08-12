@@ -52,8 +52,10 @@ dump_child_logs() {
     done
 }
 
+# --preset names the size instead of spelling it out, which is also the only
+# place the preset code path gets exercised.
 "$BENCH" --engines "mcpp=$MCPP" --variants modules --scenarios cold,noop \
-         --units 4 --fanin 2 --weight 2 --runs 1 \
+         --preset smoke --runs 1 \
          --work "$TMP/work" --out "$TMP/report.json" > "$TMP/stdout.txt" \
   || { echo "harness exited non-zero"; dump_child_logs; exit 1; }
 
@@ -121,16 +123,21 @@ fi
 #    used to resolve against the fixture and fail to spawn — reported per cell as
 #    `exited -1` across the whole matrix, with an empty log to explain it.
 #
-#    The test runs from a DIFFERENT directory than the binary lives in, because a
-#    harness that only ever ran where the binary sits would pass this either way.
-#    The binary is REFERENCED where it is, never copied: mcpp locates its payloads
-#    relative to its own installation, so a copy in a scratch dir would fail for a
-#    reason that has nothing to do with the path handling under test.
-mkdir -p "$TMP/elsewhere"
-REL=$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' \
-        "$MCPP" "$TMP/elsewhere")
-( cd "$TMP/elsewhere" \
-  && "$BENCH" --engines "mcpp=$REL" --variants modules --scenarios cold \
+#    The run happens from the binary's OWN directory, with the fixture under
+#    $TMP: that is all the bug needs (cwd at launch != the tree the child is
+#    later run in) and it is expressible everywhere. Deriving a relative path
+#    between two arbitrary directories is not — on Windows `$MCPP` and `$TMP`
+#    routinely sit on different drives (`path is on mount 'D:', start on mount
+#    'C:'`), and on macOS `mktemp -d` returns `/var/folders/...` while the
+#    process's real cwd is `/private/var/folders/...`, one level deeper.
+#
+#    The binary is REFERENCED where it is, never copied: mcpp locates its
+#    payloads relative to its own installation, so a copy in a scratch dir would
+#    fail for a reason that has nothing to do with the path handling under test.
+BINDIR=$(dirname "$MCPP")
+BINNAME=$(basename "$MCPP")
+( cd "$BINDIR" \
+  && "$BENCH" --engines "mcpp=./$BINNAME" --variants modules --scenarios cold \
               --units 3 --fanin 1 --weight 1 --runs 1 \
               --work "$TMP/w3" --out "$TMP/r3.json" > "$TMP/stdout3.txt" ) \
   || { echo "harness exited non-zero on a relative engine path"; cat "$TMP/stdout3.txt"; exit 1; }

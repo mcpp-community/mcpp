@@ -41,12 +41,63 @@ And, orthogonally, **the source form**: the same project emitted three ways.
 | `modules` | `unit_k.cppm` declares **and** defines | what most module code looks like |
 | `modules-impl` | `unit_k.cppm` declares, `unit_k_impl.cpp` defines | does splitting implementation out of the interface stop edit cascades? |
 
-`modules-impl` exists because of a measured result: on **both** GCC 16.1 and
-Clang 22.1 a module interface unit's BMI carries function bodies, so editing any
-body changes the BMI and cascades to every importer. No compiler flag fixes it
-(`-fmodules-reduced-bmi` was measured and does not). Moving bodies into
-implementation units is the only available fix, and this variant is how that
-claim gets a number instead of an argument.
+`modules-impl` gives the "move bodies out of interface units" advice a number.
+What that number is turns out to depend on the compiler, and an earlier version
+of this paragraph asserted the **opposite** of the measurement:
+
+* GCC 16.1 does **not** put the body of an exported non-template function into
+  the BMI. Editing such a body changes the object file and leaves the BMI
+  byte-identical apart from its embedded timestamps.
+* So the cascade other engines pay for that edit is avoidable, and the engines
+  split by their *decision rule*: compare the BMI's **content** (mcpp, 0.3 s) or
+  trust its **mtime** (cmake and xmake, ~10 s).
+* Templates and inline functions in an interface unit **do** change the BMI. The
+  advice survives; its justification is narrower than it was written to be.
+
+Establishing this needs a control — compile the *same* source twice and diff the
+BMIs. The differing bytes land at the same offsets either way, inside
+`buildtime:`/`localtime:`. Without that control the timestamp reads as a content
+change and the conclusion inverts.
+
+### 1a. The workload must actually be the workload
+
+A size knob that does not move the cost is worse than no knob: it makes a
+benchmark look tunable while it measures something else. The first version of
+this fixture failed exactly there.
+
+| | cost per unit (gcc 16.1, x86_64) |
+|---|---|
+| empty module | 0.17 s |
+| **old fixture unit, `weight 6`** | **0.23 s** — 74% of it compiler startup |
+| old fixture unit, `weight 40` | 0.28 s — a 6.7x knob bought 20% |
+| one unit with a realistic global module fragment | 0.97 s |
+| **mcpp's own units** (57k lines / 139 units) | **0.57 s** |
+
+The old `weight` emitted O(weight²) instantiations of one trivial `constexpr`
+recursion — a few hundred at weight 40, which a compiler does in microseconds.
+Unit *count* scaled cost linearly at 0.088 s each; `weight` did not scale it at
+all. **The suite was largely measuring `g++` starting up.**
+
+The workload is now built from what actually costs time in real C++: standard
+library headers, plus instantiation over **distinct types** so blocks cannot
+share instantiations. Cost is `0.38 s + 0.066 s × weight`, and the knob is
+verified to move: at 20 units, `weight` 0 / 4 / 12 gives 4.7 s / 18.0 s / 31.4 s
+cold.
+
+**Rule.** Any future knob must come with a measured sweep showing it changes
+cost, in this file. A knob without one is assumed inert.
+
+### 1b. Named sizes
+
+A benchmark whose size is a free-form triple of numbers cannot be compared
+between two people. `--preset` names it, and the default shape **is** `standard`
+so that "no flags" and `--preset standard` cannot mean different things.
+
+| preset | units | fan-in | weight | mcpp cold (gcc, modules) |
+|---|---|---|---|---|
+| `smoke` | 4 | 2 | 1 | ~2 s — CI and the e2e test, not for publication |
+| `standard` | 20 | 3 | 4 | ~18 s — what published results use |
+| `large` | 60 | 3 | 6 | minutes |
 
 ---
 
@@ -162,6 +213,64 @@ Two details that are easy to get wrong and change the answer:
   `<work>/logs/<engine>-<scenario>.log`. A mixed stream cannot be parsed — and
   the log lives under the WORK root, never inside the measured tree, so a
   `--project` run cannot drop scratch into someone's repository.
+
+### 4a. Validity rules — when a cell must NOT be compared
+
+Every result file carries `median_s`, `min_s`, `max_s` and every raw `sample`.
+Two rules decide whether a number means anything, and both are computable from
+those fields alone — no trust in the harness required.
+
+**R1 — resolution.** Each engine's `noop` row for the same variant is its floor:
+what it costs to ask "is anything out of date?" before any work happens. A cell
+within **2x of its own engine's `noop`** is measuring process startup and
+bookkeeping, not building, and must not be read as a build comparison.
+
+> This is why the `headers` rows read the way they do at small sizes. With the
+> old fixture, `cmake` `noop` was 0.33 s and `cmake` `edit-body` was 0.79 s —
+> 2.4x, right at the edge. The three fastest engines sat inside a 0.15 s band
+> that is *entirely* startup. Those cells were never a ranking.
+
+**R2 — dispersion.** If `(max_s − min_s) / median_s > 0.20`, the cell is noisy
+and only order-of-magnitude claims survive it. Report it, do not silently
+re-run: a cell that needs re-running to look stable is a cell whose number
+depends on the machine's mood.
+
+Neither rule is applied automatically. Automatic suppression hides data; the
+rules are stated so a reader applies them, and so a table that violates them is
+visibly wrong rather than quietly wrong.
+
+### 4b. What this suite deliberately does not do
+
+* **No CPU pinning, no governor forcing, no `nice`.** Developers do not build
+  that way. The cost is variance, which R2 exposes rather than hides.
+* **No cache dropping.** A cold page cache is not a situation anyone builds in,
+  and it adds variance unrelated to the engine.
+* **No engine-specific tuning.** Each engine gets the same standard, the same
+  sources, the same compiler binary, the same optimisation level, and whatever
+  its own documentation says is the normal way to build. Tuning one engine and
+  not the others is how build-system benchmarks usually go wrong.
+* **No confidence intervals.** Run counts are small by necessity; a computed
+  interval would imply rigour that is not there. Medians with min/max and the
+  raw samples are what the data supports.
+
+### 4c. Practices this follows, and what it is not
+
+Adopted, with the source of the practice:
+
+| practice | from | here |
+|---|---|---|
+| full disclosure — host, tool versions, exact command, all flags | SPEC's run rules | §11 + every engine's version recorded by the engine itself |
+| no benchmark-specific tuning | SPEC's run rules | §4b |
+| warm-up run excluded from the timing | hyperfine, Google Benchmark | one untimed seed build per cell |
+| report dispersion, not just a central value | hyperfine | `min_s`/`max_s`/`samples` + R2 |
+| distinguish "cannot run" from "ran and failed" | — | `unavailable` vs `failed`, both requiring a reason |
+| a versioned, machine-readable result format | — | `protocol_version` |
+
+**What this is not.** It is not an audited or certified benchmark, there is no
+reviewing body, and the numbers are single-host. Reproducing a published table
+requires the same preset, the same engine versions and a comparable machine —
+all of which the result file states, which is the point. Treat cross-machine
+comparison of absolute seconds as invalid; compare **ratios within one table**.
 
 ---
 
