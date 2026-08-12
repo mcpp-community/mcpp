@@ -55,19 +55,21 @@ units, and compiles them. **It does not link**, and the reason is worth having
 written down, because it is the honest limit of a hand-written foreign build
 description rather than a gap in effort:
 
-xlings declares **6 direct dependencies**. Four ship source (mcpplibs
-`cmdline` / `xpkg` / `tinyhttps` / `capi.lua`), two ship source trees that mcpp
-builds (`ftxui`, `libarchive`). Wiring the four in surfaced *their*
-dependencies:
+The dependencies themselves describe fine: every header they need is unpacked
+in mcpp's registry, and `CMakeLists.txt` finds all of them **transitively** —
+`mbedtls` arrives through mcpplibs `tinyhttps`, `lua` through `capi.lua`.
+
+The blocker is one level past that, and it is specific:
 
 ```
-tinyhttps/src/tls.cppm:3     fatal error: mbedtls/ssl.h: No such file or directory
-capi.lua/.../lua_headers.h   fatal error: lua.h: No such file or directory
+xpkg-executor.cppm:5  fatal error: unknown compiled module interface: no such module
+                      [mcpplibs.xpkg.lua_stdlib]
 ```
 
-Following that graph to a link means reimplementing mcpp's package manager
-inside a CMakeLists — and a hand-written copy of it is stale on the first
-upstream change, silently.
+`mcpplibs.xpkg.lua_stdlib` **is not a checked-in file**. That package generates
+it at build time with a `build.mcpp` program — mcpp's build-program protocol. No
+foreign build system can produce it without implementing that protocol, so this
+is not a gap in the description; it is the boundary of what a description can be.
 
 **So the xlings arm compares mcpp against mcpp** (two releases, or two
 schedules). That is what a control target is for: it answers *"does this engine

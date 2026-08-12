@@ -23,19 +23,20 @@
 #
 # ⚠️ STATUS: CONFIGURES AND COMPILES xlings' OWN 110 UNITS; DOES NOT LINK.
 #
-# The blocker is not modules — it is dependency resolution, and it is worth
-# stating because it is the honest limit of a hand-written foreign description:
+# The dependencies themselves describe fine — every header one of them needs is
+# unpacked in mcpp's registry and the list below finds all of them, transitively
+# (mbedtls arrives via mcpplibs tinyhttps, lua via capi.lua).
 #
-#   xlings declares 6 direct dependencies. Four ship source (mcpplibs cmdline /
-#   xpkg / tinyhttps / capi.lua) and two ship source trees that mcpp builds
-#   (ftxui, libarchive). Wiring those four in surfaced THEIR dependencies:
+# The blocker is one level past that, and it is specific:
 #
-#     tinyhttps/src/tls.cppm:3    fatal error: mbedtls/ssl.h: No such file
-#     capi.lua/.../lua_headers.h  fatal error: lua.h: No such file
+#     xpkg-executor.cppm:5  fatal error: unknown compiled module interface:
+#                           no such module          [mcpplibs.xpkg.lua_stdlib]
 #
-#   Following that graph to a link means reimplementing mcpp's package manager
-#   inside a CMakeLists — and a hand-written version of it is stale on the first
-#   upstream change, silently.
+# `mcpplibs.xpkg.lua_stdlib` is not a checked-in file. It is GENERATED at build
+# time by that package's `build.mcpp` program — mcpp's build-program protocol.
+# No foreign build system can produce it without implementing that protocol, so
+# this is not a gap in the description; it is the boundary of what a description
+# can be.
 #
 # So the xlings arm compares **mcpp against mcpp** (releases, schedules), which
 # is what a control target is for: it answers "does this engine change hold on a
@@ -160,29 +161,36 @@ xlings_add_source_dep(mcpplibs-x-xpkg      0.0.57)
 xlings_add_source_dep(mcpplibs-x-tinyhttps 0.2.9)
 xlings_add_source_dep(mcpplibs.capi-x-lua  0.0.3)
 
-# ftxui and libarchive arrive as SOURCE trees, unpacked one level below the
-# version directory (`compat-x-ftxui/6.1.9/FTXUI-6.1.9/include`,
-# `compat-x-libarchive/3.8.7/libarchive-3.8.7/libarchive`) — not as prebuilt
-# libraries. Globbing `<ver>/include` finds nothing and the first importer dies
-# with `fatal error: ftxui/component/event.hpp: No such file or directory`.
+# Header-providing packages.
 #
-# ⚠️ THIS ARM IS INCOMPLETE, and that is stated rather than papered over: mcpp
-# BUILDS these two from source through its own package machinery, and
-# reproducing that here means compiling ftxui and libarchive with cmake as well.
-# Until that is done, this description configures and compiles xlings' own units
-# but cannot LINK. The headers are wired so the compile phase — which is what
-# the module-graph benchmark measures — is comparable.
-foreach(pkg IN ITEMS compat-x-ftxui compat-x-libarchive)
-  file(GLOB pkgdirs "${MCPP_XPKGS}/${pkg}/*")
-  foreach(pkgdir IN LISTS pkgdirs)
-    file(GLOB inner "${pkgdir}/*")
+# Each arrives as a SOURCE tree unpacked one level below the version directory —
+# `compat-x-ftxui/6.1.9/FTXUI-6.1.9/include`,
+# `compat-x-lua/5.4.7/lua-5.4.7/src` — so globbing `<ver>/include` finds nothing
+# and the failure surfaces on the first importer rather than on the glob.
+#
+# The list is TRANSITIVE, and it is written out rather than discovered because
+# the discovery is what mcpp's package manager does: xlings names 6 direct
+# dependencies, and wiring the four source ones in surfaced two more
+# (`mbedtls/ssl.h` for tinyhttps, `lua.h` for capi.lua). Naming them keeps this
+# description honest about what it is — a hand-maintained copy of a resolved
+# dependency set, which is exactly why bench/projects/ carries a description
+# only for trees this repository can keep correct.
+set(XLINGS_HEADER_PKGS
+    compat-x-ftxui        # ftxui/component/event.hpp
+    compat-x-libarchive   # archive.h
+    compat-x-mbedtls      # mbedtls/ssl.h        (via mcpplibs tinyhttps)
+    compat-x-lua)         # lua.h                (via mcpplibs capi.lua)
+
+foreach(pkg IN LISTS XLINGS_HEADER_PKGS)
+  file(GLOB pkgvers "${MCPP_XPKGS}/${pkg}/*")
+  foreach(pkgver IN LISTS pkgvers)
+    file(GLOB inner "${pkgver}/*")
     foreach(d IN LISTS inner)
-      if(IS_DIRECTORY "${d}/include")
-        target_include_directories(xlings PRIVATE "${d}/include")
-      endif()
-      if(IS_DIRECTORY "${d}/libarchive")
-        target_include_directories(xlings PRIVATE "${d}/libarchive")
-      endif()
+      foreach(sub include src libarchive)
+        if(IS_DIRECTORY "${d}/${sub}")
+          target_include_directories(xlings PRIVATE "${d}/${sub}")
+        endif()
+      endforeach()
     endforeach()
   endforeach()
 endforeach()
