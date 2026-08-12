@@ -625,6 +625,28 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("bmi-equal")
             .description("(internal: invoked by ninja) Compare two BMIs ignoring the compiler's embedded timestamp")
             .action(wrap_rc(cmd_bmi_equal)))
+        // The three edges of the detach-codegen schedule. Internal, and named as
+        // such: they are only ever invoked by a generated build.ninja.
+        .subcommand(cl::App("bmi-compile")
+            .description("(internal) Compile a module interface and return when its BMI is published")
+            .option(cl::Option("bmi").takes_value().value_name("PATH").help("BMI this unit publishes"))
+            .option(cl::Option("slot").takes_value().value_name("PATH").help("where .log/.rc are kept"))
+            .option(cl::Option("self").takes_value().value_name("PATH").help("path to mcpp, re-invoked as supervisor"))
+            .option(cl::Option("sem").takes_value().value_name("DIR").help("concurrency token directory"))
+            .option(cl::Option("cap").takes_value().value_name("N").help("max concurrent compilers"))
+            .option(cl::Option("argv-file").takes_value().value_name("PATH").help("compiler command, one argument per line"))
+            .action(wrap_rc(cmd_bmi_compile)))
+        .subcommand(cl::App("bmi-supervise")
+            .description("(internal) Run a compiler to completion and record its status")
+            .option(cl::Option("slot").takes_value().value_name("PATH"))
+            .option(cl::Option("token").takes_value().value_name("PATH"))
+            .option(cl::Option("argv-file").takes_value().value_name("PATH"))
+            .action(wrap_rc(cmd_bmi_supervise)))
+        .subcommand(cl::App("bmi-await")
+            .description("(internal) Join a detached compiler and replay its diagnostics")
+            .option(cl::Option("slot").takes_value().value_name("PATH"))
+            .option(cl::Option("object").takes_value().value_name("PATH"))
+            .action(wrap_rc(cmd_bmi_await)))
     ;
 
     // The bareword `mcpp help` and `mcpp` (no args) both print the
@@ -699,6 +721,7 @@ int run(int argc, char** argv) {
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "bmi-equal",
+                "bmi-compile", "bmi-supervise", "bmi-await",
             });
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }
