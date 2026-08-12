@@ -7,10 +7,13 @@
 // whatever ninja defaulted to. Deriving the same decision in two places is how
 // the two halves drifted apart. This module is the only place it is derived.
 //
-// PURE. No filesystem, no processes, no environment reads — a caller passes the
-// facts in and gets a Decision plus the sentence explaining it. That is what
-// makes the policy unit-testable without a toolchain, and what lets the reason
-// be printed, logged and written into build.ninja unchanged.
+// `decide()` IS PURE. No filesystem, no processes, no environment — a caller
+// hands it facts and gets a Decision plus the sentence explaining it, so the
+// table is unit-testable without a toolchain and the reason can be printed,
+// logged and written into build.ninja unchanged. `requested_switch()` is the
+// one impure function here, and it is impure on purpose: the switch has to be
+// read somewhere, and two callers each doing env-then-manifest in their own
+// order is exactly the duplicate derivation this module exists to prevent.
 //
 // THE MEASUREMENTS BEHIND THE TABLE (2026-08-13, mcpp building itself: 138
 // module interface units, 57k lines, i9-13900K, gcc@16.1.0 / llvm@22.1.8):
@@ -49,6 +52,8 @@ export module mcpp.build.schedule.policy;
 
 import std;
 import mcpp.toolchain.model;
+import mcpp.manifest;
+import mcpp.platform.capacity;
 
 export namespace mcpp::build::schedule {
 
@@ -83,6 +88,32 @@ struct Decision {
     // measured, and it is what made the first prototype read as a no-op.
     int ninjaJobs = 0;
 };
+
+// The one place the switch is READ. `decide` above stays pure — a caller hands
+// it facts — but the switch itself has to come from somewhere, and having two
+// callers each read env-then-manifest in their own order is precisely the
+// duplicate-derivation this module exists to prevent.
+//
+// Precedence matches every other mcpp switch: environment beats manifest.
+std::string requested_switch(const manifest::Manifest& m);
+
+// How many compilers this machine should run at once.
+//
+// Precedence: MCPP_JOBS (where `--jobs` lands) > `[build] jobs` > 0, meaning
+// "say nothing" and leave the backend's own default. The default is unchanged
+// on purpose: altering everyone's concurrency is a behaviour change.
+//
+// `auto` is resolved HERE, against the machine doing the build, never frozen
+// into a manifest. Measured on this repository: the cold self-build takes 81.0s
+// at -j8 and 79.9s at -j32 — 4x the workers for 1.4%, because the build is
+// latency-bound — while a single module compile peaks at 0.5–1.0 GB, so the
+// extra jobs are pure memory pressure. On a high-core, modest-RAM machine the
+// backend default swaps.
+//
+// `onInvalid` is called with the offending text instead of warning directly, so
+// this stays free of any UI dependency and remains testable.
+int resolve_jobs(const manifest::Manifest& m,
+                 const std::function<void(std::string_view)>& onInvalid = {});
 
 // `requested` is the user's switch: "auto" (default), "on", "off". `hostJobs` is
 // the already-resolved parallelism (`--jobs`, `[build] jobs`, or the backend
@@ -135,6 +166,37 @@ Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int 
     d.reason = "unknown compiler family";
     d.ninjaJobs = cap;
     return d;
+}
+
+int resolve_jobs(const manifest::Manifest& m,
+                 const std::function<void(std::string_view)>& onInvalid) {
+    auto from_text = [&](std::string_view v) -> std::optional<int> {
+        if (v.empty()) return std::nullopt;
+        if (v == "auto") {
+            const auto cap = platform::capacity::host_capacity();
+            return platform::capacity::recommended_jobs(cap);
+        }
+        int n = 0;
+        const auto* first = v.data();
+        const auto* last  = v.data() + v.size();
+        if (auto [p, ec] = std::from_chars(first, last, n);
+            ec == std::errc{} && p == last && n > 0)
+            return n;
+        // A malformed value must not silently become "use the default" — that
+        // is how a typo turns into a build that is mysteriously slower.
+        if (onInvalid) onInvalid(v);
+        return std::nullopt;
+    };
+    if (const char* e = std::getenv("MCPP_JOBS"))
+        if (auto n = from_text(e)) return *n;
+    if (auto n = from_text(m.buildConfig.jobs)) return *n;
+    return 0;
+}
+
+std::string requested_switch(const manifest::Manifest& m) {
+    if (const char* e = std::getenv("MCPP_BMI_SCHEDULE"); e && *e) return std::string(e);
+    if (!m.buildConfig.schedule.empty()) return m.buildConfig.schedule;
+    return "auto";
 }
 
 }  // namespace mcpp::build::schedule

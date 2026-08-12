@@ -377,46 +377,11 @@ compute_subos_env(const mcpp::build::BuildPlan& plan) {
 // so the latter doesn't call prepare_build twice (and re-print the toolchain
 // resolution banner).
 // How many compiles to run at once.
-//
-// Precedence: `--jobs` (arriving as MCPP_JOBS, same channel --offline uses and
-// for the same reason — the consumers span subsystems) > `[build] jobs` >
-// 0, which means "say nothing" and leaves ninja's own default (nproc + 2).
-// The default is deliberately unchanged: altering everyone's concurrency is a
-// behaviour change, and this lands as an opt-in first.
-//
-// `auto` is resolved HERE, against the machine doing the build, never frozen
-// into a manifest. Measured on this repository: the cold self-build takes
-// 81.0s at -j8 and 79.9s at -j32 — 4x the workers for 1.4%, because the build
-// is latency-bound. Meanwhile a single module compile peaks at 0.5-1.0 GB, so
-// the extra jobs are pure memory pressure; on a high-core, modest-RAM machine
-// ninja's default swaps.
-std::size_t resolve_parallel_jobs(const mcpp::build::BuildPlan& plan) {
-    auto from_text = [&](std::string_view v) -> std::optional<std::size_t> {
-        if (v.empty()) return std::nullopt;
-        if (v == "auto") {
-            const auto cap = mcpp::platform::capacity::host_capacity();
-            return static_cast<std::size_t>(
-                mcpp::platform::capacity::recommended_jobs(cap));
-        }
-        std::size_t n = 0;
-        const auto* first = v.data();
-        const auto* last  = v.data() + v.size();
-        if (auto [p, ec] = std::from_chars(first, last, n);
-            ec == std::errc{} && p == last && n > 0)
-            return n;
-        // A malformed value must not silently become "use the default" — that
-        // is how a typo turns into a build that is mysteriously slower.
-        mcpp::ui::warning(std::format(
-            "ignoring invalid job count '{}' (expected a positive number or 'auto')", v));
-        return std::nullopt;
-    };
-
-    if (const char* e = std::getenv("MCPP_JOBS"))
-        if (auto n = from_text(e)) return *n;
-    if (auto n = from_text(plan.manifest.buildConfig.jobs)) return *n;
-    return 0;
-}
-
+// Concurrency and the module-edge schedule are resolved together in
+// mcpp.build.schedule.policy and stamped onto the plan, so this reads one value
+// instead of re-deriving it. `scheduleNinjaJobs` is NOT the compiler cap under
+// detach-codegen: a detached compiler stops holding a ninja slot, so ninja is
+// handed a larger number on purpose.
 export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                    std::string_view targetOverride = "") {
     // `--cache=off` means a cold build: no global cache, and target/ cleared —
@@ -488,7 +453,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
 
     mcpp::build::BuildOptions opts;
     opts.verbose = verbose;
-    opts.parallelJobs = resolve_parallel_jobs(ctx.plan);
+    opts.parallelJobs = static_cast<std::size_t>(ctx.plan.scheduleNinjaJobs);
     auto r = be->build(ctx.plan, opts);
     if (!r) {
         std::fflush(stdout);
