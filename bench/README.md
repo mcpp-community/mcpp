@@ -71,6 +71,29 @@ claim gets a number instead of an argument.
 | **generated** (default) | `--units/--fanin/--weight` synthesise the same project in three source forms | comparing **source forms**, and engines against each other on identical input |
 | **project** (`--project DIR`) | an existing tree, measured **in place** | comparing **engine binaries** on a real codebase — mcpp building itself is the base case |
 
+### Measure a PINNED SNAPSHOT, never your working tree
+
+```bash
+BASE=$(git merge-base origin/main HEAD)
+mkdir -p ~/.local/share/mcpp-bench-src/mcpp
+git archive "$BASE" | tar -x -C ~/.local/share/mcpp-bench-src/mcpp
+
+bench --project ~/.local/share/mcpp-bench-src/mcpp \
+      --engines mcpp=/path/to/old,mcpp=/path/to/new \
+      --scenarios cold --hub src/platform/platform.cppm
+```
+
+Benchmarking the tree you are editing does not merely add noise — it produces
+**wrong results that look real**. Measured here: a job-count sweep reported
+`rc=1` at three different job counts in a row, which read as "the design fails
+above 16 concurrent compiles". The actual cause was that a new module had been
+added to the working tree between generating `build.ninja` and running the
+sweep, so every arm was building a source set its graph did not know about. A
+snapshot pinned to a commit cannot drift underneath a measurement.
+
+A plain `git archive` (not a clone or worktree) is deliberate: no `.git`, no
+shared state, nothing that a branch switch in the real repo can reach.
+
 In project mode the variant axis collapses to `native`: the project is whatever
 it already is, and generating over it would destroy the thing being measured.
 Scenarios that perturb a file need to be told which one (`--hub`, `--leaf`,
@@ -118,7 +141,9 @@ Two details that are easy to get wrong and change the answer:
   situation developers live in, and dropping caches adds variance unrelated to
   the engine.
 * The harness never lets build output reach its own stdout; child streams go to
-  `bench-child.log` inside the fixture. A mixed stream cannot be parsed.
+  `<work>/logs/<engine>-<scenario>.log`. A mixed stream cannot be parsed — and
+  the log lives under the WORK root, never inside the measured tree, so a
+  `--project` run cannot drop scratch into someone's repository.
 
 ---
 

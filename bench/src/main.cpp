@@ -36,6 +36,7 @@ struct Options {
     std::filesystem::path analyze;   // profile an existing ninja build dir instead
     std::filesystem::path project;   // measure an existing tree instead of a fixture
     std::filesystem::path hub, leaf, body;   // what the scenarios perturb there
+    std::string baseline;                    // engine to normalise the summary against
     bool list{false};
 };
 
@@ -67,6 +68,8 @@ void usage() {
     std::println("  --runs N           repetitions per cell                    (default: per scenario)");
     std::println("  --work DIR         scratch directory                       (default: bench-work)");
     std::println("  --out FILE         JSON report path                        (default: bench-report.json)");
+    std::println("  --baseline NAME    add a normalised column to the summary, relative to this");
+    std::println("                     engine (e.g. --baseline cmake). Substring match on the label.");
     std::println("  --list             print engines and their availability, then exit");
     std::println("  --analyze DIR      profile an existing ninja build dir (work, makespan,");
     std::println("                     critical path, concurrency) instead of measuring");
@@ -113,6 +116,7 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--hub")       { auto v = value(a); if (!v) return std::unexpected(v.error()); o.hub  = *v; }
         else if (a == "--leaf")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.leaf = *v; }
         else if (a == "--body")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.body = *v; }
+        else if (a == "--baseline")  { auto v = value(a); if (!v) return std::unexpected(v.error()); o.baseline = *v; }
         else if (a == "-h" || a == "--help") { return std::unexpected("help"); }
         else if (a == "--variants") {
             auto v = value(a); if (!v) return std::unexpected(v.error());
@@ -271,6 +275,53 @@ int main(int argc, char** argv) {
                                  bench::to_string(cell.status), cell.note);
                 }
                 report.cells.push_back(std::move(cell));
+            }
+        }
+    }
+
+    // Normalised summary. A column of raw seconds answers "how long"; a column of
+    // ratios answers "compared to what", and the second question is the one a
+    // build-engine comparison is actually asking.
+    if (!opts->baseline.empty()) {
+        std::println("");
+        std::println("=== relative to {} (>1.00 = slower than the baseline) ===", opts->baseline);
+
+        // Group by (variant, scenario): a ratio only means something against the
+        // SAME source form and the SAME perturbation.
+        std::vector<std::pair<std::string, std::string>> groups;
+        for (const auto& c : report.cells) {
+            auto key = std::pair{c.key.variant, c.key.scenario};
+            if (std::ranges::find(groups, key) == groups.end()) groups.push_back(key);
+        }
+
+        for (const auto& [variant, scenario] : groups) {
+            const bench::CellResult* base = nullptr;
+            for (const auto& c : report.cells)
+                if (c.key.variant == variant && c.key.scenario == scenario
+                    && c.key.engine.find(opts->baseline) != std::string::npos
+                    && c.status == bench::Status::Ok)
+                    base = &c;
+
+            std::println("");
+            std::println("-- {} / {} --", variant, scenario);
+            if (!base) {
+                // Saying "no baseline" beats printing ratios against nothing, and
+                // beats silently omitting the group.
+                std::println("   (no successful '{}' cell here; ratios omitted)", opts->baseline);
+            }
+            for (const auto& c : report.cells) {
+                if (c.key.variant != variant || c.key.scenario != scenario) continue;
+                if (c.status != bench::Status::Ok) {
+                    std::println("   {:<22} {:>9}  {}", c.key.engine,
+                                 bench::to_string(c.status), c.note);
+                    continue;
+                }
+                if (base && base->median_s() > 0.0)
+                    std::println("   {:<22} {:>8.2f}s  {:>6.2f}x{}", c.key.engine,
+                                 c.median_s(), c.median_s() / base->median_s(),
+                                 (&c == base) ? "   <- baseline" : "");
+                else
+                    std::println("   {:<22} {:>8.2f}s", c.key.engine, c.median_s());
             }
         }
     }

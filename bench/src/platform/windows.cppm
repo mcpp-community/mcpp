@@ -16,6 +16,12 @@ module;
 #define NOMINMAX
 #endif
 #include <windows.h>
+// RegOpenKeyExA / RegQueryValueExA live in advapi32, which lld-link does NOT
+// pull in by default — the build fails at link with "undefined symbol:
+// __declspec(dllimport) RegOpenKeyExA". Declaring the dependency in the source
+// keeps this partition self-contained instead of pushing an ldflag into every
+// consumer's manifest.
+#pragma comment(lib, "advapi32.lib")
 #endif
 
 export module bench.platform:windows;

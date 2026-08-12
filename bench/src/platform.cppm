@@ -33,6 +33,12 @@ using platform_impl::unset_env;
 class ScopedEnv {
 public:
     ScopedEnv(std::string key, const std::string& value) : key_(std::move(key)) {
+        // MSVC's CRT deprecates getenv in favour of _dupenv_s. Reading it is
+        // safe here (single-threaded setup, value copied immediately) and the
+        // portable spelling keeps this out of the platform partitions.
+#if defined(_MSC_VER)
+#pragma warning(suppress : 4996)
+#endif
         if (const char* prev = std::getenv(key_.c_str())) {
             had_previous_ = true;
             previous_     = prev;
