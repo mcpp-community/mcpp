@@ -13,7 +13,7 @@ wall time and its ratio to cmake in the same row.
 | build files | `bench/projects/mcpp/` (`--buildfiles`), so nothing foreign sits at the repo root |
 | perturbed | hub `src/platform/platform.cppm` (46 importers) · leaf `src/pm/publisher.cppm` (0) · body `src/build/stage.cppm` |
 | runs | 2 per cell |
-| raw | [`mcpp-self-20260813-linux-x86_64-gcc.json`](mcpp-self-20260813-linux-x86_64-gcc.json) |
+| raw | [`linux-x86_64-gcc.json`](linux-x86_64-gcc.json) |
 
 | scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake |
 |---|---|---|---|---|

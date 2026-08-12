@@ -13,7 +13,7 @@ and `4.66x` reads "took 4.66 times as long".
 | fixture | generated, **40 units / fan-in 3 / weight 6**, medians of 2 runs |
 | compilers | `gcc@16.1.0` and `llvm@22.1.8`, both hermetic mcpp payloads, pinned into every engine |
 | engines | mcpp 2026.8.11.3 (previous release) and 2026.8.12.1 (this PR), cmake 4.0.2, xmake v3.0.7+HEAD.77d94ad, meson 1.10.2, bazel 9.2.0 + rules_cc 0.2.22 — each recorded in the result file by the engine itself, not asserted here |
-| raw | [`five-way-20260812-linux-x86_64-gcc.json`](five-way-20260812-linux-x86_64-gcc.json), [`five-way-20260812-linux-x86_64-clang.json`](five-way-20260812-linux-x86_64-clang.json) |
+| raw | [`linux-x86_64-gcc.json`](linux-x86_64-gcc.json), [`linux-x86_64-clang.json`](linux-x86_64-clang.json) |
 
 Reproduce:
 

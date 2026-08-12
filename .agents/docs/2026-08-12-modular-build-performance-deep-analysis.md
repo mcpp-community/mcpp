@@ -570,7 +570,8 @@ cd bench && mcpp build
 bench/proto-bmi-release/run_proto.sh
 ```
 
-测量契约见 `bench/README.md`;结果与其出处见 `bench/results/NOTES.md`。
+测量契约见 `bench/README.md`;结果按运行分目录,索引见 `bench/results/README.md`,
+本文这批数据的出处在 `bench/results/hyperfine-20260812/NOTES.md`。
 
 ## 附录 B:关键原始数据
 
