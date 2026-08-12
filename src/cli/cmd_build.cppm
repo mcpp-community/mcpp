@@ -499,14 +499,13 @@ namespace {
 // list rather than an error. A file also sidesteps MAX_ARG_STRLEN (128 KiB for
 // a single argv entry, which mcpp has hit before on link lines) and needs no
 // quoting rules that a compiler flag could violate.
-std::vector<std::string> read_argv_file(const std::filesystem::path& path) {
-    std::vector<std::string> out;
-    std::ifstream in(path);
-    for (std::string line; std::getline(in, line);) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (!line.empty()) out.push_back(std::move(line));
-    }
-    return out;
+std::string read_command_file(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+    return text;
 }
 
 // `option_or_empty(...).value()`, the idiom the rest of this file uses.
@@ -528,14 +527,14 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
     req.maxCompilers = 0;
     if (const auto cap = opt_value(parsed, "cap"); !cap.empty())
         std::from_chars(cap.data(), cap.data() + cap.size(), req.maxCompilers);
-    req.argvFile  = std::filesystem::path{opt_value(parsed, "argv-file")};
-    req.argv      = read_argv_file(req.argvFile);
+    req.commandFile = std::filesystem::path{opt_value(parsed, "command-file")};
+    req.command     = read_command_file(req.commandFile);
     if (req.slot.empty()) {
         std::println(stderr, "error: bmi-compile needs --slot");
         return 2;
     }
-    if (req.argv.empty()) {
-        std::println(stderr, "error: bmi-compile got no compiler command from --argv-file");
+    if (req.command.empty()) {
+        std::println(stderr, "error: bmi-compile got no command from --command-file");
         return 2;
     }
     return mcpp::build::schedule::detach::compile_release_at_bmi(req);
@@ -545,9 +544,9 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
 export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const std::filesystem::path slot{opt_value(parsed, "slot")};
     const std::filesystem::path token{opt_value(parsed, "token")};
-    const auto argv = read_argv_file(std::filesystem::path{opt_value(parsed, "argv-file")});
-    if (slot.empty() || argv.empty()) return 2;
-    return mcpp::build::schedule::detach::supervise(slot, token, argv);
+    const auto command = read_command_file(std::filesystem::path{opt_value(parsed, "command-file")});
+    if (slot.empty() || command.empty()) return 2;
+    return mcpp::build::schedule::detach::supervise(slot, token, command);
 }
 
 // Phase 2: join the detached compiler before anything reads its object.

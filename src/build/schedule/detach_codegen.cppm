@@ -97,9 +97,17 @@ struct CompileRequest {
     // Directory of concurrency tokens. Empty disables the cap (hazard 2).
     std::filesystem::path semaphore;
     int                   maxCompilers{0};
-    std::vector<std::string> argv;      // compiler and its arguments
-    // The file `argv` was read from; handed to the supervisor unchanged.
-    std::filesystem::path argvFile;
+    // The compiler invocation, as ONE shell command line.
+    //
+    // Not a token list: the backend has already joined and quoted the flags for
+    // ninja, and splitting that string back into argv would need to reimplement
+    // the shell's rules — the exact assumption ("one flag element == one argv
+    // token") that has been wrong here before. ninja runs every command through
+    // a shell already, so going through one costs no portability.
+    std::string command;
+    // The file `command` was read from; handed to the supervisor unchanged, so
+    // there is one representation and no re-quoting.
+    std::filesystem::path commandFile;
 };
 
 // Phase 1 — returns 0 as soon as the BMI is published, leaving code generation
@@ -110,7 +118,7 @@ int compile_release_at_bmi(const CompileRequest& req);
 // then records the status. Never invoked directly by a build edge.
 int supervise(const std::filesystem::path& slot,
               const std::filesystem::path& semaphoreToken,
-              const std::vector<std::string>& argv);
+              std::string_view command);
 
 // Phase 2 — blocks until the compiler for `slot` finished, replays what it
 // wrote, and propagates its status. `object`, when given, must exist: a
@@ -209,8 +217,9 @@ bool spawn_detached(const std::vector<std::string>& argv) {
     return true;
 }
 
-int run_to_completion(const std::vector<std::string>& argv,
+int run_to_completion(std::string_view command,
                       const std::filesystem::path& logPath) {
+    const std::vector<std::string> argv{"cmd.exe", "/c", std::string(command)};
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE log = ::CreateFileA(logPath.string().c_str(), GENERIC_WRITE,
                                FILE_SHARE_READ, &sa, CREATE_ALWAYS,
@@ -268,8 +277,9 @@ bool spawn_detached(const std::vector<std::string>& argv) {
     return rc == 0;
 }
 
-int run_to_completion(const std::vector<std::string>& argv,
+int run_to_completion(std::string_view command,
                       const std::filesystem::path& logPath) {
+    const std::vector<std::string> argv{"/bin/sh", "-c", std::string(command)};
     posix_spawn_file_actions_t fa;
     ::posix_spawn_file_actions_init(&fa);
     ::posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
@@ -292,7 +302,7 @@ int run_to_completion(const std::vector<std::string>& argv,
 }  // namespace
 
 int compile_release_at_bmi(const CompileRequest& req) {
-    if (req.argv.empty() || req.self.empty()) return 2;
+    if (req.command.empty() || req.self.empty()) return 2;
 
     std::error_code ec;
     if (!req.slot.parent_path().empty())
@@ -315,7 +325,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
     // on how long a compiler command may be.
     std::vector<std::string> sup{req.self.string(), "bmi-supervise",
                                  "--slot", req.slot.string(),
-                                 "--argv-file", req.argvFile.string()};
+                                 "--command-file", req.commandFile.string()};
     if (!token.empty()) { sup.push_back("--token"); sup.push_back(token.string()); }
     if (!spawn_detached(sup)) return 2;
 
@@ -337,8 +347,8 @@ int compile_release_at_bmi(const CompileRequest& req) {
 
 int supervise(const std::filesystem::path& slot,
               const std::filesystem::path& semaphoreToken,
-              const std::vector<std::string>& argv) {
-    const int rc = run_to_completion(argv, suffixed(slot, ".log"));
+              std::string_view command) {
+    const int rc = run_to_completion(command, suffixed(slot, ".log"));
     if (!semaphoreToken.empty()) {
         std::error_code ec;
         std::filesystem::remove(semaphoreToken, ec);

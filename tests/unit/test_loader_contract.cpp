@@ -82,12 +82,33 @@ TEST(GraphShape, HeaderAndReaderAgree) {
         ~Cleanup() { std::error_code ec; std::filesystem::remove_all(d, ec); } }
         cleanup{dir};
 
+    // The line now carries the module-edge schedule too. Round-tripping both
+    // fields together is the point: the schedule was added to this line rather
+    // than to a second file precisely so the two cannot disagree.
     for (auto shape : {GraphShape::Normal, GraphShape::WithTests}) {
+        for (std::string_view sched : {"none", "two-phase", "detach-codegen"}) {
+            auto p = dir / "build.ninja";
+            { std::ofstream out(p, std::ios::trunc);
+              out << header_line(shape, sched) << "\n"; }
+            auto read = read_shape(p);
+            ASSERT_TRUE(read.has_value());
+            EXPECT_EQ(*read, shape);
+            EXPECT_EQ(read_schedule(p), sched);
+        }
+    }
+
+    // A graph written before the schedule field existed still reads as its
+    // shape — an older file must degrade, not become "unknown" — but its
+    // schedule reads as empty, which is NOT "none": callers that care have to
+    // be able to tell "this file predates the field" from "this file chose to
+    // do nothing".
+    {
         auto p = dir / "build.ninja";
-        { std::ofstream out(p, std::ios::trunc); out << header_line(shape) << "\n"; }
+        { std::ofstream out(p, std::ios::trunc); out << "# mcpp:graph=normal\n"; }
         auto read = read_shape(p);
         ASSERT_TRUE(read.has_value());
-        EXPECT_EQ(*read, shape);
+        EXPECT_EQ(*read, GraphShape::Normal);
+        EXPECT_TRUE(read_schedule(p).empty());
     }
 }
 
