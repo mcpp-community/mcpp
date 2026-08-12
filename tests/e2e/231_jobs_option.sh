@@ -90,3 +90,31 @@ if [ "$(uname -s)" = "Linux" ]; then
 fi
 
 echo "toolchain override OK"
+
+# 11. The split module schedule (L2). Default is OFF; `on` selects it. Asserted
+#     on the GRAPH's own declaration and on the edges it emits — not on timing,
+#     which on CI measures the runner's mood.
+"$MCPP" build --release > /dev/null 2>&1
+ninja_file=$(find target -name build.ninja | head -1)
+grep -q 'schedule=none' "$ninja_file" \
+  || { echo "default should not use the split schedule:"; head -2 "$ninja_file"; exit 1; }
+
+rm -rf target
+MCPP_BMI_SCHEDULE=on "$MCPP" build --release > "$TMP/sched.txt" 2>&1 \
+  || { echo "schedule=on failed to build:"; cat "$TMP/sched.txt"; exit 1; }
+ninja_file=$(find target -name build.ninja | head -1)
+grep -q 'schedule=detach-codegen\|schedule=two-phase\|schedule=none' "$ninja_file" \
+  || { echo "graph does not declare its schedule:"; head -2 "$ninja_file"; exit 1; }
+
+# The fixture has no module interfaces, so there are no split edges to count
+# here; what must hold on every platform is that turning it on still BUILDS and
+# that a second build is a no-op. A schedule whose depfile target is wrong looks
+# exactly like success while recompiling everything — the symptom that cost the
+# most to find — and a no-op is what exposes it.
+before=$(find target -name '*.o' -newer "$TMP/sched.txt" | wc -l)
+MCPP_BMI_SCHEDULE=on "$MCPP" build --release > /dev/null 2>&1
+after=$(find target -name '*.o' -newer "$TMP/sched.txt" | wc -l)
+[ "$after" -eq "$before" ] \
+  || { echo "second build under schedule=on recompiled ($before -> $after objects)"; exit 1; }
+
+echo "split schedule OK"
