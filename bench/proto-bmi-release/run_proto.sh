@@ -8,7 +8,8 @@
 # One compiler process per module in both arms — total CPU work is identical.
 set -u
 PROTO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-R="$(cd "$PROTO/../../.." && pwd)"
+# bench/proto-bmi-release -> two levels up is the repository root.
+R="$(cd "$PROTO/../.." && pwd)"
 NINJA=$(command -v ninja)
 J=${J:-$(nproc)}
 
