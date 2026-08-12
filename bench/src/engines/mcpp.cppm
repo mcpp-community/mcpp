@@ -43,8 +43,8 @@ public:
 
     // mcpp compiles plain .cpp as readily as modules, and a Native project is
     // whatever it already is, so every variant is in scope.
-    bool supports(Variant) const override { return true; }
-    std::string unsupported_reason(Variant) const override { return {}; }
+    bool supports(Variant, std::string_view) const override { return true; }
+    std::string unsupported_reason(Variant, std::string_view) const override { return {}; }
 
     platform::RunResult configure(const Job&) const override {
         return {0.0, 0};   // no separate configure step by design

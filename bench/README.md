@@ -113,7 +113,8 @@ when the build fails, which is precisely when a leftover edit would be missed.
 | `cold` | `clean()`, then time **configure + build** | full graph construction + every compile |
 | `noop` | nothing | the up-to-date check / fast path |
 | `touch-hub` | mtime bump on the most-depended-on unit, **content unchanged** | can the engine prove the interface did not change and stop the cascade? |
-| `edit-body` | insert a **numbered** marker inside a function body, interface untouched | the everyday developer loop |
+| `edit-comment` | insert a **comment** into the most-depended-on unit — bytes change, interface does not | mtime is no longer enough; only comparing the produced BMI avoids the cascade |
+| `edit-body` | insert a **numbered `volatile` statement** into a function body | the everyday developer loop: real codegen change, interface untouched |
 | `touch-leaf` | mtime bump on a unit nobody depends on | recompile 1 + link |
 
 Two details that are easy to get wrong and change the answer:
@@ -123,9 +124,26 @@ Two details that are easy to get wrong and change the answer:
   fails. Timing configure separately would also be wrong: the user waits for both,
   and engines that fold configure into the build (mcpp, bazel) would get a
   discount for it.
-* **`edit-body` uses a counter.** An idempotent edit is a real edit on run 1 and a
-  bare `touch` on runs 2..N — a different, much cheaper scenario, silently
-  dragging the median toward it.
+* **`edit-body` uses a counter**, and the counter is in the *identifier*. An
+  idempotent edit is a real edit on run 1 and a bare `touch` on runs 2..N — a
+  different, much cheaper scenario, silently dragging the median toward it. The
+  inserted statement is `volatile`, so no optimiser can delete it and hand back
+  the previous object file, and its name carries the nonce, because
+  perturbations ACCUMULATE within a cell and a fixed name redeclares itself on
+  run 2.
+* **`edit-body` and `edit-comment` are separate on purpose.** They were one
+  scenario, named `edit-body`, that inserted a comment — so every "N times
+  faster on edits" number it produced was really a statement about comments.
+  Splitting them costs one extra column and makes each number mean its name.
+
+  On GCC 16.1 both happen to be cheap for the same underlying reason, and it is
+  worth stating because it is easy to misread as a bug: **GCC does not encode
+  the body of an exported non-template function into the BMI.** Editing such a
+  body changes the object file and leaves the BMI byte-identical apart from its
+  embedded `buildtime:`/`localtime:` stamps, so skipping the importers is
+  correct, not a missed rebuild. Establishing that requires a control — compile
+  the *same* source twice and diff: the differing bytes land at the same offsets,
+  inside the timestamps.
 
 ---
 
@@ -164,9 +182,36 @@ These cannot be removed, so they are stated rather than hidden.
   cache outside the workspace. `clean` here is deliberately *not* `--expunge`,
   which would also discard the toolchain and turn the measurement into
   provisioning. Every bazel cell says so in its note.
-* **meson and bazel are headers-only.** Their C++20 named-module support is not
-  comparable to cmake's or xmake's; they report `unavailable` with a reason
-  rather than producing a number that does not mean what it looks like.
+* **Module support is a property of the engine *and* the compiler.** `supports()`
+  therefore takes both, and a `false` becomes `unavailable` **with the
+  measurement that produced it** — never a slow number. As measured here:
+
+  | engine | modules with clang | modules with gcc |
+  |---|---|---|
+  | mcpp | yes | yes |
+  | cmake ≥ 3.28 | yes | yes |
+  | xmake 3.x | yes | yes |
+  | bazel 9.2 + rules_cc 0.2.22 | **yes** | no — `aggregate-ddi failed … Invalid JSON string`, i.e. its ddi aggregator cannot parse GCC's P1689 output |
+  | meson 1.10.2 | no — `fatal error: module 'fx.a' not found`; no attribute declares an interface unit | no |
+
+  So a gcc run and a clang run legitimately have **different sets of populated
+  cells**, and a table must say which compiler it used before its `unavailable`
+  rows mean anything.
+* **bazel module builds are forced to one object flavour.** `cc_binary` registers
+  the ddi-aggregation action for both the PIC and the non-PIC object sets but
+  names the output `<target>.CXXModules.json` for both, so analysis aborts before
+  any compilation:
+
+  ```
+  Attempted action contains artifacts not in previous action: _objs/fx/unit_0.pic.ddi
+  Previous action contains artifacts not in attempted action:  _objs/fx/unit_0.ddi
+  Outputs: are equal
+  ```
+
+  The adapter passes `--force_pic` — to **every** variant, so bazel's own
+  headers-vs-modules rows stay comparable, and PIC rather than
+  `--features=-supports_pic` because it yields a PIE executable, which is what
+  the other engines produce by default.
 
 ---
 

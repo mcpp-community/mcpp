@@ -26,6 +26,9 @@ struct RunOptions {
     // real codebase — a synthetic graph cannot reproduce the shape of one.
     std::filesystem::path project;            // empty → generate a fixture
     fixture::Targets      project_targets{};  // which files the scenarios perturb
+    // The requested compiler, so the generated mcpp manifest can pin the same
+    // family the other engines are handed.
+    std::string           compiler;
 };
 
 namespace detail {
@@ -34,7 +37,22 @@ namespace detail {
 // repetition. An idempotent edit is a real edit on run 1 and a bare `touch` on
 // runs 2..N — which measures a different, much cheaper scenario and silently
 // drags the median toward it. The counter is what keeps every run honest.
-inline bool edit_body(const std::filesystem::path& file, int nonce) {
+// Inserts text into the first function body of `file`.
+//
+// `statement` decides WHAT this measures, and the two are not interchangeable:
+//
+//   true  — a real statement. The function's object code changes, and for an
+//           inline body in an interface unit the BMI changes too, so a cascade
+//           is the CORRECT answer, not a defect.
+//   false — a comment. The bytes change but nothing observable does, so an
+//           engine that compares the produced BMI can stop the cascade while an
+//           mtime-only engine cannot.
+//
+// They used to be one function that inserted a comment and was called
+// "edit_body". Every "engine X is N times faster on edits" number it produced
+// was really a statement about comments.
+inline bool insert_into_first_body(const std::filesystem::path& file, int nonce,
+                                   bool statement) {
     std::ifstream in(file, std::ios::binary);
     if (!in) return false;
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -43,13 +61,31 @@ inline bool edit_body(const std::filesystem::path& file, int nonce) {
     // Insert inside the first function body: after the first '{' that follows a
     // ')'. Anchoring on the brace rather than a name keeps this working for all
     // three variants, whose function text differs.
+    //
+    // A file may legitimately have NO function body — the modules-impl variant's
+    // interface unit only declares — so a comment falls back to end-of-file
+    // rather than reporting the scenario as inapplicable. A statement has no
+    // such fallback: there is nowhere to put it that would mean the same thing.
     const auto paren = text.find(") {");
-    if (paren == std::string::npos) return false;
-    const auto brace = text.find('\n', paren);
-    if (brace == std::string::npos) return false;
-
-    const auto marker = std::format("\n    // bench: body perturbation #{}\n", nonce);
-    text.insert(brace + 1, marker);
+    const auto brace = paren == std::string::npos ? std::string::npos
+                                                  : text.find('\n', paren);
+    if (brace == std::string::npos) {
+        if (statement) return false;
+        text += std::format("\n// bench: comment perturbation #{}\n", nonce);
+    } else {
+        // `volatile` so no optimiser can delete the edit and hand back the
+        // previous object file — that would quietly turn a semantic edit back
+        // into a no-op, i.e. straight back into the bug this split exists to fix.
+        //
+        // The name carries the nonce because perturbations ACCUMULATE across the
+        // repetitions of one cell: a fixed name redeclares itself on run 2 and
+        // the build fails, which is exactly what the first version did.
+        text.insert(brace + 1,
+                    statement
+                        ? std::format("    volatile int bench_nonce_{0} = {0};"
+                                      " (void)bench_nonce_{0};\n", nonce)
+                        : std::format("    // bench: comment perturbation #{}\n", nonce));
+    }
 
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     out << text;
@@ -60,6 +96,19 @@ inline bool edit_body(const std::filesystem::path& file, int nonce) {
 
 class Runner {
 public:
+    // Explains a non-zero result. `RunResult::started()` is false when the child
+    // never ran at all (bad path, not executable, missing loader) — in that case
+    // the log file exists but is EMPTY, and pointing a reader at it sends them
+    // looking for a compiler error that was never emitted. Say which of the two
+    // happened.
+    static std::string failure_note(std::string_view what, const platform::RunResult& r,
+                                    const std::filesystem::path& log) {
+        if (!r.started())
+            return std::format("{}: could not start the process (no log written) — "
+                               "check the engine's program path", what);
+        return std::format("{} exited {} (see {})", what, r.exit_code, log.string());
+    }
+
     explicit Runner(RunOptions opt) : opt_(std::move(opt)) {}
 
     // Materialise one fixture instance. Kept separate from measure() so a single
@@ -105,7 +154,7 @@ public:
         inst.project_dir = dir;
         inst.build_dir   = dir / "build";
         inst.targets     = fixture::emit_sources(dir, variant, opt_.shape);
-        fixture::emit_all(dir, variant, opt_.shape);
+        fixture::emit_all(dir, variant, opt_.shape, opt_.compiler);
         return inst;
     }
 
@@ -131,9 +180,9 @@ public:
             cell.note   = avail.note;
             return cell;
         }
-        if (!engine.supports(variant)) {
+        if (!engine.supports(variant, compiler)) {
             cell.status = Status::Unavailable;
-            cell.note   = engine.unsupported_reason(variant);
+            cell.note   = engine.unsupported_reason(variant, compiler);
             return cell;
         }
 
@@ -162,8 +211,7 @@ public:
 
         if (const auto cfg = engine.configure(job); !cfg.ok()) {
             cell.status = Status::Failed;
-            cell.note   = std::format("configure exited {} (see {})", cfg.exit_code,
-                                      job.log_path.string());
+            cell.note   = failure_note("configure", cfg, job.log_path);
             return cell;
         }
 
@@ -172,16 +220,19 @@ public:
         // not systematically slower than the rest.
         if (const auto seed = engine.build(job); !seed.ok()) {
             cell.status = Status::Failed;
-            cell.note   = std::format("seed build exited {} (see {})", seed.exit_code,
-                                      job.log_path.string());
+            cell.note   = failure_note("seed build", seed, job.log_path);
             return cell;
         }
 
         // edit-body rewrites a source file. In project mode that file belongs to
         // the user, so its exact bytes are captured first and restored no matter
         // how this function exits — including on a failed build.
-        const SourceGuard guard(scenario == Scenario::EditBody ? inst.targets.body
-                                                               : std::filesystem::path{});
+        // Both editing scenarios rewrite a source file. In project mode that file
+        // belongs to the user, so the guard must cover each of them — an
+        // unguarded scenario silently leaves the perturbation behind.
+        const SourceGuard guard(
+            scenario == Scenario::EditBody    ? inst.targets.body :
+            scenario == Scenario::EditComment ? inst.targets.hub  : std::filesystem::path{});
 
         const int runs = opt_.runs_override > 0 ? opt_.runs_override : default_runs(scenario);
         for (int i = 0; i < runs; ++i) {
@@ -203,8 +254,8 @@ public:
                 const auto cfg = engine.configure(job);
                 if (!cfg.ok()) {
                     cell.status = Status::Failed;
-                    cell.note   = std::format("re-configure exited {} on run {} (see {})",
-                                              cfg.exit_code, i + 1, job.log_path.string());
+                    cell.note   = failure_note(std::format("re-configure on run {}", i + 1),
+                                               cfg, job.log_path);
                     return cell;
                 }
                 extra = cfg.wall_s;
@@ -213,8 +264,8 @@ public:
             const auto r = engine.build(job);
             if (!r.ok()) {
                 cell.status = Status::Failed;
-                cell.note   = std::format("build exited {} on run {} (see {})",
-                                          r.exit_code, i + 1, job.log_path.string());
+                cell.note   = failure_note(std::format("build on run {}", i + 1),
+                                           r, job.log_path);
                 return cell;
             }
             cell.samples.push_back(Sample{extra + r.wall_s, r.exit_code});
@@ -259,6 +310,11 @@ private:
             case Scenario::TouchHub:  want = &inst.targets.hub;  which = "--hub";  break;
             case Scenario::TouchLeaf: want = &inst.targets.leaf; which = "--leaf"; break;
             case Scenario::EditBody:  want = &inst.targets.body; which = "--body"; break;
+            // Deliberately the HUB, not the body target: the question is whether
+            // a non-semantic change to a widely-imported INTERFACE cascades. In
+            // the modules-impl variant `body` is an implementation unit with no
+            // BMI at all, so asking it there would measure nothing.
+            case Scenario::EditComment: want = &inst.targets.hub; which = "--hub"; break;
             default: return {};
         }
         if (want->empty())
@@ -284,7 +340,9 @@ private:
             case Scenario::TouchLeaf:
                 return platform::touch(inst.targets.leaf);
             case Scenario::EditBody:
-                return detail::edit_body(inst.targets.body, nonce);
+                return detail::insert_into_first_body(inst.targets.body, nonce, true);
+            case Scenario::EditComment:
+                return detail::insert_into_first_body(inst.targets.hub, nonce, false);
         }
         return false;
     }

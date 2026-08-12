@@ -56,9 +56,9 @@ std::vector<std::string> split(std::string_view s, char sep = ',') {
 void usage() {
     std::println("bench — build-engine benchmark harness");
     std::println("");
-    std::println("  --engines LIST     mcpp,mcpp-opt,cmake,xmake,meson,bazel   (default: all)");
+    std::println("  --engines LIST     mcpp,cmake,xmake,meson,bazel            (default: all)");
     std::println("  --variants LIST    headers,modules,modules-impl            (default: all)");
-    std::println("  --scenarios LIST   cold,noop,touch-hub,edit-body,touch-leaf");
+    std::println("  --scenarios LIST   cold,noop,touch-hub,touch-leaf,edit-body,edit-comment");
     std::println("  --profile NAME     release | debug                         (default: release)");
     std::println("  --compiler NAME    default | gcc | clang                   (default: default)");
     std::println("  --units N          fixture translation units               (default: 40)");
@@ -145,8 +145,13 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
             : std::vector{bench::Variant::Native};
     }
     if (o.scenarios.empty())
-        o.scenarios = {bench::Scenario::Cold, bench::Scenario::Noop,
-                       bench::Scenario::TouchHub, bench::Scenario::EditBody};
+        // ALL of them. A scenario that is defined, documented and advertised in
+        // --help but left out of this list runs only when someone names it
+        // explicitly, which in practice is never — `touch-leaf` sat unmeasured
+        // in every default run and every CI matrix cell for exactly that reason.
+        o.scenarios = {bench::Scenario::Cold,      bench::Scenario::Noop,
+                       bench::Scenario::TouchHub,  bench::Scenario::TouchLeaf,
+                       bench::Scenario::EditBody,  bench::Scenario::EditComment};
     return o;
 }
 
@@ -225,6 +230,7 @@ int main(int argc, char** argv) {
     ro.shape           = opts->shape;
     ro.jobs            = opts->jobs;
     ro.runs_override   = opts->runs;
+    ro.compiler        = opts->compiler;
     ro.project         = opts->project;
     ro.project_targets = bench::fixture::Targets{opts->hub, opts->leaf, opts->body};
     const bench::Runner runner(ro);
@@ -248,7 +254,7 @@ int main(int argc, char** argv) {
             // Materialise once per (engine, variant): the scenarios of a pair
             // share a tree on purpose, since generation time belongs to none of
             // them. Cells that will not run skip the cost entirely.
-            const bool will_run = engine->probe().present && engine->supports(variant);
+            const bool will_run = engine->probe().present && engine->supports(variant, opts->compiler);
             std::optional<bench::Runner::Instance> inst;
             if (will_run) inst = runner.materialise(engine->name(), variant);
 
@@ -263,7 +269,7 @@ int main(int argc, char** argv) {
                                               fixture_name, std::string(to_string(variant))};
                     const auto a = engine->probe();
                     cell.status = bench::Status::Unavailable;
-                    cell.note   = a.present ? engine->unsupported_reason(variant) : a.note;
+                    cell.note   = a.present ? engine->unsupported_reason(variant, opts->compiler) : a.note;
                 }
 
                 if (cell.status == bench::Status::Ok) {

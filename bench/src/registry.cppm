@@ -23,12 +23,36 @@ import bench.engines.bazel;
 
 export namespace bench {
 
+// Makes a program spec independent of the current directory.
+//
+// Every measured command runs with its cwd set to the project under test, so a
+// relative `--engines mcpp=./mcpp-old` resolves against the FIXTURE rather than
+// the shell the user typed it in. The spawn then fails with "could not start",
+// which is reported per cell as `exited -1` — a whole matrix of failures whose
+// cause is one missing `./`. Resolving here, once, at the only place a spec
+// becomes an engine, removes the class of bug rather than documenting it.
+//
+// Bare names (`mcpp`, `cmake`) are left alone: those are PATH lookups, which the
+// child performs itself and which cwd does not affect.
+inline std::string anchor_program(std::string program) {
+    if (program.empty()) return program;
+    if (program.find('/') == std::string::npos &&
+        program.find('\\') == std::string::npos)
+        return program;                       // bare name → PATH, cwd-independent
+    std::error_code ec;
+    auto abs = std::filesystem::absolute(program, ec);
+    if (ec) return program;                   // leave it; probe() will report it
+    // weakly_canonical also collapses `..`, which absolute() keeps.
+    auto canon = std::filesystem::weakly_canonical(abs, ec);
+    return ec ? abs.string() : canon.string();
+}
+
 inline std::unique_ptr<engines::Engine> make_engine(std::string_view spec) {
     std::string name(spec);
     std::string program;
     if (const auto eq = spec.find('='); eq != std::string_view::npos) {
         name    = std::string(spec.substr(0, eq));
-        program = std::string(spec.substr(eq + 1));
+        program = anchor_program(std::string(spec.substr(eq + 1)));
     }
 
     if (name == "mcpp")  return engines::make_mcpp(program.empty() ? "mcpp" : program);

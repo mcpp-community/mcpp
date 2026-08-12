@@ -25,9 +25,12 @@ on:
         required: false
         default: 'headers,modules,modules-impl'
       scenarios:
-        description: 'comma-separated: cold,noop,touch-hub,edit-body,touch-leaf'
+        description: 'comma-separated: cold,noop,touch-hub,touch-leaf,edit-body,edit-comment'
         required: false
-        default: 'cold,noop,touch-hub,edit-body'
+        # All of them. A scenario left out of the default is a scenario nobody
+        # ever runs — `touch-leaf` was defined, documented and advertised, and
+        # had never appeared in a single result file.
+        default: 'cold,noop,touch-hub,touch-leaf,edit-body,edit-comment'
       units:
         description: 'fixture translation units'
         required: false

@@ -24,11 +24,11 @@ public:
         // beats a confusing configure failure later.
         if (!platform::have_program({"ninja", "--version"}))
             return {false, "cmake present but ninja is not; the Makefile generator cannot build C++20 modules"};
-        return {true, "cmake + ninja"};
+        return {true, std::format("{} + ninja", a.note)};
     }
 
-    bool supports(Variant) const override { return true; }
-    std::string unsupported_reason(Variant) const override { return {}; }
+    bool supports(Variant, std::string_view) const override { return true; }
+    std::string unsupported_reason(Variant, std::string_view) const override { return {}; }
 
     platform::RunResult configure(const Job& job) const override {
         std::vector<std::string> argv{

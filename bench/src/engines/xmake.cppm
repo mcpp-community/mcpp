@@ -17,8 +17,8 @@ public:
         return probe_program("xmake", {"xmake", "--version"});
     }
 
-    bool supports(Variant) const override { return true; }
-    std::string unsupported_reason(Variant) const override { return {}; }
+    bool supports(Variant, std::string_view) const override { return true; }
+    std::string unsupported_reason(Variant, std::string_view) const override { return {}; }
 
     platform::RunResult configure(const Job& job) const override {
         std::vector<std::string> argv{

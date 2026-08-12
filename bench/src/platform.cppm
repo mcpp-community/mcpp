@@ -86,8 +86,11 @@ inline bool have_program(const std::vector<std::string>& version_argv) {
 // started. Goes through a temp file rather than a pipe: a pipe needs
 // platform-specific plumbing on both sides, and the outputs captured here are
 // version banners — a few dozen bytes, once per engine.
+// `result`, when given, receives the child's RunResult so a caller needing both
+// the output and the exit status does not have to run the command twice.
 inline std::optional<std::string> run_capture(const std::vector<std::string>& argv,
-                                              const std::filesystem::path& cwd = {}) {
+                                              const std::filesystem::path& cwd = {},
+                                              RunResult* result = nullptr) {
     std::error_code ec;
     auto tmp = std::filesystem::temp_directory_path(ec);
     if (ec) return std::nullopt;
@@ -95,6 +98,7 @@ inline std::optional<std::string> run_capture(const std::vector<std::string>& ar
                        std::chrono::steady_clock::now().time_since_epoch().count());
 
     const auto r = run(argv, cwd, tmp);
+    if (result) *result = r;
     if (!r.started()) { std::filesystem::remove(tmp, ec); return std::nullopt; }
 
     std::ifstream in(tmp, std::ios::binary);

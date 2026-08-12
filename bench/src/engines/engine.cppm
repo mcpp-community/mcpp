@@ -9,11 +9,13 @@
 //   probe()      — "not installed here" and "ran and failed" are OPPOSITE
 //                  conclusions. Without probe, a missing bazel would be recorded
 //                  as a slow or broken bazel. Protocol invariant 2.
-//   supports()   — not every engine can build every source form. bazel's C++20
-//                  module support is not comparable to CMake's, and forcing a
-//                  number out of it would be worse than reporting that it cannot
-//                  play. "不追求引擎功能对等" is a design decision, and this is
-//                  where it is enforced.
+//   supports()   — not every engine can build every source form WITH EVERY
+//                  COMPILER, and forcing a number out of one that cannot is
+//                  worse than reporting that it cannot play. Measured examples:
+//                  bazel 9.2 + rules_cc 0.2.22 builds C++20 modules with clang
+//                  but not with gcc; meson 1.10.2 builds them with neither.
+//                  Both are reported as `unavailable` WITH the measurement,
+//                  never as a slow number.
 export module bench.engines.engine;
 
 import std;
@@ -37,13 +39,22 @@ public:
     // Is this engine runnable on this machine right now?
     virtual Availability probe() const = 0;
 
-    // Can it build this source form at all? A `false` becomes `unavailable`
-    // with a reason, never a timing.
-    virtual bool supports(Variant v) const = 0;
+    // Can it build this source form, WITH THIS COMPILER? The compiler is part
+    // of the question: bazel builds C++20 modules with clang and fails with gcc
+    // (its ddi aggregator cannot parse GCC's P1689 output), so "does bazel
+    // support modules" has no answer that is independent of the run.
+    // A `false` becomes `unavailable` with a reason, never a timing.
+    virtual bool supports(Variant v, std::string_view compiler) const = 0;
 
     // Reason shown when supports() says no. Required, so the result file
     // explains itself without a reader consulting this source.
-    virtual std::string unsupported_reason(Variant v) const = 0;
+    virtual std::string unsupported_reason(Variant v, std::string_view compiler) const = 0;
+
+    // Does `compiler` resolve to a clang driver? Several engines' module
+    // support is clang-only today.
+    static bool is_clang(std::string_view compiler) {
+        return compiler.find("clang") != std::string_view::npos;
+    }
 
     // One-time project setup (cmake/meson configure, xmake f, ...). Engines
     // with no configure step return success without doing anything.
@@ -78,18 +89,49 @@ inline std::string resolve_cxx(std::string_view compiler) {
     return std::string(compiler);
 }
 
-// Shared helper: probe by running `<program> --version` and keeping the first
-// line as the note. Engines with a different version flag override probe().
+// Trims to the first line and strips trailing whitespace and ANSI colour — some
+// tools (xmake) colour their version banner, and a control sequence in a JSON
+// result file is noise a reader has to decode.
+inline std::string first_line(std::string_view text) {
+    std::string out;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\n' || text[i] == '\r') break;
+        if (text[i] == '\x1b') {
+            // CSI = ESC '[' , parameter bytes 0x30-0x3F, intermediate bytes
+            // 0x20-0x2F, then ONE final byte 0x40-0x7E. Scanning straight for a
+            // byte in @-~ stops on the '[' itself, which leaves "0m" behind in
+            // every colour reset — the exact residue this used to produce.
+            ++i;
+            if (i < text.size() && text[i] == '[') ++i;
+            while (i < text.size() && text[i] >= '\x20' && text[i] <= '\x3f') ++i;
+            // land on the final byte; the loop's own ++i steps past it
+            continue;
+        }
+        out += text[i];
+    }
+    while (!out.empty() && (out.back() == ' ' || out.back() == '\t')) out.pop_back();
+    return out;
+}
+
+// Shared helper: probe by running `<program> --version` and keeping the reported
+// VERSION as the note. Engines with a different version flag override probe().
+//
+// The version, not just the name: a result file whose note reads "cmake" cannot
+// answer "which cmake produced this?", and the answer moves the numbers a lot —
+// cmake 4.0's module cold build is a different measurement from 3.28's. This is
+// the same reason the report records host facts.
 inline Availability probe_program(std::string_view program,
                                   const std::vector<std::string>& version_argv) {
-    const auto r = platform::run(version_argv);
-    if (r.exit_code < 0)
+    platform::RunResult r;
+    const auto captured = platform::run_capture(version_argv, {}, &r);
+    if (!captured)
         return {false, std::format("{} not found on PATH", program)};
     if (r.exit_code != 0)
         return {false, std::format("{} present but `{}` exited {}", program,
                                    version_argv.size() > 1 ? version_argv[1] : "--version",
                                    r.exit_code)};
-    return {true, std::string(program)};
+    auto banner = first_line(*captured);
+    return {true, banner.empty() ? std::string(program) : banner};
 }
 
 }  // namespace bench::engines

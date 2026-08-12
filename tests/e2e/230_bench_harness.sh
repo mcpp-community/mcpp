@@ -28,6 +28,16 @@ out=$("$BENCH" --list --engines "mcpp=$MCPP")
 # The label carries the version it discovered ("mcpp@2026.8.12.1"), which is what
 # makes a two-binary comparison legible; match the prefix, not the whole token.
 echo "$out" | grep -qE '^mcpp(@[^ ]+)? +yes' || { echo "mcpp not reported available:"; echo "$out"; exit 1; }
+# The note carries each engine's reported VERSION, so a result file can answer
+# "which cmake produced this?". Some tools colour that banner, and the escape
+# sequences must be stripped before they reach a JSON result — an ESC here means
+# the CSI parser regressed (it once left the "0m" of every colour reset behind).
+# Written as an explicit `if` rather than `grep -q ... && { ... }`: under
+# `set -e` the exit status of an AND-OR list whose left side fails is the exact
+# corner this suite has been bitten by before.
+if printf '%s' "$out" | grep -q "$(printf '\033')"; then
+    echo "engine notes contain ANSI escapes:"; printf '%s' "$out" | cat -v; exit 1
+fi
 
 # 2. A real measurement over the modules variant. Tiny on purpose: 4 units still
 #    produce a module graph with depth, which is what the harness is for.
@@ -36,7 +46,7 @@ echo "$out" | grep -qE '^mcpp(@[^ ]+)? +yes' || { echo "mcpp not reported availa
 # in CI. Dump it here instead of leaving a dangling reference.
 dump_child_logs() {
     echo "--- harness stdout ---"; cat "$TMP/stdout.txt" 2>/dev/null
-    for log in "$TMP"/work/*/bench-child.log; do
+    for log in "$TMP"/work/logs/*.log; do
         [ -f "$log" ] || continue
         echo "--- $log ---"; tail -40 "$log"
     done
@@ -105,5 +115,49 @@ if grep -rq 'import std;' "$TMP/w2"/*/src/ 2>/dev/null; then
     echo "a generated fixture imports std, which breaks cross-engine comparability"
     exit 1
 fi
+
+# 8. A RELATIVE engine program path must still resolve. Every measured command
+#    runs with its cwd set to the project under test, so `--engines mcpp=./bin`
+#    used to resolve against the fixture and fail to spawn — reported per cell as
+#    `exited -1` across the whole matrix, with an empty log to explain it.
+#
+#    The test runs from a DIFFERENT directory than the binary lives in, because a
+#    harness that only ever ran where the binary sits would pass this either way.
+#    The binary is REFERENCED where it is, never copied: mcpp locates its payloads
+#    relative to its own installation, so a copy in a scratch dir would fail for a
+#    reason that has nothing to do with the path handling under test.
+mkdir -p "$TMP/elsewhere"
+REL=$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' \
+        "$MCPP" "$TMP/elsewhere")
+( cd "$TMP/elsewhere" \
+  && "$BENCH" --engines "mcpp=$REL" --variants modules --scenarios cold \
+              --units 3 --fanin 1 --weight 1 --runs 1 \
+              --work "$TMP/w3" --out "$TMP/r3.json" > "$TMP/stdout3.txt" ) \
+  || { echo "harness exited non-zero on a relative engine path"; cat "$TMP/stdout3.txt"; exit 1; }
+python3 - "$TMP/r3.json" <<'PY'
+import json, sys
+cells = json.load(open(sys.argv[1]))["cells"]
+assert cells, "no cells for a relative engine path"
+bad = [c for c in cells if c["status"] != "ok"]
+assert not bad, f"relative engine path did not resolve: {bad}"
+PY
+
+# 9. And a program that cannot be run at all must be reported with a reason that
+#    stands on its own. Here the probe catches it first (`unavailable`), but the
+#    invariant is the same one `failure_note` enforces further in: never point a
+#    reader at a log the child never got far enough to write.
+"$BENCH" --engines "mcpp=$TMP/definitely-not-here" --variants modules --scenarios cold \
+         --units 3 --fanin 1 --weight 1 --runs 1 \
+         --work "$TMP/w4" --out "$TMP/r4.json" > /dev/null 2>&1 || true
+python3 - "$TMP/r4.json" <<'PY'
+import json, sys
+cells = json.load(open(sys.argv[1]))["cells"]
+assert cells, "no cells for a missing engine binary"
+for c in cells:
+    assert c["status"] != "ok", f"a missing binary produced a timing: {c}"
+    assert c["note"], f"a missing binary produced no reason: {c}"
+    assert "see " not in c["note"], \
+        f"reason points at a log that was never written: {c['note']}"
+PY
 
 echo "bench harness OK"

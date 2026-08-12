@@ -24,15 +24,19 @@ public:
         if (!a.present) return a;
         if (!platform::have_program({"ninja", "--version"}))
             return {false, "meson present but ninja is not"};
-        return {true, "meson + ninja"};
+        return {true, std::format("meson {} + ninja", a.note)};
     }
 
-    bool supports(Variant v) const override { return v == Variant::Headers; }
+    bool supports(Variant v, std::string_view) const override { return v == Variant::Headers; }
 
-    std::string unsupported_reason(Variant v) const override {
+    std::string unsupported_reason(Variant v, std::string_view) const override {
         if (v == Variant::Headers) return {};
-        return "meson's C++20 named-module support is not comparable to cmake/xmake; "
-               "measuring it would produce a number that does not mean what it looks like";
+        // Measured, not assumed: meson 1.10.2 with clang 22 compiles main.cpp
+        // without first building the interface unit and fails with
+        // "fatal error: module 'fx.a' not found". There is no meson spelling
+        // for "this source is a module interface".
+        return "meson 1.10.2 does not build C++20 named modules (measured: "
+               "\"module 'fx.a' not found\"; no attribute declares an interface unit)";
     }
 
     platform::RunResult configure(const Job& job) const override {

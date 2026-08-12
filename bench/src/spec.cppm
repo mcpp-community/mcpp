@@ -18,8 +18,17 @@ enum class Scenario {
     Noop,       // nothing changed: how cheap is "already up to date"
     TouchHub,   // mtime bump on a widely-imported unit, CONTENT UNCHANGED —
                 // can the engine prove the interface did not change?
-    EditBody,   // real edit inside a function body, interface untouched —
-                // the everyday developer loop
+    EditBody,   // real SEMANTIC edit inside a function body — the everyday
+                // developer loop. For an inline body in an interface unit this
+                // legitimately changes the BMI and a cascade is CORRECT; that
+                // is the point of comparing it against `modules-impl`, where
+                // the same edit touches no interface at all.
+    EditComment, // the file's bytes change but its interface does not (a comment
+                // is inserted into a widely-imported unit). Distinct from
+                // TouchHub: mtime engines see a real content change here, so
+                // only an engine that compares the produced BMI can avoid the
+                // cascade. Keeping this separate from EditBody is what stops a
+                // "12x faster on edits" claim that is really about comments.
     TouchLeaf,  // mtime bump on a unit nobody imports: recompile 1 + link
 };
 
@@ -29,6 +38,7 @@ constexpr std::string_view to_string(Scenario s) {
         case Scenario::Noop:      return "noop";
         case Scenario::TouchHub:  return "touch-hub";
         case Scenario::EditBody:  return "edit-body";
+        case Scenario::EditComment: return "edit-comment";
         case Scenario::TouchLeaf: return "touch-leaf";
     }
     return "unknown";
@@ -39,6 +49,7 @@ constexpr std::optional<Scenario> scenario_from(std::string_view s) {
     if (s == "noop")       return Scenario::Noop;
     if (s == "touch-hub")  return Scenario::TouchHub;
     if (s == "edit-body")  return Scenario::EditBody;
+    if (s == "edit-comment") return Scenario::EditComment;
     if (s == "touch-leaf") return Scenario::TouchLeaf;
     return std::nullopt;
 }

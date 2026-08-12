@@ -112,7 +112,11 @@ export struct Engine {
 
 **加一个引擎 = 新增一个 `engines/<name>.cppm` + 在 `registry.cppm` 注册一行。** 不动 runner、不动协议、不动 CI。
 
-`supports(Variant)` 是必要的:并非所有引擎都支持 C++20 模块(bazel 的模块支持仍很有限),此时应报 `unavailable` 并说明,而不是硬跑出一个误导性的数字。
+`supports(Variant, compiler)` 是必要的,而且**编译器是这个问题的一部分** —— 实测:bazel 9.2 + rules_cc 0.2.22
+配 clang 能构建 C++20 模块,配 gcc 则死在它自己的扫描器里(`aggregate-ddi: Invalid JSON string`,
+它解析不了 GCC 的 P1689 输出);meson 1.10.2 两个编译器都不行(`module 'fx.a' not found`)。
+所以"bazel 支不支持模块"没有脱离具体运行的答案。不支持时报 `unavailable` **并附上得出该结论的那次测量**,
+而不是硬跑出一个误导性的数字。
 
 ---
 
@@ -202,4 +206,7 @@ fixtures/synth-<N>x<D>/
 - **不把基准挂进 PR CI**。噪声会淹没信号。
 - **不设性能回归阈值**。宿主差异(异构 CPU、云厂商邻居噪声)远大于多数真实回归。
 - **不重新实现计时统计学**。中位数 + min/max 足够;不做置信区间,因为样本量本来就小。
-- **不追求引擎功能对等**。bazel 不支持模块就报 unavailable —— 强行凑一个数字比没有数字更糟。
+- **不追求引擎功能对等**。引擎跑不了某个变体就报 unavailable —— 强行凑一个数字比没有数字更糟。
+  但"跑不了"必须是**测出来的**,不是假设的:最初这里写死了 `bazel supports(modules) = false`,
+  而实际上加上 `module_interfaces` + `--experimental_cpp_modules --features=cpp_modules` 之后,
+  bazel 配 clang 是能构建并运行模块程序的。写死的能力判断会把一整列真实数据变成空白。
