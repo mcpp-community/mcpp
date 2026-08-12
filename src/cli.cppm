@@ -645,6 +645,8 @@ int run(int argc, char** argv) {
             .option(cl::Option("sem").takes_value().value_name("DIR").help("concurrency token directory"))
             .option(cl::Option("cap").takes_value().value_name("N").help("max concurrent compilers"))
             .option(cl::Option("command-file").takes_value().value_name("PATH").help("file holding the compiler command line"))
+            .option(cl::Option("dep-from").takes_value().value_name("PATH").help("scanner depfile to adopt"))
+            .option(cl::Option("dep-to").takes_value().value_name("PATH").help("where ninja expects this edge's depfile"))
             .action(wrap_rc(cmd_bmi_compile)))
         .subcommand(cl::App("bmi-supervise")
             .description("(internal) Run a compiler to completion and record its status")

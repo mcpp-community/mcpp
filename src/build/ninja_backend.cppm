@@ -399,6 +399,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     bool has_scanner = caps.has_builtin_p1689_scan || !plan.scanDepsPath.empty();
     bool dyndep = dyndep_mode_enabled() && has_scanner;
     auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
+    // The module-edge shape, decided once in prepare (mcpp.build.schedule).
+    // dyndep is a precondition: without it nothing declares BMIs as outputs, so
+    // there is no BMI edge for importers to depend on.
+    const bool splitBmi = plan.scheduleTag == "detach-codegen" && dyndep;
     const auto& dial = mcpp::toolchain::dialect_for(plan.toolchain);
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
@@ -708,6 +712,44 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     if (dyndep)
         append("  restat = 1\n");
     append("\n");
+
+    if (splitBmi) {
+        // Two edges driven by ONE compiler process. `$out` is the BMI here, so
+        // the object path travels as `$obj_out`.
+        //
+        // The compiler command goes through a response file rather than the
+        // command line: it is already joined and quoted for a shell, and
+        // splitting it back into argv would mean reimplementing the shell's
+        // rules — the assumption "one flag element == one argv token" has been
+        // wrong in this file before.
+        append("rule cxx_module_bmi\n");
+        append("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
+               " --self $mcpp --sem $sched_sem --cap $sched_cap"
+               " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d\n");
+        append(std::format(
+            "  rspfile = $out.cmd\n"
+            "  rspfile_content = $cxx $local_includes $cxxflags $unit_cxxflags{}{} {} $in {}$obj_out\n",
+            module_output_flag, module_src_flags,
+            dial.compileOnly, dial.outputObjPrefix));
+        // The depfile is ADOPTED from the P1689 scan, not produced here.
+        // MEASURED: the compiler's own -MMD file lands at 16.39s of a 16.55s
+        // compile — AFTER the BMI is published at 2.36s — so this edge is over
+        // before it exists. The scan's is equivalent for headers (compared on
+        // real modules: the only prerequisites it lacks are `.gcm`, and those
+        // are ninja's through dyndep). Copied rather than pointed at, because
+        // ninja DELETES a depfile once it has folded it into .ninja_deps.
+        append("  depfile = $out.d\n");
+        append("  description = BMI $out\n");
+        append("  restat = 1\n\n");
+
+        append("rule cxx_module_obj\n");
+        append("  command = $mcpp bmi-await --slot $slot --object $out\n");
+        append("  description = OBJ $out\n");
+        // The object is written by the detached compiler, so its mtime moves
+        // outside this edge. Without restat ninja treats every join as having
+        // changed its output and cascades into the link every time.
+        append("  restat = 1\n\n");
+    }
 
     append("rule cxx_object\n");
     if constexpr (mcpp::platform::is_windows) {
@@ -1158,7 +1200,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             ddi_paths.push_back(ddi);
             append(std::format("build {} : cxx_scan {}{}\n", escape_ninja_path(ddi),
                                escape_ninja_path(cu.source), stagedOrderOnly));
-            append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
+            // Under the split shape the dyndep file must bind the BMI edge —
+            // that is the edge whose inputs are the imported BMIs — so the
+            // scanner is told the BMI is the primary output.
+            append(std::format("  compile_target = {}\n",
+                               splitBmi && cu.providesModule
+                                   ? bmi_path(*cu.providesModule)
+                                   : escape_ninja_path(cu.object)));
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
             if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
@@ -1238,6 +1286,42 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         for (auto& cu : plan.compileUnits) {
             if (cu.servedFromCache) continue;   // a stage_file edge owns these outputs
             std::string rule = pick_rule(cu);
+
+            if (splitBmi && cu.providesModule &&
+                cu.kind == mcpp::SourceKind::ModuleInterface) {
+                const auto bmi  = bmi_path(*cu.providesModule);
+                const auto obj  = escape_ninja_path(cu.object);
+                const auto slot = obj + ".sched";
+                const auto ddi  = (cu.object.parent_path() / cu.source.filename())
+                                      .string() + ".ddi";
+                auto it = ddi_to_dd.find(ddi);
+                if (it != ddi_to_dd.end()) {
+                    std::string e = std::format("build {} : cxx_module_bmi {} | {}",
+                                                bmi, escape_ninja_path(cu.source),
+                                                it->second);
+                    e += stagedOrderOnly;
+                    e += "\n  dyndep = " + it->second + "\n";
+                    e += "  bmi_out = " + bmi + "\n";
+                    e += "  obj_out = " + obj + "\n";
+                    e += "  slot = " + slot + "\n";
+                    e += "  scan_dep = " + escape_ninja_path(ddi) + ".dep\n";
+                    e += "  sched_sem = .mcpp-sched\n";
+                    e += std::format("  sched_cap = {}\n", plan.scheduleCompilerCap);
+                    if (auto inc = local_include_flags(cu, dial); !inc.empty())
+                        e += "  local_includes =" + inc + "\n";
+                    if (auto fl = join_flags(cu.packageCxxflags); !fl.empty())
+                        e += "  unit_cxxflags =" + fl + "\n";
+                    append(std::move(e));
+                    // The join. Its only input is the BMI, so ninja orders it
+                    // after the compiler published — and `bmi-await` blocks
+                    // until that same compiler finished writing the object.
+                    append(std::format("build {} : cxx_module_obj {}\n  slot = {}\n",
+                                       obj, bmi, slot));
+                    continue;
+                }
+                // No dyndep file for this unit: fall through to the single-edge
+                // shape rather than emitting a BMI edge nothing can order.
+            }
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (cu.providesModule) {

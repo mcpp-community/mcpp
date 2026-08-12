@@ -528,6 +528,8 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (const auto cap = opt_value(parsed, "cap"); !cap.empty())
         std::from_chars(cap.data(), cap.data() + cap.size(), req.maxCompilers);
     req.commandFile = std::filesystem::path{opt_value(parsed, "command-file")};
+    req.depFrom     = std::filesystem::path{opt_value(parsed, "dep-from")};
+    req.depTo       = std::filesystem::path{opt_value(parsed, "dep-to")};
     req.command     = read_command_file(req.commandFile);
     if (req.slot.empty()) {
         std::println(stderr, "error: bmi-compile needs --slot");

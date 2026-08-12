@@ -108,6 +108,21 @@ struct CompileRequest {
     // The file `command` was read from; handed to the supervisor unchanged, so
     // there is one representation and no re-quoting.
     std::filesystem::path commandFile;
+    // Where this edge's header dependencies come from, and where ninja expects
+    // to find them.
+    //
+    // MEASURED: the compiler's own `-MMD` file is written at 16.39s of a 16.55s
+    // compile — AFTER the BMI is published at 2.36s. This edge is over before
+    // it exists, so it cannot use it. The P1689 SCAN has already run and writes
+    // an equivalent one; compared on real modules the only prerequisites it
+    // lacks are `.gcm` BMIs, which are ninja's through dyndep. Header coverage
+    // is exact.
+    //
+    // COPIED, not pointed at: ninja DELETES a depfile once it has folded it
+    // into .ninja_deps, and the scan would not regenerate it unless the scan
+    // itself reran.
+    std::filesystem::path depFrom;
+    std::filesystem::path depTo;
 };
 
 // Phase 1 — returns 0 as soon as the BMI is published, leaving code generation
@@ -173,6 +188,39 @@ std::filesystem::path acquire_token(const std::filesystem::path& dir, int cap) {
             if (std::filesystem::create_directory(tok, ec) && !ec) return tok;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+// Keep only the first rule of a make-style depfile.
+//
+// GCC emits several: the real one, then `.PHONY:` entries and a `CXX_IMPORTS`
+// section. Handing those to ninja makes it believe in prerequisites that are
+// not files. This is the C++ counterpart of the `awk 'NR==1{print;next}
+// /^[^ ]/{exit} {print}'` that used to live in the generated command — having
+// it here is also what lets the rule stop depending on a POSIX shell.
+// `target` REPLACES the one in the source file, and that is not cosmetic: the
+// scanner names the OBJECT, this edge's output is the BMI, and ninja silently
+// treats an edge whose depfile names something else as permanently dirty. The
+// symptom is a no-op build that recompiles all 140 module interfaces in 25s and
+// reports success — nothing warns.
+void copy_first_rule(const std::filesystem::path& from, const std::filesystem::path& to,
+                     std::string_view target) {
+    if (from.empty() || to.empty()) return;
+    std::ifstream in(from);
+    if (!in) return;
+    std::ofstream out(to, std::ios::trunc);
+    std::string line;
+    bool first = true;
+    while (std::getline(in, line)) {
+        if (first) {
+            const auto colon = line.find(':');
+            out << target << (colon == std::string::npos ? ":" : line.substr(colon))
+                << '\n';
+            first = false;
+            continue;
+        }
+        if (!line.empty() && !std::isspace(static_cast<unsigned char>(line[0]))) break;
+        out << line << '\n';
     }
 }
 
@@ -332,12 +380,15 @@ int compile_release_at_bmi(const CompileRequest& req) {
     for (;;) {
         if (!req.bmi.empty() && file_exists(req.bmi)) {
             settle_bmi(req.bmi);
+            copy_first_rule(req.depFrom, req.depTo, req.bmi.string());
             return 0;                       // importers may proceed
         }
         if (const auto rc = read_rc(req.slot)) {
             if (*rc != 0) {                 // failed before publishing a BMI
                 std::ifstream in(suffixed(req.slot, ".log"));
                 if (in) std::cerr << in.rdbuf();
+            } else {
+                copy_first_rule(req.depFrom, req.depTo, req.bmi.string());
             }
             return *rc;
         }
