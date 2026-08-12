@@ -3,6 +3,47 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.12.1] — 2026-08-12
+
+### 新增
+
+- **`bench/` —— 构建引擎基准套件(顶层目录,用 mcpp 自己写)。**
+
+  起因是一次实测:mcpp 的自举构建**不是吞吐瓶颈,是延迟瓶颈** —— 关键路径 = 100%
+  墙钟,后 55% 的时间里 32 个硬件线程上只有 1 个编译进程在跑;而这条关键路径上
+  **77% 的时间在生产没有任何下游需要的 `.o`**(BMI 在编译进度 22.8% 处就原子落盘
+  了)。同样的病理在 xlings(110 模块、独立作者)上完全复现,说明这是
+  「C++23 命名模块 + GCC 单阶段 + 边完成即释放」的结构性结果,不是某一家的实现问题。
+
+  详见 `.agents/docs/2026-08-12-modular-build-performance-deep-analysis.md`。
+
+  上一轮用的是一次性 bash + hyperfine 脚本,有四个致命缺陷:只支持两个引擎、
+  **Windows 上根本跑不了**、被测对象只有 mcpp 自己、结果格式随手加字段。新套件:
+
+  - **跨平台**:C++23 写成、由 mcpp 构建,三平台同一套逻辑。平台差异按 xlings
+    `src/platform/*.cppm` 的约定拆成**模块分区 + 整文件宏控** —— 非目标平台不导出
+    任何符号,同名定义全局只有一份,编译期自动选中。`#if defined(_WIN32)` 只出现在
+    两个分区里,runner / engines / protocol / fixture 全部零平台条件。
+  - **协议先行**:`bench.protocol` 带 `protocol_version`,并把三条不变量写进类型 ——
+    失败不得伪装成数据(非 ok 的格**没有** timing 字段,而不是 0)、跳过必须带原因
+    (`unavailable` ≠ `failed`)、结果与宿主同生共死(含**异构 CPU 标记**:13900K 的
+    32 线程不能当 32 个同构核读)。
+  - **加一个引擎 = 加一个文件**:`bench.engines.Engine` + `registry.cppm` 一行。
+    已接入 mcpp / mcpp-opt / cmake / xmake / meson / bazel。
+  - **同一工程三种形态**:`headers` / `modules` / `modules-impl`,由生成器产出而非
+    手写 —— 手写两份「等价」代码几乎必然在某处不等价,而那正是被测量的东西。
+  - **`--analyze`**:同一个二进制还能剖析任意 ninja 构建目录(工作量 / makespan /
+    关键路径 / 并发曲线),固化了五个会**反转结论**的解析陷阱。
+
+  CI:`.github/workflows/bench.yml`,**仅手动触发**、覆盖 linux/macOS/windows、
+  **不设性能阈值**(宿主方差远大于多数真实回归,把噪声变成红叉只会让人忽略它)。
+
+### 说明
+
+本版本不改变 mcpp 的构建行为;`bench/` 是独立工程,`mcpp build` 不受影响。
+分析报告给出的优化方案(BMI 落盘即释放、BMI 时间戳归一、实现移出接口单元)
+按收益/风险排序记录在文档中,尚未实施。
+
 ## [2026.8.11.3] — 2026-08-11
 
 ### 修复

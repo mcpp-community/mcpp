@@ -1,0 +1,144 @@
+name: bench
+
+# Build-engine benchmark. MANUAL TRIGGER ONLY, and that is a design decision:
+#
+#   * it is heavy — a full matrix compiles the same fixture six ways per platform
+#   * it is noisy — cloud runners are shared, and the CPU model changes under you
+#   * it asserts nothing — no threshold, no pass/fail on timings
+#
+# Attaching it to every PR would drown the signal it exists to produce, and a
+# timing threshold on a shared runner turns normal variance into red crosses that
+# people learn to ignore. Results are uploaded as artifacts; comparing them is a
+# human act.
+#
+# See bench/README.md for the measurement contract before quoting any number.
+
+on:
+  workflow_dispatch:
+    inputs:
+      engines:
+        description: 'comma-separated: mcpp,mcpp-opt,cmake,xmake,meson,bazel'
+        required: false
+        default: 'mcpp,mcpp-opt,cmake,xmake'
+      variants:
+        description: 'comma-separated: headers,modules,modules-impl'
+        required: false
+        default: 'headers,modules,modules-impl'
+      scenarios:
+        description: 'comma-separated: cold,noop,touch-hub,edit-body,touch-leaf'
+        required: false
+        default: 'cold,noop,touch-hub,edit-body'
+      units:
+        description: 'fixture translation units'
+        required: false
+        default: '40'
+      fanin:
+        description: 'dependencies per unit (controls graph depth)'
+        required: false
+        default: '3'
+      runs:
+        description: 'repetitions per cell (0 = per-scenario default)'
+        required: false
+        default: '0'
+      profile:
+        description: 'release | debug'
+        required: false
+        default: 'release'
+      platforms:
+        description: 'comma-separated: linux,macos,windows'
+        required: false
+        default: 'linux,macos,windows'
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The matrix is computed rather than written out, so `platforms: linux` runs
+  # ONE job instead of three jobs where two are skipped — a skipped job still
+  # queues a runner and still reports a check.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          want="${{ inputs.platforms }}"
+          entries=()
+          case ",$want," in *,linux,*)   entries+=('{"os":"ubuntu-24.04","name":"linux"}');;  esac
+          case ",$want," in *,macos,*)   entries+=('{"os":"macos-14","name":"macos"}');;      esac
+          case ",$want," in *,windows,*) entries+=('{"os":"windows-2022","name":"windows"}');; esac
+          if [ ${#entries[@]} -eq 0 ]; then
+            echo "no platform selected from '$want'" >&2
+            exit 1
+          fi
+          printf 'matrix={"include":[%s]}\n' "$(IFS=,; echo "${entries[*]}")" >> "$GITHUB_OUTPUT"
+
+  bench:
+    needs: plan
+    strategy:
+      fail-fast: false          # one platform's engine gap must not cancel the rest
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    name: bench (${{ matrix.name }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build the harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd bench
+          "$MCPP" build --release
+          # Resolve the produced binary once; the fingerprint directory name is
+          # not predictable from here.
+          BIN=$(find target -type f -name 'bench' -o -type f -name 'bench.exe' | head -1)
+          [ -n "$BIN" ] || { echo "harness binary not found under bench/target" >&2; exit 1; }
+          echo "BENCH=$PWD/$BIN" >> "$GITHUB_ENV"
+
+      # Engines beyond mcpp are optional by design: a missing one is reported as
+      # `unavailable` with a reason, never as a slow or broken engine. Installing
+      # them is therefore best-effort and never fails the job.
+      - name: Install comparison engines (best effort)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          xlings install bazel -y || echo "bazel unavailable on this runner"
+          xlings install xmake -y || echo "xmake unavailable on this runner"
+          python3 -m pip install --quiet meson || echo "meson unavailable on this runner"
+          cmake --version || true
+          ninja --version || true
+
+      - name: Report engine availability
+        shell: bash
+        run: "$BENCH" --list
+
+      - name: Run benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BENCH" \
+            --engines   '${{ inputs.engines }}' \
+            --variants  '${{ inputs.variants }}' \
+            --scenarios '${{ inputs.scenarios }}' \
+            --profile   '${{ inputs.profile }}' \
+            --units     '${{ inputs.units }}' \
+            --fanin     '${{ inputs.fanin }}' \
+            --runs      '${{ inputs.runs }}' \
+            --work      "$RUNNER_TEMP/bench-work" \
+            --out       "bench-${{ matrix.name }}.json"
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.name }}
+          path: bench-${{ matrix.name }}.json
+          if-no-files-found: error

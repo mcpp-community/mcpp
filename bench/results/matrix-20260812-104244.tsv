@@ -1,0 +1,11 @@
+engine	compiler	profile	scenario	median_s	min_s	max_s	runs
+mcpp	gcc	release	cold	77.551	77.244	77.970	3
+mcpp	gcc	release	noop	0.430	0.428	0.448	3
+mcpp	gcc	release	touch-hub	73.790	73.602	73.919	3
+mcpp	gcc	release	edit-body	47.753	47.522	47.811	3
+mcpp	gcc	release	touch-main	5.401	5.338	5.754	3
+xmake	gcc	release	cold	88.942	88.279	88.968	3
+xmake	gcc	release	noop	0.381	0.374	0.384	3
+xmake	gcc	release	touch-hub	81.700	80.927	82.221	3
+xmake	gcc	release	edit-body	0.000	0.000	0.000	3
+xmake	gcc	release	touch-main	0.000	0.000	0.000	3

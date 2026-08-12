@@ -23,3 +23,16 @@ doctor.log
 *.ddi
 compile_commands.json
 .cache/
+
+# xmake control-arm build (bench/: xmake.lua builds mcpp for the
+# build-engine benchmark; these are its artifact + resolved-config dirs)
+/build/
+/.xmake/
+
+# benchmark scratch. bench-work/ holds generated fixtures (regenerated on every
+# run, and large); reports are per-host and belong in an artifact, not in git.
+/bench-work/
+/bench/bench-work/
+bench-report.json
+bench/bench-report.json
+.mcpp.toml.bench-backup

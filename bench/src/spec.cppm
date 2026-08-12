@@ -1,0 +1,71 @@
+// bench.spec — WHAT gets measured, expressed as data.
+//
+// Scenarios, jobs and the matrix live here so that adding a measurement never
+// means editing the runner. The runner knows how to time a thing; this module
+// knows which things are worth timing and how to perturb the tree first.
+export module bench.spec;
+
+import std;
+import bench.protocol;
+
+export namespace bench {
+
+// The perturbation applied immediately before a timed build. Every one of these
+// answers a different question, and the names are the vocabulary the whole
+// suite (CLI, CI inputs, result files) speaks.
+enum class Scenario {
+    Cold,       // no build dir at all: full graph construction + every compile
+    Noop,       // nothing changed: how cheap is "already up to date"
+    TouchHub,   // mtime bump on a widely-imported unit, CONTENT UNCHANGED —
+                // can the engine prove the interface did not change?
+    EditBody,   // real edit inside a function body, interface untouched —
+                // the everyday developer loop
+    TouchLeaf,  // mtime bump on a unit nobody imports: recompile 1 + link
+};
+
+constexpr std::string_view to_string(Scenario s) {
+    switch (s) {
+        case Scenario::Cold:      return "cold";
+        case Scenario::Noop:      return "noop";
+        case Scenario::TouchHub:  return "touch-hub";
+        case Scenario::EditBody:  return "edit-body";
+        case Scenario::TouchLeaf: return "touch-leaf";
+    }
+    return "unknown";
+}
+
+constexpr std::optional<Scenario> scenario_from(std::string_view s) {
+    if (s == "cold")       return Scenario::Cold;
+    if (s == "noop")       return Scenario::Noop;
+    if (s == "touch-hub")  return Scenario::TouchHub;
+    if (s == "edit-body")  return Scenario::EditBody;
+    if (s == "touch-leaf") return Scenario::TouchLeaf;
+    return std::nullopt;
+}
+
+// Everything an engine needs to act, and nothing about how it is timed.
+struct Job {
+    std::filesystem::path project_dir;   // the fixture instance (holds the sources)
+    std::filesystem::path build_dir;     // where this engine may write
+    std::filesystem::path log_path;      // child stdout+stderr goes here
+    Variant               variant{Variant::Modules};
+    std::string           profile{"release"};   // release | debug
+    std::string           compiler{"default"};  // gcc | clang | default
+    int                   jobs{0};              // 0 = let the engine decide
+};
+
+// Which source file each scenario perturbs. Filled by the fixture, because only
+// it knows its own shape — "hub" means something different in a 10-unit synthetic
+// project than in mcpp's 137-module graph.
+struct PerturbTargets {
+    std::filesystem::path hub;    // many importers
+    std::filesystem::path leaf;   // no importers
+    std::filesystem::path body;   // a file with a function body to edit
+};
+
+// Cold builds are expensive and their variance is low; incremental scenarios are
+// cheap and noisier, so they get more repetitions. Encoded here rather than in
+// the runner so the policy is visible next to the scenario it applies to.
+constexpr int default_runs(Scenario s) { return s == Scenario::Cold ? 3 : 5; }
+
+}  // namespace bench
