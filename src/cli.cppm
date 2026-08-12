@@ -90,6 +90,7 @@ void print_usage() {
     std::println("  --no-color                           Disable colored output");
     std::println("  --offline                            Never touch the network (also: MCPP_OFFLINE=1)");
     std::println("  --jobs N|auto, -j                    Concurrent compiles ('auto' = cores + free RAM)");
+    std::println("  --toolchain SPEC                     Use this toolchain for one build (e.g. llvm@22.1.8)");
     std::println("");
     std::println("Docs: https://github.com/mcpp-community/mcpp/tree/main/docs");
 }
@@ -128,6 +129,13 @@ int run(int argc, char** argv) {
             if (i + 1 < argc) mcpp::platform::env::set("MCPP_JOBS", argv[++i]);
         }
         else if (a.starts_with("--jobs=")) mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(7)));
+        // --toolchain rides the same channel, for the same reason: its consumer
+        // is deep inside prepare's resolution and threading a parameter down
+        // would touch every caller in between.
+        else if (a == "--toolchain") {
+            if (i + 1 < argc) mcpp::platform::env::set("MCPP_TOOLCHAIN", argv[++i]);
+        }
+        else if (a.starts_with("--toolchain=")) mcpp::platform::env::set("MCPP_TOOLCHAIN", std::string(a.substr(12)));
         else if (a.starts_with("-j") && a.size() > 2)
             mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(2)));
     }
@@ -283,6 +291,8 @@ int run(int argc, char** argv) {
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("jobs").short_name('j').takes_value().value_name("N")
                 .help("Concurrent compiles: a number, or 'auto' to size from cores + free RAM"))
+            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                .help("Build with this toolchain for one build, e.g. llvm@22.1.8"))
             .option(cl::Option("no-cache")
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("target").takes_value().help(

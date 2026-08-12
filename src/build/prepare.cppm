@@ -1363,6 +1363,21 @@ prepare_build(bool print_fingerprint,
     // silently overrule one the user wrote down.
     auto tcOrigin = tcSpec.has_value() ? TcOrigin::ManifestToolchain
                                        : TcOrigin::None;
+    // `--toolchain` (arriving as MCPP_TOOLCHAIN, the same side channel
+    // `--offline` and `--jobs` use) beats everything, including the manifest.
+    //
+    // This is the usable form of "which compiler". On this repository the
+    // choice is worth 2.48x — gcc@16.1.0 builds mcpp in 79.9s, llvm@22.1.8 in
+    // 32.2s — but CHANGING THE DEFAULT is an ecosystem decision, not a
+    // performance one: it invalidates every published package's fingerprint and
+    // the three platforms do not yet ship the same llvm. Selecting per build
+    // costs nobody anything and needs no coordination.
+    //
+    // It counts as user-explicit, so mcpp will not quietly revise it.
+    if (const char* tcEnv = std::getenv("MCPP_TOOLCHAIN"); tcEnv && *tcEnv) {
+        tcSpec   = std::string(tcEnv);
+        tcOrigin = TcOrigin::ManifestToolchain;
+    }
     if (!tcSpec.has_value()) {
         auto cfg = get_cfg();
         if (cfg && !(*cfg)->defaultToolchain.empty()) {

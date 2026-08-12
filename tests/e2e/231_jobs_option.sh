@@ -62,3 +62,26 @@ if grep -qi 'invalid job count' "$TMP/sep.txt"; then
 fi
 
 echo "jobs option OK"
+
+# 10. `--toolchain` selects a toolchain for ONE build, without touching the
+#     manifest. This is the usable form of "which compiler": on mcpp itself the
+#     choice is worth 2.5x (gcc 81.8s vs llvm 32.6s), but changing the DEFAULT
+#     would invalidate every published package's fingerprint, so per-build
+#     selection is the part that costs nobody anything.
+#
+#     Asserted by OBSERVING THE RESOLUTION, not by timing: a timing assertion on
+#     CI measures the runner's mood.
+out=$("$MCPP" build --release --toolchain gcc@16.1.0 2>&1) \
+  || { echo "--toolchain gcc failed:"; echo "$out"; exit 1; }
+echo "$out" | grep -q 'Resolved gcc@16.1.0' \
+  || { echo "--toolchain did not reach toolchain resolution:"; echo "$out"; exit 1; }
+
+# ...and it must BEAT the manifest, or it is not an override. The fixture pins
+# gcc on Linux, so asking for something else has to change what gets resolved.
+if [ "$(uname -s)" = "Linux" ]; then
+    out=$("$MCPP" build --release --toolchain llvm@22.1.8 2>&1) || true
+    echo "$out" | grep -q 'Resolved llvm@22.1.8' \
+      || { echo "--toolchain lost to the manifest pin:"; echo "$out"; exit 1; }
+fi
+
+echo "toolchain override OK"
