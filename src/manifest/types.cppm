@@ -353,6 +353,13 @@ struct Resources {
 // is read in ~150 places, and a BuildConfig genuinely IS a set of build
 // inputs plus the selection axis and resolved policy scalars.
 struct BuildConfig : BuildInputs {
+    // `[build] jobs` — how many compiles to run at once. A decimal count,
+    // "auto", or empty (the default) meaning "let the backend decide".
+    //
+    // Kept as TEXT rather than a number so that "auto" survives into the build
+    // that actually runs: resolving it at parse time would freeze one machine's
+    // core count into a value that then travels with the manifest.
+    std::string jobs;
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a

@@ -1042,6 +1042,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
     if (auto v = doc->get_string("build.target"))         m.buildConfig.target = *v;
+    // `jobs` accepts a number or "auto"; both arrive as text and are validated
+    // where they are used, so a bad value warns at build time instead of making
+    // the whole manifest unloadable. (A published package carrying an unknown
+    // key must never break an older mcpp — same rule the dependency keys follow.)
+    if (auto v = doc->get_string("build.jobs")) m.buildConfig.jobs = *v;
+    else if (auto n = doc->get_int("build.jobs")) m.buildConfig.jobs = std::to_string(*n);
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
     else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
     if (auto v = doc->get_string("build.cache"))          m.buildConfig.cacheMode = *v;
@@ -1074,7 +1080,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "allow_host_libs", "build_program_timeout", "c_standard", "cache",
         "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
         "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
-        "ldflags", "macos_deployment_target", "module_extensions", "profile",
+        "jobs", "ldflags", "macos_deployment_target", "module_extensions", "profile",
         "sources", "static_stdlib", "target",
     };
     if (auto* bt = doc->get_table("build")) {

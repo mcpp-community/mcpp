@@ -89,6 +89,7 @@ void print_usage() {
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
     std::println("  --offline                            Never touch the network (also: MCPP_OFFLINE=1)");
+    std::println("  --jobs N|auto, -j                    Concurrent compiles ('auto' = cores + free RAM)");
     std::println("");
     std::println("Docs: https://github.com/mcpp-community/mcpp/tree/main/docs");
 }
@@ -114,6 +115,16 @@ int run(int argc, char** argv) {
         // need a parameter threaded down. Same shape as MCPP_VERBOSE above, and
         // it makes `MCPP_OFFLINE=1` and `--offline` literally the same switch.
         else if (a == "--offline") mcpp::platform::env::set("MCPP_OFFLINE", "1");
+        // --jobs rides the same side channel as --offline, for the same reason
+        // recorded there: its consumer is deep in mcpp.build.execute and
+        // threading a parameter down would touch every caller in between.
+        // Accepts `--jobs N`, `--jobs=N`, `-j N` and `-jN`.
+        else if (a == "--jobs" || a == "-j") {
+            if (i + 1 < argc) mcpp::platform::env::set("MCPP_JOBS", argv[++i]);
+        }
+        else if (a.starts_with("--jobs=")) mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(7)));
+        else if (a.starts_with("-j") && a.size() > 2)
+            mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(2)));
     }
     // Decline xlings' linker-wrapper path injection, for this process and
     // everything it spawns (openxlings/xlings#540).
@@ -265,6 +276,8 @@ int run(int argc, char** argv) {
                 .help("Show toolchain fingerprint and 11 inputs"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
+            .option(cl::Option("jobs").short_name('j').takes_value().value_name("N")
+                .help("Concurrent compiles: a number, or 'auto' to size from cores + free RAM"))
             .option(cl::Option("no-cache")
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("target").takes_value().help(

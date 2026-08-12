@@ -16,6 +16,9 @@ module;
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <stdlib.h>   // setenv / unsetenv — needed on Darwin too, where they
+                      // live in <_stdlib.h> and are NOT reachable through the
+                      // other POSIX headers this file pulls in
 #include <time.h>
 #include <unistd.h>
 #if defined(__APPLE__)
@@ -23,7 +26,6 @@ module;
 #include <sys/types.h>
 #else
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #endif
 extern "C" char** environ;
