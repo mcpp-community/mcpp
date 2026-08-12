@@ -48,11 +48,30 @@ check that catches it.
 units against an 80-second difference does not move the conclusion, but it is
 recorded rather than smoothed over.
 
-## Why there are no cmake/xmake descriptions here
+## The cmake description, and where it stops
 
-`bench/projects/mcpp/` carries them because mcpp is the project this repository
-can keep them correct for. Writing them for someone else's tree means owning a
-build description that must track a codebase we do not control — it would be
-stale on the first upstream refactor, and a stale description does not fail, it
-just measures something else. The xlings arm therefore compares **mcpp against
-mcpp** (releases, or schedules), which is what a control target is for.
+`CMakeLists.txt` here is real — it configures, finds all 110 module interface
+units, and compiles them. **It does not link**, and the reason is worth having
+written down, because it is the honest limit of a hand-written foreign build
+description rather than a gap in effort:
+
+xlings declares **6 direct dependencies**. Four ship source (mcpplibs
+`cmdline` / `xpkg` / `tinyhttps` / `capi.lua`), two ship source trees that mcpp
+builds (`ftxui`, `libarchive`). Wiring the four in surfaced *their*
+dependencies:
+
+```
+tinyhttps/src/tls.cppm:3     fatal error: mbedtls/ssl.h: No such file or directory
+capi.lua/.../lua_headers.h   fatal error: lua.h: No such file or directory
+```
+
+Following that graph to a link means reimplementing mcpp's package manager
+inside a CMakeLists — and a hand-written copy of it is stale on the first
+upstream change, silently.
+
+**So the xlings arm compares mcpp against mcpp** (two releases, or two
+schedules). That is what a control target is for: it answers *"does this engine
+change hold on a codebase nobody tuned it for?"*, and that question does not
+need a second engine. The cross-engine arm stays on
+[`../mcpp/`](../mcpp/), which has one source dependency and lives in this
+repository, so its descriptions can be kept correct.
