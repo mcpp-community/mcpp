@@ -14,6 +14,7 @@ import mcpp.build.prepare;
 import mcpp.build.execute;
 import mcpp.build.configure;
 import mcpp.build.stage;
+import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
 import mcpp.dyndep;
 import mcpp.log;
@@ -479,6 +480,84 @@ export int cmd_bmi_equal(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // exactly the way `cmp -s` did. No output on either path: this runs once per
     // module compile and any chatter would land in the build log.
     return same ? 0 : 1;
+}
+
+// The three edges of the DetachCodegen shape. They are `mcpp` subcommands
+// rather than shell fragments for two reasons: the previous BMI-equivalence
+// logic lived in the generated ninja command as POSIX shell and was therefore
+// SKIPPED ENTIRELY ON WINDOWS, and a shell fragment cannot outlive its shell —
+// which is exactly what phase 1 has to do.
+//
+// `--` separates mcpp's own options from the compiler command line, so a
+// compiler flag can never be mistaken for one of ours.
+namespace {
+
+// The compiler command, one argument per line, read from a file.
+//
+// NOT `--`: the cmdline parser implements that separator only at the top level,
+// so a subcommand receives nothing after it — silently, with an empty argument
+// list rather than an error. A file also sidesteps MAX_ARG_STRLEN (128 KiB for
+// a single argv entry, which mcpp has hit before on link lines) and needs no
+// quoting rules that a compiler flag could violate.
+std::string read_command_file(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+    return text;
+}
+
+// `option_or_empty(...).value()`, the idiom the rest of this file uses.
+// `parsed.value(name)` looks plausible and returns nothing here — the two are
+// not interchangeable, and the difference is silent.
+std::string opt_value(const mcpplibs::cmdline::ParsedArgs& parsed, std::string_view name) {
+    return parsed.option_or_empty(name).value();
+}
+
+}  // namespace
+
+// Phase 1: start the compiler, return when the BMI is published.
+export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    mcpp::build::schedule::detach::CompileRequest req;
+    req.bmi       = std::filesystem::path{opt_value(parsed, "bmi")};
+    req.slot      = std::filesystem::path{opt_value(parsed, "slot")};
+    req.self      = std::filesystem::path{opt_value(parsed, "self")};
+    req.semaphore = std::filesystem::path{opt_value(parsed, "sem")};
+    req.maxCompilers = 0;
+    if (const auto cap = opt_value(parsed, "cap"); !cap.empty())
+        std::from_chars(cap.data(), cap.data() + cap.size(), req.maxCompilers);
+    req.commandFile = std::filesystem::path{opt_value(parsed, "command-file")};
+    req.command     = read_command_file(req.commandFile);
+    if (req.slot.empty()) {
+        std::println(stderr, "error: bmi-compile needs --slot");
+        return 2;
+    }
+    if (req.command.empty()) {
+        std::println(stderr, "error: bmi-compile got no command from --command-file");
+        return 2;
+    }
+    return mcpp::build::schedule::detach::compile_release_at_bmi(req);
+}
+
+// The supervisor. Detached by phase 1; never named by a build edge.
+export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    const std::filesystem::path slot{opt_value(parsed, "slot")};
+    const std::filesystem::path token{opt_value(parsed, "token")};
+    const auto command = read_command_file(std::filesystem::path{opt_value(parsed, "command-file")});
+    if (slot.empty() || command.empty()) return 2;
+    return mcpp::build::schedule::detach::supervise(slot, token, command);
+}
+
+// Phase 2: join the detached compiler before anything reads its object.
+export int cmd_bmi_await(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    const std::filesystem::path slot{opt_value(parsed, "slot")};
+    const std::filesystem::path object{opt_value(parsed, "object")};
+    if (slot.empty()) {
+        std::println(stderr, "error: bmi-await needs --slot");
+        return 2;
+    }
+    return mcpp::build::schedule::detach::await_unit(slot, object);
 }
 
 } // namespace mcpp::cli
