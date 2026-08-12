@@ -406,7 +406,21 @@ the original analysis:
 
 ---
 
-## 9. Building mcpp itself — `bench/projects/mcpp/`
+## 9. Real projects — `bench/projects/`
+
+| target | what it is for |
+|---|---|
+| [`mcpp/`](projects/mcpp/) | mcpp building itself, with cmake/xmake/meson/bazel descriptions beside it |
+| [`xlings/`](projects/xlings/) | an **independent** codebase (110 modules / 46k lines, different authors) — the control that separates "a faster build engine" from "a faster benchmark target" |
+
+⚠️ **An engine change that only helps the project it was developed on is not an
+engine change.** The split module schedule was developed against mcpp (2.30x)
+and reproduces on xlings at **3.38x**; that second number is the one that makes
+it a general result. Conversely, restructuring a target's modules speeds up that
+target and nobody else's — see `.agents/docs/2026-08-13-build-optimization-status.md`
+§L3/L4 for why those stay out of the engine's own PR.
+
+### 9a. Building mcpp itself — `bench/projects/mcpp/`
 
 Separate from the generated fixtures, `bench/projects/mcpp/` carries one build
 description per foreign engine for **mcpp itself** — the control arm for "same
@@ -470,6 +484,13 @@ xmake show -P bench/projects/mcpp -t mcpp | grep 'compiler (cxx)'   # must be mc
 > That check above is not ceremony.
 
 ## 10. Running
+
+The suite's own tests live in [`tests/`](tests/) rather than in mcpp's e2e
+directory: `bench/` is meant to be extractable into its own project, and mixing
+its tests into the host repository would put that one rename away from breaking.
+mcpp's `tests/e2e/230_bench_harness.sh` is a five-line delegator, kept so the
+harness does not silently drop out of every mcpp PR — `bench.yml` is
+workflow_dispatch-only and nothing else would run it.
 
 ```bash
 cd bench && mcpp build
