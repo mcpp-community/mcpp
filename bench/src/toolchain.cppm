@@ -199,12 +199,27 @@ inline PayloadFlags payload_flags(std::string_view compiler) {
         //     ld: cannot find -lc++: No such file or directory
         //
         // Naming both directories makes the flags independent of who links.
-        f.link += " -nostdlib++ -L" + (root / "lib").string();
+        // ⚠️ -L TELLS THE LINKER; -rpath TELLS THE LOADER. They are different
+        // questions and this payload needs both answered: libc++ lives inside
+        // the registry, nowhere the dynamic loader looks by default. With only
+        // -L, every engine on macOS produced a binary that linked cleanly and
+        // then died the moment it ran:
+        //
+        //     dyld: Symbol not found: __ZdaPv        (operator delete[])
+        //
+        // cmake, mcpp and bazel all failed identically, which is the tell that
+        // it was the flags rather than any one engine.
+        const auto add_libdir = [&](const std::filesystem::path& d) {
+            f.link += " -L" + d.string() + " -Wl,-rpath," + d.string();
+        };
+        f.link += " -nostdlib++";
+        add_libdir(root / "lib");
         for (const auto& d : std::filesystem::directory_iterator(root / "lib", ec)) {
             if (!d.is_directory()) continue;
-            if (std::filesystem::exists(d.path() / "libc++.so", ec) ||
+            if (std::filesystem::exists(d.path() / "libc++.so", ec)   ||
+                std::filesystem::exists(d.path() / "libc++.dylib", ec) ||
                 std::filesystem::exists(d.path() / "libc++.a", ec))
-                f.link += " -L" + d.path().string();
+                add_libdir(d.path());
         }
         f.link += " -lc++ -lc++abi";
     }
