@@ -116,7 +116,7 @@ ninja 不是警告而是**整图拒绝**:
 | | 杠杆 | 状态 | 依据 |
 |---|---|---|---|
 | **L1** | 按次选择工具链 `--toolchain` | **已实施** | 实测 81.8 → **32.6s**(2.51×) |
-| **L2** | 下游在 BMI 可用时即开始 | **已实施**(`schedule = "on"`,gcc + clang) | gcc 79.9 → **34.8s**(2.30×);clang 32.0 → **17.95s**(1.78×) |
+| **L2** | 下游在 BMI 可用时即开始 | **已实施**(`bmi_schedule = "on"`,gcc + clang) | gcc 79.9 → **34.8s**(2.30×);clang 32.0 → **17.95s**(1.78×) |
 | **L3** | 定义移出接口单元 | **不做** —— 已量出它治的是 L2 同一个病 | 实测:对 mcpp **−6.2%**,对 cmake +92.3% |
 | **L4** | 拆 `build.prepare` | **已实施**(架构收益;性能上为零) | 实测:**0**,原因见下 |
 
@@ -354,7 +354,7 @@ P1689 扫描的产出上;第一版发射(未提交)会让 `mcpp build` **段错�
 引擎侧:
 
 * **L1** `--toolchain SPEC` / `MCPP_TOOLCHAIN`:按次选工具链,不动 manifest、不动指纹。
-* **L2** `schedule = "on"` / `MCPP_BMI_SCHEDULE`:gcc `detach-codegen` + clang `two-phase`,
+* **L2** `bmi_schedule = "on"` / `MCPP_BMI_SCHEDULE`:gcc `detach-codegen` + clang `two-phase`,
   决策集中在 `src/build/schedule/policy.cppm`,运行期在 `src/build/schedule/`。
   默认 `auto` = off。
 * **L4** 抽出 `src/build/prepare_inputs.cppm`(架构收益,性能为零 —— 见 §1)。

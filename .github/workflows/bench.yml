@@ -266,11 +266,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The payload has to BE THERE. `mcpp build` installs whatever the
+          # manifest's default toolchain is and nothing else, so on a clang cell
+          # the llvm payload may simply not exist — and `--compiler payload:clang`
+          # is a hard error by design rather than a silent fall back to the host
+          # clang, which is the failure mode this whole arrangement exists to
+          # prevent. Install it explicitly, once, before it is asked for.
           case "${{ matrix.toolchain }}" in
-            msvc)  echo "BENCH_CXX=msvc" >> "$GITHUB_ENV" ;;
-            gcc)   echo "BENCH_CXX=payload:gcc" >> "$GITHUB_ENV" ;;
-            clang) echo "BENCH_CXX=payload:clang" >> "$GITHUB_ENV" ;;
+            msvc)
+              # No payload: mcpp uses the system Visual Studio (`msvc@system`),
+              # reached through the VS environment rather than through a path.
+              echo "BENCH_CXX=msvc" >> "$GITHUB_ENV" ;;
+            gcc)
+              "$MCPP" toolchain install "gcc@$(printf '%s' "$TOOLS" | jq -r .gcc)"
+              echo "BENCH_CXX=payload:gcc" >> "$GITHUB_ENV" ;;
+            clang)
+              # Windows is pinned to a different llvm than the other platforms —
+              # see bench/src/toolchain.cppm, which is where the harness looks it
+              # up, so the two must name the same version.
+              if [ "${{ matrix.os }}" = "windows" ]; then key=.llvm_windows; else key=.llvm; fi
+              "$MCPP" toolchain install "llvm@$(printf '%s' "$TOOLS" | jq -r $key)"
+              echo "BENCH_CXX=payload:clang" >> "$GITHUB_ENV" ;;
           esac
+          "$MCPP" toolchain list || true
           echo "cell compiler: ${{ matrix.toolchain }}"
 
       - uses: ilammy/msvc-dev-cmd@v1
@@ -313,10 +331,19 @@ jobs:
           # (i.e. every macOS runner) does not implement, and it fails by NOT
           # substituting — the macOS cells would quietly measure one mcpp while
           # the Linux ones measured two.
+          # THREE arms, not two. The third is the same binary with the BMI
+          # schedule turned on (`[build] bmi_schedule = "on"`), which is opt-in
+          # until it is verified on every platform — and which the suite could
+          # not otherwise reach at all, because the switch lives in the MEASURED
+          # PROJECT's manifest and the measured projects are pinned workloads
+          # that are not ours to edit. Without it the table said "no improvement
+          # on cold builds" for the largest cold-build change in the release.
           engines=""
           IFS=',' read -ra want <<< '${{ matrix.engines }}'
           for e in "${want[@]}"; do
-            if [ "$e" = "mcpp" ]; then e="mcpp=$MCPP_UNDER_TEST,mcpp"; fi
+            if [ "$e" = "mcpp" ]; then
+              e="mcpp=$MCPP_UNDER_TEST,mcpp[schedule=on]=$MCPP_UNDER_TEST,mcpp"
+            fi
             engines="${engines:+$engines,}$e"
           done
           echo "engines: $engines"

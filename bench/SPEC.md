@@ -56,7 +56,7 @@ the checkout and `reference_mcpp` installed by xlings. Each labels itself from
 the version it reports, so the rows never collapse — and the harness warns if
 two binaries claim the same version, because then they silently would.
 
-> **Not covered by that column:** the split build schedule (`[build] schedule =
+> **Not covered by that column:** the split build schedule (`[build] bmi_schedule =
 > "on"`) is opt-in until it has been verified on every platform, so both
 > binaries run with it OFF. These numbers therefore do not include it; see
 > `.agents/docs/2026-08-13-build-optimization-status.md` for its separately

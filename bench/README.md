@@ -107,7 +107,7 @@ Four things this bought, each of which had already gone wrong:
 > so they are also easy to recognise in a diff.
 
 > **Not exercised by these numbers:** mcpp's split build schedule
-> (`[build] schedule = "on"`) is opt-in until it has been verified on every
+> (`[build] bmi_schedule = "on"`) is opt-in until it has been verified on every
 > platform, so both mcpp binaries run with it off. Its effect is measured
 > separately in `.agents/docs/2026-08-13-build-optimization-status.md`.
 

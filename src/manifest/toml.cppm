@@ -1046,7 +1046,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // where they are used, so a bad value warns at build time instead of making
     // the whole manifest unloadable. (A published package carrying an unknown
     // key must never break an older mcpp — same rule the dependency keys follow.)
-    if (auto v = doc->get_string("build.schedule")) m.buildConfig.schedule = *v;
+    if (auto v = doc->get_string("build.bmi_schedule")) m.buildConfig.bmiSchedule = *v;
     if (auto v = doc->get_string("build.jobs")) m.buildConfig.jobs = *v;
     else if (auto n = doc->get_int("build.jobs")) m.buildConfig.jobs = std::to_string(*n);
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;

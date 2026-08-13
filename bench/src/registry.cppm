@@ -46,15 +46,68 @@ inline std::string anchor_program(std::string program) {
     return ec ? abs.string() : canon.string();
 }
 
+// A spec may carry ENGINE OPTIONS in brackets: `mcpp[schedule=on]=/path/to/mcpp`.
+//
+// This exists for opt-in behaviour. mcpp's split build schedule is a key in the
+// MEASURED PROJECT's manifest, and the measured projects are pinned workloads —
+// one of them belongs to someone else — so the suite had no way to reach the
+// largest cold-build change in the release it was benchmarking, and reported
+// "no improvement" for something worth 2.29x.
+//
+// Bracket options become environment variables for that engine's child only, so
+// both arms sit in one report against one baseline on one machine. Unbracketed
+// specs are untouched, and an unknown option is an error rather than a silently
+// ignored word — a benchmark that quietly measures the default when you asked
+// for the option is the exact failure this is meant to remove.
+inline std::optional<std::pair<std::string, std::string>> engine_option(
+    std::string_view engine, std::string_view key, std::string_view value) {
+    if (engine == "mcpp" && key == "schedule")
+        return std::pair{std::string("MCPP_BMI_SCHEDULE"), std::string(value)};
+    return std::nullopt;
+}
+
 inline std::unique_ptr<engines::Engine> make_engine(std::string_view spec) {
     std::string name(spec);
     std::string program;
-    if (const auto eq = spec.find('='); eq != std::string_view::npos) {
+    std::map<std::string, std::string> env;
+
+    // The BRACKETS are parsed first, then `=program`. Order matters: the option
+    // list contains `=` itself (`mcpp[schedule=on]=/path`), so splitting on the
+    // first `=` yields the name `mcpp[schedule`, and the whole spec is rejected
+    // as an unknown engine.
+    std::string opts;
+    if (const auto lb = spec.find('['); lb != std::string_view::npos) {
+        const auto rb = spec.find(']', lb);
+        if (rb == std::string_view::npos) return nullptr;   // unterminated: reject
+        name = std::string(spec.substr(0, lb));
+        opts = std::string(spec.substr(lb + 1, rb - lb - 1));
+        auto rest = spec.substr(rb + 1);
+        if (!rest.empty()) {
+            if (rest.front() != '=') return nullptr;        // trailing junk: reject
+            program = anchor_program(std::string(rest.substr(1)));
+        }
+    } else if (const auto eq = spec.find('='); eq != std::string_view::npos) {
         name    = std::string(spec.substr(0, eq));
         program = anchor_program(std::string(spec.substr(eq + 1)));
     }
 
-    if (name == "mcpp")  return engines::make_mcpp(program.empty() ? "mcpp" : program);
+    {
+        for (std::size_t at = 0; at <= opts.size();) {
+            const auto end  = std::min(opts.find(',', at), opts.size());
+            const auto item = std::string_view(opts).substr(at, end - at);
+            at = end + 1;
+            if (item.empty()) continue;
+            const auto sep = item.find('=');
+            if (sep == std::string_view::npos) return nullptr;
+            auto mapped = engine_option(name, item.substr(0, sep), item.substr(sep + 1));
+            if (!mapped) return nullptr;                  // unknown: reject loudly
+            env.emplace(std::move(mapped->first), std::move(mapped->second));
+        }
+    }
+
+    if (name == "mcpp")
+        return engines::make_mcpp(program.empty() ? "mcpp" : program, {}, std::move(env));
+    if (!env.empty()) return nullptr;   // no other engine takes options yet
     if (name == "cmake") return engines::make_cmake();
     if (name == "xmake") return engines::make_xmake();
     if (name == "bazel") return engines::make_bazel();

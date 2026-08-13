@@ -149,7 +149,7 @@ Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int 
     // not become the default on the strength of one machine. `on` selects it.
     if (requested != "on") {
         d.reason = "auto: the split schedule is opt-in until it has been "
-                   "verified on every platform (set schedule = \"on\")";
+                   "verified on every platform (set bmi_schedule = \"on\")";
         d.ninjaJobs = cap;
         return d;
     }
@@ -217,7 +217,7 @@ int resolve_jobs(const manifest::Manifest& m,
 
 std::string requested_switch(const manifest::Manifest& m) {
     if (const char* e = std::getenv("MCPP_BMI_SCHEDULE"); e && *e) return std::string(e);
-    if (!m.buildConfig.schedule.empty()) return m.buildConfig.schedule;
+    if (!m.buildConfig.bmiSchedule.empty()) return m.buildConfig.bmiSchedule;
     return "auto";
 }
 

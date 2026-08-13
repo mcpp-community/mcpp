@@ -67,11 +67,11 @@ the combined tree, 54 in the split one).
 
 ## What it has shown so far
 
-The split module schedule (`schedule = "on"`, see
+The split module schedule (`bmi_schedule = "on"`, see
 `.agents/docs/2026-08-13-build-performance-architecture.md` L2) reproduces on
 both projects, with a *larger* effect on the one that was not used to develop it:
 
-| project | modules / lines | `schedule=off` | `schedule=on` | ratio |
+| project | modules / lines | `bmi_schedule=off` | `bmi_schedule=on` | ratio |
 |---|---|---|---|---|
 | mcpp | 138 / 57k | 79.9s | **34.80s** | **2.30x** |
 | **xlings** | 110 / 46k | 112.92s | **33.41s** | **3.38x** |

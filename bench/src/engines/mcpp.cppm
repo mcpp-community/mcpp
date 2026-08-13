@@ -26,8 +26,24 @@ public:
     // `program` may be a bare name resolved through PATH or an absolute path to
     // a specific build. `label` is what appears in results; empty means "ask the
     // binary", which is what makes a two-version comparison self-describing.
-    explicit McppEngine(std::string program = "mcpp", std::string label = {})
-        : program_(std::move(program)), label_(std::move(label)) {}
+    //
+    // `env` is how an OPT-IN BEHAVIOUR becomes a measurable engine.
+    //
+    // mcpp's split build schedule is `[build] bmi_schedule = "on"` in the measured
+    // project's manifest, and it is opt-in until it has been verified on every
+    // platform. That put the benchmark in an impossible position: the manifests
+    // belong to the pinned workloads (one of them is someone else's project), so
+    // the suite could not reach the single largest cold-build optimisation in
+    // the release it was supposed to be measuring — and the table read "no
+    // improvement on cold builds" for a change worth 2.29x.
+    //
+    // mcpp already exposes it as `MCPP_BMI_SCHEDULE`, so no flag had to be
+    // invented; the harness only had to set it. Setting it per ENGINE rather
+    // than per run is the point: both arms appear in the same report, against
+    // the same baseline, on the same machine, in the same minute.
+    explicit McppEngine(std::string program = "mcpp", std::string label = {},
+                        std::map<std::string, std::string> env = {})
+        : program_(std::move(program)), label_(std::move(label)), env_(std::move(env)) {}
 
     std::string_view name() const override {
         if (label_.empty()) label_ = discover_label();
@@ -53,6 +69,13 @@ public:
     platform::RunResult build(const Job& job) const override {
         const std::vector<std::string> argv{
             program_, "build", job.profile == "debug" ? "--dev" : "--release"};
+        // Scoped, so the setting reaches THIS engine's child and is restored
+        // before the next engine runs. A run that leaked it would silently
+        // measure every later arm with the option on.
+        std::vector<std::unique_ptr<platform::ScopedEnv>> scoped;
+        scoped.reserve(env_.size());
+        for (const auto& [k, v] : env_)
+            scoped.push_back(std::make_unique<platform::ScopedEnv>(k, v));
         return platform::run(argv, job.project_dir, job.log_path, job.timeout_s);
     }
 
@@ -65,8 +88,9 @@ public:
     }
 
 private:
-    std::string         program_;
-    mutable std::string label_;
+    std::string                        program_;
+    mutable std::string                label_;
+    std::map<std::string, std::string> env_;
 
     // `mcpp --version` prints "mcpp <version>". Empty means the binary could not
     // be run at all — which probe() reports as unavailable rather than failed.
@@ -84,15 +108,30 @@ private:
         if (v.empty()) return "mcpp";
         const auto sp = v.rfind(' ');
         if (sp == std::string::npos) return "mcpp";
-        // "mcpp@2026.8.12.1" — distinct per version, so two binaries never
+        // "mcpp@2026.8.13.1" — distinct per version, so two binaries never
         // collapse into one row of the result table.
-        return std::format("mcpp@{}", v.substr(sp + 1));
+        //
+        // The env suffix is part of the identity for the same reason: the SAME
+        // binary with `schedule=on` is a different engine to measure, and two
+        // rows called `mcpp@2026.8.13.1` would be unreadable.
+        std::string out = std::format("mcpp@{}", v.substr(sp + 1));
+        for (const auto& [k, val] : env_) {
+            std::string key = k;
+            // `MCPP_BMI_SCHEDULE` -> `schedule`: the label is read by people.
+            if (key.starts_with("MCPP_")) key.erase(0, 5);
+            if (key.ends_with("_SCHEDULE") || key == "BMI_SCHEDULE") key = "schedule";
+            for (char& c : key) c = static_cast<char>(std::tolower(c));
+            out += std::format("+{}={}", key, val);
+        }
+        return out;
     }
 };
 
 export std::unique_ptr<Engine> make_mcpp(std::string program = "mcpp",
-                                         std::string label = {}) {
-    return std::make_unique<McppEngine>(std::move(program), std::move(label));
+                                         std::string label = {},
+                                         std::map<std::string, std::string> env = {}) {
+    return std::make_unique<McppEngine>(std::move(program), std::move(label),
+                                        std::move(env));
 }
 
 }  // namespace bench::engines

@@ -360,11 +360,23 @@ struct BuildConfig : BuildInputs {
     // that actually runs: resolving it at parse time would freeze one machine's
     // core count into a value that then travels with the manifest.
     std::string jobs;
-    // `[build] schedule` — the module-edge shape: "auto" (default), "on",
-    // "off". Text for the same reason `jobs` is: the meaning of "auto" depends
-    // on the compiler doing the build, and resolving it at parse time would
-    // freeze one machine's answer into a manifest that travels.
-    std::string schedule;
+    // `[build] bmi_schedule` — when the BMI becomes visible to importers:
+    // "auto" (default), "on", "off".
+    //
+    // "on" publishes each module's BMI as soon as it exists and moves code
+    // generation onto a separate edge, so downstream units stop waiting for
+    // work they do not need. The per-compiler strategy that implements it
+    // (`detach-codegen` for gcc, `two-phase` for clang) is chosen by
+    // mcpp.build.schedule::decide and reported by `mcpp build --verbose`.
+    //
+    // NAMED FOR WHAT IT SCHEDULES. It was `schedule`, which said only that
+    // something was being scheduled — and disagreed with its own environment
+    // override, `MCPP_BMI_SCHEDULE`. The two spellings now match.
+    //
+    // Text for the same reason `jobs` is: the meaning of "auto" depends on the
+    // compiler doing the build, and resolving it at parse time would freeze one
+    // machine's answer into a manifest that travels.
+    std::string bmiSchedule;
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a

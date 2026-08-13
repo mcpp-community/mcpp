@@ -108,6 +108,25 @@ ninja_file=$(find target -name build.ninja | head -1)
 grep -q 'schedule=none' "$ninja_file" \
   || { echo "default should not use the split schedule:"; head -2 "$ninja_file"; exit 1; }
 
+#     The MANIFEST KEY is asserted as well as the environment override. They are
+#     two spellings of one switch and only the env one was ever exercised, so
+#     `[build] bmi_schedule` could be renamed, mistyped or dropped entirely and
+#     every test would still pass — the key would just silently stop working and
+#     the build would quietly use the default. (It was called `schedule` until
+#     it was renamed to agree with `MCPP_BMI_SCHEDULE`; this is what makes the
+#     next such rename fail loudly.)
+rm -rf target
+cp mcpp.toml "$TMP/mcpp.toml.bak"
+printf '\n[build]\nbmi_schedule = "on"\n' >> mcpp.toml
+"$MCPP" build --release > "$TMP/sched-manifest.txt" 2>&1 \
+  || { echo "bmi_schedule = \"on\" failed to build:"; cat "$TMP/sched-manifest.txt"; exit 1; }
+ninja_file=$(find target -name build.ninja | head -1)
+grep -qE 'schedule=(detach-codegen|two-phase)' "$ninja_file" \
+  || { echo "[build] bmi_schedule = \"on\" did not select a split schedule:"
+       head -2 "$ninja_file"; exit 1; }
+cp "$TMP/mcpp.toml.bak" mcpp.toml
+echo "manifest key bmi_schedule OK"
+
 rm -rf target
 MCPP_BMI_SCHEDULE=on "$MCPP" build --release > "$TMP/sched.txt" 2>&1 \
   || { echo "schedule=on failed to build:"; cat "$TMP/sched.txt"; exit 1; }

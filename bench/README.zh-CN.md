@@ -86,7 +86,7 @@ job 会打印每个工具实际解析到的版本，与钉的版本不符就大�
 
 > **刻意不摁住的**：runner 硬件。见英文版 §4a。
 
-> **这些数字没有覆盖的**：mcpp 的分离式调度（`[build] schedule = "on"`）在所有
+> **这些数字没有覆盖的**：mcpp 的分离式调度（`[build] bmi_schedule = "on"`）在所有
 > 平台验证通过前是 opt-in 的，所以两个 mcpp 二进制都是关着它跑的。它的效果单独
 > 测量，见 `.agents/docs/2026-08-13-build-optimization-status.md`。
 
