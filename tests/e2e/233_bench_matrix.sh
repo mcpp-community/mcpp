@@ -171,6 +171,27 @@ for c in m["cells"]:
                         f"exist in the pinned tree — every scenario that perturbs it would be "
                         f"reported `skipped` and the job would still pass")
 
+# ── No engine scratch may be tracked ───────────────────────────────────────
+#
+# The foreign engines write their state next to the description they are pointed
+# at, and ten of xmake's cache files were committed by an over-broad `git add`.
+# One of them recorded `builddir = "mcpp-2026.8.11.3/build"` — the path-doubling
+# bug this suite was fixed for — in a file CI would have READ, reinstating the
+# defect on every runner while the code that caused it was already gone.
+#
+# Checked here rather than trusted to .gitignore, because the root ignore file
+# already had `/.xmake/` and it did not reach `bench/projects/` at all.
+import subprocess
+tracked = subprocess.run(
+    ["git", "-C", root, "ls-files",
+     "bench/projects/*/.xmake*", "bench/projects/*/build/*",
+     "bench/projects/*/CMakeCache.txt", "bench/projects/*/bazel-*"],
+    capture_output=True, text=True).stdout.split()
+if tracked:
+    fail.append("engine scratch is tracked in git (machine-local state, and one of "
+                f"these froze a fixed bug into CI): {tracked[:4]}"
+                + (f" … and {len(tracked)-4} more" if len(tracked) > 4 else ""))
+
 # ── The tool pins ──────────────────────────────────────────────────────────
 # A pin that is absent is a tool resolved from the runner image, which is how
 # the matrix ended up measuring cmake 3.31.6 against a suite that needs 4.0.

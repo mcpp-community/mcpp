@@ -33,12 +33,27 @@
 # (bench/projects/<name>/{CMakeLists.txt,xmake.lua}): they glob
 # `src/**/*.{cppm,cpp}`, which is the same rule mcpp itself infers from, so no
 # style needs its own file, an environment switch, or a branch.
+#
+# `ignore = dirty` on every one of them: a measurement RUNS these trees, and the
+# engines write into them — `mcpp build` writes `mcpp.lock`, cmake and xmake put
+# objects under `build/`. Those are the engines doing their job, and they made
+# `git status` in this repository report two modified submodules after every
+# bench run. The only state that matters here is WHICH COMMIT each workload is
+# pinned to, and that is still reported: `ignore = dirty` hides working-tree
+# changes, never a moved gitlink.
+#
+# The source files themselves are restored by the harness (`SourceGuard`), so a
+# leftover perturbation is already a bug rather than something to ignore — and
+# `git submodule foreach git status` still shows one when it happens.
 [submodule "bench/projects/xlings/xlings-2026.8.11.2"]
 	path = bench/projects/xlings/xlings-2026.8.11.2
 	url = https://github.com/openxlings/xlings
+	ignore = dirty
 [submodule "bench/projects/xlings/xlings-2026.8.13.1"]
 	path = bench/projects/xlings/xlings-2026.8.13.1
 	url = https://github.com/openxlings/xlings
+	ignore = dirty
 [submodule "bench/projects/mcpp/mcpp-2026.8.11.3"]
 	path = bench/projects/mcpp/mcpp-2026.8.11.3
 	url = https://github.com/mcpp-community/mcpp
+	ignore = dirty
