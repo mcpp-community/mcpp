@@ -134,6 +134,7 @@ for x in m.get("excluded", []):
 # than cloned from a moving branch at run time. That is most of the argument for
 # pinning them.
 root = sys.argv[2]
+uninit = set()
 for c in m["cells"]:
     if c["project"] == "fixture":
         if c.get("hub") or c.get("body"):
@@ -150,9 +151,19 @@ for c in m["cells"]:
         # engine under test is the binary, the workload must not move with it.
         tree = os.path.join(root, "bench", "projects",
                             c.get("buildfiles", c["project"]), c["project"])
-        if not os.path.isdir(tree):
-            fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: no tree at {tree} "
-                        "(run `git submodule update --init`)")
+        # A submodule that is DECLARED but not checked out leaves an empty
+        # directory, which is not the same as a missing one and must not read as
+        # a broken matrix: only the bench workflow checks submodules out, so
+        # every other CI job would fail this on a perfectly correct file.
+        #
+        # `mcpp.toml` is the marker — every workload here is an mcpp project, and
+        # its absence means "not initialised" rather than "hub is wrong".
+        if not os.path.isfile(os.path.join(tree, "mcpp.toml")):
+            if not os.path.isdir(tree):
+                fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: nothing at {tree} — "
+                            "the cell names a workload that is not even declared as a submodule")
+            else:
+                uninit.add(c["project"])
             break
         target = os.path.join(tree, c[field])
         if not os.path.isfile(target):
@@ -192,6 +203,13 @@ if fail:
     raise SystemExit(1)
 print(f"matrix: {len(m['cells'])} cells, {len(m.get('excluded', []))} documented exclusions, "
       f"baseline={base}, tool pins {m['tools']['cmake']}/{m['tools']['xmake']}/{m['tools']['bazel']}")
+if uninit:
+    # Loud, and named. A silent skip here would mean the check that catches a
+    # stale `hub` never actually runs anywhere, which is how it got missed in
+    # the first place. The bench workflow checks submodules out and runs this
+    # test, so the assertion does execute on every change to the suite.
+    print(f"  NOTE: hub/body existence NOT checked for {', '.join(sorted(uninit))} "
+          f"— submodule(s) not checked out here (`git submodule update --init`)")
 PY
 
 # ── 2: the axis values are ones the harness accepts ────────────────────────

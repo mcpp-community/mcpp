@@ -44,10 +44,27 @@ inline bool is_clang_request(std::string_view compiler) {
         || compiler.find("llvm")  != std::string_view::npos;
 }
 
+// Which FAMILY a compiler request resolves to on this host — the single
+// decision `mcpp_pin` and `payload_cxx` both read, so the toolchain mcpp is told
+// to use and the driver every other engine is handed cannot disagree.
+//
+// ⚠️ THE HOST IS PART OF THE ANSWER. There is no gcc payload for macOS in mcpp's
+// registry (bench/matrix.json excludes the macos/gcc cell for exactly that
+// reason), and the Windows payload is llvm. A pin that reads `gcc@16.1.0`
+// everywhere fails on those hosts with
+//
+//     error: toolchain 'gcc@16.1.0': package 'xim:gcc@16.1.0' not found
+//
+// which is what happened the moment this replaced the old emitter's explicit
+// `macos = "llvm@..."` / `windows = "llvm@..."` overrides with one `default`.
+inline bool resolves_to_clang(std::string_view compiler) {
+    return is_clang_request(compiler) || platform::OS_NAME != "linux";
+}
+
 // What the fixture's `mcpp.toml` must say so that mcpp uses the same compiler
 // every other engine was handed.
 inline std::string mcpp_pin(std::string_view compiler) {
-    if (is_clang_request(compiler))
+    if (resolves_to_clang(compiler))
         return std::format("llvm@{}", on_windows() ? kLlvmWindows : kLlvm);
     return std::format("gcc@{}", kGcc);
 }
@@ -84,7 +101,7 @@ inline Resolved payload_cxx(std::string_view compiler) {
     if (xpkgs.empty())
         return {{}, "neither MCPP_HOME nor HOME/USERPROFILE is set"};
 
-    const bool clang = is_clang_request(compiler);
+    const bool clang = resolves_to_clang(compiler);
     const std::string pkg = clang ? "xim-x-llvm" : "xim-x-gcc";
     const std::string ver{clang ? (on_windows() ? kLlvmWindows : kLlvm) : kGcc};
     const std::string exe = std::string(clang ? "clang++" : "g++")

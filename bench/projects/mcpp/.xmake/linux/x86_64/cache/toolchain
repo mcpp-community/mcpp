@@ -1,0 +1,118 @@
+{
+    gfortran_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    fasm_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    cuda_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    fpc_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    rust_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    zig_arch_x86_64_plat_linux = {
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    tool_target_mcpp_linux_x86_64_ld = {
+        toolchain_info = {
+            cachekey = "mcpp-gcc_arch_x86_64_plat_linux",
+            name = "mcpp-gcc",
+            arch = "x86_64",
+            plat = "linux"
+        },
+        toolname = "gxx",
+        program = "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++"
+    },
+    clang_arch_x86_64_plat_linux = {
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    envs_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    yasm_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    swift_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    ["mcpp-gcc_arch_x86_64_plat_linux"] = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    tool_target_mcpp_linux_x86_64_cxx = {
+        toolchain_info = {
+            cachekey = "mcpp-gcc_arch_x86_64_plat_linux",
+            name = "mcpp-gcc",
+            arch = "x86_64",
+            plat = "linux"
+        },
+        toolname = "gxx",
+        program = "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++"
+    },
+    gcc_arch_x86_64_plat_linux = {
+        __checked = {
+            name = "gcc",
+            program = "/home/speak/workspace/github/mcpp-community/mcpp/.xlings/subos/_/bin/gcc"
+        },
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    cross_arch_x86_64_plat_linux = {
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    nasm_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    nim_arch_x86_64_plat_linux = {
+        __checked = false,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    go_arch_x86_64_plat_linux = {
+        __checked = true,
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    }
+}

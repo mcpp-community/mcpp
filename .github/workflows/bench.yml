@@ -114,7 +114,19 @@ jobs:
       reference_mcpp: ${{ steps.plan.outputs.reference_mcpp }}
       baseline: ${{ steps.plan.outputs.baseline }}
     steps:
+      # submodules, because the guard below checks that every cell's `hub` and
+      # `body` still EXIST in the pinned workload — the assertion that would
+      # have caught `--hub src/xlings.cppm` naming a file that had been gone for
+      # months. This is the only workflow that checks them out, so it is the
+      # only place that assertion can run.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Check the matrix against the harness and the pinned workloads
+        shell: bash
+        run: bash tests/e2e/233_bench_matrix.sh
+
       - id: plan
         shell: bash
         run: |

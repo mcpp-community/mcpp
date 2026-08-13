@@ -1,0 +1,16 @@
+{
+    pin_payload = {
+        default = true,
+        __sourceinfo_default = { },
+        __scriptdir = "/home/speak/workspace/github/mcpp-community/mcpp/bench/projects/mcpp",
+        description = "Pin the hermetic mcpp toolchain payload (required for a fair benchmark)",
+        showmenu = true,
+        __sourceinfo_description = {
+            ["Pin the hermetic mcpp toolchain payload (required for a fair benchmark)"] = {
+                line = 76,
+                file = "./xmake.lua"
+            }
+        },
+        __sourceinfo_showmenu = { }
+    }
+}
