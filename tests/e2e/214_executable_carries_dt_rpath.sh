@@ -196,7 +196,49 @@ print("rule E: executable=%s library=%s" % (
     by_form["executable"]["actual"], by_form["shared_library"]["actual"]))
 PY2
 
+# ── the record must SURVIVE a build that produced nothing ───────────────────
+#
+# Rule E used to re-read every link artifact on every backend drive, whether or
+# not anything had been relinked. `mcpp test` drives the backend once per test,
+# so on the 83-test suite that was 1.87s x 85 = 158.7s of a 190s hot run —
+# reading ELF files nothing had touched.
+#
+# The fix reads back the stored verdict for an artifact whose stat did not
+# move. That has its own failure mode, and it is the one asserted here: the
+# cheap version of "skip what did not change" also skips RECORDING it, so
+# resolution.json shrinks to whatever was rebuilt — and a no-op build empties
+# it. An empty record and a compliant build then look identical, which is the
+# confusion this whole rule exists to prevent.
+count_tags() {
+    python3 -c "import json,sys;print(len(json.load(open(sys.argv[1]))['runtime']['loader_tags']))" "$1"
+}
+before_count=$(count_tags "$RES")
+[ "$before_count" -ge 2 ] || { echo "FAIL: rule E recorded only $before_count artifact(s)"; exit 1; }
+
+# (a) a build that relinks NOTHING.
+"$MCPP" build > rebuild.log 2>&1 || { cat rebuild.log; exit 1; }
+noop_count=$(count_tags "$RES")
+[ "$before_count" = "$noop_count" ] || {
+    echo "FAIL: a no-op build changed the loader-tag record: $before_count -> $noop_count"
+    cat "$RES"; exit 1
+}
+
+# (b) THE ONE THAT MATTERS: a build that relinks ONE of the two. `main.cpp`
+# belongs to tagbin alone, so the executable is rewritten and the library is
+# not. A rule that records only what it re-read drops the library here — and
+# (a) alone cannot see that, because a no-op rewrites nothing at all and so
+# leaves even a broken record looking intact.
+sleep 1
+printf '\n// touch\n' >> src/main.cpp
+"$MCPP" build > partial.log 2>&1 || { cat partial.log; exit 1; }
+partial_count=$(count_tags "$RES")
+[ "$before_count" = "$partial_count" ] || {
+    echo "FAIL: relinking one artifact shrank the loader-tag record: $before_count -> $partial_count"
+    cat "$RES"; exit 1
+}
+after_count=$partial_count
+
 # and it has to run
 "$MCPP" run tagbin > run.log 2>&1 || { cat run.log; exit 1; }
 
-echo "PASS: executables carry DT_RPATH, shared libraries keep DT_RUNPATH, and rule E recorded it"
+echo "PASS: executables carry DT_RPATH, shared libraries keep DT_RUNPATH, and rule E recorded it ($after_count artifacts, stable across a no-op build)"

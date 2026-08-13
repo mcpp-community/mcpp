@@ -41,6 +41,7 @@ import mcpp.toolchain.registry;
 import mcpp.platform.xlings;
 import mcpp.platform;
 import mcpp.ui;
+import mcpp.log;
 
 export namespace mcpp::build {
 
@@ -1826,11 +1827,24 @@ std::optional<std::string> check_inline_command_lengths(const std::string& manif
 std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan,
                                                            const BuildOptions& opts) {
     auto t0 = std::chrono::steady_clock::now();
+    // Where a drive's wall clock went. `mcpp test` calls this once per test on
+    // an already-built tree, so anything here that is not proportional to the
+    // work done is paid N times — and that is invisible from the outside,
+    // because the only number reported is the total.
+    auto tStage = t0;
+    auto stage = [&](std::string_view what) {
+        if (!mcpp::log::is_verbose()) { tStage = std::chrono::steady_clock::now(); return; }
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - tStage).count();
+        tStage = now;
+        if (ms >= 1) mcpp::log::verbose("build/stage", std::format("{}: {}ms", what, ms));
+    };
     // Captured before ninja touches any link output.  The post-build runtime
     // validator compares this snapshot, so a hot no-op performs zero ELF
     // parses and an output rebuilt behind an unchanged build.ninja is caught.
     auto runtimeBefore =
         mcpp::build::runtime_validation::snapshot_link_artifacts(plan);
+    stage("snapshot");
 
     std::error_code ec;
     std::filesystem::create_directories(plan.outputDir, ec);
@@ -1841,6 +1855,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 
     auto ninja_path = plan.outputDir / "build.ninja";
     auto manifest = emit_ninja_string(plan);
+    stage("emit-ninja");
 
     // Command-length backstop (see
     // .agents/docs/2026-08-06-command-length-architecture.md). The structural
@@ -1853,10 +1868,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         return std::unexpected(BuildError{*over, ninja_path});
     auto goalArg = append_goal_phony(manifest, opts.ninjaTargets);
     write_file(ninja_path, manifest);
+    stage("write-ninja");
 
     // compile_commands.json — via the dedicated module.
     auto flags = compute_flags(plan);
+    stage("compute-flags");
     auto cdb = write_compile_commands(plan, flags);
+    stage("compile-commands");
     if (!cdb) {
         if (opts.requireCompileDatabase) {
             return std::unexpected(BuildError{
@@ -1903,6 +1921,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                       plan.manifest.buildConfig.allowHostLibs); !h) {
         return std::unexpected(BuildError{h.error(), {}});
     }
+    stage("hermetic-check");
 
     // When the toolchain comes from mcpp's private sandbox, use the
     // sandbox-local ninja absolute path (skip the system xlings ninja
@@ -1989,6 +2008,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nargv, nenv,
         std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000),
         &buildTimedOut);
+    stage("ninja");
     std::string out = cap.output;
     bool ok = (cap.exit_code == 0) && !buildTimedOut;
 
@@ -2012,6 +2032,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         auto runtimeReport =
             mcpp::build::runtime_validation::validate_changed_artifacts(
                 plan, runtimeBefore);
+        stage("runtime-validate");
         std::string runtimeFailure;
         std::filesystem::path runtimeFailureArtifact;
         for (auto const& checked : runtimeReport.artifacts) {
@@ -2054,6 +2075,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                 continue;
             mcpp::ui::warning(finding.explain());
         }
+        stage("loader-tags");
         if (opts.verbose && !out.empty())
             std::fputs(out.c_str(), stdout);
         std::set<std::string> want(opts.ninjaTargets.begin(), opts.ninjaTargets.end());
