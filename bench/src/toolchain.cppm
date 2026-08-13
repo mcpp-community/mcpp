@@ -115,4 +115,72 @@ inline Resolved payload_cxx(std::string_view compiler) {
                             driver.string(), clang ? "llvm" : "gcc", ver)};
 }
 
+// The flags a FOREIGN engine needs so that a payload compiler can actually
+// build and link — the generated fixture's counterpart of
+// bench/projects/common/cmake/hermetic_payload.cmake.
+//
+// ⚠️ WHY THIS EXISTS AT ALL, given that file exists. The checked-in project
+// descriptions `include()` it; the fixture is GENERATED into a scratch
+// directory by a binary that may live anywhere, so it has no path to include.
+// The two are the same decision in two places and must be kept in step — the
+// alternative considered (emit an `include()` of an absolute path) makes every
+// generated fixture depend on this checkout still being where it was.
+//
+// It is needed because `--compiler payload:gcc` hands cmake and xmake a
+// compiler out of mcpp's registry, and a bare registry gcc has no idea where
+// its assembler, linker or libc are:
+//
+//     /usr/bin/ld: cannot find crt1.o: No such file or directory
+//     /usr/bin/ld: cannot find -lm: No such file or directory
+//
+// which cmake reports as "the C++ compiler is not able to compile a simple
+// test program", i.e. as a configure failure with no mention of a sysroot.
+struct PayloadFlags {
+    std::string compile;
+    std::string link;
+};
+
+inline PayloadFlags payload_flags(std::string_view compiler) {
+    PayloadFlags f;
+    // Only a compiler FROM the registry gets these; a host compiler already
+    // knows where its own runtime is, and adding a registry sysroot to it
+    // produces a mixed build that fails somewhere unrelated.
+    if (compiler.find("xpkgs") == std::string_view::npos) return f;
+
+    const auto xpkgs = registry_xpkgs();
+    if (xpkgs.empty()) return f;
+    std::error_code ec;
+
+    if (!is_clang_request(compiler)) {
+        // gcc: -B for `as`/`ld`, --sysroot for headers and startup files, and
+        // BOTH must reach compile and link — the driver spawns `as` at compile
+        // time and `ld` at link time, so one side alone silently falls back.
+        for (const auto& e : std::filesystem::directory_iterator(
+                 xpkgs / "xim-x-binutils", ec)) {
+            f.compile += " -B" + (e.path() / "bin").string();
+            f.link    += " -B" + (e.path() / "bin").string();
+            break;
+        }
+        auto sysroot = registry_xpkgs().parent_path().parent_path()
+                     / "subos" / "default";
+        if (std::filesystem::is_directory(sysroot, ec)) {
+            f.compile += " --sysroot=" + sysroot.string();
+            f.link    += " --sysroot=" + sysroot.string();
+        }
+        return f;
+    }
+
+    // clang: an explicit libc++ chain rather than --sysroot, which is what mcpp
+    // itself drives clang with. Handing clang gcc's sysroot is the mirror of the
+    // bug above — one arm on the payload libc, the other on the host's.
+    const std::string ver{on_windows() ? kLlvmWindows : kLlvm};
+    const auto root = xpkgs / "xim-x-llvm" / ver;
+    if (std::filesystem::is_directory(root / "include" / "c++" / "v1", ec)) {
+        f.compile += " --no-default-config -nostdinc++"
+                     " -isystem" + (root / "include" / "c++" / "v1").string();
+        f.link    += " -nostdlib++ -L" + (root / "lib").string() + " -lc++ -lc++abi";
+    }
+    return f;
+}
+
 }  // namespace bench::toolchain

@@ -131,6 +131,19 @@ inline Availability probe_program(std::string_view program,
                                    version_argv.size() > 1 ? version_argv[1] : "--version",
                                    r.exit_code)};
     auto banner = first_line(*captured);
+    // ⚠️ A SHIM THAT ANSWERS FOR A PROGRAM IT DOES NOT HAVE. xlings installs
+    // `bazel`, `mcpp` and friends as shims on PATH; ask one for its version
+    // when the package is not installed and it prints
+    //
+    //     [error] xlings: 'bazel' is not installed
+    //
+    // and exits ZERO. Taken at face value that is "present, version =
+    // <error message>", so every cell for that engine ran, failed, and was
+    // recorded as a FINDING against the engine rather than as "not installed
+    // here" — 18 cells per macOS job.
+    if (banner.find("is not installed") != std::string::npos)
+        return {false, std::format("{} resolves to a shim that reports it is not "
+                                   "installed: {}", program, banner)};
     return {true, banner.empty() ? std::string(program) : banner};
 }
 
