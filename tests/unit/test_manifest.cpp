@@ -3476,3 +3476,39 @@ cxx_runtime = "host-coupled"
     EXPECT_TRUE(m->buildConfig.cxxRuntimeShared.empty());
     EXPECT_TRUE(m->schemaWarnings.empty());
 }
+
+TEST(Manifest, BmiScheduleKey) {
+    // The KEY SPELLING, not just the field. `[build] bmi_schedule` reaches the
+    // build only through this one string in mcpp.manifest.toml, and nothing
+    // downstream can tell a mistyped key from an absent one: the value silently
+    // stays empty, `requested_switch` returns "auto", and the build quietly uses
+    // the default schedule. Every other test would still pass.
+    //
+    // It was called `schedule` until it was renamed to agree with its own
+    // environment override, `MCPP_BMI_SCHEDULE`. This is what makes the next
+    // such rename fail loudly instead of silently.
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+bmi_schedule = "on"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->buildConfig.bmiSchedule, "on");
+
+    // And the old spelling must NOT still work: leaving it accepted would mean
+    // two keys for one switch, which is how a rename ends up half-done.
+    constexpr auto old_key = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+schedule = "on"
+)";
+    auto o = mcpp::manifest::parse_string(old_key);
+    ASSERT_TRUE(o.has_value()) << o.error().format();
+    EXPECT_TRUE(o->buildConfig.bmiSchedule.empty())
+        << "the pre-rename key `schedule` is still being read";
+}
