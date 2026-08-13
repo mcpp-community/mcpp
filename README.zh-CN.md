@@ -307,13 +307,14 @@ import mcpplibs.cmdline;
 
 | 场景 | 改了什么 | **mcpp** | cmake | xmake |
 |---|---|---|---|---|
-| `cold` | 什么都还没构建 | **79.5s** | 92.3s | 90.3s |
-| `noop` | 什么都没改 | **0.16s** | 0.28s | 0.38s |
-| `touch-hub` | 给被大量 import 的接口改 mtime | **0.40s** | 83.4s | 82.1s |
-| `edit-body` | 函数体内部一处真实修改 | 76.2s | 85.6s | 84.6s |
+| `cold` | 什么都还没构建 | **79.54s** · 1.2x | 92.33s · 1.0x | 90.30s · 1.0x |
+| `noop` | 什么都没改 | **0.16s** · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
+| `touch-hub` | 给被大量 import 的接口改 mtime | **0.40s** · 208x | 83.39s · 1.0x | 82.07s · 1.0x |
+| `edit-body` | 函数体内部一处真实修改 | **76.24s** · 1.1x | 85.64s · 1.0x | 84.61s · 1.0x |
+| `edit-comment` | 给被大量 import 的接口加一条注释 | **0.38s** · 218x | 82.96s · 1.0x | 82.73s · 1.0x |
 
 * **冷构建三家都在 15% 以内** —— 依赖图是一条 26 层深的模块接口链,没有可供调度
-  的余地。打开 `[build] bmi_schedule = "on"` 后 mcpp 的冷构建降到 **35.4s**。
+  的余地,任何引擎都缩短不了一条链。
 * **`touch-hub` 才是一天里真正花掉的时间。** cmake 和 xmake 按时间戳判断,下游
   全量重建;mcpp 把编译器刚产出的 BMI 和上一份比对,接口没变就不级联 ——
   **0.40s 对 83s**。
@@ -322,7 +323,10 @@ import mcpplibs.cmdline;
 📊 **[测量方法、钉住的版本与完整数据 → `bench/README.zh-CN.md`](bench/README.zh-CN.md)**
  · [English](bench/README.md)
 
-<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 · 钉住的工作负载 `a749e9f`。
+<sub>mcpp 为**默认配置**。Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 ·
+钉住的工作负载 `a749e9f`。opt-in 的 `[build] bmi_schedule = "on"` 能把 `cold`
+降到 35.4s,但它在增量重建上有一个尚未修好的正确性缺陷,因此这里不引用 ——
+见 `bench/README.md`。
 套件还测量了第二个独立工程(xlings)的两种代码风格;那份对比、已声明的不对称、
 以及「什么时候一个格子**不能**拿来比较」的规则,都在 `bench/README.md`。</sub>
 

@@ -357,7 +357,17 @@ jobs:
           IFS=',' read -ra want <<< '${{ matrix.engines }}'
           for e in "${want[@]}"; do
             if [ "$e" = "mcpp" ]; then
-              e="mcpp=$MCPP_UNDER_TEST,mcpp[schedule=on]=$MCPP_UNDER_TEST,mcpp"
+              # ⚠️ THE `mcpp[schedule=on]` ARM IS DELIBERATELY ABSENT.
+              #
+              # `[build] bmi_schedule = "on"` has an unresolved correctness bug
+              # on incremental rebuilds — see
+              # .agents/docs/2026-08-13-build-optimization-status.md §8. It is
+              # opt-in and off by default, so nothing users get is affected, but
+              # CI must not measure a configuration that does not build.
+              #
+              # Putting it back is one line, and the §8 reproduction is the gate:
+              # all six fixture scenarios green at --runs 2 before it returns.
+              e="mcpp=$MCPP_UNDER_TEST,mcpp"
             fi
             engines="${engines:+$engines,}$e"
           done

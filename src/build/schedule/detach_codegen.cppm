@@ -227,6 +227,53 @@ void copy_first_rule(const std::filesystem::path& from, const std::filesystem::p
 // The BMI equivalence check, which used to be a POSIX shell one-liner inside the
 // generated ninja command — and was therefore skipped entirely on Windows.
 // Having it here is what brings cascade suppression to every platform.
+// A BMI's IDENTITY, so publication can be detected without the file ever having
+// to be absent.
+//
+// ⚠️ THE OLD DESIGN CREATED THE HOLE IT WAS TRYING TO AVOID. Phase 1 used to
+// `rename(bmi, bmi.bak)` before spawning the compiler — the comment said it was
+// so "its mere presence can never be mistaken for the new one landing". That is
+// a real hazard, but the cure left the module with NO BMI ON DISK from that
+// rename until the compiler republished: measured at ~208 ms of a single
+// incremental rebuild. Any importer scheduled inside that window dies with
+//
+//     error: failed to read compiled module: No such file or directory
+//     note: imports must be built before being imported
+//
+// reproducible at `-j1`, on four of six scenarios of the generated fixture.
+//
+// The previous BMI is now COPIED aside instead, so the file is continuously
+// readable and GCC's own atomic rename is what replaces it. Publication is
+// detected by the identity below changing, which is exactly the question the
+// existence check was a poor proxy for.
+struct BmiIdentity {
+    bool                                    present{};
+    std::uintmax_t                          size{};
+    std::filesystem::file_time_type         mtime{};
+    bool operator==(const BmiIdentity&) const = default;
+};
+
+BmiIdentity bmi_identity(const std::filesystem::path& p) {
+    BmiIdentity id;
+    if (p.empty()) return id;
+    std::error_code ec;
+    // ⚠️ ASSIGN NOTHING BEFORE CHECKING `ec`. `file_size` returns
+    // `static_cast<uintmax_t>(-1)` when it fails, so writing it into the struct
+    // first makes "this file is missing" compare UNEQUAL to a default-built
+    // identity — which is exactly the sentinel used for "there was no previous
+    // BMI". Phase 1 then saw a difference on its very first poll and returned
+    // before the compiler had produced anything, and every object edge failed
+    // with `no compiler was started … phase 1 did not run`.
+    const auto size = std::filesystem::file_size(p, ec);
+    if (ec) return id;
+    const auto mtime = std::filesystem::last_write_time(p, ec);
+    if (ec) return id;
+    id.present = true;
+    id.size    = size;
+    id.mtime   = mtime;
+    return id;
+}
+
 // Put the previous BMI back. Used when the compile failed: the unit still has
 // the BMI it had before, and leaving it parked in `.bak` would strand every
 // importer on a file that does not exist.
@@ -243,8 +290,11 @@ void settle_bmi(const std::filesystem::path& bmi) {
     const auto backup = suffixed(bmi, ".bak");
     if (!file_exists(backup)) return;
     std::error_code ec;
+    // Equivalent → put the PREVIOUS file back, so its mtime does not advance and
+    // ninja's restat stops the cascade. The rename is atomic, so the BMI is
+    // readable throughout: there is no moment at which importers see nothing.
     if (stage::bmi_equivalent(bmi, backup))
-        std::filesystem::rename(backup, bmi, ec);   // keep the old mtime: no cascade
+        std::filesystem::rename(backup, bmi, ec);
     else
         std::filesystem::remove(backup, ec);
 }
@@ -369,12 +419,27 @@ int compile_release_at_bmi(const CompileRequest& req) {
     std::filesystem::remove(suffixed(req.slot, ".rc"), ec);
     std::filesystem::remove(suffixed(req.slot, ".rc.tmp"), ec);
 
-    // Keep the previous BMI for the equivalence check AND get it out of the
-    // way, so its mere presence can never be mistaken for the new one landing.
+    // Keep the previous BMI for the equivalence check, and LEAVE THE ORIGINAL
+    // IN PLACE — see BmiIdentity for why moving it away is what broke importers.
+    // Snapshot through the SAME function in both cases, so "no previous BMI"
+    // and "the BMI as it is now" are directly comparable.
+    const BmiIdentity before = bmi_identity(req.bmi);
     if (!req.bmi.empty()) {
         const auto backup = suffixed(req.bmi, ".bak");
         std::filesystem::remove(backup, ec);
-        if (file_exists(req.bmi)) std::filesystem::rename(req.bmi, backup, ec);
+        if (before.present) {
+            std::filesystem::copy_file(
+                req.bmi, backup, std::filesystem::copy_options::overwrite_existing, ec);
+            // ⚠️ AND CARRY THE MTIME ACROSS. `copy_file` stamps the copy with
+            // the time of the copy, and `settle_bmi` restores this file when the
+            // new BMI turns out equivalent — precisely so the mtime does NOT
+            // advance and ninja's restat stops the cascade. Without this line
+            // the restore moves the mtime forward instead, every importer is
+            // rebuilt, and the optimisation is silently off: `touch-hub` came
+            // back at 12.61s against a 12.37s cold build, with every cell
+            // reporting `ok`. A status column cannot catch that; the number can.
+            std::filesystem::last_write_time(backup, before.mtime, ec);
+        }
     }
 
     const auto token = acquire_token(req.semaphore, req.maxCompilers);
@@ -389,7 +454,9 @@ int compile_release_at_bmi(const CompileRequest& req) {
     if (!spawn_detached(sup)) return 2;
 
     for (;;) {
-        if (!req.bmi.empty() && file_exists(req.bmi)) {
+        // Published = the file's identity is no longer the one we snapshotted.
+        // For a unit with no previous BMI that reduces to "it now exists".
+        if (!req.bmi.empty() && bmi_identity(req.bmi) != before) {
             settle_bmi(req.bmi);
             copy_first_rule(req.depFrom, req.depTo, req.bmi.string());
             return 0;                       // importers may proceed

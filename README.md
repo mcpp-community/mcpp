@@ -312,25 +312,24 @@ Each cell is the median wall-clock and how many times faster it is than cmake.
 
 | scenario | what changed | **mcpp** | cmake | xmake |
 |---|---|---|---|---|
-| `cold` | nothing built yet | **35.43s** · 2.6x | 92.33s · 1.0x | 90.30s · 1.0x |
+| `cold` | nothing built yet | **79.54s** · 1.2x | 92.33s · 1.0x | 90.30s · 1.0x |
 | `noop` | nothing at all | **0.16s** · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
-| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.22s** · 379x | 83.39s · 1.0x | 82.07s · 1.0x |
-| `edit-body` | a real edit inside a function body | **30.17s** · 2.8x | 85.64s · 1.0x | 84.61s · 1.0x |
-| `edit-comment` | a comment added to a widely-imported interface | **0.18s** · 461x | 82.96s · 1.0x | 82.73s · 1.0x |
+| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.40s** · 208x | 83.39s · 1.0x | 82.07s · 1.0x |
+| `edit-body` | a real edit inside a function body | **76.24s** · 1.1x | 85.64s · 1.0x | 84.61s · 1.0x |
+| `edit-comment` | a comment added to a widely-imported interface | **0.38s** · 218x | 82.96s · 1.0x | 82.73s · 1.0x |
 
-> ⚠️ `bmi_schedule` is opt-in and currently has a **known correctness bug** on
-> incremental rebuilds (see [`bench/README.md`](bench/README.md)); the `cold`
-> figure here was measured with that defect present.
-
-<sub>mcpp with `[build] bmi_schedule = "on"`. Linux x86_64 · i9-13900K ·
-gcc 16.1.0 · n=1 · pinned workload `a749e9f`.</sub>
+<sub>mcpp in its DEFAULT configuration. Linux x86_64 · i9-13900K · gcc 16.1.0 ·
+n=1 · pinned workload `a749e9f`. The opt-in `[build] bmi_schedule = "on"` takes
+`cold` to 35.4s, but it has an unresolved correctness bug on incremental
+rebuilds and is therefore not quoted here — see
+[`bench/README.md`](bench/README.md).</sub>
 
 * **`touch-hub` and `edit-comment` are where the day goes.** cmake and xmake
   decide by timestamp and rebuild everything downstream; mcpp compares the BMI
   the compiler just produced against the previous one, and when the interface
   did not change it skips the cascade entirely.
 * **`edit-body` is the control.** There the interface really did change, so the
-  cascade is owed — mcpp is 2.8x rather than 400x, and an engine that were
+  cascade is owed — mcpp is 1.1x rather than 200x, and an engine that were
   faster would have skipped work it owed.
 * **Cold builds** come down to one 26-deep chain of module interfaces. `mcpp`
   publishes each BMI as soon as it exists and moves code generation off the
