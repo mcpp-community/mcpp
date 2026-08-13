@@ -64,11 +64,29 @@ end
 MCPP_ROOT = path.normalize(MCPP_ROOT)
 local MCPP_MANIFEST = path.join(MCPP_ROOT, "mcpp.toml")
 
--- mcpp.toml pins mcpplibs.cmdline = "0.0.1" exactly; newer versions may also be
--- unpacked in the registry, so pin rather than take the newest or the two builds
--- would not be compiling the same code.
-local CMDLINE_VER = "0.0.1"
-local CMDLINE_SRC = bench_package_root("mcpplibs-x-cmdline", CMDLINE_VER)
+-- Which version of mcpplibs.cmdline to compile is read from the measured tree's
+-- own mcpp.lock, NOT hardcoded and NOT "the newest unpacked".
+--
+--   * hardcoding it is what broke CI: this said "0.0.1" because mcpp.toml says
+--     `mcpplibs.cmdline = "0.0.1"`, but that is a REQUIREMENT, not a resolution.
+--     A developer box that had 0.0.1 unpacked from some earlier run worked; a
+--     fresh runner had only what mcpp resolved, `bench_package_root` returned
+--     nil, the `if` below quietly added no files, and the build died 137 units
+--     later with `missing mcpplibs.cmdline dependency for module mcpp.cli` —
+--     an error that names neither the version nor the registry.
+--   * "the newest unpacked" would silently compile different sources than mcpp
+--     did, which is the one thing a comparison arm may not do.
+--
+-- The lockfile is the resolution mcpp itself performed on this exact tree, so
+-- both arms compile the same code by construction.
+-- Read inside on_load, not here: `io` is nil in xmake's DESCRIPTION scope, so a
+-- reader written at this level dies with `attempt to index a nil value (global
+-- 'io')` — the same trap ../common/xmake/payload.lua documents for its manifest
+-- reader, walked into a second time. Both the lock path and the registry root
+-- are captured as upvalues for the same reason: on_load's sandbox cannot see
+-- this file's globals, so `bench_package_root` is not callable from in there.
+local MCPP_LOCK = path.join(MCPP_ROOT, "mcpp.lock")
+local XPKGS     = bench_xpkgs()
 
 option("pin_payload")
     set_default(true)
@@ -102,9 +120,39 @@ target("mcpp")
     -- has no such cache, so it compiles the 3 units from source. That is a ~1s
     -- handicap on xmake's cold build and is called out in the benchmark report
     -- rather than hidden.
-    if CMDLINE_SRC and os.isdir(path.join(CMDLINE_SRC, "src")) then
-        add_files(path.join(CMDLINE_SRC, "src", "*.cppm"))
-    end
+    --
+    -- Absence is FATAL rather than skipped. Skipping produced a build missing
+    -- three units out of 140 that announced itself only as
+    -- `missing mcpplibs.cmdline dependency for module mcpp.cli.cmd_cache` —
+    -- naming a consumer instead of the cause. A description that cannot name the
+    -- same sources mcpp compiled is not a comparison arm.
+    on_load(function (target)
+        local ver
+        if os.isfile(MCPP_LOCK) then
+            local in_section = false
+            for _, line in ipairs((io.readfile(MCPP_LOCK) or ""):split("\n", {plain = true})) do
+                local section = line:match("^%s*%[(.-)%]")
+                if section then in_section = (section == 'package."mcpplibs.cmdline"')
+                elseif in_section then
+                    ver = ver or line:match('^%s*version%s*=%s*"([^"]+)"')
+                end
+            end
+        end
+        if not ver then
+            raise("bench: cannot read mcpplibs.cmdline's resolved version from " .. MCPP_LOCK
+                  .. " — the measured tree must carry the lockfile mcpp resolved it with")
+        end
+        local base = path.join(XPKGS, "mcpplibs-x-cmdline", ver)
+        local dirs = os.isdir(base) and os.dirs(path.join(base, "*")) or {}
+        table.sort(dirs)
+        local src = dirs[1] and path.join(dirs[1], "src")
+        if not src or not os.isdir(src) then
+            raise("bench: mcpplibs.cmdline " .. ver .. " is not unpacked under " .. XPKGS
+                  .. " — build the tree with mcpp once first, so both arms compile the "
+                  .. "same dependency sources")
+        end
+        target:add("files", path.join(src, "*.cppm"))
+    end)
 
     set_policy("build.c++.modules", true)
     set_policy("build.c++.modules.std", true)

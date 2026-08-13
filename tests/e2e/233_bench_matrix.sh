@@ -334,4 +334,50 @@ done
 grep -q 'matrix.json' "$SPEC" \
   || { echo "FAIL: bench/SPEC.md does not reference matrix.json"; exit 1; }
 
+# §6. An engine may not be scheduled against a project whose build description
+#     for that engine declares nothing to build.
+#
+# `bazel build //...` over a package with no rules EXITS 0 having compiled
+# nothing, in ~0.2s. That is not a failure anywhere in the stack — bazel
+# succeeded, the runner timed it, the report printed it — so it reached the
+# matrix as `bazel/clang/release/cold/mcpp-2026.8.11.3  0.43s`, beside mcpp's
+# 12s and cmake's 94s, and nothing was red.
+#
+# Checked statically here (no bazel required) because the adapter's own
+# `unbuildable_reason` guard only runs on a machine that HAS bazel, and the
+# matrix is edited far more often than the adapter.
+python3 - "$ROOT" <<'PY' || exit 1
+import json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+m = json.loads((root / "bench/matrix.json").read_text())
+bad = []
+for c in m["cells"]:
+    proj = c.get("project", "")
+    bf = root / "bench/projects" / c.get("buildfiles", proj)
+    for eng in c.get("engines", "").split(","):
+        if eng != "bazel":
+            continue
+        f = bf / "BUILD.bazel"
+        # No file at all means the description is EMITTED PER RUN by
+        # bench.fixture.buildfiles (the generated fixture works this way and
+        # does declare a cc_binary). Only a checked-in description can be
+        # judged from here; asserting on the generated ones from a static test
+        # just re-implements the emitter, wrongly — this check's first run
+        # failed exactly that way.
+        if not f.exists():
+            continue
+        body = re.sub(r"#.*", "", f.read_text())
+        if not re.search(r"^\s*cc_(binary|library)\s*\(", body, re.M):
+            bad.append(f"{proj}: engines lists bazel, but {f.relative_to(root)} "
+                       f"declares no cc_binary/cc_library outside comments")
+if bad:
+    print("FAIL: a cell schedules an engine that would build nothing:")
+    for b in bad:
+        print("  " + b)
+    print("  such a cell reports `ok` with a ~0.2s number; drop the engine from the")
+    print("  cell and record it under matrix.json `excluded`.")
+    sys.exit(1)
+print(f"no cell schedules bazel against a ruleless package ({len(m['cells'])} cells)")
+PY
+
 echo "bench matrix OK"

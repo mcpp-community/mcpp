@@ -51,7 +51,7 @@ public:
     // ⚠️ EVERY COMMAND RUNS FROM `buildfile_dir`, i.e. the `-P` directory, and
     // that is load-bearing rather than tidiness.
     //
-    // xmake normalises `--buildir` (`-o`) to a path RELATIVE TO THE PROJECT
+    // xmake normalises `--builddir` (`-o`) to a path RELATIVE TO THE PROJECT
     // DIRECTORY, then resolves that relative path against the process's cwd when
     // it builds. Run it from anywhere other than `-P` and the two disagree. With
     // `-P bench/projects/mcpp` and `-o <workload>/build`, running from

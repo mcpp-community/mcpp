@@ -18,7 +18,35 @@ TMP=$(mktemp -d)
 # directory is not a test result.
 trap "rm -rf $TMP || true" EXIT
 
+# mcpp's e2e runner exports MCPP as the binary under test; a standalone run has
+# nothing to inherit and used to die on `line 22: : command not found`, which
+# names neither the variable nor the fix.
+#
+# NOT defaulted to PATH. `command -v mcpp` returns the xlings SHIM, and a shim
+# re-resolves which mcpp to exec from the workspace it is invoked in — while
+# bench deliberately runs every engine with its cwd inside the tree under test.
+# The shim then picked a different mcpp than the one being tested and the cells
+# failed as `mcpp@2026.8.11.2 | unknown command: build`, naming a version nobody
+# asked for. This is the same defect as the reference-mcpp arm on CI; the rule
+# from bench/README §4 is absolute: an engine is named by BINARY, never by PATH.
+[ -n "${MCPP:-}" ] || {
+  echo "FAIL: MCPP is unset. Set it to a REAL mcpp binary, not a PATH name:"
+  echo "        MCPP=\$(bash .github/tools/newest_artifact.sh . mcpp) bash bench/tests/harness.sh"
+  echo "      (mcpp's e2e runner exports it; \`bash tests/e2e/230_bench_harness.sh\` works too.)"
+  exit 1
+}
+# Absolutised against the INVOKING cwd, which is why this runs before the `cd`
+# below: `MCPP=./target/.../mcpp` is what every natural way of producing the
+# path yields, and a relative one silently stops resolving the moment the script
+# changes directory — including the command this very message suggests.
+case "$MCPP" in
+  /*|?:[/\\]*) ;;
+  *) MCPP="$PWD/$MCPP" ;;
+esac
+[ -x "$MCPP" ] || { echo "FAIL: MCPP=$MCPP is not an executable file"; exit 1; }
+
 cd "$REPO/bench"
+echo "harness built with: $("$MCPP" --version 2>&1 | head -1) ($MCPP)"
 "$MCPP" build > /dev/null
 
 # NEWEST, not `find | head -1`: target/ holds one directory per toolchain

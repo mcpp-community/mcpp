@@ -62,6 +62,34 @@ public:
         return {0.0, 0};   // MODULE.bazel/BUILD are the configuration
     }
 
+    // `bazel build //...` over a package with no rules is a SUCCESS that compiles
+    // nothing, in about 0.2s. Ask bazel itself what it is about to build rather
+    // than reading the BUILD file here — a hand-rolled rule detector would be one
+    // more parser to keep in step with the file it parses.
+    std::string unbuildable_reason(const Job& job) const override {
+        platform::RunResult r;
+        const auto out = platform::run_capture(
+            {"bazel", "query", "kind(rule, //...)", "--noshow_progress"},
+            job.buildfile_dir, &r);
+        // A query that ERRORS is not "no targets" — a broken query is a real
+        // failure, and it belongs in the build where the log gets reported.
+        if (!out || !r.ok()) return {};
+        // The capture is stdout+stderr combined, so presence is tested on the one
+        // token bazel never prints by accident: a target label at line start.
+        for (std::string_view rest = *out; !rest.empty();) {
+            const auto nl   = rest.find('\n');
+            const auto line = rest.substr(0, nl);
+            if (line.starts_with("//")) return {};
+            if (nl == std::string_view::npos) break;
+            rest.remove_prefix(nl + 1);
+        }
+        return std::format(
+            "{}/BUILD.bazel declares no rules, so `bazel build //...` would exit 0 "
+            "having compiled nothing and report a ~0.2s 'build'. bazel cannot glob "
+            "sources from outside its workspace and has no spelling for `import std;`",
+            job.buildfile_dir.filename().string());
+    }
+
     platform::RunResult build(const Job& job) const override {
         std::vector<std::string> argv{"bazel", "build", "//..."};
         if (job.jobs > 0) argv.push_back(std::format("--jobs={}", job.jobs));

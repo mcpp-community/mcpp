@@ -288,6 +288,15 @@ public:
                                    job.log_path.filename().string(), tail));
         };
 
+        // Asked once the Job exists, because the answer depends on the PROJECT —
+        // which is why it cannot live beside the `supports()` check above.
+        if (auto why = engine.unbuildable_reason(job); !why.empty()) {
+            cell.status = Status::Unavailable;
+            cell.note   = std::move(why);
+            report(cell.note);
+            return cell;
+        }
+
         report("configure");
         if (const auto cfg = engine.configure(job); !cfg.ok()) {
             fail("configure", cfg);

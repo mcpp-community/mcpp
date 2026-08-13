@@ -37,6 +37,12 @@ on:
   # workflow's own artifacts land there, so including it would let a results
   # commit trigger the run that produces the next results commit.
   push:
+    # main only, matching every other workflow in this repo. Unscoped, a branch
+    # with an open PR fires BOTH this and the `pull_request` below for the same
+    # commit — two full matrices, and `concurrency` cannot dedupe them because
+    # github.ref differs between the events (refs/heads/... vs refs/pull/N/merge).
+    # For a two-hour job that is the most expensive kind of duplicate.
+    branches: [main]
     paths:
       - 'bench/**'
       - '!bench/**/*.md'

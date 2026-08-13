@@ -563,6 +563,41 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --- cross-engine consistency: a cold build cannot be 20x cheaper than every
+    //     other engine building the same sources ---
+    //
+    // The check above is RELATIVE TO ONE ENGINE, so it is blind to the case that
+    // actually shipped: an engine that builds NOTHING has a cheap cold AND a
+    // cheap noop, and their ratio looks healthy. bazel on the pinned mcpp tree
+    // reported cold=0.43s / noop=0.22s — a ratio of 1.95, missing the 2x trip
+    // wire by one hundredth of a second — while compiling zero of 137 units.
+    //
+    // Peers are the honest yardstick here, and they are already in the report:
+    // engines in the same cell compile the same sources on the same machine, so
+    // a 20x gap is not a fast engine, it is a different workload. The factor is
+    // deliberately far past any real result (mcpp's best measured win over cmake
+    // is 3.1x) so this fires on phantoms and never on a good number.
+    for (const auto& c : report.cells) {
+        if (c.status != bench::Status::Ok || c.key.scenario != "cold") continue;
+        std::vector<double> peers;
+        for (const auto& p : report.cells)
+            if (p.status == bench::Status::Ok && p.key.scenario == "cold"
+                && p.key.fixture == c.key.fixture && p.key.variant == c.key.variant
+                && p.key.engine != c.key.engine && p.median_s() > 0.0)
+                peers.push_back(p.median_s());
+        if (peers.empty() || c.median_s() <= 0.0) continue;
+        std::ranges::sort(peers);
+        const double peer_median = peers[peers.size() / 2];
+        if (c.median_s() * 20.0 < peer_median) {
+            ++suspect;
+            std::println(std::cerr,
+                         "bench: {} reports cold={:.2f}s while other engines building the same "
+                         "sources take {:.2f}s — {:.0f}x is not a faster engine, it is a smaller "
+                         "workload; check that this engine's description actually names the sources.",
+                         c.key.str(), c.median_s(), peer_median, peer_median / c.median_s());
+        }
+    }
+
     std::size_t ok = 0, failed = 0, waived = 0;
     for (const auto& c : report.cells) {
         if (c.status == bench::Status::Ok) { ++ok; continue; }

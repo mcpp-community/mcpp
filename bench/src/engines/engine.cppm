@@ -50,6 +50,22 @@ public:
     // explains itself without a reader consulting this source.
     virtual std::string unsupported_reason(Variant v, std::string_view compiler) const = 0;
 
+    // "This engine cannot build THIS PROJECT" — the question `supports()` cannot
+    // ask, because it only sees the variant and the compiler.
+    //
+    // The gap was not theoretical. bench/projects/mcpp/BUILD.bazel declares no
+    // targets at all (bazel will not glob sources from outside its workspace, and
+    // `import std;` has no bazel spelling), so `bazel build //...` succeeded
+    // having built nothing, and the cell was published as
+    //     bazel/clang/release/cold/mcpp-2026.8.11.3  0.43s
+    // next to mcpp's 12s and cmake's 94s. Every layer behaved correctly on its
+    // own: bazel exited 0, the runner timed it, the report printed it.
+    //
+    // Returning a non-empty reason marks the cell `unavailable` — a documented
+    // gap — instead of `ok` with a number that is off by two orders of magnitude.
+    // Empty (the default) means "nothing project-specific stops me".
+    virtual std::string unbuildable_reason(const Job&) const { return {}; }
+
     // Does `compiler` resolve to a clang driver? Several engines' module
     // support is clang-only today.
     static bool is_clang(std::string_view compiler) {

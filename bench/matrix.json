@@ -145,7 +145,7 @@
       "os": "linux",
       "toolchain": "clang",
       "project": "mcpp-2026.8.11.3",
-      "engines": "mcpp,cmake,xmake,bazel",
+      "engines": "mcpp,cmake,xmake",
       "variants": "modules",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
@@ -156,7 +156,7 @@
       "os": "windows",
       "toolchain": "clang",
       "project": "mcpp-2026.8.11.3",
-      "engines": "mcpp,cmake,xmake,bazel",
+      "engines": "mcpp,cmake,xmake",
       "variants": "modules",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
@@ -277,6 +277,11 @@
       "toolchain": "clang",
       "project": "*",
       "reason": "KNOWN GAP, and an mcpp/xlings environment defect rather than a benchmark one. On macOS the registry's libc++ ends up on the dynamic loader's search path for EVERY child process, so Apple's own linker — which links against libc++ — resolves against the payload copy and aborts before linking: `dyld: Symbol not found: __ZdaPv, Referenced from: .../XcodeDefault.xctoolchain/usr/bin/ld, Expected in: .../registry/.../lib/libc++.1.0.dylib`. cmake, bazel and the reference mcpp all fail identically while the mcpp under test passes, which is what identifies it as environmental. Same symbol and mechanism as the build.mcpp helper failure in .agents/docs/2026-08-13-build-optimization-status.md S9a. Removing the payload libc++ flags on macOS did NOT fix it, so the contamination arrives through DYLD_* rather than through link flags. The cells return once that is understood — deliberately not guessed at from a machine that cannot reproduce it"
+    },
+    {
+      "project": "mcpp-*",
+      "engine": "bazel",
+      "reason": "bazel cannot build this workload: it will not glob sources from outside its workspace, and `import std;` has no bazel spelling. bench/projects/mcpp/BUILD.bazel therefore declares no rules — and `bazel build //...` over a package with no rules EXITS 0 having compiled nothing, which the matrix published as `bazel cold 0.43s` beside mcpp's 12s and cmake's 94s. Removed here, and the bazel adapter now reports `unavailable` for a ruleless package so the next one cannot be published as a measurement."
     }
   ],
   "_workload_note": [
