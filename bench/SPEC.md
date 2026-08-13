@@ -23,7 +23,7 @@ which the report records in its run facts.
 | **OS** | `linux` `macos` `windows` | one CI job each |
 | **Toolchain** | `gcc` `clang` `msvc` | one CI job each — `--compiler` |
 | **Build tool** | `mcpp` `cmake` `xmake` `bazel` | swept inside a job — `--engines` |
-| **Project** | `fixture` `mcpp` `xlings-2026.8.11.2` `xlings-2026.8.13.1` | one CI job each — `--project` |
+| **Project** | `fixture` `mcpp-2026.8.11.3` `xlings-2026.8.11.2` `xlings-2026.8.13.1` | one CI job each — `--project` |
 | **Variant** | `headers` `modules` `modules-impl` | swept inside a job — `--variants` |
 | **Scenario** | `cold` `noop` `touch-hub` `touch-leaf` `edit-body` `edit-comment` | swept inside a job — `--scenarios` |
 
@@ -41,7 +41,7 @@ table that was measuring something other than what it said:
 |---|---|---|
 | cmake, xmake, bazel | `matrix.json.tools` | runner images ship cmake 3.31.6, which lacks the CMake 4.0 `import std` key, so **every module cell failed to configure** |
 | the compiler | `bench/src/toolchain.cppm` | engines got `command -v g++` = gcc 13.3.0 while mcpp used the registry's gcc 16.1 — cmake could not configure, xmake crashed gcc outright |
-| the projects | git submodules under `bench/projects/` | xlings was cloned from its default branch at run time, so `--hub src/xlings.cppm` silently named a file that had stopped existing |
+| the workloads | git submodules under `bench/projects/` | xlings was cloned from its default branch at run time (`--hub src/xlings.cppm` named a file that had stopped existing); **mcpp's own sources were the checkout**, so every commit on a branch changed the thing being measured |
 | the reference mcpp | `matrix.json.reference_mcpp` | a report said how fast this branch is, never whether it got faster |
 
 `--compiler payload:gcc` / `payload:clang` is the spelling that delivers the
@@ -84,8 +84,10 @@ of one graph shape:
 * **`fixture`** — synthetic, parameterised (`--preset`, `--units`, `--fanin`,
   `--weight`). The only project where `headers` / `modules` / `modules-impl`
   are all generated, so it is where the *variant* axis is a controlled variable.
-* **`mcpp`** — 139 modules / 57k lines, one source dependency, build
-  descriptions for every engine under `projects/mcpp/`. Variant `native`.
+* **`mcpp-2026.8.11.3`** (`a749e9f`) — 137 modules / 57k lines, one source
+  dependency, build descriptions for every engine under `projects/mcpp/`.
+  Pinned like everything else: the engine under test is the binary, and a
+  workload that moves with the branch makes two runs incomparable.
 * **`xlings-2026.8.11.2`** and **`xlings-2026.8.13.1`** — 110 modules / 46k
   lines, **different authors**. This is what separates "a faster build engine"
   from "a faster benchmark target".

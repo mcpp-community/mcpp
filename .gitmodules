@@ -1,33 +1,44 @@
-# The benchmark's independent control target, pinned twice.
+# The benchmark's measured WORKLOADS, all pinned.
 #
-# WHY SUBMODULES RATHER THAN A CLONE IN CI. The workflow used to
-# `git clone --depth 1` xlings' default branch at run time, which means the
-# benchmark target moved with every upstream push. That is the drift these
-# descriptions warn about, and it had already happened: `--hub src/xlings.cppm`
-# named a file that no longer existed, so every xlings cell in every job
-# reported `skipped` and the jobs stayed green.
+# A benchmark has two halves: the engine under test, and the workload it is
+# given. The engine is the binary and is SUPPOSED to move between runs. The
+# workload is not — and both of these were moving.
 #
-# A submodule is a PIN, not a vendored snapshot — the commit is in the diff, it
-# is reviewed like any other change, and `git submodule update --init` gives
-# everyone the tree CI measured. Updating it is deliberate, which is the whole
-# point of a benchmark target.
+#   * xlings was `git clone --depth 1` of its default branch at run time, so the
+#     target changed with every upstream push. `--hub src/xlings.cppm` had been
+#     naming a file that no longer existed for months: every xlings cell reported
+#     `skipped`, every xlings job reported success, and nobody had a reason to
+#     look.
+#   * mcpp's own sources were `--project $GITHUB_WORKSPACE`, i.e. the checkout,
+#     so every commit on a branch silently changed the thing being measured. The
+#     same defect, just harder to see because the drift was our own.
 #
-# WHY TWO OF THE SAME REPOSITORY. They are the two code styles being compared:
+# A submodule is a PIN, not a vendored snapshot: the commit is in the diff, it is
+# reviewed like any other change, `git submodule update --init` gives everyone
+# the tree CI measured, and `tests/e2e/233_bench_matrix.sh` can check that each
+# `hub`/`body` still exists in it. Bumping one is a deliberate act that
+# invalidates the previous ratios on purpose.
 #
-#   tree-2026.8.11.2 (b1563fe)  110 .cppm +  2 .cpp — implementation lives
-#                                                     inside each interface unit
-#   tree-2026.8.13.1 (f072075)  110 .cppm + 92 .cpp — implementation split out
+# WHY TWO COPIES OF xlings. They are the two code styles being compared:
 #
-# Same authors, same 46k lines, same module graph; the question is what the
-# split costs or saves on an incremental build. That is the `modules` vs
-# `modules-impl` axis the generated fixture has, on a real tree.
+#   xlings-2026.8.11.2 (b1563fe)  110 .cppm +  2 .cpp — implementation lives
+#                                                       inside each interface unit
+#   xlings-2026.8.13.1 (f072075)  110 .cppm + 92 .cpp — implementation split out
 #
-# ONE description serves both (bench/projects/xlings/{CMakeLists.txt,xmake.lua}):
-# it globs `src/**/*.{cppm,cpp}`, which is the same rule mcpp itself infers from,
-# so neither style needs its own file, an environment switch, or a branch.
+# Same authors, same 46k lines, same module graph; the question is what the split
+# costs or saves on an incremental build. That is the `modules` vs `modules-impl`
+# axis the generated fixture has, on a real tree.
+#
+# ONE description serves every pin of a project
+# (bench/projects/<name>/{CMakeLists.txt,xmake.lua}): they glob
+# `src/**/*.{cppm,cpp}`, which is the same rule mcpp itself infers from, so no
+# style needs its own file, an environment switch, or a branch.
 [submodule "bench/projects/xlings/xlings-2026.8.11.2"]
 	path = bench/projects/xlings/xlings-2026.8.11.2
 	url = https://github.com/openxlings/xlings
 [submodule "bench/projects/xlings/xlings-2026.8.13.1"]
 	path = bench/projects/xlings/xlings-2026.8.13.1
 	url = https://github.com/openxlings/xlings
+[submodule "bench/projects/mcpp/mcpp-2026.8.11.3"]
+	path = bench/projects/mcpp/mcpp-2026.8.11.3
+	url = https://github.com/mcpp-community/mcpp

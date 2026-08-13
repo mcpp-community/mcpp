@@ -312,45 +312,57 @@ same compiler binary**, by a harness that lives in this repository
 
 <!-- BENCHMARK-TABLE:START — regenerate from bench/results/; do not hand-edit numbers -->
 
-C++20 **named modules**, 40 translation units, fan-in 3. Median wall-clock and
-the ratio to cmake; **lower is better**, `0.03x` reads "took 3% of what cmake
-took". Same sources, same compiler binary, same machine.
+### A real project: building mcpp itself
 
-**gcc 16.1.0**
+**137 module interface units, 57k lines, every one of them `import std;`** —
+measured in place, four engines, the same hermetic `gcc 16.1.0` binary handed to
+each. Median wall-clock and the ratio to cmake; **lower is better**.
 
-| scenario | what it asks | mcpp | cmake | xmake | bazel |
-|---|---|---|---|---|---|
-| `cold` | build everything from nothing | **3.53s** · 0.27x | 13.05s · 1.00x | 11.46s · 0.88x | — |
-| `noop` | how cheap is "already up to date" | **0.14s** · 0.42x | 0.34s · 1.00x | 0.32s · 0.94x | — |
-| `touch-hub` | mtime bump on a hub, content unchanged | **0.29s** · 0.03x | 10.32s · 1.00x | 11.13s · 1.08x | — |
-| `edit-body` | real edit inside a function body | **0.29s** · 0.03x | 10.29s · 1.00x | 11.15s · 1.08x | — |
+| scenario | what it asks | mcpp | cmake | xmake |
+|---|---|---|---|---|
+| `cold` | everything, from nothing | **82.87s** · 0.88x | 94.53s · 1.00x | 94.63s · 1.00x |
+| `noop` | how cheap is "already up to date" | **0.20s** · 0.58x | 0.34s · 1.00x | 0.38s · 1.10x |
+| `touch-leaf` | mtime bump on a unit nobody imports | **2.14s** · 0.12x | 18.06s · 1.00x | 18.47s · 1.02x |
+| `edit-body` | real edit inside a function body | **18.29s** · 0.93x | 19.64s · 1.00x | 19.97s · 1.02x |
+| `edit-comment` | a comment added to a widely-imported unit | **0.46s** · 0.01x | 85.03s · 1.00x | 84.69s · 1.00x |
+| `touch-hub` | mtime bump on a hub, content unchanged | **0.44s** · 0.01x | 84.53s · 1.00x | 83.65s · 0.99x |
 
-**clang 22.1.8**
+**Read the `cold` row first.** On a full build all three engines are within 15%
+of each other, and that is not a disappointment — it is the correct answer.
+mcpp's cold build is **100% critical path** (79.7s of a 79.8s makespan): every
+engine walks the same 26-deep chain of module interfaces, so no amount of
+scheduling or cores can help. Anyone quoting a synthetic fixture's `0.26x` as a
+cold-build advantage is quoting an artefact of a workload whose units cost 0.09s.
 
-| scenario | what it asks | mcpp | cmake | xmake | bazel |
-|---|---|---|---|---|---|
-| `cold` | build everything from nothing | **2.50s** · 0.62x | 4.00s · 1.00x | 13.19s · 3.30x | 3.19s · 0.80x |
-| `noop` | how cheap is "already up to date" | **0.18s** · 0.54x | 0.32s · 1.00x | 0.32s · 0.99x | 0.20s · 0.63x |
-| `touch-hub` | mtime bump on a hub, content unchanged | **0.28s** · 0.10x | 2.67s · 1.00x | 12.76s · 4.79x | 0.23s · 0.08x |
-| `edit-body` | real edit inside a function body | **0.46s** · 0.17x | 2.62s · 1.00x | 12.68s · 4.84x | 2.84s · 1.08x |
+**The gap is in the loop you actually spend the day in.** Touching a hub
+interface costs cmake and xmake a full 84-second downstream rebuild, because
+they decide by timestamp. mcpp compares the BMI the compiler just produced
+against the previous one and, when they are equivalent, puts the old file back
+so ninja's `restat` sees no change — the 46 importers never rebuild. That is
+**0.44s against 84.53s**.
 
-The interesting row is `touch-hub` / `edit-body`: changing a widely-imported
-interface unit costs cmake and xmake a **full downstream rebuild**, because they
-decide by timestamp. mcpp compares the BMI the compiler just produced against
-the previous one and, when they are equivalent, puts the old file back so
-ninja's `restat` sees no change — 39 downstream units never rebuild.
+`edit-body` is the control that keeps this honest: there the interface really
+did change, no engine should be fast, and none is (0.93x).
 
-Under gcc that is where 10.3s becomes 0.29s. Under clang the same mechanism is
-worth less, because clang's cold build is already 3.3× cheaper than gcc's — a
-good illustration of why the toolchain is an axis of this benchmark and not a
-footnote.
+### The same question on someone else's codebase
 
-<sub>Source: [`bench/results/five-way-20260812/`](bench/results/five-way-20260812/)
-— Linux x86_64, i9-13900K, medians of 2 runs, mcpp 2026.8.12.1, **cmake 4.0.2,
-xmake 3.0.7, bazel 9.2.0**. CI now pins cmake 4.4.2 / xmake 3.1.0 / bazel 9.2.0
-([`bench/matrix.json`](bench/matrix.json)); this table is refreshed from those
-artifacts. `—` = the engine cannot build C++20 modules with a gcc driver, which
-the report records as `unavailable` with the reason rather than as a slow number.</sub>
+mcpp measuring its own build proves nothing on its own — an optimisation can be
+an artefact of one project's module graph. **xlings** (110 modules, 46k lines,
+different authors, never tuned for this) is the control, pinned as a submodule
+and measured in two code styles: implementation inside the interface units, and
+implementation split into separate `.cpp`. See
+[`bench/projects/xlings/`](bench/projects/xlings/).
+
+Synthetic-fixture numbers across **six** engine/compiler combinations, including
+bazel and clang, are in [`bench/results/`](bench/results/).
+
+<sub>Source: [`bench/results/mcpp-self-20260813/`](bench/results/mcpp-self-20260813/)
+— Linux x86_64, i9-13900K, medians of 2 runs, mcpp 2026.8.12.1, **cmake 4.0.2 +
+ninja, xmake 3.0.7**. CI pins cmake 4.4.2 / xmake 3.1.0 / bazel 9.2.0
+([`bench/matrix.json`](bench/matrix.json)) and these tables are refreshed from
+its artifacts; do not mix rows taken at different pins. bazel is absent from this
+table because it cannot build C++20 modules with a gcc driver — recorded as
+`unavailable` with the reason, never as a slow number.</sub>
 
 <!-- BENCHMARK-TABLE:END -->
 

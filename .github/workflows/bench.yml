@@ -284,11 +284,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.project }}" = "mcpp" ]; then
-            root="$GITHUB_WORKSPACE"
-          else
-            root="$GITHUB_WORKSPACE/bench/projects/${{ matrix.buildfiles }}/${{ matrix.project }}"
-          fi
+          # One rule, no special cases: every workload is a pinned submodule.
+          # mcpp's own sources used to be `$GITHUB_WORKSPACE`, which made the
+          # thing being measured change with every commit on the branch.
+          root="$GITHUB_WORKSPACE/bench/projects/${{ matrix.buildfiles }}/${{ matrix.project }}"
           [ -e "$root/mcpp.toml" ] || {
             echo "no project at $root — is the submodule checked out?" >&2
             ls -la "$(dirname "$root")" >&2 || true

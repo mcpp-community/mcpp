@@ -23,7 +23,7 @@ bench --project bench/projects/xlings/xlings-2026.8.13.1 \
 ```
 
 每个 `mcpp=<path>` 引擎都用**那个二进制自己报的版本**作标签
-(`mcpp@2026.8.12.1`)，所以两个版本永远不会并成一行。「这个版本变快了吗」就是
+(`mcpp@2026.8.13.1`)，所以两个版本永远不会并成一行。「这个版本变快了吗」就是
 这样回答的 —— 真的把两个都跑一遍，而不是在测量工具里模拟其中一个。
 
 > 本文是英文版 [`README.md`](README.md) 的对照翻译。两份内容一致；如有出入，
@@ -55,6 +55,7 @@ bench --project bench/projects/xlings/xlings-2026.8.13.1 \
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
 | clang / libc++ | **22.1.8**（Windows：20.1.7） | `bench/src/toolchain.cppm` |
 | 参照 mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp` |
+| mcpp（被测工作负载） | **2026.8.11.3** — `a749e9f` | 子模块 `projects/mcpp/mcpp-2026.8.11.3` |
 | xlings（合并风格） | **2026.8.11.2** — `b1563fe` | 子模块 `projects/xlings/xlings-2026.8.11.2` |
 | xlings（分离风格） | **2026.8.13.1** — `f072075` | 子模块 `projects/xlings/xlings-2026.8.13.1` |
 | 被测 mcpp | 当前 checkout | CI 现场构建，由 `newest_artifact.sh` 定位 |
@@ -73,10 +74,13 @@ job 会打印每个工具实际解析到的版本，与钉的版本不符就大�
   自己 registry 里的 gcc 16.1。表格是 `48 failed / 6 ok`，却仍然被当作「构建引擎
   对比」。现在**每个**引擎都拿到 mcpp 自己载荷里的那个驱动
   （`--compiler payload:gcc`）：套件的公平性规则终于被执行，而不只是写在注释里。
-* **工程是运行时从默认分支 clone 的**，所以基准目标随上游每次 push 而漂移。
-  `--hub src/xlings.cppm` 指的文件已经消失好几个月了；每个 xlings 格子都报
-  `skipped`，每个 xlings job 都报成功。现在它们是 git 子模块，守卫会检查每个
-  `hub`/`body` 在钉住的树里确实存在。
+* **被测工作负载会漂移。** xlings 是运行时 `git clone --depth 1` 默认分支的，
+  所以目标随上游每次 push 而变 —— `--hub src/xlings.cppm` 指的文件已经消失
+  好几个月，每个 xlings 格子都报 `skipped`，每个 job 都报成功。mcpp 自己的
+  源码是同一个缺陷、但更难看见的形式：`--project $GITHUB_WORKSPACE` 让
+  checkout 成了工作负载，于是分支上每一次提交都在悄悄改变被测对象。
+  **被测的引擎是那个二进制、它本来就该变；工作负载不该变。** 现在三个都是
+  git 子模块，守卫会检查每个 `hub`/`body` 在钉住的树里确实存在。
 * **只测了一个 mcpp。** 一份只说「这个分支有多快」、却不说「有没有变快」的报告，
   不是 pull request 上的基准该给的东西。
 

@@ -145,9 +145,11 @@ for c in m["cells"]:
             fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: '{field}' is required for a "
                         "real project — without it every perturbing scenario reports `skipped`")
             continue
-        # mcpp is this checkout; anything else is a submodule under bench/projects/.
-        tree = root if c["project"] == "mcpp" else os.path.join(
-            root, "bench", "projects", c.get("buildfiles", c["project"]), c["project"])
+        # EVERY workload is a pinned submodule under bench/projects/<desc>/<pin>,
+        # including mcpp's own sources. There is no "this checkout" case: the
+        # engine under test is the binary, the workload must not move with it.
+        tree = os.path.join(root, "bench", "projects",
+                            c.get("buildfiles", c["project"]), c["project"])
         if not os.path.isdir(tree):
             fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: no tree at {tree} "
                         "(run `git submodule update --init`)")

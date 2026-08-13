@@ -51,12 +51,36 @@ endif()
 # compiler family rather than one block of flags, and why it must be applied
 # through CMAKE_CXX_FLAGS.
 # ---------------------------------------------------------------------------
-# This file lives in bench/projects/mcpp/, so the tree it builds is three up.
-# Resolved to an absolute path once, because a FILE_SET's base directory and a
+# The tree is whatever the harness points at — BENCH_PROJECT_ROOT, exported for
+# every `--project` run. It used to be derived from this file's own location
+# (`../../..`, i.e. the checkout), and that made mcpp's WORKING TREE the
+# workload: every commit on a branch silently changed the thing being measured,
+# so no two runs on that branch were comparable to each other.
+#
+# A benchmark has two halves. The engine under test is the binary and is
+# supposed to move; the workload is not. It is now the pinned submodule
+# `mcpp-<version>/` beside this file, exactly like the xlings arms.
+#
+# Resolved to an absolute path, because a FILE_SET's base directory and a
 # relative glob disagree about what "here" means.
-get_filename_component(MCPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
-if(NOT EXISTS "${MCPP_ROOT}/mcpp.toml")
-  message(FATAL_ERROR "expected mcpp's tree at ${MCPP_ROOT} (no mcpp.toml there)")
+if(NOT MCPP_ROOT AND DEFINED ENV{BENCH_PROJECT_ROOT})
+  set(MCPP_ROOT "$ENV{BENCH_PROJECT_ROOT}")
+endif()
+if(NOT MCPP_ROOT)
+  # Driving this by hand: default to the pinned workload rather than to the
+  # checkout, so the hand-run and the CI run measure the same sources.
+  file(GLOB pinned "${CMAKE_CURRENT_SOURCE_DIR}/mcpp-*")
+  if(pinned)
+    list(SORT pinned)
+    list(GET pinned -1 MCPP_ROOT)
+  endif()
+endif()
+get_filename_component(MCPP_ROOT "${MCPP_ROOT}" ABSOLUTE)
+if(NOT MCPP_ROOT OR NOT EXISTS "${MCPP_ROOT}/mcpp.toml")
+  message(FATAL_ERROR
+    "no mcpp tree at '${MCPP_ROOT}': set -DMCPP_ROOT=<dir>, or let the bench "
+    "harness export BENCH_PROJECT_ROOT via --project. The pinned workload is the "
+    "submodule bench/projects/mcpp/mcpp-<version>/ — run `git submodule update --init`.")
 endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/../common/cmake/hermetic_payload.cmake)

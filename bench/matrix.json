@@ -66,7 +66,7 @@
     ],
     "project": [
       "fixture",
-      "mcpp",
+      "mcpp-2026.8.11.3",
       "xlings-2026.8.11.2",
       "xlings-2026.8.13.1"
     ],
@@ -140,43 +140,47 @@
     {
       "os": "linux",
       "toolchain": "gcc",
-      "project": "mcpp",
+      "project": "mcpp-2026.8.11.3",
       "engines": "mcpp,cmake,xmake",
-      "variants": "native",
+      "variants": "modules",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
       "body": "src/version_req.cppm",
-      "note": "touch-leaf omitted: a real tree has no unit nobody imports that is also stable enough to name"
+      "note": "touch-leaf omitted: a real tree has no unit nobody imports that is also stable enough to name",
+      "buildfiles": "mcpp"
     },
     {
       "os": "linux",
       "toolchain": "clang",
-      "project": "mcpp",
+      "project": "mcpp-2026.8.11.3",
       "engines": "mcpp,cmake,xmake,bazel",
-      "variants": "native",
+      "variants": "modules",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
-      "body": "src/version_req.cppm"
+      "body": "src/version_req.cppm",
+      "buildfiles": "mcpp"
     },
     {
       "os": "macos",
       "toolchain": "clang",
-      "project": "mcpp",
+      "project": "mcpp-2026.8.11.3",
       "engines": "mcpp,cmake,xmake,bazel",
-      "variants": "native",
+      "variants": "modules",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
-      "body": "src/version_req.cppm"
+      "body": "src/version_req.cppm",
+      "buildfiles": "mcpp"
     },
     {
       "os": "windows",
       "toolchain": "clang",
-      "project": "mcpp",
+      "project": "mcpp-2026.8.11.3",
       "engines": "mcpp,cmake,xmake,bazel",
-      "variants": "native",
+      "variants": "modules",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
-      "body": "src/version_req.cppm"
+      "body": "src/version_req.cppm",
+      "buildfiles": "mcpp"
     },
     {
       "os": "linux",
@@ -273,7 +277,7 @@
     {
       "os": "windows",
       "toolchain": "msvc",
-      "project": "mcpp",
+      "project": "mcpp-*",
       "reason": "mcpp's own schedule policy reports msvc as unmeasured (src/build/schedule/policy.cppm), so the mcpp arm would be measuring a shape nobody has validated"
     },
     {
@@ -295,5 +299,16 @@
       "engine": "xmake",
       "reason": "KNOWN GAP, xmake+clang only: xmake locates libc++'s std module through lib/libc++.modules.json, which mcpp's llvm payload does not ship (it has share/libc++/v1/std.cppm). xmake warns 'std and std.compat modules not found' and build.c++.modules.std degrades SILENTLY — the arm would then measure a project without `import std;` against ones with it. The cell still runs; read its note before quoting the number"
     }
+  ],
+  "_workload_note": [
+    "THE MEASURED SOURCES ARE PINNED, INCLUDING mcpp's OWN.",
+    "A benchmark has two halves: the engine under test and the workload it is",
+    "given. The engine is the binary, which is what moves between runs; the",
+    "workload must not. `--project $GITHUB_WORKSPACE` made mcpp's own tree the",
+    "workload, so every commit on a branch silently changed the thing being",
+    "measured and no two runs were comparable — the same defect the xlings clone",
+    "had, just harder to see because the drift was our own.",
+    "Both are git submodules under bench/projects/ now. Bumping one is a",
+    "deliberate, reviewable act that invalidates the previous ratios on purpose."
   ]
 }

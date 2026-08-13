@@ -36,10 +36,32 @@ add_rules("mode.debug", "mode.release")
 -- ---------------------------------------------------------------------------
 includes("../common/xmake/payload.lua")
 
--- The tree this file builds. os.scriptdir() is bench/projects/mcpp, so the
--- repository root is three levels up; deriving it from the SCRIPT rather than
--- from the working directory keeps `xmake -P` working from anywhere.
-local MCPP_ROOT     = path.normalize(path.join(os.scriptdir(), "..", "..", ".."))
+-- The tree this file builds is whatever the harness points at —
+-- BENCH_PROJECT_ROOT, exported for every `--project` run.
+--
+-- It used to be `os.scriptdir()/../../..`, i.e. the checkout, which made mcpp's
+-- WORKING TREE the workload: every commit on a branch silently changed the thing
+-- being measured, so no two runs on that branch were comparable. The engine
+-- under test is the binary and is supposed to move; the workload is not.
+--
+-- Driving this by hand falls back to the pinned submodule beside this file
+-- rather than to the checkout, so a hand-run and a CI run measure the same
+-- sources.
+local MCPP_ROOT = os.getenv("BENCH_PROJECT_ROOT") or os.getenv("MCPP_ROOT")
+if not MCPP_ROOT then
+    local pinned = os.dirs(path.join(os.scriptdir(), "mcpp-*"))
+    if pinned and #pinned > 0 then
+        table.sort(pinned)
+        MCPP_ROOT = pinned[#pinned]
+    end
+end
+if not MCPP_ROOT or not os.isfile(path.join(MCPP_ROOT, "mcpp.toml")) then
+    raise("no mcpp tree: set MCPP_ROOT=<dir>, or let the bench harness export "
+          .. "BENCH_PROJECT_ROOT via --project. The pinned workload is the "
+          .. "submodule bench/projects/mcpp/mcpp-<version>/ — run "
+          .. "`git submodule update --init`.")
+end
+MCPP_ROOT = path.normalize(MCPP_ROOT)
 local MCPP_MANIFEST = path.join(MCPP_ROOT, "mcpp.toml")
 
 -- mcpp.toml pins mcpplibs.cmdline = "0.0.1" exactly; newer versions may also be

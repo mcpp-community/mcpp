@@ -34,5 +34,5 @@
 #      are measured here against gcc@16.1.0. A bazel column in a gcc table would
 #      violate fairness invariant I1 — same compiler binary for every engine —
 #      so bazel belongs in a separate clang-baselined table, not this one.
-module(name = "mcpp", version = "2026.8.12.1")
+module(name = "mcpp", version = "2026.8.13.1")
 bazel_dep(name = "rules_cc", version = "0.2.22")

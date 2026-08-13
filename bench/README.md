@@ -17,14 +17,16 @@ bench --engines mcpp,cmake,xmake,bazel \
       --scenarios cold,noop,touch-hub,edit-body \
       --compiler /path/to/g++ --jobs 32 --out report.json
 
-# a REAL project, measured in place — e.g. mcpp building itself,
+# a REAL project — one of the PINNED workloads under bench/projects/,
 # comparing two mcpp binaries
-bench --project . --engines mcpp=/usr/bin/mcpp,mcpp=./target/*/*/bin/mcpp \
+bench --project bench/projects/mcpp/mcpp-2026.8.11.3 \
+      --buildfiles bench/projects/mcpp \
+      --engines mcpp=./target/*/*/bin/mcpp,mcpp --compiler payload:gcc \
       --scenarios noop,touch-hub --hub src/platform/platform.cppm
 ```
 
 Each `mcpp=<path>` engine labels itself from the version that binary reports
-(`mcpp@2026.8.12.1`), so two releases never collapse into one row. That is how
+(`mcpp@2026.8.13.1`), so two releases never collapse into one row. That is how
 "did this release get faster?" is answered — by running both, not by emulating
 one of them in the harness.
 
@@ -57,6 +59,7 @@ than what it said.
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
 | clang / libc++ | **22.1.8** (Windows: 20.1.7) | `bench/src/toolchain.cppm` |
 | reference mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp` |
+| mcpp (the workload) | **2026.8.11.3** — `a749e9f` | submodule `projects/mcpp/mcpp-2026.8.11.3` |
 | xlings (combined style) | **2026.8.11.2** — `b1563fe` | submodule `projects/xlings/xlings-2026.8.11.2` |
 | xlings (split style) | **2026.8.13.1** — `f072075` | submodule `projects/xlings/xlings-2026.8.13.1` |
 | mcpp under test | the checkout | built by CI, resolved by `newest_artifact.sh` |
@@ -78,12 +81,16 @@ Four things this bought, each of which had already gone wrong:
   suite now hands **every** engine the driver out of mcpp's own payload
   (`--compiler payload:gcc`), which is its fairness rule finally enforced rather
   than merely written down.
-* **The projects were cloned from their default branch at run time**, so the
-  benchmark target moved with every upstream push. `--hub src/xlings.cppm` had
-  been naming a file that no longer existed for months; every xlings cell
-  reported `skipped` and every xlings job reported success. They are git
-  submodules now, and the guard checks that each `hub`/`body` exists in the
-  pinned tree.
+* **The measured workloads moved.** xlings was `git clone --depth 1` of its
+  default branch at run time, so the target changed with every upstream push —
+  `--hub src/xlings.cppm` had been naming a file that no longer existed for
+  months, every xlings cell reported `skipped`, and every xlings job reported
+  success. mcpp's own sources had the same defect in a form that is harder to
+  see: `--project $GITHUB_WORKSPACE` made the checkout the workload, so every
+  commit on a branch silently changed the thing being measured. **The engine
+  under test is the binary and is supposed to move; the workload is not.**
+  All three are git submodules now, and the guard checks that each `hub` and
+  `body` exists in the pinned tree.
 * **Only one mcpp was measured.** A report that says how fast this branch is,
   without saying whether it got faster, is not what a benchmark on a pull
   request is for.
@@ -106,9 +113,41 @@ Four things this bought, each of which had already gone wrong:
 
 ### The headline numbers, and where they come from
 
-Full data: [`results/five-way-20260812/`](results/five-way-20260812/). 40 units,
-fan-in 3, medians of 2 runs, i9-13900K. **Ratios are against cmake**; the two
-mcpp columns are the release-over-release comparison.
+**Read the real-project table first.** A synthetic fixture is for isolating one
+variable; it is not evidence about anyone's build. Where the two disagree, the
+real project is right and the fixture is telling you about its own shape.
+
+#### mcpp itself — 137 modules, 57k lines, gcc 16.1.0
+
+Full data: [`results/mcpp-self-20260813/`](results/mcpp-self-20260813/), medians
+of 2 runs, i9-13900K, measured in place with `--buildfiles projects/mcpp/`.
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake |
+|---|---|---|---|---|
+| `cold`         | 80.49s · 0.85x | 82.87s · 0.88x | **94.53s** · 1.00x | 94.63s · 1.00x |
+| `noop`         | 0.28s · 0.83x  | 0.20s · 0.58x  | **0.34s** · 1.00x  | 0.38s · 1.10x  |
+| `touch-leaf`   | 17.39s · 0.96x | 2.14s · 0.12x  | **18.06s** · 1.00x | 18.47s · 1.02x |
+| `edit-body`    | 18.30s · 0.93x | 18.29s · 0.93x | **19.64s** · 1.00x | 19.97s · 1.02x |
+| `edit-comment` | 76.50s · 0.90x | **0.46s · 0.01x** | **85.03s** · 1.00x | 84.69s · 1.00x |
+| `touch-hub`    | 76.50s · 0.91x | **0.44s · 0.01x** | **84.53s** · 1.00x | 83.65s · 0.99x |
+
+Three things this says that the fixture cannot:
+
+1. **On a cold build nobody wins, and that is the right answer.** 80.5–94.6s
+   across four engines. mcpp's cold build is 100% critical path — 79.73s of a
+   79.79s makespan, average parallelism 3.94 of 32 hardware threads — so every
+   engine walks the same 26-deep chain of interfaces and scheduling cannot help.
+   The fixture put mcpp at **0.26x** here; that number is an artefact of a
+   workload whose units cost 0.09s each, and quoting it would be dishonest.
+2. **The daily loop is where the engines differ**, by ~190x on this project.
+3. **`edit-body` is the control**, and mcpp is deliberately *not* fast there
+   (0.93x): the interface genuinely changed, so the cascade is owed.
+
+#### The generated fixture — 40 units, fan-in 3
+
+Full data: [`results/five-way-20260812/`](results/five-way-20260812/). Useful
+because it is the only place `headers` / `modules` / `modules-impl` can be
+compared as a controlled variable, and because it covers clang and bazel too.
 
 `modules`, **gcc 16.1.0**:
 
