@@ -68,10 +68,32 @@ namespace detail {
 // They used to be one function that inserted a comment and was called
 // "edit_body". Every "engine X is N times faster on edits" number it produced
 // was really a statement about comments.
-inline bool insert_into_first_body(const std::filesystem::path& file, int nonce,
-                                   bool statement) {
+// Returns WHICH FORM the perturbation took, or nullopt if it could not be
+// applied. The form is not a detail — it changes what the cell measures:
+//
+//   "in-body"     the text lands inside the first function body, so every
+//                 subsequent line in the file moves. GCC records source
+//                 locations for inline bodies in the BMI, so the BMI genuinely
+//                 changes and a cascade is CORRECT.
+//   "end-of-file" the unit had no function body to insert into, so a comment is
+//                 appended instead. No existing line moves, the BMI is
+//                 unchanged, and an engine that compares BMIs skips the whole
+//                 cascade.
+//
+// Those are different questions, and the suite was answering both under one
+// scenario name. Measured on the same engine, same compiler, same day:
+// `edit-comment` on mcpp's hub (66 lines, no bodies → end-of-file) came out at
+// 0.38s, and on xlings' hub (566 lines, 56 bodies → in-body) at 95.02s. Read
+// side by side without knowing the form, that reads as "the optimisation works
+// on one project and not the other", which is not what happened at all.
+//
+// So the form goes into the cell's note. Same rule as `status` carrying its
+// reason: a number whose meaning depends on an invisible choice is not a
+// measurement.
+inline std::optional<std::string_view> insert_into_first_body(
+    const std::filesystem::path& file, int nonce, bool statement) {
     std::ifstream in(file, std::ios::binary);
-    if (!in) return false;
+    if (!in) return std::nullopt;
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     in.close();
 
@@ -86,8 +108,10 @@ inline bool insert_into_first_body(const std::filesystem::path& file, int nonce,
     const auto paren = text.find(") {");
     const auto brace = paren == std::string::npos ? std::string::npos
                                                   : text.find('\n', paren);
+    std::string_view form = "in-body";
     if (brace == std::string::npos) {
-        if (statement) return false;
+        if (statement) return std::nullopt;
+        form = "end-of-file";
         text += std::format("\n// bench: comment perturbation #{}\n", nonce);
     } else {
         // `volatile` so no optimiser can delete the edit and hand back the
@@ -106,7 +130,7 @@ inline bool insert_into_first_body(const std::filesystem::path& file, int nonce,
 
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     out << text;
-    return true;
+    return form;
 }
 
 }  // namespace detail
@@ -271,15 +295,18 @@ public:
             scenario == Scenario::EditBody    ? inst.targets.body :
             scenario == Scenario::EditComment ? inst.targets.hub  : std::filesystem::path{});
 
+        std::string_view perturbForm;
         const int runs = opt_.runs_override > 0 ? opt_.runs_override : default_runs(scenario);
         for (int i = 0; i < runs; ++i) {
             report(std::format("run {}/{}", i + 1, runs));
-            if (!perturb(engine, job, inst, scenario, i)) {
+            const auto form = perturb(engine, job, inst, scenario, i);
+            if (!form) {
                 cell.status = Status::Failed;
                 cell.note   = std::format("could not apply scenario '{}'", to_string(scenario));
                 report(cell.note);
                 return cell;
             }
+            if (!form->empty()) perturbForm = *form;
 
             // COLD IS "from nothing to a binary", so it must include configure.
             // Not a detail: cmake and meson keep their configure output INSIDE
@@ -306,7 +333,11 @@ public:
             cell.samples.push_back(Sample{extra + r.wall_s, r.exit_code});
         }
         cell.status = Status::Ok;
-        cell.note   = avail.note;
+        // The engine's version banner, plus HOW the source was perturbed when
+        // that choice was not fixed by the scenario name alone.
+        cell.note = perturbForm.empty()
+            ? avail.note
+            : std::format("{} · perturbation: {}", avail.note, perturbForm);
         return cell;
     }
 
@@ -366,24 +397,29 @@ private:
         return {};
     }
 
-    bool perturb(engines::Engine& engine, const Job& job, const Instance& inst,
-                 Scenario scenario, int nonce) const {
+    // nullopt = could not apply. A non-empty string_view describes the FORM,
+    // which the caller records in the cell note — see insert_into_first_body.
+    std::optional<std::string_view> perturb(engines::Engine& engine, const Job& job,
+                                            const Instance& inst,
+                                            Scenario scenario, int nonce) const {
         switch (scenario) {
             case Scenario::Cold:
                 engine.clean(job);
-                return true;
+                return std::string_view{};
             case Scenario::Noop:
-                return true;
+                return std::string_view{};
             case Scenario::TouchHub:
-                return platform::touch(inst.targets.hub);
+                return platform::touch(inst.targets.hub) ? std::optional<std::string_view>{std::string_view{}}
+                                                         : std::nullopt;
             case Scenario::TouchLeaf:
-                return platform::touch(inst.targets.leaf);
+                return platform::touch(inst.targets.leaf) ? std::optional<std::string_view>{std::string_view{}}
+                                                          : std::nullopt;
             case Scenario::EditBody:
                 return detail::insert_into_first_body(inst.targets.body, nonce, true);
             case Scenario::EditComment:
                 return detail::insert_into_first_body(inst.targets.hub, nonce, false);
         }
-        return false;
+        return std::nullopt;
     }
 };
 

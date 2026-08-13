@@ -222,6 +222,30 @@ job: the cell still runs, and its note says what to distrust.
 split, an engine that skips comment-only rebuilds can be advertised as "12x
 faster on edits", which is a claim about comments.
 
+#### `edit-comment` has two forms, and the report says which one ran
+
+The comment goes **inside the first function body**. A unit with no function
+body — a `modules-impl` interface, or a hub that only declares — has nowhere to
+put it, so it is appended at end of file instead. Those are different
+perturbations:
+
+| form | what moves | BMI | expected result |
+|---|---|---|---|
+| `in-body` | every subsequent line in the file | **changes** — GCC records inline-body source locations | a cascade is CORRECT |
+| `end-of-file` | nothing | unchanged | an engine comparing BMIs skips the cascade |
+
+Measured the same day, same engine, same compiler: `edit-comment` on mcpp's hub
+(66 lines, no bodies → `end-of-file`) was **0.38s**, and on xlings' hub (566
+lines, 56 bodies → `in-body`) was **95.02s**. Side by side and without the form,
+that reads as "the optimisation works on one project and not the other" — which
+is not what happened. The generated fixture splits the same way, `modules` going
+in-body and `modules-impl` end-of-file.
+
+So the form is written into the cell's `note`
+(`… · perturbation: in-body`). Same rule as a non-`ok` status carrying its
+reason: **a number whose meaning depends on an invisible choice is not a
+measurement.**
+
 `edit-body` is the control that keeps the suite honest in the other direction —
 there, no engine should be fast, and one that is has skipped work it owed.
 
