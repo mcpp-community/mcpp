@@ -161,7 +161,9 @@
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
       "body": "src/version_req.cppm",
-      "buildfiles": "mcpp"
+      "buildfiles": "mcpp",
+      "allow_failed": "cmake,xmake",
+      "note": "KNOWN GAP: neither foreign arm has `import std` on Windows. cmake stops inside project() at the CXX_MODULE_STD toolchain-support probe (CMakeTestCXXCompiler -> CMakeDetermineCompilerSupport) and xmake stops at `missing std dependency for module ...`; the Windows payload is llvm@20.1.7 against the MSVC STL, which ships no std module either engine can build. The mcpp arms measure fine, so the cell is kept for them and the two arms are waived rather than dropped — a waived failure stays visible in the report, an excluded engine does not."
     },
     {
       "os": "linux",

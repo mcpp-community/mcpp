@@ -10,6 +10,20 @@
 #      MCPP_JOBS side channel, and that pre-scan used to walk the whole argv.
 set -e
 
+# mcpp's e2e runner exports MCPP as the binary under test. Filled in when unset
+# so this file can be run BY HAND — otherwise it dies on
+#     line 45: : command not found
+# which names neither the variable nor the fix. (Same treatment as
+# 230_bench_harness.sh; the bench harness itself deliberately refuses to guess,
+# because there the binary IS the measurement.)
+if [ -z "${MCPP:-}" ]; then
+  _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  MCPP="$(bash "$_root/.github/tools/newest_artifact.sh" "$_root" mcpp 2>/dev/null || true)"
+  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet — run \`mcpp build\` first"; exit 0; }
+  case "$MCPP" in /*) ;; *) MCPP="$_root/$MCPP" ;; esac
+  export MCPP
+fi
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
