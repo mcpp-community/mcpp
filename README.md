@@ -310,19 +310,20 @@ Building **mcpp itself** — 137 module interface units, 57k lines, every one of
 them `import std;` — with three engines given the **same compiler binary**.
 Each cell is the median wall-clock and how many times faster it is than cmake.
 
-| scenario | what changed | **mcpp** | cmake | xmake |
-|---|---|---|---|---|
-| `cold` | nothing built yet | **79.54s** · 1.2x | 92.33s · 1.0x | 90.30s · 1.0x |
-| `noop` | nothing at all | **0.16s** · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
-| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.40s** · 208x | 83.39s · 1.0x | 82.08s · 1.0x |
-| `edit-body` | a real edit inside a function body | **76.24s** · 1.1x | 85.64s · 1.0x | 84.61s · 1.0x |
-| `edit-comment` | a comment added to a widely-imported interface | **0.38s** · 218x | 82.96s · 1.0x | 82.73s · 1.0x |
+| scenario | what changed | **mcpp** `bmi_schedule=on` | mcpp default | cmake | xmake |
+|---|---|---|---|---|---|
+| `cold` | nothing built yet | **35.43s** · 3x | 79.54s · 1.2x | 92.33s · 1.0x | 90.30s · 1.0x |
+| `noop` | nothing at all | **0.16s** · 2x | 0.16s · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
+| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.22s** · 377x | 0.40s · 207.9x | 83.39s · 1.0x | 82.08s · 1.0x |
+| `edit-body` | a real edit inside a function body | **30.17s** · 3x | 76.24s · 1.1x | 85.64s · 1.0x | 84.61s · 1.0x |
+| `edit-comment` | a comment added to a widely-imported interface | **0.18s** · 458x | 0.38s · 217.2x | 82.96s · 1.0x | 82.73s · 1.0x |
 
-<sub>mcpp in its DEFAULT configuration. Linux x86_64 · i9-13900K · gcc 16.1.0 ·
-n=1 · pinned workload `a749e9f`. The opt-in `[build] bmi_schedule = "on"` takes
-`cold` to 35.4s, but it has an unresolved correctness bug on incremental
-rebuilds and is therefore not quoted here — see
-[`bench/README.md`](bench/README.md).</sub>
+<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 · pinned workload `a749e9f`.
+**Both mcpp columns are shown because either alone misleads**: the default is
+what you get today, `bmi_schedule = "on"` is one opt-in manifest key. It is
+opt-in because it still has an unresolved correctness bug on incremental
+rebuilds — reproducible on the generated fixture, not on any of the three real
+trees measured — see [`bench/README.md`](bench/README.md) §8b.</sub>
 
 * **`touch-hub` and `edit-comment` are where the day goes.** cmake and xmake
   decide by timestamp and rebuild everything downstream; mcpp compares the BMI

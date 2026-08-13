@@ -292,16 +292,26 @@ if not default:
     raise SystemExit(0)
 
 readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
-rows = re.findall(r"^\| `([\w-]+)` \| [^|]+ \| \*\*([\d.]+)s\*\* · [\d.]+x \| ([\d.]+)s · 1\.0x",
+# Six columns now: scenario | what changed | schedule=on | default | cmake | xmake.
+# The bolded cell is the SCHEDULE arm and the `1.0x` one is cmake; the default
+# mcpp column sits between them and is checked too — publishing one mcpp column
+# alone understated the engine badly enough to be a defect in its own right.
+rows = re.findall(r"^\| `([\w-]+)` \| [^|]+ \| \*\*([\d.]+)s\*\* · [\d.]+x \| ([\d.]+)s · [\d.]+x \| ([\d.]+)s · 1\.0x",
                   readme, re.M)
 if not rows:
     print("FAIL: the root README benchmark table did not parse — has its shape changed?")
     raise SystemExit(1)
 
 bad = []
-for sc, mcpp, cmake in rows:
-    for engine, claimed in (("mcpp", mcpp), ("cmake", cmake)):
-        have = truth.get(default if engine == "mcpp" else "cmake", {}).get(sc)
+for sc, sched, mcpp, cmake in rows:
+    # The schedule arm is checked too. It is the column a reader's eye goes to,
+    # so an unchecked number there is the most expensive kind to get wrong.
+    for engine, claimed in (("mcpp", mcpp), ("cmake", cmake),
+                            (default + "+schedule=on", sched)):
+        key = ("cmake" if engine == "cmake"
+               else default if engine == "mcpp"
+               else engine)
+        have = truth.get(key, {}).get(sc)
         if have is None or abs(float(claimed) - have) >= 0.01:
             bad.append(f"README {sc}/{engine}={claimed}s but the run says {have}")
 if bad:
