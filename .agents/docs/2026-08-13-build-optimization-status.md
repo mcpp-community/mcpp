@@ -439,3 +439,51 @@ P1689 扫描的产出上;第一版发射(未提交)会让 `mcpp build` **段错�
    (半个 BMI 不是诊断,是编错),所以保持 `None`。
 3. **L3 作为书写约定**:优先施加于链上那 19 个模块(见 §1),不回改存量。
 4. **换默认工具链**单独立项(生态决策,见 §L1)。
+
+
+## 8. ⚠️ L2 有一个未修好的正确性缺陷 —— 现阶段不应推荐开启
+
+`bmi_schedule = "on"` 在**增量重建**上会让导入者撞到不存在的 BMI:
+
+    failed: gcm.cache/fx.unit_1.gcm
+    fx.unit_0: error: failed to read compiled module: No such file or directory
+    fx.unit_0: note: imports must be built before being imported
+
+**复现**(生成的 fixture,modules variant,四个场景稳定失败):
+
+    bench --engines 'mcpp[schedule=on]=<mcpp>' --variants modules \
+          --scenarios touch-hub,touch-leaf,edit-body,edit-comment \
+          --preset standard --runs 2 --compiler payload:gcc
+
+### 已经确定的
+
+* **不是编译器之间的竞态**:`-j1` 一样复现。
+* **窗口是设计带来的、而且很大**:phase 1 在 spawn 编译器**之前**就把旧 BMI
+  rename 进 `.bak`,直到编译器发布新的为止,这个模块在磁盘上**没有 BMI**。
+  实测一次增量重建中该文件消失约 **208ms**(2ms 采样 × 104 次命中)。
+* **失败模态是安全的那一种**:该路径下 BMI 是**缺失**而不是**陈旧**,所以永远
+  是响亮的失败,不会产出一个「成功但错误」的构建。这一点是量出来的,不是希望。
+* 真实工程(mcpp 自己、xlings 两种风格)上没有复现 —— 只有 fixture 的紧密
+  unit_0→unit_1 链会撞上。**这就是合成 fixture 的价值**,我此前把它当成
+  「不如真实工程可信的那一半」,是错的。
+
+### 已经修掉但**不是**本缺陷成因的
+
+`compile_release_at_bmi` 的 `read_rc` 分支返回成功却从不 `settle_bmi`(见
+`8c9f239`)。它确实是个真缺陷 —— 上一份 BMI 一直停在 `.bak`,而且那个单元的
+**等价性检查从未运行**,也就是说级联抑制对最便宜的那些单元是静默关闭的。修完
+之后 `.bak` 残留归零,**但四个场景照样失败**。
+
+### 还没搞清楚的
+
+在 `-j1`、且 dyndep 明确写着 `unit_1.gcm: dyndep | unit_0.gcm` 的情况下,导入者
+为什么仍然会在那 208ms 的窗口里被 ninja 调度。下一步应当是 `ninja -d explain`
+配合边级时间线,而不是继续静态推理 —— 这一条我已经猜错过一次。
+
+### 因此
+
+* **`auto` 绝不能翻成 on**,直到这条修好;
+* 所有已发布的 `bmi_schedule` 数字都是在缺陷存在时取的,README 里已标注不可引用;
+* 修法方向:要么让 BMI 在整个重建期间保持可读(先编译到临时路径、成功后再原子
+  替换,而不是先把旧的挪走),要么让导入者的边真正等到 BMI **重新发布**之后。
+  前者更像是对的 —— 「先移走再重建」本身就在制造一个不存在的中间态。

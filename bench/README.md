@@ -119,6 +119,15 @@ Four things this bought, each of which had already gone wrong:
 
 ### The headline numbers, and where they come from
 
+> ⚠️ **`bmi_schedule` has a known correctness bug — do not quote these numbers.**
+> On the generated fixture's `modules` variant, four scenarios fail with
+> `failed to read compiled module: No such file or directory` in an importer.
+> It reproduces at `-j1`, so it is not a race between compilers: phase 1 parks
+> the previous BMI in `.bak` *before* spawning the compiler, and the file is
+> measurably absent for ~208 ms of every rebuild. Every `bmi_schedule` figure
+> below was taken with that defect present. See
+> `.agents/docs/2026-08-13-build-optimization-status.md` §8.
+
 **Read the real-project table first.** A synthetic fixture is for isolating one
 variable; it is not evidence about anyone's build. Where the two disagree, the
 real project is right and the fixture is telling you about its own shape.

@@ -318,6 +318,10 @@ Each cell is the median wall-clock and how many times faster it is than cmake.
 | `edit-body` | a real edit inside a function body | **30.17s** · 2.8x | 85.64s · 1.0x | 84.61s · 1.0x |
 | `edit-comment` | a comment added to a widely-imported interface | **0.18s** · 461x | 82.96s · 1.0x | 82.73s · 1.0x |
 
+> ⚠️ `bmi_schedule` is opt-in and currently has a **known correctness bug** on
+> incremental rebuilds (see [`bench/README.md`](bench/README.md)); the `cold`
+> figure here was measured with that defect present.
+
 <sub>mcpp with `[build] bmi_schedule = "on"`. Linux x86_64 · i9-13900K ·
 gcc 16.1.0 · n=1 · pinned workload `a749e9f`.</sub>
 
