@@ -300,6 +300,32 @@ import mcpplibs.cmdline;
 
 </details>
 
+## 性能对比
+
+用**同一个编译器二进制**、三个构建引擎构建 **mcpp 自己** —— 137 个模块接口单元、
+57k 行,每一个都 `import std;`。中位墙钟时间,越低越好。
+
+| 场景 | 改了什么 | **mcpp** | cmake | xmake |
+|---|---|---|---|---|
+| `cold` | 什么都还没构建 | **79.5s** | 92.3s | 90.3s |
+| `noop` | 什么都没改 | **0.16s** | 0.28s | 0.38s |
+| `touch-hub` | 给被大量 import 的接口改 mtime | **0.40s** | 83.4s | 82.1s |
+| `edit-body` | 函数体内部一处真实修改 | 76.2s | 85.6s | 84.6s |
+
+* **冷构建三家都在 15% 以内** —— 依赖图是一条 26 层深的模块接口链,没有可供调度
+  的余地。打开 `[build] bmi_schedule = "on"` 后 mcpp 的冷构建降到 **35.4s**。
+* **`touch-hub` 才是一天里真正花掉的时间。** cmake 和 xmake 按时间戳判断,下游
+  全量重建;mcpp 把编译器刚产出的 BMI 和上一份比对,接口没变就不级联 ——
+  **0.40s 对 83s**。
+* **`edit-body` 是对照组。** 那里接口确实变了,任何引擎都不该快,也确实都不快。
+
+📊 **[测量方法、钉住的版本与完整数据 → `bench/README.zh-CN.md`](bench/README.zh-CN.md)**
+ · [English](bench/README.md)
+
+<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 · 钉住的工作负载 `a749e9f`。
+套件还测量了第二个独立工程(xlings)的两种代码风格;那份对比、已声明的不对称、
+以及「什么时候一个格子**不能**拿来比较」的规则,都在 `bench/README.md`。</sub>
+
 ## 平台支持
 
 mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family ∈ gcc | llvm | msvc),

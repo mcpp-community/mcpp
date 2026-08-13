@@ -306,89 +306,33 @@ import mcpplibs.cmdline;
 
 ## Benchmark
 
-mcpp is measured against cmake, xmake and bazel on the **same sources with the
-same compiler binary**, by a harness that lives in this repository
-([`bench/`](bench/)) and runs in CI across Linux, macOS and Windows.
+Building **mcpp itself** — 137 module interface units, 57k lines, every one of
+them `import std;` — with three engines given the same compiler binary. Median
+wall-clock, lower is better.
 
-<!-- BENCHMARK-TABLE:START — regenerate from bench/results/; do not hand-edit numbers -->
+| scenario | what changed | **mcpp** | cmake | xmake |
+|---|---|---|---|---|
+| `cold` | nothing built yet | **79.5s** | 92.3s | 90.3s |
+| `noop` | nothing at all | **0.16s** | 0.28s | 0.38s |
+| `touch-hub` | mtime on a widely-imported interface | **0.40s** | 83.4s | 82.1s |
+| `edit-body` | a real edit inside a function | 76.2s | 85.6s | 84.6s |
 
-### A real project: building mcpp itself
+* **Cold builds are all within 15%** — the graph is one 26-deep chain of module
+  interfaces, so there is nothing to schedule around. Turning on
+  `[build] bmi_schedule = "on"` takes mcpp's cold build to **35.4s**.
+* **`touch-hub` is where the day goes.** cmake and xmake decide by timestamp and
+  rebuild everything downstream; mcpp compares the BMI the compiler just produced
+  against the previous one and skips the cascade — **0.40s against 83s**.
+* **`edit-body` is the control.** There the interface really did change, so no
+  engine should be fast, and none is.
 
-**137 module interface units, 57k lines, every one of them `import std;`** —
-a pinned checkout, measured in place, with the same hermetic `gcc 16.1.0` binary
-handed to every engine. Median wall-clock and the ratio to cmake; **lower is
-better**.
+📊 **[Methodology, pinned versions, and the full data →
+`bench/README.md`](bench/README.md)** · [简体中文](bench/README.zh-CN.md)
 
-| scenario | what it asks | mcpp | mcpp `+bmi_schedule` | cmake | xmake |
-|---|---|---|---|---|---|
-| `cold` | everything, from nothing | 79.54s · 0.86x | **35.43s · 0.38x** | 92.33s · 1.00x | 90.30s · 0.98x |
-| `noop` | how cheap is "already up to date" | **0.16s** · 0.57x | 0.16s · 0.57x | 0.28s · 1.00x | 0.38s · 1.36x |
-| `touch-hub` | mtime bump on a hub, content unchanged | **0.40s** · 0.005x | **0.22s** · 0.003x | 83.39s · 1.00x | 82.07s · 0.98x |
-| `edit-body` | real edit inside a function body | 76.24s · 0.89x | **30.17s · 0.35x** | 85.64s · 1.00x | 84.61s · 0.99x |
-
-**Read the `cold` row first.** On a full build all three engines land within 15%
-of each other, and that is the correct answer, not a disappointment: mcpp's cold
-build is **100% critical path** (79.7s of a 79.8s makespan, average parallelism
-3.94 of 32 hardware threads). Every engine walks the same 26-deep chain of module
-interfaces, and scheduling cannot shorten a chain. Anyone quoting a synthetic
-fixture's `0.26x` as a cold-build advantage is quoting an artefact of a workload
-whose units cost 0.09s each.
-
-The cold-build lever is **`[build] bmi_schedule = "on"`** — publish each module's
-BMI as soon as it exists and move code generation onto its own edge, so importers
-stop waiting for work they do not need. 79.54s → 35.43s. It is opt-in until it
-has been verified on every platform.
-
-**The gap is in the loop you actually spend the day in.** Touching a hub
-interface costs cmake and xmake a full 83-second downstream rebuild, because they
-decide by timestamp. mcpp compares the BMI the compiler just produced against the
-previous one and, when they are equivalent, puts the old file back so ninja's
-`restat` sees no change — the importers never rebuild. **0.40s against 83.39s.**
-
-`edit-body` is the control that keeps this honest: there the interface really did
-change, no engine should be fast, and none is.
-
-### The same question on someone else's codebase
-
-mcpp measuring its own build proves nothing on its own. **xlings** (110 modules,
-46k lines, different authors, never tuned for this) is pinned in two code styles
-— implementation inside the interface units, and implementation split into
-separate `.cpp`:
-
-| scenario | combined, old → new mcpp | split, old → new mcpp | what the split buys |
-|---|---|---|---|
-| `cold` | 97.01s → 92.48s | 30.33s → 29.78s | **3.11x** |
-| `touch-hub` | 89.39s → **1.76s** | 24.87s → **1.30s** | 1.35x |
-| `edit-body` | 89.46s → 88.33s | 2.73s → **1.77s** | **49.96x** |
-
-Splitting implementations out of the interface units is worth **3.1x on a cold
-build and ~50x on an edit** — a code style, not an engine feature, and the
-largest single effect in the suite.
-
-It also overlaps with `bmi_schedule`. On the combined tree that setting takes
-`cold` from 92.95s to 43.26s (2.15x); on the split tree it changes nothing
-(27.62s → 29.72s), because there is no longer a cascade to overlap. **If you are
-choosing one, choose the code style** — the schedule is what helps a codebase
-that has not made that change.
-
-Numbers are **n=1** except the split-tree `cold` row (n=3); read the ratios, not
-the digits. That row is why: at n=1 it read as a 23% regression, and at n=3 it is
-a marginal improvement — the single pair had caught one arm near the other's
-maximum. Full methodology, the
-declared asymmetries, and the cases where a cell must *not* be compared are in
-`bench/README.md`.
-
-📊 **[Methodology, pinned versions and data → `bench/README.md`](bench/README.md)**
- · [中文](bench/README.zh-CN.md) · [what is measured → `bench/SPEC.md`](bench/SPEC.md)
-
-<!-- BENCHMARK-TABLE:END -->
-
-**What makes this comparable at all:** every engine is handed the same compiler
-binary out of mcpp's own payload; the build tools are pinned (cmake 4.4.2,
-xmake 3.1.0, bazel 9.2.0) and installed by xlings on every platform; the measured
-projects are pinned as git submodules so the target cannot drift; and cmake is
-the baseline, because an absolute second count means nothing without knowing the
-machine while "0.38x cmake" survives being read somewhere else.
+<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 · pinned workload
+`a749e9f`. The suite also measures a second, independent project (xlings) in two
+code styles; that comparison, the declared asymmetries, and the rules for when a
+cell must *not* be compared are all in `bench/README.md`.</sub>
 
 ## Platform Support
 
