@@ -1,0 +1,46 @@
+{
+  "protocol_version": 1,
+  "started_at": "2026-08-13T06:51:28Z",
+  "host": {
+    "os": "linux",
+    "arch": "x86_64",
+    "cpu_model": "13th Gen Intel(R) Core(TM) i9-13900K",
+    "logical_cores": 32,
+    "physical_cores": 24,
+    "heterogeneous": true,
+    "ram_bytes": 67147722752,
+    "toolchain": "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++"
+  },
+  "cells": [
+    {
+      "engine": "mcpp@2026.8.13.1",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "cold",
+      "fixture": "xlings-2026.8.13.1",
+      "variant": "modules-impl",
+      "status": "ok",
+      "note": "mcpp 2026.8.13.1",
+      "runs": 3,
+      "median_s": 29.779,
+      "min_s": 28.651,
+      "max_s": 30.042,
+      "samples": [30.042, 29.779, 28.651]
+    },
+    {
+      "engine": "mcpp@2026.8.11.3",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "cold",
+      "fixture": "xlings-2026.8.13.1",
+      "variant": "modules-impl",
+      "status": "ok",
+      "note": "mcpp 2026.8.11.3",
+      "runs": 3,
+      "median_s": 30.329,
+      "min_s": 29.922,
+      "max_s": 35.724,
+      "samples": [35.724, 30.329, 29.922]
+    }
+  ]
+}

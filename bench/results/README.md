@@ -12,6 +12,7 @@ than repeating what the directory already says.
 |---|---|
 | [`five-way-20260812/`](five-way-20260812/) | six engines × three source forms × six scenarios, on a **generated fixture**. cmake is the baseline. Two compilers, one file each. |
 | [`mcpp-self-20260813/`](mcpp-self-20260813/) | the same scenarios on the **real project** — mcpp building itself, 138 module interface units. cmake is the baseline. |
+| [`pinned-workloads-20260813/`](pinned-workloads-20260813/) | **the first run in which everything that moves a number is pinned** — tools, compiler, measured sources, reference mcpp. mcpp building itself five ways, and xlings in two code styles. Earlier runs are not comparable to it. |
 | [`hyperfine-20260812/`](hyperfine-20260812/) | the earlier one-off mcpp-vs-xmake runs, driven by hyperfine before the harness existed. Superseded by the two above; kept because `NOTES.md` records how those numbers were taken. |
 
 **Read the reports, not the JSON.** The raw files are what makes a claim

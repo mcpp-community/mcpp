@@ -1,0 +1,91 @@
+{
+  "protocol_version": 1,
+  "started_at": "2026-08-13T06:44:18Z",
+  "host": {
+    "os": "linux",
+    "arch": "x86_64",
+    "cpu_model": "13th Gen Intel(R) Core(TM) i9-13900K",
+    "logical_cores": 32,
+    "physical_cores": 24,
+    "heterogeneous": true,
+    "ram_bytes": 67147722752,
+    "toolchain": "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++"
+  },
+  "cells": [
+    {
+      "engine": "xmake",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "cold",
+      "fixture": "mcpp-2026.8.11.3",
+      "variant": "modules",
+      "status": "ok",
+      "note": "xmake v3.0.7+HEAD.77d94ad, A cross-platform build utility based on Lua",
+      "runs": 1,
+      "median_s": 90.295,
+      "min_s": 90.295,
+      "max_s": 90.295,
+      "samples": [90.295]
+    },
+    {
+      "engine": "xmake",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "noop",
+      "fixture": "mcpp-2026.8.11.3",
+      "variant": "modules",
+      "status": "ok",
+      "note": "xmake v3.0.7+HEAD.77d94ad, A cross-platform build utility based on Lua",
+      "runs": 1,
+      "median_s": 0.382,
+      "min_s": 0.382,
+      "max_s": 0.382,
+      "samples": [0.382]
+    },
+    {
+      "engine": "xmake",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "touch-hub",
+      "fixture": "mcpp-2026.8.11.3",
+      "variant": "modules",
+      "status": "ok",
+      "note": "xmake v3.0.7+HEAD.77d94ad, A cross-platform build utility based on Lua",
+      "runs": 1,
+      "median_s": 82.075,
+      "min_s": 82.075,
+      "max_s": 82.075,
+      "samples": [82.075]
+    },
+    {
+      "engine": "xmake",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "edit-body",
+      "fixture": "mcpp-2026.8.11.3",
+      "variant": "modules",
+      "status": "ok",
+      "note": "xmake v3.0.7+HEAD.77d94ad, A cross-platform build utility based on Lua · perturbation: in-body",
+      "runs": 1,
+      "median_s": 84.607,
+      "min_s": 84.607,
+      "max_s": 84.607,
+      "samples": [84.607]
+    },
+    {
+      "engine": "xmake",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "edit-comment",
+      "fixture": "mcpp-2026.8.11.3",
+      "variant": "modules",
+      "status": "ok",
+      "note": "xmake v3.0.7+HEAD.77d94ad, A cross-platform build utility based on Lua · perturbation: end-of-file",
+      "runs": 1,
+      "median_s": 82.730,
+      "min_s": 82.730,
+      "max_s": 82.730,
+      "samples": [82.730]
+    }
+  ]
+}
