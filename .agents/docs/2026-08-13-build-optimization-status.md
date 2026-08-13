@@ -577,3 +577,54 @@ macOS 的 bench 格子因此进 `excluded`,原因写在 matrix.json 里。**没�
 
 解法有三条,都需要决策而不是我单方面选:vendor 那个不大的 `framework` 目录、
 改走 mbedtls 的 Makefile、或者让 registry 把完整树打进包里。
+
+## 10. CI 的核心 job 全红 —— 根因是 clang 22 的模块误编译,不是环境
+
+**判据(同一份分支代码,只换编译器):**
+
+| 编译器 | `mcpp test` |
+|---|---|
+| clang 22.1.8(仓库默认) | `unit/test_elf_runtime` **SIGSEGV**,82 passed / 1 failed |
+| gcc 16.1.0 | `unit/test_elf_runtime ... ok`,**83 passed / 0 failed** |
+
+backtrace 落在 libc++ 的 `__assign_with_sentinel`,调用方是
+`mcpp::platform::elf::inspect_elf_runtime@mcpp.platform.elf_runtime` ——
+**那个文件本分支一行没改**(`git log origin/main..HEAD -- src/platform/elf_runtime.cppm`
+为空),而 main 用同一个 clang 是 80 passed / 0 failed(在独立 worktree 里实测,
+不是看 CI)。也就是说:别处的新增改变了这个函数的代码生成。这与仓库里已记录的
+`clang-modules-unused-fn-miscompile` 是同一类现象。
+
+崩的那个用例叫 `RejectsUnsupportedOrTruncatedElfWithoutGuessing` —— 它只对一个
+9 字节文本和一个 6 字节文件调 `inspect_elf_runtime`,而头部检查
+(`bytes.size() < 0x40`)本该直接挡住。
+
+### 定位它花了多少弯路,以及为什么
+
+**转折点是给 CI 加了一个 `continue-on-error` 的 verbose 探针**,它把崩溃钉在
+`stage("runtime-validate")` **打印之前** —— 即 `validate_changed_artifacts` 内部。
+顺着这条线才在本地找到那个稳定复现的单测。
+
+在此之前逐条否掉的七个假设(每条都有实验,不是推理):
+
+1. `--jobs auto` 导致 OOM —— `mcpp.toml` 根本没设 `jobs`,默认不走该路径
+2. xmake 3.1.0 —— 切过去后 fixture 本地 1 ok / 0 failed
+3. mcpp-index 变动 —— 最后一次提交 08-12,不在窗口内
+4. xim 索引载荷 —— 近期无 llvm/glibc 变动
+5. 容器镜像 —— 在同一个 `debian:stable-slim` 里精确复现 CI 那一步:`hello 195`,rc=0
+6. 全新空 registry(强制重下全部载荷)—— rc=0
+7. 「这是本分支的代码缺陷」—— 被同一批日志否掉:`toolchain: gcc` 里崩的是**已发布的
+   2026.8.11.3**,hermetic 里崩的是本分支构建的,两个版本都崩
+
+⚠️ **本来可以早几个小时定位。** 我在很早就记录过「本地 `mcpp test` 有 1 个失败:
+`unit/test_elf_runtime`」,当时把它当孤立小问题;它和 CI 的 `exit 139` 是**同一个
+信号、同一个子系统**。一个和 CI 症状同信号的本地失败,永远值得先连起来看。
+
+⚠️ 还有一个我一度当成证据的错误推理:「文档提交(经核实只有两个 markdown、38 行)
+让 9 个核心 job 全红 ⇒ 必是环境问题」,以及后来的「重跑能复现 ⇒ 确定性 ⇒ 不是环境」。
+后一步是错的:**确定性失败同样可以来自一个已经变了的外部状态**。真正的解释是第三种:
+缺陷一直在,变的是**构建状态是否让那条代码路径被走到**(缓存命中 vs 冷构建)。
+
+### 现状
+
+正在 `git bisect`(判据=该单测是否 SIGSEGV)定位分支上哪一处新增触发了误编译。
+CI 里那个诊断探针(`ci-linux-e2e.yml` 的 "diagnose: verbose trace")**理解之后要删**。
