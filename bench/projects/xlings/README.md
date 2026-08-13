@@ -91,9 +91,9 @@ recorded rather than smoothed over.
 
 | engine | file | status |
 |---|---|---|
-| cmake | [`CMakeLists.txt`](CMakeLists.txt) | configures, compiles all 110 units; **does not link** |
-| xmake | [`xmake.lua`](xmake.lua) | same shape, same gap; shares the toolchain definitions in [`../common/xmake/payload.lua`](../common/xmake/payload.lua) |
-| bazel | [`MODULE.bazel`](MODULE.bazel) | **cannot** — the workspace boundary, and this tree is not even in the repository |
+| cmake | [`CMakeLists.txt`](CMakeLists.txt) | **complete** — configures, compiles all 110 units plus the nine source packages (467 C/C++ TUs), links a binary that runs |
+| xmake | [`xmake.lua`](xmake.lua) | **in progress** — declares its dependencies through xrepo the way xlings' own xmake.lua does; blocked on mcpplibs-index#16. Shares the toolchain definitions in [`../common/xmake/payload.lua`](../common/xmake/payload.lua) |
+| bazel | [`MODULE.bazel`](MODULE.bazel) | **complete** — `@xlings_tree` reaches the pinned tree through a repository rule (the workspace boundary is crossed, not worked around), `@mcpp_deps` builds the same 13 packages out of their `.xpkg.lua`, and `@mcpp_deps//:std` compiles libc++'s own `std.cppm` so `import std;` resolves. Verified on both trees |
 | meson | — | removed from the suite entirely: meson cannot declare a module interface unit at all (see `../../SPEC.md`) |
 
 Both working arms take the compiler as a parameter, so the **toolchain is a real
@@ -103,38 +103,53 @@ libc), msvc gets nothing because mcpp uses the system Visual Studio too. That
 logic is shared with the mcpp arm rather than copied — see
 [`../common/`](../common/).
 
-## Where the cmake and xmake arms stop
+## Where the cmake arm used to stop
 
-`CMakeLists.txt` here is real — it configures, finds all 110 module interface
-units, and compiles them. **It does not link**, and the reason is worth having
-written down, because it is the honest limit of a hand-written foreign build
-description rather than a gap in effort:
+`CMakeLists.txt` here used to configure, find all 110 module interface units,
+compile every one of them — and then fail at the link with ~1371 undefined
+`archive_*` / `mbedtls_*` / `lua_*`. That was written down as a *"known gap"*,
+and the note is what let it sit: it was not a boundary, it was unfinished work.
+The arm now links a binary that answers `xlings --version`.
 
-**82 of 83 edges: every translation unit compiles; only the link fails.**
+Three things looked like boundaries and were not:
 
-Two things looked like boundaries and were not:
-
-* **Transitive headers.** All of them are unpacked in mcpp's registry and
-  `CMakeLists.txt` finds them — `mbedtls` via mcpplibs `tinyhttps`, `lua` via
-  `capi.lua`.
+* **Transitive headers.** All of them are unpacked in mcpp's registry — `mbedtls`
+  via mcpplibs `tinyhttps`, `lua` via `capi.lua`. They arrive as the `PUBLIC`
+  include directories of the dependency targets rather than as a hand-written
+  walk of registry subdirectories.
 * **A generated module.** `mcpplibs.xpkg.lua_stdlib` is not checked in; libxpkg's
   `build.mcpp` produces it. But all it does is embed eleven `.lua` files as
   strings, so [`embed_lua_stdlib.cmake`](embed_lua_stdlib.cmake) reproduces it.
   *"mcpp runs a build program"* is not by itself a boundary.
+* **The source dependencies.** `ftxui`, `libarchive`, `lua` and `mbedtls` arrive
+  as **source** and mcpp compiles them, so the link asked for symbols nobody had
+  built here. Neither obvious answer works: `add_subdirectory` on the vendored
+  CMakeLists drags in test suites libarchive cannot even configure without, and
+  mbedtls 3.6.1 `FATAL_ERROR`s **unconditionally** on a `framework/` submodule
+  the registry tarball does not carry — no option disables it. A glob of the
+  unpacked tree compiles the wrong set (`libarchive/*.c` is 132 files where mcpp
+  compiles 127; `lua/src/*.c` is 34 where it compiles 32, the two extra being
+  `lua.c` and `luac.c`, each with its own `main()`).
 
-What is left is ordinary work rather than a wall: `ftxui`, `libarchive`, `lua`
-and `mbedtls` arrive as **source** and mcpp compiles them, so the link asks for
-symbols nobody built here (`undefined reference to archive_entry_pathname`, …).
-Each ships its own CMakeLists, so `add_subdirectory` finishes the arm.
+  What does work is that **every package in mcpp's registry ships a `.xpkg.lua`
+  naming exactly the sources, include dirs and cflags mcpp compiles it with**.
+  [`xpkg_source_library.cmake`](xpkg_source_library.cmake) reads that, so both
+  engines compile the same 127 files with the same defines, and a pattern that
+  resolves to nothing is a configure error rather than a quietly smaller build.
 
 ⚠️ The copied module list in the generator **already drifted once**: a first
 regex caught ten of eleven entries, and the failure surfaced three files away as
 `error: 'base64_lua' is not a member of ...detail`. The generator now fails on a
 missing `.lua` rather than trusting the list.
 
-**So the xlings arm compares mcpp against mcpp** (two releases, or two
-schedules). That is what a control target is for: it answers *"does this engine
-change hold on a codebase nobody tuned it for?"*, and that question does not
-need a second engine. The cross-engine arm stays on
-[`../mcpp/`](../mcpp/), which has one source dependency and lives in this
-repository, so its descriptions can be kept correct.
+**The xlings arm therefore does both jobs.** mcpp against mcpp (two releases, or
+two code styles) is what a control target is for — it answers *"does this engine
+change hold on a codebase nobody tuned it for?"*, and that question does not need
+a second engine. And because the cmake description now links, the same tree also
+carries a cross-engine comparison on a project with six dependencies, four of
+them compiled from source by both engines.
+
+⚠️ **One asymmetry is real and is declared rather than smoothed over**: on a cold
+build cmake compiles all nine source packages (467 C/C++ translation units)
+while mcpp may serve them from its global dependency cache. See `../../README.md`
+§5.

@@ -203,4 +203,20 @@ function(bench_add_source_dep target name version)
   string(REGEX REPLACE "[^A-Za-z0-9_]" "_" fsname "fs_${name}")
   target_sources(${target} PRIVATE
     FILE_SET "${fsname}" TYPE CXX_MODULES BASE_DIRS "${base}" FILES ${srcs})
+
+  # ⚠️ .cpp UNDER src/ TOO, as ORDINARY sources. A package's `src/` may hold
+  # MODULE IMPLEMENTATION UNITS — `module mcpplibs.capi.lua;` with no `export`
+  # — and those are not part of a CXX_MODULES file set (CMake rejects a
+  # non-interface unit there); they are plain sources that the scanner picks
+  # the module edge out of. mcpplibs.capi.lua 0.0.3 keeps all 428 lines of its
+  # Lua-C wrapper in one, and globbing only `*.cppm` dropped it: the arm then
+  # failed at the link on every `mcpplibs::capi::lua::*` symbol, naming the
+  # consumer rather than the file that was never compiled.
+  #
+  # `*/src/` and not the whole package: examples/ and tests/ carry their own
+  # main() and are not what mcpp compiles for a dependency.
+  file(GLOB_RECURSE impls CONFIGURE_DEPENDS "${dir}/*/src/*.cpp")
+  if(impls)
+    target_sources(${target} PRIVATE ${impls})
+  endif()
 endfunction()

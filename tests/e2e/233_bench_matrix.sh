@@ -367,7 +367,14 @@ for c in m["cells"]:
         if not f.exists():
             continue
         body = re.sub(r"#.*", "", f.read_text())
-        if not re.search(r"^\s*cc_(binary|library)\s*\(", body, re.M):
+        # ANY rule, not `cc_*` specifically. Every bazel rule instantiation
+        # carries a `name =` attribute; `load()`, `package()` and
+        # `exports_files()` do not. Matching `cc_binary|cc_library` was wrong:
+        # the working xlings description declares an `alias`, which is a real
+        # rule that `bazel query kind(rule, //...)` returns, so the guard would
+        # have failed a cell that builds perfectly well. The phantom this
+        # catches is ZERO rules, which is what `Found 0 targets` means.
+        if not re.search(r"^\s*name\s*=", body, re.M):
             bad.append(f"{proj}: engines lists bazel, but {f.relative_to(root)} "
                        f"declares no cc_binary/cc_library outside comments")
 if bad:

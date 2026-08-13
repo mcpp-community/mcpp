@@ -29,3 +29,7 @@ compile_commands.json
 # bazel
 bazel-*/
 MODULE.bazel.lock
+
+# bazel convenience symlinks — created in the package dir on every build,
+# and pointing into ~/.cache/bazel, so they are never worth tracking.
+bazel-*

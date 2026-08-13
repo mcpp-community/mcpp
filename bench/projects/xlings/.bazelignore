@@ -1,0 +1,15 @@
+# The pinned trees are consumed through @xlings_tree, which symlinks the ONE
+# named by BENCH_PROJECT_ROOT. Left visible here they would also be part of this
+# package, so `bazel build //...` would glob both of them into every target it
+# found — and a cell that measures two builds and reports one is worse than no
+# cell. Ignoring them is what makes "//... builds the tree under measurement"
+# true rather than approximately true.
+xlings-2026.8.11.2
+xlings-2026.8.13.1
+
+# Output directories of the other arms. cmake's build/ and mcpp's target/ hold
+# tens of thousands of files with no BUILD file among them; scanning them costs
+# real time on every `bazel build //...`.
+build
+target
+.xmake

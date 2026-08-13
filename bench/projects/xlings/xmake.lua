@@ -54,53 +54,36 @@ bench_define_toolchains(XLINGS_MANIFEST)
 -- every cell, behind a green check. Lua closures capture their upvalues
 -- lexically, so resolving to LOCALS here and letting the target read those is
 -- both the fix and the shape bench/projects/mcpp/xmake.lua already used.
-local DEP_MODULE_GLOBS = {}
-for _, dep in ipairs({{"mcpplibs-x-cmdline",   "0.0.2"},
-                      {"mcpplibs-x-xpkg",      "0.0.57"},
-                      {"mcpplibs-x-tinyhttps", "0.2.9"},
-                      {"mcpplibs.capi-x-lua",  "0.0.3"}}) do
-    -- PINNED to xlings' mcpp.toml. Newer versions are usually also unpacked in
-    -- the registry, and taking the newest would mean the arms compile different
-    -- code.
-    --
-    -- mcpp stages prebuilt objects for these out of its global build cache
-    -- while xmake compiles them from source: a handicap on xmake's cold build,
-    -- declared here rather than hidden.
-    local dir = bench_package_root(dep[1], dep[2])
-    if dir and os.isdir(path.join(dir, "src")) then
-        table.insert(DEP_MODULE_GLOBS, path.join(dir, "src/**.cppm"))
-    else
-        utils.warning("dependency %s %s is not unpacked in the registry; "
-                      .. "this build will not match mcpp's own", dep[1], dep[2])
-    end
-end
-
--- Header-providing packages. Each unpacks ONE level below the version directory
--- (`compat-x-ftxui/6.1.9/FTXUI-6.1.9/include`), so globbing `<ver>/include`
--- finds nothing and the failure surfaces on the first importer rather than on
--- the glob.
+-- ── Dependencies, declared the way xlings itself declares them ───────────────
 --
--- The list is TRANSITIVE and written out rather than discovered, because the
--- discovery is what mcpp's package manager does: xlings names 6 direct
--- dependencies, and wiring the four source ones in surfaced two more (mbedtls
--- for tinyhttps, lua for capi.lua).
-local DEP_INCLUDE_DIRS = {}
-for _, pkg in ipairs({"compat-x-ftxui", "compat-x-libarchive",
-                      "compat-x-mbedtls", "compat-x-lua"}) do
-    for _, ver in ipairs(os.dirs(path.join(bench_xpkgs(), pkg, "*"))) do
-        for _, inner in ipairs(os.dirs(path.join(ver, "*"))) do
-            for _, sub in ipairs({"include", "src", "libarchive"}) do
-                if os.isdir(path.join(inner, sub)) then
-                    table.insert(DEP_INCLUDE_DIRS, path.join(inner, sub))
-                end
-            end
-        end
-    end
-end
+-- Shaped after openxlings/xlings@bb27e43's own xmake.lua: `add_requires` for
+-- every dependency, `add_packages` on the target. Compiling them out of mcpp's
+-- registry by hand — the previous shape here — went wrong in five separate ways
+-- (source lists that a glob gets wrong, `!` exclusions that `target:add` ignores,
+-- escaped quotes in cflags, `*`-prefixed paths resolving to the filesystem root,
+-- and `io` being nil in description scope) before producing a binary. This is
+-- what an xmake user would actually write.
+--
+-- The index needed three newer versions than it carried (mcpplibs-xpkg 0.0.57,
+-- capi-lua 0.0.3, tinyhttps 0.2.9); they were added there rather than overridden
+-- here, because every xmake user of these libraries needs them, not just this
+-- benchmark. mcpplibs-index also had to learn to SUPPLY a build description for
+-- mcpplibs-xpkg: libxpkg moved to mcpp, so its 0.0.57 tarball ships `mcpp.toml`
+-- and no xmake.lua at all.
+--
+-- (mcpplibs/mcpplibs-index#14, merged.) MCPPLIBS_INDEX still overrides the URL,
+-- which is how the next version bump gets tested against a checkout before it
+-- is published.
+add_repositories("mcpplibs-index " ..
+                 (os.getenv("MCPPLIBS_INDEX") or "https://github.com/mcpplibs/mcpplibs-index.git"))
 
--- Resolved here for the same reason; before_build cannot call the helper.
-local XPKG_ROOT = bench_package_root("mcpplibs-x-xpkg", "0.0.57")
-local LUA_STDLIB_DIR = XPKG_ROOT and path.join(XPKG_ROOT, "src", "lua-stdlib")
+add_requires("cmdline 0.0.2")
+add_requires("mcpplibs-capi-lua 0.0.3")
+add_requires("mcpplibs-tinyhttps 0.2.9")
+add_requires("mcpplibs-xpkg 0.0.57")
+add_requires("ftxui 6.1.9")
+add_requires("libarchive 3.8.7")
+
 
 target("xlings")
     set_kind("binary")
@@ -122,12 +105,18 @@ target("xlings")
     -- style, link nothing, and still report a number. Same note in CMakeLists.txt.
     add_files(path.join(XLINGS_ROOT, "src/**.cppm"))
     add_files(path.join(XLINGS_ROOT, "src/**.cpp"))
-    for _, glob in ipairs(DEP_MODULE_GLOBS) do add_files(glob) end
+
+    -- Every dependency comes through xrepo, exactly as xlings' own xmake.lua
+    -- does. `mcpplibs-xpkg` brings the generated `mcpplibs.xpkg.lua_stdlib`
+    -- module with it — that generation lives in the PACKAGE now
+    -- (xrepo/packages/m/mcpplibs-xpkg/xmake.lua), which is where libxpkg keeps
+    -- it too, instead of being re-implemented against the registry here.
+    add_packages("cmdline", "mcpplibs-capi-lua", "mcpplibs-tinyhttps",
+                 "mcpplibs-xpkg", "ftxui", "libarchive")
 
     -- `[build] include_dirs = ["src/libs/json"]` — src/libs/json.cppm reaches
     -- for <json.hpp> from its global module fragment.
     add_includedirs(path.join(XLINGS_ROOT, "src/libs/json"))
-    for _, dir in ipairs(DEP_INCLUDE_DIRS) do add_includedirs(dir) end
     -- `[build] cxxflags`
     add_defines("LIBARCHIVE_STATIC", "UNICODE", "_UNICODE")
 
@@ -139,57 +128,7 @@ target("xlings")
     -- already drifted once and the failure landed three files away, in a
     -- consumer, as `'base64_lua' is not a member of ...detail`.
     --
-    -- before_build rather than a custom rule: the file must exist before module
-    -- dependency scanning, which runs ahead of any per-file rule.
-    before_build(function (target)
-        -- LUA_STDLIB_DIR is an UPVALUE resolved at description scope: the
-        -- helper that produces it is not reachable from inside this callback.
-        local stdlib = LUA_STDLIB_DIR
-        -- FATAL, not a silent return. Returning here skips emitting the module
-        -- and the build dies far away with
-        --     missing mcpplibs.xpkg.lua_stdlib dependency for module ...
-        -- naming a consumer instead of the absent package — which is exactly
-        -- how this failed on CI while passing on a box that had it unpacked.
-        -- (Same defect, same day, as the mcpplibs.cmdline arm in ../mcpp/.)
-        if not stdlib or not os.isdir(stdlib) then
-            raise("bench: mcpplibs.xpkg's lua-stdlib is not unpacked (looked for "
-                  .. tostring(stdlib) .. ") — build the tree with mcpp once first, "
-                  .. "so this arm generates the same module mcpp does")
-        end
-
-        local out = path.join(os.projectdir(), "build", "generated", "xpkg-lua-stdlib.cppm")
-        local text = {
-            "// Generated by bench/projects/xlings/xmake.lua — do not edit.",
-            "// Mirrors what libxpkg's build.mcpp produces; edit the .lua sources.",
-            "module;",
-            "export module mcpplibs.xpkg.lua_stdlib;",
-            "import std;",
-            "",
-            "export namespace mcpplibs::xpkg::detail {",
-            "",
-        }
-        local files = os.files(path.join(stdlib, "**.lua"))
-        if #files == 0 then
-            raise("no .lua under %s — either the package layout changed or the "
-                  .. "version pin is wrong. Emitting an empty module would fail "
-                  .. "three files away, in a consumer.", stdlib)
-        end
-        table.sort(files)
-        for _, f in ipairs(files) do
-            local var = path.basename(f) .. "_lua"
-            -- A raw string literal, so nothing in the Lua needs escaping. The
-            -- delimiter is one no Lua file contains; if that stops being true
-            -- the generated file will not compile, which is the loud failure.
-            table.insert(text, ("inline const std::string_view %s = R\"XLUA(%s)XLUA\";")
-                                   :format(var, io.readfile(f)))
-            table.insert(text, "")
-        end
-        table.insert(text, "} // namespace mcpplibs::xpkg::detail")
-
-        os.mkdir(path.directory(out))
-        io.writefile(out, table.concat(text, "\n") .. "\n")
-        target:add("files", out)
-    end)
+    -- on_load, NOT before_build. The file existing early is only half of what is
 
     set_policy("build.c++.modules", true)
     set_policy("build.c++.modules.std", true)

@@ -112,6 +112,15 @@ function bench_define_toolchains(manifest)
             set_toolset("sh",    path.join(gcc_dir, "bin", "g++"))
             set_toolset("ar",    path.join(binutils, "bin", "ar"))
             set_toolset("strip", path.join(binutils, "bin", "strip"))
+            -- `as` and `ranlib` are NOT optional once xrepo builds packages with
+            -- this toolchain. `-B<binutils>/bin` only lets the DRIVER find them;
+            -- xmake resolves the assembler itself and stops the whole configure
+            -- with `cannot get program for as` — a message that names neither
+            -- the toolchain nor the package it was building (ftxui, here).
+            set_toolset("as",     path.join(gcc_dir,  "bin", "gcc"))
+            set_toolset("ranlib", path.join(binutils, "bin", "ranlib"))
+            set_toolset("nm",     path.join(binutils, "bin", "nm"))
+            set_toolset("objcopy", path.join(binutils, "bin", "objcopy"))
             on_load(function (toolchain)
                 local read_pin = function (m)
                     if not m or not os.isfile(m) then return nil end
@@ -164,6 +173,12 @@ function bench_define_toolchains(manifest)
             set_toolset("sh",    path.join(llvm_dir, "bin", "clang++"))
             set_toolset("ar",    path.join(llvm_dir, "bin", "llvm-ar"))
             set_toolset("strip", path.join(llvm_dir, "bin", "llvm-strip"))
+            -- Same reason as the gcc arm: xrepo package builds resolve these
+            -- programs through the toolchain, not through the driver.
+            set_toolset("as",     path.join(llvm_dir, "bin", "clang"))
+            set_toolset("ranlib", path.join(llvm_dir, "bin", "llvm-ranlib"))
+            set_toolset("nm",     path.join(llvm_dir, "bin", "llvm-nm"))
+            set_toolset("objcopy", path.join(llvm_dir, "bin", "llvm-objcopy"))
             -- xmake finds libc++'s `std.cppm` through the SDK dir, and it reads
             -- that at DESCRIPTION scope — setting it inside on_load is too late
             -- and leaves `std and std.compat modules not found!`, after which
