@@ -251,6 +251,11 @@ public:
         // committing its own scratch (which is exactly what happened once).
         job.log_path    = log_dir() / std::format("{}-{}.log", engine.name(),
                                                   to_string(scenario));
+        // Cleared ONCE per cell; every child then appends. The alternative —
+        // truncating per child — is what made a 0.60s "cold" build unexplainable:
+        // the timed build's one line of output had erased the configure that
+        // preceded it.
+        { std::ofstream clear(job.log_path, std::ios::binary | std::ios::trunc); }
         job.variant     = variant;
         job.profile     = std::string(profile);
         job.compiler    = std::string(compiler);

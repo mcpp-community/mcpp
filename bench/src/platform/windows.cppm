@@ -88,8 +88,14 @@ export int run_process(const std::vector<std::string>& argv,
     sa.bInheritHandle = TRUE;
 
     const std::string log_s = log.empty() ? std::string("NUL") : log.string();
-    HANDLE sink = ::CreateFileA(log_s.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
-                                log.empty() ? OPEN_EXISTING : CREATE_ALWAYS,
+    // FILE_APPEND_DATA + OPEN_ALWAYS, the peer partition's O_APPEND: a cell's
+    // configure, seed build and timed builds all share one log path, and
+    // truncating meant each step erased the previous one's output. The runner
+    // clears the file once per cell.
+    HANDLE sink = ::CreateFileA(log_s.c_str(),
+                                log.empty() ? GENERIC_WRITE : FILE_APPEND_DATA,
+                                FILE_SHARE_READ, &sa,
+                                log.empty() ? OPEN_EXISTING : OPEN_ALWAYS,
                                 FILE_ATTRIBUTE_NORMAL, nullptr);
 
     STARTUPINFOA si{};

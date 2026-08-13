@@ -95,7 +95,13 @@ export int run_process(const std::vector<std::string>& argv,
     }
 
     const std::string log_s = log.empty() ? std::string("/dev/null") : log.string();
-    const int flags = log.empty() ? O_WRONLY : (O_WRONLY | O_CREAT | O_TRUNC);
+    // APPEND, not truncate. A cell runs configure, then a seed build, then N
+    // timed builds — all into one log path. Truncating meant the build's output
+    // erased the configure's, so when a cold cell came back at 0.60s the log
+    // held one line ("build ok, spent 0.111s") and nothing about the configure
+    // that had just been asked to set the output directory. The runner clears
+    // the file once per cell (see Runner::measure), which is the right grain.
+    const int flags = log.empty() ? O_WRONLY : (O_WRONLY | O_CREAT | O_APPEND);
     ::posix_spawn_file_actions_addopen(&actions, 1, log_s.c_str(), flags, 0644);
     ::posix_spawn_file_actions_adddup2(&actions, 1, 2);
 

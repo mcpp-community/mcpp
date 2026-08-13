@@ -527,6 +527,42 @@ int main(int argc, char** argv) {
     // `failed` is the finding: the engine ran and produced no artifact.
     // `unavailable` and `skipped` are gaps, are documented in the note, and
     // never fail the run.
+    // --- internal consistency: a `cold` build must out-work its own `noop` ---
+    //
+    // NOT a performance threshold. The suite deliberately has none, because a
+    // shared runner's variance would turn into red crosses people mute. This is
+    // an INVARIANT: `cold` removes the build directory and rebuilds everything,
+    // `noop` does nothing, so a `cold` in the same league as its own engine's
+    // `noop` did not rebuild — the engine's clean() missed where that engine
+    // actually keeps its artifacts.
+    //
+    // It is worth a check because the failure is invisible: the cell is `ok`,
+    // it carries samples, and it reports a spectacular number. xmake on the
+    // pinned mcpp workload produced `cold 0.60s` next to `touch-hub 82.79s`,
+    // and nothing in the report said the first of those was not a build.
+    //
+    // 2x is the same floor README §4a R1 uses for "this is measuring process
+    // startup". For every other scenario that is a caveat a reader applies; for
+    // `cold` it is a defect.
+    std::size_t suspect = 0;
+    for (const auto& c : report.cells) {
+        if (c.status != bench::Status::Ok || c.key.scenario != "cold") continue;
+        const bench::CellResult* noop = nullptr;
+        for (const auto& n : report.cells)
+            if (n.status == bench::Status::Ok && n.key.scenario == "noop"
+                && n.key.engine == c.key.engine && n.key.variant == c.key.variant)
+                noop = &n;
+        if (!noop || noop->median_s() <= 0.0) continue;
+        if (c.median_s() < noop->median_s() * 2.0) {
+            ++suspect;
+            std::println(std::cerr,
+                         "bench: {} reports cold={:.2f}s against its own noop={:.2f}s — a cold "
+                         "build cannot be that cheap, so clean() did not remove this engine's "
+                         "artifacts and the cell measured an up-to-date tree.",
+                         c.key.str(), c.median_s(), noop->median_s());
+        }
+    }
+
     std::size_t ok = 0, failed = 0, waived = 0;
     for (const auto& c : report.cells) {
         if (c.status == bench::Status::Ok) { ++ok; continue; }
@@ -541,6 +577,12 @@ int main(int argc, char** argv) {
         std::println(std::cerr,
                      "bench: {} cell(s) FAILED — the engine ran and produced no artifact. "
                      "Each one's reason and log tail are above.", failed);
+        return 1;
+    }
+    if (suspect) {
+        std::println(std::cerr,
+                     "bench: {} `cold` cell(s) did not actually rebuild (see above). Those "
+                     "numbers are not measurements of a cold build.", suspect);
         return 1;
     }
     if (ok == 0) {
