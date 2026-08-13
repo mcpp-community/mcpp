@@ -29,11 +29,29 @@ cmake_minimum_required(VERSION 3.30)
 # compiler-support probe that reads it runs during project().
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "a9e1cf81-9932-4810-974b-6eccaf14e457")
 
-project(mcpp CXX)
-
+# The DIALECT settings belong before project() for the same reason as the key
+# above, and getting that wrong is not a style question — it is why this arm
+# could not build at all.
+#
+# CMake synthesises its own target for the std module during the compiler probe
+# inside project(). That target captures whatever CMAKE_CXX_EXTENSIONS says AT
+# THAT MOMENT, and the default is ON. Set OFF afterwards, std.pcm is built as
+# `gnu++23` while every real target compiles as `c++23`, and clang refuses the
+# mismatch:
+#
+#   error: GNU extensions was enabled in precompiled file 'std.pcm'
+#          but is currently disabled
+#   error: precompiled file 'std.pcm' cannot be loaded due to a configuration
+#          mismatch with the current compilation
+#
+# `import std;` then supplies nothing and the build dies in 19 places with
+# `use of undeclared identifier 'std'` — an error that points at mcpp's sources
+# and names neither std.pcm nor extensions.
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+project(mcpp CXX)
 # Every mcpp module says `import std;`. This asks CMake to build the standard
 # library module from the compiler's own libstdc++.modules.json, which the
 # hermetic gcc payload ships.

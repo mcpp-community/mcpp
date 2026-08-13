@@ -243,6 +243,30 @@ jobs:
           xlings install "mcpp@$REFERENCE_MCPP" -y || echo "::warning::mcpp@$REFERENCE_MCPP unavailable; the reference column will be missing"
           echo "::endgroup::"
 
+          # Resolve the reference to a REAL BINARY, because the thing on PATH
+          # (and $MCPP) is a shim that re-picks a version from the working
+          # directory — see the engine-spec step for what that cost. xlings
+          # unpacks each version to data/runtimedir/mcpp-<ver>-<os>-<arch>/mcpp;
+          # $MCPP is <home>/subos/default/bin/mcpp, so the home is three levels up.
+          ref=""
+          xl_home="$(cd "$(dirname "$MCPP")/../../.." && pwd)"
+          for c in "$xl_home"/data/runtimedir/mcpp-"$REFERENCE_MCPP"-*/mcpp \
+                   "$xl_home"/data/runtimedir/mcpp-"$REFERENCE_MCPP"-*/mcpp.exe; do
+            [ -x "$c" ] || continue
+            # Asserted, not assumed: a binary found by glob under a versioned
+            # directory still has to SAY it is that version, or the reference
+            # column silently compares against something else.
+            got="$("$c" --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+){2,3}' | head -1)"
+            if [ "$got" = "$REFERENCE_MCPP" ]; then ref="$c"; break; fi
+            echo "::warning::$c reports '$got', not '$REFERENCE_MCPP'; ignoring it"
+          done
+          if [ -n "$ref" ]; then
+            echo "reference mcpp binary: $ref ($REFERENCE_MCPP)"
+          else
+            echo "::warning::no mcpp@$REFERENCE_MCPP binary under $xl_home/data/runtimedir; the reference column will be missing"
+          fi
+          echo "REFERENCE_BIN=$ref" >> "$GITHUB_ENV"
+
       # Loud, because a version that quietly differs from the pin is the whole
       # class of bug this section exists to end.
       - name: Report the resolved tool versions
@@ -387,18 +411,28 @@ jobs:
               #
               # Putting it back is one line, and the §8 reproduction is the gate:
               # all six fixture scenarios green at --runs 2 before it returns.
-              # BOTH ARMS BY PATH, never the bare `mcpp` shim. The measured
-              # workloads carry their own `.xlings.json`, and the harness runs
-              # every engine with its cwd inside the workload — so a bare `mcpp`
-              # resolves against THAT workspace's pin and fails with
+              # BOTH ARMS BY REAL BINARY — and $MCPP is NOT one.
               #
-              #     xlings: version '2026.8.11.2' not found for 'mcpp'
-              #       available: 2026.8.11.3
+              # $MCPP is `<xlings home>/subos/default/bin/mcpp`, which is a
+              # SYMLINK TO `xlings` that dispatches on argv[0] and re-resolves
+              # which mcpp to exec from the workspace it is invoked in. bench
+              # deliberately runs every engine with its cwd inside the measured
+              # tree, and those trees carry their own `.xlings.json` — so the
+              # shim executed a version nobody asked for and the cells failed as
               #
-              # $MCPP is the binary the bootstrap installed, which IS
-              # reference_mcpp (both come from .xlings.json — asserted by
-              # tests/e2e/233_bench_matrix.sh).
-              e="mcpp=$MCPP_UNDER_TEST,mcpp=$MCPP"
+              #     mcpp@2026.8.11.2 | [error] unknown command: build
+              #
+              # Passing $MCPP here was a fix for the PREVIOUS spelling of this
+              # same bug (a bare `mcpp`, which failed as `version '2026.8.11.2'
+              # not found`). It moved the resolution one step earlier without
+              # leaving the shim, so the symptom changed and the defect did not.
+              # $REFERENCE_BIN is resolved in the step above out of xlings'
+              # runtimedir, i.e. an actual ELF.
+              if [ -n "$REFERENCE_BIN" ]; then
+                e="mcpp=$MCPP_UNDER_TEST,mcpp=$REFERENCE_BIN"
+              else
+                e="mcpp=$MCPP_UNDER_TEST"
+              fi
             fi
             engines="${engines:+$engines,}$e"
           done

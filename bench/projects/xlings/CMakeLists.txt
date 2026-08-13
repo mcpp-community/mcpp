@@ -43,11 +43,18 @@ cmake_minimum_required(VERSION 3.30)
 # CMake version — this is the CMake 4.0 key. Must be set BEFORE project().
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "a9e1cf81-9932-4810-974b-6eccaf14e457")
 
-project(xlings CXX)
-
+# Before project() for the same reason as the key above: CMake builds the std
+# module through a target it synthesises during the compiler probe inside
+# project(), and that target captures CMAKE_CXX_EXTENSIONS as it stands right
+# then — default ON. Setting OFF afterwards yields a `gnu++23` std.pcm that no
+# `c++23` target can load, and the build fails with `use of undeclared
+# identifier 'std'` pointing at the project's own sources. See the identical
+# block in ../mcpp/CMakeLists.txt, where this was diagnosed.
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+project(xlings CXX)
 set(CMAKE_CXX_MODULE_STD 1)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

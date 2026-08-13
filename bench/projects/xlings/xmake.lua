@@ -145,7 +145,17 @@ target("xlings")
         -- LUA_STDLIB_DIR is an UPVALUE resolved at description scope: the
         -- helper that produces it is not reachable from inside this callback.
         local stdlib = LUA_STDLIB_DIR
-        if not stdlib or not os.isdir(stdlib) then return end
+        -- FATAL, not a silent return. Returning here skips emitting the module
+        -- and the build dies far away with
+        --     missing mcpplibs.xpkg.lua_stdlib dependency for module ...
+        -- naming a consumer instead of the absent package — which is exactly
+        -- how this failed on CI while passing on a box that had it unpacked.
+        -- (Same defect, same day, as the mcpplibs.cmdline arm in ../mcpp/.)
+        if not stdlib or not os.isdir(stdlib) then
+            raise("bench: mcpplibs.xpkg's lua-stdlib is not unpacked (looked for "
+                  .. tostring(stdlib) .. ") — build the tree with mcpp once first, "
+                  .. "so this arm generates the same module mcpp does")
+        end
 
         local out = path.join(os.projectdir(), "build", "generated", "xpkg-lua-stdlib.cppm")
         local text = {
