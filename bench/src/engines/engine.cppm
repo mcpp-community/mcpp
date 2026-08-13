@@ -113,6 +113,21 @@ inline std::string first_line(std::string_view text) {
     return out;
 }
 
+// Does this version banner actually say the program is missing?
+//
+// EVERY engine's probe needs this, not just the ones going through
+// `probe_program`: mcpp and bazel have their own probes, and putting the test in
+// only one of them left 36 cells per job still reported as engine FAILURES on
+// macOS. One spelling, three callers.
+inline bool looks_uninstalled(std::string_view banner) {
+    return banner.find("is not installed") != std::string_view::npos;
+}
+
+inline std::string uninstalled_reason(std::string_view program, std::string_view banner) {
+    return std::format("{} resolves to a shim that reports it is not installed: {}",
+                       program, banner);
+}
+
 // Shared helper: probe by running `<program> --version` and keeping the reported
 // VERSION as the note. Engines with a different version flag override probe().
 //
@@ -141,9 +156,8 @@ inline Availability probe_program(std::string_view program,
     // <error message>", so every cell for that engine ran, failed, and was
     // recorded as a FINDING against the engine rather than as "not installed
     // here" — 18 cells per macOS job.
-    if (banner.find("is not installed") != std::string::npos)
-        return {false, std::format("{} resolves to a shim that reports it is not "
-                                   "installed: {}", program, banner)};
+    if (looks_uninstalled(banner))
+        return {false, uninstalled_reason(program, banner)};
     return {true, banner.empty() ? std::string(program) : banner};
 }
 

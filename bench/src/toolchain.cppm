@@ -178,7 +178,35 @@ inline PayloadFlags payload_flags(std::string_view compiler) {
     if (std::filesystem::is_directory(root / "include" / "c++" / "v1", ec)) {
         f.compile += " --no-default-config -nostdinc++"
                      " -isystem" + (root / "include" / "c++" / "v1").string();
-        f.link    += " -nostdlib++ -L" + (root / "lib").string() + " -lc++ -lc++abi";
+        // ⚠️ AND THE PER-TRIPLE DIRECTORY, which is where `__config_site` lives.
+        // libc++'s `__config` includes it, so without this every TU dies with
+        //
+        //     __config:13:10: fatal error: '__config_site' file not found
+        //
+        // pointing inside the standard library rather than at a missing flag.
+        // hermetic_payload.cmake globs for it; this port dropped that line.
+        for (const auto& d : std::filesystem::directory_iterator(root / "include", ec)) {
+            const auto cand = d.path() / "c++" / "v1";
+            if (std::filesystem::is_directory(cand, ec))
+                f.compile += " -isystem" + cand.string();
+        }
+        // ⚠️ AND THE PER-TRIPLE lib DIRECTORY. In this payload libc++ lives in
+        // `lib/x86_64-unknown-linux-gnu/`, not `lib/`. A clang DRIVER finds it
+        // by itself, which is why the cmake arm worked with `-L…/lib` alone —
+        // but an engine that links through a different driver does not, and
+        // xmake failed with
+        //
+        //     ld: cannot find -lc++: No such file or directory
+        //
+        // Naming both directories makes the flags independent of who links.
+        f.link += " -nostdlib++ -L" + (root / "lib").string();
+        for (const auto& d : std::filesystem::directory_iterator(root / "lib", ec)) {
+            if (!d.is_directory()) continue;
+            if (std::filesystem::exists(d.path() / "libc++.so", ec) ||
+                std::filesystem::exists(d.path() / "libc++.a", ec))
+                f.link += " -L" + d.path().string();
+        }
+        f.link += " -lc++ -lc++abi";
     }
     return f;
 }

@@ -55,6 +55,9 @@ public:
         const auto v = version_string();
         if (v.empty())
             return {false, std::format("{} not runnable", program_)};
+        // An xlings shim answers `--version` for a package it does not have,
+        // prints "is not installed", and exits ZERO — see looks_uninstalled.
+        if (looks_uninstalled(v)) return {false, uninstalled_reason(program_, v)};
         return {true, v};
     }
 

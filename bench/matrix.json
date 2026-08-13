@@ -237,20 +237,6 @@
       "baseline": "2026.8.11.3",
       "allow_failed": "cmake,xmake",
       "note": "KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp."
-    },
-    {
-      "os": "macos",
-      "toolchain": "clang",
-      "project": "xlings-2026.8.13.1",
-      "buildfiles": "xlings",
-      "engines": "mcpp,cmake,xmake",
-      "variants": "modules-impl",
-      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
-      "hub": "src/platform.cppm",
-      "body": "src/platform.cpp",
-      "note": "only the split style on macOS: the pair comparison is a Linux job, and running one style here is enough to catch a platform-specific break  KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp.",
-      "baseline": "2026.8.11.3",
-      "allow_failed": "cmake,xmake"
     }
   ],
   "excluded": [
@@ -298,6 +284,12 @@
       "project": "*",
       "engine": "xmake",
       "reason": "KNOWN GAP, xmake+clang only: xmake locates libc++'s std module through lib/libc++.modules.json, which mcpp's llvm payload does not ship (it has share/libc++/v1/std.cppm). xmake warns 'std and std.compat modules not found' and build.c++.modules.std degrades SILENTLY — the arm would then measure a project without `import std;` against ones with it. The cell still runs; read its note before quoting the number"
+    },
+    {
+      "os": "macos",
+      "toolchain": "clang",
+      "project": "xlings-*",
+      "reason": "KNOWN GAP, and it is an mcpp defect rather than a benchmark one: on macOS mcpp cannot compile a dependency's `build.mcpp` helper — xlings depends on mcpplibs.xpkg, whose helper links but then dies at run time with `dyld: Symbol not found: __ZdaPv` (operator delete[]), i.e. it cannot find libc++. Same family as the helper self-containment work (glibc via rpath, musl and PE via -static) with macOS never covered. Recorded in .agents/docs/2026-08-13-build-optimization-status.md S9a; the cell returns when that is fixed, and its blast radius is every macOS project depending on a package that ships a build.mcpp"
     }
   ],
   "_workload_note": [
