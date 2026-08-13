@@ -525,3 +525,35 @@ P1689 扫描的产出上;第一版发射(未提交)会让 `mcpp build` **段错�
 **这条 bug 我连错四次**(误诊 settle_bmi、哨兵不匹配、mtime 没带过去、以及现在的
 object 边)。记在这里是因为下一个人应该从「object 边与 BMI 边的 restat 语义不同」
 开始,而不是从头再猜一遍。
+
+
+## 9. bench 跑起来之后暴露的两个**与 bench 无关**的既有缺陷
+
+这两个都不是这次改动引入的 —— 是矩阵此前根本没在测,所以从来没人看见。
+
+### 9a. macOS 上 mcpp 编不了依赖的 `build.mcpp` 助手
+
+`bench (macos/clang/xlings-2026.8.13.1)`:
+
+    error: dependency 'xpkg': build.mcpp failed to compile (exit 1):
+    dyld[21445]: Symbol not found: __ZdaPv
+    clang++: error: unable to execute command: Abort trap: 6
+
+`__ZdaPv` 是 `operator delete[](void*)`。助手链接过了,运行期找不到 libc++。
+与 [[build-mcpp-helper-self-containment]] 同一类问题(glibc 靠 rpath、musl 与 PE
+才需 `-static`),但 macOS 这条此前没有覆盖。
+
+**影响面比 bench 大**:任何在 macOS 上依赖带 `build.mcpp` 的包的工程都会踩到。
+
+### 9b. mbedtls 的 registry 源码包缺 `framework/` 子模块
+
+    mbedtls-3.6.1/CMakeLists.txt:304
+      framework/CMakeLists.txt not found.
+      Run `git submodule update --init` from the source tree.
+
+挡住的是 xlings cmake arm 的最后四分之一(ftxui / libarchive / lua 三个已经接好、
+能用)。注意 **mcpp 自己构建 mbedtls 不会踩到**,说明 mcpp 走的根本不是 mbedtls
+的 CMake 路径。
+
+解法有三条,都需要决策而不是我单方面选:vendor 那个不大的 `framework` 目录、
+改走 mbedtls 的 Makefile、或者让 registry 把完整树打进包里。
