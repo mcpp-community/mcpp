@@ -91,18 +91,16 @@ inline std::unique_ptr<engines::Engine> make_engine(std::string_view spec) {
         program = anchor_program(std::string(spec.substr(eq + 1)));
     }
 
-    {
-        for (std::size_t at = 0; at <= opts.size();) {
-            const auto end  = std::min(opts.find(',', at), opts.size());
-            const auto item = std::string_view(opts).substr(at, end - at);
-            at = end + 1;
-            if (item.empty()) continue;
-            const auto sep = item.find('=');
-            if (sep == std::string_view::npos) return nullptr;
-            auto mapped = engine_option(name, item.substr(0, sep), item.substr(sep + 1));
-            if (!mapped) return nullptr;                  // unknown: reject loudly
-            env.emplace(std::move(mapped->first), std::move(mapped->second));
-        }
+    for (std::size_t at = 0; at <= opts.size();) {
+        const auto end  = std::min(opts.find(',', at), opts.size());
+        const auto item = std::string_view(opts).substr(at, end - at);
+        at = end + 1;
+        if (item.empty()) continue;
+        const auto sep = item.find('=');
+        if (sep == std::string_view::npos) return nullptr;
+        auto mapped = engine_option(name, item.substr(0, sep), item.substr(sep + 1));
+        if (!mapped) return nullptr;                  // unknown: reject loudly
+        env.emplace(std::move(mapped->first), std::move(mapped->second));
     }
 
     if (name == "mcpp")

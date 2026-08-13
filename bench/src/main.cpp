@@ -73,15 +73,28 @@ bool listed(const std::vector<std::string>& names, std::string_view engine) {
     });
 }
 
+// Splits a comma-separated list, IGNORING commas inside `[...]`.
+//
+// An engine spec may carry bracketed options (`mcpp[schedule=on]=/path`), and a
+// second option would be separated by a comma — which this function would
+// otherwise cut in half, handing `make_engine` the fragments `mcpp[a=1` and
+// `b=2]=/path` and reporting "unknown engine" for a perfectly valid spec. The
+// list separator and the option separator are the same character, so the list
+// splitter is the one that has to know about the brackets.
+//
+// Harmless for every other caller: `--variants`, `--scenarios` and
+// `--allow-failed` contain no brackets, so the depth counter never leaves zero.
 std::vector<std::string> split(std::string_view s, char sep = ',') {
     std::vector<std::string> parts;
-    std::size_t start = 0;
-    while (start <= s.size()) {
-        const auto pos = s.find(sep, start);
-        const auto end = (pos == std::string_view::npos) ? s.size() : pos;
-        if (end > start) parts.emplace_back(s.substr(start, end - start));
-        if (pos == std::string_view::npos) break;
-        start = pos + 1;
+    std::size_t start = 0, depth = 0;
+    for (std::size_t i = 0; i <= s.size(); ++i) {
+        if (i < s.size()) {
+            if (s[i] == '[') { ++depth; continue; }
+            if (s[i] == ']') { if (depth) --depth; continue; }
+            if (s[i] != sep || depth) continue;
+        }
+        if (i > start) parts.emplace_back(s.substr(start, i - start));
+        start = i + 1;
     }
     return parts;
 }
