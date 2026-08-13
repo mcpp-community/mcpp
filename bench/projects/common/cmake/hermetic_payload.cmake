@@ -92,19 +92,28 @@ function(bench_hermetic_payload)
   # Two glibcs in one link, and the error names neither the flag nor the target
   # that is wrong.
   set(cxx "${CMAKE_CXX_FLAGS}")
+  set(cc  "${CMAKE_C_FLAGS}")
   set(ld  "${CMAKE_EXE_LINKER_FLAGS}")
 
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     # -B and --sysroot must reach BOTH compile and link: the driver spawns `as`
     # from it at compile time and `ld` from it at link time. Adding it on one
     # side only silently falls through to PATH.
+    # ⚠️ C FLAGS TOO, not just CXX. xlings pulls libarchive, lua and mbedtls in
+    # as C sources that this arm has to compile, and CMAKE_C_FLAGS is a separate
+    # variable — setting only the C++ one puts the C half of the build on the
+    # HOST's headers and libc while the C++ half uses the payload's. That is the
+    # same two-libc failure the CMAKE_CXX_FLAGS comment above describes, just
+    # arriving through a different door.
     bench_newest_package("${xpkgs}" "xim-x-binutils" binutils)
     if(binutils)
       string(APPEND cxx " -B${binutils}/bin")
+      string(APPEND cc  " -B${binutils}/bin")
       string(APPEND ld  " -B${binutils}/bin")
     endif()
     if(IS_DIRECTORY "${sysroot}")
       string(APPEND cxx " --sysroot=${sysroot}")
+      string(APPEND cc  " --sysroot=${sysroot}")
       string(APPEND ld  " --sysroot=${sysroot}")
     endif()
 
@@ -140,14 +149,26 @@ function(bench_hermetic_payload)
     bench_newest_package("${xpkgs}" "xim-x-glibc" glibc)
     if(glibc AND IS_DIRECTORY "${glibc}/include")
       string(APPEND cxx " -isystem${glibc}/include")
+      string(APPEND cc  " -isystem${glibc}/include")
     endif()
     bench_newest_package("${xpkgs}" "xim-x-linux-headers" uapi)
     if(uapi AND IS_DIRECTORY "${uapi}/include")
       string(APPEND cxx " -isystem${uapi}/include")
+      string(APPEND cc  " -isystem${uapi}/include")
+    endif()
+    # macOS: a registry clang has no idea where the platform SDK is, and cmake
+    # only passes -isysroot automatically for AppleClang. Without it even the
+    # compiler-works probe fails to LINK, which is reported as "cmake could not
+    # configure" — observed on every macOS bench cell.
+    if(APPLE AND CMAKE_OSX_SYSROOT)
+      string(APPEND cxx " -isysroot ${CMAKE_OSX_SYSROOT}")
+      string(APPEND cc  " -isysroot ${CMAKE_OSX_SYSROOT}")
+      string(APPEND ld  " -isysroot ${CMAKE_OSX_SYSROOT}")
     endif()
   endif()
 
   set(CMAKE_CXX_FLAGS        "${cxx}" PARENT_SCOPE)
+  set(CMAKE_C_FLAGS          "${cc}"  PARENT_SCOPE)
   set(CMAKE_EXE_LINKER_FLAGS "${ld}"  PARENT_SCOPE)
   message(STATUS "bench: hermetic payload for ${CMAKE_CXX_COMPILER_ID} applied")
 endfunction()

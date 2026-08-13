@@ -6,24 +6,29 @@
 # structure (110 module interface units, 46k lines, 6 dependencies), so a result
 # that reproduces here is a result about the engine rather than about mcpp.
 #
-# THE TREE IS NOT VENDORED. A snapshot rots, and a benchmark whose target has
-# drifted from the real project measures the snapshot. Point this at a checkout:
+# THE TREE IS PINNED, not vendored: the two code styles live beside this file as
+# git submodules (`xlings-2026.8.11.2`, `xlings-2026.8.13.1`). The harness points
+# this description at one of them through BENCH_PROJECT_ROOT; by hand:
 #
 #   cmake -G Ninja -S bench/projects/xlings -B build-xlings \
-#         -DXLINGS_ROOT=/path/to/xlings \
+#         -DXLINGS_ROOT=bench/projects/xlings/xlings-2026.8.13.1 \
 #         -DCMAKE_BUILD_TYPE=Release \
 #         -DCMAKE_CXX_COMPILER=$HOME/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++
 #   cmake --build build-xlings
-#
-# Record the commit with the numbers; the published ones are from `b1563fe`.
 #
 # FAIRNESS CONTRACT — the same five as bench/projects/mcpp/CMakeLists.txt:
 # same compiler binary, same language flags, same source set, same link output
 # kind, same standard library (`import std;`, not a header shim).
 #
-# ⚠️ STATUS: 82 of 83 edges — EVERY TRANSLATION UNIT COMPILES; ONLY THE LINK FAILS.
+# THIS ARM USED TO STOP AT THE LINK, and that was recorded as a "known gap". It
+# was not a gap — it was unfinished work, and the note saying otherwise let it
+# sit. xlings links ftxui, libarchive, lua and mbedtls, all of which arrive in
+# mcpp's registry as SOURCE; this description found their headers, compiled all
+# 110 units, and then failed on `undefined reference to archive_entry_pathname`.
+# Three of the four ship their own CMakeLists and the fourth is 32 C files, so
+# they are built here now (see the dependency section below) and the arm links.
 #
-# Two things that looked like boundaries and were not:
+# Two things that had looked like boundaries and were not:
 #
 #   * Transitive headers. Every one is unpacked in mcpp's registry and the list
 #     below finds them all (mbedtls via mcpplibs tinyhttps, lua via capi.lua).
@@ -31,17 +36,6 @@
 #     `build.mcpp` rather than checked in. It embeds eleven `.lua` files as
 #     strings — small and fully specified, so `embed_lua_stdlib.cmake`
 #     reproduces it. "mcpp runs a build program" is not by itself a boundary.
-#
-# What remains is ordinary: ftxui / libarchive / lua / mbedtls arrive as SOURCE
-# and mcpp compiles them, so the link wants symbols nobody built here
-# (`undefined reference to archive_entry_pathname`, ...). They all ship their
-# own CMakeLists, so `add_subdirectory` finishes this — it is work, not a wall.
-#
-# So the xlings arm compares **mcpp against mcpp** (releases, schedules), which
-# is what a control target is for: it answers "does this engine change hold on a
-# codebase nobody tuned it for?", and that question needs no second engine.
-# bench/projects/mcpp/ keeps the cross-engine arm, because mcpp has one source
-# dependency and this repository can keep that description correct.
 
 cmake_minimum_required(VERSION 3.30)
 
@@ -76,7 +70,7 @@ if(NOT XLINGS_ROOT OR NOT EXISTS "${XLINGS_ROOT}/mcpp.toml")
   message(FATAL_ERROR
     "no xlings tree: set -DXLINGS_ROOT=<dir>, or let the bench harness export "
     "BENCH_PROJECT_ROOT via --project. The pinned trees are the submodules "
-    "bench/projects/xlings/tree-<version>/ — run `git submodule update --init`.")
+    "bench/projects/xlings/xlings-<version>/ — run `git submodule update --init`.")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -212,6 +206,68 @@ foreach(pkg IN LISTS XLINGS_HEADER_PKGS)
       endforeach()
     endforeach()
   endforeach()
+endforeach()
+
+# ---------------------------------------------------------------------------
+# The C/C++ libraries xlings links against.
+#
+# THIS IS WHAT USED TO STOP THE ARM AT THE LINK. ftxui, libarchive, lua and
+# mbedtls arrive in mcpp's registry as SOURCE, and mcpp compiles them — so this
+# description found their headers, compiled all 110 units, and then failed with
+# `undefined reference to archive_entry_pathname` / `mbedtls_ssl_free`. It was
+# recorded as a known gap; it is not one, it was unfinished work. Three of the
+# four ship their own CMakeLists and the fourth is 32 C files.
+#
+# `EXCLUDE_FROM_ALL` plus an explicit binary directory: the sources live in the
+# registry, outside this project, so add_subdirectory needs to be told where to
+# build them, and nothing but `xlings` should pull them in.
+#
+# Both engines compile these from source on a cold build, which is what makes
+# the comparison fair. mcpp may serve them from its global build cache instead —
+# that asymmetry is declared in ../../README.md §5 rather than hidden here.
+# ---------------------------------------------------------------------------
+function(bench_add_source_library pkg version inner subdir)
+  set(dir "${MCPP_XPKGS}/${pkg}/${version}/${inner}")
+  if(NOT IS_DIRECTORY "${dir}")
+    message(WARNING "bench: ${pkg} ${version} is not unpacked at ${dir}; "
+                    "the link will fail on its symbols")
+    return()
+  endif()
+  add_subdirectory("${dir}" "${CMAKE_CURRENT_BINARY_DIR}/deps/${subdir}" EXCLUDE_FROM_ALL)
+endfunction()
+
+# Build the libraries only — no examples, tests, docs or command-line tools.
+# Their defaults would multiply this arm's cold build by work xlings never links.
+set(BUILD_SHARED_LIBS       OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING           OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_DOCS        OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_TESTS       OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_TESTS_FUZZER OFF CACHE BOOL "" FORCE)
+set(ENABLE_PROGRAMS         OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTING          OFF CACHE BOOL "" FORCE)
+set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+
+bench_add_source_library(compat-x-ftxui      6.1.9  FTXUI-6.1.9            ftxui)
+bench_add_source_library(compat-x-libarchive 3.8.7  libarchive-3.8.7       libarchive)
+bench_add_source_library(compat-x-mbedtls    3.6.1  mbedtls-mbedtls-3.6.1  mbedtls)
+
+# lua ships a hand-written Makefile and no CMakeLists, so its library is built
+# here. `lua.c` and `luac.c` are the interpreter and the compiler — each has a
+# `main`, and linking either into xlings is a duplicate-symbol error.
+set(LUA_SRC "${MCPP_XPKGS}/compat-x-lua/5.4.7/lua-5.4.7/src")
+if(IS_DIRECTORY "${LUA_SRC}")
+  file(GLOB LUA_SOURCES "${LUA_SRC}/*.c")
+  list(FILTER LUA_SOURCES EXCLUDE REGEX "/(lua|luac)\\.c$")
+  add_library(bench_lua STATIC ${LUA_SOURCES})
+  target_include_directories(bench_lua PUBLIC "${LUA_SRC}")
+endif()
+
+foreach(lib ftxui::component ftxui::dom ftxui::screen archive_static
+            mbedtls mbedx509 mbedcrypto bench_lua)
+  if(TARGET ${lib})
+    target_link_libraries(xlings PRIVATE ${lib})
+  endif()
 endforeach()
 
 target_link_options(xlings PRIVATE -static-libstdc++)

@@ -227,6 +227,17 @@ void copy_first_rule(const std::filesystem::path& from, const std::filesystem::p
 // The BMI equivalence check, which used to be a POSIX shell one-liner inside the
 // generated ninja command — and was therefore skipped entirely on Windows.
 // Having it here is what brings cascade suppression to every platform.
+// Put the previous BMI back. Used when the compile failed: the unit still has
+// the BMI it had before, and leaving it parked in `.bak` would strand every
+// importer on a file that does not exist.
+void restore_backup(const std::filesystem::path& bmi) {
+    if (bmi.empty()) return;
+    const auto backup = suffixed(bmi, ".bak");
+    if (!file_exists(backup)) return;
+    std::error_code ec;
+    std::filesystem::rename(backup, bmi, ec);
+}
+
 void settle_bmi(const std::filesystem::path& bmi) {
     if (bmi.empty()) return;
     const auto backup = suffixed(bmi, ".bak");
@@ -387,7 +398,29 @@ int compile_release_at_bmi(const CompileRequest& req) {
             if (*rc != 0) {                 // failed before publishing a BMI
                 std::ifstream in(suffixed(req.slot, ".log"));
                 if (in) std::cerr << in.rdbuf();
+                // Nothing was published, so the previous BMI is the truth. Put
+                // it back rather than leaving the unit with no BMI at all.
+                restore_backup(req.bmi);
             } else {
+                // ⚠️ THE COMPILER CAN FINISH BETWEEN THE TWO CHECKS ABOVE.
+                //
+                // The loop tests `file_exists(bmi)` first and `rc` second, so a
+                // unit whose compile is shorter than one poll interval lands
+                // here: no BMI seen, then a zero rc. This path used to return
+                // success WITHOUT settling — which left the previous BMI parked
+                // in `<name>.gcm.bak` and skipped the equivalence check
+                // entirely, so the restat suppression that stops the cascade
+                // never ran for that unit.
+                //
+                // Observed as `.bak` files surviving a completed build, and as
+                //
+                //     fx.unit_0: error: failed to read compiled module:
+                //                       No such file or directory
+                //     fx.unit_0: note: imports must be built before being imported
+                //
+                // in an importer — reproducible at `-j1`, so it was never a
+                // race between compilers, only between this loop's two checks.
+                settle_bmi(req.bmi);
                 copy_first_rule(req.depFrom, req.depTo, req.bmi.string());
             }
             return *rc;

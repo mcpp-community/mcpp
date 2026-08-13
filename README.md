@@ -307,32 +307,33 @@ import mcpplibs.cmdline;
 ## Benchmark
 
 Building **mcpp itself** — 137 module interface units, 57k lines, every one of
-them `import std;` — with three engines given the same compiler binary. Median
-wall-clock, lower is better.
+them `import std;` — with three engines given the **same compiler binary**.
+Each cell is the median wall-clock and how many times faster it is than cmake.
 
 | scenario | what changed | **mcpp** | cmake | xmake |
 |---|---|---|---|---|
-| `cold` | nothing built yet | **79.5s** | 92.3s | 90.3s |
-| `noop` | nothing at all | **0.16s** | 0.28s | 0.38s |
-| `touch-hub` | mtime on a widely-imported interface | **0.40s** | 83.4s | 82.1s |
-| `edit-body` | a real edit inside a function | 76.2s | 85.6s | 84.6s |
+| `cold` | nothing built yet | **35.43s** · 2.6x | 92.33s · 1.0x | 90.30s · 1.0x |
+| `noop` | nothing at all | **0.16s** · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
+| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.22s** · 379x | 83.39s · 1.0x | 82.07s · 1.0x |
+| `edit-body` | a real edit inside a function body | **30.17s** · 2.8x | 85.64s · 1.0x | 84.61s · 1.0x |
+| `edit-comment` | a comment added to a widely-imported interface | **0.18s** · 461x | 82.96s · 1.0x | 82.73s · 1.0x |
 
-* **Cold builds are all within 15%** — the graph is one 26-deep chain of module
-  interfaces, so there is nothing to schedule around. Turning on
-  `[build] bmi_schedule = "on"` takes mcpp's cold build to **35.4s**.
-* **`touch-hub` is where the day goes.** cmake and xmake decide by timestamp and
-  rebuild everything downstream; mcpp compares the BMI the compiler just produced
-  against the previous one and skips the cascade — **0.40s against 83s**.
-* **`edit-body` is the control.** There the interface really did change, so no
-  engine should be fast, and none is.
+<sub>mcpp with `[build] bmi_schedule = "on"`. Linux x86_64 · i9-13900K ·
+gcc 16.1.0 · n=1 · pinned workload `a749e9f`.</sub>
+
+* **`touch-hub` and `edit-comment` are where the day goes.** cmake and xmake
+  decide by timestamp and rebuild everything downstream; mcpp compares the BMI
+  the compiler just produced against the previous one, and when the interface
+  did not change it skips the cascade entirely.
+* **`edit-body` is the control.** There the interface really did change, so the
+  cascade is owed — mcpp is 2.8x rather than 400x, and an engine that were
+  faster would have skipped work it owed.
+* **Cold builds** come down to one 26-deep chain of module interfaces. `mcpp`
+  publishes each BMI as soon as it exists and moves code generation off the
+  critical path; without that setting it is 79.5s, i.e. level with the others.
 
 📊 **[Methodology, pinned versions, and the full data →
 `bench/README.md`](bench/README.md)** · [简体中文](bench/README.zh-CN.md)
-
-<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 · pinned workload
-`a749e9f`. The suite also measures a second, independent project (xlings) in two
-code styles; that comparison, the declared asymmetries, and the rules for when a
-cell must *not* be compared are all in `bench/README.md`.</sub>
 
 ## Platform Support
 
