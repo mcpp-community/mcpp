@@ -45,9 +45,19 @@ table that was measuring something other than what it said:
 | the reference mcpp | `matrix.json.reference_mcpp` | a report said how fast this branch is, never whether it got faster |
 
 `--compiler payload:gcc` / `payload:clang` is the spelling that delivers the
-third row: it resolves to the driver **inside mcpp's own registry**, so every
-engine including mcpp is handed the same binary. That is the suite's fairness
-rule (`resolve_cxx`) actually enforced rather than merely written down.
+second row: it resolves to the driver **inside mcpp's own registry**, so every
+engine is handed the same binary. That is the suite's fairness rule
+(`resolve_cxx`) actually enforced rather than merely written down.
+
+**mcpp needed a second half of that fix.** It resolves its own toolchain from
+the *measured project's* manifest and ignores `--compiler` entirely. For the
+generated fixture that is harmless, because the harness writes that manifest —
+but the real workloads are pinned submodules whose `[toolchain]` says
+`gcc@16.1.0`, so on a clang cell cmake and xmake ran clang while mcpp quietly
+ran gcc. The mcpp engine now translates the requested compiler into
+`MCPP_TOOLCHAIN` (the side channel `--toolchain` uses), from the same version
+constants `payload:` resolves against, so the driver the other engines get and
+the toolchain mcpp is told to use cannot name different versions.
 
 ### Two mcpp binaries, always
 

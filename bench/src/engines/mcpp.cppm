@@ -17,6 +17,7 @@ import std;
 import bench.protocol;
 import bench.spec;
 import bench.platform;
+import bench.toolchain;
 import bench.engines.engine;
 
 namespace bench::engines {
@@ -69,11 +70,31 @@ public:
     platform::RunResult build(const Job& job) const override {
         const std::vector<std::string> argv{
             program_, "build", job.profile == "debug" ? "--dev" : "--release"};
-        // Scoped, so the setting reaches THIS engine's child and is restored
-        // before the next engine runs. A run that leaked it would silently
+
+        // Scoped, so a setting reaches THIS engine's child and is restored
+        // before the next engine runs. A run that leaked one would silently
         // measure every later arm with the option on.
         std::vector<std::unique_ptr<platform::ScopedEnv>> scoped;
-        scoped.reserve(env_.size());
+        scoped.reserve(env_.size() + 1);
+
+        // ── THE COMPILER, and the one place mcpp used to escape the axis ─────
+        //
+        // mcpp resolves its own toolchain from the MEASURED PROJECT's manifest
+        // and ignores the `--compiler` every other engine is handed. For the
+        // generated fixture that is fine, because the harness writes that
+        // manifest. For a REAL project it is not: the workloads are pinned
+        // submodules whose `[toolchain]` says `gcc@16.1.0`, so on a clang cell
+        // cmake and xmake were measured with clang while mcpp quietly used gcc —
+        // a compiler-vs-compiler comparison wearing an engine-vs-engine label,
+        // which is precisely what `resolve_cxx`'s fairness rule exists to stop.
+        //
+        // `--toolchain` is plumbed through MCPP_TOOLCHAIN, so the same mechanism
+        // the bracket options use covers this too. An explicit engine option
+        // wins, since that is the caller being specific on purpose.
+        if (!env_.contains("MCPP_TOOLCHAIN")) {
+            if (auto tc = toolchain_for(job.compiler); !tc.empty())
+                scoped.push_back(std::make_unique<platform::ScopedEnv>("MCPP_TOOLCHAIN", tc));
+        }
         for (const auto& [k, v] : env_)
             scoped.push_back(std::make_unique<platform::ScopedEnv>(k, v));
         return platform::run(argv, job.project_dir, job.log_path, job.timeout_s);
@@ -91,6 +112,27 @@ private:
     std::string                        program_;
     mutable std::string                label_;
     std::map<std::string, std::string> env_;
+
+    // `--compiler` -> the mcpp toolchain spec that names the SAME payload every
+    // other engine was handed. Empty for "default", where the project's own
+    // manifest is the right answer and nothing should override it.
+    //
+    // The versions come from bench.toolchain, which is also where `payload:gcc`
+    // is resolved — so the driver cmake is given and the toolchain mcpp is told
+    // to use cannot name different versions.
+    static std::string toolchain_for(std::string_view compiler) {
+        if (compiler.empty() || compiler == "default" || compiler == "msvc") return {};
+        if (toolchain::is_clang_request(compiler))
+            return std::format("llvm@{}", toolchain::on_windows() ? toolchain::kLlvmWindows
+                                                                  : toolchain::kLlvm);
+        // A path that is neither clang nor gcc-shaped is the caller pinning
+        // something the harness does not model; leave mcpp alone rather than
+        // guess a family for it.
+        if (compiler.find("gcc") != std::string_view::npos ||
+            compiler.find("g++") != std::string_view::npos)
+            return std::format("gcc@{}", toolchain::kGcc);
+        return {};
+    }
 
     // `mcpp --version` prints "mcpp <version>". Empty means the binary could not
     // be run at all — which probe() reports as unavailable rather than failed.

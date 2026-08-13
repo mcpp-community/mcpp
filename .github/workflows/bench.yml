@@ -285,7 +285,7 @@ jobs:
               # see bench/src/toolchain.cppm, which is where the harness looks it
               # up, so the two must name the same version.
               if [ "${{ matrix.os }}" = "windows" ]; then key=.llvm_windows; else key=.llvm; fi
-              "$MCPP" toolchain install "llvm@$(printf '%s' "$TOOLS" | jq -r $key)"
+              "$MCPP" toolchain install "llvm@$(printf '%s' "$TOOLS" | jq -r "$key")"
               echo "BENCH_CXX=payload:clang" >> "$GITHUB_ENV" ;;
           esac
           "$MCPP" toolchain list || true
@@ -295,8 +295,9 @@ jobs:
         if: matrix.toolchain == 'msvc'
 
       # The project axis. `fixture` needs nothing — the harness generates it.
-      # `mcpp` is this checkout. Everything else is a PINNED SUBMODULE under
-      # bench/projects/, which is why there is no clone step here any more.
+      # EVERY other workload is a PINNED SUBMODULE under bench/projects/, which
+      # is why there is no clone step here any more and no special case for
+      # mcpp's own sources.
       - name: Locate the project under measurement
         if: matrix.project != 'fixture'
         shell: bash

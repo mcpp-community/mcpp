@@ -97,14 +97,20 @@ Four things this bought, each of which had already gone wrong:
 
 > **Not held still, and deliberately so:** the runner hardware. See §4a.
 
-> **The one case where "never writes into the measured tree" does not hold.**
-> The editing scenarios save a file's exact bytes and restore them however the
-> function exits — including on a failed build — but that is a destructor, and a
-> destructor does not run when the process is `SIGKILL`ed. Interrupt a
-> `--project` run hard enough and the perturbation is still there, which for the
-> pinned submodules shows up as a dirty working tree. `git submodule foreach
-> 'git checkout -- .'` undoes it; the perturbations are named `bench_nonce_*`,
-> so they are also easy to recognise in a diff.
+> **Two ways the measured tree does get written to.** Neither affects a timing,
+> but both leave a dirty submodule:
+>
+> 1. **The engine's own bookkeeping.** `mcpp build` writes `mcpp.lock`, cmake and
+>    xmake write into `build/`. That is the engine doing its job — a real user's
+>    build does it too — so it is not something the harness should prevent.
+> 2. **A hard-killed run.**
+>    The editing scenarios save a file's exact bytes and restore them however
+>    the function exits — including on a failed build — but that is a
+>    destructor, and a destructor does not run under `SIGKILL`. Interrupt a
+>    `--project` run hard enough and the perturbation is still there. They are
+>    named `bench_nonce_*`, so they are easy to recognise in a diff.
+>
+> `git submodule foreach 'git checkout -- .'` undoes both.
 
 > **Not exercised by these numbers:** mcpp's split build schedule
 > (`[build] bmi_schedule = "on"`) is opt-in until it has been verified on every
