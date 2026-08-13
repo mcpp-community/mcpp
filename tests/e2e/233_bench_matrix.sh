@@ -266,6 +266,52 @@ if fail:
 print("axes agree with the harness (scenarios via scenario_from, engines via the registry)")
 PY
 
+# ── 5: every number in the root README exists in the published data ────────
+#
+# The tables are generated (bench/tools/report.py) precisely so nobody types
+# them, but a human still pastes the output — and a pasted number that drifts
+# from the run it claims to come from is unfalsifiable by any other test. The
+# numbers still print, they are just of something else, which is this suite's
+# entire failure mode in miniature.
+python3 - "$ROOT" <<'PYREADME'
+import json, os, re, sys
+
+root = sys.argv[1]
+data = os.path.join(root, "bench/results/pinned-workloads-20260813/mcpp-linux-gcc-5way.json")
+if not os.path.isfile(data):
+    print("  (no published run to check against; skipping)")
+    raise SystemExit(0)
+
+truth = {}
+for c in json.load(open(data))["cells"]:
+    if c["status"] == "ok":
+        truth.setdefault(c["engine"], {})[c["scenario"]] = round(c["median_s"], 2)
+default = next((k for k in truth if k.startswith("mcpp@") and "+" not in k), None)
+if not default:
+    print("  (no default mcpp arm in the run; skipping)")
+    raise SystemExit(0)
+
+readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
+rows = re.findall(r"^\| `([\w-]+)` \| [^|]+ \| \*\*([\d.]+)s\*\* · [\d.]+x \| ([\d.]+)s · 1\.0x",
+                  readme, re.M)
+if not rows:
+    print("FAIL: the root README benchmark table did not parse — has its shape changed?")
+    raise SystemExit(1)
+
+bad = []
+for sc, mcpp, cmake in rows:
+    for engine, claimed in (("mcpp", mcpp), ("cmake", cmake)):
+        have = truth.get(default if engine == "mcpp" else "cmake", {}).get(sc)
+        if have is None or abs(float(claimed) - have) >= 0.01:
+            bad.append(f"README {sc}/{engine}={claimed}s but the run says {have}")
+if bad:
+    print("FAIL: the root README quotes numbers that are not in the published run")
+    for b in bad:
+        print("  " + b)
+    raise SystemExit(1)
+print(f"root README: {len(rows)} rows all match bench/results/pinned-workloads-20260813/")
+PYREADME
+
 # ── 4: the workflow reads the file, and does not repeat it ─────────────────
 grep -q 'bench/matrix.json' "$WORKFLOW" \
   || { echo "FAIL: bench.yml does not read bench/matrix.json — the matrix has been re-hardcoded"; exit 1; }
