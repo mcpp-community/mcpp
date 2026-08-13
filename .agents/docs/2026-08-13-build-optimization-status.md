@@ -42,8 +42,16 @@ on 那次命中了缓存。5 个单元相对 80s 的差值可以忽略,但记在
     ninja: build stopped: 'pcm.cache/mcpp.version_req.pcm' not mentioned in
            its dyndep file 'obj/version_req.cppm.ddi.dd'
 
-把 `-fdeps-target` 指向 BMI 之后,dyndep 生成的那条 `build` 行与 precompile 边的
-输出对不上。这是 `mcpp dyndep` 写出物的形状问题,不是发射端的问题,需要连着它一起改。
+真因已定位到具体一行:**clang-scan-deps 的 P1689 primary-output 来自内层编译命令的
+`-o`(目标文件),没有 GCC `-fdeps-target` 那样的独立开关**
+(`src/build/ninja_backend.cppm` 的 clang 分支:`-- $cxx ... -c $in -o $compile_target`)。
+于是 `mcpp dyndep` 写出的 `build` 行指向**目标文件**,而 precompile 边的输出是 **BMI**。
+
+**落地形状(未实施)**:给 `mcpp dyndep` 加一个开关,让 `--single` 按 `provides`
+推出的 BMI 作为那条 `build` 行的目标,而不是 `primaryOutput`;后端在 two-phase 时传它。
+不要去改扫描的 `-o` —— GCC 那边共用 `-o` 与 `-fdeps-target` 已经造成过
+"扫描去写还不存在的 gcm.cache/"。
+
 **撤回而不是留着**:一个会让 `schedule=on` 直接失败的形状,比没有更糟。
 
 ⚠️ 顺带记下:同一个 `deps_target` 一开始被我和扫描的 `-o` 共用,
