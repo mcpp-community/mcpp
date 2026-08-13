@@ -324,21 +324,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # `mcpp` in the cell's engine list means BOTH mcpp binaries: the one
-          # built from this checkout and the last released one. Each labels
-          # itself from the version it reports, so the rows stay distinct.
+          # `mcpp` in a cell's engine list expands to THREE arms, not one:
+          #   1. the mcpp built from this checkout,
+          #   2. the same binary with the BMI schedule turned on,
+          #   3. the last released mcpp (`reference_mcpp`, on PATH).
+          # Each labels itself from the version it reports plus its options, so
+          # the rows stay distinct.
           #
-          # Split on commas rather than sed: `\b` is a GNU extension that BSD sed
-          # (i.e. every macOS runner) does not implement, and it fails by NOT
-          # substituting — the macOS cells would quietly measure one mcpp while
-          # the Linux ones measured two.
-          # THREE arms, not two. The third is the same binary with the BMI
-          # schedule turned on (`[build] bmi_schedule = "on"`), which is opt-in
-          # until it is verified on every platform — and which the suite could
-          # not otherwise reach at all, because the switch lives in the MEASURED
-          # PROJECT's manifest and the measured projects are pinned workloads
-          # that are not ours to edit. Without it the table said "no improvement
-          # on cold builds" for the largest cold-build change in the release.
+          # Arm 2 exists because `[build] bmi_schedule = "on"` is opt-in until it
+          # is verified on every platform, and the switch lives in the MEASURED
+          # PROJECT's manifest — which the pinned workloads own, not us. Without
+          # it the table said "no improvement on cold builds" for a change that
+          # is worth 2.2x — measured, on this workload, in this same report.
+          #
+          # Expanded by splitting on commas rather than with sed: `\b` is a GNU
+          # extension that BSD sed (every macOS runner) does not implement, and
+          # it fails by NOT substituting — the macOS cells would quietly measure
+          # one mcpp while the Linux ones measured three.
           engines=""
           IFS=',' read -ra want <<< '${{ matrix.engines }}'
           for e in "${want[@]}"; do
@@ -366,7 +368,15 @@ jobs:
                  --out       "bench-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.project }}.json" )
 
           # `msvc` is a label, not a path — see the resolve step above.
-          [ "$BENCH_CXX" != "msvc" ] && [ -n "$BENCH_CXX" ] && args+=( --compiler "$BENCH_CXX" )
+          #
+          # Written as an `if` rather than `[ ... ] && args+=(...)`: under
+          # `set -e` that form leaves the SCRIPT's exit status at 1 whenever the
+          # test is false, and it only survives here because other commands
+          # follow it. Move it to the end of a step and the msvc cells fail with
+          # no output. This repository has been bitten by that exemption before.
+          if [ -n "$BENCH_CXX" ] && [ "$BENCH_CXX" != "msvc" ]; then
+            args+=( --compiler "$BENCH_CXX" )
+          fi
 
           if [ "${{ matrix.project }}" = "fixture" ]; then
             # The preset names the size; units/fanin override it only when set to
@@ -375,8 +385,15 @@ jobs:
             # comparable workload — and --preset must come first so the
             # overrides still win.
             args+=( --preset "${{ inputs.preset || matrix.preset }}" )
-            [ "${{ inputs.units || 0 }}" -gt 0 ] 2>/dev/null && args+=( --units "${{ inputs.units }}" )
-            [ "${{ inputs.fanin || 0 }}" -gt 0 ] 2>/dev/null && args+=( --fanin "${{ inputs.fanin }}" )
+            # `if`, not `[ ] && ...`, for the reason given above — and these two
+            # ARE the last commands in this branch, which is the shape that
+            # actually fails.
+            if [ "${{ inputs.units || 0 }}" -gt 0 ] 2>/dev/null; then
+              args+=( --units "${{ inputs.units }}" )
+            fi
+            if [ "${{ inputs.fanin || 0 }}" -gt 0 ] 2>/dev/null; then
+              args+=( --fanin "${{ inputs.fanin }}" )
+            fi
           else
             # A real tree: measured in place, and the scenarios that perturb a
             # file must be TOLD which one — from matrix.json, next to the cell,
@@ -386,7 +403,12 @@ jobs:
                     --buildfiles "$GITHUB_WORKSPACE/bench/projects/${{ matrix.buildfiles }}"
                     --hub        '${{ matrix.hub }}'
                     --body       '${{ matrix.body }}' )
-            [ -n '${{ matrix.allow_failed }}' ] && args+=( --allow-failed '${{ matrix.allow_failed }}' )
+            # `if`, not `[ ] && ...` — and this one IS the last command in its
+            # branch, so the compound's status would be 1 on every cell that has
+            # no waiver. It survives today only because a command follows `fi`.
+            if [ -n '${{ matrix.allow_failed }}' ]; then
+              args+=( --allow-failed '${{ matrix.allow_failed }}' )
+            fi
           fi
 
           "$BENCH" "${args[@]}"
