@@ -545,6 +545,26 @@ object 边)。记在这里是因为下一个人应该从「object 边与 BMI 边
 
 **影响面比 bench 大**:任何在 macOS 上依赖带 `build.mcpp` 的包的工程都会踩到。
 
+### 9a-2. 同一个机制,更大的面:macOS 上**每个**子进程都被污染
+
+不只是 `build.mcpp` 助手。bench 的 macOS 格子里 cmake / bazel / 参照 mcpp
+**三个引擎一起**挂在同一处:
+
+    dyld: Symbol not found: __ZdaPv
+      Referenced from: …/XcodeDefault.xctoolchain/usr/bin/ld     ← Apple 自己的链接器
+      Expected in:     …/registry/…/lib/libc++.1.0.dylib
+
+**Apple 的 `ld` 自己就链 libc++**,而 registry 的那份 libc++ 进了动态加载器的搜索
+路径,于是 `ld` 还没开始链接就 abort。判据:**被测的 mcpp 那条臂在同一次运行里
+全绿** —— 三个引擎同样地挂、一个不挂,说明问题在环境而不在任何一个引擎。
+
+⚠️ **把 macOS 上的 payload libc++ flag 全部去掉之后,它照样发生。** 所以污染不是
+经由链接 flag 进来的,而是经由 `DYLD_*`(很可能是 mcpp/xlings 为了让自己的载荷
+二进制跑起来而设的),然后被所有子进程继承。
+
+macOS 的 bench 格子因此进 `excluded`,原因写在 matrix.json 里。**没有继续猜** ——
+本机是 Linux,复现不了,而这条已经让我烧掉好几轮 CI。
+
 ### 9b. mbedtls 的 registry 源码包缺 `framework/` 子模块
 
     mbedtls-3.6.1/CMakeLists.txt:304

@@ -211,6 +211,20 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          # ⚠️ INSTALL FROM OUTSIDE THE REPOSITORY. A directory containing
+          # `.xlings.json` makes `xlings install` a WORKSPACE install, and a
+          # workspace shim only resolves while your cwd is inside that
+          # workspace. The harness runs every engine with its cwd set to the
+          # project under measurement — under $RUNNER_TEMP, not here — so the
+          # tools looked perfectly present to `bench --list` (run from the repo)
+          # and then answered
+          #
+          #     [error] xlings: 'bazel' is not installed
+          #
+          # to every actual build. `--list` said `bazel 9.2.0 yes` in the same
+          # job. Installing from $RUNNER_TEMP makes them global, which is what a
+          # benchmark harness needs: the engine must work from any directory.
+          cd "$RUNNER_TEMP"
           for t in cmake xmake bazel; do
             v=$(printf '%s' "$TOOLS" | jq -r --arg t "$t" '.[$t]')
             echo "::group::xlings install $t@$v"

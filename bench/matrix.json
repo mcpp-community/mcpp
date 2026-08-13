@@ -110,15 +110,6 @@
       "preset": "standard"
     },
     {
-      "os": "macos",
-      "toolchain": "clang",
-      "project": "fixture",
-      "engines": "mcpp,cmake,xmake,bazel",
-      "variants": "headers,modules,modules-impl",
-      "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
-      "preset": "standard"
-    },
-    {
       "os": "windows",
       "toolchain": "clang",
       "project": "fixture",
@@ -151,17 +142,6 @@
     },
     {
       "os": "linux",
-      "toolchain": "clang",
-      "project": "mcpp-2026.8.11.3",
-      "engines": "mcpp,cmake,xmake,bazel",
-      "variants": "modules",
-      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
-      "hub": "src/platform/platform.cppm",
-      "body": "src/version_req.cppm",
-      "buildfiles": "mcpp"
-    },
-    {
-      "os": "macos",
       "toolchain": "clang",
       "project": "mcpp-2026.8.11.3",
       "engines": "mcpp,cmake,xmake,bazel",
@@ -290,6 +270,12 @@
       "toolchain": "clang",
       "project": "xlings-*",
       "reason": "KNOWN GAP, and it is an mcpp defect rather than a benchmark one: on macOS mcpp cannot compile a dependency's `build.mcpp` helper — xlings depends on mcpplibs.xpkg, whose helper links but then dies at run time with `dyld: Symbol not found: __ZdaPv` (operator delete[]), i.e. it cannot find libc++. Same family as the helper self-containment work (glibc via rpath, musl and PE via -static) with macOS never covered. Recorded in .agents/docs/2026-08-13-build-optimization-status.md S9a; the cell returns when that is fixed, and its blast radius is every macOS project depending on a package that ships a build.mcpp"
+    },
+    {
+      "os": "macos",
+      "toolchain": "clang",
+      "project": "*",
+      "reason": "KNOWN GAP, and an mcpp/xlings environment defect rather than a benchmark one. On macOS the registry's libc++ ends up on the dynamic loader's search path for EVERY child process, so Apple's own linker — which links against libc++ — resolves against the payload copy and aborts before linking: `dyld: Symbol not found: __ZdaPv, Referenced from: .../XcodeDefault.xctoolchain/usr/bin/ld, Expected in: .../registry/.../lib/libc++.1.0.dylib`. cmake, bazel and the reference mcpp all fail identically while the mcpp under test passes, which is what identifies it as environmental. Same symbol and mechanism as the build.mcpp helper failure in .agents/docs/2026-08-13-build-optimization-status.md S9a. Removing the payload libc++ flags on macOS did NOT fix it, so the contamination arrives through DYLD_* rather than through link flags. The cells return once that is understood — deliberately not guessed at from a machine that cannot reproduce it"
     }
   ],
   "_workload_note": [
