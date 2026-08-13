@@ -215,7 +215,7 @@ job: the cell still runs, and its note says what to distrust.
 | `noop` | nothing | how cheap is "already up to date" |
 | `touch-hub` | mtime bump on a widely-imported unit, **content unchanged** | can the engine prove the interface did not change? |
 | `edit-comment` | a comment inserted into that same unit | the bytes *did* change but the interface did not — only an engine that compares the produced BMI avoids the cascade |
-| `edit-body` | a real semantic edit inside a function body | the everyday loop. For an inline body in an interface unit the BMI legitimately changes and a cascade is **correct** |
+| `edit-body` | a real semantic edit inside a function body | the everyday loop — and whether a cascade is owed depends on **where the body lives**, not on the edit. See below. |
 | `touch-leaf` | mtime bump on a unit nobody imports | recompile 1 + link |
 
 `edit-comment` exists **separately from `edit-body`** on purpose: without the
@@ -247,7 +247,33 @@ reason: **a number whose meaning depends on an invisible choice is not a
 measurement.**
 
 `edit-body` is the control that keeps the suite honest in the other direction —
-there, no engine should be fast, and one that is has skipped work it owed.
+where a cascade IS owed, no engine should be fast, and one that is has skipped
+work it owed.
+
+#### But a body edit does not always owe a cascade, and that is the point
+
+Measured directly, GCC 16.1, comparing the BMI before and after:
+
+| what is edited | BMI | cascade |
+|---|---|---|
+| a free exported function's body, in the `.cppm` | **byte-identical** | not owed |
+| a **member function of an exported class**, inline in the `.cppm` | **differs** | **owed** |
+| a body in a separate `.cpp` implementation unit | **byte-identical** | **not owed** |
+
+A class's member function bodies are part of the class definition, which every
+importer has to see, so they are serialised into the BMI. A free function's body
+is not, and nothing in an implementation unit is.
+
+So "editing one function rebuilt forty modules" is not inherent to named modules
+— it is a consequence of where the body was written. `mcpp`'s own
+`src/version_req.cppm` is the first case (the perturbation lands in
+`Version::str()`, a member of an exported class), which is why its `edit-body`
+row is a near-full rebuild and why that is correct.
+
+**This is what the two xlings pins measure.** Moving the implementations out of
+the interface units takes `edit-body` from 88.33s to **1.77s** on the same
+project — ~50x, the largest single effect anywhere in this suite, and a code
+style rather than an engine feature.
 
 Real projects run five of the six: `touch-leaf` needs a unit nobody imports
 *and* a stable name for it, which a generated fixture has by construction and a
