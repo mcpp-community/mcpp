@@ -283,7 +283,18 @@ public:
             cell.status = Status::Failed;
             cell.note   = failure_note(what, r, job.log_path);
             report(cell.note);
-            if (const auto tail = platform::tail_of(job.log_path); !tail.empty())
+            // 20 lines is right for an ordinary failure and useless for the one
+            // that most needs a log: a compiler CRASH. clang prints ~40 lines of
+            // stack dump after the line that names the file and the pass, so a
+            // 20-line tail shows frames #30..#36 and the bare
+            // `clang frontend command failed with exit code 139` — everything
+            // identifying WHAT it was compiling has already scrolled past. That
+            // is exactly what happened to the xlings/clang cell, and it is why
+            // that crash is still undiagnosed.
+            const auto crashed = platform::log_mentions(
+                job.log_path, {"PLEASE submit a bug report", "Stack dump"});
+            if (const auto tail = platform::tail_of(job.log_path, crashed ? 80 : 20);
+                !tail.empty())
                 report(std::format("--- last lines of {} ---\n{}",
                                    job.log_path.filename().string(), tail));
         };

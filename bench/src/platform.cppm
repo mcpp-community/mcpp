@@ -94,6 +94,19 @@ inline RunResult run(const std::vector<std::string>& argv,
 // replaces: the harness records `see .../logs/cmake-cold.log`, and on a CI
 // runner that file is deleted with the machine. Every module cell in the matrix
 // failed for weeks behind exactly that sentence.
+// Does the log contain any of these markers? Used to decide how much of it is
+// worth showing — a crash needs far more context than a compile error.
+inline bool log_mentions(const std::filesystem::path& p,
+                         std::initializer_list<std::string_view> markers) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return false;
+    std::string line;
+    while (std::getline(in, line))
+        for (const auto m : markers)
+            if (line.find(m) != std::string::npos) return true;
+    return false;
+}
+
 inline std::string tail_of(const std::filesystem::path& p, std::size_t lines = 20) {
     std::ifstream in(p, std::ios::binary);
     if (!in) return {};
