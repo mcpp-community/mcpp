@@ -181,6 +181,31 @@ harness 会把进度实时打到 **stderr**（逐行 flush），stdout 留给报
 
 ---
 
+## 5b. 已声明的不对称
+
+这些去不掉,所以写出来而不是藏起来。完整清单见英文版 §5;下面是**读数字之前
+必须知道**的几条。
+
+* **三条臂拿依赖的方式不同,所以它们的 `cold` 不是同一个量。** xlings 链接
+  ftxui / libarchive / lua / mbedtls,而 mcpp 的 registry 是以**源码**分发它们的。
+  cmake 与 bazel 两条臂自己编这些源码 —— 而且是按各包自己的 `.xpkg.lua` 编,
+  文件清单与 mcpp 完全一致 —— 于是它们的 `cold` 里含着约 470 个依赖翻译单元。
+  xmake 臂改为经 xrepo 声明(和 xlings 自己的 `xmake.lua` 一样),链接的是
+  xrepo 早先构建好的库,`cold` 里**不含**它们。`xmake clean` 不会清 xrepo 的包
+  缓存,所以这不是首次运行的假象,而是稳定存在的**工作量差异**,不是引擎快慢。
+  跨引擎比 `cold`,请用**生成的 fixture**(它完全没有第三方依赖);在 xlings 上
+  请比增量场景,那里没有任何一条臂会重建依赖。
+* **`+schedule=on` 那条臂是同一个二进制,不是另一个引擎。** 它是被测工程 manifest
+  里的一个键,由 harness 经 `MCPP_BMI_SCHEDULE` 打开,标签写作
+  `mcpp@<ver>+schedule=on`,和默认配置放在同一组行里一起读。
+* **没有任何 fixture 写 `import std;`。** 各引擎在「能否、以及如何」构建 std 模块
+  上差异极大(CMake 需要一把随版本变化的实验性 UUID,meson 根本没有说法),这个
+  差异会淹没一切测量。fixture 一律经全局模块片段取标准库。**本套件测的是模块
+  机制,不是 std 模块支持。**
+* **bazel 的 cold 不是一台冷机器。** 它在工作区之外保有常驻 server 和 action
+  缓存;这里的 `clean` **刻意不是** `--expunge`,否则连工具链一起丢掉,测的就
+  变成了 provisioning。
+
 ## 6. 运行
 
 ```bash

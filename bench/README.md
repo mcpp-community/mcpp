@@ -570,6 +570,19 @@ These cannot be removed, so they are stated rather than hidden.
   fixtures reach the standard library through the global module fragment, which
   every engine handles identically. **This suite measures module machinery, not
   std-module support.**
+* **The three arms do not obtain their dependencies the same way, and their
+  `cold` columns are therefore not the same quantity.** xlings links ftxui,
+  libarchive, lua and mbedtls, which mcpp's registry ships as SOURCE. The cmake
+  and bazel arms compile those sources themselves — from each package's own
+  `.xpkg.lua`, so the file list matches mcpp's exactly — which means their
+  `cold` includes ~470 dependency translation units. The xmake arm declares them
+  through xrepo instead, the way xlings' own `xmake.lua` does, so it links
+  libraries xrepo built earlier and its `cold` does not include them.
+  `xmake clean` does not evict the xrepo package cache, so this is stable across
+  runs rather than a first-run artefact — but it is a real difference in
+  workload, not a difference in engine speed. Compare `cold` across engines on
+  the FIXTURE, which has no third-party dependencies at all; on xlings, compare
+  the incremental scenarios, where no arm rebuilds a dependency.
 * **bazel's cold is not a cold machine.** It keeps a warm server and an action
   cache outside the workspace. `clean` here is deliberately *not* `--expunge`,
   which would also discard the toolchain and turn the measurement into
