@@ -13,9 +13,17 @@ namespace bench::engines {
 // The toolchain name ../common/xmake/payload.lua defines for a payload driver.
 // Empty when the request is not a payload one (a bare `gcc`/`clang`/a path), in
 // which case there is nothing pinned to name.
+// Decided from the RESOLVED DRIVER PATH, not from the `payload:` request.
+// main.cpp rewrites `--compiler payload:gcc` into an absolute path long before
+// an engine sees it, so testing `starts_with("payload:")` here is always false —
+// which is how this silently stopped passing `--toolchain` at all while looking
+// correct. The test that survives that rewrite is where the binary lives.
 inline std::string payload_toolchain(std::string_view compiler) {
-    if (!compiler.starts_with("payload:")) return {};
-    return toolchain::resolves_to_clang(compiler) ? "mcpp-clang" : "mcpp-gcc";
+    if (compiler.find("/registry/data/xpkgs/") == std::string_view::npos &&
+        compiler.find("\\registry\\data\\xpkgs\\") == std::string_view::npos)
+        return {};
+    const bool clang = compiler.find("clang") != std::string_view::npos;
+    return clang ? "mcpp-clang" : "mcpp-gcc";
 }
 
 class XmakeEngine : public Engine {
