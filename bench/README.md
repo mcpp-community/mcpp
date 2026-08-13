@@ -26,6 +26,18 @@ Each `mcpp=<path>` engine labels itself from the version that binary reports
 "did this release get faster?" is answered — by running both, not by emulating
 one of them in the harness.
 
+### The three documents, and which one to read
+
+| file | answers |
+|---|---|
+| **this file** | *how* a timing is taken, and what is deliberately not controlled |
+| [`SPEC.md`](SPEC.md) | *what* is measured: the six axes, why cmake is the baseline, what a cell being undefined means |
+| [`matrix.json`](matrix.json) | *which* cells CI runs — the single source, read by `.github/workflows/bench.yml` |
+
+The cell list appears in exactly one of those. A matrix written down twice is a
+matrix that disagrees with itself, and the disagreement is silent: both copies
+keep looking right. `tests/e2e/233_bench_matrix.sh` is what keeps it that way.
+
 ---
 
 ## 1. What is measured
