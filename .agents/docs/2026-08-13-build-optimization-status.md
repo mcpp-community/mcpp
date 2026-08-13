@@ -31,6 +31,26 @@ on 那次命中了缓存。5 个单元相对 80s 的差值可以忽略,但记在
 
 ---
 
+## 0b. L2 的覆盖面 —— 目前只有 gcc
+
+`policy` 为 clang 决策出 `two-phase`,但**后端没有发射对应的边**,
+所以 clang 上 `schedule=on` 目前等于没开。这是真实的未完成部分,不是设计取舍。
+
+试做过一次并撤回:两条边(`cxx_precompile` + `cxx_object_from_bmi`)本身很简单,
+卡在 dyndep 上 ——
+
+    ninja: build stopped: 'pcm.cache/mcpp.version_req.pcm' not mentioned in
+           its dyndep file 'obj/version_req.cppm.ddi.dd'
+
+把 `-fdeps-target` 指向 BMI 之后,dyndep 生成的那条 `build` 行与 precompile 边的
+输出对不上。这是 `mcpp dyndep` 写出物的形状问题,不是发射端的问题,需要连着它一起改。
+**撤回而不是留着**:一个会让 `schedule=on` 直接失败的形状,比没有更糟。
+
+⚠️ 顺带记下:同一个 `deps_target` 一开始被我和扫描的 `-o` 共用,
+于是扫描去写还不存在的 `gcm.cache/` —— **在 mcpp 自己的仓库上不暴露**
+(那个目录早被上一次构建建好),换个全新工程立刻失败。已修,并且这正是
+"只在开发它的那个工程上验过"会漏掉的东西。
+
 ## 1. 四条杠杆的状态
 
 | | 杠杆 | 状态 | 依据 |
