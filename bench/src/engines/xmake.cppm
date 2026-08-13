@@ -57,11 +57,42 @@ public:
         // The generated fixture has no such definition (bench.fixture.buildfiles
         // writes the payload flags inline), so it still takes CXX. The two cases
         // are told apart by whether the description lives beside the tree.
+        // BOTH mechanisms, because they cover different builds:
+        //
+        //   --toolchain=mcpp-*   the PROJECT's targets. Carries the payload
+        //                        compiler together with its -B/--sysroot.
+        //   CC / CXX             the DEPENDENCY packages xrepo builds. xmake
+        //                        does not apply the project toolchain to those,
+        //                        so without this they compile with whatever
+        //                        `cc` is first on PATH.
+        //
+        // In this repository that `cc` is the workspace xlings shim, whose
+        // include path lacks the kernel UAPI headers its own glibc needs, so
+        // every package build dies in a header three levels down:
+        //     .../xim-x-glibc/2.39/include/bits/local_lim.h:38:10:
+        //     fatal error: linux/limits.h: No such file or directory
+        //       > in src/lua.c
+        // The same command run by hand looked fine only because the packages
+        // were already in xrepo's cache and never rebuilt.
         const bool own_description = !job.buildfile_dir.empty() &&
                                      job.buildfile_dir != job.project_dir;
         if (own_description) {
             if (const auto tc = payload_toolchain(job.compiler); !tc.empty()) {
                 argv.push_back("--toolchain=" + tc);
+                const auto cxx = resolve_cxx(job.compiler);
+                if (!cxx.empty()) {
+                    auto cc = cxx;
+                    for (const auto& [from, to] : {std::pair{"clang++", "clang"},
+                                                   std::pair{"g++", "gcc"}}) {
+                        if (const auto at = cc.rfind(from); at != std::string::npos) {
+                            cc.replace(at, std::string_view(from).size(), to);
+                            break;
+                        }
+                    }
+                    platform::ScopedEnv pin_cxx("CXX", cxx);
+                    platform::ScopedEnv pin_cc("CC", cc);
+                    return platform::run(argv, job.buildfile_dir, job.log_path, job.timeout_s);
+                }
                 return platform::run(argv, job.buildfile_dir, job.log_path, job.timeout_s);
             }
         }
