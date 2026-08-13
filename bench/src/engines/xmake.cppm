@@ -6,8 +6,17 @@ import bench.protocol;
 import bench.spec;
 import bench.platform;
 import bench.engines.engine;
+import bench.toolchain;
 
 namespace bench::engines {
+
+// The toolchain name ../common/xmake/payload.lua defines for a payload driver.
+// Empty when the request is not a payload one (a bare `gcc`/`clang`/a path), in
+// which case there is nothing pinned to name.
+inline std::string payload_toolchain(std::string_view compiler) {
+    if (!compiler.starts_with("payload:")) return {};
+    return toolchain::resolves_to_clang(compiler) ? "mcpp-clang" : "mcpp-gcc";
+}
 
 class XmakeEngine : public Engine {
 public:
@@ -30,8 +39,33 @@ public:
             "-m", job.profile == "debug" ? "debug" : "release",
             "-o", job.build_dir.string(),
         };
-        if (job.compiler == "clang") argv.push_back("--toolchain=llvm");
+        // ── How the payload driver is pinned, and why it is not always CXX ──
         //
+        // A real project's description (bench/projects/*/xmake.lua) DEFINES the
+        // payload as an xmake toolchain — compiler and its `-B<binutils>` /
+        // `--sysroot` flags together — in ../common/xmake/payload.lua. Naming
+        // that toolchain is the only way to get both halves.
+        //
+        // Setting CXX instead hands xrepo a compiler WITHOUT those flags, and
+        // xmake then builds every dependency package with it. They fail:
+        //     => install cmdline 0.0.2 .. failed
+        //     => install mbedtls v3.6.7 .. failed
+        //     => install ftxui v6.1.9 .. failed
+        // — while the identical `xmake f --toolchain=mcpp-gcc` run by hand
+        // succeeds, because there the toolchain carries the flags.
+        //
+        // The generated fixture has no such definition (bench.fixture.buildfiles
+        // writes the payload flags inline), so it still takes CXX. The two cases
+        // are told apart by whether the description lives beside the tree.
+        const bool own_description = !job.buildfile_dir.empty() &&
+                                     job.buildfile_dir != job.project_dir;
+        if (own_description) {
+            if (const auto tc = payload_toolchain(job.compiler); !tc.empty()) {
+                argv.push_back("--toolchain=" + tc);
+                return platform::run(argv, job.buildfile_dir, job.log_path, job.timeout_s);
+            }
+        }
+        if (job.compiler == "clang") argv.push_back("--toolchain=llvm");
         // The driver is pinned through CXX so every engine compiles with the
         // SAME binary; without it xmake resolves whatever `g++` means on this
         // host, and the comparison silently becomes compiler-vs-compiler.

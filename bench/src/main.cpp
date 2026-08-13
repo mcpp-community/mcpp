@@ -189,7 +189,23 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--list")      { o.list = true; }
         else if (a == "--analyze")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.analyze = *v; }
         else if (a == "--project")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.project = *v; }
-        else if (a == "--buildfiles"){ auto v = value(a); if (!v) return std::unexpected(v.error()); o.buildfiles = *v; }
+        // ABSOLUTE, resolved against the cwd the harness was STARTED in.
+        //
+        // Every engine is spawned with its cwd set to this directory, and xmake
+        // is then handed it again as `-P`. A relative path therefore resolves
+        // twice: `--buildfiles bench/projects/xlings` became
+        // `bench/projects/xlings/bench/projects/xlings` and the whole arm failed
+        // with `error: project not found!` — while the identical command run by
+        // hand from the repository root worked, because there the doubling had
+        // nothing to double against. Same shape as the `--buildir` doubling this
+        // suite already fixed once; the fix belongs here, once, rather than in
+        // each adapter.
+        else if (a == "--buildfiles"){
+            auto v = value(a); if (!v) return std::unexpected(v.error());
+            std::error_code ec;
+            auto abs = std::filesystem::absolute(*v, ec);
+            o.buildfiles = ec ? std::filesystem::path(*v) : abs;
+        }
         else if (a == "--hub")       { auto v = value(a); if (!v) return std::unexpected(v.error()); o.hub  = *v; }
         else if (a == "--leaf")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.leaf = *v; }
         else if (a == "--body")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.body = *v; }
