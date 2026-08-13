@@ -1409,7 +1409,6 @@ export int run_tests(std::span<const std::string> passthrough,
         std::string name;
         std::vector<std::string> argv;
         std::vector<std::pair<std::string, std::string>> env;
-        std::chrono::steady_clock::time_point started;
     };
     std::vector<Runnable> runnable;
 
@@ -1438,6 +1437,18 @@ export int run_tests(std::span<const std::string> passthrough,
                 if (i >= list.size()) return;
                 auto& r = list[i];
 
+                // Stamped HERE, immediately before the exec — not when the
+                // test was queued.
+                //
+                // Discovery, building and attribution all happen in a first
+                // pass that completes before any test runs, and the workers
+                // then take tests off a queue. A start time captured at queue
+                // time therefore includes the whole preparation phase plus
+                // however long this test waited for a worker, and `ok (2.30s)`
+                // for a test that ran in 30ms is not a slow test, it is a
+                // mislabelled one. The phase's own wall time is measured
+                // separately by `tRunPhase` below.
+                const auto tStart = std::chrono::steady_clock::now();
                 bool timedOut = false;
                 int exitCode = 0;
                 std::string runOutput;
@@ -1452,7 +1463,7 @@ export int run_tests(std::span<const std::string> passthrough,
                         r.argv, r.env, deadline, &timedOut);
                 }
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - r.started).count();
+                    std::chrono::steady_clock::now() - tStart).count();
 
                 std::scoped_lock lock(reportMutex);
                 if (timedOut) {
@@ -1574,8 +1585,7 @@ export int run_tests(std::span<const std::string> passthrough,
             }
         }
 
-        runnable.push_back({lu.targetName, std::move(argv), std::move(childEnv),
-                            tTest});
+        runnable.push_back({lu.targetName, std::move(argv), std::move(childEnv)});
     }
 
     // Pass 2: run them. Concurrently unless there is exactly one — see

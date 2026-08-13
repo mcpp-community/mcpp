@@ -1,54 +1,5 @@
 {
-    gcc_arch_x86_64_plat_linux = {
-        plat = "linux",
-        __checked = {
-            program = "/home/speak/workspace/github/mcpp-community/mcpp/.xlings/subos/_/bin/gcc",
-            name = "gcc"
-        },
-        arch = "x86_64",
-        __global = true
-    },
-    tool_target_mcpp_linux_x86_64_ld = {
-        toolchain_info = {
-            plat = "linux",
-            cachekey = "mcpp-gcc_arch_x86_64_plat_linux",
-            arch = "x86_64",
-            name = "mcpp-gcc"
-        },
-        program = "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++",
-        toolname = "gxx"
-    },
-    go_arch_x86_64_plat_linux = {
-        plat = "linux",
-        __checked = true,
-        arch = "x86_64",
-        __global = true
-    },
-    swift_arch_x86_64_plat_linux = {
-        plat = "linux",
-        __checked = true,
-        arch = "x86_64",
-        __global = true
-    },
     envs_arch_x86_64_plat_linux = {
-        plat = "linux",
-        __checked = true,
-        arch = "x86_64",
-        __global = true
-    },
-    fasm_arch_x86_64_plat_linux = {
-        plat = "linux",
-        __checked = true,
-        arch = "x86_64",
-        __global = true
-    },
-    fpc_arch_x86_64_plat_linux = {
-        plat = "linux",
-        __checked = true,
-        arch = "x86_64",
-        __global = true
-    },
-    ["mcpp-gcc_arch_x86_64_plat_linux"] = {
         plat = "linux",
         __checked = true,
         arch = "x86_64",
@@ -60,17 +11,66 @@
         arch = "x86_64",
         __global = true
     },
+    fpc_arch_x86_64_plat_linux = {
+        plat = "linux",
+        __checked = true,
+        arch = "x86_64",
+        __global = true
+    },
+    fasm_arch_x86_64_plat_linux = {
+        plat = "linux",
+        __checked = true,
+        arch = "x86_64",
+        __global = true
+    },
+    go_arch_x86_64_plat_linux = {
+        plat = "linux",
+        __checked = true,
+        arch = "x86_64",
+        __global = true
+    },
+    gcc_arch_x86_64_plat_linux = {
+        plat = "linux",
+        __checked = {
+            name = "gcc",
+            program = "/home/speak/workspace/github/mcpp-community/mcpp/.xlings/subos/_/bin/gcc"
+        },
+        arch = "x86_64",
+        __global = true
+    },
+    nim_arch_x86_64_plat_linux = {
+        plat = "linux",
+        __checked = false,
+        arch = "x86_64",
+        __global = true
+    },
+    clang_arch_x86_64_plat_linux = {
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
     tool_target_mcpp_linux_x86_64_cxx = {
+        toolname = "gxx",
+        program = "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++",
         toolchain_info = {
             plat = "linux",
             cachekey = "mcpp-gcc_arch_x86_64_plat_linux",
-            arch = "x86_64",
-            name = "mcpp-gcc"
-        },
-        program = "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++",
-        toolname = "gxx"
+            name = "mcpp-gcc",
+            arch = "x86_64"
+        }
     },
-    yasm_arch_x86_64_plat_linux = {
+    zig_arch_x86_64_plat_linux = {
+        plat = "linux",
+        arch = "x86_64",
+        __global = true
+    },
+    swift_arch_x86_64_plat_linux = {
+        plat = "linux",
+        __checked = true,
+        arch = "x86_64",
+        __global = true
+    },
+    gfortran_arch_x86_64_plat_linux = {
         plat = "linux",
         __checked = true,
         arch = "x86_64",
@@ -82,29 +82,29 @@
         arch = "x86_64",
         __global = true
     },
-    cross_arch_x86_64_plat_linux = {
-        plat = "linux",
-        arch = "x86_64",
-        __global = true
-    },
-    gfortran_arch_x86_64_plat_linux = {
+    yasm_arch_x86_64_plat_linux = {
         plat = "linux",
         __checked = true,
         arch = "x86_64",
         __global = true
     },
-    clang_arch_x86_64_plat_linux = {
+    tool_target_mcpp_linux_x86_64_ld = {
+        toolname = "gxx",
+        program = "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++",
+        toolchain_info = {
+            plat = "linux",
+            cachekey = "mcpp-gcc_arch_x86_64_plat_linux",
+            name = "mcpp-gcc",
+            arch = "x86_64"
+        }
+    },
+    ["mcpp-gcc_arch_x86_64_plat_linux"] = {
         plat = "linux",
+        __checked = true,
         arch = "x86_64",
         __global = true
     },
-    nim_arch_x86_64_plat_linux = {
-        plat = "linux",
-        __checked = false,
-        arch = "x86_64",
-        __global = true
-    },
-    zig_arch_x86_64_plat_linux = {
+    cross_arch_x86_64_plat_linux = {
         plat = "linux",
         arch = "x86_64",
         __global = true
