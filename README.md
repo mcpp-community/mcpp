@@ -314,7 +314,7 @@ Each cell is the median wall-clock and how many times faster it is than cmake.
 |---|---|---|---|---|
 | `cold` | nothing built yet | **79.54s** · 1.2x | 92.33s · 1.0x | 90.30s · 1.0x |
 | `noop` | nothing at all | **0.16s** · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
-| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.40s** · 208x | 83.39s · 1.0x | 82.07s · 1.0x |
+| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.40s** · 208x | 83.39s · 1.0x | 82.08s · 1.0x |
 | `edit-body` | a real edit inside a function body | **76.24s** · 1.1x | 85.64s · 1.0x | 84.61s · 1.0x |
 | `edit-comment` | a comment added to a widely-imported interface | **0.38s** · 218x | 82.96s · 1.0x | 82.73s · 1.0x |
 
