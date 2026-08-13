@@ -1,0 +1,31 @@
+# bazel module for xlings — BEST EFFORT, AND IT DOES NOT BUILD.
+#
+# Kept so this directory answers "what about bazel?" with a reason instead of
+# silence, and so the day the blocker lifts this file is the diff.
+#
+# bazel 9.2.0 + rules_cc 0.2.22 CAN build C++20 named modules — measured, with
+# `module_interfaces` plus --experimental_cpp_modules --features=cpp_modules,
+# and clang (its ddi aggregator cannot parse GCC's P1689 output). That is enough
+# for the synthetic fixture, where bazel is a real column. It is not enough here,
+# and the reason is WORSE for xlings than for mcpp:
+#
+#   1. WORKSPACE BOUNDARY, and this tree is not even in the repository. bazel
+#      will not glob outside its workspace. mcpp's arm at least has its sources
+#      three directories up; xlings lives wherever the user cloned it, named by
+#      XLINGS_ROOT at configure time — which is precisely the thing a bazel
+#      workspace cannot be parameterised by. A working setup would have to
+#      generate a MODULE.bazel inside the checkout, i.e. write into the tree
+#      being measured, which this harness refuses to do (see README.md).
+#
+#   2. FOUR SOURCE DEPENDENCIES resolved out of mcpp's registry, each unpacked at
+#      an absolute path outside any workspace. Same boundary, four more times.
+#
+#   3. `import std;` works, but only by hand — libc++ ships the std module as
+#      ordinary source, so it can be listed like any other interface unit. See
+#      bench/projects/mcpp/MODULE.bazel for the measured recipe. Not a blocker
+#      by itself, but it has to be redone per workspace.
+#
+# So bazel is absent from the xlings cells in ../../matrix.json rather than
+# present-and-failing: a cell that cannot build is not a measurement.
+module(name = "xlings", version = "0.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.22")

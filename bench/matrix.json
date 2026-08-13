@@ -10,141 +10,204 @@
     "A cell is one CI job. Inside it the harness sweeps every engine x variant x",
     "scenario, so those axes are per-cell lists rather than more jobs: they share a",
     "checkout, a toolchain install and a fixture, and splitting them would multiply",
-    "runner minutes without adding a single measurement."
+    "runner minutes without adding a single measurement.",
+    "meson is deliberately absent, not missing: meson 1.10.2 has no way to declare a translation unit to be a module INTERFACE, so every module cell was an `unavailable` row. An engine that cannot express the thing being measured is not a comparison point, and keeping it produced one honest row and five empty ones per report."
   ],
-
   "baseline": "cmake",
   "_baseline_note": "Every ratio in every report is against cmake. See SPEC.md S2.",
-
   "axes": {
-    "os":        ["linux", "macos", "windows"],
-    "toolchain": ["gcc", "clang", "msvc"],
-    "engine":    ["mcpp", "cmake", "xmake", "meson", "bazel"],
-    "project":   ["fixture", "mcpp", "xlings"],
-    "variant":   ["headers", "modules", "modules-impl"],
-    "scenario":  ["cold", "noop", "touch-hub", "touch-leaf", "edit-body", "edit-comment"]
+    "os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "toolchain": [
+      "gcc",
+      "clang",
+      "msvc"
+    ],
+    "engine": [
+      "mcpp",
+      "cmake",
+      "xmake",
+      "bazel"
+    ],
+    "project": [
+      "fixture",
+      "mcpp",
+      "xlings"
+    ],
+    "variant": [
+      "headers",
+      "modules",
+      "modules-impl"
+    ],
+    "scenario": [
+      "cold",
+      "noop",
+      "touch-hub",
+      "touch-leaf",
+      "edit-body",
+      "edit-comment"
+    ]
   },
-
   "runners": {
-    "linux":   "ubuntu-24.04",
-    "macos":   "macos-14",
+    "linux": "ubuntu-24.04",
+    "macos": "macos-14",
     "windows": "windows-2022"
   },
-
   "cells": [
     {
-      "os": "linux", "toolchain": "gcc", "project": "fixture",
-      "engines": "mcpp,cmake,xmake,meson",
+      "os": "linux",
+      "toolchain": "gcc",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake",
       "variants": "headers,modules,modules-impl",
       "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
       "preset": "standard",
       "note": "bazel omitted: its module support requires a clang driver (see the bazel engine's unsupported_reason)"
     },
     {
-      "os": "linux", "toolchain": "clang", "project": "fixture",
-      "engines": "mcpp,cmake,xmake,meson,bazel",
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake,bazel",
       "variants": "headers,modules,modules-impl",
       "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
       "preset": "standard"
     },
     {
-      "os": "macos", "toolchain": "clang", "project": "fixture",
-      "engines": "mcpp,cmake,xmake,meson,bazel",
+      "os": "macos",
+      "toolchain": "clang",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake,bazel",
       "variants": "headers,modules,modules-impl",
       "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
       "preset": "standard"
     },
     {
-      "os": "windows", "toolchain": "clang", "project": "fixture",
-      "engines": "mcpp,cmake,xmake,meson,bazel",
+      "os": "windows",
+      "toolchain": "clang",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake,bazel",
       "variants": "headers,modules,modules-impl",
       "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
       "preset": "standard"
     },
     {
-      "os": "windows", "toolchain": "msvc", "project": "fixture",
-      "engines": "mcpp,cmake,xmake,meson",
+      "os": "windows",
+      "toolchain": "msvc",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake",
       "variants": "headers,modules,modules-impl",
       "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
       "preset": "standard",
       "note": "bazel omitted: same clang-driver requirement as the gcc cell"
     },
-
     {
-      "os": "linux", "toolchain": "gcc", "project": "mcpp",
-      "engines": "mcpp,cmake,xmake,meson",
+      "os": "linux",
+      "toolchain": "gcc",
+      "project": "mcpp",
+      "engines": "mcpp,cmake,xmake",
       "variants": "native",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "note": "touch-leaf omitted: a real tree has no unit nobody imports that is also stable enough to name"
     },
     {
-      "os": "linux", "toolchain": "clang", "project": "mcpp",
-      "engines": "mcpp,cmake,xmake,meson,bazel",
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "mcpp",
+      "engines": "mcpp,cmake,xmake,bazel",
       "variants": "native",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
     },
     {
-      "os": "macos", "toolchain": "clang", "project": "mcpp",
-      "engines": "mcpp,cmake,xmake,meson,bazel",
+      "os": "macos",
+      "toolchain": "clang",
+      "project": "mcpp",
+      "engines": "mcpp,cmake,xmake,bazel",
       "variants": "native",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
     },
     {
-      "os": "windows", "toolchain": "clang", "project": "mcpp",
-      "engines": "mcpp,cmake,xmake,meson,bazel",
+      "os": "windows",
+      "toolchain": "clang",
+      "project": "mcpp",
+      "engines": "mcpp,cmake,xmake,bazel",
       "variants": "native",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
     },
-
     {
-      "os": "linux", "toolchain": "gcc", "project": "xlings",
-      "engines": "mcpp,cmake",
+      "os": "linux",
+      "toolchain": "gcc",
+      "project": "xlings",
+      "engines": "mcpp,cmake,xmake",
       "variants": "native",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "note": "mcpp-vs-mcpp is the point here (see projects/xlings/README.md); the cmake arm compiles all 110 units and is expected to stop at the link"
     },
     {
-      "os": "linux", "toolchain": "clang", "project": "xlings",
-      "engines": "mcpp,cmake",
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "xlings",
+      "engines": "mcpp,cmake,xmake",
       "variants": "native",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
     },
     {
-      "os": "macos", "toolchain": "clang", "project": "xlings",
-      "engines": "mcpp,cmake",
+      "os": "macos",
+      "toolchain": "clang",
+      "project": "xlings",
+      "engines": "mcpp,cmake,xmake",
       "variants": "native",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
     }
   ],
-
   "excluded": [
     {
-      "os": "macos", "toolchain": "gcc",
+      "os": "macos",
+      "toolchain": "gcc",
       "reason": "no gcc payload exists for macOS in mcpp's registry, and a Homebrew gcc would make the cell a comparison of distributions rather than of engines"
     },
     {
-      "os": "windows", "toolchain": "gcc",
+      "os": "windows",
+      "toolchain": "gcc",
       "reason": "mcpp supports x86_64-windows-gnu, but the other four engines would each have to be pointed at an msys2 gcc that mcpp does not use. KNOWN GAP, not a decision: the cell is meaningful and is simply not wired up yet"
     },
     {
-      "os": "linux", "toolchain": "msvc",
+      "os": "linux",
+      "toolchain": "msvc",
       "reason": "msvc is Windows-only"
     },
     {
-      "os": "macos", "toolchain": "msvc",
+      "os": "macos",
+      "toolchain": "msvc",
       "reason": "msvc is Windows-only"
     },
     {
-      "os": "windows", "toolchain": "msvc", "project": "mcpp",
+      "os": "windows",
+      "toolchain": "msvc",
+      "project": "mcpp",
       "reason": "mcpp's own schedule policy reports msvc as unmeasured (src/build/schedule/policy.cppm), so the mcpp arm would be measuring a shape nobody has validated"
     },
     {
-      "os": "windows", "toolchain": "msvc", "project": "xlings",
+      "os": "windows",
+      "toolchain": "msvc",
+      "project": "xlings",
       "reason": "same as the mcpp project on msvc"
     },
     {
-      "os": "windows", "toolchain": "clang", "project": "xlings",
+      "os": "windows",
+      "toolchain": "clang",
+      "project": "xlings",
       "reason": "xlings has not been shown to build on Windows at all. KNOWN GAP: verify the plain build first, then add the cell — a bench cell that cannot build is not a measurement"
+    },
+    {
+      "os": "*",
+      "toolchain": "clang",
+      "project": "*",
+      "engine": "xmake",
+      "reason": "KNOWN GAP, xmake+clang only: xmake locates libc++'s std module through lib/libc++.modules.json, which mcpp's llvm payload does not ship (it has share/libc++/v1/std.cppm). xmake warns 'std and std.compat modules not found' and build.c++.modules.std degrades SILENTLY — the arm would then measure a project without `import std;` against ones with it. The cell still runs; read its note before quoting the number"
     }
   ]
 }

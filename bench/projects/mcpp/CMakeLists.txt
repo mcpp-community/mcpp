@@ -44,23 +44,13 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # ---------------------------------------------------------------------------
-# The hermetic payload.
+# Where the tree is, and the hermetic payload that makes this a fair comparison.
 #
-# mcpp always passes an explicit -B<binutils> and --sysroot; a bare g++ from the
-# payload otherwise falls back to PATH for `as`/`ld` and picks up whatever shim
-# is there — on a machine with xlings installed, a stale one. The two arms must
-# drive an identical process tree, so reproduce the full triple here rather than
-# hoping the environment matches.
-#
-# -B and --sysroot must reach BOTH compile and link: the driver spawns `as` from
-# it at compile time and `ld` from it at link time. Adding it on one side only
-# silently falls through to PATH.
+# The payload logic is SHARED with the xlings arm — see
+# ../common/cmake/hermetic_payload.cmake, including why it is one branch per
+# compiler family rather than one block of flags, and why it must be applied
+# through CMAKE_CXX_FLAGS.
 # ---------------------------------------------------------------------------
-if(DEFINED ENV{MCPP_HOME})
-  set(MCPP_HOME "$ENV{MCPP_HOME}")
-else()
-  set(MCPP_HOME "$ENV{HOME}/.mcpp")
-endif()
 # This file lives in bench/projects/mcpp/, so the tree it builds is three up.
 # Resolved to an absolute path once, because a FILE_SET's base directory and a
 # relative glob disagree about what "here" means.
@@ -69,33 +59,9 @@ if(NOT EXISTS "${MCPP_ROOT}/mcpp.toml")
   message(FATAL_ERROR "expected mcpp's tree at ${MCPP_ROOT} (no mcpp.toml there)")
 endif()
 
-set(MCPP_XPKGS "${MCPP_HOME}/registry/data/xpkgs")
-set(MCPP_SYSROOT "${MCPP_HOME}/registry/subos/default")
-
-file(GLOB MCPP_BINUTILS_DIRS "${MCPP_XPKGS}/xim-x-binutils/*")
-# CMAKE_CXX_FLAGS, not add_compile_options(): CMake generates the `std` module
-# target ITSELF, and directory-scope options do not reach it. Without this the
-# std module compiles against whatever libc headers the compiler defaults to
-# while every mcpp unit compiles against the sysroot, and the build dies on a
-# type that exists in both:
-#
-#   error: conflicting type for imported declaration 'char _IO_FILE::_unused2 [20]'
-#     .../xlings/.../glibc-2.39/include/bits/types/struct_FILE.h:98
-#     note: existing declaration 'char _IO_FILE::_unused2 [8]'
-#     .../mcpp/registry/subos/default/usr/include/bits/types/struct_FILE.h:109
-#
-# Two glibcs in one link, and the error names neither the flag nor the target
-# that is wrong.
-if(MCPP_BINUTILS_DIRS)
-  list(SORT MCPP_BINUTILS_DIRS)
-  list(GET MCPP_BINUTILS_DIRS -1 MCPP_BINUTILS)
-  string(APPEND CMAKE_CXX_FLAGS " -B${MCPP_BINUTILS}/bin")
-  string(APPEND CMAKE_EXE_LINKER_FLAGS " -B${MCPP_BINUTILS}/bin")
-endif()
-if(IS_DIRECTORY "${MCPP_SYSROOT}")
-  string(APPEND CMAKE_CXX_FLAGS " --sysroot=${MCPP_SYSROOT}")
-  string(APPEND CMAKE_EXE_LINKER_FLAGS " --sysroot=${MCPP_SYSROOT}")
-endif()
+include(${CMAKE_CURRENT_LIST_DIR}/../common/cmake/hermetic_payload.cmake)
+bench_hermetic_payload()
+bench_registry_xpkgs(MCPP_XPKGS)
 
 # ---------------------------------------------------------------------------
 # Source set — mcpp.toml's inferred glob `src/**/*.{cppm,cpp}`. mcpp infers

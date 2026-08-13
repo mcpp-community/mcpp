@@ -1,25 +1,29 @@
-# Reproduce `mcpplibs.xpkg.lua_stdlib` for the cmake arm of the benchmark.
+# Reproduce `mcpplibs.xpkg.lua_stdlib` for the foreign build arms.
 #
 # That module is not a checked-in file: the xpkg package generates it at build
 # time with a `build.mcpp` program. What the program does, though, is small and
-# fully specified — it embeds ten `.lua` files as strings — so a foreign build
-# system CAN reproduce it, and "mcpp runs a build program" is not by itself a
-# boundary. Reproducing it is what keeps the cross-engine comparison honest:
-# both arms then compile the same set of translation units.
+# fully specified — it embeds every `.lua` under `src/lua-stdlib/` as a string
+# named after the file — so a foreign build system CAN reproduce it, and "mcpp
+# runs a build program" is not by itself a boundary. Reproducing it is what
+# keeps the cross-engine comparison honest: both arms then compile the same set
+# of translation units.
 #
-# ⚠️ THE MODULE LIST IS COPIED, and copies drift — this one already did. A first
-# pass extracted ten of the eleven entries (a regex that missed `base64_lua`),
-# and the failure was not "list incomplete" but
+# ⚠️ THIS USED TO CARRY A COPIED LIST OF THE ELEVEN MODULES, AND THE COPY DRIFTED.
+# A first pass extracted ten of eleven (a regex that missed `base64_lua`), and
+# the failure was not "list incomplete" but
 #
 #     xpkg-executor.cppm:585  error: 'base64_lua' is not a member of ...detail
 #
-# i.e. it surfaced in a consumer, three files away from the cause. The guard
-# below therefore fails on a MISSING FILE rather than trusting the list; the
-# alternative — quietly embedding ten of eleven — produces a binary that differs
-# from mcpp's while the benchmark reports a clean run.
+# i.e. it surfaced in a consumer, three files away from the cause. The list is
+# now DERIVED — every `.lua` under `src/lua-stdlib`, variable name = basename +
+# `_lua` — which is verifiably the same rule build.mcpp applies (checked against
+# libxpkg 0.0.57: 11 files, 11 embeddings, names identical). A rule cannot drift
+# from itself; a copy of its output can, and did.
 #
-# Regenerate with:
-#   grep -oE '\{ *"[A-Za-z0-9_]+" *, *"[^"]+\.lua" *\}' <pkg>/build.mcpp
+# `bench/projects/xlings/xmake.lua` implements the same rule in Lua, because
+# xmake cannot run a CMake script portably. That is two implementations of one
+# RULE, which is a different and much weaker coupling than two copies of one
+# LIST — the rule is one line long and its failure is loud (see below).
 #
 # Usage (from add_custom_command):
 #   cmake -DXPKG_ROOT=<pkg> -DOUT=<file> -P embed_lua_stdlib.cmake
@@ -28,20 +32,18 @@ if(NOT XPKG_ROOT OR NOT OUT)
   message(FATAL_ERROR "embed_lua_stdlib.cmake needs -DXPKG_ROOT= and -DOUT=")
 endif()
 
-# (variable name, path relative to the package root) — mirrors MODULES in
-# libxpkg's build.mcpp.
-set(LUA_MODULES
-  "prelude_lua|src/lua-stdlib/prelude.lua"
-  "log_lua|src/lua-stdlib/xim/libxpkg/log.lua"
-  "pkginfo_lua|src/lua-stdlib/xim/libxpkg/pkginfo.lua"
-  "system_lua|src/lua-stdlib/xim/libxpkg/system.lua"
-  "subos_lua|src/lua-stdlib/xim/libxpkg/subos.lua"
-  "xvm_lua|src/lua-stdlib/xim/libxpkg/xvm.lua"
-  "utils_lua|src/lua-stdlib/xim/libxpkg/utils.lua"
-  "pkgmanager_lua|src/lua-stdlib/xim/libxpkg/pkgmanager.lua"
-  "elfpatch_lua|src/lua-stdlib/xim/libxpkg/elfpatch.lua"
-  "json_lua|src/lua-stdlib/xim/libxpkg/json.lua"
-  "base64_lua|src/lua-stdlib/xim/libxpkg/base64.lua")
+# Every .lua under src/lua-stdlib, in a stable order. GLOB is normally the wrong
+# tool for a build input — it hides an added file until someone reconfigures —
+# but here the SET IS THE CONTRACT: build.mcpp embeds whatever is in that
+# directory, so globbing is not an approximation of the list, it is the list.
+file(GLOB_RECURSE LUA_FILES "${XPKG_ROOT}/src/lua-stdlib/*.lua")
+list(SORT LUA_FILES)
+if(NOT LUA_FILES)
+  message(FATAL_ERROR
+    "no .lua under ${XPKG_ROOT}/src/lua-stdlib — either the package layout "
+    "changed or XPKG_ROOT points at the wrong directory. Emitting an empty "
+    "module would fail three files away, in a consumer.")
+endif()
 
 # Bracket syntax, not a quoted string: a quoted CMake string needs `\;` for a
 # literal semicolon, and that backslash reaches the generated C++ verbatim —
@@ -56,16 +58,9 @@ export namespace mcpplibs::xpkg::detail {
 
 ]])
 
-foreach(entry IN LISTS LUA_MODULES)
-  string(REPLACE "|" ";" parts "${entry}")
-  list(GET parts 0 var)
-  list(GET parts 1 rel)
-  set(src "${XPKG_ROOT}/${rel}")
-  if(NOT EXISTS "${src}")
-    message(FATAL_ERROR
-      "lua-stdlib source missing: ${src}\n"
-      "the copied module list has drifted from libxpkg's build.mcpp")
-  endif()
+foreach(src IN LISTS LUA_FILES)
+  get_filename_component(stem "${src}" NAME_WE)
+  set(var "${stem}_lua")
   file(READ "${src}" body)
   # A C++ raw string literal, so nothing in the Lua needs escaping. The
   # delimiter is one no Lua file contains; if that ever stops being true the

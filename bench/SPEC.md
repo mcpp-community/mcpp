@@ -22,7 +22,7 @@ which the report records in its run facts.
 |---|---|---|
 | **OS** | `linux` `macos` `windows` | one CI job each |
 | **Toolchain** | `gcc` `clang` `msvc` | one CI job each — `--compiler` |
-| **Build tool** | `mcpp` `cmake` `xmake` `meson` `bazel` | swept inside a job — `--engines` |
+| **Build tool** | `mcpp` `cmake` `xmake` `bazel` | swept inside a job — `--engines` |
 | **Project** | `fixture` `mcpp` `xlings` | one CI job each — `--project` |
 | **Variant** | `headers` `modules` `modules-impl` | swept inside a job — `--variants` |
 | **Scenario** | `cold` `noop` `touch-hub` `touch-leaf` `edit-body` `edit-comment` | swept inside a job — `--scenarios` |
@@ -55,7 +55,7 @@ of one graph shape:
   `--weight`). The only project where `headers` / `modules` / `modules-impl`
   all exist, so it is the only place the *variant* axis means anything.
 * **`mcpp`** — 138 modules / 57k lines, one source dependency, build
-  descriptions for all five engines under `projects/mcpp/`.
+  descriptions for every engine under `projects/mcpp/`.
 * **`xlings`** — 110 modules / 46k lines, **different authors**. This is the one
   that separates "a faster build engine" from "a faster benchmark target".
 
@@ -86,6 +86,19 @@ that cannot be compared to anything.
 
 ---
 
+### meson is not an engine here
+
+meson 1.10.2 has no way to declare a translation unit to be a module
+**interface**. Listing `.cppm` files as ordinary sources compiles them as plain
+TUs and the first importer fails with `fatal error: module 'x' not found`, and
+there is no `import std;` equivalent either. So every module cell was an
+`unavailable` row with the same reason — one honest row and five empty ones per
+report, which is noise rather than a comparison. It was removed: engine,
+descriptions and fixture emitter.
+
+The day meson grows the feature, the diff is adding
+`bench/src/engines/meson.cppm` back and one line in `registry.cppm`.
+
 ## 3. A cell may be undefined, and it must say why
 
 Three outcomes are distinguishable in the result schema, and collapsing them is
@@ -104,10 +117,11 @@ seconds" must never render the same way, and neither must "not installed" and
 
 The same rule applies one level up, to cells that CI does not run at all:
 [`matrix.json`](matrix.json) carries an `excluded` list where every entry has a
-`reason`. Two of those reasons currently say **KNOWN GAP** — `windows`+`gcc`,
-and `xlings` on Windows. Those are meaningful cells that are simply not wired
-up; they are written down so that "not measured" cannot quietly become "not
-applicable".
+`reason`, and the ones that say **KNOWN GAP** are meaningful cells that are
+simply not wired up rather than cells that make no sense — written down so that
+"not measured" cannot quietly become "not applicable". An exclusion may also
+name an `engine`, which scopes a caveat to one COLUMN instead of removing the
+job: the cell still runs, and its note says what to distrust.
 
 ---
 
@@ -134,6 +148,18 @@ Real projects run five of the six: `touch-leaf` needs a unit nobody imports
 real tree does not.
 
 ---
+
+### Shared build descriptions
+
+`projects/common/` holds the parts every arm needs: `cmake/hermetic_payload.cmake`
+and `xmake/payload.lua`. Both answer one question — "make this engine drive the
+same process tree mcpp does" — and both are **one branch per compiler family**,
+because that is what makes the toolchain a real axis rather than a label.
+
+They exist because the two projects had two copies of it, and the copies were
+already diverging. Two copies of a toolchain definition is the worst place for a
+copy: they drift by one flag and the benchmark reports the difference between the
+two *descriptions* as an engine result.
 
 ## 5. What CI runs
 

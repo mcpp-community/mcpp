@@ -67,7 +67,7 @@ std::vector<std::string> split(std::string_view s, char sep = ',') {
 void usage() {
     std::println("bench — build-engine benchmark harness");
     std::println("");
-    std::println("  --engines LIST     mcpp,cmake,xmake,meson,bazel            (default: all)");
+    std::println("  --engines LIST     mcpp,cmake,xmake,bazel                  (default: all)");
     std::println("  --variants LIST    headers,modules,modules-impl            (default: all)");
     std::println("  --scenarios LIST   cold,noop,touch-hub,touch-leaf,edit-body,edit-comment");
     std::println("  --profile NAME     release | debug                         (default: release)");

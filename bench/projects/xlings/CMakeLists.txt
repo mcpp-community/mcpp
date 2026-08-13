@@ -73,33 +73,14 @@ if(NOT XLINGS_ROOT OR NOT EXISTS "${XLINGS_ROOT}/mcpp.toml")
 endif()
 
 # ---------------------------------------------------------------------------
-# The hermetic payload, exactly as bench/projects/mcpp does it.
-#
-# CMAKE_CXX_FLAGS, not add_compile_options(): CMake generates the `std` module
-# target ITSELF and directory-scope options do not reach it. Without this the
-# std module compiles against the compiler's default libc headers while every
-# xlings unit compiles against the sysroot, and the build dies on a type that
-# exists in both (`conflicting type for imported declaration '_IO_FILE'`) — an
-# error that names neither the flag nor the target that is wrong.
+# The hermetic payload — SHARED with the mcpp arm. See
+# ../common/cmake/hermetic_payload.cmake, including why it is one branch per
+# compiler family (gcc gets -B/--sysroot, clang gets an explicit include chain,
+# msvc gets nothing because mcpp uses the system Visual Studio too).
 # ---------------------------------------------------------------------------
-if(DEFINED ENV{MCPP_HOME})
-  set(MCPP_HOME "$ENV{MCPP_HOME}")
-else()
-  set(MCPP_HOME "$ENV{HOME}/.mcpp")
-endif()
-set(MCPP_XPKGS "${MCPP_HOME}/registry/data/xpkgs")
-
-file(GLOB MCPP_BINUTILS_DIRS "${MCPP_XPKGS}/xim-x-binutils/*")
-if(MCPP_BINUTILS_DIRS)
-  list(SORT MCPP_BINUTILS_DIRS)
-  list(GET MCPP_BINUTILS_DIRS -1 MCPP_BINUTILS)
-  string(APPEND CMAKE_CXX_FLAGS " -B${MCPP_BINUTILS}/bin")
-  string(APPEND CMAKE_EXE_LINKER_FLAGS " -B${MCPP_BINUTILS}/bin")
-endif()
-if(IS_DIRECTORY "${MCPP_HOME}/registry/subos/default")
-  string(APPEND CMAKE_CXX_FLAGS " --sysroot=${MCPP_HOME}/registry/subos/default")
-  string(APPEND CMAKE_EXE_LINKER_FLAGS " --sysroot=${MCPP_HOME}/registry/subos/default")
-endif()
+include(${CMAKE_CURRENT_LIST_DIR}/../common/cmake/hermetic_payload.cmake)
+bench_hermetic_payload()
+bench_registry_xpkgs(MCPP_XPKGS)
 
 # ---------------------------------------------------------------------------
 # Source set — xlings' mcpp.toml infers `src/**/*.{cppm,cpp}` and names
@@ -137,26 +118,9 @@ target_compile_definitions(xlings PRIVATE LIBARCHIVE_STATIC UNICODE _UNICODE)
 # compiles them from source: a handicap on cmake's cold build, declared here
 # rather than hidden.
 # ---------------------------------------------------------------------------
-function(xlings_add_source_dep name version)
-  set(dir "${MCPP_XPKGS}/${name}/${version}")
-  file(GLOB_RECURSE srcs CONFIGURE_DEPENDS "${dir}/*/src/*.cppm")
-  if(NOT srcs)
-    message(WARNING "dependency ${name} ${version} not unpacked at ${dir}; "
-                    "this build will not match mcpp's own")
-    return()
-  endif()
-  list(GET srcs 0 first)
-  get_filename_component(base "${first}" DIRECTORY)
-  # A file-set name may only contain letters, digits and underscores — package
-  # names like `mcpplibs.capi-x-lua` do not qualify, and CMake rejects them at
-  # configure time rather than mangling them.
-  string(REGEX REPLACE "[^A-Za-z0-9_]" "_" fsname "fs_${name}")
-  target_sources(xlings PRIVATE
-    FILE_SET "${fsname}" TYPE CXX_MODULES BASE_DIRS "${base}" FILES ${srcs})
-endfunction()
 
-xlings_add_source_dep(mcpplibs-x-cmdline   0.0.2)
-xlings_add_source_dep(mcpplibs-x-xpkg      0.0.57)
+bench_add_source_dep(xlings mcpplibs-x-cmdline   0.0.2)
+bench_add_source_dep(xlings mcpplibs-x-xpkg      0.0.57)
 
 # `mcpplibs.xpkg.lua_stdlib` is generated, not checked in — libxpkg's build.mcpp
 # embeds ten .lua files as strings. Reproduced here so both arms compile the
@@ -182,8 +146,8 @@ if(XPKG_PKG_ROOT)
       BASE_DIRS "${CMAKE_CURRENT_BINARY_DIR}/generated"
       FILES "${LUA_STDLIB_CPPM}")
 endif()
-xlings_add_source_dep(mcpplibs-x-tinyhttps 0.2.9)
-xlings_add_source_dep(mcpplibs.capi-x-lua  0.0.3)
+bench_add_source_dep(xlings mcpplibs-x-tinyhttps 0.2.9)
+bench_add_source_dep(xlings mcpplibs.capi-x-lua  0.0.3)
 
 # Header-providing packages.
 #

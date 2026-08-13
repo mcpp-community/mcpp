@@ -10,7 +10,7 @@ only run on Linux.
 
 ```bash
 # generated fixtures, across engines and source forms
-bench --engines mcpp,cmake,xmake,meson,bazel \
+bench --engines mcpp,cmake,xmake,bazel \
       --variants headers,modules,modules-impl \
       --scenarios cold,noop,touch-hub,edit-body \
       --compiler /path/to/g++ --jobs 32 --out report.json
@@ -117,7 +117,7 @@ so that "no flags" and `--preset standard` cannot mean different things.
 
 | # | Invariant | How it is enforced |
 |---|---|---|
-| I1 | Identical compiler **binary** across engines | `--compiler <path>` is threaded into cmake (`-DCMAKE_CXX_COMPILER`), meson & xmake (`CXX`), bazel (`CC` + `--action_env`). mcpp uses its hermetic payload — a **declared asymmetry**, see §5. |
+| I1 | Identical compiler **binary** across engines | `--compiler <path>` is threaded into cmake (`-DCMAKE_CXX_COMPILER`), xmake (`CXX`), bazel (`CC` + `--action_env`). mcpp uses its hermetic payload — a **declared asymmetry**, see §5. |
 | I0 | Optimisations are measured, never emulated | Engines are parameterised by BINARY (`mcpp=<path>`). The harness contains no "what if we also set X" mode: emulating a change measures the harness's idea of it and silently stops tracking the implementation. |
 | I2 | Identical source set | All variants come from one generator; no engine globs its own inputs. |
 | I3 | Identical language level | C++23 everywhere; `import std;` is **absent from every fixture** (see §5). |
@@ -182,7 +182,7 @@ when the build fails, which is precisely when a leftover edit would be missed.
 
 Two details that are easy to get wrong and change the answer:
 
-* **`cold` includes configure.** cmake and meson keep configure output inside the
+* **`cold` includes configure.** cmake keeps its configure output inside the
   build directory that `clean` removes, so building without re-configuring simply
   fails. Timing configure separately would also be wrong: the user waits for both,
   and engines that fold configure into the build (mcpp, bazel) would get a
@@ -422,7 +422,8 @@ the original analysis:
 
 | target | what it is for |
 |---|---|
-| [`mcpp/`](projects/mcpp/) | mcpp building itself, with cmake/xmake/meson/bazel descriptions beside it |
+| [`mcpp/`](projects/mcpp/) | mcpp building itself, with cmake/xmake/bazel descriptions beside it |
+| [`common/`](projects/common/) | the per-engine payload logic both projects share — one branch per compiler family |
 | [`xlings/`](projects/xlings/) | an **independent** codebase (110 modules / 46k lines, different authors) — the control that separates "a faster build engine" from "a faster benchmark target" |
 
 ⚠️ **An engine change that only helps the project it was developed on is not an

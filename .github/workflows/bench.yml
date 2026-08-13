@@ -173,7 +173,6 @@ jobs:
           set -uo pipefail
           xlings install bazel -y || echo "bazel unavailable on this runner"
           xlings install xmake -y || echo "xmake unavailable on this runner"
-          python3 -m pip install --quiet meson || echo "meson unavailable on this runner"
           cmake --version || true
           ninja --version || true
 

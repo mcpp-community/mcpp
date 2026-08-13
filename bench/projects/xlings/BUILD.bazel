@@ -1,0 +1,22 @@
+# See MODULE.bazel: this cannot build xlings today, and the blocker is the
+# workspace boundary rather than anything about modules.
+#
+# The shape a working version would take is kept here so the gap is legible:
+#
+#   cc_binary(
+#       name = "xlings",
+#       srcs = ["src/main.cpp"],
+#       module_interfaces = glob(["src/**/*.cppm"]) + [
+#           "std.cppm",                      # copied from libc++, listed FIRST
+#       ],
+#       includes = ["src/libs/json"],
+#       defines = ["LIBARCHIVE_STATIC", "UNICODE", "_UNICODE"],
+#       copts = ["-std=c++23", "-Wno-reserved-module-identifier"],
+#       linkopts = ["-static-libstdc++"],
+#   )
+#
+# built with:
+#   bazel build //:xlings --experimental_cpp_modules --features=cpp_modules --force_pic
+#
+# ...from inside the xlings checkout, which is the part that does not work: this
+# description would have to be written INTO the tree being measured.

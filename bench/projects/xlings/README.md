@@ -48,7 +48,23 @@ check that catches it.
 units against an 80-second difference does not move the conclusion, but it is
 recorded rather than smoothed over.
 
-## The cmake description, and where it stops
+## The foreign build descriptions, and where each stops
+
+| engine | file | status |
+|---|---|---|
+| cmake | [`CMakeLists.txt`](CMakeLists.txt) | configures, compiles all 110 units; **does not link** |
+| xmake | [`xmake.lua`](xmake.lua) | same shape, same gap; shares the toolchain definitions in [`../common/xmake/payload.lua`](../common/xmake/payload.lua) |
+| bazel | [`MODULE.bazel`](MODULE.bazel) | **cannot** — the workspace boundary, and this tree is not even in the repository |
+| meson | — | removed from the suite entirely: meson cannot declare a module interface unit at all (see `../../SPEC.md`) |
+
+Both working arms take the compiler as a parameter, so the **toolchain is a real
+axis here** and not a label: gcc gets `-B<binutils>` + `--sysroot`, clang gets its
+own include chain (handing clang gcc's sysroot puts the two arms on different
+libc), msvc gets nothing because mcpp uses the system Visual Studio too. That
+logic is shared with the mcpp arm rather than copied — see
+[`../common/`](../common/).
+
+## Where the cmake and xmake arms stop
 
 `CMakeLists.txt` here is real — it configures, finds all 110 module interface
 units, and compiles them. **It does not link**, and the reason is worth having

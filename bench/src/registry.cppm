@@ -18,7 +18,6 @@ import bench.engines.engine;
 import bench.engines.mcpp;
 import bench.engines.cmake;
 import bench.engines.xmake;
-import bench.engines.meson;
 import bench.engines.bazel;
 
 export namespace bench {
@@ -58,7 +57,6 @@ inline std::unique_ptr<engines::Engine> make_engine(std::string_view spec) {
     if (name == "mcpp")  return engines::make_mcpp(program.empty() ? "mcpp" : program);
     if (name == "cmake") return engines::make_cmake();
     if (name == "xmake") return engines::make_xmake();
-    if (name == "meson") return engines::make_meson();
     if (name == "bazel") return engines::make_bazel();
     return nullptr;
 }
@@ -66,7 +64,7 @@ inline std::unique_ptr<engines::Engine> make_engine(std::string_view spec) {
 // The default set, used when --engines is omitted. Order is the reporting order,
 // chosen for reading: mcpp first (the subject), then the others.
 inline std::vector<std::string> default_engine_specs() {
-    return {"mcpp", "cmake", "xmake", "meson", "bazel"};
+    return {"mcpp", "cmake", "xmake", "bazel"};
 }
 
 }  // namespace bench

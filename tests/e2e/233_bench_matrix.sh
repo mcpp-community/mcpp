@@ -78,11 +78,18 @@ for x in m.get("excluded", []):
         fail.append(f"excluded {x.get('os')}/{x.get('toolchain')}/{x.get('project','*')}: "
                     "reason is missing or too short to be one")
 
-# An exclusion must not also be a cell.
+# An exclusion must not also be a cell. `*` is a wildcard, and an exclusion that
+# names an `engine` scopes a CAVEAT to one column rather than removing the job —
+# those legitimately coexist with the cell.
+def matches(x, c, key):
+    v = x.get(key)
+    return v is None or v == "*" or v == c[key]
+
 for x in m.get("excluded", []):
+    if x.get("engine"):
+        continue
     for c in m["cells"]:
-        if (x.get("os") == c["os"] and x.get("toolchain") == c["toolchain"]
-                and x.get("project", c["project"]) == c["project"]):
+        if all(matches(x, c, k) for k in ("os", "toolchain", "project")):
             fail.append(f"{c['os']}/{c['toolchain']}/{c['project']} is both a cell and excluded")
 
 if fail:
@@ -114,7 +121,7 @@ for s in m["axes"]["scenario"]:
 
 # Engines are whatever the registry constructs.
 known = set(re.findall(r'make_(\w+)_engine', registry)) | set(
-    re.findall(r'"(mcpp|cmake|xmake|meson|bazel)"', registry))
+    re.findall(r'"(mcpp|cmake|xmake|bazel)"', registry))
 for e in m["axes"]["engine"]:
     if e not in known:
         fail.append(f"axes.engine '{e}' is not built by bench/src/registry.cppm")
