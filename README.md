@@ -315,74 +315,74 @@ same compiler binary**, by a harness that lives in this repository
 ### A real project: building mcpp itself
 
 **137 module interface units, 57k lines, every one of them `import std;`** —
-measured in place, four engines, the same hermetic `gcc 16.1.0` binary handed to
-each. Median wall-clock and the ratio to cmake; **lower is better**.
+a pinned checkout, measured in place, with the same hermetic `gcc 16.1.0` binary
+handed to every engine. Median wall-clock and the ratio to cmake; **lower is
+better**.
 
-| scenario | what it asks | mcpp | cmake | xmake |
-|---|---|---|---|---|
-| `cold` | everything, from nothing | **82.87s** · 0.88x | 94.53s · 1.00x | 94.63s · 1.00x |
-| `noop` | how cheap is "already up to date" | **0.20s** · 0.58x | 0.34s · 1.00x | 0.38s · 1.10x |
-| `touch-leaf` | mtime bump on a unit nobody imports | **2.14s** · 0.12x | 18.06s · 1.00x | 18.47s · 1.02x |
-| `edit-body` | real edit inside a function body | **18.29s** · 0.93x | 19.64s · 1.00x | 19.97s · 1.02x |
-| `edit-comment` | a comment added to a widely-imported unit | **0.46s** · 0.01x | 85.03s · 1.00x | 84.69s · 1.00x |
-| `touch-hub` | mtime bump on a hub, content unchanged | **0.44s** · 0.01x | 84.53s · 1.00x | 83.65s · 0.99x |
+| scenario | what it asks | mcpp | mcpp `+bmi_schedule` | cmake | xmake |
+|---|---|---|---|---|---|
+| `cold` | everything, from nothing | 79.54s · 0.86x | **35.43s · 0.38x** | 92.33s · 1.00x | 90.30s · 0.98x |
+| `noop` | how cheap is "already up to date" | **0.16s** · 0.57x | 0.16s · 0.57x | 0.28s · 1.00x | 0.38s · 1.36x |
+| `touch-hub` | mtime bump on a hub, content unchanged | **0.40s** · 0.005x | **0.22s** · 0.003x | 83.39s · 1.00x | 82.07s · 0.98x |
+| `edit-body` | real edit inside a function body | 76.24s · 0.89x | **30.17s · 0.35x** | 85.64s · 1.00x | 84.61s · 0.99x |
 
-**Read the `cold` row first.** On a full build all three engines are within 15%
-of each other, and that is not a disappointment — it is the correct answer.
-mcpp's cold build is **100% critical path** (79.7s of a 79.8s makespan): every
-engine walks the same 26-deep chain of module interfaces, so no amount of
-scheduling or cores can help. Anyone quoting a synthetic fixture's `0.26x` as a
-cold-build advantage is quoting an artefact of a workload whose units cost 0.09s.
+**Read the `cold` row first.** On a full build all three engines land within 15%
+of each other, and that is the correct answer, not a disappointment: mcpp's cold
+build is **100% critical path** (79.7s of a 79.8s makespan, average parallelism
+3.94 of 32 hardware threads). Every engine walks the same 26-deep chain of module
+interfaces, and scheduling cannot shorten a chain. Anyone quoting a synthetic
+fixture's `0.26x` as a cold-build advantage is quoting an artefact of a workload
+whose units cost 0.09s each.
+
+The cold-build lever is **`[build] bmi_schedule = "on"`** — publish each module's
+BMI as soon as it exists and move code generation onto its own edge, so importers
+stop waiting for work they do not need. 79.54s → 35.43s. It is opt-in until it
+has been verified on every platform.
 
 **The gap is in the loop you actually spend the day in.** Touching a hub
-interface costs cmake and xmake a full 84-second downstream rebuild, because
-they decide by timestamp. mcpp compares the BMI the compiler just produced
-against the previous one and, when they are equivalent, puts the old file back
-so ninja's `restat` sees no change — the 46 importers never rebuild. That is
-**0.44s against 84.53s**.
+interface costs cmake and xmake a full 83-second downstream rebuild, because they
+decide by timestamp. mcpp compares the BMI the compiler just produced against the
+previous one and, when they are equivalent, puts the old file back so ninja's
+`restat` sees no change — the importers never rebuild. **0.40s against 83.39s.**
 
-`edit-body` is the control that keeps this honest: there the interface really
-did change, no engine should be fast, and none is (0.93x).
+`edit-body` is the control that keeps this honest: there the interface really did
+change, no engine should be fast, and none is.
 
 ### The same question on someone else's codebase
 
-mcpp measuring its own build proves nothing on its own — an optimisation can be
-an artefact of one project's module graph. **xlings** (110 modules, 46k lines,
-different authors, never tuned for this) is the control, pinned as a submodule
-and measured in two code styles: implementation inside the interface units, and
-implementation split into separate `.cpp`. See
-[`bench/projects/xlings/`](bench/projects/xlings/).
+mcpp measuring its own build proves nothing on its own. **xlings** (110 modules,
+46k lines, different authors, never tuned for this) is pinned in two code styles
+— implementation inside the interface units, and implementation split into
+separate `.cpp`:
 
-Synthetic-fixture numbers across **six** engine/compiler combinations, including
-bazel and clang, are in [`bench/results/`](bench/results/).
+| scenario | combined, old → new mcpp | split, old → new mcpp | what the split buys |
+|---|---|---|---|
+| `cold` | 97.01s → 92.48s | 30.33s → 29.78s | **3.11x** |
+| `touch-hub` | 89.39s → **1.76s** | 24.87s → **1.30s** | 1.35x |
+| `edit-body` | 89.46s → 88.33s | 2.73s → **1.77s** | **49.96x** |
 
-<sub>Source: [`bench/results/mcpp-self-20260813/`](bench/results/mcpp-self-20260813/)
-— Linux x86_64, i9-13900K, medians of 2 runs, mcpp 2026.8.12.1, **cmake 4.0.2 +
-ninja, xmake 3.0.7**. CI pins cmake 4.4.2 / xmake 3.1.0 / bazel 9.2.0
-([`bench/matrix.json`](bench/matrix.json)) and these tables are refreshed from
-its artifacts; do not mix rows taken at different pins. bazel is absent from this
-table because it cannot build C++20 modules with a gcc driver — recorded as
-`unavailable` with the reason, never as a slow number.</sub>
+Splitting implementations out of the interface units is worth **2.6x on a cold
+build and ~50x on an edit** — a code style, not an engine feature, and the
+largest single effect in the suite.
+
+Numbers are **n=1** except the split-tree `cold` row (n=3); read the ratios, not
+the digits. That row is why: at n=1 it read as a 23% regression, and at n=3 it is
+a marginal improvement — the single pair had caught one arm near the other's
+maximum. Full methodology, the
+declared asymmetries, and the cases where a cell must *not* be compared are in
+`bench/README.md`.
+
+📊 **[Methodology, pinned versions and data → `bench/README.md`](bench/README.md)**
+ · [中文](bench/README.zh-CN.md) · [what is measured → `bench/SPEC.md`](bench/SPEC.md)
 
 <!-- BENCHMARK-TABLE:END -->
 
-**What makes this comparable at all**, and what to check before quoting any of
-it:
-
-* every engine is handed **the same compiler binary** out of mcpp's own payload
-  (gcc 16.1.0 / clang 22.1.8), not whatever `g++` means on the runner;
-* the build tools are pinned — **cmake 4.4.2, xmake 3.1.0, bazel 9.2.0** —
-  and installed by xlings on every platform;
-* the projects are pinned as git submodules, so the target cannot drift;
-* **cmake is the baseline**: an absolute second count means nothing without
-  knowing the machine, but "1.8× cmake" survives being read somewhere else.
-
-There are declared asymmetries — cases where an engine is doing more or less
-work than another — and cells that are honestly `unavailable` or `skipped`
-rather than quietly zero. They are all written down.
-
-📊 **[Full methodology, pinned versions and data → `bench/README.md`](bench/README.md)**
- · [中文](bench/README.zh-CN.md) · [what is measured → `bench/SPEC.md`](bench/SPEC.md)
+**What makes this comparable at all:** every engine is handed the same compiler
+binary out of mcpp's own payload; the build tools are pinned (cmake 4.4.2,
+xmake 3.1.0, bazel 9.2.0) and installed by xlings on every platform; the measured
+projects are pinned as git submodules so the target cannot drift; and cmake is
+the baseline, because an absolute second count means nothing without knowing the
+machine while "0.38x cmake" survives being read somewhere else.
 
 ## Platform Support
 

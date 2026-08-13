@@ -187,7 +187,7 @@ mcpp, because the cmake and xmake arms stop at the link here (SPEC.md §2).
 
 | scenario | combined `2026.8.11.2` old → new | split `2026.8.13.1` old → new | what the split buys |
 |---|---|---|---|
-| `cold`         | 97.01s → 92.48s | 29.13s → 35.88s | **2.58x** |
+| `cold`         | 97.01s → 92.48s | 30.33s → 29.78s ⁽ⁿ⁼³⁾ | **3.11x** |
 | `noop`         | 1.55s → 0.72s   | 1.62s → 0.76s   | — |
 | `touch-hub`    | 89.39s → **1.76s** (50.6x) | 24.87s → **1.30s** (19.1x) | 1.35x |
 | `edit-body`    | 89.46s → 88.33s | 2.73s → **1.77s** | **49.96x** |
@@ -198,6 +198,13 @@ mcpp, because the cmake and xmake arms stop at the link here (SPEC.md §2).
   whole suite, and it is a *code style*, not an engine feature.
 * **`touch-hub` reproduces the engine result on a codebase nobody tuned for it**
   — 50.6x, against 190x on mcpp's own tree. Different magnitude, same mechanism.
+* ⚠️ **The `cold` row was nearly published as a 23% REGRESSION.** At n=1 the
+  split tree read `29.13s → 35.88s`, i.e. the new mcpp slower. Re-measured at
+  n=3 it is `30.33s → 29.78s` — marginally *faster*. The single pair had simply
+  caught the new arm near the old arm's maximum: the old arm's spread is
+  **19.1%** (29.92–35.72), a hair under the 20% that §4a R2 calls noisy, while
+  the new arm's is 4.7%. This is R2 doing exactly what it is for, and it is why
+  every other row here says n=1 rather than pretending otherwise.
 * **`edit-comment` does not improve at all here (1.00x), and that is correct.**
   xlings' hub has 56 function bodies, so inserting a comment moves every
   subsequent line; GCC records inline-body source locations in the BMI, the BMI
