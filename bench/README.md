@@ -200,13 +200,32 @@ First measurement in which all three arms produce a running binary — the cmake
 and xmake columns below were `failed` cells until the arms were finished, and the
 table that stood here was mcpp-against-mcpp for that reason.
 
-| scenario | **mcpp** | cmake | xmake |
-|---|---|---|---|
-| `cold` | **92.49s** · 1.29x | 119.46s · 1.00x | 105.02s · 1.14x |
-| `noop` | **0.74s** · 0.49x | 0.36s · 1.00x | 0.40s · 0.90x |
-| `touch-hub` | **1.79s** · 54.96x | 98.16s · 1.00x | 98.16s · 1.00x |
-| `edit-body` | **88.38s** · 1.11x | 98.43s · 1.00x | 98.00s · 1.00x |
-| `edit-comment` | **93.81s** · 1.04x | 97.98s · 1.00x | 97.97s · 1.00x |
+| scenario | **mcpp** `bmi_schedule=on` | mcpp default | cmake | xmake |
+|---|---|---|---|---|
+| `cold` | **37.56s** · 3.18x | 92.49s · 1.29x | 119.46s · 1.00x | 105.02s · 1.14x |
+| `noop` | **0.72s** · 0.50x | 0.74s · 0.49x | 0.36s · 1.00x | 0.40s · 0.90x |
+| `touch-hub` | **1.04s** · 93.93x | 1.79s · 54.96x | 98.16s · 1.00x | 98.16s · 1.00x |
+| `edit-body` | **29.65s** · 3.32x | 88.38s · 1.11x | 98.43s · 1.00x | 98.00s · 1.00x |
+| `edit-comment` | **30.44s** · 3.22x | 93.81s · 1.04x | 97.98s · 1.00x | 97.97s · 1.00x |
+
+**Both mcpp columns are here because one of them was misleading on its own.**
+The default column is what a user gets today; `bmi_schedule=on` is the opt-in
+split schedule, and leaving it out understated mcpp badly — `edit-body` reads
+1.11x in the default column and 3.32x with the schedule on.
+
+* **`edit-body` and `edit-comment` are not "no advantage".** The cascade really
+  is owed in both (the perturbed function body lives in an interface unit, so
+  the BMI genuinely changes). The default column shows mcpp doing that owed work
+  at cmake's pace; the schedule column shows it doing the SAME work 3.3x faster,
+  by publishing each BMI as soon as it exists instead of after code generation.
+* **`noop` is the one mcpp loses outright**, in both columns: 0.72–0.74s against
+  cmake's 0.36s. That is per-invocation overhead, and it is the number a user
+  feels on every edit-build cycle.
+* **The `bmi_schedule` correctness bug (§8b) does NOT reproduce here.** All ten
+  cells are `ok`. It reproduces on the generated fixture, whose tight
+  unit_0→unit_1 chain hits the window; three real trees (mcpp's own and both
+  xlings styles) do not. That is why the key is still opt-in — a defect that
+  only one workload can show is still a defect.
 
 <sub>xlings `2026.8.11.2`, gcc 16.1.0 payload, Linux x86_64 · i9-13900K · n=1 ·
 `--baseline cmake`. Raw report: `bench/results/xlings-3way-20260814/`.</sub>
