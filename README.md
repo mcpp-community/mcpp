@@ -310,10 +310,47 @@ mcpp is measured against cmake, xmake and bazel on the **same sources with the
 same compiler binary**, by a harness that lives in this repository
 ([`bench/`](bench/)) and runs in CI across Linux, macOS and Windows.
 
-<!-- BENCHMARK-TABLE:START — see bench/README.md before quoting any of this -->
+<!-- BENCHMARK-TABLE:START — regenerate from bench/results/; do not hand-edit numbers -->
 
-_Filled in from the CI matrix. Every number below is a median wall-clock, taken
-with the pins listed in [`bench/README.md` §0](bench/README.md)._
+C++20 **named modules**, 40 translation units, fan-in 3. Median wall-clock and
+the ratio to cmake; **lower is better**, `0.03x` reads "took 3% of what cmake
+took". Same sources, same compiler binary, same machine.
+
+**gcc 16.1.0**
+
+| scenario | what it asks | mcpp | cmake | xmake | bazel |
+|---|---|---|---|---|---|
+| `cold` | build everything from nothing | **3.53s** · 0.27x | 13.05s · 1.00x | 11.46s · 0.88x | — |
+| `noop` | how cheap is "already up to date" | **0.14s** · 0.42x | 0.34s · 1.00x | 0.32s · 0.94x | — |
+| `touch-hub` | mtime bump on a hub, content unchanged | **0.29s** · 0.03x | 10.32s · 1.00x | 11.13s · 1.08x | — |
+| `edit-body` | real edit inside a function body | **0.29s** · 0.03x | 10.29s · 1.00x | 11.15s · 1.08x | — |
+
+**clang 22.1.8**
+
+| scenario | what it asks | mcpp | cmake | xmake | bazel |
+|---|---|---|---|---|---|
+| `cold` | build everything from nothing | **2.50s** · 0.62x | 4.00s · 1.00x | 13.19s · 3.30x | 3.19s · 0.80x |
+| `noop` | how cheap is "already up to date" | **0.18s** · 0.54x | 0.32s · 1.00x | 0.32s · 0.99x | 0.20s · 0.63x |
+| `touch-hub` | mtime bump on a hub, content unchanged | **0.28s** · 0.10x | 2.67s · 1.00x | 12.76s · 4.79x | 0.23s · 0.08x |
+| `edit-body` | real edit inside a function body | **0.46s** · 0.17x | 2.62s · 1.00x | 12.68s · 4.84x | 2.84s · 1.08x |
+
+The interesting row is `touch-hub` / `edit-body`: changing a widely-imported
+interface unit costs cmake and xmake a **full downstream rebuild**, because they
+decide by timestamp. mcpp compares the BMI the compiler just produced against
+the previous one and, when they are equivalent, puts the old file back so
+ninja's `restat` sees no change — 39 downstream units never rebuild.
+
+Under gcc that is where 10.3s becomes 0.29s. Under clang the same mechanism is
+worth less, because clang's cold build is already 3.3× cheaper than gcc's — a
+good illustration of why the toolchain is an axis of this benchmark and not a
+footnote.
+
+<sub>Source: [`bench/results/five-way-20260812/`](bench/results/five-way-20260812/)
+— Linux x86_64, i9-13900K, medians of 2 runs, mcpp 2026.8.12.1, **cmake 4.0.2,
+xmake 3.0.7, bazel 9.2.0**. CI now pins cmake 4.4.2 / xmake 3.1.0 / bazel 9.2.0
+([`bench/matrix.json`](bench/matrix.json)); this table is refreshed from those
+artifacts. `—` = the engine cannot build C++20 modules with a gcc driver, which
+the report records as `unavailable` with the reason rather than as a slow number.</sub>
 
 <!-- BENCHMARK-TABLE:END -->
 

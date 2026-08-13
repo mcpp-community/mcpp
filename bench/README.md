@@ -104,6 +104,51 @@ Four things this bought, each of which had already gone wrong:
 > platform, so both mcpp binaries run with it off. Its effect is measured
 > separately in `.agents/docs/2026-08-13-build-optimization-status.md`.
 
+### The headline numbers, and where they come from
+
+Full data: [`results/five-way-20260812/`](results/five-way-20260812/). 40 units,
+fan-in 3, medians of 2 runs, i9-13900K. **Ratios are against cmake**; the two
+mcpp columns are the release-over-release comparison.
+
+`modules`, **gcc 16.1.0**:
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake |
+|---|---|---|---|---|
+| `cold`        | 3.61s · 0.28x | 3.53s · 0.27x | **13.05s** · 1.00x | 11.46s · 0.88x |
+| `noop`        | 0.15s · 0.46x | 0.14s · 0.42x | **0.34s** · 1.00x  | 0.32s · 0.94x  |
+| `touch-leaf`  | 0.39s · 0.39x | 0.30s · 0.31x | **0.99s** · 1.00x  | 1.16s · 1.17x  |
+| `touch-hub`   | 3.61s · 0.35x | **0.29s · 0.03x** | **10.32s** · 1.00x | 11.13s · 1.08x |
+| `edit-comment`| 3.67s · 0.36x | **0.30s · 0.03x** | **10.31s** · 1.00x | 10.55s · 1.02x |
+| `edit-body`   | 3.65s · 0.35x | **0.29s · 0.03x** | **10.29s** · 1.00x | 11.15s · 1.08x |
+
+`modules`, **clang 22.1.8**:
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake | bazel |
+|---|---|---|---|---|---|
+| `cold`        | 2.65s · 0.66x | 2.50s · 0.62x | **4.00s** · 1.00x | 13.19s · 3.30x | 3.19s · 0.80x |
+| `noop`        | 0.18s · 0.57x | 0.18s · 0.54x | **0.32s** · 1.00x | 0.32s · 0.99x  | 0.20s · 0.63x |
+| `touch-hub`   | 0.35s · 0.13x | 0.28s · 0.10x | **2.67s** · 1.00x | 12.76s · 4.79x | 0.23s · 0.08x |
+| `edit-body`   | 0.52s · 0.20x | 0.46s · 0.17x | **2.62s** · 1.00x | 12.68s · 4.84x | 2.84s · 1.08x |
+
+**What the old-vs-new column is actually showing.** Under gcc, 3.65s → 0.29s on
+`edit-body` is not a scheduling change. Both releases have the same mechanism —
+compare the BMI the compiler just produced against the previous one, and when
+they are equivalent put the old file back so ninja's `restat` sees no change —
+but 2026.8.11.3 compared **bytes**, and GCC writes `buildtime:`/`localtime:`
+stamps into every BMI. No two BMIs were ever byte-equal, so the suppression had
+never once fired since it was written in May.
+
+Under clang the same rows barely move, because clang's cold build is already
+3.3× cheaper than gcc's and there is far less cascade to avoid. That is the
+whole argument for the toolchain being an axis: **the answer is not the same
+multiple on both**, so a suite that pinned one compiler would publish one of
+these two numbers as if it were the answer.
+
+> ⚠️ Those numbers were taken with **cmake 4.0.2 / xmake 3.0.7**, before the
+> pins in the table above. They are quoted here because they are a real,
+> reproducible, in-repo result file; CI now runs the pinned versions and the
+> tables are refreshed from its artifacts. Do not mix rows from the two.
+
 ---
 
 ## 1. What is measured

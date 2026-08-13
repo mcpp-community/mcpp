@@ -32,7 +32,7 @@ SPEC="$ROOT/bench/SPEC.md"
 # ROOT is passed in: this python runs from stdin, so sys.argv[0] is "-" and the
 # repository cannot be derived from it.
 python3 - "$MATRIX" "$ROOT" <<'PY'
-import json, re, sys
+import json, os, re, sys
 
 m = json.load(open(sys.argv[1]))
 axes = m["axes"]
@@ -133,7 +133,6 @@ for x in m.get("excluded", []):
 # It is checkable at all only because the trees are now pinned SUBMODULES rather
 # than cloned from a moving branch at run time. That is most of the argument for
 # pinning them.
-import os
 root = sys.argv[2]
 for c in m["cells"]:
     if c["project"] == "fixture":
@@ -169,6 +168,20 @@ for t in ("cmake", "xmake", "bazel", "gcc", "llvm"):
                     "variable the report does not record")
 if not re.match(r"^\d+(\.\d+)+$", str(m.get("reference_mcpp", ""))):
     fail.append("reference_mcpp must be an exact released version — it is the old-vs-new column")
+
+# ...and it must be the version the repository already bootstraps from.
+#
+# They are the same decision written in two files: `.xlings.json` says which
+# released mcpp CI installs, and that installed binary IS the reference arm the
+# bench compares against. Let them drift and the "old" column silently becomes
+# some other release, with every ratio still looking perfectly reasonable.
+xlings_pin = os.path.join(root, ".xlings.json")
+if os.path.isfile(xlings_pin):
+    ws = json.load(open(xlings_pin)).get("workspace", {}).get("mcpp")
+    if ws and ws != m.get("reference_mcpp"):
+        fail.append(f"reference_mcpp={m.get('reference_mcpp')} but .xlings.json bootstraps "
+                    f"mcpp {ws} — the reference arm IS the bootstrapped binary, so these "
+                    f"two must agree or the old-vs-new column compares the wrong release")
 
 if fail:
     print("FAIL: bench/matrix.json")
