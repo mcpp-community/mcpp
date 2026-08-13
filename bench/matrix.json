@@ -206,20 +206,6 @@
       "baseline": "2026.8.11.3",
       "allow_failed": "cmake,xmake",
       "note": "KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp."
-    },
-    {
-      "os": "linux",
-      "toolchain": "clang",
-      "project": "xlings-2026.8.13.1",
-      "buildfiles": "xlings",
-      "engines": "mcpp,cmake,xmake",
-      "variants": "modules-impl",
-      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
-      "hub": "src/platform.cppm",
-      "body": "src/platform.cpp",
-      "baseline": "2026.8.11.3",
-      "allow_failed": "cmake,xmake",
-      "note": "KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp."
     }
   ],
   "excluded": [
@@ -284,6 +270,12 @@
       "project": "mcpp-*",
       "engine": "bazel",
       "reason": "bazel cannot build this workload: it will not glob sources from outside its workspace, and `import std;` has no bazel spelling. bench/projects/mcpp/BUILD.bazel therefore declares no rules — and `bazel build //...` over a package with no rules EXITS 0 having compiled nothing, which the matrix published as `bazel cold 0.43s` beside mcpp's 12s and cmake's 94s. Removed here, and the bazel adapter now reports `unavailable` for a ruleless package so the next one cannot be published as a measurement."
+    },
+    {
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "xlings-2026.8.13.1",
+      "reason": "clang 22.1.8 crashes compiling this tree's `xlings.core.config` module — a compiler bug, not a build-engine result: `clang frontend command failed with exit code 139`, `PLEASE submit a bug report to llvm/llvm-project`, on obj/xlings/src/core/config.m.o. The SAME tree with the SAME description builds clean under gcc 16.1.0 (linux/gcc/xlings-2026.8.13.1 is green), so nothing here measures an engine. Excluded rather than waived because a crashing compiler produces no number to look at; re-add the cell when llvm ships a fix."
     }
   ],
   "_workload_note": [
