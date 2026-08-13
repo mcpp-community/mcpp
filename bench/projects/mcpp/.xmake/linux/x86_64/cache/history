@@ -24,6 +24,7 @@
         "xmake build -P /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/mcpp",
         "xmake build -P /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/mcpp",
         "xmake f -y -P /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/mcpp -m release -o /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/mcpp/mcpp-2026.8.11.3/build",
+        "xmake build -P /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/mcpp",
         "xmake build -P /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/mcpp"
     }
 }

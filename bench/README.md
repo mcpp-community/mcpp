@@ -446,9 +446,23 @@ comparison of absolute seconds as invalid; compare **ratios within one table**.
 
 These cannot be removed, so they are stated rather than hidden.
 
-* **mcpp uses its own hermetic toolchain.** `--compiler` pins the others; mcpp
-  resolves gcc/llvm from its registry by design. Point `--compiler` at that same
-  payload (`~/.mcpp/registry/data/xpkgs/xim-x-gcc/<ver>/bin/g++`) to close the gap.
+* ~~**mcpp uses its own hermetic toolchain.**~~ **CLOSED, and it was not an
+  asymmetry — it was a hole.** mcpp resolves gcc/llvm from its registry and
+  ignores the `--compiler` every other engine is handed, which for the generated
+  fixture is harmless (the harness writes that manifest) and for a real project
+  is not: the pinned workloads say `gcc@16.1.0`, so on a clang cell cmake and
+  xmake ran clang while mcpp quietly ran gcc — a compiler comparison wearing an
+  engine-comparison label. `--compiler payload:gcc|clang` now resolves the driver
+  out of mcpp's own registry for *every* engine, and the mcpp engine translates
+  the same request into `MCPP_TOOLCHAIN` from the same version constants. Stated
+  here because it stood as a "declared asymmetry" for a while, and a thing you
+  can fix should not stay on this list.
+* **The `+schedule=on` arm is the same binary, not a different engine.** mcpp's
+  BMI schedule is a key in the MEASURED PROJECT's manifest and the workloads are
+  pinned (one belongs to someone else), so the harness reaches it through
+  `MCPP_BMI_SCHEDULE` and labels the arm `mcpp@<ver>+schedule=on`. It is an
+  option under test, and it is on the same row set as the default so the two are
+  read together rather than across runs.
 * **No fixture says `import std;`.** Engines differ wildly in how — and whether —
   they can build the std module (CMake needs a per-version experimental UUID,
   meson has no story). That difference would dominate every measurement. The
