@@ -646,4 +646,9 @@ clang,于是每一次 CI 构建都撞上 clang 22 的模块误编译。
 ⚠️ **教训:`git add -A` 会把无关改动带进一个主题明确的提交。** 这次带进去的是
 一行工具链切换,代价是几小时的排查,而排查方向一直被"提交说明说它只改了 bench"
 误导。提交前看 `--stat` 里有没有主题之外的文件,是最便宜的防线。
-CI 里那个诊断探针(`ci-linux-e2e.yml` 的 "diagnose: verbose trace")**理解之后要删**。
+CI 里那个诊断探针(`ci-linux-e2e.yml` 的 "diagnose: verbose trace")已在根因确认后
+删除 —— 它的使命就是把崩溃钉在 `stage("runtime-validate")` 打印之前,做到了。
+
+**修复确认**:改回 gcc 后,先前全红的六个核心 job(build+unit tests / toolchain: gcc /
+hermetic e2e / integration / toolchain: musl+llvm / cross-build aarch64)在 CI 上
+**全部转绿**。

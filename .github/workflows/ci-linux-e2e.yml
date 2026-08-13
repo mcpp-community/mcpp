@@ -150,27 +150,6 @@ jobs:
           "$MCPP" --version
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
 
-      # DIAGNOSTIC, not a test. The step below has been segfaulting on CI while
-      # the identical build succeeds locally, and its output stops dead at
-      #     Compiling hello195 v0.1.0 (.)
-      #     Segmentation fault (core dumped)
-      # with nothing to say which stage died. The e2e jobs deliberately do not
-      # set MCPP_VERBOSE (they assert mcpp's default quiet output), so this runs
-      # the same build once, verbosely, in its own directory, and never fails the
-      # job — the next run of it will name the stage.
-      #
-      # Delete this step once the crash is understood.
-      - name: "diagnose: verbose trace of the crashing build"
-        continue-on-error: true
-        run: |
-          cd "$(mktemp -d)"
-          "$MCPP" new hellodiag
-          cd hellodiag
-          printf '\n[toolchain]\nlinux = "llvm@22.1.8"\n' >> mcpp.toml
-          printf 'import std;\nint main() { std::println("diag"); return 0; }\n' > src/main.cpp
-          ulimit -c unlimited || true
-          MCPP_VERBOSE=1 "$MCPP" build 2>&1 | tail -60 || echo "exit=$?"
-
       - name: "issue #195 reproduction: manifest llvm toolchain, fresh"
         run: |
           cd "$(mktemp -d)"
