@@ -30,6 +30,7 @@ import mcpp.platform.runtime_binding;
 import mcpp.log;
 import mcpp.platform;
 import mcpp.platform.capacity;
+import mcpp.build.schedule.policy;   // resolve_jobs — one answer to "how many at once"
 import mcpp.fetcher.progress;
 import mcpp.project;
 import mcpp.ui;
@@ -1331,9 +1332,21 @@ export int run_tests(std::span<const std::string> passthrough,
     // 6. Phase B. First a single keep-going bulk build over every selected
     //    test goal — ninja parallelizes across tests and a failing test does
     //    not stop the rest (-k 0). The result is deliberately ignored: the
-    //    per-test loop below re-drives each goal, where successes are cache
-    //    hits (near no-ops) and failures re-fail fast, yielding cleanly
-    //    attributed per-test diagnostics without sacrificing parallelism.
+    //    per-test loop below re-drives each goal so a failure is attributed to
+    //    exactly one test.
+    //
+    //    ...but ONLY when this bulk build failed. A re-drive was assumed to be
+    //    a near no-op, and it is not: a drive re-emits build.ninja, rewrites
+    //    compile_commands.json, spawns ninja and re-validates the runtime
+    //    closure. Measured on the 83-test suite AFTER the rule E fix, that is
+    //    still ~39ms x 83 = 3.2s of a 5.3s hot run — spent re-asking a question
+    //    the bulk build just answered for every test at once.
+    //
+    //    `-k 0` means the bulk exit code is 0 IFF every selected goal built, so
+    //    it carries exactly the information the loop was re-deriving. When it
+    //    is non-zero the loop runs as before and each failure still names its
+    //    own test.
+    bool bulkBuiltEverything = false;
     {
         mcpp::build::BuildOptions bulk;
         bulk.keepGoing = true;
@@ -1343,7 +1356,7 @@ export int run_tests(std::span<const std::string> passthrough,
                 bulk.ninjaTargets.push_back(lu.output.generic_string());
         if (!bulk.ninjaTargets.empty()) {
             auto tBulk = std::chrono::steady_clock::now();
-            (void)backend->build(ctx->plan, bulk);
+            bulkBuiltEverything = backend->build(ctx->plan, bulk).has_value();
             summary.buildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - tBulk).count();
         }
@@ -1374,6 +1387,117 @@ export int run_tests(std::span<const std::string> passthrough,
         }
     }
 
+    // How many test binaries run at once.
+    //
+    // The tests themselves were never the slow part — MEASURED on the 83-test
+    // suite, the whole run phase is 1.8s against a 190s total — so this is the
+    // tail, not the fix. It is still worth having: after the build-side work
+    // (rule E, the per-test re-drive) the run phase is HALF of what is left.
+    //
+    // ONE test runs in the foreground, unbuffered. That is the debugging case:
+    // a single long test streaming its progress is worth more than the ~0ms
+    // concurrency would save on it, and capturing would hold that output back
+    // until the test ended — including when it hangs, which is exactly when a
+    // reader needs it.
+    const int runJobs = [&] {
+        int j = mcpp::build::schedule::resolve_jobs(ctx->manifest);
+        if (j <= 0) j = static_cast<int>(std::thread::hardware_concurrency());
+        return j > 0 ? j : 1;
+    }();
+
+    struct Runnable {
+        std::string name;
+        std::vector<std::string> argv;
+        std::vector<std::pair<std::string, std::string>> env;
+        std::chrono::steady_clock::time_point started;
+    };
+    std::vector<Runnable> runnable;
+
+    // Executes `list`, appending to `results` and emitting the per-test line.
+    //
+    // Output is CAPTURED whenever more than one test runs, and printed as one
+    // contiguous block when that test finishes. Streaming N tests straight to
+    // the terminal interleaves them line by line, which does not just look
+    // untidy — it makes a failing assertion unattributable, and the whole
+    // reason the per-test loop exists is attribution.
+    auto run_tests_now = [&](std::vector<Runnable>& list) {
+        if (list.empty()) return;
+        const bool capture = json || list.size() > 1;
+        const auto deadline = std::chrono::milliseconds(
+            static_cast<long long>(testOpts.timeoutSecs) * 1000);
+        const int workers = capture
+            ? std::min<int>(runJobs, static_cast<int>(list.size())) : 1;
+
+        auto tRunPhase = std::chrono::steady_clock::now();
+        std::atomic<std::size_t> next{0};
+        std::mutex reportMutex;
+
+        auto worker = [&] {
+            for (;;) {
+                std::size_t i = next.fetch_add(1);
+                if (i >= list.size()) return;
+                auto& r = list[i];
+
+                bool timedOut = false;
+                int exitCode = 0;
+                std::string runOutput;
+                if (capture) {
+                    auto rr = mcpp::platform::process::capture_exec_deadline(
+                        r.argv, r.env, deadline, &timedOut);
+                    exitCode  = rr.exit_code;
+                    runOutput = std::move(rr.output);
+                } else {
+                    mcpp::ui::status("Running", std::format("bin/{}", r.name));
+                    exitCode = mcpp::platform::process::run_exec_deadline(
+                        r.argv, r.env, deadline, &timedOut);
+                }
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - r.started).count();
+
+                std::scoped_lock lock(reportMutex);
+                if (timedOut) {
+                    if (!json) mcpp::ui::plain(std::format(
+                        "{} ... FAIL (timeout after {}s)", r.name, testOpts.timeoutSecs));
+                    results.push_back({r.name, TestResult::St::RunFail, exitCode, {},
+                                       runOutput, ms, true});
+                } else if (exitCode == 0) {
+                    if (!json) mcpp::ui::plain(std::format(
+                        "{} ... ok ({:.2f}s)", r.name, static_cast<double>(ms) / 1000.0));
+                    results.push_back({r.name, TestResult::St::Pass, 0, {},
+                                       runOutput, ms});
+                } else {
+                    if (!json) mcpp::ui::plain(std::format(
+                        "{} ... FAIL (exit {}, {:.2f}s)", r.name, exitCode,
+                        static_cast<double>(ms) / 1000.0));
+                    results.push_back({r.name, TestResult::St::RunFail, exitCode, {},
+                                       runOutput, ms});
+                }
+                // The captured output belongs directly under its own line, or
+                // it is attributable to nothing.
+                if (!json && capture && !runOutput.empty()) {
+                    std::fputs(runOutput.c_str(), stdout);
+                    if (runOutput.back() != '\n') std::fputc('\n', stdout);
+                }
+                std::fflush(stdout);
+                emit_json(results.back());
+            }
+        };
+
+        if (workers <= 1) {
+            worker();
+        } else {
+            std::vector<std::thread> pool;
+            pool.reserve(static_cast<std::size_t>(workers));
+            for (int w = 0; w < workers; ++w) pool.emplace_back(worker);
+            for (auto& t : pool) t.join();
+        }
+        // WALL time of the phase, not the sum of the per-test durations: with
+        // N running at once that sum exceeds the elapsed time and the summary
+        // would report a run phase longer than the whole command.
+        summary.runMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - tRunPhase).count();
+    };
+
     for (auto& lu : ctx->plan.linkUnits) {
         if (!filter_match(lu)) continue;
 
@@ -1385,13 +1509,16 @@ export int run_tests(std::span<const std::string> passthrough,
 
         mcpp::ui::status("Compiling", std::format("{} (test)", lu.targetName));
 
-        mcpp::build::BuildOptions bOpts;
-        bOpts.ninjaTargets = {lu.output.generic_string()};
-        bOpts.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
-        auto tBuild = std::chrono::steady_clock::now();
-        auto b = backend->build(ctx->plan, bOpts);
-        summary.buildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - tBuild).count();
+        std::expected<mcpp::build::BuildResult, mcpp::build::BuildError> b{};
+        if (!bulkBuiltEverything) {
+            mcpp::build::BuildOptions bOpts;
+            bOpts.ninjaTargets = {lu.output.generic_string()};
+            bOpts.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
+            auto tBuild = std::chrono::steady_clock::now();
+            b = backend->build(ctx->plan, bOpts);
+            summary.buildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - tBuild).count();
+        }
         if (!b) {
             if (!json) {
                 // The test's own diagnostics, right under its FAIL line — a
@@ -1418,7 +1545,6 @@ export int run_tests(std::span<const std::string> passthrough,
         }
 
         auto exe = ctx->outputDir / lu.output;
-        mcpp::ui::status("Running", std::format("bin/{}", lu.targetName));
 
         std::vector<std::string> argv;
         argv.push_back(exe.string());
@@ -1448,45 +1574,13 @@ export int run_tests(std::span<const std::string> passthrough,
             }
         }
 
-        // JSON mode captures the test's combined stdout+stderr into the
-        // record; human mode streams it to the terminal as before.
-        auto deadline = std::chrono::milliseconds(
-            static_cast<long long>(testOpts.timeoutSecs) * 1000);
-        bool timedOut = false;
-        int exitCode;
-        std::string runOutput;
-        auto tRun = std::chrono::steady_clock::now();
-        if (json) {
-            auto rr = mcpp::platform::process::capture_exec_deadline(
-                argv, childEnv, deadline, &timedOut);
-            exitCode  = rr.exit_code;
-            runOutput = std::move(rr.output);
-        } else {
-            exitCode = mcpp::platform::process::run_exec_deadline(
-                argv, childEnv, deadline, &timedOut);
-        }
-        summary.runMs += std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - tRun).count();
-
-        if (timedOut) {
-            if (!json) mcpp::ui::plain(std::format("{} ... FAIL (timeout after {}s)",
-                                                   lu.targetName, testOpts.timeoutSecs));
-            results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {},
-                               std::move(runOutput), test_ms(), true});
-        } else if (exitCode == 0) {
-            if (!json) mcpp::ui::plain(std::format("{} ... ok ({:.2f}s)", lu.targetName,
-                                                   static_cast<double>(test_ms()) / 1000.0));
-            results.push_back({lu.targetName, TestResult::St::Pass, 0, {},
-                               std::move(runOutput), test_ms()});
-        } else {
-            if (!json) mcpp::ui::plain(std::format("{} ... FAIL (exit {}, {:.2f}s)",
-                                                   lu.targetName, exitCode,
-                                                   static_cast<double>(test_ms()) / 1000.0));
-            results.push_back({lu.targetName, TestResult::St::RunFail, exitCode, {},
-                               std::move(runOutput), test_ms()});
-        }
-        emit_json(results.back());
+        runnable.push_back({lu.targetName, std::move(argv), std::move(childEnv),
+                            tTest});
     }
+
+    // Pass 2: run them. Concurrently unless there is exactly one — see
+    // `runJobs` for why the single-test case is deliberately different.
+    run_tests_now(runnable);
     summary.elapsedMs = member_ms();
 
     // 7. Summary.
