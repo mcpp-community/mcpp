@@ -226,6 +226,35 @@ mcpp LOSING:
   cmake and xmake decide by timestamp and rebuild all of them — to within 0.00s
   of each other, which is what two timestamp-driven engines should look like.
 
+
+#### The same three engines on the SPLIT tree
+
+Same project, implementations moved out of the interface units. This is the axis
+the two pins exist for, and it changes the answer more than the engine does.
+
+| scenario | **mcpp** | cmake | xmake |
+|---|---|---|---|
+| `cold` | **27.59s** · 1.82x | 50.13s · 1.00x | 41.90s · 1.20x |
+| `noop` | **0.79s** · 0.44x | 0.34s · 1.00x | 0.50s · 0.68x |
+| `touch-hub` | **1.32s** · 20.08x | 26.60s · 1.00x | 31.68s · 0.84x |
+| `edit-body` | **1.79s** · 0.75x | 1.35s · 1.00x | 1.49s · 0.91x |
+| `edit-comment` | **24.17s** · 1.09x | 26.35s · 1.00x | 31.28s · 0.84x |
+
+<sub>xlings `2026.8.13.1`, `modules-impl`, same host and payload as above. Raw
+report: `bench/results/xlings-3way-20260814/xlings-split-3way.json`.</sub>
+
+* **The refactor beats every engine choice on this workload.** `cold` falls from
+  92.49s to 27.59s for mcpp — 3.35x — and cmake's own cold falls 119.46s → 50.13s
+  (2.38x). Moving implementations out of interface units buys more than switching
+  build tool does.
+* **`edit-body` is 0.75x — mcpp is SLOWER than cmake here**, 1.79s against 1.35s.
+  With the body in a `.cpp`, one object recompiles and nothing cascades, so the
+  scenario measures per-invocation overhead rather than graph reasoning — the
+  same fixed cost `noop` shows. On this axis mcpp has no advantage to offer and
+  the number says so.
+* **`touch-hub` still pays: 20.08x.** Smaller than the combined tree's 54.96x
+  because there is simply less downstream work left to skip.
+
 #### The two code styles, mcpp against mcpp
 
 Older run, kept because it is the only side-by-side of the two pinned
