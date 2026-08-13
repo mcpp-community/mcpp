@@ -69,6 +69,13 @@ mcpp.
   **~50x on an edit**. A code style, not an engine feature — and the largest
   single effect anywhere in this suite.
 
+* `touch-hub` reproduces the engine result on a codebase nobody tuned for it.
+
+⚠️ **The `cold` row was nearly published as a 23% regression.** At n=1 it read
+`29.13s → 35.88s`. At n=3 it is `30.33s → 29.78s`, marginally faster: the single
+pair had caught the new arm near the old arm's max. The old arm's spread is
+**19.1%** — a hair under the 20% that §4a R2 calls noisy.
+
 ### 2b. …and the opt-in schedule on top of it
 
 | tree | scenario | default | `+bmi_schedule=on` | |
@@ -84,12 +91,6 @@ cascade to overlap. Splitting the implementations removes the cascade instead,
 after which the schedule has nothing left to win — and costs a little on `cold`.
 
 Raw: `xlings-combined-schedule-linux-gcc.json`, `xlings-split-schedule-linux-gcc.json`.
-* `touch-hub` reproduces the engine result on a codebase nobody tuned for it.
-
-⚠️ **The `cold` row was nearly published as a 23% regression.** At n=1 it read
-`29.13s → 35.88s`. At n=3 it is `30.33s → 29.78s`, marginally faster: the single
-pair had caught the new arm near the old arm's max. The old arm's spread is
-**19.1%** — a hair under the 20% that §4a R2 calls noisy.
 
 ## 3. The finding that only a second project could produce
 
@@ -101,9 +102,24 @@ optimisation that works sometimes:
 | mcpp `src/platform/platform.cppm` | 66 | **0** | `end-of-file` — nothing shifts | BMI unchanged, cascade skipped |
 | xlings `src/platform.cppm` | 566 | **56** | `in-body` — every later line shifts | BMI changes, **cascade is owed** |
 
-GCC records inline-body source locations in the BMI. mcpp measuring itself could
-never have seen this, because its hub happens to have no function bodies. The
-form is now recorded in every cell's `note`.
+mcpp measuring itself could never have seen this, because its hub happens to
+have no function bodies at all. The form is now recorded in every cell's `note`.
+
+**On the mechanism, only what was measured.** Directly comparing BMIs before and
+after an edit, on GCC 16.1:
+
+| edit | BMI |
+|---|---|
+| a free exported function's body, in the `.cppm` | **byte-identical** |
+| a **member function of an exported class**, inline in the `.cppm` | **differs** |
+| a body in a separate `.cpp` implementation unit | **byte-identical** |
+
+A class's member function bodies are part of the class definition every importer
+must see, so they are serialised; a free function's body is not, and nothing in
+an implementation unit is. What that does *not* settle is how much of the xlings
+`in-body` result is the serialised entity and how much is the line-number shift
+the insertion causes — both are present there, and the suite does not currently
+separate them. Stated rather than guessed.
 
 ---
 
