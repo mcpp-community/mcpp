@@ -123,33 +123,90 @@ Four things this bought, each of which had already gone wrong:
 variable; it is not evidence about anyone's build. Where the two disagree, the
 real project is right and the fixture is telling you about its own shape.
 
-#### mcpp itself — 137 modules, 57k lines, gcc 16.1.0
+#### mcpp itself — the pinned workload, 137 modules, 57k lines, gcc 16.1.0
 
-Full data: [`results/mcpp-self-20260813/`](results/mcpp-self-20260813/), medians
-of 2 runs, i9-13900K, measured in place with `--buildfiles projects/mcpp/`.
+`bench/projects/mcpp/mcpp-2026.8.11.3` (`a749e9f`), measured in place with
+`--buildfiles projects/mcpp/`, i9-13900K, **n=1** (see the caveat below).
+Ratios against cmake.
 
-| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake |
-|---|---|---|---|---|
-| `cold`         | 80.49s · 0.85x | 82.87s · 0.88x | **94.53s** · 1.00x | 94.63s · 1.00x |
-| `noop`         | 0.28s · 0.83x  | 0.20s · 0.58x  | **0.34s** · 1.00x  | 0.38s · 1.10x  |
-| `touch-leaf`   | 17.39s · 0.96x | 2.14s · 0.12x  | **18.06s** · 1.00x | 18.47s · 1.02x |
-| `edit-body`    | 18.30s · 0.93x | 18.29s · 0.93x | **19.64s** · 1.00x | 19.97s · 1.02x |
-| `edit-comment` | 76.50s · 0.90x | **0.46s · 0.01x** | **85.03s** · 1.00x | 84.69s · 1.00x |
-| `touch-hub`    | 76.50s · 0.91x | **0.44s · 0.01x** | **84.53s** · 1.00x | 83.65s · 0.99x |
+| scenario | `mcpp@2026.8.11.3` | `mcpp@2026.8.13.1` | `+bmi_schedule=on` | `cmake` | `xmake` |
+|---|---|---|---|---|---|
+| `cold`         | 79.46s · 0.86x | 79.54s · 0.86x    | **35.43s · 0.38x** | **92.33s** · 1.00x | 90.30s · 0.98x |
+| `noop`         | 0.34s · 1.21x  | 0.16s · 0.57x     | 0.16s · 0.57x      | **0.28s** · 1.00x  | 0.38s · 1.36x |
+| `touch-hub`    | 76.53s · 0.92x | **0.40s · 0.005x** | **0.22s · 0.003x** | **83.39s** · 1.00x | 82.07s · 0.98x |
+| `edit-body`    | 77.33s · 0.90x | 76.24s · 0.89x    | **30.17s · 0.35x** | **85.64s** · 1.00x | 84.61s · 0.99x |
+| `edit-comment` | 75.69s · 0.91x | **0.38s · 0.005x** | **0.18s · 0.002x** | **82.96s** · 1.00x | 82.73s · 1.00x |
 
-Three things this says that the fixture cannot:
+Four things this says, and the fixture can say none of them:
 
-1. **On a cold build nobody wins, and that is the right answer.** 80.5–94.6s
-   across four engines. mcpp's cold build is 100% critical path — 79.73s of a
-   79.79s makespan, average parallelism 3.94 of 32 hardware threads — so every
-   engine walks the same 26-deep chain of interfaces and scheduling cannot help.
-   The fixture put mcpp at **0.26x** here; that number is an artefact of a
-   workload whose units cost 0.09s each, and quoting it would be dishonest.
-2. **The daily loop is where the engines differ**, by ~190x on this project.
-3. **`edit-body` is the control**, and mcpp is deliberately *not* fast there
-   (0.93x): the interface genuinely changed, so the cascade is owed.
+1. **On a cold build nobody wins, and that is the correct answer.** Every engine
+   is within 15% of the others, because mcpp's cold build is **100% critical
+   path** — 79.7s of a 79.8s makespan, average parallelism 3.94 of 32 hardware
+   threads. All of them walk the same 26-deep chain of module interfaces, and
+   scheduling cannot shorten a chain. The generated fixture puts mcpp at `0.26x`
+   here; that is an artefact of a workload whose units cost 0.09s each, and
+   quoting it as a cold-build advantage would be dishonest.
+2. **The cold-build lever is the opt-in schedule, not the release.** 79.46s →
+   79.54s between the two releases is no change at all; `bmi_schedule = "on"`
+   takes it to 35.43s. Everything else in this table is release-over-release;
+   that column is a *setting*.
+3. **The daily loop is where the engines differ**, by ~190x on this project:
+   touching a hub interface costs cmake and xmake a full 83-second rebuild
+   because they decide by timestamp, and 0.40s for an engine that compares the
+   BMI it just produced against the previous one.
+4. **`edit-body` is the control.** mcpp is deliberately *not* fast there (0.89x):
+   the interface genuinely changed, so the cascade is owed. An engine that were
+   fast on that row would have skipped work it owed.
+
+> **The xmake column is from a SEPARATE run.** Its numbers in the original
+> five-arm run were invalid — xmake normalises `--buildir` to a path relative to
+> `-P` and then resolves it against the process cwd, so `clean()` had been
+> removing a directory it never wrote to and `cold` came back at **0.60s** with
+> status `ok`. Fixed (the engine now runs from `-P`) and re-measured on the same
+> machine; `cold` went 0.58s → 90.95s in the isolated check and 90.30s here.
+> Recorded rather than quietly re-run, because the two halves of this table were
+> not taken in the same minute.
+
+> **n=1, so read the ratios and not the digits.** §4a R2 asks for dispersion and
+> a single sample has none. Two rows also sit near their own engine's resolution
+> floor: mcpp's `touch-hub` and `edit-comment` are 2.5x and 2.4x its own `noop`,
+> just above R1's 2x line, so *"about two orders of magnitude"* is supported and
+> *"0.40 versus 0.38"* is not.
+
+> **`edit-comment` here is the `end-of-file` form.** mcpp's hub has no function
+> body, so the comment is appended rather than inserted, and no line numbers
+> move. On a hub that does have bodies the same scenario legitimately cascades —
+> see the xlings table below and SPEC.md §4. The cell's `note` records which
+> form ran.
+
+#### xlings — the same question on someone else's codebase, in two code styles
+
+110 modules, 46k lines, different authors, never tuned for this. The two pins
+are the same project either side of one refactor. Ratios against the released
+mcpp, because the cmake and xmake arms stop at the link here (SPEC.md §2).
+
+| scenario | combined `2026.8.11.2` old → new | split `2026.8.13.1` old → new | what the split buys |
+|---|---|---|---|
+| `cold`         | 97.01s → 92.48s | 29.13s → 35.88s | **2.58x** |
+| `noop`         | 1.55s → 0.72s   | 1.62s → 0.76s   | — |
+| `touch-hub`    | 89.39s → **1.76s** (50.6x) | 24.87s → **1.30s** (19.1x) | 1.35x |
+| `edit-body`    | 89.46s → 88.33s | 2.73s → **1.77s** | **49.96x** |
+| `edit-comment` | 95.40s → 95.02s | 25.09s → 25.29s | 3.76x |
+
+* **Splitting implementations out of the interface units is worth 2.6x on a cold
+  build and ~50x on `edit-body`.** That is the largest single effect in this
+  whole suite, and it is a *code style*, not an engine feature.
+* **`touch-hub` reproduces the engine result on a codebase nobody tuned for it**
+  — 50.6x, against 190x on mcpp's own tree. Different magnitude, same mechanism.
+* **`edit-comment` does not improve at all here (1.00x), and that is correct.**
+  xlings' hub has 56 function bodies, so inserting a comment moves every
+  subsequent line; GCC records inline-body source locations in the BMI, the BMI
+  genuinely changes, and the cascade is owed. mcpp's own hub has none, which is
+  the entire reason that row reads 199x there and 1.00x here. **A project
+  measuring itself cannot discover this.**
 
 #### The generated fixture — 40 units, fan-in 3
+
 
 Full data: [`results/five-way-20260812/`](results/five-way-20260812/). Useful
 because it is the only place `headers` / `modules` / `modules-impl` can be

@@ -97,17 +97,28 @@ inline std::optional<std::string_view> insert_into_first_body(
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     in.close();
 
-    // Insert inside the first function body: after the first '{' that follows a
-    // ')'. Anchoring on the brace rather than a name keeps this working for all
-    // three variants, whose function text differs.
+    // Insert inside the first function body: immediately after the first '{'
+    // that follows a ')'. Anchoring on the brace rather than a name keeps this
+    // working for all three variants, whose function text differs.
+    //
+    // ⚠️ AFTER THE BRACE, not after the newline that follows it. Those are the
+    // same position only when the body spans several lines. Given a one-line
+    // body — `export int f() { return 1; }` — the newline is past the CLOSING
+    // brace, so the statement landed at namespace scope and the build died with
+    //
+    //     error: expected unqualified-id
+    //         volatile int bench_nonce_0 = 0; (void)bench_nonce_0;
+    //
+    // pointing at a file the harness had just written. Honest (the cell failed
+    // loudly) but wrong: the perturbation is supposed to be applicable to any
+    // function, and "your function is on one line" is not a real limitation.
     //
     // A file may legitimately have NO function body — the modules-impl variant's
     // interface unit only declares — so a comment falls back to end-of-file
     // rather than reporting the scenario as inapplicable. A statement has no
     // such fallback: there is nowhere to put it that would mean the same thing.
     const auto paren = text.find(") {");
-    const auto brace = paren == std::string::npos ? std::string::npos
-                                                  : text.find('\n', paren);
+    const auto brace = paren == std::string::npos ? std::string::npos : paren + 2;
     std::string_view form = "in-body";
     if (brace == std::string::npos) {
         if (statement) return std::nullopt;
@@ -121,11 +132,13 @@ inline std::optional<std::string_view> insert_into_first_body(
         // The name carries the nonce because perturbations ACCUMULATE across the
         // repetitions of one cell: a fixed name redeclares itself on run 2 and
         // the build fails, which is exactly what the first version did.
+        // The leading newline is what makes a one-line body work: the text
+        // opens its own line immediately after `{`, whatever followed it.
         text.insert(brace + 1,
                     statement
-                        ? std::format("    volatile int bench_nonce_{0} = {0};"
-                                      " (void)bench_nonce_{0};\n", nonce)
-                        : std::format("    // bench: comment perturbation #{}\n", nonce));
+                        ? std::format("\n    volatile int bench_nonce_{0} = {0};"
+                                      " (void)bench_nonce_{0};", nonce)
+                        : std::format("\n    // bench: comment perturbation #{}", nonce));
     }
 
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
