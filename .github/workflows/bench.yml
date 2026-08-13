@@ -299,6 +299,20 @@ jobs:
           # and say nothing.
           BIN=$(bash .github/tools/newest_artifact.sh target 'mcpp')
           echo "MCPP_UNDER_TEST=$BIN" >> "$GITHUB_ENV"
+
+          # THE FOREIGN ARMS NEED THE DEPENDENCY'S SOURCES, and a cache hit never
+          # unpacks them. mcpp serves `mcpplibs.cmdline` from its global build
+          # cache, so on a fresh runner nothing is unpacked under
+          # registry/data/xpkgs — and the cmake and xmake arms, which compile
+          # those units from source to match what mcpp linked, then fail:
+          #     bench: mcpplibs.cmdline 0.0.1 is not unpacked under .../xpkgs
+          # (that message is the xmake arm's guard doing its job — the cmake arm
+          # used to warn and silently build without the units instead).
+          #
+          # Dropping the cached package makes the next mcpp build compile it from
+          # source, which unpacks it. Cheap — three translation units — and it
+          # happens before any measurement starts.
+          rm -rf "$HOME"/.mcpp/build-cache/v1/pkg/mcpplibs/*cmdline* || true
           echo "under test : $("$BIN" --version)"
           echo "reference  : $(command -v mcpp && mcpp --version || echo 'not installed')"
 

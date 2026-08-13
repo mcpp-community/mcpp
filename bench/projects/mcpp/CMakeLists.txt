@@ -51,6 +51,9 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(${CMAKE_CURRENT_LIST_DIR}/../common/cmake/hermetic_payload.cmake)
+bench_hermetic_payload_preproject()
+
 project(mcpp CXX)
 # Every mcpp module says `import std;`. This asks CMake to build the standard
 # library module from the compiler's own libstdc++.modules.json, which the
@@ -140,9 +143,16 @@ set(MCPP_CMDLINE_SRC
 if(IS_DIRECTORY "${MCPP_CMDLINE_SRC}")
   file(GLOB MCPP_CMDLINE_MODULES CONFIGURE_DEPENDS "${MCPP_CMDLINE_SRC}/*.cppm")
 else()
-  message(WARNING "mcpplibs.cmdline ${MCPP_CMDLINE_VERSION} not unpacked at "
-                  "${MCPP_CMDLINE_SRC}; this build will not match mcpp's own")
-  set(MCPP_CMDLINE_MODULES "")
+  # FATAL, not a warning. Warning here builds mcpp WITHOUT three of its units
+  # and the failure lands at the link as `undefined reference to ...cmdline...`,
+  # naming a consumer rather than the missing package — and on CI it did exactly
+  # that. A description that cannot name the same sources mcpp compiled is not a
+  # comparison arm. (The xmake arm beside this one raises for the same reason.)
+  message(FATAL_ERROR
+          "mcpplibs.cmdline ${MCPP_CMDLINE_VERSION} is not unpacked at "
+          "${MCPP_CMDLINE_SRC} — build the tree with mcpp once first, so both "
+          "arms compile the same dependency sources. A cache hit does NOT unpack "
+          "them; bench.yml drops the cached package before the matrix for this.")
 endif()
 
 add_executable(mcpp ${MCPP_SOURCES})

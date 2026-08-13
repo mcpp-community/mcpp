@@ -220,3 +220,53 @@ function(bench_add_source_dep target name version)
     target_sources(${target} PRIVATE ${impls})
   endif()
 endfunction()
+
+# ── The half that must run BEFORE project() ─────────────────────────────────
+#
+# `bench_hermetic_payload()` above keys off CMAKE_CXX_COMPILER_ID, which does
+# not exist until project() has probed the compiler — and that probe is exactly
+# what fails without these flags:
+#
+#     [2/2] .../xim-x-gcc/16.1.0/bin/g++ ... -o cmTC_c87ee
+#     /usr/bin/ld: cannot find crt1.o: No such file or directory
+#     /usr/bin/ld: cannot find crti.o: No such file or directory
+#
+# CMake reports that as "The C++ compiler is not able to compile a simple test
+# program", naming neither the sysroot nor the payload. It passed on developer
+# boxes because a host crt1.o was findable there and did not on CI.
+#
+# So this one keys off the compiler PATH, which the caller already has from
+# -DCMAKE_CXX_COMPILER. Same flags, same reasoning as the GNU branch above;
+# a compiler outside the registry is left alone, exactly as there.
+function(bench_hermetic_payload_preproject)
+  if(NOT CMAKE_CXX_COMPILER OR WIN32)
+    return()
+  endif()
+  get_filename_component(_real "${CMAKE_CXX_COMPILER}" REALPATH)
+  string(FIND "${_real}" "xpkgs" _pos)
+  if(_pos EQUAL -1)
+    return()
+  endif()
+  # clang carries its own include chain (see the Clang branch above) and does
+  # not need -B/--sysroot to link a test program; only the gcc payload does.
+  if(NOT _real MATCHES "g\\+\\+$" AND NOT _real MATCHES "gcc$")
+    return()
+  endif()
+  bench_registry_xpkgs(_xpkgs)
+  bench_newest_package("${_xpkgs}" "xim-x-binutils" _binutils)
+  set(_sysroot "${_xpkgs}/../subos/default")
+  set(_add "")
+  if(_binutils)
+    string(APPEND _add " -B${_binutils}/bin")
+  endif()
+  if(IS_DIRECTORY "${_sysroot}")
+    string(APPEND _add " --sysroot=${_sysroot}")
+  endif()
+  if(_add STREQUAL "")
+    return()
+  endif()
+  foreach(_v CMAKE_CXX_FLAGS CMAKE_C_FLAGS CMAKE_EXE_LINKER_FLAGS)
+    set(${_v} "${${_v}}${_add}" PARENT_SCOPE)
+  endforeach()
+  message(STATUS "bench: hermetic payload applied before project()${_add}")
+endfunction()

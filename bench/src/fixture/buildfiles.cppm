@@ -173,6 +173,19 @@ inline void emit_xmake(const std::filesystem::path& root, Variant variant, const
         // cost none of the others do.
         lua += "    set_policy(\"build.c++.modules.std\", false)\n";
     }
+    // ⚠️ PIE MUST BE EXPLICIT ON BOTH SIDES. The payload gcc defaults to a PIE
+    // link on the CI runners and to a non-PIE link on some developer boxes, so
+    // compiling without `-fPIE` produced objects the linker then refused:
+    //     relocation R_X86_64_32 against `.rodata.str1.1' can not be used
+    //     when making a PIE object; recompile with -fPIE
+    //     ld: failed to set dynamic section sizes: bad value
+    // Twelve fixture cells red on CI, green locally — the difference was the
+    // driver's default, not the engine. mcpp and cmake produce PIE here (the
+    // bazel adapter passes --force_pic for the same reason), so saying it out
+    // loud keeps all four arms producing the same kind of executable.
+    lua += "    add_cxflags(\"-fPIE\", {force = true})\n";
+    lua += "    add_ldflags(\"-pie\", {force = true})\n";
+
     // Same payload flags as the cmake arm: xmake is handed the driver through
     // CXX, and a registry gcc without -B/--sysroot cannot link.
     if (!pf.compile.empty())

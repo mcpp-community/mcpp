@@ -84,6 +84,9 @@ if(NOT CMAKE_C_COMPILER AND CMAKE_CXX_COMPILER)
   endif()
 endif()
 
+include(${CMAKE_CURRENT_LIST_DIR}/../common/cmake/hermetic_payload.cmake)
+bench_hermetic_payload_preproject()
+
 project(xlings C CXX)
 set(CMAKE_CXX_MODULE_STD 1)
 
