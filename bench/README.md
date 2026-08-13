@@ -53,7 +53,7 @@ than what it said.
 
 | what | pinned to | declared in |
 |---|---|---|
-| cmake | **4.4.2** | `matrix.json` → `tools` |
+| cmake | **4.0.2** | `matrix.json` → `tools` |
 | xmake | **3.1.0** | `matrix.json` → `tools` |
 | bazel | **9.2.0** | `matrix.json` → `tools` |
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
@@ -65,7 +65,7 @@ than what it said.
 | mcpp under test | the checkout | built by CI, resolved by `newest_artifact.sh` |
 
 **Everything is installed by xlings**, at those exact versions, on every runner.
-`xlings install cmake@4.4.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` is
+`xlings install cmake@4.0.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` is
 literally what CI runs, and the job prints the resolved version of each one and
 warns loudly if it is not the pinned one.
 
@@ -73,7 +73,7 @@ Four things this bought, each of which had already gone wrong:
 
 * **cmake 3.31.6** is what the GitHub runner images ship. It does not have the
   CMake 4.0 experimental key for `import std`, so *every module cell failed to
-  configure*. With 4.4.2 they pass.
+  configure*. With 4.0.2 they pass.
 * **`command -v g++`** on those images is gcc 13.3.0. cmake cannot configure
   C++23 modules with it and xmake crashes it with an internal compiler error —
   while mcpp quietly used its own registry's gcc 16.1 regardless. The table read

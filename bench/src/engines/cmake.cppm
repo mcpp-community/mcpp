@@ -57,7 +57,7 @@ public:
         return std::format(
             "cmake {}.{} is too old for `import std;` — the experimental gate key "
             "changes with the version and these descriptions carry the 4.0 one "
-            "(bench/matrix.json pins 4.4.2)", ver.major, ver.minor);
+            "(bench/matrix.json pins 4.0.2)", ver.major, ver.minor);
     }
 
     platform::RunResult configure(const Job& job) const override {
@@ -77,7 +77,7 @@ public:
         return platform::run(argv, {}, job.log_path, job.timeout_s);
     }
 
-    // Parsed out of the probe banner ("cmake version 4.4.2"), and cached: the
+    // Parsed out of the probe banner ("cmake version 4.0.2"), and cached: the
     // support question is asked once per cell and spawning cmake each time would
     // add a process launch to every row of the matrix.
     struct Version { int major{}; int minor{}; };

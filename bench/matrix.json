@@ -25,7 +25,7 @@
       "developer box had 3.1.0. A version that varies per runner is a variable",
       "the report does not record and the reader cannot see."
     ],
-    "cmake": "4.4.2",
+    "cmake": "4.0.2",
     "xmake": "3.1.0",
     "bazel": "9.2.0",
     "gcc": "16.1.0",
@@ -38,7 +38,8 @@
       "configure C++23 modules with it, xmake crashes it with an internal",
       "compiler error, and mcpp quietly used the registry payload anyway — so the",
       "table read `48 failed` while claiming to compare build engines."
-    ]
+    ],
+    "_cmake_note": "4.0.2, not the newest. `CMAKE_EXPERIMENTAL_CXX_IMPORT_STD` is gated by a UUID that CHANGES WITH THE CMAKE VERSION, and the descriptions in projects/ carry the 4.0 key; 4.4.2 rejects it with `this CMake's version of the feature` and the project fails to configure. It is also the version every published number in bench/results/ was measured with, so pinning it keeps the tables and the matrix describing the same tool. Moving to a newer cmake means updating the UUID in every description in the same commit."
   },
   "reference_mcpp": "2026.8.11.3",
   "_reference_mcpp_note": [

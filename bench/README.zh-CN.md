@@ -49,7 +49,7 @@ bench --project bench/projects/xlings/xlings-2026.8.13.1 \
 
 | 项目 | 钉到 | 声明位置 |
 |---|---|---|
-| cmake | **4.4.2** | `matrix.json` → `tools` |
+| cmake | **4.0.2** | `matrix.json` → `tools` |
 | xmake | **3.1.0** | `matrix.json` → `tools` |
 | bazel | **9.2.0** | `matrix.json` → `tools` |
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
@@ -61,14 +61,14 @@ bench --project bench/projects/xlings/xlings-2026.8.13.1 \
 | 被测 mcpp | 当前 checkout | CI 现场构建，由 `newest_artifact.sh` 定位 |
 
 **全部由 xlings 安装**，版本精确，每个 runner 一致。CI 里跑的字面就是
-`xlings install cmake@4.4.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3`，而且
+`xlings install cmake@4.0.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3`，而且
 job 会打印每个工具实际解析到的版本，与钉的版本不符就大声告警。
 
 这解决了四件已经真实发生过的事：
 
 * **cmake 3.31.6** 是 GitHub runner 镜像自带的版本。它没有 CMake 4.0 的
   `import std` 实验开关键，所以*每一个 module 格子都 configure 失败*。换成
-  4.4.2 之后全过。
+  4.0.2 之后全过。
 * **`command -v g++`** 在那些镜像上是 gcc 13.3.0。cmake 用它配不出 C++23
   modules，xmake 直接把它编崩（internal compiler error）—— 而 mcpp 一直悄悄用
   自己 registry 里的 gcc 16.1。表格是 `48 failed / 6 ok`，却仍然被当作「构建引擎

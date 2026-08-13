@@ -381,7 +381,18 @@ jobs:
               #
               # Putting it back is one line, and the §8 reproduction is the gate:
               # all six fixture scenarios green at --runs 2 before it returns.
-              e="mcpp=$MCPP_UNDER_TEST,mcpp"
+              # BOTH ARMS BY PATH, never the bare `mcpp` shim. The measured
+              # workloads carry their own `.xlings.json`, and the harness runs
+              # every engine with its cwd inside the workload — so a bare `mcpp`
+              # resolves against THAT workspace's pin and fails with
+              #
+              #     xlings: version '2026.8.11.2' not found for 'mcpp'
+              #       available: 2026.8.11.3
+              #
+              # $MCPP is the binary the bootstrap installed, which IS
+              # reference_mcpp (both come from .xlings.json — asserted by
+              # tests/e2e/233_bench_matrix.sh).
+              e="mcpp=$MCPP_UNDER_TEST,mcpp=$MCPP"
             fi
             engines="${engines:+$engines,}$e"
           done
