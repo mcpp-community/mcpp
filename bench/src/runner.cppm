@@ -33,6 +33,19 @@ struct RunOptions {
     // The requested compiler, so the generated mcpp manifest can pin the same
     // family the other engines are handed.
     std::string           compiler;
+
+    // How long ONE configure or build may run. 0 = forever, which is the right
+    // default for a library and the wrong one for CI — main gives it a value.
+    double                timeout_s{0.0};
+
+    // Live progress, and the ONLY thing that makes a long run legible while it
+    // is happening. A cell prints when it finishes, so a matrix cell that hangs
+    // in its third engine looks identical to one that hangs in its first: two
+    // CI jobs sat 25 minutes inside a child with a completely silent log.
+    //
+    // A callback rather than a print, because the runner must not own an output
+    // policy — the tests drive it with no sink at all.
+    std::function<void(std::string_view)> on_progress;
 };
 
 namespace detail {
@@ -110,6 +123,9 @@ public:
         if (!r.started())
             return std::format("{}: could not start the process (no log written) — "
                                "check the engine's program path", what);
+        if (r.timed_out)
+            return std::format("{} TIMED OUT after {:.0f}s and was killed (see {})",
+                               what, r.wall_s, log.string());
         return std::format("{} exited {} (see {})", what, r.exit_code, log.string());
     }
 
@@ -215,19 +231,33 @@ public:
         job.profile     = std::string(profile);
         job.compiler    = std::string(compiler);
         job.jobs        = opt_.jobs;
+        job.timeout_s   = opt_.timeout_s;
 
-        if (const auto cfg = engine.configure(job); !cfg.ok()) {
+        // Turns a failure into something a reader can act on WITHOUT the log
+        // file, which on a CI runner is deleted with the machine. Every module
+        // cell in the matrix failed behind a bare "see .../cmake-cold.log" and
+        // the job stayed green; neither half of that was noticed for weeks.
+        const auto fail = [&](std::string_view what, const platform::RunResult& r) {
             cell.status = Status::Failed;
-            cell.note   = failure_note("configure", cfg, job.log_path);
+            cell.note   = failure_note(what, r, job.log_path);
+            report(cell.note);
+            if (const auto tail = platform::tail_of(job.log_path); !tail.empty())
+                report(std::format("--- last lines of {} ---\n{}",
+                                   job.log_path.filename().string(), tail));
+        };
+
+        report("configure");
+        if (const auto cfg = engine.configure(job); !cfg.ok()) {
+            fail("configure", cfg);
             return cell;
         }
 
         // One untimed seed build. An incremental scenario is only incremental
         // against an up-to-date tree, and it warms the page cache so run 1 is
         // not systematically slower than the rest.
+        report("seed build");
         if (const auto seed = engine.build(job); !seed.ok()) {
-            cell.status = Status::Failed;
-            cell.note   = failure_note("seed build", seed, job.log_path);
+            fail("seed build", seed);
             return cell;
         }
 
@@ -243,9 +273,11 @@ public:
 
         const int runs = opt_.runs_override > 0 ? opt_.runs_override : default_runs(scenario);
         for (int i = 0; i < runs; ++i) {
+            report(std::format("run {}/{}", i + 1, runs));
             if (!perturb(engine, job, inst, scenario, i)) {
                 cell.status = Status::Failed;
                 cell.note   = std::format("could not apply scenario '{}'", to_string(scenario));
+                report(cell.note);
                 return cell;
             }
 
@@ -260,9 +292,7 @@ public:
             if (scenario == Scenario::Cold) {
                 const auto cfg = engine.configure(job);
                 if (!cfg.ok()) {
-                    cell.status = Status::Failed;
-                    cell.note   = failure_note(std::format("re-configure on run {}", i + 1),
-                                               cfg, job.log_path);
+                    fail(std::format("re-configure on run {}", i + 1), cfg);
                     return cell;
                 }
                 extra = cfg.wall_s;
@@ -270,9 +300,7 @@ public:
 
             const auto r = engine.build(job);
             if (!r.ok()) {
-                cell.status = Status::Failed;
-                cell.note   = failure_note(std::format("build on run {}", i + 1),
-                                           r, job.log_path);
+                fail(std::format("build on run {}", i + 1), r);
                 return cell;
             }
             cell.samples.push_back(Sample{extra + r.wall_s, r.exit_code});
@@ -284,6 +312,10 @@ public:
 
 private:
     RunOptions opt_;
+
+    void report(std::string_view what) const {
+        if (opt_.on_progress) opt_.on_progress(what);
+    }
 
     // Restores a file's exact bytes on destruction. Not a convenience: without
     // it a benchmark run leaves edit markers in the measured repository, and a

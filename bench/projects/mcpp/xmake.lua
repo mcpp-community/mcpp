@@ -65,7 +65,11 @@ target("mcpp")
     -- Source set == mcpp.toml's inferred glob src/**/*.{cppm,cpp}. mcpp infers
     -- kind=bin from src/main.cpp; xmake needs it spelled out.
     add_files(path.join(MCPP_ROOT, "src/**.cppm"))
-    add_files(path.join(MCPP_ROOT, "src/main.cpp"))
+    -- .cpp is globbed even though mcpp has exactly one today: naming it by
+    -- hand keeps working right until implementations are split out of the
+    -- interface units (which is what xlings did), and then this compiles
+    -- the interfaces, links nothing, and still reports a time.
+    add_files(path.join(MCPP_ROOT, "src/**.cpp"))
 
     -- mcpp.toml: include_dirs = ["src/libs/json"] — src/libs/json.cppm reaches
     -- for <json.hpp> from its global module fragment.

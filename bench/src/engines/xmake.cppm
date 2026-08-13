@@ -37,15 +37,15 @@ public:
         // host, and the comparison silently becomes compiler-vs-compiler.
         if (const auto cxx = resolve_cxx(job.compiler); !cxx.empty()) {
             platform::ScopedEnv pin("CXX", cxx);
-            return platform::run(argv, job.project_dir, job.log_path);
+            return platform::run(argv, job.project_dir, job.log_path, job.timeout_s);
         }
-        return platform::run(argv, job.project_dir, job.log_path);
+        return platform::run(argv, job.project_dir, job.log_path, job.timeout_s);
     }
 
     platform::RunResult build(const Job& job) const override {
         std::vector<std::string> argv{"xmake", "build", "-P", job.buildfile_dir.string()};
         if (job.jobs > 0) argv.push_back(std::format("-j{}", job.jobs));
-        return platform::run(argv, job.project_dir, job.log_path);
+        return platform::run(argv, job.project_dir, job.log_path, job.timeout_s);
     }
 
     // `.xmake/` holds the resolved configuration — the counterpart of a cmake

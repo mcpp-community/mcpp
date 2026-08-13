@@ -1,0 +1,33 @@
+# The benchmark's independent control target, pinned twice.
+#
+# WHY SUBMODULES RATHER THAN A CLONE IN CI. The workflow used to
+# `git clone --depth 1` xlings' default branch at run time, which means the
+# benchmark target moved with every upstream push. That is the drift these
+# descriptions warn about, and it had already happened: `--hub src/xlings.cppm`
+# named a file that no longer existed, so every xlings cell in every job
+# reported `skipped` and the jobs stayed green.
+#
+# A submodule is a PIN, not a vendored snapshot — the commit is in the diff, it
+# is reviewed like any other change, and `git submodule update --init` gives
+# everyone the tree CI measured. Updating it is deliberate, which is the whole
+# point of a benchmark target.
+#
+# WHY TWO OF THE SAME REPOSITORY. They are the two code styles being compared:
+#
+#   tree-2026.8.11.2 (b1563fe)  110 .cppm +  2 .cpp — implementation lives
+#                                                     inside each interface unit
+#   tree-2026.8.13.1 (f072075)  110 .cppm + 92 .cpp — implementation split out
+#
+# Same authors, same 46k lines, same module graph; the question is what the
+# split costs or saves on an incremental build. That is the `modules` vs
+# `modules-impl` axis the generated fixture has, on a real tree.
+#
+# ONE description serves both (bench/projects/xlings/{CMakeLists.txt,xmake.lua}):
+# it globs `src/**/*.{cppm,cpp}`, which is the same rule mcpp itself infers from,
+# so neither style needs its own file, an environment switch, or a branch.
+[submodule "bench/projects/xlings/xlings-2026.8.11.2"]
+	path = bench/projects/xlings/xlings-2026.8.11.2
+	url = https://github.com/openxlings/xlings
+[submodule "bench/projects/xlings/xlings-2026.8.13.1"]
+	path = bench/projects/xlings/xlings-2026.8.13.1
+	url = https://github.com/openxlings/xlings

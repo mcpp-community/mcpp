@@ -14,6 +14,7 @@ module;
 #if !defined(_WIN32)
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>   // kill/SIGKILL for the run_process timeout
 #include <spawn.h>
 #include <sys/wait.h>
 #include <stdlib.h>   // setenv / unsetenv — needed on Darwin too, where they
@@ -57,11 +58,21 @@ static unsigned long long now_ns() {
 // Returns the exit status, or -1 if the child could not be started; the
 // distinction matters because "could not start" is what tells probe() an engine
 // is absent rather than broken.
+//
+// `timeout_s` <= 0 means wait forever. A build engine CAN hang — bazel fetching
+// a module from a registry that never answers is the one seen here — and a
+// benchmark that hangs with it is worse than one that fails: the CI job burns
+// its whole budget and the log says nothing, because the harness only prints a
+// cell once the cell is over. Two jobs sat 25 minutes inside one child that way,
+// on a cell whose sibling finished in four.
 export int run_process(const std::vector<std::string>& argv,
                        const std::filesystem::path&    cwd,
                        const std::filesystem::path&    log,
-                       double*                         out_wall_s) {
-    if (out_wall_s) *out_wall_s = 0.0;
+                       double*                         out_wall_s,
+                       double                          timeout_s   = 0.0,
+                       bool*                           out_timeout = nullptr) {
+    if (out_wall_s)  *out_wall_s  = 0.0;
+    if (out_timeout) *out_timeout = false;
     if (argv.empty()) return -1;
 
     std::vector<char*> raw;
@@ -95,8 +106,43 @@ export int run_process(const std::vector<std::string>& argv,
     if (rc != 0) return -1;
 
     int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) return -1;
+    if (timeout_s <= 0.0) {
+        while (::waitpid(pid, &status, 0) < 0) {
+            if (errno != EINTR) return -1;
+        }
+    } else {
+        // Poll rather than alarm/sigtimedwait: the harness must not install a
+        // signal handler, because the child inherits the disposition and a
+        // compiler that ignores SIGALRM is a compiler that behaves differently
+        // under measurement than in real use.
+        //
+        // 20ms is well under the noise floor of anything timed here (the
+        // fastest measured cell is a ~10ms noop) and costs ~50 wakeups a second
+        // on a machine already running a compiler.
+        const auto deadline_ns = t0 + static_cast<unsigned long long>(timeout_s * 1e9);
+        for (;;) {
+            const ::pid_t r = ::waitpid(pid, &status, WNOHANG);
+            if (r == pid) break;
+            if (r < 0) { if (errno == EINTR) continue; return -1; }
+            if (now_ns() >= deadline_ns) {
+                // SIGKILL, not SIGTERM: the thing being killed is a build tool
+                // that may have spawned a job server and a pool of compilers,
+                // and a polite signal it chooses to handle leaves the harness
+                // waiting on exactly the hang it is trying to escape. The
+                // process group would be better still, but the child was not
+                // made a group leader, so killing one would reach the harness.
+                ::kill(pid, SIGKILL);
+                while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+                if (out_wall_s)  *out_wall_s  = static_cast<double>(now_ns() - t0) / 1e9;
+                if (out_timeout) *out_timeout = true;
+                // 124 is what `timeout(1)` reports, so the number is already
+                // familiar; `out_timeout` is what callers actually branch on,
+                // since a build tool may legitimately exit 124 on its own.
+                return 124;
+            }
+            struct timespec nap{0, 20 * 1000 * 1000};
+            ::nanosleep(&nap, nullptr);
+        }
     }
     if (out_wall_s) *out_wall_s = static_cast<double>(now_ns() - t0) / 1e9;
 

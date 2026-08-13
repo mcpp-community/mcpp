@@ -72,7 +72,13 @@ bench_registry_xpkgs(MCPP_XPKGS)
 # projects. CONFIGURE_DEPENDS re-globs on build so an added module is not missed.
 # ---------------------------------------------------------------------------
 file(GLOB_RECURSE MCPP_MODULES CONFIGURE_DEPENDS "${MCPP_ROOT}/src/*.cppm")
+# .cpp is globbed for the same reason, even though mcpp has exactly one today:
+# the xlings arm found this the hard way. Naming `src/main.cpp` by hand keeps
+# working right up until implementations are split out of the interface units,
+# and then it compiles the interfaces, links nothing, and still reports a time.
+file(GLOB_RECURSE MCPP_SOURCES CONFIGURE_DEPENDS "${MCPP_ROOT}/src/*.cpp")
 list(LENGTH MCPP_MODULES MCPP_MODULE_COUNT)
+list(LENGTH MCPP_SOURCES MCPP_SOURCE_COUNT)
 if(MCPP_MODULE_COUNT EQUAL 0)
   message(FATAL_ERROR "no module interface units found under src/ — refusing to "
                       "build a project that is not mcpp")
@@ -97,7 +103,7 @@ else()
   set(MCPP_CMDLINE_MODULES "")
 endif()
 
-add_executable(mcpp "${MCPP_ROOT}/src/main.cpp")
+add_executable(mcpp ${MCPP_SOURCES})
 
 # FILE_SET CXX_MODULES is the only way CMake learns these are interface units.
 # Listing them as ordinary sources compiles them as plain TUs and the link fails
@@ -127,4 +133,5 @@ target_include_directories(mcpp PRIVATE "${MCPP_ROOT}/src/libs/json")
 # mcpp.toml default: static_stdlib = true, so the binary is portable.
 target_link_options(mcpp PRIVATE -static-libstdc++)
 
-message(STATUS "mcpp: ${MCPP_MODULE_COUNT} module interface units + src/main.cpp")
+message(STATUS "mcpp: ${MCPP_MODULE_COUNT} module interface units + "
+               "${MCPP_SOURCE_COUNT} .cpp")

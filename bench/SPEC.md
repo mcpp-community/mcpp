@@ -23,7 +23,7 @@ which the report records in its run facts.
 | **OS** | `linux` `macos` `windows` | one CI job each |
 | **Toolchain** | `gcc` `clang` `msvc` | one CI job each — `--compiler` |
 | **Build tool** | `mcpp` `cmake` `xmake` `bazel` | swept inside a job — `--engines` |
-| **Project** | `fixture` `mcpp` `xlings` | one CI job each — `--project` |
+| **Project** | `fixture` `mcpp` `xlings-2026.8.11.2` `xlings-2026.8.13.1` | one CI job each — `--project` |
 | **Variant** | `headers` `modules` `modules-impl` | swept inside a job — `--variants` |
 | **Scenario** | `cold` `noop` `touch-hub` `touch-leaf` `edit-body` `edit-comment` | swept inside a job — `--scenarios` |
 
@@ -31,6 +31,36 @@ which the report records in its run facts.
 swept inside it, because they share a checkout, a toolchain install and a
 generated fixture. Promoting them to jobs would multiply runner minutes without
 adding a single measurement.
+
+### Everything the number depends on is pinned
+
+Not a tidiness preference. Each of these was unpinned once, and each produced a
+table that was measuring something other than what it said:
+
+| pinned | where | what it cost while it was loose |
+|---|---|---|
+| cmake, xmake, bazel | `matrix.json.tools` | runner images ship cmake 3.31.6, which lacks the CMake 4.0 `import std` key, so **every module cell failed to configure** |
+| the compiler | `bench/src/toolchain.cppm` | engines got `command -v g++` = gcc 13.3.0 while mcpp used the registry's gcc 16.1 — cmake could not configure, xmake crashed gcc outright |
+| the projects | git submodules under `bench/projects/` | xlings was cloned from its default branch at run time, so `--hub src/xlings.cppm` silently named a file that had stopped existing |
+| the reference mcpp | `matrix.json.reference_mcpp` | a report said how fast this branch is, never whether it got faster |
+
+`--compiler payload:gcc` / `payload:clang` is the spelling that delivers the
+third row: it resolves to the driver **inside mcpp's own registry**, so every
+engine including mcpp is handed the same binary. That is the suite's fairness
+rule (`resolve_cxx`) actually enforced rather than merely written down.
+
+### Two mcpp binaries, always
+
+`mcpp` in a cell's engine list expands to **two** engines: the mcpp built from
+the checkout and `reference_mcpp` installed by xlings. Each labels itself from
+the version it reports, so the rows never collapse — and the harness warns if
+two binaries claim the same version, because then they silently would.
+
+> **Not covered by that column:** the split build schedule (`[build] schedule =
+> "on"`) is opt-in until it has been verified on every platform, so both
+> binaries run with it OFF. These numbers therefore do not include it; see
+> `.agents/docs/2026-08-13-build-optimization-status.md` for its separately
+> measured effect.
 
 ### Why the toolchain is an axis and not a detail
 
@@ -53,14 +83,36 @@ of one graph shape:
 
 * **`fixture`** — synthetic, parameterised (`--preset`, `--units`, `--fanin`,
   `--weight`). The only project where `headers` / `modules` / `modules-impl`
-  all exist, so it is the only place the *variant* axis means anything.
-* **`mcpp`** — 138 modules / 57k lines, one source dependency, build
-  descriptions for every engine under `projects/mcpp/`.
-* **`xlings`** — 110 modules / 46k lines, **different authors**. This is the one
-  that separates "a faster build engine" from "a faster benchmark target".
+  are all generated, so it is where the *variant* axis is a controlled variable.
+* **`mcpp`** — 139 modules / 57k lines, one source dependency, build
+  descriptions for every engine under `projects/mcpp/`. Variant `native`.
+* **`xlings-2026.8.11.2`** and **`xlings-2026.8.13.1`** — 110 modules / 46k
+  lines, **different authors**. This is what separates "a faster build engine"
+  from "a faster benchmark target".
 
-Real projects have exactly one form — their own — so their variant is `native`
-and the harness refuses to generate over them.
+### The two xlings pins are a code-style comparison
+
+They are the same project either side of one refactor:
+
+| project | shape | variant |
+|---|---|---|
+| `xlings-2026.8.11.2` (`b1563fe`) | 110 `.cppm` + **2** `.cpp` — each interface unit carries its own implementation | `modules` |
+| `xlings-2026.8.13.1` (`f072075`) | 110 `.cppm` + **92** `.cpp` — implementations split out | `modules-impl` |
+
+Same module graph, same line count, opposite answers to "where does the code
+live" — which is exactly the `modules` vs `modules-impl` axis the generated
+fixture has, except on a real codebase written by people who were not thinking
+about this benchmark. `--body` differs accordingly: editing an implementation
+means the `.cpp` in the split style and the `.cppm` in the combined one.
+
+**One description serves both.** `projects/xlings/{CMakeLists.txt,xmake.lua}`
+glob `src/**/*.{cppm,cpp}` — the same rule mcpp itself infers from — so neither
+style needs its own file, an environment switch, or a branch. Globbing only
+`src/main.cpp`, which is what they used to do, compiles the split style's
+interfaces, links nothing, and still reports a time.
+
+A real project has exactly one form — its own — so a cell states which of the
+two names it, and the harness never generates over the tree.
 
 ---
 
@@ -83,6 +135,24 @@ Not an arbitrary pick:
 A run whose engine set omits cmake prints `(no successful 'cmake' cell here;
 ratios omitted)` rather than a table of bare seconds — the one form of this data
 that cannot be compared to anything.
+
+### A cell may override it, and the xlings cells do
+
+`matrix.json` lets a cell name its own `baseline`. The xlings cells normalise
+against the released mcpp instead, because their cmake and xmake arms compile
+every translation unit and then **stop at the link**: xlings pulls ftxui,
+libarchive, lua and mbedtls in as *source* packages that mcpp compiles, so the
+foreign arms want symbols nobody built (`undefined reference to mbedtls_*`).
+
+Both arms are kept anyway — a documented wall is data, and the day someone adds
+`add_subdirectory` for those four the cell turns green by itself — but they are
+listed in that cell's `allow_failed` so a known gap does not fail the run. The
+guard requires a waiver to name an engine the cell actually has *and* to carry a
+`KNOWN GAP` note, because a waived failure that says nothing is a hidden one.
+
+Overriding the baseline is what turns that cell from "a table of bare seconds"
+into the comparison it can actually make: **mcpp against mcpp**, which is the
+question a control target exists to answer.
 
 ---
 

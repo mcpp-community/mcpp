@@ -11,20 +11,59 @@ separates the two.
 adaptation, which is exactly what makes it a fair control rather than a
 purpose-built fixture.
 
-## Not vendored, on purpose
+## Pinned as submodules — and why that replaced "not vendored"
 
-There is no copy of xlings here. A vendored snapshot rots, and a benchmark whose
-target silently drifts from the real project measures the snapshot. Point the
-harness at a checkout instead:
+This directory used to say *"there is no copy of xlings here, on purpose: a
+vendored snapshot rots"*, and CI cloned the default branch at run time.
+
+**The reasoning was right and the implementation did the opposite of it.** A
+target cloned from a moving branch does not merely rot, it rots *invisibly*:
+`--hub src/xlings.cppm` went on naming a file that had stopped existing, so
+every xlings cell reported `skipped`, every xlings job reported success, and
+nobody had a reason to look. Drift was not prevented — it was made unobservable.
+
+A submodule is a **pin**, not a snapshot. The commit is in the diff, it is
+reviewed like any other change, bumping it is a deliberate act with a
+before/after, and `tests/e2e/233_bench_matrix.sh` can check that each `hub` and
+`body` still exists in the tree CI will actually measure.
 
 ```bash
-git clone https://github.com/openxlings/xlings   # any recent commit
-bench --project /path/to/xlings --engines mcpp=<old>,mcpp=<new> \
-      --scenarios cold,noop --runs 2
+git submodule update --init          # get both pinned trees
 ```
 
-Record the commit with the numbers. The measurements below are from
-**`b1563fe`**.
+| directory | version | commit | shape | variant |
+|---|---|---|---|---|
+| `xlings-2026.8.11.2` | 2026.8.11.2 | `b1563fe` | 110 `.cppm` + **2** `.cpp` | `modules` |
+| `xlings-2026.8.13.1` | 2026.8.13.1 | `f072075` | 110 `.cppm` + **92** `.cpp` | `modules-impl` |
+
+### Two pins, because the code style is the measurement
+
+They are the same project either side of one refactor — `f072075` moved the
+implementations out of the interface units. Same module graph, same 46k lines,
+opposite answers to "where does the code live". That is the `modules` vs
+`modules-impl` axis the generated fixture has, except here it was done by people
+who were not thinking about this benchmark, which is the entire value of it.
+
+`--body` follows the style: the `.cpp` in the split tree, the `.cppm` in the
+combined one. Editing an implementation is the point, and in the combined style
+the implementation *is* the interface unit — which is why the two are expected
+to behave differently, and why measuring both is the only way to say by how much.
+
+**One description serves both.** `CMakeLists.txt` and `xmake.lua` here glob
+`src/**/*.{cppm,cpp}` — the same rule mcpp infers from — so neither style needs
+its own file, an environment switch, or a branch. They used to name
+`src/main.cpp` alone, which against the split tree compiles 110 interfaces,
+links nothing, and still reports a time.
+
+```bash
+bench --project bench/projects/xlings/xlings-2026.8.13.1 \
+      --buildfiles bench/projects/xlings \
+      --engines mcpp=<new>,mcpp --compiler payload:gcc \
+      --scenarios cold,noop --hub src/platform.cppm --body src/platform.cpp
+```
+
+`--hub src/platform.cppm` is the hub because it has the most importers (45 in
+the combined tree, 54 in the split one).
 
 ## What it has shown so far
 

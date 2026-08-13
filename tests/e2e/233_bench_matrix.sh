@@ -29,8 +29,10 @@ SPEC="$ROOT/bench/SPEC.md"
 [ -f "$WORKFLOW" ] || { echo "FAIL: .github/workflows/bench.yml is missing"; exit 1; }
 
 # ── 1..3: the data ─────────────────────────────────────────────────────────
-python3 - "$MATRIX" <<'PY'
-import json, sys
+# ROOT is passed in: this python runs from stdin, so sys.argv[0] is "-" and the
+# repository cannot be derived from it.
+python3 - "$MATRIX" "$ROOT" <<'PY'
+import json, re, sys
 
 m = json.load(open(sys.argv[1]))
 axes = m["axes"]
@@ -64,13 +66,33 @@ for c in m["cells"]:
 # The baseline must be an engine, and it must actually be IN every cell it is
 # supposed to normalise — a ratio against an engine that never ran is not a
 # ratio, and the report renders it as bare seconds.
+# A cell may OVERRIDE it: the xlings arms are an mcpp-against-mcpp comparison
+# because their cmake/xmake arms stop at the link, and normalising against an
+# engine that never produced a binary is how a table of bare seconds gets
+# published as a comparison.
 base = m["baseline"]
 if base not in axes["engine"]:
     fail.append(f"baseline '{base}' is not one of axes.engine")
 for c in m["cells"]:
-    if base not in [e.strip() for e in c["engines"].split(",")]:
-        fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: baseline '{base}' "
-                    f"is not among its engines — that cell would report bare seconds")
+    eff = c.get("baseline", base)
+    engines = [e.strip() for e in c["engines"].split(",")]
+    # `mcpp` in a cell's engine list means BOTH mcpp binaries (the built one and
+    # the released reference), so a reference-version baseline is satisfied by it.
+    if eff in engines or (eff == m.get("reference_mcpp") and "mcpp" in engines):
+        continue
+    fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: baseline '{eff}' "
+                f"is not among its engines — that cell would report bare seconds")
+
+# An engine may only be waived if it is actually in the cell, and the cell must
+# say why. A blanket waiver is how a permanently broken arm stops being noticed.
+for c in m["cells"]:
+    for w in [e.strip() for e in c.get("allow_failed", "").split(",") if e.strip()]:
+        if w not in [e.strip() for e in c["engines"].split(",")]:
+            fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: allow_failed names "
+                        f"'{w}', which is not one of its engines")
+    if c.get("allow_failed") and "KNOWN GAP" not in c.get("note", ""):
+        fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: allow_failed without a "
+                    f"'KNOWN GAP' note — a waived failure that says nothing is a hidden one")
 
 # 3. Every excluded cell says why, and says something.
 for x in m.get("excluded", []):
@@ -78,12 +100,20 @@ for x in m.get("excluded", []):
         fail.append(f"excluded {x.get('os')}/{x.get('toolchain')}/{x.get('project','*')}: "
                     "reason is missing or too short to be one")
 
-# An exclusion must not also be a cell. `*` is a wildcard, and an exclusion that
-# names an `engine` scopes a CAVEAT to one column rather than removing the job —
-# those legitimately coexist with the cell.
+# An exclusion must not also be a cell. `*` is a wildcard, `foo-*` a prefix
+# wildcard (the project axis carries pinned versions, so `xlings-*` is the only
+# way to say "both styles"), and an exclusion that names an `engine` scopes a
+# CAVEAT to one column rather than removing the job — those legitimately coexist
+# with the cell.
+#
+# The prefix form exists because the bare `*` is too big: written as
+# `{os: windows, toolchain: clang, project: "*"}` it also claimed the
+# windows/clang fixture and mcpp cells, which do run. This check caught that.
 def matches(x, c, key):
     v = x.get(key)
-    return v is None or v == "*" or v == c[key]
+    if v is None or v == "*":            return True
+    if v.endswith("*"):                  return c[key].startswith(v[:-1])
+    return v == c[key]
 
 for x in m.get("excluded", []):
     if x.get("engine"):
@@ -92,13 +122,61 @@ for x in m.get("excluded", []):
         if all(matches(x, c, k) for k in ("os", "toolchain", "project")):
             fail.append(f"{c['os']}/{c['toolchain']}/{c['project']} is both a cell and excluded")
 
+# ── The perturbation targets must EXIST ────────────────────────────────────
+#
+# This is the assertion the suite most needed and did not have. `--hub` pointed
+# at `src/xlings.cppm` for months after that file stopped existing; the harness
+# correctly reported `skipped — points at a file that does not exist`, the
+# workflow correctly exited 0, and three CI jobs per run reported success having
+# measured precisely nothing.
+#
+# It is checkable at all only because the trees are now pinned SUBMODULES rather
+# than cloned from a moving branch at run time. That is most of the argument for
+# pinning them.
+import os
+root = sys.argv[2]
+for c in m["cells"]:
+    if c["project"] == "fixture":
+        if c.get("hub") or c.get("body"):
+            fail.append(f"{c['os']}/{c['toolchain']}/fixture: hub/body are for real projects; "
+                        "a generated fixture names its own targets")
+        continue
+    for field in ("hub", "body"):
+        if not c.get(field):
+            fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: '{field}' is required for a "
+                        "real project — without it every perturbing scenario reports `skipped`")
+            continue
+        # mcpp is this checkout; anything else is a submodule under bench/projects/.
+        tree = root if c["project"] == "mcpp" else os.path.join(
+            root, "bench", "projects", c.get("buildfiles", c["project"]), c["project"])
+        if not os.path.isdir(tree):
+            fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: no tree at {tree} "
+                        "(run `git submodule update --init`)")
+            break
+        target = os.path.join(tree, c[field])
+        if not os.path.isfile(target):
+            fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: {field}='{c[field]}' does not "
+                        f"exist in the pinned tree — every scenario that perturbs it would be "
+                        f"reported `skipped` and the job would still pass")
+
+# ── The tool pins ──────────────────────────────────────────────────────────
+# A pin that is absent is a tool resolved from the runner image, which is how
+# the matrix ended up measuring cmake 3.31.6 against a suite that needs 4.0.
+for t in ("cmake", "xmake", "bazel", "gcc", "llvm"):
+    v = m.get("tools", {}).get(t, "")
+    if not re.match(r"^\d+(\.\d+)+$", str(v)):
+        fail.append(f"tools.{t} = {v!r} is not an exact version; an unpinned tool is a "
+                    "variable the report does not record")
+if not re.match(r"^\d+(\.\d+)+$", str(m.get("reference_mcpp", ""))):
+    fail.append("reference_mcpp must be an exact released version — it is the old-vs-new column")
+
 if fail:
     print("FAIL: bench/matrix.json")
     for f in fail:
         print("  " + f)
     raise SystemExit(1)
 print(f"matrix: {len(m['cells'])} cells, {len(m.get('excluded', []))} documented exclusions, "
-      f"baseline={base}")
+      f"baseline={base}, tool pins {m['tools']['cmake']}/{m['tools']['xmake']}/{m['tools']['bazel']}")
 PY
 
 # ── 2: the axis values are ones the harness accepts ────────────────────────

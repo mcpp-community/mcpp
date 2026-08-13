@@ -1,5 +1,7 @@
 # `bench/` — build-engine benchmark suite
 
+**English** · [简体中文](README.zh-CN.md)
+
 A cross-platform harness for measuring **build engines** against each other on
 the **same C++ sources**, and for measuring what C++20 named modules actually
 cost compared to headers.
@@ -37,6 +39,70 @@ one of them in the harness.
 The cell list appears in exactly one of those. A matrix written down twice is a
 matrix that disagrees with itself, and the disagreement is silent: both copies
 keep looking right. `tests/e2e/233_bench_matrix.sh` is what keeps it that way.
+
+---
+
+## 0. What is pinned, and why every one of these is pinned
+
+A benchmark number is only worth the list of things that were held still while
+it was taken. Every row below was loose at some point in this suite's short
+life, and every one of them produced a table that was measuring something other
+than what it said.
+
+| what | pinned to | declared in |
+|---|---|---|
+| cmake | **4.4.2** | `matrix.json` → `tools` |
+| xmake | **3.1.0** | `matrix.json` → `tools` |
+| bazel | **9.2.0** | `matrix.json` → `tools` |
+| gcc | **16.1.0** | `bench/src/toolchain.cppm` |
+| clang / libc++ | **22.1.8** (Windows: 20.1.7) | `bench/src/toolchain.cppm` |
+| reference mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp` |
+| xlings (combined style) | **2026.8.11.2** — `b1563fe` | submodule `projects/xlings/xlings-2026.8.11.2` |
+| xlings (split style) | **2026.8.13.1** — `f072075` | submodule `projects/xlings/xlings-2026.8.13.1` |
+| mcpp under test | the checkout | built by CI, resolved by `newest_artifact.sh` |
+
+**Everything is installed by xlings**, at those exact versions, on every runner.
+`xlings install cmake@4.4.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` is
+literally what CI runs, and the job prints the resolved version of each one and
+warns loudly if it is not the pinned one.
+
+Four things this bought, each of which had already gone wrong:
+
+* **cmake 3.31.6** is what the GitHub runner images ship. It does not have the
+  CMake 4.0 experimental key for `import std`, so *every module cell failed to
+  configure*. With 4.4.2 they pass.
+* **`command -v g++`** on those images is gcc 13.3.0. cmake cannot configure
+  C++23 modules with it and xmake crashes it with an internal compiler error —
+  while mcpp quietly used its own registry's gcc 16.1 regardless. The table read
+  `48 failed / 6 ok` and was still called a comparison of build engines. The
+  suite now hands **every** engine the driver out of mcpp's own payload
+  (`--compiler payload:gcc`), which is its fairness rule finally enforced rather
+  than merely written down.
+* **The projects were cloned from their default branch at run time**, so the
+  benchmark target moved with every upstream push. `--hub src/xlings.cppm` had
+  been naming a file that no longer existed for months; every xlings cell
+  reported `skipped` and every xlings job reported success. They are git
+  submodules now, and the guard checks that each `hub`/`body` exists in the
+  pinned tree.
+* **Only one mcpp was measured.** A report that says how fast this branch is,
+  without saying whether it got faster, is not what a benchmark on a pull
+  request is for.
+
+> **Not held still, and deliberately so:** the runner hardware. See §4a.
+
+> **The one case where "never writes into the measured tree" does not hold.**
+> The editing scenarios save a file's exact bytes and restore them however the
+> function exits — including on a failed build — but that is a destructor, and a
+> destructor does not run when the process is `SIGKILL`ed. Interrupt a
+> `--project` run hard enough and the perturbation is still there, which for the
+> pinned submodules shows up as a dirty working tree. `git submodule foreach
+> 'git checkout -- .'` undoes it; the perturbations are named `bench_nonce_*`,
+> so they are also easy to recognise in a diff.
+
+> **Not exercised by these numbers:** mcpp's split build schedule
+> (`[build] schedule = "on"`) is opt-in until it has been verified on every
+> platform, so both mcpp binaries run with it off. Its effect is measured
+> separately in `.agents/docs/2026-08-13-build-optimization-status.md`.
 
 ---
 

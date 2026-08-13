@@ -108,15 +108,15 @@ public:
         if (const auto cxx = resolve_cxx(job.compiler); !cxx.empty()) {
             argv.push_back(std::format("--action_env=CC={}", cxx));
             platform::ScopedEnv pin("CC", cxx);
-            return platform::run(argv, job.project_dir, job.log_path);
+            return platform::run(argv, job.project_dir, job.log_path, job.timeout_s);
         }
-        return platform::run(argv, job.project_dir, job.log_path);
+        return platform::run(argv, job.project_dir, job.log_path, job.timeout_s);
     }
 
     void clean(const Job& job) const override {
         // Deliberately NOT --expunge: that would drop the downloaded toolchain
         // and turn a build measurement into a provisioning measurement.
-        platform::run({"bazel", "clean"}, job.project_dir, job.log_path);
+        platform::run({"bazel", "clean"}, job.project_dir, job.log_path, job.timeout_s);
         platform::remove_tree(job.build_dir);
     }
 };

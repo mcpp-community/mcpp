@@ -28,7 +28,10 @@ add_rules("mode.debug", "mode.release")
 -- the mcpp arm: ../common/xmake/payload.lua.
 includes("../common/xmake/payload.lua")
 
-local XLINGS_ROOT = os.getenv("XLINGS_ROOT")
+-- BENCH_PROJECT_ROOT is what the harness exports for every --project run, and
+-- it is why one description serves both pinned trees. XLINGS_ROOT stays
+-- supported for driving this by hand.
+local XLINGS_ROOT = os.getenv("BENCH_PROJECT_ROOT") or os.getenv("XLINGS_ROOT")
 local XLINGS_MANIFEST = XLINGS_ROOT and path.join(XLINGS_ROOT, "mcpp.toml")
 
 option("pin_payload")
@@ -39,69 +42,95 @@ option_end()
 
 bench_define_toolchains(XLINGS_MANIFEST)
 
-target("xlings")
-    set_kind("binary")
+-- ── Everything the helpers answer is resolved HERE, at description scope ──────
+--
+-- ⚠️ THE HELPERS ARE NOT REACHABLE FROM on_load/before_build. xmake runs those
+-- callbacks in a sandbox that does not carry an include()'d file's globals, so
+-- `bench_package_root(...)` inside one fails with
+--
+--     error: attempt to call a nil value (global 'bench_package_root')
+--
+-- and the whole xlings/xmake arm reported `configure exited 255` — in CI, for
+-- every cell, behind a green check. Lua closures capture their upvalues
+-- lexically, so resolving to LOCALS here and letting the target read those is
+-- both the fix and the shape bench/projects/mcpp/xmake.lua already used.
+local DEP_MODULE_GLOBS = {}
+for _, dep in ipairs({{"mcpplibs-x-cmdline",   "0.0.2"},
+                      {"mcpplibs-x-xpkg",      "0.0.57"},
+                      {"mcpplibs-x-tinyhttps", "0.2.9"},
+                      {"mcpplibs.capi-x-lua",  "0.0.3"}}) do
+    -- PINNED to xlings' mcpp.toml. Newer versions are usually also unpacked in
+    -- the registry, and taking the newest would mean the arms compile different
+    -- code.
+    --
+    -- mcpp stages prebuilt objects for these out of its global build cache
+    -- while xmake compiles them from source: a handicap on xmake's cold build,
+    -- declared here rather than hidden.
+    local dir = bench_package_root(dep[1], dep[2])
+    if dir and os.isdir(path.join(dir, "src")) then
+        table.insert(DEP_MODULE_GLOBS, path.join(dir, "src/**.cppm"))
+    else
+        utils.warning("dependency %s %s is not unpacked in the registry; "
+                      .. "this build will not match mcpp's own", dep[1], dep[2])
+    end
+end
 
-    on_load(function (target)
-        local root = os.getenv("XLINGS_ROOT")
-        if not root or not os.isfile(path.join(root, "mcpp.toml")) then
-            raise("set XLINGS_ROOT=<checkout of https://github.com/openxlings/xlings>; "
-                  .. "this description is deliberately not vendored — see README.md")
-        end
-
-        -- Source set == xlings' mcpp.toml inferred glob src/**/*.{cppm,cpp};
-        -- mcpp infers kind=bin from src/main.cpp, xmake needs it spelled out.
-        target:add("files", path.join(root, "src/**.cppm"))
-        target:add("files", path.join(root, "src/main.cpp"))
-
-        -- `[build] include_dirs = ["src/libs/json"]` — src/libs/json.cppm reaches
-        -- for <json.hpp> from its global module fragment.
-        target:add("includedirs", path.join(root, "src/libs/json"))
-        -- `[build] cxxflags`
-        target:add("defines", "LIBARCHIVE_STATIC", "UNICODE", "_UNICODE")
-
-        -- Source dependencies, PINNED to xlings' mcpp.toml. Newer versions are
-        -- usually also unpacked in the registry, and taking the newest would
-        -- mean the arms compile different code.
-        --
-        -- mcpp stages prebuilt objects for these out of its global build cache
-        -- while xmake compiles them from source: a handicap on xmake's cold
-        -- build, declared here rather than hidden.
-        for _, dep in ipairs({{"mcpplibs-x-cmdline",   "0.0.2"},
-                              {"mcpplibs-x-xpkg",      "0.0.57"},
-                              {"mcpplibs-x-tinyhttps", "0.2.9"},
-                              {"mcpplibs.capi-x-lua",  "0.0.3"}}) do
-            local dir = bench_package_root(dep[1], dep[2])
-            if dir and os.isdir(path.join(dir, "src")) then
-                target:add("files", path.join(dir, "src/**.cppm"))
-            else
-                utils.warning("dependency %s %s is not unpacked in the registry; "
-                              .. "this build will not match mcpp's own", dep[1], dep[2])
-            end
-        end
-
-        -- Header-providing packages. Each unpacks ONE level below the version
-        -- directory (`compat-x-ftxui/6.1.9/FTXUI-6.1.9/include`), so globbing
-        -- `<ver>/include` finds nothing and the failure surfaces on the first
-        -- importer rather than on the glob.
-        --
-        -- The list is TRANSITIVE and written out rather than discovered, because
-        -- the discovery is what mcpp's package manager does: xlings names 6
-        -- direct dependencies, and wiring the four source ones in surfaced two
-        -- more (mbedtls for tinyhttps, lua for capi.lua).
-        for _, pkg in ipairs({"compat-x-ftxui", "compat-x-libarchive",
-                              "compat-x-mbedtls", "compat-x-lua"}) do
-            for _, ver in ipairs(os.dirs(path.join(bench_xpkgs(), pkg, "*"))) do
-                for _, inner in ipairs(os.dirs(path.join(ver, "*"))) do
-                    for _, sub in ipairs({"include", "src", "libarchive"}) do
-                        if os.isdir(path.join(inner, sub)) then
-                            target:add("includedirs", path.join(inner, sub))
-                        end
-                    end
+-- Header-providing packages. Each unpacks ONE level below the version directory
+-- (`compat-x-ftxui/6.1.9/FTXUI-6.1.9/include`), so globbing `<ver>/include`
+-- finds nothing and the failure surfaces on the first importer rather than on
+-- the glob.
+--
+-- The list is TRANSITIVE and written out rather than discovered, because the
+-- discovery is what mcpp's package manager does: xlings names 6 direct
+-- dependencies, and wiring the four source ones in surfaced two more (mbedtls
+-- for tinyhttps, lua for capi.lua).
+local DEP_INCLUDE_DIRS = {}
+for _, pkg in ipairs({"compat-x-ftxui", "compat-x-libarchive",
+                      "compat-x-mbedtls", "compat-x-lua"}) do
+    for _, ver in ipairs(os.dirs(path.join(bench_xpkgs(), pkg, "*"))) do
+        for _, inner in ipairs(os.dirs(path.join(ver, "*"))) do
+            for _, sub in ipairs({"include", "src", "libarchive"}) do
+                if os.isdir(path.join(inner, sub)) then
+                    table.insert(DEP_INCLUDE_DIRS, path.join(inner, sub))
                 end
             end
         end
-    end)
+    end
+end
+
+-- Resolved here for the same reason; before_build cannot call the helper.
+local XPKG_ROOT = bench_package_root("mcpplibs-x-xpkg", "0.0.57")
+local LUA_STDLIB_DIR = XPKG_ROOT and path.join(XPKG_ROOT, "src", "lua-stdlib")
+
+target("xlings")
+    set_kind("binary")
+
+    if not XLINGS_ROOT or not os.isfile(XLINGS_MANIFEST) then
+        raise("no xlings tree: set XLINGS_ROOT=<dir>, or let the bench harness "
+              .. "export BENCH_PROJECT_ROOT via --project. The pinned trees are "
+              .. "the submodules bench/projects/xlings/xlings-<version>/ — run "
+              .. "`git submodule update --init`.")
+    end
+
+    -- Source set == xlings' mcpp.toml inferred glob src/**/*.{cppm,cpp}; mcpp
+    -- infers kind=bin from src/main.cpp, xmake needs it spelled out.
+    --
+    -- BOTH extensions, which is what lets ONE description measure xlings' two
+    -- code styles: 2026.8.11.2 has 110 .cppm + 2 .cpp (implementation inside
+    -- each interface unit), 2026.8.13.1 has 110 .cppm + 92 .cpp (split out).
+    -- Globbing `src/main.cpp` alone would compile the interfaces of the split
+    -- style, link nothing, and still report a number. Same note in CMakeLists.txt.
+    add_files(path.join(XLINGS_ROOT, "src/**.cppm"))
+    add_files(path.join(XLINGS_ROOT, "src/**.cpp"))
+    for _, glob in ipairs(DEP_MODULE_GLOBS) do add_files(glob) end
+
+    -- `[build] include_dirs = ["src/libs/json"]` — src/libs/json.cppm reaches
+    -- for <json.hpp> from its global module fragment.
+    add_includedirs(path.join(XLINGS_ROOT, "src/libs/json"))
+    for _, dir in ipairs(DEP_INCLUDE_DIRS) do add_includedirs(dir) end
+    -- `[build] cxxflags`
+    add_defines("LIBARCHIVE_STATIC", "UNICODE", "_UNICODE")
+
 
     -- `mcpplibs.xpkg.lua_stdlib` is GENERATED by libxpkg's build.mcpp rather
     -- than checked in: it embeds every .lua under src/lua-stdlib as a string
@@ -113,10 +142,10 @@ target("xlings")
     -- before_build rather than a custom rule: the file must exist before module
     -- dependency scanning, which runs ahead of any per-file rule.
     before_build(function (target)
-        local pkg = bench_package_root("mcpplibs-x-xpkg", "0.0.57")
-        if not pkg then return end
-        local stdlib = path.join(pkg, "src", "lua-stdlib")
-        if not os.isdir(stdlib) then return end
+        -- LUA_STDLIB_DIR is an UPVALUE resolved at description scope: the
+        -- helper that produces it is not reachable from inside this callback.
+        local stdlib = LUA_STDLIB_DIR
+        if not stdlib or not os.isdir(stdlib) then return end
 
         local out = path.join(os.projectdir(), "build", "generated", "xpkg-lua-stdlib.cppm")
         local text = {

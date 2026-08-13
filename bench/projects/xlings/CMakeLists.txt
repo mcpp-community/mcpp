@@ -63,13 +63,20 @@ endif()
 # ---------------------------------------------------------------------------
 # Where the tree is.
 # ---------------------------------------------------------------------------
+# BENCH_PROJECT_ROOT is what the harness exports for every --project run, and it
+# is the reason this description can be shared by both pinned trees. -DXLINGS_ROOT
+# and the XLINGS_ROOT environment variable stay supported for driving it by hand.
+if(NOT XLINGS_ROOT AND DEFINED ENV{BENCH_PROJECT_ROOT})
+  set(XLINGS_ROOT "$ENV{BENCH_PROJECT_ROOT}")
+endif()
 if(NOT XLINGS_ROOT AND DEFINED ENV{XLINGS_ROOT})
   set(XLINGS_ROOT "$ENV{XLINGS_ROOT}")
 endif()
 if(NOT XLINGS_ROOT OR NOT EXISTS "${XLINGS_ROOT}/mcpp.toml")
   message(FATAL_ERROR
-    "set -DXLINGS_ROOT=<checkout of https://github.com/openxlings/xlings>; "
-    "this description is deliberately not vendored — see README.md")
+    "no xlings tree: set -DXLINGS_ROOT=<dir>, or let the bench harness export "
+    "BENCH_PROJECT_ROOT via --project. The pinned trees are the submodules "
+    "bench/projects/xlings/tree-<version>/ — run `git submodule update --init`.")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -85,14 +92,38 @@ bench_registry_xpkgs(MCPP_XPKGS)
 # ---------------------------------------------------------------------------
 # Source set — xlings' mcpp.toml infers `src/**/*.{cppm,cpp}` and names
 # src/main.cpp as the binary's entry point.
+#
+# BOTH .cppm AND .cpp ARE GLOBBED, and that is what lets ONE description measure
+# xlings' two code styles:
+#
+#   2026.8.11.2   110 .cppm  +  2 .cpp   — each interface unit carries its own
+#                                          implementation
+#   2026.8.13.1   110 .cppm  + 92 .cpp   — interface and implementation split
+#
+# Same module graph, same 46k lines, opposite answers to "where does the code
+# live" — which is exactly the `modules` vs `modules-impl` axis the generated
+# fixture has, on a real tree. A glob spans both because it is the same rule
+# mcpp itself infers from; branching on the style (or carrying two description
+# files, or an env var) would be one more thing that can differ between the arms
+# for a reason that is not the engine.
+#
+# It also matters that this is not `main.cpp` alone: against the split style
+# that description compiles the interfaces, links nothing, and reports a number
+# for a build that never happened.
 # ---------------------------------------------------------------------------
 file(GLOB_RECURSE XLINGS_MODULES CONFIGURE_DEPENDS "${XLINGS_ROOT}/src/*.cppm")
+file(GLOB_RECURSE XLINGS_SOURCES CONFIGURE_DEPENDS "${XLINGS_ROOT}/src/*.cpp")
 list(LENGTH XLINGS_MODULES XLINGS_MODULE_COUNT)
+list(LENGTH XLINGS_SOURCES XLINGS_SOURCE_COUNT)
 if(XLINGS_MODULE_COUNT EQUAL 0)
   message(FATAL_ERROR "no module interface units under ${XLINGS_ROOT}/src")
 endif()
+if(XLINGS_SOURCE_COUNT EQUAL 0)
+  message(FATAL_ERROR "no .cpp under ${XLINGS_ROOT}/src — not even main.cpp; "
+                      "is XLINGS_ROOT pointing at a checkout?")
+endif()
 
-add_executable(xlings "${XLINGS_ROOT}/src/main.cpp")
+add_executable(xlings ${XLINGS_SOURCES})
 target_sources(xlings
   PRIVATE FILE_SET CXX_MODULES BASE_DIRS "${XLINGS_ROOT}/src" FILES ${XLINGS_MODULES})
 
@@ -185,4 +216,5 @@ endforeach()
 
 target_link_options(xlings PRIVATE -static-libstdc++)
 
-message(STATUS "xlings: ${XLINGS_MODULE_COUNT} module interface units from ${XLINGS_ROOT}")
+message(STATUS "xlings: ${XLINGS_MODULE_COUNT} module interface units + "
+               "${XLINGS_SOURCE_COUNT} .cpp from ${XLINGS_ROOT}")

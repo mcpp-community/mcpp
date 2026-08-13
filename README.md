@@ -304,6 +304,37 @@ import mcpplibs.cmdline;
 
 </details>
 
+## Benchmark
+
+mcpp is measured against cmake, xmake and bazel on the **same sources with the
+same compiler binary**, by a harness that lives in this repository
+([`bench/`](bench/)) and runs in CI across Linux, macOS and Windows.
+
+<!-- BENCHMARK-TABLE:START — see bench/README.md before quoting any of this -->
+
+_Filled in from the CI matrix. Every number below is a median wall-clock, taken
+with the pins listed in [`bench/README.md` §0](bench/README.md)._
+
+<!-- BENCHMARK-TABLE:END -->
+
+**What makes this comparable at all**, and what to check before quoting any of
+it:
+
+* every engine is handed **the same compiler binary** out of mcpp's own payload
+  (gcc 16.1.0 / clang 22.1.8), not whatever `g++` means on the runner;
+* the build tools are pinned — **cmake 4.4.2, xmake 3.1.0, bazel 9.2.0** —
+  and installed by xlings on every platform;
+* the projects are pinned as git submodules, so the target cannot drift;
+* **cmake is the baseline**: an absolute second count means nothing without
+  knowing the machine, but "1.8× cmake" survives being read somewhere else.
+
+There are declared asymmetries — cases where an engine is doing more or less
+work than another — and cells that are honestly `unavailable` or `skipped`
+rather than quietly zero. They are all written down.
+
+📊 **[Full methodology, pinned versions and data → `bench/README.md`](bench/README.md)**
+ · [中文](bench/README.zh-CN.md) · [what is measured → `bench/SPEC.md`](bench/SPEC.md)
+
 ## Platform Support
 
 mcpp's identity model has two orthogonal axes: a **toolchain** is

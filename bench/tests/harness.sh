@@ -15,9 +15,12 @@ trap "rm -rf $TMP" EXIT
 cd "$REPO/bench"
 "$MCPP" build > /dev/null
 
-BENCH=$(find target -type f \( -name bench -o -name bench.exe \) | head -1)
-[ -n "$BENCH" ] || { echo "harness binary not found under bench/target"; exit 1; }
-BENCH="$REPO/bench/$BENCH"
+# NEWEST, not `find | head -1`: target/ holds one directory per toolchain
+# fingerprint, so a tree built more than once has several binaries with this
+# name and `head -1` picks whichever the filesystem lists first — routinely a
+# stale one. That is a test exercising code that has already been replaced, with
+# no symptom at all. See .github/tools/newest_artifact.sh.
+BENCH="$REPO/bench/$(bash "$REPO/.github/tools/newest_artifact.sh" target bench)"
 
 # 1. Availability listing must classify mcpp itself as present. If this fails the
 #    probe path is broken, and every later cell would be reported `unavailable`
@@ -167,5 +170,63 @@ for c in cells:
     assert "see " not in c["note"], \
         f"reason points at a log that was never written: {c['note']}"
 PY
+
+# 10. --hub/--leaf/--body are PROJECT-RELATIVE, and must resolve from anywhere.
+#
+#     They used to be taken as given, i.e. relative to the harness's own working
+#     directory. That is the project directory only when you are benchmarking
+#     the tree you are standing in — true for mcpp measuring itself, false for
+#     every other project — and it fails SILENTLY: exists() says no, the cell
+#     reports `skipped --hub points at a file that does not exist`, and the run
+#     still exits 0. Three CI jobs reported success with zero measurements.
+#
+#     Driven from a different cwd on purpose; that difference IS the bug.
+mkdir -p "$TMP/proj/src"
+cat > "$TMP/proj/mcpp.toml" <<'TOML'
+[package]
+name    = "relhub"
+version = "0.1.0"
+TOML
+printf 'export module hub;\nexport int hub_value() { return 1; }\n' > "$TMP/proj/src/hub.cppm"
+printf 'import hub;\nint main() { return hub_value() - 1; }\n'      > "$TMP/proj/src/main.cpp"
+
+( cd "$TMP" \
+  && "$BENCH" --engines "mcpp=$MCPP" --project "$TMP/proj" --variants native \
+              --scenarios touch-hub,edit-body --runs 1 \
+              --hub src/hub.cppm --body src/hub.cppm \
+              --work "$TMP/w5" --out "$TMP/r5.json" > "$TMP/stdout5.txt" 2>&1 ) \
+  || { echo "harness exited non-zero on project-relative targets"; cat "$TMP/stdout5.txt"; exit 1; }
+python3 - "$TMP/r5.json" <<'PY'
+import json, sys
+cells = json.load(open(sys.argv[1]))["cells"]
+assert cells, "no cells for project-relative targets"
+missing = [c["note"] for c in cells if "does not exist" in c["note"]]
+assert not missing, ("--hub/--body were resolved against the harness's cwd "
+                     f"rather than the project: {missing}")
+PY
+
+# 11. EXIT STATUS. A run that measured nothing must not report success — the
+#     whole matrix did exactly that for weeks (6 ok / 48 failed / 18
+#     unavailable, and green), as did an xlings job whose every cell was
+#     skipped. Asserted from BOTH sides, because a harness that always exited
+#     non-zero would sail through a one-sided check: every successful run above
+#     is the other half.
+if "$BENCH" --engines "mcpp=$TMP/definitely-not-here" --variants modules \
+            --scenarios cold --units 3 --fanin 1 --weight 1 --runs 1 \
+            --work "$TMP/w6" --out "$TMP/r6.json" > /dev/null 2>&1; then
+    echo "a run in which nothing was measured exited 0"; exit 1
+fi
+
+# 12. --timeout must KILL a child rather than wait on it, and must say that is
+#     what happened. Without it a hung engine consumes the whole CI budget and
+#     the log stays empty, because a cell only prints once it is over: two jobs
+#     sat 25 minutes inside one child that way. One second is far below any real
+#     cold build, so the deadline is certain to fire.
+"$BENCH" --engines "mcpp=$MCPP" --variants modules --scenarios cold \
+         --units 3 --fanin 1 --weight 1 --runs 1 --timeout 1 \
+         --work "$TMP/w7" --out "$TMP/r7.json" > "$TMP/stdout7.txt" 2>&1 || true
+grep -qi 'timed out' "$TMP/stdout7.txt" || {
+    echo "a 1-second deadline neither fired nor was reported:"
+    cat "$TMP/stdout7.txt"; exit 1; }
 
 echo "bench harness OK"

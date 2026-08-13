@@ -61,6 +61,11 @@ private:
 struct RunResult {
     double wall_s{};
     int    exit_code{};
+    // Set when the child was killed for exceeding its deadline. A separate flag
+    // rather than a reserved exit code: 124 is the `timeout(1)` convention and
+    // is a perfectly legal thing for a build tool to exit with on its own, so
+    // "hung" and "exited 124" must stay distinguishable.
+    bool   timed_out{};
     [[nodiscard]] bool ok() const { return exit_code == 0; }
     // Distinguishes "could not start" from "started and failed" — the whole
     // basis for reporting an engine as unavailable rather than broken.
@@ -70,12 +75,38 @@ struct RunResult {
 // Run argv, discarding the child's output unless a log path is given. The
 // harness never lets build noise reach its own stdout: the report IS the
 // output, and a mixed stream cannot be parsed.
+//
+// `timeout_s` <= 0 waits forever, which is right for a version probe and wrong
+// for a build — see run_process.
 inline RunResult run(const std::vector<std::string>& argv,
                      const std::filesystem::path&    cwd = {},
-                     const std::filesystem::path&    log = {}) {
+                     const std::filesystem::path&    log = {},
+                     double                          timeout_s = 0.0) {
     double wall = 0.0;
-    const int rc = run_process(argv, cwd, log, &wall);
-    return RunResult{wall, rc};
+    bool   hung = false;
+    const int rc = run_process(argv, cwd, log, &wall, timeout_s, &hung);
+    return RunResult{wall, rc, hung};
+}
+
+// The last `lines` lines of a file, for showing WHY a cell failed.
+//
+// Without this a red benchmark is as uninformative as the green one it
+// replaces: the harness records `see .../logs/cmake-cold.log`, and on a CI
+// runner that file is deleted with the machine. Every module cell in the matrix
+// failed for weeks behind exactly that sentence.
+inline std::string tail_of(const std::filesystem::path& p, std::size_t lines = 20) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return {};
+    std::deque<std::string> keep;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        keep.push_back(std::move(line));
+        if (keep.size() > lines) keep.pop_front();
+    }
+    std::string out;
+    for (const auto& l : keep) { out += l; out += '\n'; }
+    return out;
 }
 
 inline bool have_program(const std::vector<std::string>& version_argv) {

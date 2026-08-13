@@ -65,11 +65,16 @@ static void append_quoted(std::string& out, const std::string& arg) {
     out += '"';
 }
 
+// `timeout_s` <= 0 means wait forever — see the peer partition for why a
+// benchmark that can hang forever is worse than one that fails.
 export int run_process(const std::vector<std::string>& argv,
                        const std::filesystem::path&    cwd,
                        const std::filesystem::path&    log,
-                       double*                         out_wall_s) {
-    if (out_wall_s) *out_wall_s = 0.0;
+                       double*                         out_wall_s,
+                       double                          timeout_s   = 0.0,
+                       bool*                           out_timeout = nullptr) {
+    if (out_wall_s)  *out_wall_s  = 0.0;
+    if (out_timeout) *out_timeout = false;
     if (argv.empty()) return -1;
 
     std::string cmdline;
@@ -110,7 +115,26 @@ export int run_process(const std::vector<std::string>& argv,
         return -1;
     }
 
-    ::WaitForSingleObject(pi.hProcess, INFINITE);
+    const DWORD wait_ms = timeout_s <= 0.0
+        ? INFINITE
+        : static_cast<DWORD>(timeout_s * 1000.0);
+    if (::WaitForSingleObject(pi.hProcess, wait_ms) == WAIT_TIMEOUT) {
+        // TerminateProcess does not reach the child's own children, so a build
+        // tool that spawned compilers leaves them running. They are reaped when
+        // the job ends; what matters here is that the HARNESS stops waiting and
+        // reports which command hung, which is the whole point.
+        ::TerminateProcess(pi.hProcess, 124);
+        ::WaitForSingleObject(pi.hProcess, 5000);
+        ::QueryPerformanceCounter(&t1);
+        if (out_wall_s && freq.QuadPart)
+            *out_wall_s = static_cast<double>(t1.QuadPart - t0.QuadPart)
+                        / static_cast<double>(freq.QuadPart);
+        if (out_timeout) *out_timeout = true;
+        ::CloseHandle(pi.hThread);
+        ::CloseHandle(pi.hProcess);
+        if (sink != INVALID_HANDLE_VALUE) ::CloseHandle(sink);
+        return 124;   // the `timeout(1)` convention; callers branch on out_timeout
+    }
     ::QueryPerformanceCounter(&t1);
 
     DWORD code = 0;

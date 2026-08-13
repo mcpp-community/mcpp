@@ -12,6 +12,7 @@ import std;
 import bench.protocol;
 import bench.spec;
 import bench.platform;
+import bench.toolchain;
 import bench.registry;
 import bench.runner;
 import bench.engines.engine;
@@ -48,8 +49,29 @@ struct Options {
     // forgot the flag produced a table of bare seconds, which is the one form
     // of this data that cannot be compared to anything.
     std::string baseline{"cmake"};
+    // One configure or build may take this long before the child is killed.
+    // NOT unlimited by default: a hung engine used to consume the whole 120
+    // minute CI budget and report nothing, because a cell only prints once it
+    // is over. 30 minutes is well clear of a cold cmake build of mcpp on a
+    // 4-core runner (~16 min measured) and still leaves room in the job.
+    double timeout_s{1800.0};
+    // Engines whose `failed` must not fail the RUN. Empty by default: a failure
+    // is "the engine ran and did not produce the artifact", which is a finding,
+    // and a suite that reports findings with exit 0 is the one that let 48 of 72
+    // cells fail unnoticed. A genuine known gap goes here WITH its reason in
+    // bench/matrix.json, so it stays visible instead of becoming invisible.
+    std::vector<std::string> allow_failed;
     bool list{false};
 };
+
+// Does `engine` (a label like "mcpp@2026.8.13.1") match one of the names the
+// caller marked as allowed-to-fail? Substring, like --baseline, so a versioned
+// mcpp label is reachable by the bare name.
+bool listed(const std::vector<std::string>& names, std::string_view engine) {
+    return std::ranges::any_of(names, [&](const std::string& n) {
+        return !n.empty() && engine.find(n) != std::string_view::npos;
+    });
+}
 
 std::vector<std::string> split(std::string_view s, char sep = ',') {
     std::vector<std::string> parts;
@@ -71,7 +93,11 @@ void usage() {
     std::println("  --variants LIST    headers,modules,modules-impl            (default: all)");
     std::println("  --scenarios LIST   cold,noop,touch-hub,touch-leaf,edit-body,edit-comment");
     std::println("  --profile NAME     release | debug                         (default: release)");
-    std::println("  --compiler NAME    default | gcc | clang                   (default: default)");
+    std::println("  --compiler NAME    default | gcc | clang | /path/to/g++    (default: default)");
+    std::println("                     payload:gcc / payload:clang — the driver out of MCPP'S OWN");
+    std::println("                     registry, i.e. the one mcpp itself builds with. Use this to");
+    std::println("                     compare engines rather than compilers; a host g++ that cannot");
+    std::println("                     build modules makes every other engine look broken.");
     std::println("  --preset NAME      smoke | standard | large  — a NAMED size, so two runs on");
     std::println("                     two machines compare. standard is the default shape.");
     std::println("                       smoke     4 units  / fan-in 2 / weight 1   (~2s, CI)");
@@ -86,6 +112,13 @@ void usage() {
     std::println("  --out FILE         JSON report path                        (default: bench-report.json)");
     std::println("  --baseline NAME    normalise the summary against this engine   (default: cmake)");
     std::println("                     Substring match on the label; \"\" disables the column.");
+    std::println("  --timeout SEC      kill one configure/build after this long    (default: 1800, 0 = never)");
+    std::println("  --allow-failed L   engines whose failure must not fail the run (default: none)");
+    std::println("");
+    std::println("EXIT STATUS: 0 only when something was measured and nothing failed. A `failed`");
+    std::println("cell means the engine ran and produced no artifact — that is a finding, not a");
+    std::println("gap, so it is reported with a non-zero status unless --allow-failed names it.");
+    std::println("`unavailable` and `skipped` are gaps and never fail the run.");
     std::println("  --list             print engines and their availability, then exit");
     std::println("  --analyze DIR      profile an existing ninja build dir (work, makespan,");
     std::println("                     critical path, concurrency) instead of measuring");
@@ -148,6 +181,12 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--leaf")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.leaf = *v; }
         else if (a == "--body")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.body = *v; }
         else if (a == "--baseline")  { auto v = value(a); if (!v) return std::unexpected(v.error()); o.baseline = *v; }
+        else if (a == "--allow-failed") { auto v = value(a); if (!v) return std::unexpected(v.error()); o.allow_failed = split(*v); }
+        else if (a == "--timeout") {
+            auto v = value(a); if (!v) return std::unexpected(v.error());
+            o.timeout_s = std::atof(v->c_str());
+            if (o.timeout_s < 0.0) return std::unexpected(std::string("--timeout must not be negative"));
+        }
         else if (a == "-h" || a == "--help") { return std::unexpected("help"); }
         else if (a == "--variants") {
             auto v = value(a); if (!v) return std::unexpected(v.error());
@@ -217,6 +256,25 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // `payload:gcc` / `payload:clang` become a concrete path BEFORE anything
+    // else looks at the value, so the engines, the generated manifest, the cell
+    // key and the report all describe the same compiler. Resolving it later, or
+    // per engine, is how they came apart the first time.
+    if (opts->compiler.starts_with("payload:")) {
+        const auto want = opts->compiler.substr(std::string_view("payload:").size());
+        const auto r    = bench::toolchain::payload_cxx(want);
+        if (r.driver.empty()) {
+            // Hard error, not a fallback. Falling back to the host compiler is
+            // precisely what produced a matrix in which 48 of 72 cells failed
+            // while the job reported success.
+            std::println(std::cerr, "bench: --compiler {} could not be resolved: {}",
+                         opts->compiler, r.why);
+            return 2;
+        }
+        std::println("payload: {} → {}", opts->compiler, r.driver.string());
+        opts->compiler = r.driver.string();
+    }
+
     const auto specs = opts->engines.empty() ? bench::default_engine_specs() : opts->engines;
     std::vector<std::unique_ptr<bench::engines::Engine>> engines;
     for (const auto& spec : specs) {
@@ -226,6 +284,24 @@ int main(int argc, char** argv) {
             return 2;
         }
         engines.push_back(std::move(e));
+    }
+
+    // Two binaries that report the SAME version produce the same label, and two
+    // rows with one name is a table nobody can read — the old-vs-new comparison
+    // silently stops being one the moment a branch forgets to bump its version.
+    // Say so rather than printing it twice.
+    {
+        std::vector<std::string_view> seen;
+        for (std::size_t i = 0; i < engines.size(); ++i) {
+            const auto n = engines[i]->name();
+            if (std::ranges::find(seen, n) != seen.end())
+                std::println(std::cerr,
+                             "bench: WARNING — engine #{} also calls itself '{}'. Two "
+                             "binaries reporting one version cannot be told apart in "
+                             "the report; bump one, or pass distinct labels.",
+                             i + 1, n);
+            seen.push_back(n);
+        }
     }
 
     if (opts->list) {
@@ -249,12 +325,39 @@ int main(int argc, char** argv) {
         return stem;
     }();
 
+    // A foreign build description for a REAL project cannot derive the tree from
+    // its own location — it lives in bench/projects/<name>/ and the tree is
+    // elsewhere — so the harness has to tell it. Exported for the whole run
+    // because it is constant for the whole run.
+    //
+    // Without this the xlings arm could never run at all: its CMakeLists starts
+    // with a FATAL_ERROR demanding XLINGS_ROOT, nothing set it, and every cell
+    // was recorded as `configure exited 1`. Twelve cells per job, three jobs,
+    // all green.
+    std::optional<bench::platform::ScopedEnv> project_root_env;
+    if (!opts->project.empty()) {
+        std::error_code ec;
+        auto abs = std::filesystem::absolute(opts->project, ec);
+        project_root_env.emplace("BENCH_PROJECT_ROOT",
+                                 (ec ? opts->project : abs).string());
+    }
+
     const auto facts = bench::platform::host_facts();
     bench::Report report;
     report.host = bench::HostInfo{facts.os, facts.arch, facts.cpu_model,
                                   facts.logical_cores, facts.physical_cores,
                                   facts.heterogeneous, facts.ram_bytes, opts->compiler};
     report.started_at = bench::platform::iso_now();
+
+    // Live progress. It goes to STDERR so that stdout stays the report and can
+    // still be redirected on its own, and it is flushed on every line because
+    // the whole point is to be readable WHILE the run is happening — a buffered
+    // progress line arrives with the summary, which is exactly too late.
+    const auto t0 = std::chrono::steady_clock::now();
+    std::string current_cell;
+    const auto elapsed = [&] {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    };
 
     bench::RunOptions ro;
     ro.work_root       = opts->work;
@@ -264,7 +367,33 @@ int main(int argc, char** argv) {
     ro.compiler        = opts->compiler;
     ro.buildfiles      = opts->buildfiles;
     ro.project         = opts->project;
-    ro.project_targets = bench::fixture::Targets{opts->hub, opts->leaf, opts->body};
+    // --hub/--leaf/--body are PROJECT-RELATIVE, and have to be resolved here.
+    //
+    // They used to be taken as given, which made them relative to the harness's
+    // working directory instead. That is the same directory only when you are
+    // benchmarking the tree you happen to be standing in — true for mcpp
+    // measuring itself, false for every other project — and the failure is
+    // silent: `exists()` says no, the cell reports `skipped`, and the run still
+    // exits 0. An absolute path is left alone, so `--hub /tmp/x.cppm` still works.
+    const auto in_project = [&](const std::filesystem::path& p) {
+        if (p.empty() || p.is_absolute()) return p;
+        return opts->project.empty() ? p : opts->project / p;
+    };
+    ro.project_targets = bench::fixture::Targets{in_project(opts->hub),
+                                                in_project(opts->leaf),
+                                                in_project(opts->body)};
+    ro.timeout_s       = opts->timeout_s;
+    ro.on_progress     = [&](std::string_view what) {
+        bool first = true;
+        for (const auto part : std::views::split(what, '\n')) {
+            const std::string_view line(part.begin(), part.end());
+            if (line.empty() && !first) continue;
+            if (first) std::print(std::cerr, "[{:>7.1f}s] {}  {}\n", elapsed(), current_cell, line);
+            else       std::print(std::cerr, "             | {}\n", line);
+            first = false;
+        }
+        std::cerr.flush();
+    };
     const bench::Runner runner(ro);
 
     const auto fixture_name = opts->project.empty()
@@ -293,6 +422,10 @@ int main(int argc, char** argv) {
             for (const auto scenario : opts->scenarios) {
                 bench::CellResult cell;
                 if (will_run) {
+                    current_cell = bench::CellKey{
+                        std::string(engine->name()), compiler_label, opts->profile,
+                        std::string(to_string(scenario)), fixture_name,
+                        std::string(to_string(variant))}.str();
                     cell = runner.measure(*engine, *inst, variant, scenario, opts->profile,
                                           opts->compiler, compiler_label, fixture_name);
                 } else {
@@ -368,5 +501,40 @@ int main(int argc, char** argv) {
     out << bench::to_json(report);
     std::println("");
     std::println("report : {}", opts->out.string());
+
+    // --- exit status -------------------------------------------------------
+    //
+    // A benchmark that cannot assert on TIMINGS (shared runners, changing CPU
+    // models) can still assert that it MEASURED SOMETHING. Not doing so cost
+    // this suite weeks: a matrix job in which 48 of 72 cells failed, 18 were
+    // unavailable and the only 6 that ran were one engine on one variant,
+    // reported success — as did an xlings job whose every single cell was
+    // skipped because --hub named a file that no longer existed.
+    //
+    // `failed` is the finding: the engine ran and produced no artifact.
+    // `unavailable` and `skipped` are gaps, are documented in the note, and
+    // never fail the run.
+    std::size_t ok = 0, failed = 0, waived = 0;
+    for (const auto& c : report.cells) {
+        if (c.status == bench::Status::Ok) { ++ok; continue; }
+        if (c.status != bench::Status::Failed) continue;
+        if (listed(opts->allow_failed, c.key.engine)) ++waived; else ++failed;
+    }
+    std::println("cells  : {} ok, {} failed{}, {} not applicable", ok, failed,
+                 waived ? std::format(" ({} waived by --allow-failed)", waived) : "",
+                 report.cells.size() - ok - failed - waived);
+
+    if (failed) {
+        std::println(std::cerr,
+                     "bench: {} cell(s) FAILED — the engine ran and produced no artifact. "
+                     "Each one's reason and log tail are above.", failed);
+        return 1;
+    }
+    if (ok == 0) {
+        std::println(std::cerr,
+                     "bench: nothing was measured. Every cell was unavailable or skipped, "
+                     "so this run contains no data; see each cell's note for why.");
+        return 1;
+    }
     return 0;
 }

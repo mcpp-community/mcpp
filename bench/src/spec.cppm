@@ -73,6 +73,13 @@ struct Job {
     std::string           profile{"release"};   // release | debug
     std::string           compiler{"default"};  // gcc | clang | default
     int                   jobs{0};              // 0 = let the engine decide
+    // How long ONE configure or build may take before the child is killed and
+    // the cell reported as `failed` with "timed out". 0 = wait forever.
+    //
+    // It lives on the Job rather than inside the runner because every engine
+    // has to pass it to platform::run itself, and an engine that forgets is an
+    // engine that can still hang the whole matrix — which is what happened.
+    double                timeout_s{0.0};
 };
 
 // NOTE: which file each scenario perturbs is NOT declared here. Only the fixture

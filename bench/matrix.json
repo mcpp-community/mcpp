@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "_comment": [
     "THE benchmark matrix. Read by .github/workflows/bench.yml to plan its jobs and",
     "by tests/e2e/233_bench_matrix.sh to check this file against the harness's own",
@@ -14,7 +14,39 @@
     "meson is deliberately absent, not missing: meson 1.10.2 has no way to declare a translation unit to be a module INTERFACE, so every module cell was an `unavailable` row. An engine that cannot express the thing being measured is not a comparison point, and keeping it produced one honest row and five empty ones per report."
   ],
   "baseline": "cmake",
-  "_baseline_note": "Every ratio in every report is against cmake. See SPEC.md S2.",
+  "_baseline_note": "Every ratio in every report is against cmake unless a cell overrides it. See SPEC.md S2.",
+  "tools": {
+    "_note": [
+      "EVERY tool is installed through xlings at an exact version, on every runner.",
+      "Not a tidiness preference — the unpinned matrix measured something else:",
+      "the runner images carry cmake 3.31.6, which does not have the CMake 4.0",
+      "`import std` experimental key, so every module cell failed to configure;",
+      "and `xlings install xmake` resolved to 3.0.7 on the runner while a",
+      "developer box had 3.1.0. A version that varies per runner is a variable",
+      "the report does not record and the reader cannot see."
+    ],
+    "cmake": "4.4.2",
+    "xmake": "3.1.0",
+    "bazel": "9.2.0",
+    "gcc": "16.1.0",
+    "llvm": "22.1.8",
+    "llvm_windows": "20.1.7",
+    "_compiler_note": [
+      "gcc/llvm are the versions bench/src/toolchain.cppm pins and mcpp itself",
+      "builds with. Every engine is handed THAT driver via `--compiler payload:*`,",
+      "not `command -v g++`. The runner's own gcc is 13.3.0: cmake cannot",
+      "configure C++23 modules with it, xmake crashes it with an internal",
+      "compiler error, and mcpp quietly used the registry payload anyway — so the",
+      "table read `48 failed` while claiming to compare build engines."
+    ]
+  },
+  "reference_mcpp": "2026.8.11.3",
+  "_reference_mcpp_note": [
+    "The last RELEASED mcpp, installed by xlings and measured alongside the mcpp",
+    "built from this checkout. Without it a report says how fast this branch is",
+    "and not whether it got faster, which is the question a benchmark on a pull",
+    "request is being asked."
+  ],
   "axes": {
     "os": [
       "linux",
@@ -35,7 +67,8 @@
     "project": [
       "fixture",
       "mcpp",
-      "xlings"
+      "xlings-2026.8.11.2",
+      "xlings-2026.8.13.1"
     ],
     "variant": [
       "headers",
@@ -111,6 +144,8 @@
       "engines": "mcpp,cmake,xmake",
       "variants": "native",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform/platform.cppm",
+      "body": "src/version_req.cppm",
       "note": "touch-leaf omitted: a real tree has no unit nobody imports that is also stable enough to name"
     },
     {
@@ -119,7 +154,9 @@
       "project": "mcpp",
       "engines": "mcpp,cmake,xmake,bazel",
       "variants": "native",
-      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform/platform.cppm",
+      "body": "src/version_req.cppm"
     },
     {
       "os": "macos",
@@ -127,7 +164,9 @@
       "project": "mcpp",
       "engines": "mcpp,cmake,xmake,bazel",
       "variants": "native",
-      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform/platform.cppm",
+      "body": "src/version_req.cppm"
     },
     {
       "os": "windows",
@@ -135,32 +174,79 @@
       "project": "mcpp",
       "engines": "mcpp,cmake,xmake,bazel",
       "variants": "native",
-      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform/platform.cppm",
+      "body": "src/version_req.cppm"
     },
     {
       "os": "linux",
       "toolchain": "gcc",
-      "project": "xlings",
+      "project": "xlings-2026.8.11.2",
+      "buildfiles": "xlings",
       "engines": "mcpp,cmake,xmake",
-      "variants": "native",
+      "variants": "modules",
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
-      "note": "mcpp-vs-mcpp is the point here (see projects/xlings/README.md); the cmake arm compiles all 110 units and is expected to stop at the link"
+      "hub": "src/platform.cppm",
+      "body": "src/platform.cppm",
+      "note": "the COMBINED code style: 110 .cppm + 2 .cpp, each interface unit carrying its own implementation. src/platform.cppm has 45 importers, which is what makes it the hub  KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp.",
+      "baseline": "2026.8.11.3",
+      "allow_failed": "cmake,xmake"
+    },
+    {
+      "os": "linux",
+      "toolchain": "gcc",
+      "project": "xlings-2026.8.13.1",
+      "buildfiles": "xlings",
+      "engines": "mcpp,cmake,xmake",
+      "variants": "modules-impl",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform.cppm",
+      "body": "src/platform.cpp",
+      "note": "the SPLIT code style: the same 110 interfaces with implementations moved into 92 .cpp. Paired with the cell above, this is the only measurement in the suite of what that refactor costs on a real codebase — note `body` is the .cpp here, because editing an implementation unit is the point  KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp.",
+      "baseline": "2026.8.11.3",
+      "allow_failed": "cmake,xmake"
     },
     {
       "os": "linux",
       "toolchain": "clang",
-      "project": "xlings",
+      "project": "xlings-2026.8.11.2",
+      "buildfiles": "xlings",
       "engines": "mcpp,cmake,xmake",
-      "variants": "native",
-      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
+      "variants": "modules",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform.cppm",
+      "body": "src/platform.cppm",
+      "baseline": "2026.8.11.3",
+      "allow_failed": "cmake,xmake",
+      "note": "KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp."
+    },
+    {
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "xlings-2026.8.13.1",
+      "buildfiles": "xlings",
+      "engines": "mcpp,cmake,xmake",
+      "variants": "modules-impl",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform.cppm",
+      "body": "src/platform.cpp",
+      "baseline": "2026.8.11.3",
+      "allow_failed": "cmake,xmake",
+      "note": "KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp."
     },
     {
       "os": "macos",
       "toolchain": "clang",
-      "project": "xlings",
+      "project": "xlings-2026.8.13.1",
+      "buildfiles": "xlings",
       "engines": "mcpp,cmake,xmake",
-      "variants": "native",
-      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment"
+      "variants": "modules-impl",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform.cppm",
+      "body": "src/platform.cpp",
+      "note": "only the split style on macOS: the pair comparison is a Linux job, and running one style here is enough to catch a platform-specific break  KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp.",
+      "baseline": "2026.8.11.3",
+      "allow_failed": "cmake,xmake"
     }
   ],
   "excluded": [
@@ -193,14 +279,14 @@
     {
       "os": "windows",
       "toolchain": "msvc",
-      "project": "xlings",
-      "reason": "same as the mcpp project on msvc"
+      "project": "xlings-*",
+      "reason": "same as the mcpp project on msvc: no validated schedule, so a real-project number would describe an unvalidated shape"
     },
     {
       "os": "windows",
       "toolchain": "clang",
-      "project": "xlings",
-      "reason": "xlings has not been shown to build on Windows at all. KNOWN GAP: verify the plain build first, then add the cell — a bench cell that cannot build is not a measurement"
+      "project": "xlings-*",
+      "reason": "xlings has not been shown to build on Windows at all. KNOWN GAP: verify the plain build first, then add the cell — a bench cell that cannot build is not a measurement. The `xlings-*` prefix is deliberate: a bare `*` here would also claim the windows/clang fixture and mcpp cells, which do run"
     },
     {
       "os": "*",

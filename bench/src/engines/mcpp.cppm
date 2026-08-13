@@ -53,7 +53,7 @@ public:
     platform::RunResult build(const Job& job) const override {
         const std::vector<std::string> argv{
             program_, "build", job.profile == "debug" ? "--dev" : "--release"};
-        return platform::run(argv, job.project_dir, job.log_path);
+        return platform::run(argv, job.project_dir, job.log_path, job.timeout_s);
     }
 
     void clean(const Job& job) const override {

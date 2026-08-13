@@ -38,13 +38,13 @@ public:
         };
         if (const auto cxx = resolve_cxx(job.compiler); !cxx.empty())
             argv.push_back(std::format("-DCMAKE_CXX_COMPILER={}", cxx));
-        return platform::run(argv, {}, job.log_path);
+        return platform::run(argv, {}, job.log_path, job.timeout_s);
     }
 
     platform::RunResult build(const Job& job) const override {
         std::vector<std::string> argv{"cmake", "--build", job.build_dir.string()};
         if (job.jobs > 0) { argv.push_back("-j"); argv.push_back(std::to_string(job.jobs)); }
-        return platform::run(argv, {}, job.log_path);
+        return platform::run(argv, {}, job.log_path, job.timeout_s);
     }
 
     // Artifacts only — the configure result lives in the same directory, so a

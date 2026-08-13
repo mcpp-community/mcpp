@@ -16,6 +16,7 @@ export module bench.fixture.buildfiles;
 
 import std;
 import bench.protocol;
+import bench.toolchain;
 import bench.fixture.generate;
 
 export namespace bench::fixture {
@@ -89,11 +90,13 @@ inline void emit_mcpp(const std::filesystem::path& root, Variant variant, const 
     // the flag every other engine honours, so pinning gcc here while the harness
     // hands clang to cmake/xmake/bazel would turn the table into a compiler
     // comparison without saying so.
-    const bool clang = compiler.find("clang") != std::string_view::npos;
+    //
+    // The VERSION comes from bench.toolchain, which is also where the harness
+    // looks the payload driver up. Spelling it here as well is how the two
+    // drifted the first time: the manifest said gcc@16.1.0 and CI handed every
+    // other engine the runner's gcc 13.
     toml += "\n[toolchain]\n";
-    toml += clang ? "default = \"llvm@22.1.8\"\n" : "default = \"gcc@16.1.0\"\n";
-    toml += "macos   = \"llvm@22.1.8\"\n"
-            "windows = \"llvm@20.1.7\"\n";
+    toml += std::format("default = \"{}\"\n", toolchain::mcpp_pin(compiler));
     detail::write(root / "mcpp.toml", toml);
 }
 
