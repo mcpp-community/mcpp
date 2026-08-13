@@ -94,6 +94,25 @@ add_requires("mcpplibs-capi-lua 0.0.3")
 add_requires("mcpplibs-tinyhttps 0.2.9")
 add_requires("mcpplibs-xpkg 0.0.57")
 add_requires("ftxui 6.1.9")
+-- libarchive's compression backends, declared EXPLICITLY exactly as xlings' own
+-- xmake.lua declares them. Leaving them to libarchive-xlings' `add_deps` is not
+-- enough: zlib, bzip2 and lz4 were then never installed at all
+-- (`~/.xmake/packages/b/` empty), so `-lz -lbz2 -llz4` fell through to the
+-- HOST's shared libraries. The link succeeded and the product could not start —
+--     error while loading shared libraries: libz.so.1
+-- because the payload's private loader does not search /usr/lib.
+add_requires("zlib",  {system = false})
+add_requires("bzip2", {system = false})
+add_requires("lz4",   {system = false})
+add_requires("zstd",  {system = false})
+add_requires("xz",    {system = false})
+-- openssl too, even though the override passes `-DENABLE_OPENSSL=OFF`:
+-- `set_base("libarchive")` inherits the upstream package's openssl dependency,
+-- so `-lssl -lcrypto` reach the link line regardless. The host has
+-- libssl.so.3 but no `libssl.so` development symlink, so they resolve to
+-- nothing and libarchive itself fails to build:
+--     ld: cannot find -lssl: No such file or directory
+add_requires("openssl", {system = false})
 -- libarchive-xlings, not plain libarchive: xmake-repo's build stops at
 -- `CMake Error at CMakeLists.txt:1349 (MESSAGE): libgcc not found.` under the
 -- payload toolchain. The override is xlings' own (see packages/libarchive.lua).
@@ -127,7 +146,8 @@ target("xlings")
     -- (xrepo/packages/m/mcpplibs-xpkg/xmake.lua), which is where libxpkg keeps
     -- it too, instead of being re-implemented against the registry here.
     add_packages("cmdline", "mcpplibs-capi-lua", "mcpplibs-tinyhttps",
-                 "mcpplibs-xpkg", "ftxui", "libarchive-xlings")
+                 "mcpplibs-xpkg", "ftxui", "libarchive-xlings",
+                 "zlib", "bzip2", "lz4", "zstd", "xz")
 
     -- `[build] include_dirs = ["src/libs/json"]` — src/libs/json.cppm reaches
     -- for <json.hpp> from its global module fragment.

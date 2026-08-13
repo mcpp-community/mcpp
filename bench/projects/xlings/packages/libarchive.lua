@@ -29,7 +29,15 @@ package("libarchive-xlings")
     add_versions("3.8.6", "213269b05aac957c98f6e944774bb438d0bd168a2ec60b9e4f8d92035925821c")
 
     add_deps("cmake")
-    add_deps("zlib", "bzip2", "lz4", "zstd", "xz")
+    -- openssl is in the list even though `-DENABLE_OPENSSL=OFF` is passed
+    -- below: `set_base("libarchive")` inherits the upstream package's openssl
+    -- dependency, so `-lssl -lcrypto` reach libarchive's own link line anyway.
+    -- Declaring it HERE is what puts openssl's lib dir on that line — a
+    -- project-level `add_requires("openssl")` installs the package but does not
+    -- reach into this package's build, and libarchive then fails with
+    --     ld: cannot find -lssl: No such file or directory
+    -- because the host ships libssl.so.3 without a `libssl.so` dev symlink.
+    add_deps("zlib", "bzip2", "lz4", "zstd", "xz", "openssl")
 
     if is_plat("windows") then
         add_syslinks("advapi32")
@@ -55,6 +63,12 @@ package("libarchive-xlings")
             "-DENABLE_LZ4=ON",
             "-DENABLE_ZSTD=ON",
             "-DENABLE_LZMA=ON",
+            -- NO `-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=OFF` HERE. It looks like the
+            -- right way to stop libarchive preferring the host's shared zlib/bz2
+            -- over the static ones xrepo built, and it does — along with
+            -- everything else libarchive legitimately probes for, so the package
+            -- then fails to link at all. The runtime path is solved on the
+            -- consumer side instead (see xmake.lua), not by blinding configure.
         }
         table.insert(configs, "-DCMAKE_BUILD_TYPE=" .. (package:debug() and "Debug" or "Release"))
         table.insert(configs, "-DBUILD_SHARED_LIBS=" .. (package:config("shared") and "ON" or "OFF"))
