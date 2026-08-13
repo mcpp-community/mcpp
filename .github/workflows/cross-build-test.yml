@@ -121,8 +121,9 @@ jobs:
           XLINGS_VERSION: '2026.8.11.2'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
-          curl -fsSL -o "/tmp/${tarball}" \
-            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
+            "/tmp/${tarball}"
           tar -xzf "/tmp/${tarball}" -C /tmp
           "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"
@@ -258,8 +259,9 @@ jobs:
           XLINGS_VERSION: '2026.8.11.2'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
-          curl -fsSL -o "/tmp/${tarball}" \
-            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
+            "/tmp/${tarball}"
           tar -xzf "/tmp/${tarball}" -C /tmp
           "/tmp/xlings-${XLINGS_VERSION}-linux-x86_64/subos/default/bin/xlings" self install
           export PATH="$HOME/.xlings/subos/default/bin:$PATH"

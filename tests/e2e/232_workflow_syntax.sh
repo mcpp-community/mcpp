@@ -79,4 +79,35 @@ mode = "parsed" if HAVE_YAML else "linted (no PyYAML here — quoted-scalar chec
 print(f"{len(files)} workflow files {mode}")
 PYEOF
 
+# ── every release-archive download goes through the retrying fetcher ────────
+#
+# A bare `curl -fsSL -o <archive>` was the single largest source of unexplained
+# CI red on this repository:
+#
+#     curl: (52) Empty reply from server
+#     Error: Process completed with exit code 52
+#
+# — the release CDN accepting the connection and closing it with no response.
+# It is transient, it hits Windows hardest, and the log carries no test name, so
+# it reads like a code failure every time.
+#
+# Two things make it come back, and this guard catches both:
+#   * a NEW download added with a plain curl, because the surrounding lines all
+#     look like that;
+#   * someone "fixing" it with `--retry` alone, which does NOT cover exit 52 —
+#     an empty reply is a transport error, not one of the HTTP statuses
+#     `--retry` knows about.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ -x "$ROOT/.github/tools/fetch_release.sh" ]   || { echo "FAIL: .github/tools/fetch_release.sh is missing or not executable"; exit 1; }
+
+bare=$(grep -rn -- '-o "\${WORK}/\|-o "/tmp/' "$ROOT/.github/workflows" "$ROOT/.github/actions" 2>/dev/null        | grep 'curl' | grep -v 'retry-all-errors' || true)
+if [ -n "$bare" ]; then
+    echo "FAIL: an archive is downloaded with a bare curl; use .github/tools/fetch_release.sh"
+    echo "      (a plain curl here is the 'curl: (52) Empty reply from server' flake,"
+    echo "       and --retry alone does not cover it)"
+    echo "$bare"
+    exit 1
+fi
+echo "release archive downloads: all via fetch_release.sh"
+
 echo "workflow syntax OK"
