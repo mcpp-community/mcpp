@@ -1,0 +1,76 @@
+{
+  "protocol_version": 1,
+  "started_at": "2026-08-13T07:11:42Z",
+  "host": {
+    "os": "linux",
+    "arch": "x86_64",
+    "cpu_model": "13th Gen Intel(R) Core(TM) i9-13900K",
+    "logical_cores": 32,
+    "physical_cores": 24,
+    "heterogeneous": true,
+    "ram_bytes": 67147722752,
+    "toolchain": "/home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++"
+  },
+  "cells": [
+    {
+      "engine": "mcpp@2026.8.13.1",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "cold",
+      "fixture": "xlings-2026.8.13.1",
+      "variant": "modules-impl",
+      "status": "ok",
+      "note": "mcpp 2026.8.13.1",
+      "runs": 1,
+      "median_s": 27.619,
+      "min_s": 27.619,
+      "max_s": 27.619,
+      "samples": [27.619]
+    },
+    {
+      "engine": "mcpp@2026.8.13.1",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "edit-body",
+      "fixture": "xlings-2026.8.13.1",
+      "variant": "modules-impl",
+      "status": "ok",
+      "note": "mcpp 2026.8.13.1 · perturbation: in-body",
+      "runs": 1,
+      "median_s": 1.786,
+      "min_s": 1.786,
+      "max_s": 1.786,
+      "samples": [1.786]
+    },
+    {
+      "engine": "mcpp@2026.8.13.1+schedule=on",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "cold",
+      "fixture": "xlings-2026.8.13.1",
+      "variant": "modules-impl",
+      "status": "ok",
+      "note": "mcpp 2026.8.13.1",
+      "runs": 1,
+      "median_s": 29.717,
+      "min_s": 29.717,
+      "max_s": 29.717,
+      "samples": [29.717]
+    },
+    {
+      "engine": "mcpp@2026.8.13.1+schedule=on",
+      "compiler": "gcc",
+      "profile": "release",
+      "scenario": "edit-body",
+      "fixture": "xlings-2026.8.13.1",
+      "variant": "modules-impl",
+      "status": "ok",
+      "note": "mcpp 2026.8.13.1 · perturbation: in-body",
+      "runs": 1,
+      "median_s": 1.787,
+      "min_s": 1.787,
+      "max_s": 1.787,
+      "samples": [1.787]
+    }
+  ]
+}

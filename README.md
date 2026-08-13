@@ -361,9 +361,15 @@ separate `.cpp`:
 | `touch-hub` | 89.39s → **1.76s** | 24.87s → **1.30s** | 1.35x |
 | `edit-body` | 89.46s → 88.33s | 2.73s → **1.77s** | **49.96x** |
 
-Splitting implementations out of the interface units is worth **2.6x on a cold
+Splitting implementations out of the interface units is worth **3.1x on a cold
 build and ~50x on an edit** — a code style, not an engine feature, and the
 largest single effect in the suite.
+
+It also overlaps with `bmi_schedule`. On the combined tree that setting takes
+`cold` from 92.95s to 43.26s (2.15x); on the split tree it changes nothing
+(27.62s → 29.72s), because there is no longer a cascade to overlap. **If you are
+choosing one, choose the code style** — the schedule is what helps a codebase
+that has not made that change.
 
 Numbers are **n=1** except the split-tree `cold` row (n=3); read the ratios, not
 the digits. That row is why: at n=1 it read as a 23% regression, and at n=3 it is

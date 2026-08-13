@@ -10,7 +10,13 @@ set -e
 # bench/tests -> two levels up is the repository root.
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP=$(mktemp -d)
-trap "rm -rf $TMP" EXIT
+# `|| true`: on Windows a build killed by the --timeout test (§12) leaves the
+# compilers ninja spawned still running for a moment, and they hold the child
+# log open — `rm -rf` then fails with "Device or resource busy" and, because the
+# trap runs on EXIT, ITS status becomes the script's. The suite printed
+# "bench harness OK" and the job went red anyway. Failing to delete a temp
+# directory is not a test result.
+trap "rm -rf $TMP || true" EXIT
 
 cd "$REPO/bench"
 "$MCPP" build > /dev/null

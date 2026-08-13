@@ -193,6 +193,25 @@ mcpp, because the cmake and xmake arms stop at the link here (SPEC.md §2).
 | `edit-body`    | 89.46s → 88.33s | 2.73s → **1.77s** | **49.96x** |
 | `edit-comment` | 95.40s → 95.02s | 25.09s → 25.29s | 3.76x |
 
+Those `new` columns are the DEFAULT build. With the opt-in BMI schedule on the
+same binary:
+
+| tree | scenario | default | `+bmi_schedule=on` | |
+|---|---|---|---|---|
+| combined | `cold`      | 92.95s | **43.26s** | **2.15x** |
+| combined | `edit-body` | 91.66s | **30.19s** | **3.04x** |
+| split    | `cold`      | 27.62s | 29.72s     | 0.93x |
+| split    | `edit-body` | 1.79s  | 1.79s      | 1.00x |
+
+**The two levers overlap, and the code style is the bigger one.** The schedule
+buys time by letting importers start as soon as a BMI exists — so it only helps
+when there is a cascade to overlap. Splitting the implementations out removes
+the cascade instead: 92.95s → 27.62s cold and 91.66s → 1.79s on an edit, after
+which the schedule has nothing left to win (and costs a little on `cold`).
+
+If you are choosing one, choose the code style. The schedule is what helps a
+codebase that has not made that change.
+
 * **Splitting implementations out of the interface units is worth 2.6x on a cold
   build and ~50x on `edit-body`.** That is the largest single effect in this
   whole suite, and it is a *code style*, not an engine feature.

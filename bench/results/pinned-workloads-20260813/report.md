@@ -68,6 +68,22 @@ mcpp.
 * Splitting implementations out of the interface units is worth **3.1x cold** and
   **~50x on an edit**. A code style, not an engine feature — and the largest
   single effect anywhere in this suite.
+
+### 2b. …and the opt-in schedule on top of it
+
+| tree | scenario | default | `+bmi_schedule=on` | |
+|---|---|---|---|---|
+| combined | `cold`      | 92.95s | **43.26s** | **2.15x** |
+| combined | `edit-body` | 91.66s | **30.19s** | **3.04x** |
+| split    | `cold`      | 27.62s | 29.72s     | 0.93x |
+| split    | `edit-body` | 1.79s  | 1.79s      | 1.00x |
+
+**The two levers overlap, and the code style is the bigger one.** The schedule
+lets importers start as soon as a BMI exists, so it only helps where there is a
+cascade to overlap. Splitting the implementations removes the cascade instead,
+after which the schedule has nothing left to win — and costs a little on `cold`.
+
+Raw: `xlings-combined-schedule-linux-gcc.json`, `xlings-split-schedule-linux-gcc.json`.
 * `touch-hub` reproduces the engine result on a codebase nobody tuned for it.
 
 ⚠️ **The `cold` row was nearly published as a 23% regression.** At n=1 it read
