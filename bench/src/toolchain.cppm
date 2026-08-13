@@ -170,9 +170,27 @@ inline PayloadFlags payload_flags(std::string_view compiler) {
         return f;
     }
 
-    // clang: an explicit libc++ chain rather than --sysroot, which is what mcpp
-    // itself drives clang with. Handing clang gcc's sysroot is the mirror of the
-    // bug above — one arm on the payload libc, the other on the host's.
+    // ⚠️ macOS GETS NOTHING, AND THAT IS THE CORRECT ANSWER.
+    //
+    // Pointing `-L`/`-rpath` at the registry's lib directory puts a second
+    // libc++ where the platform toolchain can find it, and Apple's own linker
+    // links against libc++ — so `ld` itself was resolved against the payload's
+    // copy and died before it linked anything:
+    //
+    //     dyld: Symbol not found: __ZdaPv
+    //       Referenced from: /Applications/Xcode_*.app/.../usr/bin/ld
+    //       Expected in:     …/registry/…/lib/libc++.1.0.dylib
+    //
+    // cmake, bazel and the reference mcpp all failed identically while the mcpp
+    // UNDER TEST passed on the same runner — which is the proof that mcpp does
+    // not pass these flags on macOS either. The payload clang already knows
+    // where its own libc++ is, and cmake supplies `-isysroot` itself.
+    if (platform::OS_NAME == "macos") return f;
+
+    // clang elsewhere: an explicit libc++ chain rather than --sysroot, which is
+    // what mcpp itself drives clang with. Handing clang gcc's sysroot is the
+    // mirror of the gcc branch's bug — one arm on the payload libc, the other
+    // on the host's.
     const std::string ver{on_windows() ? kLlvmWindows : kLlvm};
     const auto root = xpkgs / "xim-x-llvm" / ver;
     if (std::filesystem::is_directory(root / "include" / "c++" / "v1", ec)) {

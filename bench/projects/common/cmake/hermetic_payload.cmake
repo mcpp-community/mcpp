@@ -117,7 +117,12 @@ function(bench_hermetic_payload)
       string(APPEND ld  " --sysroot=${sysroot}")
     endif()
 
-  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT APPLE)
+    # NOT APPLE for the reason bench/src/toolchain.cppm spells out: adding the
+    # registry's lib directory on macOS makes Apple's own `ld` resolve against
+    # the payload's libc++ and abort with `Symbol not found: __ZdaPv` before it
+    # links anything. The payload clang finds its own libc++, and cmake supplies
+    # -isysroot itself.
     # Clang's payload is shaped differently and `--sysroot` is NOT the
     # equivalent: mcpp drives clang with an explicit include chain instead
     # (verified against a real mcpp build command). Passing gcc's --sysroot to
