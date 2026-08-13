@@ -194,14 +194,43 @@ Four things this says, and the fixture can say none of them:
 are the same project either side of one refactor. Ratios against the released
 mcpp.
 
-> **These numbers predate the foreign arms working.** For a long time this said
-> the cmake and xmake arms "stop at the link", and that was recorded as a known
-> gap — it was not a gap, it was unfinished work, and calling it a gap let it
-> sit. The cmake and bazel arms now build both trees into a running binary
-> (`xlings --version` reports the tree's own version on each); xmake is in
-> progress. The table below is still mcpp-against-mcpp because it has not been
-> re-measured since. Until it is, do not read the absence of cmake and xmake
-> columns here as a statement about those engines.
+#### The three engines, on the combined tree
+
+First measurement in which all three arms produce a running binary — the cmake
+and xmake columns below were `failed` cells until the arms were finished, and the
+table that stood here was mcpp-against-mcpp for that reason.
+
+| scenario | **mcpp** | cmake | xmake |
+|---|---|---|---|
+| `cold` | **92.49s** · 1.29x | 119.46s · 1.00x | 105.02s · 1.14x |
+| `noop` | **0.74s** · 0.49x | 0.36s · 1.00x | 0.40s · 0.90x |
+| `touch-hub` | **1.79s** · 54.96x | 98.16s · 1.00x | 98.16s · 1.00x |
+| `edit-body` | **88.38s** · 1.11x | 98.43s · 1.00x | 98.00s · 1.00x |
+| `edit-comment` | **93.81s** · 1.04x | 97.98s · 1.00x | 97.97s · 1.00x |
+
+<sub>xlings `2026.8.11.2`, gcc 16.1.0 payload, Linux x86_64 · i9-13900K · n=1 ·
+`--baseline cmake`. Raw report: `bench/results/xlings-3way-20260814/`.</sub>
+
+Three things in that table are worth reading carefully, because two of them are
+mcpp LOSING:
+
+* **`noop` is 0.49x — mcpp is the slowest of the three at doing nothing.** 0.74s
+  against cmake's 0.36s. It is a fixed cost on every invocation, and it is the
+  one number here that a user feels on every keystroke-to-build cycle.
+* **`edit-comment` is 1.04x, not the 200x the mcpp workload shows.** The comment
+  lands INSIDE an inline function body that xlings keeps in its interface unit,
+  so the BMI genuinely changes and the cascade is owed. The cell's note records
+  which form ran; see §3, and do not read this as the optimisation failing.
+* **`touch-hub` is the real result: 54.96x.** Content unchanged, so mcpp compares
+  the BMI it just produced against the previous one and skips 45 importers.
+  cmake and xmake decide by timestamp and rebuild all of them — to within 0.00s
+  of each other, which is what two timestamp-driven engines should look like.
+
+#### The two code styles, mcpp against mcpp
+
+Older run, kept because it is the only side-by-side of the two pinned
+styles. Both columns are mcpp, so the foreign arms being unfinished at the
+time does not affect it.
 
 | scenario | combined `2026.8.11.2` old → new | split `2026.8.13.1` old → new | what the split buys |
 |---|---|---|---|
