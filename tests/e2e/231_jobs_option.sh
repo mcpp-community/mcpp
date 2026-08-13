@@ -141,9 +141,12 @@ if grep -qE 'schedule=(detach-codegen|two-phase)' "$ninja_file"; then
     sleep 1
     touch "$TMP/mark"
     MCPP_BMI_SCHEDULE=on "$MCPP" build --release > /dev/null 2>&1
-    rebuilt=$(find target \( -name '*.o' -o -name '*.pcm' -o -name '*.gcm' \) -newer "$TMP/mark" | wc -l)
-    [ "$rebuilt" -eq 0 ] \
-      || { echo "second build under the split schedule rebuilt $rebuilt artifact(s)"; exit 1; }
+    rebuilt=$(find target \( -name '*.o' -o -name '*.pcm' -o -name '*.gcm' \) -newer "$TMP/mark")
+    # Name them. "rebuilt 1 artifact(s)" cost a CI round trip to turn into
+    # "which one" — and the answer (a generated .c rewritten on every drive, so
+    # macOS-only) was not guessable from the count.
+    [ -z "$rebuilt" ] \
+      || { echo "second build under the split schedule rebuilt:"; echo "$rebuilt"; exit 1; }
 fi
 
 echo "split schedule OK"

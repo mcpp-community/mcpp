@@ -37,7 +37,17 @@ struct Options {
     std::filesystem::path project;   // measure an existing tree instead of a fixture
     std::filesystem::path buildfiles;// foreign build descriptions for that tree
     std::filesystem::path hub, leaf, body;   // what the scenarios perturb there
-    std::string baseline;                    // engine to normalise the summary against
+    // The engine every ratio is expressed against. cmake is the default and not
+    // an arbitrary one: it is the reference implementation of C++ module support
+    // (P1689 scanning + dyndep are its design), it is present on every machine
+    // this suite runs on, and it is what a reader already has a feel for. An
+    // absolute second count means nothing without knowing the runner; "1.8x
+    // cmake" survives being read on a different machine.
+    //
+    // Defaulting it rather than leaving it empty is deliberate: a run that
+    // forgot the flag produced a table of bare seconds, which is the one form
+    // of this data that cannot be compared to anything.
+    std::string baseline{"cmake"};
     bool list{false};
 };
 
@@ -74,8 +84,8 @@ void usage() {
     std::println("  --runs N           repetitions per cell                    (default: per scenario)");
     std::println("  --work DIR         scratch directory                       (default: bench-work)");
     std::println("  --out FILE         JSON report path                        (default: bench-report.json)");
-    std::println("  --baseline NAME    add a normalised column to the summary, relative to this");
-    std::println("                     engine (e.g. --baseline cmake). Substring match on the label.");
+    std::println("  --baseline NAME    normalise the summary against this engine   (default: cmake)");
+    std::println("                     Substring match on the label; \"\" disables the column.");
     std::println("  --list             print engines and their availability, then exit");
     std::println("  --analyze DIR      profile an existing ninja build dir (work, makespan,");
     std::println("                     critical path, concurrency) instead of measuring");

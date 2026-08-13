@@ -204,7 +204,22 @@ std::string shared_soname_flag(const LinkUnit& lu) {
 #endif
 }
 
+// Write only when the bytes would actually change.
+//
+// One of these files is a BUILD INPUT: `obj/mcpp_ios_init.c`, the generated
+// initializer-ordering TU (#336, macOS static libc++ only). It was rewritten on
+// every drive, so its mtime moved on every drive, so ninja recompiled it on
+// every build — including no-op ones. That is one object, but `mcpp test`
+// drives the backend once per test, and the symptom read as "the split module
+// schedule is not incremental" on macOS while being invisible on Linux, where
+// the shim does not exist.
 void write_file(const std::filesystem::path& p, std::string_view content) {
+    std::error_code ec;
+    if (std::filesystem::file_size(p, ec) == content.size() && !ec) {
+        std::ifstream is(p, std::ios::binary);
+        std::string prev((std::istreambuf_iterator<char>(is)), {});
+        if (prev == content) return;
+    }
     std::filesystem::create_directories(p.parent_path());
     std::ofstream os(p);
     os << content;

@@ -42,22 +42,12 @@ on:
       - '!bench/results/**'
       - '.github/workflows/bench.yml'
   workflow_dispatch:
+    # These FILTER the cell list in bench/matrix.json; they do not replace it.
+    # Which engines / variants / scenarios a cell sweeps is a property of the
+    # cell (a gcc cell cannot run bazel's module support, a real project has no
+    # `headers` form), so those live in matrix.json next to the cell they
+    # describe rather than as one global default applied to every platform.
     inputs:
-      engines:
-        description: 'comma-separated: mcpp,mcpp-opt,cmake,xmake,meson,bazel'
-        required: false
-        default: 'mcpp,mcpp-opt,cmake,xmake'
-      variants:
-        description: 'comma-separated: headers,modules,modules-impl'
-        required: false
-        default: 'headers,modules,modules-impl'
-      scenarios:
-        description: 'comma-separated: cold,noop,touch-hub,touch-leaf,edit-body,edit-comment'
-        required: false
-        # All of them. A scenario left out of the default is a scenario nobody
-        # ever runs — `touch-leaf` was defined, documented and advertised, and
-        # had never appeared in a single result file.
-        default: 'cold,noop,touch-hub,touch-leaf,edit-body,edit-comment'
       preset:
         description: 'named fixture size: smoke | standard | large (overridden by units/fanin/weight below)'
         required: false
@@ -79,49 +69,82 @@ on:
         required: false
         default: 'release'
       platforms:
-        description: 'comma-separated: linux,macos,windows'
+        description: 'FILTER on bench/matrix.json cells: linux,macos,windows'
         required: false
         default: 'linux,macos,windows'
+      toolchains:
+        description: 'FILTER on bench/matrix.json cells: gcc,clang,msvc'
+        required: false
+        default: 'gcc,clang,msvc'
+      projects:
+        description: 'FILTER on bench/matrix.json cells: fixture,mcpp,xlings'
+        required: false
+        default: 'fixture,mcpp,xlings'
 
 concurrency:
   group: bench-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # The matrix is computed rather than written out, so `platforms: linux` runs
-  # ONE job instead of three jobs where two are skipped — a skipped job still
-  # queues a runner and still reports a check.
+  # The matrix is READ, not written here. bench/matrix.json is the single source
+  # of truth for which (OS, toolchain, project) cells exist and which engines /
+  # variants / scenarios each one sweeps; bench/SPEC.md explains the axes and
+  # deliberately does not repeat the list. A matrix written down twice is a
+  # matrix that disagrees with itself, and the disagreement is silent — both
+  # copies keep looking right.
+  #
+  # The dispatch inputs FILTER that list rather than replace it, so
+  # `platforms: linux` runs the linux cells and nothing else — a skipped job
+  # still queues a runner and still reports a check.
   plan:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v4
       - id: plan
         shell: bash
         run: |
           set -euo pipefail
-          # `inputs.*` is empty on a push/pull_request trigger, so every input needs
-          # a fallback here — an empty `platforms` would otherwise plan an empty
-          # matrix and the job would silently do nothing.
-          want="${{ inputs.platforms || 'linux,macos,windows' }}"
-          entries=()
-          case ",$want," in *,linux,*)   entries+=('{"os":"ubuntu-24.04","name":"linux"}');;  esac
-          case ",$want," in *,macos,*)   entries+=('{"os":"macos-14","name":"macos"}');;      esac
-          case ",$want," in *,windows,*) entries+=('{"os":"windows-2022","name":"windows"}');; esac
-          if [ ${#entries[@]} -eq 0 ]; then
-            echo "no platform selected from '$want'" >&2
+          # `inputs.*` is empty on push/pull_request, so every one needs a
+          # fallback here — an empty filter would otherwise plan an empty matrix
+          # and the job would silently do nothing.
+          plat="${{ inputs.platforms || 'linux,macos,windows' }}"
+          tool="${{ inputs.toolchains || 'gcc,clang,msvc' }}"
+          proj="${{ inputs.projects || 'fixture,mcpp,xlings' }}"
+
+          # `. as $c` is load-bearing: inside `$plat | contains(...)` the `.` has
+          # already become $plat, so a bare `.os` there indexes a STRING and jq
+          # fails pointing at a line number in the data file rather than at the
+          # program.
+          include=$(jq -c \
+            --arg plat ",$plat," --arg tool ",$tool," --arg proj ",$proj," \
+            --argjson runners "$(jq -c .runners bench/matrix.json)" '
+            [ .cells[]
+              | . as $c
+              | select($plat | contains("," + $c.os        + ","))
+              | select($tool | contains("," + $c.toolchain + ","))
+              | select($proj | contains("," + $c.project   + ","))
+              | $c + { runs_on: $runners[$c.os] }
+            ]' bench/matrix.json)
+
+          count=$(printf '%s' "$include" | jq 'length')
+          if [ "$count" -eq 0 ]; then
+            echo "no cell in bench/matrix.json matches platforms='$plat' toolchains='$tool' projects='$proj'" >&2
             exit 1
           fi
-          printf 'matrix={"include":[%s]}\n' "$(IFS=,; echo "${entries[*]}")" >> "$GITHUB_OUTPUT"
+          echo "planning $count cell(s):"
+          printf '%s' "$include" | jq -r '.[] | "  \(.os)/\(.toolchain)/\(.project)"'
+          printf 'matrix={"include":%s}\n' "$include" >> "$GITHUB_OUTPUT"
 
   bench:
     needs: plan
     strategy:
       fail-fast: false          # one platform's engine gap must not cancel the rest
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 120
-    name: bench (${{ matrix.name }})
+    name: bench (${{ matrix.os }}/${{ matrix.toolchain }}/${{ matrix.project }})
 
     steps:
       - uses: actions/checkout@v4
@@ -154,6 +177,44 @@ jobs:
           cmake --version || true
           ninja --version || true
 
+      # The compiler axis. Resolved to a DRIVER PATH here rather than passed as a
+      # label, because `--compiler clang` means "whatever clang++ is on PATH" and
+      # that is a different compiler on each runner — which is exactly the
+      # comparison this suite is not making. msvc is the exception: cl.exe is
+      # reached through the VS environment, not a path, so the label is passed
+      # through and each engine's msvc handling applies.
+      - name: Resolve the compiler for this cell
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.toolchain }}" in
+            msvc)  echo "BENCH_CXX=msvc" >> "$GITHUB_ENV" ;;
+            gcc)   echo "BENCH_CXX=$(command -v g++)" >> "$GITHUB_ENV" ;;
+            clang) echo "BENCH_CXX=$(command -v clang++)" >> "$GITHUB_ENV" ;;
+          esac
+          echo "cell compiler: ${{ matrix.toolchain }}"
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.toolchain == 'msvc'
+
+      # The project axis. `fixture` needs nothing — the harness generates it.
+      # `xlings` is cloned rather than vendored: a vendored snapshot rots, and a
+      # benchmark whose target drifts from the real project measures the
+      # snapshot (bench/projects/xlings/README.md).
+      - name: Fetch the project under measurement
+        if: matrix.project == 'xlings'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/openxlings/xlings "$RUNNER_TEMP/xlings"
+          echo "BENCH_PROJECT=$RUNNER_TEMP/xlings" >> "$GITHUB_ENV"
+          git -C "$RUNNER_TEMP/xlings" rev-parse HEAD
+
+      - name: Locate the project under measurement
+        if: matrix.project == 'mcpp'
+        shell: bash
+        run: echo "BENCH_PROJECT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
       - name: Report engine availability
         shell: bash
         run: |
@@ -163,29 +224,47 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The preset names the size; units/fanin override it only when set to a
-          # positive number. Passing raw numbers unconditionally would make every
-          # run's size an accident of this file rather than a named, comparable
-          # workload — and --preset must come first so the overrides still win.
-          # Every `inputs.*` needs a fallback: on a push/pull_request trigger
-          # they are all EMPTY, and an empty --engines would run nothing while
-          # still reporting success.
-          args=( --preset "${{ inputs.preset || 'smoke' }}" )
-          [ "${{ inputs.units || 0 }}" -gt 0 ] 2>/dev/null && args+=( --units "${{ inputs.units }}" )
-          [ "${{ inputs.fanin || 0 }}" -gt 0 ] 2>/dev/null && args+=( --fanin "${{ inputs.fanin }}" )
-          "$BENCH" \
-            --engines   '${{ inputs.engines || 'mcpp,cmake,xmake,meson,bazel' }}' \
-            --variants  '${{ inputs.variants || 'headers,modules,modules-impl' }}' \
-            --scenarios '${{ inputs.scenarios || 'cold,noop,touch-hub,touch-leaf,edit-body,edit-comment' }}' \
-            --profile   '${{ inputs.profile || 'release' }}' \
-            "${args[@]}" \
-            --runs      '${{ inputs.runs || 0 }}' \
-            --work      "$RUNNER_TEMP/bench-work" \
-            --out       "bench-${{ matrix.name }}.json"
+          args=( --engines   '${{ matrix.engines }}'
+                 --variants  '${{ matrix.variants }}'
+                 --scenarios '${{ matrix.scenarios }}'
+                 --baseline  cmake
+                 --profile   '${{ inputs.profile || 'release' }}'
+                 --runs      '${{ inputs.runs || 0 }}'
+                 --work      "$RUNNER_TEMP/bench-work"
+                 --out       "bench-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.project }}.json" )
+
+          # `msvc` is a label, not a path — see the resolve step above.
+          [ "$BENCH_CXX" != "msvc" ] && [ -n "$BENCH_CXX" ] && args+=( --compiler "$BENCH_CXX" )
+
+          if [ "${{ matrix.project }}" = "fixture" ]; then
+            # The preset names the size; units/fanin override it only when set to
+            # a positive number. Passing raw numbers unconditionally would make
+            # every run's size an accident of this file rather than a named,
+            # comparable workload — and --preset must come first so the
+            # overrides still win.
+            args+=( --preset "${{ inputs.preset || matrix.preset }}" )
+            [ "${{ inputs.units || 0 }}" -gt 0 ] 2>/dev/null && args+=( --units "${{ inputs.units }}" )
+            [ "${{ inputs.fanin || 0 }}" -gt 0 ] 2>/dev/null && args+=( --fanin "${{ inputs.fanin }}" )
+          else
+            # A real tree: measured in place, and the scenarios that perturb a
+            # file must be TOLD which one. Without --hub/--leaf/--body they
+            # report `skipped` with the reason rather than picking a file and
+            # producing a number that looks valid.
+            args+=( --project    "$BENCH_PROJECT"
+                    --buildfiles "$GITHUB_WORKSPACE/bench/projects/${{ matrix.project }}" )
+            case "${{ matrix.project }}" in
+              mcpp)   args+=( --hub  "src/platform/platform.cppm"
+                              --body "src/version_req.cppm" ) ;;
+              xlings) args+=( --hub  "src/xlings.cppm"
+                              --body "src/xlings.cppm" ) ;;
+            esac
+          fi
+
+          "$BENCH" "${args[@]}"
 
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: bench-${{ matrix.name }}
-          path: bench-${{ matrix.name }}.json
+          name: bench-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.project }}
+          path: bench-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.project }}.json
           if-no-files-found: error
