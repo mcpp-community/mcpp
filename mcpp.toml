@@ -17,7 +17,7 @@ default-profile = "release"
 include_dirs = ["src/libs/json"]
 
 [toolchain]
-default = "gcc@16.1.0"
+default = "llvm@22.1.8"
 macos   = "llvm@22.1.8"
 windows = "llvm@20.1.7"
 

@@ -74,6 +74,18 @@ bench_define_toolchains(XLINGS_MANIFEST)
 -- (mcpplibs/mcpplibs-index#14, merged.) MCPPLIBS_INDEX still overrides the URL,
 -- which is how the next version bump gets tested against a checkout before it
 -- is published.
+includes("packages/libarchive.lua")
+
+-- EVERY dependency static, transitively. Without this the binary builds and
+-- then cannot start:
+--     error while loading shared libraries: libbz2.so.1.0: cannot open
+--     shared object file: No such file or directory
+-- bzip2 arrives through libarchive and xrepo built it shared, so the link
+-- succeeded against a .so that is not on any runtime path. It also matters for
+-- the comparison: mcpp produces a self-contained binary here (the arm passes
+-- `-static-libstdc++` below), so an arm that leaves its dependencies dynamic is
+-- not producing the same artifact.
+add_requireconfs("**", {configs = {shared = false}})
 add_repositories("mcpplibs-index " ..
                  (os.getenv("MCPPLIBS_INDEX") or "https://github.com/mcpplibs/mcpplibs-index.git"))
 
@@ -82,7 +94,10 @@ add_requires("mcpplibs-capi-lua 0.0.3")
 add_requires("mcpplibs-tinyhttps 0.2.9")
 add_requires("mcpplibs-xpkg 0.0.57")
 add_requires("ftxui 6.1.9")
-add_requires("libarchive 3.8.7")
+-- libarchive-xlings, not plain libarchive: xmake-repo's build stops at
+-- `CMake Error at CMakeLists.txt:1349 (MESSAGE): libgcc not found.` under the
+-- payload toolchain. The override is xlings' own (see packages/libarchive.lua).
+add_requires("libarchive-xlings 3.8.7")
 
 
 target("xlings")
@@ -112,7 +127,7 @@ target("xlings")
     -- (xrepo/packages/m/mcpplibs-xpkg/xmake.lua), which is where libxpkg keeps
     -- it too, instead of being re-implemented against the registry here.
     add_packages("cmdline", "mcpplibs-capi-lua", "mcpplibs-tinyhttps",
-                 "mcpplibs-xpkg", "ftxui", "libarchive")
+                 "mcpplibs-xpkg", "ftxui", "libarchive-xlings")
 
     -- `[build] include_dirs = ["src/libs/json"]` — src/libs/json.cppm reaches
     -- for <json.hpp> from its global module fragment.

@@ -192,7 +192,16 @@ Four things this says, and the fixture can say none of them:
 
 110 modules, 46k lines, different authors, never tuned for this. The two pins
 are the same project either side of one refactor. Ratios against the released
-mcpp, because the cmake and xmake arms stop at the link here (SPEC.md §2).
+mcpp.
+
+> **These numbers predate the foreign arms working.** For a long time this said
+> the cmake and xmake arms "stop at the link", and that was recorded as a known
+> gap — it was not a gap, it was unfinished work, and calling it a gap let it
+> sit. The cmake and bazel arms now build both trees into a running binary
+> (`xlings --version` reports the tree's own version on each); xmake is in
+> progress. The table below is still mcpp-against-mcpp because it has not been
+> re-measured since. Until it is, do not read the absence of cmake and xmake
+> columns here as a statement about those engines.
 
 | scenario | combined `2026.8.11.2` old → new | split `2026.8.13.1` old → new | what the split buys |
 |---|---|---|---|
