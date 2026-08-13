@@ -972,7 +972,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // GCC path: compiler-integrated P1689 scanning.
             append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
-                   "-fdeps-file=$out -fdeps-target=$compile_target "
+                   "-fdeps-file=$out -fdeps-target=$deps_target "
                    "-M -MM -MF $out.dep $unit_lang -E $in -o $compile_target\n",
                    rsp_ref(scanPayload)));
         } else {
@@ -1200,10 +1200,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             ddi_paths.push_back(ddi);
             append(std::format("build {} : cxx_scan {}{}\n", escape_ninja_path(ddi),
                                escape_ninja_path(cu.source), stagedOrderOnly));
-            // Under the split shape the dyndep file must bind the BMI edge —
-            // that is the edge whose inputs are the imported BMIs — so the
-            // scanner is told the BMI is the primary output.
-            append(std::format("  compile_target = {}\n",
+            // `-o` and `-fdeps-target` are DIFFERENT under the split shape and
+            // must not share a variable. The scan writes a throwaway object to
+            // `-o`, but the dyndep file has to bind the BMI edge — that is the
+            // edge whose inputs are the imported BMIs.
+            //
+            // Pointing both at the BMI made the SCAN try to create
+            // `gcm.cache/<mod>.gcm` before anything had made that directory:
+            //   cc1plus: fatal error: opening output file gcm.cache/fx.unit_19.gcm
+            // It survived on this repository only because gcm.cache already
+            // existed there from an earlier build — a fresh project failed.
+            append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
+            append(std::format("  deps_target = {}\n",
                                splitBmi && cu.providesModule
                                    ? bmi_path(*cu.providesModule)
                                    : escape_ninja_path(cu.object)));
