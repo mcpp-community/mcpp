@@ -399,21 +399,24 @@ private:
 
     // nullopt = could not apply. A non-empty string_view describes the FORM,
     // which the caller records in the cell note — see insert_into_first_body.
+    // nullopt        — could not apply; the cell fails and says so.
+    // an EMPTY view   — applied, and the scenario's name already says everything
+    //                   about what was done (`cold` cleans, `touch-*` bumps an
+    //                   mtime; there is only one way to do either).
+    // a NON-EMPTY view — applied in one of several forms, and the form changes
+    //                   what the cell measures, so it is recorded in the note.
+    //                   Only the editing scenarios have this; see
+    //                   insert_into_first_body.
     std::optional<std::string_view> perturb(engines::Engine& engine, const Job& job,
                                             const Instance& inst,
                                             Scenario scenario, int nonce) const {
+        const std::optional<std::string_view> applied{std::string_view{}};
+        const auto done = [&](bool ok) { return ok ? applied : std::nullopt; };
         switch (scenario) {
-            case Scenario::Cold:
-                engine.clean(job);
-                return std::string_view{};
-            case Scenario::Noop:
-                return std::string_view{};
-            case Scenario::TouchHub:
-                return platform::touch(inst.targets.hub) ? std::optional<std::string_view>{std::string_view{}}
-                                                         : std::nullopt;
-            case Scenario::TouchLeaf:
-                return platform::touch(inst.targets.leaf) ? std::optional<std::string_view>{std::string_view{}}
-                                                          : std::nullopt;
+            case Scenario::Cold:        engine.clean(job); return applied;
+            case Scenario::Noop:        return applied;
+            case Scenario::TouchHub:    return done(platform::touch(inst.targets.hub));
+            case Scenario::TouchLeaf:   return done(platform::touch(inst.targets.leaf));
             case Scenario::EditBody:
                 return detail::insert_into_first_body(inst.targets.body, nonce, true);
             case Scenario::EditComment:

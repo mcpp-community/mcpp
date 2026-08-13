@@ -18,6 +18,19 @@ than repeating what the directory already says.
 checkable, but a number in them means nothing without the run's declared
 asymmetries — those live in the report and in [`../README.md`](../README.md) §5.
 
+**Generate the tables, do not type them.**
+
+```bash
+bench/tools/report.py <run>/*.json --baseline cmake
+```
+
+The tables in these reports used to be transcribed from harness output by hand,
+and transcription is the one error this suite cannot catch: a mistyped headline
+number is indistinguishable from a measured one, and no test will ever fail. The
+generator also enforces two things a person forgets — a non-`ok` cell renders as
+its status rather than as a blank or a zero, and a group whose cells used
+different **perturbation forms** gets a footnote saying so.
+
 **Before comparing anything across runs**, apply the validity rules in
 [`../README.md`](../README.md) §4a: a cell within 2x of its own engine's `noop`
 is measuring process startup, and absolute seconds do not carry between hosts —
