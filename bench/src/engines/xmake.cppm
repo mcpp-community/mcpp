@@ -46,6 +46,22 @@ public:
             "-P", job.buildfile_dir.string(),
             "-m", job.profile == "debug" ? "debug" : "release",
             "-o", job.build_dir.string(),
+            // ⚠️ xmake's compiler cache is ON BY DEFAULT (`--ccache=y`) and it
+            // lives OUTSIDE the build directory, so `clean()` cannot reach it.
+            // A `cold` build then restores every object from it:
+            //     seed build   105.059s
+            //     timed run      0.106s   <- "cold"
+            // which the report published as `cold 0.70s` against cmake's 103s.
+            // Both invariants caught it (cold vs its own noop, and cold vs the
+            // other engines on the same sources), which is the only reason this
+            // is a comment rather than a number in the README.
+            //
+            // Disabled rather than declared as an asymmetry: neither mcpp nor
+            // cmake has a compiler cache in this suite, so leaving it on would
+            // not be "xmake is faster", it would be "xmake did not compile".
+            // bazel's action cache is the one that IS declared instead — there
+            // it cannot be turned off without also discarding the toolchain.
+            "--ccache=n",
         };
         // ── How the payload driver is pinned, and why it is not always CXX ──
         //

@@ -188,7 +188,21 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--runs")      { if (auto e = take_int(a, o.runs))         return std::unexpected(*e); }
         else if (a == "--list")      { o.list = true; }
         else if (a == "--analyze")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.analyze = *v; }
-        else if (a == "--project")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.project = *v; }
+        // ABSOLUTE, for the same reason as --buildfiles below: `build_dir` is
+        // derived from this (`<project>/build`) and handed to xmake as `-o`,
+        // which resolves a relative path against ITS cwd — the buildfile dir —
+        // while clean() resolves the same string against the harness's cwd.
+        // The two then name different directories: xmake wrote into
+        //     bench/projects/xlings/bench/projects/xlings/<tree>/build
+        // and clean() removed a path nothing had written to, so every `cold`
+        // measured an up-to-date tree (0.76s against cmake's 103s). The
+        // cold-vs-noop and cold-vs-peers invariants are what caught it.
+        else if (a == "--project")   {
+            auto v = value(a); if (!v) return std::unexpected(v.error());
+            std::error_code ec;
+            auto abs = std::filesystem::absolute(*v, ec);
+            o.project = ec ? std::filesystem::path(*v) : abs;
+        }
         // ABSOLUTE, resolved against the cwd the harness was STARTED in.
         //
         // Every engine is spawned with its cwd set to this directory, and xmake
