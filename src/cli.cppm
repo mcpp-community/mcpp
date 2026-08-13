@@ -618,6 +618,9 @@ int run(int argc, char** argv) {
                 .help("BMI cache directory name (default: gcm.cache)"))
             .option(cl::Option("bmi-ext").takes_value().value_name("EXT")
                 .help("BMI file extension (default: .gcm)"))
+            .option(cl::Option("split-module")
+                .help("Also emit a record for the provided BMI (two-phase "
+                      "schedule: BMI and object are separate edges)"))
             .option(cl::Option("expect-provides").takes_value().value_name("NAME")
                 .help("(verification) planned provided module for this TU"))
             .option(cl::Option("expect-imports").takes_value().value_name("CSV")

@@ -372,6 +372,7 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
         opts.bmiDir = bmiDirStorage;
     if (!bmiExtStorage.empty())
         opts.bmiExt = bmiExtStorage;
+    opts.splitModuleEdges = parsed.is_flag_set("split-module");
 
     std::expected<std::string, std::string> body;
     if (single) {

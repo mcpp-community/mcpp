@@ -25,10 +25,19 @@ macos   = "llvm@22.1.8"
 windows = "llvm@20.1.7"
 EOF
 mkdir -p src
-cat > src/main.cpp <<'EOF'
+# A module interface unit, not just a .cpp: the split schedule asserted at the
+# bottom of this file only produces edges for module interfaces, and a fixture
+# without one lets "declares a split schedule, emits no split edges" pass.
+cat > src/echo.cppm <<'EOF'
+module;
 #include <cstdio>
+export module jobsopt.echo;
+export void echo_arg(const char* s) { std::printf("%s\n", s); }
+EOF
+cat > src/main.cpp <<'EOF'
+import jobsopt.echo;
 int main(int argc, char** argv) {
-    for (int i = 1; i < argc; ++i) std::printf("%s\n", argv[i]);
+    for (int i = 1; i < argc; ++i) echo_arg(argv[i]);
 }
 EOF
 
@@ -106,24 +115,35 @@ ninja_file=$(find target -name build.ninja | head -1)
 grep -q 'schedule=detach-codegen\|schedule=two-phase\|schedule=none' "$ninja_file" \
   || { echo "graph does not declare its schedule:"; head -2 "$ninja_file"; exit 1; }
 
+# Both split shapes must declare their edges. Which one appears is a property of
+# the compiler, not of this test, so the assertion is "the shape the graph says
+# it has is the shape it emitted" — an empty split (rules present, zero edges)
+# has happened twice and looks exactly like a working build.
+if grep -q 'schedule=detach-codegen' "$ninja_file"; then
+    grep -q ': cxx_module_bmi ' "$ninja_file" \
+      || { echo "graph declares detach-codegen but emits no BMI edge"; exit 1; }
+elif grep -q 'schedule=two-phase' "$ninja_file"; then
+    grep -q ': cxx_precompile '    "$ninja_file" \
+      || { echo "graph declares two-phase but emits no BMI edge"; exit 1; }
+    grep -q ': cxx_module_object ' "$ninja_file" \
+      || { echo "graph declares two-phase but emits no object edge"; exit 1; }
+fi
+
 # The no-op check is GATED on the split shape actually being in effect. It
-# exists to catch one specific defect — a depfile whose target does not match
-# the edge's output, which looks exactly like success while recompiling
-# everything — and that defect only exists where BMI edges do. Asserting it
-# where the graph is ordinary measures unrelated platform behaviour instead:
-# on macOS `on` selects two-phase, which the backend does not emit, and the
-# check failed on one object rebuilt for reasons that predate this feature.
+# exists to catch one specific defect — a dyndep/depfile record that does not
+# match the edge's output, which looks exactly like success while recompiling
+# everything — and that defect only exists where split edges do.
 # The reference mark is taken AFTER the first build, not from its stdout
 # redirect: that file's mtime is when the shell opened it, which is before the
 # objects exist, so every object counted as "newer" and the comparison measured
 # nothing but timestamp ordering.
-if grep -q 'schedule=detach-codegen' "$ninja_file"; then
+if grep -qE 'schedule=(detach-codegen|two-phase)' "$ninja_file"; then
     sleep 1
     touch "$TMP/mark"
     MCPP_BMI_SCHEDULE=on "$MCPP" build --release > /dev/null 2>&1
-    rebuilt=$(find target -name '*.o' -newer "$TMP/mark" | wc -l)
+    rebuilt=$(find target \( -name '*.o' -o -name '*.pcm' -o -name '*.gcm' \) -newer "$TMP/mark" | wc -l)
     [ "$rebuilt" -eq 0 ] \
-      || { echo "second build under the split schedule recompiled $rebuilt object(s)"; exit 1; }
+      || { echo "second build under the split schedule rebuilt $rebuilt artifact(s)"; exit 1; }
 fi
 
 echo "split schedule OK"

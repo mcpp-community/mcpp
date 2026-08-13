@@ -80,6 +80,75 @@ TEST(Dyndep, EmitDyndepSelfProvideFiltered) {
     EXPECT_EQ(body.find("gcm.cache/foo.gcm"), std::string::npos);
 }
 
+// Two-phase (clang): one source, two edges — a BMI edge and an object edge —
+// and BOTH parse the same imports, so both need the same implicit inputs.
+// P1689 only knows about the object (`primary-output` comes from the scanned
+// command's `-o`), and an edge with no record is not a warning: ninja refuses
+// the whole graph with "'…pcm' not mentioned in its dyndep file", naming the
+// edge rather than the missing record.
+TEST(Dyndep, SplitModuleEmitsARecordForBothEdges) {
+    std::vector<UnitInfo> units = {
+        { "obj/lib.m.o", {"myapp.lib"}, {"std"} },
+    };
+    DyndepOptions opts;
+    opts.bmiDir = "pcm.cache";
+    opts.bmiExt = ".pcm";
+    opts.splitModuleEdges = true;
+    auto body = emit_dyndep(units, {}, opts);
+
+    EXPECT_NE(body.find("build pcm.cache/myapp.lib.pcm: dyndep | pcm.cache/std.pcm\n"),
+              std::string::npos) << body;
+    EXPECT_NE(body.find("build obj/lib.m.o: dyndep | pcm.cache/std.pcm\n"),
+              std::string::npos) << body;
+}
+
+// A unit that provides nothing is NOT split — there is only one edge, so a
+// second record would name something nobody declared. Same failure text as the
+// missing-record case, from the opposite mistake.
+TEST(Dyndep, SplitModuleLeavesNonProvidingUnitsAlone) {
+    std::vector<UnitInfo> units = {
+        { "obj/main.o", {}, {"myapp.lib"} },
+    };
+    DyndepOptions opts;
+    opts.splitModuleEdges = true;
+    auto body = emit_dyndep(units, {}, opts);
+
+    // Count the records, not the lines: one record is `build …` plus its
+    // `restat = 1`, so a line count says nothing about how many there are.
+    std::size_t records = 0;
+    for (auto pos = body.find("build "); pos != std::string::npos;
+         pos = body.find("build ", pos + 1))
+        ++records;
+    EXPECT_EQ(records, 1u) << body;
+    EXPECT_NE(body.find("build obj/main.o: dyndep | gcm.cache/myapp.lib.gcm\n"),
+              std::string::npos) << body;
+}
+
+// The single-unit path is what ninja actually runs (one .ddi → one .dd), and it
+// used to be a separate hand-written copy of the loop above. Pinned together so
+// a change to one shape cannot silently leave the other behind.
+TEST(Dyndep, SplitModuleSingleFileMatchesTheBatchShape) {
+    auto tmp = std::filesystem::temp_directory_path()
+             / std::format("mcpp_dyndep_split_{}", std::random_device{}());
+    std::filesystem::create_directories(tmp);
+    auto p = tmp / "lib.ddi";
+    std::ofstream(p) << R"({
+"rules":[{"primary-output":"obj/lib.m.o","provides":[{"logical-name":"myapp.lib","is-interface":true}],"requires":[{"logical-name":"std"}]}]
+})";
+    DyndepOptions opts;
+    opts.bmiDir = "pcm.cache";
+    opts.bmiExt = ".pcm";
+    opts.splitModuleEdges = true;
+
+    auto single = emit_dyndep_single(p, opts);
+    ASSERT_TRUE(single) << single.error();
+
+    std::vector<UnitInfo> units = { { "obj/lib.m.o", {"myapp.lib"}, {"std"} } };
+    EXPECT_EQ(*single, emit_dyndep(units, {}, opts));
+
+    std::filesystem::remove_all(tmp);
+}
+
 TEST(Dyndep, EmitDyndepFromFiles) {
     auto tmp = std::filesystem::temp_directory_path()
              / std::format("mcpp_dyndep_test_{}", std::random_device{}());

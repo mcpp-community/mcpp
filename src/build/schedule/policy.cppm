@@ -30,10 +30,22 @@
 //   HOW that is done differs per compiler, and the two mechanisms are
 //   COMPLEMENTARY — each family supports exactly one:
 //
-//     clang  TwoPhase       `--precompile` emits the BMI, `-c x.pcm` emits the
-//                           object: two ordinary edges, no process machinery,
-//                           portable by construction. BMI ready at 57% of a
-//                           single-phase compile for +9.6% total CPU.
+//     clang  TwoPhase       two ORDINARY edges over the same source: one emits
+//                           only the BMI, one emits only the object. No process
+//                           machinery, portable by construction.
+//                           MEASURED (22.1.8, src/build/prepare.cppm):
+//                           BMI edge 1.67 s vs 7.35 s for the single edge, and
+//                           the object edge is byte-identical to the one the
+//                           single edge produced.
+//                           The object edge recompiles the SOURCE rather than
+//                           reading the BMI back. `-c x.pcm` does work, but only
+//                           against clang's *full* BMI, and publishing those to
+//                           importers makes clang 22.1.8 miscompile a downstream
+//                           TU (see BmiTraits::bmiOnlyFlags). Front-end work is
+//                           therefore done twice — measured on the whole
+//                           project it still wins at every job count tried:
+//                           -j4 56.3 s → 37.6 s, -j8 34.0 s → 25.6 s,
+//                           -j32 32.0 s → 18.0 s.
 //                           clang CANNOT use DetachCodegen — strace shows it
 //                           writes the BMI to the final path with O_TRUNC, so a
 //                           reader can observe a half-written file.
@@ -145,8 +157,8 @@ Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int 
     switch (tc.compiler) {
         case toolchain::CompilerId::Clang:
             d.strategy = Strategy::TwoPhase;
-            d.reason = "clang: --precompile publishes the BMI at ~57% of a "
-                       "single-phase compile (+9.6% total CPU)";
+            d.reason = "clang: a BMI-only invocation costs ~23% of a full "
+                       "compile, so importers wait on that instead";
             d.compilerCap = cap;
             // Two ordinary edges: a compiler always holds a ninja slot, so the
             // ordinary job count is still the real bound.

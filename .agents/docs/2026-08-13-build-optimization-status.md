@@ -31,40 +31,84 @@ on 那次命中了缓存。5 个单元相对 80s 的差值可以忽略,但记在
 
 ---
 
-## 0b. L2 的覆盖面 —— 目前只有 gcc
+## 0b. L2 的覆盖面 —— gcc 与 clang 都已落地
 
-`policy` 为 clang 决策出 `two-phase`,但**后端没有发射对应的边**,
-所以 clang 上 `schedule=on` 目前等于没开。这是真实的未完成部分,不是设计取舍。
+两个编译器各支持**其中一种**机制,不可互换,`policy` 决策一次:
 
-试做过一次并撤回:两条边(`cxx_precompile` + `cxx_object_from_bmi`)本身很简单,
-卡在 dyndep 上 ——
+| 编译器 | 形状 | 为什么只能是它 |
+|---|---|---|
+| gcc | `detach-codegen` | 无廉价的 BMI-only 模式(`-fmodule-only` 要花掉整编译的 99%),但 gcc 用 `rename()` 发布 BMI,所以"文件出现"是可靠信号 |
+| clang | `two-phase` | 反过来:clang 用 `O_TRUNC` 就地写 BMI(读者会看到半个文件),但它有真正廉价的 BMI-only 调用 |
+
+### clang 这条的两个坑,都不是"接边"的问题
+
+**坑 1:`--precompile` 发出来的不是同一种 BMI。**
+
+    -fmodule-output= … -c                        7.35s   BMI  9,102,984 B  (reduced)
+    --precompile                                 1.81s   BMI 18,402,920 B  (FULL)
+    --precompile -Xclang -emit-reduced-module-interface
+                                                 1.67s   BMI  9,102,968 B  (reduced)
+                          (clang 22.1.8,src/build/prepare.cppm)
+
+`--precompile` 单独用又快又对**看起来**成立,实际上它发的是 *full* BMI ——
+因为它的产物本来是要喂回去做 codegen 的。把 full BMI 发布给下游不是等价替换:
+小模块上体积涨约 16 倍(`mcpp.platform` 19,424 → 313,452 B),而且在 mcpp 自己的
+模块图上直接让 clang 22.1.8 编错一个下游 TU:
+
+    error: call to implicitly-deleted default constructor of
+           'formatter<basic_string<char>, wchar_t>'
+
+—— 一个**窄**格式串,报错点在 `std` 里面,离真因三个文件远。同一个 TU 对着 reduced BMI
+编译通过。所以 reduced 不是优化,是契约:`bmiOnlyFlags` 必须逐字节复现它。
+
+⚠️ 这个坑的判据是**体积**,不是"编过了"。先做出来的版本能跑完 fixture、
+noop 干净、增量传播正确,**在 137 个模块的真实工程上才炸**。
+
+**坑 2:object 边只能重编源码,不能读 BMI。**
+
+reduced BMI 不能拿去 codegen,于是 object 边是 `-c <源码>`(不带 `-fmodule-output`,
+BMI 归 A 边所有,两条边不能写同一个文件)。代价是**前端跑两遍**;收益是下游只等 A 边。
+
+两条边彼此**独立**(object 边不等 BMI 边),所以 codegen 可以整体落在图的后面。
+
+### dyndep:一个源码两条边,两条都要记录
+
+P1689 只知道 object(`primary-output` 取自被扫描命令的 `-o`),BMI 边没有记录时
+ninja 不是警告而是**整图拒绝**:
 
     ninja: build stopped: 'pcm.cache/mcpp.version_req.pcm' not mentioned in
            its dyndep file 'obj/version_req.cppm.ddi.dd'
 
-真因已定位到具体一行:**clang-scan-deps 的 P1689 primary-output 来自内层编译命令的
-`-o`(目标文件),没有 GCC `-fdeps-target` 那样的独立开关**
-(`src/build/ninja_backend.cppm` 的 clang 分支:`-- $cxx ... -c $in -o $compile_target`)。
-于是 `mcpp dyndep` 写出的 `build` 行指向**目标文件**,而 precompile 边的输出是 **BMI**。
+—— 报的是边,不是缺失的记录,指向的是无辜的一侧。
 
-**落地形状(未实施)**:给 `mcpp dyndep` 加一个开关,让 `--single` 按 `provides`
-推出的 BMI 作为那条 `build` 行的目标,而不是 `primaryOutput`;后端在 two-phase 时传它。
-不要去改扫描的 `-o` —— GCC 那边共用 `-o` 与 `-fdeps-target` 已经造成过
-"扫描去写还不存在的 gcm.cache/"。
+解法是 `mcpp dyndep --split-module`:给 BMI **和** primaryOutput 各写一条记录。
+不是"把目标改成 BMI" —— 两条边都要解析同一批 import,都需要同一批隐式输入。
+**不要去改扫描的 `-o`**:GCC 那边共用 `-o` 与 `-fdeps-target` 已经造成过
+"扫描去写还不存在的 `gcm.cache/`" —— **在 mcpp 自己的仓库上不暴露**
+(那个目录早被上一次构建建好),换个全新工程立刻失败。
 
-**撤回而不是留着**:一个会让 `schedule=on` 直接失败的形状,比没有更糟。
+### 实测(pinned 源码 @ 8219584,clang 22.1.8)
 
-⚠️ 顺带记下:同一个 `deps_target` 一开始被我和扫描的 `-o` 共用,
-于是扫描去写还不存在的 `gcm.cache/` —— **在 mcpp 自己的仓库上不暴露**
-(那个目录早被上一次构建建好),换个全新工程立刻失败。已修,并且这正是
-"只在开发它的那个工程上验过"会漏掉的东西。
+| 并发 | schedule=off | schedule=on | 比值 |
+|---|---|---|---|
+| `-j4` | 56.34s | **37.60s** | 1.50× |
+| `-j8` | 34.00s | **25.55s** | 1.33× |
+| `-j32` | 32.03s | **17.95s** | **1.78×** |
+
+前端跑两遍要多花 CPU,但**在试过的每个并发档位上都是净赢**,所以没有加核数门槛。
+
+**正确性判据是产物而不是退出码**:两条臂的 **130 个目标文件逐字节相同**。
+(BMI 有 101 个不同 —— 两臂在不同的指纹目录下,BMI 里烙了输出目录的绝对路径;
+这正是"对照放两个目录会让路径冒充差异"那条,所以 BMI 差异在这里不构成证据。)
+
+---
 
 ## 1. 四条杠杆的状态
 
 | | 杠杆 | 状态 | 依据 |
 |---|---|---|---|
 | **L1** | 按次选择工具链 `--toolchain` | **已实施** | 实测 81.8 → **32.6s**(2.51×) |
-| **L2** | 下游在 BMI 可用时即开始 | **已实施**(`schedule = "on"`) | 实测 79.9 → **34.8s**(2.30×) |
+| **L2** | 下游在 BMI 可用时即开始 | **已实施**(`schedule = "on"`,gcc + clang) | gcc 79.9 → **34.8s**(2.30×);clang 32.0 → **17.95s**(1.78×) |
 | **L3** | 定义移出接口单元 | **不做** —— 已量出它治的是 L2 同一个病 | 实测:对 mcpp **−6.2%**,对 cmake +92.3% |
 | **L4** | 拆 `build.prepare` | **已实施**(架构收益;性能上为零) | 实测:**0**,原因见下 |
 
