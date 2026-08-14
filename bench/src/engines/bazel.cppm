@@ -107,7 +107,22 @@ public:
         // --features=-supports_pic) is the one that matches the other engines:
         // it yields a PIE executable, which is what gcc/clang produce by default
         // for everyone else in the table.
-        argv.push_back("--force_pic");
+        //
+        // ⚠️ POSIX ONLY. Windows has no PIC — code there is relocatable by
+        // construction — so its toolchain does not enable `supports_pic`, and
+        // asking for it is not ignored, it is fatal at ANALYSIS:
+        //
+        //     Error in fail: PIC compilation is requested but the toolchain does
+        //     not support it (feature named 'supports_pic' is not enabled)
+        //     ERROR: Analysis of target '//:fx' failed; build aborted
+        //
+        // Every bazel cell of the windows/clang fixture died there, before a
+        // single file was compiled. The duplicate-action problem this flag
+        // solves is a POSIX one to begin with: it comes from bazel producing
+        // both a pic and a non-pic flavour of each object, which Windows does
+        // not do.
+        if constexpr (platform::OS_NAME != "windows")
+            argv.push_back("--force_pic");
         if (job.variant != Variant::Headers) {
             // Both are required and they fail differently: without the first,
             // `attribute module_interfaces: requires --experimental_cpp_modules`;
