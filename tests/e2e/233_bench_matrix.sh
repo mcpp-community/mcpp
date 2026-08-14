@@ -397,6 +397,49 @@ PYREADME
 grep -q 'bench/matrix.json' "$WORKFLOW" \
   || { echo "FAIL: bench.yml does not read bench/matrix.json — the matrix has been re-hardcoded"; exit 1; }
 
+# An automatic trigger takes ONE sample per cell; only a hand-started run may
+# ask for more.
+#
+# `--runs 0` means "ask the harness", which is 3, and three samples across 10
+# cells x 5 scenarios on a workload whose cold build is 80s is most of a
+# two-hour matrix — spent on dispersion nobody reads on a pull request. This is
+# the kind of default that drifts back silently and is only noticed as "CI got
+# slow again", so it is pinned here rather than left to a reviewer's eye.
+python3 - "$WORKFLOW" <<'PYRUNS' || exit 1
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+
+# ⚠️ PARSE THE BLOCK, DO NOT COUNT LINES. The first version of this check used
+# `grep -A4` to reach the input's `default:`, and the four explanatory comment
+# lines above it pushed it out of range — so it failed on a correct file. A
+# line-counting check is a check that breaks when someone adds a comment.
+try:
+    import yaml
+    doc = yaml.safe_load(text)
+    on = doc.get("on", doc.get(True))          # YAML 1.1 reads bare `on` as True
+    default = on["workflow_dispatch"]["inputs"]["runs"]["default"]
+except Exception:
+    # No pyyaml: fall back to reading the block bounded by the NEXT key at the
+    # same indent, which is still structural rather than positional.
+    m = re.search(r"^(\s+)runs:\s*$(.*?)^\1\w", text, re.S | re.M)
+    d = re.search(r"^\s+default:\s*'([^']*)'", m.group(2), re.M) if m else None
+    default = d.group(1) if d else None
+
+bad = []
+if str(default) != "1":
+    bad.append(f"the workflow_dispatch `runs` input defaults to {default!r}, not '1'")
+if not re.search(r"--runs\s+'\$\{\{\s*inputs\.runs\s*\|\|\s*1\s*\}\}'", text):
+    bad.append("--runs is not `${{ inputs.runs || 1 }}`")
+if bad:
+    print("FAIL: an automatic bench run must take ONE sample per cell:")
+    for b in bad:
+        print("  " + b)
+    print("  `0` means the harness default, which is 3 — three samples across 10 cells")
+    print("  x 5 scenarios on an 80s cold build is most of a two-hour matrix, spent on")
+    print("  dispersion nobody reads on a pull request. Ask for more by hand instead.")
+    sys.exit(1)
+PYRUNS
+
 # The old shape enumerated runner images inline. If that ever comes back, the
 # two copies disagree the first time a runner image is bumped in one of them.
 if grep -qE '^\s*case ",\$want," in \*,(linux|macos|windows),\*\)' "$WORKFLOW"; then

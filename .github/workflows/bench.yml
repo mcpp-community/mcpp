@@ -76,9 +76,13 @@ on:
         required: false
         default: '3'
       runs:
-        description: 'repetitions per cell (0 = per-scenario default)'
+        # Automatic triggers use 1 — see the --runs comment below. Raise it here
+        # when the numbers are going somewhere they will be quoted: n=1 has no
+        # dispersion, and bench/README §4a R2 forbids reading digits without it.
+        # `0` still means "ask the harness" (3), for parity with the CLI.
+        description: 'repetitions per cell (default 1; 3+ for numbers you will publish, 0 = harness default)'
         required: false
-        default: '0'
+        default: '1'
       profile:
         description: 'release | debug'
         required: false
@@ -463,7 +467,21 @@ jobs:
                  --scenarios '${{ matrix.scenarios }}'
                  --baseline  '${{ matrix.baseline || needs.plan.outputs.baseline }}'
                  --profile   '${{ inputs.profile || 'release' }}'
-                 --runs      '${{ inputs.runs || 0 }}'
+                 # ONE run per cell on an automatic trigger, N on request.
+                 #
+                 # `0` means "ask the harness", which is 3 — and 3 x 10 cells x
+                 # 5 scenarios on a workload whose cold build is 80s is most of
+                 # a two-hour matrix spent on dispersion nobody reads on a PR.
+                 # A push or a PR is asking "did this change break or move
+                 # anything", and one sample answers that.
+                 #
+                 # Dispersion is what n>1 buys, and it is worth paying for
+                 # deliberately: `workflow_dispatch` with `runs: 3` (or more)
+                 # is how a number destined for the README gets taken. The
+                 # published tables say `n=1` for the same reason — see
+                 # bench/README §4a R2, which asks a reader not to compare
+                 # digits at n=1.
+                 --runs      '${{ inputs.runs || 1 }}'
                  --timeout   1800
                  --work      "$RUNNER_TEMP/bench-work"
                  --out       "bench-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.project }}.json" )

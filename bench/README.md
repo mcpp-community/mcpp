@@ -562,7 +562,16 @@ Two details that are easy to get wrong and change the answer:
 
 * Medians, with min/max. No confidence intervals: sample counts are small by
   necessity and a computed interval would imply more rigour than exists.
-* `cold` defaults to 3 runs, incremental scenarios to 5 (`--runs` overrides).
+* **The harness default is 3 runs per cell; CI's automatic runs take 1.** They
+  answer different questions. A push or a pull request asks "did this change
+  break or move anything", and one sample answers it — three would spend most of
+  a two-hour matrix on dispersion nobody reads. Numbers destined for a table are
+  taken by hand: `workflow_dispatch` with `runs: 3` (or more), or `--runs N`
+  locally. Every published table here says `n=1` because it was taken that way,
+  which is exactly what §4a R2 asks a reader to account for.
+  (It used to be 3 for `cold` and 5 for incremental scenarios. Flattened to 3:
+  the split was an accident of when each scenario was added, and having two
+  answers made "how many samples is this" a question rather than a fact.)
 * One **untimed seed build** per cell: an incremental scenario is only incremental
   against an up-to-date tree, and it warms the page cache so run 1 is not
   systematically slower.
