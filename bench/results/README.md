@@ -8,6 +8,25 @@ Each directory holds its own `report.md` and the raw files that report was
 written from, named by what varies **within** the run (host, compiler) rather
 than repeating what the directory already says.
 
+## Which of these is the standard data
+
+**`standard-<date>-<os>-<arch>/` is the standard data set.** It is the only
+directory produced by `bench/run-standard.sh`, the only one taken at 3 samples
+per cell, and the only one the README tables quote. Everything else is history —
+kept because a claim that cannot be checked against the run that produced it is
+not a measurement, and deleted history cannot be checked at all.
+
+⚠️ **Every directory below the standard one was taken under conditions that no
+longer hold.** Read them as a record of what was measured then, not as data
+about mcpp now:
+
+| taken with | what changed since |
+|---|---|
+| **cmake 4.0.2** | the pin is 4.4.2; its `import std` gate key is different, so those descriptions would not even configure today |
+| **n=1** | the standard set is n=3; a single sample has no dispersion, which is why each of those tables carries a "do not compare the digits" caveat |
+| **CI runners** | measured a shared 2-core machine — the same tree took 243s there and 79s on a developer box |
+| **`bmi_schedule=on` before the §8b fix** | `touch-hub` and `edit-comment` in those columns were timing a build that had not finished; see ../README.md §8b |
+
 | run | what it measures |
 |---|---|
 | [`five-way-20260812/`](five-way-20260812/) | six engines × three source forms × six scenarios, on a **generated fixture**. cmake is the baseline. Two compilers, one file each. |
