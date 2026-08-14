@@ -36,7 +36,27 @@
 #     bash bench/run-standard.sh                 # everything for this OS
 #     bash bench/run-standard.sh --dry-run       # print the plan and stop
 #     bash bench/run-standard.sh --runs 1        # faster, NOT publishable
+#     bash bench/run-standard.sh --resume        # continue an interrupted run
 #
+# ── RESUMING ───────────────────────────────────────────────────────────────
+#
+# mbench records every measured unit to `.mbench/<fingerprint>/journal.jsonl` as
+# it goes, so an interrupted run costs at most the unit in flight. `--resume`
+# re-runs this script against that cache: units already recorded are replayed
+# from it, the rest are measured.
+#
+# It is a FLAG rather than the default because the two behaviours protect
+# against opposite mistakes. Without it a second invocation must never write
+# beside the first one's reports (see the supersede block below — two runs did
+# end up spliced in one directory). With it, that is precisely what is wanted.
+# The fingerprint is what makes it safe: it covers the whole configuration, so a
+# resume that is not actually the same run lands in a different cache and starts
+# from zero on its own.
+#
+# ⚠️ SEED BUILDS ARE NOT UNITS AND ARE REDONE. An incremental scenario needs a
+# tree that is already up to date, and that state was built by a seed build that
+# no journal can hold. A resumed cell therefore pays its seed again before it
+# can skip anything — resume is cheap, not free.
 set -uo pipefail
 
 # BENCH_ROOT lets this be run from a COPY. Editing a bash script while it is
@@ -50,11 +70,13 @@ ROOT="${BENCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MATRIX="$ROOT/bench/matrix.json"
 RUNS=3
 DRY=0
+RESUME=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;
+        --resume)  RESUME=1 ;;
         --runs)    RUNS="${2:?--runs needs a number}"; shift ;;
-        -h|--help) sed -n '2,32p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        -h|--help) sed -n '2,55p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -79,7 +101,7 @@ ARCH="$(uname -m)"
 fail=0
 say_missing() { echo "  MISSING: $*"; fail=1; }
 
-BENCH="$(ls -t "$ROOT"/bench/target/*/*/bin/bench 2>/dev/null | head -1)"
+BENCH="$(ls -t "$ROOT"/bench/target/*/*/bin/mbench 2>/dev/null | head -1)"
 [ -n "$BENCH" ] || say_missing "the harness — run: (cd bench && mcpp build --release)"
 
 MCPP_BIN="$(ls -t "$ROOT"/target/*/*/bin/mcpp 2>/dev/null | head -1)"
@@ -196,7 +218,19 @@ WORK="${TMPDIR:-/tmp}/bench-standard-$STAMP-$$"
 #
 # Same shape as the timeout leak the harness itself had: a process outliving the
 # command that was supposed to end it.
-if [ -d "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
+# One cache root for the whole set, pinned to the repository rather than to the
+# working directory: resume must not depend on where the script was invoked from.
+CACHE="$ROOT/.mbench"
+
+if [ "$RESUME" = 1 ]; then
+    if [ -d "$CACHE" ]; then
+        echo "resuming: $(find "$CACHE" -name journal.jsonl -exec cat {} + 2>/dev/null | wc -l)"\
+             "unit(s) already recorded under ${CACHE#"$ROOT"/}"
+    else
+        echo "note: --resume given but ${CACHE#"$ROOT"/} does not exist; this run starts from zero."
+    fi
+    echo
+elif [ -d "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
     stamped="$OUT.superseded-$(date -u +%H%M%S)"
     mv "$OUT" "$stamped"
     echo "note: $(basename "$OUT") already held files from an earlier run;"
@@ -227,15 +261,23 @@ while IFS=$'\x1f' read -r tc proj engines variants scenarios hub body leaf build
     spec=""
     for e in ${engines//,/ }; do
         case "$e" in
+            # Bare `mcpp` is the old-vs-new pair: the build under test, plus the
+            # released reference when one could be resolved.
             mcpp) spec="${spec:+$spec,}mcpp=$MCPP_BIN"
                   [ -n "$REF_BIN" ] && spec="$spec,mcpp=$REF_BIN" ;;
+            # `mcpp[...]` is an OPT-IN ARM of the build under test, and only of
+            # it. Running the reference with `schedule=on` would answer a
+            # question nobody asked — the released binary predates the fix in
+            # §8b, so the arm would measure a known-broken scheduler and the
+            # column would read as a regression in the feature.
+            "mcpp["*"]") spec="${spec:+$spec,}${e}=$MCPP_BIN" ;;
             *)    spec="${spec:+$spec,}$e" ;;
         esac
     done
 
     args=(--engines "$spec" --variants "$variants" --scenarios "$scenarios"
           --baseline "$baseline" --profile release --runs "$RUNS" --timeout 1800
-          --work "$WORK" --out "$OUT/$tc-$proj.json")
+          --work "$WORK" --out "$OUT/$tc-$proj.json" --cache-root "$CACHE")
 
     # `payload:gcc` / `payload:clang` resolve to the hermetic driver every engine
     # is handed — never `command -v g++`, which inside an xlings workspace is a

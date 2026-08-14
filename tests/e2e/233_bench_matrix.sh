@@ -63,13 +63,24 @@ axes = m["axes"]
 fail = []
 
 def check_list(where, field, value, axis):
-    for v in value.split(","):
+    # `mcpp[schedule=on]` is ONE engine with an option list, not a second engine.
+    # Splitting on commas alone would also tear `a[x=1,y=2]` in half, so brackets
+    # are consumed before the split rather than after it.
+    items = re.findall(r"[^,\[\]]+(?:\[[^\]]*\])?", value) if "[" in value else value.split(",")
+    for v in items:
         v = v.strip()
+        if not v:
+            continue
         # `native` is the real-project variant: a tree has exactly one form,
         # its own, so it is not a generated axis value.
         if axis == "variant" and v == "native":
             continue
-        if v not in axes[axis]:
+        # The axis is the engine NAME; the options modify it. They are checked
+        # for real by the registry (`engine_option` rejects an unknown one and
+        # the whole spec with it), so repeating that list here would be a second
+        # source of truth for it.
+        base = v.split("[", 1)[0] if axis == "engine" else v
+        if base not in axes[axis]:
             fail.append(f"{where}: {field}='{v}' is not in axes.{axis} {axes[axis]}")
 
 seen = set()
