@@ -461,6 +461,19 @@ if m.group(1) != "3":
     sys.exit(1)
 PYRUNS
 
+# The runner must never hand the harness a BARE `mcpp`.
+#
+# A bare name resolves through PATH to the xlings shim, which RE-PICKS its
+# version from the working directory — and for a `--project` run that directory
+# is the measured tree, which carries its own pin. The first full local run
+# measured mcpp@2026.8.11.3 in every single cell: the released binary, not the
+# branch, and with no old-vs-new column at all. Nothing failed; the report simply
+# described a different program.
+grep -qE '^[^#]*mcpp=\$MCPP_BIN' "$RUNNER" \
+  || { echo "FAIL: bench/run-standard.sh does not pass the mcpp under test as an"
+       echo "      explicit binary. A bare \`mcpp\` is the xlings shim, and it"
+       echo "      re-resolves its version from the measured tree."; exit 1; }
+
 # The runner must SELECT from matrix.json, never enumerate cells itself.
 #
 # The workflow this replaced grew an inline platform list once and it had to be

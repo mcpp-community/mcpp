@@ -78,6 +78,33 @@ BENCH="$(ls -t "$ROOT"/bench/target/*/*/bin/bench 2>/dev/null | head -1)"
 MCPP_BIN="$(ls -t "$ROOT"/target/*/*/bin/mcpp 2>/dev/null | head -1)"
 [ -n "$MCPP_BIN" ] || say_missing "the mcpp under test — run: mcpp build --release"
 
+# ⚠️ THE ENGINE MUST BE A BINARY, NEVER THE BARE NAME `mcpp`.
+#
+# A bare `mcpp` resolves through PATH to the xlings shim, and that shim RE-PICKS
+# its version from the working directory — which, for a `--project` run, is the
+# measured tree. Every pinned workload carries its own pin, so the whole first
+# run of this script measured mcpp@2026.8.11.3 in every cell: the released
+# binary, not the branch, and with no old-vs-new column at all. The tell was in
+# the report the entire time — `mcpp@2026.8.11.3` on rows that were supposed to
+# be the build under test — and `touch-hub 76.55s` on mcpp's own tree, which is
+# the old binary's byte-comparison behaviour, not this branch's.
+#
+# So `mcpp` in a cell's engine list is expanded here into explicit paths: the
+# build under test, plus the released reference when it can be resolved AND
+# asserts its own version. xlings unpacks each version to
+# data/runtimedir/mcpp-<ver>-<os>-<arch>/mcpp.
+REFERENCE_MCPP="$(python3 -c "import json;print(json.load(open('$MATRIX',encoding='utf-8')).get('reference_mcpp',''))" 2>/dev/null)"
+REF_BIN=""
+if [ -n "$REFERENCE_MCPP" ]; then
+    for c in "$HOME"/.xlings/data/runtimedir/mcpp-"$REFERENCE_MCPP"-*/mcpp; do
+        [ -x "$c" ] || continue
+        got="$("$c" --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+){2,3}' | head -1)"
+        if [ "$got" = "$REFERENCE_MCPP" ]; then REF_BIN="$c"; break; fi
+        echo "  note: $c reports '$got', not '$REFERENCE_MCPP'; ignoring it"
+    done
+    [ -n "$REF_BIN" ] || echo "  note: no mcpp@$REFERENCE_MCPP binary found; the old-vs-new column will be missing"
+fi
+
 for t in cmake xmake bazel; do
     want="$(python3 -c "import json;print(json.load(open('$MATRIX',encoding='utf-8'))['tools'].get('$t',''))" 2>/dev/null)"
     have="$(command -v "$t" >/dev/null 2>&1 && "$t" --version 2>/dev/null | head -1 || true)"
@@ -169,7 +196,17 @@ while IFS=$'\x1f' read -r tc proj engines variants scenarios hub body leaf build
     [ "$DRY" = 1 ] && continue
 
     mkdir -p "$OUT"
-    args=(--engines "$engines" --variants "$variants" --scenarios "$scenarios"
+    # Expand the bare `mcpp` into explicit binaries — see REFERENCE_MCPP above.
+    spec=""
+    for e in ${engines//,/ }; do
+        case "$e" in
+            mcpp) spec="${spec:+$spec,}mcpp=$MCPP_BIN"
+                  [ -n "$REF_BIN" ] && spec="$spec,mcpp=$REF_BIN" ;;
+            *)    spec="${spec:+$spec,}$e" ;;
+        esac
+    done
+
+    args=(--engines "$spec" --variants "$variants" --scenarios "$scenarios"
           --baseline "$baseline" --profile release --runs "$RUNS" --timeout 1800
           --work "$WORK" --out "$OUT/$tc-$proj.json")
 
