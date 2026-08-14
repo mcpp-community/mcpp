@@ -154,7 +154,17 @@ echo "standard set: $(printf '%s\n' "$PLAN" | wc -l) cells, ${RUNS} run(s) each,
 echo "output       : ${OUT#"$ROOT"/}"
 echo
 
-printf '%s\n' "$PLAN" | while IFS=$'\x1f' read -r tc proj engines variants scenarios hub body leaf buildfiles baseline preset; do
+# ⚠️ NOT `printf ... | while`. A pipeline runs its right-hand side in a SUBSHELL,
+# so a failure counter incremented inside the loop does not survive it and the
+# script exits 0 no matter what happened. Verified with a stub engine that exits
+# 7 for every cell: the old shape printed seven failures and then exited 0 — and
+# went on to print "how to tell whether this data is publishable: 1. every cell
+# exited 0", handing the reader a question it had the answer to.
+#
+# That is the exact defect this suite exists to remove, in the script written to
+# replace a CI that had it. Process substitution keeps the loop in THIS shell.
+FAILED=0
+while IFS=$'\x1f' read -r tc proj engines variants scenarios hub body leaf buildfiles baseline preset; do
     echo "  $tc/$proj  [$engines]"
     [ "$DRY" = 1 ] && continue
 
@@ -194,14 +204,26 @@ printf '%s\n' "$PLAN" | while IFS=$'\x1f' read -r tc proj engines variants scena
     fi
     "$BENCH" "${args[@]}" 2>&1 | tee "$OUT/$tc-$proj.log" | sed 's/^/    /'
     rc=${PIPESTATUS[0]}
-    [ "$rc" = 0 ] || echo "    ^ cell exited $rc — see $OUT/$tc-$proj.log"
-done
+    if [ "$rc" != 0 ]; then
+        echo "    ^ cell exited $rc — see ${OUT#"$ROOT"/}/$tc-$proj.log"
+        FAILED=$((FAILED + 1))
+    fi
+done < <(printf '%s\n' "$PLAN")
 
 [ "$DRY" = 1 ] && exit 0
 
 echo
-echo "── how to tell whether this data is publishable ────────────────────────"
-echo "  1. every cell exited 0"
+if [ "$FAILED" != 0 ]; then
+    echo "── NOT PUBLISHABLE ─────────────────────────────────────────────────────"
+    echo "  $FAILED cell(s) failed. Nothing here is pre-excluded, so each one is a"
+    echo "  real failure on THIS machine: reproduce it by hand before calling it a"
+    echo "  gap, and do not publish a table that quietly omits it."
+    echo
+    echo "reports: ${OUT#"$ROOT"/}"
+    exit 1
+fi
+
+echo "── the remaining checks, which this script cannot make for you ──────────"
 echo "  2. no cell reports \`failed\` — nothing is pre-excluded, so a failure is real"
 echo "     (if one is, reproduce it by hand before calling it a gap)"
 echo "  3. no \`cold\` tripped an invariant (vs its own noop, vs its peers)"
