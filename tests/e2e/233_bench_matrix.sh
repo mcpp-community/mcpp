@@ -73,6 +73,9 @@ def check_list(where, field, value, axis):
             fail.append(f"{where}: {field}='{v}' is not in axes.{axis} {axes[axis]}")
 
 seen = set()
+if not m.get("cells"):
+    fail.append("the matrix has no cells at all — every per-cell check below "
+                "would pass by having nothing to check")
 for c in m["cells"]:
     where = f"{c.get('os')}/{c.get('toolchain')}/{c.get('project')}"
     for field, axis in (("os", "os"), ("toolchain", "toolchain"), ("project", "project")):
@@ -554,8 +557,21 @@ PY
 python3 - "$ROOT" <<'PY' || exit 1
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1]) / "bench/src/engines"
+
+# ⚠️ AN EMPTY GLOB PASSES THIS CHECK PERFECTLY. Rename the directory, move the
+# adapters, and every assertion below iterates zero files and prints its success
+# line. That is the failure mode this whole test exists to prevent, so the check
+# must first prove it has something to check. Four is the number of adapters
+# today (mcpp, cmake, xmake, bazel) plus engine.cppm; the floor is deliberately
+# low so adding one does not require editing this.
+adapters = sorted(root.glob("*.cppm"))
+if len(adapters) < 3:
+    print(f"FAIL: only {len(adapters)} engine adapters found under {root} — this "
+          f"check cannot mean anything with so few, so something has moved")
+    sys.exit(1)
+
 bad = []
-for f in root.glob("*.cppm"):
+for f in adapters:
     # engine.cppm's resolve_cxx() is the NORMALISER — comparing there is how a
     # bare `gcc` becomes `g++`, and it runs before any rewrite. Everything else
     # sees the resolved path.
