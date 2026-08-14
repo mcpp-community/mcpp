@@ -32,23 +32,8 @@ using platform_impl::unset_env;
 // measured cell without leaking it into the next.
 class ScopedEnv {
 public:
-    ScopedEnv(std::string key, const std::string& value) : key_(std::move(key)) {
-        // MSVC's CRT deprecates getenv in favour of _dupenv_s. Reading it is
-        // safe here (single-threaded setup, value copied immediately) and the
-        // portable spelling keeps this out of the platform partitions.
-#if defined(_MSC_VER)
-#pragma warning(suppress : 4996)
-#endif
-        if (const char* prev = std::getenv(key_.c_str())) {
-            had_previous_ = true;
-            previous_     = prev;
-        }
-        set_env(key_, value);
-    }
-    ~ScopedEnv() {
-        if (had_previous_) set_env(key_, previous_);
-        else               unset_env(key_);
-    }
+    ScopedEnv(std::string key, const std::string& value);
+    ~ScopedEnv();
     ScopedEnv(const ScopedEnv&)            = delete;
     ScopedEnv& operator=(const ScopedEnv&) = delete;
 
@@ -77,7 +62,7 @@ struct RunResult {
     // log path — and there was no way to tell which from CI. One
     // GetLastError/errno turns that into a sentence.
     std::string start_error;
-    [[nodiscard]] bool ok() const { return exit_code == 0; }
+    [[nodiscard]] bool ok() const;
     // Distinguishes "could not start" from "started and failed" — the whole
     // basis for reporting an engine as unavailable rather than broken.
     //
@@ -98,7 +83,7 @@ struct RunResult {
     // Launch failure is now its own fact, reported by the platform layer,
     // instead of being inferred from the shape of a number that has a different
     // meaning on each OS.
-    [[nodiscard]] bool started() const { return !launch_failed; }
+    [[nodiscard]] bool started() const;
     bool launch_failed{};
 };
 
@@ -108,18 +93,10 @@ struct RunResult {
 //
 // `timeout_s` <= 0 waits forever, which is right for a version probe and wrong
 // for a build — see run_process.
-inline RunResult run(const std::vector<std::string>& argv,
-                     const std::filesystem::path&    cwd = {},
-                     const std::filesystem::path&    log = {},
-                     double                          timeout_s = 0.0) {
-    double wall = 0.0;
-    bool   hung = false;
-    std::string why;
-    bool failed_to_launch = false;
-    const int rc = run_process(argv, cwd, log, &wall, timeout_s, &hung, &why,
-                               &failed_to_launch);
-    return RunResult{wall, rc, hung, std::move(why), failed_to_launch};
-}
+RunResult run(const std::vector<std::string>& argv,
+              const std::filesystem::path&    cwd = {},
+              const std::filesystem::path&    log = {},
+              double                          timeout_s = 0.0);
 
 // The last `lines` lines of a file, for showing WHY a cell failed.
 //
@@ -129,16 +106,8 @@ inline RunResult run(const std::vector<std::string>& argv,
 // failed for weeks behind exactly that sentence.
 // Does the log contain any of these markers? Used to decide how much of it is
 // worth showing — a crash needs far more context than a compile error.
-inline bool log_mentions(const std::filesystem::path& p,
-                         std::initializer_list<std::string_view> markers) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return false;
-    std::string line;
-    while (std::getline(in, line))
-        for (const auto m : markers)
-            if (line.find(m) != std::string::npos) return true;
-    return false;
-}
+bool log_mentions(const std::filesystem::path& p,
+                  std::initializer_list<std::string_view> markers);
 
 // The lines anywhere in `p` that look like a cause, not a progress report.
 //
@@ -152,59 +121,13 @@ inline bool log_mentions(const std::filesystem::path& p,
 // is merely APPROXIMATELY right on all of them beats four that are exactly
 // right until a tool changes its wording. False positives cost a line of noise;
 // a false negative costs a matrix cycle.
-inline std::string log_grep(const std::filesystem::path& p,
-                            std::initializer_list<std::string_view> markers,
-                            std::size_t max = 12) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return {};
-    std::string out, line;
-    std::size_t kept = 0;
-    // ⚠️ THE MESSAGE IS OFTEN ON THE NEXT LINE. cmake writes
-    //     CMake Error at xpkg_source_library.cmake:231 (message):
-    //       bench: <pkg>'s manifest has no `sources` list
-    // and a grep that returns only matching lines keeps the location and throws
-    // away WHAT WENT WRONG. That happened three separate times today, each time
-    // costing a round trip to CI for a sentence that was already in the file.
-    // `after` carries the following lines of a hit through.
-    std::size_t after = 0;
-    while (kept < max && std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        bool hit = false;
-        for (const auto m : markers)
-            if (line.find(m) != std::string::npos) { hit = true; break; }
-        if (!hit) {
-            if (after == 0 || line.empty()) continue;
-            --after;                       // trailing context of the previous hit
-        } else {
-            after = 2;
-        }
-        // Long lines here are usually a whole compiler command line; the cause
-        // is at the front of them.
-        if (line.size() > 400) { line.resize(400); line += " …"; }
-        out += "    "; out += line; out += '\n';
-        ++kept;
-    }
-    return out;
-}
+std::string log_grep(const std::filesystem::path& p,
+                     std::initializer_list<std::string_view> markers,
+                     std::size_t max = 12);
 
-inline std::string tail_of(const std::filesystem::path& p, std::size_t lines = 20) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return {};
-    std::deque<std::string> keep;
-    std::string line;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        keep.push_back(std::move(line));
-        if (keep.size() > lines) keep.pop_front();
-    }
-    std::string out;
-    for (const auto& l : keep) { out += l; out += '\n'; }
-    return out;
-}
+std::string tail_of(const std::filesystem::path& p, std::size_t lines = 20);
 
-inline bool have_program(const std::vector<std::string>& version_argv) {
-    return run(version_argv).started();
-}
+bool have_program(const std::vector<std::string>& version_argv);
 
 // Run argv and return its combined stdout+stderr, or nullopt if it could not be
 // started. Goes through a temp file rather than a pipe: a pipe needs
@@ -212,26 +135,9 @@ inline bool have_program(const std::vector<std::string>& version_argv) {
 // version banners — a few dozen bytes, once per engine.
 // `result`, when given, receives the child's RunResult so a caller needing both
 // the output and the exit status does not have to run the command twice.
-inline std::optional<std::string> run_capture(const std::vector<std::string>& argv,
-                                              const std::filesystem::path& cwd = {},
-                                              RunResult* result = nullptr) {
-    std::error_code ec;
-    auto tmp = std::filesystem::temp_directory_path(ec);
-    if (ec) return std::nullopt;
-    tmp /= std::format("bench-capture-{}.txt",
-                       std::chrono::steady_clock::now().time_since_epoch().count());
-
-    const auto r = run(argv, cwd, tmp);
-    if (result) *result = r;
-    if (!r.started()) { std::filesystem::remove(tmp, ec); return std::nullopt; }
-
-    std::ifstream in(tmp, std::ios::binary);
-    std::string text;
-    if (in) text.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    in.close();
-    std::filesystem::remove(tmp, ec);
-    return text;
-}
+std::optional<std::string> run_capture(const std::vector<std::string>& argv,
+                                       const std::filesystem::path& cwd = {},
+                                       RunResult* result = nullptr);
 
 struct HostFacts {
     std::string   os;
@@ -243,47 +149,16 @@ struct HostFacts {
     std::uint64_t ram_bytes{};
 };
 
-inline HostFacts host_facts() {
-    HostFacts f;
-    f.os             = std::string(OS_NAME);
-    f.cpu_model      = platform_impl::cpu_model();
-    f.logical_cores  = platform_impl::cpu_logical();
-    f.physical_cores = platform_impl::cpu_physical();
-    f.heterogeneous  = platform_impl::heterogeneous_cpu();
-    f.ram_bytes      = platform_impl::ram_bytes();
-    // Architecture, unlike the OS, is not a partition concern: both partitions
-    // would carry an identical copy of this. It is a property of the build, so
-    // it is detected once, here.
-#if defined(__aarch64__) || defined(_M_ARM64)
-    f.arch = "aarch64";
-#elif defined(__x86_64__) || defined(_M_X64)
-    f.arch = "x86_64";
-#else
-    f.arch = "unknown";
-#endif
-    return f;
-}
+HostFacts host_facts();
 
 // --- portable helpers: std::filesystem needs no per-platform split ---------
 
-inline void remove_tree(const std::filesystem::path& p) {
-    std::error_code ec;
-    std::filesystem::remove_all(p, ec);   // absent is success, not failure
-}
+void remove_tree(const std::filesystem::path& p);
 
 // mtime bump with no content change — the `touch-*` scenarios turn on exactly
 // this distinction, so it must not rewrite the file.
-inline bool touch(const std::filesystem::path& p) {
-    std::error_code ec;
-    if (!std::filesystem::exists(p, ec)) return false;
-    std::filesystem::last_write_time(p, std::filesystem::file_time_type::clock::now(), ec);
-    return !ec;
-}
+bool touch(const std::filesystem::path& p);
 
-inline std::string iso_now() {
-    return std::format("{:%FT%TZ}",
-                       std::chrono::floor<std::chrono::seconds>(
-                           std::chrono::system_clock::now()));
-}
+std::string iso_now();
 
 }  // namespace bench::platform

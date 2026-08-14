@@ -1,5 +1,5 @@
 [package]
-name        = "bench"
+name        = "mbench"
 version     = "0.1.0"
 description = "Build-engine benchmark harness — cross-platform, engine-agnostic, protocol-versioned"
 license     = "Apache-2.0"

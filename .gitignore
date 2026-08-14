@@ -1,5 +1,7 @@
 # mcpp's own build output (mcpp build / mcpp pack)
 target/
+# mbench's run cache: one fingerprinted directory per configuration
+.mbench/
 
 # mcpp's per-workspace xlings sandbox + lockfile + diagnostic logs
 /.xlings/

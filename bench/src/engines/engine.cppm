@@ -95,39 +95,12 @@ public:
 // caller can pin a hermetic payload (`--compiler /path/to/g++`) rather than
 // whatever `g++` happens to mean on this host — which, inside an xlings
 // workspace, is a shim whose include search list moves with the workspace.
-inline std::string resolve_cxx(std::string_view compiler) {
-    if (compiler.empty() || compiler == "default") return {};
-    if (compiler.find('/') != std::string_view::npos ||
-        compiler.find('\\') != std::string_view::npos)
-        return std::string(compiler);
-    if (compiler == "gcc")   return "g++";
-    if (compiler == "clang") return "clang++";
-    return std::string(compiler);
-}
+std::string resolve_cxx(std::string_view compiler);
 
 // Trims to the first line and strips trailing whitespace and ANSI colour — some
 // tools (xmake) colour their version banner, and a control sequence in a JSON
 // result file is noise a reader has to decode.
-inline std::string first_line(std::string_view text) {
-    std::string out;
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        if (text[i] == '\n' || text[i] == '\r') break;
-        if (text[i] == '\x1b') {
-            // CSI = ESC '[' , parameter bytes 0x30-0x3F, intermediate bytes
-            // 0x20-0x2F, then ONE final byte 0x40-0x7E. Scanning straight for a
-            // byte in @-~ stops on the '[' itself, which leaves "0m" behind in
-            // every colour reset — the exact residue this used to produce.
-            ++i;
-            if (i < text.size() && text[i] == '[') ++i;
-            while (i < text.size() && text[i] >= '\x20' && text[i] <= '\x3f') ++i;
-            // land on the final byte; the loop's own ++i steps past it
-            continue;
-        }
-        out += text[i];
-    }
-    while (!out.empty() && (out.back() == ' ' || out.back() == '\t')) out.pop_back();
-    return out;
-}
+std::string first_line(std::string_view text);
 
 // Does this version banner actually say the program is missing?
 //
@@ -135,14 +108,9 @@ inline std::string first_line(std::string_view text) {
 // `probe_program`: mcpp and bazel have their own probes, and putting the test in
 // only one of them left 36 cells per job still reported as engine FAILURES on
 // macOS. One spelling, three callers.
-inline bool looks_uninstalled(std::string_view banner) {
-    return banner.find("is not installed") != std::string_view::npos;
-}
+bool looks_uninstalled(std::string_view banner);
 
-inline std::string uninstalled_reason(std::string_view program, std::string_view banner) {
-    return std::format("{} resolves to a shim that reports it is not installed: {}",
-                       program, banner);
-}
+std::string uninstalled_reason(std::string_view program, std::string_view banner);
 
 // Shared helper: probe by running `<program> --version` and keeping the reported
 // VERSION as the note. Engines with a different version flag override probe().
@@ -151,30 +119,7 @@ inline std::string uninstalled_reason(std::string_view program, std::string_view
 // answer "which cmake produced this?", and the answer moves the numbers a lot —
 // cmake 4.0's module cold build is a different measurement from 3.28's. This is
 // the same reason the report records host facts.
-inline Availability probe_program(std::string_view program,
-                                  const std::vector<std::string>& version_argv) {
-    platform::RunResult r;
-    const auto captured = platform::run_capture(version_argv, {}, &r);
-    if (!captured)
-        return {false, std::format("{} not found on PATH", program)};
-    if (r.exit_code != 0)
-        return {false, std::format("{} present but `{}` exited {}", program,
-                                   version_argv.size() > 1 ? version_argv[1] : "--version",
-                                   r.exit_code)};
-    auto banner = first_line(*captured);
-    // ⚠️ A SHIM THAT ANSWERS FOR A PROGRAM IT DOES NOT HAVE. xlings installs
-    // `bazel`, `mcpp` and friends as shims on PATH; ask one for its version
-    // when the package is not installed and it prints
-    //
-    //     [error] xlings: 'bazel' is not installed
-    //
-    // and exits ZERO. Taken at face value that is "present, version =
-    // <error message>", so every cell for that engine ran, failed, and was
-    // recorded as a FINDING against the engine rather than as "not installed
-    // here" — 18 cells per macOS job.
-    if (looks_uninstalled(banner))
-        return {false, uninstalled_reason(program, banner)};
-    return {true, banner.empty() ? std::string(program) : banner};
-}
+Availability probe_program(std::string_view program,
+                                  const std::vector<std::string>& version_argv);
 
 }  // namespace bench::engines

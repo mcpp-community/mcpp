@@ -184,6 +184,26 @@ OUT="$ROOT/bench/results/standard-$STAMP-$OS-$ARCH"
 # it died with `AttributeError: 'list' object has no attribute 'get'`.
 # It would also have been committed along with the data.
 WORK="${TMPDIR:-/tmp}/bench-standard-$STAMP-$$"
+# ⚠️ REFUSE TO MIX RUNS. A previous invocation's reports must not sit beside
+# this one's under the same names.
+#
+# It happened: an earlier run was stopped with SIGTERM, did not die immediately,
+# finished the cell it was on and wrote its report AFTER the `rm -rf` that was
+# meant to clear the directory — so a 90-cell file from one run sat next to a
+# 72-cell file from another, and the only way to tell was to read `started_at`
+# out of the JSON. A table generated from that directory would have spliced two
+# runs silently, which is the failure this suite exists to remove.
+#
+# Same shape as the timeout leak the harness itself had: a process outliving the
+# command that was supposed to end it.
+if [ -d "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
+    stamped="$OUT.superseded-$(date -u +%H%M%S)"
+    mv "$OUT" "$stamped"
+    echo "note: $(basename "$OUT") already held files from an earlier run;"
+    echo "      moved to $(basename "$stamped") rather than writing beside them."
+    echo
+fi
+
 echo "standard set: $(printf '%s\n' "$PLAN" | wc -l) cells, ${RUNS} run(s) each, os=$OS arch=$ARCH"
 echo "output       : ${OUT#"$ROOT"/}"
 echo

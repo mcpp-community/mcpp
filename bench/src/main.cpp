@@ -10,6 +10,7 @@
 // what merges across machines, the summary is what a person reads.
 import std;
 import bench.protocol;
+import bench.journal;
 import bench.spec;
 import bench.platform;
 import bench.toolchain;
@@ -34,6 +35,11 @@ struct Options {
     int  runs{0};
     std::filesystem::path work{"bench-work"};
     std::filesystem::path out{"bench-report.json"};
+    // Names this run, and therefore its journal. Empty → derived from
+    // os-toolchain-project, which is how the reports are already named.
+    std::string           run_id;
+    // Where fingerprinted run caches live, like a build directory.
+    std::filesystem::path cache_root{".mbench"};
     std::filesystem::path analyze;   // profile an existing ninja build dir instead
     std::filesystem::path project;   // measure an existing tree instead of a fixture
     std::filesystem::path buildfiles;// foreign build descriptions for that tree
@@ -122,6 +128,16 @@ void usage() {
     std::println("  --jobs N           parallelism handed to each engine       (default: engine's)");
     std::println("  --runs N           repetitions per cell                    (default: per scenario)");
     std::println("  --work DIR         scratch directory                       (default: bench-work)");
+    std::println("  --id NAME          one more field in the run's fingerprint — use it to keep");
+    std::println("                       two otherwise-identical runs apart");
+    std::println("  --cache-root DIR   where fingerprinted runs are cached      (default: .mbench)");
+    std::println("");
+    std::println("  A run is fingerprinted over its WHOLE configuration (engines, variants,");
+    std::println("  scenarios, runs, compiler, profile, project, shape, --id) and cached in");
+    std::println("  <cache-root>/<fingerprint>/. Re-running the same configuration RESUMES from");
+    std::println("  what is already recorded there, one measured unit at a time; changing any of");
+    std::println("  it lands in a different directory instead of overwriting. Delete the");
+    std::println("  directory to start that configuration over.");
     std::println("  --out FILE         JSON report path                        (default: bench-report.json)");
     std::println("  --baseline NAME    normalise the summary against this engine   (default: cmake)");
     std::println("                     Substring match on the label; \"\" disables the column.");
@@ -168,6 +184,8 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--profile")   { auto v = value(a); if (!v) return std::unexpected(v.error()); o.profile = *v; }
         else if (a == "--compiler")  { auto v = value(a); if (!v) return std::unexpected(v.error()); o.compiler = *v; }
         else if (a == "--work")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.work = *v; }
+        else if (a == "--cache-root") { auto v = value(a); if (!v) return std::unexpected(v.error()); o.cache_root = *v; }
+        else if (a == "--id")        { auto v = value(a); if (!v) return std::unexpected(v.error()); o.run_id = *v; }
         else if (a == "--out")       { auto v = value(a); if (!v) return std::unexpected(v.error()); o.out = *v; }
         // Presets come FIRST so an explicit --units/--weight after one still
         // wins. A benchmark whose size is a free-form pair of numbers cannot be
@@ -437,11 +455,101 @@ int main(int argc, char** argv) {
         }
         std::cerr.flush();
     };
-    const bench::Runner runner(ro);
-
+    // Defined here rather than after the runner: the journal keys on it.
     const auto fixture_name = opts->project.empty()
         ? std::format("synth-{}x{}", opts->shape.units, opts->shape.fanin)
         : opts->project.filename().string();
+    const std::string fixture_name_for_key = fixture_name;
+    std::size_t units_done = 0;
+
+    // ── The journal, and what makes its records usable ────────────────────
+    //
+    // Beside the report, so a run's data and its record of how far it got stay
+    // together. Every measured unit is appended the moment it exists.
+    // ── The run's identity, and where its cache lives ─────────────────────
+    //
+    // One fingerprint over the whole configuration, the same way `mcpp build`
+    // works: same configuration → same directory → resume; different
+    // configuration → a different directory, instead of overwriting.
+    // `--id` is just one more field in the hash.
+    bench::RunId id;
+    {
+        std::string cfg = std::format(
+            "id={};profile={};runs={};compiler={};project={};buildfiles={};"
+            "units={};fanin={};weight={}",
+            opts->run_id, opts->profile, opts->runs, opts->compiler,
+            opts->project.string(), opts->buildfiles.string(),
+            opts->shape.units, opts->shape.fanin, opts->shape.weight);
+        for (const auto& e : engines) { cfg += ";e="; cfg += e->name(); }
+        for (const auto v : opts->variants)   { cfg += ";v="; cfg += to_string(v); }
+        for (const auto sc : opts->scenarios) { cfg += ";s="; cfg += to_string(sc); }
+        id = bench::RunId::of(std::move(cfg));
+    }
+
+    // `.mbench/<fingerprint>/` beside the working directory, like a build cache.
+    const auto cache_dir = opts->cache_root / id.fingerprint;
+    std::error_code cache_ec;
+    std::filesystem::create_directories(cache_dir, cache_ec);
+    {
+        // The configuration in full, beside the journal: a fingerprint nobody
+        // can decode is a fingerprint nobody trusts.
+        std::ofstream cfg_out(cache_dir / "config.txt", std::ios::trunc);
+        if (cfg_out) cfg_out << id.config << '\n';
+    }
+
+    const bench::Journal journal(cache_dir / "journal.jsonl");
+    auto loaded = journal.load(id.str());
+
+    if (loaded.skipped_other_id)
+        std::println(std::cerr,
+                     "bench: {} journal entries carry a different fingerprint and are ignored "
+                     "(this run {}, theirs {}).",
+                     loaded.skipped_other_id, id.str(), loaded.other_id);
+    if (loaded.skipped_unparsable)
+        std::println(std::cerr,
+                     "bench: {} journal line(s) unreadable and skipped — the last line of a "
+                     "killed run is expected to be half-written.", loaded.skipped_unparsable);
+    std::println("run id : {} ({})", id.fingerprint,
+                 loaded.units.empty() ? "fresh"
+                                      : std::format("resuming, {} unit(s) recorded",
+                                                    loaded.units.size()));
+
+    ro.already_done = [&](std::string_view sc, std::string_view en,
+                          std::string_view va, int run) {
+        return loaded.units.contains(
+            bench::Journal::unit_id(fixture_name_for_key, va, sc, en, run));
+    };
+    ro.recorded_sample = [&](std::string_view sc, std::string_view en,
+                             std::string_view va, int run) {
+        const auto it = loaded.units.find(
+            bench::Journal::unit_id(fixture_name_for_key, va, sc, en, run));
+        if (it == loaded.units.end()) return std::pair<double, int>{0.0, 0};
+        // The binary is NOT part of the fingerprint — a rebuild must not throw
+        // the cache away — so adopting a record measured with a different one is
+        // reported instead. This is the one way a resume can mix two binaries.
+        for (const auto& e : engines) {
+            if (e->name() != en) continue;
+            const auto now = e->probe().note;
+            if (!it->second.engine_version.empty() && it->second.engine_version != now)
+                std::println(std::cerr,
+                             "bench: adopting a {} record measured with '{}', but it now "
+                             "reports '{}' — both are in this table.",
+                             en, it->second.engine_version, now);
+            break;
+        }
+        return std::pair<double, int>{it->second.wall_s, it->second.exit_code};
+    };
+    ro.record = [&](std::string_view sc, std::string_view en, std::string_view va,
+                    int run, double wall_s, int exit_code) {
+        std::string ver;
+        for (const auto& e : engines) if (e->name() == en) { ver = e->probe().note; break; }
+        journal.append(bench::JournalEntry{id.str(), ver, fixture_name_for_key,
+                                           std::string(va), std::string(sc),
+                                           std::string(en), run, wall_s, exit_code});
+    };
+
+    const bench::Runner runner(ro);
+
 
     std::println("host   : {} {} · {} · {} logical / {} physical{}",
                  facts.os, facts.arch, facts.cpu_model, facts.logical_cores,

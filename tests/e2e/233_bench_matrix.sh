@@ -307,11 +307,23 @@ PY
 # Read out of the harness's own source, not a second list here — the whole
 # point of this test is that there is no second list.
 python3 - "$MATRIX" "$ROOT/bench/src/spec.cppm" "$ROOT/bench/src/registry.cppm" <<'PY'
-import json, re, sys
+import json, os, re, sys
+
+# A module is its INTERFACE PLUS ITS IMPLEMENTATION UNIT. The suite writes
+# declarations in `<m>.cppm` and definitions in `<m>.cpp`, so reading only the
+# `.cppm` finds the declaration of `make_engine` and none of the engine names
+# inside it — which is exactly how this check started reporting that the harness
+# builds no engines at all, one commit after the split. Read the pair.
+def module_text(cppm):
+    text = open(cppm, encoding="utf-8").read()
+    impl = cppm[:-len(".cppm")] + ".cpp"
+    if os.path.exists(impl):
+        text += "\n" + open(impl, encoding="utf-8").read()
+    return text
 
 m = json.load(open(sys.argv[1], encoding="utf-8"))
-spec = open(sys.argv[2], encoding="utf-8").read()
-registry = open(sys.argv[3], encoding="utf-8").read()
+spec = module_text(sys.argv[2])
+registry = module_text(sys.argv[3])
 fail = []
 
 # `scenario_from` is the harness's parser: what it accepts IS the axis.
@@ -566,20 +578,30 @@ root = pathlib.Path(sys.argv[1]) / "bench/src/engines"
 # adapters, and every assertion below iterates zero files and prints its success
 # line. That is the failure mode this whole test exists to prevent, so the check
 # must first prove it has something to check. Four is the number of adapters
-# today (mcpp, cmake, xmake, bazel) plus engine.cppm; the floor is deliberately
-# low so adding one does not require editing this.
-adapters = sorted(root.glob("*.cppm"))
-if len(adapters) < 3:
-    print(f"FAIL: only {len(adapters)} engine adapters found under {root} — this "
-          f"check cannot mean anything with so few, so something has moved")
+# today (mcpp, cmake, xmake, bazel) plus engine; the floor is deliberately low
+# so adding one does not require editing this.
+#
+# ⚠️ AND THE IMPLEMENTATION UNITS ARE WHERE THE CODE IS. The adapters declare in
+# `.cppm` and define in `.cpp`; globbing only `.cppm` leaves this scanning
+# signatures, where a `compiler == "clang"` cannot appear — so the check would
+# have kept printing its success line while testing nothing at all. It nearly
+# did: the split that moved the bodies did not touch this line.
+adapters = sorted(root.glob("*.cppm")) + sorted(root.glob("*.cpp"))
+if len(adapters) < 6:
+    print(f"FAIL: only {len(adapters)} engine adapter files found under {root} — "
+          f"this check cannot mean anything with so few, so something has moved")
+    sys.exit(1)
+if not any(f.suffix == ".cpp" for f in adapters):
+    print(f"FAIL: no implementation units under {root} — the adapter bodies are "
+          f"what this check reads, and it is looking at declarations only")
     sys.exit(1)
 
 bad = []
 for f in adapters:
-    # engine.cppm's resolve_cxx() is the NORMALISER — comparing there is how a
-    # bare `gcc` becomes `g++`, and it runs before any rewrite. Everything else
-    # sees the resolved path.
-    if f.name == "engine.cppm":
+    # engine's resolve_cxx() is the NORMALISER — comparing there is how a bare
+    # `gcc` becomes `g++`, and it runs before any rewrite. Everything else sees
+    # the resolved path.
+    if f.stem == "engine":
         continue
     for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
         code = line.split("//", 1)[0]

@@ -99,10 +99,7 @@ struct CellKey {
     std::string fixture;
     std::string variant;
 
-    [[nodiscard]] std::string str() const {
-        return std::format("{}/{}/{}/{}/{}/{}", engine, compiler, profile, scenario,
-                           fixture, variant);
-    }
+    [[nodiscard]] std::string str() const;
 };
 
 struct Sample {
@@ -119,116 +116,82 @@ public:
 
     // Timings are DERIVED, never set alongside a non-ok status — that is what
     // makes invariant 1 structural instead of a review comment.
-    [[nodiscard]] bool has_timing() const { return status == Status::Ok && !samples.empty(); }
-
-    [[nodiscard]] double median_s() const {
-        if (!has_timing()) return 0.0;
-        std::vector<double> v;
-        v.reserve(samples.size());
-        for (const auto& s : samples) v.push_back(s.wall_s);
-        std::ranges::sort(v);
-        const auto n = v.size();
-        return (n % 2) ? v[n / 2] : (v[n / 2 - 1] + v[n / 2]) / 2.0;
-    }
-    [[nodiscard]] double min_s() const {
-        if (!has_timing()) return 0.0;
-        return std::ranges::min(samples, {}, &Sample::wall_s).wall_s;
-    }
-    [[nodiscard]] double max_s() const {
-        if (!has_timing()) return 0.0;
-        return std::ranges::max(samples, {}, &Sample::wall_s).wall_s;
-    }
+    [[nodiscard]] bool   has_timing() const;
+    [[nodiscard]] double median_s() const;
+    [[nodiscard]] double min_s() const;
+    [[nodiscard]] double max_s() const;
 };
 
 struct Report {
     HostInfo                 host;
     std::string              started_at;   // ISO-8601, filled by the caller
     std::vector<CellResult>  cells;
+    // Identifies WHICH RUN produced this. See RunId.
+    std::string              run_id;
 };
 
-// ---------------------------------------------------------------------------
+// ── The identity of a run: ONE fingerprint over the whole configuration ────
+//
+// Same shape as `mcpp build`: everything that decides WHAT is measured is
+// hashed into one value, that value names a cache directory, a re-run with the
+// same configuration hits it, and a different configuration lands somewhere
+// else instead of overwriting. `--id` is not a separate concept — it is simply
+// one more input to the hash, so passing it forks a fresh cache exactly the way
+// changing the engine list does.
+//
+// Hashed: engines, variants, scenarios, run count, compiler, profile, fixture
+// shape, project, buildfiles, and `--id`.
+//
+// ⚠️ NOT hashed: the mcpp binary, the installed cmake, anything that can change
+// underneath while the command line stays the same. Folding those in would
+// restart from zero on every rebuild — the normal case while developing, and
+// exactly when resume is worth having. They are recorded per entry as observed
+// facts, and adopting a record measured with a different one is REPORTED.
+//
+// ⚠️ WHY AN IDENTITY AT ALL: resuming means treating an old record as this
+// run's result, so without one a resumable benchmark is a machine for silently
+// splicing runs together. Not hypothetical — a killed run did not die on
+// SIGTERM, finished its cell and wrote its report AFTER the `rm -rf` meant to
+// clear the directory, leaving a 90-cell file beside a 72-cell file under names
+// that gave no hint. The only field that told them apart was `started_at`,
+// inside the JSON.
+struct RunId {
+    std::string fingerprint;      // 8 hex chars, like mcpp's build directories
+    std::string config;           // the text it was taken over, for `--explain`
+
+    [[nodiscard]] std::string str() const;
+    [[nodiscard]] bool operator==(const RunId&) const = default;
+
+    // FNV-1a. Short and stable; a cache key, not a security boundary.
+    [[nodiscard]] static RunId of(std::string config_text);
+};
+
+// One measured unit: the smallest thing worth saving, and the granularity a
+// resume works at.
+//
+//     os · toolchain · project · variant · scenario · engine · run index
+//
+// Appended to the journal the moment it is measured, so a kill costs at most
+// the unit in flight rather than the whole invocation.
+struct JournalEntry {
+    std::string id;         // RunId::str()
+    // The engine's own version banner AT THE TIME this was measured. Not part
+    // of the id — a rebuilt binary must not invalidate a resume — but recorded
+    // so that adopting a record measured with a different one is REPORTED
+    // rather than silent.
+    std::string engine_version;
+    std::string project;
+    std::string variant;
+    std::string scenario;
+    std::string engine;
+    int         run{};      // 1-based
+    double      wall_s{};
+    int         exit_code{};
+};
+
 // Serialisation. Hand-rolled on purpose: the suite must build with nothing but
 // `import std;` so it can be the FIRST thing that runs on a fresh machine.
-// ---------------------------------------------------------------------------
-
-namespace detail {
-
-inline std::string escape(std::string_view s) {
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20)
-                    out += std::format("\\u{:04x}", static_cast<unsigned>(c));
-                else
-                    out += c;
-        }
-    }
-    return out;
-}
-
-inline std::string q(std::string_view s) { return std::format("\"{}\"", escape(s)); }
-
-// Fixed precision everywhere: a result file is diffed and merged across runs,
-// and shortest-round-trip formatting makes those diffs noisy for no gain.
-inline std::string num(double v) { return std::format("{:.3f}", v); }
-
-}  // namespace detail
-
-inline std::string to_json(const Report& r) {
-    using detail::q;
-    using detail::num;
-    std::string out;
-    out += "{\n";
-    out += std::format("  \"protocol_version\": {},\n", kProtocolVersion);
-    out += std::format("  \"started_at\": {},\n", q(r.started_at));
-    out += "  \"host\": {\n";
-    out += std::format("    \"os\": {},\n", q(r.host.os));
-    out += std::format("    \"arch\": {},\n", q(r.host.arch));
-    out += std::format("    \"cpu_model\": {},\n", q(r.host.cpu_model));
-    out += std::format("    \"logical_cores\": {},\n", r.host.logical_cores);
-    out += std::format("    \"physical_cores\": {},\n", r.host.physical_cores);
-    out += std::format("    \"heterogeneous\": {},\n", r.host.heterogeneous ? "true" : "false");
-    out += std::format("    \"ram_bytes\": {},\n", r.host.ram_bytes);
-    out += std::format("    \"toolchain\": {}\n", q(r.host.toolchain));
-    out += "  },\n";
-    out += "  \"cells\": [\n";
-    for (std::size_t i = 0; i < r.cells.size(); ++i) {
-        const auto& c = r.cells[i];
-        out += "    {\n";
-        out += std::format("      \"engine\": {},\n",   q(c.key.engine));
-        out += std::format("      \"compiler\": {},\n", q(c.key.compiler));
-        out += std::format("      \"profile\": {},\n",  q(c.key.profile));
-        out += std::format("      \"scenario\": {},\n", q(c.key.scenario));
-        out += std::format("      \"fixture\": {},\n",  q(c.key.fixture));
-        out += std::format("      \"variant\": {},\n",  q(c.key.variant));
-        out += std::format("      \"status\": {},\n",   q(to_string(c.status)));
-        out += std::format("      \"note\": {},\n",     q(c.note));
-        out += std::format("      \"runs\": {},\n",     c.samples.size());
-        if (c.has_timing()) {
-            out += std::format("      \"median_s\": {},\n", num(c.median_s()));
-            out += std::format("      \"min_s\": {},\n",    num(c.min_s()));
-            out += std::format("      \"max_s\": {},\n",    num(c.max_s()));
-            out += "      \"samples\": [";
-            for (std::size_t k = 0; k < c.samples.size(); ++k)
-                out += std::format("{}{}", k ? ", " : "", num(c.samples[k].wall_s));
-            out += "]\n";
-        } else {
-            // No timing keys at all rather than zeros: a reader that forgets to
-            // check `status` gets a missing key (loud) instead of a 0.0 (silent).
-            out += "      \"samples\": []\n";
-        }
-        out += (i + 1 == r.cells.size()) ? "    }\n" : "    },\n";
-    }
-    out += "  ]\n";
-    out += "}\n";
-    return out;
-}
+// Defined in protocol.cpp — see the header comment for why.
+std::string to_json(const Report& r);
 
 }  // namespace bench
