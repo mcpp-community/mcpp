@@ -85,11 +85,6 @@
       "edit-comment"
     ]
   },
-  "runners": {
-    "linux": "ubuntu-24.04",
-    "macos": "macos-14",
-    "windows": "windows-2022"
-  },
   "cells": [
     {
       "os": "linux",

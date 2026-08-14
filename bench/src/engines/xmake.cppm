@@ -131,6 +131,51 @@ public:
         //       > in src/lua.c
         // The same command run by hand looked fine only because the packages
         // were already in xrepo's cache and never rebuilt.
+        // ── clang: xmake's BUILT-IN llvm toolchain, plus a RUNTIME ──────────
+        //
+        // The custom `mcpp-clang` toolchain below carries the payload's `-B` and
+        // include chain, which gcc needs. For clang it is actively wrong, and
+        // the reason is not obvious enough to leave undocumented.
+        //
+        // xmake picks the std module by C++ LIBRARY, and reads the library from
+        // the target's RUNTIME (rules/c++/modules/support.lua):
+        //
+        //     has_runtime("c++_shared","c++_static") -> "c++"     (libc++)
+        //     ... no runtime given: fall back on the platform
+        //     is_plat("linux", ...)                  -> "stdc++"  (libstdc++)
+        //
+        // So a clang build with no runtime declared is treated as libstdc++:
+        // xmake looks for GCC's modules.json inside the LLVM payload, finds
+        // nothing, and prints
+        //
+        //     warning: std and std.compat modules not found!
+        //              maybe try to add --sdk=<PATH/TO/LLVM> or install libc++
+        //
+        // ⚠️ THAT SUGGESTION IS A DEAD END, and following it cost three rounds.
+        // `--sdk` is only read on the `c++` branch, which was never reached. The
+        // payload has carried `lib/<triple>/libc++.modules.json` — precisely
+        // what that branch looks for — the entire time.
+        //
+        // Declaring the runtime on the TARGET does not fix it either: with the
+        // custom standalone toolchain the branch still is not taken. What works,
+        // verified end to end, is the built-in toolchain plus both flags —
+        // measured: the warning disappears and xmake starts emitting module
+        // BMIs.
+        const bool payload_clang = !payload_sdk_root(job.compiler).empty();
+        if (payload_clang) {
+            argv.push_back("--toolchain=llvm");
+            argv.push_back("--runtimes=c++_static");   // mcpp.toml: static_stdlib
+            if (const auto cxx = resolve_cxx(job.compiler); !cxx.empty()) {
+                auto cc = cxx;
+                if (const auto at = cc.rfind("clang++"); at != std::string::npos)
+                    cc.replace(at, 7, "clang");
+                platform::ScopedEnv pin_cxx("CXX", cxx);
+                platform::ScopedEnv pin_cc("CC", cc);
+                return platform::run(argv, job.buildfile_dir, job.log_path, job.timeout_s);
+            }
+            return platform::run(argv, job.buildfile_dir, job.log_path, job.timeout_s);
+        }
+
         const bool own_description = !job.buildfile_dir.empty() &&
                                      job.buildfile_dir != job.project_dir;
         if (own_description) {

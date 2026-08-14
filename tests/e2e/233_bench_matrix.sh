@@ -45,12 +45,12 @@ export PYTHONWARNINGS=error::EncodingWarning
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MATRIX="$ROOT/bench/matrix.json"
-WORKFLOW="$ROOT/.github/workflows/bench.yml"
+RUNNER="$ROOT/bench/run-standard.sh"
 SPEC="$ROOT/bench/SPEC.md"
 
 [ -f "$MATRIX" ]   || { echo "FAIL: bench/matrix.json is missing"; exit 1; }
 [ -f "$SPEC" ]     || { echo "FAIL: bench/SPEC.md is missing"; exit 1; }
-[ -f "$WORKFLOW" ] || { echo "FAIL: .github/workflows/bench.yml is missing"; exit 1; }
+[ -f "$RUNNER" ] || { echo "FAIL: bench/run-standard.sh is missing"; exit 1; }
 
 # ── 1..3: the data ─────────────────────────────────────────────────────────
 # ROOT is passed in: this python runs from stdin, so sys.argv[0] is "-" and the
@@ -87,8 +87,6 @@ for c in m["cells"]:
     check_list(where, "engines",   c["engines"],   "engine")
     check_list(where, "variants",  c["variants"],  "variant")
     check_list(where, "scenarios", c["scenarios"], "scenario")
-    if c["os"] not in m["runners"]:
-        fail.append(f"{where}: no runner declared for os='{c['os']}'")
 
 # The baseline must be an engine, and it must actually be IN every cell it is
 # supposed to normalise — a ratio against an engine that never ran is not a
@@ -423,62 +421,55 @@ if bad:
 print(f"root README: {len(rows)} rows x 4 engines all match their published runs")
 PYREADME
 
-# ── 4: the workflow reads the file, and does not repeat it ─────────────────
-grep -q 'bench/matrix.json' "$WORKFLOW" \
-  || { echo "FAIL: bench.yml does not read bench/matrix.json — the matrix has been re-hardcoded"; exit 1; }
-
-# An automatic trigger takes ONE sample per cell; only a hand-started run may
-# ask for more.
+# ── 4: the runner reads the file, and does not repeat it ───────────────────
 #
-# `--runs 0` means "ask the harness", which is 3, and three samples across 10
-# cells x 5 scenarios on a workload whose cold build is 80s is most of a
-# two-hour matrix — spent on dispersion nobody reads on a pull request. This is
-# the kind of default that drifts back silently and is only noticed as "CI got
-# slow again", so it is pinned here rather than left to a reviewer's eye.
-python3 - "$WORKFLOW" <<'PYRUNS' || exit 1
+# The matrix used to be run by .github/workflows/bench.yml. That workflow is
+# gone — 12 of its 32 foreign-engine arms were waived, so a third of the
+# comparison never ran while the job went green, and a shared runner measures
+# the runner (243s there against 79s on a developer box for the same tree).
+# bench/run-standard.sh took its place, and the invariant is unchanged: ONE
+# list, read rather than repeated.
+# The literal path, not `$MATRIX`: the variable is referenced all over the
+# script, so matching it made this check pass even after the assignment was
+# repointed at /dev/null — which is exactly what the negative test for it did.
+grep -qE '^[^#]*MATRIX=.*bench/matrix\.json' "$RUNNER" \
+  || { echo "FAIL: bench/run-standard.sh does not read bench/matrix.json — the matrix has been re-hardcoded"; exit 1; }
+
+# The standard data set is THREE runs, and the runner must not quietly change it.
+#
+# n=1 has no dispersion at all, and every table this suite has published so far
+# carried an `n=1` caveat asking readers not to compare digits — a caveat that
+# is really an admission. Three samples with min/max is the least that makes a
+# published number readable. `--runs 1` stays available for a quick check and is
+# marked as not publishable in the script's own output.
+#
+# Checked structurally, not by counting lines: the first version of a check like
+# this used `grep -A4` to reach a default and the comment above it pushed the
+# default out of range, so it failed on a correct file.
+python3 - "$RUNNER" <<'PYRUNS' || exit 1
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
-
-# ⚠️ PARSE THE BLOCK, DO NOT COUNT LINES. The first version of this check used
-# `grep -A4` to reach the input's `default:`, and the four explanatory comment
-# lines above it pushed it out of range — so it failed on a correct file. A
-# line-counting check is a check that breaks when someone adds a comment.
-try:
-    import yaml
-    doc = yaml.safe_load(text)
-    on = doc.get("on", doc.get(True))          # YAML 1.1 reads bare `on` as True
-    default = on["workflow_dispatch"]["inputs"]["runs"]["default"]
-except Exception:
-    # No pyyaml: fall back to reading the block bounded by the NEXT key at the
-    # same indent, which is still structural rather than positional.
-    m = re.search(r"^(\s+)runs:\s*$(.*?)^\1\w", text, re.S | re.M)
-    d = re.search(r"^\s+default:\s*'([^']*)'", m.group(2), re.M) if m else None
-    default = d.group(1) if d else None
-
-bad = []
-if str(default) != "1":
-    bad.append(f"the workflow_dispatch `runs` input defaults to {default!r}, not '1'")
-if not re.search(r"--runs\s+'\$\{\{\s*inputs\.runs\s*\|\|\s*1\s*\}\}'", text):
-    bad.append("--runs is not `${{ inputs.runs || 1 }}`")
-if bad:
-    print("FAIL: an automatic bench run must take ONE sample per cell:")
-    for b in bad:
-        print("  " + b)
-    print("  `0` means the harness default, which is 3 — three samples across 10 cells")
-    print("  x 5 scenarios on an 80s cold build is most of a two-hour matrix, spent on")
-    print("  dispersion nobody reads on a pull request. Ask for more by hand instead.")
+m = re.search(r"^RUNS=(\d+)\s*$", text, re.M)
+if not m:
+    print("FAIL: bench/run-standard.sh no longer defines RUNS — this check cannot")
+    print("      compare anything and must not pass silently")
+    sys.exit(1)
+if m.group(1) != "3":
+    print(f"FAIL: the standard set takes 3 runs; bench/run-standard.sh defaults to {m.group(1)}")
+    print("      n=1 has no dispersion, which is why every earlier table needed a")
+    print("      caveat telling readers not to compare its digits.")
     sys.exit(1)
 PYRUNS
 
-# The old shape enumerated runner images inline. If that ever comes back, the
-# two copies disagree the first time a runner image is bumped in one of them.
-if grep -qE '^\s*case ",\$want," in \*,(linux|macos|windows),\*\)' "$WORKFLOW"; then
-    echo "FAIL: bench.yml still enumerates platforms inline; matrix.json owns that list"
-    exit 1
-fi
-for img in $(python3 -c "import json,sys;print(' '.join(json.load(open(sys.argv[1], encoding='utf-8'))['runners'].values()))" "$MATRIX"); do
-    if grep -q "runs-on: $img" "$WORKFLOW"; then
-        echo "FAIL: bench.yml hard-codes runner image '$img'; it must come from matrix.json"
+# The runner must SELECT from matrix.json, never enumerate cells itself.
+#
+# The workflow this replaced grew an inline platform list once and it had to be
+# guarded; a shell script is at least as easy to hard-code into. The tell is a
+# project or toolchain name written down here rather than read.
+for token in mcpp-2026 xlings-2026 synth- ; do
+    if grep -qE "^[^#]*${token}" "$RUNNER"; then
+        echo "FAIL: bench/run-standard.sh mentions '${token}...' outside a comment —"
+        echo "      the cell list belongs to matrix.json and must be read, not repeated"
         exit 1
     fi
 done
@@ -624,6 +615,11 @@ for f in files:
         doc = json.load(open(f, encoding="utf-8"))
     except Exception:
         continue                       # hyperfine exports and other shapes
+    # A bench report is an OBJECT. Engine scratch (compile_commands.json, bazel
+    # exports) is often an ARRAY, and `.get` on one raised AttributeError right
+    # out of this loop — a guard that crashes is a guard that stops guarding.
+    if not isinstance(doc, dict):
+        continue
     for c in doc.get("cells", []):
         if c.get("status") == "ok" and isinstance(c.get("median_s"), (int, float)):
             published.add(round(float(c["median_s"]), 2))
