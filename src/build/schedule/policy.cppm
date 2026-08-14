@@ -107,7 +107,20 @@ struct Decision {
 // duplicate-derivation this module exists to prevent.
 //
 // Precedence matches every other mcpp switch: environment beats manifest.
-std::string requested_switch(const manifest::Manifest& m);
+//
+// ALWAYS returns one of "auto" | "on" | "off". Anything else is a typo, and a
+// typo must not quietly become "auto" — that is the rule `resolve_jobs` below
+// already follows, and this switch was the one place breaking it. `bmi_schedule
+// = "ON"` (or "true", or "yes") used to be accepted, mean OFF, and explain
+// itself with "the split schedule is opt-in until verified", which reads as
+// "you did not ask for it" to someone who just did.
+//
+// It was also not merely a no-op: prepare.cppm folds this value into the build
+// fingerprint whenever it is not "auto", so a typo picked a DIFFERENT build
+// directory — a full rebuild — while changing nothing about the schedule.
+// Normalising here fixes both halves, because the fingerprint reads this too.
+std::string requested_switch(const manifest::Manifest& m,
+                             const std::function<void(std::string_view)>& onInvalid = {});
 
 // How many compilers this machine should run at once.
 //
@@ -165,15 +178,25 @@ Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int 
             d.ninjaJobs = cap;
             return d;
 
-        case toolchain::CompilerId::GCC:
+        case toolchain::CompilerId::GCC: {
             d.strategy = Strategy::DetachCodegen;
             d.reason = "gcc: publishes the BMI with rename() at ~22% of the "
                        "compile, so importers can start before code generation";
             d.compilerCap = cap;
             // HAZARD 2. 6x is empirical: the prototype starved at 1x and was
             // saturated well before 6x (measured -j192 against a cap of 32).
-            d.ninjaJobs = cap > 0 ? cap * 6 : 0;
+            //
+            // The cap is CLAMPED before multiplying because `--jobs` is only
+            // checked for `> 0`: `auto` is bounded by recommended_jobs' ceiling
+            // of 64, but an explicit `--jobs 2000000000` reaches here intact and
+            // `cap * 6` is then signed overflow — undefined behaviour, i.e. a
+            // negative `-j` handed to ninja is one of the *better* outcomes.
+            // 4096 is far above any real machine and far below the overflow.
+            constexpr int kMaxCap = 4096;
+            const int bounded = cap > kMaxCap ? kMaxCap : cap;
+            d.ninjaJobs = bounded > 0 ? bounded * 6 : 0;
             return d;
+        }
 
         case toolchain::CompilerId::MSVC:
             d.reason = "msvc: neither /ifcOnly's cost nor the atomicity of .ifc "
@@ -215,9 +238,22 @@ int resolve_jobs(const manifest::Manifest& m,
     return 0;
 }
 
-std::string requested_switch(const manifest::Manifest& m) {
-    if (const char* e = std::getenv("MCPP_BMI_SCHEDULE"); e && *e) return std::string(e);
-    if (!m.buildConfig.bmiSchedule.empty()) return m.buildConfig.bmiSchedule;
+std::string requested_switch(const manifest::Manifest& m,
+                             const std::function<void(std::string_view)>& onInvalid) {
+    std::string v;
+    if (const char* e = std::getenv("MCPP_BMI_SCHEDULE"); e && *e)
+        v = e;
+    else if (!m.buildConfig.bmiSchedule.empty())
+        v = m.buildConfig.bmiSchedule;
+    else
+        return "auto";
+
+    // Exact match only, no case folding and no synonyms. Accepting "ON" invites
+    // the next question ("does it take `true`? `1`? `yes`?"), and every answer
+    // is another spelling of a switch whose value is written into build.ninja
+    // and compared across runs. One spelling, or a diagnostic.
+    if (v == "auto" || v == "on" || v == "off") return v;
+    if (onInvalid) onInvalid(v);
     return "auto";
 }
 

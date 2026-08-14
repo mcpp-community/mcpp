@@ -5010,7 +5010,14 @@ prepare_build(bool print_fingerprint,
     {
         const auto decision = mcpp::build::schedule::decide(
             ctx.plan.toolchain,
-            mcpp::build::schedule::requested_switch(*m),
+            // Warned HERE and not at the fingerprint call above, which reads the
+            // same switch a few hundred lines earlier: both get the normalised
+            // value, only one of them says anything, so a typo produces exactly
+            // one warning rather than two identical ones.
+            mcpp::build::schedule::requested_switch(*m, [](std::string_view bad) {
+                mcpp::ui::warning(std::format(
+                    "ignoring invalid bmi_schedule '{}' (expected \"auto\", \"on\" or \"off\")", bad));
+            }),
             mcpp::build::schedule::resolve_jobs(*m, [](std::string_view bad) {
                 mcpp::ui::warning(std::format(
                     "ignoring invalid job count '{}' (expected a positive number or 'auto')", bad));

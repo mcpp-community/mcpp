@@ -219,8 +219,19 @@ split schedule, and leaving it out understated mcpp badly — `edit-body` reads
   at cmake's pace; the schedule column shows it doing the SAME work 3.3x faster,
   by publishing each BMI as soon as it exists instead of after code generation.
 * **`noop` is the one mcpp loses outright**, in both columns: 0.72–0.74s against
-  cmake's 0.36s. That is per-invocation overhead, and it is the number a user
-  feels on every edit-build cycle.
+  cmake's 0.36s (0.49x). That is per-invocation overhead — the number a user
+  feels on every edit-build cycle, and mcpp is the slowest of the three at doing
+  nothing at all.
+* **`edit-comment` is 1.04x in the default column, not the 200x the mcpp
+  workload shows.** The comment lands INSIDE an inline function body that xlings
+  keeps in its interface unit, so the BMI genuinely changes and the cascade is
+  owed. The cell's note records which form ran; see §3, and do not read this as
+  the optimisation failing.
+* **`touch-hub` is the real cascade-suppression result: 54.96x.** Content
+  unchanged, so mcpp compares the BMI it just produced against the previous one
+  and skips 45 importers. cmake and xmake decide by timestamp and rebuild all of
+  them — to within 0.00s of each other, which is what two timestamp-driven
+  engines should look like.
 * **The `bmi_schedule` correctness bug (§8b) does NOT reproduce here.** All ten
   cells are `ok`. It reproduces on the generated fixture, whose tight
   unit_0→unit_1 chain hits the window; three real trees (mcpp's own and both
@@ -228,23 +239,17 @@ split schedule, and leaving it out understated mcpp badly — `edit-body` reads
   only one workload can show is still a defect.
 
 <sub>xlings `2026.8.11.2`, gcc 16.1.0 payload, Linux x86_64 · i9-13900K · n=1 ·
-`--baseline cmake`. Raw report: `bench/results/xlings-3way-20260814/`.</sub>
-
-Three things in that table are worth reading carefully, because two of them are
-mcpp LOSING:
-
-* **`noop` is 0.49x — mcpp is the slowest of the three at doing nothing.** 0.74s
-  against cmake's 0.36s. It is a fixed cost on every invocation, and it is the
-  one number here that a user feels on every keystroke-to-build cycle.
-* **`edit-comment` is 1.04x, not the 200x the mcpp workload shows.** The comment
-  lands INSIDE an inline function body that xlings keeps in its interface unit,
-  so the BMI genuinely changes and the cascade is owed. The cell's note records
-  which form ran; see §3, and do not read this as the optimisation failing.
-* **`touch-hub` is the real result: 54.96x.** Content unchanged, so mcpp compares
-  the BMI it just produced against the previous one and skips 45 importers.
-  cmake and xmake decide by timestamp and rebuild all of them — to within 0.00s
-  of each other, which is what two timestamp-driven engines should look like.
-
+`--baseline cmake`. Raw report: `bench/results/xlings-3way-20260814/`.
+**This table splices two runs, which is worth stating rather than leaving to be
+discovered.** `mcpp default`, `cmake` and `xmake` come from
+`xlings-combined-3way.json`; the `bmi_schedule=on` column comes from
+`xlings-schedule.json`, because the schedule arm was never measured in the same
+run as the other two engines. That second file carries its OWN default arm, and
+it does not match this one exactly — `cold` 91.61s there against 92.49s here,
+about 1%, which is ordinary run-to-run spread on an untuned desktop. Read the
+schedule speed-up from the within-run pair (91.61 → 37.56, **2.44x**) rather
+than across the columns (92.49 → 37.56, 2.46x); the cross-engine ratios in the
+table are the ones taken within `xlings-combined-3way.json`.</sub>
 
 #### The same three engines on the SPLIT tree
 
@@ -417,7 +422,7 @@ this fixture failed exactly there.
 | **old fixture unit, `weight 6`** | **0.23 s** — 74% of it compiler startup |
 | old fixture unit, `weight 40` | 0.28 s — a 6.7x knob bought 20% |
 | one unit with a realistic global module fragment | 0.97 s |
-| **mcpp's own units** (57k lines / 139 units) | **0.57 s** |
+| **mcpp's own units** (57k lines / 139 units — the checkout when this table was taken, not the 137-unit pinned workload) | **0.57 s** |
 
 The old `weight` emitted O(weight²) instantiations of one trivial `constexpr`
 recursion — a few hundred at weight 40, which a compiler does in microseconds.

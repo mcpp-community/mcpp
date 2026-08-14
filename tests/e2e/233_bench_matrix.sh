@@ -462,4 +462,71 @@ if bad:
 print("no engine adapter branches on the literal compiler request")
 PY
 
+# §8. Every timing quoted in a bench/README table exists in the published data.
+#
+# §5 does this for the root README, which carries five rows. bench/README.md
+# carries about ninety across seven tables — it is where nearly every number the
+# project publishes actually lives, and it had no check at all.
+#
+# The failure this prevents has already happened once, and was caught by hand
+# with one command to spare: the mcpp workload's xmake column was about to be
+# published as `cold 0.60s` — a phantom from the run where xmake's `-P`/cwd
+# disagreement meant every "cold" build measured an already-up-to-date tree. The
+# real figure, 90.30s, lives in a different result file. Nothing about the README
+# would have looked wrong; 0.60s is simply a number, and a fast one.
+#
+# Deliberately a WIDE net rather than a structured parse: any `NN.NNs` inside a
+# table row must appear as some cell's median. It does not check that the number
+# is in the RIGHT row — §5 does that for the table the most people see — but it
+# does make an invented or stale figure impossible, and it needs no per-table
+# schema, so it keeps working when a table is added.
+#
+# Table rows only, and two decimals with no space before the `s`: prose quotes
+# measurements from other instruments in other formats ("makespan 79.79 s",
+# "0.3 s"), and those are not cells of any bench run.
+python3 - "$ROOT" <<'PY' || exit 1
+import json, glob, os, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+
+published = set()
+files = sorted(glob.glob(str(root / "bench/results/**/*.json"), recursive=True))
+for f in files:
+    try:
+        doc = json.load(open(f, encoding="utf-8"))
+    except Exception:
+        continue                       # hyperfine exports and other shapes
+    for c in doc.get("cells", []):
+        if c.get("status") == "ok" and isinstance(c.get("median_s"), (int, float)):
+            published.add(round(float(c["median_s"]), 2))
+
+# An empty set would make every README trivially "clean" — the same silent pass
+# the whole test exists to prevent, and one `git mv` of bench/results away.
+if len(published) < 50:
+    print(f"FAIL: only {len(published)} published medians found in "
+          f"bench/results/ ({len(files)} files) — this check cannot mean "
+          f"anything with so few, so something has moved")
+    sys.exit(1)
+
+bad = []
+for name in ["bench/README.md", "bench/README.zh-CN.md"]:
+    for n, line in enumerate((root / name).read_text(encoding="utf-8").splitlines(), 1):
+        if not line.lstrip().startswith("|"):
+            continue
+        for m in re.finditer(r"(?<![\d.])(\d+\.\d\d)s(?![\d])", line):
+            if round(float(m.group(1)), 2) not in published:
+                bad.append(f"{name}:{n}: {m.group(0)} is in no published run")
+if bad:
+    print("FAIL: a bench README table quotes a timing that was never measured:")
+    for b in bad[:20]:
+        print("  " + b)
+    if len(bad) > 20:
+        print(f"  ... and {len(bad) - 20} more")
+    print("  Either the number is invented, or it comes from a run that was not")
+    print("  committed under bench/results/. A benchmark whose numbers cannot be")
+    print("  traced to a run is a claim, not a measurement.")
+    sys.exit(1)
+print(f"bench READMEs: every quoted timing traces to bench/results/ "
+      f"({len(published)} medians across {len(files)} files)")
+PY
+
 echo "bench matrix OK"
