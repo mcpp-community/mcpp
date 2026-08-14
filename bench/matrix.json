@@ -25,7 +25,7 @@
       "developer box had 3.1.0. A version that varies per runner is a variable",
       "the report does not record and the reader cannot see."
     ],
-    "cmake": "4.0.2",
+    "cmake": "4.4.2",
     "xmake": "3.1.0",
     "bazel": "9.2.0",
     "gcc": "16.1.0",
@@ -39,7 +39,7 @@
       "compiler error, and mcpp quietly used the registry payload anyway — so the",
       "table read `48 failed` while claiming to compare build engines."
     ],
-    "_cmake_note": "4.0.2, not the newest. `CMAKE_EXPERIMENTAL_CXX_IMPORT_STD` is gated by a UUID that CHANGES WITH THE CMAKE VERSION, and the descriptions in projects/ carry the 4.0 key; 4.4.2 rejects it with `this CMake's version of the feature` and the project fails to configure. It is also the version every published number in bench/results/ was measured with, so pinning it keeps the tables and the matrix describing the same tool. Moving to a newer cmake means updating the UUID in every description in the same commit."
+    "_cmake_note": "4.4.2. `CMAKE_EXPERIMENTAL_CXX_IMPORT_STD` is gated by a UUID that CHANGES WITH THE CMAKE VERSION, and it is compiled into the cmake binary rather than written in the Modules — 4.4's is f35a9ac6-8463-4d38-8eec-5d6008153e7d, 4.0's was a9e1cf81-9932-4810-974b-6eccaf14e457, and 4.4.2 rejects the old one with `CMAKE_EXPERIMENTAL_CXX_IMPORT_STD is set to incorrect value`. So the version here and the key in every description under bench/projects/ MUST move in the same commit. The key was not guessed: each UUID in the binary was offered to cmake in a throwaway project until one was accepted. ⚠️ Offering them to the REAL project proves nothing — its CMakeLists.txt `set()`s the key itself, which overrides the -D, so all seven candidates came back rejected including the one that works."
   },
   "reference_mcpp": "2026.8.11.3",
   "_reference_mcpp_note": [

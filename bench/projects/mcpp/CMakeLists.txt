@@ -25,9 +25,9 @@
 cmake_minimum_required(VERSION 3.30)
 
 # `import std;` is still behind an experimental gate whose key changes with the
-# CMake version — this is the CMake 4.0 key. Set BEFORE project(), because the
+# CMake version — this is the CMake 4.4 key. Set BEFORE project(), because the
 # compiler-support probe that reads it runs during project().
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "a9e1cf81-9932-4810-974b-6eccaf14e457")
+set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
 
 # The DIALECT settings belong before project() for the same reason as the key
 # above, and getting that wrong is not a style question — it is why this arm
