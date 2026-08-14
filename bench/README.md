@@ -833,10 +833,9 @@ input, with the BMI as an implicit one so ninja still orders it after phase 1.
 The unit's own object and the cascade to its importers are different questions
 and now have different edges.
 
-**What it did to the published numbers.** Timing an unfinished build makes it
-look fast. On the pinned mcpp workload, `mcpp build` returned in 0.56s with
-`cc1plus` still running; the object landed 1.24s later. The two "instant" cells
-of the `bmi_schedule=on` column were measuring that:
+**What it did to the published numbers.** The skipped object edge and link were
+work the build owed, so the column was timing less than a build. The two
+"instant" cells of `bmi_schedule=on` doubled once that work came back:
 
 | scenario | as published | re-measured with the fix | |
 |---|---|---|---|
@@ -852,10 +851,17 @@ helps everywhere: on the two rows where the cascade is already skipped it is
 now visibly *slower* than the default, which is the honest shape.
 
 <sub>Raw data: `bench/results/schedule-refix-20260814/`. The invariants in
-`bench/src/main.cpp` did not catch this — they compare a scenario against that
-engine's own `noop` and against the other engines, and 0.22s against a 0.16s
-`noop` is not anomalous. What catches "the build was still running" is asserting
-on the artefact, not on the clock; that is not yet implemented.</sub>
+`bench/src/main.cpp` did not catch this — both are `cold`-only, and 0.22s
+against a 0.16s `noop` is not anomalous anyway. **THIS GAP IS STILL OPEN.** An
+invariant was written for it — poll the tree the engine writes to and fail if
+anything lands after the engine exits — and it does not fire on the binary that
+still has the defect, in this suite's own touch-hub flow. It was removed rather
+than kept: a guard that cannot be shown to catch the case it was written for is
+indistinguishable from no guard, and the whole point of this section is that
+things which look like coverage are the expensive kind of wrong. Watching a
+hand-run rebuild DOES show `mcpp build` returning in 0.56s with `cc1plus` still
+running and the object landing 1.24s later, so the phenomenon is real; what is
+missing is a check that sees it from inside the harness.</sub>
 
 ---
 
