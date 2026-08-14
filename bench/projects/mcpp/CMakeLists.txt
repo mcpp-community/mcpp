@@ -92,6 +92,38 @@ foreach(_d lib64 lib lib/gcc)
 endforeach()
 if(_mcpp_std_json)
   message(STATUS "bench: std module manifest: ${_mcpp_std_json}")
+  # ...and whether the SOURCE it names is actually there. A present manifest
+  # pointing at an absent `std.cc` fails exactly like an absent manifest, and
+  # CMake's message ("Only `libstdc++` is supported") distinguishes neither.
+  # This is the last untested difference between a developer box, where the arm
+  # generates fine, and the runner, where the manifest IS present and generate
+  # still fails — so the next matrix decides it instead of another round of
+  # hypotheses.
+  get_filename_component(_mcpp_json_dir "${_mcpp_std_json}" DIRECTORY)
+  file(READ "${_mcpp_std_json}" _mcpp_json_text)
+  string(JSON _mcpp_mod_count ERROR_VARIABLE _mcpp_json_err
+         LENGTH "${_mcpp_json_text}" modules)
+  if(_mcpp_json_err)
+    message(STATUS "bench: could not read `modules` from the manifest: ${_mcpp_json_err}")
+  else()
+    math(EXPR _mcpp_last "${_mcpp_mod_count} - 1")
+    foreach(_i RANGE 0 ${_mcpp_last})
+      string(JSON _mcpp_src ERROR_VARIABLE _e GET "${_mcpp_json_text}"
+             modules ${_i} source-path)
+      string(JSON _mcpp_name ERROR_VARIABLE _e2 GET "${_mcpp_json_text}"
+             modules ${_i} logical-name)
+      if(_mcpp_src)
+        get_filename_component(_mcpp_abs "${_mcpp_json_dir}/${_mcpp_src}" ABSOLUTE)
+        if(EXISTS "${_mcpp_abs}")
+          message(STATUS "bench:   ${_mcpp_name} -> ${_mcpp_abs} (present)")
+        else()
+          message(STATUS "bench:   ${_mcpp_name} -> ${_mcpp_abs} MISSING — the "
+                         "manifest is there but its source is not, which fails "
+                         "exactly like no manifest at all")
+        endif()
+      endif()
+    endforeach()
+  endif()
 else()
   message(STATUS "bench: NO libstdc++.modules.json under ${_mcpp_cxx_prefix} — "
                  "CMAKE_CXX_MODULE_STD cannot work and generate will fail with "
