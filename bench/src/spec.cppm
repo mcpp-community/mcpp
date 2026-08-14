@@ -88,8 +88,15 @@ struct Job {
 // this module stays free of any assumption about the project being measured.
 
 // Cold builds are expensive and their variance is low; incremental scenarios are
-// cheap and noisier, so they get more repetitions. Encoded here rather than in
-// the runner so the policy is visible next to the scenario it applies to.
-constexpr int default_runs(Scenario s) { return s == Scenario::Cold ? 3 : 5; }
+// cheap and noisier, so they would justify more repetitions. Encoded here rather
+// than in the runner so the policy is visible next to the scenario it applies to.
+//
+// THREE, not five. On a real project an "incremental" scenario is not cheap —
+// `edit-comment` on xlings rebuilds 45 importers, so five repetitions is five
+// near-full rebuilds and a windows/clang cell spent over half an hour on one
+// engine. The extra samples were not buying accuracy worth that: the spread
+// across runs on the pinned workloads is under 2%, and every published table is
+// a median. A matrix nobody waits for is one nobody reads.
+constexpr int default_runs(Scenario) { return 3; }
 
 }  // namespace bench

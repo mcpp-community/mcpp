@@ -26,6 +26,21 @@ inline std::string payload_toolchain(std::string_view compiler) {
     return clang ? "mcpp-clang" : "mcpp-gcc";
 }
 
+// The LLVM root a payload driver lives under: `…/xim-x-llvm/<ver>/bin/clang++`
+// → `…/xim-x-llvm/<ver>`. Empty for anything that is not a payload clang.
+inline std::string payload_sdk_root(std::string_view compiler) {
+    if (compiler.find("/registry/data/xpkgs/") == std::string_view::npos &&
+        compiler.find("\\registry\\data\\xpkgs\\") == std::string_view::npos)
+        return {};
+    if (compiler.find("clang") == std::string_view::npos) return {};
+    const auto slash = compiler.find_last_of("/\\");
+    if (slash == std::string_view::npos) return {};
+    const auto bin = compiler.substr(0, slash);          // …/<ver>/bin
+    const auto up  = bin.find_last_of("/\\");
+    if (up == std::string_view::npos) return {};
+    return std::string(bin.substr(0, up));               // …/<ver>
+}
+
 class XmakeEngine : public Engine {
 public:
     std::string_view name() const override { return "xmake"; }
@@ -63,6 +78,24 @@ public:
             // it cannot be turned off without also discarding the toolchain.
             "--ccache=n",
         };
+        // ── Tell xmake where libc++ lives, or `import std;` has no provider ──
+        //
+        // The payload SHIPS the std module (share/libc++/v1/std.cppm), but xmake
+        // looks for it under its own notion of an LLVM SDK and otherwise says
+        //     warning: std and std.compat modules not found!
+        //              maybe try to add --sdk=<PATH/TO/LLVM> or install libc++
+        //     error: <mcpp> missing std dependency for module mcpp.build.provisions
+        // — a message naming a module of the project under test, so it reads as
+        // "this project is broken" rather than "the engine was not told where
+        // its standard library is". Every scenario in the windows/clang cell
+        // failed that way.
+        //
+        // Derived from the resolved driver (…/bin/clang++), which is the same
+        // path the toolchain pin already produced, so there is nothing to keep
+        // in step by hand.
+        if (const auto sdk = payload_sdk_root(job.compiler); !sdk.empty())
+            argv.push_back("--sdk=" + sdk);
+
         // ── How the payload driver is pinned, and why it is not always CXX ──
         //
         // A real project's description (bench/projects/*/xmake.lua) DEFINES the
