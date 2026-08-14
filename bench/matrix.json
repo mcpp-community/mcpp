@@ -117,7 +117,9 @@
       "engines": "mcpp,cmake,xmake,bazel",
       "variants": "headers,modules,modules-impl",
       "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
-      "preset": "standard"
+      "preset": "standard",
+      "allow_failed": "xmake,bazel",
+      "note": "KNOWN GAP, two of them, in two foreign tools on Windows. xmake: exits -1 (0xFFFFFFFF) from the seed build. It USED to be reported as `could not start the process`, which was the harness's own bug — Windows crash/abort statuses are large DWORDs that become negative ints, and `started()` inferred launch failure from the sign. That is fixed, so this is now honestly an exit code, and it is xmake's. bazel: `msvc_deps_scanner_wrapper_x64.bat failed ... The syntax of the command is incorrect` on the modules-impl variant — rules_cc's MSVC dependency scanner, not something this suite passes. A separate bazel failure on this cell WAS ours and is fixed: `--force_pic` is fatal on Windows (`supports_pic` is not enabled there), and dropping it recovered the headers and modules variants. cmake and mcpp stay measured here."
     },
     {
       "os": "windows",
@@ -138,8 +140,10 @@
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
       "body": "src/version_req.cppm",
-      "note": "touch-leaf omitted: a real tree has no unit nobody imports that is also stable enough to name",
-      "buildfiles": "mcpp"
+      "note": "KNOWN GAP: cmake cannot GENERATE this project on the runner. It configures (the compiler probe passes) and then fails with `CMake Error: the \"CXX_MODULE_STD\" property ... requires that the \"__CMAKE::CXX23\" target exist, but it was not provided by the toolchain. Reason: Only `libstdc++` is supported`. Everything checkable from outside has been checked and every one of them AGREES with a developer box where the same arm configures, generates and builds: same cmake (the very same `xim-x-cmake/4.0.2` xlings payload, not merely the same version), same `xim-x-gcc/16.1.0`, `libstdc++.modules.json` present on the runner, both sources it names (`std.cc`, `std.compat.cc`) present on the runner, and the runner's exact flag shape (`-B<glibc>/lib -L<glibc>/lib`, the branch this machine does not normally take) reproduced locally via a fake MCPP_HOME with no subos — it works there. What is left is inside CMake's own detection. The arm's CMakeConfigureLog is now attached to the cell log on failure so the next look starts from CMake's own record rather than another hypothesis. BASELINE MOVED to the released mcpp for this cell, exactly as the xlings cells do: normalising against an engine that never produced a binary prints bare seconds under a heading that says `relative to`. xmake and both mcpp arms stay measured here. The published cmake numbers in bench/README were taken on a machine where this arm works.",
+      "buildfiles": "mcpp",
+      "allow_failed": "cmake",
+      "baseline": "2026.8.11.3"
     },
     {
       "os": "linux",

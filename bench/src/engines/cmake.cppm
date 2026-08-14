@@ -91,12 +91,25 @@ public:
         // nothing and a red one carries its own evidence.
         if (!r.ok()) {
             const auto detail = job.build_dir / "CMakeFiles" / "CMakeConfigureLog.yaml";
-            if (const auto tail = platform::tail_of(detail, 120); !tail.empty()) {
-                std::ofstream log(job.log_path, std::ios::app);
-                if (log) {
-                    log << "\n--- CMakeConfigureLog.yaml (last 120 lines) ---\n"
+            // GREP, then tail. The first version took the last 120 lines and got
+            // the ABI/linker-id probe, because that is what CMake happens to
+            // write last — the std-module detection this was added for sits
+            // EARLIER in the file and was cut off. Same lesson as the build
+            // logs: a tail answers "what happened at the end", not "why did it
+            // fail".
+            std::ofstream log(job.log_path, std::ios::app);
+            if (log) {
+                if (const auto hits = platform::log_grep(
+                        detail,
+                        {"CXX_MODULE_STD", "IMPORT_STD", "import std", "CXX23",
+                         "modules.json", "libstdc++", "std module"},
+                        40);
+                    !hits.empty())
+                    log << "\n--- CMakeConfigureLog.yaml (std-module entries) ---\n"
+                        << hits;
+                if (const auto tail = platform::tail_of(detail, 60); !tail.empty())
+                    log << "\n--- CMakeConfigureLog.yaml (last 60 lines) ---\n"
                         << tail;
-                }
             }
         }
         return r;
