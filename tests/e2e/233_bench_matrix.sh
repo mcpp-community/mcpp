@@ -397,4 +397,41 @@ if bad:
 print(f"no cell schedules bazel against a ruleless package ({len(m['cells'])} cells)")
 PY
 
+# §7. No engine adapter may branch on the LITERAL compiler request.
+#
+# main.cpp resolves `--compiler payload:clang` into an absolute driver path
+# before any engine sees it, so `job.compiler == "clang"` is false in exactly
+# the cells that mean clang. That rewrite has now broken three separate checks:
+#   * `payload_toolchain` — --toolchain=mcpp-* was never passed at all
+#   * `--toolchain=llvm`  — xmake fell back to g++ with clang's flags:
+#                           `g++: unrecognized command-line option
+#                           '--no-default-config'`, six fixture cells red
+#   * (the same shape would hit any new one written the same way)
+#
+# Each time it looked correct in review, because the string being compared is
+# the string the user typed. Adapters must key off the RESOLVED PATH instead.
+python3 - "$ROOT" <<'PY' || exit 1
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1]) / "bench/src/engines"
+bad = []
+for f in root.glob("*.cppm"):
+    # engine.cppm's resolve_cxx() is the NORMALISER — comparing there is how a
+    # bare `gcc` becomes `g++`, and it runs before any rewrite. Everything else
+    # sees the resolved path.
+    if f.name == "engine.cppm":
+        continue
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        code = line.split("//", 1)[0]
+        if re.search(r'compiler\s*==\s*"(clang|gcc)"', code):
+            bad.append(f"{f.name}:{n}: {line.strip()[:90]}")
+if bad:
+    print("FAIL: an engine adapter compares job.compiler to a literal:")
+    for b in bad:
+        print("  " + b)
+    print("  main.cpp rewrites payload:* into a path first, so that test never fires.")
+    print("  Key off the resolved driver path (see payload_toolchain).")
+    sys.exit(1)
+print("no engine adapter branches on the literal compiler request")
+PY
+
 echo "bench matrix OK"

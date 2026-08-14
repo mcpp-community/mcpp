@@ -153,7 +153,17 @@ public:
                 return platform::run(argv, job.buildfile_dir, job.log_path, job.timeout_s);
             }
         }
-        if (job.compiler == "clang") argv.push_back("--toolchain=llvm");
+        // Decided from the RESOLVED DRIVER, not from the literal string "clang"
+        // — main.cpp rewrites `--compiler payload:clang` into an absolute path
+        // before any engine sees it, so `job.compiler == "clang"` is false in
+        // exactly the cells that need this. xmake then fell back to g++ while
+        // the description carried clang's flags:
+        //     g++: error: unrecognized command-line option '--no-default-config'
+        // Six fixture cells in the linux/clang job. Same rewrite, same mistake
+        // as `payload_toolchain` above — which I fixed without checking whether
+        // anything else tested the same string.
+        if (job.compiler.find("clang") != std::string::npos)
+            argv.push_back("--toolchain=llvm");
         // The driver is pinned through CXX so every engine compiles with the
         // SAME binary; without it xmake resolves whatever `g++` means on this
         // host, and the comparison silently becomes compiler-vs-compiler.
