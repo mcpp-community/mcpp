@@ -83,18 +83,160 @@ def render(cells, baseline):
     return "\n".join(out)
 
 
+# ── the root README's headline table ───────────────────────────────────────
+#
+# That table was the last hand-transcribed thing in the repository, and it was
+# also the WORST place for one: it is the first table a reader sees, and it was
+# stitched from three separate runs because no single run measured every column.
+# The standard set now does, so it can be generated — and once it is generated,
+# `233_bench_matrix.sh` can check it against ONE file instead of a hard-coded
+# list of three.
+#
+# ⚠️ The wording is deliberately not translated field-by-field. A benchmark table
+# that says different things in two languages is two claims, and only one of them
+# can be checked against the data.
+ALLOW_SUSPECT = [False]
+HEADLINE_SCENARIOS = ["cold", "noop", "touch-hub", "edit-body", "edit-comment"]
+HEADLINE_WHAT = {
+    "en": {
+        "cold":         "nothing built yet",
+        "noop":         "nothing at all",
+        "touch-hub":    "mtime on a widely-imported interface, content unchanged",
+        "edit-body":    "a real edit inside a function body",
+        "edit-comment": "a comment added to a widely-imported interface",
+        "scenario": "scenario", "what": "what changed",
+    },
+    "zh": {
+        "cold":         "还没编过",
+        "noop":         "什么都没改",
+        "touch-hub":    "碰一下被大量导入的接口的 mtime,内容不变",
+        "edit-body":    "真的改了一个函数体",
+        "edit-comment": "在被大量导入的接口里加一行注释",
+        "scenario": "场景", "what": "改了什么",
+    },
+}
+
+
+def engine_order(engines):
+    """mcpp arms first (opt-in, then default, then the released reference)."""
+    def key(e):
+        if not e.startswith("mcpp@"):
+            return (2, e)
+        return (0 if "+" in e else 1, e)
+    return sorted(engines, key=key)
+
+
+def headline(cells, baseline, lang):
+    w = HEADLINE_WHAT[lang]
+    # The real workload only: a headline table that silently mixed a generated
+    # fixture into it would be comparing two different questions.
+    #
+    # ⚠️ THE DISCRIMINATOR IS THE FIXTURE NAME, NOT THE VARIANT. `variant` is
+    # whatever the cell declared, and the same real project is labelled `modules`
+    # in one published run and `native` in another — so filtering on `native`
+    # silently dropped every cmake and xmake column and the table rendered with
+    # two columns and no ratios at all.
+    cells = [c for c in cells if not c["fixture"].startswith("synth-")]
+    projects = {c["fixture"] for c in cells}
+    if len(projects) > 1:
+        raise SystemExit(f"headline: {len(projects)} projects in these reports "
+                         f"({', '.join(sorted(projects))}) — one table, one workload; "
+                         f"pass the report for a single project")
+    if not cells:
+        raise SystemExit("headline: no real-workload cells in these reports "
+                         "(only generated fixtures)")
+    engines = engine_order({c["engine"] for c in cells})
+
+    # ⚠️ A COLD BUILD THAT IS NOT SLOWER THAN A NO-OP DID NOT BUILD ANYTHING.
+    #
+    # Not a hypothetical: rendering the previously published files produced
+    #     xmake  cold  0.60s · 153.1x
+    # next to cmake's 92s — xmake was resolving `--buildir` relative to `-P` and
+    # configuring into a directory that was already populated, so it exited
+    # having compiled nothing. The number was real, the measurement was not, and
+    # in a headline table it reads as xmake being 153x faster than cmake.
+    #
+    # This is the whole failure mode of the suite in one cell, so it BLOCKS
+    # rather than warns: a table nobody can publish is better than one that is
+    # wrong in the reader's favour.
+    suspect = []
+    for e in engines:
+        cold = next((c for c in cells if c["engine"] == e and c["scenario"] == "cold"
+                     and c["status"] == "ok"), None)
+        noop = next((c for c in cells if c["engine"] == e and c["scenario"] == "noop"
+                     and c["status"] == "ok"), None)
+        if cold and noop and noop["median_s"] > 0 and cold["median_s"] < noop["median_s"] * 5:
+            suspect.append(f"{e}: cold {cold['median_s']:.2f}s vs noop "
+                           f"{noop['median_s']:.2f}s — a cold build that is not at least "
+                           f"5x its own no-op did not build the project")
+    if suspect and not ALLOW_SUSPECT[0]:
+        raise SystemExit("headline: refusing to render — "
+                         + "; ".join(suspect)
+                         + "\n(pass --allow-suspect to see it anyway)")
+
+    rows = [f"| {w['scenario']} | {w['what']} | " + " | ".join(f"`{e}`" for e in engines) + " |",
+            "|---" * (len(engines) + 2) + "|"]
+    for sc in HEADLINE_SCENARIOS:
+        here = {c["engine"]: c for c in cells if c["scenario"] == sc}
+        if not here:
+            continue
+        base = next((c for e, c in here.items()
+                     if baseline in e and c["status"] == "ok"), None)
+        ok = [c for c in here.values() if c["status"] == "ok" and c.get("median_s") is not None]
+        best = min((c["median_s"] for c in ok), default=None)
+        cellsr = []
+        for e in engines:
+            c = here.get(e)
+            if c is None:
+                cellsr.append("—")
+            elif c["status"] != "ok":
+                cellsr.append(f"_{c['status']}_")
+            else:
+                txt = f"{c['median_s']:.2f}s"
+                if base and base.get("median_s"):
+                    txt += f" · {base['median_s'] / c['median_s']:.1f}x"
+                # Bold the fastest arm in the row, so the table reads without
+                # the reader dividing anything in their head.
+                cellsr.append(f"**{txt}**" if c["median_s"] == best else txt)
+        rows.append(f"| `{sc}` | {w[sc]} | " + " | ".join(cellsr) + " |")
+    return "\n".join(rows)
+
+
 def main(argv):
     baseline = "cmake"
+    mode = "table"
+    lang = "en"
     paths = []
     it = iter(argv)
     for a in it:
         if a == "--baseline":
             baseline = next(it, "cmake")
+        elif a == "--headline":
+            mode = "headline"
+        elif a == "--allow-suspect":
+            ALLOW_SUSPECT[0] = True
+        elif a == "--lang":
+            lang = next(it, "en")
         else:
             paths.append(a)
     if not paths:
         print(__doc__)
         return 2
+    if mode == "headline":
+        cells, hosts = load(paths)
+        h = hosts[0]
+        print(headline(cells, baseline, lang))
+        print()
+        # The toolchain is recorded as the driver PATH; a footnote wants the
+        # compiler, not where this machine happens to keep it.
+        tc = str(h.get("toolchain", ""))
+        for part in tc.replace("\\", "/").split("/"):
+            if any(ch.isdigit() for ch in part) and "." in part:
+                tc = part
+        print(f"<sub>{h.get('os')} {h.get('arch')} · {h.get('cpu_model')} · "
+              f"{tc} · n={max((len(c.get('samples', [])) for c in cells), default=0)}"
+              f"</sub>")
+        return 0
     cells, hosts = load(paths)
     if not cells:
         print("no cells in those reports", file=sys.stderr)
