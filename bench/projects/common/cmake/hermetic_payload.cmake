@@ -259,8 +259,40 @@ function(bench_hermetic_payload_preproject)
   if(_binutils)
     string(APPEND _add " -B${_binutils}/bin")
   endif()
-  if(IS_DIRECTORY "${_sysroot}")
+  # ⚠️ THE TEST IS "DOES IT HOLD A C RUNTIME", NOT "DOES THE DIRECTORY EXIST".
+  #
+  # `--sysroot` does not ADD a search path, it REPLACES gcc's default one. Point
+  # it at a directory that exists but has no libc and every link dies at the
+  # first object:
+  #
+  #     ld: cannot find crt1.o: No such file or directory
+  #     ld: cannot find crti.o: No such file or directory
+  #     ld: cannot find -lm: No such file or directory
+  #
+  # which is a message about the C runtime and says nothing about the flag that
+  # caused it. `IS_DIRECTORY` passed on the runners because mcpp creates
+  # `registry/subos/default` whether or not anything has been installed into it,
+  # so all five cmake cells of the linux/gcc bench failed at cmake's own compiler
+  # probe — before a single line of the project was configured.
+  #
+  # This repository has been bitten by the same flag before (an `install()`
+  # source package lost its libc headers exactly this way). Existence was the
+  # wrong predicate then too.
+  set(_crt "")
+  foreach(_d lib lib64 usr/lib usr/lib64 usr/lib/x86_64-linux-gnu)
+    if(EXISTS "${_sysroot}/${_d}/crt1.o")
+      set(_crt "${_sysroot}/${_d}/crt1.o")
+      break()
+    endif()
+  endforeach()
+  if(_crt)
     string(APPEND _add " --sysroot=${_sysroot}")
+  elseif(IS_DIRECTORY "${_sysroot}")
+    # Say so. A payload build that silently falls back to the host's libc is a
+    # different measurement from the one this file claims to set up, and the
+    # only way to notice is if it announces itself.
+    message(STATUS "bench: ${_sysroot} has no crt1.o — NOT passing --sysroot; "
+                   "this arm links against the host C runtime")
   endif()
   if(_add STREQUAL "")
     return()

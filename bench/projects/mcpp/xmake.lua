@@ -145,11 +145,37 @@ target("mcpp")
         local base = path.join(XPKGS, "mcpplibs-x-cmdline", ver)
         local dirs = os.isdir(base) and os.dirs(path.join(base, "*")) or {}
         table.sort(dirs)
-        local src = dirs[1] and path.join(dirs[1], "src")
-        if not src or not os.isdir(src) then
-            raise("bench: mcpplibs.cmdline " .. ver .. " is not unpacked under " .. XPKGS
-                  .. " — build the tree with mcpp once first, so both arms compile the "
-                  .. "same dependency sources")
+
+        -- NAME THE DIRECTORY, DO NOT SEARCH FOR IT.
+        --
+        -- `cmdline-<version>` is the registry's layout and is exactly what the
+        -- cmake arm beside this one writes down — which is why cmake's five
+        -- cells were green in the same run where these five were red. Two arms
+        -- that must compile the SAME sources cannot locate them two ways.
+        --
+        -- Searching was wrong twice over. `dirs[1]` after a sort is "whatever
+        -- happens to come first", and the registry keeps a tarball and a lock
+        -- beside the unpacked tree while mcpp writes partial directories during
+        -- unpacking. Widening it to "the first directory that has a src/" is no
+        -- better: renaming the real tree to `cmdline-0.0.1.hidden` to test the
+        -- error path made this file compile THAT instead, silently, and report
+        -- success. A backup directory is a plausible thing to find on a machine.
+        local canonical = path.join(base, "cmdline-" .. ver, "src")
+        local src = os.isdir(canonical) and canonical or nil
+        if not src then
+            -- ⚠️ SAY WHAT WAS LOOKED AT. The previous message named the version
+            -- and the registry root and stopped there, so a CI failure could not
+            -- be told apart from "the package is genuinely absent", "the version
+            -- came out wrong", or "the directory is there but holds something
+            -- else". Three different causes, one sentence, none of them
+            -- actionable without a runner to log into.
+            local found = #dirs > 0 and table.concat(dirs, ", ") or "(nothing)"
+            raise("bench: mcpplibs.cmdline " .. ver .. " has no unpacked source tree.\n"
+                  .. "  expected: " .. canonical .. "\n"
+                  .. "  directories under " .. base .. ": " .. found .. "\n"
+                  .. "  base exists: " .. tostring(os.isdir(base)) .. "\n"
+                  .. "  Build the tree with mcpp once first, so both arms compile the "
+                  .. "same dependency sources. A cache hit does NOT unpack them.")
         end
         target:add("files", path.join(src, "*.cppm"))
     end)
