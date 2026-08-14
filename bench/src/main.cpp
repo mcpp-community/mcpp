@@ -638,6 +638,48 @@ int main(int argc, char** argv) {
                  waived ? std::format(" ({} waived by --allow-failed)", waived) : "",
                  report.cells.size() - ok - failed - waived);
 
+    // ── A WAIVER MAY HIDE A FAILURE. IT MUST NOT HIDE THE COMPARISON. ───────
+    //
+    // `--allow-failed` exists so ONE arm with a documented gap does not turn a
+    // whole matrix red. It was never meant to cover every foreign engine at
+    // once — but nothing stopped it, and the result is a job that exits 0 while
+    // its log reads
+    //
+    //     => install ftxui v6.1.9 .. failed
+    //     => install mcpplibs-tinyhttps 0.2.9 .. failed
+    //     error: <cmdline> missing std dependency for module ...
+    //     cells  : 10 ok, 0 failed (10 waived by --allow-failed)
+    //
+    // A cell that calls itself a three-engine comparison, measures mcpp against
+    // mcpp, and reports green. That is the exact shape this suite exists to
+    // remove, so it may not be the suite's own.
+    //
+    // Named per ENGINE rather than counted: "10 waived" is a number, "cmake and
+    // xmake produced nothing here" is the fact a reader needs.
+    {
+        std::map<std::string, std::pair<std::size_t, std::size_t>> per_engine;  // ok, waived
+        for (const auto& c : report.cells) {
+            auto& e = per_engine[c.key.engine];
+            if (c.status == bench::Status::Ok) ++e.first;
+            else if (c.status == bench::Status::Failed &&
+                     listed(opts->allow_failed, c.key.engine)) ++e.second;
+        }
+        std::vector<std::string> silenced;
+        for (const auto& [engine, counts] : per_engine)
+            if (counts.first == 0 && counts.second > 0) silenced.push_back(engine);
+        if (!silenced.empty()) {
+            std::string list;
+            for (const auto& e : silenced) { if (!list.empty()) list += ", "; list += e; }
+            std::println(std::cerr,
+                         "bench: WAIVED AWAY ENTIRELY: {} — every cell of {} failed and was "
+                         "waived, so this run contains no measurement of {} at all. The run "
+                         "is green by policy, not because those engines worked; whatever this "
+                         "report is compared against, it is not them.",
+                         list, silenced.size() == 1 ? "it" : "them",
+                         silenced.size() == 1 ? "it" : "them");
+        }
+    }
+
     if (failed) {
         std::println(std::cerr,
                      "bench: {} cell(s) FAILED — the engine ran and produced no artifact. "

@@ -532,6 +532,38 @@ jobs:
 
           "$BENCH" "${args[@]}"
 
+      # ── Make a WAIVED failure visible on a green job ────────────────────
+      #
+      # `allow_failed` keeps one documented gap from turning the matrix red.
+      # What it must not do is make the gap invisible: the linux/clang xlings
+      # cell reported `10 ok, 0 failed (10 waived)` and exited 0 while its log
+      # read `install ftxui .. failed`, `install mcpplibs-tinyhttps .. failed`,
+      # `missing std dependency`. Green, and not one arm of the comparison it
+      # claims to be had run.
+      #
+      # A GitHub warning annotation puts that on the job's own page, where the
+      # green is, instead of 2000 lines down. `if: always()` because the point
+      # is precisely the runs that did NOT fail.
+      - name: Report waived cells
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          f="bench-${{ matrix.os }}-${{ matrix.toolchain }}-${{ matrix.project }}.json"
+          [ -f "$f" ] || exit 0
+          # Engines with no successful cell at all: those are the ones a waiver
+          # removed from the comparison rather than merely excused.
+          jq -r '
+            [.cells[] | select(.status=="ok")      | .engine] as $ok |
+            [.cells[] | select(.status=="failed")  | .engine] | unique
+            | map(select(. as $e | ($ok | index($e)) | not)) | .[]
+          ' "$f" 2>/dev/null | while read -r engine; do
+            [ -n "$engine" ] || continue
+            echo "::warning title=bench: $engine produced no measurement::" \
+                 "every $engine cell of ${{ matrix.os }}/${{ matrix.toolchain }}/${{ matrix.project }}" \
+                 "failed and was waived. This job is green by policy, not because $engine worked."
+          done
+
       # if: always() — a failed cell still produced a report, and that report is
       # the evidence for WHY it failed. Uploading only on success would throw
       # away the run worth looking at.
