@@ -19,6 +19,30 @@
 #   4. the workflow reads the file instead of repeating it.
 set -e
 
+# ⚠️ EVERY python read below MUST name its encoding, and this is what enforces it.
+#
+# `open()`, `read_text()` and `subprocess(text=True)` decode with the LOCALE
+# encoding, which is UTF-8 on the Linux and macOS runners and cp1252 on the
+# Windows one. Every file this test reads — matrix.json, the engine adapters,
+# the READMEs — contains non-ASCII, so on Windows the reads either raise
+#
+#     UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f in position 3037
+#
+# or, for the bytes cp1252 does happen to map, silently produce mojibake: the
+# regex then matches nothing and the guard reports success while guarding
+# nothing. That is the same "failure looks like success" shape this whole test
+# exists to catch, so it must not be the test's own failure mode.
+#
+# §1 read matrix.json without an encoding for a while and stayed green purely
+# because its non-ASCII bytes missed cp1252's five undefined ones; §7 hit 0x8f
+# and turned the whole Windows e2e job red. Both are the same defect.
+#
+# These two variables turn an unspecified encoding into a hard error, so the
+# next one fails on the FIRST machine that runs it rather than only on Windows.
+# Ignored by Python < 3.10, which predates EncodingWarning.
+export PYTHONWARNDEFAULTENCODING=1
+export PYTHONWARNINGS=error::EncodingWarning
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MATRIX="$ROOT/bench/matrix.json"
 WORKFLOW="$ROOT/.github/workflows/bench.yml"
@@ -34,7 +58,7 @@ SPEC="$ROOT/bench/SPEC.md"
 python3 - "$MATRIX" "$ROOT" <<'PY'
 import json, os, re, sys
 
-m = json.load(open(sys.argv[1]))
+m = json.load(open(sys.argv[1], encoding="utf-8"))
 axes = m["axes"]
 fail = []
 
@@ -186,7 +210,11 @@ tracked = subprocess.run(
     ["git", "-C", root, "ls-files",
      "bench/projects/*/.xmake*", "bench/projects/*/build/*",
      "bench/projects/*/CMakeCache.txt", "bench/projects/*/bazel-*"],
-    capture_output=True, text=True).stdout.split()
+    # encoding pinned, not `text=True` alone: that decodes the child's stdout
+    # with the LOCALE encoding, which on a Windows runner is cp1252. A path (or
+    # any UTF-8 byte) then either raises or, worse, mojibakes into something
+    # that no longer matches — a guard that silently stops guarding.
+    capture_output=True, encoding="utf-8").stdout.split()
 if tracked:
     fail.append("engine scratch is tracked in git (machine-local state, and one of "
                 f"these froze a fixed bug into CI): {tracked[:4]}"
@@ -211,7 +239,7 @@ if not re.match(r"^\d+(\.\d+)+$", str(m.get("reference_mcpp", ""))):
 # some other release, with every ratio still looking perfectly reasonable.
 xlings_pin = os.path.join(root, ".xlings.json")
 if os.path.isfile(xlings_pin):
-    ws = json.load(open(xlings_pin)).get("workspace", {}).get("mcpp")
+    ws = json.load(open(xlings_pin, encoding="utf-8")).get("workspace", {}).get("mcpp")
     if ws and ws != m.get("reference_mcpp"):
         fail.append(f"reference_mcpp={m.get('reference_mcpp')} but .xlings.json bootstraps "
                     f"mcpp {ws} — the reference arm IS the bootstrapped binary, so these "
@@ -239,7 +267,7 @@ PY
 python3 - "$MATRIX" "$ROOT/bench/src/spec.cppm" "$ROOT/bench/src/registry.cppm" <<'PY'
 import json, re, sys
 
-m = json.load(open(sys.argv[1]))
+m = json.load(open(sys.argv[1], encoding="utf-8"))
 spec = open(sys.argv[2], encoding="utf-8").read()
 registry = open(sys.argv[3], encoding="utf-8").read()
 fail = []
@@ -283,7 +311,7 @@ if not os.path.isfile(data):
     raise SystemExit(0)
 
 truth = {}
-for c in json.load(open(data))["cells"]:
+for c in json.load(open(data, encoding="utf-8"))["cells"]:
     if c["status"] == "ok":
         truth.setdefault(c["engine"], {})[c["scenario"]] = round(c["median_s"], 2)
 default = next((k for k in truth if k.startswith("mcpp@") and "+" not in k), None)
@@ -332,7 +360,7 @@ if grep -qE '^\s*case ",\$want," in \*,(linux|macos|windows),\*\)' "$WORKFLOW"; 
     echo "FAIL: bench.yml still enumerates platforms inline; matrix.json owns that list"
     exit 1
 fi
-for img in $(python3 -c "import json,sys;print(' '.join(json.load(open(sys.argv[1]))['runners'].values()))" "$MATRIX"); do
+for img in $(python3 -c "import json,sys;print(' '.join(json.load(open(sys.argv[1], encoding='utf-8'))['runners'].values()))" "$MATRIX"); do
     if grep -q "runs-on: $img" "$WORKFLOW"; then
         echo "FAIL: bench.yml hard-codes runner image '$img'; it must come from matrix.json"
         exit 1
@@ -359,7 +387,7 @@ grep -q 'matrix.json' "$SPEC" \
 python3 - "$ROOT" <<'PY' || exit 1
 import json, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
-m = json.loads((root / "bench/matrix.json").read_text())
+m = json.loads((root / "bench/matrix.json").read_text(encoding="utf-8"))
 bad = []
 for c in m["cells"]:
     proj = c.get("project", "")
@@ -376,7 +404,7 @@ for c in m["cells"]:
         # failed exactly that way.
         if not f.exists():
             continue
-        body = re.sub(r"#.*", "", f.read_text())
+        body = re.sub(r"#.*", "", f.read_text(encoding="utf-8"))
         # ANY rule, not `cc_*` specifically. Every bazel rule instantiation
         # carries a `name =` attribute; `load()`, `package()` and
         # `exports_files()` do not. Matching `cc_binary|cc_library` was wrong:
@@ -420,7 +448,7 @@ for f in root.glob("*.cppm"):
     # sees the resolved path.
     if f.name == "engine.cppm":
         continue
-    for n, line in enumerate(f.read_text().splitlines(), 1):
+    for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
         code = line.split("//", 1)[0]
         if re.search(r'compiler\s*==\s*"(clang|gcc)"', code):
             bad.append(f"{f.name}:{n}: {line.strip()[:90]}")
