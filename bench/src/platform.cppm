@@ -159,12 +159,25 @@ inline std::string log_grep(const std::filesystem::path& p,
     if (!in) return {};
     std::string out, line;
     std::size_t kept = 0;
+    // ⚠️ THE MESSAGE IS OFTEN ON THE NEXT LINE. cmake writes
+    //     CMake Error at xpkg_source_library.cmake:231 (message):
+    //       bench: <pkg>'s manifest has no `sources` list
+    // and a grep that returns only matching lines keeps the location and throws
+    // away WHAT WENT WRONG. That happened three separate times today, each time
+    // costing a round trip to CI for a sentence that was already in the file.
+    // `after` carries the following lines of a hit through.
+    std::size_t after = 0;
     while (kept < max && std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         bool hit = false;
         for (const auto m : markers)
             if (line.find(m) != std::string::npos) { hit = true; break; }
-        if (!hit) continue;
+        if (!hit) {
+            if (after == 0 || line.empty()) continue;
+            --after;                       // trailing context of the previous hit
+        } else {
+            after = 2;
+        }
         // Long lines here are usually a whole compiler command line; the cause
         // is at the front of them.
         if (line.size() > 400) { line.resize(400); line += " …"; }
