@@ -150,7 +150,9 @@
       "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
       "hub": "src/platform/platform.cppm",
       "body": "src/version_req.cppm",
-      "buildfiles": "mcpp"
+      "buildfiles": "mcpp",
+      "allow_failed": "xmake",
+      "note": "KNOWN GAP: xmake cannot build `import std` with the libc++ payload on this project. It fails during dependency scanning with `warning: std and std.compat modules not found!` followed by `error: <mcpp> missing std dependency for module <...>`, naming a different module each run. REPRODUCED LOCALLY and bounded — it is not a runner problem: the same failure occurs on a developer box with the same payload. Two fixes were tried and neither works: passing `--sdk=<llvm root>` explicitly (the flag xmake's own warning suggests, and the one that the windows/clang arm needed), and switching from the custom `mcpp-clang` toolchain to xmake's built-in `llvm` toolchain with that same `--sdk`. The payload layout is the standard one — `<sdk>/share/libc++/v1/std.cppm` is present. The gcc arm of this same project is green, and the generated fixture is green with this same clang, so this is specific to xmake + libc++ + a real tree. cmake is NOT waived here and must stay measured. Unresolved, not impossible: whoever picks this up should start from why the fixture succeeds where the project does not."
     },
     {
       "os": "windows",
