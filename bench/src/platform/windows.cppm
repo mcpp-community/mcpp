@@ -113,22 +113,70 @@ export int run_process(const std::vector<std::string>& argv,
 
     const std::string  cwd_s = cwd.string();
     PROCESS_INFORMATION pi{};
+
+    // A JOB OBJECT so a timeout can kill the whole process TREE.
+    //
+    // `TerminateProcess` reaches one process. A build engine is a tree — ninja
+    // and a pool of compilers, bazel and a server — so killing the tool alone
+    // leaves that pool running, holding the CPU while the REMAINING CELLS of
+    // this same run are being timed. One timeout then inflates every number
+    // after it, and nothing in the report says why. (The POSIX peer solves the
+    // same problem with a process group.)
+    //
+    // CREATE_SUSPENDED so the child cannot spawn anything before it is inside
+    // the job; KILL_ON_JOB_CLOSE so the tree also dies if the harness itself is
+    // killed, which is the case a timeout handler cannot cover.
+    //
+    // ⚠️ NOT VERIFIED ON WINDOWS — this repository's author has no Windows
+    // machine, and CI does not time out, so no job here exercises it. It is
+    // written to be non-regressive rather than to be trusted: every step is
+    // checked, and any failure falls through to exactly the previous behaviour
+    // (a plain CreateProcess and a TerminateProcess on the one handle). Wine is
+    // not evidence either — see the note in .agents/docs about Z: mapping.
+    HANDLE job = ::CreateJobObjectA(nullptr, nullptr);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+        li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!::SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                       &li, sizeof(li))) {
+            ::CloseHandle(job);
+            job = nullptr;
+        }
+    }
+
     const BOOL ok = ::CreateProcessA(nullptr, cmdline.data(), nullptr, nullptr,
-                                     /*bInheritHandles*/ TRUE, 0, nullptr,
+                                     /*bInheritHandles*/ TRUE,
+                                     job ? CREATE_SUSPENDED : 0, nullptr,
                                      cwd.empty() ? nullptr : cwd_s.c_str(), &si, &pi);
     if (!ok) {
         if (sink != INVALID_HANDLE_VALUE) ::CloseHandle(sink);
+        if (job) ::CloseHandle(job);
         return -1;
+    }
+    if (job) {
+        // If assignment fails the child is still suspended and must be resumed
+        // anyway — dropping the job is a lost optimisation, not a lost build.
+        if (!::AssignProcessToJobObject(job, pi.hProcess)) {
+            ::CloseHandle(job);
+            job = nullptr;
+        }
+        ::ResumeThread(pi.hThread);
     }
 
     const DWORD wait_ms = timeout_s <= 0.0
         ? INFINITE
         : static_cast<DWORD>(timeout_s * 1000.0);
     if (::WaitForSingleObject(pi.hProcess, wait_ms) == WAIT_TIMEOUT) {
-        // TerminateProcess does not reach the child's own children, so a build
-        // tool that spawned compilers leaves them running. They are reaped when
-        // the job ends; what matters here is that the HARNESS stops waiting and
-        // reports which command hung, which is the whole point.
+        // THE JOB first, which reaches the compilers the tool started; then the
+        // process itself, which is all that was possible before the job object
+        // above and is still the fallback when it could not be created.
+        //
+        // TerminateProcess alone does not reach a child's children, and "they
+        // are reaped when the CI job ends" — the old justification here — only
+        // covers the harness's own exit. It does not cover the cells measured
+        // between the timeout and that exit, which are the numbers this suite
+        // exists to produce.
+        if (job) ::TerminateJobObject(job, 124);
         ::TerminateProcess(pi.hProcess, 124);
         ::WaitForSingleObject(pi.hProcess, 5000);
         ::QueryPerformanceCounter(&t1);
@@ -138,6 +186,11 @@ export int run_process(const std::vector<std::string>& argv,
         if (out_timeout) *out_timeout = true;
         ::CloseHandle(pi.hThread);
         ::CloseHandle(pi.hProcess);
+        // The job handle closes on EVERY path. One per spawned process, and a
+        // matrix spawns hundreds; KILL_ON_JOB_CLOSE also means an unclosed job
+        // keeps its tree alive rather than merely leaking a handle. Safe here
+        // because the wait above has already returned.
+        if (job) ::CloseHandle(job);
         if (sink != INVALID_HANDLE_VALUE) ::CloseHandle(sink);
         return 124;   // the `timeout(1)` convention; callers branch on out_timeout
     }
@@ -147,6 +200,7 @@ export int run_process(const std::vector<std::string>& argv,
     ::GetExitCodeProcess(pi.hProcess, &code);
     ::CloseHandle(pi.hThread);
     ::CloseHandle(pi.hProcess);
+    if (job) ::CloseHandle(job);   // see the timeout path
     if (sink != INVALID_HANDLE_VALUE) ::CloseHandle(sink);
 
     if (out_wall_s && freq.QuadPart > 0)
