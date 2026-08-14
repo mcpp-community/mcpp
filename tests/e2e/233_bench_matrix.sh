@@ -259,6 +259,33 @@ if os.path.isfile(xlings_pin):
                     f"mcpp {ws} — the reference arm IS the bootstrapped binary, so these "
                     f"two must agree or the old-vs-new column compares the wrong release")
 
+# ...and so are the COMPILER pins, for the same reason and with a worse failure.
+#
+# matrix.json's `tools.gcc` / `tools.llvm` decide which toolchain CI INSTALLS.
+# bench/src/toolchain.cppm's kGcc / kLlvm decide which payload path the harness
+# HANDS EVERY ENGINE via `--compiler payload:*`. Those are one decision written
+# in two files — matrix.json's own `_compiler_note` says as much — and nothing
+# made them agree.
+#
+# Drift is silent in the direction that matters: xlings installs the version
+# from matrix.json, the harness asks for the payload directory of the version
+# from toolchain.cppm, and that directory is simply not there. Every cell then
+# fails for a reason that names a path, not a pin. Checked here because this is
+# already the file that cross-checks `reference_mcpp` against `.xlings.json`.
+tc_src = os.path.join(root, "bench/src/toolchain.cppm")
+if os.path.isfile(tc_src):
+    tc = open(tc_src, encoding="utf-8").read()
+    for key, const in (("gcc", "kGcc"), ("llvm", "kLlvm"), ("llvm_windows", "kLlvmWindows")):
+        # `kLlvm` is a prefix of `kLlvmWindows`, so anchor on the whole name.
+        mm = re.search(rf"\b{const}\b\s*=\s*\"([^\"]+)\"", tc)
+        if not mm:
+            fail.append(f"bench/src/toolchain.cppm no longer defines {const} — this check "
+                        f"cannot compare the pins and must not pass silently")
+        elif mm.group(1) != str(m.get("tools", {}).get(key, "")):
+            fail.append(f"tools.{key}={m.get('tools', {}).get(key)!r} but toolchain.cppm's "
+                        f"{const} is {mm.group(1)!r} — CI installs one and the harness hands "
+                        f"every engine the other; the cells fail naming a missing path")
+
 if fail:
     print("FAIL: bench/matrix.json")
     for f in fail:
