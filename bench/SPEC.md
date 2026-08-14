@@ -1,9 +1,9 @@
 # Benchmark specification
 
-What this suite measures, what a cell is, and which cells CI runs.
+What this suite measures, what a cell is, and which cells the standard data set covers.
 
 The **cell list itself is not here** — it is [`matrix.json`](matrix.json), which
-`.github/workflows/bench.yml` reads to plan its jobs. A matrix written down
+`bench/run-standard.sh` reads to plan a run. A matrix written down
 twice is a matrix that disagrees with itself, and the disagreement is silent:
 both copies keep looking right.
 
@@ -20,14 +20,14 @@ which the report records in its run facts.
 
 | axis | values | where it is chosen |
 |---|---|---|
-| **OS** | `linux` `macos` `windows` | one CI job each |
-| **Toolchain** | `gcc` `clang` `msvc` | one CI job each — `--compiler` |
+| **OS** | `linux` `macos` `windows` | the runner selects the cells for the machine it is on |
+| **Toolchain** | `gcc` `clang` `msvc` | one cell each — `--compiler` |
 | **Build tool** | `mcpp` `cmake` `xmake` `bazel` | swept inside a job — `--engines` |
-| **Project** | `fixture` `mcpp-2026.8.11.3` `xlings-2026.8.11.2` `xlings-2026.8.13.1` | one CI job each — `--project` |
+| **Project** | `fixture` `mcpp-2026.8.11.3` `xlings-2026.8.11.2` `xlings-2026.8.13.1` | one cell each — `--project` |
 | **Variant** | `headers` `modules` `modules-impl` | swept inside a job — `--variants` |
 | **Scenario** | `cold` `noop` `touch-hub` `touch-leaf` `edit-body` `edit-comment` | swept inside a job — `--scenarios` |
 
-**One CI job = one (OS, toolchain, project) cell.** The remaining three axes are
+**One cell = one (OS, toolchain, project).** The remaining three axes are
 swept inside it, because they share a checkout, a toolchain install and a
 generated fixture. Promoting them to jobs would multiply runner minutes without
 adding a single measurement.
@@ -197,7 +197,7 @@ the failure this suite is built to avoid:
 seconds" must never render the same way, and neither must "not installed" and
 "cannot do this".
 
-The same rule applies one level up, to cells that CI does not run at all:
+The same rule applies one level up, to cells the standard set does not cover at all:
 [`matrix.json`](matrix.json) carries an `excluded` list where every entry has a
 `reason`, and the ones that say **KNOWN GAP** are meaningful cells that are
 simply not wired up rather than cells that make no sense — written down so that
@@ -293,25 +293,22 @@ already diverging. Two copies of a toolchain definition is the worst place for a
 copy: they drift by one flag and the benchmark reports the difference between the
 two *descriptions* as an engine result.
 
-## 5. What CI runs
+## 5. What the standard data set covers
 
-`.github/workflows/bench.yml` plans one job per entry in `matrix.json.cells`,
-`fail-fast: false` — one platform missing an engine must not cancel another
-platform's data.
+`bench/run-standard.sh` plans one run per entry in `matrix.json.cells` whose
+`os` matches the machine it is on, and runs **every engine that cell lists** at
+**3 samples** each.
 
-Triggers: any change under `bench/**` except `*.md` and `results/**`, plus
-`workflow_dispatch`. Docs and past results are excluded because a README edit
-cannot move a number, and running a long matrix to prove that is how a check
-becomes one people ignore. `results/**` is excluded for a sharper reason too:
-this workflow's own artifacts land there, so including it would let a results
-commit trigger the run that produces the next results.
+⚠️ **`allow_failed` is NOT consulted by the runner.** Those waivers were recorded
+against failures on a shared CI runner, and at least two of them describe arms
+that configure and generate perfectly well on a developer machine. Filtering by
+them would carry a runner's limitation into local data and publish a smaller
+comparison than the machine can make. They stay in the file as the record of
+what broke where; the runner ignores them, and a failure here is a failure here.
 
-**No thresholds, no pass/fail on timings.** Cloud runners are shared and the CPU
-model changes underneath you; a threshold there converts normal variance into
-red crosses that get muted. Reports upload as artifacts and comparing them is a
-human act.
+**There is no CI job for this suite.** There was, and 12 of its 32 foreign-engine
+arms were waived — xmake had more arms waived than measured — while the job
+reported success. `tests/e2e/230_bench_harness.sh` still runs on every PR and
+checks that the suite builds and emits a valid report; the measuring is manual,
+and belongs before a release and after any change claiming a performance effect.
 
-`tests/e2e/233_bench_matrix.sh` checks this file against the harness: every
-value named in `axes` must be one the harness actually accepts, every cell must
-draw from those axes, and the workflow must not carry a second hard-coded copy
-of the list.
