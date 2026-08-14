@@ -163,7 +163,7 @@
       "body": "src/version_req.cppm",
       "buildfiles": "mcpp",
       "allow_failed": "cmake,xmake",
-      "note": "KNOWN GAP: neither foreign arm has `import std` on Windows. cmake stops inside project() at the CXX_MODULE_STD toolchain-support probe (CMakeTestCXXCompiler -> CMakeDetermineCompilerSupport) and xmake stops at `missing std dependency for module ...`; the Windows payload is llvm@20.1.7 against the MSVC STL, which ships no std module either engine can build. The mcpp arms measure fine, so the cell is kept for them and the two arms are waived rather than dropped — a waived failure stays visible in the report, an excluded engine does not."
+      "note": "KNOWN GAP, TWO DIFFERENT ONES, and they must not be conflated. cmake: no `import std` on Windows — it stops inside project() at the CXX_MODULE_STD toolchain-support probe (CMakeTestCXXCompiler -> CMakeDetermineCompilerSupport), because the Windows payload is llvm@20.1.7 against the MSVC STL, which ships no std module cmake can build. xmake: does not start at all — `seed build: could not start the process (no log written)`, i.e. the program is not on the runner's PATH. That is an ENVIRONMENT problem and is fixable, unlike cmake's; it is waived here only so the mcpp arms keep running, and it used to be waived under cmake's reason, which is how it went unnoticed. Re-check both when the Windows payload or the tool install changes. The mcpp arms measure fine, so the cell is kept for them and the two arms are waived rather than dropped — a waived failure stays visible in the report, an excluded engine does not."
     },
     {
       "os": "linux",

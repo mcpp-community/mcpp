@@ -117,6 +117,20 @@ for c in m["cells"]:
     if c.get("allow_failed") and "KNOWN GAP" not in c.get("note", ""):
         fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: allow_failed without a "
                     f"'KNOWN GAP' note — a waived failure that says nothing is a hidden one")
+    # ...and the note must say something about EACH waived engine by name.
+    #
+    # A note can only be checked for existence, never for truth, so the next
+    # best thing is to stop one blanket sentence from covering two arms. It
+    # already went wrong that way: the windows/clang cell waived cmake and xmake
+    # under a single `import std` explanation, and by the time anyone looked
+    # xmake was failing with `could not start the process` — not a language-
+    # feature gap at all but a missing program on the runner, i.e. something
+    # fixable, hidden behind a reason that was only ever cmake's.
+    for w in [e.strip() for e in c.get("allow_failed", "").split(",") if e.strip()]:
+        if w not in c.get("note", ""):
+            fail.append(f"{c['os']}/{c['toolchain']}/{c['project']}: '{w}' is waived but the "
+                        f"note never mentions it — one reason covering two arms is how a "
+                        f"fixable failure hides behind an unfixable one")
 
 # 3. Every excluded cell says why, and says something.
 for x in m.get("excluded", []):
