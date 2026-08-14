@@ -1425,11 +1425,40 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     if (auto fl = join_flags(cu.packageCxxflags); !fl.empty())
                         e += "  unit_cxxflags =" + fl + "\n";
                     append(std::move(e));
-                    // The join. Its only input is the BMI, so ninja orders it
-                    // after the compiler published — and `bmi-await` blocks
-                    // until that same compiler finished writing the object.
-                    append(std::format("build {} : cxx_module_obj {}\n  slot = {}\n",
-                                       obj, bmi, slot));
+                    // The join. THE SOURCE IS AN INPUT, and the BMI is only an
+                    // implicit one — the reverse of what this was.
+                    //
+                    // ⚠️ WITH THE BMI AS THE ONLY INPUT THIS EDGE GETS CLEANED
+                    // BY THE VERY OPTIMISATION IT IS PART OF. The BMI edge sets
+                    // `restat = 1`, and when the new BMI turns out equivalent
+                    // `settle_bmi` puts the previous file back so its mtime does
+                    // not advance — that is what stops the cascade to importers,
+                    // and it is correct. But ninja's restat then cleans every
+                    // edge whose only reason to be dirty was that output, and
+                    // this edge was one: it was skipped, and the LINK with it.
+                    //
+                    // The unit's own object is a different question from the
+                    // cascade. Editing a function body does not change a GCC
+                    // BMI — bodies are not in it — so importers genuinely need
+                    // no rebuild, while THIS unit's object genuinely does.
+                    //
+                    // Measured on a two-module repro (`export int leaf_value()
+                    // { return 1; }` → `42`): the rebuild reported success in
+                    // 0.02s having run 3 of 8 edges, and the binary still
+                    // printed 1. No link error, no diagnostic — the detached
+                    // compiler wrote the correct object a fifth of a second
+                    // later, after ninja had already decided not to link it.
+                    // On the generated fixture the same defect surfaces instead
+                    // as `undefined reference to unit_19_value@fx.unit_19()`,
+                    // which is the same skip in the case where the symbol did
+                    // not exist beforehand.
+                    //
+                    // With the source as an input the edge has a reason to be
+                    // dirty that restat cannot clean away, and the BMI stays as
+                    // an implicit input so ninja still orders this after phase 1
+                    // — `bmi-await` must not run before a compiler was started.
+                    append(std::format("build {} : cxx_module_obj {} | {}\n  slot = {}\n",
+                                       obj, escape_ninja_path(cu.source), bmi, slot));
                     continue;
                 }
                 // No dyndep file for this unit: fall through to the single-edge

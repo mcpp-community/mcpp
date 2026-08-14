@@ -305,49 +305,78 @@ python3 - "$ROOT" <<'PYREADME'
 import json, os, re, sys
 
 root = sys.argv[1]
-data = os.path.join(root, "bench/results/pinned-workloads-20260813/mcpp-linux-gcc-5way.json")
-if not os.path.isfile(data):
-    print("  (no published run to check against; skipping)")
-    raise SystemExit(0)
 
+# ONE TABLE, THREE RUNS — each column named with the file it came from, because
+# the table cannot be taken in a single run and pretending otherwise is how a
+# number outlives the measurement it describes:
+#   default mcpp + cmake  the five-arm run
+#   xmake                 re-measured after the `-P`/cwd defect (cold 0.60s)
+#   schedule=on           re-measured after the object-edge defect (§8b), where
+#                         `touch-hub 0.22s` was timing a build still in flight
+SOURCES = {
+    "main":  "bench/results/pinned-workloads-20260813/mcpp-linux-gcc-5way.json",
+    "xmake": "bench/results/pinned-workloads-20260813/mcpp-linux-gcc-xmake-refixed.json",
+    "sched": "bench/results/schedule-refix-20260814/mcpp-linux-gcc-schedule-refixed.json",
+}
 truth = {}
-for c in json.load(open(data, encoding="utf-8"))["cells"]:
-    if c["status"] == "ok":
-        truth.setdefault(c["engine"], {})[c["scenario"]] = round(c["median_s"], 2)
-default = next((k for k in truth if k.startswith("mcpp@") and "+" not in k), None)
-if not default:
-    print("  (no default mcpp arm in the run; skipping)")
-    raise SystemExit(0)
+for tag, rel in SOURCES.items():
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        print(f"FAIL: {rel} is missing — the root README quotes it")
+        raise SystemExit(1)
+    truth[tag] = {}
+    for c in json.load(open(path, encoding="utf-8"))["cells"]:
+        if c["status"] == "ok":
+            truth[tag].setdefault(c["engine"], {})[c["scenario"]] = round(c["median_s"], 2)
+
+def arm(tag, suffix=""):
+    return next((k for k in truth[tag]
+                 if k.startswith("mcpp@") and k.endswith(suffix)
+                 and ("+" in k) == bool(suffix)), None)
+
+default = arm("main")
+sched   = arm("sched", "+schedule=on")
+if not default or not sched:
+    print(f"FAIL: could not find both mcpp arms (default={default}, schedule={sched})")
+    raise SystemExit(1)
 
 readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
-# Six columns now: scenario | what changed | schedule=on | default | cmake | xmake.
-# The bolded cell is the SCHEDULE arm and the `1.0x` one is cmake; the default
-# mcpp column sits between them and is checked too — publishing one mcpp column
-# alone understated the engine badly enough to be a defect in its own right.
-rows = re.findall(r"^\| `([\w-]+)` \| [^|]+ \| \*\*([\d.]+)s\*\* · [\d.]+x \| ([\d.]+)s · [\d.]+x \| ([\d.]+)s · 1\.0x",
-                  readme, re.M)
-if not rows:
+
+# ⚠️ BOLD IS NOT PART OF THE GRAMMAR. This used to require `**Ns**` in the
+# schedule column, which silently stopped matching the moment the bolding moved
+# to whichever column is actually faster — two of the five rows dropped out and
+# the check went on printing a success line for the three that remained.
+# Emphasis is stripped first, and the row count is asserted against the table's
+# own length, so a shape change fails loudly instead of narrowing the check.
+table = re.search(r"^\| scenario \| what changed \|.*?(?=\n\n)", readme, re.S | re.M)
+if not table:
     print("FAIL: the root README benchmark table did not parse — has its shape changed?")
+    raise SystemExit(1)
+plain = table.group(0).replace("**", "")
+body  = [l for l in plain.splitlines() if re.match(r"^\| `[\w-]+` \|", l)]
+rows  = re.findall(r"^\| `([\w-]+)` \| [^|]+ \| ([\d.]+)s · [\d.]+x \| ([\d.]+)s · [\d.]+x"
+                   r" \| ([\d.]+)s · [\d.]+x \| ([\d.]+)s · [\d.]+x",
+                   "\n".join(body), re.M)
+if len(rows) != len(body):
+    print(f"FAIL: parsed {len(rows)} of {len(body)} table rows — the check would "
+          f"have covered only part of the table")
     raise SystemExit(1)
 
 bad = []
-for sc, sched, mcpp, cmake in rows:
-    # The schedule arm is checked too. It is the column a reader's eye goes to,
-    # so an unchecked number there is the most expensive kind to get wrong.
-    for engine, claimed in (("mcpp", mcpp), ("cmake", cmake),
-                            (default + "+schedule=on", sched)):
-        key = ("cmake" if engine == "cmake"
-               else default if engine == "mcpp"
-               else engine)
-        have = truth.get(key, {}).get(sc)
+for sc, s_sched, s_mcpp, s_cmake, s_xmake in rows:
+    for tag, engine, claimed in (("sched", sched,   s_sched),
+                                 ("main",  default, s_mcpp),
+                                 ("main",  "cmake", s_cmake),
+                                 ("xmake", "xmake", s_xmake)):
+        have = truth[tag].get(engine, {}).get(sc)
         if have is None or abs(float(claimed) - have) >= 0.01:
-            bad.append(f"README {sc}/{engine}={claimed}s but the run says {have}")
+            bad.append(f"README {sc}/{engine}={claimed}s but {SOURCES[tag]} says {have}")
 if bad:
     print("FAIL: the root README quotes numbers that are not in the published run")
     for b in bad:
         print("  " + b)
     raise SystemExit(1)
-print(f"root README: {len(rows)} rows all match bench/results/pinned-workloads-20260813/")
+print(f"root README: {len(rows)} rows x 4 engines all match their published runs")
 PYREADME
 
 # ── 4: the workflow reads the file, and does not repeat it ─────────────────

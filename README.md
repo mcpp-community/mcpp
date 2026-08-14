@@ -312,26 +312,34 @@ Each cell is the median wall-clock and how many times faster it is than cmake.
 
 | scenario | what changed | **mcpp** `bmi_schedule=on` | mcpp default | cmake | xmake |
 |---|---|---|---|---|---|
-| `cold` | nothing built yet | **35.43s** · 3x | 79.54s · 1.2x | 92.33s · 1.0x | 90.30s · 1.0x |
-| `noop` | nothing at all | **0.16s** · 2x | 0.16s · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
-| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.22s** · 377x | 0.40s · 207.9x | 83.39s · 1.0x | 82.08s · 1.0x |
-| `edit-body` | a real edit inside a function body | **30.17s** · 3x | 76.24s · 1.1x | 85.64s · 1.0x | 84.61s · 1.0x |
-| `edit-comment` | a comment added to a widely-imported interface | **0.18s** · 458x | 0.38s · 217.2x | 82.96s · 1.0x | 82.73s · 1.0x |
+| `cold` | nothing built yet | **36.36s** · 2.5x | 79.54s · 1.2x | 92.33s · 1.0x | 90.30s · 1.0x |
+| `noop` | nothing at all | **0.16s** · 1.8x | 0.16s · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
+| `touch-hub` | mtime on a widely-imported interface, content unchanged | 0.44s · 189.5x | **0.40s** · 207.9x | 83.39s · 1.0x | 82.08s · 1.0x |
+| `edit-body` | a real edit inside a function body | **30.48s** · 2.8x | 76.24s · 1.1x | 85.64s · 1.0x | 84.61s · 1.0x |
+| `edit-comment` | a comment added to a widely-imported interface | 0.44s · 188.5x | **0.38s** · 217.2x | 82.96s · 1.0x | 82.73s · 1.0x |
 
 <sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 · pinned workload `a749e9f`.
 **Both mcpp columns are shown because either alone misleads**: the default is
-what you get today, `bmi_schedule = "on"` is one opt-in manifest key. It is
-opt-in because it still has an unresolved correctness bug on incremental
-rebuilds — reproducible on the generated fixture, not on any of the three real
-trees measured — see [`bench/README.md`](bench/README.md) §8b.</sub>
+what you get today, `bmi_schedule = "on"` is one opt-in manifest key that helps
+only where a cascade is genuinely owed — on the two rows where mcpp already
+skips the cascade it costs a little rather than saving any.
+`bmi_schedule` remains opt-in: it is new, and a scheduling change that is wrong
+is wrong silently.
+The `bmi_schedule=on` column was re-measured on 2026-08-14 after a defect was
+found in it — the earlier `touch-hub 0.22s` / `edit-comment 0.18s` were
+measuring a build that had not finished, because the object edge was being
+cleaned by the very restat that suppresses the cascade and ninja exited while
+the compiler was still running. See [`bench/README.md`](bench/README.md) §8b.</sub>
 
 * **`touch-hub` and `edit-comment` are where the day goes.** cmake and xmake
   decide by timestamp and rebuild everything downstream; mcpp compares the BMI
   the compiler just produced against the previous one, and when the interface
-  did not change it skips the cascade entirely.
+  did not change it skips the cascade entirely. This is the DEFAULT behaviour —
+  no key to set — and it is why those two rows read 200x.
 * **`edit-body` is the control.** There the interface really did change, so the
   cascade is owed — mcpp is 1.1x rather than 200x, and an engine that were
-  faster would have skipped work it owed.
+  faster would have skipped work it owed. `bmi_schedule=on` does not skip it
+  either; it does the same owed work 2.5x faster.
 * **Cold builds** come down to one 26-deep chain of module interfaces. `mcpp`
   publishes each BMI as soon as it exists and moves code generation off the
   critical path; without that setting it is 79.5s, i.e. level with the others.

@@ -325,8 +325,12 @@ import mcpplibs.cmdline;
 
 <sub>mcpp 为**默认配置**。Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 ·
 钉住的工作负载 `a749e9f`。opt-in 的 `[build] bmi_schedule = "on"` 能把 `cold`
-降到 35.4s,但它在增量重建上有一个尚未修好的正确性缺陷,因此这里不引用 ——
-见 `bench/README.md`。
+降到 36.4s、`edit-body` 降到 30.5s,但它**只在级联确实欠着的时候有用**:上表
+`touch-hub` / `edit-comment` 两行 mcpp 本来就跳过了级联,开了它反而略慢
+(0.44s 对 0.40s / 0.38s)。该键仍为 opt-in。
+它此前有一个增量正确性缺陷,已于 2026-08-14 修复;修复也推翻了那一列原先的
+`touch-hub 0.22s` / `edit-comment 0.18s` —— 那两个数量的是**没跑完的构建**。
+经过与修正后的数据见 `bench/README.zh-CN.md` §8b。
 套件还测量了第二个独立工程(xlings)的两种代码风格;那份对比、已声明的不对称、
 以及「什么时候一个格子**不能**拿来比较」的规则,都在 `bench/README.md`。</sub>
 

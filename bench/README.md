@@ -140,11 +140,11 @@ Ratios against cmake.
 
 | scenario | `mcpp@2026.8.11.3` | `mcpp@2026.8.13.1` | `+bmi_schedule=on` | `cmake` | `xmake` |
 |---|---|---|---|---|---|
-| `cold`         | 79.46s · 0.86x | 79.54s · 0.86x    | **35.43s · 0.38x** | **92.33s** · 1.00x | 90.30s · 0.98x |
+| `cold`         | 79.46s · 0.86x | 79.54s · 0.86x    | **36.36s · 0.39x** | **92.33s** · 1.00x | 90.30s · 0.98x |
 | `noop`         | 0.34s · 1.21x  | 0.16s · 0.57x     | 0.16s · 0.57x      | **0.28s** · 1.00x  | 0.38s · 1.36x |
-| `touch-hub`    | 76.53s · 0.92x | **0.40s · 0.005x** | **0.22s · 0.003x** | **83.39s** · 1.00x | 82.08s · 0.98x |
-| `edit-body`    | 77.33s · 0.90x | 76.24s · 0.89x    | **30.17s · 0.35x** | **85.64s** · 1.00x | 84.61s · 0.99x |
-| `edit-comment` | 75.69s · 0.91x | **0.38s · 0.005x** | **0.18s · 0.002x** | **82.96s** · 1.00x | 82.73s · 1.00x |
+| `touch-hub`    | 76.53s · 0.92x | **0.40s · 0.005x** | 0.44s · 0.005x     | **83.39s** · 1.00x | 82.08s · 0.98x |
+| `edit-body`    | 77.33s · 0.90x | 76.24s · 0.89x    | **30.48s · 0.36x** | **85.64s** · 1.00x | 84.61s · 0.99x |
+| `edit-comment` | 75.69s · 0.91x | **0.38s · 0.005x** | 0.44s · 0.005x     | **82.96s** · 1.00x | 82.73s · 1.00x |
 
 Four things this says, and the fixture can say none of them:
 
@@ -157,8 +157,14 @@ Four things this says, and the fixture can say none of them:
    quoting it as a cold-build advantage would be dishonest.
 2. **The cold-build lever is the opt-in schedule, not the release.** 79.46s →
    79.54s between the two releases is no change at all; `bmi_schedule = "on"`
-   takes it to 35.43s. Everything else in this table is release-over-release;
+   takes it to 36.36s. Everything else in this table is release-over-release;
    that column is a *setting*.
+
+   **And the schedule column is not a free upgrade.** On `touch-hub` and
+   `edit-comment` it is 0.44s against the default's 0.40s and 0.38s — slightly
+   WORSE, because those are exactly the rows where mcpp already skips the
+   cascade, so the split graph adds edges and buys nothing. It pays where a
+   cascade is genuinely owed (`cold`, `edit-body`) and nowhere else.
 3. **The daily loop is where the engines differ**, by ~190x on this project:
    touching a hub interface costs cmake and xmake a full 83-second rebuild
    because they decide by timestamp, and 0.40s for an engine that compares the
@@ -232,11 +238,14 @@ split schedule, and leaving it out understated mcpp badly — `edit-body` reads
   and skips 45 importers. cmake and xmake decide by timestamp and rebuild all of
   them — to within 0.00s of each other, which is what two timestamp-driven
   engines should look like.
-* **The `bmi_schedule` correctness bug (§8b) does NOT reproduce here.** All ten
-  cells are `ok`. It reproduces on the generated fixture, whose tight
-  unit_0→unit_1 chain hits the window; three real trees (mcpp's own and both
-  xlings styles) do not. That is why the key is still opt-in — a defect that
-  only one workload can show is still a defect.
+* **⚠️ These `bmi_schedule=on` cells were taken BEFORE the §8b fix, and are
+  therefore suspect in the same way the mcpp table's were.** All ten reported
+  `ok` — status cannot see a build that stopped early. The two mcpp-workload
+  cells that were affected there (`touch-hub`, `edit-comment`) doubled once the
+  object edge stopped being cleaned by the cascade's own restat; `cold` and
+  `edit-body` did not move. This table's `cold` and `edit-body` are the two
+  quoted above, so the headline holds, but it has not been re-run. When it is,
+  the file to compare against is `bench/results/xlings-3way-20260814/`.
 
 <sub>xlings `2026.8.11.2`, gcc 16.1.0 payload, Linux x86_64 · i9-13900K · n=1 ·
 `--baseline cmake`. Raw report: `bench/results/xlings-3way-20260814/`.
@@ -781,6 +790,72 @@ the original analysis:
 
 > **Cross-check anything that computes a critical path.** Every other metric
 > agreed between two independent implementations while this one was wrong by 2.3x.
+
+---
+
+## 8b. The `bmi_schedule` defect, and the numbers it produced
+
+Fixed on **2026-08-14**. Kept here because the way it hid is more instructive
+than the fix, and because three tables point at this section.
+
+**The defect.** Under `bmi_schedule = "on"` with gcc, each module interface unit
+gets two ninja edges: a BMI edge that returns as soon as the compiler publishes
+the BMI, and an object edge that waits for that same compiler to finish. The
+object edge's only input was the BMI.
+
+That is the same file the cascade suppression deliberately leaves untouched.
+When the new BMI turns out equivalent to the previous one, mcpp puts the
+previous file back so its mtime does not advance — which is exactly what stops
+39 importers from rebuilding, and is correct. But ninja's `restat` then cleans
+every edge whose only reason to be dirty was that output, and the object edge
+was one. It was skipped, and the link with it.
+
+**Editing a function body does not change a GCC BMI** — bodies are not in it —
+so this is not a corner case, it is the common one. Minimal reproduction:
+
+```cpp
+export module repro.leaf;
+export int leaf_value() { return 1; }   // change to 42, rebuild
+```
+
+    Finished dev in 0.02s     <- reported success, 3 of 8 edges run
+    ./repro8b  ->  1          <- the source says 42
+
+No link error and no diagnostic. The detached compiler wrote the correct object
+0.2s later, after ninja had already decided not to link it. On the generated
+fixture the same skip surfaces as `undefined reference to
+unit_19_value@fx.unit_19()`, which is this defect in the case where the symbol
+did not exist beforehand — that is the form this section used to describe, and
+describing only that form is why it read as fixture-specific for a week.
+
+**The fix** is one line of graph shape: the object edge takes the SOURCE as an
+input, with the BMI as an implicit one so ninja still orders it after phase 1.
+The unit's own object and the cascade to its importers are different questions
+and now have different edges.
+
+**What it did to the published numbers.** Timing an unfinished build makes it
+look fast. On the pinned mcpp workload, `mcpp build` returned in 0.56s with
+`cc1plus` still running; the object landed 1.24s later. The two "instant" cells
+of the `bmi_schedule=on` column were measuring that:
+
+| scenario | as published | re-measured with the fix | |
+|---|---|---|---|
+| `cold`         | 35.43s | 36.36s | unchanged |
+| `noop`         | 0.16s  | 0.16s  | unchanged |
+| `touch-hub`    | 0.22s  | **0.44s** | was not finished |
+| `edit-body`    | 30.17s | 30.48s | unchanged |
+| `edit-comment` | 0.18s  | **0.44s** | was not finished |
+
+The headline claims survive — `cold` and `edit-body` were doing real work and
+are still 2.5x and 2.8x. What did not survive is the idea that the schedule
+helps everywhere: on the two rows where the cascade is already skipped it is
+now visibly *slower* than the default, which is the honest shape.
+
+<sub>Raw data: `bench/results/schedule-refix-20260814/`. The invariants in
+`bench/src/main.cpp` did not catch this — they compare a scenario against that
+engine's own `noop` and against the other engines, and 0.22s against a 0.16s
+`noop` is not anomalous. What catches "the build was still running" is asserting
+on the artefact, not on the clock; that is not yet implemented.</sub>
 
 ---
 
