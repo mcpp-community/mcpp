@@ -32,12 +32,59 @@ script exits non-zero.
 | option | |
 |---|---|
 | `--dry-run` | print the plan and stop |
+| `--resume` | continue an interrupted run — see below |
 | `--runs 1` | faster, and **not publishable** — one sample has no dispersion |
 | `BENCH_PRINT_ARGV=1` | print the argv it would pass, instead of running |
 | `BENCH_ROOT=<dir>` | run from a copy of the script against that repository |
 
 **Expect one to several hours.** Seven cells, every engine each cell lists,
 three samples, on workloads whose cold build is 30–120 seconds.
+
+### If it gets interrupted
+
+```bash
+bash bench/run-standard.sh --resume
+```
+
+The unit of measurement is one sample —
+
+```
+project · variant · scenario · engine · run index
+```
+
+— and the harness appends each one to `.mbench/<fingerprint>/journal.jsonl` the
+moment it is measured, flushing as it goes. **An interruption costs the sample
+in flight and nothing else.** Three whole runs were lost to this before it
+existed: a bare `mcpp` measuring the released binary, a field-order bug feeding
+cmake the wrong directory, and a `cmake` upgrade that changed which binary was
+on PATH halfway through.
+
+The `<fingerprint>` is one hash over the **whole configuration** — engines,
+variants, scenarios, sample count, compiler, project, fixture shape, and `--id`.
+Same shape as a build directory: the same configuration resumes, a different one
+lands somewhere else instead of overwriting. `mbench` prints which it got:
+
+```
+run id : 4e58a816 (resuming, 73 unit(s) recorded)
+run id : a0840b10 (fresh)
+```
+
+⚠️ **Resume is where a benchmark quietly splices two runs together**, so two
+things are deliberate:
+
+* The fingerprint **excludes the mcpp binary**. Including it would restart from
+  zero on every rebuild — exactly when resume is worth having. Each record
+  carries the version it was measured with instead, and adopting one measured
+  with a different version is **reported**, not silent.
+* **Seed builds are not samples and are redone.** An incremental scenario needs
+  a tree that is already up to date, and no journal can hold that state. A
+  resumed cell pays its seed again before it can skip anything.
+
+`--resume` is a flag rather than the default because the two behaviours guard
+against opposite mistakes: without it a second invocation must never write
+beside the first one's reports, and a stopped run that kept writing after a
+`rm -rf` did once leave a 90-cell file next to a 72-cell one, distinguishable
+only by reading `started_at` out of the JSON.
 
 ### Before you publish anything from it
 
@@ -52,7 +99,7 @@ The script checks the first of these and says so; it cannot check the rest.
 ### Driving the harness directly
 
 ```bash
-BENCH=$(ls -t bench/target/*/*/bin/bench | head -1)
+BENCH=$(ls -t bench/target/*/*/bin/mbench | head -1)
 
 # generated fixtures, across engines and source forms
 "$BENCH" --engines mcpp=<path-to-mcpp>,cmake,xmake,bazel \
@@ -104,7 +151,7 @@ than what it said.
 
 | what | pinned to | declared in |
 |---|---|---|
-| cmake | **4.0.2** | `matrix.json` → `tools` |
+| cmake | **4.4.2** | `matrix.json` → `tools` |
 | xmake | **3.1.0** | `matrix.json` → `tools` |
 | bazel | **9.2.0** | `matrix.json` → `tools` |
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
@@ -116,7 +163,7 @@ than what it said.
 | mcpp under test | the checkout | built locally; `run-standard.sh` passes its PATH |
 
 **Everything is installed by xlings**, at those exact versions, on every runner.
-`xlings install cmake@4.0.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` installs
+`xlings install cmake@4.4.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` installs
 the set; `run-standard.sh` refuses to start if an installed tool does not report
 the pinned version, because a tool that varies is a variable the report does not
 record and the reader cannot see.
@@ -972,8 +1019,8 @@ repository, which this harness refuses to do.
 | engine | builds mcpp? |
 |---|---|
 | mcpp | yes — it is mcpp's own manifest |
-| cmake 4.0.2 | yes — needs `CMAKE_CXX_MODULE_STD 1` and the CMake-4.0 experimental UUID |
-| xmake 3.0.7 | yes |
+| cmake 4.4.2 | yes — needs `CMAKE_CXX_MODULE_STD 1` and the experimental UUID **for that exact cmake**: the key is a different value in every release and is compiled into the binary, so a 4.0 UUID silently leaves `import std` off in 4.4 |
+| xmake 3.1.0 | yes |
 | meson 1.10.2 | no — no way to declare an interface unit, and no `import std;` |
 | bazel 9.2.0 | not in the gcc table. `import std;` **is** buildable (libc++ ships the std module as ordinary source — see `bench/projects/mcpp/MODULE.bazel` for the working recipe), but bazel's modules need clang, so a bazel column belongs in a clang-baselined table or it breaks invariant I1 |
 

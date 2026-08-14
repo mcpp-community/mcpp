@@ -298,6 +298,29 @@ if os.path.isfile(tc_src):
                         f"{const} is {mm.group(1)!r} — CI installs one and the harness hands "
                         f"every engine the other; the cells fail naming a missing path")
 
+# The READMEs open with a "what is pinned" table whose whole claim is that those
+# are the versions the numbers were taken with. It is prose, so nothing made it
+# follow `matrix.json` — and it did not: the pin moved to cmake 4.4.2 (a version
+# whose `import std` gate is a DIFFERENT UUID) while both tables still said
+# 4.0.2, in the one section a reader consults to decide whether to trust the
+# data. Rows only; the surrounding prose discusses older versions on purpose.
+for doc in ("bench/README.md", "bench/README.zh-CN.md"):
+    path = os.path.join(root, doc)
+    if not os.path.isfile(path):
+        continue
+    text = open(path, encoding="utf-8").read()
+    for tool in ("cmake", "xmake", "bazel"):
+        want = str(m.get("tools", {}).get(tool, ""))
+        rows = re.findall(rf"^\|\s*{tool}\s*\|\s*\*\*([^*]+)\*\*\s*\|", text, re.M)
+        if not rows:
+            fail.append(f"{doc}: no pinned-version row for {tool} — this check "
+                        f"cannot compare anything and must not pass silently")
+        for got in rows:
+            if got.strip() != want:
+                fail.append(f"{doc}: the pinned table says {tool} {got.strip()} but "
+                            f"matrix.json pins {want} — that table is what a reader "
+                            f"uses to decide whether to trust the numbers")
+
 if fail:
     print("FAIL: bench/matrix.json")
     for f in fail:

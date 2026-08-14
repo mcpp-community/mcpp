@@ -29,9 +29,49 @@ bash bench/run-standard.sh              # → bench/results/standard-<日期>-<o
 | 选项 | |
 |---|---|
 | `--dry-run` | 只打印计划 |
+| `--resume` | 接着上次没跑完的继续 —— 见下 |
 | `--runs 1` | 更快,但**不可发布** —— 单样本没有离散度 |
 | `BENCH_PRINT_ARGV=1` | 打印它将要传的 argv,不实际运行 |
 | `BENCH_ROOT=<dir>` | 从脚本副本运行,指向该仓库 |
+
+### 跑一半被打断了
+
+```bash
+bash bench/run-standard.sh --resume
+```
+
+测量的最小单元是一个样本 ——
+
+```
+工程 · variant · 场景 · 引擎 · 轮次
+```
+
+—— 每测完一个就 append 一行到 `.mbench/<指纹>/journal.jsonl` 并 flush。
+**一次中断最多丢正在测的那一个样本。** 在这之前已经因此整整丢过三轮:裸名
+`mcpp` 测成了已发布二进制、字段错位让 cmake 拿到了错的目录、中途装 cmake 4.4.2
+把 PATH 上的 cmake 换掉了。
+
+`<指纹>` 是**整份配置**的一个哈希 —— 引擎、变体、场景、轮数、编译器、工程、
+fixture 形状、`--id`。和构建目录一个形状:同配置命中续跑,改配置落到另一个目录
+而不是覆盖。`mbench` 会把结果打出来:
+
+```
+run id : 4e58a816 (resuming, 73 unit(s) recorded)
+run id : a0840b10 (fresh)
+```
+
+⚠️ **断点续跑正是「把两次跑无声拼在一起」最容易发生的地方**,所以有两条是刻意的:
+
+* 指纹**不含 mcpp 二进制**。含了的话每次重编都从零开始 —— 而那恰恰是续跑最有用
+  的时候。每条记录改为携带当时的版本,认领到版本不同的记录时**会报出来**,不是
+  默默用掉。
+* **seed build 不是样本,必须重做。** 增量场景要求一棵「已经是最新」的树,而那个
+  状态没有任何 journal 装得下。所以恢复一个格子要先重跑 seed,然后才能开始跳过。
+
+`--resume` 是**开关而不是默认**,因为两种行为防的是相反的错误:没有它时,第二次
+调用绝不能写在第一次的报告旁边 —— 曾经有一次被停掉的跑在 `rm -rf` 之后才写完
+报告,于是 90 格的文件和 72 格的文件并排躺着,唯一能分辨的线索是 JSON 里的
+`started_at`。
 
 **预计一到数小时。** 七个格子、每格所有引擎、三轮,而工作负载的冷构建是
 30–120 秒。
@@ -48,7 +88,7 @@ bash bench/run-standard.sh              # → bench/results/standard-<日期>-<o
 ### 直接驱动 harness
 
 ```bash
-BENCH=$(ls -t bench/target/*/*/bin/bench | head -1)
+BENCH=$(ls -t bench/target/*/*/bin/mbench | head -1)
 
 "$BENCH" --project bench/projects/mcpp/mcpp-2026.8.11.3 \
          --buildfiles bench/projects/mcpp \
@@ -101,7 +141,7 @@ BENCH=$(ls -t bench/target/*/*/bin/bench | head -1)
 
 | 项目 | 钉到 | 声明位置 |
 |---|---|---|
-| cmake | **4.0.2** | `matrix.json` → `tools` |
+| cmake | **4.4.2** | `matrix.json` → `tools` |
 | xmake | **3.1.0** | `matrix.json` → `tools` |
 | bazel | **9.2.0** | `matrix.json` → `tools` |
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
@@ -112,7 +152,7 @@ BENCH=$(ls -t bench/target/*/*/bin/bench | head -1)
 | xlings（分离风格） | **2026.8.13.1** — `f072075` | 子模块 `projects/xlings/xlings-2026.8.13.1` |
 | 被测 mcpp | 当前 checkout | 本地构建,由 `run-standard.sh` 以路径传入 |
 
-**全部由 xlings 安装**,版本精确。`xlings install cmake@4.0.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` 装齐这一套;`run-standard.sh` 在开跑前核对,
+**全部由 xlings 安装**,版本精确。`xlings install cmake@4.4.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` 装齐这一套;`run-standard.sh` 在开跑前核对,
 版本对不上就拒绝启动 —— 一个会变的工具是报告没有记录、读者也看不见的变量。
 
 这解决了四件已经真实发生过的事：
@@ -402,7 +442,7 @@ cd bench && mcpp build --release
 git submodule update --init
 
 # 一次 smoke
-./target/*/*/bin/bench --engines mcpp,cmake --variants modules \
+./target/*/*/bin/mbench --engines mcpp,cmake --variants modules \
     --scenarios cold,noop --preset smoke --compiler payload:gcc
 ```
 
