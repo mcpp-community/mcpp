@@ -71,11 +71,13 @@ export int run_process(const std::vector<std::string>& argv,
                        double*                         out_wall_s,
                        double                          timeout_s   = 0.0,
                        bool*                           out_timeout = nullptr,
-                       std::string*                    out_error   = nullptr) {
+                       std::string*                    out_error   = nullptr,
+                       bool*                           out_launch_failed = nullptr) {
     if (out_wall_s)  *out_wall_s  = 0.0;
     if (out_timeout) *out_timeout = false;
     if (argv.empty()) {
         if (out_error) *out_error = "empty argv";
+        if (out_launch_failed) *out_launch_failed = true;
         return -1;
     }
 
@@ -139,6 +141,7 @@ export int run_process(const std::vector<std::string>& argv,
         // posix_spawnp reports through its RETURN VALUE, not errno.
         if (out_error)
             *out_error = std::format("posix_spawnp('{}'): {}", raw[0], std::strerror(rc));
+        if (out_launch_failed) *out_launch_failed = true;
         return -1;
     }
 

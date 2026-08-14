@@ -80,7 +80,26 @@ struct RunResult {
     [[nodiscard]] bool ok() const { return exit_code == 0; }
     // Distinguishes "could not start" from "started and failed" — the whole
     // basis for reporting an engine as unavailable rather than broken.
-    [[nodiscard]] bool started() const { return exit_code >= 0; }
+    //
+    // ⚠️ NOT `exit_code >= 0`. That was the test, and on Windows it is wrong in
+    // the one case that matters: a child that CRASHES exits with a status like
+    // 0xC0000135 (a DLL it needs is missing) or 0xC0000005 (access violation),
+    // and `GetExitCodeProcess` hands back a DWORD that becomes a NEGATIVE int.
+    // The harness then reported
+    //
+    //     could not start the process (no log written) —
+    //     check the engine's program path
+    //
+    // for an xmake that `xlings install` had just installed successfully and
+    // that the harness's own probe had just run. The advice was wrong, the
+    // diagnosis was wrong, and it cost two matrix cycles chasing a PATH that was
+    // never the problem.
+    //
+    // Launch failure is now its own fact, reported by the platform layer,
+    // instead of being inferred from the shape of a number that has a different
+    // meaning on each OS.
+    [[nodiscard]] bool started() const { return !launch_failed; }
+    bool launch_failed{};
 };
 
 // Run argv, discarding the child's output unless a log path is given. The
@@ -96,8 +115,10 @@ inline RunResult run(const std::vector<std::string>& argv,
     double wall = 0.0;
     bool   hung = false;
     std::string why;
-    const int rc = run_process(argv, cwd, log, &wall, timeout_s, &hung, &why);
-    return RunResult{wall, rc, hung, std::move(why)};
+    bool failed_to_launch = false;
+    const int rc = run_process(argv, cwd, log, &wall, timeout_s, &hung, &why,
+                               &failed_to_launch);
+    return RunResult{wall, rc, hung, std::move(why), failed_to_launch};
 }
 
 // The last `lines` lines of a file, for showing WHY a cell failed.

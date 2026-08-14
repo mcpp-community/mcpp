@@ -73,11 +73,13 @@ export int run_process(const std::vector<std::string>& argv,
                        double*                         out_wall_s,
                        double                          timeout_s   = 0.0,
                        bool*                           out_timeout = nullptr,
-                       std::string*                    out_error   = nullptr) {
+                       std::string*                    out_error   = nullptr,
+                       bool*                           out_launch_failed = nullptr) {
     if (out_wall_s)  *out_wall_s  = 0.0;
     if (out_timeout) *out_timeout = false;
     if (argv.empty()) {
         if (out_error) *out_error = "empty argv";
+        if (out_launch_failed) *out_launch_failed = true;
         return -1;
     }
 
@@ -175,6 +177,7 @@ export int run_process(const std::vector<std::string>& argv,
                                      msg.empty() ? "unknown error" : msg,
                                      cwd.empty() ? std::string("<inherited>") : cwd_s);
         }
+        if (out_launch_failed) *out_launch_failed = true;
         if (sink != INVALID_HANDLE_VALUE) ::CloseHandle(sink);
         if (job) ::CloseHandle(job);
         return -1;
