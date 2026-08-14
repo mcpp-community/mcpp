@@ -66,6 +66,17 @@ struct RunResult {
     // is a perfectly legal thing for a build tool to exit with on its own, so
     // "hung" and "exited 124" must stay distinguishable.
     bool   timed_out{};
+    // WHY the child could not be launched, in the OS's own words. Empty unless
+    // `started()` is false.
+    //
+    // "could not start the process" is true and useless: on Windows it covers a
+    // program that is not on PATH, a cwd that does not exist, a bad handle and
+    // an ACL, and those are four different fixes. A windows/clang cell reported
+    // exactly that message while `xmake --version` had just succeeded in the
+    // same job — the only difference between the two calls being a cwd and a
+    // log path — and there was no way to tell which from CI. One
+    // GetLastError/errno turns that into a sentence.
+    std::string start_error;
     [[nodiscard]] bool ok() const { return exit_code == 0; }
     // Distinguishes "could not start" from "started and failed" — the whole
     // basis for reporting an engine as unavailable rather than broken.
@@ -84,8 +95,9 @@ inline RunResult run(const std::vector<std::string>& argv,
                      double                          timeout_s = 0.0) {
     double wall = 0.0;
     bool   hung = false;
-    const int rc = run_process(argv, cwd, log, &wall, timeout_s, &hung);
-    return RunResult{wall, rc, hung};
+    std::string why;
+    const int rc = run_process(argv, cwd, log, &wall, timeout_s, &hung, &why);
+    return RunResult{wall, rc, hung, std::move(why)};
 }
 
 // The last `lines` lines of a file, for showing WHY a cell failed.

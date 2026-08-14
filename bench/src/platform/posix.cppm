@@ -70,10 +70,14 @@ export int run_process(const std::vector<std::string>& argv,
                        const std::filesystem::path&    log,
                        double*                         out_wall_s,
                        double                          timeout_s   = 0.0,
-                       bool*                           out_timeout = nullptr) {
+                       bool*                           out_timeout = nullptr,
+                       std::string*                    out_error   = nullptr) {
     if (out_wall_s)  *out_wall_s  = 0.0;
     if (out_timeout) *out_timeout = false;
-    if (argv.empty()) return -1;
+    if (argv.empty()) {
+        if (out_error) *out_error = "empty argv";
+        return -1;
+    }
 
     std::vector<char*> raw;
     raw.reserve(argv.size() + 1);
@@ -131,7 +135,12 @@ export int run_process(const std::vector<std::string>& argv,
                                   raw.data(), ::environ);
     ::posix_spawn_file_actions_destroy(&actions);
     ::posix_spawnattr_destroy(&attr);
-    if (rc != 0) return -1;
+    if (rc != 0) {
+        // posix_spawnp reports through its RETURN VALUE, not errno.
+        if (out_error)
+            *out_error = std::format("posix_spawnp('{}'): {}", raw[0], std::strerror(rc));
+        return -1;
+    }
 
     int status = 0;
     if (timeout_s <= 0.0) {

@@ -72,10 +72,14 @@ export int run_process(const std::vector<std::string>& argv,
                        const std::filesystem::path&    log,
                        double*                         out_wall_s,
                        double                          timeout_s   = 0.0,
-                       bool*                           out_timeout = nullptr) {
+                       bool*                           out_timeout = nullptr,
+                       std::string*                    out_error   = nullptr) {
     if (out_wall_s)  *out_wall_s  = 0.0;
     if (out_timeout) *out_timeout = false;
-    if (argv.empty()) return -1;
+    if (argv.empty()) {
+        if (out_error) *out_error = "empty argv";
+        return -1;
+    }
 
     std::string cmdline;
     for (std::size_t i = 0; i < argv.size(); ++i) {
@@ -149,6 +153,28 @@ export int run_process(const std::vector<std::string>& argv,
                                      job ? CREATE_SUSPENDED : 0, nullptr,
                                      cwd.empty() ? nullptr : cwd_s.c_str(), &si, &pi);
     if (!ok) {
+        // ⚠️ GetLastError FIRST — CloseHandle overwrites it, and this is the
+        // whole reason the message exists. "could not start the process" covers
+        // a program not on PATH (2), a cwd that does not exist (267), a bad
+        // handle and an ACL; those are four different fixes and the harness
+        // could not tell them apart from CI.
+        const DWORD err = ::GetLastError();
+        if (out_error) {
+            char* text = nullptr;
+            const DWORD n = ::FormatMessageA(
+                FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                    FORMAT_MESSAGE_IGNORE_INSERTS,
+                nullptr, err, 0, reinterpret_cast<char*>(&text), 0, nullptr);
+            std::string msg = (n && text) ? std::string(text, n) : std::string();
+            if (text) ::LocalFree(text);
+            while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r' ||
+                                    msg.back() == ' ' || msg.back() == '.'))
+                msg.pop_back();
+            *out_error = std::format("CreateProcess failed ({}): {} [cwd={}]",
+                                     static_cast<unsigned>(err),
+                                     msg.empty() ? "unknown error" : msg,
+                                     cwd.empty() ? std::string("<inherited>") : cwd_s);
+        }
         if (sink != INVALID_HANDLE_VALUE) ::CloseHandle(sink);
         if (job) ::CloseHandle(job);
         return -1;

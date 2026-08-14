@@ -158,8 +158,16 @@ public:
     static std::string failure_note(std::string_view what, const platform::RunResult& r,
                                     const std::filesystem::path& log) {
         if (!r.started())
-            return std::format("{}: could not start the process (no log written) — "
-                               "check the engine's program path", what);
+            // The OS's own reason when there is one. "check the engine's program
+            // path" was the only advice this could give, and it is wrong as
+            // often as it is right — a windows/clang cell reported it while
+            // `xmake --version` had just succeeded in the same job, so the path
+            // was demonstrably fine and something else (a cwd, a handle) was not.
+            return std::format("{}: could not start the process (no log written){}",
+                               what,
+                               r.start_error.empty()
+                                   ? std::string(" — check the engine's program path")
+                                   : std::format(" — {}", r.start_error));
         if (r.timed_out)
             return std::format("{} TIMED OUT after {:.0f}s and was killed (see {})",
                                what, r.wall_s, log.string());
