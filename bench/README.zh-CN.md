@@ -8,23 +8,75 @@ C++20 具名模块相对于头文件到底付出/节省了什么。
 用 C++23 写、由 mcpp 构建，所以 Linux / macOS / Windows 上跑法完全一致 —— 它
 替换掉的那套 shell 脚本只能在 Linux 上跑。
 
-```bash
-# 生成的 fixture，跨引擎、跨源码形态
-bench --engines mcpp,cmake,xmake,bazel \
-      --variants headers,modules,modules-impl \
-      --scenarios cold,noop,touch-hub,edit-body \
-      --compiler payload:gcc --jobs 32 --out report.json
+---
 
-# 真实工程，原地测量 —— 比如两个 mcpp 二进制对比
-bench --project bench/projects/xlings/xlings-2026.8.13.1 \
-      --buildfiles bench/projects/xlings \
-      --engines mcpp=./target/x86_64-linux-gnu/*/bin/mcpp,mcpp \
-      --scenarios noop,touch-hub --hub src/platform.cppm --body src/platform.cpp
+## 怎么跑
+
+### 标准数据集 —— 一条命令
+
+```bash
+mcpp build --release                    # 被测的 mcpp
+(cd bench && mcpp build --release)      # harness
+git submodule update --init             # 钉住的工作负载
+
+bash bench/run-standard.sh              # → bench/results/standard-<日期>-<os>-<arch>/
 ```
 
-每个 `mcpp=<path>` 引擎都用**那个二进制自己报的版本**作标签
-(`mcpp@2026.8.13.1`)，所以两个版本永远不会并成一行。「这个版本变快了吗」就是
-这样回答的 —— 真的把两个都跑一遍，而不是在测量工具里模拟其中一个。
+全部流程就是这四行。脚本读 [`matrix.json`](matrix.json),挑出**当前机器**对应的
+格子,每格跑 **3 轮**,并且**不会安静地结束**:有格子失败就打印 `NOT PUBLISHABLE`
+并以非 0 退出。
+
+| 选项 | |
+|---|---|
+| `--dry-run` | 只打印计划 |
+| `--runs 1` | 更快,但**不可发布** —— 单样本没有离散度 |
+| `BENCH_PRINT_ARGV=1` | 打印它将要传的 argv,不实际运行 |
+| `BENCH_ROOT=<dir>` | 从脚本副本运行,指向该仓库 |
+
+**预计一到数小时。** 七个格子、每格所有引擎、三轮,而工作负载的冷构建是
+30–120 秒。
+
+### 发布这些数字之前
+
+第 1 条脚本会替你查并明确报告,后两条它查不了。
+
+1. **退出码为 0** —— 没有格子失败;标准集不预先排除任何东西,所以一次失败就是
+   **这台机器上**的真实失败
+2. **min/max 在中位数 ±20% 以内** —— 更宽说明机器当时有噪声,数字描述的是噪声
+3. **把失败先手工复现,再称之为缺口** —— 见 §5
+
+### 直接驱动 harness
+
+```bash
+BENCH=$(ls -t bench/target/*/*/bin/bench | head -1)
+
+"$BENCH" --project bench/projects/mcpp/mcpp-2026.8.11.3 \
+         --buildfiles bench/projects/mcpp \
+         --engines mcpp=<被测>,mcpp=<已发布> --compiler payload:gcc \
+         --scenarios noop,touch-hub --hub src/platform/platform.cppm --runs 3
+```
+
+⚠️ **mcpp 一律用路径传,绝不用裸名 `mcpp`。** 裸名走 PATH 到 xlings shim,而
+**shim 会按当前工作目录重新解析版本** —— `--project` 时那个目录就是被测的树,
+而每个工作负载都钉着自己的版本。有一整轮因此把七个格子**全部**测成了
+`mcpp@2026.8.11.3`(已发布的旧版,不是被测分支),**没有任何东西失败来提示这件事**。
+
+每个 `mcpp=<path>` 用**那个二进制自己报的版本**作标签,所以两个版本永远不会并成
+一行。「这个版本变快了吗」就是这样回答的 —— 真的把两个都跑一遍。
+
+### CI 去哪了
+
+**这个套件没有 CI job。** 曾经有,而它测到的远比看起来少:10 个格子、32 条外部
+引擎臂,**其中 12 条被豁免**(xmake 被豁免的比在测的还多),而 job 是绿的。加上
+共享 runner 测的是 runner(同一棵树那边 243s、这边 79s),而被豁免的大多是别人
+的工具、不是 mcpp。
+
+`tests/e2e/230_bench_harness.sh` 仍然每个 PR 都跑:它构建套件并检查能产出一份
+合法报告。**不再自动化的是"测量"本身。**
+
+**发版前跑一次标准集;任何声称有性能影响的改动之后也跑一次。**
+
+---
 
 > 本文是英文版 [`README.md`](README.md) 的对照翻译。两份内容一致；如有出入，
 > 以英文版为准（CI 与守卫测试读的是英文版里引用的文件名）。
@@ -35,7 +87,7 @@ bench --project bench/projects/xlings/xlings-2026.8.13.1 \
 |---|---|
 | **本文 / README.md** | 一次计时**怎么取**，以及什么是刻意不控制的 |
 | [`SPEC.md`](SPEC.md) | **测什么**：六个轴、为什么 cmake 是基线、一个格子「无定义」意味着什么 |
-| [`matrix.json`](matrix.json) | CI **跑哪些格子** —— 唯一真源，由 `.github/workflows/bench.yml` 读取 |
+| [`matrix.json`](matrix.json) | **标准集有哪些格子** —— 唯一真源,由 `bench/run-standard.sh` 读取 |
 
 格子清单只出现在其中**一处**。写两遍的矩阵就是会自相矛盾的矩阵，而且矛盾是无声
 的：两份副本看起来都对。`tests/e2e/233_bench_matrix.sh` 就是用来保证这一点的。
@@ -58,11 +110,10 @@ bench --project bench/projects/xlings/xlings-2026.8.13.1 \
 | mcpp（被测工作负载） | **2026.8.11.3** — `a749e9f` | 子模块 `projects/mcpp/mcpp-2026.8.11.3` |
 | xlings（合并风格） | **2026.8.11.2** — `b1563fe` | 子模块 `projects/xlings/xlings-2026.8.11.2` |
 | xlings（分离风格） | **2026.8.13.1** — `f072075` | 子模块 `projects/xlings/xlings-2026.8.13.1` |
-| 被测 mcpp | 当前 checkout | CI 现场构建，由 `newest_artifact.sh` 定位 |
+| 被测 mcpp | 当前 checkout | 本地构建,由 `run-standard.sh` 以路径传入 |
 
-**全部由 xlings 安装**，版本精确，每个 runner 一致。CI 里跑的字面就是
-`xlings install cmake@4.0.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3`，而且
-job 会打印每个工具实际解析到的版本，与钉的版本不符就大声告警。
+**全部由 xlings 安装**,版本精确。`xlings install cmake@4.0.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` 装齐这一套;`run-standard.sh` 在开跑前核对,
+版本对不上就拒绝启动 —— 一个会变的工具是报告没有记录、读者也看不见的变量。
 
 这解决了四件已经真实发生过的事：
 
@@ -84,7 +135,7 @@ job 会打印每个工具实际解析到的版本，与钉的版本不符就大�
 * **只测了一个 mcpp。** 一份只说「这个分支有多快」、却不说「有没有变快」的报告，
   不是 pull request 上的基准该给的东西。
 
-> **刻意不摁住的**：runner 硬件。见英文版 §4a。
+> **刻意不摁住的**:跑它的那台机器。数据里记了 CPU 型号、核数、内存,见英文版 §4a。
 
 > **这些数字没有覆盖的**：mcpp 的分离式调度（`[build] bmi_schedule = "on"`）在所有
 > 平台验证通过前是 opt-in 的，所以两个 mcpp 二进制都是关着它跑的。它的效果单独

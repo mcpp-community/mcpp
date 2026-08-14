@@ -10,41 +10,92 @@ Written in C++23 and built by mcpp, so it runs identically on Linux, macOS and
 Windows — a shell-based harness cannot, and this suite replaced one that could
 only run on Linux.
 
-```bash
-# generated fixtures, across engines and source forms
-bench --engines mcpp,cmake,xmake,bazel \
-      --variants headers,modules,modules-impl \
-      --scenarios cold,noop,touch-hub,edit-body \
-      --compiler /path/to/g++ --jobs 32 --out report.json
+---
 
-# a REAL project — one of the PINNED workloads under bench/projects/,
-# comparing two mcpp binaries
-bench --project bench/projects/mcpp/mcpp-2026.8.11.3 \
-      --buildfiles bench/projects/mcpp \
-      --engines mcpp=./target/*/*/bin/mcpp,mcpp --compiler payload:gcc \
-      --scenarios noop,touch-hub --hub src/platform/platform.cppm
+## Running it
+
+### The standard data set — one command
+
+```bash
+mcpp build --release                    # the mcpp under test
+(cd bench && mcpp build --release)      # the harness
+git submodule update --init             # the pinned workloads
+
+bash bench/run-standard.sh              # → bench/results/standard-<date>-<os>-<arch>/
 ```
 
-Each `mcpp=<path>` engine labels itself from the version that binary reports
-(`mcpp@2026.8.13.1`), so two releases never collapse into one row. That is how
-"did this release get faster?" is answered — by running both, not by emulating
-one of them in the harness.
+That is the whole procedure. The script reads [`matrix.json`](matrix.json),
+selects the cells for the machine it is on, runs **3 samples** of each, and
+refuses to finish quietly: a failing cell prints `NOT PUBLISHABLE` and the
+script exits non-zero.
 
-### The three documents, and which one to read
-
-| file | answers |
+| option | |
 |---|---|
-| **this file** | *how* a timing is taken, and what is deliberately not controlled |
-| [`SPEC.md`](SPEC.md) | *what* is measured: the six axes, why cmake is the baseline, what a cell being undefined means |
-| [`matrix.json`](matrix.json) | *which* cells CI runs — the single source, read by `.github/workflows/bench.yml` |
+| `--dry-run` | print the plan and stop |
+| `--runs 1` | faster, and **not publishable** — one sample has no dispersion |
+| `BENCH_PRINT_ARGV=1` | print the argv it would pass, instead of running |
+| `BENCH_ROOT=<dir>` | run from a copy of the script against that repository |
 
-The cell list appears in exactly one of those. A matrix written down twice is a
-matrix that disagrees with itself, and the disagreement is silent: both copies
-keep looking right. `tests/e2e/233_bench_matrix.sh` is what keeps it that way.
+**Expect one to several hours.** Seven cells, every engine each cell lists,
+three samples, on workloads whose cold build is 30–120 seconds.
+
+### Before you publish anything from it
+
+The script checks the first of these and says so; it cannot check the rest.
+
+1. **it exited 0** — no cell failed, and nothing is pre-excluded, so a failure
+   is a real failure on *this* machine
+2. **min/max within about ±20% of the median** — wider means the machine was
+   busy, and the numbers describe that instead
+3. **a failure reproduced by hand before it is called a gap** — see §5
+
+### Driving the harness directly
+
+```bash
+BENCH=$(ls -t bench/target/*/*/bin/bench | head -1)
+
+# generated fixtures, across engines and source forms
+"$BENCH" --engines mcpp=<path-to-mcpp>,cmake,xmake,bazel \
+         --variants headers,modules,modules-impl \
+         --scenarios cold,noop,touch-hub,edit-body \
+         --compiler payload:gcc --runs 3
+
+# a real project
+"$BENCH" --project bench/projects/mcpp/mcpp-2026.8.11.3 \
+         --buildfiles bench/projects/mcpp \
+         --engines mcpp=<built>,mcpp=<released> --compiler payload:gcc \
+         --scenarios noop,touch-hub --hub src/platform/platform.cppm --runs 3
+```
+
+⚠️ **Always pass mcpp as a PATH, never as the bare name `mcpp`.** The bare name
+resolves through PATH to the xlings shim, which re-picks its version from the
+working directory — and for `--project` that directory is the measured tree,
+which carries its own pin. A whole run once reported `mcpp@2026.8.11.3` in every
+cell: the released binary, not the branch, with nothing failing to say so.
+
+Each `mcpp=<path>` labels itself from the version that binary reports, so two
+releases never collapse into one row. That is how "did this release get faster?"
+is answered — by running both, not by emulating one in the harness.
+
+### Where CI went
+
+There is no CI job for this. There was, and it measured far less than it looked
+like: 10 cells, 32 foreign-engine arms, **12 of them waived** — xmake had more
+arms waived than measured — while the job went green. On top of that a shared
+runner measures the runner (the same tree took 243s there and 79s here), and
+most of what was being waived is other people's tools rather than mcpp.
+
+`tests/e2e/230_bench_harness.sh` still runs on every PR: it builds the suite and
+checks it produces a valid report. What is not automated is the measuring.
+
+**Run the standard set before a release, and after any change that claims a
+performance effect.**
 
 ---
 
-## 0. What is pinned, and why every one of these is pinned
+## The standard data
+
+### What is pinned, and why every one of these is pinned
 
 A benchmark number is only worth the list of things that were held still while
 it was taken. Every row below was loose at some point in this suite's short
@@ -62,12 +113,13 @@ than what it said.
 | mcpp (the workload) | **2026.8.11.3** — `a749e9f` | submodule `projects/mcpp/mcpp-2026.8.11.3` |
 | xlings (combined style) | **2026.8.11.2** — `b1563fe` | submodule `projects/xlings/xlings-2026.8.11.2` |
 | xlings (split style) | **2026.8.13.1** — `f072075` | submodule `projects/xlings/xlings-2026.8.13.1` |
-| mcpp under test | the checkout | built by CI, resolved by `newest_artifact.sh` |
+| mcpp under test | the checkout | built locally; `run-standard.sh` passes its PATH |
 
 **Everything is installed by xlings**, at those exact versions, on every runner.
-`xlings install cmake@4.0.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` is
-literally what CI runs, and the job prints the resolved version of each one and
-warns loudly if it is not the pinned one.
+`xlings install cmake@4.0.2 xmake@3.1.0 bazel@9.2.0 mcpp@2026.8.11.3` installs
+the set; `run-standard.sh` refuses to start if an installed tool does not report
+the pinned version, because a tool that varies is a variable the report does not
+record and the reader cannot see.
 
 Four things this bought, each of which had already gone wrong:
 
@@ -952,25 +1004,9 @@ xmake show -P bench/projects/mcpp -t mcpp | grep 'compiler (cxx)'   # must be mc
 > g++, and the only tell was that its number landed within noise of the gcc cell.
 > That check above is not ceremony.
 
-## 10. Running
+## 10. (moved)
 
-The suite's own tests live in [`tests/`](tests/) rather than in mcpp's e2e
-directory: `bench/` is meant to be extractable into its own project, and mixing
-its tests into the host repository would put that one rename away from breaking.
-mcpp's `tests/e2e/230_bench_harness.sh` is a five-line delegator, kept so the
-harness does not silently drop out of every mcpp PR — `bench.yml` is
-workflow_dispatch-only and nothing else would run it.
-
-```bash
-cd bench && mcpp build
-./target/*/*/bin/bench --list                 # what is installed here
-./target/*/*/bin/bench --units 40 --fanin 3   # default matrix
-```
-
-CI: `.github/workflows/bench.yml`, **manual trigger only**
-(`workflow_dispatch`). A benchmark is heavy and noisy; attaching it to every PR
-would drown the signal, and no threshold assertion is made — host variance
-(heterogeneous CPUs, cloud neighbours) is larger than most real regressions.
+Running the suite is described at the top of this file.
 
 ## 11. Host record
 

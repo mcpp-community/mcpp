@@ -39,7 +39,14 @@
 #
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# BENCH_ROOT lets this be run from a COPY. Editing a bash script while it is
+# executing corrupts the running instance — bash reads the file incrementally,
+# so an edit shifts byte offsets under it, and one run ended in
+#     line 193: ather: command not found
+#     line 199: tc: unbound variable
+# That happened twice. Copy the script somewhere, point BENCH_ROOT at the
+# repository, and the original can be edited freely while it runs.
+ROOT="${BENCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MATRIX="$ROOT/bench/matrix.json"
 RUNS=3
 DRY=0
