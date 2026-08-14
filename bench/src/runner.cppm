@@ -293,6 +293,29 @@ public:
             // that crash is still undiagnosed.
             const auto crashed = platform::log_mentions(
                 job.log_path, {"PLEASE submit a bug report", "Stack dump"});
+
+            // ⚠️ A TAIL IS THE WRONG SHAPE WHEN THE TOOL IS CHATTY. Every build
+            // engine here prints a progress line per translation unit, so 20
+            // lines of tail is 20 lines of `generating.module.deps ...` and the
+            // error that actually stopped it — printed once, hundreds of lines
+            // earlier — is gone. That is not hypothetical: `xmake/clang` failed
+            // with `seed build exited 255` and the captured tail contained
+            // nothing but progress, so the cell could not be diagnosed from CI
+            // at all and cost a full matrix cycle to learn nothing.
+            //
+            // So the lines that LOOK like an error are pulled out first, from
+            // anywhere in the file, and the tail follows as context. Cheap, and
+            // it is the difference between "exited 255" and a cause.
+            if (const auto why = platform::log_grep(
+                    job.log_path,
+                    {"error:", "error :", "ERROR:", " error ", "fatal",
+                     "not found", "No such file", "cannot find", "undefined",
+                     "failed to", "Assertion", "abort"},
+                    /*max=*/12);
+                !why.empty())
+                report(std::format("--- error lines from {} ---\n{}",
+                                   job.log_path.filename().string(), why));
+
             if (const auto tail = platform::tail_of(job.log_path, crashed ? 80 : 20);
                 !tail.empty())
                 report(std::format("--- last lines of {} ---\n{}",

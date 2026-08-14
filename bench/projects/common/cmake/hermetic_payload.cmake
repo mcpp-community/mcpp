@@ -259,40 +259,55 @@ function(bench_hermetic_payload_preproject)
   if(_binutils)
     string(APPEND _add " -B${_binutils}/bin")
   endif()
-  # ⚠️ THE TEST IS "DOES IT HOLD A C RUNTIME", NOT "DOES THE DIRECTORY EXIST".
+  # ── The C runtime: FIND crt1.o, then ADD its directory. No --sysroot. ──────
   #
-  # `--sysroot` does not ADD a search path, it REPLACES gcc's default one. Point
-  # it at a directory that exists but has no libc and every link dies at the
-  # first object:
+  # ⚠️ `--sysroot` does not ADD a search path, it REPLACES gcc's default one, so
+  # pointing it anywhere that lacks a libc removes the C runtime entirely:
   #
   #     ld: cannot find crt1.o: No such file or directory
   #     ld: cannot find crti.o: No such file or directory
   #     ld: cannot find -lm: No such file or directory
   #
-  # which is a message about the C runtime and says nothing about the flag that
-  # caused it. `IS_DIRECTORY` passed on the runners because mcpp creates
-  # `registry/subos/default` whether or not anything has been installed into it,
-  # so all five cmake cells of the linux/gcc bench failed at cmake's own compiler
-  # probe — before a single line of the project was configured.
+  # — a message about the C runtime that names neither the flag nor the cause.
+  # All five cmake cells of the linux/gcc bench died there, inside cmake's own
+  # compiler probe, before a line of the project was configured.
   #
-  # This repository has been bitten by the same flag before (an `install()`
-  # source package lost its libc headers exactly this way). Existence was the
-  # wrong predicate then too.
-  set(_crt "")
-  foreach(_d lib lib64 usr/lib usr/lib64 usr/lib/x86_64-linux-gnu)
-    if(EXISTS "${_sysroot}/${_d}/crt1.o")
-      set(_crt "${_sysroot}/${_d}/crt1.o")
-      break()
+  # TWO WRONG ANSWERS PRECEDED THIS ONE, and both looked right:
+  #   * `IS_DIRECTORY "${_sysroot}"` — true on the runners, because that path is
+  #     created whether or not anything was installed into it.
+  #   * then "only pass it when crt1.o is under the sysroot" — correct as far as
+  #     it went, and it changed nothing: on the runner that directory does not
+  #     exist at all, so neither branch ran, no --sysroot was passed, and the
+  #     payload gcc fell back to a built-in prefix that is not there either.
+  #     Diagnosed from the CI log by the ABSENCE of both `--sysroot=` on the
+  #     command line and the STATUS line the second branch would have printed.
+  #
+  # The stable anchor is the PACKAGE. `subos/default/lib/crt1.o` is a symlink
+  # into `xpkgs/xim-x-glibc/<ver>/lib/`, and xpkgs is where the compiler itself
+  # was found, so it exists by construction. `-B` (startup files) and `-L`
+  # (`-lm`) ADD to the search rather than replacing it, which is the property
+  # this needed all along.
+  set(_crtdir "")
+  bench_newest_package("${_xpkgs}" "xim-x-glibc" _glibc)
+  foreach(_root "${_sysroot}" "${_glibc}")
+    if(_crtdir OR NOT _root)
+      continue()
     endif()
+    foreach(_d lib lib64 usr/lib usr/lib64 usr/lib/x86_64-linux-gnu)
+      if(EXISTS "${_root}/${_d}/crt1.o")
+        set(_crtdir "${_root}/${_d}")
+        break()
+      endif()
+    endforeach()
   endforeach()
-  if(_crt)
-    string(APPEND _add " --sysroot=${_sysroot}")
-  elseif(IS_DIRECTORY "${_sysroot}")
-    # Say so. A payload build that silently falls back to the host's libc is a
-    # different measurement from the one this file claims to set up, and the
-    # only way to notice is if it announces itself.
-    message(STATUS "bench: ${_sysroot} has no crt1.o — NOT passing --sysroot; "
-                   "this arm links against the host C runtime")
+  if(_crtdir)
+    string(APPEND _add " -B${_crtdir} -L${_crtdir}")
+  else()
+    # Say so. Falling back to the host's C runtime is a different measurement
+    # from the one this file claims to set up, and the only way anyone notices
+    # is if it announces itself.
+    message(STATUS "bench: no crt1.o under ${_sysroot} or ${_glibc} — this arm "
+                   "links against the host C runtime")
   endif()
   if(_add STREQUAL "")
     return()

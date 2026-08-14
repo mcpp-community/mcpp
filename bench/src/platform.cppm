@@ -107,6 +107,40 @@ inline bool log_mentions(const std::filesystem::path& p,
     return false;
 }
 
+// The lines anywhere in `p` that look like a cause, not a progress report.
+//
+// A tail cannot answer "why did this fail" for a tool that prints a line per
+// translation unit: the error scrolled past hundreds of lines ago and the last
+// 20 are all `[ 2%]: generating.module.deps ...`. That is exactly how an
+// `xmake exited 255` cell reached CI with nothing to diagnose it by.
+//
+// Deliberately a keyword sieve rather than per-engine parsing: every engine
+// here is a different program with a different diagnostic format, and one that
+// is merely APPROXIMATELY right on all of them beats four that are exactly
+// right until a tool changes its wording. False positives cost a line of noise;
+// a false negative costs a matrix cycle.
+inline std::string log_grep(const std::filesystem::path& p,
+                            std::initializer_list<std::string_view> markers,
+                            std::size_t max = 12) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return {};
+    std::string out, line;
+    std::size_t kept = 0;
+    while (kept < max && std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        bool hit = false;
+        for (const auto m : markers)
+            if (line.find(m) != std::string::npos) { hit = true; break; }
+        if (!hit) continue;
+        // Long lines here are usually a whole compiler command line; the cause
+        // is at the front of them.
+        if (line.size() > 400) { line.resize(400); line += " …"; }
+        out += "    "; out += line; out += '\n';
+        ++kept;
+    }
+    return out;
+}
+
 inline std::string tail_of(const std::filesystem::path& p, std::size_t lines = 20) {
     std::ifstream in(p, std::ios::binary);
     if (!in) return {};
