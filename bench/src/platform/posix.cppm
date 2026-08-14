@@ -105,10 +105,32 @@ export int run_process(const std::vector<std::string>& argv,
     ::posix_spawn_file_actions_addopen(&actions, 1, log_s.c_str(), flags, 0644);
     ::posix_spawn_file_actions_adddup2(&actions, 1, 2);
 
+    // The child leads its OWN process group, so a timeout can kill everything it
+    // started rather than just the tool itself.
+    //
+    // A build engine is a process tree: ninja and a pool of compilers, bazel and
+    // a server, xmake and its own children. Killing only the direct child leaves
+    // that pool running — reparented, invisible, and still holding the CPU while
+    // the NEXT cells are being timed. A single timeout would then inflate every
+    // measurement after it, with nothing in the report to show why. That is the
+    // expensive shape: not a failure, a quietly wrong number.
+    //
+    // It must be a new group and not the harness's: `kill(-pid)` on a shared
+    // group reaches the harness too.
+    posix_spawnattr_t attr;
+    bool own_group = false;
+    if (::posix_spawnattr_init(&attr) == 0) {
+        if (::posix_spawnattr_setpgroup(&attr, 0) == 0 &&
+            ::posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP) == 0)
+            own_group = true;
+    }
+
     const unsigned long long t0 = now_ns();
     ::pid_t pid = 0;
-    const int rc = ::posix_spawnp(&pid, raw[0], &actions, nullptr, raw.data(), ::environ);
+    const int rc = ::posix_spawnp(&pid, raw[0], &actions, own_group ? &attr : nullptr,
+                                  raw.data(), ::environ);
     ::posix_spawn_file_actions_destroy(&actions);
+    ::posix_spawnattr_destroy(&attr);
     if (rc != 0) return -1;
 
     int status = 0;
@@ -134,9 +156,15 @@ export int run_process(const std::vector<std::string>& argv,
                 // SIGKILL, not SIGTERM: the thing being killed is a build tool
                 // that may have spawned a job server and a pool of compilers,
                 // and a polite signal it chooses to handle leaves the harness
-                // waiting on exactly the hang it is trying to escape. The
-                // process group would be better still, but the child was not
-                // made a group leader, so killing one would reach the harness.
+                // waiting on exactly the hang it is trying to escape.
+                //
+                // THE GROUP, not just the child — that is what the spawn above
+                // set up. `kill(-pid)` reaches the compilers the tool started;
+                // killing the tool alone leaves them running and stealing CPU
+                // from every cell measured afterwards. Falls back to the single
+                // process when the group could not be set (the flag is POSIX,
+                // but this must not depend on it succeeding).
+                if (own_group) ::kill(-pid, SIGKILL);
                 ::kill(pid, SIGKILL);
                 while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
                 if (out_wall_s)  *out_wall_s  = static_cast<double>(now_ns() - t0) / 1e9;
