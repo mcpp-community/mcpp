@@ -316,9 +316,16 @@ public:
             // it is the difference between "exited 255" and a cause.
             if (const auto why = platform::log_grep(
                     job.log_path,
-                    {"error:", "error :", "ERROR:", " error ", "fatal",
-                     "not found", "No such file", "cannot find", "undefined",
-                     "failed to", "Assertion", "abort"},
+                    // ⚠️ EVERY ENGINE SPELLS IT DIFFERENTLY, and the first
+                    // version of this list only knew the compiler's spelling.
+                    // cmake writes `CMake Error in CMakeLists.txt:` — no colon
+                    // after "Error", capital E — so the very next failure it
+                    // was meant to explain slipped straight through it. That is
+                    // the sieve's own version of the bug it exists to catch.
+                    {"error:", "error :", "ERROR:", " error ", "Error in",
+                     "Error at", "Error:", "fatal", "not found", "No such file",
+                     "cannot find", "undefined", "failed to", "step failed",
+                     "requires that", "Assertion", "abort"},
                     /*max=*/12);
                 !why.empty())
                 report(std::format("--- error lines from {} ---\n{}",

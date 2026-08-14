@@ -60,6 +60,45 @@ project(mcpp CXX)
 # hermetic gcc payload ships.
 set(CMAKE_CXX_MODULE_STD 1)
 
+# ── Say whether the file that makes the line above work is actually there ────
+#
+# When it is not, CMake fails at GENERATE — after "Configuring done", so the log
+# reads as a successful configure — with
+#
+#     CMake Error in CMakeLists.txt:
+#       The "CXX_MODULE_STD" property on the target "mcpp" requires that the
+#       "__CMAKE::CXX23" target exist, but it was not provided by the toolchain.
+#       Reason:
+#         Only `libstdc++` is supported
+#
+# which names neither the file nor the directory it was looked for in, and reads
+# like a statement about the standard library rather than about a missing
+# manifest. That message stopped the linux/gcc cmake arm on CI while the same
+# compiler and the same cmake 4.0.2 configured fine on a developer box, and
+# there was no way to tell the two apart from the log.
+#
+# Not a check — this must not decide whether the build proceeds, because
+# CMake's own detection is the authority and may look somewhere this does not.
+# It exists so the next failure carries its cause.
+get_filename_component(_mcpp_cxx_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+get_filename_component(_mcpp_cxx_prefix "${_mcpp_cxx_dir}" DIRECTORY)
+set(_mcpp_std_json "")
+foreach(_d lib64 lib lib/gcc)
+  file(GLOB_RECURSE _found "${_mcpp_cxx_prefix}/${_d}/libstdc++.modules.json")
+  if(_found)
+    list(GET _found 0 _mcpp_std_json)
+    break()
+  endif()
+endforeach()
+if(_mcpp_std_json)
+  message(STATUS "bench: std module manifest: ${_mcpp_std_json}")
+else()
+  message(STATUS "bench: NO libstdc++.modules.json under ${_mcpp_cxx_prefix} — "
+                 "CMAKE_CXX_MODULE_STD cannot work and generate will fail with "
+                 "\"__CMAKE::CXX23 ... not provided by the toolchain\"; the gcc "
+                 "payload on this machine does not ship it")
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
