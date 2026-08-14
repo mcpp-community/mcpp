@@ -68,7 +68,38 @@ public:
         };
         if (const auto cxx = resolve_cxx(job.compiler); !cxx.empty())
             argv.push_back(std::format("-DCMAKE_CXX_COMPILER={}", cxx));
-        return platform::run(argv, {}, job.log_path, job.timeout_s);
+        auto r = platform::run(argv, {}, job.log_path, job.timeout_s);
+
+        // ── When configure fails, append CMake's OWN detection log ──────────
+        //
+        // CMake's user-facing errors about the standard library are summaries:
+        //
+        //     The "CXX_MODULE_STD" property ... requires that the
+        //     "__CMAKE::CXX23" target exist, but it was not provided by the
+        //     toolchain.  Reason: Only `libstdc++` is supported
+        //
+        // names neither what it looked for nor what it found. Everything
+        // checkable from OUTSIDE has been checked for the linux/gcc arm and it
+        // all agrees with a machine where the same cmake and the same gcc
+        // succeed: the manifest is present on the runner, both sources it names
+        // are present, and the runner's exact flag shape reproduces and works
+        // locally. What is left is inside CMake's own probe, and CMake writes
+        // that down — in CMakeConfigureLog.yaml, which nobody ever reads
+        // because it lives in a build directory that CI deletes with the job.
+        //
+        // Appended to the cell's log ONLY on failure, so a green run costs
+        // nothing and a red one carries its own evidence.
+        if (!r.ok()) {
+            const auto detail = job.build_dir / "CMakeFiles" / "CMakeConfigureLog.yaml";
+            if (const auto tail = platform::tail_of(detail, 120); !tail.empty()) {
+                std::ofstream log(job.log_path, std::ios::app);
+                if (log) {
+                    log << "\n--- CMakeConfigureLog.yaml (last 120 lines) ---\n"
+                        << tail;
+                }
+            }
+        }
+        return r;
     }
 
     platform::RunResult build(const Job& job) const override {
