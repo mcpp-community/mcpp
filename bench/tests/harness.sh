@@ -54,7 +54,15 @@ echo "harness built with: $("$MCPP" --version 2>&1 | head -1) ($MCPP)"
 # name and `head -1` picks whichever the filesystem lists first — routinely a
 # stale one. That is a test exercising code that has already been replaced, with
 # no symptom at all. See .github/tools/newest_artifact.sh.
-BENCH="$REPO/bench/$(bash "$REPO/.github/tools/newest_artifact.sh" target bench)"
+#
+# ⚠️ THE NAME COMES FROM THE MANIFEST, NOT FROM THIS LINE. The harness binary was
+# renamed `bench` -> `mbench` and this kept asking for `bench`, so the test died
+# with `newest_artifact: no 'bench' under target/*/*/bin/` — a rename caught only
+# by running it, because nothing ties the two together. Reading the name out of
+# bench/mcpp.toml is what ties them.
+BENCH_NAME="$(sed -n 's/^ *name *= *"\([^"]*\)".*/\1/p' "$REPO/bench/mcpp.toml" | head -1)"
+[ -n "$BENCH_NAME" ] || { echo "FAIL: no package name in bench/mcpp.toml"; exit 1; }
+BENCH="$REPO/bench/$(bash "$REPO/.github/tools/newest_artifact.sh" target "$BENCH_NAME")"
 
 # 1. Availability listing must classify mcpp itself as present. If this fails the
 #    probe path is broken, and every later cell would be reported `unavailable`
