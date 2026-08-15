@@ -23,14 +23,32 @@ which the report records in its run facts.
 | **OS** | `linux` `macos` `windows` | the runner selects the cells for the machine it is on |
 | **Toolchain** | `gcc` `clang` `msvc` | one cell each — `--compiler` |
 | **Build tool** | `mcpp` `cmake` `xmake` `bazel` | swept inside a job — `--engines` |
+| **Engine options** | `mcpp[schedule=on]` | an ARM of an engine, not a fifth engine — `--engines` |
 | **Project** | `fixture` `mcpp-2026.8.11.3` `xlings-2026.8.11.2` `xlings-2026.8.13.1` | one cell each — `--project` |
 | **Variant** | `headers` `modules` `modules-impl` | swept inside a job — `--variants` |
 | **Scenario** | `cold` `noop` `touch-hub` `touch-leaf` `edit-body` `edit-comment` | swept inside a job — `--scenarios` |
 
-**One cell = one (OS, toolchain, project).** The remaining three axes are
-swept inside it, because they share a checkout, a toolchain install and a
-generated fixture. Promoting them to jobs would multiply runner minutes without
-adding a single measurement.
+**One cell = one (OS, toolchain, project).** The remaining axes are swept
+inside it, because they share a checkout, a toolchain install and a generated
+fixture. Promoting them to jobs would multiply runner minutes without adding a
+single measurement.
+
+**An engine may appear more than once in the same cell**, and a row is named by
+what the binary reports rather than by the token that asked for it:
+
+| spec | row |
+|---|---|
+| `mcpp=<the build under test>` | `mcpp@2026.8.13.1` |
+| `mcpp=<the released reference>` | `mcpp@2026.8.11.3` |
+| `mcpp[schedule=on]=<the build under test>` | `mcpp@2026.8.13.1+schedule=on` |
+
+That is how "did this release get faster?" and "what does the opt-in key buy?"
+are answered — by running each and letting them label themselves, never by one
+arm standing in for another. `[...]` is an option list understood by the
+registry, which rejects a spec whose option it does not know rather than
+silently ignoring it; `run-standard.sh` gives the reference arm to the bare
+token only, because the released binary predates the fix in README §8b and
+measuring its scheduler would read as a regression in the feature.
 
 ### Everything the number depends on is pinned
 
