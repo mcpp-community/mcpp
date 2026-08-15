@@ -15,6 +15,27 @@ default-profile = "release"
 # nlohmann/json.hpp lives in src/libs/json/; expose it to the global
 # module fragment `#include <json.hpp>` in src/libs/json.cppm.
 include_dirs = ["src/libs/json"]
+# Split the module edge: importers start when the BMI is published rather than
+# when the compiler exits. See docs/05-mcpp-toml.md.
+#
+# ON HERE, `auto` (= off) EVERYWHERE ELSE — deliberately, and this is the point
+# of turning it on at all. The key stays opt-in until it has been through CI on
+# every platform, and nothing was exercising it, so it could never accumulate
+# the evidence needed to change that. mcpp's own build is where that evidence
+# is cheapest to get: whatever this schedule produces then has to pass 83 unit
+# tests and the full e2e suite, on Linux (detach-codegen, gcc) and on macOS and
+# Windows (two-phase, clang) — three platforms, every PR.
+#
+# ⚠️ WHY THAT SAFETY NET MATTERS HERE. A scheduling bug does not fail loudly; it
+# stops rebuilding something. The one that already happened (§8b in
+# bench/README.md) left the object edge with the BMI as its only input, so
+# restat cleaned the object and ninja exited while the compiler was still
+# running — a binary that was silently short. Running the produced binary
+# against its own test suite is what turns that class of defect into a red job
+# instead of a bad release.
+#
+# Revert is this one line if anything here is ever unexplained.
+bmi_schedule = "on"
 
 [toolchain]
 default = "gcc@16.1.0"
