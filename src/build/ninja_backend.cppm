@@ -768,6 +768,24 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             "  rspfile_content = $cxx $local_includes $cxxflags $unit_cxxflags{}{} {} $in {}$obj_out\n",
             module_output_flag, module_src_flags,
             dial.compileOnly, dial.outputObjPrefix));
+        // ⚠️ THE SUPERVISOR OUTLIVES THIS EDGE, THE RSPFILE DOES NOT.
+        //
+        // ninja DELETES `$out.cmd` as soon as the edge finishes, and the edge
+        // finishes when `bmi-compile` returns — which is the moment the BMI is
+        // published, with the compiler still running under a detached
+        // supervisor that was handed this same path.
+        //
+        // It is safe because of an ordering worth writing down: the supervisor
+        // reads the file at start-up, and the BMI cannot appear until the
+        // compiler it launched has produced one, so every SUCCESSFUL exit from
+        // phase 1 is already downstream of that read.
+        //
+        // Phase 1 also has two exits that do NOT require the compiler to have
+        // started — the no-supervisor grace and the hard limit. Both fail the
+        // edge, so ninja does not proceed and a supervisor arriving afterwards
+        // to a deleted file changes nothing. If a phase-1 exit is ever added
+        // that reports SUCCESS without the compiler having started, this stops
+        // holding: pass the command by value at that point, not by path.
         // The depfile is ADOPTED from the P1689 scan, not produced here.
         // MEASURED: the compiler's own -MMD file lands at 16.39s of a 16.55s
         // compile — AFTER the BMI is published at 2.36s — so this edge is over

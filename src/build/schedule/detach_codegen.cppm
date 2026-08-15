@@ -175,17 +175,40 @@ void write_rc(const std::filesystem::path& slot, int rc) {
 }
 
 // A counting semaphore made of directories. `mkdir` is atomic on every
-// filesystem mcpp targets, it needs no daemon and no shared memory, and a
-// crashed holder leaves a directory that is trivially reclaimable. A holder
-// never waits for another token, so this cannot deadlock.
+// filesystem mcpp targets, it needs no daemon and no shared memory. A holder
+// never waits for another token, so this cannot deadlock between holders.
+//
+// ⚠️ WHAT IT CAN DO IS OUTLIVE ITS HOLDER. A token is released by the
+// supervisor that took it; a supervisor killed before its cleanup (Ctrl-C, the
+// OOM killer, a reboot) leaves the directory behind, and nothing in this file
+// ever reclaims one. The reclaim is therefore done ONCE PER BUILD, in prepare,
+// before ninja is spawned — the only moment at which no token can have a live
+// owner. Doing it here instead would race every other compiler in the build.
+//
+// The wait is bounded anyway. If a token is somehow still unreleasable, the
+// honest outcome is a failure that names the directory, not a build that stops
+// producing output and never returns.
 std::filesystem::path acquire_token(const std::filesystem::path& dir, int cap) {
     if (dir.empty() || cap <= 0) return {};
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
+    const auto started = std::chrono::steady_clock::now();
+    constexpr auto kLimit = std::chrono::hours(2);
     for (;;) {
         for (int i = 0; i < cap; ++i) {
             const auto tok = dir / std::to_string(i);
             if (std::filesystem::create_directory(tok, ec) && !ec) return tok;
+        }
+        if (std::chrono::steady_clock::now() - started > kLimit) {
+            // Proceeds WITHOUT the cap rather than failing: the semaphore bounds
+            // memory pressure, it is not a correctness property, so an unbounded
+            // compile is a worse build and a failed one is no build at all.
+            std::println(std::cerr,
+                         "mcpp: no compiler slot became free in 2h — all {} tokens in {} "
+                         "are held by processes that are gone. Continuing without the "
+                         "concurrency cap; remove that directory to restore it.",
+                         cap, dir.string());
+            return {};
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -453,6 +476,21 @@ int compile_release_at_bmi(const CompileRequest& req) {
     if (!token.empty()) { sup.push_back("--token"); sup.push_back(token.string()); }
     if (!spawn_detached(sup)) return 2;
 
+    // BOUNDED, for the same reason `await_unit` is — and this loop waits on the
+    // SAME supervisor. The spawn succeeding only says a process was created; if
+    // it then dies without writing `<slot>.rc` (the OOM killer is the realistic
+    // one here, since this strategy deliberately runs ninja at 6x the compiler
+    // cap and each module compile peaks near a gigabyte), neither exit below can
+    // ever be taken and the build hangs forever at 2 ms per poll with nothing on
+    // stdout to say what it is waiting for.
+    //
+    // Bounding phase 2 and not phase 1 left the hang reachable from the earlier
+    // half of the same mechanism.
+    using clock = std::chrono::steady_clock;
+    const auto  started            = clock::now();
+    constexpr auto kNoSupervisorGrace = std::chrono::seconds(10);
+    constexpr auto kHardLimit         = std::chrono::hours(2);
+
     for (;;) {
         // Published = the file's identity is no longer the one we snapshotted.
         // For a unit with no previous BMI that reduces to "it now exists".
@@ -492,6 +530,26 @@ int compile_release_at_bmi(const CompileRequest& req) {
             }
             return *rc;
         }
+        const auto waited = clock::now() - started;
+        // No log file means no supervisor ever opened one. Distinguished from
+        // the hard limit because the two need different advice: this one is
+        // "the process is not there", not "it is taking too long".
+        if (!file_exists(suffixed(req.slot, ".log")) && waited > kNoSupervisorGrace) {
+            std::println(std::cerr,
+                         "mcpp: the compiler supervisor for {} never started "
+                         "(no log after {}s) — restoring the previous BMI",
+                         req.slot.string(),
+                         std::chrono::duration_cast<std::chrono::seconds>(waited).count());
+            restore_backup(req.bmi);
+            return 1;
+        }
+        if (waited > kHardLimit) {
+            std::println(std::cerr,
+                         "mcpp: timed out waiting for {} to publish its BMI",
+                         req.slot.string());
+            restore_backup(req.bmi);
+            return 1;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 }
@@ -499,6 +557,22 @@ int compile_release_at_bmi(const CompileRequest& req) {
 int supervise(const std::filesystem::path& slot,
               const std::filesystem::path& semaphoreToken,
               std::string_view command) {
+    // ⚠️ EVERY EXIT FROM HERE MUST LEAVE AN `.rc`, INCLUDING THE ONES THAT DO
+    // NOT RUN A COMPILER. Phase 1 and phase 2 both wait on that file; a
+    // supervisor that bails without writing one is indistinguishable from one
+    // that was never started, and both waiters can only end on a timeout. The
+    // caller used to return 2 for an unreadable command file before reaching
+    // this function, which is precisely that case.
+    if (command.empty()) {
+        std::println(std::cerr, "mcpp: bmi-supervise got an empty command for {}",
+                     slot.string());
+        if (!semaphoreToken.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(semaphoreToken, ec);
+        }
+        write_rc(slot, 2);
+        return 0;
+    }
     const int rc = run_to_completion(command, suffixed(slot, ".log"));
     if (!semaphoreToken.empty()) {
         std::error_code ec;

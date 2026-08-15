@@ -1,0 +1,7 @@
+payload: payload:gcc → /home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++
+run id : 3b0f60c5 (fresh)
+host   : linux x86_64 · 13th Gen Intel(R) Core(TM) i9-13900K · 32 logical / 24 physical (heterogeneous)
+project: /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/xlings/xlings-2026.8.13.1 (measured in place)
+
+[    0.0s] mcpp@2026.8.13.1/gcc/release/cold/xlings-2026.8.13.1/modules-impl  configure
+[    0.0s] mcpp@2026.8.13.1/gcc/release/cold/xlings-2026.8.13.1/modules-impl  seed build

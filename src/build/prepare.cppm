@@ -40,6 +40,7 @@ import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
+import mcpp.platform.capacity;   // the host fallback handed to schedule::decide
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
@@ -5021,12 +5022,20 @@ prepare_build(bool print_fingerprint,
             mcpp::build::schedule::resolve_jobs(*m, [](std::string_view bad) {
                 mcpp::ui::warning(std::format(
                     "ignoring invalid job count '{}' (expected a positive number or 'auto')", bad));
-            }));
+            }),
+            // What this machine would pick if asked. Impure, so it is resolved
+            // here and handed to the pure `decide`. Only DetachCodegen uses it,
+            // and only when the user gave no job count — without it that
+            // strategy ships `sched_cap = 0`, which disables the semaphore that
+            // is its ONLY bound on how many compilers run at once.
+            mcpp::platform::capacity::recommended_jobs(
+                mcpp::platform::capacity::host_capacity()));
         ctx.plan.scheduleTag         = std::string(mcpp::build::schedule::to_string(decision.strategy));
         ctx.plan.scheduleNinjaJobs   = decision.ninjaJobs;
         ctx.plan.scheduleCompilerCap = decision.compilerCap;
         mcpp::log::verbose("build", std::format("schedule: {} — {}",
                                                 ctx.plan.scheduleTag, decision.reason));
+
     }
     ctx.plan.runtimeBinding = runtimeBindingSnapshot;
     mcpp::build::merge_runtime_binding_contract(

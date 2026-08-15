@@ -548,7 +548,14 @@ export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const std::filesystem::path slot{opt_value(parsed, "slot")};
     const std::filesystem::path token{opt_value(parsed, "token")};
     const auto command = read_command_file(std::filesystem::path{opt_value(parsed, "command-file")});
-    if (slot.empty() || command.empty()) return 2;
+    // Only `--slot` is checked here. An empty COMMAND is handed to supervise()
+    // on purpose: it is the one place that can record the failure in the file
+    // both waiters are polling. Returning early instead left them waiting on an
+    // `.rc` that nobody would ever write.
+    if (slot.empty()) {
+        std::println(stderr, "error: bmi-supervise needs --slot");
+        return 2;
+    }
     return mcpp::build::schedule::detach::supervise(slot, token, command);
 }
 

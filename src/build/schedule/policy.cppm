@@ -141,13 +141,29 @@ int resolve_jobs(const manifest::Manifest& m,
                  const std::function<void(std::string_view)>& onInvalid = {});
 
 // `requested` is the user's switch: "auto" (default), "on", "off". `hostJobs` is
-// the already-resolved parallelism (`--jobs`, `[build] jobs`, or the backend
-// default), i.e. how many compilers this machine should run at once.
-Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int hostJobs);
+// the already-resolved parallelism (`--jobs` or `[build] jobs`), or 0 meaning
+// "the user said nothing, leave the backend's own default".
+//
+// `autoJobs` is what this machine would choose if asked — `recommended_jobs`
+// against the live host. Computed by the CALLER so `decide` stays pure, and
+// needed because 0 is not a usable answer for every strategy:
+//
+// ⚠️ UNDER DetachCodegen, `hostJobs == 0` MEANS NO BOUND AT ALL. A detached
+// compiler stops holding a ninja slot the moment it publishes its BMI, so
+// ninja's -j is no longer a limit on how many compilers are running — the
+// semaphore is. A cap of 0 disables the semaphore (`acquire_token` returns
+// immediately), and the graph then goes out with `sched_cap = 0`: ninja keeps
+// starting compiles as fast as BMIs appear, with nothing counting them. That is
+// hazard 2 in detach_codegen, and it was live in the DEFAULT configuration —
+// nobody passing `--jobs` got any bound, on a workload whose single compile
+// peaks near a gigabyte.
+Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int hostJobs,
+                int autoJobs = 0);
 
 // ---------------------------------------------------------------------------
 
-Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int hostJobs) {
+Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int hostJobs,
+                int autoJobs) {
     Decision d;
     const int cap = hostJobs > 0 ? hostJobs : 0;
 
@@ -182,7 +198,17 @@ Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int 
             d.strategy = Strategy::DetachCodegen;
             d.reason = "gcc: publishes the BMI with rename() at ~22% of the "
                        "compile, so importers can start before code generation";
-            d.compilerCap = cap;
+            // The semaphore IS the bound here, so it must exist. Falling back to
+            // what this machine would pick keeps the default configuration
+            // bounded; `--jobs` still wins when it is given. Only if the caller
+            // supplied no fallback either does this end up unbounded, and then
+            // the reason says so rather than leaving it to be discovered from a
+            // `sched_cap = 0` in a generated file.
+            const int effective = cap > 0 ? cap : autoJobs;
+            if (effective <= 0)
+                d.reason += " — WARNING: no compiler cap could be resolved, so "
+                            "concurrency is bounded by nothing; pass --jobs";
+            d.compilerCap = effective;
             // HAZARD 2. 6x is empirical: the prototype starved at 1x and was
             // saturated well before 6x (measured -j192 against a cap of 32).
             //
@@ -193,7 +219,7 @@ Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int 
             // negative `-j` handed to ninja is one of the *better* outcomes.
             // 4096 is far above any real machine and far below the overflow.
             constexpr int kMaxCap = 4096;
-            const int bounded = cap > kMaxCap ? kMaxCap : cap;
+            const int bounded = effective > kMaxCap ? kMaxCap : effective;
             d.ninjaJobs = bounded > 0 ? bounded * 6 : 0;
             return d;
         }

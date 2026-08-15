@@ -1078,10 +1078,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     //
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
     static constexpr std::string_view kKnownBuildKeys[] = {
-        "allow_host_libs", "build_program_timeout", "c_standard", "cache",
-        "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
+        "allow_host_libs", "bmi_schedule", "build_program_timeout", "c_standard",
+        "cache", "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
         "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
-        "jobs", "ldflags", "schedule", "macos_deployment_target", "module_extensions", "profile",
+        "jobs", "ldflags", "macos_deployment_target", "module_extensions", "profile",
         "sources", "static_stdlib", "target",
     };
     if (auto* bt = doc->get_table("build")) {
@@ -1089,13 +1089,26 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             bool known = false;
             for (auto k : kKnownBuildKeys) if (key == k) { known = true; break; }
             if (!known) {
+                // ⚠️ THE LIST IN THE MESSAGE IS THE SAME LIST. It used to be a
+                // THIRD hand-written copy and had already drifted from both
+                // others: it named neither `jobs` nor `bmi_schedule`, while
+                // `kKnownBuildKeys` carried a `schedule` that nothing reads and
+                // omitted the `bmi_schedule` the parser actually looks for.
+                //
+                // The user-visible result was the worst possible one: writing
+                // the documented `bmi_schedule = "on"` produced
+                //   [build] has unsupported key 'bmi_schedule' (ignored)
+                // which is FALSE — it is read a few lines above — so the only
+                // way to turn the feature on told you it had been ignored,
+                // while the typo `schedule` was accepted in silence.
+                std::string supported;
+                for (auto k : kKnownBuildKeys) {
+                    if (!supported.empty()) supported += ", ";
+                    supported += k;
+                }
                 m.schemaWarnings.push_back(std::format(
-                    "[build] has unsupported key '{}' (ignored). Supported keys: "
-                    "sources, module_extensions, cflags, cxxflags, ldflags, "
-                    "defines, flags, include_dirs, include_dirs_after, "
-                    "dialect_cxxflags, c_standard, target, static_stdlib, "
-                    "cxx_runtime, allow_host_libs, cache, profile, "
-                    "build_program_timeout, macos_deployment_target.", key));
+                    "[build] has unsupported key '{}' (ignored). Supported keys: {}.",
+                    key, supported));
             }
         }
     }

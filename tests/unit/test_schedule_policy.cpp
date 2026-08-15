@@ -122,6 +122,40 @@ TEST(SchedulePolicy, ZeroJobsStaysZeroRatherThanBecomingNonsense) {
     const auto d = decide(with(CompilerId::GCC), "on", 0);
     EXPECT_EQ(d.compilerCap, 0);
     EXPECT_EQ(d.ninjaJobs, 0);
+    // ...and it must SAY so. Under detach-codegen a cap of 0 disables the
+    // semaphore, which is the only bound on how many compilers run at once, so
+    // this state is not a neutral default — it is unbounded concurrency.
+    EXPECT_NE(d.reason.find("bounded by nothing"), std::string::npos)
+        << "a zero cap silently means no bound at all: " << d.reason;
+}
+
+// ⚠️ THE DEFAULT CONFIGURATION MUST STILL BE BOUNDED.
+//
+// `resolve_jobs` returns 0 when the user passed neither `--jobs` nor
+// `[build] jobs` — "say nothing, leave the backend's default". For every other
+// strategy that is fine, because ninja's -j is a real bound. Under
+// DetachCodegen it is NOT: a compiler stops holding its ninja slot the moment
+// it publishes a BMI, so the semaphore is the only counter, and a cap of 0
+// turns `acquire_token` into a no-op.
+//
+// This shipped: a plain `mcpp build` with `bmi_schedule = "on"` generated
+// `sched_cap = 0`, i.e. ninja starting compiles as fast as BMIs appeared with
+// nothing limiting them, on a workload whose single compile peaks near a
+// gigabyte. The caller now resolves what the host would pick and hands it in.
+TEST(SchedulePolicy, DetachCodegenFallsBackToTheHostWhenNoJobCountWasGiven) {
+    const auto d = decide(with(CompilerId::GCC), "on", /*hostJobs=*/0, /*autoJobs=*/24);
+    EXPECT_EQ(d.strategy, Strategy::DetachCodegen);
+    EXPECT_EQ(d.compilerCap, 24) << "the semaphore would be disabled";
+    EXPECT_GT(d.ninjaJobs, d.compilerCap) << "hazard 2: -j must exceed the cap";
+
+    // An explicit job count still wins over the fallback.
+    const auto e = decide(with(CompilerId::GCC), "on", /*hostJobs=*/8, /*autoJobs=*/24);
+    EXPECT_EQ(e.compilerCap, 8);
+
+    // The fallback is only for the strategy that needs it; two-phase uses
+    // ordinary edges, where ninja's -j is already the bound.
+    const auto c = decide(with(CompilerId::Clang), "on", /*hostJobs=*/0, /*autoJobs=*/24);
+    EXPECT_EQ(c.ninjaJobs, 0) << "clang must still defer to the backend default";
 }
 
 // `auto` is bounded by recommended_jobs' ceiling of 64, but `--jobs N` is only

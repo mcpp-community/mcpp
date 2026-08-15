@@ -1,0 +1,153 @@
+payload: payload:gcc → /home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++
+run id : 4e58a816 (fresh)
+host   : linux x86_64 · 13th Gen Intel(R) Core(TM) i9-13900K · 32 logical / 24 physical (heterogeneous)
+fixture: 20 units, fanin 3, weight 4
+
+[    0.0s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/headers  configure
+[    0.0s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/headers  seed build
+[    1.3s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/headers  run 1/3
+[    2.6s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/headers  run 2/3
+[    3.9s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/headers  run 3/3
+mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/headers     1.31s  (min 1.28 / max 1.33, n=3)
+[    5.3s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/headers  configure
+[    5.3s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/headers  seed build
+[    5.5s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/headers  run 1/3
+[    5.6s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/headers  run 2/3
+[    5.8s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/headers  run 3/3
+mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/headers     0.16s  (min 0.16 / max 0.18, n=3)
+[    6.0s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/headers  configure
+[    6.0s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/headers  seed build
+[    6.1s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/headers  run 1/3
+[    7.5s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/headers  run 2/3
+[    8.8s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/headers  run 3/3
+mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/headers     1.30s  (min 1.30 / max 1.35, n=3)
+[   10.1s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/headers  configure
+[   10.1s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/headers  seed build
+[   10.3s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/headers  run 1/3
+[   11.0s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/headers  run 2/3
+[   11.8s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/headers  run 3/3
+mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/headers     0.78s  (min 0.78 / max 0.78, n=3)
+[   12.6s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/headers  configure
+[   12.6s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/headers  seed build
+[   12.8s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/headers  run 1/3
+[   13.5s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/headers  run 2/3
+[   14.3s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/headers  run 3/3
+mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/headers     0.78s  (min 0.78 / max 0.80, n=3)
+[   15.1s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/headers  configure
+[   15.1s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/headers  seed build
+[   15.9s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/headers  run 1/3
+[   17.2s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/headers  run 2/3
+[   18.4s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/headers  run 3/3
+mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/headers     1.26s  (min 1.24 / max 1.29, n=3)
+[   19.7s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules  configure
+[   19.7s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules  seed build
+[   37.9s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules  run 1/3
+[   56.6s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules  run 2/3
+[   75.1s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules    18.51s  (min 17.92 / max 18.70, n=3)
+[   93.0s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules  configure
+[   93.0s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules  seed build
+[   93.2s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules  run 1/3
+[   93.4s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules  run 2/3
+[   93.6s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules     0.18s  (min 0.16 / max 0.18, n=3)
+[   93.7s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules  configure
+[   93.7s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules  seed build
+[   93.9s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules  run 1/3
+[   94.8s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules  run 2/3
+[   95.8s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules     0.93s  (min 0.91 / max 0.94, n=3)
+[   96.7s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules  configure
+[   96.7s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules  seed build
+[   96.9s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules  run 1/3
+[   98.2s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules  run 2/3
+[   99.7s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules     1.40s  (min 1.39 / max 1.41, n=3)
+[  101.1s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules  configure
+[  101.1s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules  seed build
+[  101.2s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules  run 1/3
+[  102.2s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules  run 2/3
+[  103.1s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules     0.94s  (min 0.92 / max 0.96, n=3)
+[  104.1s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules  configure
+[  104.1s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules  seed build
+[  105.0s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules  run 1/3
+[  105.9s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules  run 2/3
+[  106.9s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules     0.92s  (min 0.92 / max 0.92, n=3)
+[  107.8s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules-impl  configure
+[  107.8s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules-impl  seed build
+[  113.2s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules-impl  run 1/3
+[  118.6s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules-impl  run 2/3
+[  123.9s] mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules-impl  run 3/3
+mcpp@2026.8.13.1/gcc/release/cold/synth-20x3/modules-impl     5.35s  (min 5.30 / max 5.36, n=3)
+[  129.2s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules-impl  configure
+[  129.2s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules-impl  seed build
+[  129.4s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules-impl  run 1/3
+[  129.6s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules-impl  run 2/3
+[  129.7s] mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules-impl  run 3/3
+mcpp@2026.8.13.1/gcc/release/noop/synth-20x3/modules-impl     0.18s  (min 0.16 / max 0.18, n=3)
+[  129.9s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules-impl  configure
+[  129.9s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules-impl  seed build
+[  130.1s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules-impl  run 1/3
+[  130.6s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules-impl  run 2/3
+[  131.1s] mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules-impl  run 3/3
+mcpp@2026.8.13.1/gcc/release/touch-hub/synth-20x3/modules-impl     0.48s  (min 0.48 / max 0.50, n=3)
+[  131.6s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules-impl  configure
+[  131.6s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules-impl  seed build
+[  131.7s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules-impl  run 1/3
+[  132.2s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules-impl  run 2/3
+[  132.7s] mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules-impl  run 3/3
+mcpp@2026.8.13.1/gcc/release/touch-leaf/synth-20x3/modules-impl     0.48s  (min 0.46 / max 0.48, n=3)
+[  133.2s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules-impl  configure
+[  133.2s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules-impl  seed build
+[  133.4s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules-impl  run 1/3
+[  134.2s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules-impl  run 2/3
+[  134.9s] mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules-impl  run 3/3
+mcpp@2026.8.13.1/gcc/release/edit-body/synth-20x3/modules-impl     0.78s  (min 0.76 / max 0.80, n=3)
+[  135.7s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules-impl  configure
+[  135.7s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules-impl  seed build
+[  136.5s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules-impl  run 1/3
+[  137.0s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules-impl  run 2/3
+[  137.5s] mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules-impl  run 3/3
+mcpp@2026.8.13.1/gcc/release/edit-comment/synth-20x3/modules-impl     0.48s  (min 0.48 / max 0.52, n=3)
+[  138.0s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/headers  configure
+[  138.0s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/headers  seed build
+[  139.6s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/headers  run 1/3
+[  141.0s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/headers  run 2/3
+[  142.3s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/headers  run 3/3
+mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/headers     1.39s  (min 1.34 / max 1.49, n=3)
+[  143.8s] mcpp@2026.8.11.3/gcc/release/noop/synth-20x3/headers  configure
+[  143.8s] mcpp@2026.8.11.3/gcc/release/noop/synth-20x3/headers  seed build
+[  144.0s] mcpp@2026.8.11.3/gcc/release/noop/synth-20x3/headers  run 1/3
+[  144.2s] mcpp@2026.8.11.3/gcc/release/noop/synth-20x3/headers  run 2/3
+[  144.3s] mcpp@2026.8.11.3/gcc/release/noop/synth-20x3/headers  run 3/3
+mcpp@2026.8.11.3/gcc/release/noop/synth-20x3/headers     0.16s  (min 0.16 / max 0.16, n=3)
+[  144.5s] mcpp@2026.8.11.3/gcc/release/touch-hub/synth-20x3/headers  configure
+[  144.5s] mcpp@2026.8.11.3/gcc/release/touch-hub/synth-20x3/headers  seed build
+[  144.7s] mcpp@2026.8.11.3/gcc/release/touch-hub/synth-20x3/headers  run 1/3
+[  146.0s] mcpp@2026.8.11.3/gcc/release/touch-hub/synth-20x3/headers  run 2/3
+[  147.5s] mcpp@2026.8.11.3/gcc/release/touch-hub/synth-20x3/headers  run 3/3
+mcpp@2026.8.11.3/gcc/release/touch-hub/synth-20x3/headers     1.43s  (min 1.37 / max 1.51, n=3)
+[  149.0s] mcpp@2026.8.11.3/gcc/release/touch-leaf/synth-20x3/headers  configure
+[  149.0s] mcpp@2026.8.11.3/gcc/release/touch-leaf/synth-20x3/headers  seed build
+[  149.2s] mcpp@2026.8.11.3/gcc/release/touch-leaf/synth-20x3/headers  run 1/3
+[  150.1s] mcpp@2026.8.11.3/gcc/release/touch-leaf/synth-20x3/headers  run 2/3
+[  150.9s] mcpp@2026.8.11.3/gcc/release/touch-leaf/synth-20x3/headers  run 3/3
+mcpp@2026.8.11.3/gcc/release/touch-leaf/synth-20x3/headers     0.86s  (min 0.84 / max 0.90, n=3)
+[  151.8s] mcpp@2026.8.11.3/gcc/release/edit-body/synth-20x3/headers  configure
+[  151.8s] mcpp@2026.8.11.3/gcc/release/edit-body/synth-20x3/headers  seed build
+[  151.9s] mcpp@2026.8.11.3/gcc/release/edit-body/synth-20x3/headers  run 1/3
+[  152.8s] mcpp@2026.8.11.3/gcc/release/edit-body/synth-20x3/headers  run 2/3
+[  153.7s] mcpp@2026.8.11.3/gcc/release/edit-body/synth-20x3/headers  run 3/3
+mcpp@2026.8.11.3/gcc/release/edit-body/synth-20x3/headers     0.86s  (min 0.86 / max 0.86, n=3)
+[  154.5s] mcpp@2026.8.11.3/gcc/release/edit-comment/synth-20x3/headers  configure
+[  154.5s] mcpp@2026.8.11.3/gcc/release/edit-comment/synth-20x3/headers  seed build
+[  155.4s] mcpp@2026.8.11.3/gcc/release/edit-comment/synth-20x3/headers  run 1/3
+[  156.7s] mcpp@2026.8.11.3/gcc/release/edit-comment/synth-20x3/headers  run 2/3
+[  158.0s] mcpp@2026.8.11.3/gcc/release/edit-comment/synth-20x3/headers  run 3/3
+mcpp@2026.8.11.3/gcc/release/edit-comment/synth-20x3/headers     1.35s  (min 1.31 / max 1.39, n=3)
+[  159.4s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/modules  configure
+[  159.4s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/modules  seed build
+[  177.5s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/modules  run 1/3
+[  195.4s] mcpp@2026.8.11.3/gcc/release/cold/synth-20x3/modules  run 2/3

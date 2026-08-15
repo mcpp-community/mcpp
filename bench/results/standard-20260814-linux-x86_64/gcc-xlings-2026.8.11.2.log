@@ -1,0 +1,195 @@
+payload: payload:gcc → /home/speak/.mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++
+run id : 14a47a36 (fresh)
+host   : linux x86_64 · 13th Gen Intel(R) Core(TM) i9-13900K · 32 logical / 24 physical (heterogeneous)
+project: /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/xlings/xlings-2026.8.11.2 (measured in place)
+
+[    0.0s] mcpp@2026.8.13.1/gcc/release/cold/xlings-2026.8.11.2/modules  configure
+[    0.0s] mcpp@2026.8.13.1/gcc/release/cold/xlings-2026.8.11.2/modules  seed build
+[   95.9s] mcpp@2026.8.13.1/gcc/release/cold/xlings-2026.8.11.2/modules  run 1/3
+[  187.0s] mcpp@2026.8.13.1/gcc/release/cold/xlings-2026.8.11.2/modules  run 2/3
+[  284.1s] mcpp@2026.8.13.1/gcc/release/cold/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/cold/xlings-2026.8.11.2/modules    91.46s  (min 91.05 / max 97.01, n=3)
+[  375.6s] mcpp@2026.8.13.1/gcc/release/noop/xlings-2026.8.11.2/modules  configure
+[  375.6s] mcpp@2026.8.13.1/gcc/release/noop/xlings-2026.8.11.2/modules  seed build
+[  384.2s] mcpp@2026.8.13.1/gcc/release/noop/xlings-2026.8.11.2/modules  run 1/3
+[  384.9s] mcpp@2026.8.13.1/gcc/release/noop/xlings-2026.8.11.2/modules  run 2/3
+[  385.6s] mcpp@2026.8.13.1/gcc/release/noop/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/noop/xlings-2026.8.11.2/modules     0.72s  (min 0.72 / max 0.73, n=3)
+[  386.4s] mcpp@2026.8.13.1/gcc/release/touch-hub/xlings-2026.8.11.2/modules  configure
+[  386.4s] mcpp@2026.8.13.1/gcc/release/touch-hub/xlings-2026.8.11.2/modules  seed build
+[  387.1s] mcpp@2026.8.13.1/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 1/3
+[  388.9s] mcpp@2026.8.13.1/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 2/3
+[  390.7s] mcpp@2026.8.13.1/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/touch-hub/xlings-2026.8.11.2/modules     1.79s  (min 1.77 / max 1.79, n=3)
+[  392.4s] mcpp@2026.8.13.1/gcc/release/edit-body/xlings-2026.8.11.2/modules  configure
+[  392.4s] mcpp@2026.8.13.1/gcc/release/edit-body/xlings-2026.8.11.2/modules  seed build
+[  393.2s] mcpp@2026.8.13.1/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 1/3
+[  480.7s] mcpp@2026.8.13.1/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 2/3
+[  568.4s] mcpp@2026.8.13.1/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/edit-body/xlings-2026.8.11.2/modules    87.69s  (min 87.49 / max 94.87, n=3)
+[  663.2s] mcpp@2026.8.13.1/gcc/release/edit-comment/xlings-2026.8.11.2/modules  configure
+[  663.2s] mcpp@2026.8.13.1/gcc/release/edit-comment/xlings-2026.8.11.2/modules  seed build
+[  751.1s] mcpp@2026.8.13.1/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 1/3
+[  846.8s] mcpp@2026.8.13.1/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 2/3
+[  934.9s] mcpp@2026.8.13.1/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1/gcc/release/edit-comment/xlings-2026.8.11.2/modules    93.58s  (min 88.09 / max 95.75, n=3)
+[ 1028.5s] mcpp@2026.8.11.3/gcc/release/cold/xlings-2026.8.11.2/modules  configure
+[ 1028.5s] mcpp@2026.8.11.3/gcc/release/cold/xlings-2026.8.11.2/modules  seed build
+[ 1128.9s] mcpp@2026.8.11.3/gcc/release/cold/xlings-2026.8.11.2/modules  run 1/3
+[ 1222.9s] mcpp@2026.8.11.3/gcc/release/cold/xlings-2026.8.11.2/modules  run 2/3
+[ 1323.9s] mcpp@2026.8.11.3/gcc/release/cold/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.11.3/gcc/release/cold/xlings-2026.8.11.2/modules    93.94s  (min 92.01 / max 100.92, n=3)
+[ 1415.9s] mcpp@2026.8.11.3/gcc/release/noop/xlings-2026.8.11.2/modules  configure
+[ 1415.9s] mcpp@2026.8.11.3/gcc/release/noop/xlings-2026.8.11.2/modules  seed build
+[ 1427.7s] mcpp@2026.8.11.3/gcc/release/noop/xlings-2026.8.11.2/modules  run 1/3
+[ 1429.4s] mcpp@2026.8.11.3/gcc/release/noop/xlings-2026.8.11.2/modules  run 2/3
+[ 1431.1s] mcpp@2026.8.11.3/gcc/release/noop/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.11.3/gcc/release/noop/xlings-2026.8.11.2/modules     1.71s  (min 1.71 / max 1.71, n=3)
+[ 1432.8s] mcpp@2026.8.11.3/gcc/release/touch-hub/xlings-2026.8.11.2/modules  configure
+[ 1432.8s] mcpp@2026.8.11.3/gcc/release/touch-hub/xlings-2026.8.11.2/modules  seed build
+[ 1434.6s] mcpp@2026.8.11.3/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 1/3
+[ 1524.6s] mcpp@2026.8.11.3/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 2/3
+[ 1614.1s] mcpp@2026.8.11.3/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.11.3/gcc/release/touch-hub/xlings-2026.8.11.2/modules    90.09s  (min 89.43 / max 97.76, n=3)
+[ 1711.8s] mcpp@2026.8.11.3/gcc/release/edit-body/xlings-2026.8.11.2/modules  configure
+[ 1711.8s] mcpp@2026.8.11.3/gcc/release/edit-body/xlings-2026.8.11.2/modules  seed build
+[ 1713.5s] mcpp@2026.8.11.3/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 1/3
+[ 1802.8s] mcpp@2026.8.11.3/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 2/3
+[ 1899.7s] mcpp@2026.8.11.3/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.11.3/gcc/release/edit-body/xlings-2026.8.11.2/modules    89.36s  (min 89.30 / max 96.83, n=3)
+[ 1989.1s] mcpp@2026.8.11.3/gcc/release/edit-comment/xlings-2026.8.11.2/modules  configure
+[ 1989.1s] mcpp@2026.8.11.3/gcc/release/edit-comment/xlings-2026.8.11.2/modules  seed build
+[ 2085.5s] mcpp@2026.8.11.3/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 1/3
+[ 2174.7s] mcpp@2026.8.11.3/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 2/3
+[ 2270.8s] mcpp@2026.8.11.3/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.11.3/gcc/release/edit-comment/xlings-2026.8.11.2/modules    89.38s  (min 89.27 / max 96.10, n=3)
+[ 2360.2s] mcpp@2026.8.13.1+schedule=on/gcc/release/cold/xlings-2026.8.11.2/modules  configure
+[ 2360.2s] mcpp@2026.8.13.1+schedule=on/gcc/release/cold/xlings-2026.8.11.2/modules  seed build
+[ 2398.6s] mcpp@2026.8.13.1+schedule=on/gcc/release/cold/xlings-2026.8.11.2/modules  run 1/3
+[ 2432.0s] mcpp@2026.8.13.1+schedule=on/gcc/release/cold/xlings-2026.8.11.2/modules  run 2/3
+[ 2465.0s] mcpp@2026.8.13.1+schedule=on/gcc/release/cold/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/gcc/release/cold/xlings-2026.8.11.2/modules    33.27s  (min 33.00 / max 33.47, n=3)
+[ 2498.5s] mcpp@2026.8.13.1+schedule=on/gcc/release/noop/xlings-2026.8.11.2/modules  configure
+[ 2498.5s] mcpp@2026.8.13.1+schedule=on/gcc/release/noop/xlings-2026.8.11.2/modules  seed build
+[ 2504.0s] mcpp@2026.8.13.1+schedule=on/gcc/release/noop/xlings-2026.8.11.2/modules  run 1/3
+[ 2504.7s] mcpp@2026.8.13.1+schedule=on/gcc/release/noop/xlings-2026.8.11.2/modules  run 2/3
+[ 2505.5s] mcpp@2026.8.13.1+schedule=on/gcc/release/noop/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/gcc/release/noop/xlings-2026.8.11.2/modules     0.72s  (min 0.72 / max 0.72, n=3)
+[ 2506.2s] mcpp@2026.8.13.1+schedule=on/gcc/release/touch-hub/xlings-2026.8.11.2/modules  configure
+[ 2506.2s] mcpp@2026.8.13.1+schedule=on/gcc/release/touch-hub/xlings-2026.8.11.2/modules  seed build
+[ 2506.9s] mcpp@2026.8.13.1+schedule=on/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 1/3
+[ 2508.7s] mcpp@2026.8.13.1+schedule=on/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 2/3
+[ 2529.5s] mcpp@2026.8.13.1+schedule=on/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/gcc/release/touch-hub/xlings-2026.8.11.2/modules     1.79s  (min 1.77 / max 20.82, n=3)
+[ 2531.3s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-body/xlings-2026.8.11.2/modules  configure
+[ 2531.3s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-body/xlings-2026.8.11.2/modules  seed build
+[ 2532.0s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 1/3
+[ 2560.8s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 2/3
+[ 2590.3s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/gcc/release/edit-body/xlings-2026.8.11.2/modules    29.48s  (min 28.78 / max 29.69, n=3)
+[ 2620.0s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-comment/xlings-2026.8.11.2/modules  configure
+[ 2620.0s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-comment/xlings-2026.8.11.2/modules  seed build
+[ 2650.3s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 1/3
+[ 2685.6s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 2/3
+[ 2715.5s] mcpp@2026.8.13.1+schedule=on/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/gcc/release/edit-comment/xlings-2026.8.11.2/modules    29.90s  (min 29.86 / max 35.32, n=3)
+[ 2746.2s] cmake/gcc/release/cold/xlings-2026.8.11.2/modules  configure
+[ 2748.8s] cmake/gcc/release/cold/xlings-2026.8.11.2/modules  seed build
+[ 2858.8s] cmake/gcc/release/cold/xlings-2026.8.11.2/modules  run 1/3
+[ 2973.2s] cmake/gcc/release/cold/xlings-2026.8.11.2/modules  run 2/3
+[ 3086.4s] cmake/gcc/release/cold/xlings-2026.8.11.2/modules  run 3/3
+cmake/gcc/release/cold/xlings-2026.8.11.2/modules   113.88s  (min 112.86 / max 114.15, n=3)
+[ 3201.3s] cmake/gcc/release/noop/xlings-2026.8.11.2/modules  configure
+[ 3201.9s] cmake/gcc/release/noop/xlings-2026.8.11.2/modules  seed build
+[ 3202.3s] cmake/gcc/release/noop/xlings-2026.8.11.2/modules  run 1/3
+[ 3203.0s] cmake/gcc/release/noop/xlings-2026.8.11.2/modules  run 2/3
+[ 3203.7s] cmake/gcc/release/noop/xlings-2026.8.11.2/modules  run 3/3
+cmake/gcc/release/noop/xlings-2026.8.11.2/modules     0.36s  (min 0.36 / max 0.38, n=3)
+[ 3204.7s] cmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  configure
+[ 3205.3s] cmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  seed build
+[ 3205.7s] cmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 1/3
+[ 3302.3s] cmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 2/3
+[ 3399.8s] cmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 3/3
+cmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules    97.12s  (min 96.28 / max 97.69, n=3)
+[ 3498.2s] cmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  configure
+[ 3498.8s] cmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  seed build
+[ 3499.1s] cmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 1/3
+[ 3597.7s] cmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 2/3
+[ 3695.8s] cmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 3/3
+cmake/gcc/release/edit-body/xlings-2026.8.11.2/modules    98.23s  (min 97.75 / max 98.54, n=3)
+[ 3795.0s] cmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  configure
+[ 3795.6s] cmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  seed build
+[ 3893.3s] cmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 1/3
+[ 3992.6s] cmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 2/3
+[ 4091.8s] cmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 3/3
+cmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules    98.97s  (min 98.85 / max 100.11, n=3)
+[ 4192.7s] xmake/gcc/release/cold/xlings-2026.8.11.2/modules  configure
+[ 4196.8s] xmake/gcc/release/cold/xlings-2026.8.11.2/modules  seed build
+[ 4302.9s] xmake/gcc/release/cold/xlings-2026.8.11.2/modules  run 1/3
+[ 4408.0s] xmake/gcc/release/cold/xlings-2026.8.11.2/modules  run 2/3
+[ 4512.6s] xmake/gcc/release/cold/xlings-2026.8.11.2/modules  run 3/3
+xmake/gcc/release/cold/xlings-2026.8.11.2/modules   104.74s  (min 104.42 / max 105.80, n=3)
+[ 4618.8s] xmake/gcc/release/noop/xlings-2026.8.11.2/modules  configure
+[ 4619.1s] xmake/gcc/release/noop/xlings-2026.8.11.2/modules  seed build
+[ 4619.5s] xmake/gcc/release/noop/xlings-2026.8.11.2/modules  run 1/3
+[ 4620.2s] xmake/gcc/release/noop/xlings-2026.8.11.2/modules  run 2/3
+[ 4620.8s] xmake/gcc/release/noop/xlings-2026.8.11.2/modules  run 3/3
+xmake/gcc/release/noop/xlings-2026.8.11.2/modules     0.40s  (min 0.40 / max 0.40, n=3)
+[ 4621.6s] xmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  configure
+[ 4621.9s] xmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  seed build
+[ 4622.2s] xmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 1/3
+[ 4720.8s] xmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 2/3
+[ 4821.1s] xmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules  run 3/3
+xmake/gcc/release/touch-hub/xlings-2026.8.11.2/modules   100.12s  (min 98.32 / max 101.39, n=3)
+[ 4922.9s] xmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  configure
+[ 4923.2s] xmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  seed build
+[ 4923.6s] xmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 1/3
+[ 5024.4s] xmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 2/3
+[ 5123.6s] xmake/gcc/release/edit-body/xlings-2026.8.11.2/modules  run 3/3
+xmake/gcc/release/edit-body/xlings-2026.8.11.2/modules    99.04s  (min 98.37 / max 100.58, n=3)
+[ 5222.4s] xmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  configure
+[ 5222.7s] xmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  seed build
+[ 5322.0s] xmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 1/3
+[ 5420.6s] xmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 2/3
+[ 5519.1s] xmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules  run 3/3
+xmake/gcc/release/edit-comment/xlings-2026.8.11.2/modules    98.33s  (min 97.91 / max 98.33, n=3)
+
+=== relative to 2026.8.11.3 (>1.00 = slower than the baseline) ===
+
+-- modules / cold --
+   mcpp@2026.8.13.1          91.46s    0.97x
+   mcpp@2026.8.11.3          93.94s    1.00x   <- baseline
+   mcpp@2026.8.13.1+schedule=on    33.27s    0.35x
+   cmake                    113.88s    1.21x
+   xmake                    104.74s    1.11x
+
+-- modules / noop --
+   mcpp@2026.8.13.1           0.72s    0.42x
+   mcpp@2026.8.11.3           1.71s    1.00x   <- baseline
+   mcpp@2026.8.13.1+schedule=on     0.72s    0.42x
+   cmake                      0.36s    0.21x
+   xmake                      0.40s    0.24x
+
+-- modules / touch-hub --
+   mcpp@2026.8.13.1           1.79s    0.02x
+   mcpp@2026.8.11.3          90.09s    1.00x   <- baseline
+   mcpp@2026.8.13.1+schedule=on     1.79s    0.02x
+   cmake                     97.12s    1.08x
+   xmake                    100.12s    1.11x
+
+-- modules / edit-body --
+   mcpp@2026.8.13.1          87.69s    0.98x
+   mcpp@2026.8.11.3          89.36s    1.00x   <- baseline
+   mcpp@2026.8.13.1+schedule=on    29.48s    0.33x
+   cmake                     98.23s    1.10x
+   xmake                     99.04s    1.11x
+
+-- modules / edit-comment --
+   mcpp@2026.8.13.1          93.58s    1.05x
+   mcpp@2026.8.11.3          89.38s    1.00x   <- baseline
+   mcpp@2026.8.13.1+schedule=on    29.90s    0.33x
+   cmake                     98.97s    1.11x
+   xmake                     98.33s    1.10x
+
+report : /home/speak/workspace/github/mcpp-community/mcpp/bench/results/standard-20260814-linux-x86_64/gcc-xlings-2026.8.11.2.json
+cells  : 25 ok, 0 failed, 0 not applicable

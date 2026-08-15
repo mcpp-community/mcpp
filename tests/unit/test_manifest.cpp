@@ -3511,4 +3511,27 @@ schedule = "on"
     ASSERT_TRUE(o.has_value()) << o.error().format();
     EXPECT_TRUE(o->buildConfig.bmiSchedule.empty())
         << "the pre-rename key `schedule` is still being read";
+
+    // ⚠️ AND THE PARSER MUST NOT WARN ABOUT ITS OWN KEY.
+    //
+    // Checking only the VALUE is what let this ship broken. The rename reached
+    // the read (`build.bmi_schedule`) but not the accepted-key list, which kept
+    // the old `schedule` — so the assertions above passed while a user writing
+    // the one documented way to enable the feature got
+    //
+    //     [build] has unsupported key 'bmi_schedule' (ignored)
+    //
+    // and that message is FALSE: the value is read. The only way to turn the
+    // feature on announced that it had been ignored, and the dead `schedule`
+    // was accepted in silence. Both halves of the rename are pinned now.
+    for (const auto& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("bmi_schedule"), std::string::npos)
+            << "the parser reads `bmi_schedule` but also warns about it: " << w;
+
+    EXPECT_TRUE(std::ranges::any_of(o->schemaWarnings,
+                                    [](const std::string& w) {
+                                        return w.find("schedule") != std::string::npos;
+                                    }))
+        << "the dead key `schedule` is accepted silently — an unread key that "
+           "produces no diagnostic is a typo that costs a debugging session";
 }

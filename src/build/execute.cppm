@@ -452,6 +452,30 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         }
     }
 
+    // ⚠️ RECLAIM THE STALE CONCURRENCY TOKENS, HERE AND NOT IN prepare.
+    //
+    // detach-codegen bounds real compiler concurrency with a semaphore of
+    // directories under `<build dir>/.mcpp-sched`, released by the supervisor
+    // holding each token. A supervisor that never runs its cleanup — Ctrl-C on
+    // the build, the OOM killer, a reboot — leaves its directory behind, and
+    // nothing else deletes one. Every such event permanently lowers the cap for
+    // that build directory; after `cap` of them the next build waits for a token
+    // that can never be released and hangs with no output at all.
+    //
+    // This was first placed in prepare, beside the schedule decision, and an
+    // e2e that plants a full set of stale tokens showed it never running: an
+    // incremental build takes the project-level fast path, which replays
+    // build.ninja without re-deriving the plan. The reclaim has to sit on the
+    // path EVERY build takes, which is the line below this one.
+    //
+    // Safe here because ninja has not been spawned yet, so no token in the
+    // directory can have a live owner.
+    if (ctx.plan.scheduleTag == "detach-codegen") {
+        std::error_code semEc;
+        std::filesystem::remove_all(
+            std::filesystem::path(ctx.plan.outputDir) / ".mcpp-sched", semEc);
+    }
+
     mcpp::build::BuildOptions opts;
     opts.verbose = verbose;
     opts.parallelJobs = static_cast<std::size_t>(ctx.plan.scheduleNinjaJobs);
