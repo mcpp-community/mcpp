@@ -134,6 +134,63 @@ BENCH=$(ls -t bench/target/*/*/bin/mbench | head -1)
 
 ---
 
+## 标准数据
+
+### 这一次跑到底覆盖了什么 —— 以及没覆盖什么
+
+`bench/results/standard-20260814-linux-x86_64/` · **696 个测量点** ·
+每格 3 轮 · Linux x86_64 · i9-13900K。
+
+下表里的 `-` 表示**没测**。它不表示「不适用」,更不表示 0 —— 没有被标出来的缺口,
+读者会当成结果。
+
+| 工具链 | 工程 | 格数 | 结果 |
+|---|---|---|---|
+| gcc | `fixture` | 72 | 72 ok |
+| clang | `fixture` | 90 | 90 ok |
+| gcc | `mcpp-2026.8.11.3` | 25 | 25 ok |
+| clang | `mcpp-2026.8.11.3` | 25 | 20 ok,**5 failed**(xmake,见下) |
+| gcc | `xlings-2026.8.11.2` | 25 | 25 ok |
+| gcc | `xlings-2026.8.13.1` | - | **未测** —— 跑到这里停了 |
+| clang | `xlings-2026.8.11.2` | - | **未测** —— 跑到这里停了 |
+| macOS(全部格) | - | - | **未测** |
+| Windows(全部格) | - | - | **未测** |
+
+七格跑了五格就停:按每个点约 55 秒算,剩下两格还要约 2 小时,而它们不改变任何
+已发布的结论 —— 两种代码风格的对比在 gcc 上已经完整,clang 在 mcpp 工作负载上
+也已覆盖。**重跑 `bash bench/run-standard.sh --resume` 就能补上,且不会重复任何
+已测的点**,因为上面每一个点都在 journal 里。
+
+#### 唯一的失败,以及它为什么是「发现」而不是「缺口」
+
+`clang / mcpp-2026.8.11.3 / xmake` 五个场景全部 `seed build exited 255`。
+手工复现后根因是精确的:
+
+```
+__format/format_functions.h:99:30: error: call to implicitly-deleted default
+    constructor of 'formatter<basic_string<char>, wchar_t>'
+```
+
+而那是一个**窄**格式串。xmake 在 clang 上的默认形状是
+`--precompile` → `.pcm` → `-c .pcm`,这条链**必须**要 clang 的 **full** BMI,
+而把 full BMI 发布给 importer 会让 clang 22.1.8 编错一个下游 TU。mcpp 不受影响,
+因为它发布 reduced BMI、object 边重编源码。这是**上游**问题,已记为
+[#424](https://github.com/mcpp-community/mcpp/issues/424) —— 不是 xmake 写错了,
+也不该用 `allow_failed` 糊过去。
+
+#### 一个已声明的离群点
+
+`gcc / xlings-2026.8.11.2 / mcpp+schedule=on / touch-hub` 测到的是
+`[1.77, 20.82, 1.79]` —— 中位数 1.79s,离散度 1066%。紧接着用 8 轮重测得到
+`[1.79, 1.79, 1.79, 1.79, 1.78, 1.79, 1.81, 1.79]`,离散度 1%、没有离群点,
+所以那 20.82s 是机器噪声,不是级联抑制偶发失效。那次重测的报告就放在同一个目录:
+[`probe-touch-hub-outlier-8-samples.json`](results/standard-20260814-linux-x86_64/probe-touch-hub-outlier-8-samples.json)
+—— 关于一个已发布数字的论断,本身也必须可核。**已发布的那一格原样保留**:
+把第二次跑的样本拼进第一次跑的报告,正是这套套件绝不能做的事。那次重测是
+关于这个数字的**证据**,不是它的替代品。
+
+---
+
 ## 0. 钉住了什么，以及为什么每一条都必须钉住
 
 一个基准数字的价值，等于取它时被摁住不动的那张清单。下面每一行都曾经是松的，

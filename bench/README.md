@@ -142,6 +142,63 @@ performance effect.**
 
 ## The standard data
 
+### What this run actually covers — and what it does not
+
+`bench/results/standard-20260814-linux-x86_64/` · **696 measured samples** ·
+3 samples per cell · Linux x86_64 · i9-13900K.
+
+`-` below means **not measured**. It never means "not applicable" and never
+means zero: a gap that is not marked is a gap that gets read as a result.
+
+| toolchain | project | cells | outcome |
+|---|---|---|---|
+| gcc | `fixture` | 72 | 72 ok |
+| clang | `fixture` | 90 | 90 ok |
+| gcc | `mcpp-2026.8.11.3` | 25 | 25 ok |
+| clang | `mcpp-2026.8.11.3` | 25 | 20 ok, **5 failed** (xmake — see below) |
+| gcc | `xlings-2026.8.11.2` | 25 | 25 ok |
+| gcc | `xlings-2026.8.13.1` | - | **not measured** — the run was stopped here |
+| clang | `xlings-2026.8.11.2` | - | **not measured** — the run was stopped here |
+| macOS (all cells) | - | - | **not measured** |
+| Windows (all cells) | - | - | **not measured** |
+
+The run was stopped after five of seven cells: at ~55s per sample the remaining
+two were another ~2 hours and neither changes a published conclusion — the
+two-code-style comparison is complete on gcc, and clang is covered on the mcpp
+workload. **Re-running `bash bench/run-standard.sh --resume` fills them in
+without repeating anything**, because every sample above is journaled.
+
+#### The one failure, and why it is a finding rather than a gap
+
+`clang / mcpp-2026.8.11.3 / xmake` failed all five scenarios with
+`seed build exited 255`. Reproduced by hand, the cause is exact:
+
+```
+__format/format_functions.h:99:30: error: call to implicitly-deleted default
+    constructor of 'formatter<basic_string<char>, wchar_t>'
+```
+
+on a **narrow** format string. xmake's default shape on clang is
+`--precompile` → `.pcm` → `-c .pcm`, which requires clang's **full** BMI, and
+publishing a full BMI to importers makes clang 22.1.8 miscompile a downstream
+TU. mcpp is immune because it publishes reduced BMIs and recompiles the source
+for the object edge. This is upstream, filed as
+[#424](https://github.com/mcpp-community/mcpp/issues/424) — not something xmake
+got wrong, and not something this suite should paper over with `allow_failed`.
+
+#### One declared outlier
+
+`gcc / xlings-2026.8.11.2 / mcpp+schedule=on / touch-hub` was measured as
+`[1.77, 20.82, 1.79]` — a 1066% spread around a 1.79s median. Re-measured
+immediately afterwards at 8 samples it was
+`[1.79, 1.79, 1.79, 1.79, 1.78, 1.79, 1.81, 1.79]`, a 1% spread with no
+outlier, so the 20.82s was machine noise rather than an intermittent cascade
+failure. That probe is kept beside the run as
+[`probe-touch-hub-outlier-8-samples.json`](results/standard-20260814-linux-x86_64/probe-touch-hub-outlier-8-samples.json)
+— a claim about a published number has to be checkable too. **The published cell is left exactly as measured**: splicing a second
+run's samples into a first run's report is the one thing this suite must never
+do. The probe is evidence about the number, not a replacement for it.
+
 ### What is pinned, and why every one of these is pinned
 
 A benchmark number is only worth the list of things that were held still while
