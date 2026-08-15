@@ -27,9 +27,66 @@ import sys
 from collections import OrderedDict
 
 
+def load_journal(path):
+    """Reduce a `.mbench/<fingerprint>/journal.jsonl` to report cells.
+
+    ⚠️ WHY THIS EXISTS. The journal records one line per measured SAMPLE, but a
+    report JSON is only written when a whole CELL finishes — so an interrupted
+    run left its samples on disk with no way to look at them. 42 measured points
+    of an in-flight cell were invisible to every table in the repository while
+    sitting in a file. The design says the journal is the source of truth and the
+    report is derived from it; until this function, that was only half true.
+
+    The reduction is deliberately the same one the harness does: group by
+    (project, variant, scenario, engine), median/min/max over the samples
+    present. A partial group is reported with the count it actually has, never
+    padded — `runs` in the output is how many samples exist, not how many were
+    planned.
+    """
+    groups = OrderedDict()
+    for line in open(path, encoding="utf-8"):
+        line = line.strip()
+        if not line.startswith("{") or not line.endswith("}"):
+            continue          # a half-written last line is expected after a kill
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        key = (e.get("project", ""), e.get("variant", ""),
+               e.get("scenario", ""), e.get("engine", ""))
+        groups.setdefault(key, []).append(e)
+
+    cells = []
+    for (project, variant, scenario, engine), samples in groups.items():
+        walls = sorted(s["wall_s"] for s in samples)
+        n = len(walls)
+        failed = [s for s in samples if s.get("exit", 0) != 0]
+        cell = {
+            "engine": engine, "compiler": "", "profile": "",
+            "scenario": scenario, "fixture": project, "variant": variant,
+            "runs": n,
+            "note": "" if not failed else f"{len(failed)} of {n} samples exited non-zero",
+            "status": "ok" if not failed else "failed",
+            "samples": [{"wall_s": w} for w in walls],
+        }
+        if not failed:
+            cell["median_s"] = walls[n // 2] if n % 2 else (walls[n // 2 - 1] + walls[n // 2]) / 2
+            cell["min_s"] = walls[0]
+            cell["max_s"] = walls[-1]
+        cells.append(cell)
+    return cells
+
+
 def load(paths):
     cells, hosts = [], []
     for p in paths:
+        # A journal and a report describe the same thing at different stages;
+        # accepting both means a table can be drawn at any moment, not only
+        # after a cell completes.
+        if p.endswith(".jsonl"):
+            cells += load_journal(p)
+            hosts.append({})
+            continue
         d = json.load(open(p, encoding="utf-8"))
         cells += d["cells"]
         hosts.append(d.get("host", {}))
@@ -241,11 +298,21 @@ def main(argv):
     if not cells:
         print("no cells in those reports", file=sys.stderr)
         return 1
-    h = hosts[0]
-    print(f"host: {h.get('os')} {h.get('arch')} · {h.get('cpu_model')} · "
-          f"{h.get('logical_cores')} logical / {h.get('physical_cores')} physical"
-          f"{' (heterogeneous)' if h.get('heterogeneous') else ''}")
+    h = next((x for x in hosts if x), {})
+    if h:
+        print(f"host: {h.get('os')} {h.get('arch')} · {h.get('cpu_model')} · "
+              f"{h.get('logical_cores')} logical / {h.get('physical_cores')} physical"
+              f"{' (heterogeneous)' if h.get('heterogeneous') else ''}")
+    else:
+        # A journal records samples, not the machine — that is in the report the
+        # run writes at the end. Say so rather than printing a row of `None`,
+        # which reads like the host detection failed.
+        print("host: not recorded in a journal (see the run's report JSON)")
     print(f"baseline: {baseline}")
+    incomplete = sorted({c["runs"] for c in cells})
+    if len(incomplete) > 1:
+        print(f"⚠️  sample counts differ across cells ({incomplete}) — this is a "
+              f"PARTIAL run; a cell with fewer samples has less dispersion, not less variance")
     print(render(cells, baseline))
     return 0
 
