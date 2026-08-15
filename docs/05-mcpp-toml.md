@@ -330,6 +330,13 @@ The **compile** phase is not bounded, only the build *program*. See
 runs it. It is a **distribution** property, not a build one — it describes the
 runtime dependency set, and the flags that deliver it differ per platform.
 
+> **A target with no C++ in it has no C++ runtime contract to honour.** mcpp
+> links such a target with the C driver and leaves the C++ runtime flags off the
+> line entirely, so a pure-C shared library does not acquire a dependency on
+> `libstdc++`/`libc++` it has no use for. One C++ translation unit anywhere in
+> the target puts the whole target back on the C++ driver. This is derived from
+> the sources — there is no key for it.
+
 ```toml
 [build]
 cxx_runtime = "self-contained"          # applies to every target (the default)

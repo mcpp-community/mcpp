@@ -188,6 +188,13 @@ struct ClangDriverModel {
     static constexpr std::string_view kLinkDriverFlags =
         " -stdlib=libc++ -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
 
+    // The same selection for a link that has no C++ in it (mcpp#426). Only
+    // `-stdlib=` comes off: the compiler runtime and the unwinder are just as
+    // much a C decision, and dropping them would make a C link resolve
+    // __udivti3 differently from every other link in the same build.
+    static constexpr std::string_view kLinkDriverFlagsC =
+        " -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind";
+
     // Same, as argv tokens, WITHOUT `-stdlib=libc++`: a driver invocation that
     // both compiles and links (build.mcpp) already carries it on the compile
     // side via HostFlagOptions::clangStdlibSelect, and repeating it is noise.

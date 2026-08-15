@@ -23,6 +23,8 @@ import mcpp.toolchain.post_install;
 import mcpp.ui;
 import mcpp.log;
 import mcpp.platform.xlings;
+import mcpp.platform.xlings.runtime_selection;
+import mcpp.platform.runtime_binding;
 
 namespace mcpp::toolchain {
 
@@ -584,11 +586,38 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // Post-install fixup (patchelf / specs / cfg regeneration) — ONE
         // pipeline shared by every toolchain install path, dispatched and
         // made idempotent inside ensure_post_install_fixup.
+        //
+        // ⚠️ RESOLVE THE RUNTIME BINDING HERE, do not let the fixup guess.
+        // The fixup is a CONSUMER of RuntimeBinding (`prepare.cppm` says so
+        // where it does the same thing) and it no longer derives an identity
+        // of its own — so a caller that passes nothing gets no fixup at all.
+        // `mcpp toolchain install` is the path that needs it MOST: without
+        // the patchelf/specs wiring a fresh sandbox gcc cannot find the C
+        // library. There is no project here, so the selection is mcpp's
+        // default SubOS, which is exactly what `RuntimeSelection{}` means.
+        std::string runtimeId;
+        std::filesystem::path runtimeLibDir;
+        if (auto rb = mcpp::platform::runtime::resolve_runtime_binding(
+                mcpp::xlings::runtime::RuntimeSelection{}, {}, cfg)) {
+            runtimeId = rb->runtimeId;
+            if (!rb->libraryDirs.empty()) runtimeLibDir = rb->libraryDirs.front();
+        }   // a binding that cannot be resolved degrades below, it does not stop
+            // the install — same rule the build path follows.
+
         if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
-                cfg, payload->root, pkg); !fixed) {
+                cfg, payload->root, pkg, runtimeId, runtimeLibDir); !fixed) {
             mcpp::ui::error(std::format(
                 "post-install fixup failed: {}", fixed.error()));
             return 1;
+        } else if (!fixed->skippedReason.empty()) {
+            // The user asked for this install explicitly, so the degradation
+            // is louder here than on a build — but it is still a warning, and
+            // the install itself succeeded.
+            mcpp::ui::warning(std::format(
+                "installed, but not bound to a C runtime: {}.\n"
+                "         Run `xlings self update` to write the SubOS "
+                "description, then re-run this command to complete the wiring.",
+                fixed->skippedReason));
         }
 
         mcpp::ui::status("Installed",

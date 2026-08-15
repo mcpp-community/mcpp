@@ -257,19 +257,28 @@ for t in ("cmake", "xmake", "bazel", "gcc", "llvm"):
 if not re.match(r"^\d+(\.\d+)+$", str(m.get("reference_mcpp", ""))):
     fail.append("reference_mcpp must be an exact released version — it is the old-vs-new column")
 
-# ...and it must be the version the repository already bootstraps from.
+# ⚠️ WHAT IS DELIBERATELY *NOT* CHECKED HERE: that `reference_mcpp` equals the
+# `.xlings.json` workspace pin.
 #
-# They are the same decision written in two files: `.xlings.json` says which
-# released mcpp CI installs, and that installed binary IS the reference arm the
-# bench compares against. Let them drift and the "old" column silently becomes
-# some other release, with every ratio still looking perfectly reasonable.
-xlings_pin = os.path.join(root, ".xlings.json")
-if os.path.isfile(xlings_pin):
-    ws = json.load(open(xlings_pin, encoding="utf-8")).get("workspace", {}).get("mcpp")
-    if ws and ws != m.get("reference_mcpp"):
-        fail.append(f"reference_mcpp={m.get('reference_mcpp')} but .xlings.json bootstraps "
-                    f"mcpp {ws} — the reference arm IS the bootstrapped binary, so these "
-                    f"two must agree or the old-vs-new column compares the wrong release")
+# That check existed and was wrong. It read "the reference arm IS the binary CI
+# bootstraps", and neither half holds: the standard set runs on a developer box
+# (no workflow invokes `bench/run-standard.sh`), where `runtimedir` holds many
+# released versions at once and the arm is the one NAMED here; and the bootstrap
+# pin is a self-hosting starting point whose criterion is an upper bound, so it
+# may legitimately lag the newest release.
+#
+# The hazard it claimed to prevent — "the old column silently becomes some other
+# release" — cannot happen: `run-standard.sh` resolves the arm by exact version
+# AND requires the binary to report that version itself, printing a note and
+# dropping the column when it cannot. Drift is reported, not measured.
+#
+# What it DID do was couple a bench knob to the release pipeline: bumping the
+# bootstrap pin after a release turned every e2e shard on all three platforms
+# red, on `main`, for a file the pin has no authority over.
+#
+# The COMPILER pins below are a different matter and stay: those two files
+# decide *what gets installed* and *which path is handed to the engines*, and a
+# mismatch makes every cell fail on a missing directory.
 
 # ...and so are the COMPILER pins, for the same reason and with a worse failure.
 #

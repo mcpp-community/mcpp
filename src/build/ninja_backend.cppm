@@ -483,6 +483,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append(std::format("rcflags   ={}\n", rcf));
     }
     append(std::format("ldflags   ={}\n", flags.ld));
+    // mcpp#426: the same line for a link unit with no C++ in it. ALWAYS
+    // emitted, even when identical — `c_link` references `$c_ldflags`, and a
+    // conditional definition would make an empty link line the failure mode on
+    // exactly the toolchains where the two happen to agree.
+    append(std::format("c_ldflags ={}\n", flags.ldC));
 
     // `ar` for cxx_archive.
     if (!flags.arBinary.empty()) {
@@ -1024,6 +1029,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             link_rule("cxx_shared",
                       "$cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags",
                       "SHARED");
+            // mcpp#426: a link unit with no C++ translation unit in it is
+            // linked by the C driver. `g++` appends `-lstdc++` unconditionally,
+            // and mcpp uses `--as-needed` in exactly one place (`-latomic`), so
+            // a pure-C shared library came out with NEEDED libstdc++.so.6,
+            // libm.so.6 and libgcc_s.so.1 against zero referencing symbols.
+            // Measured with the C driver on the same object and the same
+            // flags: libc.so.6, and nothing else.
+            link_rule("c_link",
+                      "$cc $in -o $out $c_ldflags $unit_ldflags", "LINK");
+            link_rule("c_shared",
+                      "$cc -shared $in -o $out $c_ldflags $soname_flag $unit_ldflags",
+                      "SHARED");
         }
     }
 
@@ -1174,6 +1191,32 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         for (auto& o : lu.objects) {
             auto it = objectNeedsStd.find(o.generic_string());
             if (it != objectNeedsStd.end() && it->second) return true;
+        }
+        return false;
+    };
+
+    // mcpp#426: does this link unit contain any C++ at all?
+    //
+    // ⚠️ THE UNKNOWN CASE IS THE OPPOSITE OF `unit_needs_std`'s. That one treats
+    // an object it cannot find as "does not need std" — a missing `std.o` is
+    // recoverable. Here a wrong answer is an undefined-symbol link failure, and
+    // objects produced by an `action` (prepare_actions) are NOT in
+    // `plan.compileUnits` and have no declared language. Unknown ⇒ C++.
+    //
+    // No separate dependency walk is needed: a `kind = "lib"` dependency's
+    // objects are appended into `lu.objects` by `append_package_objects`, so
+    // their language is already in this table. A shared-library dependency
+    // carries its own NEEDED and does not decide this unit's driver.
+    std::unordered_map<std::string, bool> objectIsCxx;
+    for (auto& cu : plan.compileUnits)
+        objectIsCxx[cu.object.generic_string()] =
+            cu.kind == mcpp::SourceKind::ModuleInterface
+         || cu.kind == mcpp::SourceKind::Cxx;
+
+    auto unit_needs_cxx_runtime = [&](const LinkUnit& lu) {
+        for (auto& o : lu.objects) {
+            auto it = objectIsCxx.find(o.generic_string());
+            if (it == objectIsCxx.end() || it->second) return true;
         }
         return false;
     };
@@ -1688,25 +1731,34 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             ins += " " + escape_ninja_path(o);
         }
 
+        // mcpp#426. `separateLinker` (link.exe) takes no driver at all, so the
+        // question does not arise there and the msvc rules are untouched.
+        const bool cxxUnit = separateLinker || unit_needs_cxx_runtime(lu);
+        // Both std objects are C++ translation units, so a unit that takes
+        // either of them IS a C++ unit — asserted rather than assumed, because
+        // the two predicates are computed independently.
+        const bool takesStd = cxxUnit && has_std_artifacts && unit_needs_std(lu);
+        // ⚠️ `std.compat.o` had no `unit_needs_std` narrowing at all: mcpp#416
+        // fixed `std.o` and left its neighbour unconditional, which put a C++
+        // TU's global initialiser into every link unit whose toolchain merely
+        // HAD a prebuilt std.compat. Same predicate, same reason.
+        const bool takesCompat = cxxUnit && has_std_compat && unit_needs_std(lu);
+
         std::string rule;
         switch (lu.kind) {
             case LinkUnit::Binary:
             case LinkUnit::TestBinary:
-                if (has_std_artifacts && unit_needs_std(lu))
-                    ins += " " + escape_ninja_path(std_o_dst);
-                if (has_std_compat)
-                    ins += " " + escape_ninja_path(compat_o_dst);
-                rule = "cxx_link";
+                if (takesStd)    ins += " " + escape_ninja_path(std_o_dst);
+                if (takesCompat) ins += " " + escape_ninja_path(compat_o_dst);
+                rule = cxxUnit ? "cxx_link" : "c_link";
                 break;
             case LinkUnit::StaticLibrary:
-                rule = "cxx_archive";
+                rule = "cxx_archive";   // `ar`: no driver, no runtime
                 break;
             case LinkUnit::SharedLibrary:
-                if (has_std_artifacts && unit_needs_std(lu))
-                    ins += " " + escape_ninja_path(std_o_dst);
-                if (has_std_compat)
-                    ins += " " + escape_ninja_path(compat_o_dst);
-                rule = "cxx_shared";
+                if (takesStd)    ins += " " + escape_ninja_path(std_o_dst);
+                if (takesCompat) ins += " " + escape_ninja_path(compat_o_dst);
+                rule = cxxUnit ? "cxx_shared" : "c_shared";
                 break;
         }
         std::string implicit;
@@ -1743,7 +1795,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // of libX11 than it was linked against.
             mcpp::build::link_line::UnitTail tail;
             tail.dependencies = join_flags(lu.linkFlags);
-            tail.cxxRuntime   = flags.ldStdlibFor(role_of(lu.kind));
+            // mcpp#426: a link unit with no C++ in it takes only the part of
+            // the contract that is not a statement about the C++ runtime.
+            // Swapping the driver is not sufficient by itself — this slot names
+            // `libc++.a` by path on macOS and `-static-libstdc++` on MinGW.
+            tail.cxxRuntime   = cxxUnit
+                ? flags.ldStdlibFor(role_of(lu.kind))
+                : flags.ldStdlibCFor(role_of(lu.kind));
             // An archive has no run-time search path of its own: `ar` never
             // reads `$unit_ldflags`, so rpath flags there would be dead bytes
             // in every graph that builds a static library.

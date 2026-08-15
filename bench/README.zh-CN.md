@@ -203,7 +203,7 @@ __format/format_functions.h:99:30: error: call to implicitly-deleted default
 | bazel | **9.2.0** | `matrix.json` → `tools` |
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
 | clang / libc++ | **22.1.8**（Windows：20.1.7） | `bench/src/toolchain.cppm` |
-| 参照 mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp` |
+| 参照 mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp`;每次跑把实际解析到的版本写进 `meta.json`,报告的表头直接写出它 |
 | mcpp（被测工作负载） | **2026.8.11.3** — `a749e9f` | 子模块 `projects/mcpp/mcpp-2026.8.11.3` |
 | xlings（合并风格） | **2026.8.11.2** — `b1563fe` | 子模块 `projects/xlings/xlings-2026.8.11.2` |
 | xlings（分离风格） | **2026.8.13.1** — `f072075` | 子模块 `projects/xlings/xlings-2026.8.13.1` |
@@ -278,12 +278,15 @@ SNAPSHOT」。
 | `noop` | 什么都不动 | 「已经是最新」有多便宜 |
 | `touch-hub` | 给被大量 import 的单元改 mtime，**内容不变** | 引擎能不能证明接口没变？ |
 | `edit-comment` | 往同一个单元里插一条注释 | 字节**确实**变了但接口没变 —— 只有比较产出 BMI 的引擎能止住级联 |
-| `edit-body` | 函数体内部一处真实语义修改 | 日常循环。接口单元里的内联函数体，BMI 合理地变了，级联是**对的** |
+| `edit-body` | 函数体内部一处真实语义修改（插入一条语句） | 日常循环。改动移动了行号，接口单元的 BMI 因此改变，级联是**对的** |
 | `touch-leaf` | 给没人 import 的单元改 mtime | 重编 1 个 + 链接 |
 
 `edit-comment` 与 `edit-body` 是**刻意分开**的：不分开的话，一个能跳过纯注释重建
 的引擎就可以宣传成「改代码快 12 倍」，而那实际上是一句关于注释的话。
 `edit-body` 是反方向的对照 —— 那里没有引擎应该快，快了就是漏了该做的活。
+一次函数体修改欠不欠级联,取决于**函数体写在哪里**、以及改动是否移动行号:
+`.cppm` 里移动行号 ⇒ 欠;`.cppm` 里原地等长修改 ⇒ 不欠;独立 `.cpp` ⇒ 不欠,
+且跨编译器成立。详见 `SPEC.md`。
 
 ---
 

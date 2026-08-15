@@ -240,6 +240,14 @@ struct Mechanism {
     // Flags for this link unit, each with a leading space. Per-unit rather
     // than global precisely so two roles in one build can differ.
     std::string unitFlags;
+    // The subset that is NOT a statement about the C++ runtime, for a link
+    // unit with no C++ in it (mcpp#426). Accumulated HERE, beside the flags
+    // themselves, rather than filtered downstream: which of these is a C++
+    // decision is knowledge this table has and a string filter would have to
+    // re-derive. On macOS the difference is not cosmetic — the self-contained
+    // contract names `libc++.a`/`libc++abi.a` by path, so a pure-C library
+    // would otherwise have the C++ runtime linked INTO it.
+    std::string unitFlagsC;
     Contract    effective = Contract::SelfContained;
     // effective != requested. `diagnostic` is then non-empty and the caller
     // is required to surface it — see INV-1/INV-4 in the analysis doc.
@@ -410,10 +418,15 @@ Mechanism resolve(const MechanismInput& in) {
         // keeps it regardless of the C++ runtime contract.
         const bool wantStatic =
             m.effective == Contract::SelfContained || in.fullStaticLibc;
-        if (wantStatic) m.unitFlags += " -static";
+        // `-static` and `-static-libgcc` are libc / compiler-runtime
+        // decisions, not C++ ones: a self-contained pure-C DLL wants both.
+        if (wantStatic) { m.unitFlags += " -static"; m.unitFlagsC += " -static"; }
         if (m.effective == Contract::SelfContained) {
             m.unitFlags += " -static-libstdc++";
-            if (in.hostIsWindows) m.unitFlags += " -static-libgcc";
+            if (in.hostIsWindows) {
+                m.unitFlags  += " -static-libgcc";
+                m.unitFlagsC += " -static-libgcc";
+            }
         }
         return m;
     }

@@ -20,7 +20,6 @@ import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
 import mcpp.ui;
 import mcpp.platform.xlings;
-import mcpp.platform.xlings.subos_info;
 
 namespace mcpp::toolchain {
 
@@ -507,7 +506,24 @@ void llvm_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 // Bump when the fixup logic changes so existing installs re-run it.
 constexpr std::string_view kFixupRev = "hermetic-4-exact-runtime";
 
-export std::expected<void, std::string>
+// What the fixup DID, so the caller can decide how loud to be about it.
+//
+// mcpp#427: this used to be `expected<void>`, and "the runtime identity is
+// unknown" was an ERROR inside this function. That made one severity for every
+// caller, and it was the wrong one: `mcpp build` died on a machine whose
+// default SubOS predates xlings' `subos_info` block — an absence, not a
+// contradiction — while the very function this gate protects already degrades
+// correctly on an empty `glibcLibDir` (it warns and skips patching). The
+// degradation existed and was unreachable.
+//
+// Severity belongs to the caller. `build` continues; `toolchain install`,
+// which the user asked for explicitly, says so at warning level.
+export struct FixupOutcome {
+    bool        applied = false;   // patching actually ran
+    std::string skippedReason;     // non-empty ⇒ degraded, and why
+};
+
+export std::expected<FixupOutcome, std::string>
 ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
                           const std::filesystem::path& payloadRoot,
                           const XimToolchainPackage& pkg,
@@ -516,8 +532,9 @@ ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
     std::string kind;
     if (pkg.needsGccPostInstallFixup) kind = "gcc";
     else if (pkg.ximName == "llvm")   kind = "llvm";
-    else return {};
-    if constexpr (mcpp::platform::is_windows) return {};  // PE world: no fixups
+    else return FixupOutcome{};
+    if constexpr (mcpp::platform::is_windows)
+        return FixupOutcome{};  // PE world: no fixups
 
     // Ownership guard: payloads inherited via symlink from another MCPP_HOME
     // are not ours to patch — their owner already ran the fixup, and patching
@@ -533,25 +550,31 @@ ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
             "skip {} fixup: payload '{}' resolves outside this home — "
             "inherited payload, owner is responsible for its fixup",
             kind, payloadRoot.string()));
-        return {};
+        return FixupOutcome{};
     }
 
     auto xlEnv = mcpp::config::make_xlings_env(cfg);
     std::filesystem::path glibcLibDir;
+    std::string skipped;
     if constexpr (mcpp::platform::is_linux) {
+        // ⚠️ ONE DERIVATION, AND IT IS NOT THIS FUNCTION'S.
+        //
+        // The caller resolves a RuntimeBinding first and hands the identity in;
+        // `prepare.cppm` says so where it does it ("The fixup is itself a
+        // consumer of RuntimeBinding: doing it first would recreate #392 by
+        // letting directory order choose a libc"). This function used to ALSO
+        // read `<xlings home>/subos/default` when the identity was empty —
+        // a second derivation that (a) contradicted that architecture, (b)
+        // consulted a HARDCODED SubOS even when the project selected another
+        // one, and (c) turned an absent description into a fatal error.
+        //
+        // Unknown degrades. A CONTRADICTION — an identity that is declared but
+        // cannot be honoured — still fails, below.
         std::string selected(runtimeId);
         if (selected.empty()) {
-            auto info = mcpp::xlings::subos::read(
-                cfg.xlingsHome() / "subos" / "default");
-            if (!info.present || info.runtime.empty()) {
-                return std::unexpected(std::format(
-                    "cannot fix up {} toolchain '{}': default SubOS has no "
-                    "RuntimeBinding identity ({})",
-                    kind, payloadRoot.string(), info.note));
-            }
-            selected = std::move(info.runtime);
-        }
-        if (!selectedRuntimeLibDir.empty()) {
+            skipped = "the selected SubOS declares no runtime identity, so "
+                      "there is no C runtime to bind this toolchain to";
+        } else if (!selectedRuntimeLibDir.empty()) {
             constexpr std::string_view prefix = "glibc@";
             auto version = selected.starts_with(prefix)
                 ? std::string_view(selected).substr(prefix.size())
@@ -578,6 +601,14 @@ ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
         }
     }
 
+    // Nothing to bind to. Report it and change nothing — patching a payload
+    // against a runtime we cannot name would be a guess, and a guess here is
+    // an ABI. NO MARKER IS WRITTEN: "we did nothing" must never be able to
+    // read back as "already applied", so the day the SubOS learns to describe
+    // itself the fixup runs on the next invocation.
+    if (!skipped.empty())
+        return FixupOutcome{.applied = false, .skippedReason = std::move(skipped)};
+
     // Content-fingerprinted marker: a marker whose INPUTS drifted (different
     // glibc payload, newer fixup logic) re-runs the fixup — "a process once
     // exited 0" is not evidence the current inputs were ever applied.
@@ -593,7 +624,8 @@ ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
             try {
                 nlohmann::json actual;
                 is >> actual;
-                if (actual == expected) return {};  // fixup already applied
+                if (actual == expected)     // fixup already applied
+                    return FixupOutcome{.applied = true, .skippedReason = {}};
             } catch (...) { /* corrupt marker → re-run */ }
         }
     }
@@ -603,7 +635,7 @@ ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
 
     std::ofstream os(markerPath);
     os << expected.dump(2) << "\n";
-    return {};
+    return FixupOutcome{.applied = true, .skippedReason = {}};
 }
 
 
