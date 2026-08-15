@@ -3535,3 +3535,58 @@ schedule = "on"
         << "the dead key `schedule` is accepted silently — an unread key that "
            "produces no diagnostic is a typo that costs a debugging session";
 }
+
+// #418 — an unsupported SCALAR under `[target.<triple>]` is reported; the
+// conditional sub-TABLES are not.
+//
+// `[target.<triple>]` had no unknown-key check at all, so `cxx_runtime_tests`
+// — a key that existed on the struct, was parsed nowhere and applied nowhere —
+// was accepted in silence. A configuration key that does nothing is worse than
+// one that does not exist.
+//
+// ⚠️ AND THE CHECK MUST NOT SEE THE CONDITIONAL CHANNEL. TOML presents
+// `[target.<pred>.dependencies]` as a KEY of `[target.<pred>]`, so a
+// hand-written "known keys" list has to enumerate `build`, `dependencies`,
+// `dev-dependencies`, `build-dependencies`, `feature-deps` too — and that list
+// is precisely what this codebase has watched drift twice (ConditionalConfig's
+// own comments on #258 and #359). The first version of this check did exactly
+// that and warned about a documented feature. Scalars only; tables are skipped
+// on principle, not by enumeration.
+TEST(Manifest, PerTargetUnknownScalarWarnsButSubTablesDoNot) {
+    constexpr auto src = R"(
+[package]
+name = "t"
+version = "0.1.0"
+
+[target.'cfg(unix)'.dependencies]
+dep = { path = "dep" }
+
+[target.x86_64-linux-gnu]
+linkage = "dynamic"
+cxx_runtime_tests = "host-coupled"
+
+[target.x86_64-linux-gnu.build]
+defines = ["FOO=1"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    auto mentions = [&](std::string_view needle) {
+        return std::ranges::any_of(m->schemaWarnings, [&](const std::string& w) {
+            return w.find(needle) != std::string::npos;
+        });
+    };
+
+    EXPECT_TRUE(mentions("cxx_runtime_tests"))
+        << "a per-target scalar that nothing reads must be reported, not dropped";
+
+    // The conditional channel is not a typo, and warning about it would be a
+    // false positive on a documented feature (e2e 195 uses it).
+    EXPECT_FALSE(mentions("'dependencies'"))
+        << "[target.<pred>.dependencies] is the conditional channel, not an unknown key";
+    EXPECT_FALSE(mentions("'build'"))
+        << "[target.<pred>.build] is the conditional channel, not an unknown key";
+
+    // ...and the field itself is gone, so nothing downstream can read it.
+    EXPECT_EQ(m->targetOverrides.at("x86_64-linux-gnu").cxxRuntime, "");
+}

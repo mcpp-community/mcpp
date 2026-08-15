@@ -1387,20 +1387,36 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         triple, e.cxxRuntime)));
                 }
             }
-            // Unsupported keys are REPORTED, not dropped. `[targets.<name>]`
-            // has done this since #249; this table did not, so a key that looks
-            // plausible — `cxx_runtime_tests` was the real one — was accepted
-            // in silence and had no effect (#418). A configuration key that
-            // does nothing is worse than one that does not exist.
-            static constexpr std::string_view kKnownTargetKeys[] = {
-                "build", "cxx_runtime", "linkage", "toolchain",
+            // Unsupported SCALAR keys are REPORTED, not dropped.
+            // `[targets.<name>]` has done this since #249; this table did not,
+            // so a key that looks plausible — `cxx_runtime_tests` was the real
+            // one — was accepted in silence and had no effect (#418).
+            //
+            // ⚠️ SCALARS ONLY, AND THAT IS THE POINT. The sub-TABLES here are the
+            // conditional channel (`[target.<pred>.build]`, `.dependencies`,
+            // `.dev-dependencies`, `.build-dependencies`, `.feature-deps`) and
+            // TOML presents each as a key of this table. A hand-written list of
+            // "known keys" therefore has to enumerate that channel too — and
+            // that list is exactly the thing this codebase has watched drift
+            // twice already (see ConditionalConfig's comments on #258 and #359,
+            // both "the conditional reader kept its own subset and fell
+            // behind"). The first version of this check did hand-list them and
+            // warned about `[target.'cfg(unix)'.dependencies]`, a documented
+            // feature with its own e2e.
+            //
+            // Restricting the check to scalars removes the coupling entirely:
+            // new conditional sections need no change here, and the reported
+            // case — a scalar that does nothing — is still caught.
+            static constexpr std::string_view kKnownTargetScalars[] = {
+                "cxx_runtime", "linkage", "toolchain",
             };
-            for (auto& [key, _] : body) {
+            for (auto& [key, value] : body) {
+                if (value.is_table()) continue;   // the conditional channel
                 bool known = false;
-                for (auto k : kKnownTargetKeys) if (key == k) { known = true; break; }
+                for (auto k : kKnownTargetScalars) if (key == k) { known = true; break; }
                 if (known) continue;
                 std::string supported;
-                for (auto k : kKnownTargetKeys) {
+                for (auto k : kKnownTargetScalars) {
                     if (!supported.empty()) supported += ", ";
                     supported += k;
                 }
