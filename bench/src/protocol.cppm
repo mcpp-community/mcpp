@@ -27,7 +27,7 @@ export namespace bench {
 
 // Bump on ANY field addition/removal/semantic change. Readers compare against
 // their own expectation and degrade explicitly rather than mis-parsing.
-inline constexpr int kProtocolVersion = 1;
+inline constexpr int kProtocolVersion = 2;   // +Report::under_test
 
 // ---------------------------------------------------------------------------
 
@@ -128,6 +128,15 @@ struct Report {
     std::vector<CellResult>  cells;
     // Identifies WHICH RUN produced this. See RunId.
     std::string              run_id;
+    // WHAT WAS UNDER TEST, in the caller's own words — for mcpp, the commit.
+    //
+    // The engines label themselves from `--version`, and mcpp's version is a
+    // DATE: every commit on a branch reports the same `2026.8.13.1`. So a report
+    // could say which release it measured but never which build of it, and the
+    // numbers in this suite move with single commits. Supplied rather than
+    // derived because the harness measures a BINARY and cannot know what tree it
+    // came from.
+    std::string              under_test;
 };
 
 // ── The identity of a run: ONE fingerprint over the whole configuration ────

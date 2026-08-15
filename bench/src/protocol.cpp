@@ -89,6 +89,7 @@ std::string to_json(const Report& r) {
     out += "{\n";
     out += std::format("  \"protocol_version\": {},\n", kProtocolVersion);
     out += std::format("  \"started_at\": {},\n", q(r.started_at));
+    out += std::format("  \"under_test\": {},\n", q(r.under_test));
     out += "  \"host\": {\n";
     out += std::format("    \"os\": {},\n", q(r.host.os));
     out += std::format("    \"arch\": {},\n", q(r.host.arch));

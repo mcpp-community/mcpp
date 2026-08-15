@@ -38,6 +38,9 @@ struct Options {
     // Names this run, and therefore its journal. Empty → derived from
     // os-toolchain-project, which is how the reports are already named.
     std::string           run_id;
+    // What is under test, in the caller's words (mcpp's commit). Recorded, never
+    // fingerprinted: folding it in would restart every resume on every rebuild.
+    std::string           under_test;
     // Where fingerprinted run caches live, like a build directory.
     std::filesystem::path cache_root{".mbench"};
     std::filesystem::path analyze;   // profile an existing ninja build dir instead
@@ -131,6 +134,10 @@ void usage() {
     std::println("  --id NAME          one more field in the run's fingerprint — use it to keep");
     std::println("                       two otherwise-identical runs apart");
     std::println("  --cache-root DIR   where fingerprinted runs are cached      (default: .mbench)");
+    std::println("  --under-test TEXT  what is being measured, in your words — for mcpp the");
+    std::println("                     commit, because its version is a DATE and every commit");
+    std::println("                     on a branch reports the same one. Recorded in the report");
+    std::println("                     and compared on resume; never part of the fingerprint.");
     std::println("");
     std::println("  A run is fingerprinted over its WHOLE configuration (engines, variants,");
     std::println("  scenarios, runs, compiler, profile, project, shape, --id) and cached in");
@@ -186,6 +193,7 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         else if (a == "--work")      { auto v = value(a); if (!v) return std::unexpected(v.error()); o.work = *v; }
         else if (a == "--cache-root") { auto v = value(a); if (!v) return std::unexpected(v.error()); o.cache_root = *v; }
         else if (a == "--id")        { auto v = value(a); if (!v) return std::unexpected(v.error()); o.run_id = *v; }
+        else if (a == "--under-test") { auto v = value(a); if (!v) return std::unexpected(v.error()); o.under_test = *v; }
         else if (a == "--out")       { auto v = value(a); if (!v) return std::unexpected(v.error()); o.out = *v; }
         // Presets come FIRST so an explicit --units/--weight after one still
         // wins. A benchmark whose size is a free-form pair of numbers cannot be
@@ -409,6 +417,7 @@ int main(int argc, char** argv) {
                                   facts.logical_cores, facts.physical_cores,
                                   facts.heterogeneous, facts.ram_bytes, opts->compiler};
     report.started_at = bench::platform::iso_now();
+    report.under_test = opts->under_test;
 
     // Live progress. It goes to STDERR so that stdout stays the report and can
     // still be redirected on its own, and it is flushed on every line because
@@ -499,6 +508,34 @@ int main(int argc, char** argv) {
 
     const bench::Journal journal(cache_dir / "journal.jsonl");
     auto loaded = journal.load(id.str());
+
+    // ⚠️ A RESUME MUST NOT SILENTLY SPAN TWO BUILDS OF WHAT IS UNDER TEST.
+    //
+    // The fingerprint deliberately excludes the binary, so that rebuilding does
+    // not throw the cache away — and that is exactly what makes this possible:
+    // resume, rebuild, resume again, and the report carries samples from two
+    // different binaries under one heading. `engine_version` catches a version
+    // change, but mcpp's version is a DATE, so every commit on a branch reports
+    // the same one and that check sees nothing.
+    //
+    // Recorded here rather than fingerprinted, and REPORTED on mismatch: the
+    // caller is entitled to resume across a rebuild (that is the normal case
+    // while developing), but not to be unaware that they did.
+    {
+        const auto stamp = cache_dir / "under-test.txt";
+        std::string previous;
+        if (std::ifstream in(stamp); in) std::getline(in, previous);
+        if (!previous.empty() && !opts->under_test.empty() && previous != opts->under_test)
+            std::println(std::cerr,
+                         "bench: ⚠️  this cache holds samples measured with '{}' but this run is "
+                         "'{}'. The report will mix them. Use --id to fork a fresh cache, or "
+                         "delete {}.",
+                         previous, opts->under_test, cache_dir.string());
+        if (!opts->under_test.empty() && previous != opts->under_test) {
+            std::ofstream out(stamp, std::ios::trunc);
+            if (out) out << opts->under_test << '\n';
+        }
+    }
 
     if (loaded.skipped_other_id)
         std::println(std::cerr,

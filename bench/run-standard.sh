@@ -222,6 +222,19 @@ WORK="${TMPDIR:-/tmp}/bench-standard-$STAMP-$$"
 # working directory: resume must not depend on where the script was invoked from.
 CACHE="$ROOT/.mbench"
 
+# WHICH BUILD OF mcpp THIS IS. Every engine labels itself from `--version`, and
+# mcpp's version is a DATE: every commit on this branch reports `2026.8.13.1`,
+# so the report could say which release it measured but never which build. The
+# numbers here move with single commits, so that is not a detail.
+#
+# `-dirty` is not cosmetic either: a benchmark taken against uncommitted work
+# describes a tree nobody else can check out.
+UNDER_TEST="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if ! git -C "$ROOT" diff --quiet HEAD -- src/ 2>/dev/null; then
+    UNDER_TEST="$UNDER_TEST-dirty"
+    echo "  ⚠ src/ has uncommitted changes; recording the build as $UNDER_TEST"
+fi
+
 if [ "$RESUME" = 1 ]; then
     if [ -d "$CACHE" ]; then
         echo "resuming: $(find "$CACHE" -name journal.jsonl -exec cat {} + 2>/dev/null | wc -l)"\
@@ -277,7 +290,8 @@ while IFS=$'\x1f' read -r tc proj engines variants scenarios hub body leaf build
 
     args=(--engines "$spec" --variants "$variants" --scenarios "$scenarios"
           --baseline "$baseline" --profile release --runs "$RUNS" --timeout 1800
-          --work "$WORK" --out "$OUT/$tc-$proj.json" --cache-root "$CACHE")
+          --work "$WORK" --out "$OUT/$tc-$proj.json" --cache-root "$CACHE"
+          --under-test "$UNDER_TEST")
 
     # `payload:gcc` / `payload:clang` resolve to the hermetic driver every engine
     # is handed — never `command -v g++`, which inside an xlings workspace is a
