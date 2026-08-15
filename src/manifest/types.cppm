@@ -353,6 +353,30 @@ struct Resources {
 // is read in ~150 places, and a BuildConfig genuinely IS a set of build
 // inputs plus the selection axis and resolved policy scalars.
 struct BuildConfig : BuildInputs {
+    // `[build] jobs` — how many compiles to run at once. A decimal count,
+    // "auto", or empty (the default) meaning "let the backend decide".
+    //
+    // Kept as TEXT rather than a number so that "auto" survives into the build
+    // that actually runs: resolving it at parse time would freeze one machine's
+    // core count into a value that then travels with the manifest.
+    std::string jobs;
+    // `[build] bmi_schedule` — when the BMI becomes visible to importers:
+    // "auto" (default), "on", "off".
+    //
+    // "on" publishes each module's BMI as soon as it exists and moves code
+    // generation onto a separate edge, so downstream units stop waiting for
+    // work they do not need. The per-compiler strategy that implements it
+    // (`detach-codegen` for gcc, `two-phase` for clang) is chosen by
+    // mcpp.build.schedule::decide and reported by `mcpp build --verbose`.
+    //
+    // NAMED FOR WHAT IT SCHEDULES. It was `schedule`, which said only that
+    // something was being scheduled — and disagreed with its own environment
+    // override, `MCPP_BMI_SCHEDULE`. The two spellings now match.
+    //
+    // Text for the same reason `jobs` is: the meaning of "auto" depends on the
+    // compiler doing the build, and resolving it at parse time would freeze one
+    // machine's answer into a manifest that travels.
+    std::string bmiSchedule;
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a
@@ -626,7 +650,12 @@ struct TargetEntry {
     // channel deliberately carries build INPUTS and nothing else
     // (ConditionalConfig). One axis, one scoping rule.
     std::string                         cxxRuntime;
-    std::string                         cxxRuntimeTests;
+    // ⚠️ NO per-role field here. There used to be a `cxxRuntimeTests`, and it was
+    // parsed nowhere and applied nowhere — a configuration key that looked
+    // available and did nothing (#418). The per-target channel carries the
+    // SCALAR contract only; `[build].cxx_runtime`'s table form already covers
+    // the role split, and an unsupported key in `[target.<triple>]` is now
+    // reported rather than dropped.
 };
 
 // `[target.'cfg(...)'.build]` — platform-conditional build flags (L1). The

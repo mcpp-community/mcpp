@@ -1,5 +1,10 @@
 # mcpp's own build output (mcpp build / mcpp pack)
 target/
+# mbench's run cache: one fingerprinted directory per configuration
+.mbench/
+# Python bytecode from bench/tools/*.py
+__pycache__/
+*.py[cod]
 
 # mcpp's per-workspace xlings sandbox + lockfile + diagnostic logs
 /.xlings/
@@ -23,3 +28,18 @@ doctor.log
 *.ddi
 compile_commands.json
 .cache/
+
+# xmake control-arm build (bench/: xmake.lua builds mcpp for the
+# build-engine benchmark; these are its artifact + resolved-config dirs)
+/build/
+/.xmake/
+
+# benchmark scratch. bench-work/ holds generated fixtures (regenerated on every
+# run, and large); reports are per-host and belong in an artifact, not in git.
+/bench-work/
+/bench/bench-work/
+bench-report.json
+bench/bench-report.json
+# --project mode writes the measured build's stdout/stderr next to the project
+bench-child.log
+.mcpp.toml.bench-backup

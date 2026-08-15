@@ -1,0 +1,59 @@
+# The benchmark's measured WORKLOADS, all pinned.
+#
+# A benchmark has two halves: the engine under test, and the workload it is
+# given. The engine is the binary and is SUPPOSED to move between runs. The
+# workload is not — and both of these were moving.
+#
+#   * xlings was `git clone --depth 1` of its default branch at run time, so the
+#     target changed with every upstream push. `--hub src/xlings.cppm` had been
+#     naming a file that no longer existed for months: every xlings cell reported
+#     `skipped`, every xlings job reported success, and nobody had a reason to
+#     look.
+#   * mcpp's own sources were `--project $GITHUB_WORKSPACE`, i.e. the checkout,
+#     so every commit on a branch silently changed the thing being measured. The
+#     same defect, just harder to see because the drift was our own.
+#
+# A submodule is a PIN, not a vendored snapshot: the commit is in the diff, it is
+# reviewed like any other change, `git submodule update --init` gives everyone
+# the tree CI measured, and `tests/e2e/233_bench_matrix.sh` can check that each
+# `hub`/`body` still exists in it. Bumping one is a deliberate act that
+# invalidates the previous ratios on purpose.
+#
+# WHY TWO COPIES OF xlings. They are the two code styles being compared:
+#
+#   xlings-2026.8.11.2 (b1563fe)  110 .cppm +  2 .cpp — implementation lives
+#                                                       inside each interface unit
+#   xlings-2026.8.13.1 (f072075)  110 .cppm + 92 .cpp — implementation split out
+#
+# Same authors, same 46k lines, same module graph; the question is what the split
+# costs or saves on an incremental build. That is the `modules` vs `modules-impl`
+# axis the generated fixture has, on a real tree.
+#
+# ONE description serves every pin of a project
+# (bench/projects/<name>/{CMakeLists.txt,xmake.lua}): they glob
+# `src/**/*.{cppm,cpp}`, which is the same rule mcpp itself infers from, so no
+# style needs its own file, an environment switch, or a branch.
+#
+# `ignore = dirty` on every one of them: a measurement RUNS these trees, and the
+# engines write into them — `mcpp build` writes `mcpp.lock`, cmake and xmake put
+# objects under `build/`. Those are the engines doing their job, and they made
+# `git status` in this repository report two modified submodules after every
+# bench run. The only state that matters here is WHICH COMMIT each workload is
+# pinned to, and that is still reported: `ignore = dirty` hides working-tree
+# changes, never a moved gitlink.
+#
+# The source files themselves are restored by the harness (`SourceGuard`), so a
+# leftover perturbation is already a bug rather than something to ignore — and
+# `git submodule foreach git status` still shows one when it happens.
+[submodule "bench/projects/xlings/xlings-2026.8.11.2"]
+	path = bench/projects/xlings/xlings-2026.8.11.2
+	url = https://github.com/openxlings/xlings
+	ignore = dirty
+[submodule "bench/projects/xlings/xlings-2026.8.13.1"]
+	path = bench/projects/xlings/xlings-2026.8.13.1
+	url = https://github.com/openxlings/xlings
+	ignore = dirty
+[submodule "bench/projects/mcpp/mcpp-2026.8.11.3"]
+	path = bench/projects/mcpp/mcpp-2026.8.11.3
+	url = https://github.com/mcpp-community/mcpp
+	ignore = dirty

@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "2026.8.11.3"
+version     = "2026.8.15.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -15,6 +15,27 @@ default-profile = "release"
 # nlohmann/json.hpp lives in src/libs/json/; expose it to the global
 # module fragment `#include <json.hpp>` in src/libs/json.cppm.
 include_dirs = ["src/libs/json"]
+# Split the module edge: importers start when the BMI is published rather than
+# when the compiler exits. See docs/05-mcpp-toml.md.
+#
+# ON HERE, `auto` (= off) EVERYWHERE ELSE. The key stays opt-in until it has been
+# through CI on every platform, and nothing was exercising it, so it could never
+# accumulate the evidence needed to change that. mcpp's own build is where that
+# evidence is cheapest: whatever this schedule produces has to pass 83 unit tests
+# and the full e2e suite, on Linux (detach-codegen, gcc) and on macOS and Windows
+# (two-phase, clang) — three platforms, every PR.
+#
+# ⚠️ THAT SAFETY NET IS NOT DECORATION — it has already caught one defect. The
+# windows-host cross build to x86_64-linux-musl failed on the BMI edge with
+#
+#     failed: gcm.cache/mcpp.libs.json.gcm
+#     src/libs/json.cppm:3: fatal error: json.hpp: No such file or directory
+#
+# because `cmd.exe /c` does not use CreateProcess argument quoting, so the
+# compiler ran with `-I` missing. Fixed in detach_codegen.cppm; see #425.
+#
+# Revert is this one line if anything here is ever unexplained.
+bmi_schedule = "on"
 
 [toolchain]
 default = "gcc@16.1.0"

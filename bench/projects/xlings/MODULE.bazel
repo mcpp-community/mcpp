@@ -1,0 +1,61 @@
+# bazel module for xlings — the benchmark's independent control target.
+#
+# THIS FILE USED TO SAY "BEST EFFORT, AND IT DOES NOT BUILD", and the three
+# reasons it gave were a workspace boundary, four source dependencies, and
+# `import std;`. Two of them were real problems with a solution and one had
+# already been solved and written down as unsolved. What made the note worse
+# than useless is what it produced: BUILD.bazel declared no rules, so
+# `bazel build //...` exited 0 in 0.14s having found 0 targets, and the harness
+# published that as a 0.43s cold build next to cmake's 94s.
+#
+# What each of the three actually was:
+#
+#   1. WORKSPACE BOUNDARY — real, and solved by a repository rule. bazel will
+#      not glob outside its workspace, but a repo rule may name an absolute path
+#      and compute it from the environment, which is how @local_config_cc finds
+#      a compiler. `@xlings_tree` resolves BENCH_PROJECT_ROOT — the variable
+#      bench/src/main.cpp exports for every --project run, the same one
+#      CMakeLists.txt and xmake.lua read — so one description serves both pinned
+#      trees and a cell builds the tree it claims to measure.
+#
+#   2. FOUR SOURCE DEPENDENCIES — nine, transitively, and also real. Same
+#      mechanism: `@mcpp_deps` reaches into ~/.mcpp/registry and reads each
+#      package's `.xpkg.lua` for the exact sources, include dirs and cflags mcpp
+#      compiles it with. Not BCR: the point of this arm is that both engines
+#      compile the SAME code, and a bazel_dep would pin whatever version the
+#      registry happens to carry.
+#
+#   3. `import std;` — NOT A BOUNDARY, and the old note conceded as much three
+#      lines after asserting it. bazel has no CXX_MODULE_STD and its modmap
+#      generator fails with `Module not found: std`, but libc++ ships the std
+#      module as ordinary source, so `@mcpp_deps//:std` compiles it as a
+#      `module_interfaces` unit like any other and every dependent imports it.
+#
+# WHAT IS STILL TRUE: this arm is CLANG-ONLY. bazel's ddi aggregator cannot
+# parse GCC's P1689 output (`aggregate-ddi: "Invalid JSON string"`), so a bazel
+# column in the gcc table would violate fairness invariant I1 — same compiler
+# binary for every engine. bench/src/engines/bazel.cppm refuses the cell rather
+# than measuring a different compiler, and _libcxx_root() in mcpp_registry.bzl
+# fails loudly if $CC is not a clang that ships std.cppm.
+#
+#   bazel build //:xlings                       # the default pin
+#   BENCH_PROJECT_ROOT=$PWD/xlings-2026.8.11.2 bazel build //:xlings
+#
+# (the flags this needs live in .bazelrc, so both of those work as written)
+module(name = "xlings", version = "0.0.0")
+
+# NOT 0.1.x: `module_interfaces` does not exist there, and the attribute error
+# reads as a typo rather than as a version floor.
+bazel_dep(name = "rules_cc", version = "0.2.22")
+
+mcpp_deps = use_repo_rule("//:mcpp_registry.bzl", "mcpp_deps")
+xlings_tree = use_repo_rule("//:mcpp_registry.bzl", "xlings_tree")
+
+mcpp_deps(name = "mcpp_deps")
+
+# The default is the newer pin, so a bare `bazel build //...` builds something
+# real. Which tree that is belongs in the diff, not in a shell profile.
+xlings_tree(
+    name = "xlings_tree",
+    default_tree = "xlings-2026.8.13.1",
+)

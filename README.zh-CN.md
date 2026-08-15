@@ -300,6 +300,46 @@ import mcpplibs.cmdline;
 
 </details>
 
+## 性能对比
+
+用**四个构建引擎**编译 **mcpp 自己** —— 137 个模块接口单元、57k 行、每一个都
+`import std;` —— 并且**给它们同一个编译器二进制**。每格是 **3 轮的中位数**,以及
+相对 cmake 的倍率。所有列出自**同一次跑**。
+
+<!-- columns: mcpp=mcpp@2026.8.13.1; mcpp +优化=mcpp@2026.8.13.1+schedule=on; mcpp (旧版)=mcpp@2026.8.11.3; cmake=cmake; xmake=xmake -->
+| 场景 | `mcpp` | `mcpp +优化` | `mcpp (旧版)` | `cmake` | `xmake` |
+|---|---|---|---|---|---|
+| `cold` | 86.69s · 1.1x | **35.73s · 2.6x** | 86.75s · 1.1x | 91.74s · 1.0x | 90.54s · 1.0x |
+| `noop` | **0.16s · 2.0x** | 0.18s · 1.8x | 0.24s · 1.3x | 0.32s · 1.0x | 0.38s · 0.8x |
+| `touch-hub` | **0.42s · 197.7x** | 0.42s · 197.2x | 81.72s · 1.0x | 83.21s · 1.0x | 82.48s · 1.0x |
+| `edit-body` | 80.87s · 1.1x | **29.83s · 2.9x** | 81.19s · 1.1x | 85.30s · 1.0x | 84.33s · 1.0x |
+| `edit-comment` | **0.40s · 207.0x** | **0.40s · 207.0x** | 79.11s · 1.1x | 83.21s · 1.0x | 82.15s · 1.0x |
+
+<sub>`cold` 还没编过 · `noop` 什么都没改 · `touch-hub` 只碰 mtime,内容不变 · `edit-body` 真的改了一个函数体 · `edit-comment` 在 hub 接口里加一行注释。<br>
+<br>
+`mcpp` = mcpp@2026.8.13.1,被测的这一版 · `mcpp +优化` = **和 `mcpp` 同一个二进制**,开了 opt-in 的 `[build] bmi_schedule = "on"`(默认关闭) · `mcpp (旧版)` = mcpp@2026.8.11.3,上一个已发布版。<br>
+Linux x86_64 · i9-13900K · gcc 16.1.0 · n=3 · 锁定的工作负载 `a749e9f` ·
+cmake 4.4.2 / xmake 3.1.0 · `-` 表示未测,本表没有 ·
+所有大于 1s 的中位数 min/max 都在 ±4% 以内 ·
+数据:[`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x86_64/)。</sub>
+
+* **`touch-hub` 与 `edit-comment` 两行由级联抑制决定。**
+  cmake 与 xmake 按时间戳判断,重编全部下游单元;mcpp 将编译器刚产出的 BMI 与上
+  一份比较,接口未变则不触发级联。这是默认行为,无需任何配置。`mcpp (旧版)` 一列
+  测得上一个发布版为 81.72s,与 cmake 同量级,因此该效果在本版本中才生效。
+* **`edit-body` 为对照组**,也是级联确实欠着的那一行:mcpp 为 1.1x 而非 200x,
+  在这一行更快的引擎意味着省略了应做的工作。`+优化` 同样不省略,只是把同一份工作
+  加快 2.9 倍。有一点需要说准:该扰动是**插入一行**,而 GCC 会因此移动其后所有声明
+  的源码位置记录,BMI 随之改变。级联来自变化后的 BMI,而非被编辑的函数体 —— 实测见
+  [`.agents/docs/2026-08-15-module-edit-granularity.md`](.agents/docs/2026-08-15-module-edit-granularity.md)。
+* **`bmi_schedule` 为 opt-in,默认关闭**(`auto` 解析为 off)。它将代码生成移出关键
+  路径,因此仅在级联必需时有效:`cold` 86.69s → 35.73s、`edit-body` 80.87s →
+  29.83s;而在 mcpp 本已跳过级联的两行上没有收益。调度错误的表现是静默失效而非
+  报错,因此不以单台机器的证据变更默认值。
+
+📊 **[方法、锁定的版本、完整数据 → `bench/README.zh-CN.md`](bench/README.zh-CN.md)** ·
+[English](bench/README.md)
+
 ## 平台支持
 
 mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family ∈ gcc | llvm | msvc),

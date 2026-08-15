@@ -41,6 +41,7 @@ import mcpp.toolchain.registry;
 import mcpp.platform.xlings;
 import mcpp.platform;
 import mcpp.ui;
+import mcpp.log;
 
 export namespace mcpp::build {
 
@@ -203,7 +204,22 @@ std::string shared_soname_flag(const LinkUnit& lu) {
 #endif
 }
 
+// Write only when the bytes would actually change.
+//
+// One of these files is a BUILD INPUT: `obj/mcpp_ios_init.c`, the generated
+// initializer-ordering TU (#336, macOS static libc++ only). It was rewritten on
+// every drive, so its mtime moved on every drive, so ninja recompiled it on
+// every build — including no-op ones. That is one object, but `mcpp test`
+// drives the backend once per test, and the symptom read as "the split module
+// schedule is not incremental" on macOS while being invisible on Linux, where
+// the shim does not exist.
 void write_file(const std::filesystem::path& p, std::string_view content) {
+    std::error_code ec;
+    if (std::filesystem::file_size(p, ec) == content.size() && !ec) {
+        std::ifstream is(p, std::ios::binary);
+        std::string prev((std::istreambuf_iterator<char>(is)), {});
+        if (prev == content) return;
+    }
     std::filesystem::create_directories(p.parent_path());
     std::ofstream os(p);
     os << content;
@@ -399,6 +415,26 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     bool has_scanner = caps.has_builtin_p1689_scan || !plan.scanDepsPath.empty();
     bool dyndep = dyndep_mode_enabled() && has_scanner;
     auto traits = mcpp::toolchain::bmi_traits(plan.toolchain);
+    // The module-edge shape, decided once in prepare (mcpp.build.schedule).
+    // dyndep is a precondition: without it nothing declares BMIs as outputs, so
+    // there is no BMI edge for importers to depend on.
+    const bool splitBmi = plan.scheduleTag == "detach-codegen" && dyndep;
+    // The other split shape. Clang publishes no BMI early — it writes the BMI
+    // at the end of the compile — so the GCC trick of releasing the file
+    // mid-compile has nothing to release. What clang has instead is a driver
+    // mode that stops once the BMI exists, so the split is two INDEPENDENT
+    // PROCESSES over the same source: one emits the BMI (fast; importers wait
+    // only on this), one emits the object (slow; nobody waits on it).
+    //
+    // The object edge recompiles the source rather than reading the BMI back.
+    // That is not a missed shortcut — see BmiTraits::bmiOnlyFlags: the BMI that
+    // CAN be read back is clang's *full* BMI, which is ~2x larger and makes
+    // clang 22.1.8 miscompile a downstream TU on mcpp's own graph. MEASURED on
+    // src/build/prepare.cppm: BMI edge 1.67s, object edge 7.31s, against 7.35s
+    // for the single edge — so ~22% more CPU buys a 4.4x shorter critical path,
+    // and both outputs are byte-identical to the single-edge build's.
+    const bool twoPhase = plan.scheduleTag == "two-phase" && dyndep
+                       && !traits.bmiOnlyFlags.empty();
     const auto& dial = mcpp::toolchain::dialect_for(plan.toolchain);
     std::string out;
     auto append = [&](std::string s) { out += std::move(s); };
@@ -407,7 +443,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // #407: the graph declares which mode produced it, because three modes
     // write this one file and the fast path has to know what it is about to
     // replay. Must stay within the first few lines — see read_shape.
-    append(mcpp::build::header_line(plan.graphShape) + "\n");
+    append(mcpp::build::header_line(plan.graphShape, plan.scheduleTag) + "\n");
     append("ninja_required_version = 1.11\n\n");
 
     // All compile/link flags are computed once via flags.cppm.
@@ -499,9 +535,14 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     append("  restat = 1\n\n");
 
     // P1: per-file dyndep rule. Converts one .ddi → .dd independently.
+    //
+    // `$bind` is per-edge, not per-graph: under two-phase only the units that
+    // are actually SPLIT bind their record to the BMI. An implementation unit
+    // or a plain .cpp still compiles in one edge whose output is the object,
+    // and a `--target-bmi` there would name an edge nobody declared.
     append(std::format(
         "rule cxx_dyndep\n"
-        "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} $expect --output $out $in\n"
+        "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} $bind $expect --output $out $in\n"
         "  description = DYNDEP $out\n"
         "  restat = 1\n\n",
         traits.bmiDir, traits.bmiExt));
@@ -690,8 +731,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                // must precede `-c $in` (which compile_tail carries) or it
                // applies to nothing.
                "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}{}{} && "
+               // `$mcpp bmi-equal`, not `cmp -s`: GCC stamps a wall clock into
+               // the BMI content, so a byte compare NEVER reports "unchanged"
+               // and this whole fast path was dead. Measured: touching a module
+               // with 46 importers and no content change cost 73.0 s before,
+               // 0.22 s after.
                "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
-                  "cmp -s \"$bmi_out\" \"$bmi_out.bak\"; then "
+                  "$mcpp bmi-equal \"$bmi_out\" \"$bmi_out.bak\"; then "
                  "mv \"$bmi_out.bak\" \"$bmi_out\"; "
                "else "
                  "rm -f \"$bmi_out.bak\"; "
@@ -703,6 +749,113 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     if (dyndep)
         append("  restat = 1\n");
     append("\n");
+
+    if (splitBmi) {
+        // Two edges driven by ONE compiler process. `$out` is the BMI here, so
+        // the object path travels as `$obj_out`.
+        //
+        // The compiler command goes through a response file rather than the
+        // command line: it is already joined and quoted for a shell, and
+        // splitting it back into argv would mean reimplementing the shell's
+        // rules — the assumption "one flag element == one argv token" has been
+        // wrong in this file before.
+        append("rule cxx_module_bmi\n");
+        append("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
+               " --self $mcpp --sem $sched_sem --cap $sched_cap"
+               " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d\n");
+        append(std::format(
+            "  rspfile = $out.cmd\n"
+            "  rspfile_content = $cxx $local_includes $cxxflags $unit_cxxflags{}{} {} $in {}$obj_out\n",
+            module_output_flag, module_src_flags,
+            dial.compileOnly, dial.outputObjPrefix));
+        // ⚠️ THE SUPERVISOR OUTLIVES THIS EDGE, THE RSPFILE DOES NOT.
+        //
+        // ninja DELETES `$out.cmd` as soon as the edge finishes, and the edge
+        // finishes when `bmi-compile` returns — which is the moment the BMI is
+        // published, with the compiler still running under a detached
+        // supervisor that was handed this same path.
+        //
+        // It is safe because of an ordering worth writing down: the supervisor
+        // reads the file at start-up, and the BMI cannot appear until the
+        // compiler it launched has produced one, so every SUCCESSFUL exit from
+        // phase 1 is already downstream of that read.
+        //
+        // Phase 1 also has two exits that do NOT require the compiler to have
+        // started — the no-supervisor grace and the hard limit. Both fail the
+        // edge, so ninja does not proceed and a supervisor arriving afterwards
+        // to a deleted file changes nothing. If a phase-1 exit is ever added
+        // that reports SUCCESS without the compiler having started, this stops
+        // holding: pass the command by value at that point, not by path.
+        // The depfile is ADOPTED from the P1689 scan, not produced here.
+        // MEASURED: the compiler's own -MMD file lands at 16.39s of a 16.55s
+        // compile — AFTER the BMI is published at 2.36s — so this edge is over
+        // before it exists. The scan's is equivalent for headers (compared on
+        // real modules: the only prerequisites it lacks are `.gcm`, and those
+        // are ninja's through dyndep). Copied rather than pointed at, because
+        // ninja DELETES a depfile once it has folded it into .ninja_deps.
+        append("  depfile = $out.d\n");
+        append("  description = BMI $out\n");
+        append("  restat = 1\n\n");
+
+        append("rule cxx_module_obj\n");
+        append("  command = $mcpp bmi-await --slot $slot --object $out\n");
+        append("  description = OBJ $out\n");
+        // The object is written by the detached compiler, so its mtime moves
+        // outside this edge. Without restat ninja treats every join as having
+        // changed its output and cascades into the link every time.
+        append("  restat = 1\n\n");
+    }
+
+    if (twoPhase) {
+        // Edge A — the BMI, and nothing else. `$out` is the BMI here.
+        append("rule cxx_precompile\n");
+        if constexpr (mcpp::platform::is_windows) {
+            const std::string payload = " $local_includes";
+            append(std::format(
+                "  command = $cxx{} $cxxflags $unit_cxxflags{}{} $in {}$out\n",
+                rsp_ref(payload), traits.bmiOnlyFlags, module_src_flags,
+                dial.outputObjPrefix));
+            append_rspfile(payload);
+            append_deps();
+        } else {
+            // Same bak / bmi-equal / restore dance as cxx_module, and for the
+            // same reason: ninja's `restat` compares the output's MTIME, and a
+            // compiler that rewrites a byte-identical BMI still moves it. What
+            // suppresses the cascade is putting the old file back.
+            append(std::format(
+                "  command = "
+                "if [ -f \"$out\" ]; then cp -p \"$out\" \"$out.bak\"; fi && "
+                "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}$in {}$out && "
+                "if [ -f \"$out.bak\" ] && $mcpp bmi-equal \"$out\" \"$out.bak\"; then "
+                  "mv \"$out.bak\" \"$out\"; "
+                "else rm -f \"$out.bak\"; fi\n",
+                traits.bmiOnlyFlags, module_src_flags, mmd_flag,
+                dial.outputObjPrefix));
+            append_cxx_deps();
+        }
+        append("  description = BMI $out\n");
+        append("  restat = 1\n\n");
+
+        // Edge B — the object, compiled from the SAME SOURCE, with no
+        // `-fmodule-output`: the BMI is edge A's output and two edges must not
+        // write one file. Identical to cxx_object except for the language flag
+        // that tells the driver this source is a module interface.
+        append("rule cxx_module_object\n");
+        if constexpr (mcpp::platform::is_windows) {
+            const std::string payload = " $local_includes";
+            append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags{} {}\n",
+                               rsp_ref(payload), module_src_flags, compile_tail));
+            append_rspfile(payload);
+            append_deps();
+        } else {
+            append(std::format(
+                "  command = $cxx $local_includes $cxxflags $unit_cxxflags{} {}{}{}\n",
+                module_src_flags, mmd_flag, compile_tail, mmd_filter));
+            append_cxx_deps();
+        }
+        append("  description = OBJ $out\n");
+        append("  restat = 1\n\n");
+    }
 
     append("rule cxx_object\n");
     if constexpr (mcpp::platform::is_windows) {
@@ -925,7 +1078,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // GCC path: compiler-integrated P1689 scanning.
             append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
-                   "-fdeps-file=$out -fdeps-target=$compile_target "
+                   "-fdeps-file=$out -fdeps-target=$deps_target "
                    "-M -MM -MF $out.dep $unit_lang -E $in -o $compile_target\n",
                    rsp_ref(scanPayload)));
         } else {
@@ -976,6 +1129,54 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     bool has_std_artifacts = !plan.stdBmiPath.empty() && !plan.stdObjectPath.empty();
+
+    // WHICH LINK UNITS ACTUALLY NEED `std.o` (#416).
+    //
+    // `has_std_artifacts` only says "this toolchain has a prebuilt std module".
+    // It was also the whole condition for appending `std.o` to every Binary,
+    // TestBinary and SharedLibrary — so a link unit with no `import std`
+    // anywhere in it still got the module's global initialiser linked in.
+    //
+    // ⚠️ THE TEST HAS TO BE TRANSITIVE. A unit that never writes `import std`
+    // itself still needs the initialiser when a module it imports does; asking
+    // only about the unit's own source is the same "the edge exists but nobody
+    // depends on it" mistake as #405. So: reachability over the module graph.
+    //
+    // Getting it wrong UNDER-includes, and that fails loudly — `std.o` defines
+    // exactly one symbol (`_ZGIW3std`, measured) and an importing TU references
+    // it, so a missed unit is an undefined symbol at link time rather than a
+    // silent miscompile.
+    std::unordered_map<std::string, const CompileUnit*> byModule;
+    for (auto& cu : plan.compileUnits)
+        if (cu.providesModule) byModule.emplace(*cu.providesModule, &cu);
+
+    auto reaches_std = [&](const CompileUnit& start) {
+        std::vector<const CompileUnit*> stack{&start};
+        std::unordered_set<std::string> seen;
+        while (!stack.empty()) {
+            const CompileUnit* cu = stack.back();
+            stack.pop_back();
+            for (auto& imp : cu->imports) {
+                if (imp == "std" || imp == "std.compat") return true;
+                if (!seen.insert(imp).second) continue;
+                if (auto it = byModule.find(imp); it != byModule.end())
+                    stack.push_back(it->second);
+            }
+        }
+        return false;
+    };
+
+    std::unordered_map<std::string, bool> objectNeedsStd;
+    for (auto& cu : plan.compileUnits)
+        objectNeedsStd[cu.object.generic_string()] = reaches_std(cu);
+
+    auto unit_needs_std = [&](const LinkUnit& lu) {
+        for (auto& o : lu.objects) {
+            auto it = objectNeedsStd.find(o.generic_string());
+            if (it != objectNeedsStd.end() && it->second) return true;
+        }
+        return false;
+    };
     if (has_std_artifacts) {
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_bmi_dst),
                            escape_ninja_path(plan.stdBmiPath)));
@@ -1153,7 +1354,21 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             ddi_paths.push_back(ddi);
             append(std::format("build {} : cxx_scan {}{}\n", escape_ninja_path(ddi),
                                escape_ninja_path(cu.source), stagedOrderOnly));
+            // `-o` and `-fdeps-target` are DIFFERENT under the split shape and
+            // must not share a variable. The scan writes a throwaway object to
+            // `-o`, but the dyndep file has to bind the BMI edge — that is the
+            // edge whose inputs are the imported BMIs.
+            //
+            // Pointing both at the BMI made the SCAN try to create
+            // `gcm.cache/<mod>.gcm` before anything had made that directory:
+            //   cc1plus: fatal error: opening output file gcm.cache/fx.unit_19.gcm
+            // It survived on this repository only because gcm.cache already
+            // existed there from an earlier build — a fresh project failed.
             append(std::format("  compile_target = {}\n", escape_ninja_path(cu.object)));
+            append(std::format("  deps_target = {}\n",
+                               splitBmi && cu.providesModule
+                                   ? bmi_path(*cu.providesModule)
+                                   : escape_ninja_path(cu.object)));
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
             if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
@@ -1218,10 +1433,27 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (exp.empty()) exp = "--expect-none";
             ddi_expect[ddi] = std::move(exp);
         }
+        // Which units get the split shape. Computed ONCE and consulted from
+        // both loops below: the dyndep record and the edge it augments have to
+        // agree on the target, and when they disagree ninja blames the edge
+        // ("'…pcm' not mentioned in its dyndep file") rather than the record.
+        std::set<std::string> two_phase_ddi;
+        if (twoPhase) {
+            for (auto& cu : plan.compileUnits) {
+                if (cu.servedFromCache) continue;
+                if (is_scan_exempt(cu)) continue;
+                if (!cu.providesModule) continue;
+                if (cu.kind != mcpp::SourceKind::ModuleInterface) continue;
+                two_phase_ddi.insert(
+                    (cu.object.parent_path() / cu.source.filename()).string() + ".ddi");
+            }
+        }
         for (auto& ddi : ddi_paths) {
             auto dd = ddi + ".dd";   // e.g. obj/cli.cppm.ddi.dd
             ddi_to_dd[ddi] = dd;
             append(std::format("build {} : cxx_dyndep {}\n", dd, ddi));
+            if (two_phase_ddi.contains(ddi))
+                append("  bind = --split-module\n");
             if (auto it = ddi_expect.find(ddi); it != ddi_expect.end())
                 append(std::format("  expect = {}\n", it->second));
         }
@@ -1233,6 +1465,103 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         for (auto& cu : plan.compileUnits) {
             if (cu.servedFromCache) continue;   // a stage_file edge owns these outputs
             std::string rule = pick_rule(cu);
+
+            if (splitBmi && cu.providesModule &&
+                cu.kind == mcpp::SourceKind::ModuleInterface) {
+                const auto bmi  = bmi_path(*cu.providesModule);
+                const auto obj  = escape_ninja_path(cu.object);
+                const auto slot = obj + ".sched";
+                const auto ddi  = (cu.object.parent_path() / cu.source.filename())
+                                      .string() + ".ddi";
+                auto it = ddi_to_dd.find(ddi);
+                if (it != ddi_to_dd.end()) {
+                    std::string e = std::format("build {} : cxx_module_bmi {} | {}",
+                                                bmi, escape_ninja_path(cu.source),
+                                                it->second);
+                    e += stagedOrderOnly;
+                    e += "\n  dyndep = " + it->second + "\n";
+                    e += "  bmi_out = " + bmi + "\n";
+                    e += "  obj_out = " + obj + "\n";
+                    e += "  slot = " + slot + "\n";
+                    e += "  scan_dep = " + escape_ninja_path(ddi) + ".dep\n";
+                    e += "  sched_sem = .mcpp-sched\n";
+                    e += std::format("  sched_cap = {}\n", plan.scheduleCompilerCap);
+                    if (auto inc = local_include_flags(cu, dial); !inc.empty())
+                        e += "  local_includes =" + inc + "\n";
+                    if (auto fl = join_flags(cu.packageCxxflags); !fl.empty())
+                        e += "  unit_cxxflags =" + fl + "\n";
+                    append(std::move(e));
+                    // The join. THE SOURCE IS AN INPUT, and the BMI is only an
+                    // implicit one — the reverse of what this was.
+                    //
+                    // ⚠️ WITH THE BMI AS THE ONLY INPUT THIS EDGE GETS CLEANED
+                    // BY THE VERY OPTIMISATION IT IS PART OF. The BMI edge sets
+                    // `restat = 1`, and when the new BMI turns out equivalent
+                    // `settle_bmi` puts the previous file back so its mtime does
+                    // not advance — that is what stops the cascade to importers,
+                    // and it is correct. But ninja's restat then cleans every
+                    // edge whose only reason to be dirty was that output, and
+                    // this edge was one: it was skipped, and the LINK with it.
+                    //
+                    // The unit's own object is a different question from the
+                    // cascade. Editing a function body does not change a GCC
+                    // BMI — bodies are not in it — so importers genuinely need
+                    // no rebuild, while THIS unit's object genuinely does.
+                    //
+                    // Measured on a two-module repro (`export int leaf_value()
+                    // { return 1; }` → `42`): the rebuild reported success in
+                    // 0.02s having run 3 of 8 edges, and the binary still
+                    // printed 1. No link error, no diagnostic — the detached
+                    // compiler wrote the correct object a fifth of a second
+                    // later, after ninja had already decided not to link it.
+                    // On the generated fixture the same defect surfaces instead
+                    // as `undefined reference to unit_19_value@fx.unit_19()`,
+                    // which is the same skip in the case where the symbol did
+                    // not exist beforehand.
+                    //
+                    // With the source as an input the edge has a reason to be
+                    // dirty that restat cannot clean away, and the BMI stays as
+                    // an implicit input so ninja still orders this after phase 1
+                    // — `bmi-await` must not run before a compiler was started.
+                    append(std::format("build {} : cxx_module_obj {} | {}\n  slot = {}\n",
+                                       obj, escape_ninja_path(cu.source), bmi, slot));
+                    continue;
+                }
+                // No dyndep file for this unit: fall through to the single-edge
+                // shape rather than emitting a BMI edge nothing can order.
+            }
+
+            if (twoPhase && cu.providesModule &&
+                cu.kind == mcpp::SourceKind::ModuleInterface) {
+                const auto bmi = bmi_path(*cu.providesModule);
+                const auto obj = escape_ninja_path(cu.object);
+                const auto ddi = (cu.object.parent_path() / cu.source.filename())
+                                     .string() + ".ddi";
+                auto it = ddi_to_dd.find(ddi);
+                if (it != ddi_to_dd.end()) {
+                    // Both edges read the same source and so need the same
+                    // imported BMIs; `--split-module` made the .dd carry a
+                    // record for each. They are otherwise INDEPENDENT — the
+                    // object edge does not wait for the BMI edge, which is what
+                    // lets codegen drift behind the front of the graph.
+                    auto edge = [&](std::string_view rule, const std::string& out) {
+                        std::string e = std::format("build {} : {} {} | {}",
+                                                    out, rule,
+                                                    escape_ninja_path(cu.source),
+                                                    it->second);
+                        e += stagedOrderOnly;
+                        e += "\n  dyndep = " + it->second + "\n";
+                        if (auto inc = local_include_flags(cu, dial); !inc.empty())
+                            e += "  local_includes =" + inc + "\n";
+                        if (auto fl = join_flags(cu.packageCxxflags); !fl.empty())
+                            e += "  unit_cxxflags =" + fl + "\n";
+                        append(std::move(e));
+                    };
+                    edge("cxx_precompile",    bmi);
+                    edge("cxx_module_object", obj);
+                    continue;
+                }
+            }
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (cu.providesModule) {
@@ -1363,7 +1692,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         switch (lu.kind) {
             case LinkUnit::Binary:
             case LinkUnit::TestBinary:
-                if (has_std_artifacts)
+                if (has_std_artifacts && unit_needs_std(lu))
                     ins += " " + escape_ninja_path(std_o_dst);
                 if (has_std_compat)
                     ins += " " + escape_ninja_path(compat_o_dst);
@@ -1373,7 +1702,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 rule = "cxx_archive";
                 break;
             case LinkUnit::SharedLibrary:
-                if (has_std_artifacts)
+                if (has_std_artifacts && unit_needs_std(lu))
                     ins += " " + escape_ninja_path(std_o_dst);
                 if (has_std_compat)
                     ins += " " + escape_ninja_path(compat_o_dst);
@@ -1608,11 +1937,24 @@ std::optional<std::string> check_inline_command_lengths(const std::string& manif
 std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan,
                                                            const BuildOptions& opts) {
     auto t0 = std::chrono::steady_clock::now();
+    // Where a drive's wall clock went. `mcpp test` calls this once per test on
+    // an already-built tree, so anything here that is not proportional to the
+    // work done is paid N times — and that is invisible from the outside,
+    // because the only number reported is the total.
+    auto tStage = t0;
+    auto stage = [&](std::string_view what) {
+        if (!mcpp::log::is_verbose()) { tStage = std::chrono::steady_clock::now(); return; }
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - tStage).count();
+        tStage = now;
+        if (ms >= 1) mcpp::log::verbose("build/stage", std::format("{}: {}ms", what, ms));
+    };
     // Captured before ninja touches any link output.  The post-build runtime
     // validator compares this snapshot, so a hot no-op performs zero ELF
     // parses and an output rebuilt behind an unchanged build.ninja is caught.
     auto runtimeBefore =
         mcpp::build::runtime_validation::snapshot_link_artifacts(plan);
+    stage("snapshot");
 
     std::error_code ec;
     std::filesystem::create_directories(plan.outputDir, ec);
@@ -1623,6 +1965,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 
     auto ninja_path = plan.outputDir / "build.ninja";
     auto manifest = emit_ninja_string(plan);
+    stage("emit-ninja");
 
     // Command-length backstop (see
     // .agents/docs/2026-08-06-command-length-architecture.md). The structural
@@ -1635,10 +1978,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         return std::unexpected(BuildError{*over, ninja_path});
     auto goalArg = append_goal_phony(manifest, opts.ninjaTargets);
     write_file(ninja_path, manifest);
+    stage("write-ninja");
 
     // compile_commands.json — via the dedicated module.
     auto flags = compute_flags(plan);
+    stage("compute-flags");
     auto cdb = write_compile_commands(plan, flags);
+    stage("compile-commands");
     if (!cdb) {
         if (opts.requireCompileDatabase) {
             return std::unexpected(BuildError{
@@ -1685,6 +2031,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                       plan.manifest.buildConfig.allowHostLibs); !h) {
         return std::unexpected(BuildError{h.error(), {}});
     }
+    stage("hermetic-check");
 
     // When the toolchain comes from mcpp's private sandbox, use the
     // sandbox-local ninja absolute path (skip the system xlings ninja
@@ -1771,6 +2118,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nargv, nenv,
         std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000),
         &buildTimedOut);
+    stage("ninja");
     std::string out = cap.output;
     bool ok = (cap.exit_code == 0) && !buildTimedOut;
 
@@ -1794,6 +2142,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         auto runtimeReport =
             mcpp::build::runtime_validation::validate_changed_artifacts(
                 plan, runtimeBefore);
+        stage("runtime-validate");
         std::string runtimeFailure;
         std::filesystem::path runtimeFailureArtifact;
         for (auto const& checked : runtimeReport.artifacts) {
@@ -1836,6 +2185,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                 continue;
             mcpp::ui::warning(finding.explain());
         }
+        stage("loader-tags");
         if (opts.verbose && !out.empty())
             std::fputs(out.c_str(), stdout);
         std::set<std::string> want(opts.ninjaTargets.begin(), opts.ninjaTargets.end());

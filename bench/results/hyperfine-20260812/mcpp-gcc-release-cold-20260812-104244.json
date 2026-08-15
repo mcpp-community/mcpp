@@ -1,0 +1,24 @@
+{
+  "results": [
+    {
+      "command": "cd '/home/speak/workspace/github/mcpp-community/mcpp' && mcpp build --release",
+      "mean": 77.58809723248667,
+      "stddev": 0.3647750861532106,
+      "median": 77.55061916382,
+      "user": 286.9025155266667,
+      "system": 15.796073299999998,
+      "min": 77.24350802782,
+      "max": 77.97016450582001,
+      "times": [
+        77.55061916382,
+        77.97016450582001,
+        77.24350802782
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

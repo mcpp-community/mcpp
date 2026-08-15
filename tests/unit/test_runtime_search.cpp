@@ -24,6 +24,14 @@ TEST(RuntimeSearch, PayloadOutranksFarm) {
     EXPECT_LT(search::rank(Origin::Payload), search::rank(Origin::SubosFarm));
     EXPECT_LT(search::rank(Origin::Package), search::rank(Origin::SubosFarm));
     EXPECT_LT(search::rank(Origin::SubosFarm), search::rank(Origin::HostDefault));
+
+    // #415 — the artifact's own directory (`$ORIGIN`) sits between the packages
+    // and the farm. This is the ordering #414 was about: with the farm ahead of
+    // `$ORIGIN` an artifact linked one libX11 and loaded another. A pinned
+    // payload still wins, because that is the one thing nothing re-points.
+    EXPECT_LT(search::rank(Origin::Package),  search::rank(Origin::Artifact));
+    EXPECT_LT(search::rank(Origin::Artifact), search::rank(Origin::SubosFarm));
+    EXPECT_LT(search::rank(Origin::Payload),  search::rank(Origin::Artifact));
 }
 
 // `mcpp pack` asks this to decide what may not be baked into a distributable.
@@ -35,6 +43,13 @@ TEST(RuntimeSearch, MachineLocalIsEverythingButTheHostDefaults) {
     EXPECT_TRUE(search::is_machine_local(Origin::Package));
     EXPECT_TRUE(search::is_machine_local(Origin::SubosFarm));
     EXPECT_FALSE(search::is_machine_local(Origin::HostDefault));
+
+    // ⚠️ `$ORIGIN` is NOT machine-local, and getting this backwards would be
+    // worse than the gap it closes: it is resolved by the loader relative to
+    // the artifact, so it means the same thing wherever that artifact is
+    // copied — `pack` REWRITES everything else into this form. Marking it
+    // local would make pack reject the one entry it is trying to produce.
+    EXPECT_FALSE(search::is_machine_local(Origin::Artifact));
 }
 
 // These strings are PUBLISHED — they are the `origin` field of every entry in
@@ -44,6 +59,7 @@ TEST(RuntimeSearch, MachineLocalIsEverythingButTheHostDefaults) {
 TEST(RuntimeSearch, OriginNamesArePublishedAndStable) {
     EXPECT_EQ(search::to_string(Origin::Payload),     "payload");
     EXPECT_EQ(search::to_string(Origin::Package),     "package");
+    EXPECT_EQ(search::to_string(Origin::Artifact),    "artifact");
     EXPECT_EQ(search::to_string(Origin::SubosFarm),   "subos_farm");
     EXPECT_EQ(search::to_string(Origin::HostDefault), "host_default");
 }

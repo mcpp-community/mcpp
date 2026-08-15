@@ -127,12 +127,17 @@ std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
 // std / std.compat module staging commands (single cl step each):
 //   cl /nologo <stdFlagAndDialect> /EHsc /W0 /O2 /c <tools>\modules\std.ixx
 //      /ifcOutput <cacheDir>\ifc.cache\std.ifc /Fo:<cacheDir>\std.obj
+// `crtFlag` is the CRT model (`/MT` or `/MD`) the PROJECT'S TUs are compiled
+// with. It has to be handed in rather than defaulted, for the same reason
+// `macos_deployment_target` is: cl bakes `_MSVC_MT` / `_MSVC_MD` into the
+// module, and a TU importing a std built with the other one gets C5050 followed
+// by a real C2375 out of the ucrt headers. Empty keeps cl's own default.
 std::vector<std::string> std_module_build_commands(
     const Toolchain& tc, const std::filesystem::path& cacheDir,
-    std::string_view cppStandardFlag);
+    std::string_view cppStandardFlag, std::string_view crtFlag = {});
 std::vector<std::string> std_compat_build_commands(
     const Toolchain& tc, const std::filesystem::path& cacheDir,
-    std::string_view cppStandardFlag);
+    std::string_view cppStandardFlag, std::string_view crtFlag = {});
 
 std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir);
 std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir);
@@ -520,16 +525,18 @@ std::string cl_stage_command(const Toolchain& tc,
                              const std::filesystem::path& source,
                              const std::filesystem::path& ifcOut,
                              std::string_view objName,
-                             std::string_view extraRef) {
+                             std::string_view extraRef,
+                             std::string_view crtFlag) {
     // cd into the cache dir (relative outputs land there); env (INCLUDE/LIB)
     // comes from tc.envOverrides via the executor, not the command string.
     // `/d`: cmd.exe won't change DRIVE without it (workspace on D:, BMI
     // cache on C: is the real CI layout).
     return std::format(
-        "cd /d {} && {} /nologo {} /EHsc /O2 /W0{} /c {} /ifcOutput {} /Fo:{} 2>&1",
+        "cd /d {} && {} /nologo {}{} /EHsc /O2 /W0{} /c {} /ifcOutput {} /Fo:{} 2>&1",
         mcpp::xlings::shq(cacheDir.string()),
         mcpp::xlings::shq(tc.binaryPath.string()),
         cppStandardFlag,
+        crtFlag.empty() ? std::string{} : std::format(" {}", crtFlag),
         extraRef,
         mcpp::xlings::shq(source.string()),
         mcpp::xlings::shq(ifcOut.string()),
@@ -564,22 +571,22 @@ int std_module_min_level(const Toolchain& tc) {
 
 std::vector<std::string> std_module_build_commands(
     const Toolchain& tc, const std::filesystem::path& cacheDir,
-    std::string_view cppStandardFlag) {
+    std::string_view cppStandardFlag, std::string_view crtFlag) {
     return { cl_stage_command(tc, cacheDir, cppStandardFlag,
                               tc.stdModuleSource,
-                              std_bmi_path(cacheDir), "std.obj", "") };
+                              std_bmi_path(cacheDir), "std.obj", "", crtFlag) };
 }
 
 std::vector<std::string> std_compat_build_commands(
     const Toolchain& tc, const std::filesystem::path& cacheDir,
-    std::string_view cppStandardFlag) {
+    std::string_view cppStandardFlag, std::string_view crtFlag) {
     // std.compat imports std — reference the freshly staged std.ifc.
     auto ref = std::format(" /reference std={}",
                            mcpp::xlings::shq(std_bmi_path(cacheDir).string()));
     return { cl_stage_command(tc, cacheDir, cppStandardFlag,
                               tc.stdCompatSource,
                               std_compat_bmi_path(cacheDir), "std.compat.obj",
-                              ref) };
+                              ref, crtFlag) };
 }
 
 std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {

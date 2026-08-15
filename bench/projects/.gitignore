@@ -1,0 +1,35 @@
+# Engine scratch, written INTO the description directories at measurement time.
+#
+# Every foreign engine keeps state next to the description it was pointed at:
+# xmake puts its resolved configuration in `.xmake/`, cmake and xmake put objects
+# under `build/`. None of it belongs in the repository, and one of these files
+# has already been committed by accident and would have done real damage:
+#
+#     bench/projects/mcpp/.xmake/linux/x86_64/xmake.conf
+#       builddir = "mcpp-2026.8.11.3/build"
+#       __toolchains_linux_x86_64 = { "gcc", "cuda", "rust", ... }
+#
+# That `builddir` is the path-doubling bug this suite was fixed for, frozen into
+# a file CI would have READ — reinstating the defect on every runner while the
+# code that caused it was already gone. The toolchain list is whatever happened
+# to be installed on one developer's machine.
+#
+# The root .gitignore's `/.xmake/` is anchored to the repository root and does
+# not reach here, which is exactly how this slipped through.
+.xmake/
+build/
+
+# cmake, when driven by hand rather than by the harness (`--work` keeps the
+# harness's own output out of the tree).
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# bazel
+bazel-*/
+MODULE.bazel.lock
+
+# bazel convenience symlinks — created in the package dir on every build,
+# and pointing into ~/.cache/bazel, so they are never worth tracking.
+bazel-*

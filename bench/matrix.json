@@ -1,0 +1,293 @@
+{
+  "schema": 2,
+  "_comment": [
+    "THE benchmark matrix. Read by .github/workflows/bench.yml to plan its jobs and",
+    "by tests/e2e/233_bench_matrix.sh to check this file against the harness's own",
+    "vocabulary. bench/SPEC.md explains the axes; it deliberately does not repeat",
+    "the cell list, because a matrix written down twice is a matrix that disagrees",
+    "with itself.",
+    "",
+    "A cell is one CI job. Inside it the harness sweeps every engine x variant x",
+    "scenario, so those axes are per-cell lists rather than more jobs: they share a",
+    "checkout, a toolchain install and a fixture, and splitting them would multiply",
+    "runner minutes without adding a single measurement.",
+    "meson is deliberately absent, not missing: meson 1.10.2 has no way to declare a translation unit to be a module INTERFACE, so every module cell was an `unavailable` row. An engine that cannot express the thing being measured is not a comparison point, and keeping it produced one honest row and five empty ones per report."
+  ],
+  "baseline": "cmake",
+  "_baseline_note": "Every ratio in every report is against cmake unless a cell overrides it. See SPEC.md S2.",
+  "tools": {
+    "_note": [
+      "EVERY tool is installed through xlings at an exact version, on every runner.",
+      "Not a tidiness preference — the unpinned matrix measured something else:",
+      "the runner images carry cmake 3.31.6, which does not have the CMake 4.0",
+      "`import std` experimental key, so every module cell failed to configure;",
+      "and `xlings install xmake` resolved to 3.0.7 on the runner while a",
+      "developer box had 3.1.0. A version that varies per runner is a variable",
+      "the report does not record and the reader cannot see."
+    ],
+    "cmake": "4.4.2",
+    "xmake": "3.1.0",
+    "bazel": "9.2.0",
+    "gcc": "16.1.0",
+    "llvm": "22.1.8",
+    "llvm_windows": "20.1.7",
+    "_compiler_note": [
+      "gcc/llvm are the versions bench/src/toolchain.cppm pins and mcpp itself",
+      "builds with. Every engine is handed THAT driver via `--compiler payload:*`,",
+      "not `command -v g++`. The runner's own gcc is 13.3.0: cmake cannot",
+      "configure C++23 modules with it, xmake crashes it with an internal",
+      "compiler error, and mcpp quietly used the registry payload anyway — so the",
+      "table read `48 failed` while claiming to compare build engines."
+    ],
+    "_cmake_note": "4.4.2. `CMAKE_EXPERIMENTAL_CXX_IMPORT_STD` is gated by a UUID that CHANGES WITH THE CMAKE VERSION, and it is compiled into the cmake binary rather than written in the Modules — 4.4's is f35a9ac6-8463-4d38-8eec-5d6008153e7d, 4.0's was a9e1cf81-9932-4810-974b-6eccaf14e457, and 4.4.2 rejects the old one with `CMAKE_EXPERIMENTAL_CXX_IMPORT_STD is set to incorrect value`. So the version here and the key in every description under bench/projects/ MUST move in the same commit. The key was not guessed: each UUID in the binary was offered to cmake in a throwaway project until one was accepted. ⚠️ Offering them to the REAL project proves nothing — its CMakeLists.txt `set()`s the key itself, which overrides the -D, so all seven candidates came back rejected including the one that works."
+  },
+  "reference_mcpp": "2026.8.11.3",
+  "_reference_mcpp_note": [
+    "The last RELEASED mcpp, installed by xlings and measured alongside the mcpp",
+    "built from this checkout. Without it a report says how fast this branch is",
+    "and not whether it got faster, which is the question a benchmark on a pull",
+    "request is being asked."
+  ],
+  "axes": {
+    "os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "toolchain": [
+      "gcc",
+      "clang",
+      "msvc"
+    ],
+    "engine": [
+      "mcpp",
+      "cmake",
+      "xmake",
+      "bazel"
+    ],
+    "project": [
+      "fixture",
+      "mcpp-2026.8.11.3",
+      "xlings-2026.8.11.2",
+      "xlings-2026.8.13.1"
+    ],
+    "variant": [
+      "headers",
+      "modules",
+      "modules-impl"
+    ],
+    "scenario": [
+      "cold",
+      "noop",
+      "touch-hub",
+      "touch-leaf",
+      "edit-body",
+      "edit-comment"
+    ]
+  },
+  "cells": [
+    {
+      "os": "linux",
+      "toolchain": "gcc",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake",
+      "variants": "headers,modules,modules-impl",
+      "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
+      "preset": "standard",
+      "note": "bazel omitted: its module support requires a clang driver (see the bazel engine's unsupported_reason)"
+    },
+    {
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake,bazel",
+      "variants": "headers,modules,modules-impl",
+      "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
+      "preset": "standard"
+    },
+    {
+      "os": "windows",
+      "toolchain": "clang",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake,bazel",
+      "variants": "headers,modules,modules-impl",
+      "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
+      "preset": "standard",
+      "allow_failed": "xmake,bazel",
+      "note": "KNOWN GAP, two of them, in two foreign tools on Windows. xmake: exits -1 (0xFFFFFFFF) from the seed build. It USED to be reported as `could not start the process`, which was the harness's own bug — Windows crash/abort statuses are large DWORDs that become negative ints, and `started()` inferred launch failure from the sign. That is fixed, so this is now honestly an exit code, and it is xmake's. bazel: `msvc_deps_scanner_wrapper_x64.bat failed ... The syntax of the command is incorrect` on the modules-impl variant — rules_cc's MSVC dependency scanner, not something this suite passes. A separate bazel failure on this cell WAS ours and is fixed: `--force_pic` is fatal on Windows (`supports_pic` is not enabled there), and dropping it recovered the headers and modules variants. cmake and mcpp stay measured here."
+    },
+    {
+      "os": "windows",
+      "toolchain": "msvc",
+      "project": "fixture",
+      "engines": "mcpp,cmake,xmake",
+      "variants": "headers,modules,modules-impl",
+      "scenarios": "cold,noop,touch-hub,touch-leaf,edit-body,edit-comment",
+      "preset": "standard",
+      "note": "bazel omitted: same clang-driver requirement as the gcc cell"
+    },
+    {
+      "os": "linux",
+      "toolchain": "gcc",
+      "project": "mcpp-2026.8.11.3",
+      "engines": "mcpp,mcpp[schedule=on],cmake,xmake",
+      "variants": "modules",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform/platform.cppm",
+      "body": "src/version_req.cppm",
+      "note": "KNOWN GAP: cmake cannot GENERATE this project on the runner. It configures (the compiler probe passes) and then fails with `CMake Error: the \"CXX_MODULE_STD\" property ... requires that the \"__CMAKE::CXX23\" target exist, but it was not provided by the toolchain. Reason: Only `libstdc++` is supported`. Everything checkable from outside has been checked and every one of them AGREES with a developer box where the same arm configures, generates and builds: same cmake (the very same `xim-x-cmake/4.0.2` xlings payload, not merely the same version), same `xim-x-gcc/16.1.0`, `libstdc++.modules.json` present on the runner, both sources it names (`std.cc`, `std.compat.cc`) present on the runner, and the runner's exact flag shape (`-B<glibc>/lib -L<glibc>/lib`, the branch this machine does not normally take) reproduced locally via a fake MCPP_HOME with no subos — it works there. What is left is inside CMake's own detection. The arm's CMakeConfigureLog is now attached to the cell log on failure so the next look starts from CMake's own record rather than another hypothesis. BASELINE MOVED to the released mcpp for this cell, exactly as the xlings cells do: normalising against an engine that never produced a binary prints bare seconds under a heading that says `relative to`. xmake and both mcpp arms stay measured here. The published cmake numbers in bench/README were taken on a machine where this arm works.",
+      "buildfiles": "mcpp",
+      "allow_failed": "cmake",
+      "baseline": "2026.8.11.3"
+    },
+    {
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "mcpp-2026.8.11.3",
+      "engines": "mcpp,mcpp[schedule=on],cmake,xmake",
+      "variants": "modules",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform/platform.cppm",
+      "body": "src/version_req.cppm",
+      "buildfiles": "mcpp",
+      "allow_failed": "xmake",
+      "note": "KNOWN GAP: xmake cannot build `import std` with the libc++ payload on this project. It fails during dependency scanning with `warning: std and std.compat modules not found!` followed by `error: <mcpp> missing std dependency for module <...>`, naming a different module each run. REPRODUCED LOCALLY and bounded — it is not a runner problem: the same failure occurs on a developer box with the same payload. Two fixes were tried and neither works: passing `--sdk=<llvm root>` explicitly (the flag xmake's own warning suggests, and the one that the windows/clang arm needed), and switching from the custom `mcpp-clang` toolchain to xmake's built-in `llvm` toolchain with that same `--sdk`. The payload layout is the standard one — `<sdk>/share/libc++/v1/std.cppm` is present. The gcc arm of this same project is green, and the generated fixture is green with this same clang, so this is specific to xmake + libc++ + a real tree. cmake is NOT waived here and must stay measured. Unresolved, not impossible: whoever picks this up should start from why the fixture succeeds where the project does not."
+    },
+    {
+      "os": "windows",
+      "toolchain": "clang",
+      "project": "mcpp-2026.8.11.3",
+      "engines": "mcpp,mcpp[schedule=on],cmake,xmake",
+      "variants": "modules",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform/platform.cppm",
+      "body": "src/version_req.cppm",
+      "buildfiles": "mcpp",
+      "allow_failed": "cmake,xmake",
+      "note": "KNOWN GAP, TWO DIFFERENT ONES, and they must not be conflated. cmake: no `import std` on Windows — it stops inside project() at the CXX_MODULE_STD toolchain-support probe (CMakeTestCXXCompiler -> CMakeDetermineCompilerSupport), because the Windows payload is llvm@20.1.7 against the MSVC STL, which ships no std module cmake can build. xmake: does not start at all — `seed build: could not start the process (no log written)`, i.e. the program is not on the runner's PATH. That is an ENVIRONMENT problem and is fixable, unlike cmake's; it is waived here only so the mcpp arms keep running, and it used to be waived under cmake's reason, which is how it went unnoticed. Re-check both when the Windows payload or the tool install changes. The mcpp arms measure fine, so the cell is kept for them and the two arms are waived rather than dropped — a waived failure stays visible in the report, an excluded engine does not."
+    },
+    {
+      "os": "linux",
+      "toolchain": "gcc",
+      "project": "xlings-2026.8.11.2",
+      "buildfiles": "xlings",
+      "engines": "mcpp,mcpp[schedule=on],cmake,xmake",
+      "variants": "modules",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform.cppm",
+      "body": "src/platform.cppm",
+      "note": "the COMBINED code style: 110 .cppm + 2 .cpp, each interface unit carrying its own implementation. src/platform.cppm has 45 importers, which is what makes it the hub  KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp.",
+      "baseline": "2026.8.11.3",
+      "allow_failed": "cmake,xmake"
+    },
+    {
+      "os": "linux",
+      "toolchain": "gcc",
+      "project": "xlings-2026.8.13.1",
+      "buildfiles": "xlings",
+      "engines": "mcpp,mcpp[schedule=on],cmake,xmake",
+      "variants": "modules-impl",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform.cppm",
+      "body": "src/platform.cpp",
+      "note": "the SPLIT code style: the same 110 interfaces with implementations moved into 92 .cpp. Paired with the cell above, this is the only measurement in the suite of what that refactor costs on a real codebase — note `body` is the .cpp here, because editing an implementation unit is the point  KNOWN GAP on this project, and the reason the baseline is overridden: ftxui / libarchive / lua / mbedtls arrive as SOURCE packages that mcpp compiles, so cmake and xmake compile every translation unit and then stop at the link with `undefined reference to mbedtls_*`. Both descriptions ship their own CMakeLists and `add_subdirectory` would finish it — it is work, not a wall. Until then the arms are kept (a documented wall is data) but waived, and the cell answers the question it can answer: mcpp against mcpp.",
+      "baseline": "2026.8.11.3",
+      "allow_failed": "cmake,xmake"
+    },
+    {
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "xlings-2026.8.11.2",
+      "buildfiles": "xlings",
+      "engines": "mcpp,mcpp[schedule=on],cmake,xmake",
+      "variants": "modules",
+      "scenarios": "cold,noop,touch-hub,edit-body,edit-comment",
+      "hub": "src/platform.cppm",
+      "body": "src/platform.cppm",
+      "baseline": "2026.8.11.3",
+      "allow_failed": "cmake,xmake",
+      "note": "KNOWN GAP, TWO DIFFERENT ONES — and the reason the baseline is overridden. They must not be conflated: this note used to describe BOTH arms as 'compile everything, then stop at the link with undefined reference to mbedtls_*', and by the time anyone read the log neither arm was failing that way any more. cmake: FATAL_ERROR from the suite's own `xpkg_source_library.cmake:231` — a source package's manifest carries no `sources` list, so the description cannot name what to compile. That is OUR code and it is fixable; it just has not been fixed. xmake: xrepo cannot BUILD the dependency packages — `install ftxui v6.1.9 .. failed`, `install mcpplibs-tinyhttps 0.2.9 .. failed`, `install mcpplibs-capi-lua 0.0.3 .. failed`, each ending in `std and std.compat modules not found!`. Same libc++ std-module gap as the linux/clang mcpp cell, reproduced locally there, with `--sdk` and both the custom and built-in llvm toolchains tried. It is upstream, not ours. Both arms stay listed rather than excluded — a documented wall is data — and the cell answers what it can: mcpp against mcpp. The run prints `WAIVED AWAY ENTIRELY: cmake, xmake` so a green job says so on its face."
+    }
+  ],
+  "excluded": [
+    {
+      "os": "macos",
+      "toolchain": "gcc",
+      "reason": "no gcc payload exists for macOS in mcpp's registry, and a Homebrew gcc would make the cell a comparison of distributions rather than of engines"
+    },
+    {
+      "os": "windows",
+      "toolchain": "gcc",
+      "reason": "mcpp supports x86_64-windows-gnu, but the other four engines would each have to be pointed at an msys2 gcc that mcpp does not use. KNOWN GAP, not a decision: the cell is meaningful and is simply not wired up yet"
+    },
+    {
+      "os": "linux",
+      "toolchain": "msvc",
+      "reason": "msvc is Windows-only"
+    },
+    {
+      "os": "macos",
+      "toolchain": "msvc",
+      "reason": "msvc is Windows-only"
+    },
+    {
+      "os": "windows",
+      "toolchain": "msvc",
+      "project": "mcpp-*",
+      "reason": "mcpp's own schedule policy reports msvc as unmeasured (src/build/schedule/policy.cppm), so the mcpp arm would be measuring a shape nobody has validated"
+    },
+    {
+      "os": "windows",
+      "toolchain": "msvc",
+      "project": "xlings-*",
+      "reason": "same as the mcpp project on msvc: no validated schedule, so a real-project number would describe an unvalidated shape"
+    },
+    {
+      "os": "windows",
+      "toolchain": "clang",
+      "project": "xlings-*",
+      "reason": "xlings has not been shown to build on Windows at all. KNOWN GAP: verify the plain build first, then add the cell — a bench cell that cannot build is not a measurement. The `xlings-*` prefix is deliberate: a bare `*` here would also claim the windows/clang fixture and mcpp cells, which do run"
+    },
+    {
+      "os": "*",
+      "toolchain": "clang",
+      "project": "*",
+      "engine": "xmake",
+      "reason": "KNOWN GAP, xmake+clang only: xmake locates libc++'s std module through lib/libc++.modules.json, which mcpp's llvm payload does not ship (it has share/libc++/v1/std.cppm). xmake warns 'std and std.compat modules not found' and build.c++.modules.std degrades SILENTLY — the arm would then measure a project without `import std;` against ones with it. The cell still runs; read its note before quoting the number"
+    },
+    {
+      "os": "macos",
+      "toolchain": "clang",
+      "project": "xlings-*",
+      "reason": "KNOWN GAP, and it is an mcpp defect rather than a benchmark one: on macOS mcpp cannot compile a dependency's `build.mcpp` helper — xlings depends on mcpplibs.xpkg, whose helper links but then dies at run time with `dyld: Symbol not found: __ZdaPv` (operator delete[]), i.e. it cannot find libc++. Same family as the helper self-containment work (glibc via rpath, musl and PE via -static) with macOS never covered. Recorded in .agents/docs/2026-08-13-build-optimization-status.md S9a; the cell returns when that is fixed, and its blast radius is every macOS project depending on a package that ships a build.mcpp"
+    },
+    {
+      "os": "macos",
+      "toolchain": "clang",
+      "project": "*",
+      "reason": "KNOWN GAP, and an mcpp/xlings environment defect rather than a benchmark one. On macOS the registry's libc++ ends up on the dynamic loader's search path for EVERY child process, so Apple's own linker — which links against libc++ — resolves against the payload copy and aborts before linking: `dyld: Symbol not found: __ZdaPv, Referenced from: .../XcodeDefault.xctoolchain/usr/bin/ld, Expected in: .../registry/.../lib/libc++.1.0.dylib`. cmake, bazel and the reference mcpp all fail identically while the mcpp under test passes, which is what identifies it as environmental. Same symbol and mechanism as the build.mcpp helper failure in .agents/docs/2026-08-13-build-optimization-status.md S9a. Removing the payload libc++ flags on macOS did NOT fix it, so the contamination arrives through DYLD_* rather than through link flags. The cells return once that is understood — deliberately not guessed at from a machine that cannot reproduce it"
+    },
+    {
+      "project": "mcpp-*",
+      "engine": "bazel",
+      "reason": "bazel cannot build this workload: it will not glob sources from outside its workspace, and `import std;` has no bazel spelling. bench/projects/mcpp/BUILD.bazel therefore declares no rules — and `bazel build //...` over a package with no rules EXITS 0 having compiled nothing, which the matrix published as `bazel cold 0.43s` beside mcpp's 12s and cmake's 94s. Removed here, and the bazel adapter now reports `unavailable` for a ruleless package so the next one cannot be published as a measurement."
+    },
+    {
+      "os": "linux",
+      "toolchain": "clang",
+      "project": "xlings-2026.8.13.1",
+      "reason": "clang 22.1.8 crashes compiling this tree's `xlings.core.config` module — a compiler bug, not a build-engine result: `clang frontend command failed with exit code 139`, `PLEASE submit a bug report to llvm/llvm-project`, on obj/xlings/src/core/config.m.o. The SAME tree with the SAME description builds clean under gcc 16.1.0 (linux/gcc/xlings-2026.8.13.1 is green), so nothing here measures an engine. Excluded rather than waived because a crashing compiler produces no number to look at; re-add the cell when llvm ships a fix."
+    }
+  ],
+  "_workload_note": [
+    "THE MEASURED SOURCES ARE PINNED, INCLUDING mcpp's OWN.",
+    "A benchmark has two halves: the engine under test and the workload it is",
+    "given. The engine is the binary, which is what moves between runs; the",
+    "workload must not. `--project $GITHUB_WORKSPACE` made mcpp's own tree the",
+    "workload, so every commit on a branch silently changed the thing being",
+    "measured and no two runs were comparable — the same defect the xlings clone",
+    "had, just harder to see because the drift was our own.",
+    "Both are git submodules under bench/projects/ now. Bumping one is a",
+    "deliberate, reviewable act that invalidates the previous ratios on purpose."
+  ]
+}

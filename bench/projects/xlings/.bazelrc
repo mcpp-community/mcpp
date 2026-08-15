@@ -1,0 +1,45 @@
+# Flags this arm cannot build without. bench/src/engines/bazel.cppm passes the
+# first three itself; they are repeated here so that the command lines in
+# MODULE.bazel and README.md work as written, and so a hand-run build measures
+# the same thing the harness does.
+
+# Each one's absence is a different error, and none of them says "add this flag":
+#   without --experimental_cpp_modules: `attribute module_interfaces: requires
+#     --experimental_cpp_modules`
+#   without --features=cpp_modules:     `the feature cpp_modules must be enabled`
+build --experimental_cpp_modules
+build --features=cpp_modules
+
+# cc_binary registers the ddi aggregation action for BOTH the PIC and non-PIC
+# object sets but names its output <target>.CXXModules.json without a pic
+# suffix, so analysis dies before a single file compiles:
+#     Attempted action contains artifacts not in previous action:
+#       _objs/xlings/main.pic.ddi ... Outputs: are equal
+# Forcing one object flavour leaves one action. PIC rather than
+# --features=-supports_pic because it yields a PIE executable, which is what
+# gcc and clang produce by default for every other engine in the table.
+build --force_pic
+
+# ⚠️ --compilation_mode=opt DOES NOT BUILD WITHOUT THIS, and the harness always
+# passes opt for the release profile. bazel's opt mode appends
+# `-D_FORTIFY_SOURCE=1` after its own `-U_FORTIFY_SOURCE`, glibc then replaces
+# the string/stdio/wchar functions with `__fortify_function` wrappers — which
+# have INTERNAL LINKAGE — and libc++'s std module cannot re-export them:
+#
+#     libcxx_module/std/cwchar.inc:30:14: error: using declaration referring to
+#       'swprintf' with internal linkage cannot be exported
+#     note: target of using declaration
+#       .../xim-x-glibc/2.44/include/bits/wchar2.h:181:8
+#
+# It reads as a libc++/glibc incompatibility and is a build flag. --copt lands
+# after the compilation-mode flags, so the -U wins; no other engine in this
+# table defines _FORTIFY_SOURCE either, so removing it is also what keeps the
+# arms comparable rather than a local workaround.
+build --copt=-U_FORTIFY_SOURCE
+
+# The autoconfigured toolchain appends `-lstdc++ -lm` to every link. This arm is
+# libc++ (the payload clang's config file sets -stdlib=libc++), and linking the
+# two standard libraries into one binary is a coin flip decided by link order:
+# --as-needed happens to drop libstdc++ here, and "happens to" is not a
+# guarantee anyone should rely on for a 46k-line binary.
+build --repo_env=BAZEL_LINKLIBS=-lm

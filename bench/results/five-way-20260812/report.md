@@ -1,0 +1,203 @@
+# Five-way engine comparison — 2026-08-12
+
+**mcpp (old) · mcpp (new) · cmake · xmake · meson · bazel**, on the same fixture,
+with the same compiler binary, across two compilers.
+
+**cmake is the performance baseline.** Every cell shows the median wall time and
+its ratio to cmake in the same row, so `0.26x` reads "took 26% of what cmake took"
+and `4.66x` reads "took 4.66 times as long".
+
+| | |
+|---|---|
+| host | Linux x86_64 · 13th Gen Intel Core i9-13900K · 32 logical / 24 physical (heterogeneous) · 64 GiB |
+| fixture | generated, **40 units / fan-in 3 / weight 6**, medians of 2 runs |
+| compilers | `gcc@16.1.0` and `llvm@22.1.8`, both hermetic mcpp payloads, pinned into every engine |
+| engines | mcpp 2026.8.11.3 (previous release) and 2026.8.12.1 (this PR), cmake 4.0.2, xmake v3.0.7+HEAD.77d94ad, meson 1.10.2, bazel 9.2.0 + rules_cc 0.2.22 — each recorded in the result file by the engine itself, not asserted here |
+| raw | [`linux-x86_64-gcc.json`](linux-x86_64-gcc.json), [`linux-x86_64-clang.json`](linux-x86_64-clang.json) |
+
+Reproduce:
+
+```
+bench --engines mcpp=<old>,mcpp=<new>,cmake,xmake,meson,bazel \
+      --compiler <path to g++ or clang++> \
+      --units 40 --fanin 3 --weight 6 --runs 2 --baseline cmake
+```
+
+---
+
+#### gcc@16.1.0
+
+**`headers`**
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake | meson | bazel |
+|---|---|---|---|---|---|---|
+| `cold` | 0.57s · 0.14x | 0.51s · 0.12x | **4.07s** · 1.00x | 2.71s · 0.67x | 4.84s · 1.19x | 0.80s · 0.20x |
+| `noop` | 0.17s · 0.50x | 0.15s · 0.45x | **0.33s** · 1.00x | 0.29s · 0.86x | 0.64s · 1.95x | 0.20s · 0.62x |
+| `touch-leaf` | 0.37s · 0.47x | 0.29s · 0.36x | **0.79s** · 1.00x | 0.69s · 0.87x | 1.05s · 1.32x | 0.20s · 0.26x |
+| `edit-body` | 0.37s · 0.47x | 0.29s · 0.37x | **0.79s** · 1.00x | 1.09s · 1.37x | 1.03s · 1.30x | 0.30s · 0.38x |
+| `edit-comment` | 0.55s · 0.41x | 0.46s · 0.34x | **1.35s** · 1.00x | 1.07s · 0.79x | 1.54s · 1.14x | 0.51s · 0.37x |
+| `touch-hub` | 0.54s · 0.40x | 0.47s · 0.35x | **1.33s** · 1.00x | 1.26s · 0.95x | 1.56s · 1.17x | 0.21s · 0.16x |
+
+**`modules`**
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake | meson | bazel |
+|---|---|---|---|---|---|---|
+| `cold` | 3.61s · 0.28x | 3.53s · 0.27x | **13.05s** · 1.00x | 11.46s · 0.88x | _unavailable_ | _unavailable_ |
+| `noop` | 0.15s · 0.46x | 0.14s · 0.42x | **0.34s** · 1.00x | 0.32s · 0.94x | _unavailable_ | _unavailable_ |
+| `touch-leaf` | 0.39s · 0.39x | 0.30s · 0.31x | **0.99s** · 1.00x | 1.16s · 1.17x | _unavailable_ | _unavailable_ |
+| `edit-body` | 3.65s · 0.35x | 0.29s · 0.03x | **10.29s** · 1.00x | 11.15s · 1.08x | _unavailable_ | _unavailable_ |
+| `edit-comment` | 3.67s · 0.36x | 0.30s · 0.03x | **10.31s** · 1.00x | 10.55s · 1.02x | _unavailable_ | _unavailable_ |
+| `touch-hub` | 3.61s · 0.35x | 0.29s · 0.03x | **10.32s** · 1.00x | 11.13s · 1.08x | _unavailable_ | _unavailable_ |
+
+**`modules-impl`**
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake | meson | bazel |
+|---|---|---|---|---|---|---|
+| `cold` | 3.36s · 0.26x | 3.25s · 0.25x | **12.80s** · 1.00x | 11.97s · 0.94x | _unavailable_ | _unavailable_ |
+| `noop` | 0.17s · 0.51x | 0.15s · 0.46x | **0.33s** · 1.00x | 0.36s · 1.07x | _unavailable_ | _unavailable_ |
+| `touch-leaf` | 0.41s · 0.39x | 0.29s · 0.28x | **1.05s** · 1.00x | 1.26s · 1.20x | _unavailable_ | _unavailable_ |
+| `edit-body` | 0.37s · 0.47x | 0.31s · 0.39x | **0.79s** · 1.00x | 0.83s · 1.05x | _unavailable_ | _unavailable_ |
+| `edit-comment` | 3.30s · 0.33x | 0.30s · 0.03x | **10.04s** · 1.00x | 11.57s · 1.15x | _unavailable_ | _unavailable_ |
+| `touch-hub` | 3.34s · 0.33x | 0.30s · 0.03x | **10.01s** · 1.00x | 11.55s · 1.15x | _unavailable_ | _unavailable_ |
+
+
+#### llvm@22.1.8
+
+**`headers`**
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake | meson | bazel |
+|---|---|---|---|---|---|---|
+| `cold` | 0.48s · 0.23x | 0.41s · 0.20x | **2.03s** · 1.00x | 2.68s · 1.32x | 2.55s · 1.26x | 0.67s · 0.33x |
+| `noop` | 0.19s · 0.56x | 0.17s · 0.52x | **0.33s** · 1.00x | 0.29s · 0.87x | 0.63s · 1.89x | 0.21s · 0.62x |
+| `touch-leaf` | 0.35s · 0.85x | 0.30s · 0.73x | **0.41s** · 1.00x | 0.57s · 1.37x | 0.69s · 1.65x | 0.20s · 0.49x |
+| `edit-body` | 0.36s · 0.87x | 0.31s · 0.76x | **0.41s** · 1.00x | 1.25s · 3.03x | 0.69s · 1.68x | 0.27s · 0.66x |
+| `edit-comment` | 0.44s · 0.82x | 0.40s · 0.73x | **0.54s** · 1.00x | 0.76s · 1.41x | 0.81s · 1.50x | 0.42s · 0.78x |
+| `touch-hub` | 0.45s · 0.83x | 0.38s · 0.70x | **0.55s** · 1.00x | 0.76s · 1.39x | 0.82s · 1.50x | 0.21s · 0.39x |
+
+**`modules`**
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake | meson | bazel |
+|---|---|---|---|---|---|---|
+| `cold` | 2.65s · 0.66x | 2.50s · 0.62x | **4.00s** · 1.00x | 13.19s · 3.30x | _unavailable_ | 3.19s · 0.80x |
+| `noop` | 0.18s · 0.57x | 0.18s · 0.54x | **0.32s** · 1.00x | 0.32s · 0.99x | _unavailable_ | 0.20s · 0.63x |
+| `touch-leaf` | 0.36s · 0.78x | 0.29s · 0.64x | **0.46s** · 1.00x | 1.41s · 3.07x | _unavailable_ | 0.21s · 0.47x |
+| `edit-body` | 0.52s · 0.20x | 0.46s · 0.17x | **2.62s** · 1.00x | 12.68s · 4.84x | _unavailable_ | 2.84s · 1.08x |
+| `edit-comment` | 0.53s · 0.20x | 0.43s · 0.16x | **2.66s** · 1.00x | 12.56s · 4.73x | _unavailable_ | 2.84s · 1.07x |
+| `touch-hub` | 0.35s · 0.13x | 0.28s · 0.10x | **2.67s** · 1.00x | 12.76s · 4.79x | _unavailable_ | 0.23s · 0.08x |
+
+**`modules-impl`**
+
+| scenario | mcpp@2026.8.11.3 | mcpp@2026.8.12.1 | cmake | xmake | meson | bazel |
+|---|---|---|---|---|---|---|
+| `cold` | 2.27s · 0.57x | 2.19s · 0.55x | **3.96s** · 1.00x | 13.40s · 3.38x | _unavailable_ | 2.82s · 0.71x |
+| `noop` | 0.20s · 0.59x | 0.18s · 0.55x | **0.33s** · 1.00x | 0.35s · 1.04x | _unavailable_ | 0.21s · 0.63x |
+| `touch-leaf` | 0.36s · 0.73x | 0.32s · 0.67x | **0.48s** · 1.00x | 1.49s · 3.07x | _unavailable_ | 0.21s · 0.43x |
+| `edit-body` | 0.36s · 0.85x | 0.31s · 0.73x | **0.42s** · 1.00x | 0.57s · 1.37x | _unavailable_ | 0.32s · 0.77x |
+| `edit-comment` | 0.51s · 0.22x | 0.44s · 0.19x | **2.33s** · 1.00x | 12.68s · 5.44x | _unavailable_ | 2.44s · 1.05x |
+| `touch-hub` | 0.36s · 0.15x | 0.28s · 0.12x | **2.35s** · 1.00x | 12.64s · 5.38x | _unavailable_ | 0.21s · 0.09x |
+
+
+---
+
+## What the numbers say
+
+### 1. The module cascade is the whole story, and it is avoidable
+
+Under gcc, a change to the most-imported interface unit costs **cmake 10.3s and
+xmake 11.2s** — they rebuild 39 downstream units. mcpp 2026.8.12.1 costs
+**0.29s**, because it compares the BMI the compiler just produced against the
+previous one and, when they are equivalent, puts the old file back so ninja's
+`restat` sees no change.
+
+That is a **35x** gap against the baseline, and a **12.5x** gap against mcpp's own
+previous release — which had the same mechanism but compared bytes, and GCC
+writes `buildtime:`/`localtime:` stamps into every BMI, so no two BMIs were ever
+byte-equal and the suppression never once fired.
+
+### 2. Under gcc, editing a function body need not cascade at all
+
+`edit-body` inserts a real `volatile` statement: the object file genuinely
+changes. It still costs mcpp 0.29s, and this is **correct, not a missed
+rebuild**: GCC 16.1 does not encode the body of an exported non-template
+function into the BMI. Verified by compiling the same unit twice with and
+without the edit and diffing the two BMIs — the only differing bytes are the
+seconds digit of the embedded timestamps, at the same offsets a *control* pair
+(identical source, compiled twice) differs at.
+
+cmake and xmake pay the full cascade for that edit anyway, because they decide
+from the BMI's mtime rather than its content.
+
+### 3. Clang changes who wins, and by how much
+
+Clang's BMIs are stamp-free, so mcpp's *previous* release already avoided the
+cascade there (0.52s vs 0.46s — the new mechanism adds nothing under clang).
+What clang changes is everyone else:
+
+* cmake's module cold build drops from 13.06s to 4.00s — **3.3x faster than
+  itself**, the single largest effect in the entire matrix. It is a compiler
+  effect, not a build-system one.
+* xmake goes the other way: 11.46s → 13.19s cold, and **every** incremental
+  module scenario costs ~12.6s. It rebuilds the world on any module change under
+  either compiler.
+* bazel becomes able to build modules at all (see below) and lands at 3.19s
+  cold — 0.80x cmake.
+
+### 4. bazel builds C++20 modules — with clang only
+
+`rules_cc` 0.2.22 has a `module_interfaces` attribute, and with
+`--experimental_cpp_modules --features=cpp_modules` bazel builds and runs a
+module program. With **gcc** it fails in bazel's own scanner:
+
+```
+aggregate-ddi failed: ... what(): Invalid JSON string
+```
+
+so its ddi aggregator cannot parse GCC's P1689 output. Module cells are reported
+`unavailable` **with that measurement** in the gcc table rather than as a slow
+number.
+
+bazel's `touch-hub` of 0.21s (0.08x) is real but is not the same achievement as
+mcpp's: bazel hashes content, so an mtime bump with unchanged bytes is a
+no-op by construction. On `edit-body`, where the bytes do change, bazel pays
+2.84s — a full cascade, like cmake.
+
+### 5. meson cannot build named modules at all
+
+meson 1.10.2 has no attribute that declares an interface unit; the build fails
+with `fatal error: module 'fx.a' not found` under both compilers. Its headers
+columns are real and it is consistently the slowest engine there (1.2–1.9x cmake).
+
+### 6. Where mcpp does *not* win
+
+* **Module cold builds under clang**: 2.50s vs cmake's 4.00s is 0.62x — a real
+  lead, but far from the 0.26x it holds under gcc. Cold module builds are
+  latency-bound on the BMI chain, and no scheduler beats that (see
+  `.agents/docs/2026-08-12-modular-build-performance-deep-analysis.md`).
+* **`headers` incremental under clang**: 0.30–0.39s against cmake's 0.41–0.54s.
+  At this scale process startup dominates and the engines are within noise of
+  each other; bazel is faster still (0.20–0.29s).
+* **`noop`**: 0.14–0.20s everywhere except meson. Nobody is meaningfully ahead.
+
+---
+
+## Reading caveats
+
+* **This fixture is small.** 40 units at weight 6 build in seconds; the absolute
+  numbers are not a prediction for a large codebase. The *ratios* between engines
+  on the same row are what carry over, and the cascade ratios grow with unit
+  count, not shrink.
+* **mcpp resolves its own toolchain.** The generated `mcpp.toml` pins the same
+  family the harness hands every other engine (`gcc@16.1.0` for the gcc table,
+  `llvm@22.1.8` for the clang table), so this is not a compiler comparison in
+  disguise. It is pinned in the manifest rather than passed on the command line
+  because `mcpp build` has no toolchain flag, and the comparison must run against
+  *released* binaries that would not have one anyway.
+* **bazel's cold is not a cold machine.** `clean` here is deliberately not
+  `--expunge`, which would also discard the downloaded toolchain and turn the
+  measurement into provisioning. Its module builds also pass `--force_pic` — see
+  `bench/README.md` §5 for why analysis fails without it.
+* **No fixture says `import std;`.** Engines differ wildly in std-module support
+  and that difference would dominate everything else. This measures module
+  machinery.
+* Two runs per cell. Enough to catch a gross outlier, not enough for a confidence
+  interval — none is reported.

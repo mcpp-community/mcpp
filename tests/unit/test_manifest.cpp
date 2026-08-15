@@ -3476,3 +3476,117 @@ cxx_runtime = "host-coupled"
     EXPECT_TRUE(m->buildConfig.cxxRuntimeShared.empty());
     EXPECT_TRUE(m->schemaWarnings.empty());
 }
+
+TEST(Manifest, BmiScheduleKey) {
+    // The KEY SPELLING, not just the field. `[build] bmi_schedule` reaches the
+    // build only through this one string in mcpp.manifest.toml, and nothing
+    // downstream can tell a mistyped key from an absent one: the value silently
+    // stays empty, `requested_switch` returns "auto", and the build quietly uses
+    // the default schedule. Every other test would still pass.
+    //
+    // It was called `schedule` until it was renamed to agree with its own
+    // environment override, `MCPP_BMI_SCHEDULE`. This is what makes the next
+    // such rename fail loudly instead of silently.
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+bmi_schedule = "on"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->buildConfig.bmiSchedule, "on");
+
+    // And the old spelling must NOT still work: leaving it accepted would mean
+    // two keys for one switch, which is how a rename ends up half-done.
+    constexpr auto old_key = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+schedule = "on"
+)";
+    auto o = mcpp::manifest::parse_string(old_key);
+    ASSERT_TRUE(o.has_value()) << o.error().format();
+    EXPECT_TRUE(o->buildConfig.bmiSchedule.empty())
+        << "the pre-rename key `schedule` is still being read";
+
+    // ⚠️ AND THE PARSER MUST NOT WARN ABOUT ITS OWN KEY.
+    //
+    // Checking only the VALUE is what let this ship broken. The rename reached
+    // the read (`build.bmi_schedule`) but not the accepted-key list, which kept
+    // the old `schedule` — so the assertions above passed while a user writing
+    // the one documented way to enable the feature got
+    //
+    //     [build] has unsupported key 'bmi_schedule' (ignored)
+    //
+    // and that message is FALSE: the value is read. The only way to turn the
+    // feature on announced that it had been ignored, and the dead `schedule`
+    // was accepted in silence. Both halves of the rename are pinned now.
+    for (const auto& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("bmi_schedule"), std::string::npos)
+            << "the parser reads `bmi_schedule` but also warns about it: " << w;
+
+    EXPECT_TRUE(std::ranges::any_of(o->schemaWarnings,
+                                    [](const std::string& w) {
+                                        return w.find("schedule") != std::string::npos;
+                                    }))
+        << "the dead key `schedule` is accepted silently — an unread key that "
+           "produces no diagnostic is a typo that costs a debugging session";
+}
+
+// #418 — an unsupported SCALAR under `[target.<triple>]` is reported; the
+// conditional sub-TABLES are not.
+//
+// `[target.<triple>]` had no unknown-key check at all, so `cxx_runtime_tests`
+// — a key that existed on the struct, was parsed nowhere and applied nowhere —
+// was accepted in silence. A configuration key that does nothing is worse than
+// one that does not exist.
+//
+// ⚠️ AND THE CHECK MUST NOT SEE THE CONDITIONAL CHANNEL. TOML presents
+// `[target.<pred>.dependencies]` as a KEY of `[target.<pred>]`, so a
+// hand-written "known keys" list has to enumerate `build`, `dependencies`,
+// `dev-dependencies`, `build-dependencies`, `feature-deps` too — and that list
+// is precisely what this codebase has watched drift twice (ConditionalConfig's
+// own comments on #258 and #359). The first version of this check did exactly
+// that and warned about a documented feature. Scalars only; tables are skipped
+// on principle, not by enumeration.
+TEST(Manifest, PerTargetUnknownScalarWarnsButSubTablesDoNot) {
+    constexpr auto src = R"(
+[package]
+name = "t"
+version = "0.1.0"
+
+[target.'cfg(unix)'.dependencies]
+dep = { path = "dep" }
+
+[target.x86_64-linux-gnu]
+linkage = "dynamic"
+cxx_runtime_tests = "host-coupled"
+
+[target.x86_64-linux-gnu.build]
+defines = ["FOO=1"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+
+    auto mentions = [&](std::string_view needle) {
+        return std::ranges::any_of(m->schemaWarnings, [&](const std::string& w) {
+            return w.find(needle) != std::string::npos;
+        });
+    };
+
+    EXPECT_TRUE(mentions("cxx_runtime_tests"))
+        << "a per-target scalar that nothing reads must be reported, not dropped";
+
+    // The conditional channel is not a typo, and warning about it would be a
+    // false positive on a documented feature (e2e 195 uses it).
+    EXPECT_FALSE(mentions("'dependencies'"))
+        << "[target.<pred>.dependencies] is the conditional channel, not an unknown key";
+    EXPECT_FALSE(mentions("'build'"))
+        << "[target.<pred>.build] is the conditional channel, not an unknown key";
+
+    // ...and the field itself is gone, so nothing downstream can read it.
+    EXPECT_EQ(m->targetOverrides.at("x86_64-linux-gnu").cxxRuntime, "");
+}

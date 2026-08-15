@@ -47,8 +47,15 @@ std::string_view to_string(GraphShape shape) {
 
 // The marker line, without its newline. A ninja comment, so it costs nothing
 // and older ninja versions do not care.
-std::string header_line(GraphShape shape) {
-    return std::format("# mcpp:graph={}", to_string(shape));
+// `scheduleTag` names the SHAPE OF THE MODULE EDGES (see
+// mcpp.build.schedule.policy): "none", "two-phase", "detach-codegen". It rides
+// the same line for the same reason the shape does — build.ninja is shared
+// mutable state and the fast path replays it, so a graph built under one
+// schedule must not be replayed under another. Flipping the switch has to
+// invalidate the graph, and the only way that cannot be forgotten is if the
+// graph says which schedule produced it.
+std::string header_line(GraphShape shape, std::string_view scheduleTag) {
+    return std::format("# mcpp:graph={};schedule={}", to_string(shape), scheduleTag);
 }
 
 // Read the shape back. `nullopt` means "this file does not say" — a build.ninja
@@ -68,6 +75,10 @@ std::optional<GraphShape> read_shape(const std::filesystem::path& ninjaPath) {
         auto value = std::string_view(line).substr(prefix.size());
         while (!value.empty() && (value.back() == '\r' || value.back() == ' '))
             value.remove_suffix(1);
+        // `graph=<shape>[;schedule=<tag>]`. Split before comparing, so adding
+        // the schedule field does not turn every existing graph into "unknown".
+        if (const auto semi = value.find(';'); semi != std::string_view::npos)
+            value = value.substr(0, semi);
         if (value == "normal") return GraphShape::Normal;
         if (value == "test")   return GraphShape::WithTests;
         // A shape this binary does not know is not `Normal`. An older mcpp
@@ -77,7 +88,40 @@ std::optional<GraphShape> read_shape(const std::filesystem::path& ninjaPath) {
     return std::nullopt;
 }
 
+// The schedule tag this graph was written with. Empty means the file predates
+// the field — which is NOT the same as "none": an unlabelled graph is exactly
+// the case that must not be replayed blind, so callers compare and miss.
+std::string read_schedule(const std::filesystem::path& ninjaPath) {
+    std::ifstream input(ninjaPath);
+    if (!input) return {};
+    std::string line;
+    for (int i = 0; i < 8 && std::getline(input, line); ++i) {
+        constexpr std::string_view prefix = "# mcpp:graph=";
+        if (!line.starts_with(prefix)) continue;
+        auto value = std::string_view(line).substr(prefix.size());
+        while (!value.empty() && (value.back() == '\r' || value.back() == ' '))
+            value.remove_suffix(1);
+        const auto semi = value.find(';');
+        if (semi == std::string_view::npos) return {};
+        auto rest = value.substr(semi + 1);
+        constexpr std::string_view schedPrefix = "schedule=";
+        if (!rest.starts_with(schedPrefix)) return {};
+        return std::string(rest.substr(schedPrefix.size()));
+    }
+    return {};
+}
+
 // The one question every fast path asks.
+//
+// It deliberately does NOT compare the schedule tag. The fast paths run BEFORE
+// a plan exists, so they have no toolchain to derive the expected schedule
+// from — and passing one in would mean deriving the same decision a second
+// time, in a place that cannot see the compiler.
+//
+// Instead the schedule SWITCH is part of the toolchain fingerprint, so flipping
+// it lands in a different build directory: a graph written under one schedule
+// is structurally unreachable from a build configured with another. The tag on
+// the line is then for humans and for `mcpp explain`, not for invalidation.
 bool is_plain_build_graph(const std::filesystem::path& ninjaPath) {
     return read_shape(ninjaPath) == GraphShape::Normal;
 }

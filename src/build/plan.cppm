@@ -145,6 +145,18 @@ struct BuildPlan {
     // share an output directory and overwrite each other's graph; this is what
     // lets a fast path tell them apart (mcpp#407, mcpp.build.graph_shape).
     GraphShape                      graphShape = GraphShape::Normal;
+    // The module-edge schedule this plan will emit, resolved ONCE (see
+    // mcpp.build.schedule.policy). The backend writes the graph in this shape,
+    // the graph records the tag, and the fast path compares against it — three
+    // readers, one derivation. Deriving it separately in the backend and in the
+    // executor is how the BMI-equivalence check and the job count drifted into
+    // disagreeing about what a module edge is.
+    std::string                     scheduleTag = "none";
+    // What to hand ninja. Under detach-codegen a compiler stops holding a slot
+    // when it publishes, so this must exceed the real compiler cap or the ready
+    // frontier starves — see the hazard note in schedule/detach_codegen.
+    int                             scheduleNinjaJobs = 0;
+    int                             scheduleCompilerCap = 0;
     // One immutable snapshot selected before workspace member substitution.
     // Build/run/test and cache fast paths consume this value; none may re-read
     // xlings active/current state.
@@ -711,6 +723,36 @@ std::vector<mcpp::platform::search::Dir> runtime_search_closure(
     const bool elfTarget = triple.empty()
         ? bool(mcpp::platform::is_linux)
         : (triple.os != "macos" && triple.os != "windows");
+
+    // THE ARTIFACT'S OWN DIRECTORY — `$ORIGIN` (#415).
+    //
+    // It is emitted onto the link line by `shared_library_link_flags`, on a
+    // per-unit channel that never came through here, so the record and the
+    // artifact's DT_RPATH were STRUCTURALLY not comparable: e2e 219 had to
+    // special-case `$ORIGIN` to compare them at all, and that exception was
+    // the shape of the gap rather than a detail of the test.
+    //
+    // Recorded, not emitted: the link flag still comes from the same place it
+    // did. This closes the record, not the producer — making the closure the
+    // sole rpath producer means teaching it per-unit scope, which is a much
+    // larger change for a much smaller gain.
+    //
+    // ELF only, matching the guard below: `$ORIGIN` is the ELF spelling, and a
+    // format that gets no DT_RPATH gets no entry either.
+    //
+    // ⚠️ AND ONLY WHEN SOMETHING ACTUALLY EMITS IT. `$ORIGIN` comes from
+    // `shared_library_link_flags`, i.e. per CONSUMER of a shared library — a
+    // project with no shared library never gets one. Recording it
+    // unconditionally would swap this issue's asymmetry for its mirror image:
+    // the record would carry an entry the artifact does not, and e2e 219 would
+    // still need an exception to compare them. The point is that no exception
+    // is needed in either direction.
+    const bool buildsSharedLib = std::ranges::any_of(
+        plan.linkUnits, [](const LinkUnit& lu) {
+            return lu.kind == LinkUnit::SharedLibrary;
+        });
+    if (elfTarget && buildsSharedLib && !plan.outputDir.empty())
+        closure.push_back({plan.outputDir / "bin", Origin::Artifact});
     // The binding names its libc as `<family>@<version>`; the triple names it
     // as an ABI env (`gnu` ⇒ glibc). A MISMATCH must be PROVEN, not assumed:
     // an undeclared SubOS has no runtime identity at all, and refusing its own

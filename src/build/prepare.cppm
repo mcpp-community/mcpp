@@ -9,6 +9,12 @@ module;
 
 export module mcpp.build.prepare;
 
+// The cfg() predicate evaluator and the fingerprint canonicalisers moved out —
+// see mcpp.build.prepare_inputs. Re-exported so every existing caller of
+// `target_dir` / `canonical_compile_flags` keeps working: a split whose only
+// visible effect is that other files stop compiling is not an improvement.
+export import mcpp.build.prepare_inputs;
+
 import std;
 import mcpp.diag;
 import mcpp.home;
@@ -33,6 +39,10 @@ import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
+import mcpp.build.schedule.policy;
+import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
+import mcpp.build.distribution;   // dist::Role / dist::Contract to_string
+import mcpp.platform.capacity;   // the host fallback handed to schedule::decide
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
@@ -95,347 +105,6 @@ inline void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
                 "dependency '{}': unknown mcpp-segment key '{}' in its xpkg "
                 "descriptor — ignored; did you mean '{}'?", depLabel, key, suggestion));
     }
-}
-
-// ── L1 platform-conditional config: cfg() predicate evaluation ──────────────
-// Context = the RESOLVED target's coordinates. A `[target.'cfg(...)'.build]`
-// predicate is evaluated against this (target triple for a cross build, host
-// for a native build), so conditional flags follow what the binary will run on
-// — not the build host. See the manifest design doc.
-namespace cfgpred {
-
-struct Ctx { std::string os, arch, family, env; };
-
-// Derive the cfg context from the resolved --target triple, falling back to
-// the host for a native build. Parsing goes through triple.cppm — the single
-// triple parser — so the cfg vocabulary IS the canonical triple vocabulary
-// (os: linux|macos|windows, arch: GNU spellings, env: gnu|musl|msvc), and
-// alias spellings ("x86_64-w64-mingw32") evaluate identically to canonical.
-inline Ctx context_for(std::string_view targetTriple) {
-    namespace triple = mcpp::toolchain::triple;
-    Ctx c;
-    auto t = targetTriple.empty()
-        ? std::optional<triple::Triple>(triple::host_triple())
-        : triple::parse(targetTriple);
-    if (t) {
-        c.os     = t->os;
-        c.arch   = t->arch;
-        c.env    = t->env;
-        c.family = t->family();
-    } else {
-        // Escape-hatch triple outside the language: only the leading arch
-        // segment is derivable; other dimensions stay empty (never match).
-        auto dash = targetTriple.find('-');
-        c.arch = std::string(dash == std::string_view::npos ? targetTriple
-                                                            : targetTriple.substr(0, dash));
-    }
-    return c;
-}
-
-// Recursive-descent evaluator over the inside of `cfg(...)`:
-//   expr := all(list) | any(list) | not(expr) | key="value" | bareword
-//   key  ∈ {os, arch, family, env}   bareword ∈ {windows, unix, linux, macos}
-struct Parser {
-    std::string_view s; std::size_t i = 0; const Ctx& c;
-    void ws() { while (i < s.size() && std::isspace((unsigned char)s[i])) ++i; }
-    bool eat(char ch) { ws(); if (i < s.size() && s[i] == ch) { ++i; return true; } return false; }
-    std::string ident() {
-        ws(); std::size_t b = i;
-        while (i < s.size() && (std::isalnum((unsigned char)s[i]) || s[i] == '_')) ++i;
-        return std::string(s.substr(b, i - b));
-    }
-    std::string str() {
-        ws(); if (i >= s.size() || s[i] != '"') return {};
-        ++i; std::size_t b = i; while (i < s.size() && s[i] != '"') ++i;
-        auto v = std::string(s.substr(b, i - b)); if (i < s.size()) ++i; return v;
-    }
-    bool match_alias(const std::string& a) {
-        if (a == "windows") return c.os == "windows";
-        if (a == "linux")   return c.os == "linux";
-        if (a == "macos")   return c.os == "macos";
-        if (a == "unix")    return c.family == "unix";
-        return false;  // unknown bareword → no match
-    }
-    bool match_kv(const std::string& k, const std::string& v) {
-        if (k == "os")     return c.os == v;
-        if (k == "arch")   return c.arch == v;
-        if (k == "family") return c.family == v;
-        if (k == "env")    return c.env == v;
-        return false;
-    }
-    bool expr() {
-        std::string id = ident();
-        if (id == "all" || id == "any") {
-            eat('(');
-            bool acc = (id == "all");
-            ws();
-            if (!(i < s.size() && s[i] == ')')) {
-                do { bool r = expr(); acc = (id == "all") ? (acc && r) : (acc || r); }
-                while (eat(','));
-            }
-            eat(')');
-            return acc;
-        }
-        if (id == "not") { eat('('); bool r = expr(); eat(')'); return !r; }
-        ws();
-        if (i < s.size() && s[i] == '=') { ++i; return match_kv(id, str()); }
-        return match_alias(id);
-    }
-};
-
-// Evaluate a `[target.<predicate>]` key. Returns the cfg() result, or — for a
-// non-cfg key (a bare triple) — an exact match against the resolved triple.
-inline bool matches(const std::string& predicate, const Ctx& c, std::string_view triple) {
-    std::string_view k = predicate;
-    if (k.starts_with("cfg(") && k.ends_with(")")) {
-        Parser p{ k.substr(4, k.size() - 5), 0, c };
-        return p.expr();
-    }
-    // Bare OS/family alias sugar: `[target.linux]` ≡ `[target.'cfg(linux)']`.
-    // These aliases are never valid triples (no dash), so there is no ambiguity
-    // with the exact-triple namespace. Evaluated as the cfg bareword.
-    if (predicate == "windows" || predicate == "linux" ||
-        predicate == "macos"   || predicate == "unix") {
-        Parser p{ predicate, 0, c };
-        return p.expr();
-    }
-    // Bare-triple match, spelling-independent: a `[target.x86_64-w64-mingw32]`
-    // key matches a resolved `x86_64-windows-gnu` build (and vice versa) —
-    // both normalize through triple::parse. Unparseable keys (the explicit-
-    // section escape hatch) fall back to exact string comparison.
-    if (triple.empty()) return false;
-    if (auto p = mcpp::toolchain::triple::parse(predicate)) {
-        if (auto rt = mcpp::toolchain::triple::parse(triple))
-            return p->str() == rt->str();
-    }
-    return predicate == triple;
-}
-
-}  // namespace cfgpred
-
-export std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
-                                 const mcpp::toolchain::Fingerprint& fp,
-                                 const std::filesystem::path& root)
-{
-    // Canonical triple names the output directory (D1: `target/
-    // x86_64-windows-gnu/`, not the GNU spelling the compiler reports via
-    // -dumpmachine) — alias inputs land in the same directory. Triples
-    // outside the language keep their raw spelling.
-    auto triple = tc.targetTriple.empty() ? std::string{"unknown"} : tc.targetTriple;
-    if (auto t = mcpp::toolchain::triple::parse(triple)) triple = t->str();
-    return root / "target" / triple / fp.hex;
-}
-
-
-// Compose a stable canonical compile-flags string for fingerprinting.
-// Exported so the "every build-variant knob is in here" invariant is machine-
-// checkable: the profile knobs were absent for a long time precisely because
-// nothing could assert on this string.
-export std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
-    std::string s;
-    s += "-std="; s += m.package.standard;
-    s += " -fmodules";
-    // macOS deployment target changes the effective compile triple
-    // (arm64-apple-macosxNN) — a std.pcm built for one target cannot be
-    // loaded by a TU compiled for another. Fold the resolved value
-    // (env override > [build] macos_deployment_target manifest default)
-    // into the fingerprint so switching targets rebuilds the BMI cache
-    // instead of dying with a module config mismatch.
-    //
-    // The built-in default floor (rustc-style) lives in the single
-    // resolver (platform::macos::deployment_target), so this rule, the
-    // flags and the std-module prebuild always agree — the 0.0.50-era
-    // attempt to inject a default here alone left the test build's
-    // std.pcm unstaged (import std failed wholesale on macos CI).
-    if constexpr (mcpp::platform::is_macos) {
-        auto dtv = mcpp::platform::macos::deployment_target(
-            m.buildConfig.macosDeploymentTarget);
-        if (!dtv.empty()) {
-            s += " macos_deployment_target=";
-            s += dtv;
-        }
-    }
-    if (!m.buildConfig.cStandard.empty()) {
-        s += " c_standard=";
-        s += m.buildConfig.cStandard;
-    }
-    for (auto const& flag : m.buildConfig.cflags) {
-        s += " cflag:";
-        s += flag;
-    }
-    for (auto const& flag : m.buildConfig.cxxflags) {
-        s += " cxxflag:";
-        s += flag;
-    }
-    // Explicit [build] dialect_cxxflags (auto-promoted ones are already in
-    // cxxflags above) — they change every BMI in the graph.
-    for (auto const& flag : m.buildConfig.dialectCxxflags) {
-        s += " dialect:";
-        s += flag;
-    }
-    for (auto const& flag : m.buildConfig.ldflags) {
-        s += " ldflag:";
-        s += flag;
-    }
-    // Per-glob flags (G4): full ordered serialization — glob + every list —
-    // so editing any entry (or reordering) re-fingerprints the output dir.
-    for (auto const& gf : m.buildConfig.globFlags) {
-        s += " globflags:"; s += gf.glob;
-        for (auto const& f : gf.cflags)   { s += " gc:";  s += f; }
-        for (auto const& f : gf.cxxflags) { s += " gxx:"; s += f; }
-        for (auto const& f : gf.asmflags) { s += " gas:"; s += f; }
-        for (auto const& f : gf.defines)  { s += " gd:";  s += f; }
-    }
-    // [build] module_extensions changes WHICH FILES ARE MODULE INTERFACES,
-    // i.e. the shape of the graph: which units emit a BMI, which objects link
-    // unconditionally, which ninja rule each unit gets. That is a build
-    // variant, so it belongs in the fingerprint — mcpp.toml's mtime alone only
-    // protects the fast path within one output dir, not the BMI cache.
-    //
-    // Contrast [build] build_program_timeout, which is deliberately absent:
-    // it changes no edge. See BuildConfig::buildProgramTimeoutSecs.
-    for (auto const& e : m.buildConfig.moduleExtensions) {
-        s += " modext:";
-        s += e;
-    }
-    // The resolved [profile] knobs. These are NOT in cflags/cxxflags: the
-    // profile block (see the profile resolution below) lands them in
-    // buildConfig.optLevel/debug/lto/strip and flags.cppm turns them into
-    // -O<n>/-g/-flto at command-construction time. Leaving them out made
-    // `--dev`, `--release` and `--profile dist` share ONE fingerprint, hence
-    // one target/<triple>/<fp>/ directory AND one global cache entry — so a
-    // release build could be served -O0 -g dependency objects. They are
-    // build-variant by definition; they belong here.
-    s += " opt=";   s += m.buildConfig.optLevel;
-    s += " debug="; s += m.buildConfig.debug ? "1" : "0";
-    s += " lto=";   s += m.buildConfig.lto   ? "1" : "0";
-    s += " strip="; s += m.buildConfig.strip ? "1" : "0";
-    return s;
-}
-
-std::string canonical_package_build_metadata(
-    const std::vector<mcpp::modgraph::PackageRoot>& packages)
-{
-    std::string s;
-    for (auto const& pkg : packages) {
-        s += "\npackage:";
-        s += pkg.manifest.package.namespace_;
-        s += "/";
-        s += pkg.manifest.package.name;
-        s += "@";
-        s += pkg.manifest.package.version;
-        s += " source=";
-        s += pkg.manifest.package.sourceProvenance;
-        auto const& runtime = pkg.manifest.runtimeConfig;
-        for (auto const& requirement : runtime.requirements) {
-            s += " runtime-need:";
-            s += requirement.kind;
-            s += ':';
-            s += requirement.value;
-            s += ':';
-            s += requirement.phase;
-            s += requirement.required ? ":required" : ":optional";
-        }
-        for (auto const& artifact : runtime.artifacts) {
-            s += " runtime-artifact:";
-            s += artifact.role;
-            s += ':';
-            s += artifact.path.generic_string();
-            s += ':';
-            s += artifact.provenance;
-            s += ':';
-            s += artifact.abi;
-            s += ':';
-            s += artifact.digest;
-            s += ':';
-            s += artifact.hostFingerprint;
-        }
-        for (auto const& value : runtime.linkIntent.libraries)
-            s += " link-library:" + value;
-        for (auto const& value : runtime.linkIntent.linkLibraryDirs)
-            s += " link-dir:" + value.generic_string();
-        for (auto const& value : runtime.linkIntent.transitiveNeededDirs)
-            s += " needed-dir:" + value.generic_string();
-        for (auto const& value : runtime.linkIntent.runtimeSearchDirs)
-            s += " runtime-dir:" + value.generic_string();
-        for (auto const& value : runtime.linkIntent.frameworks)
-            s += " framework:" + value;
-        for (auto const& value : runtime.linkIntent.deployFiles)
-            s += " deploy:" + value.generic_string();
-        // Legacy fields remain fingerprinted while they are readable.
-        for (auto const& value : runtime.libraryDirs)
-            s += " legacy-runtime-dir:" + value.generic_string();
-        for (auto const& value : runtime.dlopenLibs)
-            s += " legacy-soname:" + value;
-        for (auto const& value : runtime.capabilities)
-            s += " legacy-capability:" + value;
-        for (auto const& value : runtime.provides)
-            s += " legacy-provides:" + value;
-        for (auto const& [capability, provider] : runtime.providerOverrides)
-            s += " provider-override:" + capability + '=' + provider;
-        if (!pkg.manifest.buildConfig.cStandard.empty()) {
-            s += " c_standard=";
-            s += pkg.manifest.buildConfig.cStandard;
-        }
-        for (auto const& flag : pkg.manifest.buildConfig.cflags) {
-            s += " cflag:";
-            s += flag;
-        }
-        for (auto const& flag : pkg.manifest.buildConfig.cxxflags) {
-            s += " cxxflag:";
-            s += flag;
-        }
-        for (auto const& flag : pkg.manifest.buildConfig.ldflags) {
-            s += " ldflag:";
-            s += flag;
-        }
-        // Per-glob flags — same full ordered serialization as the root-side
-        // block above. Until #253 dependency globFlags were unfingerprinted
-        // (held only by "descriptor frozen per version" + "feature toggles
-        // always change cflags via -DMCPP_FEATURE_*"); feature-folded entries
-        // make the vector build-variant, so fingerprint it directly.
-        // featureOrigin is diagnostic-only and deliberately NOT serialized
-        // (the active feature set is already in cflags above).
-        for (auto const& gf : pkg.manifest.buildConfig.globFlags) {
-            s += " globflags:"; s += gf.glob;
-            for (auto const& f : gf.cflags)   { s += " gc:";  s += f; }
-            for (auto const& f : gf.cxxflags) { s += " gxx:"; s += f; }
-            for (auto const& f : gf.asmflags) { s += " gas:"; s += f; }
-            for (auto const& f : gf.defines)  { s += " gd:";  s += f; }
-        }
-        // Same reason as the root block, and it cannot be skipped on the
-        // grounds that "a descriptor is frozen per version": path and git
-        // dependencies are not frozen, and this key changes their products.
-        for (auto const& e : pkg.manifest.buildConfig.moduleExtensions) {
-            s += " modext:";
-            s += e;
-        }
-        if (pkg.usageResolved) {
-            for (auto const& dir : pkg.privateBuild.includeDirs) {
-                s += " private_include:";
-                s += dir.generic_string();
-            }
-            for (auto const& dir : pkg.publicUsage.includeDirs) {
-                s += " public_include:";
-                s += dir.generic_string();
-            }
-            for (auto const& dir : pkg.privateBuild.includeDirsAfter) {
-                s += " private_include_after:";
-                s += dir.generic_string();
-            }
-            for (auto const& dir : pkg.publicUsage.includeDirsAfter) {
-                s += " public_include_after:";
-                s += dir.generic_string();
-            }
-        }
-        for (auto const& [path, content] : pkg.manifest.buildConfig.generatedFiles) {
-            s += " genfile:";
-            s += path.generic_string();
-            s += "=";
-            s += content;
-        }
-    }
-    return s;
 }
 
 std::expected<void, std::string>
@@ -1362,6 +1031,21 @@ prepare_build(bool print_fingerprint,
     // silently overrule one the user wrote down.
     auto tcOrigin = tcSpec.has_value() ? TcOrigin::ManifestToolchain
                                        : TcOrigin::None;
+    // `--toolchain` (arriving as MCPP_TOOLCHAIN, the same side channel
+    // `--offline` and `--jobs` use) beats everything, including the manifest.
+    //
+    // This is the usable form of "which compiler". On this repository the
+    // choice is worth 2.48x — gcc@16.1.0 builds mcpp in 79.9s, llvm@22.1.8 in
+    // 32.2s — but CHANGING THE DEFAULT is an ecosystem decision, not a
+    // performance one: it invalidates every published package's fingerprint and
+    // the three platforms do not yet ship the same llvm. Selecting per build
+    // costs nobody anything and needs no coordination.
+    //
+    // It counts as user-explicit, so mcpp will not quietly revise it.
+    if (const char* tcEnv = std::getenv("MCPP_TOOLCHAIN"); tcEnv && *tcEnv) {
+        tcSpec   = std::string(tcEnv);
+        tcOrigin = TcOrigin::ManifestToolchain;
+    }
     if (!tcSpec.has_value()) {
         auto cfg = get_cfg();
         if (cfg && !(*cfg)->defaultToolchain.empty()) {
@@ -5226,6 +4910,17 @@ prepare_build(bool print_fingerprint,
     fpi.cppStandard         = m->package.standard;
     fpi.compileFlags        = canonical_compile_flags(*m)
                               + canonical_package_build_metadata(packages);
+    // The module-edge schedule changes the SHAPE of build.ninja, and the fast
+    // path replays that file without a plan to compare against. Folding the
+    // switch into the fingerprint puts a differently-scheduled build in a
+    // different directory, which makes replaying the wrong shape structurally
+    // impossible instead of merely guarded. Only appended when non-default, so
+    // existing build directories keep their identity.
+    if (const auto sched = mcpp::build::schedule::requested_switch(*m);
+        sched != "auto") {
+        fpi.compileFlags += " #schedule=";
+        fpi.compileFlags += sched;
+    }
     if (m->cppStandard.experimental) {
         // c++fly gate flags are derived (not manifest-declared): fold them in
         // so a cppfly table change across mcpp versions re-fingerprints.
@@ -5249,10 +4944,18 @@ prepare_build(bool print_fingerprint,
         // a std BMI built without it structurally lacks std::meta). Both
         // pieces were already in the fingerprint; this fixes the COMMAND
         // construction the fingerprint promised (stdFlagAndDialect above).
+        // #422: the CRT model reaches the std module too. Derived from the
+        // SAME expression the project's TUs use (flags.cppm), through the one
+        // helper, so the two cannot drift. Non-MSVC dialects yield "" and the
+        // command is unchanged.
+        const auto& stdDialect = mcpp::toolchain::dialect_for(*tc);
+        const auto stdCrt = mcpp::toolchain::msvc_crt_flag(
+            stdDialect, m->buildConfig.linkage == "static");
         auto sm = mcpp::toolchain::ensure_built(
             *tc, m->package.standard, stdFlagAndDialect,
             mcpp::platform::macos::deployment_target(
-                m->buildConfig.macosDeploymentTarget));
+                m->buildConfig.macosDeploymentTarget),
+            mcpp::toolchain::default_cache_root(), stdCrt);
         if (!sm) return std::unexpected(sm.error().message);
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;
@@ -5311,6 +5014,39 @@ prepare_build(bool print_fingerprint,
     ctx.plan.graphShape = (includeDevDeps || !extraTargets.empty())
         ? mcpp::build::GraphShape::WithTests
         : mcpp::build::GraphShape::Normal;
+    // Resolve the module-edge schedule ONCE, here, where both the toolchain and
+    // the manifest are in hand. The backend writes the graph in this shape, the
+    // graph records the tag, and `mcpp build --verbose` prints the reason — all
+    // three read this, none of them re-derives it.
+    {
+        const auto decision = mcpp::build::schedule::decide(
+            ctx.plan.toolchain,
+            // Warned HERE and not at the fingerprint call above, which reads the
+            // same switch a few hundred lines earlier: both get the normalised
+            // value, only one of them says anything, so a typo produces exactly
+            // one warning rather than two identical ones.
+            mcpp::build::schedule::requested_switch(*m, [](std::string_view bad) {
+                mcpp::ui::warning(std::format(
+                    "ignoring invalid bmi_schedule '{}' (expected \"auto\", \"on\" or \"off\")", bad));
+            }),
+            mcpp::build::schedule::resolve_jobs(*m, [](std::string_view bad) {
+                mcpp::ui::warning(std::format(
+                    "ignoring invalid job count '{}' (expected a positive number or 'auto')", bad));
+            }),
+            // What this machine would pick if asked. Impure, so it is resolved
+            // here and handed to the pure `decide`. Only DetachCodegen uses it,
+            // and only when the user gave no job count — without it that
+            // strategy ships `sched_cap = 0`, which disables the semaphore that
+            // is its ONLY bound on how many compilers run at once.
+            mcpp::platform::capacity::recommended_jobs(
+                mcpp::platform::capacity::host_capacity()));
+        ctx.plan.scheduleTag         = std::string(mcpp::build::schedule::to_string(decision.strategy));
+        ctx.plan.scheduleNinjaJobs   = decision.ninjaJobs;
+        ctx.plan.scheduleCompilerCap = decision.compilerCap;
+        mcpp::log::verbose("build", std::format("schedule: {} — {}",
+                                                ctx.plan.scheduleTag, decision.reason));
+
+    }
     ctx.plan.runtimeBinding = runtimeBindingSnapshot;
     mcpp::build::merge_runtime_binding_contract(
         ctx.plan, runtimeBindingSnapshot);
@@ -6425,7 +6161,30 @@ prepare_build(bool print_fingerprint,
                          : format == "macho" ? "loader_rpath" : "runpath"},
             {"closure", closure},
         };
+        // #418 — the contract each ROLE actually got, after any downgrade.
+        //
+        // `CompileFlags::contractByRole` was written and never read: a valuable
+        // observation with no way out of the process. Since #414 the shared
+        // library role can legitimately end up on a different contract from the
+        // binaries beside it, so "which one did my .so actually get?" is a
+        // question a user has, and the only answer available was to run
+        // `readelf` and infer.
+        //
+        // Recorded as the RESOLVED value, not the requested one — a request
+        // that was downgraded is exactly the case worth being able to see.
+        // `compute_flags` is pure in the plan; prepare does not otherwise hold
+        // the result, and threading it through just for this would widen a
+        // signature for one field.
+        const auto roleFlags = mcpp::build::compute_flags(ctx.plan);
+        nlohmann::json contracts = nlohmann::json::object();
+        for (std::size_t i = 0; i < mcpp::build::dist::kRoleCount; ++i) {
+            contracts[std::string(mcpp::build::dist::to_string(
+                          static_cast<mcpp::build::dist::Role>(i)))] =
+                std::string(mcpp::build::dist::to_string(roleFlags.contractByRole[i]));
+        }
+
         j["runtime"] = {
+            {"cxx_runtime_by_role", contracts},
             {"library_dirs", dirs},
             {"dlopen_libs", ctx.plan.runtimeDlopenLibs},
             {"capabilities", legacyCaps},

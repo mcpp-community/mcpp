@@ -1,0 +1,24 @@
+{
+  "results": [
+    {
+      "command": "cd '/home/speak/workspace/github/mcpp-community/mcpp' && xmake build -j32",
+      "mean": 0.37954382739333337,
+      "stddev": 0.005064813871963533,
+      "median": 0.38089023506,
+      "user": 0.32198313333333334,
+      "system": 0.04366906,
+      "min": 0.37394185806,
+      "max": 0.38379938906,
+      "times": [
+        0.38089023506,
+        0.37394185806,
+        0.38379938906
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

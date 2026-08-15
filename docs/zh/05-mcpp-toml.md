@@ -161,6 +161,8 @@ defines      = ["BIZ=1", "QUX"]   # 作用于每个 TU 的预处理宏(脱糖为
 cxx_runtime  = "self-contained"   # C++ 运行时契约(见下节);static_stdlib 是旧拼写
 macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
 cache        = "global"           # 依赖的全局构建缓存:global(默认)| local | off(见 §2.10)
+jobs         = "auto"             # 并发编译数:正整数,或 "auto"(见下节)
+bmi_schedule = "auto"             # 模块边调度:auto(= 关)| on | off(见下节)
 ```
 
 `include_dirs_after`(#249)列出**排在工具链系统目录之后**搜索的头文件目录
@@ -180,6 +182,47 @@ cargo/rustc、cc 等同样尊重该变量)> 本字段(项目默认,类似 SwiftP
 `platforms:`)> **内建默认 `14.0`**(rustc 风格——每个 target 都有基线,
 14.0 即 LLVM 官方静态库自身的下限)。该值会进入 BMI 指纹——切换 target
 会自动重建模块缓存。
+
+### 构建并发(`jobs`)与模块调度(`bmi_schedule`)
+
+```toml
+[build]
+jobs         = "auto"    # 或正整数;--jobs / MCPP_JOBS 覆盖它
+bmi_schedule = "off"     # auto(默认,= 关)| on | off
+```
+
+`jobs` 是同时跑几个编译。`"auto"` **在构建这台机器上现算**,绝不冻进 manifest:
+异构 CPU 上取物理核数(13900K 是 8 P-core + 16 E-core,它的 32 个线程不是 32 个
+等价的工人),再按可用内存夹一次 —— 单个模块接口编译峰值 0.5–1.0 GB。
+优先级:`--jobs` / `MCPP_JOBS` > 这个键 > 后端自己的默认值。写错的值会被
+**明确报出来,绝不静默当成默认值** —— 一个悄悄退回默认的拼写错误,表现是
+「构建莫名其妙比我要求的慢」。
+
+`bmi_schedule` 决定**导入方什么时候被解锁**。
+
+| 值 | |
+|---|---|
+| `"auto"` | **默认值,而它目前等于「关」** |
+| `"on"` | 拆开模块边:BMI 一发布导入方就能开始,而不是等编译器退出 |
+| `"off"` | 每个模块一条边 |
+
+只认这三种拼写。`"ON"`、`"true"`、`"yes"` 会被**拒绝并给出诊断**,而不是悄悄
+当成关 —— 而且它们不是无害的笔误:这个值会进构建指纹,所以一个被拒的拼写
+以前会选到**另一个构建目录**(即一次全量重建),同时对调度没有任何影响。
+
+**`auto` 为何等于关闭。** 模块接口编译中约 86% 是任何导入方都不会读取的代码生成,
+因此提前发布 BMI 收益显著 —— 在 mcpp 自身上实测:`cold` 86.7s → 35.7s、
+`edit-body` 80.9s → 29.8s。但调度错误的表现是静默失效:缺少一条依赖不会使构建
+报错,只会使某个目标不再重建。因此在所有平台完成 CI 验证前,该键保持 opt-in。
+
+**该键无效的场景。** mcpp 本来就跳过级联的地方(`touch-hub`、`edit-comment`)
+没有可以移出关键路径的必需工作,该键不产生收益。见
+[性能对比](../../README.zh-CN.md#性能对比)。
+
+**实现方式**按编译器确定,无需用户选择:gcc 用 `rename()` 发布 BMI,所以代码
+生成被分离出去、边在发布时就返回;clang 换成两条普通边 —— 它把 BMI 直接
+`O_TRUNC` 写到最终路径,读的人可能看到写了一半的文件。MSVC 不动:`/ifcOnly`
+的代价和 `.ifc` 是否原子发布都没测过,而这两件事猜错都是无声的。
 
 ### 模块接口扩展名(`module_extensions`)
 
@@ -271,7 +314,7 @@ cxx_runtime = "host-coupled"            # 例如这次构建是为发行版打�
 | `host-coupled` | 驱动默认解析到的那份(通常是系统运行时) | 发行版打包;必须与宿主共用同一份运行时的 `dlopen` 插件 |
 
 **默认即自包含(portable by default)**:macOS 上这会静态链入 LLVM 自带的
-libc++/libc++abi —— 系统 libc++ 会把实际可运行版本钉死在构建机的 OS(老系统
+libc++/libc++abi —— 系统 libc++ 会把实际可运行版本固定在构建机的 OS(老系统
 缺新符号,如 `std::print` 的支撑符号),只有静态化才能真正兑现
 `macos_deployment_target` 的 floor。Linux/MinGW 上它是 `-static-libstdc++`
 (GCC)或整条链的 `-static`(MinGW);Linux 上的 clang/libc++ 工具链则显式链入
@@ -319,8 +362,22 @@ C++ 运行时的进程。
 > 把流顶上去,你的代码不需要做任何事。详见 mcpp-community/mcpp#336。
 
 `defines` 接受**裸**宏名(不带 `-D`),把每个条目脱糖为 `-D<x>`,同时作用于 C 和
-C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入 P1689 模块扫描
-—— 这正是被宏保护的 `import` 能被解析的前提。汇编单元同样能拿到。它是普通的构建
+C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入**编译器自己的**
+P1689 模块扫描。
+
+> ⚠️ **但它不会让被宏保护的 `import` 变得可用。** mcpp 在编译器看到文件之前先跑
+> 自己的词法预扫描,而那个扫描器对**任何** `#if` / `#ifdef` 块内的 `import`
+> 一律拒绝,不求值条件:
+>
+> ```
+> error: import statement inside conditional preprocessor block (forbidden in M1)
+> ```
+>
+> 所以即使 `FOO` 写在 `defines` 里,`#ifdef FOO` / `import bar;` 仍然会失败。
+> 替代写法是把条件放在全局模块片段的 `#include` 上。见
+> mcpp-community/mcpp#421。
+
+汇编单元同样能拿到。它是普通的构建
 输入,所以 `[target.'cfg(...)'.build]` 也能承载它:
 
 ```toml

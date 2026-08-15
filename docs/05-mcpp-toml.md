@@ -170,6 +170,8 @@ target       = "x86_64-linux-musl" # Default build target when no --target is pa
                                    # (≙ cargo build.target; e.g. "ship fully-static")
 macos_deployment_target = "14.0"   # Minimum supported OS version for macOS artifacts (macOS only)
 cache        = "global"           # Global dependency cache: global (default) | local | off (§2.10)
+jobs         = "auto"             # Concurrent compiles: a positive number, or "auto" (§ below)
+bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
 ```
 
 `include_dirs_after` (#249) lists header directories that are searched **after**
@@ -195,6 +197,55 @@ cargo/rustc, cc, etc.) > this field (the project default, similar to SwiftPM's
 baseline, and 14.0 is the floor of LLVM's official static libraries themselves).
 This value enters the BMI fingerprint, so switching targets automatically rebuilds
 the module cache.
+
+### Build concurrency (`jobs`) and module scheduling (`bmi_schedule`)
+
+```toml
+[build]
+jobs         = "auto"    # or a positive number; --jobs / MCPP_JOBS override it
+bmi_schedule = "off"     # auto (default, = off) | on | off
+```
+
+`jobs` is how many compiles run at once. `"auto"` is resolved **against the
+machine doing the build**, never frozen into the manifest: it takes the physical
+core count on a heterogeneous CPU (a 13900K is 8 P-cores + 16 E-cores, so its 32
+threads are not 32 equal workers) and clamps that by free memory, because a
+single module interface compile peaks at 0.5–1.0 GB. Precedence is
+`--jobs` / `MCPP_JOBS` > this key > the backend's own default. A malformed value
+is **reported, never silently treated as the default** — a typo that quietly
+restores the default is a build mysteriously slower than you asked for.
+
+`bmi_schedule` decides when importers are unblocked.
+
+| value | |
+|---|---|
+| `"auto"` | **the default, and it currently means OFF** |
+| `"on"` | split the module edge: importers start when the BMI is published, not when the compiler exits |
+| `"off"` | one edge per module |
+
+Only those three spellings are accepted. `"ON"`, `"true"` and `"yes"` are
+**rejected with a diagnostic** rather than quietly meaning off — and they are not
+harmless typos: the value enters the build fingerprint, so a rejected spelling
+used to select a different build directory (a full rebuild) while changing
+nothing about the schedule.
+
+**Why `auto` is off.** 86% of a module interface compile is code generation that
+no importer reads, so publishing the BMI early is worth a lot — measured on mcpp
+itself, `cold` 86.7s → 35.7s and `edit-body` 80.9s → 29.8s. But a scheduling
+change that is wrong is wrong *silently*: a missed dependency does not fail the
+build, it just stops rebuilding something. It stays opt-in until it has been
+through CI on every platform.
+
+**What it does not help.** Where mcpp already skips the cascade — `touch-hub`,
+`edit-comment` — there is no owed work to move off the critical path, and the
+key buys nothing. See the [benchmark](../README.md#benchmark).
+
+**How it works** differs per compiler and is chosen for you: gcc publishes its
+BMI with `rename()`, so code generation is detached and the edge returns at
+publication; clang gets two ordinary edges instead, because it writes the BMI to
+its final path with `O_TRUNC` and a reader could observe a half-written file.
+MSVC is left alone — neither `/ifcOnly`'s cost nor `.ifc` atomicity has been
+measured, and guessing either wrong is silent.
 
 ### Module interface extensions (`module_extensions`)
 
@@ -360,8 +411,20 @@ toolchain's libraries first.
 
 `defines` takes **bare** macro names (no `-D`) and desugars each entry to `-D<x>` on
 both the C and C++ compile channels. It reaches every TU in the package — module
-interface units included — so it also reaches the P1689 module scan, which is what
-makes a macro-guarded `import` resolvable. Assembly units pick it up too. It is a
+interface units included — so it also reaches the compiler's own P1689 module scan.
+
+> ⚠️ **It does not make a macro-guarded `import` acceptable.** mcpp runs its own
+> lexical pre-scan before the compiler ever sees the file, and that scanner
+> rejects an `import` inside **any** `#if` / `#ifdef` block without evaluating the
+> condition:
+>
+> ```
+> error: import statement inside conditional preprocessor block (forbidden in M1)
+> ```
+>
+> So a `#ifdef FOO` / `import bar;` pair fails even when `FOO` is in `defines`.
+> Put the conditional around an `#include` in the global module fragment instead.
+> Tracked as mcpp-community/mcpp#421. Assembly units pick it up too. It is a
 build input like any other, so `[target.'cfg(...)'.build]` can carry it:
 
 ```toml

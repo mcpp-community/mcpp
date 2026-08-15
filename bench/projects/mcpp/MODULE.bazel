@@ -1,0 +1,38 @@
+# bazel module for mcpp — BEST EFFORT, AND IT DOES NOT BUILD.
+#
+# bazel 9.2.0 + rules_cc 0.2.22 CAN build C++20 named modules — measured, with
+# `module_interfaces` plus --experimental_cpp_modules --features=cpp_modules,
+# and clang (its ddi aggregator cannot parse GCC's P1689 output). For the
+# synthetic fixture that is enough. For mcpp it is not, for two reasons:
+#
+#   1. `import std;` works, but only by hand — CORRECTED, an earlier version of
+#      this comment claimed it was impossible. bazel has no counterpart to
+#      CMake's CXX_MODULE_STD, and its modmap generator fails with
+#          ERROR: Module not found: std
+#      but libc++ ships the std module as ORDINARY SOURCE, so it can be built
+#      like any other interface unit. Measured working on bazel 9.2.0:
+#
+#          cp $LLVM/share/libc++/v1/std.cppm .
+#          cp -r $LLVM/share/libc++/v1/std .        # 110 .inc files it includes
+#          cc_binary(
+#              srcs = ["main.cpp"] + glob(["std/**"]),
+#              module_interfaces = ["std.cppm", "m.cppm"],   # std FIRST
+#              copts = ["-std=c++23", "-Wno-reserved-module-identifier"],
+#          )
+#          bazel build //:t --experimental_cpp_modules --features=cpp_modules --force_pic
+#
+#      (No `includes` attribute: "." is rejected as the workspace root, and the
+#      .inc files sit beside std.cppm in the sandbox anyway.)
+#
+#   2. Workspace boundary. mcpp's sources live three directories up from here.
+#      bazel will not glob outside its workspace, so a working setup would have
+#      to put MODULE.bazel at the repository root — exactly what these files
+#      were moved out of the root to avoid.
+#
+#   3. THE ONE THAT DECIDES IT: bazel builds C++20 modules only with clang (its
+#      ddi aggregator cannot parse GCC's P1689 output). mcpp, cmake and xmake
+#      are measured here against gcc@16.1.0. A bazel column in a gcc table would
+#      violate fairness invariant I1 — same compiler binary for every engine —
+#      so bazel belongs in a separate clang-baselined table, not this one.
+module(name = "mcpp", version = "2026.8.13.1")
+bazel_dep(name = "rules_cc", version = "0.2.22")

@@ -4,6 +4,7 @@ import std;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.dialect;
 
 using namespace mcpp::toolchain;
 
@@ -128,4 +129,69 @@ TEST(MsvcStdModule, MinLevelFollowsStlUnblockVersion) {
     // Unparseable banner version: stay strict rather than guess.
     EXPECT_EQ(msvc::std_module_min_level(tc_of("")), 23);
     EXPECT_EQ(msvc::std_module_min_level(tc_of("unknown")), 23);
+}
+
+// #422 — the std module must be built with the SAME CRT model as the TUs that
+// import it.
+//
+// cl bakes `_MSVC_MT` / `_MSVC_MD` into every module it produces. The std build
+// passed no `/M` flag at all, so it took cl's default (`/MT`), while a project
+// on the default (dynamic) linkage compiles `/MD`. cl accepts the mismatch with
+// a C5050 warning and then fails for real inside the ucrt headers:
+//
+//     corecrt_malloc.h(89): error C2375: 'free': redefinition; different linkage
+//
+// Two properties are pinned here, and the second is the one that makes the
+// first stay true: the flag must be IN the command (so the module is right),
+// and it must be in the command STRING (so it enters `std_build_commands`,
+// which is part of the std cache identity — two CRT models then cannot share a
+// cache directory and silently serve each other's module).
+TEST(ToolchainMsvc, StdModuleCarriesTheProjectCrtModel) {
+    Toolchain tc;
+    tc.compiler   = CompilerId::MSVC;
+    tc.binaryPath = "C:/vc/bin/cl.exe";
+    tc.stdModuleSource  = "C:/vc/modules/std.ixx";
+    tc.stdCompatSource  = "C:/vc/modules/std.compat.ixx";
+
+    const std::filesystem::path cache = "C:/cache/std/key";
+
+    for (std::string_view crt : {std::string_view("/MT"), std::string_view("/MD")}) {
+        auto cmds = msvc::std_module_build_commands(tc, cache, "/std:c++23", crt);
+        ASSERT_EQ(cmds.size(), 1u);
+        EXPECT_NE(cmds[0].find(crt), std::string::npos)
+            << crt << " missing from the std build command: " << cmds[0];
+
+        auto compat = msvc::std_compat_build_commands(tc, cache, "/std:c++23", crt);
+        ASSERT_EQ(compat.size(), 1u);
+        EXPECT_NE(compat[0].find(crt), std::string::npos)
+            << crt << " missing from the std.compat build command: " << compat[0];
+    }
+
+    // The two models must produce DIFFERENT command strings. Equal strings would
+    // mean equal cache keys, i.e. the exact silent divergence this fixes.
+    EXPECT_NE(msvc::std_module_build_commands(tc, cache, "/std:c++23", "/MT")[0],
+              msvc::std_module_build_commands(tc, cache, "/std:c++23", "/MD")[0]);
+
+    // Empty keeps cl's own default, so non-MSVC callers are unaffected.
+    auto bare = msvc::std_module_build_commands(tc, cache, "/std:c++23");
+    EXPECT_EQ(bare[0].find("/MT"), std::string::npos);
+    EXPECT_EQ(bare[0].find("/MD"), std::string::npos);
+}
+
+// The mapping linkage -> CRT model lives in ONE place. It was derived twice —
+// flags.cppm for the project's TUs, and cl's default for the std module — which
+// is how they disagreed.
+TEST(ToolchainMsvc, CrtFlagHasASingleDerivation) {
+    Toolchain cl;
+    cl.compiler = CompilerId::MSVC;
+    const auto& msvcDialect = dialect_for(cl);
+    EXPECT_EQ(msvc_crt_flag(msvcDialect, /*staticLinkage=*/true),  "/MT");
+    EXPECT_EQ(msvc_crt_flag(msvcDialect, /*staticLinkage=*/false), "/MD");
+
+    // GNU has no counterpart; the helper must yield nothing rather than invent
+    // a flag that would be passed to gcc.
+    Toolchain gcc;
+    gcc.compiler = CompilerId::GCC;
+    const auto& gnu = dialect_for(gcc);
+    EXPECT_TRUE(msvc_crt_flag(gnu, false).empty());
 }

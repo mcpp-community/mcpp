@@ -51,6 +51,21 @@ enum class Origin {
     // than the toolchain's, so it is ranked separately and can be reported
     // separately.
     Package,
+    // The artifact's own directory — what the linker writes as `$ORIGIN` on
+    // ELF and `@loader_path` on Mach-O.
+    //
+    // ⚠️ IT WAS MISSING, AND THAT MADE THIS ORDERING DECORATIVE. The module
+    // claims below to be the one place the search order is decided, but
+    // `$ORIGIN` was emitted by `shared_library_link_flags` on a completely
+    // separate per-unit channel and never entered the closure — so the ONE
+    // directory the ordering matters most for was not in it. #414 is exactly
+    // that failure: the farm outranked `$ORIGIN`, the artifact linked one
+    // libX11 and loaded another.
+    //
+    // Ranked after `Package` and before `SubosFarm`: it is as immutable as the
+    // artifact it travels with (more so than a farm that any later
+    // `xlings install` re-points), but a pinned payload still wins.
+    Artifact,
     // The SubOS symlink farm — `<subos>/lib`. A UNION VIEW of everything
     // installed into that environment, rewritten whenever the environment is
     // re-resolved. This is the directory that makes `-lGL` link, and the one
@@ -82,10 +97,11 @@ int rank(Origin origin) {
     switch (origin) {
         case Origin::Payload:     return 0;
         case Origin::Package:     return 1;
-        case Origin::SubosFarm:   return 2;
-        case Origin::HostDefault: return 3;
+        case Origin::Artifact:    return 2;
+        case Origin::SubosFarm:   return 3;
+        case Origin::HostDefault: return 4;
     }
-    return 3;
+    return 4;
 }
 
 // Is this directory part of THIS machine's private state?
@@ -102,6 +118,12 @@ bool is_machine_local(Origin origin) {
         case Origin::Payload:     return true;
         case Origin::SubosFarm:   return true;
         case Origin::Package:     return true;
+        // NOT machine-local. `$ORIGIN` is resolved by the loader relative to
+        // the artifact, so it means the same thing wherever the artifact is
+        // copied — that is the whole reason `pack` rewrites everything else
+        // INTO this form. Marking it local would make `pack` reject the one
+        // entry it actually wants.
+        case Origin::Artifact:    return false;
         case Origin::HostDefault: return false;
     }
     return false;
@@ -111,6 +133,7 @@ std::string_view to_string(Origin origin) {
     switch (origin) {
         case Origin::Payload:     return "payload";
         case Origin::Package:     return "package";
+        case Origin::Artifact:    return "artifact";
         case Origin::SubosFarm:   return "subos_farm";
         case Origin::HostDefault: return "host_default";
     }

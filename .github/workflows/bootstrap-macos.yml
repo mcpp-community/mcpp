@@ -31,8 +31,9 @@ jobs:
         run: |
           WORK=$(mktemp -d)
           tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
-          curl -fsSL -o "${WORK}/${tarball}" \
-            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+          bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
+            "${WORK}/${tarball}"
           tar -xzf "${WORK}/${tarball}" -C "${WORK}"
           "${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64/subos/default/bin/xlings" self install
           echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"

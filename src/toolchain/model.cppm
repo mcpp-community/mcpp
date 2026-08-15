@@ -150,6 +150,32 @@ struct BmiTraits {
     //
     // Positional on GNU, so the emitter must place it before `-c $in`.
     std::string_view moduleInterfaceLangFlag; // " -x c++" | " -x c++-module" | " /interface /TP"
+
+    // Non-empty ⇔ the driver can emit the BMI *and stop*, producing the SAME
+    // BMI an ordinary compile of that TU would have produced. Both halves
+    // matter, and the second one is the trap.
+    //
+    // MEASURED (clang 22.1.8, src/build/prepare.cppm):
+    //   -fmodule-output= … -c        7.35s   BMI  9,102,984 B  (reduced)
+    //   --precompile                 1.81s   BMI 18,402,920 B  (FULL)
+    //   --precompile
+    //     -Xclang -emit-reduced-
+    //          module-interface      1.67s   BMI  9,102,968 B  (reduced)
+    //
+    // `--precompile` alone is fast but emits a *full* BMI, because its output
+    // is meant to be fed back in for codegen. Publishing those to importers is
+    // not a drop-in substitution: BMIs grow ~16x on small modules, and on
+    // mcpp's own graph clang 22.1.8 then miscompiles a downstream TU outright —
+    //   error: call to implicitly-deleted default constructor of
+    //          'formatter<basic_string<char>, wchar_t>'
+    // on a narrow format string, from inside `std`. The same TU compiles
+    // against reduced BMIs. So the reduced form is not an optimisation here,
+    // it is the contract: this flag must reproduce it byte for byte.
+    //
+    // GCC leaves this empty even though `-fmodule-only` exists: MEASURED, it
+    // does not skip the back end (~99% of a full compile). GCC's split is a
+    // different mechanism — see Strategy::DetachCodegen.
+    std::string_view bmiOnlyFlags;
 };
 
 BmiTraits bmi_traits(const Toolchain& tc);
@@ -248,6 +274,7 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             .moduleOutputPrefix = " -fmodule-output=",
             .bmiSearchPrefix = " -fprebuilt-module-path=",
             .moduleInterfaceLangFlag = " -x c++-module",
+            .bmiOnlyFlags = " --precompile -Xclang -emit-reduced-module-interface",
         };
     }
     return {

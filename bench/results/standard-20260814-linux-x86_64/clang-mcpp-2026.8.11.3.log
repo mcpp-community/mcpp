@@ -1,0 +1,311 @@
+payload: payload:clang → /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++
+run id : 7b78b5de (fresh)
+host   : linux x86_64 · 13th Gen Intel(R) Core(TM) i9-13900K · 32 logical / 24 physical (heterogeneous)
+project: /home/speak/workspace/github/mcpp-community/mcpp/bench/projects/mcpp/mcpp-2026.8.11.3 (measured in place)
+
+[    0.0s] mcpp@2026.8.13.1/clang/release/cold/mcpp-2026.8.11.3/modules  configure
+[    0.0s] mcpp@2026.8.13.1/clang/release/cold/mcpp-2026.8.11.3/modules  seed build
+[   32.2s] mcpp@2026.8.13.1/clang/release/cold/mcpp-2026.8.11.3/modules  run 1/3
+[   64.5s] mcpp@2026.8.13.1/clang/release/cold/mcpp-2026.8.11.3/modules  run 2/3
+[   96.5s] mcpp@2026.8.13.1/clang/release/cold/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1/clang/release/cold/mcpp-2026.8.11.3/modules    32.06s  (min 31.93 / max 32.23, n=3)
+[  128.6s] mcpp@2026.8.13.1/clang/release/noop/mcpp-2026.8.11.3/modules  configure
+[  128.6s] mcpp@2026.8.13.1/clang/release/noop/mcpp-2026.8.11.3/modules  seed build
+[  128.7s] mcpp@2026.8.13.1/clang/release/noop/mcpp-2026.8.11.3/modules  run 1/3
+[  128.9s] mcpp@2026.8.13.1/clang/release/noop/mcpp-2026.8.11.3/modules  run 2/3
+[  129.1s] mcpp@2026.8.13.1/clang/release/noop/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1/clang/release/noop/mcpp-2026.8.11.3/modules     0.16s  (min 0.16 / max 0.18, n=3)
+[  129.2s] mcpp@2026.8.13.1/clang/release/touch-hub/mcpp-2026.8.11.3/modules  configure
+[  129.2s] mcpp@2026.8.13.1/clang/release/touch-hub/mcpp-2026.8.11.3/modules  seed build
+[  129.4s] mcpp@2026.8.13.1/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 1/3
+[  129.7s] mcpp@2026.8.13.1/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 2/3
+[  130.0s] mcpp@2026.8.13.1/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1/clang/release/touch-hub/mcpp-2026.8.11.3/modules     0.30s  (min 0.28 / max 0.32, n=3)
+[  130.3s] mcpp@2026.8.13.1/clang/release/edit-body/mcpp-2026.8.11.3/modules  configure
+[  130.3s] mcpp@2026.8.13.1/clang/release/edit-body/mcpp-2026.8.11.3/modules  seed build
+[  130.5s] mcpp@2026.8.13.1/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 1/3
+[  161.2s] mcpp@2026.8.13.1/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 2/3
+[  191.7s] mcpp@2026.8.13.1/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1/clang/release/edit-body/mcpp-2026.8.11.3/modules    30.68s  (min 30.57 / max 30.80, n=3)
+[  222.5s] mcpp@2026.8.13.1/clang/release/edit-comment/mcpp-2026.8.11.3/modules  configure
+[  222.5s] mcpp@2026.8.13.1/clang/release/edit-comment/mcpp-2026.8.11.3/modules  seed build
+[  253.3s] mcpp@2026.8.13.1/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 1/3
+[  278.2s] mcpp@2026.8.13.1/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 2/3
+[  302.9s] mcpp@2026.8.13.1/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1/clang/release/edit-comment/mcpp-2026.8.11.3/modules    24.79s  (min 24.71 / max 24.89, n=3)
+[  327.7s] mcpp@2026.8.11.3/clang/release/cold/mcpp-2026.8.11.3/modules  configure
+[  327.7s] mcpp@2026.8.11.3/clang/release/cold/mcpp-2026.8.11.3/modules  seed build
+[  406.9s] mcpp@2026.8.11.3/clang/release/cold/mcpp-2026.8.11.3/modules  run 1/3
+[  485.6s] mcpp@2026.8.11.3/clang/release/cold/mcpp-2026.8.11.3/modules  run 2/3
+[  564.9s] mcpp@2026.8.11.3/clang/release/cold/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.11.3/clang/release/cold/mcpp-2026.8.11.3/modules    78.70s  (min 78.69 / max 79.25, n=3)
+[  643.6s] mcpp@2026.8.11.3/clang/release/noop/mcpp-2026.8.11.3/modules  configure
+[  643.6s] mcpp@2026.8.11.3/clang/release/noop/mcpp-2026.8.11.3/modules  seed build
+[  643.8s] mcpp@2026.8.11.3/clang/release/noop/mcpp-2026.8.11.3/modules  run 1/3
+[  644.1s] mcpp@2026.8.11.3/clang/release/noop/mcpp-2026.8.11.3/modules  run 2/3
+[  644.3s] mcpp@2026.8.11.3/clang/release/noop/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.11.3/clang/release/noop/mcpp-2026.8.11.3/modules     0.24s  (min 0.24 / max 0.24, n=3)
+[  644.6s] mcpp@2026.8.11.3/clang/release/touch-hub/mcpp-2026.8.11.3/modules  configure
+[  644.6s] mcpp@2026.8.11.3/clang/release/touch-hub/mcpp-2026.8.11.3/modules  seed build
+[  644.8s] mcpp@2026.8.11.3/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 1/3
+[  718.9s] mcpp@2026.8.11.3/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 2/3
+[  792.4s] mcpp@2026.8.11.3/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.11.3/clang/release/touch-hub/mcpp-2026.8.11.3/modules    74.12s  (min 73.44 / max 74.46, n=3)
+[  866.8s] mcpp@2026.8.11.3/clang/release/edit-body/mcpp-2026.8.11.3/modules  configure
+[  866.8s] mcpp@2026.8.11.3/clang/release/edit-body/mcpp-2026.8.11.3/modules  seed build
+[  867.1s] mcpp@2026.8.11.3/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 1/3
+[  942.6s] mcpp@2026.8.11.3/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 2/3
+[ 1018.4s] mcpp@2026.8.11.3/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.11.3/clang/release/edit-body/mcpp-2026.8.11.3/modules    75.78s  (min 75.49 / max 75.78, n=3)
+[ 1094.1s] mcpp@2026.8.11.3/clang/release/edit-comment/mcpp-2026.8.11.3/modules  configure
+[ 1094.1s] mcpp@2026.8.11.3/clang/release/edit-comment/mcpp-2026.8.11.3/modules  seed build
+[ 1170.1s] mcpp@2026.8.11.3/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 1/3
+[ 1244.9s] mcpp@2026.8.11.3/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 2/3
+[ 1319.1s] mcpp@2026.8.11.3/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.11.3/clang/release/edit-comment/mcpp-2026.8.11.3/modules    74.14s  (min 73.96 / max 74.80, n=3)
+[ 1393.0s] mcpp@2026.8.13.1+schedule=on/clang/release/cold/mcpp-2026.8.11.3/modules  configure
+[ 1393.0s] mcpp@2026.8.13.1+schedule=on/clang/release/cold/mcpp-2026.8.11.3/modules  seed build
+[ 1411.1s] mcpp@2026.8.13.1+schedule=on/clang/release/cold/mcpp-2026.8.11.3/modules  run 1/3
+[ 1429.1s] mcpp@2026.8.13.1+schedule=on/clang/release/cold/mcpp-2026.8.11.3/modules  run 2/3
+[ 1447.5s] mcpp@2026.8.13.1+schedule=on/clang/release/cold/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/clang/release/cold/mcpp-2026.8.11.3/modules    18.14s  (min 17.98 / max 18.32, n=3)
+[ 1465.7s] mcpp@2026.8.13.1+schedule=on/clang/release/noop/mcpp-2026.8.11.3/modules  configure
+[ 1465.7s] mcpp@2026.8.13.1+schedule=on/clang/release/noop/mcpp-2026.8.11.3/modules  seed build
+[ 1465.9s] mcpp@2026.8.13.1+schedule=on/clang/release/noop/mcpp-2026.8.11.3/modules  run 1/3
+[ 1466.1s] mcpp@2026.8.13.1+schedule=on/clang/release/noop/mcpp-2026.8.11.3/modules  run 2/3
+[ 1466.3s] mcpp@2026.8.13.1+schedule=on/clang/release/noop/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/clang/release/noop/mcpp-2026.8.11.3/modules     0.18s  (min 0.16 / max 0.20, n=3)
+[ 1466.4s] mcpp@2026.8.13.1+schedule=on/clang/release/touch-hub/mcpp-2026.8.11.3/modules  configure
+[ 1466.4s] mcpp@2026.8.13.1+schedule=on/clang/release/touch-hub/mcpp-2026.8.11.3/modules  seed build
+[ 1466.6s] mcpp@2026.8.13.1+schedule=on/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 1/3
+[ 1466.9s] mcpp@2026.8.13.1+schedule=on/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 2/3
+[ 1467.2s] mcpp@2026.8.13.1+schedule=on/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/clang/release/touch-hub/mcpp-2026.8.11.3/modules     0.28s  (min 0.26 / max 0.28, n=3)
+[ 1467.4s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-body/mcpp-2026.8.11.3/modules  configure
+[ 1467.4s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-body/mcpp-2026.8.11.3/modules  seed build
+[ 1467.6s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 1/3
+[ 1482.4s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 2/3
+[ 1496.8s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/clang/release/edit-body/mcpp-2026.8.11.3/modules    14.64s  (min 14.45 / max 14.77, n=3)
+[ 1511.5s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-comment/mcpp-2026.8.11.3/modules  configure
+[ 1511.5s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-comment/mcpp-2026.8.11.3/modules  seed build
+[ 1525.9s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 1/3
+[ 1539.3s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 2/3
+[ 1553.7s] mcpp@2026.8.13.1+schedule=on/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 3/3
+mcpp@2026.8.13.1+schedule=on/clang/release/edit-comment/mcpp-2026.8.11.3/modules    13.51s  (min 13.42 / max 14.33, n=3)
+[ 1568.0s] cmake/clang/release/cold/mcpp-2026.8.11.3/modules  configure
+[ 1569.4s] cmake/clang/release/cold/mcpp-2026.8.11.3/modules  seed build
+[ 1603.4s] cmake/clang/release/cold/mcpp-2026.8.11.3/modules  run 1/3
+[ 1639.3s] cmake/clang/release/cold/mcpp-2026.8.11.3/modules  run 2/3
+[ 1674.8s] cmake/clang/release/cold/mcpp-2026.8.11.3/modules  run 3/3
+cmake/clang/release/cold/mcpp-2026.8.11.3/modules    35.20s  (min 35.13 / max 35.54, n=3)
+[ 1710.8s] cmake/clang/release/noop/mcpp-2026.8.11.3/modules  configure
+[ 1711.3s] cmake/clang/release/noop/mcpp-2026.8.11.3/modules  seed build
+[ 1711.7s] cmake/clang/release/noop/mcpp-2026.8.11.3/modules  run 1/3
+[ 1712.3s] cmake/clang/release/noop/mcpp-2026.8.11.3/modules  run 2/3
+[ 1713.0s] cmake/clang/release/noop/mcpp-2026.8.11.3/modules  run 3/3
+cmake/clang/release/noop/mcpp-2026.8.11.3/modules     0.32s  (min 0.30 / max 0.32, n=3)
+[ 1714.0s] cmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  configure
+[ 1714.5s] cmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  seed build
+[ 1714.9s] cmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 1/3
+[ 1746.0s] cmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 2/3
+[ 1777.8s] cmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  run 3/3
+cmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules    31.21s  (min 30.84 / max 31.37, n=3)
+[ 1809.7s] cmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  configure
+[ 1810.2s] cmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  seed build
+[ 1810.5s] cmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 1/3
+[ 1842.0s] cmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 2/3
+[ 1873.5s] cmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  run 3/3
+cmake/clang/release/edit-body/mcpp-2026.8.11.3/modules    31.15s  (min 31.13 / max 31.17, n=3)
+[ 1905.3s] cmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  configure
+[ 1905.9s] cmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  seed build
+[ 1937.0s] cmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 1/3
+[ 1968.5s] cmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 2/3
+[ 2000.3s] cmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  run 3/3
+cmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules    31.24s  (min 31.16 / max 31.38, n=3)
+[ 2032.3s] xmake/clang/release/cold/mcpp-2026.8.11.3/modules  configure
+[ 2032.6s] xmake/clang/release/cold/mcpp-2026.8.11.3/modules  seed build
+[ 2036.9s] xmake/clang/release/cold/mcpp-2026.8.11.3/modules  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-cold.log)
+[ 2036.9s] xmake/clang/release/cold/mcpp-2026.8.11.3/modules  --- error lines from xmake-cold.log ---
+             |     [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |        99 |       formatter<_Tp, _CharT> __f;
+             |           |                              ^
+[ 2036.9s] xmake/clang/release/cold/mcpp-2026.8.11.3/modules  --- last lines of xmake-cold.log ---
+             | [0m[38;2;0;255;0;1m[ 28%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.toolchain.clang[0m[0m
+             | [0m[38;2;0;255;0;1m[ 28%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.pm.publisher[0m[0m
+             | [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |    99 |       formatter<_Tp, _CharT> __f;
+             |       |                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:98:62: note: while substituting into a lambda expression here
+             |    98 |     __parse_ = [](basic_format_parse_context<_CharT>& __ctx) {
+             |       |                                                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:393:25: note: in instantiation of function template specialization 'std::__format::__compile_time_handle<wchar_t>::__enable<std::__1::basic_string<char>>' requested here
+             |   393 |       __handle.template __enable<_Tp>();
+             |       |                         ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:389:99: note: while substituting into a lambda expression here
+             |   389 |   static constexpr array<__format::__compile_time_handle<_CharT>, sizeof...(_Args)> __handles_{[] {
+             |       |                                                                                                   ^
+             | mcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm:140:17: note: in instantiation of template class 'std::__1::basic_format_string<wchar_t, std::__1::basic_string<char>, std::__1::basic_string<char>, std::__1::basic_string<char>>' requested here
+             |   140 |                 "{{\"namespace\":\"{}\",\"name\":\"{}\",\"error\":\"{}\"}}",
+             |       |                 ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/formatter_string.h:139:70: note: default constructor of 'formatter<std::__1::basic_string<char>, wchar_t>' is implicitly deleted because base class '__disabled_formatter' has a deleted default constructor
+             |   139 | struct formatter<basic_string<char, _Traits, _Allocator>, wchar_t> : __disabled_formatter {};
+             |   [38;2;255;255;0m> in [1mmcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm[0m
+xmake/clang/release/cold/mcpp-2026.8.11.3/modules    failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-cold.log)
+[ 2037.1s] xmake/clang/release/noop/mcpp-2026.8.11.3/modules  configure
+[ 2037.4s] xmake/clang/release/noop/mcpp-2026.8.11.3/modules  seed build
+[ 2041.2s] xmake/clang/release/noop/mcpp-2026.8.11.3/modules  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-noop.log)
+[ 2041.2s] xmake/clang/release/noop/mcpp-2026.8.11.3/modules  --- error lines from xmake-noop.log ---
+             |     [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |        99 |       formatter<_Tp, _CharT> __f;
+             |           |                              ^
+[ 2041.2s] xmake/clang/release/noop/mcpp-2026.8.11.3/modules  --- last lines of xmake-noop.log ---
+             | [0m[38;2;0;255;0;1m[ 30%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.toolchain.stdmod[0m[0m
+             | [0m[38;2;0;255;0;1m[ 30%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.pm.publisher[0m[0m
+             | [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |    99 |       formatter<_Tp, _CharT> __f;
+             |       |                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:98:62: note: while substituting into a lambda expression here
+             |    98 |     __parse_ = [](basic_format_parse_context<_CharT>& __ctx) {
+             |       |                                                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:393:25: note: in instantiation of function template specialization 'std::__format::__compile_time_handle<wchar_t>::__enable<std::__1::basic_string<char>>' requested here
+             |   393 |       __handle.template __enable<_Tp>();
+             |       |                         ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:389:99: note: while substituting into a lambda expression here
+             |   389 |   static constexpr array<__format::__compile_time_handle<_CharT>, sizeof...(_Args)> __handles_{[] {
+             |       |                                                                                                   ^
+             | mcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm:140:17: note: in instantiation of template class 'std::__1::basic_format_string<wchar_t, std::__1::basic_string<char>, std::__1::basic_string<char>, std::__1::basic_string<char>>' requested here
+             |   140 |                 "{{\"namespace\":\"{}\",\"name\":\"{}\",\"error\":\"{}\"}}",
+             |       |                 ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/formatter_string.h:139:70: note: default constructor of 'formatter<std::__1::basic_string<char>, wchar_t>' is implicitly deleted because base class '__disabled_formatter' has a deleted default constructor
+             |   139 | struct formatter<basic_string<char, _Traits, _Allocator>, wchar_t> : __disabled_formatter {};
+             |   [38;2;255;255;0m> in [1mmcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm[0m
+xmake/clang/release/noop/mcpp-2026.8.11.3/modules    failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-noop.log)
+[ 2041.4s] xmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  configure
+[ 2041.8s] xmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  seed build
+[ 2045.3s] xmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-touch-hub.log)
+[ 2045.3s] xmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  --- error lines from xmake-touch-hub.log ---
+             |     [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |        99 |       formatter<_Tp, _CharT> __f;
+             |           |                              ^
+[ 2045.3s] xmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules  --- last lines of xmake-touch-hub.log ---
+             | [0m[38;2;0;255;0;1m[ 28%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.toolchain.detect[0m[0m
+             | [0m[38;2;0;255;0;1m[ 28%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.toolchain.registry[0m[0m
+             | [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |    99 |       formatter<_Tp, _CharT> __f;
+             |       |                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:98:62: note: while substituting into a lambda expression here
+             |    98 |     __parse_ = [](basic_format_parse_context<_CharT>& __ctx) {
+             |       |                                                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:393:25: note: in instantiation of function template specialization 'std::__format::__compile_time_handle<wchar_t>::__enable<std::__1::basic_string<char>>' requested here
+             |   393 |       __handle.template __enable<_Tp>();
+             |       |                         ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:389:99: note: while substituting into a lambda expression here
+             |   389 |   static constexpr array<__format::__compile_time_handle<_CharT>, sizeof...(_Args)> __handles_{[] {
+             |       |                                                                                                   ^
+             | mcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm:140:17: note: in instantiation of template class 'std::__1::basic_format_string<wchar_t, std::__1::basic_string<char>, std::__1::basic_string<char>, std::__1::basic_string<char>>' requested here
+             |   140 |                 "{{\"namespace\":\"{}\",\"name\":\"{}\",\"error\":\"{}\"}}",
+             |       |                 ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/formatter_string.h:139:70: note: default constructor of 'formatter<std::__1::basic_string<char>, wchar_t>' is implicitly deleted because base class '__disabled_formatter' has a deleted default constructor
+             |   139 | struct formatter<basic_string<char, _Traits, _Allocator>, wchar_t> : __disabled_formatter {};
+             |   [38;2;255;255;0m> in [1mmcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm[0m
+xmake/clang/release/touch-hub/mcpp-2026.8.11.3/modules    failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-touch-hub.log)
+[ 2045.5s] xmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  configure
+[ 2045.7s] xmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  seed build
+[ 2049.3s] xmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-edit-body.log)
+[ 2049.3s] xmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  --- error lines from xmake-edit-body.log ---
+             |     [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |        99 |       formatter<_Tp, _CharT> __f;
+             |           |                              ^
+[ 2049.3s] xmake/clang/release/edit-body/mcpp-2026.8.11.3/modules  --- last lines of xmake-edit-body.log ---
+             | [0m[38;2;0;255;0;1m[ 30%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.build.tool_store[0m[0m
+             | [0m[38;2;0;255;0;1m[ 30%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.build.hermetic[0m[0m
+             | [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |    99 |       formatter<_Tp, _CharT> __f;
+             |       |                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:98:62: note: while substituting into a lambda expression here
+             |    98 |     __parse_ = [](basic_format_parse_context<_CharT>& __ctx) {
+             |       |                                                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:393:25: note: in instantiation of function template specialization 'std::__format::__compile_time_handle<wchar_t>::__enable<std::__1::basic_string<char>>' requested here
+             |   393 |       __handle.template __enable<_Tp>();
+             |       |                         ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:389:99: note: while substituting into a lambda expression here
+             |   389 |   static constexpr array<__format::__compile_time_handle<_CharT>, sizeof...(_Args)> __handles_{[] {
+             |       |                                                                                                   ^
+             | mcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm:140:17: note: in instantiation of template class 'std::__1::basic_format_string<wchar_t, std::__1::basic_string<char>, std::__1::basic_string<char>, std::__1::basic_string<char>>' requested here
+             |   140 |                 "{{\"namespace\":\"{}\",\"name\":\"{}\",\"error\":\"{}\"}}",
+             |       |                 ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/formatter_string.h:139:70: note: default constructor of 'formatter<std::__1::basic_string<char>, wchar_t>' is implicitly deleted because base class '__disabled_formatter' has a deleted default constructor
+             |   139 | struct formatter<basic_string<char, _Traits, _Allocator>, wchar_t> : __disabled_formatter {};
+             |   [38;2;255;255;0m> in [1mmcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm[0m
+xmake/clang/release/edit-body/mcpp-2026.8.11.3/modules    failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-edit-body.log)
+[ 2049.5s] xmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  configure
+[ 2049.8s] xmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  seed build
+[ 2053.4s] xmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-edit-comment.log)
+[ 2053.4s] xmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  --- error lines from xmake-edit-comment.log ---
+             |     [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |        99 |       formatter<_Tp, _CharT> __f;
+             |           |                              ^
+[ 2053.4s] xmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules  --- last lines of xmake-edit-comment.log ---
+             | [0m[38;2;0;255;0;1m[ 29%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.toolchain.hostflags[0m[0m
+             | [0m[38;2;0;255;0;1m[ 30%]:[0m [38;2;255;0;255;1m<mcpp>[0m [0mcompiling.module.bmi.release mcpp.pm.publisher[0m[0m
+             | [0m[1;38;2;255;0;0;1merror: [0m/home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:99:30: error: call to implicitly-deleted default constructor of 'formatter<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, wchar_t>'
+             |    99 |       formatter<_Tp, _CharT> __f;
+             |       |                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:98:62: note: while substituting into a lambda expression here
+             |    98 |     __parse_ = [](basic_format_parse_context<_CharT>& __ctx) {
+             |       |                                                              ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:393:25: note: in instantiation of function template specialization 'std::__format::__compile_time_handle<wchar_t>::__enable<std::__1::basic_string<char>>' requested here
+             |   393 |       __handle.template __enable<_Tp>();
+             |       |                         ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/format_functions.h:389:99: note: while substituting into a lambda expression here
+             |   389 |   static constexpr array<__format::__compile_time_handle<_CharT>, sizeof...(_Args)> __handles_{[] {
+             |       |                                                                                                   ^
+             | mcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm:140:17: note: in instantiation of template class 'std::__1::basic_format_string<wchar_t, std::__1::basic_string<char>, std::__1::basic_string<char>, std::__1::basic_string<char>>' requested here
+             |   140 |                 "{{\"namespace\":\"{}\",\"name\":\"{}\",\"error\":\"{}\"}}",
+             |       |                 ^
+             | /home/speak/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1/__format/formatter_string.h:139:70: note: default constructor of 'formatter<std::__1::basic_string<char>, wchar_t>' is implicitly deleted because base class '__disabled_formatter' has a deleted default constructor
+             |   139 | struct formatter<basic_string<char, _Traits, _Allocator>, wchar_t> : __disabled_formatter {};
+             |   [38;2;255;255;0m> in [1mmcpp-2026.8.11.3/src/cli/cmd_xpkg.cppm[0m
+xmake/clang/release/edit-comment/mcpp-2026.8.11.3/modules    failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-edit-comment.log)
+
+=== relative to cmake (>1.00 = slower than the baseline) ===
+
+-- modules / cold --
+   mcpp@2026.8.13.1          32.06s    0.91x
+   mcpp@2026.8.11.3          78.70s    2.24x
+   mcpp@2026.8.13.1+schedule=on    18.14s    0.52x
+   cmake                     35.20s    1.00x   <- baseline
+   xmake                     failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-cold.log)
+
+-- modules / noop --
+   mcpp@2026.8.13.1           0.16s    0.50x
+   mcpp@2026.8.11.3           0.24s    0.75x
+   mcpp@2026.8.13.1+schedule=on     0.18s    0.56x
+   cmake                      0.32s    1.00x   <- baseline
+   xmake                     failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-noop.log)
+
+-- modules / touch-hub --
+   mcpp@2026.8.13.1           0.30s    0.01x
+   mcpp@2026.8.11.3          74.12s    2.37x
+   mcpp@2026.8.13.1+schedule=on     0.28s    0.01x
+   cmake                     31.21s    1.00x   <- baseline
+   xmake                     failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-touch-hub.log)
+
+-- modules / edit-body --
+   mcpp@2026.8.13.1          30.68s    0.99x
+   mcpp@2026.8.11.3          75.78s    2.43x
+   mcpp@2026.8.13.1+schedule=on    14.64s    0.47x
+   cmake                     31.15s    1.00x   <- baseline
+   xmake                     failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-edit-body.log)
+
+-- modules / edit-comment --
+   mcpp@2026.8.13.1          24.79s    0.79x
+   mcpp@2026.8.11.3          74.14s    2.37x
+   mcpp@2026.8.13.1+schedule=on    13.51s    0.43x
+   cmake                     31.24s    1.00x   <- baseline
+   xmake                     failed  seed build exited 255 (see /tmp/bench-standard-20260814-1267933/logs/xmake-edit-comment.log)
+
+report : /home/speak/workspace/github/mcpp-community/mcpp/bench/results/standard-20260814-linux-x86_64/clang-mcpp-2026.8.11.3.json
+cells  : 20 ok, 5 failed, 0 not applicable
+bench: 5 cell(s) FAILED — the engine ran and produced no artifact. Each one's reason and log tail are above.

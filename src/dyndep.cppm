@@ -36,6 +36,24 @@ std::string bmi_basename(std::string_view logicalName,
 struct DyndepOptions {
     std::string_view bmiDir = "gcm.cache";
     std::string_view bmiExt = ".gcm";
+    // Emit a record for the BMI *as well as* the primary output.
+    //
+    // Needed by the two-phase (clang) schedule, where one source feeds TWO
+    // independent edges — one emitting the BMI, one emitting the object — and
+    // both parse the same imports, so both need the same implicit inputs.
+    // P1689's "primary-output" comes from the scanned command's `-o`, which
+    // names the object only, and a BMI edge with no record is rejected outright:
+    //   'pcm.cache/mcpp.version_req.pcm' not mentioned in its dyndep file
+    //
+    // Deliberately NOT solved by pointing the scan's `-o` at the BMI: that was
+    // tried on the GCC side and made the SCAN try to create the BMI directory
+    // before anything existed (`cc1plus: fatal error: opening output file
+    // gcm.cache/...`). The scan keeps writing a throwaway object; only the
+    // dyndep records change.
+    //
+    // A unit that provides nothing (implementation unit, plain .cpp) is not
+    // split, so it keeps its single record.
+    bool splitModuleEdges = false;
 };
 
 // Parse a single .ddi JSON body to a UnitInfo. Returns unexpected on JSON error.
@@ -179,6 +197,25 @@ std::string bmi_basename(std::string_view logicalName,
     return out;
 }
 
+namespace {
+
+// Which ninja edges this unit's dyndep records augment. Shared by the batch and
+// single-unit emitters so the two shapes cannot drift — the failure mode of
+// `splitModuleEdges` is a record naming an edge nobody declared (or an edge
+// with no record), and ninja reports both as "not mentioned in its dyndep
+// file", i.e. pointing at the innocent side.
+std::vector<std::string> dyndep_targets(const UnitInfo& u, const DyndepOptions& opts) {
+    std::vector<std::string> t;
+    if (opts.splitModuleEdges && !u.provides.empty()) {
+        t.push_back(std::string(opts.bmiDir) + "/"
+                    + bmi_basename(u.provides.front(), opts.bmiExt));
+    }
+    if (!u.primaryOutput.empty()) t.push_back(u.primaryOutput.string());
+    return t;
+}
+
+} // namespace
+
 std::expected<UnitInfo, std::string> parse_ddi(std::string_view body) {
     std::size_t i = 0;
     skip_ws(body, i);
@@ -265,24 +302,24 @@ std::string emit_dyndep(const std::vector<UnitInfo>&     units,
     std::string out = "ninja_dyndep_version = 1\n";
 
     for (auto& u : units) {
-        if (u.primaryOutput.empty()) continue;
+        for (auto& target : dyndep_targets(u, opts)) {
+            std::string line = "build " + target + ": dyndep";
 
-        std::string line = "build " + u.primaryOutput.string() + ": dyndep";
-
-        bool firstImplicit = true;
-        auto add_implicit = [&](const std::string& path) {
-            if (firstImplicit) { line += " |"; firstImplicit = false; }
-            line += " " + path;
-        };
-        for (auto& r : u.requires_) {
-            bool selfProvides = false;
-            for (auto& p : u.provides) if (p == r) { selfProvides = true; break; }
-            if (selfProvides) continue;
-            std::string bmiDir(opts.bmiDir);
-            add_implicit(bmiDir + "/" + bmi_basename(r, opts.bmiExt));
+            bool firstImplicit = true;
+            auto add_implicit = [&](const std::string& path) {
+                if (firstImplicit) { line += " |"; firstImplicit = false; }
+                line += " " + path;
+            };
+            for (auto& r : u.requires_) {
+                bool selfProvides = false;
+                for (auto& p : u.provides) if (p == r) { selfProvides = true; break; }
+                if (selfProvides) continue;
+                std::string bmiDir(opts.bmiDir);
+                add_implicit(bmiDir + "/" + bmi_basename(r, opts.bmiExt));
+            }
+            line += "\n  restat = 1\n";
+            out += line;
         }
-        line += "\n  restat = 1\n";
-        out += line;
         (void)stdImports;
     }
 
@@ -322,8 +359,8 @@ emit_dyndep_single(const std::filesystem::path& ddiPath,
     if (!u) return std::unexpected(std::format("{}: {}", ddiPath.string(), u.error()));
 
     std::string out = "ninja_dyndep_version = 1\n";
-    if (!u->primaryOutput.empty()) {
-        std::string line = "build " + u->primaryOutput.string() + ": dyndep";
+    for (auto& target : dyndep_targets(*u, opts)) {
+        std::string line = "build " + target + ": dyndep";
         bool firstImplicit = true;
         for (auto& r : u->requires_) {
             bool selfProvides = false;

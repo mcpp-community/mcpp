@@ -1042,6 +1042,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
     if (auto v = doc->get_string("build.c_standard"))     m.buildConfig.cStandard = *v;
     if (auto v = doc->get_string("build.target"))         m.buildConfig.target = *v;
+    // `jobs` accepts a number or "auto"; both arrive as text and are validated
+    // where they are used, so a bad value warns at build time instead of making
+    // the whole manifest unloadable. (A published package carrying an unknown
+    // key must never break an older mcpp — same rule the dependency keys follow.)
+    if (auto v = doc->get_string("build.bmi_schedule")) m.buildConfig.bmiSchedule = *v;
+    if (auto v = doc->get_string("build.jobs")) m.buildConfig.jobs = *v;
+    else if (auto n = doc->get_int("build.jobs")) m.buildConfig.jobs = std::to_string(*n);
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
     else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
     if (auto v = doc->get_string("build.cache"))          m.buildConfig.cacheMode = *v;
@@ -1071,10 +1078,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     //
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
     static constexpr std::string_view kKnownBuildKeys[] = {
-        "allow_host_libs", "build_program_timeout", "c_standard", "cache",
-        "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
+        "allow_host_libs", "bmi_schedule", "build_program_timeout", "c_standard",
+        "cache", "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
         "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
-        "ldflags", "macos_deployment_target", "module_extensions", "profile",
+        "jobs", "ldflags", "macos_deployment_target", "module_extensions", "profile",
         "sources", "static_stdlib", "target",
     };
     if (auto* bt = doc->get_table("build")) {
@@ -1082,13 +1089,26 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             bool known = false;
             for (auto k : kKnownBuildKeys) if (key == k) { known = true; break; }
             if (!known) {
+                // ⚠️ THE LIST IN THE MESSAGE IS THE SAME LIST. It used to be a
+                // THIRD hand-written copy and had already drifted from both
+                // others: it named neither `jobs` nor `bmi_schedule`, while
+                // `kKnownBuildKeys` carried a `schedule` that nothing reads and
+                // omitted the `bmi_schedule` the parser actually looks for.
+                //
+                // The user-visible result was the worst possible one: writing
+                // the documented `bmi_schedule = "on"` produced
+                //   [build] has unsupported key 'bmi_schedule' (ignored)
+                // which is FALSE — it is read a few lines above — so the only
+                // way to turn the feature on told you it had been ignored,
+                // while the typo `schedule` was accepted in silence.
+                std::string supported;
+                for (auto k : kKnownBuildKeys) {
+                    if (!supported.empty()) supported += ", ";
+                    supported += k;
+                }
                 m.schemaWarnings.push_back(std::format(
-                    "[build] has unsupported key '{}' (ignored). Supported keys: "
-                    "sources, module_extensions, cflags, cxxflags, ldflags, "
-                    "defines, flags, include_dirs, include_dirs_after, "
-                    "dialect_cxxflags, c_standard, target, static_stdlib, "
-                    "cxx_runtime, allow_host_libs, cache, profile, "
-                    "build_program_timeout, macos_deployment_target.", key));
+                    "[build] has unsupported key '{}' (ignored). Supported keys: {}.",
+                    key, supported));
             }
         }
     }
@@ -1366,6 +1386,44 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         "\"self-contained\", \"toolchain-coupled\", \"host-coupled\"",
                         triple, e.cxxRuntime)));
                 }
+            }
+            // Unsupported SCALAR keys are REPORTED, not dropped.
+            // `[targets.<name>]` has done this since #249; this table did not,
+            // so a key that looks plausible — `cxx_runtime_tests` was the real
+            // one — was accepted in silence and had no effect (#418).
+            //
+            // ⚠️ SCALARS ONLY, AND THAT IS THE POINT. The sub-TABLES here are the
+            // conditional channel (`[target.<pred>.build]`, `.dependencies`,
+            // `.dev-dependencies`, `.build-dependencies`, `.feature-deps`) and
+            // TOML presents each as a key of this table. A hand-written list of
+            // "known keys" therefore has to enumerate that channel too — and
+            // that list is exactly the thing this codebase has watched drift
+            // twice already (see ConditionalConfig's comments on #258 and #359,
+            // both "the conditional reader kept its own subset and fell
+            // behind"). The first version of this check did hand-list them and
+            // warned about `[target.'cfg(unix)'.dependencies]`, a documented
+            // feature with its own e2e.
+            //
+            // Restricting the check to scalars removes the coupling entirely:
+            // new conditional sections need no change here, and the reported
+            // case — a scalar that does nothing — is still caught.
+            static constexpr std::string_view kKnownTargetScalars[] = {
+                "cxx_runtime", "linkage", "toolchain",
+            };
+            for (auto& [key, value] : body) {
+                if (value.is_table()) continue;   // the conditional channel
+                bool known = false;
+                for (auto k : kKnownTargetScalars) if (key == k) { known = true; break; }
+                if (known) continue;
+                std::string supported;
+                for (auto k : kKnownTargetScalars) {
+                    if (!supported.empty()) supported += ", ";
+                    supported += k;
+                }
+                m.schemaWarnings.push_back(std::format(
+                    "[target.{}] has unsupported key '{}' (ignored). Supported keys: {}. "
+                    "Per-role contracts go in [build].cxx_runtime's table form.",
+                    triple, key, supported));
             }
             m.targetOverrides[canon_triple(triple)] = std::move(e);
 

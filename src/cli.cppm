@@ -89,6 +89,8 @@ void print_usage() {
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
     std::println("  --offline                            Never touch the network (also: MCPP_OFFLINE=1)");
+    std::println("  --jobs N|auto, -j                    Concurrent compiles ('auto' = cores + free RAM)");
+    std::println("  --toolchain SPEC                     Use this toolchain for one build (e.g. llvm@22.1.8)");
     std::println("");
     std::println("Docs: https://github.com/mcpp-community/mcpp/tree/main/docs");
 }
@@ -105,6 +107,11 @@ int run(int argc, char** argv) {
     // the App below so they show up in --help and pass schema checks.
     for (int i = 1; i < argc; ++i) {
         std::string_view a = argv[i];
+        // Everything after a bare `--` belongs to the program being run or the
+        // test binary being invoked, not to mcpp. Without this, `mcpp run -- -j 4`
+        // reads the child's flag as mcpp's own concurrency setting — `-j` is a
+        // common enough flag that this is a matter of when, not whether.
+        if (a == "--") break;
         if      (a == "--quiet" || a == "-q") mcpp::ui::set_quiet(true);
         else if (a == "--no-color")           mcpp::ui::disable_color();
         else if (a == "--verbose" || a == "-v") mcpp::log::set_verbose(true);
@@ -114,6 +121,23 @@ int run(int argc, char** argv) {
         // need a parameter threaded down. Same shape as MCPP_VERBOSE above, and
         // it makes `MCPP_OFFLINE=1` and `--offline` literally the same switch.
         else if (a == "--offline") mcpp::platform::env::set("MCPP_OFFLINE", "1");
+        // --jobs rides the same side channel as --offline, for the same reason
+        // recorded there: its consumer is deep in mcpp.build.execute and
+        // threading a parameter down would touch every caller in between.
+        // Accepts `--jobs N`, `--jobs=N`, `-j N` and `-jN`.
+        else if (a == "--jobs" || a == "-j") {
+            if (i + 1 < argc) mcpp::platform::env::set("MCPP_JOBS", argv[++i]);
+        }
+        else if (a.starts_with("--jobs=")) mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(7)));
+        // --toolchain rides the same channel, for the same reason: its consumer
+        // is deep inside prepare's resolution and threading a parameter down
+        // would touch every caller in between.
+        else if (a == "--toolchain") {
+            if (i + 1 < argc) mcpp::platform::env::set("MCPP_TOOLCHAIN", argv[++i]);
+        }
+        else if (a.starts_with("--toolchain=")) mcpp::platform::env::set("MCPP_TOOLCHAIN", std::string(a.substr(12)));
+        else if (a.starts_with("-j") && a.size() > 2)
+            mcpp::platform::env::set("MCPP_JOBS", std::string(a.substr(2)));
     }
     // Decline xlings' linker-wrapper path injection, for this process and
     // everything it spawns (openxlings/xlings#540).
@@ -265,6 +289,10 @@ int run(int argc, char** argv) {
                 .help("Show toolchain fingerprint and 11 inputs"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
+            .option(cl::Option("jobs").short_name('j').takes_value().value_name("N")
+                .help("Concurrent compiles: a number, or 'auto' to size from cores + free RAM"))
+            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                .help("Build with this toolchain for one build, e.g. llvm@22.1.8"))
             .option(cl::Option("no-cache")
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("target").takes_value().help(
@@ -590,6 +618,9 @@ int run(int argc, char** argv) {
                 .help("BMI cache directory name (default: gcm.cache)"))
             .option(cl::Option("bmi-ext").takes_value().value_name("EXT")
                 .help("BMI file extension (default: .gcm)"))
+            .option(cl::Option("split-module")
+                .help("Also emit a record for the provided BMI (two-phase "
+                      "schedule: BMI and object are separate edges)"))
             .option(cl::Option("expect-provides").takes_value().value_name("NAME")
                 .help("(verification) planned provided module for this TU"))
             .option(cl::Option("expect-imports").takes_value().value_name("CSV")
@@ -604,6 +635,33 @@ int run(int argc, char** argv) {
             .option(cl::Option("verify").takes_value().value_name("MODE")
                 .help("Already-staged check: size (default) | content"))
             .action(wrap_rc(cmd_stage)))
+        .subcommand(cl::App("bmi-equal")
+            .description("(internal: invoked by ninja) Compare two BMIs ignoring the compiler's embedded timestamp")
+            .action(wrap_rc(cmd_bmi_equal)))
+        // The three edges of the detach-codegen schedule. Internal, and named as
+        // such: they are only ever invoked by a generated build.ninja.
+        .subcommand(cl::App("bmi-compile")
+            .description("(internal) Compile a module interface and return when its BMI is published")
+            .option(cl::Option("bmi").takes_value().value_name("PATH").help("BMI this unit publishes"))
+            .option(cl::Option("slot").takes_value().value_name("PATH").help("where .log/.rc are kept"))
+            .option(cl::Option("self").takes_value().value_name("PATH").help("path to mcpp, re-invoked as supervisor"))
+            .option(cl::Option("sem").takes_value().value_name("DIR").help("concurrency token directory"))
+            .option(cl::Option("cap").takes_value().value_name("N").help("max concurrent compilers"))
+            .option(cl::Option("command-file").takes_value().value_name("PATH").help("file holding the compiler command line"))
+            .option(cl::Option("dep-from").takes_value().value_name("PATH").help("scanner depfile to adopt"))
+            .option(cl::Option("dep-to").takes_value().value_name("PATH").help("where ninja expects this edge's depfile"))
+            .action(wrap_rc(cmd_bmi_compile)))
+        .subcommand(cl::App("bmi-supervise")
+            .description("(internal) Run a compiler to completion and record its status")
+            .option(cl::Option("slot").takes_value().value_name("PATH"))
+            .option(cl::Option("token").takes_value().value_name("PATH"))
+            .option(cl::Option("command-file").takes_value().value_name("PATH"))
+            .action(wrap_rc(cmd_bmi_supervise)))
+        .subcommand(cl::App("bmi-await")
+            .description("(internal) Join a detached compiler and replay its diagnostics")
+            .option(cl::Option("slot").takes_value().value_name("PATH"))
+            .option(cl::Option("object").takes_value().value_name("PATH"))
+            .action(wrap_rc(cmd_bmi_await)))
     ;
 
     // The bareword `mcpp help` and `mcpp` (no args) both print the
@@ -670,12 +728,16 @@ int run(int argc, char** argv) {
     {
         std::string_view first = argv[1];
         if (!first.starts_with('-')) {
-            static constexpr std::array<std::string_view, 23> known = {
+            // Size is deduced, not spelled: an explicit count turns "add a
+            // command" into "add a command AND remember to bump a number",
+            // and the compiler only catches the direction that overflows.
+            static constexpr std::array known = std::to_array<std::string_view>({
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep", "why", "resolve", "stage",
-            };
+                "version", "dyndep", "why", "resolve", "stage", "bmi-equal",
+                "bmi-compile", "bmi-supervise", "bmi-await",
+            });
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }
             if (!ok) {

@@ -77,8 +77,12 @@ runs:
           *)      tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz" ;;
         esac
         WORK=$(mktemp -d)
-        curl -fsSL -o "${WORK}/${tarball}" \
-          "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}"
+        # Retried and verified — see .github/tools/fetch_release.sh. A bare curl
+        # here was the single largest source of unexplained CI red on this repo
+        # (`curl: (52) Empty reply from server`).
+        bash "$REPO_DIR/.github/tools/fetch_release.sh" \
+          "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
+          "${WORK}/${tarball}"
         tar -xzf "${WORK}/${tarball}" -C "${WORK}"
         "${WORK}/${tarball%.tar.gz}/subos/default/bin/xlings" self install
         export PATH="$HOME/.xlings/subos/default/bin:$PATH"
@@ -113,8 +117,11 @@ runs:
         REPO_DIR="$(pwd)"
         WORK=$(mktemp -d)
         zipfile="xlings-${XLINGS_VERSION}-windows-x86_64.zip"
-        curl -fsSL -o "${WORK}/${zipfile}" \
-          "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${zipfile}"
+        # Same helper as the unix leg. This is the leg that kept failing, and a
+        # fix applied to only one of them is a fix half the CI does not get.
+        bash "$REPO_DIR/.github/tools/fetch_release.sh" \
+          "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${zipfile}" \
+          "${WORK}/${zipfile}"
         cd "${WORK}"
         unzip -q "${zipfile}"
         "$WORK/xlings-${XLINGS_VERSION}-windows-x86_64/subos/default/bin/xlings.exe" self install

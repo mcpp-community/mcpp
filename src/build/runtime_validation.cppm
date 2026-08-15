@@ -16,6 +16,7 @@ import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.platform.elf_runtime;
 import mcpp.platform.runtime_binding;
+import mcpp.ui;
 import mcpp.platform.runtime_search;
 
 export namespace mcpp::build::runtime_validation {
@@ -111,9 +112,14 @@ ArtifactVerdict artifact_identity_verdict(
 // anyone needing readelf on the box. It is also how "checked and compliant"
 // stays distinguishable from "never checked": both look identical when the
 // only output is the absence of a warning.
+//
+// `before` is the pre-ninja snapshot, same as validate_changed_artifacts takes:
+// an artifact whose stat did not move was not produced by this run, so its
+// verdict is READ BACK from resolution.json instead of re-derived from the ELF.
+// The returned vector still covers every artifact either way.
 std::vector<mcpp::build::loader::TagFinding>
 check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
-                             const ArtifactSnapshot& produced);
+                             const ArtifactSnapshot& before);
 
 } // namespace mcpp::build::runtime_validation
 
@@ -407,6 +413,29 @@ ValidationReport validate_changed_artifacts(
             }
         }
     }
+    // ⚠️ A BINDING THAT CANNOT BE EVALUATED IS ONE FACT, NOT ONE PER ARTIFACT.
+    //
+    // On a brand-new MCPP_HOME the first build finds `binding.loader` and
+    // `binding.libraryDirs` both empty (the second build has them; #417), and
+    // rule B then reported that per artifact — two lines each, thirteen
+    // artifacts, twenty-six lines of the same sentence on a user's very first
+    // build. The root cause is a separate question and is NOT settled; this is
+    // the half of the criterion that does not depend on it.
+    //
+    // Said once, before the loop, naming what is missing. Rule B still runs:
+    // it has other inputs (PT_INTERP identity), and suppressing it entirely
+    // would trade noise for a blind spot.
+    const bool bindingUnevaluated =
+        !plan.runtimeBinding.loader.has_value() && plan.runtimeBinding.libraryDirs.empty();
+    if (bindingUnevaluated && !before.empty()) {
+        mcpp::ui::warning(std::format(
+            "runtime binding {} has no loader path or library directory yet, so "
+            "rule B cannot decide for this build's artifacts. This is expected on "
+            "the first build in a fresh MCPP_HOME; a second build resolves it.",
+            plan.runtimeBinding.runtimeId.empty() ? "<unnamed>"
+                                                  : plan.runtimeBinding.runtimeId));
+    }
+
     for (auto const& [artifact, oldStamp] : before) {
         auto now = stamp(artifact);
         if (!now.exists) continue;
@@ -523,22 +552,91 @@ ArtifactVerdict artifact_identity_verdict(
 
 std::vector<mcpp::build::loader::TagFinding>
 check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
-                             const ArtifactSnapshot& produced) {
+                             const ArtifactSnapshot& before) {
     namespace loader = mcpp::build::loader;
     std::vector<loader::TagFinding> findings;
     if constexpr (!mcpp::platform::is_linux) return findings;
 
-    for (auto const& [artifact, ignored] : produced) {
-        (void)ignored;
+    const auto path = plan.outputDir / "resolution.json";
+    nlohmann::json resolution;
+    {
+        std::ifstream input(path);
+        resolution = nlohmann::json::parse(input, nullptr, false);
+    }
+
+    // What this run actually produced. The parameter used to be spelled
+    // `produced` and then be given the BEFORE snapshot, so every drive
+    // re-parsed every link artifact in the plan — and `mcpp test` drives the
+    // backend once per test on an already-built tree.
+    // MEASURED on the 83-test suite: 158.7 s of a 190 s hot run, 1.87 s x 85
+    // drives, for artifacts that nothing had touched.
+    //
+    // An unchanged artifact keeps the verdict already written to
+    // resolution.json rather than being dropped: a violation must keep being
+    // reported on every build, and "checked and compliant" must stay
+    // distinguishable from "never checked" — which is exactly what a shorter
+    // fix (skip unchanged, record only the fresh ones) would have destroyed.
+    const auto recorded = [&]() -> nlohmann::json {
+        auto rt = resolution.is_object() ? resolution.find("runtime") : resolution.end();
+        if (rt == resolution.end() || !rt->is_object()) return nlohmann::json::array();
+        auto tags = rt->find("loader_tags");
+        if (tags == rt->end() || !tags->is_array()) return nlohmann::json::array();
+        return *tags;
+    }();
+    auto recorded_entry = [&](const std::string& rel) -> const nlohmann::json* {
+        for (auto const& e : recorded)
+            if (e.is_object() && e.value("path", "") == rel) return &e;
+        return nullptr;
+    };
+    auto required_from = [](std::string_view s) {
+        if (s == "DT_RPATH")   return loader::RequiredTag::Rpath;
+        if (s == "DT_RUNPATH") return loader::RequiredTag::Runpath;
+        return loader::RequiredTag::NotApplicable;
+    };
+    auto actual_from = [](std::string_view s) {
+        using Tag = mcpp::platform::elf::SearchPathTag;
+        if (s == "DT_RPATH")             return Tag::Rpath;
+        if (s == "DT_RUNPATH")           return Tag::Runpath;
+        if (s == "DT_RPATH+DT_RUNPATH")  return Tag::Both;
+        return Tag::None;
+    };
+
+    bool anyFresh = false;
+    for (auto const& [artifact, oldStamp] : before) {
+        auto now = stamp(artifact);
+        if (!now.exists) continue;
+
+        std::error_code ec;
+        auto rel = std::filesystem::relative(artifact, plan.outputDir, ec);
+        auto relStr = (ec ? artifact : rel).lexically_normal().generic_string();
+
+        if (now == oldStamp) {
+            if (auto const* prev = recorded_entry(relStr)) {
+                loader::TagFinding f;
+                f.artifact = artifact;
+                f.form = prev->value("form", "") == "executable"
+                             ? loader::Form::Executable : loader::Form::SharedLibrary;
+                f.required = required_from(prev->value("required", ""));
+                f.actual   = actual_from(prev->value("actual", ""));
+                auto st = prev->value("status", "");
+                f.status = st == "ok"        ? loader::TagFinding::Status::Ok
+                         : st == "violation" ? loader::TagFinding::Status::Violation
+                                             : loader::TagFinding::Status::NotChecked;
+                findings.push_back(std::move(f));
+                continue;
+            }
+            // No stored verdict for an unchanged artifact: fall through and
+            // read it, or the first build after this cache shape changed would
+            // report "not checked" forever.
+        }
+
         auto finding = loader::check_artifact(artifact);
         if (finding.form == loader::Form::NotElf) continue;
+        anyFresh = true;
         findings.push_back(std::move(finding));
     }
-    if (findings.empty()) return findings;
+    if (findings.empty() || !anyFresh) return findings;
 
-    const auto path = plan.outputDir / "resolution.json";
-    std::ifstream input(path);
-    auto resolution = nlohmann::json::parse(input, nullptr, false);
     if (resolution.is_discarded() || !resolution.is_object()) return findings;
     auto runtime = resolution.find("runtime");
     if (runtime == resolution.end() || !runtime->is_object()) return findings;

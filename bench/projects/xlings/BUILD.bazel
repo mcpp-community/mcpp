@@ -1,0 +1,45 @@
+# The bazel arm of the xlings control target. See MODULE.bazel for why the two
+# interesting things — the tree and its dependencies — are external repositories
+# rather than globs, and mcpp_registry.bzl for how they are built.
+#
+# THIS PACKAGE DECLARES ONE RULE ON PURPOSE, and that one rule is the point of
+# the file. It used to declare none: a comment-only BUILD.bazel makes
+# `bazel build //...` exit 0 in 0.14s with `Found 0 targets`, and the harness
+# published that as a 0.43s cold build in a column next to cmake's 94s.
+# bench/src/engines/bazel.cppm now asks `bazel query kind(rule, //...)` before it
+# will measure anything here, so an empty description reports a reason instead of
+# a number — but the fix for "no rules" is a rule.
+#
+# The alias, rather than the cc_binary itself, because `module_interfaces` takes
+# labels bazel can glob and the sources live in a submodule this package must not
+# write into. @xlings_tree carries the generated cc_binary; see _XLINGS_BUILD in
+# mcpp_registry.bzl for the source set and why it is not `src/main.cpp` alone.
+#
+# MEASURED, on bazel 9.2.0 + rules_cc 0.2.22 with the payload clang 22.1.8,
+# `--compilation_mode=opt`, cold after `bazel clean`:
+#
+#   tree                 TUs compiled          cold     `--version`
+#   xlings-2026.8.11.2   110 .cppm +  2 .cpp   46.4s    xlings 2026.8.11.2
+#   xlings-2026.8.13.1   110 .cppm + 92 .cpp   18.0s    xlings 2026.8.13.1
+#
+# plus the dependency set, whose counts are the check that the .xpkg.lua
+# manifests are being read rather than the trees globbed: libarchive 127 (a glob
+# is 132), lua 32 (a glob is 34, and the two extra each define `main`), mbedtls
+# 108, xz 74, ftxui 73, zstd 26, zlib 15, bzip2 7, lz4 5, and 19 translation
+# units across the four mcpplibs packages — 18 of them module interfaces, one of
+# which is the generated mcpplibs.xpkg.lua_stdlib.
+#
+#   bazel build //:xlings                                    # the default pin
+#   BENCH_PROJECT_ROOT=$PWD/xlings-2026.8.11.2 bazel build //:xlings
+#   bazel run //:xlings -- --version
+#
+# The binary itself lands at
+#   bazel-bin/external/+xlings_tree+xlings_tree/xlings
+# because that is the repository that owns the rule; `bazel run` above is the
+# path-independent way to reach it.
+
+alias(
+    name = "xlings",
+    actual = "@xlings_tree//:xlings",
+    visibility = ["//visibility:public"],
+)
