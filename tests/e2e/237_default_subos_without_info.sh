@@ -117,27 +117,55 @@ if [ "$rc" != 0 ]; then
 fi
 echo "  absence: no fixup error (exit $rc)"
 
-# ── 2. ...and with the host runtime allowed, it must BUILD ─────────────────
-# The green half. Without it, part 1 could be satisfied by mcpp failing for
-# some accepted reason on every platform, which is not what "the build is
-# unaffected" means.
+# ── 2. THE CONTROL: describe the same SubOS, change nothing else ───────────
+# The green half. Without it, part 1 could be satisfied by mcpp failing for some
+# accepted reason on every platform, which is not what "the build is unaffected"
+# means. This is also what proves the degradation in part 1 is a degradation and
+# not a broken toolchain: same home, same payloads, same project — one JSON
+# block is the entire difference.
 #
-# ⚠️ THIS IS WHAT WAS BROKEN. In the reported sandbox, `allow_host_libs = true`
-# did NOT help: the fixup gate fired before the hermeticity policy was ever
-# consulted, so the one escape hatch mcpp documents for this exact situation
-# was unreachable. Absence must cost hermeticity and nothing else.
-cat >> mcpp.toml <<'EOF'
-
-[build]
-allow_host_libs = true
-EOF
+# ⚠️ NOT `allow_host_libs = true`. That was the first version and it FAILED ON
+# CI while passing here: falling back to the host needs a host C runtime, and
+# the runners have no `crt1.o` / `libm` to fall back TO. The green half must not
+# depend on a fact about the machine — binding to the payload glibc does not.
+# ⚠️ ASK THE REAL HOME WHICH GLIBC IT USES, do not take the first directory.
+# A machine with two glibc payloads installed has one the toolchain was patched
+# against and one it was not, and `ls | head -1` picks by alphabetical order —
+# which would make this control fail for a reason that has nothing to do with
+# what it is controlling for.
+GLIBC_DIR="$MCPP_HOME/registry/data/xpkgs/xim-x-glibc"
+GLIBC_VER="$(python3 - "$REAL_HOME/registry/subos/default/.xlings.json" <<'PY'
+import json, sys
+try:
+    rt = json.load(open(sys.argv[1], encoding="utf-8"))["subos_info"]["runtime"]
+    print(rt.split("@", 1)[1] if "@" in rt else "")
+except Exception:
+    print("")
+PY
+)"
+[ -n "$GLIBC_VER" ] && [ -d "$GLIBC_DIR/$GLIBC_VER" ] \
+    || GLIBC_VER="$(ls "$GLIBC_DIR" 2>/dev/null | head -1)"
+[ -n "$GLIBC_VER" ] || { echo "SKIP: no glibc payload to bind to"; exit 0; }
+python3 - "$MCPP_HOME/registry/subos/default/.xlings.json" "$GLIBC_VER" <<'PY'
+import json, sys
+path, ver = sys.argv[1], sys.argv[2]
+json.dump({"workspace": {},
+           "subos_info": {"schema_version": 1, "runtime": "glibc@" + ver,
+                          "host_glibc": ver, "envs": {}}},
+          open(path, "w", encoding="utf-8"))
+PY
 rm -rf target
-"$MCPP" build > allow.log 2>&1 || {
-    echo "FAIL: even with allow_host_libs, an undescribed default SubOS blocks"
-    echo "      the build. That is the escape hatch being unreachable."
-    tail -20 allow.log | sed 's/^/      /'
+"$MCPP" build > described.log 2>&1 || {
+    echo "FAIL: the SAME home builds nothing even once the SubOS describes"
+    echo "      itself (runtime glibc@$GLIBC_VER), so part 1 above proved"
+    echo "      nothing — this environment cannot build either way."
+    tail -20 described.log | sed 's/^/      /'
     exit 1; }
-echo "  absence + allow_host_libs: builds"
+echo "  described (glibc@$GLIBC_VER): builds"
+
+# ...and restore the absent state for part 3, so the install path is exercised
+# against the condition this test is about.
+printf '{"workspace":{}}' > "$MCPP_HOME/registry/subos/default/.xlings.json"
 
 # ── 3. `mcpp toolchain install` survives it too ─────────────────────────────
 # The path the fix could most easily have BROKEN: it carries no RuntimeBinding
