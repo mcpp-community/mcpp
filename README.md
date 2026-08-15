@@ -334,10 +334,14 @@ data: [`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x
   skips the cascade when the interface is unchanged. This is default behaviour
   and requires no configuration. The `mcpp (old)` column measures the previous
   release at 81.72s, level with cmake, so the effect is new in this revision.
-* **`edit-body` is the control case.** The interface does change there, so the
-  cascade is required; mcpp is 1.1x rather than 200x. An engine faster on this
-  row would be omitting work it owes. `+opt` does not omit it either — it
-  performs the same required work 2.9x faster.
+* **`edit-body` is the control case**, and it is the row where the cascade is
+  genuinely owed: mcpp is 1.1x rather than 200x, and an engine faster here would
+  be omitting work. `+opt` does not omit it either — it performs the same work
+  2.9x faster. Worth stating precisely: the perturbation **inserts a line**, and
+  under GCC that shifts the recorded source location of every declaration after
+  it, which changes the BMI. The cascade follows from the changed BMI, not from
+  the edited body — measured in
+  [`.agents/docs/2026-08-15-module-edit-granularity.md`](.agents/docs/2026-08-15-module-edit-granularity.md).
 * **`bmi_schedule` is opt-in and disabled by default** (`auto` resolves to off).
   It moves code generation off the critical path, so it helps only where a
   cascade is required: `cold` 86.69s → 35.73s, `edit-body` 80.87s → 29.83s. On

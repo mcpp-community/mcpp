@@ -236,6 +236,33 @@ job: the cell still runs, and its note says what to distrust.
 | `edit-body` | a real semantic edit inside a function body | the everyday loop — and whether a cascade is owed depends on **where the body lives**, not on the edit. See below. |
 | `touch-leaf` | mtime bump on a unit nobody imports | recompile 1 + link |
 
+#### ⚠️ `edit-body` perturbs a DIFFERENT FILE in each variant, and the two ask
+#### opposite questions
+
+| variant | file perturbed | what a correct engine does |
+|---|---|---|
+| `headers` | `unit_0.cpp` | recompile 1 + link — never a cascade |
+| `modules` | `unit_0.cppm` (interface) | **may cascade**, see below |
+| `modules-impl` | `unit_0_impl.cpp` (implementation unit) | recompile 1 + link — **never** a cascade |
+
+An implementation unit produces no BMI, so nothing can depend on it; the absence
+of a cascade there is structural. An interface unit is the opposite: whether the
+edit cascades depends on the compiler and on the edit.
+
+**The perturbation inserts a line.** Under GCC that shifts the recorded source
+location of every declaration after the insertion point, which changes the BMI —
+so the cascade follows from a changed BMI rather than from the edited body. The
+same edit expressed as a same-line substitution does **not** cascade on GCC.
+Under clang the interface cascades either way, because clang serialises
+definitions into the BMI regardless of where in the file they appear.
+
+⚠️ **The generated fixture does not reproduce this**: its perturbed function is
+the LAST declaration in `unit_0.cppm`, so nothing shifts and the BMI is unchanged
+(measured: 0.94s, against 80.87s for the same scenario on the mcpp tree). Any
+conclusion about a real project drawn from the fixture's `edit-body` is invalid
+— which is what `--project` mode exists for. Full measurements in
+[`.agents/docs/2026-08-15-module-edit-granularity.md`](../.agents/docs/2026-08-15-module-edit-granularity.md).
+
 `edit-comment` exists **separately from `edit-body`** on purpose: without the
 split, an engine that skips comment-only rebuilds can be advertised as "12x
 faster on edits", which is a claim about comments.
