@@ -16,6 +16,7 @@ import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.platform.elf_runtime;
 import mcpp.platform.runtime_binding;
+import mcpp.ui;
 import mcpp.platform.runtime_search;
 
 export namespace mcpp::build::runtime_validation {
@@ -412,6 +413,29 @@ ValidationReport validate_changed_artifacts(
             }
         }
     }
+    // ⚠️ A BINDING THAT CANNOT BE EVALUATED IS ONE FACT, NOT ONE PER ARTIFACT.
+    //
+    // On a brand-new MCPP_HOME the first build finds `binding.loader` and
+    // `binding.libraryDirs` both empty (the second build has them; #417), and
+    // rule B then reported that per artifact — two lines each, thirteen
+    // artifacts, twenty-six lines of the same sentence on a user's very first
+    // build. The root cause is a separate question and is NOT settled; this is
+    // the half of the criterion that does not depend on it.
+    //
+    // Said once, before the loop, naming what is missing. Rule B still runs:
+    // it has other inputs (PT_INTERP identity), and suppressing it entirely
+    // would trade noise for a blind spot.
+    const bool bindingUnevaluated =
+        !plan.runtimeBinding.loader.has_value() && plan.runtimeBinding.libraryDirs.empty();
+    if (bindingUnevaluated && !before.empty()) {
+        mcpp::ui::warning(std::format(
+            "runtime binding {} has no loader path or library directory yet, so "
+            "rule B cannot decide for this build's artifacts. This is expected on "
+            "the first build in a fresh MCPP_HOME; a second build resolves it.",
+            plan.runtimeBinding.runtimeId.empty() ? "<unnamed>"
+                                                  : plan.runtimeBinding.runtimeId));
+    }
+
     for (auto const& [artifact, oldStamp] : before) {
         auto now = stamp(artifact);
         if (!now.exists) continue;
