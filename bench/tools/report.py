@@ -14,9 +14,18 @@ Each cell is `<median>s · <ratio>x`, the ratio against `--baseline` within the
 same (variant, scenario) group — the same grouping the harness's own summary
 uses, because a ratio across source forms or perturbations is not a ratio.
 
-A non-`ok` cell renders as its status in italics, never as a number and never as
-a blank: protocol invariant 1 says a failure must not be able to look like a
-measurement, and a table is where that invariant is most easily lost.
+A cell that has no measurement renders as `-`, and one that HAS a measurement
+which did not succeed renders as its status in italics. Those two are opposite
+claims and must never collapse into the same mark:
+
+    -               not measured — no data exists for this combination
+    _failed_        the engine ran and produced no artifact — a FINDING
+    _unavailable_   the engine is not installed, or cannot express this cell
+
+Never a blank, and never `0.00s`: protocol invariant 1 says a failure must not be
+able to look like a measurement, and a table is where that invariant is most
+easily lost — the shell harness this suite replaces formatted three failed cells
+as `0.000 s` and they were published as the fastest builds ever recorded.
 
 The PERTURBATION FORM is carried through into a footnote when a group has more
 than one, because `edit-comment` means two different things depending on whether
@@ -125,7 +134,7 @@ def render(cells, baseline):
             for e in engines:
                 c = here.get(e)
                 if c is None:
-                    row.append("—")
+                    row.append("-")        # not measured — see the legend above
                 elif c["status"] != "ok":
                     row.append(f"_{c['status']}_")
                 elif base and base.get("median_s"):
@@ -245,7 +254,7 @@ def headline(cells, baseline, lang):
         for e in engines:
             c = here.get(e)
             if c is None:
-                cellsr.append("—")
+                cellsr.append("-")         # not measured; see the legend above
             elif c["status"] != "ok":
                 cellsr.append(f"_{c['status']}_")
             else:
