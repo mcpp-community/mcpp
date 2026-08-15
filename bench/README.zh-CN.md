@@ -17,7 +17,7 @@ C++20 具名模块相对于头文件到底付出/节省了什么。
 ```bash
 mcpp build --release                    # 被测的 mcpp
 (cd bench && mcpp build --release)      # harness
-git submodule update --init             # 钉住的工作负载
+git submodule update --init             # 锁定的工作负载
 
 bash bench/run-standard.sh              # → bench/results/standard-<日期>-<os>-<arch>/
 ```
@@ -34,7 +34,7 @@ bash bench/run-standard.sh              # → bench/results/standard-<日期>-<o
 | `BENCH_PRINT_ARGV=1` | 打印它将要传的 argv,不实际运行 |
 | `BENCH_ROOT=<dir>` | 从脚本副本运行,指向该仓库 |
 
-### 跑一半被打断了
+### 运行中断后的恢复
 
 ```bash
 bash bench/run-standard.sh --resume
@@ -47,9 +47,9 @@ bash bench/run-standard.sh --resume
 ```
 
 —— 每测完一个就 append 一行到 `.mbench/<指纹>/journal.jsonl` 并 flush。
-**一次中断最多丢正在测的那一个样本。** 在这之前已经因此整整丢过三轮:裸名
-`mcpp` 测成了已发布二进制、字段错位让 cmake 拿到了错的目录、中途装 cmake 4.4.2
-把 PATH 上的 cmake 换掉了。
+**一次中断至多损失正在测量的那一个样本。** 在此机制存在之前,曾有三轮完整数据
+因中断而作废:裸名 `mcpp` 解析到已发布二进制、字段错位使 cmake 收到错误的目录、
+以及运行途中安装 cmake 4.4.2 替换了 PATH 上的 cmake。
 
 `<指纹>` 是**整份配置**的一个哈希 —— 引擎、变体、场景、轮数、编译器、工程、
 fixture 形状、`--id`。和构建目录一个形状:同配置命中续跑,改配置落到另一个目录
@@ -96,25 +96,25 @@ BENCH=$(ls -t bench/target/*/*/bin/mbench | head -1)
          --scenarios noop,touch-hub --hub src/platform/platform.cppm --runs 3
 ```
 
-⚠️ **mcpp 一律用路径传,绝不用裸名 `mcpp`。** 裸名走 PATH 到 xlings shim,而
-**shim 会按当前工作目录重新解析版本** —— `--project` 时那个目录就是被测的树,
-而每个工作负载都钉着自己的版本。有一整轮因此把七个格子**全部**测成了
-`mcpp@2026.8.11.3`(已发布的旧版,不是被测分支),**没有任何东西失败来提示这件事**。
+⚠️ **mcpp 必须以路径指定,不得使用裸名 `mcpp`。** 裸名经 PATH 解析到 xlings shim,
+而 **shim 会按当前工作目录重新解析版本** —— `--project` 模式下该目录即被测的树,
+而每个工作负载各自锁定了不同版本。曾因此有一整轮将七个格子**全部**测成
+`mcpp@2026.8.11.3`(已发布的旧版本,而非被测分支),且**没有任何失败提示这一点**。
 
-每个 `mcpp=<path>` 用**那个二进制自己报的版本**作标签,所以两个版本永远不会并成
-一行。「这个版本变快了吗」就是这样回答的 —— 真的把两个都跑一遍。
+每个 `mcpp=<path>` 以**该二进制自身报告的版本**作为标签,因此两个版本不会合并为
+同一行。「这个版本是否变快」即以此回答:两个版本各自实际运行一遍。
 
-### CI 去哪了
+### 关于 CI
 
-**这个套件没有 CI job。** 曾经有,而它测到的远比看起来少:10 个格子、32 条外部
-引擎臂,**其中 12 条被豁免**(xmake 被豁免的比在测的还多),而 job 是绿的。加上
-共享 runner 测的是 runner(同一棵树那边 243s、这边 79s),而被豁免的大多是别人
-的工具、不是 mcpp。
+**本套件没有 CI job。** 曾经有,但其实际测量范围远小于表面所示:10 个格子、32 条外部
+引擎臂,**其中 12 条被豁免**(xmake 被豁免的比在测的还多),而 job 仍为绿色。此外,
+共享 runner 测量的是 runner 本身(同一棵树在其上为 243s,在开发机上为 79s),
+且被豁免的多为第三方工具而非 mcpp。
 
 `tests/e2e/230_bench_harness.sh` 仍然每个 PR 都跑:它构建套件并检查能产出一份
-合法报告。**不再自动化的是"测量"本身。**
+合法报告。**不再自动化的是测量本身。**
 
-**发版前跑一次标准集;任何声称有性能影响的改动之后也跑一次。**
+**发版前运行一次标准集;任何声称影响性能的改动之后同样运行一次。**
 
 ---
 
@@ -176,7 +176,7 @@ __format/format_functions.h:99:30: error: call to implicitly-deleted default
 而把 full BMI 发布给 importer 会让 clang 22.1.8 编错一个下游 TU。mcpp 不受影响,
 因为它发布 reduced BMI、object 边重编源码。这是**上游**问题,已记为
 [#424](https://github.com/mcpp-community/mcpp/issues/424) —— 不是 xmake 写错了,
-也不该用 `allow_failed` 糊过去。
+也不应以 `allow_failed` 豁免。
 
 #### 一个已声明的离群点
 
@@ -191,12 +191,12 @@ __format/format_functions.h:99:30: error: call to implicitly-deleted default
 
 ---
 
-## 0. 钉住了什么，以及为什么每一条都必须钉住
+## 0. 锁定了哪些内容，以及每一项为何必须锁定
 
 一个基准数字的价值，等于取它时被摁住不动的那张清单。下面每一行都曾经是松的，
 而每一行松着的时候，产出的表格测的都不是它自己声称的东西。
 
-| 项目 | 钉到 | 声明位置 |
+| 项目 | 锁定为 | 声明位置 |
 |---|---|---|
 | cmake | **4.4.2** | `matrix.json` → `tools` |
 | xmake | **3.1.0** | `matrix.json` → `tools` |
@@ -228,7 +228,7 @@ __format/format_functions.h:99:30: error: call to implicitly-deleted default
   源码是同一个缺陷、但更难看见的形式：`--project $GITHUB_WORKSPACE` 让
   checkout 成了工作负载，于是分支上每一次提交都在悄悄改变被测对象。
   **被测的引擎是那个二进制、它本来就该变；工作负载不该变。** 现在三个都是
-  git 子模块，守卫会检查每个 `hub`/`body` 在钉住的树里确实存在。
+  git 子模块，守卫会检查每个 `hub`/`body` 在锁定的树中确实存在。
 * **只测了一个 mcpp。** 一份只说「这个分支有多快」、却不说「有没有变快」的报告，
   不是 pull request 上的基准该给的东西。
 
@@ -265,7 +265,7 @@ __format/format_functions.h:99:30: error: call to implicitly-deleted default
   编辑类场景会先存下文件字节、无论函数怎么退出都还原（`SourceGuard`），子进程
   日志一律落在 `--work` 目录里。
 
-真实工程测的是「钉住的快照」，不是你的工作区 —— 见 §「Measure a PINNED
+真实工程测的是「锁定的快照」，而非你的工作区 —— 见 §「Measure a PINNED
 SNAPSHOT」。
 
 ---
@@ -495,7 +495,7 @@ ninja 早已决定不链接它。在生成的 fixture 上,同一个跳过表现�
 # 构建 harness
 cd bench && mcpp build --release
 
-# 拉取被测的钉住工程（子模块）
+# 拉取被测的锁定工程（子模块）
 git submodule update --init
 
 # 一次 smoke

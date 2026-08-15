@@ -328,22 +328,22 @@ cmake 4.4.2 / xmake 3.1.0 · `-` would mean not measured, and there is none here
 min/max sit within 4% of every median above 1s ·
 data: [`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x86_64/).</sub>
 
-* **`touch-hub` and `edit-comment` are where the day goes — and that is new.**
-  cmake and xmake decide by timestamp and rebuild everything downstream. mcpp
-  compares the BMI the compiler just produced against the previous one and, when
-  the interface did not change, skips the cascade. The **`mcpp (old)` column shows
-  this was not working before**: 81.72s, level with cmake. It is 0.42s here.
-  Default behaviour, no key to set.
-* **`edit-body` is the control.** There the interface really did change, so the
-  cascade is owed — mcpp is 1.1x, not 200x. An engine that were faster on this
-  row would be skipping work it owed. `+opt` does not skip it either; it
-  does the same owed work 2.9x faster.
-* **`bmi_schedule` is opt-in and OFF by default** (`auto` resolves to off). It
-  moves code generation off the critical path, which is why it only helps where
-  a cascade is genuinely owed: `cold` 86.69s → 35.73s and `edit-body` 80.87s →
-  29.83s, while on the two rows mcpp already skips the cascade it buys nothing.
-  A scheduling change that is wrong is wrong *silently*, so it does not become
-  the default on the strength of one machine.
+* **Cascade suppression accounts for the `touch-hub` and `edit-comment` rows.**
+  cmake and xmake decide by timestamp and rebuild every downstream unit. mcpp
+  compares the BMI the compiler has just produced against the previous one and
+  skips the cascade when the interface is unchanged. This is default behaviour
+  and requires no configuration. The `mcpp (old)` column measures the previous
+  release at 81.72s, level with cmake, so the effect is new in this revision.
+* **`edit-body` is the control case.** The interface does change there, so the
+  cascade is required; mcpp is 1.1x rather than 200x. An engine faster on this
+  row would be omitting work it owes. `+opt` does not omit it either — it
+  performs the same required work 2.9x faster.
+* **`bmi_schedule` is opt-in and disabled by default** (`auto` resolves to off).
+  It moves code generation off the critical path, so it helps only where a
+  cascade is required: `cold` 86.69s → 35.73s, `edit-body` 80.87s → 29.83s. On
+  the two rows where mcpp already skips the cascade it yields no improvement.
+  An incorrect scheduling change fails silently rather than loudly, so the
+  default is not changed on the evidence of a single machine.
 
 📊 **[Methodology, pinned versions, and the full data →
 `bench/README.md`](bench/README.md)** · [简体中文](bench/README.zh-CN.md)
