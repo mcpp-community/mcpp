@@ -989,12 +989,12 @@ prepare_build(bool print_fingerprint,
             const std::filesystem::path& payloadRoot) {
         if (outcome.skippedReason.empty()) return;
         if (!fixupNoticed->insert(payloadRoot.generic_string()).second) return;
+        // Only the fact this line ADDS. The `Runtime` note above already gave
+        // the cause and the remedy for the same absence; repeating them here
+        // would be the second copy of one message, which is the habit mcpp#417
+        // exists to break.
         mcpp::ui::info("Toolchain", std::format(
-            "not bound to a C runtime: {}.\n"
-            "       The toolchain is used as installed. If a compile later "
-            "reports a missing libc header, or the hermeticity check refuses "
-            "the link, this is why — `xlings self update` writes the SubOS "
-            "description that supplies it.",
+            "used as installed — not patched against a C runtime ({})",
             outcome.skippedReason));
     };
 
