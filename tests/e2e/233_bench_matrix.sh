@@ -474,6 +474,9 @@ for doc, header in (("README.md", r"\| scenario \| what changed \|"),
             raise SystemExit(1)
         for column, value in zip(engines, values):
             engine = mapping.get(column, column)
+            # Cells are code spans (`86.69s · 1.1x`) so a narrow column cannot
+            # split a number from its ratio; strip the span before parsing.
+            value = value.strip("`")
             if value == "-":
                 # Declared as not measured. Assert it really is absent, so `-`
                 # cannot be used to hide a number somebody did not like.

@@ -218,13 +218,23 @@ def engine_order(engines):
 # one in the data is exactly the drift this tool exists to remove, so the header
 # carries a machine-readable `<!-- columns: ... -->` line and the guard reads the
 # mapping from there instead of keeping a second copy.
-def short_name(engine, newest):
+def short_name(engine, newest, lang="en"):
+    """The column header.
+
+    ⚠️ NOT `mcpp +schedule`. "schedule" is the name of the MECHANISM, and a
+    reader meeting this table for the first time has no idea whether a build
+    scheduler makes things faster, slower or merely different. The column is
+    there to say "this is the opt-in speed-up"; what it actually turns on is one
+    line further down, in the legend, where a name has room to be precise.
+    """
     if not engine.startswith("mcpp@"):
         return engine
     base, _, opt = engine.partition("+")
     if opt:
-        return "mcpp +schedule"
-    return "mcpp" if base == newest else "mcpp (released)"
+        return "mcpp +优化" if lang == "zh" else "mcpp +opt"
+    if base == newest:
+        return "mcpp"
+    return "mcpp (旧版)" if lang == "zh" else "mcpp (old)"
 
 
 def columns_legend(short, engines, lang):
@@ -238,18 +248,24 @@ def columns_legend(short, engines, lang):
         name = short[e]
         if not e.startswith("mcpp@"):
             continue
+        # Keyed on the SHORT NAME this run produced, never on a literal spelling
+        # of it. Renaming the column used to leave this branch unmatched, and the
+        # opt-in arm then fell through to the `else` and was described as "the
+        # previously published release" — the wrong sentence, printed with total
+        # confidence, about the one column whose whole point is that it is the
+        # SAME binary as the first.
         if name == "mcpp":
             parts.append(f"`mcpp` = {e}, the build under test"
                          if lang == "en" else f"`mcpp` = {e},被测的这一版")
-        elif name == "mcpp +schedule":
-            parts.append("`mcpp +schedule` = the same binary with "
-                         "`[build] bmi_schedule = \"on\"`"
+        elif "+" in name:
+            parts.append(f"`{name}` = the SAME binary as `mcpp`, with the opt-in key "
+                         "`[build] bmi_schedule = \"on\"` (off by default)"
                          if lang == "en" else
-                         "`mcpp +schedule` = 同一个二进制,开了 "
-                         "`[build] bmi_schedule = \"on\"`")
+                         f"`{name}` = **和 `mcpp` 同一个二进制**,开了 opt-in 的 "
+                         "`[build] bmi_schedule = \"on\"`(默认关闭)")
         else:
-            parts.append(f"`mcpp (released)` = {e}, the published release"
-                         if lang == "en" else f"`mcpp (released)` = {e},已发布版")
+            parts.append(f"`{name}` = {e}, the previously published release"
+                         if lang == "en" else f"`{name}` = {e},上一个已发布版")
     return " · ".join(parts)
 
 
@@ -274,7 +290,7 @@ def headline(cells, baseline, lang):
                          "(only generated fixtures)")
     engines = engine_order({c["engine"] for c in cells})
     newest = next((e.split("+", 1)[0] for e in engines if e.startswith("mcpp@")), "")
-    short = {e: short_name(e, newest) for e in engines}
+    short = {e: short_name(e, newest, lang) for e in engines}
 
     # ⚠️ A COLD BUILD THAT IS NOT SLOWER THAN A NO-OP DID NOT BUILD ANYTHING.
     #
@@ -325,6 +341,11 @@ def headline(cells, baseline, lang):
                 txt = f"{c['median_s']:.2f}s"
                 if base and base.get("median_s"):
                     txt += f" · {base['median_s'] / c['median_s']:.1f}x"
+                # A CODE SPAN, so a narrow column cannot break `86.69s · 1.1x`
+                # across two lines — which is what a table this wide does first
+                # when the viewport shrinks, and a number split from its ratio
+                # reads as two different numbers.
+                txt = f"`{txt}`"
                 # Bold the fastest arm in the row, so the table reads without
                 # the reader dividing anything in their head.
                 cellsr.append(f"**{txt}**" if c["median_s"] == best else txt)
@@ -360,7 +381,7 @@ def main(argv):
         _engines = engine_order({c["engine"] for c in cells
                                  if not c["fixture"].startswith("synth-")})
         _newest = next((e.split("+", 1)[0] for e in _engines if e.startswith("mcpp@")), "")
-        print("COLUMNS: " + columns_legend({e: short_name(e, _newest) for e in _engines},
+        print("COLUMNS: " + columns_legend({e: short_name(e, _newest, lang) for e in _engines},
                                            _engines, lang))
         # The toolchain is recorded as the driver PATH; a footnote wants the
         # compiler, not where this machine happens to keep it.
