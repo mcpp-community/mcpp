@@ -307,42 +307,38 @@ import mcpplibs.cmdline;
 ## Benchmark
 
 Building **mcpp itself** — 137 module interface units, 57k lines, every one of
-them `import std;` — with three engines given the **same compiler binary**.
-Each cell is the median wall-clock and how many times faster it is than cmake.
+them `import std;` — with four engines handed the **same compiler binary**.
+Each cell is the median of **3 samples** and how many times faster it is than
+cmake. Every column comes from **one run**, [`bench/results/standard-20260814-linux-x86_64/gcc-mcpp-2026.8.11.3.json`](bench/results/standard-20260814-linux-x86_64/gcc-mcpp-2026.8.11.3.json).
 
-| scenario | what changed | **mcpp** `bmi_schedule=on` | mcpp default | cmake | xmake |
-|---|---|---|---|---|---|
-| `cold` | nothing built yet | **36.36s** · 2.5x | 79.54s · 1.2x | 92.33s · 1.0x | 90.30s · 1.0x |
-| `noop` | nothing at all | **0.16s** · 1.8x | 0.16s · 1.8x | 0.28s · 1.0x | 0.38s · 0.7x |
-| `touch-hub` | mtime on a widely-imported interface, content unchanged | 0.44s · 189.5x | **0.40s** · 207.9x | 83.39s · 1.0x | 82.08s · 1.0x |
-| `edit-body` | a real edit inside a function body | **30.48s** · 2.8x | 76.24s · 1.1x | 85.64s · 1.0x | 84.61s · 1.0x |
-| `edit-comment` | a comment added to a widely-imported interface | 0.44s · 188.5x | **0.38s** · 217.2x | 82.96s · 1.0x | 82.73s · 1.0x |
+| scenario | what changed | `mcpp@2026.8.13.1` | `mcpp@2026.8.13.1+schedule=on` | `mcpp@2026.8.11.3` | `cmake` | `xmake` |
+|---|---|---|---|---|---|---|
+| `cold` | nothing built yet | 86.69s · 1.1x | **35.73s · 2.6x** | 86.75s · 1.1x | 91.74s · 1.0x | 90.54s · 1.0x |
+| `noop` | nothing at all | **0.16s · 2.0x** | 0.18s · 1.8x | 0.24s · 1.3x | 0.32s · 1.0x | 0.38s · 0.8x |
+| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.42s · 197.7x** | 0.42s · 197.2x | 81.72s · 1.0x | 83.21s · 1.0x | 82.48s · 1.0x |
+| `edit-body` | a real edit inside a function body | 80.87s · 1.1x | **29.83s · 2.9x** | 81.19s · 1.1x | 85.30s · 1.0x | 84.33s · 1.0x |
+| `edit-comment` | a comment added to a widely-imported interface | **0.40s · 207.0x** | **0.40s · 207.0x** | 79.11s · 1.1x | 83.21s · 1.0x | 82.15s · 1.0x |
 
-<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=1 · pinned workload `a749e9f`.
-**Both mcpp columns are shown because either alone misleads**: the default is
-what you get today, `bmi_schedule = "on"` is one opt-in manifest key that helps
-only where a cascade is genuinely owed — on the two rows where mcpp already
-skips the cascade it costs a little rather than saving any.
-`bmi_schedule` remains opt-in: it is new, and a scheduling change that is wrong
-is wrong silently.
-The `bmi_schedule=on` column was re-measured on 2026-08-14 after a defect was
-found in it — the earlier `touch-hub 0.22s` / `edit-comment 0.18s` were
-measuring a build that had not finished, because the object edge was being
-cleaned by the very restat that suppresses the cascade and ninja exited while
-the compiler was still running. See [`bench/README.md`](bench/README.md) §8b.</sub>
+<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=3 · pinned workload `a749e9f` ·
+cmake 4.4.2 / xmake 3.1.0. `-` would mean not measured; there is none here.
+Min/max sit within 4% of every median above 1s.</sub>
 
-* **`touch-hub` and `edit-comment` are where the day goes.** cmake and xmake
-  decide by timestamp and rebuild everything downstream; mcpp compares the BMI
-  the compiler just produced against the previous one, and when the interface
-  did not change it skips the cascade entirely. This is the DEFAULT behaviour —
-  no key to set — and it is why those two rows read 200x.
+* **`touch-hub` and `edit-comment` are where the day goes — and that is new.**
+  cmake and xmake decide by timestamp and rebuild everything downstream. mcpp
+  compares the BMI the compiler just produced against the previous one and, when
+  the interface did not change, skips the cascade. The released **2026.8.11.3
+  column shows this was not working before**: 81.72s, level with cmake. It is
+  0.42s here. Default behaviour, no key to set.
 * **`edit-body` is the control.** There the interface really did change, so the
-  cascade is owed — mcpp is 1.1x rather than 200x, and an engine that were
-  faster would have skipped work it owed. `bmi_schedule=on` does not skip it
-  either; it does the same owed work 2.5x faster.
-* **Cold builds** come down to one 26-deep chain of module interfaces. `mcpp`
-  publishes each BMI as soon as it exists and moves code generation off the
-  critical path; without that setting it is 79.5s, i.e. level with the others.
+  cascade is owed — mcpp is 1.1x, not 200x. An engine that were faster on this
+  row would be skipping work it owed. `bmi_schedule=on` does not skip it either;
+  it does the same owed work 2.9x faster.
+* **`bmi_schedule` is opt-in and OFF by default** (`auto` resolves to off). It
+  moves code generation off the critical path, which is why it only helps where
+  a cascade is genuinely owed: `cold` 86.69s → 35.73s and `edit-body` 80.87s →
+  29.83s, while on the two rows mcpp already skips the cascade it buys nothing.
+  A scheduling change that is wrong is wrong *silently*, so it does not become
+  the default on the strength of one machine.
 
 📊 **[Methodology, pinned versions, and the full data →
 `bench/README.md`](bench/README.md)** · [简体中文](bench/README.zh-CN.md)

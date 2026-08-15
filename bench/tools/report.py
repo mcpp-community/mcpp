@@ -184,11 +184,27 @@ HEADLINE_WHAT = {
 
 
 def engine_order(engines):
-    """mcpp arms first (opt-in, then default, then the released reference)."""
+    """mcpp arms first, newest version first, each default before its opt-in arm.
+
+    Reading order matters more than it looks: the build under test and its
+    `+schedule=on` arm answer one question ("what does the key buy?") and the
+    released reference answers a different one ("did this get faster?"). Sorting
+    the raw strings interleaved them — reference, opt-in, default — so neither
+    pair sat together and every comparison was two columns apart.
+    """
+    def version_key(e):
+        head = e.split("+", 1)[0]
+        ver = head.split("@", 1)[1] if "@" in head else ""
+        parts = []
+        for piece in ver.split("."):
+            parts.append(int(piece) if piece.isdigit() else 0)
+        return parts + [0] * (4 - len(parts))
+
     def key(e):
         if not e.startswith("mcpp@"):
-            return (2, e)
-        return (0 if "+" in e else 1, e)
+            return (1, [], 0, e)          # other engines after every mcpp arm
+        # negated version → newest first; base arm before its own option arm
+        return (0, [-p for p in version_key(e)], 1 if "+" in e else 0, e)
     return sorted(engines, key=key)
 
 

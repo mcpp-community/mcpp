@@ -384,87 +384,96 @@ PY
 
 # ── 5: every number in the root README exists in the published data ────────
 #
-# The tables are generated (bench/tools/report.py) precisely so nobody types
-# them, but a human still pastes the output — and a pasted number that drifts
-# from the run it claims to come from is unfalsifiable by any other test. The
-# numbers still print, they are just of something else, which is this suite's
-# entire failure mode in miniature.
-python3 - "$ROOT" <<'PYREADME'
+# The tables are generated (`bench/tools/report.py --headline`) precisely so
+# nobody types them, but a human still pastes the output — and a pasted number
+# that drifts from the run it claims to come from is unfalsifiable by any other
+# test. The numbers still print, they are just of something else, which is this
+# suite's entire failure mode in miniature.
+#
+# ⚠️ ONE RUN, ONE FILE. This used to stitch three separate runs together and
+# name each column with the file it came from, because no single run measured
+# every column. The standard set now measures all of them, so the check reads
+# ONE report — and a table that cannot be reproduced from one run is a table
+# that should not be published.
+#
+# BOTH LANGUAGES. The two READMEs must quote the same numbers: a benchmark table
+# that says different things in two languages is two claims, and only one of
+# them can be checked against the data.
+python3 - "$ROOT" <<'PYREADME' || exit 1
 import json, os, re, sys
 
 root = sys.argv[1]
+SOURCE = "bench/results/standard-20260814-linux-x86_64/gcc-mcpp-2026.8.11.3.json"
 
-# ONE TABLE, THREE RUNS — each column named with the file it came from, because
-# the table cannot be taken in a single run and pretending otherwise is how a
-# number outlives the measurement it describes:
-#   default mcpp + cmake  the five-arm run
-#   xmake                 re-measured after the `-P`/cwd defect (cold 0.60s)
-#   schedule=on           re-measured after the object-edge defect (§8b), where
-#                         `touch-hub 0.22s` was timing a build still in flight
-SOURCES = {
-    "main":  "bench/results/pinned-workloads-20260813/mcpp-linux-gcc-5way.json",
-    "xmake": "bench/results/pinned-workloads-20260813/mcpp-linux-gcc-xmake-refixed.json",
-    "sched": "bench/results/schedule-refix-20260814/mcpp-linux-gcc-schedule-refixed.json",
-}
+path = os.path.join(root, SOURCE)
+if not os.path.isfile(path):
+    print(f"FAIL: {SOURCE} is missing — the root READMEs quote it")
+    raise SystemExit(1)
+
 truth = {}
-for tag, rel in SOURCES.items():
-    path = os.path.join(root, rel)
-    if not os.path.isfile(path):
-        print(f"FAIL: {rel} is missing — the root README quotes it")
+for c in json.load(open(path, encoding="utf-8"))["cells"]:
+    if c["status"] == "ok":
+        truth.setdefault(c["engine"], {})[c["scenario"]] = round(c["median_s"], 2)
+
+checked = 0
+for doc, header in (("README.md", r"\| scenario \| what changed \|"),
+                    ("README.zh-CN.md", r"\| 场景 \| 改了什么 \|")):
+    text = open(os.path.join(root, doc), encoding="utf-8").read()
+    m = re.search(header + r".*?(?=\n\n)", text, re.S)
+    if not m:
+        print(f"FAIL: {doc}'s benchmark table did not parse — has its shape changed?")
         raise SystemExit(1)
-    truth[tag] = {}
-    for c in json.load(open(path, encoding="utf-8"))["cells"]:
-        if c["status"] == "ok":
-            truth[tag].setdefault(c["engine"], {})[c["scenario"]] = round(c["median_s"], 2)
 
-def arm(tag, suffix=""):
-    return next((k for k in truth[tag]
-                 if k.startswith("mcpp@") and k.endswith(suffix)
-                 and ("+" in k) == bool(suffix)), None)
+    # ⚠️ BOLD IS NOT PART OF THE GRAMMAR. This once required `**Ns**` in a fixed
+    # column, and silently stopped matching when the bolding moved to whichever
+    # column is actually faster: two of five rows dropped out and the check went
+    # on printing a success line for the three that remained. Emphasis is
+    # stripped first, and the engine names come from the HEADER rather than from
+    # a list here, so adding an arm cannot leave a column unchecked.
+    plain  = m.group(0).replace("**", "")
+    lines  = plain.splitlines()
+    engines = re.findall(r"`([^`]+)`", lines[0])
+    if not engines:
+        print(f"FAIL: {doc}: no engine columns in the table header")
+        raise SystemExit(1)
 
-default = arm("main")
-sched   = arm("sched", "+schedule=on")
-if not default or not sched:
-    print(f"FAIL: could not find both mcpp arms (default={default}, schedule={sched})")
-    raise SystemExit(1)
+    body = [l for l in lines if re.match(r"^\| `[\w-]+` \|", l)]
+    if not body:
+        print(f"FAIL: {doc}: the benchmark table has no data rows")
+        raise SystemExit(1)
 
-readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
+    for line in body:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        scenario = cells[0].strip("`")
+        values   = cells[2:]        # after scenario and "what changed"
+        if len(values) != len(engines):
+            print(f"FAIL: {doc}: row `{scenario}` has {len(values)} values for "
+                  f"{len(engines)} engine columns — the check would cover only part of it")
+            raise SystemExit(1)
+        for engine, value in zip(engines, values):
+            if value == "-":
+                # Declared as not measured. Assert it really is absent, so `-`
+                # cannot be used to hide a number somebody did not like.
+                if truth.get(engine, {}).get(scenario) is not None:
+                    print(f"FAIL: {doc}: {scenario}/{engine} is shown as `-` (not measured) "
+                          f"but {SOURCE} has {truth[engine][scenario]}s for it")
+                    raise SystemExit(1)
+                continue
+            mm = re.match(r"([\d.]+)s", value)
+            if not mm:
+                continue            # _failed_ / _unavailable_ carry no number
+            claimed = float(mm.group(1))
+            have = truth.get(engine, {}).get(scenario)
+            if have is None:
+                print(f"FAIL: {doc}: {scenario}/{engine}={claimed}s but {SOURCE} "
+                      f"has no ok cell for it")
+                raise SystemExit(1)
+            if abs(claimed - have) >= 0.01:
+                print(f"FAIL: {doc}: {scenario}/{engine}={claimed}s but {SOURCE} says {have}s")
+                raise SystemExit(1)
+            checked += 1
 
-# ⚠️ BOLD IS NOT PART OF THE GRAMMAR. This used to require `**Ns**` in the
-# schedule column, which silently stopped matching the moment the bolding moved
-# to whichever column is actually faster — two of the five rows dropped out and
-# the check went on printing a success line for the three that remained.
-# Emphasis is stripped first, and the row count is asserted against the table's
-# own length, so a shape change fails loudly instead of narrowing the check.
-table = re.search(r"^\| scenario \| what changed \|.*?(?=\n\n)", readme, re.S | re.M)
-if not table:
-    print("FAIL: the root README benchmark table did not parse — has its shape changed?")
-    raise SystemExit(1)
-plain = table.group(0).replace("**", "")
-body  = [l for l in plain.splitlines() if re.match(r"^\| `[\w-]+` \|", l)]
-rows  = re.findall(r"^\| `([\w-]+)` \| [^|]+ \| ([\d.]+)s · [\d.]+x \| ([\d.]+)s · [\d.]+x"
-                   r" \| ([\d.]+)s · [\d.]+x \| ([\d.]+)s · [\d.]+x",
-                   "\n".join(body), re.M)
-if len(rows) != len(body):
-    print(f"FAIL: parsed {len(rows)} of {len(body)} table rows — the check would "
-          f"have covered only part of the table")
-    raise SystemExit(1)
-
-bad = []
-for sc, s_sched, s_mcpp, s_cmake, s_xmake in rows:
-    for tag, engine, claimed in (("sched", sched,   s_sched),
-                                 ("main",  default, s_mcpp),
-                                 ("main",  "cmake", s_cmake),
-                                 ("xmake", "xmake", s_xmake)):
-        have = truth[tag].get(engine, {}).get(sc)
-        if have is None or abs(float(claimed) - have) >= 0.01:
-            bad.append(f"README {sc}/{engine}={claimed}s but {SOURCES[tag]} says {have}")
-if bad:
-    print("FAIL: the root README quotes numbers that are not in the published run")
-    for b in bad:
-        print("  " + b)
-    raise SystemExit(1)
-print(f"root README: {len(rows)} rows x 4 engines all match their published runs")
+print(f"root READMEs (en+zh): {checked} quoted medians all match {SOURCE}")
 PYREADME
 
 # ── 4: the runner reads the file, and does not repeat it ───────────────────
