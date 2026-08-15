@@ -416,8 +416,12 @@ for c in json.load(open(path, encoding="utf-8"))["cells"]:
         truth.setdefault(c["engine"], {})[c["scenario"]] = round(c["median_s"], 2)
 
 checked = 0
-for doc, header in (("README.md", r"\| scenario \| what changed \|"),
-                    ("README.zh-CN.md", r"\| 场景 \| 改了什么 \|")):
+# Anchored on the FIRST column only. The header used to be matched in full
+# (`| scenario | what changed |`), so narrowing the table by dropping a column
+# made this report "the table did not parse" — which is true but useless: the
+# table was fine, the pattern was describing a shape nobody promised to keep.
+for doc, header in (("README.md", r"\| scenario \|"),
+                    ("README.zh-CN.md", r"\| 场景 \|")):
     text = open(os.path.join(root, doc), encoding="utf-8").read()
     m = re.search(header + r".*?(?=\n\n)", text, re.S)
     if not m:
@@ -467,7 +471,13 @@ for doc, header in (("README.md", r"\| scenario \| what changed \|"),
     for line in body:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         scenario = cells[0].strip("`")
-        values   = cells[2:]        # after scenario and "what changed"
+        # ⚠️ COUNT FROM THE RIGHT, not from a fixed offset. This was `cells[2:]`
+        # ("after scenario and what-changed"), and dropping the what-changed
+        # column to narrow the table shifted every value one place — which this
+        # check would have reported as a row whose value count disagrees with the
+        # header, i.e. the right complaint for the wrong reason. The engine
+        # columns are always the LAST len(engines) cells, whatever precedes them.
+        values   = cells[-len(engines):] if len(cells) >= len(engines) else cells
         if len(values) != len(engines):
             print(f"FAIL: {doc}: row `{scenario}` has {len(values)} values for "
                   f"{len(engines)} engine columns — the check would cover only part of it")

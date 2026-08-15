@@ -320,8 +320,8 @@ def headline(cells, baseline, lang):
                          + "\n(pass --allow-suspect to see it anyway)")
 
     rows = ["<!-- columns: " + "; ".join(f"{short[e]}={e}" for e in engines) + " -->",
-            f"| {w['scenario']} | {w['what']} | " + " | ".join(f"`{short[e]}`" for e in engines) + " |",
-            "|---" * (len(engines) + 2) + "|"]
+            f"| {w['scenario']} | " + " | ".join(f"`{short[e]}`" for e in engines) + " |",
+            "|---" * (len(engines) + 1) + "|"]
     for sc in HEADLINE_SCENARIOS:
         here = {c["engine"]: c for c in cells if c["scenario"] == sc}
         if not here:
@@ -341,15 +341,15 @@ def headline(cells, baseline, lang):
                 txt = f"{c['median_s']:.2f}s"
                 if base and base.get("median_s"):
                     txt += f" · {base['median_s'] / c['median_s']:.1f}x"
-                # A CODE SPAN, so a narrow column cannot break `86.69s · 1.1x`
-                # across two lines — which is what a table this wide does first
-                # when the viewport shrinks, and a number split from its ratio
-                # reads as two different numbers.
-                txt = f"`{txt}`"
+                # NOT a code span. Wrapping `86.69s · 1.1x` was the worry, but
+                # a span renders MONOSPACE — wider than proportional text for the
+                # same characters — so it widened the very table it was meant to
+                # keep on screen. The fix for wrapping is fewer columns (below),
+                # not stiffer cells.
                 # Bold the fastest arm in the row, so the table reads without
                 # the reader dividing anything in their head.
                 cellsr.append(f"**{txt}**" if c["median_s"] == best else txt)
-        rows.append(f"| `{sc}` | {w[sc]} | " + " | ".join(cellsr) + " |")
+        rows.append(f"| `{sc}` | " + " | ".join(cellsr) + " |")
     return "\n".join(rows)
 
 
@@ -381,6 +381,9 @@ def main(argv):
         _engines = engine_order({c["engine"] for c in cells
                                  if not c["fixture"].startswith("synth-")})
         _newest = next((e.split("+", 1)[0] for e in _engines if e.startswith("mcpp@")), "")
+        _scen = [c["scenario"] for c in cells if not c["fixture"].startswith("synth-")]
+        print("SCENARIOS: " + " · ".join(
+            f"`{s}` {HEADLINE_WHAT[lang][s]}" for s in HEADLINE_SCENARIOS if s in _scen))
         print("COLUMNS: " + columns_legend({e: short_name(e, _newest, lang) for e in _engines},
                                            _engines, lang))
         # The toolchain is recorded as the driver PATH; a footnote wants the
