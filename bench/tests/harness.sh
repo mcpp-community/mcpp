@@ -64,13 +64,25 @@ BENCH_NAME="$(sed -n 's/^ *name *= *"\([^"]*\)".*/\1/p' "$REPO/bench/mcpp.toml" 
 [ -n "$BENCH_NAME" ] || { echo "FAIL: no package name in bench/mcpp.toml"; exit 1; }
 BENCH="$REPO/bench/$(bash "$REPO/.github/tools/newest_artifact.sh" target "$BENCH_NAME")"
 
+# ⚠️ A TEST MUST MEASURE, NOT RESUME.
+#
+# mbench caches every measured sample under `--cache-root` (default `.mbench` in
+# the CURRENT DIRECTORY) and replays it when the configuration matches. Run from
+# the repository root that is the repository's own cache: this test both wrote
+# into it and, on the second run, reported
+#     run 1/1 — already recorded, skipping
+# i.e. it stopped exercising the thing it exists to exercise while still passing.
+# Pinning the cache into $TMP makes every run of this test a fresh measurement
+# and leaves the repository alone.
+bench() { "$BENCH" --cache-root "$TMP/mbench-cache" "$@"; }
+
 # 1. Availability listing must classify mcpp itself as present. If this fails the
 #    probe path is broken, and every later cell would be reported `unavailable`
 #    for the wrong reason.
 # Engines are named by BINARY, not by PATH lookup: `$MCPP` is the build under
 # test, while a bare `mcpp` resolves to whatever the sandbox has — on CI that is
 # an xlings shim reporting "'mcpp' is not installed", which failed every cell.
-out=$("$BENCH" --list --engines "mcpp=$MCPP")
+out=$(bench --list --engines "mcpp=$MCPP")
 # The label carries the version it discovered ("mcpp@2026.8.12.1"), which is what
 # makes a two-binary comparison legible; match the prefix, not the whole token.
 echo "$out" | grep -qE '^mcpp(@[^ ]+)? +yes' || { echo "mcpp not reported available:"; echo "$out"; exit 1; }
@@ -100,14 +112,28 @@ dump_child_logs() {
 
 # --preset names the size instead of spelling it out, which is also the only
 # place the preset code path gets exercised.
-"$BENCH" --engines "mcpp=$MCPP" --variants modules --scenarios cold,noop \
+bench --engines "mcpp=$MCPP" --variants modules --scenarios cold,noop \
          --preset smoke --runs 1 \
          --work "$TMP/work" --out "$TMP/report.json" > "$TMP/stdout.txt" \
   || { echo "harness exited non-zero"; dump_child_logs; exit 1; }
 
 # 3. The report must be a protocol-shaped document, not merely non-empty.
-grep -q '"protocol_version": 1' "$TMP/report.json" \
-  || { echo "report is missing protocol_version"; cat "$TMP/report.json"; exit 1; }
+# ⚠️ THE EXPECTED VERSION COMES FROM THE PROTOCOL, NOT FROM THIS LINE.
+#
+# This asserted `"protocol_version": 1` literally. The protocol says to bump on
+# any field addition — which is exactly what adding `under_test` did — and the
+# test then failed with
+#     report is missing protocol_version
+# while printing a report whose very next line read `"protocol_version": 2`. The
+# message named the wrong thing because the check was really "is it 1?".
+#
+# Reading kProtocolVersion out of the source keeps the two in step, and still
+# fails loudly if the field disappears entirely.
+WANT_PROTO="$(sed -n 's/.*kProtocolVersion *= *\([0-9][0-9]*\).*/\1/p' \
+              "$REPO/bench/src/protocol.cppm" | head -1)"
+[ -n "$WANT_PROTO" ] || { echo "FAIL: no kProtocolVersion in bench/src/protocol.cppm"; exit 1; }
+grep -q "\"protocol_version\": $WANT_PROTO" "$TMP/report.json" \
+  || { echo "report does not carry protocol_version $WANT_PROTO"; cat "$TMP/report.json"; exit 1; }
 grep -q '"status": "ok"' "$TMP/report.json" \
   || { echo "no cell succeeded"; cat "$TMP/report.json"; dump_child_logs; exit 1; }
 
@@ -141,7 +167,7 @@ PY
 # 6. The three fixture variants must all generate and differ in SHAPE, not just
 #    in file names: modules-impl is the variant whose whole point is that bodies
 #    live outside the interface unit.
-"$BENCH" --engines "mcpp=$MCPP" --variants headers,modules,modules-impl --scenarios noop \
+bench --engines "mcpp=$MCPP" --variants headers,modules,modules-impl --scenarios noop \
          --units 3 --fanin 1 --weight 1 --runs 1 \
          --work "$TMP/w2" --out "$TMP/r2.json" > /dev/null
 # Directory names are slugged from the engine label, which carries a version, so
@@ -183,7 +209,7 @@ fi
 BINDIR=$(dirname "$MCPP")
 BINNAME=$(basename "$MCPP")
 ( cd "$BINDIR" \
-  && "$BENCH" --engines "mcpp=./$BINNAME" --variants modules --scenarios cold \
+  && bench --engines "mcpp=./$BINNAME" --variants modules --scenarios cold \
               --units 3 --fanin 1 --weight 1 --runs 1 \
               --work "$TMP/w3" --out "$TMP/r3.json" > "$TMP/stdout3.txt" ) \
   || { echo "harness exited non-zero on a relative engine path"; cat "$TMP/stdout3.txt"; exit 1; }
@@ -199,7 +225,7 @@ PY
 #    stands on its own. Here the probe catches it first (`unavailable`), but the
 #    invariant is the same one `failure_note` enforces further in: never point a
 #    reader at a log the child never got far enough to write.
-"$BENCH" --engines "mcpp=$TMP/definitely-not-here" --variants modules --scenarios cold \
+bench --engines "mcpp=$TMP/definitely-not-here" --variants modules --scenarios cold \
          --units 3 --fanin 1 --weight 1 --runs 1 \
          --work "$TMP/w4" --out "$TMP/r4.json" > /dev/null 2>&1 || true
 python3 - "$TMP/r4.json" <<'PY'
@@ -233,7 +259,7 @@ printf 'export module hub;\nexport int hub_value() { return 1; }\n' > "$TMP/proj
 printf 'import hub;\nint main() { return hub_value() - 1; }\n'      > "$TMP/proj/src/main.cpp"
 
 ( cd "$TMP" \
-  && "$BENCH" --engines "mcpp=$MCPP" --project "$TMP/proj" --variants native \
+  && bench --engines "mcpp=$MCPP" --project "$TMP/proj" --variants native \
               --scenarios touch-hub,edit-body --runs 1 \
               --hub src/hub.cppm --body src/hub.cppm \
               --work "$TMP/w5" --out "$TMP/r5.json" > "$TMP/stdout5.txt" 2>&1 ) \
@@ -253,7 +279,7 @@ PY
 #     skipped. Asserted from BOTH sides, because a harness that always exited
 #     non-zero would sail through a one-sided check: every successful run above
 #     is the other half.
-if "$BENCH" --engines "mcpp=$TMP/definitely-not-here" --variants modules \
+if bench --engines "mcpp=$TMP/definitely-not-here" --variants modules \
             --scenarios cold --units 3 --fanin 1 --weight 1 --runs 1 \
             --work "$TMP/w6" --out "$TMP/r6.json" > /dev/null 2>&1; then
     echo "a run in which nothing was measured exited 0"; exit 1
@@ -264,7 +290,7 @@ fi
 #     the log stays empty, because a cell only prints once it is over: two jobs
 #     sat 25 minutes inside one child that way. One second is far below any real
 #     cold build, so the deadline is certain to fire.
-"$BENCH" --engines "mcpp=$MCPP" --variants modules --scenarios cold \
+bench --engines "mcpp=$MCPP" --variants modules --scenarios cold \
          --units 3 --fanin 1 --weight 1 --runs 1 --timeout 1 \
          --work "$TMP/w7" --out "$TMP/r7.json" > "$TMP/stdout7.txt" 2>&1 || true
 grep -qi 'timed out' "$TMP/stdout7.txt" || {
