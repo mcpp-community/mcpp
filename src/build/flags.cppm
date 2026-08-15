@@ -585,7 +585,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string msvc_base;
     if (isMsvcDialect) {
         msvc_base = std::format(" {}", d.alwaysFlags);
-        msvc_base += (plan.manifest.buildConfig.linkage == "static") ? " /MT" : " /MD";
+        // ONE derivation, shared with the std module build — see
+        // `msvc_crt_flag` in mcpp.toolchain.dialect and #422.
+        msvc_base += std::format(" {}", mcpp::toolchain::msvc_crt_flag(
+            d, plan.manifest.buildConfig.linkage == "static"));
     }
 
     // User link flags

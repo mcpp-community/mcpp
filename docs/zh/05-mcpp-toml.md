@@ -362,8 +362,22 @@ C++ 运行时的进程。
 > 把流顶上去,你的代码不需要做任何事。详见 mcpp-community/mcpp#336。
 
 `defines` 接受**裸**宏名(不带 `-D`),把每个条目脱糖为 `-D<x>`,同时作用于 C 和
-C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入 P1689 模块扫描
-—— 这正是被宏保护的 `import` 能被解析的前提。汇编单元同样能拿到。它是普通的构建
+C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入**编译器自己的**
+P1689 模块扫描。
+
+> ⚠️ **但它不会让被宏保护的 `import` 变得可用。** mcpp 在编译器看到文件之前先跑
+> 自己的词法预扫描,而那个扫描器对**任何** `#if` / `#ifdef` 块内的 `import`
+> 一律拒绝,不求值条件:
+>
+> ```
+> error: import statement inside conditional preprocessor block (forbidden in M1)
+> ```
+>
+> 所以即使 `FOO` 写在 `defines` 里,`#ifdef FOO` / `import bar;` 仍然会失败。
+> 替代写法是把条件放在全局模块片段的 `#include` 上。见
+> mcpp-community/mcpp#421。
+
+汇编单元同样能拿到。它是普通的构建
 输入,所以 `[target.'cfg(...)'.build]` 也能承载它:
 
 ```toml

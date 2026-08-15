@@ -1387,6 +1387,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         triple, e.cxxRuntime)));
                 }
             }
+            // Unsupported keys are REPORTED, not dropped. `[targets.<name>]`
+            // has done this since #249; this table did not, so a key that looks
+            // plausible — `cxx_runtime_tests` was the real one — was accepted
+            // in silence and had no effect (#418). A configuration key that
+            // does nothing is worse than one that does not exist.
+            static constexpr std::string_view kKnownTargetKeys[] = {
+                "build", "cxx_runtime", "linkage", "toolchain",
+            };
+            for (auto& [key, _] : body) {
+                bool known = false;
+                for (auto k : kKnownTargetKeys) if (key == k) { known = true; break; }
+                if (known) continue;
+                std::string supported;
+                for (auto k : kKnownTargetKeys) {
+                    if (!supported.empty()) supported += ", ";
+                    supported += k;
+                }
+                m.schemaWarnings.push_back(std::format(
+                    "[target.{}] has unsupported key '{}' (ignored). Supported keys: {}. "
+                    "Per-role contracts go in [build].cxx_runtime's table form.",
+                    triple, key, supported));
+            }
             m.targetOverrides[canon_triple(triple)] = std::move(e);
 
             // [target.<predicate>.{build,dependencies,...}] — platform-conditional

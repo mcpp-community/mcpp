@@ -661,8 +661,7 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
             mcpp::ui::status("Default", std::format(
                 "set to msvc@system (was: {})",
                 cfg.defaultToolchain.empty() ? "<none>" : cfg.defaultToolchain));
-            std::println("note: `mcpp build` with native MSVC (cl.exe) is not yet "
-                         "supported — coming in a later release.");
+
             return 0;
         }
 

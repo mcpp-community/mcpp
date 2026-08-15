@@ -411,8 +411,20 @@ toolchain's libraries first.
 
 `defines` takes **bare** macro names (no `-D`) and desugars each entry to `-D<x>` on
 both the C and C++ compile channels. It reaches every TU in the package — module
-interface units included — so it also reaches the P1689 module scan, which is what
-makes a macro-guarded `import` resolvable. Assembly units pick it up too. It is a
+interface units included — so it also reaches the compiler's own P1689 module scan.
+
+> ⚠️ **It does not make a macro-guarded `import` acceptable.** mcpp runs its own
+> lexical pre-scan before the compiler ever sees the file, and that scanner
+> rejects an `import` inside **any** `#if` / `#ifdef` block without evaluating the
+> condition:
+>
+> ```
+> error: import statement inside conditional preprocessor block (forbidden in M1)
+> ```
+>
+> So a `#ifdef FOO` / `import bar;` pair fails even when `FOO` is in `defines`.
+> Put the conditional around an `#include` in the global module fragment instead.
+> Tracked as mcpp-community/mcpp#421. Assembly units pick it up too. It is a
 build input like any other, so `[target.'cfg(...)'.build]` can carry it:
 
 ```toml

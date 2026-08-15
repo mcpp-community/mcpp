@@ -66,7 +66,14 @@ std::expected<StdModule, StdModError> ensure_built(
     std::string_view                  cpp_standard,
     std::string_view                  cpp_standard_flag,
     std::string_view                  macos_deployment_target = {},
-    const std::filesystem::path&      cache_root = default_cache_root());
+    const std::filesystem::path&      cache_root = default_cache_root(),
+    // MSVC only: the CRT model (`/MT` or `/MD`) the project's TUs use. Same
+    // contract as `macos_deployment_target` above and for the same reason —
+    // cl bakes `_MSVC_MT` / `_MSVC_MD` into the module, so a std built with the
+    // other one makes every importing TU fail in the ucrt headers. It also
+    // enters `std_build_commands`, which is part of the cache identity, so two
+    // CRT models cannot share a cache directory.
+    std::string_view                  msvc_crt_flag = {});
 
 } // namespace mcpp::toolchain
 
@@ -216,7 +223,8 @@ std::expected<StdModule, StdModError> ensure_built(
     std::string_view                  cpp_standard,
     std::string_view                  cpp_standard_flag,
     std::string_view                  macos_deployment_target,
-    const std::filesystem::path&      cache_root)
+    const std::filesystem::path&      cache_root,
+    std::string_view                  msvc_crt_flag)
 {
     if (tc.stdModuleSource.empty()) {
         return std::unexpected(StdModError{
@@ -283,7 +291,7 @@ std::expected<StdModule, StdModError> ensure_built(
         d.objectPath = cacheDir / (isMsvc ? "std.obj" : "std.o");
         d.stdCommands =
             isMsvc ? mcpp::toolchain::msvc::std_module_build_commands(
-                         tc, cacheDir, cpp_standard_flag)
+                         tc, cacheDir, cpp_standard_flag, msvc_crt_flag)
           : is_clang(tc)
             ? mcpp::toolchain::clang::std_module_build_commands(
                   tc, cacheDir, d.bmiPath, sysroot_flag, cpp_standard_flag)
@@ -292,7 +300,7 @@ std::expected<StdModule, StdModError> ensure_built(
         if (!tc.stdCompatSource.empty()) {
             if (isMsvc) {
                 d.compatCommands = mcpp::toolchain::msvc::std_compat_build_commands(
-                    tc, cacheDir, cpp_standard_flag);
+                    tc, cacheDir, cpp_standard_flag, msvc_crt_flag);
             } else if (is_clang(tc)) {
                 auto compatBmi = mcpp::toolchain::clang::std_compat_bmi_path(cacheDir);
                 d.compatCommands = mcpp::toolchain::clang::std_compat_build_commands(

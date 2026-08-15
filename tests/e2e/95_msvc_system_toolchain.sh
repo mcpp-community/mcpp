@@ -6,7 +6,6 @@
 #   - `toolchain list` shows the detected MSVC in a System section, starred
 #   - version pin-verify: `msvc@99` mismatches the detected install
 #   - `toolchain remove/install msvc`: mcpp never manages MSVC itself
-#   - `mcpp build` fails with the owned "not yet supported" gate message
 set -e
 
 # This test flips the global default toolchain; save + restore it so later

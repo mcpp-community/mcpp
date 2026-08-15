@@ -65,6 +65,9 @@ struct CommandDialect {
     // Static CRT / runtime. On MSVC this is a compile-time CRT model, not a
     // link mode — there is no /MT equivalent of `-static` for the whole image.
     std::string_view staticRuntime;    // "-static"| "/MT"
+    // The MSVC CRT model for the OTHER linkage. Only meaningful on the MSVC
+    // dialect; GNU has no counterpart (the empty string).
+    std::string_view dynamicRuntime;   // ""       | "/MD"
     // Output an executable (linking driver step).
     std::string_view outputExePrefix;  // "-o "    | "/Fe:"
 
@@ -90,6 +93,22 @@ struct CommandDialect {
 
 // Dialect lookup. GCC / Clang / MinGW → gnu; MSVC → msvc.
 const CommandDialect& dialect_for(const Toolchain& tc);
+
+// The MSVC CRT model for a given linkage, in ONE place.
+//
+// ⚠️ cl bakes `_MSVC_MT` / `_MSVC_MD` into every module it produces, so the std
+// module and the TUs importing it must agree. They were derived in two places:
+// the project's TUs from `flags.cppm` and the std module from cl's own default
+// (`/MT`, because the std build passed no flag at all). A project on the default
+// dynamic linkage therefore imported a `/MT` std, which cl accepts with a C5050
+// warning and then fails on for real inside the ucrt headers — #422.
+//
+// Same shape as `macos_deployment_target`, which `stdmod::ensure_built` already
+// takes for exactly this reason on the other platform.
+constexpr std::string_view msvc_crt_flag(const CommandDialect& d, bool staticLinkage) {
+    return staticLinkage ? d.staticRuntime : d.dynamicRuntime;
+}
+
 
 // The two dialect rows, reachable without a Toolchain. Exposed so the MSVC
 // row — which no build reaches until the cl.exe backend lands — can still be
@@ -165,6 +184,7 @@ constexpr CommandDialect kMsvcDialect{
     .forceCxxLangArgv = kMsvcForceCxxArgv,
     .perFileCxxPrefix = "/Tp",
     .staticRuntime   = "/MT",
+    .dynamicRuntime  = "/MD",
     .outputExePrefix = "/Fe:",
     .objExt          = ".obj",
     .ninjaDepsMode   = "msvc",

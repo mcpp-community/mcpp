@@ -40,6 +40,8 @@ import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
+import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
+import mcpp.build.distribution;   // dist::Role / dist::Contract to_string
 import mcpp.platform.capacity;   // the host fallback handed to schedule::decide
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
@@ -4942,10 +4944,18 @@ prepare_build(bool print_fingerprint,
         // a std BMI built without it structurally lacks std::meta). Both
         // pieces were already in the fingerprint; this fixes the COMMAND
         // construction the fingerprint promised (stdFlagAndDialect above).
+        // #422: the CRT model reaches the std module too. Derived from the
+        // SAME expression the project's TUs use (flags.cppm), through the one
+        // helper, so the two cannot drift. Non-MSVC dialects yield "" and the
+        // command is unchanged.
+        const auto& stdDialect = mcpp::toolchain::dialect_for(*tc);
+        const auto stdCrt = mcpp::toolchain::msvc_crt_flag(
+            stdDialect, m->buildConfig.linkage == "static");
         auto sm = mcpp::toolchain::ensure_built(
             *tc, m->package.standard, stdFlagAndDialect,
             mcpp::platform::macos::deployment_target(
-                m->buildConfig.macosDeploymentTarget));
+                m->buildConfig.macosDeploymentTarget),
+            mcpp::toolchain::default_cache_root(), stdCrt);
         if (!sm) return std::unexpected(sm.error().message);
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;
@@ -6151,7 +6161,30 @@ prepare_build(bool print_fingerprint,
                          : format == "macho" ? "loader_rpath" : "runpath"},
             {"closure", closure},
         };
+        // #418 — the contract each ROLE actually got, after any downgrade.
+        //
+        // `CompileFlags::contractByRole` was written and never read: a valuable
+        // observation with no way out of the process. Since #414 the shared
+        // library role can legitimately end up on a different contract from the
+        // binaries beside it, so "which one did my .so actually get?" is a
+        // question a user has, and the only answer available was to run
+        // `readelf` and infer.
+        //
+        // Recorded as the RESOLVED value, not the requested one — a request
+        // that was downgraded is exactly the case worth being able to see.
+        // `compute_flags` is pure in the plan; prepare does not otherwise hold
+        // the result, and threading it through just for this would widen a
+        // signature for one field.
+        const auto roleFlags = mcpp::build::compute_flags(ctx.plan);
+        nlohmann::json contracts = nlohmann::json::object();
+        for (std::size_t i = 0; i < mcpp::build::dist::kRoleCount; ++i) {
+            contracts[std::string(mcpp::build::dist::to_string(
+                          static_cast<mcpp::build::dist::Role>(i)))] =
+                std::string(mcpp::build::dist::to_string(roleFlags.contractByRole[i]));
+        }
+
         j["runtime"] = {
+            {"cxx_runtime_by_role", contracts},
             {"library_dirs", dirs},
             {"dlopen_libs", ctx.plan.runtimeDlopenLibs},
             {"capabilities", legacyCaps},

@@ -2,6 +2,9 @@
 target/
 # mbench's run cache: one fingerprinted directory per configuration
 .mbench/
+# Python bytecode from bench/tools/*.py
+__pycache__/
+*.py[cod]
 
 # mcpp's per-workspace xlings sandbox + lockfile + diagnostic logs
 /.xlings/

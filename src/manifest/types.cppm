@@ -650,7 +650,12 @@ struct TargetEntry {
     // channel deliberately carries build INPUTS and nothing else
     // (ConditionalConfig). One axis, one scoping rule.
     std::string                         cxxRuntime;
-    std::string                         cxxRuntimeTests;
+    // ⚠️ NO per-role field here. There used to be a `cxxRuntimeTests`, and it was
+    // parsed nowhere and applied nowhere — a configuration key that looked
+    // available and did nothing (#418). The per-target channel carries the
+    // SCALAR contract only; `[build].cxx_runtime`'s table form already covers
+    // the role split, and an unsupported key in `[target.<triple>]` is now
+    // reported rather than dropped.
 };
 
 // `[target.'cfg(...)'.build]` — platform-conditional build flags (L1). The
