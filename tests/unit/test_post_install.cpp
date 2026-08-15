@@ -160,8 +160,8 @@ TEST(PostInstallFixup, ADeclaredRuntimeThatCannotBeHonouredStillFails) {
 // No marker may be written for a fixup that did not happen. The marker is a
 // content fingerprint whose whole job is to answer "were these inputs ever
 // applied"; one written for "we did nothing" reads back as "already applied",
-// and the fixup would then never run again — including on the day the user runs
-// `xlings self update` and the identity finally becomes knowable.
+// and the fixup would then never run again — including on the day the user
+// moves to a SubOS that does describe itself and the identity becomes knowable.
 TEST(PostInstallFixup, ASkippedFixupLeavesNoMarkerBehind) {
     if constexpr (!mcpp::platform::is_linux) {
         GTEST_SKIP() << "the runtime binding gate is Linux-only";

@@ -146,8 +146,10 @@ Info read(const std::filesystem::path& subosDir) {
         info.note = std::format(
             "subos '{}' does not describe itself (no `{}` block), so programs "
             "run from here get no environment it declares — a GL application "
-            "will not find its drivers. A newer xlings writes this block; "
-            "`xlings self update` adds it",
+            "will not find its drivers. A SubOS created by a current xlings "
+            "carries it; an existing one is NOT backfilled by `self update` or "
+            "`self doctor --fix` (openxlings/xlings#547), so recreating the "
+            "SubOS is what supplies it today",
             subosDir.string(), kBlock);
         return info;
     }
