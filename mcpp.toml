@@ -15,17 +15,27 @@ default-profile = "release"
 # nlohmann/json.hpp lives in src/libs/json/; expose it to the global
 # module fragment `#include <json.hpp>` in src/libs/json.cppm.
 include_dirs = ["src/libs/json"]
-# NOT enabled here. `bmi_schedule = "on"` was turned on for mcpp's own build and
-# CI rejected it within one cycle: the windows-host cross-build to
-# x86_64-linux-musl failed on the BMI edge with
+# Split the module edge: importers start when the BMI is published rather than
+# when the compiler exits. See docs/05-mcpp-toml.md.
+#
+# ON HERE, `auto` (= off) EVERYWHERE ELSE. The key stays opt-in until it has been
+# through CI on every platform, and nothing was exercising it, so it could never
+# accumulate the evidence needed to change that. mcpp's own build is where that
+# evidence is cheapest: whatever this schedule produces has to pass 83 unit tests
+# and the full e2e suite, on Linux (detach-codegen, gcc) and on macOS and Windows
+# (two-phase, clang) — three platforms, every PR.
+#
+# ⚠️ THAT SAFETY NET IS NOT DECORATION — it has already caught one defect. The
+# windows-host cross build to x86_64-linux-musl failed on the BMI edge with
 #
 #     failed: gcm.cache/mcpp.libs.json.gcm
 #     src/libs/json.cppm:3: fatal error: json.hpp: No such file or directory
 #
-# i.e. the split BMI edge loses `include_dirs` on that host. Linux was green and
-# the local self-host build was green (35.40s vs ~80s, 83 unit tests passing),
-# which is exactly why the rule is "opt-in until it has been through CI on EVERY
-# platform" rather than "until it works here". See issue #425.
+# because `cmd.exe /c` does not use CreateProcess argument quoting, so the
+# compiler ran with `-I` missing. Fixed in detach_codegen.cppm; see #425.
+#
+# Revert is this one line if anything here is ever unexplained.
+bmi_schedule = "on"
 
 [toolchain]
 default = "gcc@16.1.0"

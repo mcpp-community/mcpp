@@ -351,19 +351,46 @@ bool spawn_detached(const std::vector<std::string>& argv) {
 
 int run_to_completion(std::string_view command,
                       const std::filesystem::path& logPath) {
-    const std::vector<std::string> argv{"cmd.exe", "/c", std::string(command)};
+    // ⚠️ `cmd.exe /c` DOES NOT USE CreateProcess ARGUMENT QUOTING.
+    //
+    // This built the line with `join_command({"cmd.exe", "/c", command})`, which
+    // treats the whole compiler invocation as ONE argv element: it wraps it in
+    // quotes and escapes every interior `"` as `\"`. cmd.exe parses none of
+    // that — its /c rule is about counting quotes in the raw string — so a
+    // command containing quoted paths came out mangled, and the compiler ran
+    // with flags missing rather than failing outright. On a windows-host cross
+    // build that surfaced as
+    //
+    //     failed: gcm.cache/mcpp.libs.json.gcm
+    //     src/libs/json.cppm:3: fatal error: json.hpp: No such file or directory
+    //
+    // i.e. `-I` gone, reported as a missing header (#425).
+    //
+    // ninja concatenates verbatim (`subprocess-win32.cc`), and this edge exists
+    // to run exactly what ninja would have run. Do the same.
+    std::string line = "cmd.exe /c ";
+    line += command;
+
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE log = ::CreateFileA(logPath.string().c_str(), GENERIC_WRITE,
                                FILE_SHARE_READ, &sa, CREATE_ALWAYS,
                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    // The command, in the log, before it runs. Phase 2 replays this file, so a
+    // failure arrives with the exact invocation attached — without it a remote
+    // failure can only be guessed at, which is how #425 cost a CI cycle to even
+    // localise.
+    if (log != INVALID_HANDLE_VALUE) {
+        const std::string banner = "+ " + line + "\r\n";
+        DWORD wrote = 0;
+        ::WriteFile(log, banner.data(), static_cast<DWORD>(banner.size()), &wrote, nullptr);
+    }
     STARTUPINFOA si{}; si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = si.hStdError = log;
     si.hStdInput = ::CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ, &sa,
                                  OPEN_EXISTING, 0, nullptr);
     PROCESS_INFORMATION pi{};
-    auto cmd = join_command(argv);
-    const BOOL ok = ::CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, TRUE,
+    const BOOL ok = ::CreateProcessA(nullptr, line.data(), nullptr, nullptr, TRUE,
                                      0, nullptr, nullptr, &si, &pi);
     if (log != INVALID_HANDLE_VALUE) ::CloseHandle(log);
     if (si.hStdInput != INVALID_HANDLE_VALUE) ::CloseHandle(si.hStdInput);
