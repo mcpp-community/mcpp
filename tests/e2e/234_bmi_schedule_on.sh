@@ -46,6 +46,12 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
+# ⚠️ PIN PER PLATFORM, not just `default`. A bare `default = "gcc@16.1.0"` sends
+# macOS and Windows looking for a gcc payload that does not exist for them, and
+# the whole test dies at step 1 with `'xim:gcc@16.1.0' not in current index` —
+# reported as "the build with bmi_schedule=on failed", which is a completely
+# different diagnosis. Same three-line block every other e2e in this directory
+# uses.
 cat > mcpp.toml <<'EOF'
 [package]
 name    = "schedon"
@@ -53,6 +59,8 @@ version = "0.1.0"
 
 [toolchain]
 default = "gcc@16.1.0"
+macos   = "llvm@22.1.8"
+windows = "llvm@20.1.7"
 
 [build]
 bmi_schedule = "on"
