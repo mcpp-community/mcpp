@@ -1129,6 +1129,54 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
 
     bool has_std_artifacts = !plan.stdBmiPath.empty() && !plan.stdObjectPath.empty();
+
+    // WHICH LINK UNITS ACTUALLY NEED `std.o` (#416).
+    //
+    // `has_std_artifacts` only says "this toolchain has a prebuilt std module".
+    // It was also the whole condition for appending `std.o` to every Binary,
+    // TestBinary and SharedLibrary — so a link unit with no `import std`
+    // anywhere in it still got the module's global initialiser linked in.
+    //
+    // ⚠️ THE TEST HAS TO BE TRANSITIVE. A unit that never writes `import std`
+    // itself still needs the initialiser when a module it imports does; asking
+    // only about the unit's own source is the same "the edge exists but nobody
+    // depends on it" mistake as #405. So: reachability over the module graph.
+    //
+    // Getting it wrong UNDER-includes, and that fails loudly — `std.o` defines
+    // exactly one symbol (`_ZGIW3std`, measured) and an importing TU references
+    // it, so a missed unit is an undefined symbol at link time rather than a
+    // silent miscompile.
+    std::unordered_map<std::string, const CompileUnit*> byModule;
+    for (auto& cu : plan.compileUnits)
+        if (cu.providesModule) byModule.emplace(*cu.providesModule, &cu);
+
+    auto reaches_std = [&](const CompileUnit& start) {
+        std::vector<const CompileUnit*> stack{&start};
+        std::unordered_set<std::string> seen;
+        while (!stack.empty()) {
+            const CompileUnit* cu = stack.back();
+            stack.pop_back();
+            for (auto& imp : cu->imports) {
+                if (imp == "std" || imp == "std.compat") return true;
+                if (!seen.insert(imp).second) continue;
+                if (auto it = byModule.find(imp); it != byModule.end())
+                    stack.push_back(it->second);
+            }
+        }
+        return false;
+    };
+
+    std::unordered_map<std::string, bool> objectNeedsStd;
+    for (auto& cu : plan.compileUnits)
+        objectNeedsStd[cu.object.generic_string()] = reaches_std(cu);
+
+    auto unit_needs_std = [&](const LinkUnit& lu) {
+        for (auto& o : lu.objects) {
+            auto it = objectNeedsStd.find(o.generic_string());
+            if (it != objectNeedsStd.end() && it->second) return true;
+        }
+        return false;
+    };
     if (has_std_artifacts) {
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_bmi_dst),
                            escape_ninja_path(plan.stdBmiPath)));
@@ -1644,7 +1692,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         switch (lu.kind) {
             case LinkUnit::Binary:
             case LinkUnit::TestBinary:
-                if (has_std_artifacts)
+                if (has_std_artifacts && unit_needs_std(lu))
                     ins += " " + escape_ninja_path(std_o_dst);
                 if (has_std_compat)
                     ins += " " + escape_ninja_path(compat_o_dst);
@@ -1654,7 +1702,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 rule = "cxx_archive";
                 break;
             case LinkUnit::SharedLibrary:
-                if (has_std_artifacts)
+                if (has_std_artifacts && unit_needs_std(lu))
                     ins += " " + escape_ninja_path(std_o_dst);
                 if (has_std_compat)
                     ins += " " + escape_ninja_path(compat_o_dst);
