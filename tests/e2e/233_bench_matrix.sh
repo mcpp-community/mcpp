@@ -437,6 +437,28 @@ for doc, header in (("README.md", r"\| scenario \| what changed \|"),
         print(f"FAIL: {doc}: no engine columns in the table header")
         raise SystemExit(1)
 
+    # ⚠️ THE HEADER IS A SHORT NAME, THE DATA HOLDS THE FULL LABEL.
+    #
+    # Three columns reading `mcpp@2026.8.13.1`, `mcpp@2026.8.13.1+schedule=on`
+    # and `mcpp@2026.8.11.3` made the table wider than a README renders, so it
+    # arrived collapsed behind a horizontal scrollbar — a five-column comparison
+    # showing two. The headers are now `mcpp` / `mcpp +schedule` /
+    # `mcpp (released)`, and `report.py` emits the mapping as an HTML comment
+    # above the table so this check reads it instead of keeping a second copy.
+    # A short name with no mapping would silently stop being verified.
+    mapping = {}
+    cm = re.search(r"<!-- columns:(.*?)-->", text, re.S)
+    if cm:
+        for pair in cm.group(1).split(";"):
+            if "=" in pair:
+                k, _, v = pair.partition("=")
+                mapping[k.strip()] = v.strip()
+    for e in engines:
+        if e not in mapping and e not in truth:
+            print(f"FAIL: {doc}: column `{e}` is neither an engine in {SOURCE} nor "
+                  f"mapped by the `<!-- columns: ... -->` line above the table")
+            raise SystemExit(1)
+
     body = [l for l in lines if re.match(r"^\| `[\w-]+` \|", l)]
     if not body:
         print(f"FAIL: {doc}: the benchmark table has no data rows")
@@ -450,7 +472,8 @@ for doc, header in (("README.md", r"\| scenario \| what changed \|"),
             print(f"FAIL: {doc}: row `{scenario}` has {len(values)} values for "
                   f"{len(engines)} engine columns — the check would cover only part of it")
             raise SystemExit(1)
-        for engine, value in zip(engines, values):
+        for column, value in zip(engines, values):
+            engine = mapping.get(column, column)
             if value == "-":
                 # Declared as not measured. Assert it really is absent, so `-`
                 # cannot be used to hide a number somebody did not like.

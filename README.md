@@ -309,30 +309,33 @@ import mcpplibs.cmdline;
 Building **mcpp itself** — 137 module interface units, 57k lines, every one of
 them `import std;` — with four engines handed the **same compiler binary**.
 Each cell is the median of **3 samples** and how many times faster it is than
-cmake. Every column comes from **one run**, [`bench/results/standard-20260814-linux-x86_64/gcc-mcpp-2026.8.11.3.json`](bench/results/standard-20260814-linux-x86_64/gcc-mcpp-2026.8.11.3.json).
+cmake. Every column comes from **one run**.
 
-| scenario | what changed | `mcpp@2026.8.13.1` | `mcpp@2026.8.13.1+schedule=on` | `mcpp@2026.8.11.3` | `cmake` | `xmake` |
+<!-- columns: mcpp=mcpp@2026.8.13.1; mcpp +schedule=mcpp@2026.8.13.1+schedule=on; mcpp (released)=mcpp@2026.8.11.3; cmake=cmake; xmake=xmake -->
+| scenario | what changed | `mcpp` | `mcpp +schedule` | `mcpp (released)` | `cmake` | `xmake` |
 |---|---|---|---|---|---|---|
 | `cold` | nothing built yet | 86.69s · 1.1x | **35.73s · 2.6x** | 86.75s · 1.1x | 91.74s · 1.0x | 90.54s · 1.0x |
 | `noop` | nothing at all | **0.16s · 2.0x** | 0.18s · 1.8x | 0.24s · 1.3x | 0.32s · 1.0x | 0.38s · 0.8x |
-| `touch-hub` | mtime on a widely-imported interface, content unchanged | **0.42s · 197.7x** | 0.42s · 197.2x | 81.72s · 1.0x | 83.21s · 1.0x | 82.48s · 1.0x |
+| `touch-hub` | mtime only, content unchanged | **0.42s · 197.7x** | 0.42s · 197.2x | 81.72s · 1.0x | 83.21s · 1.0x | 82.48s · 1.0x |
 | `edit-body` | a real edit inside a function body | 80.87s · 1.1x | **29.83s · 2.9x** | 81.19s · 1.1x | 85.30s · 1.0x | 84.33s · 1.0x |
-| `edit-comment` | a comment added to a widely-imported interface | **0.40s · 207.0x** | **0.40s · 207.0x** | 79.11s · 1.1x | 83.21s · 1.0x | 82.15s · 1.0x |
+| `edit-comment` | a comment added to a hub interface | **0.40s · 207.0x** | **0.40s · 207.0x** | 79.11s · 1.1x | 83.21s · 1.0x | 82.15s · 1.0x |
 
-<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=3 · pinned workload `a749e9f` ·
-cmake 4.4.2 / xmake 3.1.0. `-` would mean not measured; there is none here.
-Min/max sit within 4% of every median above 1s.</sub>
+<sub>`mcpp` = mcpp@2026.8.13.1, the build under test · `mcpp +schedule` = the same binary with `[build] bmi_schedule = "on"` · `mcpp (released)` = mcpp@2026.8.11.3, the published release.<br>
+Linux x86_64 · i9-13900K · gcc 16.1.0 · n=3 · pinned workload `a749e9f` ·
+cmake 4.4.2 / xmake 3.1.0 · `-` would mean not measured, and there is none here ·
+min/max sit within 4% of every median above 1s ·
+data: [`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x86_64/).</sub>
 
 * **`touch-hub` and `edit-comment` are where the day goes — and that is new.**
   cmake and xmake decide by timestamp and rebuild everything downstream. mcpp
   compares the BMI the compiler just produced against the previous one and, when
-  the interface did not change, skips the cascade. The released **2026.8.11.3
-  column shows this was not working before**: 81.72s, level with cmake. It is
-  0.42s here. Default behaviour, no key to set.
+  the interface did not change, skips the cascade. The **released column shows
+  this was not working before**: 81.72s, level with cmake. It is 0.42s here.
+  Default behaviour, no key to set.
 * **`edit-body` is the control.** There the interface really did change, so the
   cascade is owed — mcpp is 1.1x, not 200x. An engine that were faster on this
-  row would be skipping work it owed. `bmi_schedule=on` does not skip it either;
-  it does the same owed work 2.9x faster.
+  row would be skipping work it owed. `+schedule` does not skip it either; it
+  does the same owed work 2.9x faster.
 * **`bmi_schedule` is opt-in and OFF by default** (`auto` resolves to off). It
   moves code generation off the critical path, which is why it only helps where
   a cascade is genuinely owed: `cold` 86.69s → 35.73s and `edit-body` 80.87s →

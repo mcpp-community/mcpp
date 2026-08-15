@@ -167,17 +167,17 @@ HEADLINE_WHAT = {
     "en": {
         "cold":         "nothing built yet",
         "noop":         "nothing at all",
-        "touch-hub":    "mtime on a widely-imported interface, content unchanged",
+        "touch-hub":    "mtime only, content unchanged",
         "edit-body":    "a real edit inside a function body",
-        "edit-comment": "a comment added to a widely-imported interface",
+        "edit-comment": "a comment added to a hub interface",
         "scenario": "scenario", "what": "what changed",
     },
     "zh": {
         "cold":         "还没编过",
         "noop":         "什么都没改",
-        "touch-hub":    "碰一下被大量导入的接口的 mtime,内容不变",
+        "touch-hub":    "只碰 mtime,内容不变",
         "edit-body":    "真的改了一个函数体",
-        "edit-comment": "在被大量导入的接口里加一行注释",
+        "edit-comment": "在 hub 接口里加一行注释",
         "scenario": "场景", "what": "改了什么",
     },
 }
@@ -208,6 +208,51 @@ def engine_order(engines):
     return sorted(engines, key=key)
 
 
+# Short COLUMN names. The engine labels are the truth — `mcpp@2026.8.13.1`,
+# `mcpp@2026.8.13.1+schedule=on`, `mcpp@2026.8.11.3` — but three of them side by
+# side make the table wider than a README renders, so it arrives collapsed with a
+# horizontal scrollbar and the reader sees two columns of a five-column
+# comparison. The identity moves to the footnote, where it is read once.
+#
+# ⚠️ THE MAPPING IS EMITTED, NOT REPEATED. A short name in the table and a long
+# one in the data is exactly the drift this tool exists to remove, so the header
+# carries a machine-readable `<!-- columns: ... -->` line and the guard reads the
+# mapping from there instead of keeping a second copy.
+def short_name(engine, newest):
+    if not engine.startswith("mcpp@"):
+        return engine
+    base, _, opt = engine.partition("+")
+    if opt:
+        return "mcpp +schedule"
+    return "mcpp" if base == newest else "mcpp (released)"
+
+
+def columns_legend(short, engines, lang):
+    """The sentence that has to accompany short column names.
+
+    Shortening a header is only safe if the identity it dropped is still stated
+    somewhere the reader will see. This is that somewhere, generated from the
+    same mapping the table uses so the two cannot disagree."""
+    parts = []
+    for e in engines:
+        name = short[e]
+        if not e.startswith("mcpp@"):
+            continue
+        if name == "mcpp":
+            parts.append(f"`mcpp` = {e}, the build under test"
+                         if lang == "en" else f"`mcpp` = {e},被测的这一版")
+        elif name == "mcpp +schedule":
+            parts.append("`mcpp +schedule` = the same binary with "
+                         "`[build] bmi_schedule = \"on\"`"
+                         if lang == "en" else
+                         "`mcpp +schedule` = 同一个二进制,开了 "
+                         "`[build] bmi_schedule = \"on\"`")
+        else:
+            parts.append(f"`mcpp (released)` = {e}, the published release"
+                         if lang == "en" else f"`mcpp (released)` = {e},已发布版")
+    return " · ".join(parts)
+
+
 def headline(cells, baseline, lang):
     w = HEADLINE_WHAT[lang]
     # The real workload only: a headline table that silently mixed a generated
@@ -228,6 +273,8 @@ def headline(cells, baseline, lang):
         raise SystemExit("headline: no real-workload cells in these reports "
                          "(only generated fixtures)")
     engines = engine_order({c["engine"] for c in cells})
+    newest = next((e.split("+", 1)[0] for e in engines if e.startswith("mcpp@")), "")
+    short = {e: short_name(e, newest) for e in engines}
 
     # ⚠️ A COLD BUILD THAT IS NOT SLOWER THAN A NO-OP DID NOT BUILD ANYTHING.
     #
@@ -256,7 +303,8 @@ def headline(cells, baseline, lang):
                          + "; ".join(suspect)
                          + "\n(pass --allow-suspect to see it anyway)")
 
-    rows = [f"| {w['scenario']} | {w['what']} | " + " | ".join(f"`{e}`" for e in engines) + " |",
+    rows = ["<!-- columns: " + "; ".join(f"{short[e]}={e}" for e in engines) + " -->",
+            f"| {w['scenario']} | {w['what']} | " + " | ".join(f"`{short[e]}`" for e in engines) + " |",
             "|---" * (len(engines) + 2) + "|"]
     for sc in HEADLINE_SCENARIOS:
         here = {c["engine"]: c for c in cells if c["scenario"] == sc}
@@ -309,6 +357,11 @@ def main(argv):
         h = hosts[0]
         print(headline(cells, baseline, lang))
         print()
+        _engines = engine_order({c["engine"] for c in cells
+                                 if not c["fixture"].startswith("synth-")})
+        _newest = next((e.split("+", 1)[0] for e in _engines if e.startswith("mcpp@")), "")
+        print("COLUMNS: " + columns_legend({e: short_name(e, _newest) for e in _engines},
+                                           _engines, lang))
         # The toolchain is recorded as the driver PATH; a footnote wants the
         # compiler, not where this machine happens to keep it.
         tc = str(h.get("toolchain", ""))

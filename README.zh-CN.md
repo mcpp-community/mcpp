@@ -304,27 +304,29 @@ import mcpplibs.cmdline;
 
 用**四个构建引擎**编译 **mcpp 自己** —— 137 个模块接口单元、57k 行、每一个都
 `import std;` —— 并且**给它们同一个编译器二进制**。每格是 **3 轮的中位数**,以及
-相对 cmake 的倍率。所有列出自**同一次跑**,数据在
-[`bench/results/standard-20260814-linux-x86_64/gcc-mcpp-2026.8.11.3.json`](bench/results/standard-20260814-linux-x86_64/gcc-mcpp-2026.8.11.3.json)。
+相对 cmake 的倍率。所有列出自**同一次跑**。
 
-| 场景 | 改了什么 | `mcpp@2026.8.13.1` | `mcpp@2026.8.13.1+schedule=on` | `mcpp@2026.8.11.3` | `cmake` | `xmake` |
+<!-- columns: mcpp=mcpp@2026.8.13.1; mcpp +schedule=mcpp@2026.8.13.1+schedule=on; mcpp (released)=mcpp@2026.8.11.3; cmake=cmake; xmake=xmake -->
+| 场景 | 改了什么 | `mcpp` | `mcpp +schedule` | `mcpp (released)` | `cmake` | `xmake` |
 |---|---|---|---|---|---|---|
 | `cold` | 还没编过 | 86.69s · 1.1x | **35.73s · 2.6x** | 86.75s · 1.1x | 91.74s · 1.0x | 90.54s · 1.0x |
 | `noop` | 什么都没改 | **0.16s · 2.0x** | 0.18s · 1.8x | 0.24s · 1.3x | 0.32s · 1.0x | 0.38s · 0.8x |
-| `touch-hub` | 碰一下被大量导入的接口的 mtime,内容不变 | **0.42s · 197.7x** | 0.42s · 197.2x | 81.72s · 1.0x | 83.21s · 1.0x | 82.48s · 1.0x |
+| `touch-hub` | 只碰 mtime,内容不变 | **0.42s · 197.7x** | 0.42s · 197.2x | 81.72s · 1.0x | 83.21s · 1.0x | 82.48s · 1.0x |
 | `edit-body` | 真的改了一个函数体 | 80.87s · 1.1x | **29.83s · 2.9x** | 81.19s · 1.1x | 85.30s · 1.0x | 84.33s · 1.0x |
-| `edit-comment` | 在被大量导入的接口里加一行注释 | **0.40s · 207.0x** | **0.40s · 207.0x** | 79.11s · 1.1x | 83.21s · 1.0x | 82.15s · 1.0x |
+| `edit-comment` | 在 hub 接口里加一行注释 | **0.40s · 207.0x** | **0.40s · 207.0x** | 79.11s · 1.1x | 83.21s · 1.0x | 82.15s · 1.0x |
 
-<sub>Linux x86_64 · i9-13900K · gcc 16.1.0 · n=3 · 钉住的工作负载 `a749e9f` ·
-cmake 4.4.2 / xmake 3.1.0。`-` 表示未测,本表没有。所有大于 1s 的中位数,
-min/max 都在 ±4% 以内。</sub>
+<sub>`mcpp` = mcpp@2026.8.13.1,被测的这一版 · `mcpp +schedule` = 同一个二进制,开了 `[build] bmi_schedule = "on"` · `mcpp (released)` = mcpp@2026.8.11.3,已发布版。<br>
+Linux x86_64 · i9-13900K · gcc 16.1.0 · n=3 · 钉住的工作负载 `a749e9f` ·
+cmake 4.4.2 / xmake 3.1.0 · `-` 表示未测,本表没有 ·
+所有大于 1s 的中位数 min/max 都在 ±4% 以内 ·
+数据:[`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x86_64/)。</sub>
 
 * **`touch-hub` 与 `edit-comment` 是一天时间的去处 —— 而且这是新的。**
   cmake 和 xmake 按时间戳判断,把下游全部重编;mcpp 拿编译器刚产出的 BMI 与上一份
-  比较,接口没变就**不级联**。已发布的 **2026.8.11.3 那一列说明它以前并没有生效**:
-  81.72s,和 cmake 一个量级;这里是 0.42s。这是**默认行为**,不需要设任何键。
+  比较,接口没变就**不级联**。**已发布那一列说明它以前并没有生效**:81.72s,
+  和 cmake 一个量级;这里是 0.42s。这是**默认行为**,不需要设任何键。
 * **`edit-body` 是对照组。** 那里接口是真的变了,级联是**欠着的** —— mcpp 是 1.1x
-  而不是 200x。在这一行更快的引擎,是漏掉了它该做的活。`bmi_schedule=on` 也不跳过它,
+  而不是 200x。在这一行更快的引擎,是漏掉了它该做的活。`+schedule` 也不跳过它,
   只是把同样欠着的活做快了 2.9 倍。
 * **`bmi_schedule` 是 opt-in,默认关闭**(`auto` 解析为 off)。它把代码生成移出关键
   路径,所以只在级联**确实欠着**时有用:`cold` 86.69s → 35.73s、`edit-body`
