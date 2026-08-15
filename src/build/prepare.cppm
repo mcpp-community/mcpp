@@ -974,6 +974,30 @@ prepare_build(bool print_fingerprint,
     const auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
         ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
 
+    // mcpp#427: a toolchain fixup that could not run is a DEGRADATION, not a
+    // failure — the build continues without it. But it has to be said, or the
+    // eventual `stdlib.h: No such file or directory` arrives with no way to
+    // connect it to its cause.
+    //
+    // Deduplicated by payload: `ensure_post_install_fixup` is called from up
+    // to four seams in one build (manifest toolchain, default toolchain,
+    // MinGW first-run, build.mcpp host toolchain) and they routinely resolve
+    // the SAME payload. Saying it once is the rule mcpp#417 already paid for.
+    auto fixupNoticed = std::make_shared<std::set<std::string>>();
+    auto report_fixup = [fixupNoticed](
+            const mcpp::toolchain::FixupOutcome& outcome,
+            const std::filesystem::path& payloadRoot) {
+        if (outcome.skippedReason.empty()) return;
+        if (!fixupNoticed->insert(payloadRoot.generic_string()).second) return;
+        mcpp::ui::info("Toolchain", std::format(
+            "not bound to a C runtime: {}.\n"
+            "       The toolchain is used as installed. If a compile later "
+            "reports a missing libc header, or the hermeticity check refuses "
+            "the link, this is why — `xlings self update` writes the SubOS "
+            "description that supplies it.",
+            outcome.skippedReason));
+    };
+
     constexpr std::string_view kCurrentPlatform = mcpp::platform::name;
 
     // M5.5: toolchain resolution priority:
@@ -1289,6 +1313,7 @@ prepare_build(bool print_fingerprint,
                 runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
             return std::unexpected(std::format(
                 "toolchain post-install fixup: {}", fixed.error()));
+        else report_fixup(*fixed, payload->root);
         // Canonical rendering, whatever spelling the manifest/config used:
         // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
         mcpp::ui::info("Resolved",
@@ -1438,6 +1463,7 @@ prepare_build(bool print_fingerprint,
                 runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
             return std::unexpected(std::format(
                 "default toolchain post-install fixup: {}", fixed.error()));
+        else report_fixup(*fixed, payload->root);
 
         // Persist the default so we don't ask again next time.
         if (auto wr = mcpp::config::write_default_toolchain(**cfg, defaultSpec); wr) {
@@ -1562,6 +1588,7 @@ prepare_build(bool print_fingerprint,
                 runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
             return std::unexpected(std::format(
                 "MinGW toolchain post-install fixup: {}", fixed.error()));
+        else report_fixup(*fixed, payloadR->root);
 
         // Persist both axes so the repair happens once, not on every build.
         if (mcpp::config::write_default_toolchain(**cfgR, pins::kFirstRunWinGnu))
@@ -1672,6 +1699,7 @@ prepare_build(bool print_fingerprint,
                 runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
             return std::unexpected(std::format(
                 "host toolchain post-install fixup: {}", fixed.error()));
+        else report_fixup(*fixed, payload->root);
         auto htc = mcpp::toolchain::detect(frontend);
         if (!htc) return std::unexpected(htc.error().message);
         mcpp::ui::info("Resolved", std::format(

@@ -62,6 +62,15 @@ table that was measuring something other than what it said:
 | the workloads | git submodules under `bench/projects/` | xlings was cloned from its default branch at run time (`--hub src/xlings.cppm` named a file that had stopped existing); **mcpp's own sources were the checkout**, so every commit on a branch changed the thing being measured |
 | the reference mcpp | `matrix.json.reference_mcpp` | a report said how fast this branch is, never whether it got faster |
 
+> The reference pin is **not** required to equal the `.xlings.json` workspace
+> pin. A guard once required that, on the theory that the reference arm is
+> whatever CI bootstraps; neither half holds (the standard set runs on a
+> developer box, and the bootstrap pin is a self-hosting floor that may lag a
+> release), and bumping the pin after a release turned every e2e shard red on
+> `main`. `run-standard.sh` resolves the arm by exact version and requires the
+> binary to report that version itself, so a mismatch drops the column with a
+> note instead of measuring the wrong release.
+
 `--compiler payload:gcc` / `payload:clang` is the spelling that delivers the
 second row: it resolves to the driver **inside mcpp's own registry**, so every
 engine is handed the same binary. That is the suite's fairness rule
@@ -233,7 +242,7 @@ job: the cell still runs, and its note says what to distrust.
 | `noop` | nothing | how cheap is "already up to date" |
 | `touch-hub` | mtime bump on a widely-imported unit, **content unchanged** | can the engine prove the interface did not change? |
 | `edit-comment` | a comment inserted into that same unit | the bytes *did* change but the interface did not — only an engine that compares the produced BMI avoids the cascade |
-| `edit-body` | a real semantic edit inside a function body | the everyday loop — and whether a cascade is owed depends on **where the body lives**, not on the edit. See below. |
+| `edit-body` | a real semantic edit inside a function body | the everyday loop — and whether a cascade is owed depends on **where the body lives and whether the edit moves lines**, not on what the body now does. See below. |
 | `touch-leaf` | mtime bump on a unit nobody imports | recompile 1 + link |
 
 #### ⚠️ `edit-body` perturbs a DIFFERENT FILE in each variant, and the two ask
@@ -301,24 +310,51 @@ Measured directly, GCC 16.1, comparing the BMI before and after:
 
 | what is edited | BMI | cascade |
 |---|---|---|
-| a free exported function's body, in the `.cppm` | **byte-identical** | not owed |
-| a **member function of an exported class**, inline in the `.cppm` | **differs** | **owed** |
-| a body in a separate `.cpp` implementation unit | **byte-identical** | **not owed** |
+| a body in a `.cppm`, edit **moves lines** (inserts or deletes one) | **differs** | **owed** |
+| a body in a `.cppm`, edited **in place** (same line count) | **byte-identical** | not owed |
+| a body in a separate `.cpp` implementation unit | **no BMI exists** | not owed |
 
-A class's member function bodies are part of the class definition, which every
-importer has to see, so they are serialised into the BMI. A free function's body
-is not, and nothing in an implementation unit is.
+GCC 16.1 does not serialise non-template function bodies, so changing what a
+body *does* is invisible to importers. What it does serialise is the source
+position of each declaration — so inserting a line moves every declaration
+after it and the BMI changes for that reason alone.
 
-So "editing one function rebuilt forty modules" is not inherent to named modules
-— it is a consequence of where the body was written. `mcpp`'s own
-`src/version_req.cppm` is the first case (the perturbation lands in
-`Version::str()`, a member of an exported class), which is why its `edit-body`
-row is a near-full rebuild and why that is correct.
+⚠️ **An earlier version of this section said the deciding factor was whether the
+body belonged to an exported class.** That was reasoning, and the measurement
+refuted it: editing `Version::str()` — a member of an exported class — in place
+rebuilt its object and left the BMI byte-identical, so no importer was touched.
+The deciding factor is line movement, not class membership.
+
+Two consequences:
+
+* "editing one function rebuilt forty modules" is not inherent to named modules.
+  It follows from the edit moving lines in an interface unit.
+* the third row is the sturdiest, because it holds for **every** compiler and
+  for every edit: a `.cpp` implementation unit produces no BMI, so nothing
+  downstream can depend on its contents. Clang, whose BMI carries more than
+  GCC's, cascades on an in-place body edit in a `.cppm` but not on a `.cpp`.
 
 **This is what the two xlings pins measure.** Moving the implementations out of
 the interface units takes `edit-body` from 88.33s to **1.77s** on the same
 project — ~50x, the largest single effect anywhere in this suite, and a code
 style rather than an engine feature.
+
+#### KNOWN GAP: there is no scenario for an in-place body edit
+
+The three rows in the table above are not equally covered. `edit-body` inserts a
+statement, so only the **first** row is ever measured; the second — a semantic
+edit that keeps the line count — has no scenario at all.
+
+That is the everyday case, and it is the only one that would show cascade
+suppression on a *real code change* rather than on a timestamp (`touch-hub`) or
+a comment (`edit-comment`). Its absence makes the published tables read as
+though the effect applies only when the code does not change, which understates
+it.
+
+Closing it is a `replace_in_first_body` beside `insert_into_first_body` (an
+equal-length substitution, e.g. one integer literal for another of the same
+width) plus a scenario token — and a re-run of the standard set, which is why it
+is recorded here rather than half-added with no data behind it.
 
 Real projects run five of the six: `touch-leaf` needs a unit nobody imports
 *and* a stable name for it, which a generated fixture has by construction and a

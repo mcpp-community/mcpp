@@ -35,6 +35,16 @@ struct CompileFlags {
     std::string as;                   // asm-safe subset for .S/.s via the C driver
     std::string nasm;                 // NASM global flags (.asm; own spelling)
     std::string ld;                   // ldflags string
+    // The same link line for a unit with NO C++ in it (mcpp#426). Linking a
+    // pure-C library with the C++ driver gave it `NEEDED libstdc++.so.6`,
+    // `libm.so.6` and `libgcc_s.so.1` with not one symbol referencing them —
+    // measured: the C driver leaves exactly `libc.so.6`.
+    //
+    // Produced in the SAME expression as `ld`, with only the C++ runtime
+    // tokens elided, so `ld` itself is unchanged by construction rather than
+    // by testing. Swapping the driver alone is not enough: `-lstdc++exp` is
+    // named explicitly and would survive it.
+    std::string ldC;
     // The LAST-RESORT run-time search path (today: the SubOS library view).
     // NOT part of `ld`, and that is the whole point: `ld` is rendered BEFORE
     // the per-unit flags, and the per-unit flags are where the artifact's own
@@ -57,6 +67,10 @@ struct CompileFlags {
     // `static_stdlib = false` could not express for test binaries before #336.
     // Produced by exactly one call to `dist::resolve` per role.
     std::array<std::string, mcpp::build::dist::kRoleCount> ldStdlibByRole{};
+    // The same, for a link unit with no C++ in it (mcpp#426). Comes from the
+    // contract table's own `unitFlagsC`, so "is this flag a C++ decision" is
+    // answered where the flag is written.
+    std::array<std::string, mcpp::build::dist::kRoleCount> ldStdlibCByRole{};
     // The contract each role actually got (after any degradation).
     std::array<mcpp::build::dist::Contract,
                mcpp::build::dist::kRoleCount> contractByRole{};
@@ -71,6 +85,9 @@ struct CompileFlags {
 
     const std::string& ldStdlibFor(mcpp::build::dist::Role r) const {
         return ldStdlibByRole[static_cast<std::size_t>(r)];
+    }
+    const std::string& ldStdlibCFor(mcpp::build::dist::Role r) const {
+        return ldStdlibCByRole[static_cast<std::size_t>(r)];
     }
 };
 
@@ -444,6 +461,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
     std::string compile_toolchain_flags;
     std::string link_toolchain_flags;
+    std::string link_toolchain_flags_c;   // same, minus C++ runtime selection
     const bool isClangWithCfg = dm.hasCfg;
     // LLVM root of a clang-with-cfg toolchain — used by the macOS link
     // path below to locate libc++.a/libc++abi.a for staticStdlib.
@@ -479,6 +497,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         link_toolchain_flags = " --no-default-config";
         if (lm.mode == mcpp::toolchain::CLibMode::Sysroot)
             link_toolchain_flags += lm.link_flags(ninjaEsc);
+        link_toolchain_flags_c = link_toolchain_flags
+            + std::string(mcpp::toolchain::ClangDriverModel::kLinkDriverFlagsC);
         link_toolchain_flags +=
             mcpp::toolchain::ClangDriverModel::kLinkDriverFlags;
         f.sysroot = link_toolchain_flags;
@@ -486,6 +506,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // GCC (or Clang without cfg): --sysroot from probe, or the payload
         // headers + C runtime (-B for crt discovery, -L for -lc/-lm).
         link_toolchain_flags = lm.link_flags(ninjaEsc);
+        link_toolchain_flags_c = link_toolchain_flags;   // nothing C++-only here
         f.sysroot = link_toolchain_flags;
     }
 
@@ -874,7 +895,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             mi.explicitRequest = wasAsked;
             auto r = dist::resolve(mi);
             auto i = static_cast<std::size_t>(role);
-            f.ldStdlibByRole[i] = r.unitFlags;
+            f.ldStdlibByRole[i]  = r.unitFlags;
+            f.ldStdlibCByRole[i] = r.unitFlagsC;
             f.contractByRole[i] = r.effective;
             if (r.streamInitShim) f.needsStreamInitShim = true;
             if (!r.diagnostic.empty() && role_is_built(role))
@@ -965,6 +987,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             mingw_stdexp = " -lstdc++exp";
         f.ld = std::format("{}{}{}{}", link_intent_ld, user_ldflags,
                            mingw_stdexp, link_extra);
+        // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
+        // drop it — the C line has to leave it out.
+        f.ldC = std::format("{}{}{}", link_intent_ld, user_ldflags, link_extra);
         return f;
     }
 
@@ -976,6 +1001,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // not apply.
             f.ldBinary = mcpp::toolchain::link_tool(plan.toolchain);
             f.ld = link_intent_ld + user_ldflags;
+            f.ldC = f.ld;   // link.exe: no driver, nothing implicit to elide
             return f;
         }
         // PE link, MSVC-ABI Clang (native MinGW is handled by the target-keyed
@@ -1017,6 +1043,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // the response file is ours, and 2026.8.5.3 already fixed it.
         f.ld = std::format(" -fuse-ld=lld{}{}{}", link_intent_ld,
                            user_ldflags, link_extra);
+        f.ldC = f.ld;   // no C++ runtime token on this line
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
         // macOS. The C++ runtime itself is decided by the contract table above
         // (dist::Format::MachO) and rides unit_ldflags; what is left here is
@@ -1058,6 +1085,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}{}", full_static,
                            b_flag, macos_sdk, version_min, link_intent_ld,
                            user_ldflags, link_extra);
+        // macOS decides the C++ runtime in the contract table (MachO), which
+        // rides unit_ldflags — this line has nothing C++-only on it.
+        f.ldC = f.ld;
     } else {
         // libatomic: 16-byte / oversized std::atomic needs the out-of-line
         // __atomic_* libcalls from libatomic, which the driver won't add on
@@ -1070,6 +1100,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                            link_toolchain_flags, b_flag, runtime_dirs,
                            link_intent_ld, atomic_ld, payload_ld,
                            user_ldflags, link_extra);
+        // Same expression, same operands, one substitution: `-stdlib=libc++`
+        // is the only C++-only token that reaches this line. `-static` and
+        // `-latomic` are NOT C++ decisions and stay.
+        f.ldC = std::format("{}{}{}{}{}{}{}{}{}", full_static,
+                            link_toolchain_flags_c, b_flag, runtime_dirs,
+                            link_intent_ld, atomic_ld, payload_ld,
+                            user_ldflags, link_extra);
     }
 
     return f;

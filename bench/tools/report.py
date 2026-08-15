@@ -234,7 +234,15 @@ def short_name(engine, newest, lang="en"):
         return "mcpp +优化" if lang == "zh" else "mcpp +opt"
     if base == newest:
         return "mcpp"
-    return "mcpp (旧版)" if lang == "zh" else "mcpp (old)"
+    # ⚠️ NAME THE RELEASE, do not write "old". The version is already in the
+    # engine key — it is the version that binary reported about ITSELF — so a
+    # header that hides it is throwing away the one fact that makes the column
+    # checkable. A guard used to enforce this from outside, by requiring
+    # `matrix.json`'s `reference_mcpp` to equal the `.xlings.json` bootstrap
+    # pin; that coupled a bench knob to the release pipeline and turned `main`
+    # red when the pin moved. Printing what was measured removes the drift
+    # instead of policing it.
+    return "mcpp " + base[len("mcpp@"):]
 
 
 def columns_legend(short, engines, lang):

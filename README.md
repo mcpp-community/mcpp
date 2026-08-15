@@ -334,13 +334,21 @@ data: [`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x
   skips the cascade when the interface is unchanged. This is default behaviour
   and requires no configuration. The `mcpp (old)` column measures the previous
   release at 81.72s, level with cmake, so the effect is new in this revision.
-* **`edit-body` is the control case**, and it is the row where the cascade is
-  genuinely owed: mcpp is 1.1x rather than 200x, and an engine faster here would
-  be omitting work. `+opt` does not omit it either — it performs the same work
-  2.9x faster. Worth stating precisely: the perturbation **inserts a line**, and
-  under GCC that shifts the recorded source location of every declaration after
-  it, which changes the BMI. The cascade follows from the changed BMI, not from
-  the edited body — measured in
+* **`edit-body` measures the case where the cascade is genuinely owed** — and
+  whether an edit owes one depends on where the body lives:
+
+  | the function body is in… | editing it | this row |
+  |---|---|---|
+  | a `.cppm`, and the edit **moves lines** | GCC records declaration positions, so the BMI changes → cascade owed | **what is measured: 1.1x, and 2.9x with `+opt`** |
+  | a `.cppm`, edited **in place** (same line count) | GCC does not serialise non-template bodies → BMI unchanged → no cascade | ~200x, like `touch-hub` |
+  | a separate `.cpp` implementation unit | that file has no BMI at all → no cascade, on every compiler | ~200x |
+
+  The perturbation here inserts a statement, so it takes the first row: every
+  engine has to rebuild the importers, and one that did not would be skipping
+  work. `+opt` does not skip it either — it does the same work 2.9x faster.
+  Splitting interface from implementation is the sturdiest of the three, because
+  it does not depend on GCC's body handling or on avoiding line shifts.
+  Measured in
   [`.agents/docs/2026-08-15-module-edit-granularity.md`](.agents/docs/2026-08-15-module-edit-granularity.md).
 * **`bmi_schedule` is opt-in and disabled by default** (`auto` resolves to off).
   It moves code generation off the critical path, so it helps only where a

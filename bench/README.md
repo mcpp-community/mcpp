@@ -213,7 +213,7 @@ than what it said.
 | bazel | **9.2.0** | `matrix.json` → `tools` |
 | gcc | **16.1.0** | `bench/src/toolchain.cppm` |
 | clang / libc++ | **22.1.8** (Windows: 20.1.7) | `bench/src/toolchain.cppm` |
-| reference mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp` |
+| reference mcpp | **2026.8.11.3** | `matrix.json` → `reference_mcpp`; the run records which release it actually resolved in `meta.json`, and the report names it in the column header |
 | mcpp (the workload) | **2026.8.11.3** — `a749e9f` | submodule `projects/mcpp/mcpp-2026.8.11.3` |
 | xlings (combined style) | **2026.8.11.2** — `b1563fe` | submodule `projects/xlings/xlings-2026.8.11.2` |
 | xlings (split style) | **2026.8.13.1** — `f072075` | submodule `projects/xlings/xlings-2026.8.13.1` |
@@ -325,9 +325,12 @@ Four things this says, and the fixture can say none of them:
    touching a hub interface costs cmake and xmake a full 83-second rebuild
    because they decide by timestamp, and 0.40s for an engine that compares the
    BMI it just produced against the previous one.
-4. **`edit-body` is the control.** mcpp is deliberately *not* fast there (0.89x):
-   the interface genuinely changed, so the cascade is owed. An engine that were
-   fast on that row would have skipped work it owed.
+4. **`edit-body` is the control.** mcpp is deliberately *not* fast there
+   (0.89x): the perturbation inserts a statement into an interface unit, which
+   moves the source position GCC records for every declaration after it, so the
+   BMI changes and the cascade is owed. An engine that were fast on that row
+   would have skipped work it owed. A body edit that does NOT move lines, or one
+   in a separate `.cpp`, owes no cascade and mcpp skips it — see §7.
 
 > **The xmake column is from a SEPARATE run.** Its numbers in the original
 > five-arm run were invalid — xmake normalises `--buildir` to a path relative to

@@ -255,6 +255,32 @@ echo "standard set: $(printf '%s\n' "$PLAN" | wc -l) cells, ${RUNS} run(s) each,
 echo "output       : ${OUT#"$ROOT"/}"
 echo
 
+# WHICH RELEASE THE `mcpp (old)` COLUMN ACTUALLY MEASURED, recorded rather than
+# asserted. `matrix.json` states a REQUEST; this file states the OUTCOME — the
+# path that was resolved and the version that binary reported about ITSELF (the
+# loop above refuses any binary whose `--version` disagrees).
+#
+# This replaces a guard that required `reference_mcpp` to equal the `.xlings.json`
+# bootstrap pin. Making the report self-describing removes the drift instead of
+# policing it: a reader never has to hold two files in their head to know what
+# the "old" column is, and the two pins are free to be what they each are.
+mkdir -p "$OUT"
+python3 - "$OUT/meta.json" "$REFERENCE_MCPP" "$REF_BIN" "$UNDER_TEST" <<'PY'
+import json, sys
+out, requested, path, under_test = sys.argv[1:5]
+json.dump({
+    "schema": 1,
+    "reference_mcpp": {
+        "requested": requested or None,
+        # null ⇒ not resolved on this machine; the old-vs-new column is absent
+        # from the report rather than silently filled by another release.
+        "measured": (requested if path else None),
+        "binary": path or None,
+    },
+    "under_test": under_test or None,
+}, open(out, "w", encoding="utf-8"), indent=2)
+PY
+
 # ⚠️ NOT `printf ... | while`. A pipeline runs its right-hand side in a SUBSHELL,
 # so a failure counter incremented inside the loop does not survive it and the
 # script exits 0 no matter what happened. Verified with a stub engine that exits
