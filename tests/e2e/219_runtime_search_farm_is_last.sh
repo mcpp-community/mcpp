@@ -238,6 +238,50 @@ if p.index('\$ORIGIN') > p.index('''$FARM'''):
     sys.exit(1)
 PY
 
+# ── invariant 2b: the RECORD and the ARTIFACT agree ITEM BY ITEM (#415) ────
+#
+# This is the assertion the record could not support until `$ORIGIN` entered the
+# closure. `resolution.json` called itself the one place the search order is
+# decided, while the artifact's own directory was emitted on a separate
+# per-unit channel and never appeared in the record — so the two lists could not
+# be compared at all, and every check here had to be about ORDER RELATIONS
+# between entries that happened to be in both.
+#
+# Now they are the same list in the same order, and this compares them directly.
+# `artifact` is the closure's spelling of `$ORIGIN`; nothing else is filtered,
+# translated or excused — an exception here would be the gap coming back, not a
+# detail of the test.
+python3 - "$TMP/closure.txt" "$DT_RPATH" <<'ITEMWISE' || exit 1
+import sys
+
+rows = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.rstrip("\n")
+    if not line:
+        continue
+    origin, _, path = line.partition("\t")
+    rows.append((origin, path))
+
+recorded = ["$ORIGIN" if o == "artifact" else p for o, p in rows]
+actual   = [e for e in sys.argv[2].split(":") if e]
+
+if recorded != actual:
+    print("FAIL: the recorded closure and the artifact's DT_RPATH differ")
+    print("      recorded (artifact -> $ORIGIN):")
+    for e in recorded:
+        print("        " + e)
+    print("      DT_RPATH:")
+    for e in actual:
+        print("        " + e)
+    print()
+    print("      These are supposed to BE the same list. A missing $ORIGIN in the")
+    print("      record means Origin::Artifact stopped entering the closure (#415);")
+    print("      an $ORIGIN in the record with none in the artifact means it is")
+    print("      being recorded for a project that emits none.")
+    sys.exit(1)
+print(f"closure == DT_RPATH, {len(actual)} entries, item by item")
+ITEMWISE
+
 # ── invariant 3: libc still comes from the payload, not the farm ────────────
 #
 # The point of the ordering. Both directories can hold a libc.so.6 (the farm's
