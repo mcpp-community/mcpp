@@ -604,6 +604,38 @@ README。手工重建确实能观察到 `mcpp build` 0.56s 返回、`cc1plus` �
 macOS 的 bench 格子因此进 `excluded`,原因写在 matrix.json 里。**没有继续猜** ——
 本机是 Linux,复现不了,而这条已经让我烧掉好几轮 CI。
 
+### 9a-3. 根因与修法(2026-08-16,已修)
+
+上面两条把现象记全了,也记了"没有继续猜"。issue #437 把最后一步补上了 ——
+**污染是真的,但可以绕开:不要用那个会被污染的链接器。**
+
+根因链(对着当前源码核过):
+
+1. `build_program.cppm:154` 把 host helper 的 `cfgBypass` 设成 `LinuxOnly`;
+2. 于是 macOS 上 `bypassCfg == false`,`hostflags.cppm` 命中
+   `else if (dm.hasCfg) return out;` —— **返回空 link token**,没有 `-fuse-ld=lld`;
+3. clang++(payload)于是用默认链接器 = Xcode 的 `/usr/bin/ld`;
+4. 那个 `ld` **自己就是链 libc++ 的 Mach-O**,而它跑在 payload 工具链设好的
+   `DYLD_*` 里,dyld 把它的 libc++ 解析到 payload 那份 —— 缺 `__ZdaPv`,
+   **ld 还没开始链接就 abort**。
+
+**为什么主构建不挂**:`flags.cppm` 的 macOS 分支**刻意**用 `-fuse-ld=lld`,
+注释原文就写着 *"Xcode 15.4's ld aborting at launch on macos-14 CI when its
+libc++ resolution was diverted"*。也就是说 —— **同一个坑,主构建早就绕过去了,
+host helper 这条路没跟上。**
+
+> 判据上这一条最说明问题:**mcpp 用 llvm 能把整个工程构建出来,却构建不了
+> 自己的 `build.mcpp`。** 同一个工具链、同一个环境,两条链接路径给出不同结果,
+> 那不是"macOS 环境问题",是这两条路径没有对齐。
+
+**修法(已实施)**:`hostflags.cppm::host_link_tokens` 的 trust-cfg 分支在 macOS 上
+追加 `-fuse-ld=lld`。cfg 选的是 runtime,从来没选过链接器;lld 随做编译的那套
+工具链一起发布,不可能被解析到它没链过的 libc++ 上。
+
+**没有配单元测试**:判断在 `if constexpr (is_macos)` 里,在 Linux 上整段编译掉,
+测试不可能失败。判据是 macOS CI 的 e2e(`89/92/110/111/125/143/144/145/181/186/194`
+都带 `build.mcpp`)与 issue 报告者的复现。
+
 ### 9b. mbedtls 的 registry 源码包缺 `framework/` 子模块
 
     mbedtls-3.6.1/CMakeLists.txt:304

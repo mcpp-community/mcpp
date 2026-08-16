@@ -181,7 +181,30 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
     if (bypassCfg) {
         for (auto& t : dm.link_tokens(esc)) out.push_back(t);
     } else if (dm.hasCfg) {
-        return out;   // trusting the cfg: it already selects the linker/runtimes
+        // Trusting the cfg — with ONE exception, and it is not a preference.
+        //
+        // The cfg picks runtimes; it does not pick a linker, so on macOS the
+        // default is Xcode's /usr/bin/ld. That binary is itself a C++ Mach-O
+        // linked against libc++, and it runs inside the same DYLD_* the
+        // payload toolchain sets up, so dyld resolves ITS libc++ to the
+        // payload's. When that copy lacks a symbol Apple's ld needs, ld
+        // aborts before it links anything:
+        //
+        //   dyld: Symbol not found: __ZdaPv        (operator delete[])
+        //     Referenced from: .../XcodeDefault.xctoolchain/usr/bin/ld
+        //     Expected in:     .../xim-x-llvm/22.1.8/lib/libc++.1.0.dylib
+        //
+        // The MAIN build already refuses to use Xcode's ld for exactly this,
+        // and says so at flags.cppm's macOS branch: "Xcode 15.4's ld aborting
+        // at launch on macos-14 CI when its libc++ resolution was diverted".
+        // The host helper links in the same environment, so it cannot be
+        // allowed to differ — a toolchain that builds the project but not its
+        // build.mcpp is not a working toolchain (mcpp#437).
+        //
+        // lld ships with the very toolchain doing the compile, so it cannot
+        // be diverted to a libc++ it was not built against.
+        if constexpr (mcpp::platform::is_macos) out.push_back("-fuse-ld=lld");
+        return out;
     }
 
     for (auto& t : lm.link_tokens(esc)) out.push_back(t);

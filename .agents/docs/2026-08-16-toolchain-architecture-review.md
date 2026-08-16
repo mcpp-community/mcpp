@@ -26,41 +26,40 @@
 
 ---
 
-## 1. `@system` 只对 MSVC 存在 —— 这是**对的**,但它的代价被摊在了 26 处 ⭐
+## 1. 一个平台特例,摊在 26 处 ⭐
 
-### 现状
+### ⚠️ 本节初稿是错的,先说清楚
 
-`registry.cppm:428`:
+初稿把 `is_system_toolchain()` 里的 `Family::Msvc` 读成"不对称,应该推广到所有族",
+提出支持 `gcc@system`。**方向反了,而且那个东西根本不存在。**
+
+xlings 是**用户态 OS**,mcpp 建立在它之上,整条设计就是**把 host 依赖降到最低**:
+工具链来自 payload,这才使得"manifest 写 14.44.35207"在**每台**机器上成立,
+而不是只在恰好装了它的那台上成立。`msvc@system` 是 **Windows 的让步**
+(Visual Studio 常常已经装了、又不总能重新分发),不是一种可推广的能力。
+
+被纠正之后我又去给自己发明的拼写写了个"显式拒绝",那是**从自己的错误里长出来的
+新范围**,已经作废(mcpp#441 已关闭)。而且那条拒绝消息还说错了一件事 ——
+它写"只有 `msvc@system` 存在",可 `prepare.cppm:1376` 有一条**故意保留**的裸
+`system` 逃生口:
 
 ```cpp
-bool is_system_toolchain(const ToolchainSpec& spec) {
-    return spec.family == Family::Msvc
-        && (spec.version.empty() || spec.version == "system");
-}
+} else if (tcSpec.has_value() && *tcSpec == "system") {
+    // Explicit user opt-in to system PATH compiler — kept as escape hatch.
 ```
 
-**族被写进了判据。**
+**真正提供 host 依赖的那一处,拼写是不带族的 `system`。** 记在这里,
+免得下一份 review 再把它当成"缺失的能力"。
 
-> **先说清楚:这个限制本身是对的,不要改。**
-> xlings 的原则是**能不依赖 host 就不依赖 host** —— 工具链应当由 xim 提供,
-> 这样"声明什么就用什么"在每台机器上成立。`gcc@system` / `llvm@system`
-> **不该**支持:那是把不确定性请回来。
->
-> `msvc@system` 是 **Windows 平台的特例**,不是通用能力的一个实例:
-> Visual Studio 常常已经装在机器上、又不总是能被重新分发,所以必须能用它。
->
-> 我这份 review 的初稿建议"把 `@system` 通用化到所有族",**那是错的**,
-> 方向正好反了。下面改成正确的问题。
+### 剩下的、与那个错误无关的部分
 
-真正的问题不是"为什么只有 MSVC 有",而是:**一个平台特例,凭什么要在 26 个
-地方各写一遍。**
+`registry.cppm:428` 的判据本身没问题。问题是**这个平台特例的代价被摊开了**:
+lifecycle.cppm **13 处**、prepare.cppm **13 处** msvc 专有分支,
+而 gcc / llvm / mingw 在 lifecycle.cppm 里**一处都没有**
+(mingw 更是零分支 —— 它整个被表达成一个 *target*,`x86_64-windows-gnu`,
+那才是这套设计想要的形状)。
 
-代价不是"四处特判"这么轻。把两个文件扫一遍:**lifecycle.cppm 里 13 处、
-prepare.cppm 里 13 处** msvc 专有分支,而 gcc / llvm / mingw 三个族在
-lifecycle.cppm 里**一处都没有**(mingw 更是零分支 —— 它整个被表达成一个
-*target*,`x86_64-windows-gnu`,那才是这套设计想要的形状)。
-
-其中直接由 `is_system_toolchain` 触发的四处:
+其中由 `is_system_toolchain` 直接触发的四处:
 
 | 位置 | 内容 |
 |---|---|
@@ -69,59 +68,30 @@ lifecycle.cppm 里**一处都没有**(mingw 更是零分支 —— 它整个被�
 | `lifecycle.cppm:931` | `toolchain remove` 拒绝 |
 | `prepare.cppm:1260` | 构建期短路整条 xim 路径 |
 
-另外三处是同一条规则的**重复拼写**,值得单独记:
+`prepare.cppm:1257` 那个变量叫 `tcSpecIsMsvc`,但它其实是 `is_system_toolchain`
+的结果 —— 名字说的是"族",值说的是"来源"。
 
-- `xim_tool()` + `installation_at()` + 那段错误信息,在
-  `prepare.cppm:1322-1341` 和 `lifecycle.cppm:730-755` **几乎逐字重复**。
-  第三份出现的时候就是下一个 #436。
-- sysroot 依赖规则有两份:`prepare.cppm:1471-1480`(只看 musl)
-  vs `lifecycle.cppm:694-702`(musl + PE + 宿主),**两者并不等价**,
-  而 `lifecycle.cppm:692` 的注释声称它们互相对应。
-- `prepare.cppm:1002-1005` 那段注释说解析是 4 步,实际链路有 **9 个输入**
-  (manifest → `--toolchain` → 全局 default → Windows 无 VS 的 target 种子 →
-  `[target.X].toolchain` → 词表 pin → 四个互斥的获取分支 → MSVC ABI 修复门 →
-  `build.mcpp` 的宿主解析)。注释比代码老,而这段代码是**决定用哪个编译器**的。
-
-`prepare.cppm:1257` 那个变量还叫 `tcSpecIsMsvc`,但它其实是
-`is_system_toolchain` 的结果 —— 名字说的是"族",值说的是"来源"。
-**名字和值不是一回事,这正是这一轮所有缺陷的形状。**
-
-### 建议:**收拢这个特例,而不是推广它**
-
-保持 `@system` 只有 MSVC 能用(甚至值得在 `parse_toolchain_spec` 里
-**显式拒绝** `gcc@system`,并给一句"xlings 不依赖 host 工具链,用
-`gcc@<version>`"—— 让原则**可执行**,而不是靠没人去写)。
-
-要减的是**摊开的代价**,做法是把"来源"变成一个显式的、解析一次的东西:
-
-```cpp
-enum class Origin { Managed, SystemMsvc };   // 只有两种,而且只会有两种
-
-struct ResolvedToolchain {
-    Origin origin;
-    std::filesystem::path compiler;   // payload 里的 cl/gcc,或机器上的 cl
-    // ……
-};
-```
-
-`prepare` / `lifecycle` 各自解析一次 `Origin`,后面按它分发,而不是每个子命令
-自己再问一遍 `is_system_toolchain`。
-
-配套把三处**重复拼写**消掉(这几处和特例本身无关,纯粹是复制):
+另外三处是同一条规则的**重复拼写**,和特例本身无关,纯粹是复制:
 
 1. `xim_tool()` + `installation_at()` + 错误信息 —— `prepare.cppm:1322-1341`
    与 `lifecycle.cppm:730-755` 几乎逐字重复 → 提一个
-   `resolve_managed_msvc(env, pkg)`。
-2. sysroot 依赖规则两份且**不等价**(`prepare.cppm:1471-1480` vs
-   `lifecycle.cppm:694-702`)→ 合成一个谓词。
-3. `prepare.cppm:1002-1005` 的注释说 4 步、实际 9 个输入 → 要么补齐,
-   要么把顺序变成一张数据表,让注释无处可撒谎。
+   `resolve_managed_msvc(env, pkg)`。第三份出现的时候就是下一个 #436。
+2. sysroot 依赖规则两份且**不等价**(`prepare.cppm:1471-1480` 只看 musl,
+   vs `lifecycle.cppm:694-702` musl + PE + 宿主)→ 合成一个谓词。
+   `lifecycle.cppm:692` 的注释声称它们互相对应。
+3. `prepare.cppm:1002-1005` 的注释说解析是 4 步,实际链路有 **9 个输入**。
+   注释比代码老,而这段代码是**决定用哪个编译器**的。
 
-**收益**:特例仍然是特例(符合原则),但只在**一处**被认出来;
-26 处分支里绝大多数变成"按 Origin 分发"的普通代码。
-`gcc@system` 从"没实现"变成"**明确拒绝并说明理由**"。
+### 建议:收拢,不推广
 
----
+把"来源"变成一个显式的、**解析一次**的东西,而不是每个子命令自己再问一遍:
+
+```cpp
+enum class Origin { Managed, SystemMsvc };   // 只有两种,而且只会有两种
+```
+
+`prepare` / `lifecycle` 各解析一次,之后按它分发。特例仍然是特例,
+但只在**一处**被认出来。
 
 ## 2. SDK 是"依赖",却被当成"搜索路径" ⭐ 高优先级
 
@@ -319,6 +289,31 @@ ELF 上靠 `ldd` 闭包歪打正着,PE 上则完全没有这一步。
 
 ---
 
+## 3e. 主构建和 host helper 用不同的链接策略(#437) 🔴 已修
+
+同一个工具链、同一个环境,两条链接路径给出不同结果:
+
+- **主构建**在 macOS 上刻意 `-fuse-ld=lld`(`flags.cppm` 的 macOS 分支,
+  注释原文:*"Xcode 15.4's ld aborting at launch ... when its libc++
+  resolution was diverted"*);
+- **host helper**(`build.mcpp`)走 `hostflags.cppm` 的 trust-cfg 分支,
+  **返回空 link token**,于是用 Xcode 的 `/usr/bin/ld` —— 那个 ld 自己链 libc++,
+  跑在 payload 的 `DYLD_*` 里,dyld 把它的 libc++ 解析到 payload 那份,
+  缺 `__ZdaPv`,**还没开始链接就 abort**。
+
+> **mcpp 用 llvm 能把整个工程构建出来,却构建不了自己的 `build.mcpp`** ——
+> 这不是 macOS 环境问题,是两条路径没对齐。主构建早就绕过了这个坑,
+> host helper 这条没跟上。
+
+修法:trust-cfg 分支在 macOS 上也追加 `-fuse-ld=lld`。cfg 选的是 runtime,
+**从来没选过链接器**。
+
+**它和这份 review 其余部分是同一个形状**:一条规则有两处实现,其中一处知道
+真相、另一处不知道 —— 和 §1 那三处重复拼写、§3b 的 doctor 第四份拷贝完全同类。
+根因记在 `2026-08-13-build-optimization-status.md` §9a-3。
+
+---
+
 ## 4. `installed()` 的语义:必须是"这份 recipe 产出的状态" ⭐ 跨仓库规则
 
 这一轮九层缺陷里,真正致命的几层全是这一条。
@@ -411,6 +406,27 @@ mcpp 有 —— 否则每个消费者都要自己重写一遍,而写错的方式
 
 ---
 
+## 8b. 落地状态(2026-08-16 当天)
+
+| 项 | 状态 |
+|---|---|
+| §3b doctor 用 `payload_frontend` | ✅ mcpp#440 已合入 |
+| §3c 拆开 `has_usable_msvc` → `msvc_available_here` | ✅ mcpp#440 已合入 |
+| §3 `vc_redist_dir` → `mcpp run` 的 PATH(5 个测试) | ✅ mcpp#440 已合入 |
+| §3e host helper 链接策略对齐(#437) | 🔄 mcpp#442 CI 中 |
+| §4 `installed()` 规则写进 skill + lint(3 条各自对着回归跑过) | ✅ index#640 已合入 |
+| §5 windows-test 真的运行声明的程序 | ✅ index#640 已合入 |
+| §6 park-and-sweep 下沉到 xlings 卸载路径 | 🔄 xlings#551 CI 中 |
+| §1 收拢 Origin + 消三处重复 | ⬜ 未做(动 spec 层,单独一轮) |
+| §2 SDK 绑定 + `windows_sdk` 版本轴 | ⬜ 未做(要改 manifest schema) |
+| §3d PE 版 `pack` + 让 pack 读 Contract | ⬜ 未做(最大一块) |
+| §7 索引发布修订号 | ⬜ 未做(跨仓库) |
+
+**没做的四项都有共同点**:要么动 spec/schema 层,要么跨仓库 —— 都不适合在
+一次发版窗口里塞进去。§1 §2 §3d 三条在这份文档里已经写到可以直接开工的程度。
+
+---
+
 ## 9. 建议的落地顺序
 
 | # | 项 | 规模 | 影响面 | 依赖 |
@@ -422,15 +438,16 @@ mcpp 有 —— 否则每个消费者都要自己重写一遍,而写错的方式
 | 4 | §3c 拆开 `has_usable_msvc` | 小 | mcpp | 无 |
 | 5 | §2 SDK 绑定 + 版本轴 | 中 | mcpp | 无 |
 | 6 | §6 park-and-sweep 下沉 | 小 | xlings | 无 |
-| 7 | §1 收拢 Origin + 消三处重复(**不**通用化 `@system`) | 大 | mcpp | 建议在 §2/§3c 之后 —— 都动 spec 层 |
+| 7 | §1 收拢 Origin + 消三处重复 | 大 | mcpp | 建议在 §2/§3c 之后 —— 都动 spec 层 |
 | 8 | §3d PE 版 `pack` | 大 | mcpp | 排在 §3 之后:§3 先解决"能跑" |
 | 9 | §7 索引修订号 | 大 | xlings + 索引 | 收益最分散 |
 
 第 0–4 项互不依赖,可以并行,合计不大。§1 和 §3d 是两块真正的工作量,
 建议各自单独一轮 —— 尤其 §1 动的是 spec 层,改完之后其余几项的 diff 会更小。
 
-⚠️ §1 的方向已修正:**收拢特例,不是推广它**。初稿建议的 `gcc@system`
-与 xlings"能不依赖 host 就不依赖 host"的原则相悖,已作废。
+⚠️ §1 初稿的 `gcc@system` 提案已整段作废(mcpp#441 已关闭)——
+那是我读错了设计意图凭空造出来的东西。xlings 是用户态 OS,
+host 依赖是要**降到最低**的,不是要补齐的能力。
 
 **如果只做三件**:§3b(一行)、§4(规则,挡住的最多)、§3(让干净 Windows
 上 `mcpp run` 真的能跑)。
