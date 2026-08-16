@@ -3,9 +3,28 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [2026.8.16.3] — 2026-08-16
 
 ### 修复
+
+- **macOS 上任何带 `build.mcpp` 的工程都构建不了(#437)。**
+
+  同一个工具链、同一个环境,**主构建能过,host helper 不能过** ——
+  这才是它是 bug 而不是"macOS 环境问题"的地方。
+
+  主构建在 macOS 上**刻意**用 `-fuse-ld=lld`,`flags.cppm` 的注释原文就写着
+  *"Xcode 15.4's ld aborting at launch on macos-14 CI when its libc++
+  resolution was diverted"*。而 host helper 走 `hostflags.cppm` 的 trust-cfg
+  分支,**返回空 link token**,于是用 Xcode 的 `/usr/bin/ld` —— 那个 ld 自己
+  就是链 libc++ 的 Mach-O,跑在 payload 工具链设好的 `DYLD_*` 里,dyld 把它的
+  libc++ 解析到 payload 那份,缺 `__ZdaPv`,**还没开始链接就 abort**。
+
+  cfg 选的是 **runtime**,从来没选过**链接器**。所以"信任 cfg"是对的但不完整:
+  继续信任它,同时在 macOS 上把链接器点名。lld 随做编译的那套工具链一起发布,
+  不可能被解析到它没链过的 libc++ 上。
+
+  根因链记在 `.agents/docs/2026-08-13-build-optimization-status.md` §9a-3
+  —— 那份文档原来停在"没有继续猜,本机复现不了"。
 
 - **Windows 上 `mcpp toolchain remove <msvc toolset>` 报 "Access is denied"。**
 
@@ -30,9 +49,25 @@
 
   修完 vctip 之后占用者换成了 `mspdbcore.dll` —— `/Zi` 构建拉起的
   **mspdbsrv.exe**,它构建完还活几十秒,而且就住在正要被删的 payload 里。
-  等它不现实(等多久都是猜),所以改成**挪走**:Windows 拒绝删除含打开文件的
-  目录,但允许**重命名**。`remove` 的承诺是"这个工具链不再装着",改名之后
-  它确实不再装着;剩下的字节在下一条生命周期命令里清扫(那时占用者早退了)。
+  等它不现实(等多久都是猜),所以改成**挪走**。
+
+  ⚠️ 第一版挪错了东西:去重命名 payload **目录**。Windows 允许重命名一个
+  **打开着的文件**(更新器就是这么替换运行中的 .exe),但**不允许**重命名
+  一个**含有**打开文件的目录 —— CI 当场否掉了这个前提。
+
+  正确的形状是反过来的:把**文件**逐个挪到旁边的 `.trash-*`,再删掉此时
+  只剩目录的那棵树。要是某个文件连挪都挪不动,就把 `.trash-*` 清掉、整体报失败
+  —— 挪了一半的 payload 比原封不动更糟。
+
+  最后一层:文件都挪走了,**空目录骨架**仍可能删不掉(sharing violation ——
+  某个进程把它当工作目录,mspdbsrv 正是在 payload 里被拉起来的)。判据因此定为
+  **「没有文件残留 = 已卸载」**:一个没有文件的工具链就是没装,这正是 `remove`
+  承诺的事;报失败等于报了相反的事实。骨架在下一条生命周期命令里清扫。
+
+  顺带修掉对称的那半句谎:`toolchain default` 原来只查目录**存在**,
+  会把骨架当成装好的工具链交给构建。现在它问 `payload_frontend` 要一个
+  **能解析出来的编译器** —— 和 `installed()`、`find_windows_sdk()` 同一条规则:
+  **装好了 = 能用,不是"在那儿"**。
 
 - **半装的 Windows SDK 被当成装好的,链接到最后才炸。**
 
@@ -51,6 +86,39 @@
   `Lib\<v>\um\<arch>\kernel32.lib`。半装的根被跳过,搜索落到下一个,
   本来就能用的构建就能用了 —— 和 `has_usable_msvc()` 坚持"两半都要"是同一条
   理由,只是这次轮到 SDK 自己。
+
+- **装好的 msvc toolset 在 `mcpp doctor` 里看不见,而 `toolchain list` 看得见。**
+
+  doctor 还在用 #436 修掉的那个写法 —— `toolchain_frontend(<root>/bin, ...)`。
+  cl.exe 在 `VC/Tools/MSVC/<ver>/bin/Host<h>/<arch>/`,深四层,`bin/` 下什么都没有
+  → `continue` → 整个 toolset 被丢掉。#436 把 list 换成了 `payload_frontend`,
+  doctor 没跟着换,于是**同一台机器上两个命令互相矛盾**,而且都"成功"。
+
+  这是同一条布局规则的**第四份拷贝**。
+
+- **`has_usable_msvc()` 把"这台机器有 VS"当成了"这里能用 MSVC"。**
+
+  它只探测机器,却门控三处对**受管 toolset 同样适用**的决策(首次运行是否转向
+  mingw、离线文案、MSVC ABI 修复门)。于是一台钉了 `msvc@14.44.35207`、
+  没装 Visual Studio 的机器,判据回答 `false` —— 工具链明明就在 payload 里躺着,
+  却被转去 mingw。
+
+  新增 `msvc_available_here(pkgsDir)`:两条来源都算。原来那个保留,
+  它回答的是另一个问题。
+
+- **默认的 `/MD` 构建在只有受管 toolset 的干净 Windows 上跑不起来。**
+
+  产物链 `vcruntime140.dll` / `msvcp140.dll`,这两个**不是** Windows 自带的
+  (自带的是 `ucrtbase.dll`)。而全仓库搜不到一处 `Redist` / `vcruntime140` /
+  `msvcp140` —— 我们把 `CRT.Redist.X64.base.vsix` 下载下来,一个字节都没用。
+
+  CI 看不到,因为 runner 上装着 Visual Studio。
+
+  新增 `vc_redist_dir()`,把 toolset 自带的那份 CRT 放进 `linkRuntimeDirs`
+  —— Windows 上它就是 PATH,和 gcc 把私有 libstdc++ 放进 `LD_LIBRARY_PATH`
+  是同一件事。5 个测试:能从编译器路径单独找到、**redist 版本号不等于 tools
+  版本号**(14.44.35112 vs 14.44.35207,推导会找不到)、取最新、
+  **`debug_nonredist` 永不返回**(不可再分发)、没有 redist 不算错误。
 
 ## [2026.8.16.2] — 2026-08-16
 
