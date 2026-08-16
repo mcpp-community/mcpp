@@ -78,11 +78,70 @@ windows-only 包在 Linux 上都会这样,反之亦然。
 
 ---
 
-## 5. 已知不被覆盖的部分(不要当成已完成)
+## 5. 验证过程本身抓到的:包好的 toolset 根本链接不了默认构建
 
-1. **`msvc@14.52.36629` 的安装路径没有在 CI 上跑过**。index 的 `windows-test`
+这条不在计划里,是**做第 4 节那份「不被覆盖」清单时查出来的** —— 我去检查
+「打包的 14.52 能不能构建 xrgui」,答案是不能,而且对**任何**项目都不能。
+
+payload 集里只有**静态** CRT。`.CRT.x64.Desktop.base` 带的是
+`libcmt` / `libcpmt` / `libvcruntime`,而默认的 `/MD` 需要 `msvcprt.lib`。
+判据是头文件自己写的(`use_ansi.h`):
+
+```c
+#if defined(_DLL) && !defined(_STATIC_CPPLIB)
+#define _LIB_STEM "msvcprt"      // /MD  ← payload 集里没有
+#else
+#define _LIB_STEM "libcpmt"      // /MT  ← 有
+```
+
+`msvcprt.lib` / `msvcrt.lib` / `vcruntime.lib` / `oldnames.lib` 在
+`Microsoft.VC.<ver>.CRT.x64.Store.base` 里。**名字是它被跳过的原因** ——
+听起来像 UWP。它确实也带 `uwp/` 和 `store/` 子目录,但**桌面**用的动态导入库
+就放在 `lib/x64` 顶层,而且别处都没有。已为两个 toolset 补上(xim-pkgindex#630)。
+
+**真正的缺陷不是少了一个 payload,是没有任何东西会发现它。**
+`installed()` 只查 `cl.exe` 和 `std.ixx` —— 两个都在。于是安装报成功,
+真 Windows runner 上的 `windows-test` 全绿,而这条工具链**在它的默认配置下不可用**;
+失败会出现在用户的链接步骤里,离原因三层远。
+
+现在 `installed()` 对每种 CRT 模型各查一个导入库(`/MT` 的 `libcpmt.lib`、
+`/MD` 的 `msvcprt.lib`),两者都不能再用同样的方式静默消失。
+
+> 这也是对 §4 那张表的一个注脚:「1790 项静态检查通过」与
+> 「windows-test 在真机上装成功」都是真的,而这条工具链同时是坏的。
+> **一个比"能用"弱的"装好了"判据,报的不是安装成功,是解压成功。**
+
+---
+
+### 5.1 第二条:装好的 toolset 在 `toolchain list` 里根本不出现
+
+拿**已发布的** 2026.8.16.1 二进制对着一个 payload 形状的 fixture 跑,发现
+装好的 msvc toolset 一行都不显示。
+
+枚举问的是 `toolchain_frontend(root / "bin", pkg)`,而 cl.exe 在
+`VC/Tools/MSVC/<ver>/bin/Host<h>/<arch>/`,深四层。拿不到 → `continue` → 消失。
+
+**这个布局有三个地方需要知道:安装知道、构建知道、列表不知道。**
+第三份内联副本就是这么来的。现在三者共用 `payload_frontend()`(#436)。
+
+值得记的是它**怎么被发现的**:不是测试。为此写的单测钉的是
+`identify_xim_payload("msvc")` —— 那一条本来就是对的。
+**「身份映射」与「枚举」是两个问题,而只有一个被问了。**
+
+> e2e 239 的 1b 步会抓到它 —— 但要等包发布之后 Windows e2e 再跑一轮。
+> 测试写在了对的粒度上,只是还没轮到它跑。**「有测试」和「测过了」不是一回事。**
+
+---
+
+## 6. 已知不被覆盖的部分(不要当成已完成)
+
+1. **没有任何 CI 用这条 toolset 链接过东西**。这正是上面那条缺陷能一路走到
+   发布的原因,而补上 `installed()` 的检查只是让「文件在不在」变严,
+   **不等于「链接得通」**。真正能覆盖它的是 xrgui 的 V3(用
+   `msvc@<toolset>` 构建一个真实项目),那一步还没跑。
+2. **`msvc@14.52.36629` 的安装路径没有在 CI 上跑过**。index 的 `windows-test`
    装的是 `latest`(14.44)。两者只差 payload URL 与目录版本,后者已逐个从真实
-   payload 读出核对,但**没有实际装过一次**。xrgui 的 V3 会第一次覆盖它。
+   payload 读出核对,但**没有实际装过一次**。
 2. **镜像回退没有被真正触发过**。两个前提单独验过了 —— `curl -f` 遇 404 退 22
    且不留文件(所以 `pcall` 会接住、`os.isfile` 为假),官方地址仍然服务同样的
    字节 —— 但「镜像挂掉时自动走官方」这条完整路径没有被执行过。
