@@ -153,6 +153,31 @@ LD_TRACE_LOADED_OBJECTS=1 '<binary>'
 mcpp #448:**19 项全绿**(Linux / macOS ARM64 / Windows × build+unit+e2e+toolchains、
 hermetic 容器、四条 cross-build、xlings 集成)。
 
+### 2.5 生态真实验证:**发布出去的那个二进制**,在沙盒里
+
+不是本地构建产物,而是 `xlings install mcpp@2026.8.17.1` 从索引装下来的那一个;
+不是这台开发机,而是 `xlings subos new` 出来的**全新 SubOS**,并且每一条都跑在
+`xlings subos use <name> --sandbox --cmd "…"` 里面。
+
+| 验证 | 结果 |
+|---|---|
+| 从索引安装 | ✓ `xim:mcpp@2026.8.17.1` |
+| `new` → `build` → `run` | ✓ `Hello from ecoproj!`(import std + C++23) |
+| `mcpp test` | ✓ 1 passed |
+| `mcpp pack`(ELF,未改动的路径) | ✓ `ecoproj-0.1.0-x86_64-linux-gnu.tar.gz` |
+| **`mcpp pack --target x86_64-windows-gnu`** | ✓ 在这个 **Linux 沙盒**里产出 `ecowin-0.1.0-x86_64-w64-mingw32.zip`,`zipfile.testzip()` 通过 |
+| `mcpp self doctor` | ✓ **all checks passed** |
+| `gcc@system` | ✓ 被拒绝,消息里同时给出 pin 与 PATH 逃生口两种写法 |
+| 裸 `system` 逃生口 | ✓ 仍解析到宿主 gcc 13.3.0,然后因为**不相干且正确**的理由失败(那个 gcc 没有 `import std`)—— 这正是"没有被破坏"的样子 |
+
+**发布链路**同样逐段核过:四平台产物齐全 → 镜像 `all assets mirrored + verified on
+2 host(s) in 488s` → 用**真实 GET**(不是 `curl -I`,它在 gitcode 上会骗人)复核四个
+归档与上游**逐字节同尺寸** → 索引 PR openxlings/xim-pkgindex#643 合入 →
+`xlings update` 后可安装。
+
+> 上一轮预留的「本地 `gtc` 补 gitcode 资源」这次**没有用到**:镜像那一条腿自己过了。
+> 授权仍在,只是没有需要修的东西。
+
 ---
 
 ## 3. 路上撞到的三件事(都不在计划里)
