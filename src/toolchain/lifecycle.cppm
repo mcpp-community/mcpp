@@ -186,8 +186,13 @@ int msvc_wrong_host() {
     return 1;
 }
 
-void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst) {
-    mcpp::ui::status("Detected", std::format(
+// `label` names the ORIGIN, because the two are not the same event.
+// "Detected" is a claim about probing the machine, and saying it after
+// unpacking a payload the caller named would describe the wrong thing —
+// quietly, and in exactly the direction this whole change is about.
+void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst,
+                         std::string_view label = "Detected") {
+    mcpp::ui::status(label, std::format(
         "msvc {}{} (VC tools {})",
         inst.display_version(),
         inst.vsProduct.empty() ? "" : std::format(" (VS {})", inst.vsProduct),
@@ -195,6 +200,26 @@ void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst) {
     std::println("           cl: {}", inst.clPath.string());
     std::println("           import std: {}",
         inst.hasStdModules ? "available (std.ixx)" : "not available");
+}
+
+// The Windows SDK is the OTHER half of a usable MSVC, and a payload that
+// unpacked a compiler without it is a half-installed state: cl.exe is right
+// there, so everything reports success, and the build dies inside the ucrt
+// headers much later. `has_usable_msvc()` exists for exactly this reason;
+// this is the same judgement applied to the managed origin, where the SDK
+// arrives as a package dependency and can therefore fail on its own.
+void msvc_warn_if_sdk_missing(const mcpp::toolchain::msvc::MsvcInstallation& inst) {
+    auto roots = mcpp::toolchain::msvc::sibling_sdk_roots(inst.clPath);
+    if (auto sdk = mcpp::toolchain::msvc::find_windows_sdk(roots)) {
+        std::println("           windows sdk: {} ({})",
+                     sdk->version, sdk->root.string());
+        return;
+    }
+    mcpp::ui::warning(
+        "the toolset installed, but no Windows SDK was found next to it.\n"
+        "         cl.exe cannot compile anything without the ucrt/um headers.\n"
+        "         The toolset declares `xim:windows-sdk` as a dependency, so this\n"
+        "         means that dependency did not install — check `xlings list`.");
 }
 
 EffectiveDefault effective_default_toolchain(const mcpp::config::GlobalConfig& cfg) {
@@ -599,7 +624,8 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
                     payload->root.string(), pkg.ximVersion));
                 return 1;
             }
-            msvc_print_detected(*inst);
+            msvc_print_detected(*inst, "Installed");
+            msvc_warn_if_sdk_missing(*inst);
             mcpp::ui::status("Installed",
                 std::format("{} → {}", pkg.display_spec(), inst->clPath.string()));
             if (cfg.defaultToolchain.empty()) {
