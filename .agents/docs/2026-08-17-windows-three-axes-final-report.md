@@ -270,7 +270,8 @@ if (b.substr(*lfanew, 4) == "PE\0\0")   // *lfanew 直接读自文件
 | 3 | `[pack] include` / `exclude` 被解析、存进 Plan,**从未被消费** | 早于本轮;文档把它们当作已有功能。属于 pack 的另一条轴,不在三条轴的范围内 |
 | 4 | Windows CI 仍用 `7z a -tzip` 手工打包 release | 那是一个自带 `registry/` 的定制布局,不是 pack 的输出。现在 `mcpp pack` 能产 zip 了,迁移是可能的,但那是发布流程的改动 |
 | 5 | **`mcpp new` + `mcpp add compat.gtest@1.15.2` 开箱即坏** —— 脚手架的 `test_smoke.cpp` 自带 `main()`,而 gtest 依赖会把 `gtest_main.o` 链进每个测试目标,`multiple definition of 'main'`。生态验证时撞到的 | **先于本轮**,已用 2026.8.16.3 在沙盒里复现过同样的失败,所以不是本次回归。它属于依赖/测试目标的链接策略,和这三条轴无关;放在这里是因为它是一条**开箱即坏**的路径,值得单独一轮 |
-| 6 | Windows 宿主 → Linux target 时 `dist::Format` 仍解析为 PE | 早于本轮。本轮的 triple 判据**只新增答案**(说不出 OS 的 triple 走原推导),刻意没有动这一条:它会改变一个正在通过的 CI job 的旗标,而对这三条轴没有好处 |
+| 6 | **release 的 `SHA256SUMS` 只覆盖 4 个平台里的 1 个** —— 里面只有 `linux-x86_64` 的两行(带版本名 + 无版本别名),aarch64 / macOS / Windows 都不在。核对发布产物时撞到的 | **先于本轮**:v2026.8.16.3 与 v2026.8.15.1 同样如此。机制很清楚 —— `build-release`(linux x86_64)最先跑并写下这个文件,另外三个平台各自上传自己的 `.sha256` 边车,但没有人往 `SHA256SUMS` 里追加。**能校验**(边车在),只是那个名字承诺了它没做到的事。属于发布流水线,不属于这三条轴 |
+| 7 | Windows 宿主 → Linux target 时 `dist::Format` 仍解析为 PE | 早于本轮。本轮的 triple 判据**只新增答案**(说不出 OS 的 triple 走原推导),刻意没有动这一条:它会改变一个正在通过的 CI job 的旗标,而对这三条轴没有好处 |
 
 ---
 
