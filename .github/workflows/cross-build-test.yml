@@ -308,6 +308,18 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/198_windows_resources_cross.sh
 
+      # Packaging a Windows program FROM LINUX — and this job is the only
+      # place that can happen, for the same reason as the two above.
+      #
+      # Running it on a Windows runner would prove nothing: the point of
+      # reading the import table instead of executing the artifact
+      # (mcpp.pack.binfmt) is precisely that the packaging host need not be
+      # the target. A same-OS pack cannot tell the two implementations apart.
+      - name: "e2e: pack a PE from Linux (zip + DLL closure)"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash tests/e2e/240_pack_pe_zip_cross.sh
+
   # ── windows → linux ───────────────────────────────────────────────────────
   # The mirror of mingw-cross-wine. Two jobs because a Windows runner cannot
   # execute the ELF it produces; the artefact is handed to a Linux job and

@@ -11,6 +11,8 @@ export module mcpp.pack.pipeline;
 import std;
 import mcpp.build.prepare;
 import mcpp.build.backend;
+import mcpp.build.distribution;
+import mcpp.build.flags;
 import mcpp.build.ninja;
 import mcpp.build.plan;
 import mcpp.config;
@@ -100,6 +102,29 @@ export int build_and_pack(Options opts, bool modeFromUser) {
         mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
+    // ─── What the build promised, and where its runtime lives ────────
+    //
+    // The C++ runtime contract has been resolved since the flags were
+    // computed; `pack` simply had no way to see it (design §4.3), so on PE
+    // nothing enforced it and on ELF the `ldd` closure agreed with it by
+    // luck. Reading the RESOLVED value rather than the manifest string is the
+    // point: a request that was downgraded (a per-role self-contained on
+    // /MD, say) must not make the package behave as though it had been
+    // honoured.
+    {
+        const auto flags = mcpp::build::compute_flags(ctx->plan);
+        opts.cxxRuntime = flags.contractByRole[
+            static_cast<std::size_t>(mcpp::build::dist::Role::Distributable)];
+        opts.toolchainRuntimeDirs = ctx->plan.toolchain.linkRuntimeDirs;
+        // Where a third-party dependency's shared library may be found. Both
+        // channels, because they answer for different things: the runtime
+        // library dirs are what `mcpp run` puts on the loader's path, and the
+        // link intent's search dirs are what a dependency package declared.
+        opts.depSearchDirs = ctx->plan.runtimeLibraryDirs;
+        for (auto const& d : ctx->plan.linkIntent.runtimeSearchDirs)
+            opts.depSearchDirs.push_back(d);
+    }
+
     // ─── Build the plan + run ────────────────────────────────────────
     auto plan = mcpp::pack::make_plan(ctx->manifest, *cfg, opts,
         mainBinary, ctx->projectRoot, ctx->tc.targetTriple,
@@ -121,7 +146,7 @@ export int build_and_pack(Options opts, bool modeFromUser) {
 
     auto pathCtx = mcpp::fetcher::make_path_ctx(&*cfg, ctx->projectRoot);
     auto outPath = (opts.format == mcpp::pack::Format::Tar)
-        ? plan->tarballPath : plan->stagingRoot;
+        ? plan->archivePath : plan->stagingRoot;
     mcpp::ui::status("Packed", mcpp::ui::shorten_path(outPath, pathCtx));
     return 0;
 }

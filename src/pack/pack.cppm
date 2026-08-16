@@ -1,4 +1,19 @@
-// mcpp.pack — bundle a built binary into a self-contained release tarball.
+// mcpp.pack — bundle a built binary into a self-contained release archive.
+//
+// TWO OUTPUT FAMILIES, ONE PIPELINE. An ELF/Mach-O artifact becomes a
+// `.tar.gz` whose libraries live in `lib/` and are reached through a rewritten
+// RUNPATH; a PE artifact becomes a `.zip` whose DLLs sit BESIDE the .exe,
+// because that is where the Win32 loader looks and PE has no rpath to rewrite.
+// Same contract, same modes, different mechanism — see
+// .agents/docs/2026-08-16-windows-toolchain-three-axes-design.md §4.
+//
+// The PE path runs on ANY host. That is not a portability nicety: the ELF
+// path derives its closure by running the artifact under
+// LD_TRACE_LOADED_OBJECTS, which is why it can cross neither an OS nor an
+// architecture, and the `#if defined(_WIN32)` refusal that used to sit at the
+// top of `run()` was that limitation surfacing rather than a missing branch.
+// mcpp.pack.binfmt reads the import table instead, so a Linux box packaging a
+// Windows build is simply what happens when nothing has to be executed.
 //
 // See docs/35-pack-design.md for the full design. Three modes:
 //   Static          full musl static, no PT_INTERP / RUNPATH
@@ -20,9 +35,12 @@ module;
 export module mcpp.pack;
 
 import std;
+import mcpp.build.distribution;
 import mcpp.build.loader_contract;
 import mcpp.config;
+import mcpp.pack.binfmt;
 import mcpp.pack.host_requirements;
+import mcpp.pack.zip;
 import mcpp.platform;
 import mcpp.platform.xlings;
 import mcpp.manifest;
@@ -38,6 +56,27 @@ struct Options {
     Format                          format       = Format::Tar;
     std::filesystem::path           output;        // empty = derive from manifest
     std::string                     targetTriple;  // empty = host
+    // Where a dependency NAME may be resolved to a file.
+    //
+    // Only used where the closure is read STATICALLY (PE): on ELF the loader
+    // hands back resolved paths and no search is performed here. Deliberately
+    // never the target's own system directories — a DLL that resolves only
+    // there is the target's to provide, and copying one is a broken program
+    // rather than a heavier one.
+    std::vector<std::filesystem::path> depSearchDirs;
+    // The TOOLCHAIN's own runtime directory: libstdc++'s for gcc, the MSVC
+    // toolset's `VC\Redist\MSVC\<v>\<arch>\Microsoft.VC*.CRT\` for cl.
+    // Searched ONLY under the toolchain-coupled contract — see make_plan.
+    std::vector<std::filesystem::path> toolchainRuntimeDirs;
+    // What the artifact promises about the machine that runs it, as resolved
+    // by mcpp.build.distribution for the distributable role.
+    //
+    // `pack` used to be unable to see this at all (design §4.3): the contract
+    // reached compile and link FLAGS and stopped there, so the step that
+    // decides which files actually travel had no idea what had been promised.
+    // On ELF the `ldd` closure happened to agree with it; on PE nothing did.
+    mcpp::build::dist::Contract     cxxRuntime =
+        mcpp::build::dist::Contract::SelfContained;
 };
 
 // Resolved plan — all paths absolute, all decisions baked in.
@@ -47,7 +86,7 @@ struct Plan {
     std::filesystem::path                builtBinary;       // mcpp build artefact
     std::string                          binaryName;        // basename(builtBinary)
     std::filesystem::path                stagingRoot;       // target/dist/<root-dir>/
-    std::filesystem::path                tarballPath;       // staging_root parent / <name>.tar.gz
+    std::filesystem::path                archivePath;       // …/<name>.tar.gz | .zip
     std::string                          packageName;
     std::string                          packageVersion;
     std::string                          triple;            // e.g. "x86_64-linux-musl"
@@ -59,6 +98,12 @@ struct Plan {
     // What the TARGET machine must provide. Derived once, in make_plan, from
     // the same predicate `mcpp publish` uses — see mcpp.pack.host_requirements.
     std::vector<HostRequirement>         hostRequirements;
+    // Is the artifact a PE? Read from the FILE, not inferred from the triple —
+    // the file is the thing being packaged, and a triple is a request.
+    bool                                 targetIsPe = false;
+    // The search set the PE closure resolves names against, after the
+    // contract has had its say (see make_plan).
+    std::vector<std::filesystem::path>   searchDirs;
 };
 
 struct Error { std::string message; };
@@ -138,29 +183,35 @@ namespace detail {
 // errors. Naming the namespace gives every helper module linkage and
 // sidesteps the rule entirely.
 
-// Default tarball name: `<name>-<version>-<triple>[-<mode>].tar.gz`.
+// Default archive name: `<name>-<version>-<triple>[-<mode>].<ext>`.
 // Mode suffix only for non-default modes so adjacent builds of different
 // modes don't stomp each other in target/dist/.
-std::string default_tarball_name(std::string_view name, std::string_view version,
-                                 std::string_view triple, Mode mode)
+//
+// The EXTENSION follows the artifact, not the host: a Windows package is a
+// `.zip` whoever built it, and a `.tar.gz` full of DLLs is a package most
+// Windows users cannot open without installing something first.
+std::string default_archive_name(std::string_view name, std::string_view version,
+                                 std::string_view triple, Mode mode, bool pe)
 {
+    std::string_view ext = pe ? ".zip" : ".tar.gz";
     auto sfx = mode_tarball_suffix(mode);
     if (sfx.empty())
-        return std::format("{}-{}-{}.tar.gz", name, version, triple);
-    return std::format("{}-{}-{}-{}.tar.gz", name, version, triple, sfx);
+        return std::format("{}-{}-{}{}", name, version, triple, ext);
+    return std::format("{}-{}-{}-{}{}", name, version, triple, sfx, ext);
 }
 
-// Strip the `.tar.gz` (or `.tgz`) suffix from a tarball filename to get
-// the canonical wrapper-directory name. The result names both the disk
-// staging dir and the top-level entry inside the archive — keeping the
-// two in lock-step makes click-to-extract behave the way users expect.
-std::string wrapper_dirname_from_tarball(const std::filesystem::path& tarball) {
-    auto name = tarball.filename().string();
-    for (auto suffix : {std::string_view{".tar.gz"}, std::string_view{".tgz"}}) {
+// Strip the archive suffix to get the canonical wrapper-directory name. The
+// result names both the disk staging dir and the top-level entry inside the
+// archive — keeping the two in lock-step makes click-to-extract behave the
+// way users expect (and on Windows, Explorer's "extract here" too).
+std::string wrapper_dirname_from_archive(const std::filesystem::path& archive) {
+    auto name = archive.filename().string();
+    for (auto suffix : {std::string_view{".tar.gz"}, std::string_view{".tgz"},
+                        std::string_view{".zip"}}) {
         if (name.ends_with(suffix)) return name.substr(0, name.size() - suffix.size());
     }
     // No recognised compression suffix — fall back to the bare stem.
-    return tarball.stem().string();
+    return archive.stem().string();
 }
 
 } // namespace detail
@@ -228,23 +279,75 @@ make_plan(const mcpp::manifest::Manifest& manifest,
             mode_cli_name(opts.mode), names)});
     }
 
+    // WHAT THE FILE IS, not what the triple asked for. `--target` states an
+    // intention; the artifact on disk is the thing being packaged, and when
+    // the two disagree it is the file that has to be believed. (They can
+    // disagree for real: `[pack] default_mode = "static"` re-prepares the
+    // build with a different target after the first one has already run.)
+    p.targetIsPe =
+        mcpp::pack::binfmt::identify(builtBinary).format
+            == mcpp::pack::binfmt::Format::Pe;
+
+    // THE CONTRACT REACHES PACKAGING. Until now it stopped at the compile and
+    // link flags, so the step that decides which files travel could not see
+    // what the artifact had promised (design §4.3).
+    //
+    //   toolchain-coupled  the toolchain's own runtime travels WITH the
+    //                      artifact — so its directory joins the search set.
+    //   host-coupled       the target provides it — so that directory stays
+    //                      OUT, and a vcruntime140.dll sitting in the
+    //                      toolset is not silently swept into the package.
+    //   self-contained     there is nothing to carry.
+    //
+    // A mode that bundles NOTHING cannot honour a contract that requires
+    // files to travel. `pack` already refuses the mirror-image contradiction
+    // (a bundle carrying its own libc cannot consume a host capability), and
+    // this grows from the same root: a contract with no executor is a promise
+    // the build prints and the package quietly drops.
+    using Contract = mcpp::build::dist::Contract;
+    const bool modeBundlesNothing =
+        opts.mode == Mode::None || opts.mode == Mode::Static;
+    if (opts.cxxRuntime == Contract::ToolchainCoupled && modeBundlesNothing) {
+        return std::unexpected(Error{std::format(
+            "cxx_runtime = \"toolchain-coupled\" and --mode {} contradict each "
+            "other.\n"
+            "  The contract says the toolchain's C++ runtime travels WITH this "
+            "artifact; --mode {}\n"
+            "  bundles nothing, so it would ship a program that cannot start "
+            "anywhere the toolchain\n"
+            "  is not already installed.\n"
+            "  use: --mode vendored (carry it), or cxx_runtime = "
+            "\"host-coupled\" / \"self-contained\"\n"
+            "       in [build] if the target is expected to provide the runtime "
+            "itself.",
+            mode_cli_name(opts.mode), mode_cli_name(opts.mode))});
+    }
+
+    // The artifact's own directory is always searched: whatever the build
+    // staged beside it (the toolchain-coupled CRT, a dependency's DLL) is by
+    // definition part of what it runs with.
+    p.searchDirs.push_back(builtBinary.parent_path());
+    for (auto const& d : opts.depSearchDirs) p.searchDirs.push_back(d);
+    if (opts.cxxRuntime == Contract::ToolchainCoupled)
+        for (auto const& d : opts.toolchainRuntimeDirs) p.searchDirs.push_back(d);
+
     auto distDir = projectRoot / "target" / "dist";
     if (opts.output.empty()) {
-        p.tarballPath = distDir / detail::default_tarball_name(
-            p.packageName, p.packageVersion, p.triple, opts.mode);
+        p.archivePath = distDir / detail::default_archive_name(
+            p.packageName, p.packageVersion, p.triple, opts.mode, p.targetIsPe);
     } else if (!opts.output.has_parent_path()) {
         // `-o name.tar.gz` (bare filename) → place in target/dist/.
         // `-o ./name.tar.gz` or `-o sub/name.tar.gz` → use as-is.
         // `-o /abs/path.tar.gz` → use as-is.
-        p.tarballPath = distDir / opts.output;
+        p.archivePath = distDir / opts.output;
     } else {
-        p.tarballPath = opts.output;
+        p.archivePath = opts.output;
     }
-    // Derive the staging dir from the tarball stem so the in-archive
+    // Derive the staging dir from the archive stem so the in-archive
     // wrapper directory and the on-disk staging dir share one name —
     // matches what GUI extractors create on click and what `tar -xzf`
     // produces on the CLI.
-    p.stagingRoot = distDir / detail::wrapper_dirname_from_tarball(p.tarballPath);
+    p.stagingRoot = distDir / detail::wrapper_dirname_from_archive(p.archivePath);
 
     p.includeGlobs    = manifest.packConfig.include;
     p.excludeGlobs    = manifest.packConfig.exclude;
@@ -608,6 +711,63 @@ void copy_if_exists(const std::filesystem::path& src,
         std::filesystem::copy_options::overwrite_existing, ec);
 }
 
+// ─── PE: the closure, read rather than executed ─────────────────────────
+//
+// BFS over the import tables, resolving each name against `searchDirs`. A
+// name that resolves NOWHERE is deliberately not an error: on a Linux host
+// `kernel32.dll` has no file to find, and on a Windows host it would resolve
+// only in the system directory, which is not searched. Both are the same
+// answer — the target provides it — and both are correct.
+std::vector<ResolvedDep>
+pe_closure(const std::filesystem::path& binary,
+           std::span<const std::filesystem::path> searchDirs,
+           const std::vector<std::string>& forceBundle)
+{
+    namespace bf = mcpp::pack::binfmt;
+    std::vector<ResolvedDep> out;
+    std::set<std::string> seen;               // lowercased: PE names are not
+    std::vector<std::filesystem::path> queue{binary};
+
+    auto lower = [](std::string_view s) {
+        std::string l(s);
+        std::ranges::transform(l, l.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+        return l;
+    };
+
+    while (!queue.empty()) {
+        auto current = queue.back();
+        queue.pop_back();
+        auto names = bf::needed_names(current);
+        if (!names) continue;                 // unreadable: nothing to add
+        for (auto const& name : *names) {
+            auto key = lower(name);
+            if (!seen.insert(key).second) continue;
+            // `[pack] force_bundle` is the escape hatch, and it has to reach
+            // the SYSTEM list too — on ELF it always did. Shipping a Windows
+            // component is normally a broken program rather than a heavier
+            // one, so this is a decision a human has to make explicitly; when
+            // they have, mcpp does not know better than them.
+            if (bf::is_system_lib(bf::Format::Pe, name)
+                && !soname_matches(name, forceBundle))
+                continue;
+            std::error_code ec;
+            for (auto const& dir : searchDirs) {
+                auto cand = dir / name;
+                if (!std::filesystem::is_regular_file(cand, ec)) continue;
+                out.push_back({name, cand});
+                // Transitive: a bundled DLL brings its own imports, and a
+                // closure that stops at depth one ships a package that starts
+                // failing one link further in.
+                queue.push_back(cand);
+                break;
+            }
+        }
+    }
+    std::ranges::sort(out, {}, &ResolvedDep::soname);
+    return out;
+}
+
 std::expected<void, Error>
 make_tarball(const std::filesystem::path& stagingRoot,
              const std::filesystem::path& tarballPath)
@@ -631,30 +791,121 @@ make_tarball(const std::filesystem::path& stagingRoot,
 
 } // namespace detail
 
+namespace detail {
+
+// The PE half of `run`. Flat layout, deliberately: the Win32 loader resolves
+// a DLL from the directory of the executable, so `bin/` + `lib/` would need a
+// mechanism PE does not have. Extract-and-double-click is also what a Windows
+// user expects, and it is what the earlier design already specified
+// (.agents/docs/2026-05-19-pack-windows-design.md).
+//
+// No patchelf step and no wrapper script: "put the DLLs next to the exe" IS
+// the relocation rule on this format, which is why the row for it in the
+// design's layering table reads "no operation".
+std::expected<void, Error>
+run_pe(const Plan& plan)
+{
+    std::error_code ec;
+    std::filesystem::remove_all(plan.stagingRoot, ec);
+    std::filesystem::create_directories(plan.stagingRoot, ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
+
+    auto stagedExe = plan.stagingRoot / plan.binaryName;
+    std::filesystem::copy_file(plan.builtBinary, stagedExe,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "copy binary failed: {}", ec.message())});
+
+    copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
+    copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
+    if (!plan.hostRequirements.empty()) {
+        std::ofstream out(plan.stagingRoot / std::filesystem::path(kFileName));
+        if (!out) return std::unexpected(Error{std::format(
+            "cannot write {} into the bundle", kFileName)});
+        out << render(plan.hostRequirements);
+    }
+
+    std::vector<ResolvedDep> deps;
+    if (plan.opts.mode != Mode::None && plan.opts.mode != Mode::Static) {
+        // `vendored` and `self-contained` collect the same set here, and that
+        // is a property of the PLATFORM rather than a simplification.
+        // `self-contained` on ELF means "ship the loader too"; on PE there is
+        // no loader to ship and kernel32.dll and friends may not be
+        // redistributed — a process that loaded a private copy of one would
+        // have two of something that must be unique. So the ceiling on
+        // "everything" is the same for both modes: every dependency mcpp is
+        // ALLOWED to carry.
+        deps = pe_closure(stagedExe, plan.searchDirs, plan.forceBundleLibs);
+        for (auto const& d : deps) {
+            if (soname_matches(d.soname, plan.alsoSkipLibs)
+                && !soname_matches(d.soname, plan.forceBundleLibs))
+                continue;
+            auto dst = plan.stagingRoot / d.soname;
+            // The build may already have staged it beside the artifact, in
+            // which case source and destination are the same file.
+            std::error_code cec;
+            if (std::filesystem::equivalent(d.path, dst, cec)) continue;
+            std::filesystem::copy_file(d.path, dst,
+                std::filesystem::copy_options::overwrite_existing, cec);
+            if (cec) return std::unexpected(Error{std::format(
+                "failed to copy {} → {}: {}",
+                d.path.string(), dst.string(), cec.message())});
+        }
+    }
+
+    if (plan.opts.format != Format::Tar) return {};
+
+    std::vector<mcpp::pack::zip::Entry> entries;
+    const auto wrapper = plan.stagingRoot.filename().string();
+    for (auto const& e :
+         std::filesystem::recursive_directory_iterator(plan.stagingRoot, ec)) {
+        if (!e.is_regular_file(ec)) continue;
+        auto rel = std::filesystem::relative(e.path(), plan.stagingRoot, ec);
+        if (ec) continue;
+        entries.push_back({
+            wrapper + "/" + rel.generic_string(),
+            e.path(),
+            e.path().filename() == plan.builtBinary.filename(),
+        });
+    }
+    // Deterministic order: a directory iteration order that leaks into an
+    // archive is how two identical builds get two different checksums.
+    std::ranges::sort(entries, {}, &mcpp::pack::zip::Entry::name);
+    if (auto r = mcpp::pack::zip::write(plan.archivePath, entries); !r)
+        return std::unexpected(Error{r.error()});
+    return {};
+}
+
+} // namespace detail
+
 std::expected<void, Error>
 run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
 {
+    // A PE package is produced the same way on every host, because nothing in
+    // that path executes the artifact. This is the branch the `#if
+    // defined(_WIN32)` refusal used to occupy — and it was never really about
+    // the host: `LD_TRACE_LOADED_OBJECTS` cannot trace a PE from Linux either.
+    if (plan.targetIsPe) return detail::run_pe(plan);
+
 #if defined(_WIN32)
-    // `mcpp pack` is not yet supported on Windows.
-    //
-    // The current implementation relies on POSIX-only tools:
-    //   - LD_TRACE_LOADED_OBJECTS=1  (ELF dynamic linker trick; no equivalent
-    //                                 on Windows PE/COFF)
-    //   - ldd / patchelf             (Linux ELF tools; not available on Windows)
-    //   - tar -czf                   (GNU tar; not universally present on Windows)
-    //
-    // For CI-produced Windows zip packages, use the ci-windows.yml workflow
-    // which zips the MSVC/Clang build output directly.
-    //
-    // Windows PE packaging (DLL collection + zip) is planned.
-    // See .agents/docs/2026-05-19-pack-windows-design.md for the design.
-    (void)plan;
+    // A NON-PE artifact on a Windows host: a cross build to Linux or macOS.
+    // The closure below asks the dynamic linker by running the binary, which
+    // this machine cannot do — so say that, rather than reporting a platform
+    // limitation that no longer exists for the case a Windows user is
+    // actually likely to hit.
     (void)cfg;
-    return std::unexpected(Error{
-        "error: `mcpp pack` is not yet supported on Windows.\n"
-        "       Use the CI workflow (ci-windows.yml) to produce Windows zip packages.\n"
-        "       Windows PE packaging (DLL collection + zip) is planned."
-    });
+    return std::unexpected(Error{std::format(
+        "cannot package a {} artifact from a Windows host.\n"
+        "       The dependency closure for that format is resolved by running "
+        "the artifact under\n"
+        "       the target's own dynamic linker, which this machine has no way "
+        "to do. Package it\n"
+        "       on the target OS, or build for Windows (`--target "
+        "x86_64-pc-windows-msvc`), which\n"
+        "       needs no such step.",
+        std::string(mcpp::pack::binfmt::format_name(
+            mcpp::pack::binfmt::identify(plan.builtBinary).format)))});
 #else
     using namespace detail;
     std::error_code ec;
@@ -829,7 +1080,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
 
     // 5. Output.
     if (plan.opts.format == Format::Tar) {
-        if (auto r = make_tarball(plan.stagingRoot, plan.tarballPath); !r)
+        if (auto r = make_tarball(plan.stagingRoot, plan.archivePath); !r)
             return r;
     }
     return {};

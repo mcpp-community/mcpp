@@ -236,6 +236,72 @@ own resolution, say — use `--mode vendored` instead. It repoints `PT_INTERP`
 at the host loader, at the cost of requiring the host's glibc to be at least
 as new as the one the artifact was built against.
 
+### Windows (PE) — a `.zip`, and the DLLs sit beside the `.exe`
+
+A Windows target produces a **`.zip`**, not a `.tar.gz`, and the layout is
+flat:
+
+```
+target/dist/myapp-0.1.0-x86_64-pc-windows-msvc.zip
+└── myapp-0.1.0-x86_64-pc-windows-msvc/
+    ├── myapp.exe
+    ├── vcruntime140.dll        ← only under cxx_runtime = "toolchain-coupled"
+    ├── mydep.dll               ← third-party dependencies
+    ├── README.md
+    └── LICENSE
+```
+
+There is no `bin/` + `lib/` split and no entry-point wrapper, and neither is a
+style choice. The Win32 loader resolves a DLL from **the directory of the
+executable**; PE has no `RUNPATH` to point anywhere else, so "next to the
+`.exe`" *is* the mechanism that `$ORIGIN/../lib` provides on ELF.
+
+**Windows' own DLLs are never bundled** — `kernel32.dll`, `ntdll.dll`,
+`ucrtbase.dll`, the `api-ms-win-*` API sets. Shipping a private copy of an OS
+component is a broken program rather than a heavier one (the process ends up
+with two of something that must be unique), and Microsoft's redistribution
+terms say the same thing from the other side. `[pack.bundle-project]
+force_bundle` still overrides this, as it does the ELF skip list.
+
+`vcruntime140.dll` and `msvcp140.dll` are **not** Windows' own: they belong to
+the MSVC toolset, exactly as `libstdc++.so` belongs to gcc. Whether they
+travel is decided by `cxx_runtime` (see `docs/05-mcpp-toml.md`), not by this
+list — and `mcpp pack` refuses a combination that cannot deliver what the
+contract promised:
+
+```
+$ mcpp pack --mode system          # with cxx_runtime = "toolchain-coupled"
+error: cxx_runtime = "toolchain-coupled" and --mode system contradict each other.
+```
+
+#### Packing a Windows program from Linux or macOS
+
+This works, and it is not a special mode — just build for a Windows target and
+pack:
+
+```bash
+mcpp pack --target x86_64-windows-gnu     # from a Linux host
+```
+
+`mcpp pack` used to refuse Windows outright. The reason was not the archiver:
+the ELF dependency closure is obtained by **running the artifact** under
+`LD_TRACE_LOADED_OBJECTS`, which cannot cross an OS *or* an architecture. A PE
+closure is read out of the file's import table instead, so nothing has to be
+executed and the packaging host is free. The archive is written by mcpp itself
+for the same reason — there is no zip tool present on every host.
+
+Two consequences worth knowing:
+
+- Entries are **stored, not deflated**, so a Windows package is roughly the
+  size of its contents. Compression is a size optimization, not a correctness
+  one, and it is not implemented yet.
+- The archive is **deterministic**: no timestamps are read, so two packs of
+  the same tree are byte-identical and a published checksum means something.
+
+The reverse direction — packing a Linux or macOS artifact *from* Windows —
+still does not work, and for the original reason: that closure is resolved by
+the target's own dynamic linker, which a Windows host has no way to run.
+
 ## Configuration
 
 Packaging behavior is configured via the `[pack]` section in `mcpp.toml`. The

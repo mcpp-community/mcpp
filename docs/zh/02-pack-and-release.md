@@ -172,6 +172,65 @@ if (!base) {
 它把 `PT_INTERP` 重指到宿主 loader,`/proc/self/exe` 正常,代价是要求宿主
 glibc 不低于构建时所用的那份。
 
+### Windows(PE)—— 产物是 `.zip`,DLL 就放在 `.exe` 旁边
+
+Windows 目标产出的是 **`.zip`** 而不是 `.tar.gz`,并且是扁平布局:
+
+```
+target/dist/myapp-0.1.0-x86_64-pc-windows-msvc.zip
+└── myapp-0.1.0-x86_64-pc-windows-msvc/
+    ├── myapp.exe
+    ├── vcruntime140.dll        ← 仅在 cxx_runtime = "toolchain-coupled" 时
+    ├── mydep.dll               ← 第三方依赖
+    ├── README.md
+    └── LICENSE
+```
+
+没有 `bin/` + `lib/` 的分层,也没有入口 wrapper —— 这两点都不是风格选择。
+Win32 loader 解析 DLL 的第一顺位就是**可执行文件所在目录**,而 PE 没有
+`RUNPATH` 可以指向别处,所以"放在 `.exe` 旁边"**就是** ELF 上
+`$ORIGIN/../lib` 所提供的那个机制。
+
+**Windows 自己的 DLL 永远不会被打进包里** —— `kernel32.dll`、`ntdll.dll`、
+`ucrtbase.dll`、`api-ms-win-*` API set。带一份系统组件的私有拷贝不是"包变大
+了",而是**程序坏了**(进程里出现了两份本应唯一的东西),而 Microsoft 的再分发
+条款也从另一侧说了同一件事。`[pack.bundle-project] force_bundle` 仍然可以覆盖
+这条,和它覆盖 ELF 跳过表一样。
+
+`vcruntime140.dll` / `msvcp140.dll` **不是** Windows 自己的:它们属于 MSVC
+toolset,就像 `libstdc++.so` 属于 gcc。它们要不要跟着产物走,由 `cxx_runtime`
+决定(见 `docs/zh/05-mcpp-toml.md`),不由这张表决定 —— 而 `mcpp pack` 会拒绝
+那些无法兑现契约的组合:
+
+```
+$ mcpp pack --mode system          # 且 cxx_runtime = "toolchain-coupled"
+error: cxx_runtime = "toolchain-coupled" and --mode system contradict each other.
+```
+
+#### 在 Linux / macOS 上给 Windows 打包
+
+这是可以的,而且不是什么特殊模式 —— 指定 Windows 目标构建,然后打包即可:
+
+```bash
+mcpp pack --target x86_64-windows-gnu     # 在 Linux 宿主上
+```
+
+`mcpp pack` 以前直接拒绝 Windows。真正的原因不是打包工具:ELF 的依赖闭包是靠
+**把产物跑起来**(`LD_TRACE_LOADED_OBJECTS`)求出来的,所以它既跨不了 OS 也跨
+不了架构。PE 的闭包改为从文件的导入表里**读**出来,于是不需要执行任何东西,
+打包宿主也就自由了。压缩包本身也由 mcpp 自己写,理由相同 —— 没有哪个 zip 工具
+在每个宿主上都存在。
+
+有两点值得知道:
+
+- 条目是 **stored(不压缩)** 的,所以 Windows 包的体积约等于其内容之和。压缩
+  是体积优化而不是正确性问题,目前尚未实现。
+- 压缩包是**确定性**的:不读取任何时间戳,同一棵树打两次字节一致,公布的校验和
+  才有意义。
+
+反方向 —— 在 Windows 上给 Linux / macOS 产物打包 —— 仍然不支持,原因还是最初
+那个:那条闭包要由目标自己的动态链接器解析,而 Windows 宿主没有办法运行它。
+
 ## 配置项
 
 打包行为通过 `mcpp.toml` 中的 `[pack]` 节配置,常用字段如下:
