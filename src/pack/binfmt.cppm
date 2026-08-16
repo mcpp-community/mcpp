@@ -160,6 +160,19 @@ std::optional<std::uint64_t> le64(std::string_view b, std::size_t off) {
     return v;
 }
 
+// Do the bytes at `off` equal `lit`?
+//
+// NOT `b.substr(off, n) == lit`, and the difference is a crash.
+// `std::string_view::substr` THROWS `std::out_of_range` when `pos > size()`,
+// and `off` here comes from a field READ OUT OF THE FILE — a file starting
+// with "MZ" whose `e_lfanew` is garbage is ordinary malformed input, not a
+// reason to terminate. This module's contract is that it is total over
+// nonsense; one unchecked `substr` was enough to break that promise.
+bool has_at(std::string_view b, std::size_t off, std::string_view lit) {
+    if (off > b.size() || b.size() - off < lit.size()) return false;
+    return b.compare(off, lit.size(), lit) == 0;
+}
+
 // NUL-terminated string at `off`, bounded by the file end.
 std::optional<std::string> cstr(std::string_view b, std::size_t off) {
     if (off >= b.size()) return std::nullopt;
@@ -309,7 +322,7 @@ pe_needed(std::string_view b) {
     auto lfanew = le32(b, 0x3C);
     if (!lfanew) return std::unexpected("PE: no e_lfanew");
     const std::size_t nt = *lfanew;
-    if (b.substr(nt, 4) != std::string_view("PE\0\0", 4))
+    if (!has_at(b, nt, std::string_view("PE\0\0", 4)))
         return std::unexpected("PE: no PE\\0\\0 signature at e_lfanew");
 
     auto numSections = le16(b, nt + 6);
@@ -445,7 +458,7 @@ Ident identify(const std::filesystem::path& binary) {
         // Saying "PE" for a file that has none would send the caller into a
         // parser that cannot succeed.
         if (auto lfanew = detail::le32(b, 0x3C)) {
-            if (b.substr(*lfanew, 4) == std::string_view("PE\0\0", 4)) {
+            if (detail::has_at(b, *lfanew, std::string_view("PE\0\0", 4))) {
                 id.format = Format::Pe;
                 if (auto m = detail::le16(b, *lfanew + 4))
                     id.arch = detail::pe_arch(*m);

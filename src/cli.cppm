@@ -63,7 +63,7 @@ void print_usage() {
     std::println("  mcpp update [pkg]                    Re-resolve deps and rewrite mcpp.lock");
     std::println("  mcpp search <keyword>                Search packages in registries");
     std::println("  mcpp publish [--dry-run]             Publish package to default registry");
-    std::println("  mcpp pack [--mode <m>]               Build + bundle a tarball (m: system|vendored|self-contained|static)");
+    std::println("  mcpp pack [--mode <m>]               Build + bundle an archive (m: system|vendored|self-contained|static)");
     std::println("  mcpp emit xpkg [-V VER] [-o FILE]    Generate xpkg Lua entry");
     std::println("  mcpp xpkg parse <file.lua> [--json]  Validate an xpkg descriptor (resolver grammar)");
     std::println("");
@@ -399,13 +399,19 @@ int run(int argc, char** argv) {
             .option(cl::Option("allow-dirty").help("Allow uncommitted changes"))
             .action(wrap_rc(cmd_publish)))
         .subcommand(cl::App("pack")
-            .description("Build + bundle into a self-contained tarball")
+            // "archive", not "tarball": a Windows target produces a .zip, and
+            // the help said tarball while the code had already stopped
+            // agreeing. `--format tar` likewise selects "an archive rather
+            // than a plain directory" — WHICH archive follows the artifact,
+            // because a .tar.gz full of DLLs is a package most Windows users
+            // cannot open without installing something first.
+            .description("Build + bundle into a self-contained archive")
             .option(cl::Option("mode").takes_value()
                 .help("system | vendored (default) | self-contained | static"))
             .option(cl::Option("target").takes_value()
                 .help("Triple, e.g. x86_64-linux-musl"))
             .option(cl::Option("format").takes_value()
-                .help("tar (default) | dir"))
+                .help("tar (default; .zip for a Windows target) | dir"))
             .option(cl::Option("output").short_name('o').takes_value()
                 .help("Override output path"))
             .action(wrap_rc(cmd_pack)))

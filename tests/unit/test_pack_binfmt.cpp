@@ -324,6 +324,27 @@ TEST(PackBinfmt, ADosStubWithoutAPeSignatureIsNotAPe) {
     EXPECT_FALSE(bf::needed_names(f.path).has_value());
 }
 
+TEST(PackBinfmt, AGarbageELfanewIsRejectedAndDoesNotThrow) {
+    // An "MZ" file whose `e_lfanew` points past the end is ordinary malformed
+    // input: a truncated download, a DOS stub, a text file named `.exe`.
+    //
+    // This crashed. `std::string_view::substr` THROWS `std::out_of_range` when
+    // `pos > size()`, and the offset comes straight out of the file — so
+    // `identify()`, which is documented as never throwing, terminated the
+    // process instead of answering Unknown. Bounds-checked comparison now.
+    for (std::uint32_t lfanew : {0xFFFFFFFFu, 0x7FFFFFFFu, 0x10000u, 0x101u}) {
+        std::string b(0x100, '\0');
+        b[0] = 'M'; b[1] = 'Z';
+        put(b, 0x3C, lfanew, 4);
+        TempFile f{"mzjunk", b};
+        EXPECT_NO_THROW({
+            EXPECT_EQ(bf::identify(f.path).format, bf::Format::Unknown)
+                << "e_lfanew=" << lfanew;
+            EXPECT_FALSE(bf::needed_names(f.path).has_value());
+        }) << "e_lfanew=" << lfanew;
+    }
+}
+
 TEST(PackBinfmt, TruncatedInputIsRejectedRatherThanRead) {
     // Malformed input is ordinary: a half-downloaded file, a text file named
     // `.exe`. Every read is bounds-checked, so the parser is total over it.
