@@ -195,7 +195,7 @@ hermetic 容器、四条 cross-build、xlings 集成)。
 
 ---
 
-## 3. 路上撞到的三件事(都不在计划里)
+## 3. 路上撞到的四件事(都不在计划里)
 
 ### 3.1 clang 在**两个目标上同时**出问题
 
@@ -221,14 +221,35 @@ macOS 那一半后来被**拆分测试**定位到了:崩在 `ThePeFixtureItselfI
 可变字符串的 lambda)之后消失。夹具现在带一个 `MCPP_TEST_TRACE=1` 才开的分步 trace:
 如果它再来,一轮 CI 就能定位,而不是这次的四轮。
 
-### 3.2 一处文档自相矛盾
+### 3.2 自审出来的一个崩溃(在已合入、已全绿之后)
+
+合入之后重读 `binfmt.cppm`,发现 `identify()` —— 注释写着"never throws" ——
+在一种输入上会**终止进程**:
+
+```cpp
+if (b.substr(*lfanew, 4) == "PE\0\0")   // *lfanew 直接读自文件
+```
+
+`std::string_view::substr` 在 `pos > size()` 时抛 `std::out_of_range`。一个以
+"MZ" 开头、0x3C 处是垃圾的文件是**普通的畸形输入**(下载了一半、DOS stub、一个
+叫 `.exe` 的文本文件),而 `mcpp pack` 对**每一个**要打包的产物都调用它。
+
+不是推理出来的,是量出来的:`std::string_view{256 字节}.substr(0xFFFFFFFF, 4)`
+在 libc++ 下抛 `string_view::substr`。
+
+模块里其它每一处读取都走了带边界检查的访问器,只有这两处比较是例外 —— 一个自称
+"对垃圾输入是全函数"的模块,就是这样不再是的。已改为 `has_at()`,并补了回归测试。
+原来的截断测试为什么没抓到:它构造的 `e_lfanew` 只落在**正好等于**文件末尾的位置,
+那里 `substr` 是良定义的、返回空。
+
+### 3.3 一处文档自相矛盾
 
 `docs/03-toolchains.md` 的 MinGW 段说 `[build] linkage` 这个键不存在、会被静默忽略;
 两百行之后的 MSVC 段**恰好**把它当成选 `/MT` 的写法展示。是照着文档写了一遍、看着 mcpp
 打印 `unsupported key 'linkage' (ignored)` 才发现的 —— 而跟着这一页做的用户,得到的也是
 这个,只是没人告诉他为什么什么都没变。两个语种都已修正。
 
-### 3.3 `--mode static` 会覆盖用户点名的 target
+### 3.4 `--mode static` 会覆盖用户点名的 target
 
 强制 musl 的那次重新 prepare 忽略了 `opts.targetTriple`,于是
 `--mode static --target x86_64-windows-gnu` 悄悄变成一次 **Linux** 构建。在 PE 打包
