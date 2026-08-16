@@ -289,6 +289,31 @@ ELF 上靠 `ldd` 闭包歪打正着,PE 上则完全没有这一步。
 
 ---
 
+## 3e. 主构建和 host helper 用不同的链接策略(#437) 🔴 已修
+
+同一个工具链、同一个环境,两条链接路径给出不同结果:
+
+- **主构建**在 macOS 上刻意 `-fuse-ld=lld`(`flags.cppm` 的 macOS 分支,
+  注释原文:*"Xcode 15.4's ld aborting at launch ... when its libc++
+  resolution was diverted"*);
+- **host helper**(`build.mcpp`)走 `hostflags.cppm` 的 trust-cfg 分支,
+  **返回空 link token**,于是用 Xcode 的 `/usr/bin/ld` —— 那个 ld 自己链 libc++,
+  跑在 payload 的 `DYLD_*` 里,dyld 把它的 libc++ 解析到 payload 那份,
+  缺 `__ZdaPv`,**还没开始链接就 abort**。
+
+> **mcpp 用 llvm 能把整个工程构建出来,却构建不了自己的 `build.mcpp`** ——
+> 这不是 macOS 环境问题,是两条路径没对齐。主构建早就绕过了这个坑,
+> host helper 这条没跟上。
+
+修法:trust-cfg 分支在 macOS 上也追加 `-fuse-ld=lld`。cfg 选的是 runtime,
+**从来没选过链接器**。
+
+**它和这份 review 其余部分是同一个形状**:一条规则有两处实现,其中一处知道
+真相、另一处不知道 —— 和 §1 那三处重复拼写、§3b 的 doctor 第四份拷贝完全同类。
+根因记在 `2026-08-13-build-optimization-status.md` §9a-3。
+
+---
+
 ## 4. `installed()` 的语义:必须是"这份 recipe 产出的状态" ⭐ 跨仓库规则
 
 这一轮九层缺陷里,真正致命的几层全是这一条。
