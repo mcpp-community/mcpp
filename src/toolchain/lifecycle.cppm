@@ -499,15 +499,19 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         mcpp::toolchain::print_compat_hint(*spec);
         if (int rc = attach_target_arg(*spec, targetArg); rc != 0) return rc;
 
-        // msvc@system: mcpp never installs MSVC — report what's there, or
-        // print installation guidance.
+        // msvc@system: mcpp never installs the machine's Visual Studio —
+        // report what's there, or point at both ways forward.
+        // (msvc@<toolset> is NOT a system spec and falls through to the xim
+        // package path below, like every other family.)
         if (mcpp::toolchain::is_system_toolchain(*spec)) {
             if (!mcpp::platform::is_windows) return msvc_wrong_host();
             if (auto inst = mcpp::toolchain::msvc::detect_installation()) {
                 msvc_print_detected(*inst);
                 std::println("");
-                std::println("MSVC is already installed — mcpp does not manage it.");
-                std::println("Tip: `mcpp toolchain default msvc` to make it the default.");
+                std::println("This is the machine's own Visual Studio — mcpp does not manage it.");
+                std::println("Tip: `mcpp toolchain default msvc` to make it the default,");
+                std::println("     or `mcpp toolchain install msvc <toolset>` for a pinned one");
+                std::println("     that does not depend on what this machine has installed.");
                 return 0;
             }
             mcpp::ui::error(mcpp::toolchain::msvc::install_guidance());
@@ -573,6 +577,37 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         if (!payload) {
             mcpp::ui::error(std::format("install failed: {}", payload.error().message));
             return 1;
+        }
+
+        // A pinned MSVC toolset shares the ACQUISITION with gcc (the xim
+        // install above) and the RESOLUTION with msvc@system (below) — the
+        // two axes are independent, so neither gets a private copy of the
+        // other's logic.
+        //
+        // What it does not share is the bin/-shaped frontend lookup and the
+        // ELF post-install fixup: an msvc payload keeps cl.exe under
+        // VC/Tools/MSVC/<ver>/bin/Hostx64/x64, and there is nothing to
+        // patchelf on a PE toolchain.
+        if (spec->family == mcpp::toolchain::Family::Msvc) {
+            auto inst = mcpp::toolchain::msvc::installation_at(
+                payload->root, pkg.ximVersion);
+            if (!inst) {
+                mcpp::ui::error(std::format(
+                    "msvc payload installed at '{}', but no cl.exe under "
+                    "VC/Tools/MSVC/{} — the payload is not what this version "
+                    "claims to be",
+                    payload->root.string(), pkg.ximVersion));
+                return 1;
+            }
+            msvc_print_detected(*inst);
+            mcpp::ui::status("Installed",
+                std::format("{} → {}", pkg.display_spec(), inst->clPath.string()));
+            if (cfg.defaultToolchain.empty()) {
+                std::println("");
+                std::println("Tip: `mcpp toolchain default {}` to make this the default.",
+                             spec->spec_str());
+            }
+            return 0;
         }
 
         auto bin = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
@@ -656,22 +691,14 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         mcpp::toolchain::print_compat_hint(*spec);
         if (int rc = attach_target_arg(*spec, targetArg); rc != 0) return rc;
 
-        // msvc@system: locate + identify the system MSVC, persist the stable
-        // spec (never a concrete version — config survives VS updates).
+        // msvc@system: locate + identify the machine's own MSVC, persist the
+        // stable spec (never a concrete version — config survives VS
+        // updates). A versioned msvc spec is a payload and falls through.
         if (mcpp::toolchain::is_system_toolchain(*spec)) {
             if (!mcpp::platform::is_windows) return msvc_wrong_host();
             auto inst = mcpp::toolchain::msvc::detect_installation();
             if (!inst) {
                 mcpp::ui::error(mcpp::toolchain::msvc::install_guidance());
-                return 1;
-            }
-            // `msvc@19.44` is a pin-verify against the detected install, not
-            // a selection among many — mcpp always uses the newest VC tools.
-            if (!spec->version.empty() && spec->version != "system"
-                && !inst->display_version().starts_with(spec->version)) {
-                mcpp::ui::error(std::format(
-                    "msvc@{} requested, but the system MSVC is {} (VC tools {})",
-                    spec->version, inst->display_version(), inst->toolsVersion));
                 return 1;
             }
             msvc_print_detected(*inst);
@@ -707,6 +734,16 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
 
         auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, pkg.ximName, pkg.ximVersion);
         if (!std::filesystem::exists(installDir)) {
+            // Before "not installed", check whether this is the retired
+            // `msvc@<cl-version>` spelling — otherwise the advice is to
+            // install a toolset that does not exist and never will.
+            if (spec->family == mcpp::toolchain::Family::Msvc) {
+                if (auto hint = mcpp::toolchain::msvc::cl_version_spelling_hint(
+                        spec->version)) {
+                    mcpp::ui::error(*hint);
+                    return 1;
+                }
+            }
             mcpp::ui::error(std::format(
                 "{} is not installed. Run `mcpp toolchain install {} {}{}` first.",
                 spec->display(), mcpp::toolchain::family_name(spec->family),
@@ -741,8 +778,11 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
     auto xlEnv = mcpp::config::make_xlings_env(cfg);
         auto parsedSpec = mcpp::toolchain::parse_toolchain_spec(pos0);
         if (parsedSpec && mcpp::toolchain::is_system_toolchain(*parsedSpec)) {
-            mcpp::ui::error("msvc is a system toolchain managed by the Visual "
-                            "Studio Installer — mcpp cannot remove it");
+            mcpp::ui::error(
+                "msvc@system is the machine's own Visual Studio, managed by the "
+                "Visual Studio Installer — mcpp cannot remove it.\n"
+                "  A toolset mcpp installed can be removed by naming it:\n"
+                "    mcpp toolchain remove msvc@<toolset>");
             return 1;
         }
         if (!parsedSpec || parsedSpec->version.empty()) {

@@ -3,6 +3,96 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.16.1] — 2026-08-16
+
+### 工具链
+
+- **MSVC 不再是「唯一版本无法声明」的工具链。**
+
+  gcc / llvm 由 mcpp 自己安装、按声明解析;MSVC 是体系里唯一的例外——**每一个**
+  msvc spec 都是系统 spec,manifest 写了版本也会被丢掉。后果不是不够优雅,是
+  **同一份源码在两台机器上会被不同的编译器编译,而且不报错**。
+
+  xrgui#3 实测:同一轮 CI 里 mcpp 用 14.51、xmake 用 14.52,直到 14.51 触发
+  ICE 才暴露。导出完整 vcvars 环境**无效**,最后只能在 CI 里把 `vswhere.exe`
+  挪开,逼 mcpp 落到 `VSINSTALLDIR` 那一步。
+
+  现在由 **spec 的版本轴**决定来源,两条来源并存:
+
+  | spec | 来源 | 用哪个编译器 |
+  |---|---|---|
+  | `msvc@system`(或裸 `msvc`) | 机器自己的 Visual Studio | 这台机器上装的那个 |
+  | `msvc@<toolset>`(如 `msvc@14.44.35207`) | mcpp 安装的 xlings payload | **声明的那个,每台机器都是** |
+
+  `msvc@<toolset>` 与 `gcc@16.1.0` 在每个方面都同构:多版本共存、
+  `toolchain remove msvc@<toolset>` 可卸载、manifest 里写了就自动安装。
+  payload 自带编译器、STL,并通过 `xim:windows-sdk` 依赖带上 ucrt/um 头与库,
+  机器上**什么都不必预装**。
+
+  实现上,「获取」与「解析」被拆成两条正交的轴:获取与 gcc 共用一条
+  (xim 安装),解析与 `msvc@system` 共用一条(`installation_from_tools_dir`)。
+  所以受管 toolset 不是第二条代码路径,也就不会长出自己的 bug。
+
+- **⚠️ 破坏性变更:`msvc@19.44` 不再是 pin-verify。**
+
+  它过去表示「用系统 MSVC,并校验 banner 前缀」——而且只有
+  `mcpp toolchain default` 会校验,**构建路径完全忽略它**。版本轴现在到处都表示
+  toolset。写成 `19.x` 时,mcpp 会用这台机器自己的 cl 版本说清楚,并给出两个
+  替代写法(`msvc@system` 或该机器实际的 toolset 版本)。
+
+- **`VSINSTALLDIR` 现在优先于 vswhere 探测。**
+
+  vswhere 在几乎每台开发机上都能返回点什么,于是 `VSINSTALLDIR` 事实上不可达:
+  一次已经导出了完整 vcvars 环境的构建,仍然用 vswhere 排第一的那个编译器。
+  **猜测不该压过答案。** 顺带给 vswhere 加了 `-prerelease`——没有它,只装了
+  Insiders 的机器会被报告成「没有 MSVC」,而磁盘上明明有一个可用的 cl.exe。
+
+  `VS*COMNTOOLS` 仍排在 vswhere **之后**:那是机器全局的残留(2017 的
+  `VS150COMNTOOLS` 不该压过当前安装),而 `VSINSTALLDIR` 是有人为这个 shell
+  设的。
+
+- **Windows SDK 不再只认两个写死的绝对路径。**
+
+  顺序改为:`WindowsSdkDir`(+ `WindowsSdkVersion`,vcvars 本来就导出这两个)
+  → 受管 toolset 在 mcpp 自己 store 里的 `xim:windows-sdk` payload
+  → 原来的绝对路径(降为回退)。
+
+  第二条不需要任何配置:**编译器自己的路径就说明了它来自哪个 store**,
+  SDK 是它在那里的邻居。所以 mcpp 里没有任何地方写死 SDK 版本。
+
+### 接口一致性
+
+- **`cxx_runtime = "self-contained"` 在 MSVC 上真的生效了。**
+
+  过去两个旋钮只有一个管用:`linkage = "static"` **确实发** `/MT`,而
+  `cxx_runtime = "self-contained"` 报「未实现」——对着同一个物理开关。
+  两处注释也互相矛盾(`flags.cppm:605` 说发了 `/MT`,`distribution.cppm:202`
+  说「根本没有 /MT」)。
+
+  在 MSVC ABI 上这两条不是可以二选一的旋钮:`/MT` 把 C 运行时和 C++ 运行时
+  从同一个库里链进来,**它们本来就是一个开关**。现在两种写法都选中它,由
+  `msvc_wants_static_crt()` 统一推导——项目的 TU 与 std 模块问的是同一个函数,
+  不再各写各的表达式(#422 正是这样分叉的)。
+
+  默认仍是 `/MD`:判据取的是**manifest 里写下的字面值**,不是解析后的
+  contract——后者对多数 role 默认就是 self-contained,拿它做判据会把每一个
+  Windows 构建都翻成 `/MT`。
+
+  MSVC 的 CRT 模型是**整个项目**的属性(一个项目只编一份 std 模块,cl 把
+  `_MSVC_MT`/`_MSVC_MD` 烤进去),所以按 role 覆盖会被明确拒绝并说明原因,
+  而不是在 ucrt 头文件里炸出 C5050/C2375。
+
+### 测试
+
+- msvc 的发现逻辑第一次可以在 Windows 之外测试:`installation_at()` 接受目录
+  而不是去探测机器,`find_windows_sdk()` 接受 root 列表。6 个新单测在 Linux CI
+  上跑真实的 fixture 目录树,包括「两个 toolset 都在,要老的那个」这条——
+  「取最新」的实现会在这里失败。
+- 新增 e2e `239_msvc_managed_toolset.sh`。它的每一条断言都写成
+  **系统编译器来应答就会失败**:cl.exe 必须在 mcpp 的 store 里、toolset 目录
+  必须是 spec 声明的那个、同一台机器上换回 `msvc@system` 必须仍然解析到系统
+  的 cl(两条来源互不污染)。
+
 ## [2026.8.13.1] — 2026-08-13
 
 ### 性能

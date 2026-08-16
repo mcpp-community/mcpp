@@ -199,13 +199,22 @@ struct MechanismInput {
     //
     // The distinction decides whether a cell with no mechanism SPEAKS. A
     // diagnostic is for a BROKEN PROMISE: mcpp said the artifact would be
-    // self-contained and it is not. Under the MSVC runtime mcpp never made
-    // that promise — there is no /MT emission at all — so warning on every
-    // Windows build would be noise nobody can act on. Write
-    // `cxx_runtime = "self-contained"` there and you get told, once, that it
-    // is not implemented. Cells where mcpp DOES promise something (a missing
-    // libc++.a under the default, say) report regardless.
+    // self-contained and it is not. Most roles DEFAULT to self-contained, so
+    // on a runtime where that default cannot be delivered, warning on every
+    // build would be noise nobody can act on. Cells where mcpp DOES promise
+    // something (a missing libc++.a under the default, say) report regardless.
     bool             explicitRequest = false;
+    // MSVC only: is this project compiled with the static CRT (`/MT`)?
+    //
+    // A whole-PROJECT fact, not a per-role one, and that is a property of the
+    // platform rather than a simplification: cl bakes _MSVC_MT / _MSVC_MD
+    // into the std module, one std module is built per project, and a TU
+    // importing the other one fails inside the ucrt headers (#422). So the
+    // table can honour a project-level request and must refuse a per-role
+    // one — out loud, since silently ignoring it is how a knob becomes
+    // decoration. Derived by `msvc_wants_static_crt`, which is also what
+    // emits the flag.
+    bool             msvcStaticCrt = false;
     // Toolchain capability id: "libstdc++", "libc++", or an MSVC STL spelling.
     std::string_view stdlibId;
     Format           format = Format::Elf;
@@ -389,26 +398,40 @@ Mechanism resolve(const MechanismInput& in) {
     // ---------------------------------------------------------------- PE
     case Format::Pe: {
         if (!detail::is_libstdcxx(in.stdlibId)) {
-            // MSVC STL (cl.exe, or clang on the MSVC ABI). The driver default
-            // is the DLL runtime and mcpp emits no runtime selection flag, so
-            // host-coupled is the only form that actually exists here. Both
-            // other contracts are refused BY NAME rather than quietly
-            // producing the same bytes and reporting success.
-            m.effective = Contract::HostCoupled;
-            if (in.requested == Contract::SelfContained) {
+            // MSVC STL (cl.exe, or clang on the MSVC ABI). The CRT model is
+            // the mechanism here, and it is a whole-project switch: /MT is
+            // self-contained (no vcruntime DLL dependency), /MD is
+            // host-coupled. `msvcStaticCrt` is that switch, already derived
+            // by whoever emits the flag — so what this table reports and what
+            // cl was actually told cannot disagree.
+            //
+            // No unit flags: the model is a COMPILE flag on every TU, not
+            // something added to the link line.
+            m.effective = in.msvcStaticCrt ? Contract::SelfContained
+                                           : Contract::HostCoupled;
+            if (in.requested == Contract::SelfContained && !in.msvcStaticCrt) {
+                // Asked for, not delivered. Only reachable from a per-ROLE
+                // override, because a project-level one would have set
+                // msvcStaticCrt — so name that, instead of the old "not
+                // implemented", which stopped being true and had already
+                // been contradicted by flags.cppm emitting /MT for
+                // `linkage = "static"`.
                 m.degraded   = in.explicitRequest;
                 m.diagnostic = in.explicitRequest
-                    ? "cxx_runtime = \"self-contained\" is not implemented for the "
-                      "MSVC runtime yet (it would need the /MT runtime); using "
-                      "host-coupled — the artifact needs the VC++ redistributable"
+                    ? "on the MSVC runtime the CRT model is a whole-project "
+                      "property — one std module is built per project and cl "
+                      "bakes _MSVC_MT/_MSVC_MD into it, so a single role "
+                      "cannot differ. Move it to [build] cxx_runtime = "
+                      "\"self-contained\" (or linkage = \"static\") to apply "
+                      "it everywhere; using host-coupled here"
                     : "";
             } else if (in.requested == Contract::ToolchainCoupled) {
                 // Only reachable from an explicit request: it is never a default.
                 m.degraded = true;
-                m.diagnostic =
+                m.diagnostic = std::format(
                     "cxx_runtime = \"toolchain-coupled\" has no meaning for the "
                     "MSVC runtime (it ships with the OS/redistributable, not with "
-                    "the toolchain); using host-coupled";
+                    "the toolchain); using {}", to_string(m.effective));
             }
             return m;
         }

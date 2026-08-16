@@ -116,15 +116,19 @@ struct PayloadIdentity {
 std::optional<PayloadIdentity> identify_xim_payload(std::string_view ximDirName);
 
 // Does an installed payload row match the configured default (toolchain axis;
-// version exact)? msvc matches on family alone — the persisted spec is the
-// stable "msvc@system", never a concrete version.
+// version exact)? `msvc@system` names no version and so matches on family
+// alone; a pinned toolset compares versions like every other family.
 bool spec_matches_payload(const ToolchainSpec& def,
                           const PayloadIdentity& id,
                           std::string_view payloadVersion);
 
 // System toolchains are located on the machine, never installed/removed by
-// mcpp. Today that's MSVC (`msvc@system`); the PATH-compiler escape hatch
-// (`[toolchain] … = "system"`) is a separate, older mechanism.
+// mcpp: `msvc@system` and bare `msvc`. A VERSIONED msvc spec is NOT one of
+// them — `msvc@14.44.35207` is an xim payload mcpp installs and pins, the
+// same shape as `gcc@16.1.0`.
+//
+// (The PATH-compiler escape hatch, `[toolchain] … = "system"`, is a separate
+// and older mechanism.)
 bool is_system_toolchain(const ToolchainSpec& spec);
 
 // Can THIS host serve that target — is there an installable payload for the
@@ -239,7 +243,19 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     pkg.ximVersion  = spec.version;
 
     if (spec.family == Family::Msvc) {
-        pkg.ximName = "msvc";                 // never resolved via xim
+        // `xim:msvc@<toolset>`. Only reached for a VERSIONED spec —
+        // `msvc@system` never gets here, because nothing about it is a
+        // package (see is_system_toolchain).
+        //
+        // frontendCandidates is what the generic bin/-shaped resolution
+        // looks for, and an msvc payload is not bin/-shaped: cl.exe lives at
+        // VC/Tools/MSVC/<ver>/bin/Hostx64/x64/. The managed path therefore
+        // resolves through msvc::installation_at() instead — the same code
+        // that describes a system install. Keeping the candidate here means
+        // a caller that does use the generic path gets nothing rather than
+        // the wrong thing.
+        pkg.ximName = "msvc";
+        pkg.ximVersion = spec.version;
         pkg.frontendCandidates = {"cl.exe"};
         return pkg;
     }
@@ -344,6 +360,15 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
 std::optional<PayloadIdentity> identify_xim_payload(std::string_view ximDirName) {
     if (ximDirName == "gcc")
         return PayloadIdentity{ Family::Gcc, {} };
+    // A pinned toolset is an installed payload like any other, so it shows up
+    // in `toolchain list` under its toolset version. Without this row the
+    // install would succeed and then be invisible.
+    //
+    // Host-target (empty triple), like gcc and llvm: an msvc payload only
+    // ever targets the machine it runs on, and a spec for it carries no
+    // target axis either — so the two sides compare equal.
+    if (ximDirName == "msvc")
+        return PayloadIdentity{ Family::Msvc, {} };
     if (ximDirName == mcpp::toolchain::llvm::package_name())
         return PayloadIdentity{ Family::Llvm, {} };
     if (ximDirName == "musl-gcc")
@@ -362,12 +387,23 @@ bool spec_matches_payload(const ToolchainSpec& def,
                           const PayloadIdentity& id,
                           std::string_view payloadVersion) {
     if (def.family != id.family) return false;
-    if (def.family == Family::Msvc) return true;   // msvc@system: family match
+    // msvc@system names no version, so it matches on family alone. A pinned
+    // toolset compares versions like every other family — that is the point
+    // of pinning it.
+    if (is_system_toolchain(def)) return true;
     return def.version == payloadVersion;
 }
 
 bool is_system_toolchain(const ToolchainSpec& spec) {
-    return spec.family == Family::Msvc;
+    // The VERSION axis decides, not the family. `msvc@system` (and bare
+    // `msvc`) means "whatever this machine has"; `msvc@14.44.35207` names a
+    // toolset mcpp installs and pins, exactly as `gcc@16.1.0` names a gcc.
+    //
+    // Before this split, every msvc spec was a system spec — so a manifest
+    // could ask for a specific toolset and silently get a different one,
+    // which is the defect this whole file's msvc handling exists to close.
+    return spec.family == Family::Msvc
+        && (spec.version.empty() || spec.version == "system");
 }
 
 bool host_can_serve(const triple::Triple& target) {
@@ -405,6 +441,11 @@ std::vector<AvailableIndex> available_toolchain_indexes() {
     // The Windows-PE gcc payload is host-split at the distribution layer
     // (§4.3); each host lists the package it would actually install.
     if constexpr (mcpp::platform::is_windows) {
+        // Pinned MSVC toolsets. Listing them is what makes the managed origin
+        // discoverable at all: without a row here `toolchain list --available`
+        // says gcc and llvm can be pinned and msvc cannot, which stopped being
+        // true. `msvc@system` is reported separately, as an installation.
+        out.push_back({ "msvc", Family::Msvc });
         out.push_back({ "mingw-gcc", Family::Gcc });
         // The windows-hosted canadian cross to Linux. Named by triple, exactly
         // as to_xim_package() derives it (`<triple>-gcc`), so the Available

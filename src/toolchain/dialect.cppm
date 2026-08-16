@@ -105,8 +105,35 @@ const CommandDialect& dialect_for(const Toolchain& tc);
 //
 // Same shape as `macos_deployment_target`, which `stdmod::ensure_built` already
 // takes for exactly this reason on the other platform.
-constexpr std::string_view msvc_crt_flag(const CommandDialect& d, bool staticLinkage) {
-    return staticLinkage ? d.staticRuntime : d.dynamicRuntime;
+constexpr std::string_view msvc_crt_flag(const CommandDialect& d, bool staticCrt) {
+    return staticCrt ? d.staticRuntime : d.dynamicRuntime;
+}
+
+// Does this build want MSVC's STATIC CRT? TWO manifest keys answer it:
+//
+//   [build] linkage     = "static"           the libc axis
+//   [build] cxx_runtime = "self-contained"   the C++ runtime axis
+//
+// That is not a redundancy to be picked between — on the MSVC ABI they are
+// physically ONE switch. `/MT` links the C runtime and the C++ runtime out of
+// the same library, and there is no way to have one static and the other
+// dynamic. distribution.cppm's PE/MinGW branch already says exactly this
+// about `-static`; MSVC is the same statement, and used to disagree with
+// itself about it (`linkage` emitted /MT while `cxx_runtime` reported "not
+// implemented" — for the same physical outcome).
+//
+// `cxxRuntime` is the RAW manifest scalar, and must stay that way: the
+// resolved Contract defaults to SelfContained for most roles, so keying off
+// it would flip every Windows build from /MD to /MT. Empty here means nobody
+// wrote it down, which is the only reading under which "explicit" is honest.
+//
+// Asking the question once is also what keeps the project's TUs and the std
+// module from disagreeing (#422): both callers ask THIS, rather than each
+// spelling out `linkage == "static"` and drifting the next time a key is
+// added — which is precisely how the second key came to be ignored.
+constexpr bool msvc_wants_static_crt(std::string_view linkage,
+                                     std::string_view cxxRuntime) {
+    return linkage == "static" || cxxRuntime == "self-contained";
 }
 
 

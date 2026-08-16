@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cstdlib>       // setenv / _putenv_s — not part of `import std;`
 
 import std;
 import mcpp.toolchain.model;
@@ -56,18 +57,24 @@ TEST(MsvcBanner, TripleForArch) {
 
 // ─── install guidance ────────────────────────────────────────────────────
 
-TEST(MsvcGuidance, MentionsInstallRoutesAndOwnership) {
+TEST(MsvcGuidance, OffersBothOrigins) {
     auto g = msvc::install_guidance();
     ASSERT_FALSE(g.empty());
-    EXPECT_NE(g.find("winget"), std::string::npos);
-    EXPECT_NE(g.find("does not install"), std::string::npos);
-    EXPECT_NE(g.find("mcpp toolchain default msvc"), std::string::npos);
+    // The managed origin has to be reachable from the message a user sees
+    // when nothing is installed — otherwise "mcpp can install a toolset" is
+    // true and undiscoverable at the same time.
+    EXPECT_NE(g.find("mcpp toolchain install msvc"), std::string::npos) << g;
+    EXPECT_NE(g.find("[toolchain]"), std::string::npos) << g;
+    // …and the system origin stays offered, with its own route.
+    EXPECT_NE(g.find("winget"), std::string::npos) << g;
+    EXPECT_NE(g.find("msvc@system"), std::string::npos) << g;
+    EXPECT_NE(g.find("mcpp toolchain default msvc"), std::string::npos) << g;
 }
 
-// ─── spec layer ──────────────────────────────────────────────────────────
+// ─── spec layer: the VERSION axis decides the origin ─────────────────────
 
-TEST(MsvcSpec, SystemToolchainClassification) {
-    for (auto s : {"msvc", "msvc@system", "msvc@19.44"}) {
+TEST(MsvcSpec, SystemOriginIsTheUnversionedSpec) {
+    for (auto s : {"msvc", "msvc@system"}) {
         auto spec = parse_toolchain_spec(s);
         ASSERT_TRUE(spec.has_value()) << s;
         EXPECT_TRUE(is_system_toolchain(*spec)) << s;
@@ -75,6 +82,20 @@ TEST(MsvcSpec, SystemToolchainClassification) {
     auto gcc = parse_toolchain_spec("gcc@16.1.0");
     ASSERT_TRUE(gcc.has_value());
     EXPECT_FALSE(is_system_toolchain(*gcc));
+}
+
+TEST(MsvcSpec, ToolsetVersionIsAManagedPayloadNotASystemSpec) {
+    // The defect this closes: EVERY msvc spec used to be a system spec, so a
+    // manifest could name a toolset and silently get whatever the machine
+    // had. A version means a payload, exactly like gcc@16.1.0.
+    for (auto s : {"msvc@14.44.35207", "msvc@14.52.36629"}) {
+        auto spec = parse_toolchain_spec(s);
+        ASSERT_TRUE(spec.has_value()) << s;
+        EXPECT_FALSE(is_system_toolchain(*spec)) << s;
+        auto pkg = to_xim_package(*spec);
+        EXPECT_EQ(pkg.ximName, "msvc") << s;
+        EXPECT_EQ(pkg.ximVersion, std::string(s).substr(5)) << s;
+    }
 }
 
 TEST(MsvcSpec, StableDefaultMatchesAnyDetectedVersion) {
@@ -90,6 +111,229 @@ TEST(MsvcSpec, StableDefaultMatchesAnyDetectedVersion) {
     auto gccDef = parse_toolchain_spec("gcc@16.1.0");
     ASSERT_TRUE(gccDef.has_value());
     EXPECT_FALSE(spec_matches_payload(*gccDef, msvcId, "19.44.35211"));
+}
+
+TEST(MsvcSpec, PinnedToolsetMatchesOnlyItsOwnPayload) {
+    // The other half of the family-level match above: once a version is
+    // named, it has to be compared. A pin that matched any payload would be
+    // the same silent divergence wearing a version number.
+    auto pinned = parse_toolchain_spec("msvc@14.52.36629");
+    ASSERT_TRUE(pinned.has_value());
+    PayloadIdentity msvcId{ Family::Msvc, {} };
+    EXPECT_TRUE(spec_matches_payload(*pinned, msvcId, "14.52.36629"));
+    EXPECT_FALSE(spec_matches_payload(*pinned, msvcId, "14.44.35207"));
+}
+
+TEST(MsvcSpec, PayloadDirectoryIsIdentifiedAsMsvc) {
+    // Installed payloads are listed by walking `xim-x-<name>` directories.
+    // Without this row an install would succeed and then be invisible.
+    auto id = identify_xim_payload("msvc");
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(id->family, Family::Msvc);
+    EXPECT_TRUE(id->target.empty());   // host-target, like gcc and llvm
+}
+
+// ─── managed origin: resolution from a payload ───────────────────────────
+//
+// These run on every platform, and that is the point. The managed path used
+// to be untestable off Windows because every entry point started by probing
+// the machine; `installation_at` takes the directory instead, so a fixture
+// tree exercises the same code a real payload does.
+
+namespace {
+
+// A payload-shaped tree: <root>/VC/Tools/MSVC/<ver>/{bin/Hostx64/x64/cl.exe,
+// modules/std.ixx}. Exactly what xim:msvc unpacks, minus the 80 MB.
+struct FakeToolset {
+    std::filesystem::path root;
+
+    explicit FakeToolset(std::string_view tag) {
+        root = std::filesystem::temp_directory_path()
+             / std::format("mcpp-msvc-{}-{}", tag,
+                           std::chrono::steady_clock::now().time_since_epoch().count());
+        std::filesystem::create_directories(root);
+    }
+    ~FakeToolset() {
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+    FakeToolset(const FakeToolset&) = delete;
+    FakeToolset& operator=(const FakeToolset&) = delete;
+
+    void add_toolset(std::string_view version, bool withStdIxx = true) {
+        auto tools = root / "VC" / "Tools" / "MSVC" / std::string(version);
+        std::filesystem::create_directories(tools / "bin" / "Hostx64" / "x64");
+        std::ofstream{tools / "bin" / "Hostx64" / "x64" / "cl.exe"} << "not a compiler";
+        if (withStdIxx) {
+            std::filesystem::create_directories(tools / "modules");
+            std::ofstream{tools / "modules" / "std.ixx"} << "export module std;";
+        }
+    }
+    void add_sdk(std::string_view version) {
+        auto inc = root / "Include" / std::string(version) / "ucrt";
+        std::filesystem::create_directories(inc);
+        std::ofstream{inc / "corecrt.h"} << "#pragma once";
+    }
+};
+
+void put_env(const char* name, const std::optional<std::string>& value) {
+#if defined(_WIN32)
+    // An empty value REMOVES the variable on Windows, which is what nullopt
+    // has to mean here.
+    ::_putenv_s(name, value ? value->c_str() : "");
+#else
+    if (value) ::setenv(name, value->c_str(), 1);
+    else       ::unsetenv(name);
+#endif
+}
+
+// RAII for an environment variable. nullopt = unset it.
+//
+// Unsetting matters as much as setting: these tests run on a Windows CI
+// runner that may have vcvars exported, and an ambient WindowsSdkDir would
+// otherwise answer before the fixture ever got a turn — a green test proving
+// nothing about the code under it.
+struct ScopedEnv {
+    const char* name;
+    std::optional<std::string> old;
+    ScopedEnv(const char* n, std::optional<std::string> value) : name(n) {
+        if (auto* v = std::getenv(name)) old = v;
+        put_env(name, value);
+    }
+    ~ScopedEnv() { put_env(name, old); }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+};
+
+// Every SDK test starts from "nothing declared", then declares what it means
+// to test.
+struct NoSdkEnv {
+    ScopedEnv dir{"WindowsSdkDir", std::nullopt};
+    ScopedEnv ver{"WindowsSdkVersion", std::nullopt};
+};
+
+} // namespace
+
+TEST(MsvcManaged, ResolvesTheDeclaredToolsetAndNotItsNeighbour) {
+    FakeToolset t{"pick"};
+    t.add_toolset("14.44.35207");
+    t.add_toolset("14.52.36629");
+
+    // Both present, and the OLDER one is asked for. A "latest" scan would
+    // answer 14.52 — the exact substitution the managed origin exists to
+    // prevent.
+    auto older = msvc::installation_at(t.root, "14.44.35207");
+    ASSERT_TRUE(older.has_value());
+    EXPECT_EQ(older->toolsVersion, "14.44.35207");
+    EXPECT_TRUE(older->hasStdModules);
+    EXPECT_EQ(older->clPath.filename(), "cl.exe");
+    EXPECT_NE(older->clPath.string().find("14.44.35207"), std::string::npos);
+
+    auto newer = msvc::installation_at(t.root, "14.52.36629");
+    ASSERT_TRUE(newer.has_value());
+    EXPECT_EQ(newer->toolsVersion, "14.52.36629");
+}
+
+TEST(MsvcManaged, AbsentToolsetIsNulloptNotASubstitute) {
+    FakeToolset t{"absent"};
+    t.add_toolset("14.44.35207");
+    // Nothing is "close enough": a pin that silently fell back would report
+    // success while building with a compiler nobody asked for.
+    EXPECT_FALSE(msvc::installation_at(t.root, "14.52.36629").has_value());
+    EXPECT_FALSE(msvc::installation_at(t.root, "14.44").has_value());
+    EXPECT_FALSE(msvc::installation_at(t.root, "").has_value());
+}
+
+TEST(MsvcManaged, VersionFallsBackToTheDeclaredOneWhenTheBannerCannotBeRead) {
+    // A fixture cl.exe produces no banner (and on Windows a real one would).
+    // display_version() must still name the toolset rather than an empty
+    // string — the declared version is a fact even when the probe fails.
+    FakeToolset t{"banner"};
+    t.add_toolset("14.52.36629");
+    auto inst = msvc::installation_at(t.root, "14.52.36629");
+    ASSERT_TRUE(inst.has_value());
+    EXPECT_EQ(inst->display_version(), "14.52.36629");
+}
+
+// ─── Windows SDK discovery ───────────────────────────────────────────────
+
+TEST(MsvcSdk, WindowsSdkDirBeatsTheHardcodedPaths) {
+    NoSdkEnv clean;
+    FakeToolset t{"sdkenv"};
+    t.add_sdk("10.0.26100.0");
+    ScopedEnv dir{"WindowsSdkDir", t.root.string()};
+    auto sdk = msvc::find_windows_sdk();
+    ASSERT_TRUE(sdk.has_value());
+    EXPECT_EQ(sdk->root, t.root);
+    EXPECT_EQ(sdk->version, "10.0.26100.0");
+}
+
+TEST(MsvcSdk, WindowsSdkVersionSelectsAmongInstalledOnes) {
+    NoSdkEnv clean;
+    FakeToolset t{"sdkver"};
+    t.add_sdk("10.0.22621.0");
+    t.add_sdk("10.0.26100.0");
+    ScopedEnv dir{"WindowsSdkDir", t.root.string()};
+    {   // vcvars exports it with a trailing backslash; that is not part of
+        // the directory name, and comparing it raw finds nothing.
+        ScopedEnv ver{"WindowsSdkVersion", "10.0.22621.0\\"};
+        auto sdk = msvc::find_windows_sdk();
+        ASSERT_TRUE(sdk.has_value());
+        EXPECT_EQ(sdk->version, "10.0.22621.0");
+    }
+    // Unset again: highest usable wins.
+    auto sdk = msvc::find_windows_sdk();
+    ASSERT_TRUE(sdk.has_value());
+    EXPECT_EQ(sdk->version, "10.0.26100.0");
+}
+
+TEST(MsvcSdk, ExtraRootsCoverTheManagedPayload) {
+    NoSdkEnv clean;
+    FakeToolset t{"sdkextra"};
+    t.add_sdk("10.0.26100.0");
+    // Nothing declared — the payload root is the only way the SDK can be
+    // found, which is exactly the managed toolset's situation.
+    std::array roots{t.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    ASSERT_TRUE(sdk.has_value());
+    EXPECT_EQ(sdk->root, t.root);
+}
+
+TEST(MsvcSdk, IncompleteSdkRootIsNotAnAnswer) {
+    // Include/<ver>/ exists but carries no ucrt/corecrt.h: a half-installed
+    // SDK must read as absent, not as a usable one that fails later inside
+    // the compiler. Checked through extraRoots so the assertion cannot be
+    // satisfied by a real SDK on the machine.
+    NoSdkEnv clean;
+    FakeToolset t{"sdkpartial"};
+    std::filesystem::create_directories(t.root / "Include" / "10.0.26100.0" / "um");
+    std::array roots{t.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    if (sdk) EXPECT_NE(sdk->root, t.root) << "an SDK-less root was accepted";
+}
+
+TEST(MsvcSdk, DeclaredRootOutranksTheManagedOne) {
+    // Both available. WindowsSdkDir is someone saying which one to use, and
+    // it has to win — the same precedence VSINSTALLDIR has over vswhere.
+    NoSdkEnv clean;
+    FakeToolset declared{"sdkdeclared"};
+    declared.add_sdk("10.0.22621.0");
+    FakeToolset managed{"sdkmanaged"};
+    managed.add_sdk("10.0.26100.0");   // newer, and still must not win
+    ScopedEnv dir{"WindowsSdkDir", declared.root.string()};
+    std::array roots{managed.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    ASSERT_TRUE(sdk.has_value());
+    EXPECT_EQ(sdk->root, declared.root);
+    EXPECT_EQ(sdk->version, "10.0.22621.0");
+}
+
+TEST(MsvcSdk, SiblingSdkRootsAreEmptyForACompilerOutsideAnyStore) {
+    // A system cl.exe is not in an xlings store, so there is nothing to
+    // offer — and offering the wrong thing would be worse than nothing.
+    EXPECT_TRUE(msvc::sibling_sdk_roots(
+        "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/"
+        "MSVC/14.51.36231/bin/Hostx64/x64/cl.exe").empty());
 }
 
 // ─── model traits ────────────────────────────────────────────────────────
@@ -185,8 +429,8 @@ TEST(ToolchainMsvc, CrtFlagHasASingleDerivation) {
     Toolchain cl;
     cl.compiler = CompilerId::MSVC;
     const auto& msvcDialect = dialect_for(cl);
-    EXPECT_EQ(msvc_crt_flag(msvcDialect, /*staticLinkage=*/true),  "/MT");
-    EXPECT_EQ(msvc_crt_flag(msvcDialect, /*staticLinkage=*/false), "/MD");
+    EXPECT_EQ(msvc_crt_flag(msvcDialect, /*staticCrt=*/true),  "/MT");
+    EXPECT_EQ(msvc_crt_flag(msvcDialect, /*staticCrt=*/false), "/MD");
 
     // GNU has no counterpart; the helper must yield nothing rather than invent
     // a flag that would be passed to gcc.
@@ -194,4 +438,23 @@ TEST(ToolchainMsvc, CrtFlagHasASingleDerivation) {
     gcc.compiler = CompilerId::GCC;
     const auto& gnu = dialect_for(gcc);
     EXPECT_TRUE(msvc_crt_flag(gnu, false).empty());
+}
+
+// Both manifest keys reach the SAME physical switch, because on the MSVC ABI
+// they are the same switch. `cxx_runtime = "self-contained"` used to report
+// "not implemented" while `linkage = "static"` quietly did the very thing it
+// said was unimplemented.
+TEST(ToolchainMsvc, BothKeysSelectTheStaticCrt) {
+    EXPECT_TRUE(msvc_wants_static_crt("static", ""));
+    EXPECT_TRUE(msvc_wants_static_crt("", "self-contained"));
+    EXPECT_TRUE(msvc_wants_static_crt("static", "self-contained"));
+
+    // Default: neither written down. This has to stay /MD — most roles
+    // DEFAULT to the self-contained contract, so keying off the resolved
+    // contract instead of the written key would flip every Windows build to
+    // /MT and split the CRT across a project's dependencies.
+    EXPECT_FALSE(msvc_wants_static_crt("", ""));
+    EXPECT_FALSE(msvc_wants_static_crt("dynamic", ""));
+    EXPECT_FALSE(msvc_wants_static_crt("", "host-coupled"));
+    EXPECT_FALSE(msvc_wants_static_crt("", "toolchain-coupled"));
 }

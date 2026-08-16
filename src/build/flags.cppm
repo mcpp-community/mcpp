@@ -601,15 +601,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if (prof.lto && !isMsvcDialect) opt_flag += " -flto";
 
     // MSVC baseline: /nologo /EHsc /utf-8 (dialect alwaysFlags) + the CRT
-    // model — /MD default, /MT under static linkage (portable-by-default is
-    // impossible on MSVC-ABI; /MT at least removes the vcruntime DLL dep).
+    // model — /MD by default, /MT when either knob asks for the static CRT
+    // (portable-by-default is impossible on MSVC-ABI; /MT at least removes
+    // the vcruntime DLL dep).
     std::string msvc_base;
     if (isMsvcDialect) {
         msvc_base = std::format(" {}", d.alwaysFlags);
         // ONE derivation, shared with the std module build — see
-        // `msvc_crt_flag` in mcpp.toolchain.dialect and #422.
+        // `msvc_wants_static_crt` in mcpp.toolchain.dialect and #422.
         msvc_base += std::format(" {}", mcpp::toolchain::msvc_crt_flag(
-            d, plan.manifest.buildConfig.linkage == "static"));
+            d, mcpp::toolchain::msvc_wants_static_crt(
+                   plan.manifest.buildConfig.linkage,
+                   plan.manifest.buildConfig.cxxRuntime)));
     }
 
     // User link flags
@@ -839,6 +842,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         mi.stdlibId       = caps.stdlib_id;
         mi.hostIsWindows  = mcpp::platform::is_windows;
         mi.fullStaticLibc = (f.linkage == "static");
+        // The CRT model this WHOLE project is being compiled with. Per-role
+        // contracts cannot move it: cl bakes _MSVC_MT / _MSVC_MD into the std
+        // module, one std module is built per project, and a TU importing the
+        // other one fails inside the ucrt headers (#422). The mechanism table
+        // needs to know so it can say that out loud rather than silently
+        // ignoring a role override.
+        mi.msvcStaticCrt  = mcpp::toolchain::msvc_wants_static_crt(
+                                bc.linkage, bc.cxxRuntime);
         mi.mingw          = isMingwTc;
         mi.macosFloor     = !macosDeploymentTarget.empty();
         mi.format         = format;
