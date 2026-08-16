@@ -298,6 +298,48 @@ LD_TRACE_LOADED_OBJECTS=1 '<binary>'
 
 ---
 
+## 6.5 落地状态(2026-08-17,mcpp 2026.8.17.1)
+
+**§1 / §2 / §3 / §4 全部实现,§2.4 明确不做。** 逐条对应:
+
+| 条目 | 状态 | 落点 |
+|---|---|---|
+| §1 Origin 建模 | ✅ | `enum class Origin`(`model.cppm`)—— 放在数据模型里,让 spec 侧(`registry`)与已定位编译器侧(`msvc`)指的是**同一根轴** |
+| §1 拒绝 `gcc@system` | ✅ | `parse_toolchain_spec`,错误里同时给出 pin 与 PATH 逃生口两种写法 |
+| §1 解析一次 | ✅ | `prepare` 原先把同一个字符串**解析两遍**、各自下结论;现在一次,`origin_of()` 分发 |
+| §1 消重复:`resolve_managed_msvc` | ✅ | `registry.cppm`。"payload 在哪、为什么不能用 fetcher 的 `root`"两份手写实现,而理由只写在其中一份里 |
+| §1 消重复:sysroot 谓词 | ✅ | `needs_linux_sysroot_payloads()`。两份**不等价**,而其中一份的注释声称它们互为镜像 —— 少的是 PE 那一项 |
+| §1 解析链注释 | ✅ | 一张按 `TcOrigin` 枚举名写的表。原先两处、分别声称 3 步和 4 步,合起来点到 9 个输入里的 5 个,还互相矛盾 |
+| §2.2 SDK 按来源分流 | ✅ | `msvc::resolve_sdk_for()`;受管来源忽略 `WindowsSdkDir`/`WindowsSdkVersion` 并打印 `note:` |
+| §2.2 无 SDK payload 时 | ✅ | 退回机器 SDK 并**说出来**(可用 > 失败,但不可复现这件事必须留痕) |
+| §2.3 `ucrt@` 身份 | ✅ | `bind_windows_ucrt()`,进 `runtimeContractHash`;`runtime_provider()` 取代各处 `starts_with("glibc@")` |
+| §2.4 manifest SDK 键 | ⛔ **不做** | 理由见该节 |
+| §3.3 PE `toolchain-coupled` | ✅ | `dist::Mechanism::deployToolchainRuntime` → `CompileFlags::toolchainRuntimeDeploy` → ninja `stage_file` 边 |
+| §3.3 排除 debug CRT | ✅ | 判据只有一处(`vc_redist_dir()`),拷贝那步复用它而不是另立一条按名字的规则 |
+| §4 静态读闭包 | ✅ | `mcpp.pack.binfmt`:ELF `DT_NEEDED`、PE 导入表 **+ 延迟导入表** |
+| §4 跨 OS 打包 | ✅ | Linux 上给 Windows 产物打 zip;`mcpp.pack.zip` 自己写压缩包(没有哪个 zip 工具在每个宿主上都存在) |
+| §4.3 `pack` 读 Contract | ✅ | `cxx_runtime` 决定 toolchain runtime 目录进不进搜索集;与 `--mode` 矛盾时拒绝 |
+
+**两处对方案本身的修正**,来自实现过程:
+
+1. **`dist::Format` 改为先看 target triple、再退回宿主。** 原先除 MinGW 外一律
+   问宿主,于是"Windows 上的契约"在 Linux runner 上**根本无法断言** —— 而这轮
+   大部分 review 就发生在 Linux runner 上。只**新增**答案:说不出 OS 的 triple
+   仍走原来那条推导,现有构建一个都不变。
+2. **`force_bundle` 在 PE 上也要能覆盖系统表。** ELF 上一直如此;PE 上第一版把
+   系统排除写成了无条件的,那会让一个明确写下来的决定变成装饰。
+
+**§4 未做的一半,以及理由。** ELF 闭包**仍然**通过运行产物取得
+(`LD_TRACE_LOADED_OBJECTS`),`binfmt` 的 `DT_NEEDED` 读取只用于识别与诊断。
+原因不是懒:`ldd` 交回的是**已解析的路径**,而 `DT_NEEDED` 只有名字,把名字变
+成路径要重新实现 loader 的搜索规则(`DT_RPATH` → `LD_LIBRARY_PATH` →
+`DT_RUNPATH` → `ld.so.cache` → 默认目录,加上 `$ORIGIN` 展开与 hwcaps 子目录)。
+在一条**已经正确、且被 e2e 覆盖**的路径上重写这个,风险远大于收益。
+**代价要说清楚:跨架构的 ELF 打包(x86_64 上给 aarch64 产物打包)仍然不支持**,
+而这正是 §4.1 指出的第二个限制。PE 那条没有既有实现,所以它从一开始就是静态的。
+
+---
+
 ## 7. 落地顺序
 
 | # | 项 | 规模 | 依赖 |

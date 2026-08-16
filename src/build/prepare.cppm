@@ -1294,18 +1294,36 @@ prepare_build(bool print_fingerprint,
     // resolution / fingerprinting.
     fold_build_defines_into_flags(m->buildConfig);
 
-    // msvc@system: located on the machine, never resolved through xim
-    // packages. mcpp does not install the machine's Visual Studio.
+    // ORIGIN, RESOLVED ONCE.
     //
-    // A VERSIONED msvc spec is a different origin and takes the xim path
-    // below — which is the whole point: what the manifest says is what gets
+    // The spec used to be parsed TWICE from the same string a dozen lines
+    // apart — once to ask "is this msvc@system", once to get the package —
+    // and each call site drew its own conclusions from the result. Two parses
+    // of one string is two places for the answer to differ, which is the shape
+    // §1 of the three-axes design is about: a platform special case whose cost
+    // is paid at every site that has to know about it.
+    //
+    // `Origin::SystemMsvc` is located on the machine and never resolved
+    // through an xim package — mcpp does not install the machine's Visual
+    // Studio. `Origin::Managed` is everything else, including a VERSIONED
+    // msvc spec, and that is the point: what the manifest says is what gets
     // used, on every machine, instead of whatever this one happens to have.
-    bool tcSpecIsMsvc = false;
-    if (tcSpec.has_value()) {
-        if (auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
-            s && mcpp::toolchain::is_system_toolchain(*s))
-            tcSpecIsMsvc = true;
+    std::optional<mcpp::toolchain::ToolchainSpec> parsedSpec;
+    auto tcOriginAxis = mcpp::toolchain::Origin::Managed;
+    if (tcSpec.has_value() && *tcSpec != "system") {
+        // A parse FAILURE is not the same as an unparseable spec being
+        // absent: `gcc@system` now fails here by name (see
+        // parse_toolchain_spec), and swallowing that would put the error back
+        // where it used to happen — somewhere else, saying something else.
+        auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+        if (!s) return std::unexpected(std::format(
+            "[toolchain].{} = '{}': {}", kCurrentPlatform, *tcSpec, s.error()));
+        parsedSpec   = std::move(*s);
+        tcOriginAxis = mcpp::toolchain::origin_of(*parsedSpec);
     }
+    const bool tcSpecIsMsvc =
+        parsedSpec && tcOriginAxis == mcpp::toolchain::Origin::SystemMsvc;
+
     if (tcSpecIsMsvc) {
         if (!mcpp::platform::is_windows) {
             return std::unexpected(std::format(
@@ -1319,9 +1337,9 @@ prepare_build(bool print_fingerprint,
         mcpp::ui::info("Resolved", std::format(
             "msvc@system → msvc {} ({})",
             inst->display_version(), inst->clPath.string()));
-    } else if (tcSpec.has_value() && *tcSpec != "system") {
-        auto spec = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
-        if (!spec || spec->version.empty()) {
+    } else if (parsedSpec) {
+        auto spec = parsedSpec;
+        if (spec->version.empty()) {
             return std::unexpected(std::format(
                 "[toolchain].{} = '{}' is invalid; expected '<pkg>@<version>'",
                 kCurrentPlatform, *tcSpec));
