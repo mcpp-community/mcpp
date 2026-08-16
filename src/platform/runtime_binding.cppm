@@ -284,8 +284,8 @@ resolve_runtime_binding(
             "       Where the C runtime comes from a payload, there is now no "
             "declared runtime to bind to — mcpp declines to guess a version, so "
             "the link falls back to the host and the hermeticity check will say "
-            "so. Only a SubOS created by a current xlings carries the block "
-            "(openxlings/xlings#547).",
+            "so. Run `xlings self doctor --fix` from inside this SubOS to have "
+            "it described (openxlings/xlings#547).",
             selection.subosName,
             info.note.empty() ? "no `subos_info` block" : info.note));
     } else if (info.schema > mcpp::xlings::subos::kSupportedSchema) {
