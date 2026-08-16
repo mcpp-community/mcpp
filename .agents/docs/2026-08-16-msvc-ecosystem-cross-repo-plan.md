@@ -113,6 +113,26 @@ payload 集里只有**静态** CRT。`.CRT.x64.Desktop.base` 带的是
 
 ---
 
+### 5.1 第二条:装好的 toolset 在 `toolchain list` 里根本不出现
+
+拿**已发布的** 2026.8.16.1 二进制对着一个 payload 形状的 fixture 跑,发现
+装好的 msvc toolset 一行都不显示。
+
+枚举问的是 `toolchain_frontend(root / "bin", pkg)`,而 cl.exe 在
+`VC/Tools/MSVC/<ver>/bin/Host<h>/<arch>/`,深四层。拿不到 → `continue` → 消失。
+
+**这个布局有三个地方需要知道:安装知道、构建知道、列表不知道。**
+第三份内联副本就是这么来的。现在三者共用 `payload_frontend()`(#436)。
+
+值得记的是它**怎么被发现的**:不是测试。为此写的单测钉的是
+`identify_xim_payload("msvc")` —— 那一条本来就是对的。
+**「身份映射」与「枚举」是两个问题,而只有一个被问了。**
+
+> e2e 239 的 1b 步会抓到它 —— 但要等包发布之后 Windows e2e 再跑一轮。
+> 测试写在了对的粒度上,只是还没轮到它跑。**「有测试」和「测过了」不是一回事。**
+
+---
+
 ## 6. 已知不被覆盖的部分(不要当成已完成)
 
 1. **没有任何 CI 用这条 toolset 链接过东西**。这正是上面那条缺陷能一路走到
