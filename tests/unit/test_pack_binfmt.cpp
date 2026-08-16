@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cstdio>       // stderr is a MACRO — `import std;` cannot export it
+#include <cstdlib>      // getenv
 
 import std;
 import mcpp.pack.binfmt;
@@ -116,7 +117,13 @@ std::string elf_with_needed(std::span<const std::string_view> needed) {
 // test proved the crash is HERE, in fixture code that touches no module at
 // all, so the shapes went and the trace stayed: if it moves again, the log
 // says which step.
+// Off by default — 24 lines of stderr in every CI run forever is a poor
+// trade for a crash that is currently fixed. `MCPP_TEST_TRACE=1` brings it
+// back, which is what makes a recurrence one CI round to localise instead of
+// the four this one cost.
 void trace(const char* step, const std::string& b) {
+    static const bool on = std::getenv("MCPP_TEST_TRACE") != nullptr;
+    if (!on) return;
     std::fprintf(stderr, "[pe-fixture] %-14s size=%zu\n", step, b.size());
     std::fflush(stderr);
 }
