@@ -243,32 +243,60 @@ export bool remove_payload_tree(const std::filesystem::path& root,
     }
     if (!std::filesystem::exists(root, ignore)) return true;
 
-    // Still held. Move it out of the way instead of waiting on a process we
+    // Still held. Move the held FILES out instead of waiting on a process we
     // do not own.
     //
-    // Windows refuses to DELETE a directory containing an open file, but it
-    // will RENAME one — the open handle keeps working and follows the new
-    // name. So the toolchain can leave the place it occupied even while
-    // mspdbsrv.exe is still holding mspdbcore.dll inside it, which is the
-    // normal state of affairs for the first ~seconds after a /Zi build with
-    // the very toolset being removed.
+    // ⚠️ NOT by renaming the payload directory. Windows lets you rename an
+    // open FILE — that is how an updater replaces a running .exe — but it
+    // does NOT let you rename a DIRECTORY that contains one. An earlier
+    // version of this function renamed `root` and was wrong about exactly
+    // that: the rename failed with the same "Access is denied", and remove
+    // still reported failure. What follows is the shape that actually works:
     //
-    // This is the difference between a `remove` that works and one that asks
-    // the user to guess how long to wait: what they asked for is that the
-    // toolchain stop being installed, and after the rename it is. The bytes
-    // are swept on the next lifecycle command, by which time nothing holds
-    // them.
-    auto parked = root.parent_path() /
-                  std::format(".trash-{}-{}", root.filename().string(),
-                              std::chrono::steady_clock::now()
-                                  .time_since_epoch().count());
-    std::error_code ren;
-    std::filesystem::rename(root, parked, ren);
-    if (ren) return false;              // could not even move it — real failure
+    //   move every surviving file to a sibling `.trash-*` directory  (allowed
+    //   even while open, same volume, the handle follows the file)
+    //   then delete the payload tree, which now holds only directories
+    //
+    // This is what makes `remove` mean something after a /Zi build with the
+    // toolset being removed: mspdbsrv.exe lives INSIDE the payload and
+    // outlives cl.exe by tens of seconds, so "wait for it" is a guess and a
+    // CLI that hangs on a guess is worse than the failure. The bytes are
+    // swept by the next lifecycle command, when nothing holds them.
+    auto trash = root.parent_path() /
+                 std::format(".trash-{}-{}", root.filename().string(),
+                             std::chrono::steady_clock::now()
+                                 .time_since_epoch().count());
+    std::vector<std::filesystem::path> survivors;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied,
+             ignore);
+         it != std::filesystem::recursive_directory_iterator{}; it.increment(ignore)) {
+        if (it->is_regular_file(ignore)) survivors.push_back(it->path());
+    }
+    if (survivors.empty()) return false;         // nothing to move; genuinely stuck
 
-    std::filesystem::remove_all(parked, ignore);   // usually works; fine if not
+    std::filesystem::create_directories(trash, ignore);
+    // Flat, index-prefixed: two payload subdirectories can hold the same file
+    // name, and this directory exists to be deleted, not to be read.
+    std::size_t moved = 0;
+    for (std::size_t i = 0; i < survivors.size(); ++i) {
+        std::error_code ren;
+        std::filesystem::rename(
+            survivors[i],
+            trash / std::format("{}-{}", i, survivors[i].filename().string()), ren);
+        if (!ren) ++moved;
+    }
+    if (moved != survivors.size()) {
+        // Some file could not even be moved. Leave the rest where they are —
+        // a half-moved payload is worse than one that is still all there.
+        std::filesystem::remove_all(trash, ignore);
+        return false;
+    }
+
     ec.clear();
-    return true;
+    std::filesystem::remove_all(root, ec);       // directories only now
+    std::filesystem::remove_all(trash, ignore);  // usually works; fine if not
+    return !ec;
 }
 
 // Delete `.trash-*` left behind by a removal that had to park a held payload.
@@ -297,7 +325,7 @@ export void sweep_parked_payloads(const std::filesystem::path& pkgRoot) {
 // first survivor needs no further destruction. (An earlier version did probe
 // by deleting, which turns a diagnostic into a second act of damage on a
 // payload the caller may well want to keep and retry.)
-std::optional<std::filesystem::path>
+export std::optional<std::filesystem::path>
 first_undeletable(const std::filesystem::path& root) {
     std::error_code ec;
     if (!std::filesystem::exists(root, ec)) return std::nullopt;

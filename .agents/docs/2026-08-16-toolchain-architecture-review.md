@@ -26,7 +26,7 @@
 
 ---
 
-## 1. `@system` 是一个通用概念,却被钉死在 MSVC 上 ⭐ 最高优先级
+## 1. `@system` 只对 MSVC 存在 —— 这是**对的**,但它的代价被摊在了 26 处 ⭐
 
 ### 现状
 
@@ -39,9 +39,21 @@ bool is_system_toolchain(const ToolchainSpec& spec) {
 }
 ```
 
-**族被写进了判据。** 于是 `gcc@system` / `llvm@system` 根本无法表达 ——
-而"用这台机器自己的编译器"在 Linux 上是最常见的情形(发行版 gcc)。
-今天 mcpp 要求 gcc 必须走 xim 装一份。
+**族被写进了判据。**
+
+> **先说清楚:这个限制本身是对的,不要改。**
+> xlings 的原则是**能不依赖 host 就不依赖 host** —— 工具链应当由 xim 提供,
+> 这样"声明什么就用什么"在每台机器上成立。`gcc@system` / `llvm@system`
+> **不该**支持:那是把不确定性请回来。
+>
+> `msvc@system` 是 **Windows 平台的特例**,不是通用能力的一个实例:
+> Visual Studio 常常已经装在机器上、又不总是能被重新分发,所以必须能用它。
+>
+> 我这份 review 的初稿建议"把 `@system` 通用化到所有族",**那是错的**,
+> 方向正好反了。下面改成正确的问题。
+
+真正的问题不是"为什么只有 MSVC 有",而是:**一个平台特例,凭什么要在 26 个
+地方各写一遍。**
 
 代价不是"四处特判"这么轻。把两个文件扫一遍:**lifecycle.cppm 里 13 处、
 prepare.cppm 里 13 处** msvc 专有分支,而 gcc / llvm / mingw 三个族在
@@ -74,29 +86,40 @@ lifecycle.cppm 里**一处都没有**(mingw 更是零分支 —— 它整个被�
 `is_system_toolchain` 的结果 —— 名字说的是"族",值说的是"来源"。
 **名字和值不是一回事,这正是这一轮所有缺陷的形状。**
 
-### 建议
+### 建议:**收拢这个特例,而不是推广它**
 
-把 `@system` 提到 spec 层,对所有族成立:
+保持 `@system` 只有 MSVC 能用(甚至值得在 `parse_toolchain_spec` 里
+**显式拒绝** `gcc@system`,并给一句"xlings 不依赖 host 工具链,用
+`gcc@<version>`"—— 让原则**可执行**,而不是靠没人去写)。
+
+要减的是**摊开的代价**,做法是把"来源"变成一个显式的、解析一次的东西:
 
 ```cpp
-// 来源由 VERSION 轴决定,与族无关。
-bool is_system_toolchain(const ToolchainSpec& spec) {
-    if (spec.version == "system") return true;
-    // 兼容:裸 `msvc` 历来就是"这台机器的 VS",保留。
-    // 裸 `gcc` 历来是"装好的最新一个",不是 system —— 不能一起改。
-    return spec.family == Family::Msvc && spec.version.empty();
-}
+enum class Origin { Managed, SystemMsvc };   // 只有两种,而且只会有两种
+
+struct ResolvedToolchain {
+    Origin origin;
+    std::filesystem::path compiler;   // payload 里的 cl/gcc,或机器上的 cl
+    // ……
+};
 ```
 
-每个族再提供一个 `detect_system_installation()`。msvc 已经有了
-(`msvc::detect_installation()`);gcc/llvm 的探测能力在
-`toolchain/detect.cppm` 里基本齐了,是接线而不是新写。
+`prepare` / `lifecycle` 各自解析一次 `Origin`,后面按它分发,而不是每个子命令
+自己再问一遍 `is_system_toolchain`。
 
-**收益**:四处特判塌缩成一次分发;`gcc@system` 成为可表达的东西;
-用户学一个概念而不是两个;msvc 不再是"那个特殊的族"。
+配套把三处**重复拼写**消掉(这几处和特例本身无关,纯粹是复制):
 
-**风险与边界**:裸 `gcc` 的语义**不能**跟着变(那会改变现有 manifest 的行为)。
-只有显式写 `@system` 才是新语义 —— 这条必须有测试钉住。
+1. `xim_tool()` + `installation_at()` + 错误信息 —— `prepare.cppm:1322-1341`
+   与 `lifecycle.cppm:730-755` 几乎逐字重复 → 提一个
+   `resolve_managed_msvc(env, pkg)`。
+2. sysroot 依赖规则两份且**不等价**(`prepare.cppm:1471-1480` vs
+   `lifecycle.cppm:694-702`)→ 合成一个谓词。
+3. `prepare.cppm:1002-1005` 的注释说 4 步、实际 9 个输入 → 要么补齐,
+   要么把顺序变成一张数据表,让注释无处可撒谎。
+
+**收益**:特例仍然是特例(符合原则),但只在**一处**被认出来;
+26 处分支里绝大多数变成"按 Origin 分发"的普通代码。
+`gcc@system` 从"没实现"变成"**明确拒绝并说明理由**"。
 
 ---
 
@@ -399,12 +422,15 @@ mcpp 有 —— 否则每个消费者都要自己重写一遍,而写错的方式
 | 4 | §3c 拆开 `has_usable_msvc` | 小 | mcpp | 无 |
 | 5 | §2 SDK 绑定 + 版本轴 | 中 | mcpp | 无 |
 | 6 | §6 park-and-sweep 下沉 | 小 | xlings | 无 |
-| 7 | §1 `@system` 通用化 | 大 | mcpp | 建议在 §2/§3c 之后 —— 都动 spec 层 |
+| 7 | §1 收拢 Origin + 消三处重复(**不**通用化 `@system`) | 大 | mcpp | 建议在 §2/§3c 之后 —— 都动 spec 层 |
 | 8 | §3d PE 版 `pack` | 大 | mcpp | 排在 §3 之后:§3 先解决"能跑" |
 | 9 | §7 索引修订号 | 大 | xlings + 索引 | 收益最分散 |
 
 第 0–4 项互不依赖,可以并行,合计不大。§1 和 §3d 是两块真正的工作量,
 建议各自单独一轮 —— 尤其 §1 动的是 spec 层,改完之后其余几项的 diff 会更小。
+
+⚠️ §1 的方向已修正:**收拢特例,不是推广它**。初稿建议的 `gcc@system`
+与 xlings"能不依赖 host 就不依赖 host"的原则相悖,已作废。
 
 **如果只做三件**:§3b(一行)、§4(规则,挡住的最多)、§3(让干净 Windows
 上 `mcpp run` 真的能跑)。
