@@ -229,15 +229,39 @@ TEST(PackBinfmt, AnElfWithNoDynamicSectionHasZeroDepsAndIsNotAnError) {
     EXPECT_TRUE(names->empty());
 }
 
-TEST(PackBinfmt, IdentifiesPeAndReadsBothImportDirectories) {
+// SPLIT INTO THREE ON PURPOSE. The combined version died with SIGSEGV on the
+// macOS ARM64 runner and nowhere else, and a single test that builds a
+// fixture, identifies it and parses it cannot say WHICH of the three it was.
+// A test that cannot localise its own failure is a test that costs a CI round
+// per hypothesis.
+TEST(PackBinfmt, ThePeFixtureItselfIsWellFormed) {
     std::array<std::string_view, 2> imports{"KERNEL32.dll", "vcruntime140.dll"};
     std::array<std::string_view, 1> delayed{"dbghelp.dll"};
-    TempFile f{"pe", pe_with_imports(imports, delayed)};
+    auto bytes = pe_with_imports(imports, delayed);
+    ASSERT_GT(bytes.size(), 0x400u);
+    EXPECT_EQ(bytes.substr(0, 2), "MZ");
+    EXPECT_EQ(bytes.substr(0x40, 4), std::string("PE\0\0", 4));
+    // The names have to be IN the image, or every assertion below is about
+    // the fixture rather than about the reader.
+    for (auto want : {"KERNEL32.dll", "vcruntime140.dll", "dbghelp.dll"})
+        EXPECT_NE(bytes.find(want), std::string::npos) << want;
+}
+
+TEST(PackBinfmt, IdentifiesPe) {
+    std::array<std::string_view, 2> imports{"KERNEL32.dll", "vcruntime140.dll"};
+    std::array<std::string_view, 1> delayed{"dbghelp.dll"};
+    TempFile f{"peid", pe_with_imports(imports, delayed)};
 
     auto id = bf::identify(f.path);
     EXPECT_EQ(id.format, bf::Format::Pe);
     EXPECT_EQ(id.arch, "x86_64");
     EXPECT_TRUE(id.is64);
+}
+
+TEST(PackBinfmt, ReadsBothPeImportDirectories) {
+    std::array<std::string_view, 2> imports{"KERNEL32.dll", "vcruntime140.dll"};
+    std::array<std::string_view, 1> delayed{"dbghelp.dll"};
+    TempFile f{"peimp", pe_with_imports(imports, delayed)};
 
     auto names = bf::needed_names(f.path);
     ASSERT_TRUE(names.has_value()) << names.error();
@@ -245,9 +269,11 @@ TEST(PackBinfmt, IdentifiesPeAndReadsBothImportDirectories) {
     // than leaving out an ordinary import: a missing delay-load does not fail
     // at startup, it fails at the first call through it.
     EXPECT_EQ(names->size(), 3u);
-    for (auto want : {"KERNEL32.dll", "vcruntime140.dll", "dbghelp.dll"})
-        EXPECT_NE(std::ranges::find(*names, want), names->end())
-            << want << " missing from the closure";
+    for (auto want : {"KERNEL32.dll", "vcruntime140.dll", "dbghelp.dll"}) {
+        bool found = false;
+        for (auto const& n : *names) found = found || n == want;
+        EXPECT_TRUE(found) << want << " missing from the closure";
+    }
 }
 
 TEST(PackBinfmt, ADosStubWithoutAPeSignatureIsNotAPe) {
