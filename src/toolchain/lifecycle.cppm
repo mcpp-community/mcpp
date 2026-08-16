@@ -248,9 +248,11 @@ bool remove_payload_tree(const std::filesystem::path& root,
 // alone says "Access is denied" and not by whom or to what, which is the
 // difference between a report someone can act on and one they cannot.
 //
-// It probes by trying to delete, and keeps whatever it manages to delete --
-// acceptable only because the caller has already failed a remove_all and the
-// tree is being torn down anyway. Do not call it on a tree meant to survive.
+// It does not probe by deleting. `remove_all` has already removed everything
+// it could, so whatever SURVIVED is exactly what blocked it -- reporting the
+// first survivor needs no further destruction. (An earlier version did probe
+// by deleting, which turns a diagnostic into a second act of damage on a
+// payload the caller may well want to keep and retry.)
 std::optional<std::filesystem::path>
 first_undeletable(const std::filesystem::path& root) {
     std::error_code ec;
@@ -259,11 +261,7 @@ first_undeletable(const std::filesystem::path& root) {
              root, std::filesystem::directory_options::skip_permission_denied, ec);
          it != std::filesystem::recursive_directory_iterator{}; it.increment(ec)) {
         if (ec) break;
-        if (it->is_regular_file(ec)) {
-            std::error_code rm;
-            std::filesystem::remove(it->path(), rm);
-            if (rm) return it->path();
-        }
+        if (it->is_regular_file(ec)) return it->path();
     }
     return root;
 }
@@ -902,8 +900,20 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
             return 1;
         }
         if (!remove_payload_tree(installDir, ec)) {
+            // Say that the payload is now BROKEN, not merely that removal
+            // failed. `remove_all` deletes what it can before it stops, so a
+            // failed remove is not a no-op: what is left is a toolchain with
+            // holes in it, and someone who reads "remove failed" and moves on
+            // will meet those holes as a build error instead.
             mcpp::ui::error(std::format(
-                "remove failed: {}{}", ec.message(),
+                "remove failed: {}{}\n"
+                "         The payload is now INCOMPLETE — files were deleted "
+                "before this one\n"
+                "         blocked the rest. Close whatever holds it and run "
+                "the same command\n"
+                "         again; do not build with this toolchain until it "
+                "removes cleanly.",
+                ec.message(),
                 first_undeletable(installDir)
                     .transform([](const std::filesystem::path& p) {
                         return std::format("\n         stuck at: {}", p.string());

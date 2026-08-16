@@ -18,6 +18,16 @@
   先清可写位重试,再给活着的进程一个**有上限**的等待窗口(10 × 300ms)。
   报错现在会指出卡在哪个文件 —— 光一句 "Access is denied" 没法处理。
 
+  这个诊断当场就派上用场了:它点名的是
+  `bin\Hostx64\x64\Microsoft.VisualStudio.Telemetry.dll` —— 既不是只读位
+  也不是 mspdbsrv,而是 cl.exe 拉起的后台遥测进程 `vctip.exe` 占着它。
+  **占用者不是 mcpp 能删掉的东西**,真正的修复在 payload 那边
+  (openxlings/xim-pkgindex#637 不再安装 vctip.exe);这边留下的是通用兜底
+  和那句能读懂的报错。
+
+  报错同时会说清楚:**失败的 remove 不是空操作** —— `remove_all` 会先删掉
+  能删的,所以剩下的是一个有洞的工具链,得重来一次而不是接着用。
+
 - **半装的 Windows SDK 被当成装好的,链接到最后才炸。**
 
   `find_windows_sdk()` 认一个根的条件是 `Include\<v>\ucrt\corecrt.h`
