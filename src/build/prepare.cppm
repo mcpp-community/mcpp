@@ -921,10 +921,46 @@ prepare_build(bool print_fingerprint,
     }
 
     // ─── Toolchain resolution (docs/21) ────────────────────────────────
-    // Priority chain:
-    //   1. mcpp.toml [toolchain].<platform>      → resolve_xpkg_path → abs path
-    //   2. $CXX env var
-    //   3. PATH g++  (with warning)
+    //
+    // THE WHOLE CHAIN, in the order it is applied. It was documented twice, as
+    // "3 steps" here and "4 steps" further down, and neither list had been
+    // true for a long time — between them they named five of the nine inputs
+    // below and disagreed about two. A comment that undercounts the inputs to
+    // a decision is worse than none: it tells the next reader they have seen
+    // the whole thing.
+    //
+    // The WHAT (which spec) is settled first, then the HOW (which binary).
+    // Anything that WRITES `tcSpec` also writes `tcOrigin`, and that is the
+    // invariant this table rests on — the enumerator names below are real, so
+    // this comment cannot quietly stop matching the code.
+    //
+    //   WHICH SPEC                                       tcOrigin
+    //   1. mcpp.toml [toolchain].<platform> / .default   ManifestToolchain
+    //   2. global config.toml [toolchain] default        GlobalDefault
+    //   3. mcpp.toml [target.<triple>].toolchain         TargetSection
+    //      (--target / [build] target / config default
+    //       select the section; 3 outranks 1 and 2)
+    //   4. the target vocabulary's pin (triple.cppm)     TargetPin
+    //      — a convention, and it stands down when a
+    //        REMEMBERED target would overrule a spec the
+    //        user wrote down
+    //   5. the platform's first-run default, installed   FirstRun
+    //      and persisted by this very invocation
+    //
+    //   WHICH BINARY, from the spec settled above
+    //   6. `msvc@system`  → probe the machine (no xim package exists)
+    //   7. `<family>@<v>` → xim payload; msvc resolves through
+    //                       resolve_managed_msvc, everything else through
+    //                       the bin/-shaped frontend lookup
+    //   8. bare `system`  → the PATH compiler. A deliberate escape hatch, and
+    //                       the ONLY host-compiler route: there is no
+    //                       `gcc@system` (see parse_toolchain_spec)
+    //   9. offline / MCPP_NO_AUTO_INSTALL → hard error rather than a silent
+    //                       ~800 MB download
+    //
+    // AND ONE REVISION, after 1-9 have produced a toolchain: a spec targeting
+    // the MSVC ABI on a machine with no usable MSVC is switched to MinGW-w64
+    // — but only when `tc_origin_is_user_explicit` says mcpp chose it itself.
     std::filesystem::path explicit_compiler;
     std::optional<mcpp::config::GlobalConfig> cfg_opt;
     bool bootstrap_checked = false;
@@ -1000,11 +1036,10 @@ prepare_build(bool print_fingerprint,
 
     constexpr std::string_view kCurrentPlatform = mcpp::platform::name;
 
-    // M5.5: toolchain resolution priority:
-    //   0. --target X / --static, looked up in [target.<triple>]
-    //   1. project mcpp.toml [toolchain].<platform> or .default
-    //   2. global ~/.mcpp/config.toml [toolchain].default
-    //   3. hard error (no system fallback)
+    // Toolchain resolution priority: see the table at the top of this
+    // function. Stated once, where `tcOrigin` is introduced — this used to be
+    // a second, shorter and differently-wrong list of the same thing.
+    //
     // Resolve the build profile, overlaid by any [profile.<name>] from the
     // manifest → buildConfig. `effectiveProfile` outlives the block: the
     // build.mcpp env contract exposes it as MCPP_PROFILE.
@@ -1259,18 +1294,36 @@ prepare_build(bool print_fingerprint,
     // resolution / fingerprinting.
     fold_build_defines_into_flags(m->buildConfig);
 
-    // msvc@system: located on the machine, never resolved through xim
-    // packages. mcpp does not install the machine's Visual Studio.
+    // ORIGIN, RESOLVED ONCE.
     //
-    // A VERSIONED msvc spec is a different origin and takes the xim path
-    // below — which is the whole point: what the manifest says is what gets
+    // The spec used to be parsed TWICE from the same string a dozen lines
+    // apart — once to ask "is this msvc@system", once to get the package —
+    // and each call site drew its own conclusions from the result. Two parses
+    // of one string is two places for the answer to differ, which is the shape
+    // §1 of the three-axes design is about: a platform special case whose cost
+    // is paid at every site that has to know about it.
+    //
+    // `Origin::SystemMsvc` is located on the machine and never resolved
+    // through an xim package — mcpp does not install the machine's Visual
+    // Studio. `Origin::Managed` is everything else, including a VERSIONED
+    // msvc spec, and that is the point: what the manifest says is what gets
     // used, on every machine, instead of whatever this one happens to have.
-    bool tcSpecIsMsvc = false;
-    if (tcSpec.has_value()) {
-        if (auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
-            s && mcpp::toolchain::is_system_toolchain(*s))
-            tcSpecIsMsvc = true;
+    std::optional<mcpp::toolchain::ToolchainSpec> parsedSpec;
+    auto tcOriginAxis = mcpp::toolchain::Origin::Managed;
+    if (tcSpec.has_value() && *tcSpec != "system") {
+        // A parse FAILURE is not the same as an unparseable spec being
+        // absent: `gcc@system` now fails here by name (see
+        // parse_toolchain_spec), and swallowing that would put the error back
+        // where it used to happen — somewhere else, saying something else.
+        auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+        if (!s) return std::unexpected(std::format(
+            "[toolchain].{} = '{}': {}", kCurrentPlatform, *tcSpec, s.error()));
+        parsedSpec   = std::move(*s);
+        tcOriginAxis = mcpp::toolchain::origin_of(*parsedSpec);
     }
+    const bool tcSpecIsMsvc =
+        parsedSpec && tcOriginAxis == mcpp::toolchain::Origin::SystemMsvc;
+
     if (tcSpecIsMsvc) {
         if (!mcpp::platform::is_windows) {
             return std::unexpected(std::format(
@@ -1284,9 +1337,9 @@ prepare_build(bool print_fingerprint,
         mcpp::ui::info("Resolved", std::format(
             "msvc@system → msvc {} ({})",
             inst->display_version(), inst->clPath.string()));
-    } else if (tcSpec.has_value() && *tcSpec != "system") {
-        auto spec = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
-        if (!spec || spec->version.empty()) {
+    } else if (parsedSpec) {
+        auto spec = parsedSpec;
+        if (spec->version.empty()) {
             return std::unexpected(std::format(
                 "[toolchain].{} = '{}' is invalid; expected '<pkg>@<version>'",
                 kCurrentPlatform, *tcSpec));
@@ -1331,20 +1384,13 @@ prepare_build(bool print_fingerprint,
         // (cl.exe is four levels deeper) and the ELF post-install fixup
         // (there is nothing to patchelf on a PE toolchain).
         if (spec->family == mcpp::toolchain::Family::Msvc) {
-            // Not `payload->root`: that field is the fetcher's guess at where
-            // the useful tree starts, and it descends into a lone
-            // subdirectory when the version dir has no bin/ include/ lib/.
-            // An msvc payload's only entry is `VC/`, so the guess lands one
-            // level too deep. (store, name, version) is known — use it.
-            auto verDir = mcpp::xlings::paths::xim_tool(
-                mcpp::config::make_xlings_env(**cfg), pkg.ximName, pkg.ximVersion);
-            auto inst = mcpp::toolchain::msvc::installation_at(
-                verDir, pkg.ximVersion);
-            if (!inst) {
-                return std::unexpected(std::format(
-                    "msvc payload at '{}' has no cl.exe under VC/Tools/MSVC/{}",
-                    verDir.string(), pkg.ximVersion));
-            }
+            // One rule, one place: where a managed toolset lives and why the
+            // fetcher's `root` must not be used for it (mcpp.toolchain.
+            // registry). Install and build asked the same question and each
+            // answered it in its own words.
+            auto inst = mcpp::toolchain::resolve_managed_msvc(
+                mcpp::config::make_xlings_env(**cfg), pkg);
+            if (!inst) return std::unexpected(inst.error());
             explicit_compiler = inst->clPath;
             mcpp::ui::info("Resolved", std::format(
                 "{} → msvc {} ({})", spec->display(),
@@ -1484,8 +1530,9 @@ prepare_build(bool print_fingerprint,
 
         mcpp::fetcher::InstallProgressHandler progress;
         // The glibc default toolchain needs the sysroot payloads (C library +
-        // kernel headers). The musl default is self-contained, so skip them.
-        if (!mcpp::platform::is_macos && !mcpp::platform::is_windows && !muslDefault) {
+        // kernel headers). One derivation, shared with `toolchain install` —
+        // see registry.cppm for what the two spellings used to disagree about.
+        if (mcpp::toolchain::needs_linux_sysroot_payloads(defaultParsed->target)) {
             for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
                 (void)fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
             }
@@ -1552,6 +1599,31 @@ prepare_build(bool print_fingerprint,
     auto tc = mcpp::toolchain::detect(
         explicit_compiler, runtimePayload, runtimeBindingSnapshot.contractHash);
     if (!tc) return std::unexpected(tc.error().message);
+
+    // Something about the resolution the user has to be told, but which is
+    // not a failure. Today's only producer is the Windows SDK axis: a managed
+    // toolset binds the SDK it was installed with, so a `WindowsSdkDir` in
+    // the environment does not apply — and an override that is ignored
+    // SILENTLY is indistinguishable from one that was never set.
+    if (!tc->resolutionNote.empty())
+        mcpp::ui::info("note", tc->resolutionNote);
+
+    // The Windows runtime identity, flowing BACK into the contract.
+    //
+    // Everything else about the runtime is known before a toolchain is
+    // resolved, and deliberately so (see the RuntimeBinding block above). The
+    // Windows SDK is the exception: it is a property of the toolchain, and
+    // until it reached the contract hash the version axis simply did not
+    // exist one layer below the compiler — two SDKs produced one cache key.
+    //
+    // `ucrt@<v>` is a COMPATIBILITY FLOOR, not a payload binding like
+    // `glibc@<v>`: ucrtbase.dll is an OS component and mcpp ships no
+    // redistributable for it. See mcpp.platform.runtime_binding.
+    if (!tc->windowsSdkVersion.empty()) {
+        mcpp::platform::runtime::bind_windows_ucrt(
+            runtimeBindingSnapshot, tc->windowsSdkVersion);
+        tc->runtimeContractHash = runtimeBindingSnapshot.contractHash;
+    }
 
     // ── Targeting the MSVC ABI without a usable MSVC ─────────────────────
     //

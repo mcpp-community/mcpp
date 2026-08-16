@@ -17,6 +17,7 @@ export module mcpp.toolchain.registry;
 
 import std;
 import mcpp.platform;
+import mcpp.platform.xlings;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.compat;
 import mcpp.toolchain.gcc;
@@ -148,6 +149,50 @@ bool spec_matches_payload(const ToolchainSpec& def,
 // and older mechanism.)
 bool is_system_toolchain(const ToolchainSpec& spec);
 
+// The same question as `is_system_toolchain`, asked as the AXIS it belongs to
+// (mcpp.toolchain.model). Both spellings exist because the predicate reads
+// better at a site that is deciding one thing, and the enum reads better at a
+// site that dispatches — but there is one derivation, so they cannot drift.
+Origin origin_of(const ToolchainSpec& spec);
+
+// Resolve a MANAGED msvc payload to its installation record.
+//
+// `prepare` (a build) and `lifecycle` (install / default / remove) both need
+// this, and both used to spell it out: derive the version directory from
+// (store, name, version) rather than trusting the fetcher's `root` guess —
+// which descends into a lone subdirectory and therefore lands one level too
+// deep for an msvc payload, whose only entry is `VC/` — then call
+// `installation_at`, then format the same error. Three copies of one rule,
+// and the comment explaining WHY the fetcher's guess is wrong existed in only
+// one of them.
+//
+// `identifyVersion = false` skips running cl.exe for its banner; callers that
+// only need to know whether a toolset is there should pass false.
+std::expected<msvc::MsvcInstallation, std::string>
+resolve_managed_msvc(const mcpp::xlings::Env& env,
+                     const XimToolchainPackage& pkg,
+                     bool identifyVersion = true);
+
+// Does installing a toolchain FOR THIS TARGET additionally need the Linux
+// sysroot payloads (`xim:glibc` + `xim:linux-headers`)?
+//
+// THE SINGLE DERIVATION. It was two, and they were not equivalent while a
+// comment on one of them said "mirrors the guard on the other":
+//
+//   lifecycle   !musl && !pe && !windows-host && !macos-host
+//   prepare     !macos-host && !windows-host && !musl
+//
+// The PE term was missing from the second. It happens to be unreachable today
+// (first-run never selects a PE target on Linux), which is what let the
+// divergence sit there — a latent difference between two spellings of one
+// rule is exactly the state that becomes a bug the moment either side moves.
+//
+// Decided by the TARGET, not the payload name: musl targets are
+// self-contained, PE targets (native MinGW and the Linux-hosted cross alike)
+// bring their own CRT, and a non-Linux host never needs a Linux sysroot at
+// all.
+bool needs_linux_sysroot_payloads(const triple::Triple& target);
+
 // Can THIS host serve that target — is there an installable payload for the
 // (host, target) pair? Empty target = host target, always serviceable.
 //
@@ -235,8 +280,60 @@ parse_toolchain_spec(std::string compilerArg,
     else                             spec.family = Family::Gcc;
     spec.version = std::move(norm->version);
     spec.target  = std::move(norm->target);
+
+    // `@system` IS NOT A GENERAL SPELLING, and refusing it here is the point.
+    //
+    // mcpp is built on xlings, a user-space OS, and the whole design drives
+    // host dependencies to a minimum: a toolchain comes from a payload the
+    // manifest names, so every machine compiles with the same compiler.
+    // `msvc@system` is a concession to ONE platform — Visual Studio is very
+    // often already installed and cannot always be redistributed — not a
+    // capability the other families are missing.
+    //
+    // It used to parse and then fail somewhere else entirely, as
+    // `xim:gcc@system` → "no such package", which sends the reader looking
+    // for a version that was never going to exist. A spec that cannot mean
+    // anything should be rejected where it is read, by name, with the two
+    // things it might have meant spelled out.
+    if (spec.version == "system" && spec.family != Family::Msvc) {
+        return std::unexpected(std::format(
+            "'{}@system' is not a toolchain spelling: only msvc has a system "
+            "origin, because Visual Studio is often already installed and "
+            "cannot always be redistributed.\n"
+            "  mcpp installs every other toolchain itself, so that each "
+            "machine builds with the same one:\n"
+            "    {}@<version>   pin a payload   (mcpp toolchain list --available {})\n"
+            "    system         the PATH compiler, whatever it is — an escape "
+            "hatch, and it takes no family",
+            family_name(spec.family), family_name(spec.family),
+            family_name(spec.family)));
+    }
     if (norm->changed) spec.compatHint = std::move(norm->hint);
     return spec;
+}
+
+Origin origin_of(const ToolchainSpec& spec) {
+    return is_system_toolchain(spec) ? Origin::SystemMsvc : Origin::Managed;
+}
+
+std::expected<msvc::MsvcInstallation, std::string>
+resolve_managed_msvc(const mcpp::xlings::Env& env,
+                     const XimToolchainPackage& pkg,
+                     bool identifyVersion) {
+    // NOT the fetcher's `root`: that field is its guess at where the useful
+    // tree starts, and it descends into a lone subdirectory when the version
+    // dir has no bin/ include/ lib/. An msvc payload's only entry is `VC/`,
+    // so the guess lands exactly one level too deep. (store, name, version)
+    // is known — compose it.
+    auto verDir = mcpp::xlings::paths::xim_tool(env, pkg.ximName, pkg.ximVersion);
+    // The package version IS the toolset directory name, so cl.exe is derived
+    // rather than searched for: nothing here can silently pick a different
+    // toolset, which is the whole reason the version axis exists.
+    if (auto inst = msvc::installation_at(verDir, pkg.ximVersion, identifyVersion))
+        return *inst;
+    return std::unexpected(std::format(
+        "msvc payload at '{}' has no cl.exe under VC/Tools/MSVC/{}",
+        verDir.string(), pkg.ximVersion));
 }
 
 void print_compat_hint(const ToolchainSpec& spec) {
@@ -435,6 +532,11 @@ bool is_system_toolchain(const ToolchainSpec& spec) {
     // which is the defect this whole file's msvc handling exists to close.
     return spec.family == Family::Msvc
         && (spec.version.empty() || spec.version == "system");
+}
+
+bool needs_linux_sysroot_payloads(const triple::Triple& target) {
+    if constexpr (!mcpp::platform::is_linux) return false;
+    return !target.is_musl() && !target.is_pe();
 }
 
 bool host_can_serve(const triple::Triple& target) {

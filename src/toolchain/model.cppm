@@ -9,6 +9,34 @@ export namespace mcpp::toolchain {
 
 enum class CompilerId { Unknown, GCC, Clang, MSVC };
 
+// WHERE A COMPILER CAME FROM. Two values, and there will only ever be two.
+//
+// `Managed`     an xlings payload the manifest named. The answer is in the
+//               manifest; the machine only decides whether it has been
+//               downloaded yet.
+// `SystemMsvc`  probed on this machine. The answer depends on what happens to
+//               be installed here.
+//
+// THE SECOND ONE IS NOT A GENERAL CAPABILITY, and reading it as one is a
+// mistake this comment exists to prevent. mcpp is built on xlings, a
+// user-space OS, and the whole design is to drive host dependencies to a
+// minimum — there is no `gcc@system`, deliberately. `msvc@system` is a
+// concession to ONE platform: Visual Studio is very often already installed
+// and cannot always be redistributed, so refusing to use it would cost more
+// than it buys. (The bare, family-less `system` spec is a different thing
+// again: a deliberate escape hatch to the PATH compiler.)
+//
+// Lives in the data model rather than in msvc.cppm so the toolchain-spec
+// side (registry) and the located-compiler side (msvc) name the SAME axis.
+// They used to answer it independently, in 26 scattered branches, which is
+// how "is this managed" and "is this a system MSVC" came to be asked with
+// different predicates in the same build.
+enum class Origin { Managed, SystemMsvc };
+
+inline std::string_view origin_name(Origin o) {
+    return o == Origin::SystemMsvc ? "system" : "managed";
+}
+
 // Fine-grained sysroot paths derived from xpkgs payloads.
 // When populated, flags are assembled from these paths instead of --sysroot.
 // One environment variable a toolchain needs at tool-invocation time.
@@ -73,6 +101,27 @@ struct Toolchain {
     // GCC/libc++ answer 20; MSVC answers 20 from cl 19.38 (VS 2022 17.8,
     // microsoft/STL#3977) and 23 below that.
     int                                 importStdMinLevel = 0;
+    // The Windows SDK this toolchain compiles and links against
+    // ("10.0.26100.0"), once resolved. Empty everywhere else — and empty on
+    // Windows too when no SDK was found, which detection tolerates so that
+    // toolchain SELECTION still works on an SDK-less box.
+    //
+    // Recorded rather than re-derived because two different questions read it
+    // and they must not be able to disagree: the compile environment
+    // (INCLUDE/LIB) and the runtime identity (`ucrt@<version>`, which enters
+    // the runtime contract hash). Deriving the second from a second search is
+    // how the SDK came to have no identity in the first place.
+    std::string                         windowsSdkVersion;
+    // Something about HOW this toolchain was resolved that the user has to be
+    // told, but which is not a failure. Non-empty ⇒ the caller MUST surface it.
+    //
+    // Today's only producer is the Windows SDK axis: a managed toolset binds
+    // the SDK that came with it, so a `WindowsSdkDir` in the environment is
+    // ignored — and an override that is ignored SILENTLY is indistinguishable
+    // from one that did not exist. That is the failure shape this whole round
+    // kept finding: "it did not happen" and "it succeeded" producing identical
+    // output.
+    std::string                         resolutionNote;
 
     std::string label() const {
         return std::format("{} {} ({})", compiler_name(), version, targetTriple);

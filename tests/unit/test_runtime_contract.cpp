@@ -370,3 +370,80 @@ TEST(RuntimeSearchClosure, UndeclaredBindingStillGetsItsOwnFarm) {
     EXPECT_EQ(farm_entries(build::runtime_search_closure(
         plan_for("aarch64-linux-gnu"), b)), 0u);
 }
+
+// ─── the Windows runtime identity ────────────────────────────────────────
+//
+// `runtimeId`'s own comment has documented `ucrt@…` since the field was
+// introduced, and nothing in the repository ever wrote one. The compiler had
+// a version axis and the C runtime it compiles against did not, so two
+// Windows SDKs produced one cache key — the version axis simply stopped
+// existing one layer down.
+
+TEST(RuntimeIdentity, ProviderIsDispatchedOnNotPatternMatched) {
+    namespace rt = mcpp::platform::runtime;
+    EXPECT_EQ(rt::runtime_provider("glibc@2.39"), "glibc");
+    EXPECT_EQ(rt::runtime_provider("ucrt@10.0.26100.0"), "ucrt");
+    EXPECT_EQ(rt::runtime_provider("macos_sdk@14.0"), "macos_sdk");
+    // No identity at all is a DIFFERENT answer from "an identity belonging to
+    // some other provider", and every consumer that spelled
+    // `starts_with("glibc@")` collapsed the two.
+    EXPECT_TRUE(rt::runtime_provider("").empty());
+    EXPECT_TRUE(rt::runtime_provider("nonsense").empty());
+}
+
+TEST(RuntimeIdentity, TheSdkVersionReachesTheContractHash) {
+    namespace rt = mcpp::platform::runtime;
+    rt::RuntimeBinding a;
+    a.platform = "windows";
+    a.contractHash = "unset";
+
+    rt::RuntimeBinding b = a;
+    rt::bind_windows_ucrt(a, "10.0.22621.0");
+    rt::bind_windows_ucrt(b, "10.0.26100.0");
+
+    EXPECT_EQ(a.runtimeId, "ucrt@10.0.22621.0");
+    EXPECT_EQ(b.runtimeId, "ucrt@10.0.26100.0");
+    EXPECT_NE(a.contractHash, b.contractHash)
+        << "two SDKs produced one contract hash, so they produce one build "
+           "cache — which is the defect this identity closes";
+    EXPECT_NE(a.contractHash, "unset") << "the hash was not re-derived";
+}
+
+TEST(RuntimeIdentity, BindingUcrtIsIdempotentAndSkipsAnEmptyVersion) {
+    namespace rt = mcpp::platform::runtime;
+    rt::RuntimeBinding b;
+    b.platform = "windows";
+    rt::bind_windows_ucrt(b, "10.0.26100.0");
+    auto once = b.contractHash;
+    rt::bind_windows_ucrt(b, "10.0.26100.0");
+    EXPECT_EQ(b.contractHash, once);
+
+    // A Windows box with no SDK still builds — toolchain SELECTION has to
+    // work there — so there is simply nothing to declare.
+    rt::RuntimeBinding empty;
+    empty.contractHash = "keep";
+    rt::bind_windows_ucrt(empty, "");
+    EXPECT_TRUE(empty.runtimeId.empty());
+    EXPECT_EQ(empty.contractHash, "keep");
+}
+
+TEST(RuntimeIdentity, UcrtIsAFloorDeclarationNotAPrivatePayload) {
+    // The asymmetry with glibc, pinned so it cannot be "tidied up" later.
+    //
+    // `glibc@2.39` binds a payload: the headers and the .so are both in it and
+    // patchelf makes the artifact run on that exact copy, so it is ALSO
+    // projected into `libc`, which the loader machinery reads. `ucrtbase.dll`
+    // is an OS component from Win10 on — it cannot be swapped and must not be
+    // shipped — so mcpp's windows-sdk payload deliberately carries only half
+    // of ucrt (headers + import libraries). Projecting it into `libc` would
+    // send the private-libc machinery looking for a payload that was never
+    // supposed to exist.
+    namespace rt = mcpp::platform::runtime;
+    rt::RuntimeBinding b;
+    b.platform = "windows";
+    rt::bind_windows_ucrt(b, "10.0.26100.0");
+    EXPECT_FALSE(b.libc.has_value())
+        << "ucrt was projected into the private-libc field";
+    EXPECT_FALSE(b.loader.has_value());
+    EXPECT_TRUE(b.libraryDirs.empty());
+}

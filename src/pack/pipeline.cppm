@@ -11,6 +11,8 @@ export module mcpp.pack.pipeline;
 import std;
 import mcpp.build.prepare;
 import mcpp.build.backend;
+import mcpp.build.distribution;
+import mcpp.build.flags;
 import mcpp.build.ninja;
 import mcpp.build.plan;
 import mcpp.config;
@@ -55,7 +57,15 @@ export int build_and_pack(Options opts, bool modeFromUser) {
     // Re-derive target triple: if mode is Static we force the musl
     // triple even when the manifest's [pack].default_mode bumped us
     // here after `prepare_build` ran with the host toolchain.
-    if (opts.mode == mcpp::pack::Mode::Static && ctx->tc.targetTriple.find("-musl") == std::string::npos) {
+    //
+    // ...but NOT over a target the user asked for. `--mode static` on its own
+    // has always meant "the musl-static ELF", and that stays; `--mode static
+    // --target x86_64-windows-gnu` used to silently become a Linux build,
+    // which was invisible while PE packaging did not exist and is a wrong
+    // answer now that it does. An explicit `--target` is an instruction.
+    if (opts.mode == mcpp::pack::Mode::Static
+        && opts.targetTriple.empty()
+        && ctx->tc.targetTriple.find("-musl") == std::string::npos) {
         // Need to re-prepare the build with the musl target.
         mcpp::build::BuildOverrides ov2;
         ov2.target_triple = "x86_64-linux-musl";
@@ -100,6 +110,31 @@ export int build_and_pack(Options opts, bool modeFromUser) {
         mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
+    // ─── What the build promised, and where its runtime lives ────────
+    //
+    // The C++ runtime contract has been resolved since the flags were
+    // computed; `pack` simply had no way to see it (design §4.3), so on PE
+    // nothing enforced it and on ELF the `ldd` closure agreed with it by
+    // luck. Reading the RESOLVED value rather than the manifest string is the
+    // point: a request that was downgraded (a per-role self-contained on
+    // /MD, say) must not make the package behave as though it had been
+    // honoured.
+    {
+        const auto flags = mcpp::build::compute_flags(ctx->plan);
+        opts.carryToolchainRuntime =
+            flags.contractByRole[static_cast<std::size_t>(
+                mcpp::build::dist::Role::Distributable)]
+            == mcpp::build::dist::Contract::ToolchainCoupled;
+        opts.toolchainRuntimeDirs = ctx->plan.toolchain.linkRuntimeDirs;
+        // Where a third-party dependency's shared library may be found. Both
+        // channels, because they answer for different things: the runtime
+        // library dirs are what `mcpp run` puts on the loader's path, and the
+        // link intent's search dirs are what a dependency package declared.
+        opts.depSearchDirs = ctx->plan.runtimeLibraryDirs;
+        for (auto const& d : ctx->plan.linkIntent.runtimeSearchDirs)
+            opts.depSearchDirs.push_back(d);
+    }
+
     // ─── Build the plan + run ────────────────────────────────────────
     auto plan = mcpp::pack::make_plan(ctx->manifest, *cfg, opts,
         mainBinary, ctx->projectRoot, ctx->tc.targetTriple,
@@ -121,7 +156,7 @@ export int build_and_pack(Options opts, bool modeFromUser) {
 
     auto pathCtx = mcpp::fetcher::make_path_ctx(&*cfg, ctx->projectRoot);
     auto outPath = (opts.format == mcpp::pack::Format::Tar)
-        ? plan->tarballPath : plan->stagingRoot;
+        ? plan->archivePath : plan->stagingRoot;
     mcpp::ui::status("Packed", mcpp::ui::shorten_path(outPath, pathCtx));
     return 0;
 }

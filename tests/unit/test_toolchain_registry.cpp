@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.platform;
+import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
 
@@ -223,4 +224,74 @@ TEST(ToolchainRegistry, NativeGccPayloadFollowsWhatTheArchActuallyPublishes) {
 
     // Non-Linux hosts are out of scope: macOS uses llvm, Windows mingw/msvc.
     EXPECT_FALSE(gcc_native_payload_is_musl("aarch64", false, none));
+}
+
+// ─── the origin axis ─────────────────────────────────────────────────────
+//
+// `@system` is not a general spelling and must not become one. mcpp is built
+// on xlings, a user-space OS, and the design drives host dependencies to a
+// minimum: a toolchain comes from a payload the manifest names, so every
+// machine compiles with the same compiler. `msvc@system` is a concession to
+// ONE platform — Visual Studio is very often already installed and cannot
+// always be redistributed.
+
+TEST(ToolchainOrigin, MsvcIsTheOnlyFamilyWithASystemSpelling) {
+    auto msvcSystem = parse_toolchain_spec("msvc@system");
+    ASSERT_TRUE(msvcSystem.has_value()) << msvcSystem.error();
+    EXPECT_TRUE(is_system_toolchain(*msvcSystem));
+    EXPECT_EQ(origin_of(*msvcSystem), Origin::SystemMsvc);
+
+    // A VERSIONED msvc spec is the other origin — that split is the whole
+    // point of the version axis.
+    auto pinned = parse_toolchain_spec("msvc@14.44.35207");
+    ASSERT_TRUE(pinned.has_value());
+    EXPECT_EQ(origin_of(*pinned), Origin::Managed);
+
+    auto gcc = parse_toolchain_spec("gcc@16.1.0");
+    ASSERT_TRUE(gcc.has_value());
+    EXPECT_EQ(origin_of(*gcc), Origin::Managed);
+}
+
+TEST(ToolchainOrigin, NonMsvcSystemIsRejectedWhereItIsReadAndOffersTheAlternatives) {
+    // It used to parse, and then fail somewhere else entirely as
+    // `xim:gcc@system` → "no such package" — which sends the reader looking
+    // for a version that was never going to exist. The error has to name both
+    // things the user might have meant.
+    for (auto spec : {"gcc@system", "llvm@system"}) {
+        auto r = parse_toolchain_spec(spec);
+        ASSERT_FALSE(r.has_value()) << spec << " was accepted";
+        EXPECT_NE(r.error().find("only msvc"), std::string::npos) << r.error();
+        EXPECT_NE(r.error().find("@<version>"), std::string::npos)
+            << "the pin alternative is not offered: " << r.error();
+        // The family-less PATH escape hatch is the OTHER thing they might
+        // have wanted, and it is a different mechanism.
+        EXPECT_NE(r.error().find("PATH compiler"), std::string::npos)
+            << "the escape hatch is not offered: " << r.error();
+        EXPECT_EQ(r.error().find("xim:"), std::string::npos)
+            << "still leaking the package spelling that cannot exist: "
+            << r.error();
+    }
+}
+
+// The Linux sysroot payloads (`xim:glibc` + `xim:linux-headers`) had two
+// derivations, and a comment on one claimed it mirrored the other. It did
+// not: the PE term was missing from the second.
+TEST(ToolchainSysrootDeps, OneDerivationForTheGlibcSysrootPayloads) {
+    mcpp::toolchain::triple::Triple host{};                 // empty = host
+    mcpp::toolchain::triple::Triple musl{std::string(mcpp::platform::host_arch), "linux", "musl"};
+    mcpp::toolchain::triple::Triple mingw{"x86_64", "windows", "gnu"};
+
+    if constexpr (mcpp::platform::is_linux) {
+        EXPECT_TRUE(needs_linux_sysroot_payloads(host));
+        // Self-contained: a musl payload carries its own C library.
+        EXPECT_FALSE(needs_linux_sysroot_payloads(musl));
+        // THE TERM THAT WAS MISSING. A PE target brings its own CRT, whether
+        // it is a native MinGW or the Linux-hosted cross, so a Linux sysroot
+        // is not part of installing one.
+        EXPECT_FALSE(needs_linux_sysroot_payloads(mingw));
+    } else {
+        // No Linux sysroot exists to want.
+        for (auto const& t : {host, musl, mingw})
+            EXPECT_FALSE(needs_linux_sysroot_payloads(t));
+    }
 }

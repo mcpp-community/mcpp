@@ -1,7 +1,37 @@
 # Windows Pack Design
 
 **Date:** 2026-05-19
-**Status:** Planned (stub guard in place, implementation not yet started)
+**Status:** SUPERSEDED and implemented, 2026-08-17. See
+`2026-08-16-windows-toolchain-three-axes-design.md` §4 for the design that
+shipped, and `src/pack/binfmt.cppm` / `src/pack/zip.cppm` for the code.
+
+> ## What this document got wrong, and it is worth keeping
+>
+> Everything below assumes **pack runs on Windows**. That assumption is
+> visible in every proposal: `dumpbin /dependents`, `ImageNtHeader` from
+> `<windows.h>`, PowerShell's `Compress-Archive`, and an implementation
+> "under `#if defined(_WIN32)`".
+>
+> The assumption came from the guard it was trying to remove. `pack` refused
+> Windows, so the problem looked like "pack has no Windows branch". It was
+> not: the ELF closure is derived by RUNNING the artifact
+> (`LD_TRACE_LOADED_OBJECTS=1 '<binary>'`), so it can cross neither an OS nor
+> an ARCHITECTURE — a Linux box cannot trace a PE, and an x86_64 box cannot
+> trace an aarch64 ELF either. The `#if defined(_WIN32)` was that limitation
+> surfacing at the nearest place a user would hit it.
+>
+> Reading the import table statically removes both limits at once, and then
+> cross-OS packaging is not a feature that had to be added — it is what
+> remains when the obstacle is gone. Each Windows-only tool above would have
+> reintroduced the obstacle one layer down.
+>
+> What did survive from here: the `.zip` output, the flat
+> DLLs-beside-the-`.exe` layout, no wrapper script, and the skip-list concept
+> (with one correction — `vcruntime*.dll` is listed below as a system DLL, and
+> it is not: it belongs to the TOOLSET, and whether it travels is
+> `cxx_runtime`'s decision).
+
+---
 
 ## Current state
 

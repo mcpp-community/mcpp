@@ -133,13 +133,45 @@ export int doctor_report() {
             warn("msvc not detected — run `mcpp toolchain default msvc` for "
                  "setup guidance (mcpp does not install MSVC)");
         }
-        // Windows SDK (native cl.exe builds need its UCRT/um headers).
+        // Windows SDK. REPORTED PER ORIGIN, because it is chosen per origin
+        // (design §2.2): `msvc@system` searches the machine, a pinned toolset
+        // takes the payload installed with it. One unlabelled line here would
+        // be the same "one question, two answerers" shape the SDK axis exists
+        // to close — a user reading it would believe it applied to their
+        // pinned build, and it does not.
         if (auto sdk = mcpp::toolchain::msvc::find_windows_sdk()) {
-            ok(std::format("Windows SDK {} at {}", sdk->version,
+            ok(std::format("Windows SDK (msvc@system) {} at {}", sdk->version,
                            sdk->root.string()));
         } else {
-            warn("no Windows SDK found — native msvc builds will fail "
-                 "(install the 'Windows 11 SDK' VS component)");
+            warn("no Windows SDK found for msvc@system — native builds with "
+                 "the machine's Visual Studio will fail (install the "
+                 "'Windows 11 SDK' VS component)");
+        }
+        {
+            std::error_code sdkEc;
+            auto msvcRoot = mcpp::home::root()
+                / "registry" / "data" / "xpkgs" / "xim-x-msvc";
+            for (auto& v : std::filesystem::directory_iterator(msvcRoot, sdkEc)) {
+                if (!v.is_directory(sdkEc)) continue;
+                auto ver = v.path().filename().string();
+                auto inst = mcpp::toolchain::msvc::installation_at(
+                    v.path(), ver, /*identifyVersion=*/false);
+                if (!inst) continue;
+                // The SAME resolution a build performs, not a second one
+                // shaped like it: what doctor prints is what the user will
+                // believe, so the two must not be able to disagree.
+                auto choice = mcpp::toolchain::msvc::resolve_sdk_for(inst->clPath);
+                if (choice.sdk) {
+                    ok(std::format("Windows SDK (msvc@{}) {} at {}",
+                                   ver, choice.sdk->version,
+                                   choice.sdk->root.string()));
+                } else {
+                    warn(std::format(
+                        "msvc@{} has no usable Windows SDK — reinstall it to "
+                        "pull its `xim:windows-sdk` dependency", ver));
+                }
+                if (!choice.note.empty()) warn(choice.note);
+            }
         }
 
         mcpp::ui::status("Checking", "mingw (xim:mingw-gcc)");

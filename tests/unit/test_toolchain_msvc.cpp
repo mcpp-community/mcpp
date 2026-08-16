@@ -657,3 +657,170 @@ TEST(ToolchainMsvc, BothKeysSelectTheStaticCrt) {
     EXPECT_FALSE(msvc_wants_static_crt("", "host-coupled"));
     EXPECT_FALSE(msvc_wants_static_crt("", "toolchain-coupled"));
 }
+
+// ─── the SDK axis: bound for a managed toolset, searched for a system one ──
+//
+// Until now the Windows SDK had no identity: `find_windows_sdk()` scanned,
+// and whatever the scan reached first won, for BOTH origins. That is the
+// defect .agents/docs/2026-08-16-windows-toolchain-three-axes-design.md §2
+// is about — the compiler got a version axis and the headers it compiles
+// against did not, so two machines could build one manifest against two SDKs
+// with nothing in the log naming either.
+
+namespace {
+
+// An xlings store, laid out the way the real one is: `xpkgs_from_compiler`
+// finds the store by walking up for a directory literally named `xpkgs`, so
+// that name is load-bearing and not decoration.
+struct FakeStore {
+    std::filesystem::path root;      // …/xpkgs
+
+    FakeStore() {
+        root = std::filesystem::temp_directory_path()
+             / std::format("mcpp-store-{}", std::chrono::steady_clock::now()
+                                                .time_since_epoch().count())
+             / "data" / "xpkgs";
+        std::filesystem::create_directories(root);
+    }
+    ~FakeStore() {
+        std::error_code ec;
+        std::filesystem::remove_all(root.parent_path().parent_path(), ec);
+    }
+    FakeStore(const FakeStore&) = delete;
+    FakeStore& operator=(const FakeStore&) = delete;
+
+    std::filesystem::path add_toolset(std::string_view version) {
+        auto tools = root / "xim-x-msvc" / std::string(version)
+                   / "VC" / "Tools" / "MSVC" / std::string(version);
+        auto bin = tools / "bin" / "Hostx64" / "x64";
+        std::filesystem::create_directories(bin);
+        std::ofstream{bin / "cl.exe"} << "not a compiler";
+        std::filesystem::create_directories(tools / "modules");
+        std::ofstream{tools / "modules" / "std.ixx"} << "export module std;";
+        return bin / "cl.exe";
+    }
+    // A complete SDK payload — headers AND import libraries, for both
+    // architectures so the fixture does not care which host runs it.
+    std::filesystem::path add_sdk(std::string_view version) {
+        auto sdk = root / "xim-x-windows-sdk" / std::string(version);
+        auto inc = sdk / "Include" / std::string(version) / "ucrt";
+        std::filesystem::create_directories(inc);
+        std::ofstream{inc / "corecrt.h"} << "#pragma once";
+        for (auto arch : {"x64", "arm64"}) {
+            auto lib = sdk / "Lib" / std::string(version) / "um" / arch;
+            std::filesystem::create_directories(lib);
+            std::ofstream{lib / "kernel32.lib"} << "not a library";
+        }
+        return sdk;
+    }
+};
+
+} // namespace
+
+TEST(MsvcSdkOrigin, ACompilerInAStoreIsManagedAndOneOutsideIsNot) {
+    FakeStore store;
+    auto cl = store.add_toolset("14.44.35207");
+    EXPECT_EQ(msvc::origin_of(cl), Origin::Managed);
+    EXPECT_EQ(msvc::origin_of(
+        "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/"
+        "MSVC/14.51.36231/bin/Hostx64/x64/cl.exe"), Origin::SystemMsvc);
+}
+
+TEST(MsvcSdkOrigin, AManagedToolsetTakesTheSdkFromItsOwnStore) {
+    NoSdkEnv clean;
+    FakeStore store;
+    auto cl = store.add_toolset("14.44.35207");
+    store.add_sdk("10.0.26100.0");
+
+    auto choice = msvc::resolve_sdk_for(cl);
+    ASSERT_TRUE(choice.sdk.has_value())
+        << "the toolset's own SDK payload was not found";
+    EXPECT_EQ(choice.origin, Origin::Managed);
+    EXPECT_EQ(choice.sdk->version, "10.0.26100.0");
+    EXPECT_TRUE(choice.note.empty()) << choice.note;
+}
+
+// THE CRITERION THIS AXIS EXISTS FOR. An environment that can overwrite the
+// choice means the manifest did not pin anything — it only expressed a
+// preference that the machine gets to overrule, silently.
+//
+// This is the design doc's §6 acceptance test, as a unit test: point
+// WindowsSdkDir somewhere else entirely and the build must still use the
+// payload's SDK, and must SAY that the variable was ignored.
+TEST(MsvcSdkOrigin, WindowsSdkDirCannotOverrideAPinnedToolsetsSdk) {
+    NoSdkEnv clean;
+    FakeStore store;
+    auto cl = store.add_toolset("14.44.35207");
+    store.add_sdk("10.0.26100.0");
+
+    FakeToolset elsewhere{"sdk-elsewhere"};
+    elsewhere.add_sdk("10.0.22621.0");
+    ScopedEnv dir{"WindowsSdkDir", elsewhere.root.string()};
+
+    auto choice = msvc::resolve_sdk_for(cl);
+    ASSERT_TRUE(choice.sdk.has_value());
+    EXPECT_EQ(choice.sdk->version, "10.0.26100.0")
+        << "the environment overrode a pinned toolset's SDK; the pin is not one";
+    EXPECT_NE(choice.sdk->root, elsewhere.root);
+    EXPECT_NE(choice.note.find("WindowsSdkDir"), std::string::npos)
+        << "an ignored override that says nothing is indistinguishable from "
+           "one that was never set: " << choice.note;
+}
+
+TEST(MsvcSdkOrigin, WindowsSdkVersionDoesNotPickAmongPayloadsEither) {
+    // Same override wearing a smaller hat: naming a version is still the
+    // environment choosing which headers a pinned build compiles against.
+    NoSdkEnv clean;
+    FakeStore store;
+    auto cl = store.add_toolset("14.44.35207");
+    store.add_sdk("10.0.22621.0");
+    store.add_sdk("10.0.26100.0");
+    ScopedEnv ver{"WindowsSdkVersion", "10.0.22621.0\\"};
+
+    auto choice = msvc::resolve_sdk_for(cl);
+    ASSERT_TRUE(choice.sdk.has_value());
+    EXPECT_EQ(choice.sdk->version, "10.0.26100.0")
+        << "WindowsSdkVersion selected among the store's payloads";
+    EXPECT_FALSE(choice.note.empty());
+}
+
+TEST(MsvcSdkOrigin, AManagedToolsetWithNoSdkPayloadFallsBackAndSaysSo) {
+    // Working beats failing here — the machine may well have a complete SDK,
+    // and refusing to build would be a regression for anyone whose toolset
+    // predates the SDK dependency. What must not happen is the fallback being
+    // invisible: the build is no longer reproducible, and only this line says
+    // so.
+    NoSdkEnv clean;
+    FakeStore store;
+    auto cl = store.add_toolset("14.44.35207");   // no add_sdk
+
+    FakeToolset machine{"sdk-machine"};
+    machine.add_sdk("10.0.22621.0");
+    ScopedEnv dir{"WindowsSdkDir", machine.root.string()};
+
+    auto choice = msvc::resolve_sdk_for(cl);
+    ASSERT_TRUE(choice.sdk.has_value());
+    EXPECT_EQ(choice.sdk->root, machine.root);
+    EXPECT_NE(choice.note.find("machine"), std::string::npos) << choice.note;
+}
+
+TEST(MsvcSdkOrigin, ASystemToolsetKeepsTheDeclaredSearchChain) {
+    // The other origin is unchanged, and must be: a machine's things can only
+    // be found by looking, and WindowsSdkDir is the most specific answer
+    // available there — the same precedence VSINSTALLDIR has over vswhere.
+    NoSdkEnv clean;
+    FakeToolset vs{"sdk-system-vs"};
+    vs.add_toolset("14.51.36231");
+    FakeToolset declared{"sdk-system-declared"};
+    declared.add_sdk("10.0.22621.0");
+    ScopedEnv dir{"WindowsSdkDir", declared.root.string()};
+
+    auto cl = vs.root / "VC" / "Tools" / "MSVC" / "14.51.36231"
+            / "bin" / "Hostx64" / "x64" / "cl.exe";
+    auto choice = msvc::resolve_sdk_for(cl);
+    EXPECT_EQ(choice.origin, Origin::SystemMsvc);
+    ASSERT_TRUE(choice.sdk.has_value());
+    EXPECT_EQ(choice.sdk->root, declared.root);
+    EXPECT_TRUE(choice.note.empty())
+        << "nothing was ignored, so there is nothing to report: " << choice.note;
+}

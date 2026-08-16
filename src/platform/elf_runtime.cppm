@@ -697,7 +697,12 @@ RuntimeVerdict validate_runtime_artifact(
     const RuntimeResolution& resolution,
     bool hostLibsAllowed) {
     RuntimeVerdict verdict;
-    const bool isGlibc = binding.runtimeId.starts_with("glibc@");
+    // Provider dispatch, not a prefix match. These are ELF/glibc physics —
+    // PT_INTERP, DT_RUNPATH, a private loader — and a `ucrt@…` identity is
+    // not a glibc that is missing, it is a different provider whose runtime
+    // this validator has no rules for.
+    const bool isGlibc =
+        mcpp::platform::runtime::runtime_provider(binding.runtimeId) == "glibc";
     if constexpr (!mcpp::platform::is_linux) {
         verdict.diagnostics.push_back(
             "runtime physics: non-Linux platform; ELF/glibc rules are not applicable");

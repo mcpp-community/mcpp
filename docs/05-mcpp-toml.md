@@ -395,10 +395,39 @@ default applies only when nobody said anything.
 `self-contained`, `false` means `host-coupled`. An explicit `cxx_runtime` wins.
 
 **A contract that cannot be honored is reported, never silently downgraded.** If a
-toolchain ships no `libc++.a`, or a contract has no mechanism on that platform
-(`self-contained` under the MSVC runtime would need `/MT`, which mcpp does not emit
-yet), the build prints what it fell back to instead of quietly producing a
-different artifact than the manifest asked for.
+toolchain ships no `libc++.a`, or a contract has no mechanism on that platform,
+the build prints what it fell back to instead of quietly producing a different
+artifact than the manifest asked for.
+
+#### On the MSVC runtime
+
+The CRT model is the mechanism here, and it is a **whole-project** switch: cl
+bakes `_MSVC_MT`/`_MSVC_MD` into the one `std` module a project builds, so a
+per-role contract that disagrees with the project's cannot be honoured and is
+reported rather than ignored.
+
+| value | what it is on MSVC |
+|---|---|
+| `self-contained` | `/MT` — the static CRT. `linkage = "static"` selects the same thing from the libc axis. |
+| `host-coupled` (default under `/MD`) | the target provides `vcruntime140.dll` / `msvcp140.dll` — i.e. Visual Studio or the redistributable is installed there. |
+| `toolchain-coupled` | the toolset's **own** copy of those DLLs travels with the artifact. |
+
+`toolchain-coupled` is worth spelling out, because the obvious reading is
+wrong. `ucrtbase.dll` *is* a Windows component (since Windows 10) and mcpp
+never ships it. `vcruntime140.dll` and `msvcp140.dll` are **not**: every MSVC
+toolset carries them under `VC\Redist\MSVC\<version>\<arch>\`, exactly the
+way a gcc payload carries `libstdc++.so`. Under this contract mcpp stages them
+beside the artifact — which is what makes a default `/MD` build runnable on a
+machine that has only the pinned toolset and no Visual Studio at all.
+
+The debug CRT (`vcruntime140d.dll` and friends, under `debug_nonredist\`) is
+never staged: it may not be redistributed.
+
+Combining it with `/MT` is a contradiction rather than a missing feature — a
+static CRT leaves no DLL to couple to — so it is reported and resolved to
+`self-contained`. `mcpp pack` enforces the other half: a mode that bundles
+nothing (`--mode system`, `--mode static`) cannot deliver `toolchain-coupled`
+and refuses.
 
 **Scope.** The contract governs the C++ runtime only. Static **libc** is a separate
 axis (`linkage = "static"` / `--static`, e.g. a musl target), and the deployment

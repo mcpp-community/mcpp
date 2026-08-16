@@ -203,19 +203,46 @@ payload 是按宿主 arch 构建的。**macOS 宿主则完全没有面向 Linux 
 Targets 一栏里没有的,就是这台机器确实服务不了(实现见
 `toolchain::host_can_serve`)。
 
-## MSVC(系统工具链,Windows)
+## MSVC(Windows)
 
-MSVC 与 mcpp 管理的其它工具链都不同:它是一条**系统工具链**。mcpp 只负责
-定位并识别已安装的 Visual Studio / Build Tools —— **从不**安装、升级或卸载
-MSVC 本身。
+一个 MSVC toolset 有两条路径进入构建,由 **spec 的版本轴**决定是哪一条:
+
+| Spec | 来源 | 你拿到的是哪个编译器 |
+|---|---|---|
+| `msvc@system`(或裸 `msvc`) | 这台机器自己的 Visual Studio | 这里恰好装了什么就是什么 |
+| `msvc@<toolset>`(如 `msvc@14.44.35207`) | mcpp 安装的 xlings payload | 你点名的那一个,在每台机器上都一样 |
+
+它们不是"二选一",而是回答了不同的问题。`msvc@system` 问的是*"用这位开发者
+已经有的东西"*;`msvc@14.44.35207` 问的是*"用恰好这个编译器构建本工程"*。
+pinned toolset 之间、以及与系统 Visual Studio 之间都可以共存。
+
+> **`@system` 是 MSVC 独有的拼写。** 没有 `gcc@system`,也没有 `llvm@system`,
+> 这是有意的而不是漏了:mcpp 建立在用户态 OS xlings 之上,整条设计就是**把 host
+> 依赖降到最低** —— 工具链来自 manifest 点名的 payload,于是每台机器用同一个
+> 编译器。Windows 是唯一一处"拒绝使用已装好的东西"代价大于收益的地方:
+> Visual Studio 常常已经装了,又不总能重新分发。其它族写 `<family>@system` 会
+> 直接报错,并同时给出你可能想要的两种写法。(不带族的
+> `[toolchain] … = "system"` —— 即 PATH 上的编译器 —— 是另一套、也是有意保留的
+> 逃生口,不受影响。)
+
+### `msvc@system` —— 机器自己的 Visual Studio
+
+mcpp 只负责定位并识别已安装的 Visual Studio / Build Tools,**从不**安装、
+升级或卸载它。
 
 ```bash
 mcpp toolchain default msvc
 ```
 
-在装有 MSVC 的机器上,mcpp 会自动定位(依次尝试 `vswhere.exe`、
-`VSINSTALLDIR`/`VS*COMNTOOLS`、标准安装路径),识别涉及的各个版本,
-并持久化为稳定 spec `msvc@system`:
+定位顺序:
+
+1. **`VSINSTALLDIR`** —— 由开发者命令提示符或跑过 `vcvarsall` 的 CI 步骤设置。
+   这是一个**回答**而不是猜测,所以排在下面几种探测之前。
+2. `vswhere.exe`(含 prerelease / Insiders 实例)
+3. `VS*COMNTOOLS`
+4. 标准的 `Program Files\Microsoft Visual Studio\<year>\<edition>` 路径
+
+随后识别涉及的各个版本,并持久化为稳定 spec `msvc@system`:
 
 ```
 Detected   msvc 19.44.35211 (VS 2022 BuildTools) (VC tools 14.44.35207)
@@ -224,29 +251,93 @@ Detected   msvc 19.44.35211 (VS 2022 BuildTools) (VC tools 14.44.35207)
 Default    set to msvc@system (was: llvm@20.1.7)
 ```
 
-若机器上**没有** MSVC,mcpp 打印安装指引(Visual Studio Installer 勾选
-*Desktop development with C++* 负载,或 `winget install
-Microsoft.VisualStudio.2022.BuildTools`)并以非零码退出 —— 需要你自己装好,
-再重跑该命令。
+若机器上没有 Visual Studio,mcpp 会说出来并同时给出两条路:一个它可以替你装的
+pinned toolset,或者 Visual Studio Installer /
+`winget install Microsoft.VisualStudio.2022.BuildTools`。
 
 `mcpp toolchain list` 会把检测到的 MSVC 列在单独的 `System:` 分区,
-`mcpp self doctor` 在 Windows 上会报告它的状态。manifest 里可按平台 pin:
+`mcpp self doctor` 在 Windows 上会报告它的状态。manifest 里:
 
 ```toml
 [toolchain]
 windows = "msvc@system"
 ```
 
-`msvc@<前缀>`(如 `msvc@19.44`)是一个 **pin-verify**:mcpp 仍然使用已安装
-的最新 VC tools,但检测到的版本与前缀不符时报错。
+### `msvc@<toolset>` —— mcpp 安装并 pin 的 toolset
 
-自 0.0.90 起,**原生 cl.exe 构建可用**:mcpp 从检测到的 VC tools + Windows
-SDK 合成 INCLUDE/LIB 环境(不经 `vcvarsall`),把 `std.ixx`/`std.compat.ixx`
-staging 成 `.ifc` BMI,用 `/interface /TP /ifcOutput` 编译 `.cppm` 模块单元,
-用 `/scanDependencies` 扫描,并通过 response file 调 `link.exe`/`lib.exe`
-链接。选择 `/MT` CRT 用 `[target.x86_64-windows-msvc] linkage = "static"`
-(或 `mcpp build --static`)—— 不是 `[build] linkage`,那个键不存在。
-缺 Windows SDK 会让构建失败并给出安装指引(`mcpp self doctor` 会报告 SDK 状态)。
+```bash
+mcpp toolchain list --available msvc     # 可以 pin 哪些
+mcpp toolchain install msvc 14.44.35207
+```
+
+这在每个方面都和 `gcc@16.1.0` 一样:payload 下载进 mcpp 自己的 store,多个
+toolset 共存,`mcpp toolchain remove msvc@<toolset>` 卸载其中一个,manifest 里
+点名的那个会在首次构建时自动安装。
+
+```toml
+[toolchain]
+windows = "msvc@14.44.35207"
+```
+
+**这里的版本是 toolset 目录名**(`14.44.35207` —— 即 `VC\Tools\MSVC\` 下的
+目录名、也是 `-vcvars_ver` 接受的值),**不是** cl banner 版本
+(`19.44.35211`),也不是产品年份。机器上不需要预装任何东西:payload 带来编译器、
+STL,以及通过它的 `xim:windows-sdk` 依赖带来 ucrt/um 的头文件与导入库。
+
+> **已变更:** `msvc@19.44` 过去的含义是"用系统 MSVC,并校验其 banner 以 19.44
+> 开头" —— 这条只有 `mcpp toolchain default` 会查,构建则静默忽略。现在版本轴
+> 在所有地方都指 toolset。写成 `19.x` 会得到一条同时给出两种替代写法的错误
+> —— `msvc@system`,或那台机器实际拥有的 toolset 版本。
+
+### 原生 cl.exe 构建
+
+自 0.0.90 起两条来源都可用:mcpp 从 VC tools + Windows SDK 合成 INCLUDE/LIB
+环境(不经 `vcvarsall`),把 `std.ixx`/`std.compat.ixx` staging 成 `.ifc` BMI,
+用 `/interface /TP /ifcOutput` 编译 `.cppm` 模块单元,用 `/scanDependencies`
+扫描,并通过 response file 调 `link.exe`/`lib.exe` 链接。
+
+**Windows SDK 跟着来源走**,因为两条来源回答的是不同的问题,SDK 也必须如此:
+
+| 来源 | SDK 怎么选 |
+|---|---|
+| `msvc@<toolset>` | **随该 toolset 一起装进 mcpp store 的** `xim:windows-sdk` payload。环境里的 `WindowsSdkDir` / `WindowsSdkVersion` 会被**忽略**,并且 mcpp 会打印一行 `note:` 说明。 |
+| `msvc@system` | 先 **`WindowsSdkDir`**(+ `WindowsSdkVersion`),再 `C:\Program Files (x86)\Windows Kits\10`。 |
+
+这种不对称正是要点。pin 一个 toolset 是在承诺"两台机器用同一套头文件编同一份
+源码";一个能悄悄改写它的环境变量会把这条承诺降格成偏好。反过来,机器自己的
+SDK 只能靠找,而在那里"明确声明"应当压过"扫描" —— 和 `VSINSTALLDIR` 压过
+`vswhere` 是同一条优先级。
+
+如果一个 pinned toolset 旁边没有 SDK payload(比如较老的安装),mcpp 会退回用
+机器上的 SDK 而不是失败 —— 并且会说出来,因为那次构建已经不可复现,而除此之外
+没有任何东西会记录这件事。
+
+一个根目录只有**两半都在**才算 SDK —— `Include\<v>\ucrt\corecrt.h` **且**
+`Lib\<v>\um\<arch>\kernel32.lib`。只有头文件、没有导入库的根会被跳过而不是
+被选中,于是一个只解包了一半的 payload 不会压过机器上完整的 SDK,也就不会在
+构建的最后一刻变成 `LNK1104: cannot open file 'kernel32.lib'`。
+
+解析出的 SDK 版本是这次构建的**运行时身份**(`ucrt@10.0.26100.0`)的一部分,
+因而也进入了给构建缓存做 key 的那个指纹:换 SDK 就换缓存键,和换编译器一样。
+它是一条**兼容性下限声明**,而不是 Linux 上 `glibc@2.39` 那种 payload 绑定 ——
+`ucrtbase.dll` 是 Windows 组件,mcpp 既不分发也不替换它。
+
+**CRT 模型。** 默认 `/MD`(host-coupled);下面两者任一都会选 `/MT`:
+
+```toml
+[target.x86_64-windows-msvc]
+linkage     = "static"           # libc 那根轴 —— TARGET 段,或 `--static`
+
+[build]
+cxx_runtime = "self-contained"   # C++ 运行时那根轴
+```
+
+注意这两个键分别属于哪个段:`linkage` 只认精确 triple,**没有 `[build] linkage`
+这个键** —— 写了会得到一条 "unsupported key (ignored)" 警告,而且不会切到静态
+CRT。
+
+toolset 自带的那份可再分发 CRT(`vcruntime140.dll` / `msvcp140.dll`)可以跟着
+产物走 —— 见 `docs/zh/05-mcpp-toml.md` 的 `cxx_runtime = "toolchain-coupled"`。
 
 ## 项目级版本锁定
 

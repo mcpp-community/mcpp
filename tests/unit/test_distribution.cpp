@@ -273,6 +273,86 @@ TEST(Distribution, MsvcCrtModelIsWholeProjectAndReportedAsSuch) {
     EXPECT_EQ(quiet.effective, dist::Contract::HostCoupled);
 }
 
+// `toolchain-coupled` on the MSVC runtime used to be a flat refusal, and the
+// sentence it refused with conflated two different DLLs:
+//
+//   ucrtbase.dll     an OS component since Win10 — the refusal was right
+//   vcruntime140.dll the TOOLSET's own, sitting in VC\Redist\MSVC\… inside
+//                    every toolset mcpp installs — the refusal was wrong
+//
+// The second one is exactly the relationship gcc has to libstdc++.so, so it
+// takes the same contract. What differs is the MECHANISM: PE has no rpath, so
+// the DLL travels by being copied beside the artifact.
+TEST(Distribution, MsvcToolchainCoupledStagesTheToolsetCrt) {
+    dist::MechanismInput in;
+    in.format          = dist::Format::Pe;
+    in.stdlibId        = "msvc";
+    in.explicitRequest = true;
+    in.requested       = dist::Contract::ToolchainCoupled;
+
+    // /MD: the artifact HAS a vcruntime140.dll dependency, so the contract is
+    // deliverable — and delivering it means staging files, not adding flags.
+    in.msvcStaticCrt = false;
+    auto coupled = dist::resolve(in);
+    EXPECT_EQ(coupled.effective, dist::Contract::ToolchainCoupled);
+    EXPECT_FALSE(coupled.degraded);
+    EXPECT_TRUE(coupled.diagnostic.empty());
+    EXPECT_TRUE(coupled.deployToolchainRuntime);
+    // The CRT model is a compile flag on every TU; nothing goes on the link line.
+    EXPECT_TRUE(coupled.unitFlags.empty());
+
+    // /MT is the one case that stays a degradation, and it is a genuine
+    // contradiction rather than a missing mechanism: a static CRT leaves no
+    // DLL to couple to. The message has to say which one won.
+    in.msvcStaticCrt = true;
+    auto contradiction = dist::resolve(in);
+    EXPECT_EQ(contradiction.effective, dist::Contract::SelfContained);
+    EXPECT_TRUE(contradiction.degraded);
+    EXPECT_FALSE(contradiction.deployToolchainRuntime)
+        << "a /MT build has no CRT DLL dependency; staging one is dead weight";
+    EXPECT_NE(contradiction.diagnostic.find("/MT"), std::string::npos)
+        << contradiction.diagnostic;
+    EXPECT_NE(contradiction.diagnostic.find("self-contained"), std::string::npos)
+        << contradiction.diagnostic;
+}
+
+// Nothing but PE+MSVC+toolchain-coupled may ask for files to be staged. The
+// flag reaches a copy step, so a stray `true` puts DLLs in an output tree on a
+// platform that has no such thing.
+TEST(Distribution, NothingElseAsksForStagedRuntimeFiles) {
+    const dist::Contract contracts[] = {dist::Contract::SelfContained,
+                                        dist::Contract::ToolchainCoupled,
+                                        dist::Contract::HostCoupled};
+    const dist::Format formats[] = {dist::Format::Elf, dist::Format::MachO,
+                                    dist::Format::Pe};
+    const std::string_view stdlibs[] = {"libstdc++", "libc++", "msvc", "surprise"};
+    for (auto fmt : formats)
+        for (auto sl : stdlibs)
+            for (auto c : contracts)
+                for (bool mt : {false, true})
+                    for (bool explicitly : {false, true}) {
+                        dist::MechanismInput in;
+                        in.format          = fmt;
+                        in.stdlibId        = sl;
+                        in.requested       = c;
+                        in.msvcStaticCrt   = mt;
+                        in.explicitRequest = explicitly;
+                        in.mingw           = (fmt == dist::Format::Pe
+                                              && sl == "libstdc++");
+                        auto m = dist::resolve(in);
+                        if (!m.deployToolchainRuntime) continue;
+                        EXPECT_EQ(fmt, dist::Format::Pe);
+                        EXPECT_NE(sl, std::string_view("libstdc++"));
+                        EXPECT_EQ(c, dist::Contract::ToolchainCoupled);
+                        EXPECT_FALSE(mt);
+                        // Staging files is a promise KEPT. A degraded cell did
+                        // not deliver the contract, so it must not act as if
+                        // it had.
+                        EXPECT_FALSE(m.degraded);
+                        EXPECT_EQ(m.effective, dist::Contract::ToolchainCoupled);
+                    }
+}
+
 // ---------------------------------------------------------------------------
 // INV-1, stated as a property rather than a list: the table is TOTAL, and
 // every cell that does not deliver what was asked explains itself. A future

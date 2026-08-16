@@ -349,9 +349,35 @@ C++ 运行时的进程。
 等价于 `host-coupled`。显式写了 `cxx_runtime` 时以后者为准。
 
 **兑现不了的契约会被报出来,绝不静默降级。** 若工具链不带 `libc++.a`,或某个
-契约在该平台上没有对应机制(MSVC 运行时的 `self-contained` 需要 `/MT`,mcpp
-目前不发射),构建会打印实际退到了哪一档,而不是悄悄交付一个与 manifest 所述
-不同的产物。
+契约在该平台上没有对应机制,构建会打印实际退到了哪一档,而不是悄悄交付一个与
+manifest 所述不同的产物。
+
+#### 在 MSVC 运行时上
+
+这里的机制就是 CRT 模型,而它是**整个工程级**的开关:cl 会把 `_MSVC_MT` /
+`_MSVC_MD` 烘进工程唯一的那份 `std` 模块,所以与工程不一致的按角色契约无法兑现,
+会被报出来而不是被忽略。
+
+| 取值 | 在 MSVC 上是什么 |
+|---|---|
+| `self-contained` | `/MT`,静态 CRT。`linkage = "static"` 从 libc 那根轴选中的是同一件事。 |
+| `host-coupled`(`/MD` 下的默认) | 由目标机器提供 `vcruntime140.dll` / `msvcp140.dll` —— 即那台机器装了 Visual Studio 或 redistributable。 |
+| `toolchain-coupled` | toolset **自带**的那份 DLL 跟着产物走。 |
+
+`toolchain-coupled` 值得说清楚,因为直觉上的理解是错的。`ucrtbase.dll` **是**
+Windows 组件(Win10 起),mcpp 从不分发它;而 `vcruntime140.dll` /
+`msvcp140.dll` **不是**:每个 MSVC toolset 都在
+`VC\Redist\MSVC\<version>\<arch>\` 下带着它们,和 gcc payload 带着
+`libstdc++.so` 是同一件事。在这个契约下 mcpp 会把它们放到产物旁边 —— 这正是让
+默认的 `/MD` 产物能在"只装了 pinned toolset、根本没有 Visual Studio"的机器上跑
+起来的原因。
+
+调试版 CRT(`debug_nonredist\` 下的 `vcruntime140d.dll` 等)永远不会被放进去:
+它不可再分发。
+
+把它和 `/MT` 一起用是**矛盾**而不是缺功能 —— 静态 CRT 根本没有 DLL 可以耦合 ——
+所以会被报出来并落到 `self-contained`。另一半由 `mcpp pack` 兜底:什么都不打包的
+模式(`--mode system`、`--mode static`)兑现不了 `toolchain-coupled`,会直接拒绝。
 
 **边界。** 该契约只管 C++ 运行时。静态 **libc** 是另一根轴(`linkage = "static"`
 / `--static`,如 musl 目标),部署下限是第三根轴(`macos_deployment_target`)。

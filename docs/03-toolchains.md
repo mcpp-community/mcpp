@@ -228,6 +228,17 @@ questions. `msvc@system` asks *"use what this developer already has"*;
 `msvc@14.44.35207` asks *"build this project with exactly this compiler"*.
 Pinned toolsets coexist with each other and with a system Visual Studio.
 
+> **`@system` is an MSVC-only spelling.** There is no `gcc@system` or
+> `llvm@system`, and that is deliberate rather than an omission: mcpp is built
+> on xlings, a user-space OS, and the design drives host dependencies to a
+> minimum — a toolchain comes from a payload the manifest names, so every
+> machine builds with the same compiler. Windows is the one place where
+> refusing to use what is already installed would cost more than it buys:
+> Visual Studio is very often present and cannot always be redistributed.
+> `<family>@system` for any other family is an error that names both things
+> you might have meant. (The family-less `[toolchain] … = "system"` — the PATH
+> compiler — is a separate and deliberate escape hatch, and is unaffected.)
+
 ### `msvc@system` — the machine's own Visual Studio
 
 mcpp locates and identifies an installed Visual Studio / Build Tools; it never
@@ -304,11 +315,23 @@ environment from the VC tools + Windows SDK (no `vcvarsall` involved), stages
 `/interface /TP /ifcOutput`, scans with `/scanDependencies`, and links with
 `link.exe`/`lib.exe` through response files.
 
-The Windows SDK is located in this order: **`WindowsSdkDir`** (+
-`WindowsSdkVersion`) if declared, then the `xim:windows-sdk` payload beside a
-pinned toolset in mcpp's store, then `C:\Program Files (x86)\Windows Kits\10`.
-A missing SDK fails the build with guidance (`mcpp self doctor` reports SDK
-status).
+**The Windows SDK follows the origin**, because the two origins answer
+different questions and so must the SDK:
+
+| origin | how the SDK is chosen |
+|---|---|
+| `msvc@<toolset>` | the `xim:windows-sdk` payload installed **with that toolset**, in mcpp's own store. `WindowsSdkDir` / `WindowsSdkVersion` in the environment are **ignored**, and mcpp prints a `note:` saying so. |
+| `msvc@system` | **`WindowsSdkDir`** (+ `WindowsSdkVersion`) if declared, then `C:\Program Files (x86)\Windows Kits\10`. |
+
+The asymmetry is the point. A pinned toolset is a promise that two machines
+compile the same source against the same headers; an environment variable that
+can quietly redirect it turns the pin into a preference. A machine's own SDK,
+on the other hand, can only be found by looking, and there a declared answer
+outranks a scan — the same precedence `VSINSTALLDIR` has over `vswhere`.
+
+If a pinned toolset has no SDK payload beside it (an older install, say), mcpp
+falls back to the machine's SDK rather than failing — and says so, because that
+build is no longer reproducible and nothing else would record it.
 
 A root only counts as an SDK when it has **both** halves — `Include\<v>\ucrt\
 corecrt.h` *and* `Lib\<v>\um\<arch>\kernel32.lib`. A root with headers and no
@@ -316,15 +339,27 @@ import libraries is skipped rather than selected, so a partially unpacked
 payload cannot outrank the machine's complete SDK and turn into
 `LNK1104: cannot open file 'kernel32.lib'` at the very end of a build.
 
+The resolved SDK version is part of the build's **runtime identity**
+(`ucrt@10.0.26100.0`) and therefore of the fingerprint that keys the build
+cache: changing SDK changes the cache key, exactly as changing compiler does.
+It is a **compatibility floor declaration**, not a payload binding like
+`glibc@2.39` on Linux — `ucrtbase.dll` is a Windows component and mcpp neither
+ships nor substitutes it.
+
 **CRT model.** `/MD` (host-coupled) by default; `/MT` when either
 
 ```toml
+[target.x86_64-windows-msvc]
+linkage     = "static"           # the libc axis — TARGET section, or `--static`
+
 [build]
-linkage     = "static"           # the libc axis
 cxx_runtime = "self-contained"   # the C++ runtime axis
 ```
 
-is written down. On the MSVC ABI these are one physical switch — `/MT` links
+is written down. Note which section each one lives in: `linkage` is
+exact-triple only and **there is no `[build] linkage` key** — writing one gets
+an "unsupported key (ignored)" warning and no static CRT. (This page said
+exactly that a few sections up, and then showed the wrong form here.) On the MSVC ABI these are one physical switch — `/MT` links
 the C and C++ runtimes out of the same library — so both spellings select it
 and mean the same thing. It is a **whole-project** property: one `std` module
 is built per project and cl bakes `_MSVC_MT`/`_MSVC_MD` into it, so a
