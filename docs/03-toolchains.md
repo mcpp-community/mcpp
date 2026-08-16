@@ -310,6 +310,12 @@ pinned toolset in mcpp's store, then `C:\Program Files (x86)\Windows Kits\10`.
 A missing SDK fails the build with guidance (`mcpp self doctor` reports SDK
 status).
 
+A root only counts as an SDK when it has **both** halves — `Include\<v>\ucrt\
+corecrt.h` *and* `Lib\<v>\um\<arch>\kernel32.lib`. A root with headers and no
+import libraries is skipped rather than selected, so a partially unpacked
+payload cannot outrank the machine's complete SDK and turn into
+`LNK1104: cannot open file 'kernel32.lib'` at the very end of a build.
+
 **CRT model.** `/MD` (host-coupled) by default; `/MT` when either
 
 ```toml

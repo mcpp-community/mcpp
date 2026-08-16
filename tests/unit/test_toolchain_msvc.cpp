@@ -169,7 +169,20 @@ struct FakeToolset {
             std::ofstream{tools / "modules" / "std.ixx"} << "export module std;";
         }
     }
+    // A COMPLETE SDK: headers and import libraries. Both, because
+    // find_windows_sdk() requires both — a root with only headers is the
+    // half-installed state `add_sdk_headers_only()` below exists to build.
+    // Libs for both architectures so the fixture does not care which host it
+    // is running on.
     void add_sdk(std::string_view version) {
+        add_sdk_headers_only(version);
+        for (auto arch : {"x64", "arm64"}) {
+            auto lib = root / "Lib" / std::string(version) / "um" / arch;
+            std::filesystem::create_directories(lib);
+            std::ofstream{lib / "kernel32.lib"} << "not a library";
+        }
+    }
+    void add_sdk_headers_only(std::string_view version) {
         auto inc = root / "Include" / std::string(version) / "ucrt";
         std::filesystem::create_directories(inc);
         std::ofstream{inc / "corecrt.h"} << "#pragma once";
@@ -360,6 +373,53 @@ TEST(MsvcSdk, IncompleteSdkRootIsNotAnAnswer) {
     std::array roots{t.root};
     auto sdk = msvc::find_windows_sdk(roots);
     if (sdk) EXPECT_NE(sdk->root, t.root) << "an SDK-less root was accepted";
+}
+
+TEST(MsvcSdk, HeadersWithoutImportLibsIsNotAnAnswer) {
+    // The half that used to pass. `Include/<v>/ucrt/corecrt.h` is there and
+    // `Lib/` is not, which is exactly what a managed windows-sdk payload
+    // looked like when its um-libs MSI had not unpacked: every TU compiled
+    // and the link died with
+    //     LINK : fatal error LNK1104: cannot open file 'kernel32.lib'
+    // An SDK is headers AND libraries; reporting "found" for half of one puts
+    // this root ahead of the machine's complete SDK and breaks a build that
+    // would otherwise have worked.
+    NoSdkEnv clean;
+    FakeToolset t{"sdkheadersonly"};
+    t.add_sdk_headers_only("10.0.26100.0");
+    std::array roots{t.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    if (sdk) EXPECT_NE(sdk->root, t.root)
+        << "a headers-only SDK was accepted; the link would fail on kernel32.lib";
+}
+
+TEST(MsvcSdk, ACompleteRootIsStillAccepted) {
+    // The other direction, so the check above cannot be satisfied by
+    // rejecting everything.
+    NoSdkEnv clean;
+    FakeToolset t{"sdkcomplete"};
+    t.add_sdk("10.0.26100.0");
+    std::array roots{t.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    ASSERT_TRUE(sdk) << "a complete SDK root was rejected";
+    EXPECT_EQ(sdk->root, t.root);
+    EXPECT_EQ(sdk->version, "10.0.26100.0");
+}
+
+TEST(MsvcSdk, APartialRootYieldsToACompleteOne) {
+    // Ordering, not just acceptance: given both, the usable one must win even
+    // though the partial one carries the HIGHER version — which is how the
+    // managed payload outranked the system SDK in the first place.
+    NoSdkEnv clean;
+    FakeToolset partial{"sdkpartialhigh"};
+    partial.add_sdk_headers_only("10.0.99999.0");
+    FakeToolset complete{"sdkcompletelow"};
+    complete.add_sdk("10.0.26100.0");
+    std::array roots{partial.root, complete.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    ASSERT_TRUE(sdk);
+    EXPECT_EQ(sdk->root, complete.root)
+        << "the partial root won on version; it cannot link";
 }
 
 TEST(MsvcSdk, DeclaredRootOutranksTheManagedOne) {

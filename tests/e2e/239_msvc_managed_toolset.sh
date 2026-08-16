@@ -13,7 +13,7 @@
 #   - `msvc@system` on the same machine must still resolve to the SYSTEM cl,
 #     i.e. the two origins do not contaminate each other
 #
-# Network: installs xim:msvc (~85 MB) + xim:windows-sdk (~135 MB). Skips
+# Network: installs xim:msvc (~85 MB) + xim:windows-sdk (~291 MB). Skips
 # cleanly when the index cannot be reached, because an offline runner has
 # nothing to say about this.
 set -e

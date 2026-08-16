@@ -575,6 +575,17 @@ sibling_sdk_roots(const std::filesystem::path& clPath) {
     return out;
 }
 
+// The `Lib\<v>\um\<arch>` subdirectory whose absence makes a root unusable
+// FOR THIS HOST. Spelled from the host architecture rather than the build's
+// target: a cross-compiling link is the caller's business (`build_env_for_cl`
+// takes an arch), but a root with no host-arch libs at all is not an SDK this
+// machine can link against. The names are the SDK's own.
+#if defined(_M_ARM64) || defined(__aarch64__)
+constexpr std::string_view sdk_lib_arch = "arm64";
+#else
+constexpr std::string_view sdk_lib_arch = "x64";
+#endif
+
 std::optional<WindowsSdk> find_windows_sdk(
     std::span<const std::filesystem::path> extraRoots) {
     // Highest version dir under `root/Include` that actually carries the UCRT
@@ -582,17 +593,38 @@ std::optional<WindowsSdk> find_windows_sdk(
     // (Registry Installed Roots would be marginally more correct — the path
     // scan covers every real installer layout seen so far and needs no Win32
     // API surface.)
+    // BOTH halves, for the same reason `has_usable_msvc()` asks for both: an
+    // SDK is headers AND import libraries, and a root carrying only the first
+    // is a half-installed state that this function used to call "found".
+    //
+    // That is not hypothetical. A managed `xim:windows-sdk` payload whose
+    // ucrt MSI had unpacked but whose um-libs MSI had not left
+    // `Include/<v>/ucrt/corecrt.h` on disk with no `kernel32.lib` anywhere;
+    // the header check passed, the root was selected over the machine's own
+    // complete SDK, every translation unit compiled, and the build died at
+    //     LINK : fatal error LNK1104: cannot open file 'kernel32.lib'
+    // with nothing in the log naming the SDK. Rejecting the partial root
+    // makes the search fall through to the next one, which is the behaviour
+    // a user would expect from a probe that reports "not found".
+    //
+    // kernel32.lib is the right sentinel: every link needs it, and unlike the
+    // ucrt libs it is not spread across the SDK's optional pieces.
     auto pick = [](const std::filesystem::path& root,
                    std::string_view want) -> std::optional<WindowsSdk> {
         std::error_code ec;
         auto inc = root / "Include";
         if (!std::filesystem::is_directory(inc, ec)) return std::nullopt;
+        auto usable = [&](const std::filesystem::path& verDir,
+                          const std::string& v) {
+            return std::filesystem::exists(verDir / "ucrt" / "corecrt.h", ec)
+                && std::filesystem::exists(
+                       root / "Lib" / v / "um" / sdk_lib_arch / "kernel32.lib", ec);
+        };
         std::string best;
         for (auto& e : std::filesystem::directory_iterator(inc, ec)) {
             if (!e.is_directory(ec)) continue;
             auto v = e.path().filename().string();
-            if (!std::filesystem::exists(e.path() / "ucrt" / "corecrt.h", ec))
-                continue;
+            if (!usable(e.path(), v)) continue;
             if (!want.empty() && v == want) return WindowsSdk{root, v};
             if (v > best) best = v;
         }

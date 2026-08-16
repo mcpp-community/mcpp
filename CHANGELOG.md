@@ -3,6 +3,28 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### 修复
+
+- **半装的 Windows SDK 被当成装好的,链接到最后才炸。**
+
+  `find_windows_sdk()` 认一个根的条件是 `Include\<v>\ucrt\corecrt.h`
+  存在 —— 只看头文件。而 SDK 是头文件**和**导入库两半。
+
+  托管的 `xim:windows-sdk` payload 少了带 `kernel32.lib` 的那个 MSI 时,
+  这个根照样"找到了",而且因为版本号更高,**排在机器自己那套完整 SDK 前面**。
+  于是每个 TU 都编过了,一直到最后一步:
+
+      LINK : fatal error LNK1104: cannot open file 'kernel32.lib'
+
+  日志里没有任何一行提到 SDK。
+
+  现在两半都要:`Include\<v>\ucrt\corecrt.h` 和
+  `Lib\<v>\um\<arch>\kernel32.lib`。半装的根被跳过,搜索落到下一个,
+  本来就能用的构建就能用了 —— 和 `has_usable_msvc()` 坚持"两半都要"是同一条
+  理由,只是这次轮到 SDK 自己。
+
 ## [2026.8.16.2] — 2026-08-16
 
 ### 修复
