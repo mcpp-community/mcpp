@@ -215,32 +215,62 @@ TEST(Distribution, MingwParity) {
     EXPECT_EQ(dist::resolve(in).unitFlags, " -static");
 }
 
-// MSVC's self-contained form would be the /MT runtime, which mcpp does not
-// emit. Before the table this cell simply produced nothing and claimed
-// success; now it names the gap.
-TEST(Distribution, MsvcSelfContainedIsAnHonestGap) {
+// MSVC's self-contained form IS the /MT runtime, and mcpp emits it — the
+// switch is `msvcStaticCrt`, derived once by `msvc_wants_static_crt` from the
+// two manifest keys that mean the same physical thing on this ABI.
+//
+// What the table must get right is that the switch is whole-PROJECT: cl bakes
+// _MSVC_MT/_MSVC_MD into the one std module a project builds, so a per-role
+// request that disagrees cannot be honoured and must say so.
+TEST(Distribution, MsvcCrtModelIsWholeProjectAndReportedAsSuch) {
     dist::MechanismInput in;
     in.format          = dist::Format::Pe;
     in.stdlibId        = "msvc";
     in.explicitRequest = true;
-    auto m = dist::resolve(in);
-    EXPECT_EQ(m.effective, dist::Contract::HostCoupled);
-    EXPECT_TRUE(m.degraded);
-    EXPECT_NE(m.diagnostic.find("/MT"), std::string::npos);
-    EXPECT_TRUE(m.unitFlags.empty());
+
+    // Project compiled /MT: self-contained is DELIVERED, not degraded.
+    in.requested      = dist::Contract::SelfContained;
+    in.msvcStaticCrt  = true;
+    auto served = dist::resolve(in);
+    EXPECT_EQ(served.effective, dist::Contract::SelfContained);
+    EXPECT_FALSE(served.degraded);
+    EXPECT_TRUE(served.diagnostic.empty());
+    // The CRT model is a COMPILE flag on every TU, never a link-line addition.
+    EXPECT_TRUE(served.unitFlags.empty());
+
+    // Project compiled /MD, one role asking for self-contained: refused, and
+    // the message has to name the whole-project constraint rather than claim
+    // the feature is missing.
+    in.msvcStaticCrt = false;
+    auto refused = dist::resolve(in);
+    EXPECT_EQ(refused.effective, dist::Contract::HostCoupled);
+    EXPECT_TRUE(refused.degraded);
+    EXPECT_NE(refused.diagnostic.find("whole-project"), std::string::npos)
+        << refused.diagnostic;
+    EXPECT_NE(refused.diagnostic.find("cxx_runtime"), std::string::npos)
+        << refused.diagnostic;
+    EXPECT_TRUE(refused.unitFlags.empty());
+
+    // `linkage = "static"` is the same switch seen from the libc axis.
+    in.fullStaticLibc = true;
+    in.msvcStaticCrt  = true;    // as msvc_wants_static_crt would report it
+    EXPECT_EQ(dist::resolve(in).effective, dist::Contract::SelfContained);
+    in.fullStaticLibc = false;
+    in.msvcStaticCrt  = false;
 
     in.requested = dist::Contract::HostCoupled;
     EXPECT_FALSE(dist::resolve(in).degraded);
 
-    // ...but the DEFAULT must be quiet. mcpp never promised a self-contained
-    // MSVC artifact — it emits no /MT at all — so warning on every Windows
-    // build would be unactionable noise. A diagnostic is for a broken
-    // promise, not for a platform limit nobody asked about.
+    // ...and the DEFAULT must be quiet. Most roles default to the
+    // self-contained contract, so a project that never mentioned the CRT gets
+    // /MD and no complaint: a diagnostic is for a broken promise, not for a
+    // default nobody asked about.
     in.requested       = dist::Contract::SelfContained;
     in.explicitRequest = false;
     auto quiet = dist::resolve(in);
     EXPECT_FALSE(quiet.degraded);
     EXPECT_TRUE(quiet.diagnostic.empty());
+    EXPECT_EQ(quiet.effective, dist::Contract::HostCoupled);
 }
 
 // ---------------------------------------------------------------------------

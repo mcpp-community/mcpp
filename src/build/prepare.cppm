@@ -1248,8 +1248,12 @@ prepare_build(bool print_fingerprint,
     // resolution / fingerprinting.
     fold_build_defines_into_flags(m->buildConfig);
 
-    // msvc@system: a *system* toolchain — located on the machine, never
-    // resolved through xim packages. mcpp does not install MSVC.
+    // msvc@system: located on the machine, never resolved through xim
+    // packages. mcpp does not install the machine's Visual Studio.
+    //
+    // A VERSIONED msvc spec is a different origin and takes the xim path
+    // below — which is the whole point: what the manifest says is what gets
+    // used, on every machine, instead of whatever this one happens to have.
     bool tcSpecIsMsvc = false;
     if (tcSpec.has_value()) {
         if (auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
@@ -1295,31 +1299,62 @@ prepare_build(bool print_fingerprint,
         mcpp::fetcher::InstallProgressHandler progress;
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         if (!payload) {
+            // `windows = "msvc@19.44"` in a manifest is the retired
+            // cl-version spelling; saying "no such xim package" would send
+            // the reader looking for a toolset that cannot exist.
+            if (spec->family == mcpp::toolchain::Family::Msvc) {
+                if (auto hint = mcpp::toolchain::msvc::cl_version_spelling_hint(
+                        spec->version))
+                    return std::unexpected(*hint);
+            }
             return std::unexpected(std::format(
                 "toolchain '{}': {}", *tcSpec, payload.error().message));
         }
 
-        explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
-        if (!std::filesystem::exists(explicit_compiler)) {
-            return std::unexpected(std::format(
-                "toolchain payload '{}' has no known C++ frontend in {}",
-                pkg.target(), payload->binDir.string()));
+        // A pinned MSVC toolset: the payload root IS a VS-shaped root and the
+        // package version IS the toolset directory name, so cl.exe is
+        // derived, not searched for. Nothing here can silently pick a
+        // different toolset — which is the defect this path exists to close.
+        //
+        // It also skips the two steps below: the bin/-shaped frontend lookup
+        // (cl.exe is four levels deeper) and the ELF post-install fixup
+        // (there is nothing to patchelf on a PE toolchain).
+        if (spec->family == mcpp::toolchain::Family::Msvc) {
+            auto inst = mcpp::toolchain::msvc::installation_at(
+                payload->root, pkg.ximVersion);
+            if (!inst) {
+                return std::unexpected(std::format(
+                    "msvc payload at '{}' has no cl.exe under VC/Tools/MSVC/{}",
+                    payload->root.string(), pkg.ximVersion));
+            }
+            explicit_compiler = inst->clPath;
+            mcpp::ui::info("Resolved", std::format(
+                "{} → msvc {} ({})", spec->display(),
+                inst->display_version(), inst->clPath.string()));
+        } else {
+            explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
+            if (!std::filesystem::exists(explicit_compiler)) {
+                return std::unexpected(std::format(
+                    "toolchain payload '{}' has no known C++ frontend in {}",
+                    pkg.target(), payload->binDir.string()));
+            }
+            // Same post-install fixup as `mcpp toolchain install` — this
+            // manifest [toolchain] path previously ran none, so a freshly
+            // auto-installed payload kept its stale install-time cfg /
+            // unpatched runtime libs.
+            if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                    **cfg, payload->root, pkg,
+                    runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+                return std::unexpected(std::format(
+                    "toolchain post-install fixup: {}", fixed.error()));
+            else report_fixup(*fixed, payload->root);
+            // Canonical rendering, whatever spelling the manifest/config used:
+            // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
+            mcpp::ui::info("Resolved",
+                std::format("{} → {}", spec->display(),
+                    mcpp::ui::shorten_path(explicit_compiler,
+                        mcpp::fetcher::make_path_ctx(&**get_cfg(), *root))));
         }
-        // Same post-install fixup as `mcpp toolchain install` — this manifest
-        // [toolchain] path previously ran none, so a freshly auto-installed
-        // payload kept its stale install-time cfg / unpatched runtime libs.
-        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
-                **cfg, payload->root, pkg,
-                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
-            return std::unexpected(std::format(
-                "toolchain post-install fixup: {}", fixed.error()));
-        else report_fixup(*fixed, payload->root);
-        // Canonical rendering, whatever spelling the manifest/config used:
-        // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
-        mcpp::ui::info("Resolved",
-            std::format("{} → {}", spec->display(),
-                mcpp::ui::shorten_path(explicit_compiler,
-                    mcpp::fetcher::make_path_ctx(&**get_cfg(), *root))));
     } else if (tcSpec.has_value() && *tcSpec == "system") {
         // Explicit user opt-in to system PATH compiler — kept as escape hatch.
     } else if (mcpp::platform::env::offline_mode()
@@ -4978,7 +5013,8 @@ prepare_build(bool print_fingerprint,
         // command is unchanged.
         const auto& stdDialect = mcpp::toolchain::dialect_for(*tc);
         const auto stdCrt = mcpp::toolchain::msvc_crt_flag(
-            stdDialect, m->buildConfig.linkage == "static");
+            stdDialect, mcpp::toolchain::msvc_wants_static_crt(
+                            m->buildConfig.linkage, m->buildConfig.cxxRuntime));
         auto sm = mcpp::toolchain::ensure_built(
             *tc, m->package.standard, stdFlagAndDialect,
             mcpp::platform::macos::deployment_target(

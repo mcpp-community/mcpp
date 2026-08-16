@@ -1,15 +1,25 @@
-// mcpp.toolchain.msvc — MSVC / Visual Studio discovery on Windows.
+// mcpp.toolchain.msvc — locating an MSVC toolset, from either origin.
 //
-// Provides reliable discovery of Visual Studio installations and MSVC
-// toolchain components (std.ixx, cl.exe, lib.exe, etc.) using multiple
-// strategies:
-//   1. vswhere.exe (Microsoft's official VS locator)
-//   2. Environment variables (VSINSTALLDIR, VS*COMNTOOLS)
-//   3. Well-known installation paths (fallback)
+// A toolset reaches a build one of two ways, and they answer different
+// questions:
 //
-// This module is used by clang.cppm to find MSVC STL's std.ixx when
-// Clang targets x86_64-pc-windows-msvc. It will also serve as the
-// foundation for future native MSVC (cl.exe) toolchain support.
+//   SYSTEM  (`msvc@system`)      — probed on this machine. The answer depends
+//                                  on what happens to be installed here.
+//   MANAGED (`msvc@<toolset>`)   — an xlings payload the manifest named. The
+//                                  answer is in the manifest; the machine only
+//                                  decides whether it has been downloaded yet.
+//
+// Everything below is one of those two, or shared between them. The shared
+// part is `installation_from_tools_dir()`: given a `VC/Tools/MSVC/<ver>`
+// directory, the record built from it is identical whichever origin produced
+// it — which is what keeps a managed toolset from being a second code path
+// with its own bugs.
+//
+// Discovery order for the SYSTEM origin is deliberate and is documented at
+// find_vs_install_path(): a declared answer outranks a probe.
+//
+// Also used by clang.cppm to find MSVC STL's std.ixx when Clang targets
+// x86_64-pc-windows-msvc.
 
 module;
 #include <cstdlib>
@@ -47,10 +57,7 @@ std::optional<std::filesystem::path> find_cl();
 // the level gate reachable: every other provider answers 20.
 int std_module_min_level(const Toolchain& tc);
 
-// ─── System-toolchain detection (msvc@system) ────────────────────────────
-//
-// mcpp treats MSVC as a *system* toolchain: it locates and identifies an
-// installed Visual Studio / Build Tools, but never installs or removes one.
+// ─── Installation records (both origins) ─────────────────────────────────
 
 struct MsvcInstallation {
     std::filesystem::path vsRoot;        // …\Microsoft Visual Studio\2022\BuildTools
@@ -67,8 +74,27 @@ struct MsvcInstallation {
     }
 };
 
-// Locate the best (newest) usable installation. nullopt = MSVC absent.
+// SYSTEM origin: locate the best (newest) usable installation on this
+// machine. nullopt = MSVC absent. Everything about which toolset this picks
+// is a property of the machine, not of the caller — see `installation_at`
+// for the other origin.
 std::optional<MsvcInstallation> detect_installation();
+
+// MANAGED origin: build the record for an EXACT toolset under a VS-shaped
+// root (`<vsRoot>/VC/Tools/MSVC/<toolsVersion>`).
+//
+// Nothing is probed and nothing is ranked: `toolsVersion` is what the caller
+// declared, so a missing directory is nullopt rather than a silent fallback
+// to a neighbouring toolset. That is the whole difference from
+// detect_installation(), and it is why a manifest pinning a toolset gets the
+// same compiler on every machine.
+//
+// Not Windows-only: given a directory of that shape the record is the same
+// anywhere, which is what makes the managed path testable off Windows. The
+// cl banner simply stays unparsed there and `display_version()` falls back
+// to the declared version.
+std::optional<MsvcInstallation> installation_at(const std::filesystem::path& vsRoot,
+                                                std::string_view toolsVersion);
 
 // Parse a cl.exe banner into (version, arch). Token-based so localized
 // banners work: first "d.d.d[.d]" run is the version, arch is the arm64/x64/
@@ -79,9 +105,21 @@ parse_cl_banner(std::string_view banner);
 // Map a cl banner arch token to the canonical windows-msvc triple.
 std::string triple_for_arch(std::string_view arch);
 
-// Multi-line guidance shown wherever MSVC is required but absent.
-// States what was searched and how to install (mcpp does not install MSVC).
+// Multi-line guidance shown wherever MSVC is required but absent: what was
+// searched, and both ways to get a compiler (pin one, or use the machine's).
 std::string install_guidance();
+
+// A version-axis spelling that no longer means what it used to.
+//
+// `msvc@19.44` was a pin-verify against the SYSTEM install's cl banner. The
+// version axis now names a toolset (`14.44.35207`), so that spelling has to
+// say so — and say what the two things it might have meant are spelled as.
+//
+// Returns guidance only when this machine can PROVE that reading (its own cl
+// banner matches the requested prefix), which makes the message a fact about
+// this machine rather than a guess about a string. nullopt otherwise, so an
+// ordinary "no such toolset" error is not decorated with speculation.
+std::optional<std::string> cl_version_spelling_hint(std::string_view requestedVersion);
 
 // Classify + enrich an already-probed cl.exe binary for detect():
 // version/arch from the banner, targetTriple, driverIdent, std.ixx lookup,
@@ -98,8 +136,29 @@ struct WindowsSdk {
     std::string           version;   // "10.0.26100.0" (highest usable)
 };
 
-// Locate the Windows 10/11 SDK (highest version with ucrt headers).
-std::optional<WindowsSdk> find_windows_sdk();
+// Locate the Windows 10/11 SDK. Search order, most specific first:
+//
+//   1. WindowsSdkDir (+ WindowsSdkVersion) — what vcvars exports and what
+//      every other build system honours. A declared answer outranks a scan,
+//      for the same reason VSINSTALLDIR outranks vswhere.
+//   2. `extraRoots` — roots the caller already knows about. In practice the
+//      windows-sdk payloads sitting beside a managed toolset in mcpp's own
+//      store; see sibling_sdk_roots().
+//   3. The conventional absolute install roots — a fallback, not the rule.
+//      They are still here because a system Visual Studio does put the SDK
+//      there, and nothing else would find it.
+//
+// Within a root the highest version carrying `ucrt/corecrt.h` wins, unless
+// WindowsSdkVersion named one that is present.
+std::optional<WindowsSdk> find_windows_sdk(
+    std::span<const std::filesystem::path> extraRoots = {});
+
+// Windows SDK payload roots that belong to the same xlings store as this
+// compiler. The compiler binary says which store it came from, so a managed
+// toolset finds its own SDK with nothing configured and no version hardcoded
+// anywhere in mcpp. Empty for a system cl.exe (it is not in a store).
+std::vector<std::filesystem::path>
+sibling_sdk_roots(const std::filesystem::path& clPath);
 
 // True only when BOTH halves of a usable MSVC C++ setup are present: the
 // STL's std module source AND the Windows SDK.
@@ -165,15 +224,32 @@ std::string run_capture_line(const std::string& cmd) {
     return out;
 }
 
-// Strategy 1: Use vswhere.exe to find VS installation.
+// Strategy 1: VSINSTALLDIR — someone SAID which install to use.
+//
+// Set by a developer command prompt, by a CI step that ran vcvarsall, or by
+// a tool that exported an environment on purpose. It is an answer, not a
+// guess, which is why it now outranks vswhere.
+std::optional<std::filesystem::path> find_vs_via_vsinstalldir() {
+    if (auto* dir = std::getenv("VSINSTALLDIR"); dir && *dir) {
+        std::filesystem::path p{dir};
+        if (std::filesystem::exists(p / "VC" / "Tools" / "MSVC"))
+            return p;
+    }
+    return std::nullopt;
+}
+
+// Strategy 2: vswhere.exe — Microsoft's locator, i.e. a ranked guess.
 std::optional<std::filesystem::path> find_vs_via_vswhere() {
     // vswhere.exe ships with the VS Installer at a well-known path
     std::filesystem::path vswhere =
         "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";
     if (!std::filesystem::exists(vswhere)) return std::nullopt;
 
+    // `-prerelease` or an Insiders instance is invisible here. Without it a
+    // machine with only an Insiders VS reports "MSVC was not found" while a
+    // perfectly good cl.exe sits on disk.
     auto result = run_capture_line(
-        "\"" + vswhere.string() + "\" -latest -products * "
+        "\"" + vswhere.string() + "\" -latest -prerelease -products * "
         "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 "
         "-property installationPath 2>nul");
 
@@ -182,15 +258,10 @@ std::optional<std::filesystem::path> find_vs_via_vswhere() {
     return std::nullopt;
 }
 
-// Strategy 2: Use environment variables.
-std::optional<std::filesystem::path> find_vs_via_env() {
-    // VSINSTALLDIR is set inside VS Developer Command Prompt
-    if (auto* dir = std::getenv("VSINSTALLDIR"); dir && *dir) {
-        std::filesystem::path p{dir};
-        if (std::filesystem::exists(p / "VC" / "Tools" / "MSVC"))
-            return p;
-    }
-
+// Strategy 3: VS*COMNTOOLS — machine-wide leftovers, so they rank BELOW
+// vswhere. VS150COMNTOOLS lingering from a 2017 install must not outrank a
+// current one; unlike VSINSTALLDIR nobody set these for this shell.
+std::optional<std::filesystem::path> find_vs_via_comntools() {
     // VS*COMNTOOLS: VS170COMNTOOLS (2022), VS160COMNTOOLS (2019), VS150COMNTOOLS (2017)
     for (auto* var : {"VS170COMNTOOLS", "VS160COMNTOOLS", "VS150COMNTOOLS"}) {
         if (auto* val = std::getenv(var); val && *val) {
@@ -204,7 +275,7 @@ std::optional<std::filesystem::path> find_vs_via_env() {
     return std::nullopt;
 }
 
-// Strategy 3: Scan well-known paths.
+// Strategy 4: Scan well-known paths.
 std::optional<std::filesystem::path> find_vs_via_paths() {
     static constexpr std::string_view bases[] = {
         "C:\\Program Files\\Microsoft Visual Studio",
@@ -256,10 +327,17 @@ std::optional<std::filesystem::path> find_latest_msvc_tools(const std::filesyste
 
 std::optional<std::filesystem::path> find_vs_install_path() {
 #if defined(_WIN32)
-    // Try strategies in order of reliability
-    if (auto p = find_vs_via_vswhere()) return p;
-    if (auto p = find_vs_via_env()) return p;
-    if (auto p = find_vs_via_paths()) return p;
+    // Declared before probed. vswhere used to run first, and because it
+    // returns something on almost every developer machine, VSINSTALLDIR was
+    // effectively unreachable — a build that had exported a complete vcvars
+    // environment still compiled with whatever vswhere ranked highest
+    // (measured on xrgui#3: vcvars said 14.52, the build used 14.51, and the
+    // only way out was to hide vswhere.exe). A guess must not silently
+    // override an answer.
+    if (auto p = find_vs_via_vsinstalldir()) return p;
+    if (auto p = find_vs_via_vswhere())      return p;
+    if (auto p = find_vs_via_comntools())    return p;
+    if (auto p = find_vs_via_paths())        return p;
 #endif
     return std::nullopt;
 }
@@ -343,15 +421,44 @@ std::string triple_for_arch(std::string_view arch) {
 
 std::string install_guidance() {
     return
-        "MSVC was not found on this system.\n"
-        "  searched: vswhere.exe, VSINSTALLDIR / VS*COMNTOOLS, and the standard\n"
+        "no Visual Studio installation was found on this system.\n"
+        "  searched: VSINSTALLDIR, vswhere.exe, VS*COMNTOOLS, and the standard\n"
         "            'Program Files\\Microsoft Visual Studio\\<year>\\<edition>' paths\n"
-        "  mcpp does not install MSVC — install it yourself, then retry:\n"
+        "\n"
+        "  mcpp can install a pinned MSVC toolset instead — no Visual Studio,\n"
+        "  no installer, no elevation, and several toolsets can coexist:\n"
+        "    mcpp toolchain install msvc 14.44.35207\n"
+        "    mcpp toolchain list --available msvc     # other toolsets\n"
+        "  then pin it in mcpp.toml, so every machine builds with that one:\n"
+        "    [toolchain]\n"
+        "    windows = \"msvc@14.44.35207\"\n"
+        "\n"
+        "  or install Visual Studio yourself and use msvc@system:\n"
         "    - Visual Studio Installer: add the 'Desktop development with C++' workload\n"
         "      (component: Microsoft.VisualStudio.Component.VC.Tools.x86.x64)\n"
         "    - or Build Tools only: winget install Microsoft.VisualStudio.2022.BuildTools\n"
         "      then add the C++ workload in the installer\n"
-        "  afterwards run: mcpp toolchain default msvc";
+        "    afterwards run: mcpp toolchain default msvc";
+}
+
+std::optional<std::string> cl_version_spelling_hint(std::string_view requestedVersion) {
+    if (requestedVersion.empty() || requestedVersion == "system")
+        return std::nullopt;
+    auto inst = detect_installation();
+    if (!inst) return std::nullopt;
+    // Only when the requested string really is this machine's cl version.
+    // A toolset version ("14.44.35207") never prefixes a banner ("19.44.…"),
+    // so this cannot fire on a genuine typo'd toolset.
+    if (!inst->display_version().starts_with(requestedVersion)) return std::nullopt;
+    if (inst->display_version() == inst->toolsVersion) return std::nullopt;  // banner unparsed
+    return std::format(
+        "msvc@{} names a COMPILER version, not a toolset.\n"
+        "  This machine's Visual Studio reports cl {} (VC tools {}).\n"
+        "  The version axis now selects the toolset mcpp installs and pins:\n"
+        "    - to use this machine's install:  msvc@system\n"
+        "    - to pin a toolset mcpp manages:  msvc@{}",
+        requestedVersion, inst->display_version(), inst->toolsVersion,
+        inst->toolsVersion);
 }
 
 namespace {
@@ -368,6 +475,18 @@ namespace {
     return {};
 }
 
+// The one place an MsvcInstallation is built — from a VS root and a
+// `VC/Tools/MSVC/<ver>` directory under it. Both origins land here, so a
+// managed toolset and a system one are described by the same code and cannot
+// drift apart in what they report or which cl.exe they pick.
+//
+// Deliberately not Windows-guarded: given a directory of that shape the
+// record is the same anywhere, which is what makes the managed path testable
+// on a Linux CI runner.
+std::optional<MsvcInstallation>
+installation_from_tools_dir(const std::filesystem::path& vsRoot,
+                            const std::filesystem::path& tools);
+
 // Capture cl.exe's banner. cl prints it (plus a usage complaint) when run
 // bare; the exit status is irrelevant — parse whatever came out.
 std::string capture_cl_banner(const std::filesystem::path& cl) {
@@ -376,19 +495,13 @@ std::string capture_cl_banner(const std::filesystem::path& cl) {
     return r.output;
 }
 
-} // namespace
-
-std::optional<MsvcInstallation> detect_installation() {
-#if defined(_WIN32)
-    auto vs = find_vs_install_path();
-    if (!vs) return std::nullopt;
-    auto tools = find_latest_msvc_tools(*vs);
-    if (!tools) return std::nullopt;
-
+std::optional<MsvcInstallation>
+installation_from_tools_dir(const std::filesystem::path& vsRoot,
+                            const std::filesystem::path& tools) {
     MsvcInstallation inst;
-    inst.vsRoot       = *vs;
-    inst.vsProduct    = product_from_vs_root(*vs);
-    inst.toolsVersion = tools->filename().string();
+    inst.vsRoot       = vsRoot;
+    inst.vsProduct    = product_from_vs_root(vsRoot);
+    inst.toolsVersion = tools.filename().string();
 
     // Host-native bin dir first (arm64 hosts run arm64 cl; everything else
     // x64), with the remaining pairs as fallback.
@@ -399,9 +512,9 @@ std::optional<MsvcInstallation> detect_installation() {
     } else {
         pairs = {{"Hostx64", "x64"}, {"Hostarm64", "arm64"}, {"Hostx86", "x86"}};
     }
+    std::error_code ec;
     for (auto [host, target] : pairs) {
-        auto cl = *tools / "bin" / host / target / "cl.exe";
-        std::error_code ec;
+        auto cl = tools / "bin" / host / target / "cl.exe";
         if (std::filesystem::exists(cl, ec)) {
             inst.clPath = cl;
             inst.arch   = std::string(target);
@@ -410,45 +523,105 @@ std::optional<MsvcInstallation> detect_installation() {
     }
     if (inst.clPath.empty()) return std::nullopt;
 
-    std::error_code ec;
     inst.hasStdModules =
-        std::filesystem::exists(*tools / "modules" / "std.ixx", ec);
+        std::filesystem::exists(tools / "modules" / "std.ixx", ec);
 
     // Version identification: banner is authoritative; tolerate failure
     // (clVersion stays empty and display_version() falls back to the
-    // tools-dir version).
+    // tools-dir version). Off Windows that failure is the normal case.
     if (auto parsed = parse_cl_banner(capture_cl_banner(inst.clPath))) {
         inst.clVersion = parsed->first;
         if (!parsed->second.empty()) inst.arch = parsed->second;
     }
     return inst;
+}
+
+} // namespace
+
+std::optional<MsvcInstallation> installation_at(const std::filesystem::path& vsRoot,
+                                                std::string_view toolsVersion) {
+    if (toolsVersion.empty()) return std::nullopt;
+    auto tools = vsRoot / "VC" / "Tools" / "MSVC" / std::string(toolsVersion);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(tools, ec)) return std::nullopt;
+    return installation_from_tools_dir(vsRoot, tools);
+}
+
+std::optional<MsvcInstallation> detect_installation() {
+#if defined(_WIN32)
+    auto vs = find_vs_install_path();
+    if (!vs) return std::nullopt;
+    auto tools = find_latest_msvc_tools(*vs);
+    if (!tools) return std::nullopt;
+    return installation_from_tools_dir(*vs, *tools);
 #else
     return std::nullopt;
 #endif
 }
 
-std::optional<WindowsSdk> find_windows_sdk() {
-#if defined(_WIN32)
-    // Directory scan of the conventional install roots; highest version dir
-    // that actually carries the UCRT headers wins. (Registry Installed
-    // Roots would be marginally more correct — the path scan covers every
-    // real installer layout seen so far and needs no Win32 API surface.)
+std::vector<std::filesystem::path>
+sibling_sdk_roots(const std::filesystem::path& clPath) {
+    std::vector<std::filesystem::path> out;
+    auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(clPath);
+    if (!xpkgs) return out;   // a system cl.exe: not in any store
+    std::error_code ec;
+    auto pkgRoot = *xpkgs / "xim-x-windows-sdk";
+    for (auto& e : std::filesystem::directory_iterator(pkgRoot, ec)) {
+        if (e.is_directory(ec)) out.push_back(e.path());
+    }
+    // Newest payload version first, so the "highest usable" rule inside
+    // find_windows_sdk() sees them in the order it would have picked anyway.
+    std::sort(out.begin(), out.end(), std::greater<>{});
+    return out;
+}
+
+std::optional<WindowsSdk> find_windows_sdk(
+    std::span<const std::filesystem::path> extraRoots) {
+    // Highest version dir under `root/Include` that actually carries the UCRT
+    // headers; `want` (from WindowsSdkVersion) wins if it is one of them.
+    // (Registry Installed Roots would be marginally more correct — the path
+    // scan covers every real installer layout seen so far and needs no Win32
+    // API surface.)
+    auto pick = [](const std::filesystem::path& root,
+                   std::string_view want) -> std::optional<WindowsSdk> {
+        std::error_code ec;
+        auto inc = root / "Include";
+        if (!std::filesystem::is_directory(inc, ec)) return std::nullopt;
+        std::string best;
+        for (auto& e : std::filesystem::directory_iterator(inc, ec)) {
+            if (!e.is_directory(ec)) continue;
+            auto v = e.path().filename().string();
+            if (!std::filesystem::exists(e.path() / "ucrt" / "corecrt.h", ec))
+                continue;
+            if (!want.empty() && v == want) return WindowsSdk{root, v};
+            if (v > best) best = v;
+        }
+        if (best.empty()) return std::nullopt;
+        return WindowsSdk{root, best};
+    };
+
+    // 1. Declared: WindowsSdkDir (+ WindowsSdkVersion). vcvars exports both;
+    //    WindowsSdkVersion carries a trailing backslash there, which is not
+    //    part of the directory name.
+    std::string want;
+    if (auto* v = std::getenv("WindowsSdkVersion"); v && *v) {
+        want = v;
+        while (!want.empty() && (want.back() == '\\' || want.back() == '/'))
+            want.pop_back();
+    }
+    if (auto* dir = std::getenv("WindowsSdkDir"); dir && *dir) {
+        if (auto s = pick(std::filesystem::path{dir}, want)) return s;
+    }
+
+    // 2. Roots the caller knows about (managed toolset's own store).
+    for (const auto& root : extraRoots)
+        if (auto s = pick(root, want)) return s;
+
+    // 3. The conventional absolute install roots.
     for (const char* base : {"C:\\Program Files (x86)\\Windows Kits\\10",
                              "C:\\Program Files\\Windows Kits\\10"}) {
-        std::filesystem::path root{base};
-        std::error_code ec;
-        if (!std::filesystem::exists(root / "Include", ec)) continue;
-        std::string best;
-        for (auto& e : std::filesystem::directory_iterator(root / "Include", ec)) {
-            if (!e.is_directory()) continue;
-            auto v = e.path().filename().string();
-            if (std::filesystem::exists(e.path() / "ucrt" / "corecrt.h", ec)
-                && v > best)
-                best = v;
-        }
-        if (!best.empty()) return WindowsSdk{root, best};
+        if (auto s = pick(std::filesystem::path{base}, want)) return s;
     }
-#endif
     return std::nullopt;
 }
 
@@ -628,7 +801,12 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     // Build environment (INCLUDE/LIB/PATH/VSLANG). SDK absence keeps
     // detection working (selection UX on SDK-less boxes); the build path
     // errors with guidance when envOverrides is empty.
-    if (auto sdk = find_windows_sdk()) {
+    //
+    // A managed toolset carries its own SDK as an xlings dependency, and the
+    // compiler's own path says which store to look in — so the two halves of
+    // a pinned toolchain stay together without anything being configured.
+    auto extraSdkRoots = sibling_sdk_roots(tc.binaryPath);
+    if (auto sdk = find_windows_sdk(extraSdkRoots)) {
         tc.envOverrides = build_env_for_cl(tc.binaryPath, parsed->second, *sdk);
     }
     return {};

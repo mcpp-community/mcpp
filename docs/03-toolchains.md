@@ -213,19 +213,40 @@ the current host can actually install, so if a target is missing from the
 Targets block, that host genuinely cannot serve it (implemented by
 `toolchain::host_can_serve`).
 
-## MSVC (System Toolchain, Windows)
+## MSVC (Windows)
 
-MSVC is different from every other toolchain mcpp manages: it is a **system
-toolchain**. mcpp locates and identifies an installed Visual Studio / Build
-Tools — it never installs, updates, or removes MSVC itself.
+An MSVC toolset reaches a build one of two ways, and the **version axis of the
+spec** says which:
+
+| Spec | Origin | Which compiler you get |
+|---|---|---|
+| `msvc@system` (or bare `msvc`) | the machine's own Visual Studio | whatever is installed here |
+| `msvc@<toolset>` (e.g. `msvc@14.44.35207`) | an xlings payload mcpp installs | the one you named, on every machine |
+
+They are not alternatives to pick between once — they answer different
+questions. `msvc@system` asks *"use what this developer already has"*;
+`msvc@14.44.35207` asks *"build this project with exactly this compiler"*.
+Pinned toolsets coexist with each other and with a system Visual Studio.
+
+### `msvc@system` — the machine's own Visual Studio
+
+mcpp locates and identifies an installed Visual Studio / Build Tools; it never
+installs, updates, or removes one.
 
 ```bash
 mcpp toolchain default msvc
 ```
 
-On a machine with MSVC installed, mcpp auto-locates it (via `vswhere.exe`,
-then `VSINSTALLDIR`/`VS*COMNTOOLS`, then the standard install paths),
-identifies the versions involved, and persists the stable spec `msvc@system`:
+mcpp auto-locates it in this order:
+
+1. **`VSINSTALLDIR`** — set by a developer command prompt or by a CI step that
+   ran `vcvarsall`. A declared answer, so it outranks the probes below.
+2. `vswhere.exe` (including prerelease/Insiders instances)
+3. `VS*COMNTOOLS`
+4. the standard `Program Files\Microsoft Visual Studio\<year>\<edition>` paths
+
+It then identifies the versions involved and persists the stable spec
+`msvc@system`:
 
 ```
 Detected   msvc 19.44.35211 (VS 2022 BuildTools) (VC tools 14.44.35207)
@@ -234,34 +255,75 @@ Detected   msvc 19.44.35211 (VS 2022 BuildTools) (VC tools 14.44.35207)
 Default    set to msvc@system (was: llvm@20.1.7)
 ```
 
-If MSVC is **not** installed, mcpp prints installation guidance instead
-(Visual Studio Installer with the *Desktop development with C++* workload, or
-`winget install Microsoft.VisualStudio.2022.BuildTools`) and exits non-zero —
-install it yourself, then re-run the command.
+If no Visual Studio is installed, mcpp says so and offers both routes — a
+pinned toolset it can install for you, or the Visual Studio Installer /
+`winget install Microsoft.VisualStudio.2022.BuildTools`.
 
 `mcpp toolchain list` shows the detected MSVC in a separate `System:` section,
-and `mcpp self doctor` reports its status on Windows. In a manifest you can
-pin it per-platform:
+and `mcpp self doctor` reports its status on Windows. In a manifest:
 
 ```toml
 [toolchain]
 windows = "msvc@system"
 ```
 
-`msvc@<prefix>` (e.g. `msvc@19.44`) acts as a pin-verify: mcpp still uses the
-newest installed VC tools, but errors if the detected version doesn't match
-the prefix.
+### `msvc@<toolset>` — a toolset mcpp installs and pins
 
-Since 0.0.90, **native cl.exe builds work**: mcpp synthesizes the
-INCLUDE/LIB environment from the detected VC tools + Windows SDK (no
-`vcvarsall` involved), stages `std.ixx`/`std.compat.ixx` as `.ifc` BMIs,
-compiles `.cppm` module units via `/interface /TP /ifcOutput`, scans with
-`/scanDependencies`, and links with `link.exe`/`lib.exe` through response
-files. `[target.x86_64-windows-msvc] linkage = "static"` (or `mcpp build
---static`) selects the `/MT` CRT — not `[build] linkage`, which is not a key.
-A missing Windows
-SDK fails the build with installation guidance (`mcpp self doctor` reports
-SDK status).
+```bash
+mcpp toolchain list --available msvc     # what can be pinned
+mcpp toolchain install msvc 14.44.35207
+```
+
+This works like `gcc@16.1.0` in every respect: the payload is downloaded into
+mcpp's own store, several toolsets coexist, `mcpp toolchain remove
+msvc@<toolset>` uninstalls one, and a manifest that names one gets it
+installed automatically on first build.
+
+```toml
+[toolchain]
+windows = "msvc@14.44.35207"
+```
+
+**The version is the toolset directory name** (`14.44.35207` — what
+`VC\Tools\MSVC\` is named and what `-vcvars_ver` takes), *not* the cl banner
+version (`19.44.35211`) and not the product year. Nothing needs to be
+installed on the machine: the payload brings the compiler, the STL, and — via
+its `xim:windows-sdk` dependency — the ucrt/um headers and libraries.
+
+> **Changed:** `msvc@19.44` used to mean "use the system MSVC and verify its
+> banner starts with 19.44", which was checked by `mcpp toolchain default` and
+> silently ignored by builds. The version axis now names a toolset everywhere.
+> A `19.x` spelling gets an error naming both replacements — `msvc@system` or
+> the toolset version that machine actually has.
+
+### Native cl.exe builds
+
+Since 0.0.90 these work on both origins: mcpp synthesizes the INCLUDE/LIB
+environment from the VC tools + Windows SDK (no `vcvarsall` involved), stages
+`std.ixx`/`std.compat.ixx` as `.ifc` BMIs, compiles `.cppm` module units via
+`/interface /TP /ifcOutput`, scans with `/scanDependencies`, and links with
+`link.exe`/`lib.exe` through response files.
+
+The Windows SDK is located in this order: **`WindowsSdkDir`** (+
+`WindowsSdkVersion`) if declared, then the `xim:windows-sdk` payload beside a
+pinned toolset in mcpp's store, then `C:\Program Files (x86)\Windows Kits\10`.
+A missing SDK fails the build with guidance (`mcpp self doctor` reports SDK
+status).
+
+**CRT model.** `/MD` (host-coupled) by default; `/MT` when either
+
+```toml
+[build]
+linkage     = "static"           # the libc axis
+cxx_runtime = "self-contained"   # the C++ runtime axis
+```
+
+is written down. On the MSVC ABI these are one physical switch — `/MT` links
+the C and C++ runtimes out of the same library — so both spellings select it
+and mean the same thing. It is a **whole-project** property: one `std` module
+is built per project and cl bakes `_MSVC_MT`/`_MSVC_MD` into it, so a
+per-role override (`cxx_runtime = { tests = … }`) is refused with a message
+saying so rather than producing a module mismatch inside the ucrt headers.
 
 ## Project-Level Version Pinning
 

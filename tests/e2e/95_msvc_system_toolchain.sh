@@ -4,8 +4,10 @@
 #   - `toolchain default msvc` locates + identifies the system MSVC and
 #     persists the stable spec msvc@system
 #   - `toolchain list` shows the detected MSVC in a System section, starred
-#   - version pin-verify: `msvc@99` mismatches the detected install
-#   - `toolchain remove/install msvc`: mcpp never manages MSVC itself
+#   - a VERSIONED msvc spec is NOT this origin: it is a payload, and an
+#     absent one says so instead of silently using the machine's compiler
+#   - the retired `msvc@<cl-version>` spelling names both replacements
+#   - `toolchain remove/install msvc`: mcpp never manages the machine's VS
 set -e
 
 # This test flips the global default toolchain; save + restore it so later
@@ -43,18 +45,47 @@ out=$("$MCPP" toolchain list 2>&1)
 echo "$out" | grep -E '\*\s*msvc' >/dev/null \
     || { echo "FAIL: msvc row not starred as default: $out"; exit 1; }
 
-# 3) version pin-verify: an impossible major must mismatch
-rc=0; out=$("$MCPP" toolchain default msvc@99 2>&1) || rc=$?
-[[ $rc -ne 0 ]]                 || { echo "FAIL: msvc@99 should mismatch"; exit 1; }
-[[ "$out" == *"requested"* ]]   || { echo "FAIL: mismatch message: $out"; exit 1; }
+# 3) a VERSIONED spec is a PAYLOAD, not this origin.
+#
+#    This is the load-bearing assertion of the whole split: a toolset that is
+#    not installed must FAIL. Falling back to the machine's compiler is
+#    exactly the silent substitution the version axis exists to prevent, and
+#    it would look like success from the outside.
+rc=0; out=$("$MCPP" toolchain default msvc@14.0.99999 2>&1) || rc=$?
+[[ $rc -ne 0 ]] || { echo "FAIL: an absent toolset must not resolve: $out"; exit 1; }
+[[ "$out" == *"not installed"* ]] \
+    || { echo "FAIL: absent-toolset message: $out"; exit 1; }
+# …and it must not have quietly become the default.
+out=$("$MCPP" toolchain list 2>&1)
+echo "$out" | grep -E '\*\s*msvc' >/dev/null \
+    || { echo "FAIL: default was disturbed by a failed pin: $out"; exit 1; }
 
-# 4) mcpp never manages the MSVC installation
+# 3b) the retired spelling. `msvc@19.x` used to mean "use the system MSVC and
+#     verify its banner" — checked here and silently ignored by builds. It now
+#     names a toolset, so this machine's own cl version has to say so and
+#     point at both replacements.
+CLVER=$("$MCPP" toolchain default msvc 2>&1 | grep -oE 'msvc 19\.[0-9]+' | head -1 | cut -d' ' -f2)
+if [[ -n "$CLVER" ]]; then
+    rc=0; out=$("$MCPP" toolchain default "msvc@$CLVER" 2>&1) || rc=$?
+    [[ $rc -ne 0 ]] || { echo "FAIL: msvc@$CLVER should not resolve"; exit 1; }
+    [[ "$out" == *"COMPILER version"* ]] \
+        || { echo "FAIL: no cl-version signpost: $out"; exit 1; }
+    [[ "$out" == *"msvc@system"* ]] \
+        || { echo "FAIL: signpost omits msvc@system: $out"; exit 1; }
+fi
+
+# 4) mcpp never manages the machine's own Visual Studio
 rc=0; out=$("$MCPP" toolchain remove msvc 2>&1) || rc=$?
-[[ $rc -ne 0 && "$out" == *"system toolchain"* ]] \
+[[ $rc -ne 0 && "$out" == *"cannot remove it"* ]] \
     || { echo "FAIL: remove msvc: rc=$rc out=$out"; exit 1; }
+# …but it must say that a toolset it DID install is removable, or the message
+# leaves the reader thinking msvc is simply un-removable.
+[[ "$out" == *"msvc@<toolset>"* ]] \
+    || { echo "FAIL: remove msvc omits the managed route: $out"; exit 1; }
+"$MCPP" toolchain default msvc >/dev/null 2>&1
 out=$("$MCPP" toolchain install msvc 2>&1) \
     || { echo "FAIL: install msvc (present) should exit 0: $out"; exit 1; }
-[[ "$out" == *"already installed"* ]] \
+[[ "$out" == *"does not manage it"* ]] \
     || { echo "FAIL: install msvc message: $out"; exit 1; }
 
 # 5) native cl.exe builds WORK (0.0.90; the 0.0.88 gate is gone) — the full
