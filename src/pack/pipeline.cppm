@@ -57,7 +57,15 @@ export int build_and_pack(Options opts, bool modeFromUser) {
     // Re-derive target triple: if mode is Static we force the musl
     // triple even when the manifest's [pack].default_mode bumped us
     // here after `prepare_build` ran with the host toolchain.
-    if (opts.mode == mcpp::pack::Mode::Static && ctx->tc.targetTriple.find("-musl") == std::string::npos) {
+    //
+    // ...but NOT over a target the user asked for. `--mode static` on its own
+    // has always meant "the musl-static ELF", and that stays; `--mode static
+    // --target x86_64-windows-gnu` used to silently become a Linux build,
+    // which was invisible while PE packaging did not exist and is a wrong
+    // answer now that it does. An explicit `--target` is an instruction.
+    if (opts.mode == mcpp::pack::Mode::Static
+        && opts.targetTriple.empty()
+        && ctx->tc.targetTriple.find("-musl") == std::string::npos) {
         // Need to re-prepare the build with the musl target.
         mcpp::build::BuildOverrides ov2;
         ov2.target_triple = "x86_64-linux-musl";
