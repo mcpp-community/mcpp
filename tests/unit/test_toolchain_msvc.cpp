@@ -375,6 +375,95 @@ TEST(MsvcSdk, IncompleteSdkRootIsNotAnAnswer) {
     if (sdk) EXPECT_NE(sdk->root, t.root) << "an SDK-less root was accepted";
 }
 
+// ─── the toolset's own redistributable CRT ───────────────────────────────
+
+namespace {
+
+// A toolset laid out the way MSVC actually lays one out, including the part
+// that trips a derivation: the Redist version is NOT the tools version.
+struct FakeRedist {
+    std::filesystem::path root, clPath;
+
+    explicit FakeRedist(std::string_view toolsVer, std::string_view redistVer) {
+        root = std::filesystem::temp_directory_path()
+             / std::format("mcpp-redist-{}", std::chrono::steady_clock::now()
+                                                 .time_since_epoch().count());
+        auto tools = root / "VC" / "Tools" / "MSVC" / std::string(toolsVer);
+        auto bin = tools / "bin" / "Hostx64" / "x64";
+        std::filesystem::create_directories(bin);
+        clPath = bin / "cl.exe";
+        std::ofstream{clPath} << "not a compiler";
+        add(redistVer, "x64", "Microsoft.VC143.CRT", "vcruntime140.dll");
+    }
+    void add(std::string_view ver, std::string_view arch,
+             std::string_view comp, std::string_view file) {
+        auto d = root / "VC" / "Redist" / "MSVC" / std::string(ver)
+               / std::string(arch) / std::string(comp);
+        std::filesystem::create_directories(d);
+        std::ofstream{d / std::string(file)} << "dll";
+    }
+    void add_debug(std::string_view ver) {
+        auto d = root / "VC" / "Redist" / "MSVC" / std::string(ver)
+               / "debug_nonredist" / "x64" / "Microsoft.VC143.DebugCRT";
+        std::filesystem::create_directories(d);
+        std::ofstream{d / "vcruntime140d.dll"} << "dll";
+    }
+    ~FakeRedist() { std::error_code ec; std::filesystem::remove_all(root, ec); }
+    FakeRedist(const FakeRedist&) = delete;
+    FakeRedist& operator=(const FakeRedist&) = delete;
+};
+
+} // namespace
+
+TEST(MsvcRedist, FoundFromTheCompilerPathAlone) {
+    // Nothing configured, no version derived: the compiler's own location
+    // says which toolset this is, and the toolset carries its runtime.
+    FakeRedist t{"14.44.35207", "14.44.35112"};
+    auto d = msvc::vc_redist_dir(t.clPath, "x64");
+    ASSERT_FALSE(d.empty()) << "the toolset's redistributable CRT was not found";
+    EXPECT_TRUE(std::filesystem::exists(d / "vcruntime140.dll"));
+}
+
+TEST(MsvcRedist, TheRedistVersionIsNotTheToolsVersion) {
+    // 14.44.35207 (tools) vs 14.44.35112 (redist) is what MSVC actually
+    // ships. Deriving one from the other finds nothing — this is why the
+    // directory is searched rather than composed.
+    FakeRedist t{"14.44.35207", "14.44.35112"};
+    auto d = msvc::vc_redist_dir(t.clPath, "x64");
+    ASSERT_FALSE(d.empty());
+    EXPECT_NE(d.string().find("14.44.35112"), std::string::npos)
+        << "did not land in the redist version directory: " << d.string();
+}
+
+TEST(MsvcRedist, NewestRedistWins) {
+    FakeRedist t{"14.44.35207", "14.40.00000"};
+    t.add("14.44.35112", "x64", "Microsoft.VC143.CRT", "vcruntime140.dll");
+    auto d = msvc::vc_redist_dir(t.clPath, "x64");
+    ASSERT_FALSE(d.empty());
+    EXPECT_NE(d.string().find("14.44.35112"), std::string::npos)
+        << "older redist won: " << d.string();
+}
+
+TEST(MsvcRedist, TheDebugCrtIsNeverReturned) {
+    // debug_nonredist may NOT be redistributed. Returning it would put
+    // vcruntime140d.dll on PATH and, later, into a shipped artifact.
+    FakeRedist t{"14.44.35207", "14.44.35112"};
+    t.add_debug("14.99.99999");          // newer, and must still lose
+    auto d = msvc::vc_redist_dir(t.clPath, "x64");
+    ASSERT_FALSE(d.empty());
+    EXPECT_EQ(d.string().find("debug_nonredist"), std::string::npos)
+        << "returned the non-redistributable debug CRT: " << d.string();
+}
+
+TEST(MsvcRedist, AToolsetWithoutARedistIsNotAnError) {
+    // msvc@system on a machine whose VS install omits the redist component,
+    // for instance. Empty means "nothing to add to PATH", not a failure.
+    FakeRedist t{"14.44.35207", "14.44.35112"};
+    std::error_code ec;
+    std::filesystem::remove_all(t.root / "VC" / "Redist", ec);
+    EXPECT_TRUE(msvc::vc_redist_dir(t.clPath, "x64").empty());
+}
+
 TEST(MsvcSdk, HeadersWithoutImportLibsIsNotAnAnswer) {
     // The half that used to pass. `Include/<v>/ucrt/corecrt.h` is there and
     // `Lib/` is not, which is exactly what a managed windows-sdk payload

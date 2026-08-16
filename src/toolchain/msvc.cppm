@@ -173,6 +173,35 @@ sibling_sdk_roots(const std::filesystem::path& clPath);
 // Always false off Windows: the whole discovery chain is Win32-only.
 bool has_usable_msvc();
 
+// Whether MSVC is usable HERE — either origin. `has_usable_msvc()` asks only
+// about the machine, which is the wrong question wherever a managed toolset
+// would serve just as well: a box with a pinned `msvc@14.44.35207` payload
+// and no Visual Studio answers `false` to that one while being perfectly able
+// to compile.
+//
+// `pkgsDir` is mcpp's payload store; a non-empty `xim-x-msvc/<ver>` with a
+// resolvable cl.exe counts. Off Windows both are false — the whole chain is
+// Win32-only.
+bool msvc_available_here(const std::filesystem::path& pkgsDir);
+
+// The redistributable VC runtime that BELONGS TO THIS TOOLSET:
+//   <VC>\Redist\MSVC\<redistVer>\<arch>\Microsoft.VC<N>.CRT\
+//     vcruntime140.dll  msvcp140.dll  ...
+//
+// It matters because the default CRT model is /MD, and those DLLs are NOT
+// Windows components — ucrtbase.dll ships with the OS, vcruntime140.dll does
+// not. On a machine that has only a managed toolset (no Visual Studio, no
+// redistributable installed) a /MD build links fine and then cannot start.
+//
+// The toolset carries its own copy, so this is the toolchain-coupled runtime
+// in exactly the sense libstdc++ is for gcc, and it goes in the same field.
+//
+// `redistVer` is NOT the tools version (14.44.35112 vs 14.44.35207), so the
+// newest directory is chosen rather than derived. `debug_nonredist\` is never
+// returned: those DLLs may not be redistributed.
+std::filesystem::path vc_redist_dir(const std::filesystem::path& clPath,
+                                    std::string_view arch = "x64");
+
 // Synthesize the environment cl.exe/link.exe need — what vcvars would set,
 // derived directly from the located VC tools + SDK (no vcvarsall.bat run):
 //   INCLUDE = <tools>\include; <sdk>\Include\<v>\{ucrt,um,shared,winrt}
@@ -668,6 +697,25 @@ bool has_usable_msvc() {
 #endif
 }
 
+bool msvc_available_here([[maybe_unused]] const std::filesystem::path& pkgsDir) {
+#if defined(_WIN32)
+    if (has_usable_msvc()) return true;
+    // A managed toolset is just as usable, and asking the machine about it
+    // gets the wrong answer. Any installed version whose cl.exe resolves
+    // counts; `installation_at` is the same resolution install and build use.
+    std::error_code ec;
+    auto root = pkgsDir / "xim-x-msvc";
+    if (!std::filesystem::is_directory(root, ec)) return false;
+    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
+        if (!v.is_directory(ec)) continue;
+        if (installation_at(v.path(), v.path().filename().string())) return true;
+    }
+    return false;
+#else
+    return false;
+#endif
+}
+
 std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
                                      std::string_view arch,
                                      const WindowsSdk& sdk) {
@@ -794,6 +842,40 @@ std::vector<std::string> std_compat_build_commands(
                               ref, crtFlag) };
 }
 
+std::filesystem::path vc_redist_dir(const std::filesystem::path& clPath,
+                                    std::string_view arch) {
+    // <VC>/Tools/MSVC/<ver>/bin/Host<h>/<arch>/cl.exe → up 6 from the arch dir
+    auto vc = clPath.parent_path();
+    for (int i = 0; i < 6 && !vc.empty(); ++i) vc = vc.parent_path();
+    std::error_code ec;
+    auto redist = vc / "Redist" / "MSVC";
+    if (!std::filesystem::is_directory(redist, ec)) return {};
+
+    std::filesystem::path best;
+    std::string bestVer;
+    for (auto& v : std::filesystem::directory_iterator(redist, ec)) {
+        if (!v.is_directory(ec)) continue;
+        auto archDir = v.path() / std::string(arch);
+        if (!std::filesystem::is_directory(archDir, ec)) continue;
+        for (auto& c : std::filesystem::directory_iterator(archDir, ec)) {
+            if (!c.is_directory(ec)) continue;
+            auto name = c.path().filename().string();
+            // Microsoft.VC143.CRT — the CRT, not CXXAMP/OpenMP, and never
+            // anything under debug_nonredist (which is not redistributable
+            // and is a sibling of <arch>, not a child, but be explicit).
+            if (!name.starts_with("Microsoft.VC") || !name.ends_with(".CRT"))
+                continue;
+            if (c.path().string().find("debug_nonredist") != std::string::npos)
+                continue;
+            if (auto ver = v.path().filename().string(); ver > bestVer) {
+                bestVer = ver;
+                best = c.path();
+            }
+        }
+    }
+    return best;
+}
+
 std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     auto banner = capture_cl_banner(tc.binaryPath);
     auto parsed = parse_cl_banner(banner);
@@ -840,6 +922,24 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     auto extraSdkRoots = sibling_sdk_roots(tc.binaryPath);
     if (auto sdk = find_windows_sdk(extraSdkRoots)) {
         tc.envOverrides = build_env_for_cl(tc.binaryPath, parsed->second, *sdk);
+    }
+
+    // The toolset's own redistributable CRT, in the same field gcc uses for
+    // libstdc++ — so `mcpp run` puts it on PATH exactly the way it puts a
+    // private libstdc++ on LD_LIBRARY_PATH.
+    //
+    // Without it, the DEFAULT build (/MD) links vcruntime140.dll and
+    // msvcp140.dll, which are not OS components, and a machine with only a
+    // managed toolset cannot start what it just built. That machine is not
+    // hypothetical — it is any box that installed `msvc@<toolset>` and never
+    // had Visual Studio. CI does not see it because the runners have VS.
+    //
+    // Safe for the link line: hostflags returns early for MSVC before it
+    // emits -L, and flags.cppm's runtime-dir block is `supports_rpath`-gated,
+    // so nothing here reaches cl or link as a flag.
+    if (auto redist = vc_redist_dir(tc.binaryPath, parsed->second);
+        !redist.empty()) {
+        tc.linkRuntimeDirs.push_back(redist);
     }
     return {};
 }

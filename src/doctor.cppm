@@ -395,8 +395,15 @@ export int doctor_report() {
                     s.family  = id->family;
                     s.version = vEntry.path().filename().string();
                     s.target  = id->target;
-                    auto bin = mcpp::toolchain::toolchain_frontend(
-                        vEntry.path() / "bin", mcpp::toolchain::to_xim_package(s));
+                    // payload_frontend, not toolchain_frontend(root/"bin"):
+                    // cl.exe is four levels down at
+                    // VC/Tools/MSVC/<ver>/bin/Host<h>/<arch>/, so the `bin/`
+                    // lookup finds nothing and `continue` drops every
+                    // installed msvc toolset. That is the defect #436 fixed
+                    // in `toolchain list`; doctor kept its own copy, so the
+                    // two commands disagreed about the same machine.
+                    auto bin = mcpp::toolchain::payload_frontend(
+                        vEntry.path(), mcpp::toolchain::to_xim_package(s), s.family);
                     if (bin.empty()) continue;
                     sawAny = true;
 

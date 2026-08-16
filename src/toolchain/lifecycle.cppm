@@ -221,6 +221,18 @@ void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst,
 // rather than picking one: clear the attribute, then give a live process a
 // bounded moment to go away. Retries are capped and short — `toolchain
 // remove` should not hang because something holds the directory forever.
+// Whether any FILE is left under `root`. Directories alone are not a
+// toolchain: nothing resolves a compiler out of an empty tree.
+bool any_regular_file(const std::filesystem::path& root) {
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied, ec);
+         it != std::filesystem::recursive_directory_iterator{}; it.increment(ec)) {
+        if (it->is_regular_file(ec)) return true;
+    }
+    return false;
+}
+
 export bool remove_payload_tree(const std::filesystem::path& root,
                          std::error_code& ec) {
     std::filesystem::remove_all(root, ec);
@@ -296,7 +308,19 @@ export bool remove_payload_tree(const std::filesystem::path& root,
     ec.clear();
     std::filesystem::remove_all(root, ec);       // directories only now
     std::filesystem::remove_all(trash, ignore);  // usually works; fine if not
-    return !ec;
+    if (!ec) return true;
+
+    // The files are gone and an empty directory skeleton would not die. That
+    // is a sharing violation on a DIRECTORY, which on Windows means some
+    // process has one of them as its current directory -- mspdbsrv.exe is
+    // launched inside the payload, so this is the normal tail of a /Zi build.
+    //
+    // A toolchain with no files in it is not installed, which is what
+    // `remove` promises. Reporting failure here would be reporting the
+    // opposite of what happened, and the skeleton is swept by the next
+    // lifecycle command once that process exits.
+    ec.clear();
+    return !any_regular_file(root);
 }
 
 // Delete `.trash-*` left behind by a removal that had to park a held payload.
@@ -311,8 +335,14 @@ export void sweep_parked_payloads(const std::filesystem::path& pkgRoot) {
     if (!std::filesystem::is_directory(pkgRoot, ec)) return;
     for (auto& e : std::filesystem::directory_iterator(pkgRoot, ec)) {
         if (!e.is_directory(ec)) continue;
-        if (e.path().filename().string().starts_with(".trash-"))
+        if (e.path().filename().string().starts_with(".trash-")) {
             std::filesystem::remove_all(e.path(), ec);
+        } else if (!any_regular_file(e.path())) {
+            // A version directory with no files in it is the skeleton a
+            // removal could not delete because something held a directory
+            // open. A real install always has files, so this cannot eat one.
+            std::filesystem::remove_all(e.path(), ec);
+        }
     }
 }
 
@@ -912,7 +942,14 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         }
 
         auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, pkg.ximName, pkg.ximVersion);
-        if (!std::filesystem::exists(installDir)) {
+        // A RESOLVABLE COMPILER, not a directory that exists. A removal that
+        // could not delete the last empty directories leaves a skeleton
+        // behind (see remove_payload_tree), and `exists()` would call that
+        // skeleton an installed toolchain and then hand it to a build.
+        //
+        // Same rule as everywhere else in this round: installed means usable,
+        // not present.
+        if (mcpp::toolchain::payload_frontend(installDir, pkg, spec->family).empty()) {
             // Before "not installed", check whether this is the retired
             // `msvc@<cl-version>` spelling — otherwise the advice is to
             // install a toolset that does not exist and never will.

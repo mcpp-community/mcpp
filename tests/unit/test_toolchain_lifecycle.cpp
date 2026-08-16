@@ -68,3 +68,45 @@ TEST(ToolchainRemove, TheSweepDeletesParkedPayloadsAndNothingElse) {
     std::error_code ec;
     std::filesystem::remove_all(pkgRoot, ec);
 }
+
+TEST(ToolchainRemove, ADirectorySkeletonWithNoFilesCountsAsRemoved) {
+    // Windows can refuse to delete an empty DIRECTORY when a process has it
+    // as its current directory — mspdbsrv.exe is launched inside the payload,
+    // so this is the ordinary tail of a /Zi build with the toolset being
+    // removed. Every file is already gone at that point.
+    //
+    // A toolchain with no files in it is not installed, which is exactly what
+    // `remove` promises. Calling that a failure would report the opposite of
+    // what happened.
+    auto dir = std::filesystem::temp_directory_path()
+             / std::format("mcpp-skel-{}", std::chrono::steady_clock::now()
+                                               .time_since_epoch().count());
+    std::filesystem::create_directories(dir / "14.44.35207" / "bin" / "Hostx64" / "x64");
+
+    std::error_code ec;
+    EXPECT_TRUE(remove_payload_tree(dir / "14.44.35207", ec))
+        << "a payload with no files left was reported as still installed";
+
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(ToolchainRemove, TheSweepAlsoClearsAFileLessSkeleton) {
+    // The deferral half: whatever the removal could not delete goes on the
+    // next lifecycle command, once the process holding it has exited.
+    auto pkgRoot = std::filesystem::temp_directory_path()
+                 / std::format("mcpp-skel2-{}", std::chrono::steady_clock::now()
+                                                    .time_since_epoch().count());
+    std::filesystem::create_directories(pkgRoot / "14.44.35207" / "bin" / "x64");
+    std::filesystem::create_directories(pkgRoot / "14.52.36629" / "bin");
+    std::ofstream{pkgRoot / "14.52.36629" / "bin" / "cl.exe"} << "a real one";
+
+    sweep_parked_payloads(pkgRoot);
+
+    EXPECT_FALSE(std::filesystem::exists(pkgRoot / "14.44.35207"))
+        << "the empty skeleton survived the sweep";
+    EXPECT_TRUE(std::filesystem::exists(pkgRoot / "14.52.36629" / "bin" / "cl.exe"))
+        << "the sweep ate an installed toolset";
+
+    std::error_code ec;
+    std::filesystem::remove_all(pkgRoot, ec);
+}
