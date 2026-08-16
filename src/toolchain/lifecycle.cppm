@@ -221,7 +221,7 @@ void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst,
 // rather than picking one: clear the attribute, then give a live process a
 // bounded moment to go away. Retries are capped and short — `toolchain
 // remove` should not hang because something holds the directory forever.
-bool remove_payload_tree(const std::filesystem::path& root,
+export bool remove_payload_tree(const std::filesystem::path& root,
                          std::error_code& ec) {
     std::filesystem::remove_all(root, ec);
     if (!ec) return true;
@@ -241,7 +241,51 @@ bool remove_payload_tree(const std::filesystem::path& root,
         if (!ec) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds{300});
     }
-    return !std::filesystem::exists(root, ignore);
+    if (!std::filesystem::exists(root, ignore)) return true;
+
+    // Still held. Move it out of the way instead of waiting on a process we
+    // do not own.
+    //
+    // Windows refuses to DELETE a directory containing an open file, but it
+    // will RENAME one — the open handle keeps working and follows the new
+    // name. So the toolchain can leave the place it occupied even while
+    // mspdbsrv.exe is still holding mspdbcore.dll inside it, which is the
+    // normal state of affairs for the first ~seconds after a /Zi build with
+    // the very toolset being removed.
+    //
+    // This is the difference between a `remove` that works and one that asks
+    // the user to guess how long to wait: what they asked for is that the
+    // toolchain stop being installed, and after the rename it is. The bytes
+    // are swept on the next lifecycle command, by which time nothing holds
+    // them.
+    auto parked = root.parent_path() /
+                  std::format(".trash-{}-{}", root.filename().string(),
+                              std::chrono::steady_clock::now()
+                                  .time_since_epoch().count());
+    std::error_code ren;
+    std::filesystem::rename(root, parked, ren);
+    if (ren) return false;              // could not even move it — real failure
+
+    std::filesystem::remove_all(parked, ignore);   // usually works; fine if not
+    ec.clear();
+    return true;
+}
+
+// Delete `.trash-*` left behind by a removal that had to park a held payload.
+// Takes the directory the payload lived IN (`<pkgs>/xim-x-<name>`), which is
+// where park() puts them -- one place, one level, nothing to walk.
+//
+// Best-effort and run before a lifecycle operation rather than after one: by
+// the next command the process that held the bytes is normally gone, so this
+// is where they actually get freed.
+export void sweep_parked_payloads(const std::filesystem::path& pkgRoot) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(pkgRoot, ec)) return;
+    for (auto& e : std::filesystem::directory_iterator(pkgRoot, ec)) {
+        if (!e.is_directory(ec)) continue;
+        if (e.path().filename().string().starts_with(".trash-"))
+            std::filesystem::remove_all(e.path(), ec);
+    }
 }
 
 // The first entry that is still there after a failed removal. The error code
@@ -658,6 +702,13 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         }
 
         mcpp::log::verbose("toolchain", std::format("installing main: {}", pkg.target()));
+        // A previous `remove` may have parked a held payload beside this one;
+        // by now whatever held it has exited, so free the bytes before adding
+        // another few hundred MB.
+        sweep_parked_payloads(
+            mcpp::xlings::paths::xim_tool(mcpp::config::make_xlings_env(cfg),
+                                          pkg.ximName, pkg.ximVersion)
+                .parent_path());
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         mcpp::log::verbose("toolchain", std::format("main install result: {}",
             payload ? ("ok → " + payload->root.string()) : payload.error().message));
@@ -899,6 +950,7 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
             mcpp::ui::error(std::format("{} is not installed", spec));
             return 1;
         }
+        sweep_parked_payloads(installDir.parent_path());
         if (!remove_payload_tree(installDir, ec)) {
             // Say that the payload is now BROKEN, not merely that removal
             // failed. `remove_all` deletes what it can before it stops, so a
