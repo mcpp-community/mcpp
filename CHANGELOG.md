@@ -7,6 +7,17 @@
 
 ### 修复
 
+- **Windows 上 `mcpp toolchain remove <msvc toolset>` 报 "Access is denied"。**
+
+  `remove_all` 直接上,不清只读位、不重试、报错也不说是哪个文件。
+  payload 是从 .vsix/.msi 解出来的,归档条目带只读属性;POSIX 只要**目录**
+  可写就能 unlink 子项,所以这个问题在 Linux/macOS 上根本不出现。
+  另外 `/Zi` 构建之后 mspdbsrv.exe 还会在 payload 里活几秒。
+
+  两个原因表现完全一样(都是 "Access is denied"),所以两个都处理:
+  先清可写位重试,再给活着的进程一个**有上限**的等待窗口(10 × 300ms)。
+  报错现在会指出卡在哪个文件 —— 光一句 "Access is denied" 没法处理。
+
 - **半装的 Windows SDK 被当成装好的,链接到最后才炸。**
 
   `find_windows_sdk()` 认一个根的条件是 `Include\<v>\ucrt\corecrt.h`

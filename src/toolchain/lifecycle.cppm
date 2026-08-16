@@ -208,6 +208,66 @@ void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst,
 // headers much later. `has_usable_msvc()` exists for exactly this reason;
 // this is the same judgement applied to the managed origin, where the SDK
 // arrives as a package dependency and can therefore fail on its own.
+// Delete a payload tree, coping with the two things that make a plain
+// `remove_all` fail on Windows and on nothing else:
+//
+//   read-only files — payloads are unpacked from .vsix/.msi, and archive
+//     entries carry the attribute through. POSIX only needs the DIRECTORY
+//     writable to unlink a child, so this never shows up on Linux or macOS.
+//   a lingering handle — a build with /Zi leaves mspdbsrv.exe running for a
+//     few seconds after cl.exe exits, and it lives inside the payload.
+//
+// Both surface as the same "Access is denied", which is why this handles both
+// rather than picking one: clear the attribute, then give a live process a
+// bounded moment to go away. Retries are capped and short — `toolchain
+// remove` should not hang because something holds the directory forever.
+bool remove_payload_tree(const std::filesystem::path& root,
+                         std::error_code& ec) {
+    std::filesystem::remove_all(root, ec);
+    if (!ec) return true;
+
+    // Second pass: make everything writable, then try again.
+    std::error_code ignore;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied,
+             ignore);
+         it != std::filesystem::recursive_directory_iterator{}; it.increment(ignore)) {
+        std::filesystem::permissions(it->path(), std::filesystem::perms::owner_write,
+                                     std::filesystem::perm_options::add, ignore);
+    }
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        ec.clear();
+        std::filesystem::remove_all(root, ec);
+        if (!ec) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds{300});
+    }
+    return !std::filesystem::exists(root, ignore);
+}
+
+// The first entry that is still there after a failed removal. The error code
+// alone says "Access is denied" and not by whom or to what, which is the
+// difference between a report someone can act on and one they cannot.
+//
+// It probes by trying to delete, and keeps whatever it manages to delete --
+// acceptable only because the caller has already failed a remove_all and the
+// tree is being torn down anyway. Do not call it on a tree meant to survive.
+std::optional<std::filesystem::path>
+first_undeletable(const std::filesystem::path& root) {
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec)) return std::nullopt;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied, ec);
+         it != std::filesystem::recursive_directory_iterator{}; it.increment(ec)) {
+        if (ec) break;
+        if (it->is_regular_file(ec)) {
+            std::error_code rm;
+            std::filesystem::remove(it->path(), rm);
+            if (rm) return it->path();
+        }
+    }
+    return root;
+}
+
 void msvc_warn_if_sdk_missing(const mcpp::toolchain::msvc::MsvcInstallation& inst) {
     auto roots = mcpp::toolchain::msvc::sibling_sdk_roots(inst.clPath);
     if (auto sdk = mcpp::toolchain::msvc::find_windows_sdk(roots)) {
@@ -841,9 +901,14 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
             mcpp::ui::error(std::format("{} is not installed", spec));
             return 1;
         }
-        std::filesystem::remove_all(installDir, ec);
-        if (ec) {
-            mcpp::ui::error(std::format("remove failed: {}", ec.message()));
+        if (!remove_payload_tree(installDir, ec)) {
+            mcpp::ui::error(std::format(
+                "remove failed: {}{}", ec.message(),
+                first_undeletable(installDir)
+                    .transform([](const std::filesystem::path& p) {
+                        return std::format("\n         stuck at: {}", p.string());
+                    })
+                    .value_or(std::string{})));
             return 1;
         }
         mcpp::ui::status("Removed", spec);
