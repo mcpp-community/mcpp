@@ -618,14 +618,26 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // VC/Tools/MSVC/<ver>/bin/Hostx64/x64, and there is nothing to
         // patchelf on a PE toolchain.
         if (spec->family == mcpp::toolchain::Family::Msvc) {
+            // NOT `payload->root` — that is a GUESS, and it guesses wrong
+            // here. resolve_xpkg_path calls the version directory the root
+            // only when it directly contains bin/ include/ lib/; otherwise it
+            // descends into a lone subdirectory. An installed msvc payload
+            // has exactly one entry, `VC/`, so the "root" comes back as
+            // …/14.44.35207/VC and the toolset then looks like it is missing.
+            //
+            // The location is not something to infer: it is (store, name,
+            // version), and all three are known here. resolve_xpkg_path above
+            // is what INSTALLS; this is what says where.
+            auto verDir = mcpp::xlings::paths::xim_tool(
+                mcpp::config::make_xlings_env(cfg), pkg.ximName, pkg.ximVersion);
             auto inst = mcpp::toolchain::msvc::installation_at(
-                payload->root, pkg.ximVersion);
+                verDir, pkg.ximVersion);
             if (!inst) {
                 mcpp::ui::error(std::format(
                     "msvc payload installed at '{}', but no cl.exe under "
                     "VC/Tools/MSVC/{} — the payload is not what this version "
                     "claims to be",
-                    payload->root.string(), pkg.ximVersion));
+                    verDir.string(), pkg.ximVersion));
                 return 1;
             }
             msvc_print_detected(*inst, "Installed");

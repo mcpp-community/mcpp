@@ -234,6 +234,28 @@ TEST(MsvcManaged, ResolvesTheDeclaredToolsetAndNotItsNeighbour) {
     EXPECT_EQ(newer->toolsVersion, "14.52.36629");
 }
 
+TEST(MsvcManaged, TheVersionDirIsTheRootNotItsLoneSubdirectory) {
+    // A real installed payload has exactly ONE entry: `VC/`. The fetcher's
+    // `XpkgPayload::root` treats the version directory as the root only when
+    // it directly contains bin/ include/ lib/, and otherwise descends into a
+    // lone subdirectory -- so for msvc it hands back `<ver>/VC`, and the
+    // toolset then looks missing on a payload that installed perfectly.
+    //
+    // Pinning both sides here: the version directory resolves, and the `VC`
+    // subdirectory does NOT. The second half is what makes this a test rather
+    // than a restatement -- an implementation that searched upward from
+    // whatever it was given would pass the first and fail this.
+    FakeToolset t{"verdir"};
+    t.add_toolset("14.44.35207");
+
+    auto ok = msvc::installation_at(t.root, "14.44.35207");
+    ASSERT_TRUE(ok.has_value()) << "the version directory must be the root";
+
+    EXPECT_FALSE(msvc::installation_at(t.root / "VC", "14.44.35207").has_value())
+        << "a caller handing in the VC subdir is passing the wrong thing, and "
+           "must be told so rather than quietly rescued";
+}
+
 TEST(MsvcManaged, AbsentToolsetIsNulloptNotASubstitute) {
     FakeToolset t{"absent"};
     t.add_toolset("14.44.35207");

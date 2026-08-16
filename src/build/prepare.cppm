@@ -1320,12 +1320,19 @@ prepare_build(bool print_fingerprint,
         // (cl.exe is four levels deeper) and the ELF post-install fixup
         // (there is nothing to patchelf on a PE toolchain).
         if (spec->family == mcpp::toolchain::Family::Msvc) {
+            // Not `payload->root`: that field is the fetcher's guess at where
+            // the useful tree starts, and it descends into a lone
+            // subdirectory when the version dir has no bin/ include/ lib/.
+            // An msvc payload's only entry is `VC/`, so the guess lands one
+            // level too deep. (store, name, version) is known — use it.
+            auto verDir = mcpp::xlings::paths::xim_tool(
+                mcpp::config::make_xlings_env(**cfg), pkg.ximName, pkg.ximVersion);
             auto inst = mcpp::toolchain::msvc::installation_at(
-                payload->root, pkg.ximVersion);
+                verDir, pkg.ximVersion);
             if (!inst) {
                 return std::unexpected(std::format(
                     "msvc payload at '{}' has no cl.exe under VC/Tools/MSVC/{}",
-                    payload->root.string(), pkg.ximVersion));
+                    verDir.string(), pkg.ximVersion));
             }
             explicit_compiler = inst->clPath;
             mcpp::ui::info("Resolved", std::format(
