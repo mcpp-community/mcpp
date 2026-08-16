@@ -1090,11 +1090,22 @@ prepare_build(bool print_fingerprint,
     // rest: the vocabulary table already maps x86_64-windows-gnu to its pin
     // (winlibs GCC) and to static linkage, so the toolchain answer stays a
     // single derivation instead of being spelled out a second time here.
+    // "Is MSVC usable here" — either origin. Asking `has_usable_msvc()` (which
+    // probes the machine) would answer "no" on a box that has a pinned
+    // msvc@<toolset> payload and no Visual Studio, and every decision below
+    // would then divert a perfectly good toolchain to mingw.
+    auto msvc_usable_either_origin = [&]() -> bool {
+        auto c = get_cfg();
+        if (!c) return mcpp::toolchain::msvc::has_usable_msvc();
+        return mcpp::toolchain::msvc::msvc_available_here(
+            (*c)->xlingsHome() / "data" / "xpkgs");
+    };
+
     bool windowsGnuFirstRun = false;
     if constexpr (mcpp::platform::is_windows) {
         if (!tcSpec.has_value() && overrides.target_triple.empty()
             && m->buildConfig.target.empty()
-            && !mcpp::toolchain::msvc::has_usable_msvc()) {
+            && !msvc_usable_either_origin()) {
             auto cfgW = get_cfg();
             if (!cfgW || (*cfgW)->defaultTarget.empty()) {
                 overrides.target_triple =
@@ -1320,12 +1331,19 @@ prepare_build(bool print_fingerprint,
         // (cl.exe is four levels deeper) and the ELF post-install fixup
         // (there is nothing to patchelf on a PE toolchain).
         if (spec->family == mcpp::toolchain::Family::Msvc) {
+            // Not `payload->root`: that field is the fetcher's guess at where
+            // the useful tree starts, and it descends into a lone
+            // subdirectory when the version dir has no bin/ include/ lib/.
+            // An msvc payload's only entry is `VC/`, so the guess lands one
+            // level too deep. (store, name, version) is known — use it.
+            auto verDir = mcpp::xlings::paths::xim_tool(
+                mcpp::config::make_xlings_env(**cfg), pkg.ximName, pkg.ximVersion);
             auto inst = mcpp::toolchain::msvc::installation_at(
-                payload->root, pkg.ximVersion);
+                verDir, pkg.ximVersion);
             if (!inst) {
                 return std::unexpected(std::format(
                     "msvc payload at '{}' has no cl.exe under VC/Tools/MSVC/{}",
-                    payload->root.string(), pkg.ximVersion));
+                    verDir.string(), pkg.ximVersion));
             }
             explicit_compiler = inst->clPath;
             mcpp::ui::info("Resolved", std::format(
@@ -1379,7 +1397,7 @@ prepare_build(bool print_fingerprint,
         // exactly what this machine cannot build. Name the toolchain that
         // will actually work there instead.
         if (mcpp::platform::is_windows
-            && !mcpp::toolchain::msvc::has_usable_msvc()) {
+            && !msvc_usable_either_origin()) {
             return std::unexpected(std::format(
                 "no toolchain configured (and no Visual Studio found).\n"
                 "       run one of:\n"
@@ -1434,7 +1452,7 @@ prepare_build(bool print_fingerprint,
         if constexpr (mcpp::platform::is_macos) {
             defaultSpec = std::string(pins::kFirstRunMac);
         } else if constexpr (mcpp::platform::is_windows) {
-            // Reaching here means has_usable_msvc() was true — the seed above
+            // Reaching here means msvc_usable_either_origin() was true — the seed above
             // diverts the no-Visual-Studio case onto the windows-gnu target
             // before the target block runs, so it never gets this far.
             defaultSpec = std::string(pins::kFirstRunWinMsvc);
@@ -1548,7 +1566,7 @@ prepare_build(bool print_fingerprint,
     const bool targetsMsvcAbi =
         tc->compiler == mcpp::toolchain::CompilerId::MSVC
         || mcpp::toolchain::is_msvc_target(*tc);
-    if (targetsMsvcAbi && !mcpp::toolchain::msvc::has_usable_msvc()) {
+    if (targetsMsvcAbi && !msvc_usable_either_origin()) {
         // Native cl.exe is ALWAYS a deliberate choice: mcpp never selects
         // msvc@system on its own — it cannot install one — so the only way it
         // reaches config.toml is a user typing `mcpp toolchain default msvc`.

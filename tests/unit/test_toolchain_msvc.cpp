@@ -169,7 +169,20 @@ struct FakeToolset {
             std::ofstream{tools / "modules" / "std.ixx"} << "export module std;";
         }
     }
+    // A COMPLETE SDK: headers and import libraries. Both, because
+    // find_windows_sdk() requires both — a root with only headers is the
+    // half-installed state `add_sdk_headers_only()` below exists to build.
+    // Libs for both architectures so the fixture does not care which host it
+    // is running on.
     void add_sdk(std::string_view version) {
+        add_sdk_headers_only(version);
+        for (auto arch : {"x64", "arm64"}) {
+            auto lib = root / "Lib" / std::string(version) / "um" / arch;
+            std::filesystem::create_directories(lib);
+            std::ofstream{lib / "kernel32.lib"} << "not a library";
+        }
+    }
+    void add_sdk_headers_only(std::string_view version) {
         auto inc = root / "Include" / std::string(version) / "ucrt";
         std::filesystem::create_directories(inc);
         std::ofstream{inc / "corecrt.h"} << "#pragma once";
@@ -232,6 +245,28 @@ TEST(MsvcManaged, ResolvesTheDeclaredToolsetAndNotItsNeighbour) {
     auto newer = msvc::installation_at(t.root, "14.52.36629");
     ASSERT_TRUE(newer.has_value());
     EXPECT_EQ(newer->toolsVersion, "14.52.36629");
+}
+
+TEST(MsvcManaged, TheVersionDirIsTheRootNotItsLoneSubdirectory) {
+    // A real installed payload has exactly ONE entry: `VC/`. The fetcher's
+    // `XpkgPayload::root` treats the version directory as the root only when
+    // it directly contains bin/ include/ lib/, and otherwise descends into a
+    // lone subdirectory -- so for msvc it hands back `<ver>/VC`, and the
+    // toolset then looks missing on a payload that installed perfectly.
+    //
+    // Pinning both sides here: the version directory resolves, and the `VC`
+    // subdirectory does NOT. The second half is what makes this a test rather
+    // than a restatement -- an implementation that searched upward from
+    // whatever it was given would pass the first and fail this.
+    FakeToolset t{"verdir"};
+    t.add_toolset("14.44.35207");
+
+    auto ok = msvc::installation_at(t.root, "14.44.35207");
+    ASSERT_TRUE(ok.has_value()) << "the version directory must be the root";
+
+    EXPECT_FALSE(msvc::installation_at(t.root / "VC", "14.44.35207").has_value())
+        << "a caller handing in the VC subdir is passing the wrong thing, and "
+           "must be told so rather than quietly rescued";
 }
 
 TEST(MsvcManaged, AbsentToolsetIsNulloptNotASubstitute) {
@@ -338,6 +373,142 @@ TEST(MsvcSdk, IncompleteSdkRootIsNotAnAnswer) {
     std::array roots{t.root};
     auto sdk = msvc::find_windows_sdk(roots);
     if (sdk) EXPECT_NE(sdk->root, t.root) << "an SDK-less root was accepted";
+}
+
+// ─── the toolset's own redistributable CRT ───────────────────────────────
+
+namespace {
+
+// A toolset laid out the way MSVC actually lays one out, including the part
+// that trips a derivation: the Redist version is NOT the tools version.
+struct FakeRedist {
+    std::filesystem::path root, clPath;
+
+    explicit FakeRedist(std::string_view toolsVer, std::string_view redistVer) {
+        root = std::filesystem::temp_directory_path()
+             / std::format("mcpp-redist-{}", std::chrono::steady_clock::now()
+                                                 .time_since_epoch().count());
+        auto tools = root / "VC" / "Tools" / "MSVC" / std::string(toolsVer);
+        auto bin = tools / "bin" / "Hostx64" / "x64";
+        std::filesystem::create_directories(bin);
+        clPath = bin / "cl.exe";
+        std::ofstream{clPath} << "not a compiler";
+        add(redistVer, "x64", "Microsoft.VC143.CRT", "vcruntime140.dll");
+    }
+    void add(std::string_view ver, std::string_view arch,
+             std::string_view comp, std::string_view file) {
+        auto d = root / "VC" / "Redist" / "MSVC" / std::string(ver)
+               / std::string(arch) / std::string(comp);
+        std::filesystem::create_directories(d);
+        std::ofstream{d / std::string(file)} << "dll";
+    }
+    void add_debug(std::string_view ver) {
+        auto d = root / "VC" / "Redist" / "MSVC" / std::string(ver)
+               / "debug_nonredist" / "x64" / "Microsoft.VC143.DebugCRT";
+        std::filesystem::create_directories(d);
+        std::ofstream{d / "vcruntime140d.dll"} << "dll";
+    }
+    ~FakeRedist() { std::error_code ec; std::filesystem::remove_all(root, ec); }
+    FakeRedist(const FakeRedist&) = delete;
+    FakeRedist& operator=(const FakeRedist&) = delete;
+};
+
+} // namespace
+
+TEST(MsvcRedist, FoundFromTheCompilerPathAlone) {
+    // Nothing configured, no version derived: the compiler's own location
+    // says which toolset this is, and the toolset carries its runtime.
+    FakeRedist t{"14.44.35207", "14.44.35112"};
+    auto d = msvc::vc_redist_dir(t.clPath, "x64");
+    ASSERT_FALSE(d.empty()) << "the toolset's redistributable CRT was not found";
+    EXPECT_TRUE(std::filesystem::exists(d / "vcruntime140.dll"));
+}
+
+TEST(MsvcRedist, TheRedistVersionIsNotTheToolsVersion) {
+    // 14.44.35207 (tools) vs 14.44.35112 (redist) is what MSVC actually
+    // ships. Deriving one from the other finds nothing — this is why the
+    // directory is searched rather than composed.
+    FakeRedist t{"14.44.35207", "14.44.35112"};
+    auto d = msvc::vc_redist_dir(t.clPath, "x64");
+    ASSERT_FALSE(d.empty());
+    EXPECT_NE(d.string().find("14.44.35112"), std::string::npos)
+        << "did not land in the redist version directory: " << d.string();
+}
+
+TEST(MsvcRedist, NewestRedistWins) {
+    FakeRedist t{"14.44.35207", "14.40.00000"};
+    t.add("14.44.35112", "x64", "Microsoft.VC143.CRT", "vcruntime140.dll");
+    auto d = msvc::vc_redist_dir(t.clPath, "x64");
+    ASSERT_FALSE(d.empty());
+    EXPECT_NE(d.string().find("14.44.35112"), std::string::npos)
+        << "older redist won: " << d.string();
+}
+
+TEST(MsvcRedist, TheDebugCrtIsNeverReturned) {
+    // debug_nonredist may NOT be redistributed. Returning it would put
+    // vcruntime140d.dll on PATH and, later, into a shipped artifact.
+    FakeRedist t{"14.44.35207", "14.44.35112"};
+    t.add_debug("14.99.99999");          // newer, and must still lose
+    auto d = msvc::vc_redist_dir(t.clPath, "x64");
+    ASSERT_FALSE(d.empty());
+    EXPECT_EQ(d.string().find("debug_nonredist"), std::string::npos)
+        << "returned the non-redistributable debug CRT: " << d.string();
+}
+
+TEST(MsvcRedist, AToolsetWithoutARedistIsNotAnError) {
+    // msvc@system on a machine whose VS install omits the redist component,
+    // for instance. Empty means "nothing to add to PATH", not a failure.
+    FakeRedist t{"14.44.35207", "14.44.35112"};
+    std::error_code ec;
+    std::filesystem::remove_all(t.root / "VC" / "Redist", ec);
+    EXPECT_TRUE(msvc::vc_redist_dir(t.clPath, "x64").empty());
+}
+
+TEST(MsvcSdk, HeadersWithoutImportLibsIsNotAnAnswer) {
+    // The half that used to pass. `Include/<v>/ucrt/corecrt.h` is there and
+    // `Lib/` is not, which is exactly what a managed windows-sdk payload
+    // looked like when its um-libs MSI had not unpacked: every TU compiled
+    // and the link died with
+    //     LINK : fatal error LNK1104: cannot open file 'kernel32.lib'
+    // An SDK is headers AND libraries; reporting "found" for half of one puts
+    // this root ahead of the machine's complete SDK and breaks a build that
+    // would otherwise have worked.
+    NoSdkEnv clean;
+    FakeToolset t{"sdkheadersonly"};
+    t.add_sdk_headers_only("10.0.26100.0");
+    std::array roots{t.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    if (sdk) EXPECT_NE(sdk->root, t.root)
+        << "a headers-only SDK was accepted; the link would fail on kernel32.lib";
+}
+
+TEST(MsvcSdk, ACompleteRootIsStillAccepted) {
+    // The other direction, so the check above cannot be satisfied by
+    // rejecting everything.
+    NoSdkEnv clean;
+    FakeToolset t{"sdkcomplete"};
+    t.add_sdk("10.0.26100.0");
+    std::array roots{t.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    ASSERT_TRUE(sdk) << "a complete SDK root was rejected";
+    EXPECT_EQ(sdk->root, t.root);
+    EXPECT_EQ(sdk->version, "10.0.26100.0");
+}
+
+TEST(MsvcSdk, APartialRootYieldsToACompleteOne) {
+    // Ordering, not just acceptance: given both, the usable one must win even
+    // though the partial one carries the HIGHER version — which is how the
+    // managed payload outranked the system SDK in the first place.
+    NoSdkEnv clean;
+    FakeToolset partial{"sdkpartialhigh"};
+    partial.add_sdk_headers_only("10.0.99999.0");
+    FakeToolset complete{"sdkcompletelow"};
+    complete.add_sdk("10.0.26100.0");
+    std::array roots{partial.root, complete.root};
+    auto sdk = msvc::find_windows_sdk(roots);
+    ASSERT_TRUE(sdk);
+    EXPECT_EQ(sdk->root, complete.root)
+        << "the partial root won on version; it cannot link";
 }
 
 TEST(MsvcSdk, DeclaredRootOutranksTheManagedOne) {

@@ -208,6 +208,166 @@ void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst,
 // headers much later. `has_usable_msvc()` exists for exactly this reason;
 // this is the same judgement applied to the managed origin, where the SDK
 // arrives as a package dependency and can therefore fail on its own.
+// Delete a payload tree, coping with the two things that make a plain
+// `remove_all` fail on Windows and on nothing else:
+//
+//   read-only files — payloads are unpacked from .vsix/.msi, and archive
+//     entries carry the attribute through. POSIX only needs the DIRECTORY
+//     writable to unlink a child, so this never shows up on Linux or macOS.
+//   a lingering handle — a build with /Zi leaves mspdbsrv.exe running for a
+//     few seconds after cl.exe exits, and it lives inside the payload.
+//
+// Both surface as the same "Access is denied", which is why this handles both
+// rather than picking one: clear the attribute, then give a live process a
+// bounded moment to go away. Retries are capped and short — `toolchain
+// remove` should not hang because something holds the directory forever.
+// Whether any FILE is left under `root`. Directories alone are not a
+// toolchain: nothing resolves a compiler out of an empty tree.
+bool any_regular_file(const std::filesystem::path& root) {
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied, ec);
+         it != std::filesystem::recursive_directory_iterator{}; it.increment(ec)) {
+        if (it->is_regular_file(ec)) return true;
+    }
+    return false;
+}
+
+export bool remove_payload_tree(const std::filesystem::path& root,
+                         std::error_code& ec) {
+    std::filesystem::remove_all(root, ec);
+    if (!ec) return true;
+
+    // Second pass: make everything writable, then try again.
+    std::error_code ignore;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied,
+             ignore);
+         it != std::filesystem::recursive_directory_iterator{}; it.increment(ignore)) {
+        std::filesystem::permissions(it->path(), std::filesystem::perms::owner_write,
+                                     std::filesystem::perm_options::add, ignore);
+    }
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        ec.clear();
+        std::filesystem::remove_all(root, ec);
+        if (!ec) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds{300});
+    }
+    if (!std::filesystem::exists(root, ignore)) return true;
+
+    // Still held. Move the held FILES out instead of waiting on a process we
+    // do not own.
+    //
+    // ⚠️ NOT by renaming the payload directory. Windows lets you rename an
+    // open FILE — that is how an updater replaces a running .exe — but it
+    // does NOT let you rename a DIRECTORY that contains one. An earlier
+    // version of this function renamed `root` and was wrong about exactly
+    // that: the rename failed with the same "Access is denied", and remove
+    // still reported failure. What follows is the shape that actually works:
+    //
+    //   move every surviving file to a sibling `.trash-*` directory  (allowed
+    //   even while open, same volume, the handle follows the file)
+    //   then delete the payload tree, which now holds only directories
+    //
+    // This is what makes `remove` mean something after a /Zi build with the
+    // toolset being removed: mspdbsrv.exe lives INSIDE the payload and
+    // outlives cl.exe by tens of seconds, so "wait for it" is a guess and a
+    // CLI that hangs on a guess is worse than the failure. The bytes are
+    // swept by the next lifecycle command, when nothing holds them.
+    auto trash = root.parent_path() /
+                 std::format(".trash-{}-{}", root.filename().string(),
+                             std::chrono::steady_clock::now()
+                                 .time_since_epoch().count());
+    std::vector<std::filesystem::path> survivors;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied,
+             ignore);
+         it != std::filesystem::recursive_directory_iterator{}; it.increment(ignore)) {
+        if (it->is_regular_file(ignore)) survivors.push_back(it->path());
+    }
+    if (survivors.empty()) return false;         // nothing to move; genuinely stuck
+
+    std::filesystem::create_directories(trash, ignore);
+    // Flat, index-prefixed: two payload subdirectories can hold the same file
+    // name, and this directory exists to be deleted, not to be read.
+    std::size_t moved = 0;
+    for (std::size_t i = 0; i < survivors.size(); ++i) {
+        std::error_code ren;
+        std::filesystem::rename(
+            survivors[i],
+            trash / std::format("{}-{}", i, survivors[i].filename().string()), ren);
+        if (!ren) ++moved;
+    }
+    if (moved != survivors.size()) {
+        // Some file could not even be moved. Leave the rest where they are —
+        // a half-moved payload is worse than one that is still all there.
+        std::filesystem::remove_all(trash, ignore);
+        return false;
+    }
+
+    ec.clear();
+    std::filesystem::remove_all(root, ec);       // directories only now
+    std::filesystem::remove_all(trash, ignore);  // usually works; fine if not
+    if (!ec) return true;
+
+    // The files are gone and an empty directory skeleton would not die. That
+    // is a sharing violation on a DIRECTORY, which on Windows means some
+    // process has one of them as its current directory -- mspdbsrv.exe is
+    // launched inside the payload, so this is the normal tail of a /Zi build.
+    //
+    // A toolchain with no files in it is not installed, which is what
+    // `remove` promises. Reporting failure here would be reporting the
+    // opposite of what happened, and the skeleton is swept by the next
+    // lifecycle command once that process exits.
+    ec.clear();
+    return !any_regular_file(root);
+}
+
+// Delete `.trash-*` left behind by a removal that had to park a held payload.
+// Takes the directory the payload lived IN (`<pkgs>/xim-x-<name>`), which is
+// where park() puts them -- one place, one level, nothing to walk.
+//
+// Best-effort and run before a lifecycle operation rather than after one: by
+// the next command the process that held the bytes is normally gone, so this
+// is where they actually get freed.
+export void sweep_parked_payloads(const std::filesystem::path& pkgRoot) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(pkgRoot, ec)) return;
+    for (auto& e : std::filesystem::directory_iterator(pkgRoot, ec)) {
+        if (!e.is_directory(ec)) continue;
+        if (e.path().filename().string().starts_with(".trash-")) {
+            std::filesystem::remove_all(e.path(), ec);
+        } else if (!any_regular_file(e.path())) {
+            // A version directory with no files in it is the skeleton a
+            // removal could not delete because something held a directory
+            // open. A real install always has files, so this cannot eat one.
+            std::filesystem::remove_all(e.path(), ec);
+        }
+    }
+}
+
+// The first entry that is still there after a failed removal. The error code
+// alone says "Access is denied" and not by whom or to what, which is the
+// difference between a report someone can act on and one they cannot.
+//
+// It does not probe by deleting. `remove_all` has already removed everything
+// it could, so whatever SURVIVED is exactly what blocked it -- reporting the
+// first survivor needs no further destruction. (An earlier version did probe
+// by deleting, which turns a diagnostic into a second act of damage on a
+// payload the caller may well want to keep and retry.)
+export std::optional<std::filesystem::path>
+first_undeletable(const std::filesystem::path& root) {
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec)) return std::nullopt;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied, ec);
+         it != std::filesystem::recursive_directory_iterator{}; it.increment(ec)) {
+        if (ec) break;
+        if (it->is_regular_file(ec)) return it->path();
+    }
+    return root;
+}
+
 void msvc_warn_if_sdk_missing(const mcpp::toolchain::msvc::MsvcInstallation& inst) {
     auto roots = mcpp::toolchain::msvc::sibling_sdk_roots(inst.clPath);
     if (auto sdk = mcpp::toolchain::msvc::find_windows_sdk(roots)) {
@@ -600,6 +760,13 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         }
 
         mcpp::log::verbose("toolchain", std::format("installing main: {}", pkg.target()));
+        // A previous `remove` may have parked a held payload beside this one;
+        // by now whatever held it has exited, so free the bytes before adding
+        // another few hundred MB.
+        sweep_parked_payloads(
+            mcpp::xlings::paths::xim_tool(mcpp::config::make_xlings_env(cfg),
+                                          pkg.ximName, pkg.ximVersion)
+                .parent_path());
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         mcpp::log::verbose("toolchain", std::format("main install result: {}",
             payload ? ("ok → " + payload->root.string()) : payload.error().message));
@@ -618,14 +785,26 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // VC/Tools/MSVC/<ver>/bin/Hostx64/x64, and there is nothing to
         // patchelf on a PE toolchain.
         if (spec->family == mcpp::toolchain::Family::Msvc) {
+            // NOT `payload->root` — that is a GUESS, and it guesses wrong
+            // here. resolve_xpkg_path calls the version directory the root
+            // only when it directly contains bin/ include/ lib/; otherwise it
+            // descends into a lone subdirectory. An installed msvc payload
+            // has exactly one entry, `VC/`, so the "root" comes back as
+            // …/14.44.35207/VC and the toolset then looks like it is missing.
+            //
+            // The location is not something to infer: it is (store, name,
+            // version), and all three are known here. resolve_xpkg_path above
+            // is what INSTALLS; this is what says where.
+            auto verDir = mcpp::xlings::paths::xim_tool(
+                mcpp::config::make_xlings_env(cfg), pkg.ximName, pkg.ximVersion);
             auto inst = mcpp::toolchain::msvc::installation_at(
-                payload->root, pkg.ximVersion);
+                verDir, pkg.ximVersion);
             if (!inst) {
                 mcpp::ui::error(std::format(
                     "msvc payload installed at '{}', but no cl.exe under "
                     "VC/Tools/MSVC/{} — the payload is not what this version "
                     "claims to be",
-                    payload->root.string(), pkg.ximVersion));
+                    verDir.string(), pkg.ximVersion));
                 return 1;
             }
             msvc_print_detected(*inst, "Installed");
@@ -763,7 +942,14 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         }
 
         auto installDir = mcpp::xlings::paths::xim_tool(xlEnv, pkg.ximName, pkg.ximVersion);
-        if (!std::filesystem::exists(installDir)) {
+        // A RESOLVABLE COMPILER, not a directory that exists. A removal that
+        // could not delete the last empty directories leaves a skeleton
+        // behind (see remove_payload_tree), and `exists()` would call that
+        // skeleton an installed toolchain and then hand it to a build.
+        //
+        // Same rule as everywhere else in this round: installed means usable,
+        // not present.
+        if (mcpp::toolchain::payload_frontend(installDir, pkg, spec->family).empty()) {
             // Before "not installed", check whether this is the retired
             // `msvc@<cl-version>` spelling — otherwise the advice is to
             // install a toolset that does not exist and never will.
@@ -829,9 +1015,27 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
             mcpp::ui::error(std::format("{} is not installed", spec));
             return 1;
         }
-        std::filesystem::remove_all(installDir, ec);
-        if (ec) {
-            mcpp::ui::error(std::format("remove failed: {}", ec.message()));
+        sweep_parked_payloads(installDir.parent_path());
+        if (!remove_payload_tree(installDir, ec)) {
+            // Say that the payload is now BROKEN, not merely that removal
+            // failed. `remove_all` deletes what it can before it stops, so a
+            // failed remove is not a no-op: what is left is a toolchain with
+            // holes in it, and someone who reads "remove failed" and moves on
+            // will meet those holes as a build error instead.
+            mcpp::ui::error(std::format(
+                "remove failed: {}{}\n"
+                "         The payload is now INCOMPLETE — files were deleted "
+                "before this one\n"
+                "         blocked the rest. Close whatever holds it and run "
+                "the same command\n"
+                "         again; do not build with this toolchain until it "
+                "removes cleanly.",
+                ec.message(),
+                first_undeletable(installDir)
+                    .transform([](const std::filesystem::path& p) {
+                        return std::format("\n         stuck at: {}", p.string());
+                    })
+                    .value_or(std::string{})));
             return 1;
         }
         mcpp::ui::status("Removed", spec);

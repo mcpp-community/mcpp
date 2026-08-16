@@ -3,6 +3,55 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### 修复
+
+- **Windows 上 `mcpp toolchain remove <msvc toolset>` 报 "Access is denied"。**
+
+  `remove_all` 直接上,不清只读位、不重试、报错也不说是哪个文件。
+  payload 是从 .vsix/.msi 解出来的,归档条目带只读属性;POSIX 只要**目录**
+  可写就能 unlink 子项,所以这个问题在 Linux/macOS 上根本不出现。
+  另外 `/Zi` 构建之后 mspdbsrv.exe 还会在 payload 里活几秒。
+
+  两个原因表现完全一样(都是 "Access is denied"),所以两个都处理:
+  先清可写位重试,再给活着的进程一个**有上限**的等待窗口(10 × 300ms)。
+  报错现在会指出卡在哪个文件 —— 光一句 "Access is denied" 没法处理。
+
+  这个诊断当场就派上用场了:它点名的是
+  `bin\Hostx64\x64\Microsoft.VisualStudio.Telemetry.dll` —— 既不是只读位
+  也不是 mspdbsrv,而是 cl.exe 拉起的后台遥测进程 `vctip.exe` 占着它。
+  **占用者不是 mcpp 能删掉的东西**,真正的修复在 payload 那边
+  (openxlings/xim-pkgindex#637 不再安装 vctip.exe);这边留下的是通用兜底
+  和那句能读懂的报错。
+
+  报错同时会说清楚:**失败的 remove 不是空操作** —— `remove_all` 会先删掉
+  能删的,所以剩下的是一个有洞的工具链,得重来一次而不是接着用。
+
+  修完 vctip 之后占用者换成了 `mspdbcore.dll` —— `/Zi` 构建拉起的
+  **mspdbsrv.exe**,它构建完还活几十秒,而且就住在正要被删的 payload 里。
+  等它不现实(等多久都是猜),所以改成**挪走**:Windows 拒绝删除含打开文件的
+  目录,但允许**重命名**。`remove` 的承诺是"这个工具链不再装着",改名之后
+  它确实不再装着;剩下的字节在下一条生命周期命令里清扫(那时占用者早退了)。
+
+- **半装的 Windows SDK 被当成装好的,链接到最后才炸。**
+
+  `find_windows_sdk()` 认一个根的条件是 `Include\<v>\ucrt\corecrt.h`
+  存在 —— 只看头文件。而 SDK 是头文件**和**导入库两半。
+
+  托管的 `xim:windows-sdk` payload 少了带 `kernel32.lib` 的那个 MSI 时,
+  这个根照样"找到了",而且因为版本号更高,**排在机器自己那套完整 SDK 前面**。
+  于是每个 TU 都编过了,一直到最后一步:
+
+      LINK : fatal error LNK1104: cannot open file 'kernel32.lib'
+
+  日志里没有任何一行提到 SDK。
+
+  现在两半都要:`Include\<v>\ucrt\corecrt.h` 和
+  `Lib\<v>\um\<arch>\kernel32.lib`。半装的根被跳过,搜索落到下一个,
+  本来就能用的构建就能用了 —— 和 `has_usable_msvc()` 坚持"两半都要"是同一条
+  理由,只是这次轮到 SDK 自己。
+
 ## [2026.8.16.2] — 2026-08-16
 
 ### 修复

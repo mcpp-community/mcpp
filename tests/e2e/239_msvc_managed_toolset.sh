@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# requires: msvc
-# 97_msvc_managed_toolset.sh — `msvc@<toolset>`: the toolset the manifest
+# requires: msvc xlings-msvc
+# 239_msvc_managed_toolset.sh — `msvc@<toolset>`: the toolset the manifest
 # names is the one that compiles, regardless of what this machine has.
 #
 # WHY THIS TEST CANNOT BE SATISFIED BY THE MACHINE'S COMPILER, which is the
@@ -13,7 +13,7 @@
 #   - `msvc@system` on the same machine must still resolve to the SYSTEM cl,
 #     i.e. the two origins do not contaminate each other
 #
-# Network: installs xim:msvc (~85 MB) + xim:windows-sdk (~135 MB). Skips
+# Network: installs xim:msvc (~85 MB) + xim:windows-sdk (~291 MB). Skips
 # cleanly when the index cannot be reached, because an offline runner has
 # nothing to say about this.
 set -e
@@ -36,19 +36,49 @@ restore() {
 trap restore EXIT
 cd "$TMP"
 
-# 1) install it. This runs BEFORE the discoverability check below, so that a
-#    runner which cannot reach the index skips instead of failing an assertion
-#    about a list the index would have filled in.
+# 0) Decide SKIP here, from a positive check, and never again.
+#
+#    ⚠️ This used to be decided AFTER the install by pattern-matching the
+#    failure text, and one of the patterns was `*"index"*`. Nearly every mcpp
+#    command prints "package index" somewhere, so every genuine install
+#    failure took the skip branch: the test could pass or skip, never fail.
+#
+#    It hid a real one. `tar -xf "C:\...vsix"` fails under GNU tar, which
+#    reads `C:` as a hostname ("Cannot connect to C: resolve failed"); the
+#    install ran for 135 seconds, failed, and this script reported PASS.
+#
+#    A skip has to be decided by what is ABSENT before the work starts, not by
+#    what the failure looked like afterwards.
+#    Ask for THIS toolset, not the family. Grepping for "msvc" is true during
+#    an index publish window -- the family is listed, this version is not yet
+#    -- and a hard failure then reports a timing artifact as a defect. The
+#    question the skip needs answered is "can this index give me $TOOLSET",
+#    so that is the question to ask.
+if ! "$MCPP" toolchain list 2>&1 | grep -q "$TOOLSET"; then
+    echo "SKIP: this index does not offer msvc $TOOLSET (publish window? offline?)"
+    exit 0
+fi
+
+# 1) install it. Any failure from here on is a FAILURE.
 rc=0; out=$("$MCPP" toolchain install msvc "$TOOLSET" 2>&1) || rc=$?
 if [[ $rc -ne 0 ]]; then
-    case "$out" in
-        *"index"*|*"network"*|*"resolve"*|*"offline"*|*"connect"*|*"not found"*)
-            echo "SKIP: xim:msvc@$TOOLSET unreachable: $out"; exit 0 ;;
-        *)  echo "FAIL: install msvc $TOOLSET: $out"; exit 1 ;;
-    esac
+    echo "FAIL: install msvc $TOOLSET (rc=$rc):"
+    echo "$out"
+    exit 1
 fi
 [[ "$out" == *"$TOOLSET"* ]] \
     || { echo "FAIL: install did not report the toolset: $out"; exit 1; }
+
+# 1a) the SDK must have arrived with it. `msvc_warn_if_sdk_missing()` prints
+#     `windows sdk: <version> (<root>)` on success, and this script used to
+#     swallow the install output whenever the install exited 0 -- so a payload
+#     whose SDK dependency was half-installed said nothing here and failed
+#     ~100 lines later as
+#         LINK : fatal error LNK1104: cannot open file 'kernel32.lib'
+#     with no line in the log naming the SDK. Assert at the step that knows.
+[[ "$out" == *"windows sdk:"* ]] \
+    || { echo "FAIL: toolset installed but no Windows SDK was reported:"; \
+         echo "$out"; exit 1; }
 
 # 1b) it must now be LISTED. A toolset that installs but never appears is
 #     indistinguishable from one that did not install, and `toolchain list` is
