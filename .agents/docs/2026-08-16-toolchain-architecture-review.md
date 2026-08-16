@@ -406,6 +406,27 @@ mcpp 有 —— 否则每个消费者都要自己重写一遍,而写错的方式
 
 ---
 
+## 8b. 落地状态(2026-08-16 当天)
+
+| 项 | 状态 |
+|---|---|
+| §3b doctor 用 `payload_frontend` | ✅ mcpp#440 已合入 |
+| §3c 拆开 `has_usable_msvc` → `msvc_available_here` | ✅ mcpp#440 已合入 |
+| §3 `vc_redist_dir` → `mcpp run` 的 PATH(5 个测试) | ✅ mcpp#440 已合入 |
+| §3e host helper 链接策略对齐(#437) | 🔄 mcpp#442 CI 中 |
+| §4 `installed()` 规则写进 skill + lint(3 条各自对着回归跑过) | ✅ index#640 已合入 |
+| §5 windows-test 真的运行声明的程序 | ✅ index#640 已合入 |
+| §6 park-and-sweep 下沉到 xlings 卸载路径 | 🔄 xlings#551 CI 中 |
+| §1 收拢 Origin + 消三处重复 | ⬜ 未做(动 spec 层,单独一轮) |
+| §2 SDK 绑定 + `windows_sdk` 版本轴 | ⬜ 未做(要改 manifest schema) |
+| §3d PE 版 `pack` + 让 pack 读 Contract | ⬜ 未做(最大一块) |
+| §7 索引发布修订号 | ⬜ 未做(跨仓库) |
+
+**没做的四项都有共同点**:要么动 spec/schema 层,要么跨仓库 —— 都不适合在
+一次发版窗口里塞进去。§1 §2 §3d 三条在这份文档里已经写到可以直接开工的程度。
+
+---
+
 ## 9. 建议的落地顺序
 
 | # | 项 | 规模 | 影响面 | 依赖 |
