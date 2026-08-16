@@ -255,6 +255,34 @@ TEST(MsvcManaged, VersionFallsBackToTheDeclaredOneWhenTheBannerCannotBeRead) {
     EXPECT_EQ(inst->display_version(), "14.52.36629");
 }
 
+TEST(MsvcManaged, PayloadFrontendFindsClWhereMsvcActuallyKeepsIt) {
+    // The defect this pins: `toolchain list` asked `toolchain_frontend(root /
+    // "bin", …)`, got nothing, and skipped the row -- so an msvc toolset
+    // installed correctly and then did not appear anywhere. Three places need
+    // to know that cl.exe is four levels deeper than `bin/`; two knew.
+    FakeToolset t{"frontend"};
+    t.add_toolset("14.44.35207");
+
+    auto spec = parse_toolchain_spec("msvc@14.44.35207");
+    ASSERT_TRUE(spec.has_value());
+    auto pkg = to_xim_package(*spec);
+
+    auto found = payload_frontend(t.root, pkg, Family::Msvc);
+    ASSERT_FALSE(found.empty()) << "payload_frontend found no cl.exe under " << t.root;
+    EXPECT_EQ(found.filename(), "cl.exe");
+
+    // The `bin/`-shaped question is the one that used to be asked, and it
+    // still answers nothing here — which is exactly why it was the wrong
+    // question rather than a broken implementation.
+    EXPECT_TRUE(toolchain_frontend(t.root / "bin", pkg).empty());
+
+    // A root with no toolset at that version stays empty rather than
+    // returning a path that does not exist.
+    EXPECT_TRUE(payload_frontend(t.root,
+                    to_xim_package(*parse_toolchain_spec("msvc@14.52.36629")),
+                    Family::Msvc).empty());
+}
+
 // ─── Windows SDK discovery ───────────────────────────────────────────────
 
 TEST(MsvcSdk, WindowsSdkDirBeatsTheHardcodedPaths) {
