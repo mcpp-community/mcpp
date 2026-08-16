@@ -44,8 +44,14 @@ struct Entry {
 };
 
 // Write `entries` to `out`, creating parent directories as needed.
+//
+// Takes the vector by reference rather than `std::span<const Entry>`. The
+// span is the better interface and it is not worth a compiler crash: passing
+// one across this module boundary was one of three constructs present when
+// clang 20.1.7 (MSVC ABI) segfaulted compiling the consumer — see the note at
+// mcpp.pack's `run_pe`. There is exactly one caller.
 std::expected<void, std::string>
-write(const std::filesystem::path& out, std::span<const Entry> entries);
+write(const std::filesystem::path& out, const std::vector<Entry>& entries);
 
 // CRC-32 (IEEE), exposed for tests: an archive whose CRCs are wrong extracts
 // with a warning on some tools and silently on others, so this is worth
@@ -115,7 +121,7 @@ std::uint32_t crc32(std::string_view data) {
 }
 
 std::expected<void, std::string>
-write(const std::filesystem::path& out, std::span<const Entry> entries) {
+write(const std::filesystem::path& out, const std::vector<Entry>& entries) {
     std::error_code ec;
     if (out.has_parent_path())
         std::filesystem::create_directories(out.parent_path(), ec);

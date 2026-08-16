@@ -116,16 +116,47 @@ std::optional<std::string> slurp(const std::filesystem::path& p) {
 }
 
 // Little-endian integer at `off`, or nullopt if it would run off the end.
-// EVERY read in this module goes through here: a malformed file is ordinary
+// EVERY read in this module goes through these: a malformed file is ordinary
 // input (a truncated download, a text file named `.exe`), and the parser has
 // to be total over it rather than trusting a length field it just read.
-template <typename T>
-std::optional<T> le(std::string_view b, std::size_t off) {
-    if (off + sizeof(T) > b.size()) return std::nullopt;
-    T v = 0;
-    for (std::size_t i = 0; i < sizeof(T); ++i)
-        v |= static_cast<T>(static_cast<unsigned char>(b[off + i]))
-             << (8 * i);
+//
+// FOUR CONCRETE FUNCTIONS, NOT ONE TEMPLATE, and the difference is not style.
+// A function template in a module interface's non-exported namespace is a
+// shape this codebase has been bitten by before (see hostflags.cppm's opening
+// comment: an unused helper added to a module's anonymous namespace
+// miscompiled a NEIGHBOURING function under clang + C++20 modules). The first
+// version of this file used `template <typename T> le(...)`, and clang
+// misbehaved on BOTH of its targets at once while gcc was fine — a frontend
+// segfault on Windows and a runtime segfault on macOS ARM64, from code that
+// is clean under ASan+UBSan and correct as a clang module on x86_64 Linux.
+// Whether the template was the cause is NOT established; what is established
+// is that the failures are compiler-side, and that four short functions cost
+// nothing.
+std::optional<std::uint8_t> le8(std::string_view b, std::size_t off) {
+    if (off >= b.size()) return std::nullopt;
+    return static_cast<std::uint8_t>(static_cast<unsigned char>(b[off]));
+}
+
+std::optional<std::uint16_t> le16(std::string_view b, std::size_t off) {
+    if (off + 2 > b.size()) return std::nullopt;
+    return static_cast<std::uint16_t>(
+        static_cast<unsigned char>(b[off])
+        | (static_cast<unsigned>(static_cast<unsigned char>(b[off + 1])) << 8));
+}
+
+std::optional<std::uint32_t> le32(std::string_view b, std::size_t off) {
+    if (off + 4 > b.size()) return std::nullopt;
+    std::uint32_t v = 0;
+    for (int i = 3; i >= 0; --i)
+        v = (v << 8) | static_cast<unsigned char>(b[off + static_cast<std::size_t>(i)]);
+    return v;
+}
+
+std::optional<std::uint64_t> le64(std::string_view b, std::size_t off) {
+    if (off + 8 > b.size()) return std::nullopt;
+    std::uint64_t v = 0;
+    for (int i = 7; i >= 0; --i)
+        v = (v << 8) | static_cast<unsigned char>(b[off + static_cast<std::size_t>(i)]);
     return v;
 }
 
@@ -171,8 +202,8 @@ std::string pe_arch(std::uint16_t machine) {
 // makes this more than "read a list".
 std::expected<std::vector<std::string>, std::string>
 elf_needed(std::string_view b) {
-    auto cls = le<std::uint8_t>(b, 4);
-    auto dat = le<std::uint8_t>(b, 5);
+    auto cls = le8(b, 4);
+    auto dat = le8(b, 5);
     if (!cls || !dat) return std::unexpected("ELF header is truncated");
     if (*dat != 1)
         return std::unexpected("big-endian ELF objects are not supported");
@@ -183,16 +214,16 @@ elf_needed(std::string_view b) {
     const std::size_t phoffAt = is64 ? 0x20 : 0x1C;
     std::uint64_t phoff = 0;
     if (is64) {
-        auto v = le<std::uint64_t>(b, phoffAt);
+        auto v = le64(b, phoffAt);
         if (!v) return std::unexpected("ELF program header offset is truncated");
         phoff = *v;
     } else {
-        auto v = le<std::uint32_t>(b, phoffAt);
+        auto v = le32(b, phoffAt);
         if (!v) return std::unexpected("ELF program header offset is truncated");
         phoff = *v;
     }
-    auto phentsize = le<std::uint16_t>(b, is64 ? 0x36 : 0x2A);
-    auto phnum     = le<std::uint16_t>(b, is64 ? 0x38 : 0x2C);
+    auto phentsize = le16(b, is64 ? 0x36 : 0x2A);
+    auto phnum     = le16(b, is64 ? 0x38 : 0x2C);
     if (!phentsize || !phnum)
         return std::unexpected("ELF program header table is truncated");
 
@@ -202,12 +233,12 @@ elf_needed(std::string_view b) {
     for (std::uint16_t i = 0; i < *phnum; ++i) {
         const std::size_t ph = static_cast<std::size_t>(phoff)
                              + static_cast<std::size_t>(i) * *phentsize;
-        auto type = le<std::uint32_t>(b, ph);
+        auto type = le32(b, ph);
         if (!type) break;
         auto rd = [&](std::size_t off64, std::size_t off32)
             -> std::optional<std::uint64_t> {
-            if (is64) return le<std::uint64_t>(b, ph + off64);
-            if (auto v = le<std::uint32_t>(b, ph + off32)) return *v;
+            if (is64) return le64(b, ph + off64);
+            if (auto v = le32(b, ph + off32)) return *v;
             return std::nullopt;
         };
         auto offset = rd(0x08, 0x04);
@@ -235,13 +266,13 @@ elf_needed(std::string_view b) {
          at += entSize) {
         std::uint64_t tag = 0, val = 0;
         if (is64) {
-            auto t = le<std::uint64_t>(b, static_cast<std::size_t>(at));
-            auto v = le<std::uint64_t>(b, static_cast<std::size_t>(at) + 8);
+            auto t = le64(b, static_cast<std::size_t>(at));
+            auto v = le64(b, static_cast<std::size_t>(at) + 8);
             if (!t || !v) break;
             tag = *t; val = *v;
         } else {
-            auto t = le<std::uint32_t>(b, static_cast<std::size_t>(at));
-            auto v = le<std::uint32_t>(b, static_cast<std::size_t>(at) + 4);
+            auto t = le32(b, static_cast<std::size_t>(at));
+            auto v = le32(b, static_cast<std::size_t>(at) + 4);
             if (!t || !v) break;
             tag = *t; val = *v;
         }
@@ -275,15 +306,15 @@ elf_needed(std::string_view b) {
 // Leaving it out of the closure would produce exactly that.
 std::expected<std::vector<std::string>, std::string>
 pe_needed(std::string_view b) {
-    auto lfanew = le<std::uint32_t>(b, 0x3C);
+    auto lfanew = le32(b, 0x3C);
     if (!lfanew) return std::unexpected("PE: no e_lfanew");
     const std::size_t nt = *lfanew;
     if (b.substr(nt, 4) != std::string_view("PE\0\0", 4))
         return std::unexpected("PE: no PE\\0\\0 signature at e_lfanew");
 
-    auto numSections = le<std::uint16_t>(b, nt + 6);
-    auto optSize     = le<std::uint16_t>(b, nt + 20);
-    auto magic       = le<std::uint16_t>(b, nt + 24);
+    auto numSections = le16(b, nt + 6);
+    auto optSize     = le16(b, nt + 20);
+    auto magic       = le16(b, nt + 24);
     if (!numSections || !optSize || !magic)
         return std::unexpected("PE: headers are truncated");
     // 0x10b PE32, 0x20b PE32+. They differ only in where the data directories
@@ -292,7 +323,7 @@ pe_needed(std::string_view b) {
     if      (*magic == 0x10b) dirsAt = nt + 24 + 96;
     else if (*magic == 0x20b) dirsAt = nt + 24 + 112;
     else return std::unexpected("PE: optional header magic is neither PE32 nor PE32+");
-    auto numDirs = le<std::uint32_t>(b, dirsAt - 4);
+    auto numDirs = le32(b, dirsAt - 4);
     if (!numDirs) return std::unexpected("PE: data directory count is truncated");
 
     struct Section { std::uint32_t va, vsize, raw, rawSize; };
@@ -300,10 +331,10 @@ pe_needed(std::string_view b) {
     const std::size_t secAt = nt + 24 + *optSize;
     for (std::uint16_t i = 0; i < *numSections; ++i) {
         const std::size_t s = secAt + static_cast<std::size_t>(i) * 40;
-        auto vsize  = le<std::uint32_t>(b, s + 8);
-        auto va     = le<std::uint32_t>(b, s + 12);
-        auto rawSz  = le<std::uint32_t>(b, s + 16);
-        auto raw    = le<std::uint32_t>(b, s + 20);
+        auto vsize  = le32(b, s + 8);
+        auto va     = le32(b, s + 12);
+        auto rawSz  = le32(b, s + 16);
+        auto raw    = le32(b, s + 20);
         if (!vsize || !va || !rawSz || !raw) break;
         sections.push_back({*va, *vsize, *raw, *rawSz});
     }
@@ -323,22 +354,23 @@ pe_needed(std::string_view b) {
     };
 
     std::vector<std::string> out;
-    auto push = [&](std::optional<std::string> name) {
+    auto push = [&out](const std::optional<std::string>& name) {
         if (!name || name->empty()) return;
-        if (std::ranges::find(out, *name) == out.end())
-            out.push_back(std::move(*name));
+        for (auto const& seen : out)
+            if (seen == *name) return;
+        out.push_back(*name);
     };
 
     // Directory 1 — imports. 20-byte descriptors, terminated by an all-zero
     // one; `Name` (offset 12) is an RVA to the DLL's ASCIIZ name.
     if (*numDirs > 1) {
-        auto rva = le<std::uint32_t>(b, dirsAt + 1 * 8);
+        auto rva = le32(b, dirsAt + 1 * 8);
         if (rva && *rva) {
             if (auto at = rva_to_off(*rva)) {
                 for (std::size_t d = *at; ; d += 20) {
-                    auto nameRva = le<std::uint32_t>(b, d + 12);
-                    auto oft     = le<std::uint32_t>(b, d);
-                    auto ft      = le<std::uint32_t>(b, d + 16);
+                    auto nameRva = le32(b, d + 12);
+                    auto oft     = le32(b, d);
+                    auto ft      = le32(b, d + 16);
                     if (!nameRva || !oft || !ft) break;
                     if (*nameRva == 0 && *oft == 0 && *ft == 0) break;
                     if (auto o = rva_to_off(*nameRva)) push(cstr(b, *o));
@@ -352,12 +384,12 @@ pe_needed(std::string_view b) {
     // ADDRESSES instead, and nothing produced in this century does that, so a
     // descriptor without the bit is skipped rather than guessed at.
     if (*numDirs > 13) {
-        auto rva = le<std::uint32_t>(b, dirsAt + 13 * 8);
+        auto rva = le32(b, dirsAt + 13 * 8);
         if (rva && *rva) {
             if (auto at = rva_to_off(*rva)) {
                 for (std::size_t d = *at; ; d += 32) {
-                    auto attrs   = le<std::uint32_t>(b, d);
-                    auto nameRva = le<std::uint32_t>(b, d + 4);
+                    auto attrs   = le32(b, d);
+                    auto nameRva = le32(b, d + 4);
                     if (!attrs || !nameRva) break;
                     if (*attrs == 0 && *nameRva == 0) break;
                     if ((*attrs & 1u) == 0) continue;
@@ -370,15 +402,15 @@ pe_needed(std::string_view b) {
 }
 
 // PEP 600 / manylinux2014: assumed present on any target Linux glibc system.
-constexpr std::array kElfSystem = std::to_array<std::string_view>({
+constexpr std::string_view kElfSystem[] = {
     "libc.so", "libm.so", "libdl.so", "libpthread.so", "librt.so",
     "libutil.so", "libnsl.so", "libresolv.so", "libcrypt.so",
     "libstdc++.so", "libgcc_s.so", "linux-vdso.so", "ld-linux", "libld-linux",
-});
+};
 
 // Windows' own. Deliberately NOT including vcruntime140/msvcp140: those
 // belong to the toolset, and whether they travel is `cxx_runtime`'s decision.
-constexpr std::array kPeSystem = std::to_array<std::string_view>({
+constexpr std::string_view kPeSystem[] = {
     "ntdll.dll", "kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll",
     "gdi32full.dll", "advapi32.dll", "shell32.dll", "shlwapi.dll",
     "ole32.dll", "oleaut32.dll", "combase.dll", "comdlg32.dll",
@@ -391,7 +423,7 @@ constexpr std::array kPeSystem = std::to_array<std::string_view>({
     "glu32.dll", "dxgi.dll", "d3d9.dll", "d3d11.dll", "d3d12.dll",
     "dbghelp.dll", "hid.dll", "avrt.dll", "mfplat.dll", "dnsapi.dll",
     "profapi.dll", "ucrtbase.dll", "msvcrt.dll", "win32u.dll",
-});
+};
 
 } // namespace detail
 
@@ -403,21 +435,21 @@ Ident identify(const std::filesystem::path& binary) {
 
     if (b.starts_with(std::string_view("\x7f" "ELF", 4))) {
         id.format = Format::Elf;
-        auto cls = detail::le<std::uint8_t>(b, 4);
+        auto cls = detail::le8(b, 4);
         id.is64 = cls && *cls == 2;
-        if (auto m = detail::le<std::uint16_t>(b, 18)) id.arch = detail::elf_arch(*m);
+        if (auto m = detail::le16(b, 18)) id.arch = detail::elf_arch(*m);
         return id;
     }
     if (b.starts_with("MZ")) {
         // MZ alone is a DOS stub; a PE needs the signature e_lfanew points at.
         // Saying "PE" for a file that has none would send the caller into a
         // parser that cannot succeed.
-        if (auto lfanew = detail::le<std::uint32_t>(b, 0x3C)) {
+        if (auto lfanew = detail::le32(b, 0x3C)) {
             if (b.substr(*lfanew, 4) == std::string_view("PE\0\0", 4)) {
                 id.format = Format::Pe;
-                if (auto m = detail::le<std::uint16_t>(b, *lfanew + 4))
+                if (auto m = detail::le16(b, *lfanew + 4))
                     id.arch = detail::pe_arch(*m);
-                if (auto magic = detail::le<std::uint16_t>(b, *lfanew + 24))
+                if (auto magic = detail::le16(b, *lfanew + 24))
                     id.is64 = (*magic == 0x20b);
                 return id;
             }
@@ -458,16 +490,17 @@ needed_names(const std::filesystem::path& binary) {
 
 bool is_system_lib(Format f, std::string_view name) {
     std::string lower(name);
-    std::ranges::transform(lower, lower.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
+    for (auto& c : lower)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (f == Format::Pe) {
         // API sets: `api-ms-win-crt-runtime-l1-1-0.dll` and friends are
         // forwarders resolved by the loader against the OS. They have no file
         // to copy on most systems and copying one would be wrong anyway.
         if (lower.starts_with("api-ms-") || lower.starts_with("ext-ms-"))
             return true;
-        return std::ranges::find(detail::kPeSystem, lower)
-            != detail::kPeSystem.end();
+        for (auto known : detail::kPeSystem)
+            if (lower == known) return true;
+        return false;
     }
     if (f == Format::Elf) {
         for (auto prefix : detail::kElfSystem)

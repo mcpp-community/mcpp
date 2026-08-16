@@ -35,7 +35,6 @@ module;
 export module mcpp.pack;
 
 import std;
-import mcpp.build.distribution;
 import mcpp.build.loader_contract;
 import mcpp.config;
 import mcpp.pack.binfmt;
@@ -68,15 +67,22 @@ struct Options {
     // toolset's `VC\Redist\MSVC\<v>\<arch>\Microsoft.VC*.CRT\` for cl.
     // Searched ONLY under the toolchain-coupled contract — see make_plan.
     std::vector<std::filesystem::path> toolchainRuntimeDirs;
-    // What the artifact promises about the machine that runs it, as resolved
-    // by mcpp.build.distribution for the distributable role.
+    // Does the RESOLVED C++ runtime contract require the toolchain's own
+    // runtime to travel WITH the artifact — i.e. `cxx_runtime =
+    // "toolchain-coupled"`?
     //
-    // `pack` used to be unable to see this at all (design §4.3): the contract
+    // `pack` used to be unable to see the contract at all (design §4.3): it
     // reached compile and link FLAGS and stopped there, so the step that
     // decides which files actually travel had no idea what had been promised.
     // On ELF the `ldd` closure happened to agree with it; on PE nothing did.
-    mcpp::build::dist::Contract     cxxRuntime =
-        mcpp::build::dist::Contract::SelfContained;
+    //
+    // A BOOL rather than `dist::Contract`, deliberately. Only one of the
+    // three values changes anything here, so the enum would be three states
+    // where the decision has two — and carrying it across this module
+    // boundary crashed the clang 20.1.7 frontend outright (see run_pe). The
+    // caller resolves the contract; this is the one bit of it that packaging
+    // acts on.
+    bool                            carryToolchainRuntime = false;
 };
 
 // Resolved plan — all paths absolute, all decisions baked in.
@@ -304,10 +310,9 @@ make_plan(const mcpp::manifest::Manifest& manifest,
     // (a bundle carrying its own libc cannot consume a host capability), and
     // this grows from the same root: a contract with no executor is a promise
     // the build prints and the package quietly drops.
-    using Contract = mcpp::build::dist::Contract;
     const bool modeBundlesNothing =
         opts.mode == Mode::None || opts.mode == Mode::Static;
-    if (opts.cxxRuntime == Contract::ToolchainCoupled && modeBundlesNothing) {
+    if (opts.carryToolchainRuntime && modeBundlesNothing) {
         return std::unexpected(Error{std::format(
             "cxx_runtime = \"toolchain-coupled\" and --mode {} contradict each "
             "other.\n"
@@ -328,7 +333,7 @@ make_plan(const mcpp::manifest::Manifest& manifest,
     // definition part of what it runs with.
     p.searchDirs.push_back(builtBinary.parent_path());
     for (auto const& d : opts.depSearchDirs) p.searchDirs.push_back(d);
-    if (opts.cxxRuntime == Contract::ToolchainCoupled)
+    if (opts.carryToolchainRuntime)
         for (auto const& d : opts.toolchainRuntimeDirs) p.searchDirs.push_back(d);
 
     auto distDir = projectRoot / "target" / "dist";
@@ -764,7 +769,10 @@ pe_closure(const std::filesystem::path& binary,
             }
         }
     }
-    std::ranges::sort(out, {}, &ResolvedDep::soname);
+    std::sort(out.begin(), out.end(),
+              [](const ResolvedDep& a, const ResolvedDep& b) {
+                  return a.soname < b.soname;
+              });
     return out;
 }
 
@@ -802,6 +810,27 @@ namespace detail {
 // No patchelf step and no wrapper script: "put the DLLs next to the exe" IS
 // the relocation rule on this format, which is why the row for it in the
 // design's layering table reads "no operation".
+// ⚠️ THIS FUNCTION ONCE CRASHED THE COMPILER, and the shape it crashed on is
+// worth not reintroducing.
+//
+// clang 20.1.7 targeting the MSVC ABI — the pinned Windows toolchain —
+// segfaulted (0xC0000005) while compiling this module interface, with no
+// diagnostic, on every Windows job at once. The first version carried three
+// module-boundary constructs that the rest of this file does not:
+//
+//   1. a scoped enum from ANOTHER module as a defaulted member of an
+//      EXPORTED struct (`dist::Contract cxxRuntime = …` in `Options`)
+//   2. a ranges projection naming a member of an IMPORTED type
+//      (`std::ranges::sort(entries, {}, &zip::Entry::name)`)
+//   3. `std::span<const Entry>` across the module boundary into zip::write
+//
+// All three were removed together, so WHICH one it was is not established —
+// stating otherwise would be a guess dressed as a finding. What is
+// established: the crash is reproducible only on that toolchain, and this
+// file has a documented history of the same class (see the `detail`
+// namespace comment above, and hostflags.cppm on a neighbouring function
+// being miscompiled by an unrelated addition). Each replacement is also
+// simpler than what it replaced, so nothing is being paid for the avoidance.
 std::expected<void, Error>
 run_pe(const Plan& plan)
 {
@@ -871,7 +900,16 @@ run_pe(const Plan& plan)
     }
     // Deterministic order: a directory iteration order that leaks into an
     // archive is how two identical builds get two different checksums.
-    std::ranges::sort(entries, {}, &mcpp::pack::zip::Entry::name);
+    //
+    // Plain `std::sort` with an explicit comparator, not
+    // `std::ranges::sort(entries, {}, &Entry::name)`. A ranges projection
+    // naming a member of an IMPORTED type is one of three module-boundary
+    // shapes this function used to carry, and together they crashed the clang
+    // 20.1.7 frontend (0xC0000005, no diagnostic) on every Windows job. See
+    // the note at the top of run_pe.
+    std::sort(entries.begin(), entries.end(),
+              [](const mcpp::pack::zip::Entry& a,
+                 const mcpp::pack::zip::Entry& b) { return a.name < b.name; });
     if (auto r = mcpp::pack::zip::write(plan.archivePath, entries); !r)
         return std::unexpected(Error{r.error()});
     return {};

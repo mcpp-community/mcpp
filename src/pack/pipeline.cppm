@@ -113,8 +113,10 @@ export int build_and_pack(Options opts, bool modeFromUser) {
     // honoured.
     {
         const auto flags = mcpp::build::compute_flags(ctx->plan);
-        opts.cxxRuntime = flags.contractByRole[
-            static_cast<std::size_t>(mcpp::build::dist::Role::Distributable)];
+        opts.carryToolchainRuntime =
+            flags.contractByRole[static_cast<std::size_t>(
+                mcpp::build::dist::Role::Distributable)]
+            == mcpp::build::dist::Contract::ToolchainCoupled;
         opts.toolchainRuntimeDirs = ctx->plan.toolchain.linkRuntimeDirs;
         // Where a third-party dependency's shared library may be found. Both
         // channels, because they answer for different things: the runtime
