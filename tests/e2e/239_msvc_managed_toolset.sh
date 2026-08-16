@@ -36,23 +36,26 @@ restore() {
 trap restore EXIT
 cd "$TMP"
 
-# 0) the toolset must be OFFERED before it can be pinned. A managed origin
-#    nobody can discover is not a feature.
-out=$("$MCPP" toolchain list --available 2>&1) || true
-[[ "$out" == *"msvc"* ]] \
-    || { echo "FAIL: msvc absent from --available: $out"; exit 1; }
-
-# 1) install it
+# 1) install it. This runs BEFORE the discoverability check below, so that a
+#    runner which cannot reach the index skips instead of failing an assertion
+#    about a list the index would have filled in.
 rc=0; out=$("$MCPP" toolchain install msvc "$TOOLSET" 2>&1) || rc=$?
 if [[ $rc -ne 0 ]]; then
     case "$out" in
-        *"index"*|*"network"*|*"resolve"*|*"offline"*|*"connect"*)
+        *"index"*|*"network"*|*"resolve"*|*"offline"*|*"connect"*|*"not found"*)
             echo "SKIP: xim:msvc@$TOOLSET unreachable: $out"; exit 0 ;;
         *)  echo "FAIL: install msvc $TOOLSET: $out"; exit 1 ;;
     esac
 fi
 [[ "$out" == *"$TOOLSET"* ]] \
     || { echo "FAIL: install did not report the toolset: $out"; exit 1; }
+
+# 1b) it must now be LISTED. A toolset that installs but never appears is
+#     indistinguishable from one that did not install, and `toolchain list` is
+#     where a user looks.
+out=$("$MCPP" toolchain list 2>&1)
+[[ "$out" == *"msvc"* && "$out" == *"$TOOLSET"* ]] \
+    || { echo "FAIL: installed toolset absent from toolchain list: $out"; exit 1; }
 
 # 2) build with it, from a manifest — the path that matters, and the one
 #    where the version used to be accepted and then ignored.
