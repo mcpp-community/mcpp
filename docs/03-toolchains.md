@@ -349,12 +349,17 @@ ships nor substitutes it.
 **CRT model.** `/MD` (host-coupled) by default; `/MT` when either
 
 ```toml
+[target.x86_64-windows-msvc]
+linkage     = "static"           # the libc axis — TARGET section, or `--static`
+
 [build]
-linkage     = "static"           # the libc axis
 cxx_runtime = "self-contained"   # the C++ runtime axis
 ```
 
-is written down. On the MSVC ABI these are one physical switch — `/MT` links
+is written down. Note which section each one lives in: `linkage` is
+exact-triple only and **there is no `[build] linkage` key** — writing one gets
+an "unsupported key (ignored)" warning and no static CRT. (This page said
+exactly that a few sections up, and then showed the wrong form here.) On the MSVC ABI these are one physical switch — `/MT` links
 the C and C++ runtimes out of the same library — so both spellings select it
 and mean the same thing. It is a **whole-project** property: one `std` module
 is built per project and cl bakes `_MSVC_MT`/`_MSVC_MD` into it, so a

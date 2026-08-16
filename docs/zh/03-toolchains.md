@@ -325,10 +325,16 @@ SDK 只能靠找,而在那里"明确声明"应当压过"扫描" —— 和 `VSIN
 **CRT 模型。** 默认 `/MD`(host-coupled);下面两者任一都会选 `/MT`:
 
 ```toml
+[target.x86_64-windows-msvc]
+linkage     = "static"           # libc 那根轴 —— TARGET 段,或 `--static`
+
 [build]
-linkage     = "static"           # libc 那根轴
 cxx_runtime = "self-contained"   # C++ 运行时那根轴
 ```
+
+注意这两个键分别属于哪个段:`linkage` 只认精确 triple,**没有 `[build] linkage`
+这个键** —— 写了会得到一条 "unsupported key (ignored)" 警告,而且不会切到静态
+CRT。
 
 toolset 自带的那份可再分发 CRT(`vcruntime140.dll` / `msvcp140.dll`)可以跟着
 产物走 —— 见 `docs/zh/05-mcpp-toml.md` 的 `cxx_runtime = "toolchain-coupled"`。
