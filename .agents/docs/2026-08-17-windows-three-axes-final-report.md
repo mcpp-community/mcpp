@@ -230,9 +230,13 @@ macOS 那一半后来被**拆分测试**定位到了:崩在 `ThePeFixtureItselfI
 if (b.substr(*lfanew, 4) == "PE\0\0")   // *lfanew 直接读自文件
 ```
 
-`std::string_view::substr` 在 `pos > size()` 时抛 `std::out_of_range`。一个以
-"MZ" 开头、0x3C 处是垃圾的文件是**普通的畸形输入**(下载了一半、DOS stub、一个
-叫 `.exe` 的文本文件),而 `mcpp pack` 对**每一个**要打包的产物都调用它。
+`std::string_view::substr` 在 `pos > size()` 时抛 `std::out_of_range`。
+
+**触发面要说准,不能夸大**:`identify()` 拿到的不是任意文件,而是**链接产物**,
+所以现实中的触发路径是一次**被截断/写坏的链接输出**(磁盘满、链接被 kill),
+而不是"用户随便丢了个文件进来"。这一条的分量不在于它多常见,而在于:这个模块
+写明了自己"对垃圾输入是全函数",而它不是 —— 一个自称从不抛异常的函数,在一种
+输入上终止了进程。
 
 不是推理出来的,是量出来的:`std::string_view{256 字节}.substr(0xFFFFFFFF, 4)`
 在 libc++ 下抛 `string_view::substr`。
