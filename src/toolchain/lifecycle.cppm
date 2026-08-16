@@ -285,7 +285,11 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
                 s.version = vEntry.path().filename().string();
                 s.target  = id->target;
                 auto pkg = mcpp::toolchain::to_xim_package(s);
-                auto bin = mcpp::toolchain::toolchain_frontend(vEntry.path() / "bin", pkg);
+                // From the payload ROOT, not `root/bin`: msvc keeps cl.exe
+                // four levels deeper, and asking for `root/bin` skipped every
+                // installed toolset silently.
+                auto bin = mcpp::toolchain::payload_frontend(vEntry.path(), pkg,
+                                                             id->family);
                 if (bin.empty()) continue;
                 payloads.push_back({ *id, s.version, bin });
             }

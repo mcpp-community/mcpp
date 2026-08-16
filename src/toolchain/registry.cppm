@@ -106,6 +106,23 @@ ToolchainSpec with_resolved_xim_version(const ToolchainSpec& spec,
 std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
                                          const XimToolchainPackage& pkg);
 
+// The frontend inside an installed payload ROOT — for callers that have the
+// root rather than a bin directory.
+//
+// Most families keep it in `bin/`, and for them this is `toolchain_frontend`
+// on `root/bin`. MSVC does not: cl.exe sits four levels deeper, under
+// `VC/Tools/MSVC/<version>/bin/Host<h>/<arch>/`.
+//
+// It exists because that difference had to be known in three places and was
+// only handled in two. The third — `toolchain list`'s enumeration — asked
+// `root/bin`, got nothing, and `continue`d, so an msvc toolset installed
+// perfectly well and then did not appear in the list. Empty = no frontend
+// here, which is the caller's cue to skip; a wrong LAYOUT and a missing
+// PAYLOAD had been reporting the same way.
+std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
+                                       const XimToolchainPackage& pkg,
+                                       Family family);
+
 // Reverse mapping: an installed `xim-x-<name>` payload directory back to its
 // (family, target) identity. nullopt for non-toolchain xpkgs (ninja, glibc,
 // python, …) — list/doctor use this to filter what they enumerate.
@@ -355,6 +372,20 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
         if (std::filesystem::exists(p)) return p;
     }
     return {};
+}
+
+std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
+                                       const XimToolchainPackage& pkg,
+                                       Family family) {
+    if (family == Family::Msvc) {
+        // Same resolution the install and build paths use, so the three
+        // cannot disagree about where an msvc payload keeps its compiler.
+        if (auto inst = mcpp::toolchain::msvc::installation_at(payloadRoot,
+                                                              pkg.ximVersion))
+            return inst->clPath;
+        return {};
+    }
+    return toolchain_frontend(payloadRoot / "bin", pkg);
 }
 
 std::optional<PayloadIdentity> identify_xim_payload(std::string_view ximDirName) {
