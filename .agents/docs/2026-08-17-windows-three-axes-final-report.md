@@ -142,6 +142,21 @@ LD_TRACE_LOADED_OBJECTS=1 '<binary>'
 - `--mode system` 不放任何 DLL;`toolchain-coupled` + `--mode system` 被拒绝,消息里
   同时有契约名和出路
 
+### 2.2b e2e 241:`ucrt@` 身份**真的到达了一次真实构建**
+
+单元测试钉住的是哈希函数(两个 SDK 版本 → 两个哈希)。它看不见的是:这个值在
+**真实的 Windows 构建**上到底有没有被填进去 —— 而 Windows CI 绿了并不能区分
+"身份填好了"和"代码路径跑了但什么都没产出":一个空字符串会毫无怨言地流过其中
+每一个 job。
+
+所以 241 读 `resolution.json`,断言**值**本身:`runtime_id` 以 `ucrt@` 开头、
+`contract_hash` 非空(一个不参与任何事的身份就是装饰)、并且它**没有**被投影进
+`libc`(那个字段指的是私有 libc **payload**,ucrt 没有对应物)。
+
+它显式 pin 了 `msvc@system`:Windows 的默认工具链是 clang targeting MSVC ABI,
+那条路径上 SDK 是 clang 自己找的、mcpp 确实无可声明 —— 用默认工具链写这条测试,
+会断言一个空身份然后**因为错误的理由通过**。
+
 ### 2.3 本机真实验证
 
 在这台 Linux 上,`mcpp pack --target x86_64-windows-gnu` 产出的 zip 被
