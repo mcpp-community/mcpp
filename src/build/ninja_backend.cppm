@@ -449,6 +449,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // All compile/link flags are computed once via flags.cppm.
     auto flags = compute_flags(plan);
 
+    // Everything that has to sit beside the artifact, from both producers:
+    // the manifest's `[runtime] deploy_files` (already in the plan) and the
+    // C++ runtime contract's own answer (`toolchain-coupled` on PE — see
+    // mcpp.build.distribution). Merged ONCE, here, because three places below
+    // consume the list — the implicit dependency of each executable, the copy
+    // edges, and `default` — and a list that is complete in two of them is a
+    // graph where the DLL is copied only when something else happens to ask.
+    auto deployFiles = plan.runtimeDeployFiles;
+    deployFiles.insert(deployFiles.end(),
+                       flags.toolchainRuntimeDeploy.begin(),
+                       flags.toolchainRuntimeDeploy.end());
+
     bool need_c_rule = false, need_asm_rule = false, need_nasm_rule = false;
     for (auto& cu : plan.compileUnits) {
         if (is_c_source(cu))         need_c_rule = true;
@@ -1770,7 +1782,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // beside the .exe before the build is considered done. Empty on RPATH
         // platforms (no *.dll deps), so other targets are unaffected.
         if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary) {
-            for (auto const& d : plan.runtimeDeployFiles)
+            for (auto const& d : deployFiles)
                 implicit += " " + escape_ninja_path(d.dest);
         }
 
@@ -1826,13 +1838,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // — which also means a DLL still loaded by a running program from a
     // previous `mcpp run` gets the skip-if-equivalent treatment instead of a
     // hard "cannot copy" failure.
-    // Inert on RPATH platforms where runtimeDeployFiles is empty.
-    for (auto const& d : plan.runtimeDeployFiles) {
+    // Inert on RPATH platforms where the merged deploy list is empty.
+    for (auto const& d : deployFiles) {
         append(std::format("build {} : stage_file {}\n",
             escape_ninja_path(d.dest),
             escape_ninja_path(d.source)));
     }
-    if (!plan.runtimeDeployFiles.empty())
+    if (!deployFiles.empty())
         append("\n");
 
     // ── Declared build-graph nodes (`mcpp:action=`) ─────────────────────────
@@ -1899,7 +1911,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 defaults += " " + escape_ninja_path(alias);
             }
         }
-        for (auto const& d : plan.runtimeDeployFiles) {
+        for (auto const& d : deployFiles) {
             defaults += " " + escape_ninja_path(d.dest);
         }
         defaults += actionDefaults;

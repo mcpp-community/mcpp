@@ -16,6 +16,7 @@ import mcpp.config;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.platform;
+import mcpp.platform.runtime_binding;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
 import mcpp.ui;
@@ -384,9 +385,20 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
                          std::string_view runtimeId) {
     constexpr std::string_view prefix = "glibc@";
     if (!runtimeId.starts_with(prefix)) {
-        return std::unexpected(std::format(
-            "selected RuntimeBinding '{}' is not a glibc payload identity "
-            "(expected glibc@<version>)", runtimeId));
+        // Name the PROVIDER that was found, not just the one that was
+        // wanted. `ucrt@10.0.26100.0` is a perfectly valid runtime identity
+        // that this fixup has nothing to do with (there is no ucrt payload to
+        // bind to — it is an OS component), and "not a glibc payload
+        // identity" reads as "malformed" for it.
+        auto provider = mcpp::platform::runtime::runtime_provider(runtimeId);
+        return std::unexpected(provider.empty()
+            ? std::format(
+                  "selected RuntimeBinding '{}' is not a glibc payload identity "
+                  "(expected glibc@<version>)", runtimeId)
+            : std::format(
+                  "selected RuntimeBinding '{}' names the '{}' runtime "
+                  "provider; the glibc payload fixup does not apply to it",
+                  runtimeId, provider));
     }
     auto version = runtimeId.substr(prefix.size());
     if (version.empty() || version == "." || version == ".."

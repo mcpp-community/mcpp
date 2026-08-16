@@ -268,6 +268,16 @@ struct Mechanism {
     // global constructor that touches std::cout runs before the streams
     // exist. Asks the backend for the ordering shim. See issue #336.
     bool        streamInitShim = false;
+    // PE + MSVC runtime + toolchain-coupled: the toolset's own redistributable
+    // CRT DLLs must be STAGED BESIDE the artifact.
+    //
+    // On ELF, `toolchain-coupled` needs no files copied — the artifact carries
+    // an rpath into the toolchain's lib directory and the loader follows it.
+    // PE has no rpath: a DLL is resolved from the directory of the executable
+    // (and then PATH), so on this format the mechanism IS the copy. Same
+    // contract, same meaning, different mechanism — which is exactly the split
+    // this module's three layers exist to express.
+    bool        deployToolchainRuntime = false;
 };
 
 namespace detail {
@@ -426,12 +436,43 @@ Mechanism resolve(const MechanismInput& in) {
                       "it everywhere; using host-coupled here"
                     : "";
             } else if (in.requested == Contract::ToolchainCoupled) {
-                // Only reachable from an explicit request: it is never a default.
-                m.degraded = true;
-                m.diagnostic = std::format(
-                    "cxx_runtime = \"toolchain-coupled\" has no meaning for the "
-                    "MSVC runtime (it ships with the OS/redistributable, not with "
-                    "the toolchain); using {}", to_string(m.effective));
+                // THIS USED TO BE A FLAT REFUSAL, and the sentence it refused
+                // with was half true:
+                //
+                //   "…has no meaning for the MSVC runtime (it ships with the
+                //    OS/redistributable, not with the toolchain)"
+                //
+                // True of `ucrtbase.dll`, which IS an OS component since
+                // Win10. NOT true of `vcruntime140.dll` / `msvcp140.dll`,
+                // which are the toolset's own and sit inside every MSVC
+                // toolset ever shipped:
+                //
+                //   VC\Redist\MSVC\<ver>\<arch>\Microsoft.VC<N>.CRT\*.dll
+                //
+                // That is the same relationship gcc has to libstdc++.so, so it
+                // takes the same contract — and refusing it left a hole in the
+                // matrix that had a real cost: the default `/MD` artifact
+                // depends on DLLs a machine with only a managed toolset does
+                // not have, and there was no spelling that made them travel.
+                //
+                // `/MT` is the one case that stays a degradation, and it is a
+                // genuine contradiction rather than a missing mechanism: a
+                // static CRT leaves NO DLL to couple to. Say which one won.
+                if (in.msvcStaticCrt) {
+                    m.effective  = Contract::SelfContained;
+                    m.degraded   = true;
+                    m.diagnostic =
+                        "cxx_runtime = \"toolchain-coupled\" cannot apply to a "
+                        "project compiled with the static CRT (/MT): there is "
+                        "no vcruntime140.dll/msvcp140.dll dependency left to "
+                        "couple to. Drop linkage = \"static\" (or the "
+                        "project-wide self-contained contract) if the toolset's "
+                        "CRT should travel beside the artifact instead; using "
+                        "self-contained";
+                } else {
+                    m.effective              = Contract::ToolchainCoupled;
+                    m.deployToolchainRuntime = true;
+                }
             }
             return m;
         }

@@ -165,6 +165,44 @@ std::optional<WindowsSdk> find_windows_sdk(
 std::vector<std::filesystem::path>
 sibling_sdk_roots(const std::filesystem::path& clPath);
 
+// Which origin produced this cl.exe, answered by where the binary lives.
+//
+// Not a guess: an xlings store is a specific directory layout that mcpp
+// itself created, and `xpkgs_from_compiler` recognises it or does not. A
+// compiler outside every store came from the machine.
+Origin origin_of(const std::filesystem::path& clPath);
+
+// The Windows SDK for a located cl.exe, chosen BY ORIGIN.
+//
+// This is the second of the three Windows axes (see
+// .agents/docs/2026-08-16-windows-toolchain-three-axes-design.md §2), and
+// until now it had no identity at all: `find_windows_sdk()` scanned, and
+// whatever the scan reached first won — for both origins.
+//
+//   MANAGED (`msvc@<toolset>`)  the SDK is a DECLARED dependency of the
+//                               toolset, installed into the same store. It is
+//                               bound, not searched: `WindowsSdkDir` /
+//                               `WindowsSdkVersion` do not participate,
+//                               because a pin that the environment can
+//                               overwrite is not a pin. Two machines building
+//                               the same manifest must see the same headers.
+//   SYSTEM  (`msvc@system`)     the machine's own SDK, and a machine's things
+//                               can only be found by looking. Unchanged: the
+//                               declared `WindowsSdkDir` still outranks the
+//                               scan, exactly as it does for VSINSTALLDIR.
+//
+// `note` is non-empty when something the user could have expected to matter
+// did not, and the caller MUST surface it. There are exactly two:
+//   - a managed toolset ignoring a `WindowsSdkDir` that was set
+//   - a managed toolset with NO SDK payload beside it, falling back to the
+//     machine's — which works, and is not reproducible, so it says so
+struct SdkChoice {
+    std::optional<WindowsSdk> sdk;
+    Origin                    origin = Origin::Managed;
+    std::string               note;
+};
+SdkChoice resolve_sdk_for(const std::filesystem::path& clPath);
+
 // True only when BOTH halves of a usable MSVC C++ setup are present: the
 // STL's std module source AND the Windows SDK.
 //
@@ -625,6 +663,46 @@ constexpr std::string_view sdk_lib_arch = "arm64";
 constexpr std::string_view sdk_lib_arch = "x64";
 #endif
 
+namespace {
+
+// Highest version dir under `root/Include` that actually carries the UCRT
+// headers; `want` (from WindowsSdkVersion) wins if it is one of them.
+std::optional<WindowsSdk> pick_sdk_in(const std::filesystem::path& root,
+                                      std::string_view want) {
+    std::error_code ec;
+    auto inc = root / "Include";
+    if (!std::filesystem::is_directory(inc, ec)) return std::nullopt;
+    auto usable = [&](const std::filesystem::path& verDir, const std::string& v) {
+        return std::filesystem::exists(verDir / "ucrt" / "corecrt.h", ec)
+            && std::filesystem::exists(
+                   root / "Lib" / v / "um" / sdk_lib_arch / "kernel32.lib", ec);
+    };
+    std::string best;
+    for (auto& e : std::filesystem::directory_iterator(inc, ec)) {
+        if (!e.is_directory(ec)) continue;
+        auto v = e.path().filename().string();
+        if (!usable(e.path(), v)) continue;
+        if (!want.empty() && v == want) return WindowsSdk{root, v};
+        if (v > best) best = v;
+    }
+    if (best.empty()) return std::nullopt;
+    return WindowsSdk{root, best};
+}
+
+// `WindowsSdkVersion` without its trailing backslash (vcvars exports one; it
+// is not part of the directory name). Empty when unset.
+std::string declared_sdk_version() {
+    std::string want;
+    if (auto* v = std::getenv("WindowsSdkVersion"); v && *v) {
+        want = v;
+        while (!want.empty() && (want.back() == '\\' || want.back() == '/'))
+            want.pop_back();
+    }
+    return want;
+}
+
+} // namespace
+
 std::optional<WindowsSdk> find_windows_sdk(
     std::span<const std::filesystem::path> extraRoots) {
     // Highest version dir under `root/Include` that actually carries the UCRT
@@ -648,52 +726,95 @@ std::optional<WindowsSdk> find_windows_sdk(
     //
     // kernel32.lib is the right sentinel: every link needs it, and unlike the
     // ucrt libs it is not spread across the SDK's optional pieces.
-    auto pick = [](const std::filesystem::path& root,
-                   std::string_view want) -> std::optional<WindowsSdk> {
-        std::error_code ec;
-        auto inc = root / "Include";
-        if (!std::filesystem::is_directory(inc, ec)) return std::nullopt;
-        auto usable = [&](const std::filesystem::path& verDir,
-                          const std::string& v) {
-            return std::filesystem::exists(verDir / "ucrt" / "corecrt.h", ec)
-                && std::filesystem::exists(
-                       root / "Lib" / v / "um" / sdk_lib_arch / "kernel32.lib", ec);
-        };
-        std::string best;
-        for (auto& e : std::filesystem::directory_iterator(inc, ec)) {
-            if (!e.is_directory(ec)) continue;
-            auto v = e.path().filename().string();
-            if (!usable(e.path(), v)) continue;
-            if (!want.empty() && v == want) return WindowsSdk{root, v};
-            if (v > best) best = v;
-        }
-        if (best.empty()) return std::nullopt;
-        return WindowsSdk{root, best};
-    };
+    //
+    // The version-selection rule itself lives in `pick_sdk_in`, because the
+    // MANAGED origin needs the same rule applied to a different (and much
+    // shorter) list of roots — see `resolve_sdk_for`.
 
     // 1. Declared: WindowsSdkDir (+ WindowsSdkVersion). vcvars exports both;
     //    WindowsSdkVersion carries a trailing backslash there, which is not
     //    part of the directory name.
-    std::string want;
-    if (auto* v = std::getenv("WindowsSdkVersion"); v && *v) {
-        want = v;
-        while (!want.empty() && (want.back() == '\\' || want.back() == '/'))
-            want.pop_back();
-    }
+    const std::string want = declared_sdk_version();
     if (auto* dir = std::getenv("WindowsSdkDir"); dir && *dir) {
-        if (auto s = pick(std::filesystem::path{dir}, want)) return s;
+        if (auto s = pick_sdk_in(std::filesystem::path{dir}, want)) return s;
     }
 
     // 2. Roots the caller knows about (managed toolset's own store).
     for (const auto& root : extraRoots)
-        if (auto s = pick(root, want)) return s;
+        if (auto s = pick_sdk_in(root, want)) return s;
 
     // 3. The conventional absolute install roots.
     for (const char* base : {"C:\\Program Files (x86)\\Windows Kits\\10",
                              "C:\\Program Files\\Windows Kits\\10"}) {
-        if (auto s = pick(std::filesystem::path{base}, want)) return s;
+        if (auto s = pick_sdk_in(std::filesystem::path{base}, want)) return s;
     }
     return std::nullopt;
+}
+
+Origin origin_of(const std::filesystem::path& clPath) {
+    return mcpp::xlings::paths::xpkgs_from_compiler(clPath)
+        ? Origin::Managed : Origin::SystemMsvc;
+}
+
+SdkChoice resolve_sdk_for(const std::filesystem::path& clPath) {
+    SdkChoice out;
+    out.origin = origin_of(clPath);
+    auto siblings = sibling_sdk_roots(clPath);
+
+    if (out.origin == Origin::SystemMsvc) {
+        // A machine's things can only be found by looking, and a declared
+        // WindowsSdkDir is still the most specific answer available.
+        // `siblings` is empty here by construction (a system cl.exe is in no
+        // store); passed through so the two origins share one call shape.
+        out.sdk = find_windows_sdk(siblings);
+        return out;
+    }
+
+    // MANAGED. The SDK arrived as a declared dependency of this toolset and
+    // sits in the same store — so it is looked up, not searched for, and
+    // nothing in the environment gets a vote. See the design doc's §2.1 for
+    // what searching cost: a half-unpacked payload outranked the machine's own
+    // complete SDK because its version number was higher, every TU compiled,
+    // and the build died at LNK1104 with nothing in the log naming the SDK.
+    //
+    // `sibling_sdk_roots` returns newest first, so the first hit is also the
+    // one the highest-version rule would have chosen.
+    for (auto const& root : siblings) {
+        // `want` deliberately empty: WindowsSdkVersion is the same declaration
+        // channel as WindowsSdkDir, and letting it pick among payloads is the
+        // same override wearing a smaller hat.
+        if ((out.sdk = pick_sdk_in(root, {}))) break;
+    }
+
+    if (out.sdk) {
+        const char* dir = std::getenv("WindowsSdkDir");
+        const char* ver = std::getenv("WindowsSdkVersion");
+        if ((dir && *dir) || (ver && *ver)) {
+            out.note = std::format(
+                "WindowsSdkDir/WindowsSdkVersion in the environment "
+                "({}) is ignored: this build pins a managed MSVC toolset, and "
+                "the Windows SDK it was installed with ({} at {}) is part of "
+                "that pin. Use msvc@system if the machine's SDK is what you "
+                "want.",
+                dir && *dir ? dir : ver,
+                out.sdk->version, out.sdk->root.string());
+        }
+        return out;
+    }
+
+    // No SDK payload beside the toolset. Falling back keeps the build working
+    // — but quietly falling back is precisely how the version axis stopped
+    // meaning anything one layer down, so it is reported.
+    out.sdk = find_windows_sdk({});
+    out.note = out.sdk
+        ? std::format(
+              "no windows-sdk payload was found beside this managed MSVC "
+              "toolset, so the machine's SDK ({} at {}) is being used. That "
+              "makes the build depend on this machine — reinstall the toolset "
+              "(`mcpp toolchain install msvc <version>`) to pull its own SDK.",
+              out.sdk->version, out.sdk->root.string())
+        : std::string{};
+    return out;
 }
 
 bool has_usable_msvc() {
@@ -928,13 +1049,19 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
     // detection working (selection UX on SDK-less boxes); the build path
     // errors with guidance when envOverrides is empty.
     //
-    // A managed toolset carries its own SDK as an xlings dependency, and the
-    // compiler's own path says which store to look in — so the two halves of
-    // a pinned toolchain stay together without anything being configured.
-    auto extraSdkRoots = sibling_sdk_roots(tc.binaryPath);
-    if (auto sdk = find_windows_sdk(extraSdkRoots)) {
-        tc.envOverrides = build_env_for_cl(tc.binaryPath, parsed->second, *sdk);
+    // BY ORIGIN, not by search. A managed toolset carries its own SDK as an
+    // xlings dependency and the compiler's own path says which store it is in,
+    // so the two halves of a pinned toolchain stay together — and stay
+    // together even when the environment says otherwise, which is the part a
+    // search could not give. `msvc@system` keeps the search chain: the
+    // machine's things can only be found by looking.
+    auto choice = resolve_sdk_for(tc.binaryPath);
+    if (choice.sdk) {
+        tc.envOverrides = build_env_for_cl(tc.binaryPath, parsed->second,
+                                           *choice.sdk);
+        tc.windowsSdkVersion = choice.sdk->version;
     }
+    if (!choice.note.empty()) tc.resolutionNote = choice.note;
 
     // The toolset's own redistributable CRT, in the same field gcc uses for
     // libstdc++ — so `mcpp run` puts it on PATH exactly the way it puts a

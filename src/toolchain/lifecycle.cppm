@@ -382,10 +382,15 @@ first_undeletable(const std::filesystem::path& root) {
 }
 
 void msvc_warn_if_sdk_missing(const mcpp::toolchain::msvc::MsvcInstallation& inst) {
-    auto roots = mcpp::toolchain::msvc::sibling_sdk_roots(inst.clPath);
-    if (auto sdk = mcpp::toolchain::msvc::find_windows_sdk(roots)) {
+    // The SAME resolution the build will perform, not a second one shaped
+    // like it. Install-time and build-time disagreeing about which SDK this
+    // toolset uses is worse than not reporting at all: the line printed here
+    // is what the user will believe.
+    auto choice = mcpp::toolchain::msvc::resolve_sdk_for(inst.clPath);
+    if (choice.sdk) {
         std::println("           windows sdk: {} ({})",
-                     sdk->version, sdk->root.string());
+                     choice.sdk->version, choice.sdk->root.string());
+        if (!choice.note.empty()) mcpp::ui::info("note", choice.note);
         return;
     }
     mcpp::ui::warning(
@@ -756,14 +761,12 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         mcpp::fetcher::Fetcher fetcher(cfg);
         mcpp::fetcher::InstallProgressHandler progress;
 
-        // Ensure sysroot dependencies (glibc, linux-headers) are installed.
-        // These are required for C library + kernel headers during compilation.
-        // Decided by the TARGET, not the payload name: musl targets are
-        // self-contained; PE targets (native mingw AND the Linux-hosted
-        // cross) bring their own CRT; Windows/macOS hosts never need the
-        // Linux sysroot. Mirrors the guard on prepare.cppm's first-run install.
-        if (!spec->target.is_musl() && !spec->target.is_pe()
-            && !mcpp::platform::is_windows && !mcpp::platform::is_macos) {
+        // Ensure sysroot dependencies (glibc, linux-headers) are installed:
+        // the C library and kernel headers a glibc-targeting compile needs.
+        // The rule itself lives in registry.cppm — prepare's first-run
+        // install asks the same question and used to answer it in its own
+        // words, with one term missing.
+        if (mcpp::toolchain::needs_linux_sysroot_payloads(spec->target)) {
             for (auto dep : {"xim:glibc", "xim:linux-headers"}) {
                 mcpp::log::verbose("toolchain", std::format("installing dep: {}", dep));
                 auto depPayload = fetcher.resolve_xpkg_path(dep, /*autoInstall=*/true, &progress);
@@ -799,26 +802,18 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // VC/Tools/MSVC/<ver>/bin/Hostx64/x64, and there is nothing to
         // patchelf on a PE toolchain.
         if (spec->family == mcpp::toolchain::Family::Msvc) {
-            // NOT `payload->root` — that is a GUESS, and it guesses wrong
-            // here. resolve_xpkg_path calls the version directory the root
-            // only when it directly contains bin/ include/ lib/; otherwise it
-            // descends into a lone subdirectory. An installed msvc payload
-            // has exactly one entry, `VC/`, so the "root" comes back as
-            // …/14.44.35207/VC and the toolset then looks like it is missing.
-            //
-            // The location is not something to infer: it is (store, name,
-            // version), and all three are known here. resolve_xpkg_path above
-            // is what INSTALLS; this is what says where.
-            auto verDir = mcpp::xlings::paths::xim_tool(
-                mcpp::config::make_xlings_env(cfg), pkg.ximName, pkg.ximVersion);
-            auto inst = mcpp::toolchain::msvc::installation_at(
-                verDir, pkg.ximVersion);
+            // Where the payload IS — not `payload->root`, which is the
+            // fetcher's guess and guesses wrong here. That rule and its
+            // reasons live in `resolve_managed_msvc`, because a build needs
+            // exactly the same one and the two used to spell it out
+            // separately. `resolve_xpkg_path` above is what INSTALLS; this is
+            // what says where.
+            auto inst = mcpp::toolchain::resolve_managed_msvc(
+                mcpp::config::make_xlings_env(cfg), pkg);
             if (!inst) {
                 mcpp::ui::error(std::format(
-                    "msvc payload installed at '{}', but no cl.exe under "
-                    "VC/Tools/MSVC/{} — the payload is not what this version "
-                    "claims to be",
-                    verDir.string(), pkg.ximVersion));
+                    "{} — the payload is not what this version claims to be",
+                    inst.error()));
                 return 1;
             }
             msvc_print_detected(*inst, "Installed");

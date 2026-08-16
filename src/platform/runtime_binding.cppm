@@ -23,6 +23,26 @@ struct RuntimeBinding {
     std::string arch;
     // Provider-native runtime identity (`glibc@...`, `macos_sdk@...`,
     // `ucrt@...`). Only Linux additionally projects this into `libc`.
+    //
+    // THE PROVIDERS ARE NOT ISOMORPHIC, and treating them as such is the
+    // mistake this note exists to prevent:
+    //
+    //   glibc@2.39   binds a PAYLOAD. The headers and the .so are both in it,
+    //                and patchelf makes the artifact actually run on that
+    //                copy. It is a runtime BINDING.
+    //   ucrt@10.0…   declares a FLOOR. `ucrtbase.dll` is an OS component from
+    //                Win10 on; it cannot be swapped and should not be
+    //                shipped, so mcpp's `windows-sdk` payload deliberately
+    //                carries only half of ucrt (headers + import libraries)
+    //                and no `Universal CRT Redistributable`. The identity
+    //                says which API surface was compiled against, not which
+    //                binary will be loaded.
+    //
+    // Both belong in this field — they are the same QUESTION ("which C
+    // runtime is this artifact built for") answered by different providers —
+    // but a consumer that assumes the glibc shape will try to resolve a
+    // payload that was never supposed to exist. Ask `runtime_provider()`
+    // before acting on the value.
     std::string runtimeId;
     std::string contractHash;
     std::optional<std::filesystem::path> loader;
@@ -74,6 +94,42 @@ struct RuntimeBinding {
     // was reported as valid.
     bool hermetic() const { return loader.has_value(); }
 };
+
+// The PROVIDER half of a runtime identity: "glibc" from "glibc@2.39", "ucrt"
+// from "ucrt@10.0.26100.0". Empty when there is no identity at all.
+//
+// Exists so consumers DISPATCH instead of pattern-matching. Every reader of
+// `runtimeId` used to spell `starts_with("glibc@")`, which reads as "is this
+// glibc" and behaves as "is this the only provider I have ever seen" — so the
+// day a second provider appeared, each of those sites silently classified it
+// as "no runtime identity" rather than "an identity with no rules here". The
+// two are not the same thing, and only one of them is worth reporting.
+std::string_view runtime_provider(std::string_view runtimeId) {
+    auto at = runtimeId.find('@');
+    if (at == std::string_view::npos) return {};
+    return runtimeId.substr(0, at);
+}
+
+// Attach the Windows C runtime identity to an already-resolved snapshot, and
+// re-derive the contract hash so it takes effect.
+//
+// WHY IT IS A SECOND STEP rather than part of resolve_runtime_binding(): the
+// SDK version is a property of the TOOLCHAIN, and the binding is deliberately
+// resolved BEFORE any toolchain — the post-install fixup is itself a consumer
+// of the binding, so resolving a toolchain first would let directory order
+// choose a libc and only then discover what the project selected (#392).
+// Windows is the one platform where a fact flows the other way, so it flows
+// back explicitly instead of reordering the two.
+//
+// WHAT IT BUYS: the SDK version enters `contractHash`, which is part of the
+// toolchain fingerprint, which keys the build cache. Two SDKs produce two
+// caches. Without this the version axis simply stopped existing one layer
+// below the compiler — the exact defect this identity was added to close.
+//
+// Idempotent, and a no-op for an empty version: a Windows box with no SDK
+// found still builds (selection UX must work there), it just has nothing to
+// declare.
+void bind_windows_ucrt(RuntimeBinding& binding, std::string_view sdkVersion);
 
 namespace detail {
 
@@ -396,6 +452,20 @@ resolve_runtime_binding(
         out.capabilities.end());
     out.contractHash = detail::hash_contract(detail::canonical_contract(out));
     return out;
+}
+
+void bind_windows_ucrt(RuntimeBinding& binding, std::string_view sdkVersion) {
+    if (sdkVersion.empty()) return;
+    auto identity = std::format("ucrt@{}", sdkVersion);
+    if (binding.runtimeId == identity) return;   // idempotent
+    binding.runtimeId = std::move(identity);
+    // Deliberately NOT projected into `libc`: that field is the Linux-only
+    // private-libc payload, read by the loader/patchelf machinery, and there
+    // is no ucrt payload for it to name. `runtime_binding.cppm`'s own comment
+    // on `libc` says "Only Linux additionally projects this" — this is that
+    // sentence being true rather than merely written down.
+    binding.contractHash =
+        detail::hash_contract(detail::canonical_contract(binding));
 }
 
 std::string serialize_runtime_binding(const RuntimeBinding& binding) {

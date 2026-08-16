@@ -1430,3 +1430,139 @@ TEST(Plan, ExpandManifestIncludeEntryNativeSpelling) {
 
     fs::remove_all(root);
 }
+
+// ── PE `toolchain-coupled`: the toolset's CRT travels with the artifact ─────
+//
+// On ELF this contract needs no files copied — the artifact carries an rpath
+// into the toolchain's lib directory. PE has no rpath: a DLL is resolved from
+// the directory of the executable, so on this format the mechanism IS the
+// copy, and a graph that resolves the contract but stages nothing delivers
+// exactly what the old flat refusal did.
+//
+// Runs on every host. The format now comes from the TARGET TRIPLE rather than
+// from `mcpp::platform::is_windows`, which is what makes a Windows contract
+// assertable on the Linux runner that reviews most of these changes.
+namespace {
+
+struct FakeRedistDir {
+    std::filesystem::path path;
+    FakeRedistDir() {
+        path = std::filesystem::temp_directory_path()
+             / std::format("mcpp-deploy-{}", std::chrono::steady_clock::now()
+                                                 .time_since_epoch().count());
+        std::filesystem::create_directories(path);
+        for (auto name : {"vcruntime140.dll", "msvcp140.dll",
+                          "vcruntime140_1.dll"})
+            std::ofstream{path / name} << "MZ";
+        // Not a DLL: the redist directory also carries a manifest, and copying
+        // it beside the artifact would be cargo.
+        std::ofstream{path / "Microsoft.VC143.CRT.manifest"} << "<assembly/>";
+    }
+    ~FakeRedistDir() { std::error_code ec; std::filesystem::remove_all(path, ec); }
+    FakeRedistDir(const FakeRedistDir&) = delete;
+    FakeRedistDir& operator=(const FakeRedistDir&) = delete;
+};
+
+BuildPlan msvc_plan_with_redist(const FakeRedistDir& redist,
+                                std::string_view cxxRuntime) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler        = mcpp::toolchain::CompilerId::MSVC;
+    plan.toolchain.binaryPath      = "cl.exe";
+    plan.toolchain.targetTriple    = "x86_64-pc-windows-msvc";
+    plan.toolchain.linkRuntimeDirs = {redist.path};
+    plan.manifest.buildConfig.cxxRuntime = std::string(cxxRuntime);
+    plan.linkUnits.push_back({
+        .targetName = "app",
+        .kind = mcpp::build::LinkUnit::Binary,
+        .objects = {"obj/main.o"},
+        .output = "bin/app.exe",
+        .entryMain = "src/main.cpp",
+    });
+    return plan;
+}
+
+}  // namespace
+
+TEST(NinjaBackendPeRuntime, ToolchainCoupledStagesTheToolsetCrtBesideTheExe) {
+    FakeRedistDir redist;
+    auto plan = msvc_plan_with_redist(redist, "toolchain-coupled");
+
+    auto flags = compute_flags(plan);
+    ASSERT_EQ(flags.toolchainRuntimeDeploy.size(), 3u)
+        << "expected the three .dll and not the .manifest beside them";
+    for (auto const& d : flags.toolchainRuntimeDeploy) {
+        EXPECT_EQ(d.dest.parent_path(), std::filesystem::path("bin"))
+            << "a DLL must land in the same directory as the .exe: "
+            << d.dest.string();
+        EXPECT_EQ(d.source.extension(), ".dll") << d.source.string();
+    }
+
+    auto ninja = emit_ninja_string(plan);
+    for (auto name : {"vcruntime140.dll", "msvcp140.dll", "vcruntime140_1.dll"}) {
+        EXPECT_NE(ninja.find(std::format("build bin/{} : stage_file", name)),
+                  std::string::npos)
+            << name << " has no copy edge\n" << ninja;
+    }
+    EXPECT_EQ(ninja.find("Microsoft.VC143.CRT.manifest"), std::string::npos)
+        << "copied something that is not a runtime DLL\n" << ninja;
+
+    // Reachability, twice over. A copy edge nothing asks for is never run
+    // under explicit ninja goals, and an .exe that does not depend on its DLLs
+    // can be reported "up to date" while they are missing.
+    auto exeAt = ninja.find("build bin/app.exe :");
+    ASSERT_NE(exeAt, std::string::npos) << ninja;
+    auto exeStanza = ninja.substr(exeAt, ninja.find("\nbuild ", exeAt + 1) - exeAt);
+    EXPECT_NE(exeStanza.find("bin/vcruntime140.dll"), std::string::npos)
+        << "the executable does not depend on the CRT staged beside it\n"
+        << exeStanza;
+    auto defaultAt = ninja.rfind("\ndefault ");
+    ASSERT_NE(defaultAt, std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("bin/vcruntime140.dll", defaultAt), std::string::npos)
+        << "the staged CRT is not a default goal\n" << ninja.substr(defaultAt);
+}
+
+TEST(NinjaBackendPeRuntime, HostCoupledStagesNothing) {
+    // The DEFAULT Windows build. Staging DLLs unasked would change what every
+    // existing project ships, and `host-coupled` is a promise that the machine
+    // provides them — keeping a copy beside the artifact contradicts it.
+    FakeRedistDir redist;
+    auto plan = msvc_plan_with_redist(redist, "host-coupled");
+    EXPECT_TRUE(compute_flags(plan).toolchainRuntimeDeploy.empty());
+
+    auto bare = msvc_plan_with_redist(redist, "");
+    EXPECT_TRUE(compute_flags(bare).toolchainRuntimeDeploy.empty())
+        << "a project that never mentioned cxx_runtime gained staged DLLs";
+}
+
+TEST(NinjaBackendPeRuntime, AProjectsOwnDeployFileOutranksTheToolsets) {
+    // A vendored redist named in `[runtime] deploy_files` is a human's
+    // statement about which build of msvcp140.dll this program ships. Silently
+    // replacing it with the toolset's copy produces a different program than
+    // the manifest describes, so the explicit one wins — out loud.
+    FakeRedistDir redist;
+    auto plan = msvc_plan_with_redist(redist, "toolchain-coupled");
+    plan.runtimeDeployFiles.push_back(
+        {"/vendor/msvcp140.dll", std::filesystem::path("bin") / "msvcp140.dll"});
+
+    auto flags = compute_flags(plan);
+    for (auto const& d : flags.toolchainRuntimeDeploy)
+        EXPECT_NE(d.dest.filename(), std::filesystem::path("msvcp140.dll"))
+            << "overwrote the project's own deploy file";
+    EXPECT_EQ(flags.toolchainRuntimeDeploy.size(), 2u);
+    EXPECT_TRUE(std::ranges::any_of(flags.diagnostics, [](auto const& d) {
+        return d.find("msvcp140.dll") != std::string::npos;
+    })) << "the collision was resolved silently";
+}
+
+TEST(NinjaBackendPeRuntime, AnElfToolchainNeverStagesItsRuntimeDirs) {
+    // `linkRuntimeDirs` means "the toolchain's private runtime" for every
+    // provider — on gcc it is libstdc++'s directory. That is reached through
+    // an rpath, and copying its contents into an output tree would be a
+    // different contract wearing the same name.
+    FakeRedistDir redist;
+    auto plan = msvc_plan_with_redist(redist, "toolchain-coupled");
+    plan.toolchain.compiler     = mcpp::toolchain::CompilerId::GCC;
+    plan.toolchain.binaryPath   = "/usr/bin/g++";
+    plan.toolchain.targetTriple = "x86_64-linux-gnu";
+    EXPECT_TRUE(compute_flags(plan).toolchainRuntimeDeploy.empty());
+}

@@ -383,8 +383,12 @@ ValidationReport validate_changed_artifacts(
     const ArtifactSnapshot& before) {
     ValidationReport report;
     if constexpr (!mcpp::platform::is_linux) return report;
+    // Provider dispatch (see mcpp.platform.runtime_binding): what follows is
+    // ELF/glibc physics, and an identity from another provider — `ucrt@…` on
+    // Windows — has no rules here rather than a missing glibc.
     if (plan.runtimeBinding.platform != "linux"
-        || !plan.runtimeBinding.runtimeId.starts_with("glibc@"))
+        || mcpp::platform::runtime::runtime_provider(
+               plan.runtimeBinding.runtimeId) != "glibc")
         return report;
 
     auto doc = read_cache(plan.outputDir);
