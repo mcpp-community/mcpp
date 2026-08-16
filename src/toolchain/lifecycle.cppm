@@ -874,9 +874,8 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             mcpp::ui::warning(std::format(
                 "installed, but not bound to a C runtime: {}.\n"
                 "         The install itself succeeded. To complete the wiring, "
-                "use a SubOS created by a current xlings — an existing one is "
-                "not backfilled (openxlings/xlings#547) — then re-run this "
-                "command.",
+                "run `xlings self doctor --fix` from inside this SubOS, then "
+                "re-run this command (openxlings/xlings#547).",
                 fixed->skippedReason));
         }
 

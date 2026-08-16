@@ -143,13 +143,28 @@ Info read(const std::filesystem::path& subosDir) {
 
     auto it = doc.find(std::string(kBlock));
     if (it == doc.end() || !it->is_object()) {
+        // The remedy has to be a command that WORKS, and this one has been
+        // wrong twice in opposite directions.
+        //
+        // It first said `xlings self update`, which does not touch a subos
+        // manifest at all. It was then corrected to say nothing backfills and
+        // that recreating the SubOS is the only way -- also wrong: `self
+        // doctor --fix` has always described the ACTIVE subos, and as of
+        // xlings 2026.8.17.1 it describes it truthfully rather than stamping
+        // it with whatever the current default libc happens to be
+        // (openxlings/xlings#547).
+        //
+        // Naming the active subos matters: doctor inspects the one this run is
+        // in and no other, so the user has to be inside the subos that is
+        // missing its block -- which, when mcpp is the one complaining, they
+        // are.
         info.note = std::format(
             "subos '{}' does not describe itself (no `{}` block), so programs "
             "run from here get no environment it declares — a GL application "
-            "will not find its drivers. A SubOS created by a current xlings "
-            "carries it; an existing one is NOT backfilled by `self update` or "
-            "`self doctor --fix` (openxlings/xlings#547), so recreating the "
-            "SubOS is what supplies it today",
+            "will not find its drivers. Run `xlings self doctor --fix` from "
+            "inside this SubOS to have it described (xlings 2026.8.17.1 or "
+            "newer records what the SubOS actually runs; older ones record the "
+            "built-in default, which may not be what is installed here)",
             subosDir.string(), kBlock);
         return info;
     }
