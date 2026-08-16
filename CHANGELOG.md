@@ -3,6 +3,23 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.16.2] — 2026-08-16
+
+### 修复
+
+- **装好的 msvc toolset 在 `mcpp toolchain list` 里不出现。**
+
+  枚举问的是 `toolchain_frontend(root / "bin", pkg)`,而 cl.exe 在
+  `VC/Tools/MSVC/<ver>/bin/Host<h>/<arch>/` —— 深四层。拿不到就 `continue`,
+  于是每一个 msvc payload 都装得好好的、然后**看不见**。
+
+  这个布局有三个地方需要知道:安装知道、构建知道、列表不知道 ——
+  一条规则被内联抄了第三份时的典型结果。三者现在共用
+  `payload_frontend(payloadRoot, pkg, family)`。
+
+  `2026.8.16.1` 带着这条(tag 打在修复之前),其余部分不受影响 ——
+  install / build / default / remove 都是好的,只有 list 少一行。
+
 ## [2026.8.16.1] — 2026-08-16
 
 ### 工具链
