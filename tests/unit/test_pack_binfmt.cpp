@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cstdio>       // stderr is a MACRO — `import std;` cannot export it
 
 import std;
 import mcpp.pack.binfmt;
@@ -104,18 +105,33 @@ std::string elf_with_needed(std::span<const std::string_view> needed) {
 
 // ─── a minimal PE32+ image ──────────────────────────────────────────────
 //
-// One section mapping RVA 0x1000 → file 0x200, an import directory and a
+// One section mapping RVA 0x1000 → file 0x400, an import directory and a
 // delay-import directory inside it.
-std::string pe_with_imports(std::span<const std::string_view> imports,
-                            std::span<const std::string_view> delayImports) {
-    constexpr std::size_t kNt      = 0x40;
-    constexpr std::size_t kOptSize = 0xF0;      // 112 + 16 directories * 8
-    constexpr std::size_t kSecAt   = kNt + 24 + kOptSize;
-    constexpr std::size_t kRawAt   = 0x400;
-    constexpr std::uint32_t kSecVa = 0x1000;
+//
+// WRITTEN AS PLAINLY AS POSSIBLE, and the breadcrumbs are not decoration.
+// The first version used two `std::span` parameters and two lambdas that
+// mutated a captured string through a captured cursor; it segfaulted on the
+// macOS ARM64 runner and NOWHERE else — not under ASan+UBSan with clang 22 +
+// libc++, not as a clang module on x86_64 Linux, not under gcc. Splitting the
+// test proved the crash is HERE, in fixture code that touches no module at
+// all, so the shapes went and the trace stayed: if it moves again, the log
+// says which step.
+void trace(const char* step, const std::string& b) {
+    std::fprintf(stderr, "[pe-fixture] %-14s size=%zu\n", step, b.size());
+    std::fflush(stderr);
+}
 
-    std::string b;
-    b.resize(kRawAt, '\0');
+std::string pe_with_imports(const std::vector<std::string>& imports,
+                            const std::vector<std::string>& delayImports) {
+    const std::size_t   kNt      = 0x40;
+    const std::size_t   kOptSize = 0xF0;      // 112 + 16 directories * 8
+    const std::size_t   kSecAt   = kNt + 24 + kOptSize;
+    const std::size_t   kRawAt   = 0x400;
+    const std::uint32_t kSecVa   = 0x1000;
+    const std::size_t   dirsAt   = kNt + 24 + 112;
+
+    std::string b(kRawAt, '\0');
+    trace("start", b);
     b[0] = 'M'; b[1] = 'Z';
     put(b, 0x3C, kNt, 4);
     b[kNt] = 'P'; b[kNt + 1] = 'E';                     // "PE\0\0"
@@ -123,67 +139,86 @@ std::string pe_with_imports(std::span<const std::string_view> imports,
     put(b, kNt + 6, 1, 2);                               // NumberOfSections
     put(b, kNt + 20, kOptSize, 2);                       // SizeOfOptionalHeader
     put(b, kNt + 24, 0x20b, 2);                          // PE32+
-    const std::size_t dirsAt = kNt + 24 + 112;
     put(b, dirsAt - 4, 16, 4);                           // NumberOfRvaAndSizes
+    trace("headers", b);
 
     // Section header: name, VirtualSize, VirtualAddress, SizeOfRawData,
     // PointerToRawData.
-    const std::string_view secName = ".rdata";
+    const std::string secName = ".rdata";
     for (std::size_t i = 0; i < secName.size(); ++i) b[kSecAt + i] = secName[i];
     put(b, kSecAt + 8,  0x1000, 4);
     put(b, kSecAt + 12, kSecVa, 4);
     put(b, kSecAt + 16, 0x1000, 4);
     put(b, kSecAt + 20, kRawAt, 4);
-
-    auto rva_of = [&](std::size_t fileOff) {
-        return static_cast<std::uint32_t>(kSecVa + (fileOff - kRawAt));
-    };
+    trace("section", b);
 
     // Names first, so the descriptors can point at them.
-    std::vector<std::uint32_t> importNameRvas, delayNameRvas;
+    std::vector<std::uint32_t> importNameRvas;
+    std::vector<std::uint32_t> delayNameRvas;
     std::size_t cursor = kRawAt;
-    auto emit_name = [&](std::string_view n) {
-        auto rva = rva_of(cursor);
-        for (char c : n) put(b, cursor++, static_cast<unsigned char>(c), 1);
-        put(b, cursor++, 0, 1);
-        return rva;
-    };
-    for (auto n : imports)      importNameRvas.push_back(emit_name(n));
-    for (auto n : delayImports) delayNameRvas.push_back(emit_name(n));
+    for (std::size_t which = 0; which < 2; ++which) {
+        const std::vector<std::string>& names = which == 0 ? imports : delayImports;
+        for (std::size_t k = 0; k < names.size(); ++k) {
+            const std::uint32_t rva =
+                static_cast<std::uint32_t>(kSecVa + (cursor - kRawAt));
+            const std::string& n = names[k];
+            for (std::size_t i = 0; i < n.size(); ++i) {
+                put(b, cursor, static_cast<unsigned char>(n[i]), 1);
+                ++cursor;
+            }
+            put(b, cursor, 0, 1);
+            ++cursor;
+            if (which == 0) importNameRvas.push_back(rva);
+            else            delayNameRvas.push_back(rva);
+        }
+    }
+    trace("names", b);
 
     // Import descriptors (20 bytes each) + an all-zero terminator.
-    cursor = (cursor + 15) & ~std::size_t{15};
+    cursor = (cursor + 15) & ~static_cast<std::size_t>(15);
     const std::size_t importAt = cursor;
-    for (auto rva : importNameRvas) {
+    for (std::size_t k = 0; k < importNameRvas.size(); ++k) {
         put(b, cursor + 0,  0x9000, 4);      // OriginalFirstThunk (nonzero)
-        put(b, cursor + 12, rva, 4);         // Name
+        put(b, cursor + 12, importNameRvas[k], 4);   // Name
         put(b, cursor + 16, 0x9100, 4);      // FirstThunk (nonzero)
         cursor += 20;
     }
-    for (int i = 0; i < 20; ++i) put(b, cursor++, 0, 1);
+    for (std::size_t i = 0; i < 20; ++i) { put(b, cursor, 0, 1); ++cursor; }
+    trace("imports", b);
 
     // Delay-import descriptors (32 bytes each). grAttrs bit 0 = the fields
     // are RVAs; without it a descriptor is the pre-VC7 address form and must
     // be skipped rather than misread.
-    cursor = (cursor + 15) & ~std::size_t{15};
+    cursor = (cursor + 15) & ~static_cast<std::size_t>(15);
     const std::size_t delayAt = cursor;
-    for (auto rva : delayNameRvas) {
-        put(b, cursor + 0, 1, 4);            // grAttrs = dlattrRva
-        put(b, cursor + 4, rva, 4);          // rvaDLLName
+    for (std::size_t k = 0; k < delayNameRvas.size(); ++k) {
+        put(b, cursor + 0, 1, 4);                    // grAttrs = dlattrRva
+        put(b, cursor + 4, delayNameRvas[k], 4);     // rvaDLLName
         cursor += 32;
     }
-    for (int i = 0; i < 32; ++i) put(b, cursor++, 0, 1);
+    for (std::size_t i = 0; i < 32; ++i) { put(b, cursor, 0, 1); ++cursor; }
+    trace("delay", b);
 
     if (!imports.empty()) {
-        put(b, dirsAt + 1 * 8, rva_of(importAt), 4);
+        put(b, dirsAt + 1 * 8,
+            static_cast<std::uint32_t>(kSecVa + (importAt - kRawAt)), 4);
         put(b, dirsAt + 1 * 8 + 4, 20 * (imports.size() + 1), 4);
     }
     if (!delayImports.empty()) {
-        put(b, dirsAt + 13 * 8, rva_of(delayAt), 4);
+        put(b, dirsAt + 13 * 8,
+            static_cast<std::uint32_t>(kSecVa + (delayAt - kRawAt)), 4);
         put(b, dirsAt + 13 * 8 + 4, 32 * (delayImports.size() + 1), 4);
     }
+    trace("directories", b);
     return b;
 }
+
+// The three names every PE test below builds an image around. A function, not
+// a namespace-scope constant: a `std::vector<std::string>` at namespace scope
+// in a test TU is a static initializer, and this file is already investigating
+// one platform-specific crash.
+std::vector<std::string> pe_imports()  { return {"KERNEL32.dll", "vcruntime140.dll"}; }
+std::vector<std::string> pe_delayed()  { return {"dbghelp.dll"}; }
 
 struct TempFile {
     std::filesystem::path path;
@@ -235,9 +270,7 @@ TEST(PackBinfmt, AnElfWithNoDynamicSectionHasZeroDepsAndIsNotAnError) {
 // A test that cannot localise its own failure is a test that costs a CI round
 // per hypothesis.
 TEST(PackBinfmt, ThePeFixtureItselfIsWellFormed) {
-    std::array<std::string_view, 2> imports{"KERNEL32.dll", "vcruntime140.dll"};
-    std::array<std::string_view, 1> delayed{"dbghelp.dll"};
-    auto bytes = pe_with_imports(imports, delayed);
+    auto bytes = pe_with_imports(pe_imports(), pe_delayed());
     ASSERT_GT(bytes.size(), 0x400u);
     EXPECT_EQ(bytes.substr(0, 2), "MZ");
     EXPECT_EQ(bytes.substr(0x40, 4), std::string("PE\0\0", 4));
@@ -248,9 +281,7 @@ TEST(PackBinfmt, ThePeFixtureItselfIsWellFormed) {
 }
 
 TEST(PackBinfmt, IdentifiesPe) {
-    std::array<std::string_view, 2> imports{"KERNEL32.dll", "vcruntime140.dll"};
-    std::array<std::string_view, 1> delayed{"dbghelp.dll"};
-    TempFile f{"peid", pe_with_imports(imports, delayed)};
+    TempFile f{"peid", pe_with_imports(pe_imports(), pe_delayed())};
 
     auto id = bf::identify(f.path);
     EXPECT_EQ(id.format, bf::Format::Pe);
@@ -259,9 +290,7 @@ TEST(PackBinfmt, IdentifiesPe) {
 }
 
 TEST(PackBinfmt, ReadsBothPeImportDirectories) {
-    std::array<std::string_view, 2> imports{"KERNEL32.dll", "vcruntime140.dll"};
-    std::array<std::string_view, 1> delayed{"dbghelp.dll"};
-    TempFile f{"peimp", pe_with_imports(imports, delayed)};
+    TempFile f{"peimp", pe_with_imports(pe_imports(), pe_delayed())};
 
     auto names = bf::needed_names(f.path);
     ASSERT_TRUE(names.has_value()) << names.error();
@@ -292,8 +321,7 @@ TEST(PackBinfmt, TruncatedInputIsRejectedRatherThanRead) {
     // Malformed input is ordinary: a half-downloaded file, a text file named
     // `.exe`. Every read is bounds-checked, so the parser is total over it.
     for (std::size_t keep : {0u, 4u, 0x40u, 0x80u}) {
-        std::array<std::string_view, 1> imports{"KERNEL32.dll"};
-        auto bytes = pe_with_imports(imports, {});
+        auto bytes = pe_with_imports({"KERNEL32.dll"}, {});
         bytes.resize(keep);
         TempFile f{"trunc", bytes};
         auto names = bf::needed_names(f.path);
