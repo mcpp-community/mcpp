@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# requires: msvc
-# 97_msvc_managed_toolset.sh — `msvc@<toolset>`: the toolset the manifest
+# requires: msvc xlings-msvc
+# 239_msvc_managed_toolset.sh — `msvc@<toolset>`: the toolset the manifest
 # names is the one that compiles, regardless of what this machine has.
 #
 # WHY THIS TEST CANNOT BE SATISFIED BY THE MACHINE'S COMPILER, which is the

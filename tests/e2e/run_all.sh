@@ -132,6 +132,21 @@ if ls "${MCPP_HOME}/registry/data/xpkgs/xim-x-llvm"/*/share/libc++/v1/std.cppm 2
     CAPS+=(import-std-libcxx)
 fi
 
+# xlings-msvc: mcpp driving the xlings-MANAGED toolset (`msvc@<toolset>`) --
+# a different subject from `msvc`, which means "this machine has a Visual
+# Studio". Opt-in rather than detected, for two reasons:
+#
+#   - it downloads ~380 MB (xim:msvc + xim:windows-sdk) and installs a
+#     toolchain, so it does not belong in a suite whose other 100+ tests are
+#     seconds each;
+#   - its subject is the xlings ECOSYSTEM (index -> payload -> unpack ->
+#     build -> remove), so it fails for reasons that have nothing to do with
+#     the change under test, and mixing it in makes every unrelated PR look
+#     broken when the index moves.
+#
+# It runs in ci-windows-msvc-xlings.yml, which sets this and nothing else.
+[[ "${MCPP_E2E_XLINGS_MSVC:-}" == "1" ]] && CAPS+=(xlings-msvc)
+
 echo "Detected capabilities: ${CAPS[*]:-<none>}"
 
 # ---------------------------------------------------------------------------
@@ -149,7 +164,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # sync when adding a capability.
 KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx macos mingw-cross msvc
             musl nasm no-msvc pack patchelf python3 scan-deps symlink unix-shell
-            windows wine)
+            windows wine xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do
@@ -268,7 +283,14 @@ if [[ -n "${E2E_SHARD:-}" ]]; then
 fi
 SHARD_POS=0
 
+# Optional name filter: E2E_ONLY="<glob>" runs just the matching tests.
+# Used by the workflows that own ONE subject (see ci-windows-msvc-xlings.yml)
+# so the job name and the thing it runs cannot drift apart.
 for test in "$HERE"/[0-9]*.sh; do
+    if [[ -n "${E2E_ONLY:-}" ]]; then
+        # shellcheck disable=SC2053 — glob match is the point
+        [[ "$(basename "$test")" == $E2E_ONLY ]] || continue
+    fi
     if (( SHARD_TOTAL > 1 )); then
         _mine=$(( (SHARD_POS % SHARD_TOTAL) + 1 ))
         SHARD_POS=$(( SHARD_POS + 1 ))

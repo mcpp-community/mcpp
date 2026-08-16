@@ -1,0 +1,98 @@
+name: ci-windows-msvc-xlings
+
+# mcpp driving the xlings-MANAGED MSVC toolset (`msvc@<toolset>`) — the whole
+# chain, end to end: index → payload → unpack → resolve → build → run →
+# remove.
+#
+# WHY THIS IS NOT IN ci-windows-e2e.yml, which also runs MSVC tests:
+#
+#   Different subject. Everything MSVC in the main suite (95_msvc_system,
+#   99_msvc_native_build, 177, 180, 182) tests mcpp against the machine's own
+#   Visual Studio. That is mcpp's code and nothing else's. This job tests
+#   mcpp against the xlings ECOSYSTEM — a package index, a mirror, a payload
+#   set, an unpack recipe — most of which lives in another repository and
+#   moves on its own schedule.
+#
+#   Different failure meaning. When this job goes red it usually means the
+#   index moved, not that the pull request broke something. Mixed into the
+#   main suite that reads as "your change broke Windows", and the honest
+#   signal (100+ fast tests, all about mcpp) gets buried under one slow test
+#   about somebody else's package. Keeping them apart keeps both readable.
+#
+#   Different cost. ~380 MB of downloads (xim:msvc + xim:windows-sdk) and a
+#   real toolchain install, against a suite whose other tests are seconds
+#   each.
+#
+# The split is enforced by a capability, not by a file list: the tests carry
+# `# requires: xlings-msvc`, granted only by MCPP_E2E_XLINGS_MSVC=1 below. So
+# the main suite skips them by construction, and a new test joins this job by
+# declaring the capability — there is no second list to keep in sync.
+#
+# Paired workflows: ci-windows.yml, ci-windows-e2e.yml.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xlings-msvc:
+    name: xlings-managed msvc toolset (windows x64, self-host)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      MCPP_HOME: C:\Users\runneradmin\.mcpp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+          # Newest mcpp.exe, not an arbitrary one — `target/` is restored from
+          # cache and keeps a directory per build fingerprint. Same reasoning
+          # as ci-windows-e2e.yml, where picking wrong ran the previous
+          # release's binary.
+          MCPP_SELF=$(find target -name "mcpp.exe" -path "*/bin/*" -printf "%T@ %p\n" \
+              | sort -rn | head -1 | cut -d" " -f2-)
+          test -n "$MCPP_SELF" || { echo "FAIL: no mcpp.exe"; exit 1; }
+          MCPP_SELF=$(cd "$(dirname "$MCPP_SELF")" && pwd)/$(basename "$MCPP_SELF")
+          "$MCPP_SELF" --version
+          echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
+
+      - name: xlings-managed msvc e2e
+        shell: bash
+        timeout-minutes: 30
+        env:
+          # Grants the `xlings-msvc` capability. Without it these tests skip
+          # everywhere, which is exactly what the main suite wants.
+          MCPP_E2E_XLINGS_MSVC: '1'
+          # Name what this job runs, so the job title and its contents cannot
+          # drift apart. Widen the glob when a second test joins.
+          E2E_ONLY: '239_*.sh'
+        run: |
+          export MCPP="$MCPP_SELF"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP_SELF" self config --mirror GLOBAL
+          bash tests/e2e/run_all.sh
+
+      # A run that matched nothing is a green tick for having done nothing,
+      # and it looks exactly like a run that passed. E2E_ONLY is a glob typed
+      # by hand; if it stops matching, say so here rather than in a report
+      # nobody reads.
+      - name: Fail if the filter selected no tests
+        if: always()
+        shell: bash
+        run: |
+          n=$(ls tests/e2e/239_*.sh 2>/dev/null | wc -l)
+          test "$n" -gt 0 || { echo "FAIL: E2E_ONLY matched no tests"; exit 1; }
+          echo "selected $n test(s)"
