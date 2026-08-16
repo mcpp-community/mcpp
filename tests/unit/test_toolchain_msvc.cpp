@@ -84,6 +84,30 @@ TEST(MsvcSpec, SystemOriginIsTheUnversionedSpec) {
     EXPECT_FALSE(is_system_toolchain(*gcc));
 }
 
+TEST(MsvcSpec, OnlyMsvcHasASystemOrigin) {
+    // xlings depends on the host as little as it can: a toolchain comes from
+    // a payload, which is what makes "the manifest says 14.44.35207" true on
+    // every machine rather than on the one that happened to have it.
+    // `gcc@system` would invite that uncertainty back.
+    //
+    // MSVC is the exception because Windows is — Visual Studio is often
+    // already installed and cannot always be redistributed. A platform fact,
+    // not a general capability, so it is not generalised.
+    //
+    // Rejected rather than merely unimplemented: an unimplemented spelling
+    // fails later, somewhere else, with a message about something else.
+    for (auto s : {"gcc@system", "llvm@system", "clang@system"}) {
+        auto spec = parse_toolchain_spec(s);
+        ASSERT_FALSE(spec.has_value()) << s << " was accepted";
+        // The message has to say what to do instead, or it is just a refusal.
+        EXPECT_NE(spec.error().find("@<version>"), std::string::npos)
+            << s << ": " << spec.error();
+        EXPECT_NE(spec.error().find("msvc@system"), std::string::npos)
+            << s << ": " << spec.error();
+    }
+    EXPECT_TRUE(parse_toolchain_spec("msvc@system").has_value());
+}
+
 TEST(MsvcSpec, ToolsetVersionIsAManagedPayloadNotASystemSpec) {
     // The defect this closes: EVERY msvc spec used to be a system spec, so a
     // manifest could name a toolset and silently get whatever the machine

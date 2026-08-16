@@ -229,6 +229,35 @@ parse_toolchain_spec(std::string compilerArg,
             "supported alias like mingw / musl-gcc)", compilerArg));
     }
 
+    // `@system` means "whatever this machine has", and it is deliberately
+    // available for MSVC ONLY.
+    //
+    // xlings depends on the host as little as it can: a toolchain comes from
+    // a payload, which is what makes "the manifest says 14.44.35207" true on
+    // every machine instead of on the one that happened to have it. Offering
+    // `gcc@system` would invite the uncertainty back in, and the alternative
+    // is one command away.
+    //
+    // MSVC is the exception because Windows is: Visual Studio is frequently
+    // already installed and cannot always be redistributed, so refusing to
+    // use it would mean refusing to build. That is a platform fact, not a
+    // general capability, so it is not generalised.
+    //
+    // Rejected here rather than left unimplemented: an unimplemented spelling
+    // fails somewhere further in with a message about something else.
+    if (norm->version == "system" && norm->family != "msvc") {
+        return std::unexpected(std::format(
+            "'{}@system' is not a thing — mcpp does not build with the "
+            "machine's own {}.\n"
+            "  A toolchain comes from a payload, so a manifest means the same "
+            "thing on every machine.\n"
+            "  Name a version instead: `{}@<version>` "
+            "(`mcpp toolchain list` shows what is available).\n"
+            "  Only `msvc@system` exists, because Visual Studio cannot always "
+            "be redistributed.",
+            norm->family, norm->family, norm->family));
+    }
+
     ToolchainSpec spec;
     if      (norm->family == "llvm") spec.family = Family::Llvm;
     else if (norm->family == "msvc") spec.family = Family::Msvc;
