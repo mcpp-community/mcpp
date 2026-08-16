@@ -93,8 +93,13 @@ std::optional<MsvcInstallation> detect_installation();
 // anywhere, which is what makes the managed path testable off Windows. The
 // cl banner simply stays unparsed there and `display_version()` falls back
 // to the declared version.
+// `identifyVersion = false` skips running cl.exe for its banner. Use it when
+// the question is only "is there a usable toolset here" -- `msvc_available_here`
+// asks that on every build, and spawning a compiler per installed payload to
+// answer it is a latency regression on exactly the machines that have several.
 std::optional<MsvcInstallation> installation_at(const std::filesystem::path& vsRoot,
-                                                std::string_view toolsVersion);
+                                                std::string_view toolsVersion,
+                                                bool identifyVersion = true);
 
 // Parse a cl.exe banner into (version, arch). Token-based so localized
 // banners work: first "d.d.d[.d]" run is the version, arch is the arm64/x64/
@@ -514,7 +519,8 @@ namespace {
 // on a Linux CI runner.
 std::optional<MsvcInstallation>
 installation_from_tools_dir(const std::filesystem::path& vsRoot,
-                            const std::filesystem::path& tools);
+                            const std::filesystem::path& tools,
+                            bool identifyVersion = true);
 
 // Capture cl.exe's banner. cl prints it (plus a usage complaint) when run
 // bare; the exit status is irrelevant — parse whatever came out.
@@ -526,7 +532,8 @@ std::string capture_cl_banner(const std::filesystem::path& cl) {
 
 std::optional<MsvcInstallation>
 installation_from_tools_dir(const std::filesystem::path& vsRoot,
-                            const std::filesystem::path& tools) {
+                            const std::filesystem::path& tools,
+                            bool identifyVersion) {
     MsvcInstallation inst;
     inst.vsRoot       = vsRoot;
     inst.vsProduct    = product_from_vs_root(vsRoot);
@@ -558,9 +565,11 @@ installation_from_tools_dir(const std::filesystem::path& vsRoot,
     // Version identification: banner is authoritative; tolerate failure
     // (clVersion stays empty and display_version() falls back to the
     // tools-dir version). Off Windows that failure is the normal case.
-    if (auto parsed = parse_cl_banner(capture_cl_banner(inst.clPath))) {
-        inst.clVersion = parsed->first;
-        if (!parsed->second.empty()) inst.arch = parsed->second;
+    if (identifyVersion) {
+        if (auto parsed = parse_cl_banner(capture_cl_banner(inst.clPath))) {
+            inst.clVersion = parsed->first;
+            if (!parsed->second.empty()) inst.arch = parsed->second;
+        }
     }
     return inst;
 }
@@ -568,12 +577,13 @@ installation_from_tools_dir(const std::filesystem::path& vsRoot,
 } // namespace
 
 std::optional<MsvcInstallation> installation_at(const std::filesystem::path& vsRoot,
-                                                std::string_view toolsVersion) {
+                                                std::string_view toolsVersion,
+                                                bool identifyVersion) {
     if (toolsVersion.empty()) return std::nullopt;
     auto tools = vsRoot / "VC" / "Tools" / "MSVC" / std::string(toolsVersion);
     std::error_code ec;
     if (!std::filesystem::is_directory(tools, ec)) return std::nullopt;
-    return installation_from_tools_dir(vsRoot, tools);
+    return installation_from_tools_dir(vsRoot, tools, identifyVersion);
 }
 
 std::optional<MsvcInstallation> detect_installation() {
@@ -708,7 +718,9 @@ bool msvc_available_here([[maybe_unused]] const std::filesystem::path& pkgsDir) 
     if (!std::filesystem::is_directory(root, ec)) return false;
     for (auto& v : std::filesystem::directory_iterator(root, ec)) {
         if (!v.is_directory(ec)) continue;
-        if (installation_at(v.path(), v.path().filename().string())) return true;
+        // identifyVersion=false: this asks IF a toolset is here, never which.
+        if (installation_at(v.path(), v.path().filename().string(),
+                            /*identifyVersion=*/false)) return true;
     }
     return false;
 #else

@@ -3,6 +3,30 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### 修复
+
+- **卸载后的清扫会波及**别的版本**,而那可能正在被另一个进程解压。**
+
+  `sweep_parked_payloads` 原来把整个 family 目录扫一遍,把**任何**没有文件的
+  版本目录删掉。但安装是**逐步**往版本目录里写文件的(所以 package_fetcher
+  用标记文件而不是"目录在"来判断装完没有),于是**另一个正在解压的版本**在那
+  短暂窗口里和"残骨架"长得一模一样 —— 共用一个 `MCPP_HOME` 的机器上
+  (自托管 runner、共享开发机)两个 mcpp 进程同时跑是常态。
+
+  `.trash-*` 照旧全扫(那个名字只有这段代码会写);"没有文件的骨架"这一条
+  收窄成**只扫这条命令点名的那一个版本**。
+
+- **`msvc_available_here()` 每次构建都要为每个已装 payload 起一次 cl.exe。**
+
+  它只想知道"这儿有没有能用的 toolset",却走了完整的 `installation_at()`,
+  那里面会跑一次 cl 拿 banner 来定版本。而这个判据在**每次构建**的 MSVC ABI
+  门上都会被问到 —— 正好是装了多个 toolset 的机器最慢。
+
+  `installation_at(..., identifyVersion=false)` 跳过 banner。**布局仍然只有
+  一份实现** —— 不是再抄一遍路径拼接。
+
 ## [2026.8.16.3] — 2026-08-16
 
 ### 修复

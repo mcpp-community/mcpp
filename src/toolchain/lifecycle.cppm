@@ -330,20 +330,33 @@ export bool remove_payload_tree(const std::filesystem::path& root,
 // Best-effort and run before a lifecycle operation rather than after one: by
 // the next command the process that held the bytes is normally gone, so this
 // is where they actually get freed.
-export void sweep_parked_payloads(const std::filesystem::path& pkgRoot) {
+export void sweep_parked_payloads(const std::filesystem::path& pkgRoot,
+                           const std::filesystem::path& skeleton) {
     std::error_code ec;
     if (!std::filesystem::is_directory(pkgRoot, ec)) return;
+
+    // `.trash-*` is a name only this code writes, so deleting any of them is
+    // safe regardless of who else is running.
     for (auto& e : std::filesystem::directory_iterator(pkgRoot, ec)) {
-        if (!e.is_directory(ec)) continue;
-        if (e.path().filename().string().starts_with(".trash-")) {
+        if (e.is_directory(ec)
+            && e.path().filename().string().starts_with(".trash-"))
             std::filesystem::remove_all(e.path(), ec);
-        } else if (!any_regular_file(e.path())) {
-            // A version directory with no files in it is the skeleton a
-            // removal could not delete because something held a directory
-            // open. A real install always has files, so this cannot eat one.
-            std::filesystem::remove_all(e.path(), ec);
-        }
     }
+
+    // The file-less skeleton, on the other hand, is swept for ONE named
+    // version — the one this command is about — and never for whatever else
+    // happens to be sitting in the family directory.
+    //
+    // "No files in it" is not a safe thing to conclude about someone else's
+    // directory: an install populates a version directory over time (it is
+    // why package_fetcher tracks completeness with a marker file rather than
+    // by existence), so a concurrent `toolchain install` of a DIFFERENT
+    // version is briefly indistinguishable from a skeleton, and sweeping the
+    // whole family would delete it mid-extraction. Two mcpp processes against
+    // one MCPP_HOME is ordinary on a shared or self-hosted runner.
+    if (!skeleton.empty() && std::filesystem::is_directory(skeleton, ec)
+        && !any_regular_file(skeleton))
+        std::filesystem::remove_all(skeleton, ec);
 }
 
 // The first entry that is still there after a failed removal. The error code
@@ -763,10 +776,11 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // A previous `remove` may have parked a held payload beside this one;
         // by now whatever held it has exited, so free the bytes before adding
         // another few hundred MB.
-        sweep_parked_payloads(
-            mcpp::xlings::paths::xim_tool(mcpp::config::make_xlings_env(cfg),
-                                          pkg.ximName, pkg.ximVersion)
-                .parent_path());
+        {
+            auto vdir = mcpp::xlings::paths::xim_tool(
+                mcpp::config::make_xlings_env(cfg), pkg.ximName, pkg.ximVersion);
+            sweep_parked_payloads(vdir.parent_path(), vdir);
+        }
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         mcpp::log::verbose("toolchain", std::format("main install result: {}",
             payload ? ("ok → " + payload->root.string()) : payload.error().message));
@@ -1015,7 +1029,7 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
             mcpp::ui::error(std::format("{} is not installed", spec));
             return 1;
         }
-        sweep_parked_payloads(installDir.parent_path());
+        sweep_parked_payloads(installDir.parent_path(), installDir);
         if (!remove_payload_tree(installDir, ec)) {
             // Say that the payload is now BROKEN, not merely that removal
             // failed. `remove_all` deletes what it can before it stops, so a

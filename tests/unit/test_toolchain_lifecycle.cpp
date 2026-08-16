@@ -47,6 +47,33 @@ TEST(ToolchainRemove, AnOrdinaryPayloadIsJustDeleted) {
     std::filesystem::remove_all(dir, ec);
 }
 
+TEST(ToolchainRemove, TheSweepDoesNotTouchAnotherVersionThatHasNoFilesYet) {
+    // An install populates a version directory over time, so a DIFFERENT
+    // version being extracted right now is briefly indistinguishable from a
+    // leftover skeleton. Two mcpp processes against one MCPP_HOME is ordinary
+    // on a shared or self-hosted runner, and deleting someone else's
+    // half-extracted toolchain is not a cleanup.
+    //
+    // So the file-less sweep applies to the ONE version this command names.
+    auto pkgRoot = std::filesystem::temp_directory_path()
+                 / std::format("mcpp-sweep3-{}", std::chrono::steady_clock::now()
+                                                     .time_since_epoch().count());
+    auto mine   = pkgRoot / "14.44.35207";       // the one being removed
+    auto theirs = pkgRoot / "14.52.36629";       // someone else, mid-extract
+    std::filesystem::create_directories(mine / "bin");
+    std::filesystem::create_directories(theirs / "VC" / "Tools");
+
+    sweep_parked_payloads(pkgRoot, mine);
+
+    EXPECT_FALSE(std::filesystem::exists(mine)) << "the named skeleton survived";
+    EXPECT_TRUE(std::filesystem::exists(theirs))
+        << "swept a version this command was not about — that is someone "
+           "else's install being extracted";
+
+    std::error_code ec;
+    std::filesystem::remove_all(pkgRoot, ec);
+}
+
 TEST(ToolchainRemove, TheSweepDeletesParkedPayloadsAndNothingElse) {
     // The sweep runs before every install and remove, so it must be precise:
     // `.trash-*` goes, an installed version directory beside it stays.
@@ -58,7 +85,7 @@ TEST(ToolchainRemove, TheSweepDeletesParkedPayloadsAndNothingElse) {
     std::filesystem::create_directories(pkgRoot / "14.44.35207" / "bin");
     std::ofstream{pkgRoot / "14.44.35207" / "bin" / "cl.exe"} << "keep me";
 
-    sweep_parked_payloads(pkgRoot);
+    sweep_parked_payloads(pkgRoot, {});
 
     EXPECT_FALSE(std::filesystem::exists(pkgRoot / ".trash-14.44.35207-1"))
         << "parked payload was not swept";
@@ -100,7 +127,7 @@ TEST(ToolchainRemove, TheSweepAlsoClearsAFileLessSkeleton) {
     std::filesystem::create_directories(pkgRoot / "14.52.36629" / "bin");
     std::ofstream{pkgRoot / "14.52.36629" / "bin" / "cl.exe"} << "a real one";
 
-    sweep_parked_payloads(pkgRoot);
+    sweep_parked_payloads(pkgRoot, pkgRoot / "14.44.35207");
 
     EXPECT_FALSE(std::filesystem::exists(pkgRoot / "14.44.35207"))
         << "the empty skeleton survived the sweep";
