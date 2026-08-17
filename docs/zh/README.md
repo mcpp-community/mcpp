@@ -15,3 +15,11 @@
 - [10 - 发布一个库到 mcpp-index](10-publishing-a-library.md)
 - [11 - 机器可读输出](11-machine-output.md)
 - [12 - 分发预编译库](12-binary-distribution.md)
+
+## 规范文档
+
+规范性文档 —— 语义、约束与匹配规则,每条规则标注其实现状态。
+面向索引作者、贡献者与下游工具。
+
+- [spec/](../spec/README.md) —— 全部规范的索引
+  - [SPEC-001 —— 包身份、`[dependencies]` 选择器与匹配](../spec/package-identity.md)

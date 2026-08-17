@@ -134,7 +134,7 @@ required_features = ["gui"]                   # 仅当 feature `gui` 激活时�
 
 **构建配置该放哪** —— 当多个二进制需要不同配置时:
 
-| 你想要 | 用 |
+| 目标 | 使用 |
 |---|---|
 | 某二进制**自己入口**上的不同宏/标志 | per-target `defines` / `cxxflags`(见上) |
 | 两个产品差异在它们**共享**的代码里 | 拆成 [workspace](06-workspace.md) member,各自 `[build]` 标志,共享一个 `lib` |
@@ -257,7 +257,7 @@ GCC 用 `-x c++`,MSVC 用 `/interface /TP`),所以即使编译器驱动从没听
 也能工作。这也是为什么任何扩展名都被允许:mcpp 不需要编译器认识它。
 
 > **发布须知**:旧版 mcpp 不认识这个键 —— 它会警告、忽略,然后把那些文件当作普通
-> 翻译单元编译,得到一个**错误的构建**而不是一次干净的失败。如果你要发布一个用了
+> 翻译单元编译,得到一个**错误的构建**而不是一次干净的失败。发布一个用了
 > `module_extensions` 的包,请在它的索引描述符里声明 mcpp 版本下限。
 
 ### 构建程序超时(`build_program_timeout`)
@@ -338,7 +338,7 @@ C++ 运行时的进程。
 
 在 ELF 上显式写 `shared = "self-contained"` 是支持的,而且就是字面意思:库会内嵌
 运行时。此时 mcpp 会额外发 `-Wl,--exclude-libs`(针对标准库归档),让内嵌的那份
-留在库的动态符号表之外,链接它的任何东西都捡不走。你自己代码产生的模板实例化
+留在库的动态符号表之外,链接它的任何东西都捡不走。本工程代码产生的模板实例化
 (`std::string` 之类的 weak/COMDAT 符号)仍然会导出 —— 那是 C++ ABI 的预期行为,
 不是这里要防的泄漏。
 
@@ -380,7 +380,7 @@ Windows 组件(Win10 起),mcpp 从不分发它;而 `vcruntime140.dll` /
 > 自 2026.8.16 起它真的生效,于是一份从那个年代带着
 > `cxx_runtime = "self-contained"` 的 manifest **会在升级时换掉 CRT 模型**:
 > 从 `/MD` 变成 `/MT`。它不是同一个模型的更严格版本,而且因为这个值一直是合法的,
-> 切换是**静默**的。如果你的工程是在这条键还不起作用时写下它的,请重新决定你真正要哪一个。
+> 切换是**静默**的。若工程是在这条键尚未生效时写下它的,应重新确认所需的取值。
 
 把它和 `/MT` 一起用是**矛盾**而不是缺功能 —— 静态 CRT 根本没有 DLL 可以耦合 ——
 所以会被报出来并落到 `self-contained`。另一半由 `mcpp pack` 兜底:什么都不打包的
@@ -397,7 +397,7 @@ Windows 组件(Win10 起),mcpp 从不分发它;而 `vcruntime140.dll` /
 > `ios_base::Init` 守卫 —— 于是从 `libc++.a` 里拉出来的流初始化器本来会排在
 > 程序自己的全局构造函数**之后**:一个在构造函数里碰 `std::cout` 的全局对象会
 > 读到尚未构造的流,进程启动即崩。mcpp 会把一个极小的生成对象排在链接最前面
-> 把流顶上去,你的代码不需要做任何事。详见 mcpp-community/mcpp#336。
+> 把流顶上去,调用方代码无需改动。详见 mcpp-community/mcpp#336。
 
 `defines` 接受**裸**宏名(不带 `-D`),把每个条目脱糖为 `-D<x>`,同时作用于 C 和
 C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入**编译器自己的**
@@ -565,7 +565,7 @@ feature(库若支持该旋钮,应在自己的 `[features]` 中声明 `backend-*`
 **Git 依赖与 `mcpp.lock`**:`tag` 和 `rev` 本身就指向历史中的固定点,而 `branch`
 是会动的。首次构建把分支解析成一个 commit 并写进 `mcpp.lock`,此后每次构建都重建
 **那个** commit —— lock 是权威而不是缓存提示,所以删掉 `~/.mcpp/git` 或换一台机器
-都不会悄悄把你挪到更新的分支头上。要新的分支头,得显式要:
+都不会静默切换到更新的分支头。需要新的分支头时,必须显式指定:
 
 ```bash
 mcpp update mylib     # 丢掉记录的 commit,下次构建重新解析
@@ -631,8 +631,8 @@ package:
   (or run `mcpp add compat.gtest@1.15.2`). This fallback is removed in 2026.9.
 ```
 
-写进 `mcpp.lock`、install 与 cache 的是**规范身份**,歧义拼写只存在于你的
-`mcpp.toml` 里,直到你改它;`mcpp add gtest@1.15.2` 会替你改。
+写进 `mcpp.lock`、install 与 cache 的是**规范身份**;歧义拼写只存在于工程的
+`mcpp.toml` 中,直到被改写 —— `mcpp add gtest@1.15.2` 会完成这次改写。
 
 过渡期**不适用于**写明 namespace 的 selector(`mcpplibs.gtest` 未命中就是未命中),
 裸名也**仍然**到不了第三方 namespace。
@@ -662,6 +662,129 @@ package = {
 省略。省略 `tname` 时选择唯一显式 default；若未写 `default = true` 且只有一个模板，
 该单模板自动成为默认。多个未标默认的模板会报错，绝不按目录顺序选择。规范表见
 `docs/spec/package-identity.md` §4.4。
+#### mcpp 何时刷新包索引
+
+`mcpp build` / `run` / `test` **只在依赖无法用本地索引解析时**刷新包索引,绝不会
+因为"时间到了"就刷。具体地说,只有三种情况会触发:本地根本没有索引、依赖的描述符
+不在其中、或 SemVer 约束在本地已知版本里无解。只要所有依赖都能在本地解析出来,
+无论本地索引多旧,构建都不会发起任何网络请求。
+
+由此带来的一个需要知道的语义:`^1.2` 这类约束是对**本地索引已知的版本**求解的。
+若上游在上次刷新之后发布了 `1.3.0`,需要主动获取:
+
+```bash
+mcpp index update     # 同步索引
+mcpp update           # 同步索引,并重新解析依赖
+mcpp index status     # 看本地现状:状态、年龄、修订号
+```
+
+三个开关,优先级从高到低:
+
+| 开关 | 作用 |
+|---|---|
+| `--offline`(任意命令) | 完全不碰网络——不刷索引、不下载、不自动装工具链,也不发 `git ls-remote`/`clone`。已安装的东西照常构建,包括 commit 已在 `mcpp.lock`、克隆已在缓存里的 git 依赖 |
+| `MCPP_OFFLINE=1` | 同上,作用于整个 shell 会话或 CI job |
+| `~/.mcpp/config.toml` 里 `[index] auto_refresh = false` | 永不自动刷新索引,但下载仍然可用 |
+
+`MCPP_NO_AUTO_INSTALL=1` 作为 `--offline` 的旧式窄化拼写仍然有效(它只管工具链的
+自动安装)。
+
+任意命令加 `-v` 可以看到每个依赖的判定结果与原因。
+
+### 2.6 `[dev-dependencies]` —— 测试依赖
+
+```toml
+[dev-dependencies.compat]
+gtest = "1.15.2"
+```
+
+`mcpp build` 忽略这些依赖;`mcpp test` 解析并使用它们。`mcpp test` 自动发现
+`tests/**/*.cpp` 并把它们编译为测试二进制。运行器与框架无关:每个文件是一个独立的
+二进制,以退出码判定 —— 裸 `main`、gtest(经 `[dev-dependencies]` + `gtest_main`)
+或任何其他框架的行为完全一致,`-- args` 会转发给每个测试二进制
+(例如 `-- --gtest_filter=...`)。注意:合成的测试目标名可能包含 `/`
+(`tests/00-a/0.cpp` → `00-a/0`),这与 `[targets.*]` 名不同 —— 两个命名空间是
+刻意分开的(测试目标从不进入 manifest,也不参与发布)。测试按其相对 `tests/` 的
+路径命名(`tests/00-a/0.cpp` → `00-a/0`),每个测试独立编译(一个测试写坏只让它
+自己失败;包或依赖损坏则报告为构建错误),`mcpp test <pattern>` 与
+`--message-format json` 分别提供过滤与机器可读输出。
+
+### 2.7 `[toolchain]` —— 工具链配置
+
+```toml
+[toolchain]
+default = "gcc@16.1.0"
+
+# 交叉编译目标覆盖
+[target.x86_64-linux-musl]
+toolchain = "gcc@16.1.0"
+linkage   = "static"
+```
+
+### 2.7.1 `[target.*]` —— 平台条件依赖与 flag
+
+用 `[target.<sel>]` 表把依赖与构建 flag 限定到某个平台。选择器 `<sel>` 有三种形式:
+
+| 选择器 | 含义 | 示例 |
+|---|---|---|
+| **裸 OS 别名** | 单个 OS / 族 —— 简洁且常用的形式 | `[target.windows]`、`[target.unix]` |
+| **`cfg(...)` 谓词** | 复合条件(arch / env / 组合子) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
+| **精确三元组** | 某个具体目标(同时承载 `toolchain` / `linkage`) | `[target.x86_64-linux-musl]` |
+
+一个选择器可以承载平台条件的**依赖**与**构建 flag**:
+
+```toml
+# 简洁的裸别名形式 —— 仅在 Windows 上拉取并链接 OpenBLAS。
+[target.windows.dependencies.compat]
+openblas = "0.3.33"
+[target.windows.build]
+ldflags = ["-Llib", "-llibopenblas"]
+
+# cfg(...) 用于复合谓词(文法:all/any/not 作用于 os/arch/family/env,
+# 以及裸别名 windows/unix/linux/macos)。
+[target.'cfg(all(linux, not(arch = "aarch64")))'.build]
+cxxflags = ["-march=x86-64-v2"]
+```
+
+`[target.windows]` 与 `[target.'cfg(windows)']` 完全等价 —— 裸别名
+`windows` / `linux` / `macos` / `unix` 都不是合法的目标三元组,因此不存在歧义。
+单个 OS/族用裸形式,arch/env 条件与组合子用 `cfg(...)`。
+
+- **可用键**:`dependencies` / `dev-dependencies` / `build-dependencies` /
+  `feature-deps.<feature>`(mcpp 2026.8.6.2+ —— 见 §2.14;feature 本身无条件注册,
+  只有它的依赖集合受限定),以及带 `cflags` / `cxxflags` / `ldflags` / `sources`
+  的 `build`(mcpp 0.0.95+ —— 条件源码 glob,例如把 `src/x86/**/*.asm` 收在
+  `cfg(arch = "x86_64")` 之后;`!` 排除 glob 在此同样有效),再加 `flags` 与
+  `include_dirs` / `include_dirs_after`(mcpp 0.0.102+)。
+- **`build` 接受的恰好是*可叠加的构建输入*集合** —— 那些以追加方式合并、
+  并在谓词求值之后被消费的东西。`linkage`、`target` 与档案开关刻意不在其中:
+  它们是**目标选择的输入**(用一个针对 `target` 求值的谓词去条件化 `target`
+  是循环的),或者需要覆盖而非追加的语义。
+- **按解析后的目标求值** —— 交叉构建取 `--target` 三元组,否则取宿主。因此原生
+  Linux 构建**根本不会下载** `[target.windows]` 依赖。
+- **优先级**:精确三元组表胜过 `cfg`/别名表;多个命中的谓词表,其 flag 按序拼接。
+  条件项追加在无条件 `[build]` 项**之后**,因此在 GNU「最后一个 flag 生效」的
+  规则下,条件规则会覆盖更宽的无条件规则。这正是让按 OS **移除**成为可表达的原因:
+
+  ```toml
+  [build]
+  flags = [{ glob = "third_party/zlib/**", defines = ["HAVE_UNISTD_H=1"] }]
+
+  # clang-MSVC 没有 <unistd.h>:撤销基础 define,加上 windows 的那个。
+  [target.'cfg(windows)'.build]
+  flags = [{ glob = "third_party/zlib/**",
+             defines = ["NO_FSEEKO"], cflags = ["-UHAVE_UNISTD_H"] }]
+  ```
+
+- **未命中当前目标的条件 `flags` 条目根本不存在**,因此它不会产生
+  「glob 未匹配到任何源文件」的警告。于是一份 manifest 可以同时携带三个 OS 的
+  flag 表,而不会在另外两个上制造噪声 —— 与未启用 feature 的条目根本不存在是
+  同一个道理。**无条件**表里的零命中 glob 仍然告警,因为那里它是真实缺陷。
+- **`toolchain` / `linkage` 仅限精确三元组** —— 它们描述某一个具体的交叉目标,
+  因此写在 `[target.<triple>]` 下(见上),而不是裸别名或 `cfg(...)` 下。
+
+### 2.8 `[features]` —— Feature(Cargo 风格,可加性)
+
 #### 表形式 —— 让 feature 贡献的不止是隐含 feature
 
 `[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature
@@ -700,35 +823,6 @@ simd       = { sources = ["src/simd/**"], flags = [
   而不必写成 base 规则、在 feature-off 构建里留下必死的 glob。与 `defines` 不同,
   feature `flags` 是**私有 per-TU 构建旗标**——永不传播给消费者(与 `[build].flags`
   同契约),因此不破坏加性模型:glob 限定作用面、顺序确定、无跨包效应。
-
-#### mcpp 何时刷新包索引
-
-`mcpp build` / `run` / `test` **只在依赖无法用本地索引解析时**刷新包索引,绝不会
-因为"时间到了"就刷。具体地说,只有三种情况会触发:本地根本没有索引、依赖的描述符
-不在其中、或 SemVer 约束在本地已知版本里无解。只要所有依赖都能在本地解析出来,
-无论本地索引多旧,构建都不会发起任何网络请求。
-
-由此带来的一个需要知道的语义:`^1.2` 这类约束是对**本地索引已知的版本**求解的。
-如果上游在你上次刷新之后发布了 `1.3.0`,你需要主动去取:
-
-```bash
-mcpp index update     # 同步索引
-mcpp update           # 同步索引,并重新解析依赖
-mcpp index status     # 看本地现状:状态、年龄、修订号
-```
-
-三个开关,优先级从高到低:
-
-| 开关 | 作用 |
-|---|---|
-| `--offline`(任意命令) | 完全不碰网络——不刷索引、不下载、不自动装工具链,也不发 `git ls-remote`/`clone`。已安装的东西照常构建,包括 commit 已在 `mcpp.lock`、克隆已在缓存里的 git 依赖 |
-| `MCPP_OFFLINE=1` | 同上,作用于整个 shell 会话或 CI job |
-| `~/.mcpp/config.toml` 里 `[index] auto_refresh = false` | 永不自动刷新索引,但下载仍然可用 |
-
-`MCPP_NO_AUTO_INSTALL=1` 作为 `--offline` 的旧式窄化拼写仍然有效(它只管工具链的
-自动安装)。
-
-任意命令加 `-v` 可以看到每个依赖的判定结果与原因。
 
 ### 2.8.1 `provides` / `requires` —— 能力(后端选择)
 
@@ -803,6 +897,42 @@ features = {
     },
 }
 ```
+
+### 2.8.3 `[scan_overrides."<glob>"]` —— 作者断言的扫描结果
+
+默认的模块扫描器是文本级的一遍扫描,它(刻意地)拒绝条件预处理块内部的 `import`
+语句。有些合法的模块单元带着这种写法 —— 例如 fmt 官方的 `src/fmt.cc` 把
+`import std;` 收在 `#ifdef FMT_IMPORT_STD` 之后。当该文件的 import 集合已知且稳定时,
+用声明取代扫描:
+
+```toml
+[modules]
+sources = ["src/**/*.cppm", "vendor/fmt.cc"]
+
+[scan_overrides."vendor/fmt.cc"]
+provides = ["fmt"]      # 每个单元至多提供一个模块
+imports  = ["std"]
+```
+
+被 glob 命中的文件跳过文本扫描,声明的单元直接进入模块图。该声明**每次构建都被审计**:
+编译器自己对该文件的 P1689 扫描结果(`.ddi` dyndep 输入)会与之比对,任何分歧都会让
+那条编译边失败并打印双方 —— 陈旧的声明无法静默污染模块图。未命中任何源文件的
+override glob 是错误。
+
+同一个键在 xpkg 描述符(索引包)中同样存在:
+
+```lua
+mcpp = {
+    sources  = { "*/src/fmt.cc" },
+    cxxflags = { "-DFMT_IMPORT_STD" },
+    scan_overrides = {
+        ["*/src/fmt.cc"] = { provides = { "fmt" }, imports = { "std" } },
+    },
+}
+```
+
+要把 plan 与 ddi 的比对审计扩展到**每一个**模块单元(而不只是 override),
+在生成构建时设置 `MCPP_VERIFY_MODGRAPH=1`。
 
 ### 2.9 `[profile.<name>]` — 构建档案
 
@@ -1019,8 +1149,8 @@ grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
 
 - **永远是 host 二进制。** 即使 `mcpp build --target <triple>`,工具依然为**本机**
   构建 —— 代码生成器必须在这里跑。它是一次独立的、面向 host 的子构建:工具包
-  自己的 `[toolchain]`、自己的依赖解析生效,不需要与你的构建一致。之所以安全,
-  是因为可执行文件与你的代码**零 ABI 接触**。
+  自己的 `[toolchain]`、自己的依赖解析生效,不需要与当前构建一致。安全的原因是
+  可执行文件与工程代码**零 ABI 接触**。
 - **单一版本轴。** 工具的版本**就是**依赖的版本,所以「protoc 与其运行时不匹配」
   这种情况**不可表达**。(把工具单独打包正是会出这个问题,而且它在**运行期**才咬人,
   不是编译期。)
@@ -1030,7 +1160,7 @@ grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
 - **全局缓存**,按 包版本 × host 工具链 × feature × 自身依赖闭包 键控 —— 每台机器
   构建一次,而不是每个工程一次。
 
-#### `[tools.overrides]` —— 用你已经有的二进制
+#### `[tools.overrides]` —— 使用已有的二进制
 
 ```toml
 [tools.overrides]
@@ -1069,13 +1199,13 @@ mcpp 会把该包的 lib 根模块**为 host 编译,且与 `build.mcpp` 在同�
 这正是 BMI 能用的前提:一个模块接口只对「在 standard / dialect / 编译器身份上与
 它一致」的编译可导入。
 
-于是规则**有版本、能测试、能通过你已有的包管理器分发**,而且是用 **C++** 写的
+于是规则**有版本、能测试、能通过既有的包管理器分发**,而且是用 **C++** 写的
 —— 不引入第二门语言,这正是 `build.mcpp` 存在的理由。
 
 **模块名就是包的 `name`。** mcpp 用依赖的裸 `package.name`(而**不是**
 `<namespace>.<name>`)注册这个 host 模块,所以规则包的名字必须是合法的 C++ 模块名:
 `grpcgen` 可以,`grpc-rules` 不行 —— 连字符在包名里合法、在模块名里非法,而且报出来
-的是 `module 'grpc_rules' not found`,不会提示你名字有问题。
+的是 `module 'grpc_rules' not found`,不会指出名字有问题。
 
 lib 根必须在 `src/<name>.cppm`(或 `[lib] path` 指向的位置);缺失时报
 *"host module 'x': no interface unit at …"*。
@@ -1083,7 +1213,7 @@ lib 根必须在 `src/<name>.cppm`(或 `[lib] path` 指向的位置);缺失时�
 *限制:* 规则接口是单独编译的,因此可以 import `std` 与内置 `mcpp` 模块,
 但不能 import 第三个包。规则包按构造是叶子。
 
-*仅构建期:* `host-module = true` 的依赖**不会**被编进、也不会被链进你的 target。
+*仅构建期:* `host-module = true` 的依赖**不会**被编进、也不会被链进本工程的 target。
 它只在 `build.mcpp` 期间运行,别处都不出现 —— 与 Cargo 用 `[build-dependencies]`
 划出的是同一条界线。(2026.8.5.2 之前它还会被当作普通库再编一遍,这正是规则里
 `import mcpp;` 失败的原因:在那第二次编译里内置模块并不存在。)
@@ -1119,7 +1249,7 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
 ```
 
 - **默认关闭,并且刻意不复用边上的 `visibility`。** `visibility` 本身默认就是
-  `"public"`,搭它的车意味着任意深度的依赖都能不声不响地往你的构建程序的工具
+  `"public"`,复用该可见性意味着任意深度的依赖都能静默地向构建程序的工具
   命名空间里塞东西。「把某样东西交给消费者」是一条供应链主张,必须写下来。
 - **一次声明只走一跳。** 被再导出的提供物到达声明它的那个包的消费者;要继续
   往上走,下一个包必须自己也写 `reexport`。每个包只决定**它**交出什么。
@@ -1175,19 +1305,19 @@ icon = "assets/app.ico"
 | 键 | 类型 | 含义 |
 |---|---|---|
 | `icon` | 路径 | 作为应用图标嵌入(资源序号 1) |
-| `files` | 路径列表 | 你自己的 `.rc` 脚本,mcpp 编译并**跟踪**为构建输入 |
+| `files` | 路径列表 | 工程自带的 `.rc` 脚本,mcpp 编译并**跟踪**为构建输入 |
 | `extra-inputs` | 路径列表 | `.rc` 扫描器看不见的输入(见下) |
 | `version-info` | 布尔 | `false` 表示不要生成版本资源 |
 | `[resources.version-info]` | 表 | `company`、`product`、`description`、`copyright`、`original-filename`、`internal-name` |
 
 **只有 PE 目标会*编译*这一节。** 在 Linux/macOS 上它**不适用**:不产资源单元、
-不出诊断、构建逐字节不变。你**不需要**(也不能)加 `cfg(windows)` 谓词 ——
+不出诊断、构建逐字节不变。**无需**(也不能)加 `cfg(windows)` 谓词 ——
 无条件写一次即可。
 
 **声明了却不存在的文件会让构建失败 —— 在每个目标上都是。** 资源和源码一样是
 构建输入;mcpp 不会悄悄产出一个缺了它的二进制。校验刻意**不**按 PE 设门:
-路径存不存在是关于你工作树的事实,不是关于目标的事实,所以 `icon = "assets/app.ico"`
-里的拼写错误由你的 Linux/macOS 构建(以及它们的 CI job)当场抓住,而不是等
+路径是否存在是关于工作树的事实,不是关于目标的事实,所以 `icon = "assets/app.ico"`
+里的拼写错误由 Linux/macOS 构建(以及对应的 CI job)当场抓住,而不是等
 Windows 那条。不想要图标,把那一行删掉。
 
 **版本字段。** `FILEVERSION` 取 `[package].version` 的四段数值,每段必须放得进
@@ -1201,7 +1331,7 @@ Windows 那条。不想要图标,把那一行删掉。
 files = ["res/app.rc"]
 ```
 
-写了 `files`,mcpp 就不再生成版本资源 —— 资源 ID 空间归你。想两者都要就同时写
+写了 `files`,mcpp 就不再生成版本资源 —— 资源 ID 空间由工程自行支配。两者都需要时同时写
 `version-info = true`(注意冲突:序号 1 的 `RT_VERSION` 只能有一个)。
 
 想从生成的脚本起步而不是从空文件起步:把它从构建目录里拷出来
@@ -1222,7 +1352,7 @@ mcpp 会读 `.rc`,把引号形式的 `#include` 和资源语句(`ICON`、`RCDATA
 (`<windows.h>`)属于工具链,由工具链 fingerprint 覆盖。
 
 通过宏间接引用的文件名(`1 ICON APP_ICON`)扫描看不见。mcpp 会**指名**它没能解析
-的东西,并要求你显式声明:
+的东西,并要求显式声明:
 
 ```toml
 extra-inputs = ["assets/app.ico"]

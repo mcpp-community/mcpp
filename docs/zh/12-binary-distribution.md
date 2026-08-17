@@ -3,12 +3,12 @@
 [English](../12-binary-distribution.md) | **简体中文**
 
 > 把一个库以**接口 + 预编译二进制**的形式分发,而不是发源码。
-> 这是闭源场景、离线场景,以及「构建农场已经编过一遍了」的场景。
+> 适用于闭源分发、离线环境,以及构建产物已在构建农场生成的场景。
 >
-> 姊妹篇:[02 - 打包应用](02-pack-and-release.md) 讲的是打包**程序**;
-> [10 - 发布一个库](10-publishing-a-library.md) 讲的是源码通路。
+> 相关文档:[02 - 打包应用](02-pack-and-release.md) 说明**程序**的打包;
+> [10 - 发布一个库](10-publishing-a-library.md) 说明源码分发通路。
 
-## 一段话讲完
+## 概述
 
 `mcpp pack <target>` 构建一个库目标,产出一个**普通的 mcpp 包** ——
 一份正常的 `mcpp.toml`、消费者要编译的接口、以及它随后链接的二进制。
@@ -17,12 +17,12 @@
 
 ```bash
 mcpp pack mathkit                              # 静态库包
-mcpp pack mathkit-shared                       # 动态库包(今天仅 Linux/ELF)
+mcpp pack mathkit-shared                       # 动态库包(ELF、Mach-O、PE/MinGW)
 mcpp pack mathkit --target x86_64-linux-gnu \
-                  --target aarch64-linux-gnu   # 一个包,两条腿
+                  --target aarch64-linux-gnu   # 一个包,两个 target
 ```
 
-## 打什么由谁决定
+## 打包内容的决定依据
 
 只由 `[targets.<name>].kind` 决定:
 
@@ -46,7 +46,7 @@ kind   = "shared"
 soname = "libmathkit.so.1"
 ```
 
-不带名字直接 `mcpp pack`,mcpp 会挑唯一可打包的目标,或者告诉你有哪些候选。
+省略名字时,`mcpp pack` 选择唯一可打包的目标;存在多个候选时列出它们并要求指名。
 
 ## 两种接口模式
 
@@ -70,14 +70,14 @@ mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23/
 `lib/` 按**三元组**分目录,不按 OS 分:MinGW 与 MSVC 同为 Windows,
 一个产 `libfoo.a` 一个产 `foo.lib`。
 
-### 为什么两者都不许裁剪
+### 两个集合不可裁剪的原因
 
 同一个包的**源码**分发会把 `include_dirs` 里的每一个头都放到消费者的 include
 路径上。二进制包若只发一部分,**同一个库就会因为分发形式不同而有不同的公开面**。
 而且「哪些头是公开的」布局已经回答了:`include/` 公开,`src/` 不公开。
 一个私有头放在 `include/` 下是工程布局的错误,不是打包选项。
 
-## 哪些 `.cppm` 会被发布
+## 发布的接口单元
 
 **lib root 的模块闭包** —— 按约定是 `src/<包名尾段>.cppm`,或 `[lib].path`。
 该单元 purview 里 import 到的东西,传递地,都发布;其余都不发。
@@ -130,7 +130,7 @@ x86_64-linux-gnu                              # 纯 extern "C" 接口
 
 `c++` 档位按**下限**比对而不是相等:消费者档位更高可以,更低不行。
 
-## 消费者的构建会检查什么
+## 消费端的构建检查
 
 两件事,而且都是不检查就会静默出错的:
 
@@ -163,12 +163,12 @@ error: acme.mathkit@0.1.0: no prebuilt artifact matches this toolchain.
 诊断里**列出它有哪些 tag** 是刻意的:一句「找不到」会让人去找一个
 就在自己硬盘上的包。
 
-## 怎么消费
+## 消费方式
 
 三种写法,同一条代码路径:
 
 ```toml
-# 一个目录(你直接拷给同事的那种)
+# 一个目录(可直接拷贝分发)
 mathkit = { path = "vendor/mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23" }
 
 # 私有 git 仓库
@@ -180,7 +180,7 @@ mathkit = "0.1.0"
 
 消费者的 manifest 里没有任何一处写着「这个是预编译的」。
 
-### 在包目录里直接 build 会被拒绝
+### 包目录内的直接构建被拒绝
 
 ```
 error: … is a distribution package produced by `mcpp pack`, not a source tree.
@@ -189,9 +189,9 @@ error: … is a distribution package produced by `mcpp pack`, not a source tree.
 它的 `interface/` 里是声明,定义在旁边的归档里。在那儿构建会把声明编出来、
 产出一个几乎空的库、然后报告成功。
 
-## 一个包,多个 target
+## 单包多 target
 
-`--target` 可重复。生成的 manifest 每条腿一个条件块,消费者的构建各选各的:
+`--target` 可重复。生成的 manifest 每个 target 的产物一个条件块,消费者的构建各选各的:
 
 ```toml
 [target.'cfg(all(arch = "x86_64", os = "linux", env = "gnu"))'.build]
@@ -202,7 +202,7 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 ```
 
 因为选择发生在**消费者的构建期**(那时解析后的 target 已知),
-胖包的交叉编译天然正确,**不需要索引侧或安装侧做任何支持**。
+多 target 包的交叉编译天然正确,**不需要索引侧或安装侧做任何支持**。
 
 > 这些块是 `cfg(...)`,绝不是裸的 `[target.'<三元组>']` 键。
 > 在 mcpp 2026.8.18.1 之前,裸三元组在没有显式 `--target` 时是失效的 ——
@@ -219,17 +219,17 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 ```
 
 `path` 与 `git` 依赖会被丢弃:它们指向发布者的磁盘,原样发出去等于
-给消费者一个在他们那里含义完全不同的地址。如果你的库依赖这类东西,
+会给消费者一个在其机器上含义完全不同的地址。若库依赖这类来源,
 要么把它也发布出去,要么在打包前 vendor 掉。
 
-## 老版本 mcpp 拿到这种包会怎样
+## 旧版本 mcpp 的行为
 
 **能构建。** 生成的 manifest 里每一个键都是既有的,所以老客户端读得懂、
 链得上。它做不到的是执行上面那两道闸门 —— 它无从知道
 `provenance = "mcpp-pack …"` 有什么含义。
 
 这是**降级**而不是变砖,方向是对的。但它意味着**闸门只保护新客户端**,
-如果你面向的是混合版本的用户群,这一条应当写进发布说明。
+面向混合版本用户群发布时,这一条应写进发布说明。
 
 ## 当前边界
 
@@ -245,7 +245,7 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 | 把依赖打包进去 | ❌ 改为声明依赖(见上) |
 | 用**原生 `cl.exe`** 消费这种包 | ❌ 见下 |
 
-### MSVC 为什么拒绝 `kind = "shared"`
+### MSVC 拒绝 `kind = "shared"` 的原因
 
 **不是链接器的问题** —— `link /DLL /IMPLIB:` 本来就能用。是**符号导出**:
 MSVC 在没有 `__declspec(dllexport)`、也没有 `.def` 列出符号时,DLL **什么都不导出**,
@@ -265,7 +265,7 @@ MinGW 的链接器会自动导出,这就是 `*-windows-gnu` 支持而 `*-windows
 
 ### 包里的链接 flag 是 GNU 拼写
 
-生成的 manifest 用这种方式选腿:
+生成的 manifest 按下列形式选择产物:
 
 ```toml
 [target.'cfg(all(arch = "x86_64", os = "windows", env = "msvc"))'.build]
@@ -300,13 +300,13 @@ warning: secret.cppm is an implementation partition, and the published interface
 > provides 空」** —— 一个文件 requires 自己的名字,于是图里**没有**从「import 分区
 > 的单元」到「定义分区的单元」的边,构建顺序无约束:GCC 与 macOS clang 靠各自的
 > 依赖扫描兜住了,**Windows clang 以 `failed to read compiled module` 失败**。
-> 如果你一直在 Windows 上回避实现分区,原因就是这个。
+> 此前在 Windows 上无法使用实现分区,原因即在于此。
 
-### mcpp 判不出类别的分区
+### 类别无法判定的分区
 
 `[scan_overrides."<glob>"]` 说的是文件提供哪些模块,**没有地方能说**那条声明是否
 带 `export`;P1689 扫描器也可能省略 `is-interface`。两种情况下源码都会被发布 ——
-消费者没有它就编不出 BMI —— 而 `mcpp pack` 会告诉你你处在哪一种:
+消费者没有它就编不出 BMI;`mcpp pack` 会指出当前属于哪一种情况:
 
 ```
 warning: secret.cppm provides a module PARTITION and mcpp cannot tell which kind:
@@ -318,7 +318,7 @@ warning: secret.cppm provides a module PARTITION and mcpp cannot tell which kind
 > 于是这样声明的实现分区被一声不响地发布了。**发布得太少**会让消费者编译失败并点名
 > 模块;**发布得太多**会把私有源码发出去,而什么都不会失败。未知必须出声。
 
-## 这些说法验证到哪一步、在哪台机器上
+## 验证范围
 
 e2e 套件按宿主能力给每条测试开门,所以「套件是绿的」和「这条跑了」是两句不同的话。
 实际跑在哪里:
@@ -326,9 +326,9 @@ e2e 套件按宿主能力给每条测试开门,所以「套件是绿的」和「
 | 说法 | linux | macOS | windows |
 |---|---|---|---|
 | 布局、两种接口模式、闭包、两道闸门、workspace 根、指名 target、`sources = []`、裸三元组谓词 | ✅ | ✅ | ✅ |
-| 胖包,两条腿**同一个**产物名(`gnu` + `musl`) | ✅ | *不可能* | — |
-| 胖包,两条腿**两个**产物名(`msvc` + `mingw`) | — | *不可能* | ✅ |
-| 跨 OS 边界的胖包(一条 PE 腿) | ✅ | — | — |
+| 多 target 包,两个 target 的产物**同一个**产物名(`gnu` + `musl`) | ✅ | *不可能* | — |
+| 多 target 包,两个 target 的产物**两个**产物名(`msvc` + `mingw`) | — | *不可能* | ✅ |
+| 跨 OS 边界的多 target 包(含一个 PE target) | ✅ | — | — |
 | `lib.exe /REMOVE:` 真的删掉了 | — | — | ✅ |
 | PE 共享库:产出、打包、链接、运行 | ✅(wine) | — | — |
 | Mach-O 共享库离开构建树仍可加载 | — | ✅ | — |
@@ -336,7 +336,7 @@ e2e 套件按宿主能力给每条测试开门,所以「套件是绿的」和「
 | 已发布的 mcpp 消费本版产出的包 | 仅本机 | 仅本机 | 仅本机 |
 
 *不可能* 不是缺口:macOS 宿主只能服务一个 target(`host_can_serve`,
-`registry.cppm`),那里根本产不出两条腿的包。
+`registry.cppm`),那里根本产不出两个 target 的产物的包。
 
 最后一行如实记录一个真的洞:每个 CI job 都从一份已发布的 mcpp 自举,但那个入口是
 xvm 的 **shim**,在 e2e 套件改过的环境里它回答「未安装」。所以老客户端检查的

@@ -116,7 +116,7 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
 UCRT 运行时 DLL,MSVC STL 与 Windows SDK 都只随 Visual Studio 的
 "Desktop development with C++" 负载安装。而 llvm 在 Windows 上打的是 MSVC ABI,
 两者都需要,所以 mcpp 首跑时会探测机器上是否有可用的 MSVC(STL **与** SDK
-两件齐——只有一半才是真正的坑),探不到就落到这里,并把选择持久化,之后的
+两者齐备 —— 只具备其一才是真正的风险),探测失败则落到这里,并把选择持久化,之后的
 构建不再重复提示。无需任何安装或配置。
 
 同一道检查也会修复既有配置:如果 mcpp 早先自己选定的 `[toolchain] default`
@@ -164,7 +164,7 @@ windows = "gcc@16"            # Windows 上的 gcc family = MinGW-w64
 | `x86_64-windows-msvc` | `foo.lib`(MSVC 约定) |
 
 2026.8.3.3 之前,Windows 宿主上的 mingw 构建产出的是 `foo.lib` —— 一个 GNU
-archive 顶着 MSVC 的名字,MSVC 拿不去用。如果你有脚本按 `*.lib` 去捞
+archive 顶着 MSVC 的名字,MSVC 拿不去用。若有脚本按 `*.lib` 收集产物
 `windows-gnu` 的产物,现在要改成 `*.a`。
 
 ## Windows 上产出 Linux ELF(`x86_64-linux-musl`,无需 WSL)
@@ -207,10 +207,10 @@ Targets 一栏里没有的,就是这台机器确实服务不了(实现见
 
 一个 MSVC toolset 有两条路径进入构建,由 **spec 的版本轴**决定是哪一条:
 
-| Spec | 来源 | 你拿到的是哪个编译器 |
+| Spec | 来源 | 解析到的编译器 |
 |---|---|---|
 | `msvc@system`(或裸 `msvc`) | 这台机器自己的 Visual Studio | 这里恰好装了什么就是什么 |
-| `msvc@<toolset>`(如 `msvc@14.44.35207`) | mcpp 安装的 xlings payload | 你点名的那一个,在每台机器上都一样 |
+| `msvc@<toolset>`(如 `msvc@14.44.35207`) | mcpp 安装的 xlings payload | 指名的那一个,在每台机器上一致 |
 
 它们不是"二选一",而是回答了不同的问题。`msvc@system` 问的是*"用这位开发者
 已经有的东西"*;`msvc@14.44.35207` 问的是*"用恰好这个编译器构建本工程"*。
@@ -221,7 +221,7 @@ pinned toolset 之间、以及与系统 Visual Studio 之间都可以共存。
 > 依赖降到最低** —— 工具链来自 manifest 点名的 payload,于是每台机器用同一个
 > 编译器。Windows 是唯一一处"拒绝使用已装好的东西"代价大于收益的地方:
 > Visual Studio 常常已经装了,又不总能重新分发。其它族写 `<family>@system` 会
-> 直接报错,并同时给出你可能想要的两种写法。(不带族的
+> 直接报错,并同时给出两种可能的写法。(不带族的
 > `[toolchain] … = "system"` —— 即 PATH 上的编译器 —— 是另一套、也是有意保留的
 > 逃生口,不受影响。)
 
@@ -251,7 +251,7 @@ Detected   msvc 19.44.35211 (VS 2022 BuildTools) (VC tools 14.44.35207)
 Default    set to msvc@system (was: llvm@20.1.7)
 ```
 
-若机器上没有 Visual Studio,mcpp 会说出来并同时给出两条路:一个它可以替你装的
+若机器上没有 Visual Studio,mcpp 会报告该情况并给出两条路径:一个可由 mcpp 安装的
 pinned toolset,或者 Visual Studio Installer /
 `winget install Microsoft.VisualStudio.2022.BuildTools`。
 

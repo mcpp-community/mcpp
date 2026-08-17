@@ -6,10 +6,10 @@
 [09 - 发布 mcpp](09-release.md) 讲的是发布 mcpp 自身,
 [02 - 发布打包](02-pack-and-release.md) 讲的是 `mcpp pack` 打包应用。
 
-## 这条链,只有一种顺序成立
+## 发布顺序
 
 ```
-你的仓库           merge → git tag → GitHub 自动生成 tag tarball
+库仓库             merge → git tag → GitHub 自动生成 tag tarball
       ↓
 gitcode 镜像       逐字节相同的一份拷贝,供 CN 区
       ↓
@@ -73,7 +73,7 @@ cmp cn.tar.gz pkg-0.0.48.tar.gz      # 必须一致,而不只是"存在"
 同样的字节;只写了其中一个,在另外两个平台上会以 "no such version" 失败,
 而那读起来像是消费方 manifest 里打错了字。
 
-## 4. 等 artifact
+## 4. 等待 artifact
 
 **索引是 artifact,不是 git clone。** 合进 `main` 还不够:必须等
 `publish-artifact.yml` 跑完并推出内容哈希 artifact,客户端之上还有一层刷新 TTL。
@@ -84,7 +84,7 @@ gh run list --repo mcpplibs/mcpp-index --workflow publish-artifact.yml --limit 1
 rm -rf ~/.mcpp/registry/data/<namespace>    # 强制客户端刷新
 ```
 
-## 5. 冷解析验证,然后再升消费方
+## 5. 冷解析验证与消费方升级
 
 这一步的意义在于:本地那份库的 checkout 会掩盖上面每一个错误。要像一个陌生人那样解析它:
 
@@ -101,7 +101,7 @@ mcpp build                            # 必须真的下载并编译 0.0.48
 > payload 仓(约 800 MB 工具链)删掉。恢复办法是 `mcpp self doctor` 重新 provision,
 > 再 `mcpp update`。
 
-## 对着尚未发布的版本做测试
+## 针对尚未发布版本的测试
 
 在上面这条链还没走完时,可以手工播种 registry,让消费方提前编译:
 
@@ -119,6 +119,20 @@ mcpp 的构建沙箱是网络隔离的,`file://` 和 `http://127.0.0.1` 形式�
 
 **在相信"真的能用"之前,先把播种的那份删掉。** 播种的 0.0.48 和已发布的 0.0.48
 对构建来说毫无区别 —— 而当发布其实失败了的时候,留在那里的正是播种的那一份。
+
+## 需要版本下限的 manifest 键
+
+多数 `[build]` 键在较老的 mcpp 上会干净地降级:它警告该键不受支持、忽略它,
+构建要么照常成功,要么以清晰的信息失败。`build_program_timeout` 属于这一类 ——
+较老的 mcpp 回落到 600 秒默认值,若该值过短会明确报出。
+
+**`module_extensions` 不属于这一类。** 较老的 mcpp 警告并忽略它,随后把那些文件
+当作普通翻译单元编译 —— 得到的是一个**错误的构建**而不是一次干净的失败:
+模块接口不产生 BMI,故障在更晚的地方浮现,而报错既不点名这条键也不点名该文件。
+
+使用 `module_extensions` 的已发布包必须在其索引描述符中声明 mcpp 版本下限。
+下限机制必须**降级**:因客户端过旧而不可用的包,必须被报告为**不可用**,
+绝不能报告为**不存在** —— 被告知「无此包」的客户端会不断刷新索引去找它。
 
 ## 检查清单
 

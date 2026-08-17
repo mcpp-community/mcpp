@@ -255,7 +255,7 @@ binding it actually selected.
 
 ## 3. The link model (`src/toolchain/linkmodel.cppm`)
 
-`ToolchainLinkModel` answers exactly one question — *how do we compile and
+`ToolchainLinkModel` answers exactly one question — *how does mcpp compile and
 link against this toolchain's C library* — and every consumer derives its
 flags from it:
 
@@ -309,7 +309,7 @@ auto-install, manifest auto-install).
 > subset. The manifest path ran *nothing*, which is how a freshly
 > auto-installed llvm kept a stale, environment-dependent cfg (issue #195),
 > and how gcc once shipped a sandbox that couldn't find `stdlib.h`. "Which
-> command you installed with" must never decide "whether the toolchain
+> command used to install it" must never decide "whether the toolchain
 > works".
 
 **Trigger semantics — ask every build, act once:**
@@ -519,7 +519,7 @@ loader coupling, so a host binary that stumbles onto them is at worst confused.
 The machinery is already arch-parameterized; the work is data:
 
 1. add the glibc/musl loader names to the triple map in
-   `linkmodel.cppm::loader_filename` (the glob fallback covers you until
+   `linkmodel.cppm::loader_filename` (the glob fallback holds until
    then);
 2. ship payload assets for the arch (glibc, linux-headers, the toolchain
    itself) — the aarch64-linux-musl cross target is the working precedent
@@ -585,7 +585,7 @@ An **unservable target is refused** rather than quietly built for the host:
 supports this target"; `host_can_serve` (`registry.cppm`) answers the different
 question "can this machine produce it", and `prepare.cppm` now asks it — with an
 explicit `[target.X] toolchain = "…"` as the escape hatch for a cross toolchain
-you supply yourself.
+supplied by the author.
 
 ## 8. Source map
 

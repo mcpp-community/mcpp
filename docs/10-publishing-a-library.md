@@ -7,10 +7,10 @@ How a library becomes something `[dependencies]` can name. This is the
 releasing mcpp itself, and [02 - Packaging & Release](02-pack-and-release.md)
 is about `mcpp pack` bundling an application.
 
-## The chain, in the only order that works
+## Release sequence
 
 ```
-your repo          merge → git tag → GitHub auto-generates the tag tarball
+the library repo          merge → git tag → GitHub auto-generates the tag tarball
       ↓
 gitcode mirror     a byte-identical copy, for the CN region
       ↓
@@ -143,7 +143,7 @@ compiles those files as ordinary translation units — a *wrong build* rather
 than a clean failure: the module interface produces no BMI, and the failure
 surfaces later, somewhere that names neither the key nor the file.
 
-So if a package you publish uses `module_extensions`, declare an mcpp version
+A published package that uses `module_extensions` must declare an mcpp version
 floor in its index descriptor. The floor mechanism must **degrade**: a package
 that is unavailable because the client is too old has to be reported as
 *unavailable*, never as *absent* — a client told "no such package" will keep
