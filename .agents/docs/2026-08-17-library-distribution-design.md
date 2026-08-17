@@ -4,6 +4,9 @@
 > `2026-08-17-distribution-architecture-analysis-and-design.md`;那份文档的
 > §2(五轮实测)是本方案每一条判据的证据来源,本文只在需要时回指。
 >
+> **实施状态(2026-08-17):P0 已实现并开 PR #451(未合入)。**
+> 落地与设计的三处差异,以及实现过程中被实测推翻的四条,记在 §11。
+>
 > 起因:issue #433「预编译 .so + .ixx/.h/.cppm 接口」。
 > 讨论过程中我有**四处设计被自己的实测推翻**,都记在 §9,因为**错的那版看起来同样合理**。
 
@@ -583,3 +586,61 @@ B1 / B2 建议**先单独开 issue 并各带一条回归测试**,不要埋进这
 | `[pack]` 推导审计 | §4.6.1 |
 | 复现脚本(`scratchpad/lab/`) | 附录 A |
 | file:line 索引 | 附录 B |
+
+
+---
+
+## 11. 实施记录(PR #451,2026-08-17)
+
+### 11.1 落地与设计的差异
+
+| 设计说的 | 实际做的 | 为什么 |
+|---|---|---|
+| `[distribution]` 段(4 个字段) | **一个字段都没加** | 追问「这件事别处能说吗」之后,`role`/`abi`/`digest`/`provenance`/`host_fingerprint` 全在 `[[runtime.artifacts]]` 上;`provenance` 前缀就是「这是分发包」的标记 |
+| `abi_surface = "c"` 开关 | **tag 的形状本身** | `abi_check` 早就是「未指定 = 不关心」,短 tag 就是那句声明 |
+| 新建 `pack-dist-matrix.yml` | **复用既有 e2e 通路** | `run_all.sh` 已有能力探测与 `# requires:` 分流,再建一条是同一决策的第二处推导 |
+| `shared` 排 P1 | **Linux/ELF 已可用** | 实测发现只差一件事:包里要同时带链接名与 SONAME |
+
+### 11.2 实现过程中被实测推翻的四条
+
+**(a) `mcpp.pack.library` 里叫 `Error`。** `mcpp.pack` 已经有一个
+`mcpp::pack::Error`,而一个名字只能归属一个模块。**GCC 接受了,clang 直接拒绝**
+(*cannot be attached to other modules*)—— Windows 与 macOS 全红、Linux 全绿,
+这正是三平台矩阵存在的理由。
+
+**(b) `mcpp pack` 在 workspace 根上不能用了。** 路由要在构建前读 manifest,
+而 workspace 根**没有自己的目标**(虚拟 workspace 连 `[package]` 都没有),
+于是新路由读到空列表、判定「无可打包」。**用上一版发布的二进制跑
+`examples/04-workspace` 对照才发现** —— e2e 249 就是这次对照的固化。
+
+**(c) 位置参数没传给应用通路。** 两个 `bin` 目标的工程接受 `mcpp pack app2`
+却打包 app1 —— **命令成功、答案错误**。e2e 250 两个方向都钉。
+
+**(d) 动态库包只带了构建出来的文件名。** `-lmathkit-shared` 链的是
+`libmathkit-shared.so`,而对象记的是 `SONAME libmathkit.so.1` —— 两个不同的文件名。
+包链得上、**起不来**。是 **mcpp 自己的运行期闭包检查**报出来的
+(`libmathkit.so.1 not found on the search path this artifact will actually use`),
+而不是加载器错误。e2e 251 用 `run` 而不是 `build`:这里链接过了什么都不证明。
+
+外加一条 e2e 卫生:六个 fixture 把包路径按 **shell 拼写**写进了 mcpp.toml。
+`00_fixture_path_hygiene.sh` 在 macOS 那条腿上抓到 —— 规则是 Windows 的
+(MSYS 只转 argv 不转文件内容),而 lint 在所有平台跑,正是为了让 Linux 上的
+reviewer 先于 Windows CI 发现。
+
+### 11.3 我在验证里自己踩的坑
+
+**`ls -t target/*/bin/mcpp | head -1` 挑到了陈旧/别的工具链的 fingerprint 目录 ——
+三次。** 一次让 B1 的修复看起来没生效,一次让全部新 e2e 报段错误(实际是拿了
+clang 构建的二进制,而 clang 构建的 mcpp 在本机会段错误)。
+**这与打包器「绝不 glob 产物」是同一条判据**,只是发生在验证侧。
+
+### 11.4 P0 交付清单
+
+| | |
+|---|---|
+| 新模块 | `src/pack/{abi_tag,digest,interface,library,library_pipeline,manifest_emit,prebuilt,route}.cppm` |
+| 改动 | `prepare_inputs`(B1)、`toml`+`types`(B2)、`source_kind`(`object_filename_for` 归位)、`prepare`(图 + 两道闸门)、`plan`、`cli` |
+| 单测 | `test_pack_abi_tag`(15)、`test_pack_interface`(8) |
+| e2e | 242–251(10 个) |
+| 文档 | `docs/12-binary-distribution.md` + zh;`docs/02`/`05`/README 索引 |
+| 示例 | `examples/05-lib-dist`、`examples/06-lib-consume` |
