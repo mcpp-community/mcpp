@@ -641,7 +641,8 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
                         std::format("file already exports module '{}'; cannot export '{}'",
                                     u.provides->logicalName, name)});
                 }
-                u.provides = ModuleId{name};
+                u.provides          = ModuleId{name};
+                u.providesInterface = true;   // read from the keyword, not assumed
             } else {
                 // A non-exporting `module …;` is TWO different declarations
                 // wearing one spelling, and they were treated as one:
@@ -896,6 +897,14 @@ void scan_one_into(ScanResult& result,
             u.kind           = mcpp::classify(f, extTable);
             if (!ov->provides.empty()) {
                 u.provides          = ModuleId{ov->provides.front()};
+                // `providesInterface` is deliberately left UNSET. The override
+                // says which module the file provides; there is nowhere in it
+                // to say whether the declaration carries `export`, and the two
+                // spellings decide whether `mcpp pack` may publish the source.
+                // It used to inherit a `true` default, which is the answer that
+                // produces no warning — so an implementation partition declared
+                // here was published in silence. Unknown is the truth, and
+                // mcpp.pack.interface reports it as such.
                 if (ov->provides.size() > 1) {
                     result.errors.push_back(ScanError{f, 0,
                         "scan_overrides: a unit may declare at most one "

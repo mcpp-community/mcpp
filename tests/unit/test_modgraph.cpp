@@ -75,7 +75,10 @@ TEST(Scanner, ImplementationPartitionProvidesItsPartitionName) {
     ASSERT_TRUE(u->provides.has_value());
     EXPECT_EQ(u->provides->logicalName, "mathkit:secret");
     // Not an interface: its source must not be published by `mcpp pack`.
-    EXPECT_FALSE(u->providesInterface);
+    // Compared against the value, not tested for truthiness — the field is a
+    // tri-state now (nullopt means "nobody determined this"), and on an
+    // optional both EXPECT_FALSE and EXPECT_TRUE ask about the wrong thing.
+    EXPECT_EQ(u->providesInterface, std::optional<bool>{false});
     // And it must not require its own name, which is what it used to do.
     for (auto const& r : u->requires_)
         EXPECT_NE(r.logicalName, "mathkit:secret");
@@ -92,7 +95,7 @@ TEST(Scanner, InterfacePartitionIsMarkedAsAnInterface) {
     ASSERT_TRUE(u.has_value());
     ASSERT_TRUE(u->provides.has_value());
     EXPECT_EQ(u->provides->logicalName, "mathkit:api");
-    EXPECT_TRUE(u->providesInterface);
+    EXPECT_EQ(u->providesInterface, std::optional<bool>{true});
     std::filesystem::remove_all(dir);
 }
 

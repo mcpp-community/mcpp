@@ -70,6 +70,18 @@ struct InterfaceClosure {
     // interface looks like any other import. So it is reported, loudly, and
     // `mcpp pack` prints it as a warning naming the file.
     std::vector<std::filesystem::path> publishedImplementationPartitions;
+    // Published partitions whose interface-ness NOBODY DETERMINED.
+    //
+    // A `[scan_overrides."<glob>"]` entry names the modules a file provides and
+    // has nowhere to say whether the declaration is exported; a P1689 scanner
+    // may omit `is-interface`. Either way mcpp is publishing a partition
+    // without knowing which kind it is, and the two outcomes are a working
+    // package and a disclosure.
+    //
+    // Kept apart from the list above because the sentence to print is a
+    // different one: that list says "you are publishing your implementation",
+    // this one says "mcpp cannot tell whether you are".
+    std::vector<std::filesystem::path> publishedUndeterminedPartitions;
 };
 
 // Compute the closure for `packageName`, starting at the unit that provides
@@ -127,11 +139,21 @@ interface_closure(const mcpp::modgraph::Graph& graph,
         auto idx = stack.front();
         stack.erase(stack.begin());          // breadth-first: root first, then its imports
         if (!seen.insert(idx).second) continue;
-        out.published.push_back(graph.units[idx].path);
-        if (!graph.units[idx].providesInterface)
-            out.publishedImplementationPartitions.push_back(graph.units[idx].path);
+        auto const& u = graph.units[idx];
+        out.published.push_back(u.path);
+        // Interface-ness is only ever in question for a PARTITION. `module M;`
+        // provides nothing, so the only declaration that can provide a bare
+        // `M` is `export module M;` — asking about it there would flag every
+        // primary interface of every overridden unit, which is noise, and noise
+        // is how a real warning gets ignored.
+        if (u.provides && u.provides->logicalName.find(':') != std::string::npos) {
+            if (u.providesInterface == false)
+                out.publishedImplementationPartitions.push_back(u.path);
+            else if (!u.providesInterface.has_value())
+                out.publishedUndeterminedPartitions.push_back(u.path);
+        }
 
-        for (auto const& req : graph.units[idx].requires_) {
+        for (auto const& req : u.requires_) {
             auto it = graph.producerOf.find(req.logicalName);
             if (it == graph.producerOf.end()) {
                 // Only OUR module's partitions are our problem. A bare name

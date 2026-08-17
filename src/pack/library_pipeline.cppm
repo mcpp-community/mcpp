@@ -227,6 +227,25 @@ export int build_and_pack_library(const std::string& targetName,
                 p.filename().string()));
         }
 
+        // The same disclosure, one step worse: mcpp does not know which kind of
+        // partition it just published. A `[scan_overrides."<glob>"]` entry names
+        // the modules a file provides and has nowhere to say whether the
+        // declaration carries `export`, and a P1689 scanner may omit
+        // `is-interface`. The author is the only one who can answer, so ask them
+        // rather than guessing — the guess used to be "interface", which is the
+        // one that says nothing.
+        for (auto const& p : here.publishedUndeterminedPartitions) {
+            mcpp::ui::warning(std::format(
+                "{} provides a module PARTITION and mcpp cannot tell which kind: "
+                "the unit is declared in `[scan_overrides]`, which has nowhere to "
+                "say whether the declaration carries `export`, or a P1689 scanner "
+                "omitted `is-interface`.\n"
+                "  Its SOURCE is being published either way. If the declaration "
+                "has no `export` and that source should stay private, keep it out "
+                "of the published interface's purview.",
+                p.filename().string()));
+        }
+
         if (!haveClosure) {
             closure           = std::move(here);
             haveClosure       = true;

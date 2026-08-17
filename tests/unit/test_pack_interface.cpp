@@ -26,8 +26,11 @@ namespace {
 // now mirrors, because the closure's warning depends on the distinction.
 Graph library_graph(bool interfaceReachesSecret = false) {
     Graph g;
+    // `iface` is optional on purpose: nullopt is the state a `scan_overrides`
+    // unit is in — it names the module and cannot say whether it is exported.
     auto add = [&](std::string path, std::optional<std::string> provides,
-                   std::vector<std::string> requires_, bool iface = true) {
+                   std::vector<std::string> requires_,
+                   std::optional<bool> iface = true) {
         SourceUnit u;
         u.path        = std::move(path);
         u.packageName = "mathkit";
@@ -110,6 +113,53 @@ TEST(InterfaceClosure, AnInterfaceOnlyClosureReportsNoPartitionLeak) {
     auto c = interface_closure(library_graph(), "mathkit", "mathkit");
     ASSERT_TRUE(c.has_value());
     EXPECT_TRUE(c->publishedImplementationPartitions.empty());
+    EXPECT_TRUE(c->publishedUndeterminedPartitions.empty());
+}
+
+// ─── the state that used to be spelled "interface" ─────────────────────────
+
+TEST(InterfaceClosure, APublishedPartitionOfUnknownKindIsReportedSeparately) {
+    // A `[scan_overrides."<glob>"]` entry says which module a file provides and
+    // has nowhere to say whether the declaration is exported; a P1689 scanner
+    // may omit `is-interface`. That used to arrive as `providesInterface =
+    // true` — the value that produces NO warning — so an implementation
+    // partition declared that way was published in silence.
+    auto g = library_graph(/*interfaceReachesSecret=*/true);
+    g.units[2].providesInterface.reset();          // src/secret.cppm, kind unknown
+    auto c = interface_closure(g, "mathkit", "mathkit");
+    ASSERT_TRUE(c.has_value());
+    // Still published — the consumer cannot build the root's BMI without it.
+    EXPECT_EQ(names(c->published),
+              (std::vector<std::string>{"api.cppm", "mathkit.cppm", "secret.cppm"}));
+    // But reported as undetermined, not as a known implementation partition:
+    // the sentence to print is a different one.
+    EXPECT_TRUE(c->publishedImplementationPartitions.empty());
+    ASSERT_EQ(c->publishedUndeterminedPartitions.size(), 1u);
+    EXPECT_EQ(c->publishedUndeterminedPartitions[0].filename().string(), "secret.cppm");
+}
+
+TEST(InterfaceClosure, AnUndeterminedPrimaryInterfaceIsNotReported) {
+    // Only a PARTITION can be either kind. `module M;` provides nothing, so the
+    // only declaration that provides a bare `M` is `export module M;` — asking
+    // the question there would warn about every primary interface in every
+    // package that uses scan_overrides, and a warning that fires on the normal
+    // case is one nobody reads.
+    auto g = library_graph();
+    g.units[0].providesInterface.reset();          // src/mathkit.cppm, the root
+    auto c = interface_closure(g, "mathkit", "mathkit");
+    ASSERT_TRUE(c.has_value());
+    EXPECT_TRUE(c->publishedUndeterminedPartitions.empty());
+    EXPECT_TRUE(c->publishedImplementationPartitions.empty());
+}
+
+TEST(InterfaceClosure, AWithheldPartitionOfUnknownKindIsNotReportedEither) {
+    // The warning is about what is PUBLISHED. `secret.cppm` is unreachable from
+    // the interface here, so its kind never mattered.
+    auto g = library_graph(/*interfaceReachesSecret=*/false);
+    g.units[2].providesInterface.reset();
+    auto c = interface_closure(g, "mathkit", "mathkit");
+    ASSERT_TRUE(c.has_value());
+    EXPECT_TRUE(c->publishedUndeterminedPartitions.empty());
 }
 
 TEST(InterfaceClosure, AGenuinelyMissingPartitionIsStillAnError) {

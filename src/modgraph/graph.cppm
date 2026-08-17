@@ -45,10 +45,21 @@ struct SourceUnit {
     // without it), and the author needs to be told that their implementation
     // is going out.
     //
-    // Defaults to true so units synthesized outside the text scanner
-    // (scan_overrides, the P1689 reader) keep counting as interfaces — the
-    // conservative direction, since the flag only ever produces a warning.
-    bool                            providesInterface = true;
+    // Three states, because "nobody determined this" is a real answer and it
+    // used to be spelled `true`:
+    //
+    //   true     `export module M:api;` — the text scanner read the keyword
+    //   false    `module M:impl;`       — likewise
+    //   nullopt  nobody could tell: a `scan_overrides` entry names the module
+    //            but has no way to say whether it is exported, and a P1689
+    //            scanner may omit `is-interface`
+    //
+    // It defaulted to `true` and was called the conservative direction "since
+    // the flag only ever produces a warning". That had it backwards: `true` is
+    // the value that produces NO warning, so an undetermined implementation
+    // partition was published in silence — the exact failure this field exists
+    // to prevent. Unknown now warns, naming the file and the reason.
+    std::optional<bool>             providesInterface;
     std::vector<ModuleId>           requires_;
     // The unit's ROLE, decided once by the scanner from the owning package's
     // extension table and carried from here on. Every downstream consumer
