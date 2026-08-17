@@ -423,6 +423,14 @@ machine that has only the pinned toolset and no Visual Studio at all.
 The debug CRT (`vcruntime140d.dll` and friends, under `debug_nonredist\`) is
 never staged: it may not be redistributed.
 
+> **Upgrading from 2026.8.15 or earlier?** This key used to be **inert** on the
+> MSVC ABI — it reported `not implemented for the MSVC runtime yet` and every
+> value fell back to `/MD`. Since 2026.8.16 it is honoured, so a manifest that
+> carries `cxx_runtime = "self-contained"` from that era **changes CRT model on
+> upgrade**, from `/MD` to `/MT`. It is not a stricter version of the same
+> model, and the switch is silent because the value was always valid. If your
+> project set it while the key did nothing, decide which one you actually want.
+
 Combining it with `/MT` is a contradiction rather than a missing feature — a
 static CRT leaves no DLL to couple to — so it is reported and resolved to
 `self-contained`. `mcpp pack` enforces the other half: a mode that bundles
