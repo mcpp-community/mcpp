@@ -21,11 +21,34 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
-host_triple="$("$MCPP" self env 2>/dev/null | grep -oE '[a-z0-9_]+-(linux|macos|windows)-[a-z0-9]+' | head -1)"
-[[ -n "$host_triple" ]] || host_triple="x86_64-linux-gnu"
-
+# The host triple, asked of mcpp rather than guessed.
+#
+# The first version pattern-matched `mcpp self env` for
+# `<arch>-<os>-<env>` and fell back to `x86_64-linux-gnu`. macOS's canonical
+# triple is `aarch64-macos` — TWO segments, no env — so the match failed, the
+# fallback was used, and the test then asserted that a *Linux* section applied
+# to a macOS build. It reported "the bare triple was inert" against a product
+# that was behaving correctly.
+#
+# `target/<triple>/` is mcpp's own answer to the same question, so take it from
+# there: build once with nothing conditional, read the directory name, then
+# write the real manifest.
 mkdir -p probe/src
 echo 'int main() { return 0; }' > probe/src/main.cpp
+cat > probe/mcpp.toml <<'EOF'
+[package]
+name    = "probe"
+version = "0.1.0"
+[targets.probe]
+kind = "bin"
+main = "src/main.cpp"
+EOF
+( cd probe && "$MCPP" build > discover.log 2>&1 ) \
+    || { cat probe/discover.log; echo "discovery build failed"; exit 1; }
+host_triple="$(ls probe/target | head -1)"
+[[ -n "$host_triple" ]] || { ls -R probe/target; echo "no target/<triple> dir"; exit 1; }
+echo "host triple: $host_triple"
+
 cat > probe/mcpp.toml <<EOF
 [package]
 name    = "probe"
@@ -37,7 +60,7 @@ main = "src/main.cpp"
 [target.'$host_triple'.build]
 cxxflags = ["-DMCPP_BARE_TRIPLE=1"]
 
-[target.'cfg(unix)'.build]
+[target.'cfg(arch = "$(echo "$host_triple" | cut -d- -f1)")'.build]
 cxxflags = ["-DMCPP_CFG_ALIAS=1"]
 EOF
 
