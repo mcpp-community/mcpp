@@ -5225,7 +5225,7 @@ prepare_build(bool print_fingerprint,
     // away — a CompileUnit records what to compile, not what it provides — so
     // the packer would otherwise have to scan the tree a second time and could
     // then disagree with the build about what the package even contains.
-    ctx.graph       = scan.graph;
+    ctx.graph       = std::move(scan.graph);
     // mcpp#407. Both callers that produce a non-plain graph arrive here the
     // same way: dev-dependencies enabled, synthetic test targets appended. The
     // resulting `default` line names the test binaries and omits the package's

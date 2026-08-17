@@ -41,6 +41,11 @@ jobs:
         # Per-test 600s timeout lives in run_all.sh.
         timeout-minutes: 25
         run: |
+          # The RELEASED mcpp this job bootstrapped from, kept for e2e 252: the
+          # claim that an older client can still build against a package the PR
+          # produces is only worth making if something checks it against a real
+          # old binary. Captured before $MCPP is repointed at the fresh build.
+          export MCPP_BOOT="$MCPP"
           MCPP=$(find target -path "*/bin/mcpp" | head -1)
           MCPP=$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")
           test -x "$MCPP"

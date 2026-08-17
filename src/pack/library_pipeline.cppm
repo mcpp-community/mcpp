@@ -31,6 +31,7 @@ import mcpp.pack;
 import mcpp.pack.abi_tag;
 import mcpp.pack.interface;
 import mcpp.pack.library;
+import mcpp.toolchain.dialect;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
 import mcpp.ui;
@@ -284,6 +285,10 @@ export int build_and_pack_library(const std::string& targetName,
             .abiTag      = tag.str(),
             .buildKey    = ctx->fp.hex,
             .linkName    = targetName,
+            .removeArg   = std::string(
+                mcpp::toolchain::dialect_for(ctx->tc).archiveRemoveArg),
+            .removeArchiveFirst =
+                mcpp::toolchain::dialect_for(ctx->tc).archiveRemoveTakesArchiveFirst,
             .soname      = target->soname,
             .shared      = shared,
         });

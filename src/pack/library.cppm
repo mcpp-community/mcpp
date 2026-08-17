@@ -51,6 +51,12 @@ struct LibraryLeg {
     std::string           abiTag;
     std::string           buildKey;
     std::string           linkName;     // the -l argument, e.g. "mathkit"
+    // How THIS leg's archiver spells "delete a member", from
+    // mcpp.toolchain.dialect. `ar` and `llvm-ar` take `d <archive> <member>…`;
+    // LIB.EXE takes `/REMOVE:<member>` per member with the archive last. The
+    // packer must not pick one — see the dialect's note.
+    std::string           removeArg;    // "d" | "/REMOVE:{}"
+    bool                  removeArchiveFirst = true;
     // The SONAME the artifact declares, when it declares one. A shared library
     // is FOUND at run time by this name and LINKED by `lib<linkName>.so`, and
     // those are two different filenames — so a package that ships only the
@@ -225,15 +231,38 @@ run_library_pack(const LibraryPackPlan& plan)
                 leg.triple, name) });
         }
         if (!leg.shared && !plan.dropObjects.empty()) {
-            std::string cmd = mcpp::platform::shell::quote(leg.archiveTool.string())
-                            + " d " + mcpp::platform::shell::quote(dst.string());
-            for (auto const& m : plan.dropObjects)
-                cmd += " " + mcpp::platform::shell::quote(m);
+            std::string cmd = mcpp::platform::shell::quote(leg.archiveTool.string());
+            auto member_words = [&] {
+                std::string w;
+                for (auto const& m : plan.dropObjects) {
+                    // `{}` means one flag per member (LIB.EXE); its absence
+                    // means one verb followed by every member (ar).
+                    auto pos = leg.removeArg.find("{}");
+                    if (pos == std::string::npos) { w += " " + mcpp::platform::shell::quote(m); continue; }
+                    auto arg = leg.removeArg;
+                    arg.replace(pos, 2, m);
+                    w += " " + mcpp::platform::shell::quote(arg);
+                }
+                return w;
+            };
+            if (leg.removeArchiveFirst) {
+                if (leg.removeArg.find("{}") == std::string::npos)
+                    cmd += " " + leg.removeArg;
+                cmd += " " + mcpp::platform::shell::quote(dst.string());
+                cmd += member_words();
+            } else {
+                cmd += member_words();
+                cmd += " " + mcpp::platform::shell::quote(dst.string());
+            }
             auto r = mcpp::platform::process::capture(cmd + " 2>&1");
             if (r.exit_code != 0) {
                 return std::unexpected(LibraryPackError{ std::format(
-                    "cannot drop published interface objects from '{}' (rc={}): {}",
-                    dst.string(), r.exit_code, r.output) });
+                    "cannot drop published interface objects from '{}' (rc={}).\n"
+                    "  command: {}\n"
+                    "  output : {}\n"
+                    "  Leaving them in would give the consumer two definitions of "
+                    "each published module's initialiser.",
+                    dst.string(), r.exit_code, cmd, r.output) });
             }
         }
 
