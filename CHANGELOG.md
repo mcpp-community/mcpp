@@ -38,10 +38,11 @@
 
 - **`kind = "shared"` 不再只有 Linux:PE/MinGW 与 Mach-O 都能产、能打包、能跑。**
 
-  过去这条路只在 ELF 上验证过,而那道「非 Linux 就拒绝」的守卫**恰好在最要紧的
-  情形下失效**:它写的是 `!targetTriple.empty() && os != "linux"`,而**原生构建的
-  targetTriple 是空的** —— 于是它拦住了一个交叉到 macOS 的构建(那个本来就不可服务),
-  却让**原生 macOS / 原生 Windows** 直接走进它本该拦住的未验证路径。
+  过去这条路只在 ELF 上验证过,其余一律拒绝。**这是能力的增加,不是修一个洞** ——
+  ⚠️ 早前的提交信息把那道守卫描述成「在原生构建上失效」,那是**错的**:
+  `tc.targetTriple` 由编译器的 `-dumpmachine` 填,原生构建上**非空**
+  (实测 `resolution.json` 记的是 `x86_64-linux-gnu`),所以原生 macOS / 原生 Windows
+  本来就被它拦住。
 
   真正缺的东西各不相同,而且都不是 flag 拼写:
 
@@ -52,11 +53,12 @@
     另外 PE 可执行文件带 `-static`,而 `-static` 会让 ld 进入纯静态模式并拒绝导入库,
     报的是 `have you installed the static version of the mathkit library?` ——
     既没点 DLL 也没点 `-static`;所以那条 `-l` 之前要先 `-Wl,-Bdynamic`。
-  - **Mach-O 缺 install name。** `.dylib` 记录的是**链接时的路径**,所以只在声明了
-    `soname` 时才发 `-install_name` 意味着**其他每一个 `.dylib` 都把构建目录烙了进去** ——
-    在打包机上完好,换个地方就 `image not found`。现在无条件发 `@rpath/<file>`。
-    而且这个选择原先是用宿主的 `#if defined(__APPLE__)` 做的,交叉链接会发错(或不发);
-    现在按 target 决定,和 `target_output` 早就做的一样。
+  - **Mach-O 缺 install name。** `.dylib` 记录的是**链接时的路径**,而原先只在声明了
+    `soname` 时才发 `-install_name` —— 一旦放开 macOS,**每个没写 soname 的 `.dylib`
+    都会把构建目录烙进去**:在打包机上完好,换个地方就 `image not found`。
+    现在无条件发 `@rpath/<file>`。这个选择原先还是用宿主的 `#if defined(__APPLE__)`
+    做的(在旧的拒绝之下不可达,但放开之后就会发错),现在按 target 决定,
+    和 `target_output` 早就做的一样。
   - **PE/MSVC 仍然拒绝,但换了个理由,而且是真理由。** 不是链接器 ——
     `link /DLL /IMPLIB:` 一直都在规则表里。是**符号导出**:没有 `__declspec(dllexport)`
     或 `.def`,MSVC 的 DLL 什么都不导出 ⇒ 导入库是空的 ⇒ 消费者拿到一堆

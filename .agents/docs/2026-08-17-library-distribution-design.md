@@ -847,17 +847,23 @@ Linux runner 不产 macOS 腿不是遗漏、是每一次。**永远触发的告�
 
 ### 13.4 顺带被逼出来的两个真缺陷
 
-**(a) `kind = "shared"` 的守卫在最要紧的情形下失效。**
-它写的是 `!targetTriple.empty() && os != "linux"`,而**原生构建的 targetTriple 是空的**
-⇒ 它拦住了一个交叉到 macOS 的构建(那本来就不可服务、不可达),
-却让**原生 macOS / 原生 Windows** 直接走进它本该拦住的未验证路径。
+**(a) `kind = "shared"` 此前只在 ELF 上可用,其余一律拒绝 —— 这一条是能力增加。**
 
-修完守卫之后,真正缺的东西各不相同,而且**都不是 flag 拼写**:
+⚠️ **我在第一版提交信息里把这道守卫说成「在原生构建上失效」,那是错的,
+review 时才自己抓出来。** 它写的是 `!targetTriple.empty() && os != "linux"`,
+我据此推断「原生构建 targetTriple 为空 ⇒ 守卫不触发」。**实测否掉了这个推断**:
+`tc.targetTriple` 由编译器的 `-dumpmachine` 填(`detect.cppm:88`),原生构建上非空 ——
+`resolution.json` 里记的就是 `x86_64-linux-gnu`;而
+`parse("x86_64-pc-windows-msvc")` 会跳过 vendor 段并成功。所以原生 macOS / 原生 Windows
+**本来就被拦住**,不存在那个洞。**判据:结构上「可能为空」不等于运行时真的为空 ——
+要么读运行时产物(resolution.json),要么别把它写成实测。**
+
+放开之后,真正缺的东西各不相同,而且**都不是 flag 拼写**:
 
 | 格式 | 缺什么 | 现在 |
 |---|---|---|
 | PE | **导入库** —— 只写了 `.dll`,消费者直接链 `.dll`,mingw 的 ld 容忍、别人都不容忍 | 链接边把导入库声明成**隐式输出**;包里两个都带;`-static` 会让 ld 拒绝导入库(报 `have you installed the static version…`,既没点 DLL 也没点 `-static`),所以那条 `-l` 前先 `-Wl,-Bdynamic` |
-| Mach-O | **install name** —— 只在声明了 `soname` 时才发,于是其他每个 `.dylib` 都把构建目录烙了进去 | 无条件 `@rpath/<file>`;而且改成**按 target 判定**(原来是宿主的 `#if defined(__APPLE__)`) |
+| Mach-O | **install name** —— 只在声明了 `soname` 时才发;**放开 macOS 的那一刻**,每个没写 soname 的 `.dylib` 都会把构建目录烙进去 | 无条件 `@rpath/<file>`;而且改成**按 target 判定**(原来是宿主的 `#if defined(__APPLE__)` —— 在旧的拒绝之下不可达,放开之后会发错) |
 | PE/MSVC | **符号导出**(不是链接器 —— `link /DLL /IMPLIB:` 一直都在) | 仍然拒绝,但换成真理由,并点名 MinGW 这条路 |
 
 ⚠️ **「能用的那种情况把坏掉的那种遮住了」是这一整块的形状。**

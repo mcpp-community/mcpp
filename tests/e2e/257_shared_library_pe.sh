@@ -3,11 +3,12 @@
 # 257_shared_library_pe.sh — `kind = "shared"` on PE: a DLL, its import library,
 # a package carrying both, and a consumer that links and RUNS.
 #
-# Until now this was Linux-only, and the refusal that said so had a hole in the
-# case that mattered: it read `!targetTriple.empty() && os != "linux"`, and
-# targetTriple is EMPTY for a native build — so it turned away a cross build to
-# macOS (unservable anyway) while letting a native macOS or native Windows build
-# walk straight into the unverified paths it existed to prevent.
+# Until now this was Linux-only: make_plan refused every non-Linux target, native
+# or cross. So this test is a NEW CAPABILITY, not a repaired hole — an earlier
+# draft of this header claimed the guard was inert on native builds because
+# `targetTriple` would be empty there, and that is wrong: it is filled from the
+# compiler's own -dumpmachine, and resolution.json records `x86_64-linux-gnu` for
+# a plain `mcpp build`.
 #
 # What was actually missing on PE was the IMPORT LIBRARY. A PE shared library is
 # two files: the `.dll` the loader opens, and an archive of stubs the linker

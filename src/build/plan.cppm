@@ -1017,12 +1017,17 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // Producing that is worse than refusing, because the diagnostic points
     // nowhere near the cause.
     //
-    // ⚠️ THE PREVIOUS GUARD HAD A HOLE, and it was in the case that matters
-    // most. It read `!targetTriple.empty() && os != "linux"`, and targetTriple
-    // is EMPTY for a native build — so it refused a cross build to macOS (which
-    // is unservable anyway, i.e. unreachable) while letting a NATIVE macOS or
-    // native Windows build walk straight into the unverified paths it was
-    // written to keep people out of. The resolved target is what decides.
+    // ⚠️ THE HOST FALLBACK BELOW IS BELT AND BRACES, NOT A FIX. An earlier
+    // version of this comment claimed the previous guard —
+    // `!targetTriple.empty() && os != "linux"` — was inert on native builds
+    // because targetTriple would be empty there. It is not: `tc.targetTriple`
+    // is filled from the compiler's own `-dumpmachine` (detect.cppm), a native
+    // Linux build records `x86_64-linux-gnu` in resolution.json, and
+    // `parse("x86_64-pc-windows-msvc")` skips the vendor segment and succeeds.
+    // So the old guard did refuse native macOS and native Windows, and this
+    // change ADDS support rather than closing a hole. The fallback stays
+    // because a target that cannot be parsed must not be silently read as
+    // "not windows".
     {
         const std::string targetOs = targetTriple.empty()
             ? (mcpp::platform::is_macos   ? "macos"
