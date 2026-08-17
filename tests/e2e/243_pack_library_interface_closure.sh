@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# requires: gcc
+# requires:
+# (no capability: a library package is claimed to work on every target, so this
+#  test has to RUN on every platform. `# requires: gcc` would have skipped it on
+#  macOS and Windows — Apple Clang is not the gcc capability — leaving the claim
+#  unverified while the suite stayed green.)
 # 243_pack_library_interface_closure.sh — what travels is the module closure of
 # the published root, and the archive keeps exactly what the closure does not.
 #

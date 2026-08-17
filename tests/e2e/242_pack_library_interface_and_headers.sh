@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# requires: gcc
+# requires:
+# (no capability: a library package is claimed to work on every target, so this
+#  test has to RUN on every platform. `# requires: gcc` would have skipped it on
+#  macOS and Windows — Apple Clang is not the gcc capability — leaving the claim
+#  unverified while the suite stayed green.)
 # 242_pack_library_interface_and_headers.sh — `mcpp pack <lib target>` produces
 # a package a consumer can use through EITHER interface mode, or both at once.
 #

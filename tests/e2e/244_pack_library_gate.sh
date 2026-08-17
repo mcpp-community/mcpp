@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# requires: gcc
+# requires:
+# (no capability: a library package is claimed to work on every target, so this
+#  test has to RUN on every platform. `# requires: gcc` would have skipped it on
+#  macOS and Windows — Apple Clang is not the gcc capability — leaving the claim
+#  unverified while the suite stayed green.)
 # 244_pack_library_gate.sh — the three refusals a prebuilt package must make.
 #
 # THE FIRST ONE IS WHY THIS FEATURE HAS A GATE AT ALL. Measured before it

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# requires: gcc
+# requires:
+# (no capability: a library package is claimed to work on every target, so this
+#  test has to RUN on every platform. `# requires: gcc` would have skipped it on
+#  macOS and Windows — Apple Clang is not the gcc capability — leaving the claim
+#  unverified while the suite stayed green.)
 # 249_pack_workspace_root_unchanged.sh — `mcpp pack` in a workspace root still
 # packs the member's program.
 #

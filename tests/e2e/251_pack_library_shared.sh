@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: elf gcc
+# requires: elf
 # 251_pack_library_shared.sh — a `kind = "shared"` package carries BOTH of the
 # library's names, and a consumer can actually start.
 #
