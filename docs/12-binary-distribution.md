@@ -310,9 +310,17 @@ every driver takes, and it does not work either: ninja runs link commands with
 cwd = the output directory, and only the include-family prefixes (`-I`, `-L`, …)
 are absolutized against the package root, so a prefix-less token is looked for
 in the wrong place — `ld: cannot find lib/x86_64-windows-gnu/libmathkit.a`. A
-manifest cannot carry an absolute path and stay relocatable. Closing this needs
-the conditional channel to carry `link_library_dirs` / `libraries`, which mcpp
-already renders per dialect, but only reads at the top level.
+manifest cannot carry an absolute path and stay relocatable.
+
+The dialect-neutral channel does exist — `[runtime] link_library_dirs` and
+`libraries`, which mcpp renders as `/LIBPATH:` + `name.lib` or `-L` + `-lname`
+depending on the target — but only at the top level, and a package needs it
+**per leg**. Measured: a previous mcpp reads `[target.'cfg(…)'.runtime]` without
+complaint and silently ignores it. That is the wrong kind of tolerance for this
+purpose — moving a leg's link flags there would leave every older client with no
+link flags at all, so closing this properly means either carrying both spellings
+(and linking the library twice on new clients) or giving these packages a version
+floor.
 
 ### Implementation partitions
 
