@@ -2,13 +2,13 @@
 
 **English** | [简体中文](zh/07-build-mcpp.md)
 
-Most projects need nothing more than `mcpp.toml`. When you need build-time logic —
+Most projects need nothing more than `mcpp.toml`. When build-time logic is required —
 probe the host, generate a source, decide a flag from the environment — put a
-`build.mcpp` in your project root. It is the mcpp analog of Zig's `build.zig` and
+`build.mcpp` in the project root. It is the mcpp analog of Zig's `build.zig` and
 Cargo's `build.rs`, but written in **C++**: no second language, and it dogfoods
 mcpp itself.
 
-mcpp compiles `build.mcpp` with your toolchain and runs it **before** the main
+mcpp compiles `build.mcpp` with the project's toolchain and runs it **before** the main
 build. The program talks to mcpp by printing `mcpp:` directives to stdout; those
 directives augment the build.
 
@@ -39,7 +39,7 @@ mcpp build      # compiles + runs build.mcpp, then builds the project
 ## Directives
 
 Print these to stdout (one per line). Any line that does not start with `mcpp:`
-is ignored, so you can freely log diagnostics.
+is ignored, so diagnostics may be logged freely.
 
 | Directive | Effect |
 |---|---|
@@ -56,7 +56,7 @@ is ignored, so you can freely log diagnostics.
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
 
 The program **requests** build edges (flags, libraries, sources). It cannot add a
-registry dependency — keep your dependency graph declarative in `mcpp.toml`
+registry dependency — the dependency graph stays declarative in `mcpp.toml`
 (including platform-conditional `[target.windows.dependencies]`). `build.mcpp`
 is for *leaf* decisions: flags, codegen, link requirements.
 
@@ -68,9 +68,9 @@ interface and belongs in the declarative manifest/descriptor
 
 ## Typed API: `import mcpp;` (recommended)
 
-Instead of printing raw strings you can write `build.mcpp` **modules-first** —
+Instead of printing raw strings, `build.mcpp` can be written **modules-first** —
 `import mcpp;`, no `#include` needed. The `mcpp` module is bundled in the
-mcpp binary (so it always matches your mcpp's protocol) and is compiled on demand;
+mcpp binary (so it always matches that mcpp's protocol) and is compiled on demand;
 its functions just emit the directives above:
 
 ```cpp
@@ -120,15 +120,15 @@ int main() {
 ```
 
 mcpp builds that `kind = "bin"` target **for the build machine** (even under
-`--target`), caches it globally, and hands you the path. The request lives in
+`--target`), caches it globally, and returns the path. The request lives in
 `mcpp.toml` rather than here for the same reason a dependency does: asking the
 graph for an extra artifact is a graph-level request, and the graph stays
 statically analysable. See [05 §2.14](05-mcpp-toml.md) for the full contract,
 including `[tools.overrides]` and `reexport = true` (which is how a library
-hands you the whole toolchain so you declare **one** dependency instead of
+provides the whole toolchain, so a project declares **one** dependency instead of
 four).
 
-### Globbing your inputs: `rerun_if_changed_glob` (2026.8.6.2+)
+### Globbing inputs: `rerun_if_changed_glob` (2026.8.6.2+)
 
 The re-run key is built from *declared* inputs. Declare files and it works;
 glob a directory and it does not — adding a `.proto` changes no declared file's
@@ -214,7 +214,7 @@ link the command would never run and the build would say nothing.
 > Naming a pre-built object in `[build].ldflags` also reaches the linker, and
 > should not be used for anything the build produces: ldflags is a flat string
 > in the link command, not a file in the graph, so nothing tracks it and editing
-> it gives you `ninja: no work to do`. For Windows resources specifically, use
+> it reports `ninja: no work to do`. For Windows resources specifically, use
 > [`[resources]`](05-mcpp-toml.md) —
 > `object` is the escape hatch for everything else.
 
@@ -230,7 +230,7 @@ a.output(gen.c_str()).provides("my.generated").imports("std").submit();
 ```
 
 mcpp seeds a placeholder carrying exactly that declaration so the prepare-time
-scan agrees with what your generator will emit — the same assertion-plus-
+scan agrees with what the generator will emit — the same assertion-plus-
 verification trade `[modules].scan_overrides` makes, and the compiler's own
 P1689 output checks it at build time.
 
@@ -258,7 +258,7 @@ Two ways to talk to mcpp, and they carry **different compatibility promises**:
 | Unknown directive | **Hard error** | Warning, then ignored |
 
 Programs using `import mcpp;` automatically announce the protocol version they
-were built against (`mcpp:protocol=<N>`, emitted before `main` runs — you never
+were built against (`mcpp:protocol=<N>`, emitted before `main` runs — it never
 write it yourself). mcpp uses that two ways:
 
 - A program announcing a **newer** protocol than mcpp understands is **refused**,
@@ -272,7 +272,7 @@ write it yourself). mcpp uses that two ways:
 A `printf`-style program announces nothing, so it keeps the historical
 warn-and-ignore behaviour. That surface is **frozen at the eleven directives in
 the table above** — it still works and will keep working, but new capabilities
-land only in the typed API. Prefer `import mcpp;` for anything you intend to
+land only in the typed API. Prefer `import mcpp;` for anything intended to
 maintain.
 
 ### `import std;` (mcpp 2026.8.2.1+)
@@ -363,7 +363,7 @@ mcpp::generated(out.string().c_str());
 ```
 
 `mcpp::out_dir()` is always absolute, so this is correct in both roles and
-needs no branch on which one you are in.
+needs no branch on which of the two applies.
 
 A generated **module interface** is fine here: `.cppm` goes through the same
 scan as any other source, so a generated file declaring `export module …` can
@@ -376,19 +376,19 @@ directives and re-runs only when something it depends on changed:
 
 - the `build.mcpp` source itself,
 - the toolchain,
-- any file you declared with `rerun-if-changed`,
-- any env var you declared with `rerun-if-env-changed`,
+- any file declared with `rerun-if-changed`,
+- any env var declared with `rerun-if-env-changed`,
 - (or a `generated` output / `source=` selection went missing),
 - (or the cache was written by an mcpp that interpreted a directive differently
   — the entry carries a format **epoch**, and a foreign one re-runs the program
   once instead of replaying values under the wrong meaning).
 
-So **declare your inputs**: if your program reads `config.h` or the `USE_FAST`
+So **declare the inputs**: if the program reads `config.h` or the `USE_FAST`
 variable, emit `mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`.
 This replaces the old "process exited 0, so assume it's fine" guesswork with an
 explicit input/output contract — incremental builds stay correct.
 
-When nothing changed you'll see `build.mcpp up to date (cached)`; otherwise
+When nothing changed the output is `build.mcpp up to date (cached)`; otherwise
 `build.mcpp compiling` / `running`.
 
 ## Notes & limits
@@ -399,7 +399,7 @@ When nothing changed you'll see `build.mcpp up to date (cached)`; otherwise
   For purely declarative target gating, `[target.'cfg(...)']` tables remain
   the first choice — see [05 - mcpp.toml Manifest Guide](05-mcpp-toml.md).
 - **CWD is the project root**, so relative paths (`src/generated.cpp`) land where
-  you expect.
+  expected.
 - A non-zero exit from `build.mcpp` aborts the build and prints its output.
 - **The run is bounded** (mcpp 2026.8.5.1+): a build program gets **600 s** by
   default, after which mcpp kills it and fails the build naming the package.
@@ -421,7 +421,7 @@ When nothing changed you'll see `build.mcpp up to date (cached)`; otherwise
   The value comes from the **owning package's** manifest, because its author is
   the one who knows how long the generator takes. When a dependency's build
   program times out, the error names the exact `mcpp.toml` to edit — editing
-  your own would change nothing.
+  a hand-written one would change nothing.
 
   Omitting the key is not the same as `0`: unset means "use the default bound",
   `0` means "no bound at all".

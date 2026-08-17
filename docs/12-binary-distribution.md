@@ -3,14 +3,14 @@
 **English** | [简体中文](zh/12-binary-distribution.md)
 
 > Ship a library as **interface + prebuilt binaries** instead of as source.
-> This is the closed-source case, and the offline case, and the "our build farm
-> already compiled this once" case.
+> It applies to closed-source distribution, offline environments, and builds whose
+> artifacts a build farm has already produced.
 >
-> [02 - Packaging & Release](02-pack-and-release.md) is the sibling: bundling an
+> Related: [02 - Packaging & Release](02-pack-and-release.md) covers bundling an
 > *application*. [10 - Publishing a Library](10-publishing-a-library.md) is the
 > source route.
 
-## The whole idea in one paragraph
+## Overview
 
 `mcpp pack <target>` builds a library target and writes a directory that is an
 **ordinary mcpp package** — a normal `mcpp.toml`, the interface a consumer must
@@ -20,12 +20,12 @@ no new resolution path.
 
 ```bash
 mcpp pack mathkit                              # a static library package
-mcpp pack mathkit-shared                       # a dynamic one (Linux/ELF today)
+mcpp pack mathkit-shared                       # a dynamic one (ELF, Mach-O, PE/MinGW)
 mcpp pack mathkit --target x86_64-linux-gnu \
                   --target aarch64-linux-gnu   # one package, two legs
 ```
 
-## What decides what gets packed
+## What determines the package contents
 
 `[targets.<name>].kind`, and nothing else:
 
@@ -50,7 +50,7 @@ soname = "libmathkit.so.1"
 ```
 
 Run `mcpp pack` with no name and mcpp picks the only packable target, or tells
-you which ones it found.
+the candidates it found.
 
 ## The two interface modes
 
@@ -69,7 +69,7 @@ mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23/
 | whose input is it | the preprocessor's | the **compiler's** |
 | does the consumer compile it | no | **yes**, to get a BMI |
 | what it constrains | the libc ABI | compiler, C++ stdlib, C++ level |
-| can you trim it | **no** — see below | **no**, it is computed |
+| trimmable | **no** — see below | **no**, it is computed |
 
 `lib/` is keyed by **triple**, not by OS. MinGW and MSVC are both Windows and
 produce `libfoo.a` and `foo.lib` respectively.
@@ -79,7 +79,7 @@ links `lib<target>.so` and the loader then asks for the `SONAME`, and those are
 different filenames. Shipping only the built file links cleanly and then fails
 to start.
 
-### Why neither set can be trimmed
+### Why neither set may be trimmed
 
 A **source** distribution of the same package puts every one of its
 `include_dirs` on its consumers' include path. If a binary package shipped a
@@ -88,7 +88,7 @@ it was delivered. "Which headers are public" is already answered by the layout:
 `include/` is public, `src/` is not. A private header under `include/` is a
 project-layout mistake, not a packaging option.
 
-## Which `.cppm` files travel
+## Interface units included in the package
 
 The **module closure of the lib root** — `src/<package-tail>.cppm` by
 convention, or `[lib].path`. Whatever that unit's purview imports, transitively,
@@ -108,7 +108,7 @@ src/impl.cpp        module mathkit;                                → withheld
     Withheld capi.c, impl.cpp, secret.cppm
 ```
 
-**Read the second one** if you are shipping closed source.
+**The second row is the one that matters for closed-source distribution.**
 
 > **`.m.o` is not the rule.** An implementation partition produces a BMI and an
 > object exactly like an interface unit does. Selecting sources by "does it
@@ -146,7 +146,7 @@ Nothing to configure: the shape is the statement.
 The `c++` level is compared as a **floor**, not for equality: building at a
 higher level is fine, lower is not.
 
-## What a consumer's build checks
+## Consumer-side build checks
 
 Two things, both of which fail silently without a check:
 
@@ -177,15 +177,15 @@ error: acme.mathkit@0.1.0: no prebuilt artifact matches this toolchain.
     stdlib    needs libstdcxx15, this build has libstdcxx16
 ```
 
-The tags it *does* have are part of the message: "not found" would send you
-looking for a package already on your disk.
+The tags it *does* have are part of the message: "not found" would send the
+reader looking for a package that is already on disk.
 
-## Consuming one
+## Consuming a package
 
 Three spellings, one code path:
 
 ```toml
-# a directory (what you hand a colleague)
+# a directory (copied directly to a colleague)
 mathkit = { path = "vendor/mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23" }
 
 # a private git repo
@@ -197,7 +197,7 @@ mathkit = "0.1.0"
 
 Nothing about the consumer's manifest says "this one is prebuilt".
 
-### Building *inside* a package is refused
+### Building inside a package is refused
 
 ```
 error: … is a distribution package produced by `mcpp pack`, not a source tree.
@@ -221,7 +221,7 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 ```
 
 Because selection happens in the **consumer's** build, where the resolved
-target is known, a fat package cross-compiles correctly with no index-side or
+target is known, a multi-target package cross-compiles correctly with no index-side or
 installer-side support at all.
 
 > The blocks are `cfg(...)` and never a bare `[target.'<triple>']` key. Before
@@ -242,10 +242,10 @@ records them and the consumer resolves them:
 
 `path` and `git` dependencies are dropped: they address the publisher's disk,
 and republishing one hands the consumer an address that means something else.
-If your library depends on one, either publish that dependency too or vendor it
+A library that depends on one must either publish that dependency too, or vendor it
 before packing.
 
-## What older mcpp does with these packages
+## Behaviour of older mcpp releases
 
 **It builds against them.** Every key in the generated manifest already
 existed, so an older client reads the package and links it. What it does not do
@@ -253,10 +253,10 @@ is run the two checks above — it has no way to know that `provenance =
 "mcpp-pack …"` means anything.
 
 That is a degradation, not a break, and it is the right direction. But it means
-**the gate protects new clients only**, which belongs in your release notes if
-you publish to a mixed audience.
+**the gate protects new clients only**, which belongs in the release notes of any
+package published to a mixed-version audience.
 
-## Current limits
+## Current limitations
 
 | | status |
 |---|---|
@@ -327,7 +327,7 @@ floor.
 `mcpp pack` treats an implementation partition (`module M:part;`, no `export`)
 as private: its source stays behind, its object ships inside the archive.
 
-If your published interface *imports* one, the consumer cannot build the BMI
+If the published interface *imports* one, the consumer cannot build the BMI
 without that source, so it IS published — and `mcpp pack` says so:
 
 ```
@@ -340,14 +340,14 @@ warning: secret.cppm is an implementation partition, and the published interface
 > held no edge from the unit importing a partition to the unit defining it.
 > Build order was unconstrained: GCC and macOS clang recovered through their own
 > dependency scan, Windows clang failed with `failed to read compiled module`.
-> If you have been avoiding implementation partitions on Windows, that was why.
+> Implementation partitions were unusable on Windows for this reason.
 
-### A partition mcpp cannot classify
+### Partitions whose kind cannot be determined
 
 `[scan_overrides."<glob>"]` says which modules a file provides and has nowhere to
 say whether the declaration carries `export`; a P1689 scanner may omit
 `is-interface`. Either way the source is published — the consumer cannot build the
-BMI without it — and `mcpp pack` says which of the two situations you are in:
+BMI without it — and `mcpp pack` reports which of the two situations applies:
 
 ```
 warning: secret.cppm provides a module PARTITION and mcpp cannot tell which kind:
@@ -361,7 +361,7 @@ warning: secret.cppm provides a module PARTITION and mcpp cannot tell which kind
 > and names the module; publishing too many ships private source and nothing
 > fails at all. Unknown has to be loud.
 
-## How much of this is verified, and where
+## Verification scope
 
 The e2e suite gates each test on host capabilities, so "the suite is green" and
 "this ran" are different statements. What runs where:
@@ -369,9 +369,9 @@ The e2e suite gates each test on host capabilities, so "the suite is green" and
 | claim | linux | macOS | windows |
 |---|---|---|---|
 | layout, both interface modes, closure, the two gates, workspace root, named target, `sources = []`, bare-triple predicate | ✅ | ✅ | ✅ |
-| fat package, two legs one artifact name (`gnu` + `musl`) | ✅ | *impossible* | — |
-| fat package, two legs **two** artifact names (`msvc` + `mingw`) | — | *impossible* | ✅ |
-| fat package crossing an OS boundary (a PE leg) | ✅ | — | — |
+| multi-target package, two legs one artifact name (`gnu` + `musl`) | ✅ | *impossible* | — |
+| multi-target package, two legs **two** artifact names (`msvc` + `mingw`) | — | *impossible* | ✅ |
+| multi-target package crossing an OS boundary (a PE leg) | ✅ | — | — |
 | `lib.exe /REMOVE:` really removing | — | — | ✅ |
 | PE shared library: build, pack, link, run | ✅ (wine) | — | — |
 | Mach-O shared library relocating out of its build tree | — | ✅ | — |

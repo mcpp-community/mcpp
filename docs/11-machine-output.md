@@ -1,19 +1,19 @@
 # 11 — Machine-Readable Output
 
 mcpp writes for two audiences. This chapter is the contract for the second one:
-programs. If you are building an editor extension, a CI script, or anything
-that parses mcpp's output, this is what you may rely on.
+programs. Editor extensions, CI scripts, and anything else that parses mcpp's
+output may rely on what is stated here.
 
 Design and the measurements behind it:
 `.agents/docs/2026-08-08-machine-readable-output-protocol-design.md`.
 
-## 1. The rule that matters most
+## 1. Primary rule
 
 > **Detect the protocol by parsing stdout. Never by exit code, and never by
 > "the command did not fail".**
 
 Read stdout, try to parse it as JSON, and require `schemaVersion` and `kind`
-to be present. If either is missing, this mcpp does not speak the protocol you
+to be present. If either is missing, this mcpp does not speak the protocol the caller
 asked for.
 
 This is not a stylistic preference. `mcpp --protocol-version` looks like it
@@ -138,7 +138,7 @@ cannot separate the harmless from the thing a gate exists for:
 
 | effect | meaning |
 |---|---|
-| `init-mcpp-home` | may create `$MCPP_HOME` on first use. **Outside your project.** |
+| `init-mcpp-home` | may create `$MCPP_HOME` on first use. **Outside the project directory.** |
 | `read-project` | reads the manifest and sources |
 | `write-project` | writes into the project tree (`target/`, the compile DB) |
 | `write-global-cache` | writes the shared build cache |
@@ -168,7 +168,7 @@ output, and a warning would land in the middle of it.
 Both spellings are produced from the same source, so they always describe the
 same thing — one answer, two shapes.
 
-## 6. What you may rely on, and what changes
+## 6. Stability guarantees
 
 For each `kind`, within a `kindVersion`:
 
@@ -207,7 +207,7 @@ mcpp self env --format json
 This path is read-only, deliberately. The human `mcpp self env` initialises
 `$MCPP_HOME` if it is missing — someone typing it at a prompt expects that —
 but a client asking *where things are* should not be what puts them there. On
-a machine that has never run mcpp you get the paths it **would** use and
+a machine that has never run mcpp, the output is the paths it **would** use and
 `initialized: false`, and the disk is untouched.
 
 That is why this exists at all: without it a client has to reimplement mcpp's

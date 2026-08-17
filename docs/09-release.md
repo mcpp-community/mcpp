@@ -1,7 +1,7 @@
 # 09 — Releasing mcpp
 
 How a release of **mcpp itself** reaches users. This is maintainer-facing; for
-packaging *your own* project see [02 — Packaging for Release](02-pack-and-release.md).
+packaging an *ordinary* project see [02 — Packaging for Release](02-pack-and-release.md).
 
 Until now this process lived only in commit messages and workflow comments. One
 of those commit messages contains a misdiagnosis that is corrected in §5.
@@ -10,7 +10,7 @@ of those commit messages contains a misdiagnosis that is corrected in §5.
 
 | Site | Group | Moves when |
 |---|---|---|
-| `mcpp.toml` `[package].version` | **being built** | you start work on a new version |
+| `mcpp.toml` `[package].version` | **being built** | work starts on a new version |
 | `src/version.cppm` `MCPP_VERSION` | **being built** | same commit as above (compiled-in copy) |
 | `.xlings.json` `[workspace].mcpp` | **bootstrapped from** | separately, *after* a release is installable |
 | `ci-fresh-install.yml` `MCPP_PIN` | **version under test** | **nothing — it is derived at run time** (§5) |
@@ -167,7 +167,7 @@ is not yet installable. Bump it only after the release is published, mirrored,
 **and merged into xim-pkgindex** — otherwise every CI job fails with
 `package 'mcpp@<unreleased>' not found`. Once its syntax issue is repaired,
 `check_version_pins.sh` enforces the weaker "never newer than the version being
-built"; the index condition is on you.
+built"; the index condition requires human judgement.
 
 ## 5. `MCPP_PIN` is derived, and why that matters
 

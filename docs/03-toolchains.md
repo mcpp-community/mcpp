@@ -8,7 +8,7 @@ C++23 modules are fairly sensitive to compiler versions, and different releases 
 
 ## Automatic Installation
 
-The first time you run `mcpp build`, if no toolchain is configured yet, mcpp
+On the first `mcpp build` with no toolchain configured, mcpp
 installs and persists a default pair for the current host. The choice is
 host-aware:
 
@@ -171,7 +171,7 @@ splits on the *env* segment, not on the OS:
 | `x86_64-windows-msvc` | `foo.lib` (MSVC convention) |
 
 Before 2026.8.3.3 a mingw build on a Windows host emitted `foo.lib` — a GNU
-archive wearing an MSVC name, which MSVC cannot consume. If you have a script
+archive wearing an MSVC name, which MSVC cannot consume. A script
 that globs `*.lib` out of a `windows-gnu` build, it needs to glob `*.a` now.
 
 ## Linux ELF from Windows (`x86_64-linux-musl`, no WSL required)
@@ -218,10 +218,10 @@ Targets block, that host genuinely cannot serve it (implemented by
 An MSVC toolset reaches a build one of two ways, and the **version axis of the
 spec** says which:
 
-| Spec | Origin | Which compiler you get |
+| Spec | Origin | Compiler resolved |
 |---|---|---|
 | `msvc@system` (or bare `msvc`) | the machine's own Visual Studio | whatever is installed here |
-| `msvc@<toolset>` (e.g. `msvc@14.44.35207`) | an xlings payload mcpp installs | the one you named, on every machine |
+| `msvc@<toolset>` (e.g. `msvc@14.44.35207`) | an xlings payload mcpp installs | the named toolset, identically on every machine |
 
 They are not alternatives to pick between once — they answer different
 questions. `msvc@system` asks *"use what this developer already has"*;
@@ -236,7 +236,7 @@ Pinned toolsets coexist with each other and with a system Visual Studio.
 > refusing to use what is already installed would cost more than it buys:
 > Visual Studio is very often present and cannot always be redistributed.
 > `<family>@system` for any other family is an error that names both things
-> you might have meant. (The family-less `[toolchain] … = "system"` — the PATH
+> that may have been intended. (The family-less `[toolchain] … = "system"` — the PATH
 > compiler — is a separate and deliberate escape hatch, and is unaffected.)
 
 ### `msvc@system` — the machine's own Visual Studio
@@ -267,7 +267,7 @@ Default    set to msvc@system (was: llvm@20.1.7)
 ```
 
 If no Visual Studio is installed, mcpp says so and offers both routes — a
-pinned toolset it can install for you, or the Visual Studio Installer /
+pinned toolset it can install, or the Visual Studio Installer /
 `winget install Microsoft.VisualStudio.2022.BuildTools`.
 
 `mcpp toolchain list` shows the detected MSVC in a separate `System:` section,
@@ -459,7 +459,7 @@ unaffected, so this is a regression somewhere between Clang 18 and 20.
 This bites the module-package pattern directly. Wrapping an upstream header
 whose operators are `static inline` templates, and mirroring their signatures
 with a trivially-true constraint (the standard mixed-TU subsumption recipe),
-is exactly how you hit it.
+is exactly how it is reached.
 
 **The rule of thumb:** every template parameter should be pinned by the
 **first** function argument. Shapes that break this are the poisonous ones:

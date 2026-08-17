@@ -13,7 +13,7 @@
 > deliverable. Three routes turn it into one — and none of them uses the host's
 > C library.
 
-## Three ways to ship
+## Three distribution routes
 
 Every route below produces an artifact whose C runtime comes from the
 ecosystem, never from `/lib64`. That is deliberate: mcpp builds against a
@@ -24,16 +24,16 @@ libc to distribute would give that away at the last step.
 | | Route | Command | Where its C runtime comes from | Choose it when |
 |---|---|---|---|---|
 | **A** | Through the ecosystem | `mcpp emit xpkg` → `xlings install <pkg>` | the target machine's own xlings payloads | the target has xlings |
-| **B** | One static file | `mcpp build --target x86_64-linux-musl` | nowhere — it is linked in | you want a single file with no runtime at all |
+| **B** | One static file | `mcpp build --target x86_64-linux-musl` | nowhere — it is linked in | a single file with no runtime dependency |
 | **C** | Carry the runtime | `mcpp pack --mode self-contained` | shipped inside the bundle | any Linux, including older than the build machine |
 
-**On route A, and the thing that surprises people.** The `PT_INTERP` baked into
-a freshly built binary points at *your* machine's payload, so copying that file
-to another machine by hand does not work — the path is not there. That is not a
-property of the artifact so much as of the copy: installed through `xlings`, the
-package's ELF files are repointed at the target machine's own payloads at
-install time. The baked path is a build-machine detail, not a distribution
-format. If you are hand-copying binaries between machines, you want B or C.
+**On route A.** The `PT_INTERP` recorded in a freshly built binary points at the
+build machine's payload, so copying that file to another machine by hand does not
+work: the path does not exist there. This is a property of the copy rather than of
+the artifact — installed through `xlings`, the package's ELF files are repointed at
+the target machine's own payloads at install time. The recorded path is a
+build-machine detail, not a distribution format. Routes B and C are the ones that
+survive hand-copying.
 
 **On route B.** `--target …-musl` implies a static link, so there is no loader,
 no RUNPATH and nothing to find at run time. It is the smallest and most
@@ -213,10 +213,10 @@ exec "$here/lib/ld-linux-x86-64.so.2" --library-path "$here/lib" "$here/bin/myap
 The layout and wrapper above use an x86_64 example. The packer derives the
 loader name from the target; for aarch64 it is `ld-linux-aarch64.so.1`.
 
-#### Trap: `/proc/self/exe` under the bundled loader
+#### `/proc/self/exe` under the bundled loader
 
 Being started *by* the loader has a consequence the layout above does not
-show: the kernel sets `/proc/self/exe` to the **loader**, not to your program,
+show: the kernel sets `/proc/self/exe` to the **loader**, not to the program,
 and `/proc/self/cmdline` carries the `--library-path` argument. Every "find my
 resources next to the executable" path therefore resolves against `lib/`
 instead of the bundle root — and it does so silently. In practice that means
@@ -244,7 +244,7 @@ own resolution, say — use `--mode vendored` instead. It repoints `PT_INTERP`
 at the host loader, at the cost of requiring the host's glibc to be at least
 as new as the one the artifact was built against.
 
-### Windows (PE) — a `.zip`, and the DLLs sit beside the `.exe`
+### Windows (PE): a `.zip`, with the DLLs beside the `.exe`
 
 A Windows target produces a **`.zip`**, not a `.tar.gz`, and the layout is
 flat:

@@ -1,16 +1,16 @@
 # 11 — 机器可读输出
 
-mcpp 面向两类读者。本章是对第二类 —— **程序** —— 的契约。如果你在写编辑器扩展、CI
-脚本,或任何解析 mcpp 输出的东西,这里写的是你可以依赖的部分。
+mcpp 面向两类读者。本章是对第二类 —— **程序** —— 的契约。编辑器扩展、CI 脚本,以及任何解析 mcpp 输出的程序,
+可依赖的部分在此列出。
 
 设计与背后的实测:`.agents/docs/2026-08-08-machine-readable-output-protocol-design.md`。
 
-## 1. 最重要的一条规则
+## 1. 首要规则
 
 > **靠解析 stdout 来识别协议。不要靠退出码,也不要靠「命令没失败」。**
 
 读 stdout,尝试按 JSON 解析,并要求 `schemaVersion` 与 `kind` 都在。缺任一,说明这个
-mcpp 不支持你要的东西。
+mcpp 不支持所请求的内容。
 
 这不是风格偏好。`mcpp --protocol-version` 看起来像是入口,在支持它的版本上确实是个
 捷径。但在**它出现之前发布的每一个 mcpp** 上,它自己就是一个未知选项 —— 而未知选项
@@ -89,7 +89,7 @@ $ echo $?
 | 70 | 内部错误(未捕获异常) |
 | 127 | 未知命令 |
 
-## 4. effects —— 命令在输出之前做了什么
+## 4. effects —— 命令在输出前执行的操作
 
 带 untrusted-workspace 门的 IDE 必须在**运行之前**决定。等信封到手,它描述的事情已经
 发生了。所以同一份信息也静态提供:
@@ -116,7 +116,7 @@ mcpp --protocol-version
 
 | effect | 含义 |
 |---|---|
-| `init-mcpp-home` | 首次使用时可能创建 `$MCPP_HOME`。**在你的项目之外。** |
+| `init-mcpp-home` | 首次使用时可能创建 `$MCPP_HOME`。**位于项目目录之外。** |
 | `read-project` | 读 manifest 与源码 |
 | `write-project` | 写入项目树(`target/`、compile DB) |
 | `write-global-cache` | 写共享构建缓存 |
@@ -143,7 +143,7 @@ mcpp cache list --json         ->  {"root": …, "entries": [ … ]}
 
 两种拼写由同一个来源产出,所以永远描述同一件事:一个答案,两种形状。
 
-## 6. 你可以依赖什么
+## 6. 稳定性承诺
 
 对每个 `kind`,在同一 `kindVersion` 内:
 
@@ -179,7 +179,7 @@ mcpp self env --format json
 
 这条路径**刻意是只读的**。人类用的 `mcpp self env` 会在 `$MCPP_HOME` 缺失时初始化它
 —— 在提示符下敲这条命令的人预期如此 —— 但一个客户端**询问东西在哪**,不该成为把东西
-放到那儿的原因。在从没跑过 mcpp 的机器上,你会拿到它**将会**使用的路径与
+放到那儿的原因。在从未运行过 mcpp 的机器上,得到的是它**将会**使用的路径与
 `initialized: false`,而磁盘未被触碰。
 
 这也是它存在的理由:没有它,客户端就得重新实现 mcpp 的 home 解析 —— 包括「PATH 上的

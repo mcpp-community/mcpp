@@ -1,6 +1,6 @@
 # 09 — 发布 mcpp
 
-**mcpp 自身**的发布如何到达用户手上。这是给维护者看的；打包**你自己的项目**见
+**mcpp 自身**的发布如何到达用户手上。本章面向维护者;打包**自有项目**见
 [02 — 打包发布](02-pack-and-release.md)。
 
 在此之前这套流程只活在 commit message 和 workflow 注释里，其中一条 commit message
@@ -151,7 +151,7 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 **唯一的硬约束是方向**：pin 绝不能指向一个尚不可安装的版本。只在发布已完成、
 已镜像、**且已合入 xim-pkgindex 之后**再 bump —— 否则所有 CI 会以
 `package 'mcpp@<unreleased>' not found` 失败。待其语法问题修复后，
-`check_version_pins.sh` 能卡住较弱的「不得新于正在构建的版本」；索引那个条件靠你自己把关。
+`check_version_pins.sh` 能卡住较弱的「不得新于正在构建的版本」；索引那个条件需要人工把关。
 
 ## 5. `MCPP_PIN` 改为推导，以及这为什么重要
 

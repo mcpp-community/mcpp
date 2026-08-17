@@ -1,6 +1,6 @@
 # Workspace
 
-A workspace lets you organize and manage multiple related mcpp packages (libraries or applications) within a single repository. Member packages share a unified set of dependency versions and toolchain settings while each keeping its own `mcpp.toml` project file.
+A workspace organizes multiple related mcpp packages (libraries or applications) within a single repository. Member packages share a unified set of dependency versions and toolchain settings while each keeping its own `mcpp.toml` project file.
 
 ## 1. Overview
 
