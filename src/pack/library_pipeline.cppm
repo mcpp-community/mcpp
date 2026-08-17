@@ -268,6 +268,7 @@ export int build_and_pack_library(const std::string& targetName,
             .abiTag      = tag.str(),
             .buildKey    = ctx->fp.hex,
             .linkName    = targetName,
+            .soname      = target->soname,
             .shared      = shared,
         });
         mcpp::ui::status("Packed leg", std::format("{}  [{}]", triple, tag.str()));

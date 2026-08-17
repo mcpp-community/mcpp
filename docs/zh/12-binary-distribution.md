@@ -236,7 +236,7 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 | | 状态 |
 |---|---|
 | `kind = "lib"`(静态) | ✅ 所有 target |
-| `kind = "shared"` on Linux/ELF | ✅ |
+| `kind = "shared"` on Linux/ELF | ✅ —— 包里同时带链接名与 SONAME |
 | `kind = "shared"` on PE / Mach-O | ❌ 拒绝 —— 导入库与 install-name 尚未建模 |
 | `kind = "shared"` on `*-musl` | ❌ musl target 是静态链接的 |
 | 发布预编译 BMI | ❌ 未尝试;BMI 与编译器构建逐位绑定 |

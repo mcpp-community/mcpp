@@ -74,6 +74,11 @@ mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23/
 `lib/` is keyed by **triple**, not by OS. MinGW and MSVC are both Windows and
 produce `libfoo.a` and `foo.lib` respectively.
 
+A **shared** package carries the library under *both* of its names: a consumer
+links `lib<target>.so` and the loader then asks for the `SONAME`, and those are
+different filenames. Shipping only the built file links cleanly and then fails
+to start.
+
 ### Why neither set can be trimmed
 
 A **source** distribution of the same package puts every one of its
@@ -256,7 +261,7 @@ you publish to a mixed audience.
 | | status |
 |---|---|
 | `kind = "lib"` (static) | ✅ every target |
-| `kind = "shared"` on Linux/ELF | ✅ |
+| `kind = "shared"` on Linux/ELF | ✅ — the package carries both the link name and the SONAME |
 | `kind = "shared"` on PE / Mach-O | ❌ refused — import libraries and install-names are not modelled yet |
 | `kind = "shared"` on `*-musl` | ❌ a musl target links statically |
 | shipping prebuilt BMIs | ❌ not attempted; BMIs are compiler-build-exact |

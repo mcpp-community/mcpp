@@ -51,6 +51,11 @@ struct LibraryLeg {
     std::string           abiTag;
     std::string           buildKey;
     std::string           linkName;     // the -l argument, e.g. "mathkit"
+    // The SONAME the artifact declares, when it declares one. A shared library
+    // is FOUND at run time by this name and LINKED by `lib<linkName>.so`, and
+    // those are two different filenames — so a package that ships only the
+    // built file links fine and then cannot start.
+    std::string           soname;
     bool                  shared = false;
 };
 
@@ -183,6 +188,26 @@ run_library_pack(const LibraryPackPlan& plan)
         auto name = leg.artifact.filename().string();
         auto dst  = plan.stagingRoot / "lib" / leg.triple / name;
         if (auto r = copy_into(leg.artifact, dst); !r) return std::unexpected(r.error());
+
+        // A shared library needs BOTH of its names present.
+        //
+        // `-lmathkit-shared` resolves `libmathkit-shared.so` at link time, but
+        // the object records `SONAME libmathkit.so.1`, and that is the name the
+        // loader asks for. Ship only the built file and the consumer links,
+        // then fails to start — mcpp's own runtime-closure check reports
+        // "libmathkit.so.1 not found on the search path this artifact will
+        // actually use", which is how this was caught.
+        //
+        // A symlink is what a distribution ships; a copy is the fallback for
+        // filesystems (and archives) that cannot carry one.
+        if (leg.shared && !leg.soname.empty() && leg.soname != name) {
+            auto alias = dst.parent_path() / leg.soname;
+            std::error_code linkEc;
+            std::filesystem::remove(alias, linkEc);
+            std::filesystem::create_symlink(name, alias, linkEc);
+            if (linkEc)
+                if (auto r = copy_into(leg.artifact, alias); !r) return std::unexpected(r.error());
+        }
 
         // Delete the objects of the units published as source. The consumer
         // compiles those itself; leaving them in the archive means two
