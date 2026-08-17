@@ -106,6 +106,16 @@ struct CommandDialect {
     // spaces after the archive path.
     std::string_view archiveRemoveArg; // "d" needs no {} | "/REMOVE:{}"
     bool             archiveRemoveTakesArchiveFirst = true;
+
+    // How the linker is told where to write a shared library's IMPORT LIBRARY —
+    // the archive of stubs a PE consumer links against, as opposed to the `.dll`
+    // the loader opens. `{}` is the path.
+    //
+    // Emitted only when the TARGET has import libraries at all (PE); on ELF and
+    // Mach-O the shared library is its own link input and there is nothing to
+    // write. So this being non-empty in both rows is not a contradiction: the
+    // rows describe how to SAY it, and the target decides whether to.
+    std::string_view sharedImportLibArg;  // "-Wl,--out-implib,{}" | "/IMPLIB:{}"
 };
 
 // Dialect lookup. GCC / Clang / MinGW → gnu; MSVC → msvc.
@@ -209,6 +219,10 @@ constexpr CommandDialect kGnuDialect{
     // `ar d <archive> <member>...` — one verb, then every member.
     .archiveRemoveArg = "d",
     .archiveRemoveTakesArchiveFirst = true,
+    // ld/lld: `--out-implib` is what makes a PE shared library linkable at all.
+    // Without it mingw writes only the .dll, consumers link the .dll directly,
+    // and that works — until the same package is consumed by any other linker.
+    .sharedImportLibArg = "-Wl,--out-implib,{}",
 };
 
 // Native cl.exe. Unreachable in builds until the MSVC backend lands
@@ -244,6 +258,10 @@ constexpr CommandDialect kMsvcDialect{
     // reported with the command that produced it rather than swallowed.
     .archiveRemoveArg = "/REMOVE:{}",
     .archiveRemoveTakesArchiveFirst = false,
+    // link.exe writes one whether asked or not; naming it explicitly is how the
+    // path stays the one plan.cppm chose, instead of the linker's `$out`-derived
+    // guess (`foo.dll.lib`) that nothing else in mcpp agrees with.
+    .sharedImportLibArg = "/IMPLIB:{}",
 };
 
 } // namespace

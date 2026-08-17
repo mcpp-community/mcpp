@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# requires: gcc
+# requires: gcc musl
 # 245_pack_library_fat_target_selection.sh — one package, several targets, and
 # each build picks exactly its own leg.
+#
+# `musl` is now declared as well as `gcc`. It always needed both — the pack below
+# asks for a musl leg outright — and CI was green only because the payload
+# happens to be warm there. A requirement the test does not declare is one that
+# turns into a confusing failure the day it stops being true.
+#
+# The Windows counterpart (msvc + mingw legs in one package) is 256; `# requires:`
+# cannot express "gcc+musl OR msvc+mingw", and a host that has neither should
+# skip rather than half-run.
 #
 # ⚠️ THE PREDICATE IS THE POINT. Each leg is selected by a generated
 # `cfg(all(arch=…, os=…, env=…))` block and NOT by a bare `[target.'<triple>']`

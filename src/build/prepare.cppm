@@ -1238,6 +1238,47 @@ prepare_build(bool print_fingerprint,
                 "       An explicit [target.{}] toolchain override can opt in early.",
                 parsed->str(), parsed->str()));
         }
+        // Known, supported — and IMPOSSIBLE ON THIS HOST.
+        //
+        // Without this the target falls through to the host toolchain and the
+        // build SUCCEEDS, which is the failure the check above calls the worst
+        // one, arriving through a different door. Measured on Linux:
+        //
+        //   $ mcpp build --target x86_64-windows-msvc
+        //       Resolved gcc@16.1.0 → x86_64-windows-msvc → …/xim-x-gcc/bin/g++
+        //       Finished dev [unoptimized + debuginfo] in 0.07s
+        //   $ ls target/
+        //       x86_64-linux-gnu/          ← an ELF, reported as a Windows build
+        //
+        // The vocabulary tier says "mcpp supports this target"; it never said
+        // "this machine can produce it". `host_can_serve` is the answer to the
+        // second question and lives beside the payload resolution it has to
+        // agree with.
+        //
+        // The escape hatch stays open on purpose: an explicit `[target.X]`
+        // toolchain override means the author is supplying the cross toolchain
+        // themselves, and mcpp's payload matrix has no standing to refuse it.
+        if (known && known->tier != "planned" && !hasToolchainOverride && parsed
+            && !mcpp::toolchain::host_can_serve(*parsed)) {
+            std::string servable;
+            for (auto const& info : triple::known_targets()) {
+                auto t = triple::parse(info.canonical);
+                if (!t || info.tier == "planned") continue;
+                if (!mcpp::toolchain::host_can_serve(*t)) continue;
+                if (!servable.empty()) servable += ", ";
+                servable += t->str();
+            }
+            return std::unexpected(std::format(
+                "target '{}' cannot be built on this host — no toolchain payload "
+                "exists that runs here and produces it.\n"
+                "       this host can build: {}\n"
+                "       Build it on a host that can, or supply your own cross "
+                "toolchain with an\n"
+                "       explicit [target.{}] toolchain = \"…\" section.",
+                parsed->str(),
+                servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
+                parsed->str()));
+        }
         // Canonical from here on: cfg evaluation, spec attachment and the
         // target/ output directory all see one spelling.
         if (parsed) overrides.target_triple = parsed->str();

@@ -95,6 +95,19 @@ case "$OS" in
             # proving nothing. The CI job that masks Visual Studio lands here.
             CAPS+=(no-msvc)
         fi
+        # mingw: the WINDOWS-HOSTED MinGW-w64 GCC payload (xim:mingw-gcc,
+        # winlibs GCC 16 UCRT). Distinct from `mingw-cross` above, which is the
+        # Linux-hosted cross — same target, different host, and a test that needs
+        # one cannot use the other.
+        #
+        # Probing the payload rather than PATH deliberately: a Windows runner may
+        # well have some g++.exe from Strawberry Perl, and that one cannot build
+        # modules. Same reason the `gcc` capability is withheld here.
+        for _mgw in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-mingw-gcc/*/bin/g++.exe \
+                    "$HOME"/.xlings/data/xpkgs/xim-x-mingw-gcc/*/bin/g++.exe; do
+            if [[ -x "$_mgw" ]]; then CAPS+=(mingw); break; fi
+        done
+        unset _mgw
         # NOTE: Windows runners may have g++.exe (MinGW/Strawberry) in PATH
         # but it's not a proper mcpp-compatible GCC. Don't add gcc capability.
         # fresh-sandbox: not yet reliable on Windows — xlings LLVM auto-install
@@ -162,7 +175,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # absent on Linux and must stay legal to declare. It is checked against the
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
-KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx macos mingw-cross msvc
+KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx macos mingw mingw-cross msvc
             musl nasm no-msvc pack patchelf python3 scan-deps symlink unix-shell
             windows wine xlings-msvc)
 

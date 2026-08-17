@@ -237,10 +237,51 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 |---|---|
 | `kind = "lib"`(静态) | ✅ 所有 target,三平台都测了 |
 | `kind = "shared"` on Linux/ELF | ✅ —— 包里同时带链接名与 SONAME |
-| `kind = "shared"` on PE / Mach-O | ❌ 拒绝 —— 导入库与 install-name 尚未建模 |
+| `kind = "shared"` on PE / MinGW(`*-windows-gnu`) | ✅ —— 包里同时带 `.dll` **和它的导入库** |
+| `kind = "shared"` on Mach-O(`*-macos`) | ✅ —— install name 是 `@rpath/<file>`,`.dylib` 可重定位 |
+| `kind = "shared"` on PE / MSVC(`*-windows-msvc`) | ❌ 拒绝 —— 见下 |
 | `kind = "shared"` on `*-musl` | ❌ musl target 是静态链接的 |
 | 发布预编译 BMI | ❌ 未尝试;BMI 与编译器构建逐位绑定 |
 | 把依赖打包进去 | ❌ 改为声明依赖(见上) |
+| 用**原生 `cl.exe`** 消费这种包 | ❌ 见下 |
+
+### MSVC 为什么拒绝 `kind = "shared"`
+
+**不是链接器的问题** —— `link /DLL /IMPLIB:` 本来就能用。是**符号导出**:
+MSVC 在没有 `__declspec(dllexport)`、也没有 `.def` 列出符号时,DLL **什么都不导出**,
+于是导入库是空的,每个消费者都会拿到一堆 unresolved externals,而那些符号
+明明就在对象文件里 —— 报错点离病因很远。mcpp 选择拒绝,而不是产出这种诊断:
+
+```
+target 'mathkit': kind = "shared" is not supported for the MSVC ABI (x86_64-windows-msvc).
+  ...
+  Use kind = "lib" for this target, or build it for *-windows-gnu (MinGW),
+  where the linker auto-exports.
+```
+
+MinGW 的链接器会自动导出,这就是 `*-windows-gnu` 支持而 `*-windows-msvc` 不支持的
+全部原因。要补齐它需要生成 `.def`(对对象做一次符号扫描)—— 那是一个构建图节点,
+不是一个 flag。
+
+### 包里的链接 flag 是 GNU 拼写
+
+生成的 manifest 用这种方式选腿:
+
+```toml
+[target.'cfg(all(arch = "x86_64", os = "windows", env = "msvc"))'.build]
+ldflags = ["-Llib/x86_64-windows-msvc", "-lmathkit"]
+```
+
+mcpp 用到的每个 driver 都吃这一套 —— 包括 Windows 上默认的、面向 MSVC ABI 的
+clang。**原生 `cl.exe` 不吃**:它不认 `-L`。所以固定了
+`[toolchain] windows = "msvc@system"` 的消费者目前链不上打包库。
+
+**改成直接写文件路径也不行**(`lib/<triple>/mathkit.lib` 才是每个 driver 都吃的
+拼写):ninja 执行链接命令时 cwd 是**输出目录**,而只有 include 家族前缀
+(`-I`、`-L` …)会被 `normalize_include_flags` 相对包根绝对化 —— 没有前缀的 token
+就会到错误的地方去找:`ld: cannot find lib/x86_64-windows-gnu/libmathkit.a`。
+而 manifest 里写绝对路径就不再可重定位了。要补齐它,需要让条件通道能承载
+`link_library_dirs` / `libraries` —— mcpp 已经能按方言渲染它们,只是只在顶层读。
 
 ### 实现分区
 

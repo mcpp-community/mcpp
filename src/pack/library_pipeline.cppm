@@ -165,11 +165,15 @@ export int build_and_pack_library(const std::string& targetName,
             return 1;
         }
         std::filesystem::path artifact;
+        std::filesystem::path importLib;
         for (auto const& lu : ctx->plan.linkUnits) {
             if (lu.targetName != targetName) continue;
             if (lu.kind != mcpp::build::LinkUnit::StaticLibrary
                 && lu.kind != mcpp::build::LinkUnit::SharedLibrary) continue;
             artifact = ctx->outputDir / lu.output;
+            // Also from the plan, for the same reason: the link unit knows
+            // whether it produced an import library and where.
+            if (!lu.importLibrary.empty()) importLib = ctx->outputDir / lu.importLibrary;
             break;
         }
         if (artifact.empty()) {
@@ -316,6 +320,7 @@ export int build_and_pack_library(const std::string& targetName,
                 mcpp::toolchain::dialect_for(ctx->tc).archiveRemoveTakesArchiveFirst,
             .soname      = target->soname,
             .shared      = shared,
+            .importLibrary = importLib,
         });
         mcpp::ui::status("Packed leg", std::format("{}  [{}]", triple, tag.str()));
     }

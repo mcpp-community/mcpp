@@ -46,6 +46,10 @@ export namespace mcpp::pack {
 struct PackageLeg {
     std::string triple;        // canonical, e.g. "x86_64-linux-gnu"
     std::string libFile;       // "libmathkit.a" — as it sits in lib/<triple>/
+    // The file a CONSUMER links. Same as libFile except for a PE shared library,
+    // where the loader opens the `.dll` and the linker consumes the import
+    // library beside it.
+    std::string linkFile;
     std::string linkName;      // "mathkit" — the -l argument
     std::string abiTag;        // "x86_64-linux-gnu-gcc16-libstdcxx16-c++23"
     std::string digest;        // "sha256:…"
@@ -180,7 +184,48 @@ std::string emit_package_manifest(const PackageDoc& doc) {
     // ── how to link each leg ───────────────────────────────────────────
     for (auto const& leg : doc.legs) {
         o += std::format("[target.'{}'.build]\n", cfg_predicate_for(leg.triple));
-        o += std::format("ldflags = [\"-Llib/{}\", \"-l{}\"]\n\n", leg.triple, leg.linkName);
+        // `-L<dir>` + `-l<name>`, on every target including PE.
+        //
+        // ⚠️ NAMING THE FILE BY PATH INSTEAD DOES NOT WORK, and it is worth
+        // writing down because it looks strictly better. A bare path is the one
+        // spelling every driver accepts (cl, clang, gcc, link.exe) and it names
+        // the exact file rather than asking the linker to search. Measured: it
+        // fails with `ld: cannot find lib/x86_64-windows-gnu/libmathkit.a`,
+        // because ninja runs link commands with cwd = the OUTPUT dir and only
+        // the include-family prefixes (`-I`, `-L`, …) get absolutized against
+        // the package root by normalize_include_flags. A prefix-less token has
+        // nothing to hook that on, and the manifest cannot carry an absolute
+        // path without ceasing to be relocatable.
+        //
+        // `-l` resolves the right file on PE too: ld tries `libX.dll.a` before
+        // `libX.a`, and lld-link/clang tries `X.lib` — which is exactly how
+        // `import_library_for` names them. What was actually missing was the
+        // import library being IN the package at all.
+        //
+        // Consequence to know: a consumer driven by NATIVE cl.exe cannot use
+        // these flags (cl rejects `-L`). Recorded in docs/12 rather than papered
+        // over — mcpp's own Windows default is clang, which takes them.
+        //
+        // ⚠️ `-Wl,-Bdynamic` is REQUIRED for a PE shared leg, and only there.
+        // mcpp gives PE executables `-static` (the self-contained C++ runtime
+        // contract: no libstdc++-6.dll beside the exe), and `-static` puts ld in
+        // static-only mode, where it refuses an import library and reports
+        // `cannot find -lmathkit / have you installed the static version of the
+        // mathkit library?` — a message that names neither the DLL nor `-static`.
+        // Switching to dynamic mode just before this `-l` fixes it; `-static`
+        // arrives later on the line and still governs the runtime libraries
+        // after it. Measured: without it the link fails, with it the program
+        // links, deploys and runs.
+        //
+        // Only for env=gnu: an msvc-ABI shared leg cannot exist (make_plan
+        // refuses it — MSVC exports nothing without dllexport), and lld-link
+        // would not understand the flag if one did.
+        const bool peGnuShared = leg.shared
+            && leg.triple.find("windows-gnu") != std::string::npos;
+        o += std::format("ldflags = [\"-Llib/{}\", {}\"-l{}\"]\n\n",
+                         leg.triple,
+                         peGnuShared ? "\"-Wl,-Bdynamic\", " : "",
+                         leg.linkName);
     }
     // A shared library has to be FOUND at run time as well as linked, and the
     // two are different search paths — `link_library_dirs` is not rpath.

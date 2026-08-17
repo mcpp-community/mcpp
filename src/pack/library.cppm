@@ -63,6 +63,13 @@ struct LibraryLeg {
     // built file links fine and then cannot start.
     std::string           soname;
     bool                  shared = false;
+    // The IMPORT LIBRARY, on PE only — absolute, empty everywhere else.
+    //
+    // A PE shared library is two files: the `.dll` the loader opens and an
+    // archive of stubs the LINKER consumes. Shipping only the `.dll` gives a
+    // package that no linker can use, so the package carries both and the
+    // emitted manifest points consumers at this one.
+    std::filesystem::path importLibrary;
 };
 
 struct LibraryPackPlan {
@@ -246,6 +253,25 @@ run_library_pack(const LibraryPackPlan& plan)
         auto dst  = plan.stagingRoot / "lib" / leg.triple / name;
         if (auto r = copy_into(leg.artifact, dst); !r) return std::unexpected(r.error());
 
+        // The import library travels beside the .dll, and it is what the emitted
+        // manifest names as the link input. Refused rather than skipped when
+        // missing: a PE shared package without one links for nobody, and finding
+        // that out at the consumer's link step points at the consumer.
+        std::string linkFile = name;
+        if (!leg.importLibrary.empty()) {
+            if (!std::filesystem::exists(leg.importLibrary, ec)) {
+                return std::unexpected(LibraryPackError{ std::format(
+                    "the build for '{}' produced no import library at '{}'.\n"
+                    "  A PE shared library is two files, and consumers link the "
+                    "second one — shipping only the .dll gives a package no "
+                    "linker can use.",
+                    leg.triple, leg.importLibrary.string()) });
+            }
+            linkFile = leg.importLibrary.filename().string();
+            if (auto r = copy_into(leg.importLibrary, dst.parent_path() / linkFile); !r)
+                return std::unexpected(r.error());
+        }
+
         // A shared library needs BOTH of its names present.
         //
         // `-lmathkit-shared` resolves `libmathkit-shared.so` at link time, but
@@ -300,6 +326,7 @@ run_library_pack(const LibraryPackPlan& plan)
         docLegs.push_back(PackageLeg{
             .triple   = leg.triple,
             .libFile  = name,
+            .linkFile = linkFile,
             .linkName = leg.linkName,
             .abiTag   = leg.abiTag,
             .digest   = file_digest(dst),

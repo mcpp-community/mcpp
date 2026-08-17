@@ -113,6 +113,12 @@ cat > app/src/main.cpp <<'EOF'
 import mathkit;
 int main(){ std::printf("ok=%d\n", mk::answer()); return 0; }
 EOF
+# ⚠️ The CONSUMER deliberately takes the DEFAULT toolchain (clang on the MSVC
+# ABI), not msvc@system. The emitted manifest links each leg with `-Llib/<triple>
+# -l<name>`, which is GNU spelling: clang accepts it, native cl.exe rejects `-L`
+# outright. That is a real limitation of the generated manifest (recorded in
+# docs/12), and it is NOT what this test is about — pinning cl here would make
+# 255 fail for a reason that has nothing to do with the archiver.
 cat > app/mcpp.toml <<EOF
 [package]
 name    = "app"
@@ -122,8 +128,6 @@ mathkit = { path = "$(host_path "$TMP/mathkit/$pkg")" }
 [targets.app]
 kind = "bin"
 main = "src/main.cpp"
-[toolchain]
-windows = "msvc@system"
 EOF
 ( cd app && "$MCPP" run > run.log 2>&1 ) || { cat app/run.log; echo "consumer failed"; exit 1; }
 grep -q 'ok=42' app/run.log || { cat app/run.log; echo "wrong answer"; exit 1; }

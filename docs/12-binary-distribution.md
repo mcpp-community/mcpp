@@ -262,10 +262,57 @@ you publish to a mixed audience.
 |---|---|
 | `kind = "lib"` (static) | ✅ every target, tested on all three |
 | `kind = "shared"` on Linux/ELF | ✅ — the package carries both the link name and the SONAME |
-| `kind = "shared"` on PE / Mach-O | ❌ refused — import libraries and install-names are not modelled yet |
+| `kind = "shared"` on PE / MinGW (`*-windows-gnu`) | ✅ — the package carries the `.dll` **and** its import library |
+| `kind = "shared"` on Mach-O (`*-macos`) | ✅ — install name is `@rpath/<file>`, so the `.dylib` relocates |
+| `kind = "shared"` on PE / MSVC (`*-windows-msvc`) | ❌ refused — see below |
 | `kind = "shared"` on `*-musl` | ❌ a musl target links statically |
 | shipping prebuilt BMIs | ❌ not attempted; BMIs are compiler-build-exact |
 | bundling dependencies into the package | ❌ declare them instead (above) |
+| consuming a package with **native `cl.exe`** | ❌ see below |
+
+### Why MSVC refuses `kind = "shared"`
+
+Not the linker — `link /DLL /IMPLIB:` works. **Symbol export.** MSVC exports
+nothing from a DLL unless the source says `__declspec(dllexport)` or a `.def`
+file lists the symbols, so the import library comes out empty and every consumer
+fails with unresolved externals naming symbols that are plainly in the object
+files. mcpp refuses rather than produce a diagnostic that points nowhere near its
+cause:
+
+```
+target 'mathkit': kind = "shared" is not supported for the MSVC ABI (x86_64-windows-msvc).
+  MSVC exports nothing from a DLL unless the source says `__declspec(dllexport)`
+  ...
+  Use kind = "lib" for this target, or build it for *-windows-gnu (MinGW),
+  where the linker auto-exports.
+```
+
+MinGW's linker auto-exports, which is why `*-windows-gnu` is supported and
+`*-windows-msvc` is not. Closing this needs a generated `.def` — a symbol scan
+over the objects — which is a build-graph node, not a flag.
+
+### A package's link flags are GNU-spelled
+
+The generated manifest selects each leg with
+
+```toml
+[target.'cfg(all(arch = "x86_64", os = "windows", env = "msvc"))'.build]
+ldflags = ["-Llib/x86_64-windows-msvc", "-lmathkit"]
+```
+
+Every driver mcpp uses accepts that — including clang on the MSVC ABI, which is
+Windows' default here. **Native `cl.exe` does not**: it rejects `-L`. So a
+consumer that pins `[toolchain] windows = "msvc@system"` cannot link a packaged
+library today.
+
+Naming the file by path instead (`lib/<triple>/mathkit.lib`) is the spelling
+every driver takes, and it does not work either: ninja runs link commands with
+cwd = the output directory, and only the include-family prefixes (`-I`, `-L`, …)
+are absolutized against the package root, so a prefix-less token is looked for
+in the wrong place — `ld: cannot find lib/x86_64-windows-gnu/libmathkit.a`. A
+manifest cannot carry an absolute path and stay relocatable. Closing this needs
+the conditional channel to carry `link_library_dirs` / `libraries`, which mcpp
+already renders per dialect, but only reads at the top level.
 
 ### Implementation partitions
 

@@ -34,7 +34,49 @@
   同一个闭包反过来决定归档里要删哪些对象,按 `.m.o` 删则会删掉真代码、
   三个平台全部链接失败。两条清单都会打印出来。
 
-  详见 `docs/12-binary-distribution.md`、`examples/05-lib-dist`、`examples/06-lib-consume`。
+  详见 `docs/12-binary-distribution.md`、`examples/05-lib-distribution`。
+
+- **`kind = "shared"` 不再只有 Linux:PE/MinGW 与 Mach-O 都能产、能打包、能跑。**
+
+  过去这条路只在 ELF 上验证过,而那道「非 Linux 就拒绝」的守卫**恰好在最要紧的
+  情形下失效**:它写的是 `!targetTriple.empty() && os != "linux"`,而**原生构建的
+  targetTriple 是空的** —— 于是它拦住了一个交叉到 macOS 的构建(那个本来就不可服务),
+  却让**原生 macOS / 原生 Windows** 直接走进它本该拦住的未验证路径。
+
+  真正缺的东西各不相同,而且都不是 flag 拼写:
+
+  - **PE 缺导入库。** 一个 PE 共享库是**两个文件**:加载器打开的 `.dll`,以及
+    链接器消费的桩归档。mcpp 只写了前者,消费者直接链 `.dll` —— mingw 的 ld 容忍这个,
+    别的链接器都不容忍,于是**能用的那种情况把坏掉的那种遮住了**。现在链接边把导入库
+    作为隐式输出声明出来,包里两个都带,生成的 manifest 指向导入库。
+    另外 PE 可执行文件带 `-static`,而 `-static` 会让 ld 进入纯静态模式并拒绝导入库,
+    报的是 `have you installed the static version of the mathkit library?` ——
+    既没点 DLL 也没点 `-static`;所以那条 `-l` 之前要先 `-Wl,-Bdynamic`。
+  - **Mach-O 缺 install name。** `.dylib` 记录的是**链接时的路径**,所以只在声明了
+    `soname` 时才发 `-install_name` 意味着**其他每一个 `.dylib` 都把构建目录烙了进去** ——
+    在打包机上完好,换个地方就 `image not found`。现在无条件发 `@rpath/<file>`。
+    而且这个选择原先是用宿主的 `#if defined(__APPLE__)` 做的,交叉链接会发错(或不发);
+    现在按 target 决定,和 `target_output` 早就做的一样。
+  - **PE/MSVC 仍然拒绝,但换了个理由,而且是真理由。** 不是链接器 ——
+    `link /DLL /IMPLIB:` 一直都在规则表里。是**符号导出**:没有 `__declspec(dllexport)`
+    或 `.def`,MSVC 的 DLL 什么都不导出 ⇒ 导入库是空的 ⇒ 消费者拿到一堆
+    unresolved externals,而那些符号明明在对象里。产出这个比拒绝更糟。
+
+- **`--target` 不能服务时直接拒绝,而不是悄悄按宿主构建。**
+
+  实测(Linux):`mcpp build --target x86_64-windows-msvc` 解析到**原生 g++**、
+  写进 `target/x86_64-linux-gnu/`、报告成功 —— 一个 ELF 被当成 Windows 构建交付。
+  词表的 tier 说的是「mcpp 支持这个 target」,从来没说「这台机器能产出它」;
+  后者是 `host_can_serve` 的问题,现在 `prepare.cppm` 会问它,并把
+  **这台宿主能构建的清单**列进错误信息。逃生口保留:显式
+  `[target.X] toolchain = "…"` 表示交叉链是你自己提供的,mcpp 的载荷矩阵无权否决。
+
+- **`[package] platforms` 会与实际打出的腿对账(设计里承诺过、实现里没有)。**
+
+  四种比较只有两种值得打印:**打了却没声明**永远可行动;**声明了却没打,
+  且这台宿主本来能构建它**才可行动。正常发布流程是 CI 上每平台各跑一次 `mcpp pack`,
+  所以 Linux runner 不产 macOS 腿不是遗漏、是每一次 —— **永远触发的告警会把真正该看的
+  那条盖掉**。所以判据用的是 `host_can_serve`,与 `--target` 是同一个函数。
 
 - **消费预编译包时的两道闸门。** 都是不检查就会静默出错的:
 
@@ -49,6 +91,21 @@
   是声明,定义在旁边的归档里,构建会产出一个几乎空的库然后报告成功。
 
 ### 修复
+
+- **「谁也没判定过」这个状态过去被拼成了「是接口」,于是闭源实现分区会静默发布出去。**
+
+  一个分区的源码能不能发布,取决于一个关键字:`export module M:api;` 可以走,
+  `module M:impl;` 不能。而三条建图路径里有两条读不到它:
+  `[scan_overrides."<glob>"]` 声明了文件提供哪些模块,**没有地方能说它是否 export**;
+  P1689 的 `is-interface` 是可选键,mcpp 把它解析进了一个**从来没人读**的字段。
+
+  两者都以 `providesInterface = true` 到达,而字段自己的注释把这叫「保守方向」,
+  理由是「这个标志只会产生一条警告」。**这恰好说反了**:`true` 正是那个**不产生
+  任何警告**的值 —— 于是用 `[scan_overrides]` 声明的实现分区被**一声不响地发布**。
+
+  现在它是三态的,每条路径只说自己真的知道的事:文本扫描器读关键字并显式写 true/false;
+  P1689 读取器把编译器的答案(**包括它的沉默**)原样带过来;`scan_overrides`
+  **留空**,因为 schema 表达不了。未知会告警,而且和已知那条**说的是不同的话**。
 
 - **实现分区(`module M:part;`)在 Windows 上构建不了,而根因在扫描器里。**
 
