@@ -782,3 +782,128 @@ clang 构建的二进制,而 clang 构建的 mcpp 在本机会段错误)。
 | **O3** | MSVC 的 `/REMOVE:` 路径**未测试**(mcpp 的 Windows CI 用 clang 的 llvm-ar,走 GNU 形式) | 失败会带命令原文报错,不会静默;要真测需要 `msvc@system` 的 job |
 | **O4** | Windows 上的胖包(msvc + mingw)未覆盖 | 见 §12.1;要在 Windows e2e job 装 `xim:mingw-gcc` |
 | **O5** | 设计 §2.2 承诺的「`--target` 集合与 `[package].platforms` 覆盖比对告警」**没有实现** | 我漏了。它便宜(一次集合比对 + 一条 warning),但属于「发布纪律」而不是正确性,可以随后补 |
+
+
+---
+
+## 13. 第二轮:把 §12 的五项做完(2026-08-18,同一个 PR #451)
+
+裁决是「统一在单 PR 451 上实现最大兼容和支持度」,所以 O1(拆 PR)**不做**,
+其余四项全部落地,并顺带补上了两个在做的过程中被逼出来的真缺陷。
+
+### 13.1 §12 五项的结局
+
+| # | 项 | 结局 |
+|---|---|---|
+| O1 | 把扫描器改动拆成独立 PR | **不做** —— 单 PR 是裁决。代价照旧:revert 粒度与库分发绑在一起 |
+| O2 | `scan_overrides` 声明的实现分区被误判成接口 | **已修,而且没加 manifest 键**(见 §13.2) |
+| O3 | MSVC `/REMOVE:` 未测试 | **两端都测了**:`archive_remove_command` 抽出成缝 + 单测钉命令,e2e 255 用真 `lib.exe` |
+| O4 | Windows 胖包未覆盖 | **e2e 256**(msvc 腿 + mingw 腿同处一包),Windows e2e job 增加 `xim:mingw-gcc` 安装步与 `mingw` 能力 |
+| O5 | `[package].platforms` 覆盖告警未实现 | **已实现**(见 §13.3) |
+
+### 13.2 O2 的解法:三态,而且零新键
+
+`SourceUnit::providesInterface` 从 `bool` 改成 `std::optional<bool>`。
+三条建图路径各说自己真的知道的事:
+
+| 路径 | 它知道什么 |
+|---|---|
+| 文本扫描器 | 读到了关键字 ⇒ 显式 true / false |
+| P1689 读取器 | 编译器的答案,**包括它的沉默**(`is-interface` 是可选键) |
+| `scan_overrides` | **什么都不知道** ⇒ 留空。schema 里没有地方说 export |
+
+**判据:`true` 是那个「不产生任何警告」的值。** 字段原来的注释把默认 `true`
+叫「保守方向,因为这个标志只会产生一条警告」—— 说反了,所以用
+`[scan_overrides]` 声明的实现分区被一声不响地发布,而那正是整个闭包设计要防的事。
+
+两个细节让告警可用:
+- **只问分区。** `module M;` 不 provide 任何东西,所以能 provide 裸 `M` 的只有
+  `export module M;` —— 在那里问会对每个用了 override 的包的每个主接口都告警;
+- **未知与已知说不同的话。** 一条是「你正在发布你的实现」,另一条是
+  「mcpp 判不出你是不是在发布」。
+
+**P1689 那一半是真修复而不是变通**:编译器早就报了 `is-interface`,
+mcpp 解析进了一个从来没人读的字段。
+
+e2e 253 **两侧都钉**:同一个 fixture 打两次(扫描 / override),两次必须给出
+**不同的句子** —— 只断言 override 会告警,分不清「mcpp 建模了三态」与
+「mcpp 对每个发布的分区都告警」。**控制探针验证过**:把 override 那一处恢复成
+`true`(其余修复保留),253 在正好那条断言上失败。
+
+### 13.3 O5 的解法:判据是 `host_can_serve`,难点是「别嚷嚷」
+
+四种比较只有两种能打印:
+
+| 情况 | 处理 |
+|---|---|
+| 打了却没声明 | 永远可行动 —— manifest 否认了一个包明明能服务的平台 |
+| 声明了却没打,**且本宿主能构建它** | 可行动 |
+| 声明了却没打,本宿主构建不了 | **不说话** |
+
+第三行才是这个检查可用的原因:正常流程是 CI 每平台各跑一次 `mcpp pack`,
+Linux runner 不产 macOS 腿不是遗漏、是每一次。**永远触发的告警会把真正该看的那条盖掉。**
+判据用 `host_can_serve` —— 与 `--target` 接受什么是同一个函数,所以告警只可能
+点出作者此刻做得到的事。e2e 254 **把沉默也断言了**。
+
+### 13.4 顺带被逼出来的两个真缺陷
+
+**(a) `kind = "shared"` 的守卫在最要紧的情形下失效。**
+它写的是 `!targetTriple.empty() && os != "linux"`,而**原生构建的 targetTriple 是空的**
+⇒ 它拦住了一个交叉到 macOS 的构建(那本来就不可服务、不可达),
+却让**原生 macOS / 原生 Windows** 直接走进它本该拦住的未验证路径。
+
+修完守卫之后,真正缺的东西各不相同,而且**都不是 flag 拼写**:
+
+| 格式 | 缺什么 | 现在 |
+|---|---|---|
+| PE | **导入库** —— 只写了 `.dll`,消费者直接链 `.dll`,mingw 的 ld 容忍、别人都不容忍 | 链接边把导入库声明成**隐式输出**;包里两个都带;`-static` 会让 ld 拒绝导入库(报 `have you installed the static version…`,既没点 DLL 也没点 `-static`),所以那条 `-l` 前先 `-Wl,-Bdynamic` |
+| Mach-O | **install name** —— 只在声明了 `soname` 时才发,于是其他每个 `.dylib` 都把构建目录烙了进去 | 无条件 `@rpath/<file>`;而且改成**按 target 判定**(原来是宿主的 `#if defined(__APPLE__)`) |
+| PE/MSVC | **符号导出**(不是链接器 —— `link /DLL /IMPLIB:` 一直都在) | 仍然拒绝,但换成真理由,并点名 MinGW 这条路 |
+
+⚠️ **「能用的那种情况把坏掉的那种遮住了」是这一整块的形状。**
+mingw 的 ld 容忍链 `.dll`,所以「PE 共享库是两个文件」这件事从来没被暴露。
+
+**(b) `--target` 接受了这台机器产不出来的 target,并悄悄按宿主构建。**
+实测(Linux):
+
+```
+$ mcpp build --target x86_64-windows-msvc
+    Resolved gcc@16.1.0 → x86_64-windows-msvc → …/xim-x-gcc/16.1.0/bin/g++
+    Finished dev [unoptimized + debuginfo] in 0.07s
+$ ls target/
+    x86_64-linux-gnu/      ← 一个 ELF,被当成 Windows 构建交付
+```
+
+**词表的 tier 说的是「mcpp 支持这个 target」,从来没说「这台机器能产出它」。**
+`host_can_serve` 此前**只用于 `toolchain list` 的展示**,构建路径根本没问它。
+现在 `prepare.cppm` 在紧邻那条「typo 绝不能悄悄回落到宿主工具链(最坏的失败模式)」
+的检查之后问它,并把**这台宿主能构建的清单**列进错误里。逃生口保留:
+显式 `[target.X] toolchain = "…"` 表示交叉链是作者自己提供的。
+
+**(c) 消费一个 `shared` 的分发包直接失败**:`ninja: multiple rules generate
+bin/libmathkit.dll` —— 依赖循环为一个**已经构建好**的库创建了 link unit。
+就算不撞名也是错的:分发包的 `sources` 只有它发布的接口,重链会静默产出一个
+**缺掉发布方保留的每个实现单元**的库。
+
+### 13.5 覆盖矩阵(第二轮之后)
+
+| e2e | linux | macOS | windows | 备注 |
+|---|---|---|---|---|
+| 242/243/244/246/247/249/250/251/253/254 | ✅ | ✅ | ✅ | 无能力门 |
+| 245 胖包(gnu+musl) | ✅ | 结构性不可能 | — | `# requires: gcc musl`(补上了 musl) |
+| 256 胖包(msvc+mingw) | — | 结构性不可能 | ✅ | `# requires: msvc mingw`;job 里装 `xim:mingw-gcc` |
+| 248 跨 OS 胖包(PE 腿) | ✅ | — | — | mingw job |
+| 255 `lib.exe /REMOVE:` | — | — | ✅ | `# requires: msvc` |
+| 257 PE 共享库(产出+打包+跑) | ✅ wine | — | — | `# requires: mingw-cross wine` |
+| 258 MSVC 拒绝 `shared` | — | — | ✅ | `# requires: msvc`;在 Linux 上**看不到**(target 门先答) |
+| 259 Mach-O 共享库可重定位 | — | ✅ | — | `# requires: macos`;**先删掉发布方的构建树**再消费 |
+
+**macOS 那两格是产品事实不是测试缺口**:它只能服务一个 target。
+
+### 13.6 第二轮仍然开着的
+
+| # | 项 | 说明 |
+|---|---|---|
+| **P1** | 打包库**不能被原生 `cl.exe` 消费** | 生成的 manifest 用 `-L`/`-l`(GNU 拼写)。**改成写文件路径也不行**:ninja 的链接命令 cwd 是输出目录,只有 include 家族前缀会被相对包根绝对化,无前缀 token 会去错地方找(`ld: cannot find lib/…/libmathkit.a`),而绝对路径就不再可重定位。要补齐需让条件通道承载 `link_library_dirs`/`libraries` —— mcpp 已能按方言渲染,只是只在顶层读 |
+| **P2** | MSVC 的 `kind = "shared"` | 要生成 `.def`(对对象做符号扫描)—— 那是一个构建图节点,不是 flag |
+| **P3** | 扫描器改动的 revert 粒度 | O1 的代价,按裁决接受 |
