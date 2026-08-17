@@ -23,7 +23,15 @@ import mcpp.ui;
 namespace mcpp::pack {
 
 // Everything after CLI option parsing for `mcpp pack`.
-export int build_and_pack(Options opts, bool modeFromUser) {
+//
+// `wantTarget` is the target NAME the user asked for, empty when they did not.
+// It exists because `mcpp pack <name>` now routes on `[targets.<name>].kind`:
+// a name that resolves to a program has to reach the binary selection below,
+// or a project with two `bin` targets would accept `mcpp pack app2` and
+// silently bundle app1 — the shape where the command succeeds and the answer
+// is wrong.
+export int build_and_pack(Options opts, bool modeFromUser,
+                          const std::string& wantTarget = {}) {
     // `--target *-linux-musl` without an explicit `--mode` implies
     // `--mode static` — packaging a musl-static ELF as bundle-project
     // would feed patchelf a static binary and crash. The docs treat
@@ -83,8 +91,26 @@ export int build_and_pack(Options opts, bool modeFromUser) {
     }
 
     // ─── Pick the main binary target ─────────────────────────────────
+    //
+    // An explicitly named target wins over the package-name convention: the
+    // user said which one, and guessing past that is how `mcpp pack app2`
+    // would produce app1's bundle under app2's name.
     std::filesystem::path mainBinary;
+    if (!wantTarget.empty()) {
+        for (auto& lu : ctx->plan.linkUnits) {
+            if (lu.kind == mcpp::build::LinkUnit::Binary && lu.targetName == wantTarget) {
+                mainBinary = ctx->outputDir / lu.output;
+                break;
+            }
+        }
+        if (mainBinary.empty()) {
+            mcpp::ui::error(std::format(
+                "target '{}' is not a program in this build", wantTarget));
+            return 2;
+        }
+    }
     for (auto& lu : ctx->plan.linkUnits) {
+        if (!mainBinary.empty()) break;
         if (lu.kind == mcpp::build::LinkUnit::Binary
             && lu.targetName == ctx->manifest.package.name)
         {

@@ -79,13 +79,18 @@ struct LibraryPackPlan {
     std::vector<LibraryLeg> legs;
 };
 
-struct Error { std::string message; };
+// NOT `Error`. `mcpp.pack` already exports a `mcpp::pack::Error`, and a name
+// can only be attached to one module — clang rejects the second outright
+// ("cannot be attached to other modules"), and mcpp.pack.library_pipeline
+// imports both. GCC accepted it, which is exactly why the Windows leg of CI
+// is the one that found this.
+struct LibraryPackError { std::string message; };
 
 // Stage, drop, describe, archive. Returns the path a caller should report.
 //
 // The digests it records come from mcpp.pack.digest, which the CONSUMER also
 // uses — one derivation, verified from both ends.
-std::expected<std::filesystem::path, Error> run_library_pack(const LibraryPackPlan& plan);
+std::expected<std::filesystem::path, LibraryPackError> run_library_pack(const LibraryPackPlan& plan);
 
 } // namespace mcpp::pack
 
@@ -93,14 +98,14 @@ namespace mcpp::pack {
 
 namespace {
 
-std::expected<void, Error> copy_into(const std::filesystem::path& src,
+std::expected<void, LibraryPackError> copy_into(const std::filesystem::path& src,
                                      const std::filesystem::path& dst)
 {
     std::error_code ec;
     std::filesystem::create_directories(dst.parent_path(), ec);
     std::filesystem::copy_file(src, dst,
         std::filesystem::copy_options::overwrite_existing, ec);
-    if (ec) return std::unexpected(Error{ std::format(
+    if (ec) return std::unexpected(LibraryPackError{ std::format(
         "cannot copy '{}' -> '{}': {}", src.string(), dst.string(), ec.message()) });
     return {};
 }
@@ -119,13 +124,13 @@ std::vector<std::filesystem::path> walk(const std::filesystem::path& root) {
 
 } // namespace
 
-std::expected<std::filesystem::path, Error>
+std::expected<std::filesystem::path, LibraryPackError>
 run_library_pack(const LibraryPackPlan& plan)
 {
     std::error_code ec;
     std::filesystem::remove_all(plan.stagingRoot, ec);
     std::filesystem::create_directories(plan.stagingRoot, ec);
-    if (ec) return std::unexpected(Error{ std::format(
+    if (ec) return std::unexpected(LibraryPackError{ std::format(
         "cannot create staging dir '{}': {}", plan.stagingRoot.string(), ec.message()) });
 
     // ── interface/ ────────────────────────────────────────────────────
@@ -141,7 +146,7 @@ run_library_pack(const LibraryPackPlan& plan)
         for (auto const& src : plan.interfaceSources) {
             auto name = src.filename().string();
             if (auto it = seen.find(name); it != seen.end()) {
-                return std::unexpected(Error{ std::format(
+                return std::unexpected(LibraryPackError{ std::format(
                     "two interface units are both called '{}':\n"
                     "  {}\n  {}\n"
                     "A package's interface is published flat, so their names must differ.",
@@ -171,7 +176,7 @@ run_library_pack(const LibraryPackPlan& plan)
     std::vector<PackageLeg> docLegs;
     for (auto const& leg : plan.legs) {
         if (!std::filesystem::exists(leg.artifact, ec)) {
-            return std::unexpected(Error{ std::format(
+            return std::unexpected(LibraryPackError{ std::format(
                 "the build for '{}' produced no artifact at '{}'",
                 leg.triple, leg.artifact.string()) });
         }
@@ -189,7 +194,7 @@ run_library_pack(const LibraryPackPlan& plan)
                 cmd += " " + mcpp::platform::shell::quote(m);
             auto r = mcpp::platform::process::capture(cmd + " 2>&1");
             if (r.exit_code != 0) {
-                return std::unexpected(Error{ std::format(
+                return std::unexpected(LibraryPackError{ std::format(
                     "cannot drop published interface objects from '{}' (rc={}): {}",
                     dst.string(), r.exit_code, r.output) });
             }
@@ -240,7 +245,7 @@ run_library_pack(const LibraryPackPlan& plan)
         doc.dependencies    = plan.dependencies;
 
         std::ofstream os(plan.stagingRoot / "mcpp.toml", std::ios::binary);
-        if (!os) return std::unexpected(Error{ std::format(
+        if (!os) return std::unexpected(LibraryPackError{ std::format(
             "cannot write '{}'", (plan.stagingRoot / "mcpp.toml").string()) });
         os << emit_package_manifest(doc);
     }
@@ -259,7 +264,7 @@ run_library_pack(const LibraryPackPlan& plan)
             });
         }
         if (auto r = zip::write(plan.archivePath, entries); !r)
-            return std::unexpected(Error{ r.error() });
+            return std::unexpected(LibraryPackError{ r.error() });
     } else {
         auto cmd = std::format("tar -czf {} -C {} {}",
             mcpp::platform::shell::quote(plan.archivePath.string()),
@@ -267,7 +272,7 @@ run_library_pack(const LibraryPackPlan& plan)
             mcpp::platform::shell::quote(plan.stagingRoot.filename().string()));
         auto r = mcpp::platform::process::capture(cmd + " 2>&1");
         if (r.exit_code != 0)
-            return std::unexpected(Error{ std::format(
+            return std::unexpected(LibraryPackError{ std::format(
                 "tar failed (rc={}): {}", r.exit_code, r.output) });
     }
     return plan.archivePath;

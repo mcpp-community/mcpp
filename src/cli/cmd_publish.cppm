@@ -88,7 +88,7 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
             "bundle wraps one executable, and one executable has one target.");
         return 2;
     }
-    return mcpp::pack::build_and_pack(std::move(opts), modeFromUser);
+    return mcpp::pack::build_and_pack(std::move(opts), modeFromUser, route->targetName);
 }
 
 } // namespace mcpp::cli

@@ -78,6 +78,17 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
             list.empty() ? "" : "; this package declares: ", list));
     }
 
+    // A WORKSPACE ROOT has no targets of its own — a virtual one has no
+    // `[package]` at all. `mcpp pack` there has always meant "pack the member",
+    // and the application pipeline is what resolves which member that is. So
+    // hand it straight through rather than reading the root's (empty) target
+    // list and concluding there is nothing to pack.
+    //
+    // Found by running the old binary and the new one against
+    // examples/04-workspace: the routing added here turned a working command
+    // into "this package declares no program and no library to pack".
+    if (m->targets.empty() && m->workspace.present) return PackRoute{ {}, false };
+
     // Nothing requested. A program is still the default — `mcpp pack` has
     // always meant "bundle this application" and a project that has one is
     // asking for that.
