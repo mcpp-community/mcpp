@@ -156,7 +156,7 @@ the package/feature boundary, not on an individual target.
 > **`sources = []` is not the same as omitting `sources`.** An absent key
 > selects the default glob; an explicitly empty list means *compile nothing*,
 > which is what a header-only distribution package needs to say. Until
-> mcpp 2026.8.17.2 the two were byte-identical, so there was no spelling for
+> mcpp 2026.8.18.1 the two were byte-identical, so there was no spelling for
 > "nothing" and any file left under `src/` was swept in.
 
 ```toml

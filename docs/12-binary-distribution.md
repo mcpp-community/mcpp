@@ -225,7 +225,7 @@ target is known, a fat package cross-compiles correctly with no index-side or
 installer-side support at all.
 
 > The blocks are `cfg(...)` and never a bare `[target.'<triple>']` key. Before
-> mcpp 2026.8.17.2 the bare form was inert without an explicit `--target`, so a
+> mcpp 2026.8.18.1 the bare form was inert without an explicit `--target`, so a
 > package using it would work in CI and silently drop its flags on a
 > developer's machine. mcpp generates the spelling that means the same thing on
 > every client.
@@ -335,7 +335,7 @@ warning: secret.cppm is an implementation partition, and the published interface
          reaches it — so its SOURCE is being published.
 ```
 
-> Until mcpp 2026.8.17.2 the scanner recorded `module M:part;` as *requiring*
+> Until mcpp 2026.8.18.1 the scanner recorded `module M:part;` as *requiring*
 > `M:part` and providing nothing, so a file required its own name and the graph
 > held no edge from the unit importing a partition to the unit defining it.
 > Build order was unconstrained: GCC and macOS clang recovered through their own
@@ -355,7 +355,7 @@ warning: secret.cppm provides a module PARTITION and mcpp cannot tell which kind
          whether the declaration carries `export`, …
 ```
 
-> Until 2026.8.17.2 that arrived as "it is an interface" — the answer that
+> Until 2026.8.18.1 that arrived as "it is an interface" — the answer that
 > produces **no** warning — so an implementation partition declared that way was
 > published in silence. Publishing too few sources fails the consumer's compile
 > and names the module; publishing too many ships private source and nothing

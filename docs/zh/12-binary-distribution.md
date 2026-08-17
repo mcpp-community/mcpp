@@ -205,7 +205,7 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 胖包的交叉编译天然正确,**不需要索引侧或安装侧做任何支持**。
 
 > 这些块是 `cfg(...)`,绝不是裸的 `[target.'<三元组>']` 键。
-> 在 mcpp 2026.8.17.2 之前,裸三元组在没有显式 `--target` 时是失效的 ——
+> 在 mcpp 2026.8.18.1 之前,裸三元组在没有显式 `--target` 时是失效的 ——
 > 用它的包会在 CI 里正常、在开发者机器上静默丢掉 flag。
 > mcpp 生成的是在**所有**客户端上含义一致的那种写法。
 
@@ -296,7 +296,7 @@ warning: secret.cppm is an implementation partition, and the published interface
          reaches it — so its SOURCE is being published.
 ```
 
-> 在 mcpp 2026.8.17.2 之前,扫描器把 `module M:part;` 记成**「requires `M:part`、
+> 在 mcpp 2026.8.18.1 之前,扫描器把 `module M:part;` 记成**「requires `M:part`、
 > provides 空」** —— 一个文件 requires 自己的名字,于是图里**没有**从「import 分区
 > 的单元」到「定义分区的单元」的边,构建顺序无约束:GCC 与 macOS clang 靠各自的
 > 依赖扫描兜住了,**Windows clang 以 `failed to read compiled module` 失败**。
@@ -314,7 +314,7 @@ warning: secret.cppm provides a module PARTITION and mcpp cannot tell which kind
          whether the declaration carries `export`, …
 ```
 
-> 在 2026.8.17.2 之前,这种情况以「它是接口」到达 —— 那个**不产生任何警告**的答案 ——
+> 在 2026.8.18.1 之前,这种情况以「它是接口」到达 —— 那个**不产生任何警告**的答案 ——
 > 于是这样声明的实现分区被一声不响地发布了。**发布得太少**会让消费者编译失败并点名
 > 模块;**发布得太多**会把私有源码发出去,而什么都不会失败。未知必须出声。
 
