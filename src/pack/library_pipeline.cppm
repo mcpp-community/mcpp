@@ -180,7 +180,13 @@ export int build_and_pack_library(const std::string& targetName,
         }
 
         // ── the interface closure ─────────────────────────────────────
-        auto libRoot = ctx->projectRoot / mcpp::manifest::resolve_lib_root_path(ctx->manifest);
+        // PROBING form: the convention is `src/<tail>.<module-interface-ext>`, and
+        // which extension that is belongs to the project. A package whose
+        // interfaces are `.ixx` used to resolve to a `src/<tail>.cppm` that does
+        // not exist, and the packer then published nothing and tagged the
+        // result as a C surface — both silently.
+        auto libRoot = ctx->projectRoot
+                     / mcpp::manifest::resolve_lib_root_path(ctx->manifest, ctx->projectRoot);
         std::error_code ec;
         InterfaceClosure here;
         std::string qualifiedPackage;

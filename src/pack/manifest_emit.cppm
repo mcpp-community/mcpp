@@ -68,6 +68,16 @@ struct PackageDoc {
     // `sources = []` says exactly that (an omitted key would be filled with
     // the default glob and would sweep up whatever sits under src/).
     std::vector<std::string> interfaceFiles;
+    // Module-interface extensions the PUBLISHED SET uses beyond the built-in
+    // `.cppm` — emitted as `[build] module_extensions`.
+    //
+    // A function of what is in the package, not a copy of what the producer
+    // declared: the packer publishes a computed subset, so the extensions it
+    // needs are computed from that subset too. Without this the consumer is
+    // handed `sources = ["interface/mathkit.ixx"]` and no way to know what an
+    // `.ixx` is, which is the producer remembering to configure something the
+    // package could state for itself.
+    std::vector<std::string> moduleExtensions;
     bool        hasIncludeDir = false;
     std::string interfaceDigest;               // over the ordered interface set
 
@@ -168,6 +178,12 @@ std::string emit_package_manifest(const PackageDoc& doc) {
     // ── the interface ──────────────────────────────────────────────────
     o += "[build]\n";
     o += std::format("sources      = [{}]\n", join_quoted(doc.interfaceFiles));
+    // Emitted only when the published set actually uses one, so a `.cppm`
+    // package's manifest is byte-identical to before. A package whose interface
+    // is `.ixx` states that itself rather than requiring the consumer to have
+    // guessed the producer's convention.
+    if (!doc.moduleExtensions.empty())
+        o += std::format("module_extensions = [{}]\n", join_quoted(doc.moduleExtensions));
     if (doc.hasIncludeDir) o += "include_dirs = [\"include\"]\n";
     if (!doc.cxxRuntime.empty())
         o += std::format("cxx_runtime  = {}\n", quote(doc.cxxRuntime));

@@ -918,6 +918,12 @@ std::vector<std::string> dialect_flags(const BuildConfig& bc);
 // libstdc++/libc++ headers declare, or participates in BMI dialect checks).
 bool is_dialect_flag(std::string_view flag);
 
+// The lib root's CONVENTIONAL name: `src/<package-tail>.cppm`, or `[lib] path`
+// when the manifest states one. It does not touch the filesystem, so it is the
+// right answer for a diagnostic or a validator's expectation and the wrong one
+// for "which file is actually there" — `mcpp.manifest.toml` owns the probing
+// form, because probing needs the extension table and this module deliberately
+// does not import it (see the note there).
 std::filesystem::path resolve_lib_root_path(const Manifest& manifest);
 
 // True if the manifest declares at least one `kind = "lib"` target.
@@ -1094,14 +1100,9 @@ bool has_lib_target(const Manifest& manifest) {
 }
 
 std::filesystem::path resolve_lib_root_path(const Manifest& manifest) {
-    if (!manifest.lib.path.empty()) {
-        return manifest.lib.path;
-    }
-    // Convention: src/<package-tail>.cppm
+    if (!manifest.lib.path.empty()) return manifest.lib.path;
     std::string tail = manifest.package.name;
-    if (auto p = tail.rfind('.'); p != std::string::npos) {
-        tail = tail.substr(p + 1);
-    }
+    if (auto p = tail.rfind('.'); p != std::string::npos) tail = tail.substr(p + 1);
     return std::filesystem::path("src") / (tail + ".cppm");
 }
 
