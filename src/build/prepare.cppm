@@ -232,8 +232,22 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
         // a broader unconditional one under GNU last-wins — which is what
         // makes an off-OS REMOVAL expressible (`-U` after the base `-D`).
         if (neutralWins) {
+            // ⚠️ Drop the LIBRARY REFERENCES, not the whole ldflags list.
+            //
+            // Clearing it outright was a measured regression: a PE/MinGW shared
+            // leg's ldflags also carry `-Wl,-Bdynamic`, without which `-static`
+            // leaves ld in static-only mode and it refuses the import library
+            // with `have you installed the static version of the mathkit
+            // library?`. e2e 257 caught it.
+            //
+            // The neutral form replaces exactly what it can express — a library
+            // and where to find it. Anything else in that block says something
+            // it cannot say, and must survive.
             auto inputs = cc.inputs;
-            inputs.ldflags.clear();
+            std::erase_if(inputs.ldflags, [](std::string_view f) {
+                return f.starts_with("-L") || f.starts_with("-l")
+                    || f.starts_with("/LIBPATH:");
+            });
             mcpp::manifest::append(m.buildConfig, inputs);
         } else {
             mcpp::manifest::append(m.buildConfig, cc.inputs);

@@ -295,10 +295,16 @@ mcpp 会按 target 把它们渲染成 `/LIBPATH:` + `<name>.lib` 或 `-L` + `-l<
 于是 `cl.exe` 的消费者也能链上。这两个键不是新词表 —— `[runtime]` 顶层一直就有,
 这里只是让它们可以按 target 给。
 
-**两种拼写都会写出来,而新版 mcpp 读到中立形式时会忽略同一条腿的 `ldflags`,
+**两种拼写都会写出来,而新版 mcpp 读到中立形式时会丢掉同一条腿的库引用,
 而不是叠加。** 旧版 mcpp 只读 `ldflags` 并静默忽略 `runtime` 段,所以去掉
 `ldflags` 会让所有旧客户端一个链接 flag 都拿不到;而两者都应用又会把 `-L` 送回
 `cl` 的命令行 —— 那正是要避免的事。
+
+有一条腿被刻意排除在外:**PE/MinGW 的动态库腿**链接行是
+`-L… -Wl,-Bdynamic -lmathkit`,而 `-Wl,-Bdynamic` 只有**紧邻它所启用的那个 `-l`**
+时才有效 —— mcpp 给 PE 可执行文件加 `-static`,否则链接器停在纯静态模式并拒绝
+导入库。中立形式没法表达「先切换链接模式」,所以那条腿保留能用的拼写。
+这不付出任何代价:PE/MinGW 的腿不是 MSVC ABI 的腿,`cl.exe` 永远读不到它。
 
 **改成直接写文件路径也不行**(`lib/<triple>/mathkit.lib` 才是每个 driver 都吃的
 拼写):ninja 执行链接命令时 cwd 是**输出目录**,而只有 include 家族前缀

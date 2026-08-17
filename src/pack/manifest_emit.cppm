@@ -243,19 +243,32 @@ std::string emit_package_manifest(const PackageDoc& doc) {
                          peGnuShared ? "\"-Wl,-Bdynamic\", " : "",
                          leg.linkName);
 
-        // …and the same statement without a dialect. mcpp renders these as
-        // `/LIBPATH:` + `<n>.lib` or `-L` + `-l<n>` from the target, which is
-        // what lets a consumer driven by native `cl.exe` link this package at
-        // all — cl rejects `-L`.
+        // …and, where it says the SAME thing, the dialect-neutral form. mcpp
+        // renders these as `/LIBPATH:` + `<n>.lib` or `-L` + `-l<n>` from the
+        // target, which is what lets a consumer driven by native `cl.exe` link
+        // this package at all — cl rejects `-L`.
         //
         // BOTH are emitted, deliberately. An older mcpp reads only the ldflags
         // above and silently ignores this block (measured), so dropping the
         // ldflags would leave every older client with no link line at all. A
-        // newer mcpp seeing this block ignores that leg's ldflags rather than
-        // adding to them — see merge_conditional_config.
-        o += std::format("[target.'{}'.runtime]\n", cfg_predicate_for(leg.triple));
-        o += std::format("link_library_dirs = [\"lib/{}\"]\n", leg.triple);
-        o += std::format("libraries         = [\"{}\"]\n\n", leg.linkName);
+        // newer mcpp seeing this block drops that leg's library references and
+        // uses these instead — see merge_conditional_config.
+        //
+        // ⚠️ NOT FOR A PE/MinGW SHARED LEG, and this was measured rather than
+        // reasoned. That leg's line is `-L… -Wl,-Bdynamic -lmathkit`, and
+        // `-Wl,-Bdynamic` only works IMMEDIATELY BEFORE the `-l` it enables:
+        // mcpp gives PE executables `-static`, which leaves ld in static-only
+        // mode where it refuses an import library. The neutral form has no way
+        // to say "and switch link mode first", and rendering the two halves
+        // through different slots separates the flag from its argument — e2e
+        // 257 fails with `have you installed the static version of the mathkit
+        // library?`. So that one leg keeps the spelling that works, and cl.exe
+        // never sees it: a PE/GNU leg is not an MSVC-ABI leg.
+        if (!peGnuShared) {
+            o += std::format("[target.'{}'.runtime]\n", cfg_predicate_for(leg.triple));
+            o += std::format("link_library_dirs = [\"lib/{}\"]\n", leg.triple);
+            o += std::format("libraries         = [\"{}\"]\n\n", leg.linkName);
+        }
     }
     // A shared library has to be FOUND at run time as well as linked, and the
     // two are different search paths — `link_library_dirs` is not rpath.

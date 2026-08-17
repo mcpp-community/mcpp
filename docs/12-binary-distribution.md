@@ -329,11 +329,19 @@ target, so a `cl.exe` consumer links the package. They are not new vocabulary �
 `[runtime]` has had both keys at the top level all along; this makes them
 per-target.
 
-**Both spellings are emitted, and a newer mcpp ignores the `ldflags` rather than
-adding to them.** An older mcpp reads only the `ldflags` and silently ignores the
-`runtime` block, so dropping the `ldflags` would leave every older client with no
-link line at all; adding both would put `-L` back on the `cl` command line, which
-is the thing being avoided.
+**Both spellings are emitted, and a newer mcpp drops the leg's library
+references rather than adding to them.** An older mcpp reads only the `ldflags`
+and silently ignores the `runtime` block, so dropping the `ldflags` would leave
+every older client with no link line at all; adding both would put `-L` back on
+the `cl` command line, which is the thing being avoided.
+
+One leg is deliberately left out of this: a **PE/MinGW shared** leg links with
+`-L… -Wl,-Bdynamic -lmathkit`, and `-Wl,-Bdynamic` only works immediately before
+the `-l` it enables — mcpp gives PE executables `-static`, which otherwise leaves
+the linker in static-only mode where it refuses an import library. The neutral
+form cannot say "switch link mode first", so that leg keeps the spelling that
+works. It costs nothing: a PE/MinGW leg is not an MSVC-ABI leg, and `cl.exe`
+never reads it.
 
 Naming the file by path instead (`lib/<triple>/mathkit.lib`) is the spelling
 every driver takes, and it does not work either: ninja runs link commands with
