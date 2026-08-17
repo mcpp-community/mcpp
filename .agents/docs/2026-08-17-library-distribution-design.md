@@ -643,6 +643,44 @@ B1 / B2 建议**先单独开 issue 并各带一条回归测试**,不要埋进这
 (MSYS 只转 argv 不转文件内容),而 lint 在所有平台跑,正是为了让 Linux 上的
 reviewer 先于 Windows CI 发现。
 
+### 11.2b 「全面可用」是怎么做到的(不是靠放宽 requires)
+
+放开可移植测试之后 CI 报出两条真实失败,**追下去发现根因在扫描器,不在打包**:
+
+`module M:part;`(实现分区)与 `module M;`(实现单元)共用一个拼写、是两种声明,
+而扫描器把前者记成**「requires `M:part`、provides 空」** —— 一个文件 requires
+自己的名字。于是图里**没有**「import 分区的单元 → 定义分区的单元」这条边,
+构建顺序无约束:GCC 与 macOS clang 靠各自的依赖扫描兜住,
+**Windows clang 以 `failed to read compiled module` 失败**。
+同一处第二半:`import :part;` 的解析读 `u.provides`,而实现单元没有 provides ⇒
+`import :secret;` 停在字面 `:secret`。两平台都刷的那条
+`module 'M:part' imported but not provided in this build` **就是病因,读起来像提示**。
+
+**实现分区在此之前 mcpp 里任何地方都没有测试覆盖** —— 库分发的 e2e 是第一个用它的。
+修好之后:
+
+| e2e | linux | macOS | windows |
+|---|---|---|---|
+| 242 布局 + 两种接口模式 | ✅ | ✅ | ✅ |
+| 243 闭包 + 剔除集 + 分区告警 | ✅ | ✅ | ✅ |
+| 244 三条拒绝 | ✅ | ✅ | ✅ |
+| 249 workspace 根仍能打包 | ✅ | ✅ | ✅ |
+| 250 `pack <name>` 打的是那个 | ✅ | ✅ | ✅ |
+| 245 胖包(含原生构建) | ✅ | skip¹ | skip¹ |
+| 246 `sources = []` | ✅ | skip² | skip² |
+| 247 裸三元组条件 | ✅ | skip² | skip² |
+| 248 跨 OS 边界的胖包(PE) | skip³ | skip³ | skip³ |
+| 251 动态库包带两个名字 | ✅ | skip⁴ | skip⁴ |
+
+¹ 用 `--target x86_64-linux-musl`,需要 musl 工具链。
+² 从 `build.ninja` 里读 `-D` 拼写,是编译器特定的。
+³ 需要 `mingw-cross`,**没有任何 e2e job 装它** ⇒ 只在本机验过。
+⁴ `kind = "shared"` 按设计只支持 ELF。
+
+**剩下的 skip 每一条都有真实理由,不是「gcc 能力凑不齐」。**
+副作用:一条**与打包无关**的既有缺陷被修好了 —— 用实现分区的工程现在在 Windows 上
+能构建了。
+
 ### 11.3 我在验证里自己踩的坑
 
 **`ls -t target/*/bin/mcpp | head -1` 挑到了陈旧/别的工具链的 fingerprint 目录 ——
