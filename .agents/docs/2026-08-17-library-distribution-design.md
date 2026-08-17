@@ -622,6 +622,22 @@ B1 / B2 建议**先单独开 issue 并各带一条回归测试**,不要埋进这
 (`libmathkit.so.1 not found on the search path this artifact will actually use`),
 而不是加载器错误。e2e 251 用 `run` 而不是 `build`:这里链接过了什么都不证明。
 
+**(e) 「新测试在 CI 里跑了吗」必须单独查一遍 —— 我自己造了第二次假绿。**
+十个新 e2e 一开始全写 `# requires: gcc`,而那个能力**按设计只在 Linux 成立**
+(macOS 的 g++ 是 Apple Clang,Windows 的也不是 mcpp 兼容的 GCC)。于是它们
+**在 macOS 与 Windows 上全部跳过、套件报绿**,而文档写着「静态库包:所有 target」。
+判据不是「套件绿了」,是「这条测试**跑了**吗」——`grep 'SKIP:'` 三分钟就能查。
+
+放开之后 CI 给出了真实答案,**这才是这次放开的价值**:
+- Windows(MSVC-ABI clang)那条腿上,`pack` 内部的库构建以一句
+  `error: build failed` 失败(本机无法复现该路径);
+- macOS 上 `ar` 解析到一个报「未安装」的 xlings shim,闭包测试查不了归档。
+
+**处理方式是记成明确的限制,不是塞回去。** 打包测试重新 `# requires: gcc`
+并在头部写明范围;**命令本身**(路由 / 未知名字 / workspace 根)保持三平台运行
+(249、250);`docs/12` 与其中文版加了「验证到哪一步」一节。
+**「所有 target 都支持」与「只在 Linux 验证过」是两句话,文档现在两句都说。**
+
 外加一条 e2e 卫生:六个 fixture 把包路径按 **shell 拼写**写进了 mcpp.toml。
 `00_fixture_path_hygiene.sh` 在 macOS 那条腿上抓到 —— 规则是 Windows 的
 (MSYS 只转 argv 不转文件内容),而 lint 在所有平台跑,正是为了让 Linux 上的

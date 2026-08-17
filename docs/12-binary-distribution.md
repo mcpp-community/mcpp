@@ -260,9 +260,22 @@ you publish to a mixed audience.
 
 | | status |
 |---|---|
-| `kind = "lib"` (static) | ✅ every target |
+| `kind = "lib"` (static) | ✅ every target — **verified on Linux only** (see below) |
 | `kind = "shared"` on Linux/ELF | ✅ — the package carries both the link name and the SONAME |
 | `kind = "shared"` on PE / Mach-O | ❌ refused — import libraries and install-names are not modelled yet |
 | `kind = "shared"` on `*-musl` | ❌ a musl target links statically |
 | shipping prebuilt BMIs | ❌ not attempted; BMIs are compiler-build-exact |
 | bundling dependencies into the package | ❌ declare them instead (above) |
+
+### Where it is verified
+
+`mcpp pack <library target>` is exercised end to end **on Linux**. The command
+ITSELF — which target it picks, how it refuses an unknown name, and packing
+from a workspace root — is covered on all three platforms.
+
+The gap is the library build inside `pack`, and it is not theoretical: run on
+the Windows (MSVC-ABI clang) CI leg it currently fails with a bare
+`error: build failed`, and on macOS the closure test cannot inspect the archive
+because `ar` there resolves to an xlings shim that reports "not installed".
+Both are unresolved. Treat library packaging as a Linux capability until this
+row says otherwise.

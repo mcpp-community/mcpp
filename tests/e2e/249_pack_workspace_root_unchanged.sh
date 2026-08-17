@@ -58,7 +58,9 @@ cd ws
     exit 1
 }
 grep -q 'Packed' pack.log || { cat pack.log; echo "no archive reported"; exit 1; }
-[[ -n "$(find . -name 'hello-0.1.0-*.tar.gz' | head -1)" ]] || {
-    cat pack.log; echo "the member's archive was not produced"; find . -name '*.tar.gz'; exit 1; }
+# .tar.gz everywhere except a Windows target, which produces a .zip — the
+# archive format follows the artifact, not the packer.
+[[ -n "$(find . -name 'hello-0.1.0-*.tar.gz' -o -name 'hello-0.1.0-*.zip' | head -1)" ]] || {
+    cat pack.log; echo "the member's archive was not produced"; find . -name 'hello-0.1.0-*'; exit 1; }
 
 echo "PASS: a workspace root still packs its member's program"
