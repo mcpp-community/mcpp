@@ -375,6 +375,13 @@ Windows 组件(Win10 起),mcpp 从不分发它;而 `vcruntime140.dll` /
 调试版 CRT(`debug_nonredist\` 下的 `vcruntime140d.dll` 等)永远不会被放进去:
 它不可再分发。
 
+> **从 2026.8.15 或更早版本升上来?** 这条键在 MSVC ABI 上曾经是**空操作** ——
+> 它会报 `not implemented for the MSVC runtime yet`,写什么都退回 `/MD`。
+> 自 2026.8.16 起它真的生效,于是一份从那个年代带着
+> `cxx_runtime = "self-contained"` 的 manifest **会在升级时换掉 CRT 模型**:
+> 从 `/MD` 变成 `/MT`。它不是同一个模型的更严格版本,而且因为这个值一直是合法的,
+> 切换是**静默**的。如果你的工程是在这条键还不起作用时写下它的,请重新决定你真正要哪一个。
+
 把它和 `/MT` 一起用是**矛盾**而不是缺功能 —— 静态 CRT 根本没有 DLL 可以耦合 ——
 所以会被报出来并落到 `self-contained`。另一半由 `mcpp pack` 兜底:什么都不打包的
 模式(`--mode system`、`--mode static`)兑现不了 `toolchain-coupled`,会直接拒绝。
