@@ -101,10 +101,16 @@ check() {   # $1 = label, $2 = expected leg dir, $3.. = build args
     ( cd app && "$MCPP" build "$@" > "$TMP/$label.log" 2>&1 ) \
         || { cat "$TMP/$label.log"; echo "$label build failed"; exit 1; }
     local nj; nj="$(find app/target -name build.ninja | head -1)"
-    grep -o "dist/mathkit-0.1.0/lib/[a-z0-9_-]*" "$nj" | sort -u > "$TMP/$label.legs"
+    # Separator-agnostic and anchored on the PACKAGE name: a native mcpp.exe
+    # writes native separators into build.ninja, so a `dist/…/lib/…` pattern
+    # matches nothing there and the failure reads like a packaging bug. Same
+    # helper as 256, which is where that was measured.
+    grep -oE "mathkit-0\.1\.0[\\/]lib[\\/][A-Za-z0-9_-]+" "$nj" \
+        | sed 's|.*[\\/]||' | sort -u > "$TMP/$label.legs"
     [[ "$(wc -l < "$TMP/$label.legs")" -eq 1 ]] || {
-        echo "$label saw more than one leg:"; cat "$TMP/$label.legs"; exit 1; }
-    grep -q "lib/$want\$" "$TMP/$label.legs" || {
+        echo "$label saw $(wc -l < "$TMP/$label.legs") leg(s), expected exactly 1:"
+        cat "$TMP/$label.legs"; exit 1; }
+    grep -qx "$want" "$TMP/$label.legs" || {
         echo "$label picked the wrong leg:"; cat "$TMP/$label.legs"; exit 1; }
 }
 
