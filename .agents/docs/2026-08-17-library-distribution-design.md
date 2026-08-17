@@ -150,7 +150,7 @@ mcpp pack mathkit --target x86_64-linux-gnu \
 ### 2.2 生产者工程示例(全部是既有的键)
 
 ```toml
-# examples/05-lib-dist/mcpp.toml
+# examples/05-lib-distribution/producer/mcpp.toml
 [package]
 name        = "mathkit"
 version     = "0.1.0"
@@ -176,7 +176,7 @@ include = ["share/**"]               # 既有键 —— 只作用于 extras
 ```
 
 ```
-examples/05-lib-dist/
+examples/05-lib-distribution/producer/
 ├── mcpp.toml
 ├── README.md
 ├── include/mathkit_c.h        # extern "C" 头接口
@@ -421,7 +421,7 @@ digest 与 abi tag)。这是**降级**而不是变砖 ——
 
 沿用既有编号与「每目录一个 README.md」的约定。
 
-### `examples/05-lib-dist/` —— 生产者(库作者)
+### `examples/05-lib-distribution/producer/` —— 生产者(库作者)
 
 结构见 §2.2。README 要点:
 
@@ -431,11 +431,11 @@ digest 与 abi tag)。这是**降级**而不是变砖 ——
 - **反面演示**:把 `src/mathkit.cppm` 改成 `import :secret;`,再 pack,
   观察闭包里多出 `secret.cppm` 并触发告警。
 
-### `examples/06-lib-consume/` —— 消费者
+### `examples/05-lib-distribution/consumer/` —— 消费者
 
 ```
-examples/06-lib-consume/
-├── mcpp.toml            # mathkit = { path = "../05-lib-dist/dist" }
+examples/05-lib-distribution/consumer/
+├── mcpp.toml            # mathkit = { path = "../producer/target/dist/mathkit-0.1.0-<tag>" }
 ├── README.md
 └── src/
     ├── main_header.cpp  # 只 #include <mathkit_c.h>
@@ -659,4 +659,4 @@ clang 构建的二进制,而 clang 构建的 mcpp 在本机会段错误)。
 | 单测 | `test_pack_abi_tag`(15)、`test_pack_interface`(8) |
 | e2e | 242–251(10 个) |
 | 文档 | `docs/12-binary-distribution.md` + zh;`docs/02`/`05`/README 索引 |
-| 示例 | `examples/05-lib-dist`、`examples/06-lib-consume` |
+| 示例 | `examples/05-lib-distribution/producer`、`examples/05-lib-distribution/consumer` |

@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# requires: gcc
-# ⚠️ SCOPE, and it is a real limit rather than a convenience: library packing is
-# verified on Linux only. Run without a capability, this fails on the Windows
-# (MSVC-ABI clang) leg with a bare "build failed" during the library build, and
-# on macOS 243 dies because `ar` there is an xlings shim that reports "not
-# installed". Both are unresolved, both are recorded in docs/12's limits table,
-# and neither is hidden behind a green suite: 249 and 250 cover the routing on
-# every platform, so what is untested here is the PACKING, not the command.
+# requires:
+# (no capability: the refusals have to hold on every platform, so this test has
+#  to RUN on every platform.)
 # 244_pack_library_gate.sh — the three refusals a prebuilt package must make.
 #
 # THE FIRST ONE IS WHY THIS FEATURE HAS A GATE AT ALL. Measured before it
@@ -90,7 +85,12 @@ cp "$TMP/interface.bak" "$pkg/interface/mathkit.cppm"
 
 # ── 2. a foreign toolchain tag is refused, and the real tags are shown ──
 cp "$pkg/mcpp.toml" "$TMP/manifest.bak"
-sed -i.bak 's/-gcc\([0-9][0-9]*\)-/-gcc999-/' "$pkg/mcpp.toml"
+# Forge the STDLIB segment, whatever it is called. Hard-coding `gcc` would have
+# made this a no-op on macOS (llvm) and Windows (msvc) — the tag would stay
+# valid, the package would be correctly accepted, and the test would report
+# "a package built for another compiler was accepted" against a product that
+# did nothing wrong.
+sed -i.bak -E 's/(abi[[:space:]]*=[[:space:]]*"[^"]*-)[a-z]+[0-9]+(-)/\1forgedstl99\2/' "$pkg/mcpp.toml"
 rm -rf app/target
 if ( cd app && "$MCPP" build > tag.log 2>&1 ); then
     cat app/tag.log
@@ -103,7 +103,7 @@ grep -q 'no prebuilt artifact matches this toolchain' app/tag.log || {
 # on sends them looking for a package that is right in front of them.
 grep -q 'published tags' app/tag.log || {
     cat app/tag.log; echo "the refusal did not list the published tags"; exit 1; }
-grep -q 'gcc999' app/tag.log || {
+grep -q 'forgedstl99' app/tag.log || {
     cat app/tag.log; echo "the refusal did not name the tag it found"; exit 1; }
 cp "$TMP/manifest.bak" "$pkg/mcpp.toml"
 

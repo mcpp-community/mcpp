@@ -235,19 +235,28 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 
 | | 状态 |
 |---|---|
-| `kind = "lib"`(静态) | ✅ 所有 target —— **仅在 Linux 上验证过**(见下) |
+| `kind = "lib"`(静态) | ✅ 所有 target,三平台都测了 |
 | `kind = "shared"` on Linux/ELF | ✅ —— 包里同时带链接名与 SONAME |
 | `kind = "shared"` on PE / Mach-O | ❌ 拒绝 —— 导入库与 install-name 尚未建模 |
 | `kind = "shared"` on `*-musl` | ❌ musl target 是静态链接的 |
 | 发布预编译 BMI | ❌ 未尝试;BMI 与编译器构建逐位绑定 |
 | 把依赖打包进去 | ❌ 改为声明依赖(见上) |
 
-### 验证到哪一步
+### 实现分区
 
-`mcpp pack <库目标>` 的端到端验证**只在 Linux 上做过**。命令本身 ——
-挑哪个目标、未知名字怎么拒、workspace 根上怎么打 —— 三平台都覆盖了。
+`mcpp pack` 把实现分区(`module M:part;` 无 `export`)当私有:**源码留下,
+对象随归档发出去**。
 
-缺口在 `pack` 内部那次库构建,而且不是理论上的:放开到 Windows
-(MSVC-ABI clang)那条 CI 腿上会以一句 `error: build failed` 失败;
-macOS 上闭包测试则因为 `ar` 解析到一个报「未安装」的 xlings shim 而无法检查归档。
-两者都未解决。在这一行改口之前,**请把库打包当成 Linux 上的能力**。
+如果被发布的接口 **import 了**一个实现分区,消费者没有那份源码就编不出 BMI,
+所以它**会**被发布 —— 而 `mcpp pack` 会说出来:
+
+```
+warning: secret.cppm is an implementation partition, and the published interface
+         reaches it — so its SOURCE is being published.
+```
+
+> 在 mcpp 2026.8.17.2 之前,扫描器把 `module M:part;` 记成**「requires `M:part`、
+> provides 空」** —— 一个文件 requires 自己的名字,于是图里**没有**从「import 分区
+> 的单元」到「定义分区的单元」的边,构建顺序无约束:GCC 与 macOS clang 靠各自的
+> 依赖扫描兜住了,**Windows clang 以 `failed to read compiled module` 失败**。
+> 如果你一直在 Windows 上回避实现分区,原因就是这个。

@@ -50,6 +50,24 @@
 
 ### 修复
 
+- **实现分区(`module M:part;`)在 Windows 上构建不了,而根因在扫描器里。**
+
+  `module M:part;` 与 `module M;` 共用一个拼写,却是两种不同的声明,而扫描器把
+  它们当成了一种:前者被记成**「requires `M:part`、provides 空」** ——
+  一个文件 requires 自己的名字。于是图里**没有**从「import 分区的单元」到
+  「定义分区的单元」的边,构建顺序无约束:GCC 与 macOS clang 靠各自的依赖扫描
+  兜住了,**Windows clang 以 `failed to read compiled module` 失败**。
+
+  同一处还有第二半:`import :part;` 的解析读的是 `u.provides`,而实现单元
+  (`module M;`)没有 provides ⇒ 它里面的 `import :secret;` 停留在字面的
+  `:secret`,没有任何单元提供。两个平台都会刷的那条
+  `module 'M:part' imported but not provided in this build` 就是这两件事的
+  合并症状 —— **它读起来像一条提示,其实是病因**。
+
+  实现分区在此之前**mcpp 里任何地方都没有测试覆盖**,是库分发的 e2e 第一次
+  用到它才暴露出来。现在扫描器记 `provides = M:part` 并标 `providesInterface
+  = false`;`import :part;` 按 TU 自己所属的模块名解析。
+
 - **`[target.'<三元组>'.build]` 在没有 `--target` 时从不命中。**
 
   同一个语句的两种拼写互相矛盾:`cfg(linux)` 在原生构建上命中,

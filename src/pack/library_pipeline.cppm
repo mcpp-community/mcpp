@@ -210,6 +210,22 @@ export int build_and_pack_library(const std::string& targetName,
             return 1;
         }
 
+        // Publishing an implementation partition is legal — the consumer cannot
+        // build the interface's BMI without it — but for a closed-source
+        // library it is the one thing nobody wants by accident, and nothing in
+        // the source looks unusual: `import :detail;` reads like any other
+        // import. So say it, with the file named.
+        for (auto const& p : here.publishedImplementationPartitions) {
+            mcpp::ui::warning(std::format(
+                "{} is an implementation partition, and the published interface "
+                "reaches it — so its SOURCE is being published.\n"
+                "  A consumer compiling the interface cannot produce a BMI "
+                "without it. If that source should stay private, move what the "
+                "interface needs into an `export module` partition and keep the "
+                "rest out of the interface's purview.",
+                p.filename().string()));
+        }
+
         if (!haveClosure) {
             closure           = std::move(here);
             haveClosure       = true;

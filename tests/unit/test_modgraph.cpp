@@ -52,6 +52,100 @@ TEST(Scanner, ProvidesAndRequires) {
 // (e.g. a `mcpp new --template gui` skeleton embedded as R"GUI( ... )GUI") must
 // not be detected as real module imports. Before the fix this produced a
 // spurious "module 'imgui.core' imported but not provided" warning.
+// ─── implementation partitions ────────────────────────────────────────────
+//
+// `module M:part;` and `module M;` share a spelling and are different
+// declarations. Conflating them left the graph without the edge from the unit
+// that IMPORTS a partition to the unit that DEFINES it, so build order was
+// unconstrained: GCC and macOS clang recovered through their own dependency
+// scan, Windows clang failed with `failed to read compiled module`. The scanner
+// also warned "imported but not provided in this build" on every platform,
+// which read like a note instead of the cause.
+
+TEST(Scanner, ImplementationPartitionProvidesItsPartitionName) {
+    auto dir = make_tempdir("scan-implpart");
+    std::filesystem::create_directories(dir / "src");
+    write(dir / "src" / "secret.cppm",
+          "module mathkit:secret;\n"
+          "namespace mk { int bias() { return 1; } }\n");
+
+    auto u = scan_file(dir / "src" / "secret.cppm", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_TRUE(u.has_value());
+    ASSERT_TRUE(u->provides.has_value());
+    EXPECT_EQ(u->provides->logicalName, "mathkit:secret");
+    // Not an interface: its source must not be published by `mcpp pack`.
+    EXPECT_FALSE(u->providesInterface);
+    // And it must not require its own name, which is what it used to do.
+    for (auto const& r : u->requires_)
+        EXPECT_NE(r.logicalName, "mathkit:secret");
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Scanner, InterfacePartitionIsMarkedAsAnInterface) {
+    auto dir = make_tempdir("scan-ifacepart");
+    std::filesystem::create_directories(dir / "src");
+    write(dir / "src" / "api.cppm", "export module mathkit:api;\nexport int f();\n");
+
+    auto u = scan_file(dir / "src" / "api.cppm", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_TRUE(u.has_value());
+    ASSERT_TRUE(u->provides.has_value());
+    EXPECT_EQ(u->provides->logicalName, "mathkit:api");
+    EXPECT_TRUE(u->providesInterface);
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Scanner, PlainImplementationUnitStillRequiresItsInterface) {
+    auto dir = make_tempdir("scan-implunit");
+    std::filesystem::create_directories(dir / "src");
+    write(dir / "src" / "impl.cpp", "module mathkit;\nnamespace mk { int g() { return 2; } }\n");
+
+    auto u = scan_file(dir / "src" / "impl.cpp", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_TRUE(u.has_value());
+    EXPECT_FALSE(u->provides.has_value());
+    ASSERT_EQ(u->requires_.size(), 1u);
+    EXPECT_EQ(u->requires_[0].logicalName, "mathkit");
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Scanner, PartitionImportResolvesInsideAnImplementationUnit) {
+    // The other half of the same bug: resolution keyed off `u.provides`, and an
+    // implementation unit has none — so `import :secret;` stayed the literal
+    // `:secret`, which nothing provides.
+    auto dir = make_tempdir("scan-implimport");
+    std::filesystem::create_directories(dir / "src");
+    write(dir / "src" / "impl.cpp",
+          "module mathkit;\nimport :secret;\nnamespace mk { int g(); }\n");
+
+    auto u = scan_file(dir / "src" / "impl.cpp", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_TRUE(u.has_value());
+    bool found = false;
+    for (auto const& r : u->requires_) {
+        EXPECT_NE(r.logicalName, ":secret");
+        if (r.logicalName == "mathkit:secret") found = true;
+    }
+    EXPECT_TRUE(found) << "`import :secret;` did not resolve to mathkit:secret";
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Scanner, PartitionImportResolvesInsideAPartition) {
+    // `export module foo:http;` + `import :tls;` must give `foo:tls`, not
+    // `foo:http:tls` — the case the old code was written for, still true.
+    auto dir = make_tempdir("scan-partpart");
+    std::filesystem::create_directories(dir / "src");
+    write(dir / "src" / "http.cppm", "export module foo:http;\nimport :tls;\nexport int h();\n");
+
+    auto u = scan_file(dir / "src" / "http.cppm", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_TRUE(u.has_value());
+    ASSERT_EQ(u->requires_.size(), 1u);
+    EXPECT_EQ(u->requires_[0].logicalName, "foo:tls");
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Scanner, IgnoresImportsInsideRawStringLiteral) {
     auto dir = make_tempdir("mcpp-scanner-raw");
     write(dir / "src" / "gen.cppm",

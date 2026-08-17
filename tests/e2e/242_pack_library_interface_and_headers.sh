@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# requires: gcc
-# ⚠️ SCOPE, and it is a real limit rather than a convenience: library packing is
-# verified on Linux only. Run without a capability, this fails on the Windows
-# (MSVC-ABI clang) leg with a bare "build failed" during the library build, and
-# on macOS 243 dies because `ar` there is an xlings shim that reports "not
-# installed". Both are unresolved, both are recorded in docs/12's limits table,
-# and neither is hidden behind a green suite: 249 and 250 cover the routing on
-# every platform, so what is untested here is the PACKING, not the command.
+# requires:
+# (no capability: "a library package works on every target" has to be TESTED on
+#  every target. `# requires: gcc` would skip this on macOS and Windows — Apple
+#  Clang is not the gcc capability — leaving the claim unverified while the
+#  suite stayed green.)
+#
+# Deliberately NO implementation partition here. This test is about the two
+# interface modes; 243 owns partitions, and they do not build on Windows/clang
+# today (a pre-existing gap this work found, see 243's header).
 # 242_pack_library_interface_and_headers.sh — `mcpp pack <lib target>` produces
 # a package a consumer can use through EITHER interface mode, or both at once.
 #
@@ -34,16 +35,9 @@ cat > mathkit/src/api.cppm <<'EOF'
 export module mathkit:api;
 export namespace mk { int add(int a, int b); }
 EOF
-cat > mathkit/src/secret.cppm <<'EOF'
-module mathkit:secret;
-namespace mk { int bias() { return 0; } }
-EOF
 cat > mathkit/src/impl.cpp <<'EOF'
 module mathkit;
-namespace mk {
-int bias();
-int add(int a, int b) { return a + b + bias(); }
-}
+namespace mk { int add(int a, int b) { return a + b; } }
 EOF
 cat > mathkit/src/capi.c <<'EOF'
 int mathkit_add(int a, int b) { return a + b; }
@@ -87,7 +81,7 @@ done
 
 # Both lists are printed, and the implementation partition is on the right one.
 grep -q 'Interface.*mathkit.cppm' pack.log || { cat pack.log; echo "no interface list"; exit 1; }
-grep -q 'Withheld.*secret.cppm'   pack.log || { cat pack.log; echo "no withheld list"; exit 1; }
+grep -q 'Withheld.*impl.cpp'     pack.log || { cat pack.log; echo "no withheld list"; exit 1; }
 
 cd "$TMP"
 

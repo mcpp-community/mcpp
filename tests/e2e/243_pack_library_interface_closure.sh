@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# requires: gcc
-# ⚠️ SCOPE, and it is a real limit rather than a convenience: library packing is
-# verified on Linux only. Run without a capability, this fails on the Windows
-# (MSVC-ABI clang) leg with a bare "build failed" during the library build, and
-# on macOS 243 dies because `ar` there is an xlings shim that reports "not
-# installed". Both are unresolved, both are recorded in docs/12's limits table,
-# and neither is hidden behind a green suite: 249 and 250 cover the routing on
-# every platform, so what is untested here is the PACKING, not the command.
+# requires:
+# (no capability: this must hold on every target.)
+#
+# ⚠️ This test is also the regression for a scanner bug it uncovered. An
+# IMPLEMENTATION PARTITION (`module M:part;`, no `export`) had no coverage
+# anywhere in mcpp, and the scanner recorded it as "requires M:part, provides
+# nothing" — so the file required its own name, the graph held no edge from the
+# unit importing the partition to the unit defining it, and build order was
+# unconstrained. GCC and macOS clang recovered via their own scan; Windows clang
+# failed with `failed to read compiled module`. The scanner now models it, and
+# the warning it used to print on every platform ("imported but not provided in
+# this build") is gone.
 # 243_pack_library_interface_closure.sh — what travels is the module closure of
 # the published root, and the archive keeps exactly what the closure does not.
 #
@@ -77,9 +81,11 @@ grep -RIl 'secret_bias' "$pkg/interface" "$pkg/include" 2>/dev/null | grep -q . 
     echo "LEAK: implementation source text found in the published interface"; exit 1; }
 
 # ── the archive criterion: published objects out, everything else in ────
-ar_bin="$(command -v ar || true)"
-if [[ -n "$ar_bin" ]]; then
-    members="$(ar t "$(find "$pkg/lib" -name 'libmathkit.a' | head -1)")"
+# A functional probe, not `command -v ar`: on macOS `ar` resolves to an xlings
+# shim that reports "not installed" and exits non-zero, which under `set -e`
+# kills the test instead of skipping the inspection.
+archive="$(find "$pkg/lib" -name 'libmathkit.a' | head -1)"
+if [[ -n "$archive" ]] && members="$(ar t "$archive" 2>/dev/null)"; then
     echo "$members" | grep -q 'secret.m.o' || {
         echo "the implementation partition's OBJECT was dropped; nothing would link"
         echo "$members"; exit 1; }
@@ -90,6 +96,31 @@ if [[ -n "$ar_bin" ]]; then
         echo "a published interface unit's object is still in the archive"
         echo "$members"; exit 1; }
 fi
+
+# ── the hazard case: an interface that reaches the partition ────────────
+#
+# Legal, and the consumer needs that source to build the BMI at all — so it is
+# published rather than refused. But for a closed-source library it is the one
+# outcome nobody wants by accident, and `import :secret;` in an interface looks
+# like any other import, so `mcpp pack` has to say it.
+cd "$TMP/mathkit"
+cp src/mathkit.cppm "$TMP/root.bak"
+printf 'import :secret;\n' >> src/mathkit.cppm
+rm -rf target
+"$MCPP" pack mathkit > hazard.log 2>&1 || { cat hazard.log; echo "hazard pack failed"; exit 1; }
+grep -q 'secret.cppm is an implementation partition' hazard.log || {
+    cat hazard.log
+    echo "FAIL: publishing an implementation partition's source was not reported"
+    exit 1; }
+hazpkg="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
+[[ -e "$hazpkg/interface/secret.cppm" ]] || {
+    echo "the warning fired but the source was not actually published"; exit 1; }
+cp "$TMP/root.bak" src/mathkit.cppm
+rm -rf target
+"$MCPP" pack mathkit > repack.log 2>&1 || { cat repack.log; echo "repack failed"; exit 1; }
+pkg="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
+[[ ! -e "$pkg/interface/secret.cppm" ]] || { echo "restore did not withhold it again"; exit 1; }
+PKG_HOST="$(host_path "$TMP/mathkit/$pkg")"
 
 # ── and it still links and runs ─────────────────────────────────────────
 cd "$TMP"

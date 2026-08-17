@@ -1,0 +1,23 @@
+[package]
+name        = "lib-consume"
+version     = "0.1.0"
+description = "Consuming a prebuilt library package three different ways"
+license     = "Apache-2.0"
+
+# A packed library is an ordinary package: a path dependency, a git dependency,
+# a downloaded archive and an index entry all reach it the same way. Point this
+# at whatever `mcpp pack mathkit` left under ../producer/target/dist/.
+[dependencies]
+mathkit = { path = "../producer/target/dist/mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23" }
+
+[targets.consume-header]
+kind = "bin"
+main = "src/main_header.cpp"
+
+[targets.consume-module]
+kind = "bin"
+main = "src/main_module.cpp"
+
+[targets.consume-both]
+kind = "bin"
+main = "src/main_both.cpp"

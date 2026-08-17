@@ -19,17 +19,20 @@ namespace {
 //   impl.cpp       module mathkit;  import :secret;
 //   capi.c         (no module at all)
 //
-// mcpp's text scanner does not record `module M:part;` as a PROVIDER, so
-// `secret.cppm` has no `provides` here — that is deliberately how the graph
-// really looks, not a simplification.
+// `module M:part;` IS a provider — of `M:part` — and the scanner records it as
+// one with `providesInterface = false`. It used to record "requires M:part,
+// provides nothing", i.e. a file requiring its own name, which left the graph
+// with no edge from the importer to the definer. That is the shape this fixture
+// now mirrors, because the closure's warning depends on the distinction.
 Graph library_graph(bool interfaceReachesSecret = false) {
     Graph g;
     auto add = [&](std::string path, std::optional<std::string> provides,
-                   std::vector<std::string> requires_) {
+                   std::vector<std::string> requires_, bool iface = true) {
         SourceUnit u;
         u.path        = std::move(path);
         u.packageName = "mathkit";
         if (provides) u.provides = ModuleId{ *provides };
+        u.providesInterface = iface;
         for (auto& r : requires_) u.requires_.push_back(ModuleId{ std::move(r) });
         g.units.push_back(std::move(u));
     };
@@ -38,7 +41,7 @@ Graph library_graph(bool interfaceReachesSecret = false) {
         interfaceReachesSecret ? std::vector<std::string>{ "mathkit:api", "mathkit:secret" }
                                : std::vector<std::string>{ "mathkit:api" });
     add("src/api.cppm",   "mathkit:api", {});
-    add("src/secret.cppm", std::nullopt,  { "mathkit" });
+    add("src/secret.cppm", "mathkit:secret", {}, /*iface=*/false);
     add("src/impl.cpp",    std::nullopt,  { "mathkit", "mathkit:secret" });
     add("src/capi.c",      std::nullopt,  {});
 
@@ -88,13 +91,33 @@ TEST(InterfaceClosure, DropSetIsThePublishedObjectsNotEveryModuleObject) {
 
 // ─── the loud half of the asymmetry ────────────────────────────────────────
 
-TEST(InterfaceClosure, AnInterfaceThatReachesAnUnprovidedPartitionIsAnError) {
-    // If the root interface imports an implementation partition, the consumer
-    // needs that source to build the BMI at all. The scanner cannot see the
-    // partition's provider, so the closure would silently under-ship and the
-    // consumer would fail. Stop at pack time instead, where the author is.
+TEST(InterfaceClosure, AnInterfaceThatReachesAnImplementationPartitionPublishesItAndSaysSo) {
+    // Legal, and the consumer cannot build the interface's BMI without that
+    // source — so it is published rather than refused. But for a closed-source
+    // library it is the one outcome nobody wants by accident, and `import
+    // :secret;` in an interface reads like any other import, so it is reported.
     auto c = interface_closure(library_graph(/*interfaceReachesSecret=*/true),
                                "mathkit", "mathkit");
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(names(c->published),
+              (std::vector<std::string>{"api.cppm", "mathkit.cppm", "secret.cppm"}));
+    ASSERT_EQ(c->publishedImplementationPartitions.size(), 1u);
+    EXPECT_EQ(c->publishedImplementationPartitions[0].filename().string(), "secret.cppm");
+    EXPECT_TRUE(c->unresolvedImports.empty());
+}
+
+TEST(InterfaceClosure, AnInterfaceOnlyClosureReportsNoPartitionLeak) {
+    auto c = interface_closure(library_graph(), "mathkit", "mathkit");
+    ASSERT_TRUE(c.has_value());
+    EXPECT_TRUE(c->publishedImplementationPartitions.empty());
+}
+
+TEST(InterfaceClosure, AGenuinelyMissingPartitionIsStillAnError) {
+    // The unresolved path is not dead: a partition nothing provides means the
+    // published set is incomplete and the consumer's compile will fail on it.
+    auto g = library_graph(/*interfaceReachesSecret=*/true);
+    g.producerOf.erase("mathkit:secret");
+    auto c = interface_closure(g, "mathkit", "mathkit");
     ASSERT_TRUE(c.has_value());
     ASSERT_EQ(c->unresolvedImports.size(), 1u);
     EXPECT_EQ(c->unresolvedImports[0], "mathkit:secret");

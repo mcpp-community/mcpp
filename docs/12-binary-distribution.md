@@ -260,22 +260,29 @@ you publish to a mixed audience.
 
 | | status |
 |---|---|
-| `kind = "lib"` (static) | ✅ every target — **verified on Linux only** (see below) |
+| `kind = "lib"` (static) | ✅ every target, tested on all three |
 | `kind = "shared"` on Linux/ELF | ✅ — the package carries both the link name and the SONAME |
 | `kind = "shared"` on PE / Mach-O | ❌ refused — import libraries and install-names are not modelled yet |
 | `kind = "shared"` on `*-musl` | ❌ a musl target links statically |
 | shipping prebuilt BMIs | ❌ not attempted; BMIs are compiler-build-exact |
 | bundling dependencies into the package | ❌ declare them instead (above) |
 
-### Where it is verified
+### Implementation partitions
 
-`mcpp pack <library target>` is exercised end to end **on Linux**. The command
-ITSELF — which target it picks, how it refuses an unknown name, and packing
-from a workspace root — is covered on all three platforms.
+`mcpp pack` treats an implementation partition (`module M:part;`, no `export`)
+as private: its source stays behind, its object ships inside the archive.
 
-The gap is the library build inside `pack`, and it is not theoretical: run on
-the Windows (MSVC-ABI clang) CI leg it currently fails with a bare
-`error: build failed`, and on macOS the closure test cannot inspect the archive
-because `ar` there resolves to an xlings shim that reports "not installed".
-Both are unresolved. Treat library packaging as a Linux capability until this
-row says otherwise.
+If your published interface *imports* one, the consumer cannot build the BMI
+without that source, so it IS published — and `mcpp pack` says so:
+
+```
+warning: secret.cppm is an implementation partition, and the published interface
+         reaches it — so its SOURCE is being published.
+```
+
+> Until mcpp 2026.8.17.2 the scanner recorded `module M:part;` as *requiring*
+> `M:part` and providing nothing, so a file required its own name and the graph
+> held no edge from the unit importing a partition to the unit defining it.
+> Build order was unconstrained: GCC and macOS clang recovered through their own
+> dependency scan, Windows clang failed with `failed to read compiled module`.
+> If you have been avoiding implementation partitions on Windows, that was why.

@@ -56,17 +56,20 @@ struct InterfaceClosure {
     std::vector<std::filesystem::path> withheld;
     // Module names the interface imports that NOTHING in this graph provides.
     //
-    // Two things land here and both are worth stopping for:
-    //   * a partition mcpp's text scanner does not model as a provider
-    //     (`module M:part;` — the scanner records a *requires* on M and no
-    //     provides, so an interface that imports it looks unsatisfiable);
-    //   * a genuinely missing unit.
-    //
-    // Either way the published set is INCOMPLETE and the consumer's build will
-    // fail on it, so this is a hard error at pack time rather than a warning:
-    // the whole point of the closure is that the failure lands on the person
-    // who can fix it.
+    // The published set is then INCOMPLETE and the consumer's build will fail
+    // on it, so this is a hard error at pack time rather than a warning: the
+    // whole point of the closure is that the failure lands on the person who
+    // can fix it.
     std::vector<std::string> unresolvedImports;
+    // Published units that are IMPLEMENTATION partitions (`module M:part;`).
+    //
+    // Reaching one from the interface's purview is legal and the consumer needs
+    // its source to build the BMI at all — so it is published, not refused. But
+    // for a closed-source library it is the one outcome nobody wants by
+    // accident, and it is invisible in the source: `import :detail;` in an
+    // interface looks like any other import. So it is reported, loudly, and
+    // `mcpp pack` prints it as a warning naming the file.
+    std::vector<std::filesystem::path> publishedImplementationPartitions;
 };
 
 // Compute the closure for `packageName`, starting at the unit that provides
@@ -125,6 +128,8 @@ interface_closure(const mcpp::modgraph::Graph& graph,
         stack.erase(stack.begin());          // breadth-first: root first, then its imports
         if (!seen.insert(idx).second) continue;
         out.published.push_back(graph.units[idx].path);
+        if (!graph.units[idx].providesInterface)
+            out.publishedImplementationPartitions.push_back(graph.units[idx].path);
 
         for (auto const& req : graph.units[idx].requires_) {
             auto it = graph.producerOf.find(req.logicalName);

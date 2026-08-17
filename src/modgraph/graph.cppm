@@ -34,6 +34,21 @@ struct SourceUnit {
     std::vector<std::string>        packageCxxflags;
     std::vector<std::string>        packageAsmflags;   // per-glob asmflags (G4)
     std::optional<ModuleId>         provides;
+    // Was `provides` declared with `export module`?
+    //
+    // Both spellings produce a BMI and an object, so `provides` alone cannot
+    // tell an INTERFACE partition (`export module M:api;`) from an
+    // IMPLEMENTATION partition (`module M:impl;`) — and the difference decides
+    // whether a source may be published. `mcpp pack` publishes the module
+    // closure of the lib root; a closure that reaches an implementation
+    // partition has to publish it too (the consumer cannot build the BMI
+    // without it), and the author needs to be told that their implementation
+    // is going out.
+    //
+    // Defaults to true so units synthesized outside the text scanner
+    // (scan_overrides, the P1689 reader) keep counting as interfaces — the
+    // conservative direction, since the flag only ever produces a warning.
+    bool                            providesInterface = true;
     std::vector<ModuleId>           requires_;
     // The unit's ROLE, decided once by the scanner from the owning package's
     // extension table and carried from here on. Every downstream consumer
