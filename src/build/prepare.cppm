@@ -210,13 +210,39 @@ materialize_generated_files(const std::filesystem::path& root,
 void merge_conditional_config(mcpp::manifest::Manifest& m,
                              const cfgpred::Ctx& ctx)
 {
+    // A DISTRIBUTION package may carry a leg's link line twice: as `ldflags`
+    // (GNU spelling, which is all an older mcpp reads) and as the neutral
+    // `[target.<pred>.runtime]` pair, which mcpp renders per dialect. Applying
+    // both would put `-L` on a native `cl.exe` command line, which is exactly
+    // what the neutral form exists to avoid — so where the neutral form is
+    // present it REPLACES the ldflags rather than adding to them.
+    //
+    // Scoped to distribution packages on purpose: a hand-written manifest that
+    // states both may well mean both (`ldflags` also carries things like
+    // `-Wl,--as-needed`), and silently dropping half of it would be its own
+    // silent failure.
+    const bool generatedPackage = mcpp::pack::is_distribution_package(m);
+
     for (auto const& cc : m.conditionalConfigs) {
         if (!cfgpred::matches(cc.predicate, ctx)) continue;
+        const bool neutralWins = generatedPackage
+                              && (!cc.linkLibraryDirs.empty() || !cc.libraries.empty());
         // One append() for every field the axis may carry (#258). Matching
         // sections land AFTER the base entries, so a conditional rule beats
         // a broader unconditional one under GNU last-wins — which is what
         // makes an off-OS REMOVAL expressible (`-U` after the base `-D`).
-        mcpp::manifest::append(m.buildConfig, cc.inputs);
+        if (neutralWins) {
+            auto inputs = cc.inputs;
+            inputs.ldflags.clear();
+            mcpp::manifest::append(m.buildConfig, inputs);
+        } else {
+            mcpp::manifest::append(m.buildConfig, cc.inputs);
+        }
+        // The neutral half goes where `render_link_intent_flags` will find it.
+        for (auto const& d : cc.linkLibraryDirs)
+            m.runtimeConfig.linkIntent.linkLibraryDirs.push_back(d);
+        for (auto const& l : cc.libraries)
+            m.runtimeConfig.linkIntent.libraries.push_back(l);
         // `modules.sources` is the scanner's own view and is not part of
         // BuildInputs, so conditional sources are mirrored into it here.
         for (auto const& s : cc.inputs.sources)

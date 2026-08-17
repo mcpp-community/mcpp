@@ -25,3 +25,9 @@ Its external defined symbols, per `x86_64-w64-mingw32-nm --defined-only
 0000000000000004 T _Z3usev
 000000000000000a T _ZN2ns10mangled_fnEi
 ```
+
+`annotated-amd64.obj` is the same shape with one symbol marked
+`__declspec(dllexport)`, from `annotated-amd64.cpp.in`. It exists so
+`declares_exports` is tested against a real `.drectve` section rather than one
+this repository wrote itself — the point of that function is to recognise what a
+COMPILER emits.

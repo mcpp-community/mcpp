@@ -1,0 +1,2 @@
+extern "C" __declspec(dllexport) int chosen(int x) { return x + 1; }
+extern "C" int not_chosen(int x) { return x - 1; }

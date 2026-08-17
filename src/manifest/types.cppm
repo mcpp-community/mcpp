@@ -702,6 +702,17 @@ struct ConditionalConfig {
     // `!`-exclusion globs work there too (the scanner handles positive+
     // negative sets).
     BuildInputs                         inputs;
+    // `[target.<sel>.runtime]` — the DIALECT-NEUTRAL half of a link line.
+    //
+    // `inputs.ldflags` above is spelled the GNU way and native `cl.exe` rejects
+    // `-L`. These two keys say the same thing without committing to a spelling,
+    // and `render_link_intent_flags` renders them as `/LIBPATH:` + `<n>.lib` or
+    // `-L` + `-l<n>` depending on the target. A generated package carries BOTH,
+    // because an older mcpp reads only the first — see the note where they are
+    // merged for why the newer client must then IGNORE the ldflags rather than
+    // add to them.
+    std::vector<std::filesystem::path>  linkLibraryDirs;
+    std::vector<std::string>            libraries;
     // Conditional dependencies (Phase 1b): merged into the corresponding
     // manifest maps in prepare_build when the predicate matches the resolved
     // target — before dependency resolution, so they resolve like any dep.

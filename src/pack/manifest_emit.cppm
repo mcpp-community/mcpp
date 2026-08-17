@@ -242,6 +242,20 @@ std::string emit_package_manifest(const PackageDoc& doc) {
                          leg.triple,
                          peGnuShared ? "\"-Wl,-Bdynamic\", " : "",
                          leg.linkName);
+
+        // …and the same statement without a dialect. mcpp renders these as
+        // `/LIBPATH:` + `<n>.lib` or `-L` + `-l<n>` from the target, which is
+        // what lets a consumer driven by native `cl.exe` link this package at
+        // all — cl rejects `-L`.
+        //
+        // BOTH are emitted, deliberately. An older mcpp reads only the ldflags
+        // above and silently ignores this block (measured), so dropping the
+        // ldflags would leave every older client with no link line at all. A
+        // newer mcpp seeing this block ignores that leg's ldflags rather than
+        // adding to them — see merge_conditional_config.
+        o += std::format("[target.'{}'.runtime]\n", cfg_predicate_for(leg.triple));
+        o += std::format("link_library_dirs = [\"lib/{}\"]\n", leg.triple);
+        o += std::format("libraries         = [\"{}\"]\n\n", leg.linkName);
     }
     // A shared library has to be FOUND at run time as well as linked, and the
     // two are different search paths — `link_library_dirs` is not rpath.

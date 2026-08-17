@@ -1456,6 +1456,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // prepare_build.
             ConditionalConfig cc;
             cc.predicate = triple;
+            // `[target.<pred>.runtime]` — the dialect-neutral link intent. Two
+            // keys only, and the same two `[runtime]` already has at the top
+            // level: this makes them per-target, it does not invent a vocabulary.
+            if (auto rit = body.find("runtime"); rit != body.end() && rit->second.is_table()) {
+                auto& rt = rit->second.as_table();
+                if (auto f = rt.find("link_library_dirs"); f != rt.end() && f->second.is_array())
+                    for (auto& v : f->second.as_array())
+                        if (v.is_string()) cc.linkLibraryDirs.emplace_back(v.as_string());
+                if (auto f = rt.find("libraries"); f != rt.end() && f->second.is_array())
+                    for (auto& v : f->second.as_array())
+                        if (v.is_string()) cc.libraries.push_back(v.as_string());
+            }
             if (auto bit = body.find("build"); bit != body.end() && bit->second.is_table()) {
                 auto& bt = bit->second.as_table();
                 auto read_list = [&](const char* key, std::vector<std::string>& out) {

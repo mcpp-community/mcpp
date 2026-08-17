@@ -7,6 +7,7 @@ using mcpp::build::coff::Export;
 using mcpp::build::coff::read_exports;
 using mcpp::build::coff::write_def;
 using mcpp::build::coff::kMaxExports;
+using mcpp::build::coff::declares_exports;
 
 // The `.def` generator decides what a DLL's public surface is. Getting the
 // filter wrong does not fail loudly: too few exports and the consumer sees
@@ -271,4 +272,48 @@ TEST(CoffExports, ReadsARealMingwObject) {
         return;
     }
     GTEST_SKIP() << "fixture not reachable from this working directory";
+}
+
+// ─── annotation wins ───────────────────────────────────────────────────────
+
+TEST(CoffExports, RecognisesAnObjectThatAlreadyDeclaresExports) {
+    // `__declspec(dllexport)` makes the compiler write `/EXPORT:` directives
+    // into `.drectve`. Generating a `.def` on top of that would export the same
+    // names twice (LNK4197) AND export everything else besides, replacing a
+    // chosen public surface with all of it.
+    //
+    // Tested against a real object because the whole point is recognising what
+    // a COMPILER emits; a hand-built `.drectve` would only prove this agrees
+    // with the test.
+    for (auto const& base : { "tests/fixtures/coff/annotated-amd64.obj",
+                              "../tests/fixtures/coff/annotated-amd64.obj",
+                              "../../tests/fixtures/coff/annotated-amd64.obj" }) {
+        std::ifstream in(base, std::ios::binary);
+        if (!in) continue;
+        std::vector<std::byte> bytes;
+        for (char c; in.get(c); ) bytes.push_back(static_cast<std::byte>(c));
+        EXPECT_TRUE(declares_exports(bytes));
+        return;
+    }
+    GTEST_SKIP() << "fixture not reachable from this working directory";
+}
+
+TEST(CoffExports, AnObjectWithNoDirectivesDeclaresNothing) {
+    // The negative half: without it, a `declares_exports` that always said true
+    // would pass the test above and silently disable auto-export everywhere.
+    for (auto const& base : { "tests/fixtures/coff/probe-amd64.obj",
+                              "../tests/fixtures/coff/probe-amd64.obj",
+                              "../../tests/fixtures/coff/probe-amd64.obj" }) {
+        std::ifstream in(base, std::ios::binary);
+        if (!in) continue;
+        std::vector<std::byte> bytes;
+        for (char c; in.get(c); ) bytes.push_back(static_cast<std::byte>(c));
+        EXPECT_FALSE(declares_exports(bytes));
+        return;
+    }
+    GTEST_SKIP() << "fixture not reachable from this working directory";
+}
+
+TEST(CoffExports, SyntheticObjectsHaveNoDirectiveSection) {
+    EXPECT_FALSE(declares_exports(make_obj({ Sym{ .name = "f" } })));
 }

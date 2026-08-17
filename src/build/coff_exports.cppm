@@ -60,6 +60,20 @@ inline constexpr std::size_t kMaxExports = 65535;
 // against is exactly where an untested assumption would hide.
 bool is_supported_machine(std::uint16_t machine);
 
+// Does this object ALREADY declare exports?
+//
+// `__declspec(dllexport)` makes the compiler write `/EXPORT:name` directives
+// into the object's `.drectve` section, which the linker reads. When an author
+// has annotated their surface, adding a generated `.def` on top would export
+// the same names twice — `LNK4197: export specified multiple times` — and,
+// worse, would export everything else as well, quietly replacing a chosen
+// public surface with all of it.
+//
+// So the annotation wins and mcpp stays out of the way. Detected rather than
+// configured: a manifest key for "I annotated my exports" would be a second
+// place to say something the objects already say, and the two could disagree.
+bool declares_exports(std::span<const std::byte> bytes);
+
 // Read one object file's exportable symbols. `bytes` is a whole `.obj`.
 //
 // Returns an error string for input this reader cannot honestly interpret —
@@ -137,6 +151,42 @@ bool is_skipped_name(std::string_view n) {
 }
 
 } // namespace
+
+bool declares_exports(std::span<const std::byte> bytes) {
+    if (bytes.size() < kFileHeaderSize) return false;
+    const auto numSections = rd16(bytes, 2);
+    const std::size_t sectionsOff = kFileHeaderSize + rd16(bytes, 16);
+
+    for (std::uint16_t i = 0; i < numSections; ++i) {
+        const auto hdr = sectionsOff + std::size_t(i) * kSectionHeaderSize;
+        if (hdr + kSectionHeaderSize > bytes.size()) return false;
+
+        std::string name;
+        for (std::size_t c = 0; c < 8; ++c) {
+            auto ch = std::to_integer<char>(bytes[hdr + c]);
+            if (ch == '\0') break;
+            name.push_back(ch);
+        }
+        if (name != ".drectve") continue;
+
+        const auto size = rd32(bytes, hdr + 16);
+        const auto off  = rd32(bytes, hdr + 20);
+        if (off == 0 || std::size_t(off) + size > bytes.size()) return false;
+
+        // The section is plain text: a run of linker directives. Both spellings
+        // occur — cl emits `/EXPORT:`, clang-cl `-export:` — and a linker
+        // accepts either, so looking for one of them only would be a coin flip
+        // on which compiler produced the object.
+        std::string text;
+        text.reserve(size);
+        for (std::uint32_t k = 0; k < size; ++k)
+            text.push_back(std::to_integer<char>(bytes[std::size_t(off) + k]));
+        for (auto& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (text.find("/export:") != std::string::npos) return true;
+        if (text.find("-export:") != std::string::npos) return true;
+    }
+    return false;
+}
 
 bool is_supported_machine(std::uint16_t machine) {
     return machine == kMachineI386  || machine == kMachineAmd64

@@ -502,6 +502,13 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto v = parsed.value("name")) libName = *v;
 
     std::vector<mcpp::build::coff::Export> all;
+    // When the AUTHOR has annotated the surface, the annotation wins and this
+    // edge writes an empty EXPORTS section — the linker then takes its export
+    // set from the objects' own `/EXPORT:` directives, exactly as if mcpp were
+    // not here. Adding a generated list on top would export the same names twice
+    // (LNK4197) and, worse, would export everything else as well, replacing a
+    // chosen public surface with all of it.
+    bool annotated = false;
     for (std::size_t i = 0; i < parsed.positional_count(); ++i) {
         const std::filesystem::path obj{ parsed.positional(i) };
         std::ifstream in(obj, std::ios::binary);
@@ -511,6 +518,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
         std::vector<std::byte> bytes;
         for (char c; in.get(c); ) bytes.push_back(static_cast<std::byte>(c));
+        if (mcpp::build::coff::declares_exports(bytes)) annotated = true;
         auto syms = mcpp::build::coff::read_exports(bytes);
         if (!syms) {
             // Named with the object, because "which one" is the whole question
@@ -524,6 +532,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // Refused, not truncated. A `.def` cut at the ceiling links cleanly and
     // then fails at whichever consumer happens to need a symbol that fell off
     // the end — a diagnostic with no path back to this decision.
+    if (annotated) all.clear();
     std::ranges::sort(all);
     all.erase(std::ranges::unique(all).begin(), all.end());
     if (all.size() > mcpp::build::coff::kMaxExports) {

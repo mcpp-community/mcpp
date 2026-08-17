@@ -119,4 +119,42 @@ EOF
     exit 1; }
 grep -q 'msvc-dll=42' app/run.log || { cat app/run.log; echo "FAIL: wrong answer"; exit 1; }
 
-echo "PASS: MSVC produces an exporting DLL with no dllexport in the source"
+# ── and an ANNOTATED library keeps its own surface ──────────────────────
+#
+# `__declspec(dllexport)` writes `/EXPORT:` directives into the object, and a
+# generated list on top would export the same names twice (LNK4197) AND export
+# everything else besides — replacing a chosen public surface with all of it.
+# So the annotation wins and the generated `.def` stays empty.
+cd "$TMP"
+mkdir -p annotated/src
+cat > annotated/src/a.cppm <<'EOF'
+export module annkit;
+export namespace ak { __declspec(dllexport) int chosen(); }
+EOF
+cat > annotated/src/a.cpp <<'EOF'
+module annkit;
+namespace ak { __declspec(dllexport) int chosen() { return 7; } }
+EOF
+cat > annotated/mcpp.toml <<'EOF'
+[package]
+name    = "annkit"
+version = "0.1.0"
+[build]
+sources = ["src/*.cppm", "src/*.cpp"]
+[targets.annkit]
+kind   = "shared"
+[toolchain]
+windows = "msvc@system"
+EOF
+( cd annotated && "$MCPP" build > build.log 2>&1 ) || {
+    cat annotated/build.log; echo "FAIL: the annotated library did not build"; exit 1; }
+anndef="$(find annotated/target -name 'annkit.def' | head -1)"
+[[ -n "$anndef" ]] || { echo "FAIL: no .def edge for the annotated library"; exit 1; }
+[[ "$(grep -cvE '^(LIBRARY|EXPORTS|$)' "$anndef")" -eq 0 ]] || {
+    cat "$anndef"
+    echo "FAIL: mcpp generated an export list for a library that declares its own."
+    echo "      That exports every other symbol too, which replaces the author's"
+    echo "      chosen surface with all of it."
+    exit 1; }
+
+echo "PASS: MSVC exports without dllexport, and defers to dllexport when present"
