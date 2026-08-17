@@ -212,7 +212,19 @@ run_library_pack(const LibraryPackPlan& plan)
         // Delete the objects of the units published as source. The consumer
         // compiles those itself; leaving them in the archive means two
         // definitions of the module initialiser, resolved by link order.
-        if (!leg.shared && !plan.dropObjects.empty() && !leg.archiveTool.empty()) {
+        // No archiver but objects to drop would leave the published interface's
+        // objects inside the archive — two definitions of the module
+        // initialiser, resolved by link order. Skipping that quietly is the
+        // exact failure class this feature exists to remove, so it is refused.
+        if (!leg.shared && !plan.dropObjects.empty() && leg.archiveTool.empty()) {
+            return std::unexpected(LibraryPackError{ std::format(
+                "no archiver was resolved for {}, so the published interface's "
+                "objects cannot be removed from '{}'.\n"
+                "  Shipping them leaves two definitions of each published "
+                "module's initialiser in the consumer's link.",
+                leg.triple, name) });
+        }
+        if (!leg.shared && !plan.dropObjects.empty()) {
             std::string cmd = mcpp::platform::shell::quote(leg.archiveTool.string())
                             + " d " + mcpp::platform::shell::quote(dst.string());
             for (auto const& m : plan.dropObjects)

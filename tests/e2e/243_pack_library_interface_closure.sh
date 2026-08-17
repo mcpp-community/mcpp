@@ -84,7 +84,7 @@ grep -RIl 'secret_bias' "$pkg/interface" "$pkg/include" 2>/dev/null | grep -q . 
 # A functional probe, not `command -v ar`: on macOS `ar` resolves to an xlings
 # shim that reports "not installed" and exits non-zero, which under `set -e`
 # kills the test instead of skipping the inspection.
-archive="$(find "$pkg/lib" -name 'libmathkit.a' | head -1)"
+archive="$(find "$pkg/lib" -type f \( -name 'libmathkit.*' -o -name 'mathkit.*' \) | head -1)"
 if [[ -n "$archive" ]] && members="$(ar t "$archive" 2>/dev/null)"; then
     echo "$members" | grep -q 'secret.m.o' || {
         echo "the implementation partition's OBJECT was dropped; nothing would link"

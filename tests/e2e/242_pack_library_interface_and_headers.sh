@@ -76,7 +76,11 @@ PKG_HOST="$(host_path "$TMP/mathkit/$pkg")"
 for f in mcpp.toml interface/mathkit.cppm interface/api.cppm include/mathkit_c.h; do
     [[ -f "$pkg/$f" ]] || { echo "package is missing $f"; find "$pkg" -type f; exit 1; }
 done
-[[ -n "$(find "$pkg/lib" -name 'libmathkit.a' | head -1)" ]] || {
+# NOT a hard-coded `libmathkit.a`: the artifact's name follows the ENVIRONMENT,
+# not the OS — MinGW writes libfoo.a where MSVC writes foo.lib. That is exactly
+# why `lib/` is keyed by triple, and hard-coding the GNU spelling here made this
+# test fail on Windows against a package that had been built correctly.
+[[ -n "$(find "$pkg/lib" -type f \( -name 'libmathkit.*' -o -name 'mathkit.*' \) | head -1)" ]] || {
     echo "package has no artifact under lib/<triple>/"; find "$pkg" -type f; exit 1; }
 
 # Both lists are printed, and the implementation partition is on the right one.
