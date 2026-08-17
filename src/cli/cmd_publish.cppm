@@ -10,7 +10,9 @@ export module mcpp.cli.cmd_publish;
 import std;
 import mcpplibs.cmdline;
 import mcpp.pack;
+import mcpp.pack.library_pipeline;
 import mcpp.pack.pipeline;
+import mcpp.pack.route;
 import mcpp.publish.pipeline;
 import mcpp.ui;
 
@@ -55,8 +57,37 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
         }
     }
     if (auto v = parsed.value("output")) opts.output = *v;
-    if (auto v = parsed.value("target")) opts.targetTriple = *v;
 
+    // `--target` is repeatable: one leg per triple, which is how a library
+    // package ships for several targets at once. The application path has
+    // always taken exactly one, and still does — packing one executable for
+    // several triples would need several executables.
+    std::vector<std::string> triples;
+    if (auto o = parsed.option("target")) triples = o->get().values;
+    if (!triples.empty()) opts.targetTriple = triples.back();
+
+    // ─── Which target, and therefore which kind of package ───────────
+    //
+    // The positional is a target NAME. Its `kind` decides everything: a
+    // program becomes an application bundle (the four --mode depths), a
+    // library becomes a library package. Reading the answer out of the
+    // manifest is the whole reason there is no --lib flag.
+    auto route = mcpp::pack::route_pack_target(parsed.positional(0));
+    if (!route) { mcpp::ui::error(route.error()); return 2; }
+    if (route->library) {
+        if (modeFromUser) {
+            mcpp::ui::warning(std::format(
+                "--mode is an application-bundle depth and does not apply to the "
+                "library target '{}' yet; ignoring it", route->targetName));
+        }
+        return mcpp::pack::build_and_pack_library(route->targetName, triples, opts);
+    }
+    if (triples.size() > 1) {
+        mcpp::ui::error(
+            "--target may be given once when packing a program: an application "
+            "bundle wraps one executable, and one executable has one target.");
+        return 2;
+    }
     return mcpp::pack::build_and_pack(std::move(opts), modeFromUser);
 }
 

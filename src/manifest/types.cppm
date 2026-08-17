@@ -353,6 +353,25 @@ struct Resources {
 // is read in ~150 places, and a BuildConfig genuinely IS a set of build
 // inputs plus the selection axis and resolved policy scalars.
 struct BuildConfig : BuildInputs {
+    // Was `sources` WRITTEN, as opposed to merely being empty?
+    //
+    // Presence is semantic here for the same reason it is on
+    // `XlingsConfig::subosDeclared`: an absent key selects the default glob,
+    // while an explicit `sources = []` selects "compile nothing". A container
+    // alone cannot tell those apart, and until this flag existed it did not:
+    // `sources = []` and deleting the line produced byte-identical build
+    // graphs, so an author had NO spelling for "nothing".
+    //
+    // A binary distribution package needs that spelling. It ships prebuilt
+    // artifacts and, in the header-only shape, no compilable source at all —
+    // yet any file left under `src/` would be swept up by the default glob and
+    // compiled into the consumer's build, where it can collide with the very
+    // symbols the prebuilt library already defines.
+    //
+    // Deliberately on BuildConfig and not on BuildInputs: the conditional axis
+    // (`[target.'cfg(...)'.build]`) only ever APPENDS sources, so "declared
+    // empty" has no meaning there — it is the same as contributing nothing.
+    bool sourcesDeclared = false;
     // `[build] jobs` — how many compiles to run at once. A decimal count,
     // "auto", or empty (the default) meaning "let the backend decide".
     //

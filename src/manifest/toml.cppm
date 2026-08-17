@@ -237,11 +237,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
 
     // [build].sources (M5.0 new home) + [modules].sources (deprecated, compat)
-    if (auto v = doc->get_string_array("build.sources"))   m.buildConfig.sources = *v;
+    //
+    // `sourcesDeclared` records PRESENCE, not content: `sources = []` has to
+    // mean "compile nothing", and only the key's existence can say that (see
+    // BuildConfig::sourcesDeclared). Set from either spelling, because the
+    // legacy one has to be able to express it too.
+    if (auto v = doc->get_string_array("build.sources")) {
+        m.buildConfig.sources = *v;
+        m.buildConfig.sourcesDeclared = true;
+    }
     if (auto v = doc->get_string_array("modules.sources")) {
         m.modules.sources = *v;
         // If [build].sources wasn't set, mirror legacy field into new field.
-        if (m.buildConfig.sources.empty()) m.buildConfig.sources = *v;
+        if (!m.buildConfig.sourcesDeclared) {
+            m.buildConfig.sources = *v;
+            m.buildConfig.sourcesDeclared = true;
+        }
     }
     // Mirror new → legacy so existing code reading manifest.modules.sources keeps working.
     if (m.modules.sources.empty()) m.modules.sources = m.buildConfig.sources;
@@ -1700,7 +1711,14 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
     // that vendors foreign-syntax .asm can `!`-exclude it.
     const auto extTable =
         mcpp::extension_table_for(m.buildConfig.moduleExtensions);
-    if (m.buildConfig.sources.empty()) {
+    // `!sourcesDeclared` and not `sources.empty()`: an author who wrote
+    // `sources = []` asked for NOTHING, and filling the default glob over that
+    // answers a question they already answered. That is not hypothetical — a
+    // binary distribution package ships prebuilt artifacts and, in the
+    // header-only shape, nothing to compile at all; the glob would sweep up
+    // whatever happens to sit under `src/` and compile it into the consumer's
+    // build, where it can collide with the prebuilt library's own symbols.
+    if (!m.buildConfig.sourcesDeclared) {
         // Derived from the extension table rather than written beside it —
         // otherwise declaring `module_extensions = [".ixx"]` would change how
         // `.ixx` is TREATED without changing whether it is FOUND, and the key

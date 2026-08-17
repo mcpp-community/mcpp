@@ -187,6 +187,17 @@ enum class ObjectNaming {
 // than weakening the exhaustive no-collision assertion around it.
 ObjectNaming object_naming_for(const std::filesystem::path& src);
 
+// The object file's NAME, formatted from the policy above.
+//
+// It lived in plan.cppm as an internal helper, under a comment saying the
+// policy lives here and it "only formats it" — which is exactly the split
+// worth closing: a second reader of the policy is a second place the format
+// can drift. `mcpp pack` needs the same answer (to tell which archive members
+// belong to the interface units it is publishing as source), and reaching into
+// plan.cppm for it would drag the whole planner into the packer.
+std::string object_filename_for(const std::filesystem::path& src,
+                                std::string_view objExt = ".o");
+
 } // namespace mcpp
 
 namespace mcpp {
@@ -367,6 +378,24 @@ ObjectNaming object_naming_for(const std::filesystem::path& src) {
     // form. `foo.ixx` -> `foo.ixx.o` can collide with neither `foo.cppm` ->
     // `foo.m.o` nor `foo.cpp` -> `foo.o`.
     return ObjectNaming::FullFilename;
+}
+
+std::string object_filename_for(const std::filesystem::path& src,
+                                std::string_view objExt) {
+    switch (object_naming_for(src)) {
+        case ObjectNaming::StemDotM:
+            return src.stem().string() + ".m" + std::string(objExt);
+        case ObjectNaming::Stem:
+            return src.stem().string() + std::string(objExt);
+        case ObjectNaming::FullFilename:
+            break;
+    }
+    // Assembly siblings of a C/C++ TU commonly share its stem (foo.c +
+    // foo.asm); keeping the full extension means they can never collide —
+    // the per-package collision prefix can't help two same-stem files in the
+    // same directory. Every extension a project adds via
+    // `[build] module_extensions` lands here for the same reason.
+    return src.filename().string() + std::string(objExt);
 }
 
 } // namespace mcpp

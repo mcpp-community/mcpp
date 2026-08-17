@@ -153,6 +153,12 @@ the package/feature boundary, not on an individual target.
 
 ### 2.3 `[build]` — Build Configuration
 
+> **`sources = []` is not the same as omitting `sources`.** An absent key
+> selects the default glob; an explicitly empty list means *compile nothing*,
+> which is what a header-only distribution package needs to say. Until
+> mcpp 2026.8.17.2 the two were byte-identical, so there was no spelling for
+> "nothing" and any file left under `src/` was swept in.
+
 ```toml
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
@@ -1598,6 +1604,17 @@ do`.
 - Package-level knobs all converge into features; for sugar keys (such as `backend=`)
   to enter the core syntax, they must satisfy: ① domain-neutral (a cross-ecosystem
   general pattern) ② 1:1 desugaring with zero new parsing semantics.
+- **A key that duplicates an answer another section already gives is not admitted.**
+  Two places to state one fact is two places that can disagree, and the failure
+  is silent — whichever reader loses the race is simply wrong. Library packaging
+  ([12](12-binary-distribution.md)) is the worked example: it added **zero**
+  manifest keys, because what to pack is `[targets.<n>].kind`, which interface
+  to publish is `[lib]` plus the module graph, which headers are public is
+  `[build].include_dirs`, and the per-artifact evidence is `[[runtime.artifacts]]`.
+- A field that describes what a *generated* package IS (rather than what a build
+  should DO) belongs on `[[runtime.artifacts]]` — see §2.11. `provenance`
+  beginning with `mcpp-pack` is what marks a directory as one, and mcpp refuses
+  to `build` inside it.
 - See `.agents/docs/2026-06-04-manifest-schema-ownership.md` for the full field-ownership
   table and the finalized decisions.
 

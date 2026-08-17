@@ -336,26 +336,10 @@ std::string sanitize_for_path(std::string_view module_name) {
     return s;
 }
 
-std::string object_filename_for(const std::filesystem::path& src,
-                                std::string_view objExt = ".o") {
-    // The naming POLICY lives in mcpp.source_kind (see ObjectNaming there for
-    // why every historical name is frozen and only new extensions get the
-    // collision-proof form). This function only formats it.
-    switch (mcpp::object_naming_for(src)) {
-        case mcpp::ObjectNaming::StemDotM:
-            return src.stem().string() + ".m" + std::string(objExt);
-        case mcpp::ObjectNaming::Stem:
-            return src.stem().string() + std::string(objExt);
-        case mcpp::ObjectNaming::FullFilename:
-            break;
-    }
-    // Assembly siblings of a C/C++ TU commonly share its stem (foo.c +
-    // foo.asm); keeping the full extension means they can never collide —
-    // the per-package collision prefix can't help two same-stem files in the
-    // same directory. Every extension a project adds via
-    // `[build] module_extensions` lands here for the same reason.
-    return src.filename().string() + std::string(objExt);
-}
+// Both the naming POLICY and its formatting now live in mcpp.source_kind, so
+// the planner and `mcpp pack` cannot answer "what is this object called"
+// differently. This alias keeps the local spelling every call site below uses.
+using mcpp::object_filename_for;
 
 std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
     if (!manifest.package.namespace_.empty()
