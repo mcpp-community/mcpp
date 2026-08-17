@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# requires: gcc
+# requires:
+# (no capability: the probe below greps a FILENAME out of build.ninja, not a
+#  compiler flag, so nothing here is toolchain-specific. It carried
+#  `# requires: gcc` for one round out of copy-paste, and that capability is
+#  Linux-only by design — it skipped on macOS and Windows for no reason.)
 # 246_explicit_empty_sources.sh — `sources = []` means "compile nothing", and
 # omitting the key still means "the default glob".
 #

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# requires: gcc
+# requires:
+# (no capability: the probe greps the MACRO NAME, never the `-D` prefix — MSVC
+#  spells that `/D`, and the prefix was the only thing that tied this test to
+#  one compiler family. The predicate it checks is compiler-independent, so the
+#  test has to run everywhere the predicate does.)
 # 247_bare_triple_conditional_native.sh — `[target.'<triple>'.build]` applies to
 # a NATIVE build, not only to one with an explicit `--target`.
 #
@@ -37,9 +41,11 @@ cxxflags = ["-DMCPP_BARE_TRIPLE=1"]
 cxxflags = ["-DMCPP_CFG_ALIAS=1"]
 EOF
 
-count() {   # $1 = define name
+count() {   # $1 = macro name
+    # The NAME, not `-D<name>`: the prefix is dialect-specific (`/D` on MSVC),
+    # and what this test is about is whether the section applied at all.
     local nj; nj="$(find target -name build.ninja | head -1)"
-    grep -c -- "-D$1" "$nj" || true
+    grep -c -- "$1" "$nj" || true
 }
 
 cd probe

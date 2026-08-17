@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# requires: elf
-# 251_pack_library_shared.sh — a `kind = "shared"` package carries BOTH of the
-# library's names, and a consumer can actually start.
+# requires:
+# 251_pack_library_shared.sh — a `kind = "shared"` package is either produced
+# CORRECTLY or refused CLEARLY. Never silently wrong.
+#
+# Both halves, because testing only the working one cannot tell "the gate is
+# handled" from "there is no gate". `kind = "shared"` is ELF-only today
+# (src/build/plan.cppm refuses it and says why), so on macOS and Windows the
+# assertion is that the refusal happens and names the reason — a `# requires:
+# elf` here would have left that side unobserved.
 #
 # A shared library is LINKED by `lib<target>.so` and FOUND at run time by its
 # SONAME, and those are two different filenames. The first version of this
@@ -41,6 +47,27 @@ soname = "libmathkit.so.1"
 EOF
 
 cd mathkit
+
+# ── the non-ELF side: refuse, and say why ──────────────────────────────
+if [[ "$(uname -s)" != "Linux" ]]; then
+    if "$MCPP" pack mathkit-shared > refuse.log 2>&1; then
+        cat refuse.log
+        echo "FAIL: a shared library was packed on a platform that cannot link one"
+        exit 1
+    fi
+    grep -qi 'shared librar' refuse.log || {
+        cat refuse.log
+        echo "FAIL: it refused, but the message does not say the artifact kind is the problem"
+        exit 1; }
+    grep -qi 'linux\|elf' refuse.log || {
+        cat refuse.log
+        echo "FAIL: the refusal does not say where shared libraries DO work"
+        exit 1; }
+    echo "PASS: a shared library package is refused, with the reason, off ELF"
+    exit 0
+fi
+
+# ── the ELF side: produce it, with both names ──────────────────────────
 "$MCPP" pack mathkit-shared > pack.log 2>&1 || { cat pack.log; echo "shared pack failed"; exit 1; }
 pkg="$TMP/mathkit/$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
 # The manifest below is FILE CONTENT: on Git Bash a shell-spelled
