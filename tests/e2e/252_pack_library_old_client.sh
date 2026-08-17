@@ -92,9 +92,27 @@ EOF
     || { cat "$TMP/app/new.log"; echo "the PR binary could not consume its own package"; exit 1; }
 grep -q 'ok=42' "$TMP/app/new.log" || { cat "$TMP/app/new.log"; echo "wrong answer"; exit 1; }
 
-if [[ -n "${MCPP_BOOT:-}" && -x "${MCPP_BOOT}" ]] \
-   && [[ "$("$MCPP_BOOT" --version 2>/dev/null)" != "$("$MCPP" --version 2>/dev/null)" ]]; then
-    echo "old client: $("$MCPP_BOOT" --version)"
+# ⚠️ The boot entry each CI job bootstraps from is an xvm SHIM, and a shim
+# resolves against the home it is asked in — under the e2e suite's environment
+# it answers `xlings: 'mcpp' is not installed` and prints NOTHING for
+# `--version`. The first version of this guard compared that empty string
+# against the PR binary's version, found them "different", and concluded it had
+# found an old client — then reported a compatibility failure against a package
+# that is perfectly readable. So the guard demands a version-SHAPED answer;
+# anything else means "no usable old binary here", which is a note, not a
+# verdict.
+boot_ver=""
+new_ver="$("$MCPP" --version 2>/dev/null || true)"
+if [[ -n "${MCPP_BOOT:-}" && -x "${MCPP_BOOT}" ]]; then
+    boot_ver="$("$MCPP_BOOT" --version 2>/dev/null || true)"
+fi
+usable=0
+case "$boot_ver" in
+    mcpp\ [0-9]*) usable=1 ;;
+esac
+
+if [[ "$usable" == 1 && "$boot_ver" != "$new_ver" ]]; then
+    echo "old client: $boot_ver"
     rm -rf "$TMP/app/target"
     ( cd "$TMP/app" && "$MCPP_BOOT" run > old.log 2>&1 ) || {
         cat "$TMP/app/old.log"
@@ -107,7 +125,15 @@ if [[ -n "${MCPP_BOOT:-}" && -x "${MCPP_BOOT}" ]] \
         cat "$TMP/app/old.log"; echo "the old client built it but ran it wrong"; exit 1; }
     echo "PASS: a released mcpp builds and runs against a package from this one"
 else
-    echo "NOTE: \$MCPP_BOOT is unset or identical to \$MCPP — the real old-client"
-    echo "      check did not run here. The static section-vocabulary check did."
+    if [[ -n "${MCPP_BOOT:-}" && "$usable" != 1 ]]; then
+        echo "NOTE: \$MCPP_BOOT=${MCPP_BOOT} does not answer --version with a version"
+        echo "      (got: '${boot_ver}'), so it is not a usable old client here — a"
+        echo "      shim resolves against the home it is asked in. The REAL old-client"
+        echo "      check therefore did not run; run it with MCPP_BOOT pointing at a"
+        echo "      released mcpp binary directly."
+    else
+        echo "NOTE: \$MCPP_BOOT is unset or identical to \$MCPP — the real old-client"
+        echo "      check did not run here."
+    fi
     echo "PASS: the generated manifest introduces no section an older mcpp cannot read"
 fi
