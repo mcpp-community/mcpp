@@ -264,32 +264,46 @@ package published to a mixed-version audience.
 | `kind = "shared"` on Linux/ELF | ✅ — the package carries both the link name and the SONAME |
 | `kind = "shared"` on PE / MinGW (`*-windows-gnu`) | ✅ — the package carries the `.dll` **and** its import library |
 | `kind = "shared"` on Mach-O (`*-macos`) | ✅ — install name is `@rpath/<file>`, so the `.dylib` relocates |
-| `kind = "shared"` on PE / MSVC (`*-windows-msvc`) | ❌ refused — see below |
+| `kind = "shared"` on PE / MSVC (`*-windows-msvc`) | ✅ — mcpp generates the `.def`; see below |
 | `kind = "shared"` on `*-musl` | ❌ a musl target links statically |
 | shipping prebuilt BMIs | ❌ not attempted; BMIs are compiler-build-exact |
 | bundling dependencies into the package | ❌ declare them instead (above) |
 | consuming a package with **native `cl.exe`** | ❌ see below |
 
-### Why MSVC refuses `kind = "shared"`
+### Exports on the MSVC ABI
 
-Not the linker — `link /DLL /IMPLIB:` works. **Symbol export.** MSVC exports
-nothing from a DLL unless the source says `__declspec(dllexport)` or a `.def`
-file lists the symbols, so the import library comes out empty and every consumer
-fails with unresolved externals naming symbols that are plainly in the object
-files. mcpp refuses rather than produce a diagnostic that points nowhere near its
-cause:
+MSVC exports nothing from a DLL unless the source says `__declspec(dllexport)` or
+a `.def` file lists the symbols. Without either, the import library comes out
+empty and every consumer fails with unresolved externals for symbols that are
+plainly in the object files. MinGW's linker auto-exports and hides this
+entirely; lld-link's MSVC flavour does not, deliberately, because PE caps
+exports at 65535.
 
-```
-target 'mathkit': kind = "shared" is not supported for the MSVC ABI (x86_64-windows-msvc).
-  MSVC exports nothing from a DLL unless the source says `__declspec(dllexport)`
-  ...
-  Use kind = "lib" for this target, or build it for *-windows-gnu (MinGW),
-  where the linker auto-exports.
-```
+mcpp generates the `.def` from the objects, which is what CMake's
+`WINDOWS_EXPORT_ALL_SYMBOLS` has done since 3.4. It is a build-graph node whose
+inputs are the same objects the link consumes, so the exported surface cannot
+drift from what was compiled, and it reads COFF directly rather than shelling out
+to `dumpbin` — that tool lives in a Visual Studio developer environment, and
+mcpp's default Windows toolchain is clang.
 
-MinGW's linker auto-exports, which is why `*-windows-gnu` is supported and
-`*-windows-msvc` is not. Closing this needs a generated `.def` — a symbol scan
-over the objects — which is a build-graph node, not a flag.
+**Two limits survive that no tool can remove**, and they are the same two CMake
+documents for the same mechanism:
+
+| | |
+|---|---|
+| exported **data** | the consumer still needs `__declspec(dllimport)` on its declaration; without it the linker reads a call thunk instead of the value |
+| a class whose **vtable** is referenced | the whole class must be marked, e.g. in a delegating constructor of a class with virtual functions |
+
+Both are answered by annotation, and **annotation wins**: an object that already
+carries `/EXPORT:` directives — which is what `__declspec(dllexport)` emits —
+makes mcpp stand down and generate nothing. Adding a list on top would export the
+same names twice (`LNK4197`) and export everything else besides, replacing a
+chosen public surface with all of it. Nothing is configured for this; the objects
+say it.
+
+Past 65535 exportable symbols mcpp refuses rather than truncating. A truncated
+export table links cleanly and then fails at whichever consumer needed the symbol
+that fell off the end.
 
 ### A package's link flags are GNU-spelled
 
@@ -301,9 +315,25 @@ ldflags = ["-Llib/x86_64-windows-msvc", "-lmathkit"]
 ```
 
 Every driver mcpp uses accepts that — including clang on the MSVC ABI, which is
-Windows' default here. **Native `cl.exe` does not**: it rejects `-L`. So a
-consumer that pins `[toolchain] windows = "msvc@system"` cannot link a packaged
-library today.
+Windows' default here. **Native `cl.exe` does not**: it rejects `-L`. So the
+package carries the same statement a second time, without a dialect:
+
+```toml
+[target.'cfg(all(arch = "x86_64", os = "windows", env = "msvc"))'.runtime]
+link_library_dirs = ["lib/x86_64-windows-msvc"]
+libraries         = ["mathkit"]
+```
+
+mcpp renders those as `/LIBPATH:` + `<name>.lib` or `-L` + `-l<name>` from the
+target, so a `cl.exe` consumer links the package. They are not new vocabulary —
+`[runtime]` has had both keys at the top level all along; this makes them
+per-target.
+
+**Both spellings are emitted, and a newer mcpp ignores the `ldflags` rather than
+adding to them.** An older mcpp reads only the `ldflags` and silently ignores the
+`runtime` block, so dropping the `ldflags` would leave every older client with no
+link line at all; adding both would put `-L` back on the `cl` command line, which
+is the thing being avoided.
 
 Naming the file by path instead (`lib/<triple>/mathkit.lib`) is the spelling
 every driver takes, and it does not work either: ninja runs link commands with

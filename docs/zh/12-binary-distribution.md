@@ -239,29 +239,38 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 | `kind = "shared"` on Linux/ELF | ✅ —— 包里同时带链接名与 SONAME |
 | `kind = "shared"` on PE / MinGW(`*-windows-gnu`) | ✅ —— 包里同时带 `.dll` **和它的导入库** |
 | `kind = "shared"` on Mach-O(`*-macos`) | ✅ —— install name 是 `@rpath/<file>`,`.dylib` 可重定位 |
-| `kind = "shared"` on PE / MSVC(`*-windows-msvc`) | ❌ 拒绝 —— 见下 |
+| `kind = "shared"` on PE / MSVC(`*-windows-msvc`) | ✅ —— mcpp 生成 `.def`;见下 |
 | `kind = "shared"` on `*-musl` | ❌ musl target 是静态链接的 |
 | 发布预编译 BMI | ❌ 未尝试;BMI 与编译器构建逐位绑定 |
 | 把依赖打包进去 | ❌ 改为声明依赖(见上) |
 | 用**原生 `cl.exe`** 消费这种包 | ❌ 见下 |
 
-### MSVC 拒绝 `kind = "shared"` 的原因
+### MSVC ABI 上的符号导出
 
-**不是链接器的问题** —— `link /DLL /IMPLIB:` 本来就能用。是**符号导出**:
-MSVC 在没有 `__declspec(dllexport)`、也没有 `.def` 列出符号时,DLL **什么都不导出**,
-于是导入库是空的,每个消费者都会拿到一堆 unresolved externals,而那些符号
-明明就在对象文件里 —— 报错点离病因很远。mcpp 选择拒绝,而不是产出这种诊断:
+MSVC 在源码没有 `__declspec(dllexport)`、也没有 `.def` 列出符号时,DLL 什么都不导出。
+两者皆无时导入库为空,每个消费者都会拿到一堆 unresolved externals,而那些符号
+明明就在对象文件里。MinGW 的链接器会自动导出,把这个问题整个遮住;lld-link 的
+MSVC 形态刻意不这么做,因为 PE 的导出上限是 65535。
 
-```
-target 'mathkit': kind = "shared" is not supported for the MSVC ABI (x86_64-windows-msvc).
-  ...
-  Use kind = "lib" for this target, or build it for *-windows-gnu (MinGW),
-  where the linker auto-exports.
-```
+mcpp 从对象生成 `.def` —— 这正是 CMake 的 `WINDOWS_EXPORT_ALL_SYMBOLS` 自 3.4 起
+在做的事。它是一个构建图节点,输入就是链接所消费的那批对象,因此导出面不会与
+「实际编译了什么」发生漂移;而且它**直接读 COFF**,不调 `dumpbin` —— 那个工具在
+Visual Studio 开发者环境里才有,而 mcpp 在 Windows 上的默认工具链是 clang。
 
-MinGW 的链接器会自动导出,这就是 `*-windows-gnu` 支持而 `*-windows-msvc` 不支持的
-全部原因。要补齐它需要生成 `.def`(对对象做一次符号扫描)—— 那是一个构建图节点,
-不是一个 flag。
+**有两条限制是任何工具都消不掉的**,与 CMake 为同一机制记录的是同两条:
+
+| | |
+|---|---|
+| 导出的**数据** | 消费者的声明仍需 `__declspec(dllimport)`;否则链接器读到的是调用桩而不是值 |
+| **vtable** 被引用的类 | 整个类都要标注,例如带虚函数的类的委托构造函数 |
+
+两者都靠标注解决,而且**标注优先**:对象里若已带 `/EXPORT:` 指令(那正是
+`__declspec(dllexport)` 产生的),mcpp 就让开,不生成任何东西。在其之上再加一份
+列表会把同名符号导出两次(`LNK4197`),更糟的是把其余所有符号也一并导出 ——
+用「全部」替换掉作者选定的公开面。这件事没有任何开关:对象自己说了算。
+
+可导出符号超过 65535 时,mcpp 拒绝而不是截断。被截断的导出表能干净地链接完成,
+随后在「恰好需要那个掉出去的符号」的消费者那里失败。
 
 ### 包里的链接 flag 是 GNU 拼写
 
@@ -273,8 +282,23 @@ ldflags = ["-Llib/x86_64-windows-msvc", "-lmathkit"]
 ```
 
 mcpp 用到的每个 driver 都吃这一套 —— 包括 Windows 上默认的、面向 MSVC ABI 的
-clang。**原生 `cl.exe` 不吃**:它不认 `-L`。所以固定了
-`[toolchain] windows = "msvc@system"` 的消费者目前链不上打包库。
+clang。**原生 `cl.exe` 不吃**:它不认 `-L`。所以包里会把同一句话再写一遍,
+这一遍不带方言:
+
+```toml
+[target.'cfg(all(arch = "x86_64", os = "windows", env = "msvc"))'.runtime]
+link_library_dirs = ["lib/x86_64-windows-msvc"]
+libraries         = ["mathkit"]
+```
+
+mcpp 会按 target 把它们渲染成 `/LIBPATH:` + `<name>.lib` 或 `-L` + `-l<name>`,
+于是 `cl.exe` 的消费者也能链上。这两个键不是新词表 —— `[runtime]` 顶层一直就有,
+这里只是让它们可以按 target 给。
+
+**两种拼写都会写出来,而新版 mcpp 读到中立形式时会忽略同一条腿的 `ldflags`,
+而不是叠加。** 旧版 mcpp 只读 `ldflags` 并静默忽略 `runtime` 段,所以去掉
+`ldflags` 会让所有旧客户端一个链接 flag 都拿不到;而两者都应用又会把 `-L` 送回
+`cl` 的命令行 —— 那正是要避免的事。
 
 **改成直接写文件路径也不行**(`lib/<triple>/mathkit.lib` 才是每个 driver 都吃的
 拼写):ninja 执行链接命令时 cwd 是**输出目录**,而只有 include 家族前缀

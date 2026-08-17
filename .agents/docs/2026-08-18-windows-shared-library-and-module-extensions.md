@@ -318,3 +318,57 @@ L4(cl.exe 消费)        ── 独立于 L2/L3,但只有 L2 落地后才有 msv
 [lld]: https://github.com/llvm/llvm-project/pull/71087
 [ms1]: https://learn.microsoft.com/en-gb/answers/questions/1665106/how-to-use-c-20-modules-in-shared-libraries
 [ms2]: https://learn.microsoft.com/en-us/answers/questions/1695780/c-20-modules-in-shared-libraries
+
+
+---
+
+## 8. 实施记录(2026-08-18,2026.8.18.2)
+
+四层全部落地,单 PR。与设计的偏差各自有实测依据。
+
+### 8.1 与设计不同的地方
+
+| 设计说 | 实际做的 | 为什么 |
+|---|---|---|
+| L1「把 `.ixx` 放进 builtin」 | **不内置**,只做「未声明即拒绝」 | 扩展名集合是配置,不是 mcpp 逐个追加的清单(review 时更正) |
+| L1 只涉及扫描器 | 还修了 **lib root 约定**与 **pack 的 manifest 输出** | `mcpp pack` 必须跟着 `module_extensions` 走,否则用户要配两次 |
+| L3「提供导出头/宏」 | **检测 `.drectve`,标注优先** | 为「我标注过了」加一个键,就是给对象已经说过的事再加一个说法 |
+
+### 8.2 实测抓到的、设计里没有的缺陷
+
+**`.ixx` 库打出来的包是静默错的。** lib root 约定把 `.cppm` 写死,于是闭包从一个
+不存在的文件开始:
+
+```
+$ mcpp pack mathkit
+     Interface (headers only)      ← 模块接口整个没了
+      Withheld (nothing)
+  Packed …-x86_64-linux-gnu        ← C 表面的 tag
+```
+
+**两半都错,而第二半比第一半更糟**:空的发布集合正是打包器判定「C 表面」的依据,
+所以丢掉接口的同时,这个包也不再约束 C++ ABI,兼容性闸门停止检查编译器与标准库。
+一个「说得比实际少」的包,正是整个分发设计要防的那种失败。
+
+**给 `mcpp.manifest.types` 加一条模块边会让 GCC 16.1 ICE。** 探测型的 lib-root
+解析需要扩展名表(`mcpp.source_kind`),而 `types` 是几乎所有东西都依赖的低层模块。
+加上那条 import 之后,GCC 在编译**与改动无关的 `src/main.cpp`** 时 ICE,
+清掉 gcm.cache 也不行 —— 与本仓库此前遇到的模块毒化形状一致。
+**解法不是加边,而是把函数移到边已经存在的地方**(`mcpp.manifest.toml` 本就 import
+了 `mcpp.source_kind`)。
+
+### 8.3 验证到哪一步
+
+| 断言 | 载体 | 平台 |
+|---|---|---|
+| 已声明的扩展名无需额外帮助;未声明的当场拒绝 | e2e 260 | 三平台 |
+| pack 跟随扩展名;包自带声明;`.cppm` 包 manifest 不变 | e2e 261 | 三平台 |
+| COFF 筛选规则(外部/已定义/DATA/跳过表/aux/i386 下划线/拒绝) | 单测 ×16(合成) | 三平台 |
+| 真实 mingw 对象可读;真实标注对象被识别 | 单测 ×3(committed fixture) | 三平台 |
+| MSVC 产出带非空导出的 DLL,消费者链通并运行 | e2e 258 | **Windows** |
+| 标注过的库不被自动导出覆盖 | e2e 258 后半 | **Windows** |
+| `.def` 是构建图节点,输入是链接同一批对象 | e2e 258 | **Windows** |
+| MinGW 不生成 `.def`(链接器已自动导出) | 本机实测 `0 edges` | Linux |
+
+**尚未验证**:`cl.exe` 消费打包库的端到端(需要 msvc job 里再加一条消费用例);
+数据符号在消费端仍需 `dllimport` 这条限制目前只写在文档里,没有做成可复现的测试。
