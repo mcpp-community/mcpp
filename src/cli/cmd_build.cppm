@@ -13,6 +13,7 @@ import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
 import mcpp.build.configure;
+import mcpp.build.coff_exports;
 import mcpp.build.stage;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
@@ -481,6 +482,71 @@ export int cmd_bmi_equal(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // exactly the way `cmp -s` did. No output on either path: this runs once per
     // module compile and any chatter would land in the build log.
     return same ? 0 : 1;
+}
+
+// `mcpp coff-def --output <def> --name <dll> <obj>...` — the auto-export edge.
+//
+// A subcommand rather than a shell fragment, for the reason bmi-equal is one:
+// a generated ninja command written in POSIX shell is skipped entirely on
+// Windows, which is the only platform this edge exists for. It also keeps the
+// COFF reader testable as a pure function over bytes (tests/unit/test_coff_exports)
+// instead of as whatever a command line happened to produce.
+export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    std::filesystem::path out;
+    if (auto v = parsed.value("output")) out = *v;
+    if (out.empty()) {
+        std::println(stderr, "error: coff-def requires --output");
+        return 2;
+    }
+    std::string libName;
+    if (auto v = parsed.value("name")) libName = *v;
+
+    std::vector<mcpp::build::coff::Export> all;
+    for (std::size_t i = 0; i < parsed.positional_count(); ++i) {
+        const std::filesystem::path obj{ parsed.positional(i) };
+        std::ifstream in(obj, std::ios::binary);
+        if (!in) {
+            std::println(stderr, "error: cannot read object '{}'", obj.string());
+            return 1;
+        }
+        std::vector<std::byte> bytes;
+        for (char c; in.get(c); ) bytes.push_back(static_cast<std::byte>(c));
+        auto syms = mcpp::build::coff::read_exports(bytes);
+        if (!syms) {
+            // Named with the object, because "which one" is the whole question
+            // when one file out of two hundred is the problem.
+            std::println(stderr, "error: {}: {}", obj.string(), syms.error());
+            return 1;
+        }
+        all.insert(all.end(), syms->begin(), syms->end());
+    }
+
+    // Refused, not truncated. A `.def` cut at the ceiling links cleanly and
+    // then fails at whichever consumer happens to need a symbol that fell off
+    // the end — a diagnostic with no path back to this decision.
+    std::ranges::sort(all);
+    all.erase(std::ranges::unique(all).begin(), all.end());
+    if (all.size() > mcpp::build::coff::kMaxExports) {
+        std::println(stderr,
+            "error: {} exportable symbols, and PE addresses exports by 16-bit "
+            "ordinal (max {}).\n"
+            "  Auto-export cannot express this library. Mark its public surface "
+            "with __declspec(dllexport)\n"
+            "  and the export set becomes what you declared instead of "
+            "everything.",
+            all.size(), mcpp::build::coff::kMaxExports);
+        return 1;
+    }
+
+    std::error_code ec;
+    if (out.has_parent_path()) std::filesystem::create_directories(out.parent_path(), ec);
+    std::ofstream o(out, std::ios::binary | std::ios::trunc);
+    if (!o) {
+        std::println(stderr, "error: cannot write '{}'", out.string());
+        return 1;
+    }
+    o << mcpp::build::coff::write_def(libName, std::move(all));
+    return o.good() ? 0 : 1;
 }
 
 // The three edges of the DetachCodegen shape. They are `mcpp` subcommands

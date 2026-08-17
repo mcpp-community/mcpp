@@ -1,0 +1,7 @@
+extern "C" int exported_fn(int x) { return x + 1; }
+extern "C" int exported_data = 7;
+extern "C" const int exported_const = 9;
+static int hidden_fn(int x) { return x - 1; }
+static int hidden_data = 3;
+int use() { return hidden_fn(hidden_data); }
+namespace ns { int mangled_fn(int) { return 0; } }

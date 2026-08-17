@@ -7,17 +7,16 @@
 # handled" from "there is no gate". Which half applies is now a property of the
 # TARGET, not of "is it Linux":
 #
-#   ELF, Mach-O, PE/MinGW   produced — the package carries every name the
-#                           platform needs to link it and to find it later
-#   PE/MSVC                 refused — MSVC exports nothing from a DLL without
-#                           `__declspec(dllexport)`, so the import library would
-#                           be empty and consumers would fail with unresolved
-#                           externals for symbols visibly present in the objects
+#   ELF, Mach-O, PE/MinGW, PE/MSVC   produced — the package carries every name
+#                                    the platform needs to link it and to find
+#                                    it later
 #
-# Windows' default toolchain here is clang on the MSVC ABI, so this file sees the
-# refusal there. 258 pins that refusal in detail, 259 pins Mach-O relocatability,
-# 257 pins the PE/MinGW path; what this one adds is that the two outcomes are
-# reachable from the same fixture and the same command.
+# Every format mcpp targets now produces one. MSVC was the last holdout, and
+# what it was missing was never the linker: it exports nothing from a DLL
+# without `__declspec(dllexport)` or a `.def`, so mcpp generates the `.def` from
+# the objects (258 pins that path in detail, 259 pins Mach-O relocatability, 257
+# the PE/MinGW one). What this file adds is that one fixture and one command
+# produce a usable package on whichever platform it runs.
 #
 # A shared library is LINKED by `lib<target>.so` and FOUND at run time by its
 # SONAME, and those are two different filenames. The first version of this
@@ -58,37 +57,17 @@ EOF
 
 cd mathkit
 
-# ── Windows: the MSVC ABI is refused, and says what to do instead ──────
-if [[ "$(uname -s)" != "Linux" && "$(uname -s)" != "Darwin" ]]; then
-    if "$MCPP" pack mathkit-shared > refuse.log 2>&1; then
-        cat refuse.log
-        echo "FAIL: a shared library was packed for the MSVC ABI. Its import"
-        echo "      library has no exports, so consumers fail with unresolved"
-        echo "      externals naming symbols that are in the objects."
-        exit 1
-    fi
-    grep -qi 'dllexport' refuse.log || {
-        cat refuse.log
-        echo "FAIL: it refused, but not for the export reason — 'shared libraries"
-        echo "      are not supported here' does not tell the reader what to change."
-        exit 1; }
-    grep -qi 'windows-gnu' refuse.log || {
-        cat refuse.log
-        echo "FAIL: the refusal names no way forward. MinGW auto-exports."
-        exit 1; }
-    echo "PASS: a shared library package is refused on the MSVC ABI, with the reason"
-    exit 0
-fi
-
-# ── macOS: it is produced, and the deep claims live in 259 ──────────────
-if [[ "$(uname -s)" == "Darwin" ]]; then
+# ── Windows and macOS: it is produced; the deep claims live in 258 / 259 ──
+if [[ "$(uname -s)" != "Linux" ]]; then
     "$MCPP" pack mathkit-shared > pack.log 2>&1 \
-        || { cat pack.log; echo "FAIL: shared pack failed on Mach-O"; exit 1; }
-    macpkg="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
-    [[ -n "$(find "$macpkg" -name 'libmathkit-shared.dylib' | head -1)" ]] || {
-        find "$macpkg" \( -type f -o -type l \)
-        echo "FAIL: no .dylib in the package"; exit 1; }
-    echo "PASS: a shared library package is produced on Mach-O"
+        || { cat pack.log; echo "FAIL: shared pack failed off ELF"; exit 1; }
+    nonelf="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
+    # `.dylib` on macOS, `.dll` on Windows — asked for by shape rather than by
+    # `uname`, so the assertion is about the artifact and not about the host.
+    [[ -n "$(find "$nonelf" \( -name '*.dylib' -o -name '*.dll' \) | head -1)" ]] || {
+        find "$nonelf" \( -type f -o -type l \)
+        echo "FAIL: no shared library in the package"; exit 1; }
+    echo "PASS: a shared library package is produced off ELF too"
     exit 0
 fi
 

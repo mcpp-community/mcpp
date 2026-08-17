@@ -1049,7 +1049,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                       "LINK");
             link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
             link_rule("cxx_shared",
-                      "$ld /nologo /DLL /OUT:$out $implib_flag "
+                      "$ld /nologo /DLL /OUT:$out $implib_flag $def_flag "
                       "$in $ldflags $unit_ldflags",
                       "SHARED");
         } else {
@@ -1085,6 +1085,15 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         append("  command = $cc $cflags -c $in -o $out\n");
         append("  description = CC $out\n\n");
     }
+
+    // The auto-export edge. `mcpp coff-def` reads the same objects the link
+    // consumes, so the DLL's surface cannot drift from what was compiled — and
+    // it is an mcpp subcommand rather than a shell fragment because a generated
+    // POSIX-shell command is skipped entirely on Windows, the only platform this
+    // edge exists for.
+    append("rule coff_def\n");
+    append("  command = $mcpp coff-def --output $out --name $def_name $in\n");
+    append("  description = DEF $out\n\n");
 
     append("rule runtime_alias\n");
     if constexpr (mcpp::platform::is_windows) {
@@ -1816,6 +1825,24 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         if (!lu.importLibrary.empty())
             implicitOut = " | " + escape_ninja_path(lu.importLibrary);
 
+        // The `.def` edge, emitted BEFORE the link that consumes it.
+        //
+        // Its inputs are this unit's objects — the same list the link gets — so
+        // the exported surface is a function of what was compiled and cannot
+        // drift from it. It is an ordinary explicit input to the link rather
+        // than an implicit one: the linker reads it, so ninja should rebuild the
+        // DLL when it changes.
+        if (!lu.defFile.empty()) {
+            std::string defIns;
+            for (auto const& o : lu.objects) defIns += " " + escape_ninja_path(o);
+            append(std::format("build {} : coff_def{}\n",
+                               escape_ninja_path(lu.defFile), defIns));
+            append(std::format("  def_name = {}\n\n",
+                               lu.output.filename().string()));
+        }
+
+        if (!lu.defFile.empty()) implicit += " " + escape_ninja_path(lu.defFile);
+
         std::string out_line = std::format("build {}{} : {}{}{}\n",
             escape_ninja_path(lu.output), implicitOut, rule, ins,
             implicit.empty() ? std::string{} : " |" + implicit);
@@ -1838,6 +1865,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 out_line += "  implib_flag = " + arg + "\n";
             }
         }
+        if (!lu.defFile.empty())
+            out_line += "  def_flag = /DEF:" + escape_ninja_path(lu.defFile) + "\n";
         {
             // Per-unit C++ runtime link, by ROLE. The kind→role map is the
             // only place that knows a TestBinary runs on the build machine

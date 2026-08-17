@@ -100,6 +100,13 @@ struct LinkUnit {
     // producer; without that, ninja reports "no known rule to make it" naming a
     // file the link command does in fact write.
     std::filesystem::path           importLibrary;     // relative to plan.outputDir
+    // The generated module-definition file, on the MSVC ABI only.
+    //
+    // MSVC exports nothing from a DLL without `__declspec(dllexport)` or a
+    // `.def`, so without this the import library is empty and every consumer
+    // fails with unresolved externals for symbols that are visibly in the
+    // objects. MinGW's linker auto-exports and needs none of this.
+    std::filesystem::path           defFile;           // relative to plan.outputDir
     std::string                     soname;            // ABI name for shared libraries
     std::vector<std::filesystem::path> runtimeAliases; // relative aliases, e.g. bin/libfoo.so.1
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
@@ -1002,33 +1009,27 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return flag ? std::string(*flag) : std::string{};
     };
 
-    // WHAT `kind = "shared"` SUPPORTS, AND THE ONE THING IT STILL DOES NOT.
+    // `kind = "shared"` is supported on every format mcpp targets.
     //
-    // ELF, Mach-O and PE/MinGW are modelled: the import library PE consumers
-    // link is `import_library_for` above, and Mach-O's install name is set to
-    // `@rpath/<file>` unconditionally (see shared_soname_flag) rather than
-    // defaulting to this machine's build path.
+    // ELF gets its SONAME, Mach-O an `@rpath/<file>` install name, PE an import
+    // library — and on the MSVC ABI, a GENERATED `.def`.
     //
-    // PE/MSVC is refused, and the reason is not the linker — `link /DLL
-    // /IMPLIB:` has been in the rule table all along. It is symbol export: MSVC
-    // exports nothing from a DLL without `__declspec(dllexport)` or a `.def`,
-    // so the import library comes out EMPTY and the consumer fails with
-    // unresolved externals naming symbols that are plainly in the object files.
-    // Producing that is worse than refusing, because the diagnostic points
-    // nowhere near the cause.
+    // The MSVC case is the one that used to be refused, and the reason was never
+    // the linker (`link /DLL /IMPLIB:` has been in the rule table all along). It
+    // is symbol export: MSVC exports nothing from a DLL without
+    // `__declspec(dllexport)` or a `.def`, so the import library came out EMPTY
+    // and consumers failed with unresolved externals naming symbols that are
+    // plainly in the objects. MinGW's linker auto-exports and hides the whole
+    // problem; lld-link's MSVC flavour does not, deliberately, because PE caps
+    // exports at 65535.
     //
-    // ⚠️ THE HOST FALLBACK BELOW IS BELT AND BRACES, NOT A FIX. An earlier
-    // version of this comment claimed the previous guard —
-    // `!targetTriple.empty() && os != "linux"` — was inert on native builds
-    // because targetTriple would be empty there. It is not: `tc.targetTriple`
-    // is filled from the compiler's own `-dumpmachine` (detect.cppm), a native
-    // Linux build records `x86_64-linux-gnu` in resolution.json, and
-    // `parse("x86_64-pc-windows-msvc")` skips the vendor segment and succeeds.
-    // So the old guard did refuse native macOS and native Windows, and this
-    // change ADDS support rather than closing a hole. The fallback stays
-    // because a target that cannot be parsed must not be silently read as
-    // "not windows".
-    {
+    // So mcpp writes the `.def` (`msvc_needs_def` below → a def-gen edge in the
+    // backend → `/DEF:`). Two limits survive that no tool can remove, and they
+    // are documented rather than discovered: a consumer still needs
+    // `__declspec(dllimport)` to read exported DATA, and a class whose vtable is
+    // referenced must be marked whole. Both are CMake's documented limits for
+    // the same mechanism, and the answer to both is annotation.
+    const bool msvcTarget = [&] {
         const std::string targetOs = targetTriple.empty()
             ? (mcpp::platform::is_macos   ? "macos"
              : mcpp::platform::is_windows ? "windows" : "linux")
@@ -1036,32 +1037,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // The ABI, from the toolchain rather than from `naming`: on a native
         // Windows build the host naming constants are the MSVC ones whatever the
         // toolchain is (lib_prefix is "" and static_lib_ext is ".lib" for mingw
-        // too), so asking `naming` would refuse MinGW as well. `is_msvc_target`
+        // too), so asking `naming` would treat MinGW as MSVC. `is_msvc_target`
         // reads the compiler's own -dumpmachine answer, which distinguishes them
         // and also covers clang driving the MSVC ABI — clang auto-exports no more
         // than link.exe does, so "which compiler binary" is the wrong question.
-        if (targetOs == "windows" && mcpp::toolchain::is_msvc_target(tc)) {
-            for (auto const& t : manifest.targets) {
-                if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
-                return std::unexpected(std::format(
-                    "target '{}': kind = \"shared\" is not supported for the MSVC "
-                    "ABI ({}).\n"
-                    "  MSVC exports nothing from a DLL unless the source says "
-                    "`__declspec(dllexport)`\n"
-                    "  or a `.def` file lists the symbols, so the import library "
-                    "would be empty and\n"
-                    "  every consumer would fail with unresolved externals naming "
-                    "symbols that are\n"
-                    "  visibly present in the objects. mcpp refuses rather than "
-                    "produce that.\n"
-                    "  Use kind = \"lib\" for this target, or build it for "
-                    "*-windows-gnu (MinGW),\n"
-                    "  where the linker auto-exports.",
-                    t.name,
-                    targetTriple.empty() ? "native" : targetTriple.str()));
-            }
-        }
-    }
+        return targetOs == "windows" && mcpp::toolchain::is_msvc_target(tc);
+    }();
 
     bool experimentalStd = false;
     if (auto stdCfg = mcpp::manifest::normalize_cpp_standard(manifest.package.standard)) {
@@ -1629,6 +1610,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.kind       = LinkUnit::SharedLibrary;
         lu.output     = dep.output;
         lu.importLibrary = import_library_for(dep.target, naming);
+        if (msvcTarget && !lu.importLibrary.empty())
+            lu.defFile = std::filesystem::path("bin") / (dep.target.name + ".def");
         lu.soname     = dep.target.soname;
         lu.runtimeAliases = runtime_aliases_for_target(dep.target, naming);
         lu.loaderTagFlag = loader_tag_flag(lu.kind);
@@ -1657,6 +1640,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.kind   = LinkUnit::SharedLibrary;
             lu.output = target_output(t, naming);
             lu.importLibrary = import_library_for(t, naming);
+            // MSVC only: MinGW's linker auto-exports, and generating a second
+            // source of truth for what a DLL exports is how the two disagree.
+            if (msvcTarget && !lu.importLibrary.empty())
+                lu.defFile = std::filesystem::path("bin") / (t.name + ".def");
             lu.soname = t.soname;
             lu.runtimeAliases = runtime_aliases_for_target(t, naming);
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {

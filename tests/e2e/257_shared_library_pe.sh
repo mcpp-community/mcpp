@@ -129,11 +129,11 @@ grep -q 'ok=42' <<<"$out" || { echo "$out"; echo "FAIL: wrong answer from the PE
 
 # ── 4. windows-msvc is refused here, but by the TARGET gate ─────────────
 #
-# The MSVC shared-library refusal cannot be observed from a Linux host: this
-# machine cannot serve `x86_64-windows-msvc` at all, so the target gate answers
-# first and make_plan is never reached. Asserting `dllexport` here would be
-# asserting a message this host cannot produce — the MSVC-ABI half lives in 258,
-# under `# requires: msvc`.
+# The MSVC-ABI shared library cannot be observed from a Linux host at all: this
+# machine cannot serve `x86_64-windows-msvc`, so the target gate answers first
+# and make_plan is never reached. That half lives in 258, under
+# `# requires: msvc`, where a real link.exe can say whether the generated `.def`
+# was accepted.
 #
 # What IS worth pinning here is that the refusal happens at all, and names the
 # host rather than silently building an ELF: that is precisely what this used to
