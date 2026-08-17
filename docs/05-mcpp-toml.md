@@ -153,6 +153,12 @@ the package/feature boundary, not on an individual target.
 
 ### 2.3 `[build]` — Build Configuration
 
+> **`sources = []` is not the same as omitting `sources`.** An absent key
+> selects the default glob; an explicitly empty list means *compile nothing*,
+> which is what a header-only distribution package needs to say. Until
+> mcpp 2026.8.18.1 the two were byte-identical, so there was no spelling for
+> "nothing" and any file left under `src/` was swept in.
+
 ```toml
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
@@ -1262,6 +1268,24 @@ The vocabulary is fixed by mcpp (which owns the target/triple system):
 `linux | macos | windows`; unknown values produce a warning, and an error under
 `--strict`.
 
+`mcpp pack` on a library target checks the claim against the legs it actually
+produced, because that is the first moment there is evidence to check it against:
+
+| situation | result |
+|---|---|
+| a leg was packed for a platform not listed here | warning — the manifest disclaims a platform the package demonstrably serves |
+| a listed platform has no leg, **and this host could have built one** | warning — consumers there will resolve the package and find no artifact |
+| a listed platform has no leg and this host cannot build for it | **silent** |
+
+The third row is why the check is usable at all. The normal release flow is one
+`mcpp pack` per platform in CI, so a Linux runner never produces a macOS leg —
+warning about it would fire on every run of every cross-platform package, and a
+warning that always fires hides the one that matters. What "this host could have
+built" means is the same question `--target` answers (docs/08 §7.4).
+
+Both are warnings, never errors: coverage is release discipline, and the person
+who can judge it is looking at the release, not at this build.
+
 ### 2.13 `[xlings]` — Build Environment
 
 ```toml
@@ -1598,6 +1622,17 @@ do`.
 - Package-level knobs all converge into features; for sugar keys (such as `backend=`)
   to enter the core syntax, they must satisfy: ① domain-neutral (a cross-ecosystem
   general pattern) ② 1:1 desugaring with zero new parsing semantics.
+- **A key that duplicates an answer another section already gives is not admitted.**
+  Two places to state one fact is two places that can disagree, and the failure
+  is silent — whichever reader loses the race is simply wrong. Library packaging
+  ([12](12-binary-distribution.md)) is the worked example: it added **zero**
+  manifest keys, because what to pack is `[targets.<n>].kind`, which interface
+  to publish is `[lib]` plus the module graph, which headers are public is
+  `[build].include_dirs`, and the per-artifact evidence is `[[runtime.artifacts]]`.
+- A field that describes what a *generated* package IS (rather than what a build
+  should DO) belongs on `[[runtime.artifacts]]` — see §2.11. `provenance`
+  beginning with `mcpp-pack` is what marks a directory as one, and mcpp refuses
+  to `build` inside it.
 - See `.agents/docs/2026-06-04-manifest-schema-ownership.md` for the full field-ownership
   table and the finalized decisions.
 

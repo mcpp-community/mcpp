@@ -38,7 +38,21 @@ export namespace mcpp::build {
 // — not the build host. See the manifest design doc.
 namespace cfgpred {
 
-struct Ctx { std::string os, arch, family, env; };
+// `triple` is the RESOLVED target — the host's for a native build, the
+// --target one for a cross build. It is a member rather than a parameter of
+// `matches()` because a bare-triple predicate and a `cfg(...)` predicate are
+// two spellings of ONE question, and they must be answered from one value.
+//
+// They were not. `matches()` used to take the raw `--target` string alongside
+// this context and short-circuit on `if (triple.empty()) return false;`, while
+// `context_for()` below fell back to the host. So `cfg(linux)` matched a native
+// build and `[target.'x86_64-linux-gnu'.build]` — the same statement about the
+// same machine — did not, silently. That shape is the worst kind: CI passes
+// `--target` and is green, the developer's plain `mcpp build` drops the flags,
+// and the failure surfaces at link time naming a symbol instead of a predicate.
+// manifest/types.cppm's ConditionalConfig has documented the fallback since it
+// was written; this makes the bare-triple branch honour it.
+struct Ctx { std::string os, arch, family, env, triple; };
 
 // Derive the cfg context from the resolved --target triple, falling back to
 // the host for a native build. Parsing goes through triple.cppm — the single
@@ -56,12 +70,18 @@ inline Ctx context_for(std::string_view targetTriple) {
         c.arch   = t->arch;
         c.env    = t->env;
         c.family = t->family();
+        // Canonical spelling on BOTH sides of the later comparison, so an
+        // `x86_64-w64-mingw32` key and an `x86_64-windows-gnu` build agree.
+        c.triple = t->str();
     } else {
         // Escape-hatch triple outside the language: only the leading arch
         // segment is derivable; other dimensions stay empty (never match).
         auto dash = targetTriple.find('-');
         c.arch = std::string(dash == std::string_view::npos ? targetTriple
                                                             : targetTriple.substr(0, dash));
+        // Unparseable: keep it verbatim so the exact-string fallback in
+        // `matches()` can still hit an explicit escape-hatch section.
+        c.triple = std::string(targetTriple);
     }
     return c;
 }
@@ -119,7 +139,11 @@ struct Parser {
 
 // Evaluate a `[target.<predicate>]` key. Returns the cfg() result, or — for a
 // non-cfg key (a bare triple) — an exact match against the resolved triple.
-inline bool matches(const std::string& predicate, const Ctx& c, std::string_view triple) {
+//
+// The resolved triple comes from `c`, never from a second parameter: see the
+// note on Ctx for what having two of them cost.
+inline bool matches(const std::string& predicate, const Ctx& c) {
+    const std::string_view triple = c.triple;
     std::string_view k = predicate;
     if (k.starts_with("cfg(") && k.ends_with(")")) {
         Parser p{ k.substr(4, k.size() - 5), 0, c };
@@ -137,6 +161,10 @@ inline bool matches(const std::string& predicate, const Ctx& c, std::string_view
     // key matches a resolved `x86_64-windows-gnu` build (and vice versa) —
     // both normalize through triple::parse. Unparseable keys (the explicit-
     // section escape hatch) fall back to exact string comparison.
+    //
+    // `c.triple` is populated for every build, native included, so this is a
+    // guard and no longer a behaviour: it used to be the line that made a
+    // bare-triple section silently inert without `--target`.
     if (triple.empty()) return false;
     if (auto p = mcpp::toolchain::triple::parse(predicate)) {
         if (auto rt = mcpp::toolchain::triple::parse(triple))

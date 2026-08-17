@@ -1,0 +1,24 @@
+[package]
+name        = "mathkit"
+version     = "0.1.0"
+description = "Demo: shipping a prebuilt library with both a header and a module interface"
+license     = "Apache-2.0"
+
+[build]
+sources      = ["src/*.cppm", "src/*.cpp", "src/*.c"]
+# The public headers. Published whole — see include/mathkit_c.h.
+include_dirs = ["include"]
+
+# [lib].path is not set, so the convention applies: src/mathkit.cppm is the
+# lib root, and the published interface is its module closure.
+
+# `mcpp pack mathkit` -> a static library package.
+[targets.mathkit]
+kind = "lib"
+
+# `mcpp pack mathkit-shared` -> a dynamic library package (Linux/ELF today).
+# Two targets rather than a flag: `kind` is where mcpp already records what an
+# artifact IS, and `soname` gives the .so the name consumers should load.
+[targets.mathkit-shared]
+kind   = "shared"
+soname = "libmathkit.so.1"

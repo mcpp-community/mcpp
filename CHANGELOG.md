@@ -3,9 +3,158 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [2026.8.18.1] — 2026-08-18
+
+### 新增
+
+- **`mcpp pack <target>` 可以把一个库打成「接口 + 预编译二进制」的包(#433)。**
+
+  闭源库、离线环境、以及「构建农场已经编过一遍了」这三种场景,过去都只能自己
+  写脚本收集产物。现在:
+
+  ```bash
+  mcpp pack mathkit                              # 静态库包
+  mcpp pack mathkit --target x86_64-linux-gnu \
+                    --target aarch64-linux-gnu   # 一个包,两条腿
+  ```
+
+  **产出的是一个普通的 mcpp 包** —— 一份正常的 `mcpp.toml`,走 mcpp 早就有的
+  「载荷自带 manifest」通路。**新增 manifest 段 0 个、键 0 个**:打什么由
+  `[targets.<n>].kind` 决定(所以没有 `--lib`、没有 `--artifact`),发布哪些接口
+  由 `[lib]` 约定 + 模块图决定,公开头是 `[build].include_dirs` 全量,
+  每条腿的 ABI tag 与 digest 记在既有的 `[[runtime.artifacts]]` 上。
+  一个**老版本 mcpp 照样能构建**这种包 —— 它只是不执行下面那两道闸门。
+
+  一个包可以同时带**两种接口**:`include/`(文本,`#include`,不编译)与
+  `interface/`(模块,消费者编译它)。实测同一个包被「只 #include」/「只 import」/
+  「两者都用」三种方式消费,静态与动态两种形态,六格全过。
+
+  发布哪些 `.cppm` 是**算出来的** —— lib root 的模块闭包,不是「所有 `.m.o`」。
+  实现分区(`module M:secret;`)照样产 `.m.o`,按扩展名挑会**泄露闭源源码**;
+  同一个闭包反过来决定归档里要删哪些对象,按 `.m.o` 删则会删掉真代码、
+  三个平台全部链接失败。两条清单都会打印出来。
+
+  详见 `docs/12-binary-distribution.md`、`examples/05-lib-distribution`。
+
+- **`kind = "shared"` 不再只有 Linux:PE/MinGW 与 Mach-O 都能产、能打包、能跑。**
+
+  过去这条路只在 ELF 上验证过,其余一律拒绝。**这是能力的增加,不是修一个洞** ——
+  ⚠️ 早前的提交信息把那道守卫描述成「在原生构建上失效」,那是**错的**:
+  `tc.targetTriple` 由编译器的 `-dumpmachine` 填,原生构建上**非空**
+  (实测 `resolution.json` 记的是 `x86_64-linux-gnu`),所以原生 macOS / 原生 Windows
+  本来就被它拦住。
+
+  真正缺的东西各不相同,而且都不是 flag 拼写:
+
+  - **PE 缺导入库。** 一个 PE 共享库是**两个文件**:加载器打开的 `.dll`,以及
+    链接器消费的桩归档。mcpp 只写了前者,消费者直接链 `.dll` —— mingw 的 ld 容忍这个,
+    别的链接器都不容忍,于是**能用的那种情况把坏掉的那种遮住了**。现在链接边把导入库
+    作为隐式输出声明出来,包里两个都带,生成的 manifest 指向导入库。
+    另外 PE 可执行文件带 `-static`,而 `-static` 会让 ld 进入纯静态模式并拒绝导入库,
+    报的是 `have you installed the static version of the mathkit library?` ——
+    既没点 DLL 也没点 `-static`;所以那条 `-l` 之前要先 `-Wl,-Bdynamic`。
+  - **Mach-O 缺 install name。** `.dylib` 记录的是**链接时的路径**,而原先只在声明了
+    `soname` 时才发 `-install_name` —— 一旦放开 macOS,**每个没写 soname 的 `.dylib`
+    都会把构建目录烙进去**:在打包机上完好,换个地方就 `image not found`。
+    现在无条件发 `@rpath/<file>`。这个选择原先还是用宿主的 `#if defined(__APPLE__)`
+    做的(在旧的拒绝之下不可达,但放开之后就会发错),现在按 target 决定,
+    和 `target_output` 早就做的一样。
+  - **PE/MSVC 仍然拒绝,但换了个理由,而且是真理由。** 不是链接器 ——
+    `link /DLL /IMPLIB:` 一直都在规则表里。是**符号导出**:没有 `__declspec(dllexport)`
+    或 `.def`,MSVC 的 DLL 什么都不导出 ⇒ 导入库是空的 ⇒ 消费者拿到一堆
+    unresolved externals,而那些符号明明在对象里。产出这个比拒绝更糟。
+
+- **`--target` 不能服务时直接拒绝,而不是悄悄按宿主构建。**
+
+  实测(Linux):`mcpp build --target x86_64-windows-msvc` 解析到**原生 g++**、
+  写进 `target/x86_64-linux-gnu/`、报告成功 —— 一个 ELF 被当成 Windows 构建交付。
+  词表的 tier 说的是「mcpp 支持这个 target」,从来没说「这台机器能产出它」;
+  后者是 `host_can_serve` 的问题,现在 `prepare.cppm` 会问它,并把
+  **这台宿主能构建的清单**列进错误信息。逃生口保留:显式
+  `[target.X] toolchain = "…"` 表示交叉链是你自己提供的,mcpp 的载荷矩阵无权否决。
+
+- **`[package] platforms` 会与实际打出的腿对账(设计里承诺过、实现里没有)。**
+
+  四种比较只有两种值得打印:**打了却没声明**永远可行动;**声明了却没打,
+  且这台宿主本来能构建它**才可行动。正常发布流程是 CI 上每平台各跑一次 `mcpp pack`,
+  所以 Linux runner 不产 macOS 腿不是遗漏、是每一次 —— **永远触发的告警会把真正该看的
+  那条盖掉**。所以判据用的是 `host_can_serve`,与 `--target` 是同一个函数。
+
+- **消费预编译包时的两道闸门。** 都是不检查就会静默出错的:
+
+  **接口与二进制是否仍然配对。** 这条闸门存在是因为另一种结果被实测过:把随包
+  接口里一个结构体的两个 `int` 成员互换 —— Itanium ABI 不 mangle 字段顺序 ——
+  消费者**编译过、链接过、运行过、打印出交换后的错数据**,任何工具都没有一句诊断。
+
+  **二进制是否为这套工具链所编。** 失配时诊断会**列出包里确实有哪些 tag** ——
+  一句「找不到」会让人去找一个就在自己硬盘上的包。
+
+  另外,在解开的分发包目录里直接 `mcpp build` 会被拒绝:那儿的 `interface/`
+  是声明,定义在旁边的归档里,构建会产出一个几乎空的库然后报告成功。
 
 ### 修复
+
+- **「谁也没判定过」这个状态过去被拼成了「是接口」,于是闭源实现分区会静默发布出去。**
+
+  一个分区的源码能不能发布,取决于一个关键字:`export module M:api;` 可以走,
+  `module M:impl;` 不能。而三条建图路径里有两条读不到它:
+  `[scan_overrides."<glob>"]` 声明了文件提供哪些模块,**没有地方能说它是否 export**;
+  P1689 的 `is-interface` 是可选键,mcpp 把它解析进了一个**从来没人读**的字段。
+
+  两者都以 `providesInterface = true` 到达,而字段自己的注释把这叫「保守方向」,
+  理由是「这个标志只会产生一条警告」。**这恰好说反了**:`true` 正是那个**不产生
+  任何警告**的值 —— 于是用 `[scan_overrides]` 声明的实现分区被**一声不响地发布**。
+
+  现在它是三态的,每条路径只说自己真的知道的事:文本扫描器读关键字并显式写 true/false;
+  P1689 读取器把编译器的答案(**包括它的沉默**)原样带过来;`scan_overrides`
+  **留空**,因为 schema 表达不了。未知会告警,而且和已知那条**说的是不同的话**。
+
+- **实现分区(`module M:part;`)在 Windows 上构建不了,而根因在扫描器里。**
+
+  `module M:part;` 与 `module M;` 共用一个拼写,却是两种不同的声明,而扫描器把
+  它们当成了一种:前者被记成**「requires `M:part`、provides 空」** ——
+  一个文件 requires 自己的名字。于是图里**没有**从「import 分区的单元」到
+  「定义分区的单元」的边,构建顺序无约束:GCC 与 macOS clang 靠各自的依赖扫描
+  兜住了,**Windows clang 以 `failed to read compiled module` 失败**。
+
+  同一处还有第二半:`import :part;` 的解析读的是 `u.provides`,而实现单元
+  (`module M;`)没有 provides ⇒ 它里面的 `import :secret;` 停留在字面的
+  `:secret`,没有任何单元提供。两个平台都会刷的那条
+  `module 'M:part' imported but not provided in this build` 就是这两件事的
+  合并症状 —— **它读起来像一条提示,其实是病因**。
+
+  实现分区在此之前**mcpp 里任何地方都没有测试覆盖**,是库分发的 e2e 第一次
+  用到它才暴露出来。现在扫描器记 `provides = M:part` 并标 `providesInterface
+  = false`;`import :part;` 按 TU 自己所属的模块名解析。
+
+  **⚠️ 两处行为变化**:①两个文件声明同一个分区(`module m:p;` × 2)现在会被
+  **拒绝并点名两个文件**,此前是静默接受 —— 那种程序本来就 ill-formed,
+  但它是一条新的失败路径;②`sources = []` 从「等于不写」变成「什么都不编」,
+  一个真写了 `sources = []` 又依赖默认 glob 的工程会发现产物变空(此前无法表达
+  「什么都不编」,所以这种写法只可能是误解)。
+
+- **`[target.'<三元组>'.build]` 在没有 `--target` 时从不命中。**
+
+  同一个语句的两种拼写互相矛盾:`cfg(linux)` 在原生构建上命中,
+  `[target.'x86_64-linux-gnu'.build]` 不命中。根因是 `matches()` 拿着原始的
+  `--target` 字符串(原生构建下是空的)短路返回 false,而同一文件的
+  `context_for()` 对 `cfg(...)` **回落到宿主三元组** —— 一个决定两处推导。
+  `manifest/types.cppm` 的注释从写下起承诺的就是回落那一种。
+
+  **形状是最坏的那种**:CI 传 `--target` 是绿的,开发者本机的 `mcpp build`
+  静默丢掉那一段,失败在链接期出现、点的是符号而不是谓词。
+
+  修法是**删掉第二个答题者**:解析后的三元组进 `cfgpred::Ctx`,`matches()`
+  只有一个来源。
+
+- **`sources = []` 与不写 `sources` 逐字节等价。**
+
+  解析器在向量为空时一律填默认 glob,于是作者**没有任何写法**能表达
+  「什么都不要编」。二进制分发需要这个:一个纯头文件的包不编译任何东西,
+  而 `src/` 下任何遗留文件都会被扫进消费者的构建,并可能与预编译库里的符号
+  重复定义。改成记录**键是否出现**(`BuildConfig::sourcesDeclared`),
+  与 `XlingsConfig::subosDeclared` 同一个模式。
+
 
 - **卸载后的清扫会波及**别的版本**,而那可能正在被另一个进程解压。**
 

@@ -565,6 +565,9 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     if (!is) return std::unexpected(ScanError{file, 0, "cannot open"});
 
     SourceUnit u;
+    // The module this TU belongs to (base name, no `:partition`). Set by the
+    // `module`/`export module` declaration and used to resolve `import :part;`.
+    std::string owningModule;
     u.path         = file;
     u.packageName = packageName;
     // The ONE place a source's role is decided. Everything downstream reads
@@ -638,15 +641,50 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
                         std::format("file already exports module '{}'; cannot export '{}'",
                                     u.provides->logicalName, name)});
                 }
-                u.provides = ModuleId{name};
+                u.provides          = ModuleId{name};
+                u.providesInterface = true;   // read from the keyword, not assumed
             } else {
-                // implementation unit (`module foo;`) — non-exporting.
-                // Don't claim ownership of `foo` (partition would be foo:part);
-                // record import dep on the module's interface.
-                if (!u.provides) {
+                // A non-exporting `module …;` is TWO different declarations
+                // wearing one spelling, and they were treated as one:
+                //
+                //   module M;        a module IMPLEMENTATION UNIT. Belongs to
+                //                    M, provides nothing importable, needs M's
+                //                    interface.
+                //   module M:part;   an IMPLEMENTATION PARTITION. It IS
+                //                    importable — as `M:part`, by the other
+                //                    units of M — and it produces a BMI and an
+                //                    object exactly like an interface partition.
+                //
+                // Recording the second as `requires M:part` made every such
+                // file require its own name and provide nothing. So the graph
+                // held no edge from the unit that imports the partition to the
+                // unit that defines it, and the build order was unconstrained.
+                // Where the compiler's own scan recovers it (GCC, macOS clang)
+                // the build worked anyway; on Windows clang it failed with
+                // `failed to read compiled module` — an ordering bug wearing a
+                // scanner mistake's clothes, and invisible because the scanner
+                // ALSO warned "imported but not provided in this build" on
+                // every platform, which read like a note rather than a cause.
+                if (name.find(':') != std::string::npos) {
+                    if (u.provides) {
+                        return std::unexpected(ScanError{file, lineno,
+                            std::format("file already provides module '{}'; "
+                                        "cannot also provide '{}'",
+                                        u.provides->logicalName, name)});
+                    }
+                    u.provides = ModuleId{name};
+                    u.providesInterface = false;
+                } else if (!u.provides) {
                     u.requires_.push_back(ModuleId{name});
                 }
             }
+            // The module this TU belongs to, for resolving `import :part;`
+            // below. Tracked separately from `u.provides` because an
+            // implementation unit (`module M;`) provides nothing and still has
+            // to be able to name its own partitions — before this, `import
+            // :secret;` inside one stayed the literal `:secret`, which no unit
+            // provides, which is the other half of the same warning.
+            owningModule = name.substr(0, name.find(':'));
             continue;
         }
 
@@ -678,12 +716,8 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             // already includes that suffix — concatenating naively would
             // produce `foo:http:tls` instead of the intended `foo:tls`.
             // Strip our own `:partition` first.
-            if (name.starts_with(":") && u.provides) {
-                std::string base = u.provides->logicalName;
-                if (auto p = base.find(':'); p != std::string::npos) {
-                    base.resize(p);
-                }
-                name = base + name;
+            if (name.starts_with(":") && !owningModule.empty()) {
+                name = owningModule + name;
             }
             u.requires_.push_back(ModuleId{name});
             continue;
@@ -863,6 +897,14 @@ void scan_one_into(ScanResult& result,
             u.kind           = mcpp::classify(f, extTable);
             if (!ov->provides.empty()) {
                 u.provides          = ModuleId{ov->provides.front()};
+                // `providesInterface` is deliberately left UNSET. The override
+                // says which module the file provides; there is nowhere in it
+                // to say whether the declaration carries `export`, and the two
+                // spellings decide whether `mcpp pack` may publish the source.
+                // It used to inherit a `true` default, which is the answer that
+                // produces no warning — so an implementation partition declared
+                // here was published in silence. Unknown is the truth, and
+                // mcpp.pack.interface reports it as such.
                 if (ov->provides.size() > 1) {
                     result.errors.push_back(ScanError{f, 0,
                         "scan_overrides: a unit may declare at most one "

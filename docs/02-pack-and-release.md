@@ -1,4 +1,12 @@
-# 02 — Packaging for Release
+# 02 — Packaging an Application for Release
+
+> This page is about bundling a **program**. To ship a *library* as interface +
+> prebuilt binaries, see [12 - Distributing a Prebuilt Library](12-binary-distribution.md).
+>
+> Which one `mcpp pack` does is decided by the target's `kind`, not by a flag:
+> `mcpp pack <name>` packs `[targets.<name>]`, and a `bin` becomes a bundle
+> while a `lib`/`shared` becomes a library package. With no name, mcpp picks
+> the only packable target.
 
 > A default dynamically linked binary produced by `mcpp build` has a loader and
 > RUNPATH tied to the build sandbox. It is a development artifact, not a

@@ -64,7 +64,9 @@ TEST(P1689Parse, SimpleProvider) {
     EXPECT_EQ(r->primaryOutput, "/tmp/foo.o");
     ASSERT_EQ(r->provides.size(), 1u);
     EXPECT_EQ(r->provides[0].logicalName, "foo");
-    EXPECT_TRUE(r->provides[0].isInterface);
+    // Not EXPECT_TRUE: on an optional that only asserts "the key was present",
+    // which stays green when the value parses as false.
+    EXPECT_EQ(r->provides[0].isInterface, std::optional<bool>{true});
     ASSERT_EQ(r->requires_.size(), 2u);
     EXPECT_EQ(r->requires_[0], "std");
     EXPECT_EQ(r->requires_[1], "foo:impl");
@@ -85,6 +87,53 @@ TEST(P1689Parse, EmptyRequires) {
     ASSERT_EQ(r->provides.size(), 1u);
     EXPECT_EQ(r->provides[0].logicalName, "lone");
     EXPECT_TRUE(r->requires_.empty());
+}
+
+// ─── is-interface decides whether a source may be published ────────────────
+//
+// `export module M:api;` and `module M:impl;` differ only in the keyword, and
+// `mcpp pack` publishes the interface closure's SOURCE. The compiler is the one
+// participant here that actually parsed the declaration, so its answer — and
+// its silence — both have to survive the trip.
+
+constexpr const char* kImplementationPartition = R"({
+"rules": [
+{
+"primary-output": "/tmp/secret.o",
+"provides": [{"logical-name": "mathkit:secret", "is-interface": false}],
+"requires": []
+}
+]
+})";
+
+constexpr const char* kNoIsInterfaceKey = R"({
+"rules": [
+{
+"primary-output": "/tmp/quiet.o",
+"provides": [{"logical-name": "mathkit:quiet"}],
+"requires": []
+}
+]
+})";
+
+TEST(P1689Parse, ImplementationPartitionIsNotAnInterface) {
+    auto r = parse_ddi(kImplementationPartition);
+    ASSERT_TRUE(r) << r.error();
+    ASSERT_EQ(r->provides.size(), 1u);
+    EXPECT_EQ(r->provides[0].logicalName, "mathkit:secret");
+    EXPECT_EQ(r->provides[0].isInterface, std::optional<bool>{false});
+}
+
+TEST(P1689Parse, AnAbsentIsInterfaceKeyStaysAbsent) {
+    // P1689 makes the key optional, so absence has to reach the packer as
+    // "nobody said" rather than as either answer. It used to arrive as `false`
+    // by struct default — which is the same value as an explicit
+    // implementation partition, i.e. the two became indistinguishable.
+    auto r = parse_ddi(kNoIsInterfaceKey);
+    ASSERT_TRUE(r) << r.error();
+    ASSERT_EQ(r->provides.size(), 1u);
+    EXPECT_EQ(r->provides[0].logicalName, "mathkit:quiet");
+    EXPECT_FALSE(r->provides[0].isInterface.has_value());
 }
 
 TEST(P1689Parse, RejectsNonObject) {

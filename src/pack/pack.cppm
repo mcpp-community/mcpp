@@ -787,8 +787,15 @@ make_tarball(const std::filesystem::path& stagingRoot,
     // tarball stem (computed by make_plan via wrapper_dirname_from_tarball).
     // This keeps click-to-extract and `tar -xzf` aligned: both surface a
     // single self-contained directory in the user's cwd.
+    // `--force-local` on Windows: GNU tar reads `C:/path/x.tar.gz` as the rsh
+    // form `host:path` and dies with `Cannot connect to C: resolve failed`,
+    // naming neither its argument nor the drive letter. Latent here rather than
+    // observed — a PE target is written as a zip — but it is the same command
+    // with the same hazard as the library packer's, and the two should not
+    // differ in whether they survive being run on Windows.
     auto cmd = std::format(
-        "tar -czf '{}' -C '{}' '{}'",
+        "tar {}-czf '{}' -C '{}' '{}'",
+        mcpp::platform::is_windows ? "--force-local " : "",
         tarballPath.string(),
         stagingRoot.parent_path().string(),
         stagingRoot.filename().string());

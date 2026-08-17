@@ -89,6 +89,33 @@ struct CommandDialect {
 
     // Full ninja command template for static archives.
     std::string_view archiveCmd;       // "$ar rcs $out $in" | "$ar /nologo /OUT:$out $in"
+
+    // How this archiver DELETES a member, as argv words before the member
+    // names. `mcpp pack` needs it: a library package publishes its interface
+    // units as source, so their objects have to come OUT of the archive, or the
+    // consumer links two definitions of each published module's initialiser.
+    //
+    // It lives here rather than in the packer because "how do you speak to the
+    // archiver" is exactly what this table is for. Hard-coding `ar`-style `d`
+    // there would be right for GNU and llvm-ar and wrong for LIB.EXE, which
+    // spells it `/REMOVE:<member>` and takes one flag per member — a difference
+    // in ARITY as well as in spelling, which is why this is a template with a
+    // placeholder rather than a prefix string.
+    //
+    // `{}` is substituted with the member name; the words are joined with
+    // spaces after the archive path.
+    std::string_view archiveRemoveArg; // "d" needs no {} | "/REMOVE:{}"
+    bool             archiveRemoveTakesArchiveFirst = true;
+
+    // How the linker is told where to write a shared library's IMPORT LIBRARY —
+    // the archive of stubs a PE consumer links against, as opposed to the `.dll`
+    // the loader opens. `{}` is the path.
+    //
+    // Emitted only when the TARGET has import libraries at all (PE); on ELF and
+    // Mach-O the shared library is its own link input and there is nothing to
+    // write. So this being non-empty in both rows is not a contradiction: the
+    // rows describe how to SAY it, and the target decides whether to.
+    std::string_view sharedImportLibArg;  // "-Wl,--out-implib,{}" | "/IMPLIB:{}"
 };
 
 // Dialect lookup. GCC / Clang / MinGW → gnu; MSVC → msvc.
@@ -189,6 +216,13 @@ constexpr CommandDialect kGnuDialect{
     .rspfileLink     = false,
     .linkStyle       = CommandDialect::LinkStyle::Driver,
     .archiveCmd      = "$ar rcs $out $in",
+    // `ar d <archive> <member>...` — one verb, then every member.
+    .archiveRemoveArg = "d",
+    .archiveRemoveTakesArchiveFirst = true,
+    // ld/lld: `--out-implib` is what makes a PE shared library linkable at all.
+    // Without it mingw writes only the .dll, consumers link the .dll directly,
+    // and that works — until the same package is consumed by any other linker.
+    .sharedImportLibArg = "-Wl,--out-implib,{}",
 };
 
 // Native cl.exe. Unreachable in builds until the MSVC backend lands
@@ -218,6 +252,16 @@ constexpr CommandDialect kMsvcDialect{
     .rspfileLink     = true,
     .linkStyle       = CommandDialect::LinkStyle::SeparateLinker,
     .archiveCmd      = "$ar /nologo /OUT:$out $in",
+    // `LIB /REMOVE:<member> … <archive>` — one flag PER member, and the
+    // archive last. Untested against a real LIB.EXE (mcpp's Windows CI packs
+    // with clang, whose llvm-ar takes the GNU form), so a failure here is
+    // reported with the command that produced it rather than swallowed.
+    .archiveRemoveArg = "/REMOVE:{}",
+    .archiveRemoveTakesArchiveFirst = false,
+    // link.exe writes one whether asked or not; naming it explicitly is how the
+    // path stays the one plan.cppm chose, instead of the linker's `$out`-derived
+    // guess (`foo.dll.lib`) that nothing else in mcpp agrees with.
+    .sharedImportLibArg = "/IMPLIB:{}",
 };
 
 } // namespace

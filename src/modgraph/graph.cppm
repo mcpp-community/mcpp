@@ -34,6 +34,32 @@ struct SourceUnit {
     std::vector<std::string>        packageCxxflags;
     std::vector<std::string>        packageAsmflags;   // per-glob asmflags (G4)
     std::optional<ModuleId>         provides;
+    // Was `provides` declared with `export module`?
+    //
+    // Both spellings produce a BMI and an object, so `provides` alone cannot
+    // tell an INTERFACE partition (`export module M:api;`) from an
+    // IMPLEMENTATION partition (`module M:impl;`) — and the difference decides
+    // whether a source may be published. `mcpp pack` publishes the module
+    // closure of the lib root; a closure that reaches an implementation
+    // partition has to publish it too (the consumer cannot build the BMI
+    // without it), and the author needs to be told that their implementation
+    // is going out.
+    //
+    // Three states, because "nobody determined this" is a real answer and it
+    // used to be spelled `true`:
+    //
+    //   true     `export module M:api;` — the text scanner read the keyword
+    //   false    `module M:impl;`       — likewise
+    //   nullopt  nobody could tell: a `scan_overrides` entry names the module
+    //            but has no way to say whether it is exported, and a P1689
+    //            scanner may omit `is-interface`
+    //
+    // It defaulted to `true` and was called the conservative direction "since
+    // the flag only ever produces a warning". That had it backwards: `true` is
+    // the value that produces NO warning, so an undetermined implementation
+    // partition was published in silence — the exact failure this field exists
+    // to prevent. Unknown now warns, naming the file and the reason.
+    std::optional<bool>             providesInterface;
     std::vector<ModuleId>           requires_;
     // The unit's ROLE, decided once by the scanner from the owning package's
     // extension table and carried from here on. Every downstream consumer

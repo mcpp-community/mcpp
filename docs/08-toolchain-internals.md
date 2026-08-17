@@ -558,6 +558,35 @@ libc++ linkage handling; Windows has no rpath — mcpp deploys runtime DLLs
 next to the produced exe, which is the platform's native equivalent of
 everything §3–§4 does for ELF.
 
+**Shared libraries a project PRODUCES** (`kind = "shared"`) do differ per format,
+and the difference is not a flag spelling — it is what the artifact records about
+itself:
+
+| format | what the producer emits | what the consumer links |
+|---|---|---|
+| ELF | `-Wl,-soname,<n>` when declared | `-L` + `-l`, `-Wl,-rpath,$ORIGIN` |
+| Mach-O | `-Wl,-install_name,@rpath/<file>` **always** | `-L` + `-l`, `-Wl,-rpath,@loader_path` |
+| PE / MinGW | `-Wl,--out-implib,<lib>` | the **import library**, `-Wl,-Bdynamic` first |
+| PE / MSVC | refused (no auto-export; see docs/12) | — |
+
+Three of those rows are new: everything but ELF was refused before, native or
+cross. Two details had to change for them to be usable rather than merely
+allowed. Mach-O's install name defaults to the path the library was LINKED at, so
+emitting it only when a `soname` was declared would have left every other
+`.dylib` recording a build directory — fine on the machine that built it, `image
+not found` anywhere else. And the choice was made with `#if defined(__APPLE__)`
+on the HOST, which is right only by coincidence on a native macOS build and wrong
+for any cross link; it is decided from the target now, like `target_output`
+already was.
+
+An **unservable target is refused** rather than quietly built for the host:
+`--target x86_64-windows-msvc` on Linux used to resolve the native `g++`, write
+`target/x86_64-linux-gnu/`, and report success. The vocabulary tier says "mcpp
+supports this target"; `host_can_serve` (`registry.cppm`) answers the different
+question "can this machine produce it", and `prepare.cppm` now asks it — with an
+explicit `[target.X] toolchain = "…"` as the escape hatch for a cross toolchain
+you supply yourself.
+
 ## 8. Source map
 
 | Concern | File |

@@ -1227,6 +1227,13 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 if (!s.empty()) {
                     m.modules.sources.push_back(s);
                     m.buildConfig.sources.push_back(std::move(s));   // M5.0 mirror
+                    // The descriptor said `sources`, so record that it did.
+                    // Harmless today — this synthesiser never runs
+                    // apply_defaults_and_infer, and it REFUSES a descriptor with
+                    // no sources at all — but leaving the flag false here means
+                    // an xpkg manifest that ever reached that function would
+                    // have its explicit list replaced by the default glob.
+                    m.buildConfig.sourcesDeclared = true;
                 }
                 cur.skip_ws_and_comments();
             }

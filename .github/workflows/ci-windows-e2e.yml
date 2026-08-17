@@ -57,12 +57,44 @@ jobs:
           "$MCPP_SELF" --version
           echo "MCPP_SELF=$MCPP_SELF" >> "$GITHUB_ENV"
 
+      # MinGW-w64 GCC (xim:mingw-gcc). Installed here so the `mingw` capability
+      # is GRANTED rather than left to whatever the shared sandbox cache happens
+      # to carry: e2e 256 packs an MSVC leg and a MinGW leg into one package,
+      # which is the only place `lib/` keyed by triple is proven with two
+      # DIFFERENT artifact names (mathkit.lib beside libmathkit.a). Without this
+      # step that test skips, and a skipped test in a green suite reads exactly
+      # like a passing one.
+      #
+      # Not `|| true`: if the payload cannot be installed the capability quietly
+      # disappears and the coverage goes with it, which is the failure mode this
+      # step exists to prevent.
+      - name: "Toolchain: MinGW payload for the fat-package e2e"
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP_SELF" toolchain install mingw 16.1.0
+          # Verified through the SAME two locations run_all.sh probes — checking
+          # only one of them would let the step pass while the capability stays
+          # ungranted, which is the shape of a green run that tested nothing.
+          found=""
+          for c in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-mingw-gcc/*/bin/g++.exe \
+                   "$HOME"/.xlings/data/xpkgs/xim-x-mingw-gcc/*/bin/g++.exe; do
+            [[ -x "$c" ]] && { found="$c"; break; }
+          done
+          test -n "$found" || { echo "FAIL: mingw installed but not where run_all.sh looks"; exit 1; }
+          echo "mingw payload: $found"
+
       - name: E2E suite
         shell: bash
         # Fail-fast on hung tests instead of burning the whole job budget.
         # Per-test 600s timeout lives in run_all.sh.
         timeout-minutes: 25
         run: |
+          # The RELEASED mcpp this job bootstrapped from, kept for e2e 252: the
+          # claim that an older client can still build against a package the PR
+          # produces is only worth making if something checks it against a real
+          # old binary. Captured before $MCPP is repointed at the fresh build.
+          export MCPP_BOOT="${MCPP:-$MCPP_BOOT}"
           export MCPP="$MCPP_SELF"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL

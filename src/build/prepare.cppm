@@ -46,6 +46,8 @@ import mcpp.platform.capacity;   // the host fallback handed to schedule::decide
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
+import mcpp.pack.abi_tag;      // the tag a prebuilt dependency is checked against
+import mcpp.pack.prebuilt;     // …and the check itself
 import mcpp.build.build_program;
 import mcpp.build.directives;   // directive table: mark / fold_private_tail
 import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
@@ -202,12 +204,14 @@ materialize_generated_files(const std::filesystem::path& root,
 // deps, and nothing said why. A package's `[target.windows.dependencies]` is
 // its own statement about itself and means the same thing whether the package
 // is the root or someone's dependency.
+// The resolved triple travels INSIDE `ctx` (cfgpred::Ctx::triple). It used to
+// be a third parameter here too, which is how a bare-triple predicate came to
+// disagree with a cfg() one about the same native build — see the note on Ctx.
 void merge_conditional_config(mcpp::manifest::Manifest& m,
-                             const cfgpred::Ctx& ctx,
-                             std::string_view targetTriple)
+                             const cfgpred::Ctx& ctx)
 {
     for (auto const& cc : m.conditionalConfigs) {
-        if (!cfgpred::matches(cc.predicate, ctx, targetTriple)) continue;
+        if (!cfgpred::matches(cc.predicate, ctx)) continue;
         // One append() for every field the axis may carry (#258). Matching
         // sections land AFTER the base entries, so a conditional rule beats
         // a broader unconditional one under GNU last-wins — which is what
@@ -463,6 +467,9 @@ export struct BuildContext {
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
     mcpp::build::BuildPlan          plan;
+    // The scanned module graph. Only `mcpp pack` reads it — see the note at
+    // the assignment for why the plan cannot answer its question.
+    mcpp::modgraph::Graph           graph;
     // Resolved profile name (resolve_profile_name). Carried so run_build_plan
     // can record it in .build_cache — without it the fast path cannot tell
     // whether a cached build.ninja was generated for the profile being asked
@@ -696,6 +703,27 @@ prepare_build(bool print_fingerprint,
               *overrides.preloaded_manifest)
         : mcpp::manifest::load(*root / "mcpp.toml");
     if (!m) return std::unexpected(m.error().format());
+
+    // A DISTRIBUTION package is not a source tree, and building "in" one is a
+    // failure that looks like a success: `interface/` holds declarations whose
+    // definitions are in the prebuilt archive, so the build compiles the
+    // declarations, produces a near-empty library, links nothing, and reports
+    // Finished. The archive it was supposed to carry never enters the picture.
+    //
+    // Only the ROOT is refused. As a dependency this is exactly what the
+    // package is for — the consumer compiles the interface and links the
+    // artifact, which is the whole design.
+    if (!overrides.preloaded_manifest && mcpp::pack::is_distribution_package(*m)) {
+        return std::unexpected(std::format(
+            "'{}' is a distribution package produced by `mcpp pack`, not a source tree.\n"
+            "  Its sources are interface declarations; the definitions are in the\n"
+            "  prebuilt artifacts beside them, so building here would produce an\n"
+            "  empty library and say it succeeded.\n"
+            "  Use it: add it to a project as a dependency —\n"
+            "      [dependencies]\n"
+            "      {} = {{ path = \"{}\" }}",
+            root->string(), m->package.name, root->string()));
+    }
 
     // ─── Workspace handling ────────────────────────────────────────────
     // If the manifest has [workspace] and is a virtual workspace (no [package]),
@@ -1210,6 +1238,47 @@ prepare_build(bool print_fingerprint,
                 "       An explicit [target.{}] toolchain override can opt in early.",
                 parsed->str(), parsed->str()));
         }
+        // Known, supported — and IMPOSSIBLE ON THIS HOST.
+        //
+        // Without this the target falls through to the host toolchain and the
+        // build SUCCEEDS, which is the failure the check above calls the worst
+        // one, arriving through a different door. Measured on Linux:
+        //
+        //   $ mcpp build --target x86_64-windows-msvc
+        //       Resolved gcc@16.1.0 → x86_64-windows-msvc → …/xim-x-gcc/bin/g++
+        //       Finished dev [unoptimized + debuginfo] in 0.07s
+        //   $ ls target/
+        //       x86_64-linux-gnu/          ← an ELF, reported as a Windows build
+        //
+        // The vocabulary tier says "mcpp supports this target"; it never said
+        // "this machine can produce it". `host_can_serve` is the answer to the
+        // second question and lives beside the payload resolution it has to
+        // agree with.
+        //
+        // The escape hatch stays open on purpose: an explicit `[target.X]`
+        // toolchain override means the author is supplying the cross toolchain
+        // themselves, and mcpp's payload matrix has no standing to refuse it.
+        if (known && known->tier != "planned" && !hasToolchainOverride && parsed
+            && !mcpp::toolchain::host_can_serve(*parsed)) {
+            std::string servable;
+            for (auto const& info : triple::known_targets()) {
+                auto t = triple::parse(info.canonical);
+                if (!t || info.tier == "planned") continue;
+                if (!mcpp::toolchain::host_can_serve(*t)) continue;
+                if (!servable.empty()) servable += ", ";
+                servable += t->str();
+            }
+            return std::unexpected(std::format(
+                "target '{}' cannot be built on this host — no toolchain payload "
+                "exists that runs here and produces it.\n"
+                "       this host can build: {}\n"
+                "       Build it on a host that can, or supply your own cross "
+                "toolchain with an\n"
+                "       explicit [target.{}] toolchain = \"…\" section.",
+                parsed->str(),
+                servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
+                parsed->str()));
+        }
         // Canonical from here on: cfg evaluation, spec attachment and the
         // target/ output directory all see one spelling.
         if (parsed) overrides.target_triple = parsed->str();
@@ -1286,8 +1355,7 @@ prepare_build(bool print_fingerprint,
     // package's half of the one funnel, not a special case: every package is
     // merged exactly once, immediately before it is captured into `packages[]`.
     if (!m->conditionalConfigs.empty()) {
-        merge_conditional_config(*m, cfgpred::context_for(overrides.target_triple),
-                                 overrides.target_triple);
+        merge_conditional_config(*m, cfgpred::context_for(overrides.target_triple));
     }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
@@ -2819,8 +2887,7 @@ prepare_build(bool print_fingerprint,
         // pass through loadVersionDep.
         if (!manifest->conditionalConfigs.empty()) {
             merge_conditional_config(*manifest,
-                                    cfgpred::context_for(overrides.target_triple),
-                                    overrides.target_triple);
+                                    cfgpred::context_for(overrides.target_triple));
         }
         fold_build_defines_into_flags(manifest->buildConfig);
 
@@ -3983,8 +4050,7 @@ prepare_build(bool print_fingerprint,
             // snapshot this manifest's flags/sources into `packages[]`.
             if (!dep_manifest->conditionalConfigs.empty()) {
                 merge_conditional_config(*dep_manifest,
-                    cfgpred::context_for(overrides.target_triple),
-                    overrides.target_triple);
+                    cfgpred::context_for(overrides.target_triple));
             }
             fold_build_defines_into_flags(dep_manifest->buildConfig);
         } else {
@@ -5154,11 +5220,53 @@ prepare_build(bool print_fingerprint,
             roots.push_back(d / "xpkgs");
         return roots;
     }();
+    // ─── Prebuilt dependencies: check before planning to link them ─────
+    //
+    // Here rather than at each place a dependency manifest is loaded, because
+    // there are three of those and the check needs the RESOLVED toolchain,
+    // which only exists by now. One pass over the assembled package list is
+    // also the only spelling under which a package cannot be checked twice
+    // with two different answers.
+    //
+    // The current tag's SHAPE follows the package's: a package that publishes
+    // a triple-only tag is saying its interface is `extern "C"`, and comparing
+    // it against a full tag would refuse a combination it explicitly allows.
+    // `tag_check` already treats an unnamed dimension as don't-care, so one
+    // full tag on this side is correct for both.
+    {
+        const auto canonicalTriple = tc->targetTriple.empty()
+            ? mcpp::toolchain::triple::host_triple().str()
+            : [&] {
+                  auto t = mcpp::toolchain::triple::parse(tc->targetTriple);
+                  return t ? t->str() : tc->targetTriple;
+              }();
+        const auto currentTag = mcpp::pack::cxx_surface_tag(
+            *tc, canonicalTriple, m->cppStandard.level);
+        for (std::size_t i = 1; i < packages.size(); ++i) {
+            auto const& pkg = packages[i];
+            if (!mcpp::pack::is_distribution_package(pkg.manifest)) continue;
+            mcpp::pack::PrebuiltCheck chk{
+                .packageRoot  = pkg.root,
+                .packageLabel = mcpp::manifest::package_id(pkg.manifest.package).canonical(),
+                .current      = currentTag,
+            };
+            if (auto ok = mcpp::pack::check_prebuilt(pkg.manifest, chk); !ok)
+                return std::unexpected(ok.error());
+        }
+    }
+
     auto planResult = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
                                              packages, *root, ctx.outputDir,
                                              stdBmiPath, stdObjectPath, storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
+    // The module graph outlives the plan for one consumer: `mcpp pack`, which
+    // has to know which units are INTERFACE (published as source) and which
+    // are implementation (published only as an object). The plan flattens that
+    // away — a CompileUnit records what to compile, not what it provides — so
+    // the packer would otherwise have to scan the tree a second time and could
+    // then disagree with the build about what the package even contains.
+    ctx.graph       = std::move(scan.graph);
     // mcpp#407. Both callers that produce a non-plain graph arrive here the
     // same way: dev-dependencies enabled, synthetic test targets appended. The
     // resulting `default` line names the test binaries and omits the package's

@@ -38,6 +38,7 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
 import mcpp.platform.xlings;
 import mcpp.platform;
 import mcpp.ui;
@@ -193,15 +194,32 @@ std::string join_flags(const std::vector<std::string>& flags) {
     return out;
 }
 
-std::string shared_soname_flag(const LinkUnit& lu) {
-    if (lu.kind != LinkUnit::SharedLibrary || lu.soname.empty()) return "";
-#if defined(__APPLE__)
-    return "-Wl,-install_name,@rpath/" + lu.soname;
-#elif defined(__linux__)
-    return "-Wl,-soname," + lu.soname;
-#else
-    return "";
-#endif
+// The name a shared library RECORDS about itself, which is not the same thing as
+// the file it is written to.
+//
+// Two corrections here, and each was load-bearing:
+//
+//  * It is decided by the TARGET, not by `#if defined(__APPLE__)` on the host.
+//    A Linux host cross-linking a PE shared library was emitting
+//    `-Wl,-soname,` — accepted by mingw's ld and meaningless in a PE, which is
+//    the quiet kind of wrong. Same class of defect as `target_output` had.
+//  * On Mach-O the flag is emitted even with no `soname` declared. A dylib's
+//    default install name is the path it was LINKED at, so a package built in
+//    /tmp/build-xyz records /tmp/build-xyz and cannot be relocated — which is
+//    every distributed dylib. `@rpath/<file>` is the only default that travels.
+std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
+    if (lu.kind != LinkUnit::SharedLibrary) return "";
+    const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+    const std::string os = t ? t->os
+        : (mcpp::platform::is_macos   ? "macos"
+         : mcpp::platform::is_windows ? "windows" : "linux");
+    // PE records no such name: a DLL is found by the filename in the importing
+    // module's import table, and there is nothing to override.
+    if (os == "windows") return "";
+    const std::string name = lu.soname.empty()
+        ? lu.output.filename().string() : lu.soname;
+    if (os == "macos") return "-Wl,-install_name,@rpath/" + name;
+    return lu.soname.empty() ? "" : "-Wl,-soname," + lu.soname;
 }
 
 // Write only when the bytes would actually change.
@@ -1031,7 +1049,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                       "LINK");
             link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
             link_rule("cxx_shared",
-                      "$ld /nologo /DLL /OUT:$out /IMPLIB:$out.lib "
+                      "$ld /nologo /DLL /OUT:$out $implib_flag "
                       "$in $ldflags $unit_ldflags",
                       "SHARED");
         } else {
@@ -1039,7 +1057,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                       "$cxx $in -o $out $ldflags $unit_ldflags", "LINK");
             link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
             link_rule("cxx_shared",
-                      "$cxx -shared $in -o $out $ldflags $soname_flag $unit_ldflags",
+                      "$cxx -shared $in -o $out $ldflags $soname_flag "
+                      "$implib_flag $unit_ldflags",
                       "SHARED");
             // mcpp#426: a link unit with no C++ translation unit in it is
             // linked by the C driver. `g++` appends `-lstdc++` unconditionally,
@@ -1051,7 +1070,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             link_rule("c_link",
                       "$cc $in -o $out $c_ldflags $unit_ldflags", "LINK");
             link_rule("c_shared",
-                      "$cc -shared $in -o $out $c_ldflags $soname_flag $unit_ldflags",
+                      "$cc -shared $in -o $out $c_ldflags $soname_flag "
+                      "$implib_flag $unit_ldflags",
                       "SHARED");
         }
     }
@@ -1786,11 +1806,38 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 implicit += " " + escape_ninja_path(d.dest);
         }
 
-        std::string out_line = std::format("build {} : {}{}{}\n",
-            escape_ninja_path(lu.output), rule, ins,
+        // The import library is a SECOND output of this edge, declared as an
+        // implicit output (`build dll | implib : …`). Not a separate edge: one
+        // command writes both, and a second edge claiming to produce the implib
+        // would run the link twice and race with itself. Not undeclared either —
+        // the consumer links it, so without a producer ninja stops with "no
+        // known rule to make it" naming a file this very command writes.
+        std::string implicitOut;
+        if (!lu.importLibrary.empty())
+            implicitOut = " | " + escape_ninja_path(lu.importLibrary);
+
+        std::string out_line = std::format("build {}{} : {}{}{}\n",
+            escape_ninja_path(lu.output), implicitOut, rule, ins,
             implicit.empty() ? std::string{} : " |" + implicit);
-        if (auto flag = shared_soname_flag(lu); !flag.empty())
+        if (auto flag = shared_soname_flag(lu, plan); !flag.empty())
             out_line += "  soname_flag = " + flag + "\n";
+        // Where the linker is told to write it. A rule-level `$out.lib` would
+        // spell the msvc case `foo.dll.lib`, i.e. a name nothing else in mcpp
+        // agrees with — the name belongs to plan.cppm's import_library_for, and
+        // this is how it gets to the command. The SPELLING belongs to the
+        // dialect table, same as `archiveRemoveArg`.
+        if (!lu.importLibrary.empty()) {
+            std::string arg{ dial.sharedImportLibArg };
+            // `{}` or nothing: a row without the placeholder cannot say WHERE to
+            // write, so emitting its bare text would hand the linker a flag with
+            // no argument. Skipping is the honest reading of an empty row, and
+            // the implicit output above then fails loudly as a missing file
+            // rather than quietly linking against a stale one.
+            if (auto at = arg.find("{}"); at != std::string::npos) {
+                arg.replace(at, 2, escape_ninja_path(lu.importLibrary));
+                out_line += "  implib_flag = " + arg + "\n";
+            }
+        }
         {
             // Per-unit C++ runtime link, by ROLE. The kind→role map is the
             // only place that knows a TestBinary runs on the build machine

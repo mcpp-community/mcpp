@@ -31,7 +31,11 @@ export namespace mcpp::modgraph::p1689 {
 
 struct DdiProvide {
     std::string logicalName;
-    bool        isInterface = false;
+    // Absent, not false, when the scanner did not say. P1689 makes the key
+    // optional and mcpp cannot invent an answer: `export module M:api;` and
+    // `module M:impl;` differ only in the keyword, and getting that backwards
+    // decides whether a closed-source partition's SOURCE is published.
+    std::optional<bool> isInterface;
 };
 
 struct DdiRule {
@@ -398,6 +402,10 @@ scan_file(const std::filesystem::path&        source,
     u.kind        = mcpp::classify(source, extTable);
     if (!rule->provides.empty()) {
         u.provides = ModuleId{ rule->provides.front().logicalName };
+        // Carried through, including its absence: the compiler is the one thing
+        // here that has actually parsed the declaration, so when it answers,
+        // its answer beats any inference; when it stays quiet, so does mcpp.
+        u.providesInterface = rule->provides.front().isInterface;
     }
     for (auto& r : rule->requires_) {
         u.requires_.push_back(ModuleId{ r });

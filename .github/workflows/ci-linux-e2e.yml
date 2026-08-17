@@ -63,6 +63,11 @@ jobs:
           # Point the e2e runner at the freshly-built binary, not the
           # bootstrap one. Tests cd into mktemp -d, so $MCPP must be
           # absolute or the relative path breaks under the temp cwd.
+          # The RELEASED mcpp this job bootstrapped from, kept for e2e 252: the
+          # claim that an older client can still build against a package the PR
+          # produces is only worth making if something checks it against a real
+          # old binary. Captured before $MCPP is repointed at the fresh build.
+          export MCPP_BOOT="$MCPP"
           MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           test -x "$MCPP"
           export MCPP
@@ -133,7 +138,7 @@ jobs:
 
       - name: Bootstrap xlings + released mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.11.2
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.8.17.2
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
           xlings update
           xlings install mcpp -y -g

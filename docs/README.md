@@ -14,6 +14,7 @@
 - [09 - Releasing mcpp](09-release.md)
 - [10 - Publishing a Library to mcpp-index](10-publishing-a-library.md)
 - [11 - Machine-Readable Output](11-machine-output.md)
+- [12 - Distributing a Prebuilt Library](12-binary-distribution.md)
 
 ## Specifications
 

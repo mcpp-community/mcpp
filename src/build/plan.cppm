@@ -18,6 +18,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.triple;
+import mcpp.pack.prebuilt;   // is_distribution_package — a shipped shared lib is not rebuilt
 import mcpp.platform;
 import mcpp.platform.runtime_binding;
 import mcpp.platform.runtime_env_contract;
@@ -93,6 +94,12 @@ struct LinkUnit {
     // Deciding it stays here; placing it is the emitter's business.
     std::string                     loaderTagFlag;
     std::filesystem::path           output;            // relative to plan.outputDir
+    // The import library a PE shared library also produces — empty on ELF and
+    // Mach-O, and empty for every non-shared unit. It is a SECOND output of the
+    // link edge, declared implicitly so the consumer that links it has a
+    // producer; without that, ninja reports "no known rule to make it" naming a
+    // file the link command does in fact write.
+    std::filesystem::path           importLibrary;     // relative to plan.outputDir
     std::string                     soname;            // ABI name for shared libraries
     std::vector<std::filesystem::path> runtimeAliases; // relative aliases, e.g. bin/libfoo.so.1
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
@@ -336,26 +343,10 @@ std::string sanitize_for_path(std::string_view module_name) {
     return s;
 }
 
-std::string object_filename_for(const std::filesystem::path& src,
-                                std::string_view objExt = ".o") {
-    // The naming POLICY lives in mcpp.source_kind (see ObjectNaming there for
-    // why every historical name is frozen and only new extensions get the
-    // collision-proof form). This function only formats it.
-    switch (mcpp::object_naming_for(src)) {
-        case mcpp::ObjectNaming::StemDotM:
-            return src.stem().string() + ".m" + std::string(objExt);
-        case mcpp::ObjectNaming::Stem:
-            return src.stem().string() + std::string(objExt);
-        case mcpp::ObjectNaming::FullFilename:
-            break;
-    }
-    // Assembly siblings of a C/C++ TU commonly share its stem (foo.c +
-    // foo.asm); keeping the full extension means they can never collide —
-    // the per-package collision prefix can't help two same-stem files in the
-    // same directory. Every extension a project adds via
-    // `[build] module_extensions` lands here for the same reason.
-    return src.filename().string() + std::string(objExt);
-}
+// Both the naming POLICY and its formatting now live in mcpp.source_kind, so
+// the planner and `mcpp pack` cannot answer "what is this object called"
+// differently. This alias keeps the local spelling every call site below uses.
+using mcpp::object_filename_for;
 
 std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
     if (!manifest.package.namespace_.empty()
@@ -449,16 +440,38 @@ bool is_implementation_source(mcpp::SourceKind kind) {
         || kind == mcpp::SourceKind::GasAsm || kind == mcpp::SourceKind::NasmAsm;
 }
 
+// The import library a PE shared target produces, and empty everywhere else.
+//
+// PE splits a shared library into two files: the `.dll` the loader opens and a
+// small archive of stubs the LINKER consumes. Nothing else models that, so the
+// name lives here — the link rule writes it, the consumer links it, and the
+// packer ships it, all from this one answer.
+//
+// The two spellings are the toolchains' own conventions, not a choice:
+//   mingw   lib<name>.dll.a   (ld --out-implib; keeps `.a` so -l finds it)
+//   msvc    <name>.lib        (link /IMPLIB)
+// The msvc spelling is the same as a static library's, which is fine because a
+// target is `lib` OR `shared`, never both.
+std::filesystem::path import_library_for(const mcpp::manifest::Target& t,
+                                         const mcpp::toolchain::triple::ArtifactNaming& n) {
+    if (t.kind != mcpp::manifest::Target::SharedLibrary || !n.sharedNeedsImportLib)
+        return {};
+    const bool msvc = n.libPrefix.empty();   // "" prefix + ".lib" is the msvc row
+    return std::filesystem::path("bin") /
+           (msvc ? std::format("{}{}", t.name, n.staticLibExt)
+                 : std::format("{}{}{}{}", n.libPrefix, t.name,
+                               n.sharedLibExt, n.staticLibExt));
+}
+
 // How a CONSUMER links against a shared library. Also a target property: PE has
 // no rpath and wants an import library, Mach-O uses @loader_path, ELF uses
 // $ORIGIN. Keying this on the host pointed it the wrong way under cross builds.
 //
-// NOTE: shared libraries have never been verified end to end on PE or Mach-O —
-// every shared-library e2e declares `# requires: elf`, and that capability is
-// only granted on Linux. The PE branch here (linking the .dll path directly)
-// is therefore unproven: mingw's ld tolerates it, MSVC's link.exe cannot.
-// make_plan() rejects SharedLibrary targets on non-ELF targets rather than
-// emitting something unverifiable — see the guard there.
+// PE now links the IMPORT LIBRARY rather than the `.dll` itself. Passing the
+// `.dll` is something mingw's ld tolerates and MSVC's link.exe rejects outright,
+// so the tolerant case was hiding the broken one — and "it works on the
+// toolchain we happened to test" is the whole reason this path went unverified
+// for so long.
 std::vector<std::string> shared_library_link_flags(
     const mcpp::manifest::Target& t,
     const mcpp::toolchain::triple::ArtifactNaming& n,
@@ -468,7 +481,7 @@ std::vector<std::string> shared_library_link_flags(
     const bool macho = target.empty() ? bool(mcpp::platform::is_macos)
                                       : target.os == "macos";
     if (pe) {
-        flags.push_back(target_output(t, n).generic_string());
+        flags.push_back(import_library_for(t, n).generic_string());
     } else {
         flags.push_back("-L" + target_output(t, n).parent_path().generic_string());
         flags.push_back(macho ? "-Wl,-rpath,@loader_path"
@@ -989,31 +1002,64 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return flag ? std::string(*flag) : std::string{};
     };
 
-    // Shared libraries have never been verified end to end on PE or Mach-O:
-    // every shared-library e2e declares `# requires: elf`, and run_all.sh only
-    // grants that capability on Linux. The non-ELF paths through
-    // shared_library_link_flags are therefore unproven — mingw's ld tolerates
-    // linking a .dll directly, MSVC's link.exe cannot, and neither has an
-    // import library to link against because mcpp does not model one.
+    // WHAT `kind = "shared"` SUPPORTS, AND THE ONE THING IT STILL DOES NOT.
     //
-    // Refusing is strictly better than emitting something unverifiable: a
-    // branch that is neither tested nor willing to say no is the hardest kind
-    // of debt, because it can be neither trusted nor deleted.
-    if (!targetTriple.empty() && targetTriple.os != "linux") {
-        for (auto const& t : manifest.targets) {
-            if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
-            return std::unexpected(std::format(
-                "target '{}': shared libraries are only supported for Linux (ELF) "
-                "targets today.\n"
-                "  target '{}' is kind=\"shared\"; build it as kind=\"lib\" "
-                "(static) for this target,\n"
-                "  or build it for a linux target.\n"
-                "  note: PE consumers need an import library and Mach-O needs "
-                "install-name handling;\n"
-                "        neither is modelled yet, so mcpp refuses rather than "
-                "producing an artifact\n"
-                "        nothing has ever verified.",
-                targetTriple.str(), t.name));
+    // ELF, Mach-O and PE/MinGW are modelled: the import library PE consumers
+    // link is `import_library_for` above, and Mach-O's install name is set to
+    // `@rpath/<file>` unconditionally (see shared_soname_flag) rather than
+    // defaulting to this machine's build path.
+    //
+    // PE/MSVC is refused, and the reason is not the linker — `link /DLL
+    // /IMPLIB:` has been in the rule table all along. It is symbol export: MSVC
+    // exports nothing from a DLL without `__declspec(dllexport)` or a `.def`,
+    // so the import library comes out EMPTY and the consumer fails with
+    // unresolved externals naming symbols that are plainly in the object files.
+    // Producing that is worse than refusing, because the diagnostic points
+    // nowhere near the cause.
+    //
+    // ⚠️ THE HOST FALLBACK BELOW IS BELT AND BRACES, NOT A FIX. An earlier
+    // version of this comment claimed the previous guard —
+    // `!targetTriple.empty() && os != "linux"` — was inert on native builds
+    // because targetTriple would be empty there. It is not: `tc.targetTriple`
+    // is filled from the compiler's own `-dumpmachine` (detect.cppm), a native
+    // Linux build records `x86_64-linux-gnu` in resolution.json, and
+    // `parse("x86_64-pc-windows-msvc")` skips the vendor segment and succeeds.
+    // So the old guard did refuse native macOS and native Windows, and this
+    // change ADDS support rather than closing a hole. The fallback stays
+    // because a target that cannot be parsed must not be silently read as
+    // "not windows".
+    {
+        const std::string targetOs = targetTriple.empty()
+            ? (mcpp::platform::is_macos   ? "macos"
+             : mcpp::platform::is_windows ? "windows" : "linux")
+            : targetTriple.os;
+        // The ABI, from the toolchain rather than from `naming`: on a native
+        // Windows build the host naming constants are the MSVC ones whatever the
+        // toolchain is (lib_prefix is "" and static_lib_ext is ".lib" for mingw
+        // too), so asking `naming` would refuse MinGW as well. `is_msvc_target`
+        // reads the compiler's own -dumpmachine answer, which distinguishes them
+        // and also covers clang driving the MSVC ABI — clang auto-exports no more
+        // than link.exe does, so "which compiler binary" is the wrong question.
+        if (targetOs == "windows" && mcpp::toolchain::is_msvc_target(tc)) {
+            for (auto const& t : manifest.targets) {
+                if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
+                return std::unexpected(std::format(
+                    "target '{}': kind = \"shared\" is not supported for the MSVC "
+                    "ABI ({}).\n"
+                    "  MSVC exports nothing from a DLL unless the source says "
+                    "`__declspec(dllexport)`\n"
+                    "  or a `.def` file lists the symbols, so the import library "
+                    "would be empty and\n"
+                    "  every consumer would fail with unresolved externals naming "
+                    "symbols that are\n"
+                    "  visibly present in the objects. mcpp refuses rather than "
+                    "produce that.\n"
+                    "  Use kind = \"lib\" for this target, or build it for "
+                    "*-windows-gnu (MinGW),\n"
+                    "  where the linker auto-exports.",
+                    t.name,
+                    targetTriple.empty() ? "native" : targetTriple.str()));
+            }
         }
     }
 
@@ -1432,6 +1478,17 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     for (std::size_t i = 1; i < packages.size(); ++i) {
         auto const& p = packages[i];
         auto qname = qualified_package_name(p.manifest);
+        // A DISTRIBUTION PACKAGE's shared target is already built — that is what
+        // the package IS. Creating a link unit for it made ninja fail outright
+        // with `multiple rules generate bin/libmathkit.dll`: this loop declared
+        // an edge that relinks the library, and the deploy machinery declared
+        // another that stages the shipped one.
+        //
+        // Rebuilding it would be wrong even without the collision: a
+        // distribution package's `sources` are its published INTERFACE only, so
+        // the relink would quietly produce a library missing every
+        // implementation unit the publisher withheld.
+        if (mcpp::pack::is_distribution_package(p.manifest)) continue;
         for (auto const& t : p.manifest.targets) {
             if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
             sharedDepPackages.insert(qname);
@@ -1510,6 +1567,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             for (auto targetIndex : targetsIt->second) {
                 auto const& dep = sharedDepTargets[targetIndex];
                 lu.implicitInputs.push_back(dep.output);
+                // On PE what the consumer actually LINKS is the import library,
+                // so that is the file the edge has to wait for — the `.dll`
+                // above is still a prerequisite because it must exist beside the
+                // exe to run, but it is not what resolves the symbols.
+                if (auto imp = import_library_for(dep.target, naming); !imp.empty())
+                    lu.implicitInputs.push_back(imp);
                 // The SONAME alias is a prerequisite too, not a by-product: the
                 // library is written as bin/libX11.so but records SONAME
                 // libX11.so.6, so both the linker (resolving a transitive
@@ -1565,6 +1628,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.targetName = dep.target.name;
         lu.kind       = LinkUnit::SharedLibrary;
         lu.output     = dep.output;
+        lu.importLibrary = import_library_for(dep.target, naming);
         lu.soname     = dep.target.soname;
         lu.runtimeAliases = runtime_aliases_for_target(dep.target, naming);
         lu.loaderTagFlag = loader_tag_flag(lu.kind);
@@ -1592,6 +1656,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         } else if (t.kind == mcpp::manifest::Target::SharedLibrary) {
             lu.kind   = LinkUnit::SharedLibrary;
             lu.output = target_output(t, naming);
+            lu.importLibrary = import_library_for(t, naming);
             lu.soname = t.soname;
             lu.runtimeAliases = runtime_aliases_for_target(t, naming);
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {

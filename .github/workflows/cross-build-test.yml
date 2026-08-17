@@ -34,6 +34,10 @@ name: cross-build-test
 # qemu-aarch64 is the CI proxy for "does this cross artefact actually execute".
 #
 # ── NOT here ───────────────────────────────────────────────────────────────
+#   * The e2e scripts this job names explicitly (102, 198, 240, 248) are the
+#     ones the ordinary Linux shards SKIP for want of `mingw-cross`. They are
+#     listed in the job rather than left to run_all's cap gating precisely so
+#     they cannot end up skipping everywhere at once.
 #   * Same-arch builds (host arch == target arch) are NOT cross. The native musl
 #     static build `--target x86_64-linux-musl` (x86_64 host) is exercised by
 #     ci-linux.yml's "Toolchain: musl-gcc" step, and release.yml for the static
@@ -118,7 +122,7 @@ jobs:
           # release assets were uploaded in a broken state (records present,
           # blobs missing → 404 on GET); re-uploaded clean. The stale-INDEX
           # half is handled by the marker-clear below.
-          XLINGS_VERSION: '2026.8.11.2'
+          XLINGS_VERSION: '2026.8.17.2'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
@@ -256,7 +260,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '2026.8.11.2'
+          XLINGS_VERSION: '2026.8.17.2'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
@@ -319,6 +323,23 @@ jobs:
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/240_pack_pe_zip_cross.sh
+
+      # A LIBRARY package whose legs cross an OS boundary, for the same reason
+      # as the three above: this is the only job with a MinGW cross toolchain.
+      #
+      # It is not redundant with 245 (which covers the fat-package mechanism
+      # with gnu + musl and therefore runs on every ordinary Linux shard). The
+      # leg added here changes BINARY FORMAT, and it is the case that proves
+      # `lib/` has to be keyed by triple rather than by OS: MinGW and MSVC are
+      # both "windows" and write `libfoo.a` and `foo.lib` respectively.
+      #
+      # Without this step the test would carry `# requires: mingw-cross` and
+      # skip in every job that exists — verified on a developer's machine and
+      # nowhere else, while the suite reported green.
+      - name: "e2e: pack a library across an OS boundary (PE leg)"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash tests/e2e/248_pack_library_fat_pe_leg.sh
 
   # ── windows → linux ───────────────────────────────────────────────────────
   # The mirror of mingw-cross-wine. Two jobs because a Windows runner cannot
