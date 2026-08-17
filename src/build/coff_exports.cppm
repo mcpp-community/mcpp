@@ -115,7 +115,6 @@ constexpr std::uint16_t kMachineArm64  = 0xaa64;
 
 constexpr std::uint8_t  kSymClassExternal = 2;    // IMAGE_SYM_CLASS_EXTERNAL
 constexpr std::uint16_t kSymTypeFunction  = 0x20; // DTYPE_FUNCTION << 4
-constexpr std::uint32_t kScnMemWrite      = 0x80000000u; // IMAGE_SCN_MEM_WRITE
 constexpr std::uint32_t kScnMemExecute    = 0x20000000u; // IMAGE_SCN_MEM_EXECUTE
 
 std::uint16_t rd16(std::span<const std::byte> b, std::size_t off) {
@@ -201,6 +200,23 @@ read_exports(std::span<const std::byte> bytes)
         return std::unexpected("not a COFF object: shorter than a file header");
 
     const auto machine = rd16(bytes, 0);
+
+    // `/bigobj` objects are a DIFFERENT container: machine 0 and a `0xFFFF`
+    // where the section count would be, followed by a class GUID and a much
+    // larger header. Named here rather than left to fall out as "unsupported
+    // machine 0x0000", which is true and useless — the reader would be blamed
+    // for a flag the project passed.
+    if (machine == 0 && bytes.size() >= 4 && rd16(bytes, 2) == 0xFFFF) {
+        return std::unexpected(
+            "this is a /bigobj object, whose header layout differs from an "
+            "ordinary COFF one.\n"
+            "  mcpp's export reader does not parse it. Build the shared library "
+            "without /bigobj,\n"
+            "  or mark its public surface with __declspec(dllexport) — an "
+            "annotated library needs\n"
+            "  no generated .def at all.");
+    }
+
     if (!is_supported_machine(machine)) {
         return std::unexpected(std::format(
             "unsupported COFF machine 0x{:04x}. mcpp reads i386, amd64, arm, "

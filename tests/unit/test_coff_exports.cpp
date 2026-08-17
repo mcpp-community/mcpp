@@ -214,6 +214,21 @@ TEST(CoffExports, RefusesATruncatedSymbolTable) {
     EXPECT_NE(r.error().find("past the end"), std::string::npos);
 }
 
+TEST(CoffExports, NamesBigobjRatherThanCallingItAnUnknownMachine) {
+    // A `/bigobj` object is a different container: machine 0 and 0xFFFF where
+    // the section count would be. Falling through to "unsupported machine
+    // 0x0000" is true and useless — it blames the reader for a flag the project
+    // passed.
+    auto obj = make_obj({ Sym{ .name = "f" } });
+    obj[0] = std::byte{0}; obj[1] = std::byte{0};
+    obj[2] = std::byte{0xFF}; obj[3] = std::byte{0xFF};
+    auto r = read_exports(obj);
+    ASSERT_FALSE(r);
+    EXPECT_NE(r.error().find("bigobj"), std::string::npos);
+    // And it says what to do, or it is a dead end.
+    EXPECT_NE(r.error().find("dllexport"), std::string::npos);
+}
+
 TEST(CoffExports, RefusesSomethingThatIsNotAnObject) {
     std::vector<std::byte> tiny(4, std::byte{0});
     EXPECT_FALSE(read_exports(tiny));
