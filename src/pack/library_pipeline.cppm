@@ -31,6 +31,7 @@ import mcpp.pack;
 import mcpp.pack.abi_tag;
 import mcpp.pack.interface;
 import mcpp.pack.library;
+import mcpp.platform;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
@@ -117,6 +118,10 @@ export int build_and_pack_library(const std::string& targetName,
     InterfaceClosure closure;
     bool             haveClosure = false;
     std::string      firstTriple;
+    // `[package] platforms` — the support CLAIM, read once. Checked against the
+    // legs after the loop; see there for why only two of the four comparisons
+    // are printable.
+    std::vector<std::string> declaredPlatforms;
 
     for (auto const& want : legs) {
         mcpp::build::BuildOverrides ov;
@@ -257,6 +262,7 @@ export int build_and_pack_library(const std::string& targetName,
             plan.targetName   = targetName;
             plan.targetShared = shared;
             plan.cxxRuntime   = ctx->manifest.buildConfig.cxxRuntime;
+            declaredPlatforms = ctx->manifest.package.platforms;
             plan.dependencies = publishable_dependencies(ctx->manifest);
             plan.extras       = extras_of(ctx->manifest, ctx->projectRoot);
             plan.interfaceSources = closure.published;
@@ -312,6 +318,79 @@ export int build_and_pack_library(const std::string& targetName,
             .shared      = shared,
         });
         mcpp::ui::status("Packed leg", std::format("{}  [{}]", triple, tag.str()));
+    }
+
+    // ── does the package cover what it claims? ─────────────────────────
+    //
+    // `[package] platforms` is a support claim, and `mcpp pack` is where it
+    // first becomes checkable: the legs in this package are the platforms it can
+    // actually serve. Two of the four comparisons are worth printing, and
+    // printing the other two would make the check worse than absent —
+    //
+    //   packed, not declared   always actionable: either the claim is stale, or
+    //                          this package now ships a binary for a platform
+    //                          nobody said it supports.
+    //   declared, not packed   actionable ONLY IF THIS HOST COULD HAVE BUILT IT.
+    //                          The normal flow is one `mcpp pack` per platform in
+    //                          CI, so a Linux runner producing no macos leg is
+    //                          not an omission — it is every single run, and a
+    //                          warning that fires on every run is one nobody
+    //                          reads. `host_can_serve` is the same function that
+    //                          decides which `--target` values are accepted at
+    //                          all, so the warning can only ever name something
+    //                          the author is able to do on this machine.
+    if (!declaredPlatforms.empty()) {
+        auto joined = [&] {
+            std::string s;
+            for (auto const& p : declaredPlatforms) { if (!s.empty()) s += ", "; s += p; }
+            return s;
+        }();
+
+        std::set<std::string> packedOs;
+        for (auto const& leg : plan.legs) {
+            if (auto t = mcpp::toolchain::triple::parse(leg.triple)) packedOs.insert(t->os);
+        }
+
+        for (auto const& os : packedOs) {
+            if (std::ranges::find(declaredPlatforms, os) != declaredPlatforms.end()) continue;
+            mcpp::ui::warning(std::format(
+                "this package ships a {} binary, and `[package] platforms` does "
+                "not list {} (it lists: {}).\n"
+                "  Add it if the support is real; drop the leg if it is not. As "
+                "it stands the manifest disclaims a platform the package serves.",
+                os, os, joined));
+        }
+
+        // Could this host have built a leg for `platform` at all?
+        auto servable_here = [](std::string_view platform) {
+            using mcpp::toolchain::triple::Triple;
+            const std::string arch{ mcpp::platform::host_arch };
+            std::vector<Triple> candidates;
+            if (platform == "linux") {
+                candidates.push_back(Triple{ arch, "linux", "gnu" });
+                candidates.push_back(Triple{ arch, "linux", "musl" });
+            } else if (platform == "windows") {
+                candidates.push_back(Triple{ arch, "windows", "msvc" });
+                candidates.push_back(Triple{ arch, "windows", "gnu" });
+            } else if (platform == "macos") {
+                candidates.push_back(Triple{ arch, "macos", "" });
+            }
+            for (auto const& c : candidates)
+                if (mcpp::toolchain::host_can_serve(c)) return true;
+            return false;
+        };
+
+        for (auto const& want : declaredPlatforms) {
+            if (packedOs.contains(want)) continue;
+            if (!servable_here(want)) continue;   // not this host's job to fix
+            mcpp::ui::warning(std::format(
+                "`[package] platforms` claims {}, and this host can build for it, "
+                "but no {} leg was packed.\n"
+                "  Consumers on {} will resolve this package and find no artifact "
+                "for their target. Add `--target <{}-triple>`, or publish a "
+                "separate package from a {} runner.",
+                want, want, want, want, want));
+        }
     }
 
     // ── where it lands ────────────────────────────────────────────────

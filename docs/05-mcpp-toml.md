@@ -1268,6 +1268,24 @@ The vocabulary is fixed by mcpp (which owns the target/triple system):
 `linux | macos | windows`; unknown values produce a warning, and an error under
 `--strict`.
 
+`mcpp pack` on a library target checks the claim against the legs it actually
+produced, because that is the first moment there is evidence to check it against:
+
+| situation | result |
+|---|---|
+| a leg was packed for a platform not listed here | warning — the manifest disclaims a platform the package demonstrably serves |
+| a listed platform has no leg, **and this host could have built one** | warning — consumers there will resolve the package and find no artifact |
+| a listed platform has no leg and this host cannot build for it | **silent** |
+
+The third row is why the check is usable at all. The normal release flow is one
+`mcpp pack` per platform in CI, so a Linux runner never produces a macOS leg —
+warning about it would fire on every run of every cross-platform package, and a
+warning that always fires hides the one that matters. What "this host could have
+built" means is the same question `--target` answers (docs/08 §7.4).
+
+Both are warnings, never errors: coverage is release discipline, and the person
+who can judge it is looking at the release, not at this build.
+
 ### 2.13 `[xlings]` — Build Environment
 
 ```toml
