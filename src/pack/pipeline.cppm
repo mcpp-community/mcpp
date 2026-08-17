@@ -86,6 +86,12 @@ export int build_and_pack(Options opts, bool modeFromUser,
     mcpp::build::BuildOptions bo;
     auto br = be->build(ctx->plan, bo);
     if (!br) {
+        // The compiler's own output, not just "build failed" — same reason as
+        // in the library pipeline.
+        if (!br.error().diagnosticOutput.empty()) {
+            std::fputs(br.error().diagnosticOutput.c_str(), stderr);
+            if (br.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
+        }
         mcpp::ui::error(br.error().message);
         return 1;
     }
