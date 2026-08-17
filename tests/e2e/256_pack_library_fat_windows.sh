@@ -90,9 +90,12 @@ grep -qE "^\[target\.'$ARCH-" "$pkg/mcpp.toml" && {
     cat "$pkg/mcpp.toml"
     echo "FAIL: a leg is selected by a BARE TRIPLE, which is inert on a native build"
     exit 1; }
-# env= must appear: `os=windows` alone cannot separate these two legs, and a
-# predicate that cannot separate them would hand MSVC consumers the MinGW archive.
-grep -q "env=" "$pkg/mcpp.toml" || {
+# An env axis must appear: `os = "windows"` alone cannot separate these two legs,
+# and a predicate that cannot separate them would hand MSVC consumers the MinGW
+# archive. Matched with optional spaces — the emitted spelling is `env = "msvc"`,
+# and the first version of this grep looked for `env=`, which is nowhere in the
+# file and failed against a package that was perfectly correct.
+grep -qE 'env[[:space:]]*=' "$pkg/mcpp.toml" || {
     cat "$pkg/mcpp.toml"
     echo "FAIL: the predicates carry no env axis, so both legs match both targets"
     exit 1; }
