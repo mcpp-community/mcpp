@@ -710,3 +710,75 @@ clang 构建的二进制,而 clang 构建的 mcpp 在本机会段错误)。
 | e2e | 242–251(10 个) |
 | 文档 | `docs/12-binary-distribution.md` + zh;`docs/02`/`05`/README 索引 |
 | 示例 | `examples/05-lib-distribution/producer`、`examples/05-lib-distribution/consumer` |
+
+
+---
+
+## 12. 深度 review(2026-08-17,PR #451 CI 全绿之后)
+
+### 12.1 245 / 248 在其他平台「没有」的真实原因
+
+**权威答案是 `host_can_serve`(`registry.cppm:542-566`),不是测试的能力表。**
+
+| target | linux host | macOS host | windows host |
+|---|---|---|---|
+| `<hostarch>-linux-gnu` | ✅ | ❌ | ❌ |
+| `*-linux-musl` | ✅ 任意 arch | ❌ | ✅ 仅 host arch |
+| `*-windows-gnu`(mingw) | ✅ | ❌ | ✅ |
+| `*-windows-msvc` | ❌ | ❌ | ✅ |
+| `*-macos` | ❌ | ✅ | ❌ |
+
+- **macOS 只能服务一个 target。** 胖包至少要两条腿 ⇒ 在 macOS 上
+  **结构上不可能**,不是测试没写。代码自己的注释:
+  *"macOS has no Linux-targeting payload at all."*
+- **Windows 能服务三个**(msvc / mingw / linux-musl)⇒ **245 与 248 的等价用例在
+  Windows 上是可行的,只是没做。** 这是**覆盖缺口**,不是产品缺口,而且它有独立价值:
+  `mathkit.lib`(MSVC)+ `libmathkit.a`(MinGW)同处一包,是「`lib/` 必须按三元组分」
+  最强的证据。代价是要在 Windows 的 e2e job 里装 `xim:mingw-gcc`(e2e 97 已经在
+  另一个 job 里装它)。
+- **248 需要一个能产 PE 的工具链**:Linux 上是 `mingw-cross`(现在跑在
+  `cross-build-test.yml` 的 mingw job),Windows 上是原生 mingw/msvc(同上缺口)。
+
+### 12.2 架构:依赖方向是可陈述的不变量
+
+`src/pack/` 现在是两层,**必须保持**:
+
+```
+叶层(prepare 可以 import 它们):  abi_tag  digest  interface  manifest_emit  prebuilt  route  library
+编排层(它 import prepare):        library_pipeline
+```
+
+实测的 import 图里,**只有 `library_pipeline` 碰 `mcpp.build.*`**;而
+`prepare` 只 import `pack.abi_tag` 与 `pack.prebuilt`(两个叶子)。
+**不变量:除 `library_pipeline` 外,`src/pack/` 下不得 import `mcpp.build.*`** ——
+否则 prepare ↔ pack 成环。
+
+三处收敛(都是把「同一个决定的第二处推导」删掉,不是加抽象):
+- `object_filename_for` 从 plan.cppm 搬进 `mcpp.source_kind` —— 策略与格式化同处;
+- 「怎么删归档成员」进 `dialect.cppm` 的 `archiveRemoveArg` —— 与 `archiveCmd` 同处,
+  packer 不再默认 `ar` 语法(**这条是 review 发现的,不是测试发现的**);
+- 解析后的三元组进 `cfgpred::Ctx` —— 删掉裸三元组分支那个第二答题者。
+
+### 12.3 兼容性:两处**故意的**行为变化
+
+| 变化 | 谁会受影响 |
+|---|---|
+| `sources = []` 从「等于不写」变成「什么都不编」 | 真写了它又依赖默认 glob 的工程。此前**无法表达**「什么都不编」,所以这种写法只可能是误解 |
+| 两个文件声明同一个分区 ⇒ 拒绝并点名两个文件 | 本来就 ill-formed 的程序。**但它是一条新的失败路径** |
+
+扫描器的改动**只会增加图上的边**,不会减少 —— 边缺失只可能允许错误的顺序,
+所以不存在「依赖那条缺失边」的工程。
+
+老客户端兼容:**两侧都验了**(静态:生成的 manifest 段 ⊆ 既有词汇,三平台跑;
+真实:2026.8.15.3 消费并运行成功,本机)。⚠️ CI 里真实那半跑不了,因为
+`$MCPP_BOOT` 是 xvm shim(在 e2e 改过的环境里报「未安装」),这一点写在 252 的头部。
+
+### 12.4 仍然开着的五项(合入前请裁决)
+
+| # | 项 | 我的建议 |
+|---|---|---|
+| **O1** | **扫描器改动是全 PR 里影响面最大的一块,而它与打包无关** | **拆成独立 PR 先合**,这样它能被独立 revert;库分发那半 rebase 在它上面 |
+| **O2** | `scan_overrides` 声明的实现分区会被**误判成接口**(`providesInterface` 只在文本扫描路径设 false,`scan_overrides`/P1689 默认 true)⇒ 它的源码会被发布 | 窄洞,而且 `scan_overrides` 的 schema **没有**表达「是否 export」的位置。先记录;要修就是给它加一个键(那会是本方案唯一的新 manifest 键) |
+| **O3** | MSVC 的 `/REMOVE:` 路径**未测试**(mcpp 的 Windows CI 用 clang 的 llvm-ar,走 GNU 形式) | 失败会带命令原文报错,不会静默;要真测需要 `msvc@system` 的 job |
+| **O4** | Windows 上的胖包(msvc + mingw)未覆盖 | 见 §12.1;要在 Windows e2e job 装 `xim:mingw-gcc` |
+| **O5** | 设计 §2.2 承诺的「`--target` 集合与 `[package].platforms` 覆盖比对告警」**没有实现** | 我漏了。它便宜(一次集合比对 + 一条 warning),但属于「发布纪律」而不是正确性,可以随后补 |
