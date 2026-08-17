@@ -11,6 +11,7 @@
 # Also pins the two lists `mcpp pack` prints. A closed-source publisher needs
 # to see what is NOT travelling as much as what is.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -64,6 +65,10 @@ cd mathkit
 "$MCPP" pack mathkit > pack.log 2>&1 || { cat pack.log; echo "pack failed"; exit 1; }
 
 pkg="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
+# The manifest below is FILE CONTENT: on Git Bash a shell-spelled
+# /tmp/... path is read by a native mcpp.exe as "root of the current
+# drive". host_path is the conversion (tests/e2e/_host_path.sh).
+PKG_HOST="$(host_path "$TMP/mathkit/$pkg")"
 [[ -n "$pkg" ]] || { cat pack.log; echo "no package directory"; exit 1; }
 
 # The layout is the contract: two interface modes, one artifact dir per triple.
@@ -88,7 +93,7 @@ consume() {   # $1 = name, $2 = main.cpp body
 name    = "$1"
 version = "0.1.0"
 [dependencies]
-mathkit = { path = "$TMP/mathkit/$pkg" }
+mathkit = { path = "$PKG_HOST" }
 [targets.$1]
 kind = "bin"
 main = "src/main.cpp"

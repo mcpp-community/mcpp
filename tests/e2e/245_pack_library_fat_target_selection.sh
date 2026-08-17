@@ -19,6 +19,7 @@
 # made the whole fat-package mechanism unverified on every ordinary CI run
 # while still reporting a green suite. The PE leg is covered by 248.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -50,6 +51,10 @@ cd mathkit
     || { cat pack.log; echo "fat pack failed"; exit 1; }
 
 pkg="$TMP/mathkit/target/dist/mathkit-0.1.0"
+# The manifest below is FILE CONTENT: on Git Bash a shell-spelled
+# /tmp/... path is read by a native mcpp.exe as "root of the current
+# drive". host_path is the conversion (tests/e2e/_host_path.sh).
+PKG_HOST="$(host_path "$pkg")"
 for t in x86_64-linux-gnu x86_64-linux-musl; do
     [[ -n "$(find "$pkg/lib/$t" -name 'libmathkit.a' | head -1)" ]] || {
         echo "no artifact for $t"; find "$pkg" -type f; exit 1; }
@@ -75,7 +80,7 @@ cat > app/mcpp.toml <<EOF
 name    = "app"
 version = "0.1.0"
 [dependencies]
-mathkit = { path = "$pkg" }
+mathkit = { path = "$PKG_HOST" }
 [targets.app]
 kind = "bin"
 main = "src/main.cpp"

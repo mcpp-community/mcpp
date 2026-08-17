@@ -14,6 +14,7 @@
 # program would have failed to start with a loader error naming a file the user
 # never asked for.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -42,6 +43,10 @@ EOF
 cd mathkit
 "$MCPP" pack mathkit-shared > pack.log 2>&1 || { cat pack.log; echo "shared pack failed"; exit 1; }
 pkg="$TMP/mathkit/$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
+# The manifest below is FILE CONTENT: on Git Bash a shell-spelled
+# /tmp/... path is read by a native mcpp.exe as "root of the current
+# drive". host_path is the conversion (tests/e2e/_host_path.sh).
+PKG_HOST="$(host_path "$pkg")"
 
 libdir="$(dirname "$(find "$pkg/lib" -name 'libmathkit-shared.so' | head -1)")"
 [[ -n "$libdir" ]] || { echo "no .so in the package"; find "$pkg" -type f; exit 1; }
@@ -70,7 +75,7 @@ cat > app/mcpp.toml <<EOF
 name    = "app"
 version = "0.1.0"
 [dependencies]
-mathkit = { path = "$pkg" }
+mathkit = { path = "$PKG_HOST" }
 [targets.app]
 kind = "bin"
 main = "src/main.cpp"

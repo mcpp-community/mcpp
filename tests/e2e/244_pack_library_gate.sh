@@ -12,6 +12,7 @@
 #   2. an artifact for another toolchain → refuse, and LIST the tags it has
 #   3. `mcpp build` inside the package   → refuse (it would "succeed" emptily)
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -39,6 +40,10 @@ EOF
 cd mathkit
 "$MCPP" pack mathkit > pack.log 2>&1 || { cat pack.log; echo "pack failed"; exit 1; }
 pkg="$TMP/mathkit/$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
+# The manifest below is FILE CONTENT: on Git Bash a shell-spelled
+# /tmp/... path is read by a native mcpp.exe as "root of the current
+# drive". host_path is the conversion (tests/e2e/_host_path.sh).
+PKG_HOST="$(host_path "$pkg")"
 cd "$TMP"
 
 mkdir -p app/src
@@ -52,7 +57,7 @@ cat > app/mcpp.toml <<EOF
 name    = "app"
 version = "0.1.0"
 [dependencies]
-mathkit = { path = "$pkg" }
+mathkit = { path = "$PKG_HOST" }
 [targets.app]
 kind = "bin"
 main = "src/main.cpp"
