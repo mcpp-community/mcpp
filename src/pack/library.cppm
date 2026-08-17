@@ -103,6 +103,26 @@ struct LibraryPackError { std::string message; };
 // uses — one derivation, verified from both ends.
 std::expected<std::filesystem::path, LibraryPackError> run_library_pack(const LibraryPackPlan& plan);
 
+// The command that deletes `members` from `archive`, spelled for whichever
+// archiver `tool` is.
+//
+// Exported ONLY so it can be tested. mcpp's Windows CI archives with clang's
+// `llvm-ar`, which takes the GNU spelling, so the MSVC branch below is never
+// executed by any job — and it is the branch that differs in both directions:
+//
+//   ar        one verb, then the archive, then every member
+//               ar d libmathkit.a mathkit.m.o api.m.o
+//   lib.exe   one FLAG PER MEMBER, and the archive comes LAST
+//               lib.exe /REMOVE:mathkit.m.o /REMOVE:api.m.o mathkit.lib
+//
+// Pinning the two constants in dialect.cppm is not enough: the order they are
+// assembled in is a third fact, and it lives here.
+std::string archive_remove_command(const std::filesystem::path& tool,
+                                   const std::filesystem::path& archive,
+                                   const std::vector<std::string>& members,
+                                   std::string_view removeArg,
+                                   bool archiveFirst);
+
 } // namespace mcpp::pack
 
 namespace mcpp::pack {
@@ -134,6 +154,37 @@ std::vector<std::filesystem::path> walk(const std::filesystem::path& root) {
 }
 
 } // namespace
+
+std::string archive_remove_command(const std::filesystem::path& tool,
+                                   const std::filesystem::path& archive,
+                                   const std::vector<std::string>& members,
+                                   std::string_view removeArg,
+                                   bool archiveFirst)
+{
+    std::string cmd = mcpp::platform::shell::quote(tool.string());
+    // `{}` in removeArg means one flag per member (lib.exe /REMOVE:<m>); its
+    // absence means one verb followed by every member (ar d <archive> <m>...).
+    const bool perMember = removeArg.find("{}") != std::string_view::npos;
+    auto member_words = [&] {
+        std::string w;
+        for (auto const& m : members) {
+            if (!perMember) { w += " " + mcpp::platform::shell::quote(m); continue; }
+            std::string arg{ removeArg };
+            arg.replace(arg.find("{}"), 2, m);
+            w += " " + mcpp::platform::shell::quote(arg);
+        }
+        return w;
+    };
+    if (archiveFirst) {
+        if (!perMember) cmd += " " + std::string(removeArg);
+        cmd += " " + mcpp::platform::shell::quote(archive.string());
+        cmd += member_words();
+    } else {
+        cmd += member_words();
+        cmd += " " + mcpp::platform::shell::quote(archive.string());
+    }
+    return cmd;
+}
 
 std::expected<std::filesystem::path, LibraryPackError>
 run_library_pack(const LibraryPackPlan& plan)
@@ -231,29 +282,9 @@ run_library_pack(const LibraryPackPlan& plan)
                 leg.triple, name) });
         }
         if (!leg.shared && !plan.dropObjects.empty()) {
-            std::string cmd = mcpp::platform::shell::quote(leg.archiveTool.string());
-            auto member_words = [&] {
-                std::string w;
-                for (auto const& m : plan.dropObjects) {
-                    // `{}` means one flag per member (LIB.EXE); its absence
-                    // means one verb followed by every member (ar).
-                    auto pos = leg.removeArg.find("{}");
-                    if (pos == std::string::npos) { w += " " + mcpp::platform::shell::quote(m); continue; }
-                    auto arg = leg.removeArg;
-                    arg.replace(pos, 2, m);
-                    w += " " + mcpp::platform::shell::quote(arg);
-                }
-                return w;
-            };
-            if (leg.removeArchiveFirst) {
-                if (leg.removeArg.find("{}") == std::string::npos)
-                    cmd += " " + leg.removeArg;
-                cmd += " " + mcpp::platform::shell::quote(dst.string());
-                cmd += member_words();
-            } else {
-                cmd += member_words();
-                cmd += " " + mcpp::platform::shell::quote(dst.string());
-            }
+            const auto cmd = archive_remove_command(
+                leg.archiveTool, dst, plan.dropObjects,
+                leg.removeArg, leg.removeArchiveFirst);
             auto r = mcpp::platform::process::capture(cmd + " 2>&1");
             if (r.exit_code != 0) {
                 return std::unexpected(LibraryPackError{ std::format(
