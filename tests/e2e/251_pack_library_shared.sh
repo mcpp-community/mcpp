@@ -4,10 +4,20 @@
 # CORRECTLY or refused CLEARLY. Never silently wrong.
 #
 # Both halves, because testing only the working one cannot tell "the gate is
-# handled" from "there is no gate". `kind = "shared"` is ELF-only today
-# (src/build/plan.cppm refuses it and says why), so on macOS and Windows the
-# assertion is that the refusal happens and names the reason — a `# requires:
-# elf` here would have left that side unobserved.
+# handled" from "there is no gate". Which half applies is now a property of the
+# TARGET, not of "is it Linux":
+#
+#   ELF, Mach-O, PE/MinGW   produced — the package carries every name the
+#                           platform needs to link it and to find it later
+#   PE/MSVC                 refused — MSVC exports nothing from a DLL without
+#                           `__declspec(dllexport)`, so the import library would
+#                           be empty and consumers would fail with unresolved
+#                           externals for symbols visibly present in the objects
+#
+# Windows' default toolchain here is clang on the MSVC ABI, so this file sees the
+# refusal there. 258 pins that refusal in detail, 259 pins Mach-O relocatability,
+# 257 pins the PE/MinGW path; what this one adds is that the two outcomes are
+# reachable from the same fixture and the same command.
 #
 # A shared library is LINKED by `lib<target>.so` and FOUND at run time by its
 # SONAME, and those are two different filenames. The first version of this
@@ -48,22 +58,37 @@ EOF
 
 cd mathkit
 
-# ── the non-ELF side: refuse, and say why ──────────────────────────────
-if [[ "$(uname -s)" != "Linux" ]]; then
+# ── Windows: the MSVC ABI is refused, and says what to do instead ──────
+if [[ "$(uname -s)" != "Linux" && "$(uname -s)" != "Darwin" ]]; then
     if "$MCPP" pack mathkit-shared > refuse.log 2>&1; then
         cat refuse.log
-        echo "FAIL: a shared library was packed on a platform that cannot link one"
+        echo "FAIL: a shared library was packed for the MSVC ABI. Its import"
+        echo "      library has no exports, so consumers fail with unresolved"
+        echo "      externals naming symbols that are in the objects."
         exit 1
     fi
-    grep -qi 'shared librar' refuse.log || {
+    grep -qi 'dllexport' refuse.log || {
         cat refuse.log
-        echo "FAIL: it refused, but the message does not say the artifact kind is the problem"
+        echo "FAIL: it refused, but not for the export reason — 'shared libraries"
+        echo "      are not supported here' does not tell the reader what to change."
         exit 1; }
-    grep -qi 'linux\|elf' refuse.log || {
+    grep -qi 'windows-gnu' refuse.log || {
         cat refuse.log
-        echo "FAIL: the refusal does not say where shared libraries DO work"
+        echo "FAIL: the refusal names no way forward. MinGW auto-exports."
         exit 1; }
-    echo "PASS: a shared library package is refused, with the reason, off ELF"
+    echo "PASS: a shared library package is refused on the MSVC ABI, with the reason"
+    exit 0
+fi
+
+# ── macOS: it is produced, and the deep claims live in 259 ──────────────
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    "$MCPP" pack mathkit-shared > pack.log 2>&1 \
+        || { cat pack.log; echo "FAIL: shared pack failed on Mach-O"; exit 1; }
+    macpkg="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
+    [[ -n "$(find "$macpkg" -name 'libmathkit-shared.dylib' | head -1)" ]] || {
+        find "$macpkg" \( -type f -o -type l \)
+        echo "FAIL: no .dylib in the package"; exit 1; }
+    echo "PASS: a shared library package is produced on Mach-O"
     exit 0
 fi
 

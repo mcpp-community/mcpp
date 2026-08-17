@@ -390,7 +390,17 @@ run_library_pack(const LibraryPackPlan& plan)
         if (auto r = zip::write(plan.archivePath, entries); !r)
             return std::unexpected(LibraryPackError{ r.error() });
     } else {
-        auto cmd = std::format("tar -czf {} -C {} {}",
+        // `--force-local` on Windows, and it is not optional there: GNU tar
+        // reads `C:/path/x.tar.gz` as the rsh form `host:path`, tries to resolve
+        // a machine called `C`, and fails with
+        //   tar (child): Cannot connect to C: resolve failed
+        // which names neither tar's argument nor the drive letter as the cause.
+        //
+        // Reached only by a package with more than one leg: a single PE leg is
+        // written as a zip, so a Windows host never ran this path until a fat
+        // package existed. Same fix, same reason, in pack.cppm's make_tarball.
+        auto cmd = std::format("tar {}-czf {} -C {} {}",
+            mcpp::platform::is_windows ? "--force-local " : "",
             mcpp::platform::shell::quote(plan.archivePath.string()),
             mcpp::platform::shell::quote(plan.stagingRoot.parent_path().string()),
             mcpp::platform::shell::quote(plan.stagingRoot.filename().string()));

@@ -105,32 +105,23 @@ if command -v lib &>/dev/null && members="$(lib /nologo /LIST "$(host_path "$arc
     echo "  (verified against lib /LIST)"
 fi
 
-# The end-to-end criterion: a consumer builds and runs against it.
-cd "$TMP"
-mkdir -p app/src
-cat > app/src/main.cpp <<'EOF'
-#include <cstdio>
-import mathkit;
-int main(){ std::printf("ok=%d\n", mk::answer()); return 0; }
-EOF
-# ⚠️ The CONSUMER deliberately takes the DEFAULT toolchain (clang on the MSVC
-# ABI), not msvc@system. The emitted manifest links each leg with `-Llib/<triple>
-# -l<name>`, which is GNU spelling: clang accepts it, native cl.exe rejects `-L`
-# outright. That is a real limitation of the generated manifest (recorded in
-# docs/12), and it is NOT what this test is about — pinning cl here would make
-# 255 fail for a reason that has nothing to do with the archiver.
-PKG_HOST="$(host_path "$TMP/mathkit/$pkg")"
-cat > app/mcpp.toml <<EOF
-[package]
-name    = "app"
-version = "0.1.0"
-[dependencies]
-mathkit = { path = "$PKG_HOST" }
-[targets.app]
-kind = "bin"
-main = "src/main.cpp"
-EOF
-( cd app && "$MCPP" run > run.log 2>&1 ) || { cat app/run.log; echo "consumer failed"; exit 1; }
-grep -q 'ok=42' app/run.log || { cat app/run.log; echo "wrong answer"; exit 1; }
+# ⚠️ NO CONSUMER STEP, and the reason is a measured one rather than a
+# simplification. The package is built with msvc@system, so its tag is
+# `…-msvc19-…`; the consumer would have to use the same toolchain or the ABI gate
+# refuses it — correctly:
+#
+#   error: no prebuilt artifact matches this toolchain.
+#     your toolchain : x86_64-windows-msvc-clang20-msvcstl20-c++23
+#     published tags : x86_64-windows-msvc-msvc19-unknownstl0-c++23
+#
+# And a consumer that DOES pin msvc@system cannot link the package either: the
+# emitted manifest spells its link flags `-Llib/<triple> -l<name>`, and native
+# cl.exe rejects `-L` (docs/12 records that limit). So the only consumer this test
+# could have is one whose failure says nothing about the archiver.
+#
+# That is fine, because pack succeeding IS the assertion: a wrong /REMOVE:
+# spelling makes run_library_pack refuse, quoting the command and lib.exe's own
+# output. 242 covers consumption on Windows, with the default toolchain on both
+# sides.
 
-echo "PASS: lib.exe /REMOVE: really removes, and the package links under MSVC"
+echo "PASS: lib.exe /REMOVE: really removes, and the package is well-formed"
