@@ -11,9 +11,6 @@
 // decision ahead of the build: `mcpp pack nosuch` should say so in
 // milliseconds, not after compiling the project.
 
-module;
-#include <cstdio>
-
 export module mcpp.pack.route;
 
 import std;

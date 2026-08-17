@@ -63,7 +63,7 @@ void print_usage() {
     std::println("  mcpp update [pkg]                    Re-resolve deps and rewrite mcpp.lock");
     std::println("  mcpp search <keyword>                Search packages in registries");
     std::println("  mcpp publish [--dry-run]             Publish package to default registry");
-    std::println("  mcpp pack [--mode <m>]               Build + bundle an archive (m: system|vendored|self-contained|static)");
+    std::println("  mcpp pack [target]                   Build + package (program: bundle; library: interface + binaries)");
     std::println("  mcpp emit xpkg [-V VER] [-o FILE]    Generate xpkg Lua entry");
     std::println("  mcpp xpkg parse <file.lua> [--json]  Validate an xpkg descriptor (resolver grammar)");
     std::println("");
@@ -405,7 +405,12 @@ int run(int argc, char** argv) {
             // than a plain directory" — WHICH archive follows the artifact,
             // because a .tar.gz full of DLLs is a package most Windows users
             // cannot open without installing something first.
-            .description("Build + bundle into a self-contained archive")
+            // Says both shapes, because `[targets.<n>].kind` picks between them
+            // and the one-line help is where a reader finds that out. "Bundle
+            // into a self-contained archive" described only the program case,
+            // which is now half of what this command does.
+            .description("Build + package: a program becomes a self-contained "
+                         "bundle, a library an interface + prebuilt binaries")
             // NB: a target NAME from [targets.*], not a triple — the same
             // split `mcpp run [target]` has. Its `kind` decides what is
             // packed, so there is no --lib and no --artifact: a program

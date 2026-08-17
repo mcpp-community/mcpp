@@ -14,9 +14,6 @@
 //
 // Design: .agents/docs/2026-08-17-library-distribution-design.md §2.
 
-module;
-#include <cstdio>
-
 export module mcpp.pack.library_pipeline;
 
 import std;
