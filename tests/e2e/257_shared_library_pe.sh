@@ -98,12 +98,13 @@ cat > app/src/main.cpp <<'EOF'
 import mathkit;
 int main(){ std::printf("ok=%d\n", mk::answer()); return 0; }
 EOF
+PKG_HOST="$(host_path "$pkg")"
 cat > app/mcpp.toml <<EOF
 [package]
 name    = "app"
 version = "0.1.0"
 [dependencies]
-mathkit = { path = "$(host_path "$pkg")" }
+mathkit = { path = "$PKG_HOST" }
 [targets.app]
 kind = "bin"
 main = "src/main.cpp"

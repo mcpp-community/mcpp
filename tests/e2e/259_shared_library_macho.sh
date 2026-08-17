@@ -80,8 +80,11 @@ pkgrel="$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0*' | head -1)
 # OUT of the producer's tree, so the next step can delete that tree entirely.
 pkg="$TMP/pkg"
 cp -R "$TMP/mathkit/$pkgrel" "$pkg"
-[[ -f "$pkg/lib/"*"/libmathkit.dylib" ]] 2>/dev/null || {
-    find "$pkg" -type f -o -type l
+# `find`, not `[[ -f "$pkg/lib/"*"/libmathkit.dylib" ]]`: inside `[[ ]]` the `*`
+# is not path-expanded, so that form tests a literal string containing an
+# asterisk and is false for every real package — a check that can only fail.
+[[ -n "$(find "$pkg/lib" -name 'libmathkit.dylib' | head -1)" ]] || {
+    find "$pkg" \( -type f -o -type l \)
     echo "FAIL: no dylib in the package"; exit 1; }
 
 # ── 4. the producer's build tree is deleted, then the consumer runs ──────
@@ -97,12 +100,13 @@ cat > app/src/main.cpp <<'EOF'
 import mathkit;
 int main(){ std::printf("ok=%d\n", mk::answer()); return 0; }
 EOF
+PKG_HOST="$(host_path "$pkg")"
 cat > app/mcpp.toml <<EOF
 [package]
 name    = "app"
 version = "0.1.0"
 [dependencies]
-mathkit = { path = "$(host_path "$pkg")" }
+mathkit = { path = "$PKG_HOST" }
 [targets.app]
 kind = "bin"
 main = "src/main.cpp"

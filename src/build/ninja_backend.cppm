@@ -1826,10 +1826,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // agrees with — the name belongs to plan.cppm's import_library_for, and
         // this is how it gets to the command. The SPELLING belongs to the
         // dialect table, same as `archiveRemoveArg`.
-        if (!lu.importLibrary.empty() && !dial.sharedImportLibArg.empty()) {
+        if (!lu.importLibrary.empty()) {
             std::string arg{ dial.sharedImportLibArg };
-            arg.replace(arg.find("{}"), 2, escape_ninja_path(lu.importLibrary));
-            out_line += "  implib_flag = " + arg + "\n";
+            // `{}` or nothing: a row without the placeholder cannot say WHERE to
+            // write, so emitting its bare text would hand the linker a flag with
+            // no argument. Skipping is the honest reading of an empty row, and
+            // the implicit output above then fails loudly as a missing file
+            // rather than quietly linking against a stale one.
+            if (auto at = arg.find("{}"); at != std::string::npos) {
+                arg.replace(at, 2, escape_ninja_path(lu.importLibrary));
+                out_line += "  implib_flag = " + arg + "\n";
+            }
         }
         {
             // Per-unit C++ runtime link, by ROLE. The kind→role map is the

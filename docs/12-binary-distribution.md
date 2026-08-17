@@ -333,3 +333,50 @@ warning: secret.cppm is an implementation partition, and the published interface
 > Build order was unconstrained: GCC and macOS clang recovered through their own
 > dependency scan, Windows clang failed with `failed to read compiled module`.
 > If you have been avoiding implementation partitions on Windows, that was why.
+
+### A partition mcpp cannot classify
+
+`[scan_overrides."<glob>"]` says which modules a file provides and has nowhere to
+say whether the declaration carries `export`; a P1689 scanner may omit
+`is-interface`. Either way the source is published — the consumer cannot build the
+BMI without it — and `mcpp pack` says which of the two situations you are in:
+
+```
+warning: secret.cppm provides a module PARTITION and mcpp cannot tell which kind:
+         the unit is declared in `[scan_overrides]`, which has nowhere to say
+         whether the declaration carries `export`, …
+```
+
+> Until 2026.8.17.2 that arrived as "it is an interface" — the answer that
+> produces **no** warning — so an implementation partition declared that way was
+> published in silence. Publishing too few sources fails the consumer's compile
+> and names the module; publishing too many ships private source and nothing
+> fails at all. Unknown has to be loud.
+
+## How much of this is verified, and where
+
+The e2e suite gates each test on host capabilities, so "the suite is green" and
+"this ran" are different statements. What runs where:
+
+| claim | linux | macOS | windows |
+|---|---|---|---|
+| layout, both interface modes, closure, the two gates, workspace root, named target, `sources = []`, bare-triple predicate | ✅ | ✅ | ✅ |
+| fat package, two legs one artifact name (`gnu` + `musl`) | ✅ | *impossible* | — |
+| fat package, two legs **two** artifact names (`msvc` + `mingw`) | — | *impossible* | ✅ |
+| fat package crossing an OS boundary (a PE leg) | ✅ | — | — |
+| `lib.exe /REMOVE:` really removing | — | — | ✅ |
+| PE shared library: build, pack, link, run | ✅ (wine) | — | — |
+| Mach-O shared library relocating out of its build tree | — | ✅ | — |
+| MSVC refusing `kind = "shared"` for the export reason | — | — | ✅ |
+| a released mcpp consuming a package this one produced | local only | local only | local only |
+
+*impossible* is not a gap: a macOS host can serve exactly one target
+(`host_can_serve`, `registry.cppm`), so a package with two legs cannot be produced
+there at all.
+
+The last row is honest about a real hole: each CI job bootstraps from a released
+mcpp, but that entry is an xvm **shim**, and under the e2e suite's environment it
+answers "not installed". So the static half of the old-client check (the generated
+manifest uses no section a previous mcpp cannot read) runs everywhere, and the
+real half — build against the package with the previous release — has been run by
+hand, not by CI.

@@ -301,3 +301,44 @@ warning: secret.cppm is an implementation partition, and the published interface
 > 的单元」到「定义分区的单元」的边,构建顺序无约束:GCC 与 macOS clang 靠各自的
 > 依赖扫描兜住了,**Windows clang 以 `failed to read compiled module` 失败**。
 > 如果你一直在 Windows 上回避实现分区,原因就是这个。
+
+### mcpp 判不出类别的分区
+
+`[scan_overrides."<glob>"]` 说的是文件提供哪些模块,**没有地方能说**那条声明是否
+带 `export`;P1689 扫描器也可能省略 `is-interface`。两种情况下源码都会被发布 ——
+消费者没有它就编不出 BMI —— 而 `mcpp pack` 会告诉你你处在哪一种:
+
+```
+warning: secret.cppm provides a module PARTITION and mcpp cannot tell which kind:
+         the unit is declared in `[scan_overrides]`, which has nowhere to say
+         whether the declaration carries `export`, …
+```
+
+> 在 2026.8.17.2 之前,这种情况以「它是接口」到达 —— 那个**不产生任何警告**的答案 ——
+> 于是这样声明的实现分区被一声不响地发布了。**发布得太少**会让消费者编译失败并点名
+> 模块;**发布得太多**会把私有源码发出去,而什么都不会失败。未知必须出声。
+
+## 这些说法验证到哪一步、在哪台机器上
+
+e2e 套件按宿主能力给每条测试开门,所以「套件是绿的」和「这条跑了」是两句不同的话。
+实际跑在哪里:
+
+| 说法 | linux | macOS | windows |
+|---|---|---|---|
+| 布局、两种接口模式、闭包、两道闸门、workspace 根、指名 target、`sources = []`、裸三元组谓词 | ✅ | ✅ | ✅ |
+| 胖包,两条腿**同一个**产物名(`gnu` + `musl`) | ✅ | *不可能* | — |
+| 胖包,两条腿**两个**产物名(`msvc` + `mingw`) | — | *不可能* | ✅ |
+| 跨 OS 边界的胖包(一条 PE 腿) | ✅ | — | — |
+| `lib.exe /REMOVE:` 真的删掉了 | — | — | ✅ |
+| PE 共享库:产出、打包、链接、运行 | ✅(wine) | — | — |
+| Mach-O 共享库离开构建树仍可加载 | — | ✅ | — |
+| MSVC 以「导出」为理由拒绝 `kind = "shared"` | — | — | ✅ |
+| 已发布的 mcpp 消费本版产出的包 | 仅本机 | 仅本机 | 仅本机 |
+
+*不可能* 不是缺口:macOS 宿主只能服务一个 target(`host_can_serve`,
+`registry.cppm`),那里根本产不出两条腿的包。
+
+最后一行如实记录一个真的洞:每个 CI job 都从一份已发布的 mcpp 自举,但那个入口是
+xvm 的 **shim**,在 e2e 套件改过的环境里它回答「未安装」。所以老客户端检查的
+**静态那半**(生成的 manifest 不含任何旧 mcpp 读不了的段)到处都跑,而**真实那半** ——
+用上一版发布的 mcpp 去构建这个包 —— 是**手工跑的,不是 CI 跑的**。

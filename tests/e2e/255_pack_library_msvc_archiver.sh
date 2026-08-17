@@ -119,12 +119,13 @@ EOF
 # outright. That is a real limitation of the generated manifest (recorded in
 # docs/12), and it is NOT what this test is about — pinning cl here would make
 # 255 fail for a reason that has nothing to do with the archiver.
+PKG_HOST="$(host_path "$TMP/mathkit/$pkg")"
 cat > app/mcpp.toml <<EOF
 [package]
 name    = "app"
 version = "0.1.0"
 [dependencies]
-mathkit = { path = "$(host_path "$TMP/mathkit/$pkg")" }
+mathkit = { path = "$PKG_HOST" }
 [targets.app]
 kind = "bin"
 main = "src/main.cpp"
