@@ -4485,7 +4485,12 @@ prepare_build(bool print_fingerprint,
                     if (pr.provider >= packages.size()) continue;
                     auto const& depPkg = packages[pr.provider];
                     auto const& canon = depPkg.manifest.package.name;
-                    auto rel = mcpp::manifest::resolve_lib_root_path(depPkg.manifest);
+                    // PROBING form: a host-module dependency whose interface
+                    // is `.ixx` resolves to a `src/<tail>.cppm` that does not
+                    // exist, and the consumer's build.mcpp is then handed a
+                    // path to nothing.
+                    auto rel = mcpp::manifest::resolve_lib_root_path(
+                        depPkg.manifest, depPkg.root);
                     hostModulesByConsumer[c].emplace_back(canon, depPkg.root / rel);
                 }
             }
