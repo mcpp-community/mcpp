@@ -1460,6 +1460,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) continue;   // the conditional channel
+                // ...and arrays, which this sweep was never about. It checks
+                // SCALARS ("a scalar that does nothing"), and `runner` is an
+                // array read a few lines above — reaching here it was reported
+                // as "unsupported key 'runner' (ignored)" while in fact being
+                // honoured, which is worse than either being true.
+                if (value.is_array()) continue;
                 bool known = false;
                 for (auto k : kKnownTargetScalars) if (key == k) { known = true; break; }
                 if (known) continue;

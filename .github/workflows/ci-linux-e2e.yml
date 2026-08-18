@@ -132,10 +132,18 @@ jobs:
 
       - name: Install the emulator (xim:qemu-riscv)
         run: |
+          # ⚠️ BOTH homes. The shim on PATH dispatches against whichever home
+          # owns it, and `mcpp run` runs the runner through that shim — so an
+          # emulator installed only in the ambient xlings home answers
+          # "xlings: 'qemu-system-riscv64' is not installed" when mcpp asks.
+          # Measured: the job installed it once, the shim resolved, and the
+          # run still failed.
           "$XLINGS_BIN" install xim:qemu-riscv -y
-          # Assert it is reachable BEFORE the suite runs. Without this the
-          # capability probe simply would not add `qemu-riscv`, and the test
-          # would skip — which is what this job exists to prevent.
+          XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
+            "$XLINGS_BIN" install xim:qemu-riscv -y
+          # Assert it is reachable AND runnable BEFORE the tests. Without this
+          # the capability probe simply would not add `qemu-riscv` and the
+          # tests would skip — which is what this job exists to prevent.
           command -v qemu-system-riscv64
           qemu-system-riscv64 --version | head -1
           # The target sysroot, into the home MCPP uses. Test 131's BSP
