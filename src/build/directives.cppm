@@ -467,12 +467,27 @@ std::optional<std::string> protocol_error(const Directives& d) {
         std::string list;
         for (auto const& k : d.unknownKeys)
             list += (list.empty() ? "" : ", ") + ("mcpp:" + k);
+        // ⚠️ NOT "so it must be a typo".
+        //
+        // That is what this said, and adding `link-script` in protocol 3
+        // proved it wrong: a package written against a newer mcpp reaches an
+        // older one with the OLDER engine's protocol number stamped on it —
+        // the announcement is substituted at build.mcpp compile time by
+        // whichever engine is running, not carried by the package. So the two
+        // numbers agreeing says nothing about whether the KEY is from the
+        // future, and an old mcpp cannot tell the two cases apart. Naming both
+        // is the only honest thing it can do, and the upgrade is the cheaper
+        // one to try first.
         return std::format(
             "build.mcpp emitted directive(s) this mcpp does not know: {}.\n"
-            "       The program announced protocol {}, which this mcpp also "
-            "speaks, so an unrecognized directive is a typo rather than newer "
-            "syntax.",
-            list, d.protocol);
+            "       Either the package was written for a newer mcpp (try "
+            "`mcpp self update`),\n"
+            "       or the directive is misspelled. This mcpp speaks protocol "
+            "{}; the protocol number\n"
+            "       cannot distinguish the two, because it is stamped by "
+            "whichever mcpp compiled\n"
+            "       the program, not by the package.",
+            list, kProtocolVersion);
     }
     return std::nullopt;
 }
