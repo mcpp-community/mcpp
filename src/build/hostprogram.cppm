@@ -50,6 +50,10 @@ inline void generated(const char* path)           { std::printf("mcpp:generated=
 inline void source(const char* path)              { std::printf("mcpp:source=%s\n", path); }
 inline void include_dir(const char* dir)          { std::printf("mcpp:include-dir=%s\n", dir); }
 inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-dir-after=%s\n", dir); }
+// The memory layout for a freestanding link. Reaches the CONSUMER's link line
+// (like link_lib/link_search, unlike include_dir), because the package that
+// knows a board's layout is not the package being built.
+inline void link_script(const char* path)         { std::printf("mcpp:link-script=%s\n", path); }
 // ── Build-graph nodes (mcpp 2026.8.5.1+) ────────────────────────────────
 // Declare WORK instead of doing it. A build program is a good place to decide
 // what the build looks like and a bad place to perform it: work done here is
@@ -185,6 +189,45 @@ inline const char* dep_dir(const char* name) {
     buf[o++] = '_'; buf[o++] = 'D'; buf[o++] = 'I'; buf[o++] = 'R'; buf[o] = 0;
     return env_or(buf);
 }
+// The payload directory of a package declared in `[xlings] deps`.
+//
+// An INTERFACE, not a naming convention. `dep_dir` answers for mcpp
+// dependencies and cannot answer for xlings ones: they are a different
+// namespace with a different store layout, and a build.mcpp that reconstructed
+// `<home>/data/xpkgs/<ns>-x-<name>/<version>` itself would be encoding store
+// internals that mcpp is free to change — the exact thing `dep_dir` exists to
+// avoid ("instead of reverse-engineering the store layout").
+//
+// Ask with the spelling the manifest used:
+//
+//     deps = ["xim:picolibc-riscv@1.8.12"]
+//     xpkg_dir("xim", "picolibc-riscv")   // exact, and preferred
+//     xpkg_dir("picolibc-riscv")          // bare name
+//
+// The namespaced form is tried first and answers only for a package declared
+// under that namespace. The bare form is a convenience for the common single
+// declaration; when two namespaces declare the same name, only the namespaced
+// form can say which one is meant, and the bare one answers for the first
+// declared. Returns "" when the package was not declared or is not installed —
+// a caller that needs it should say so itself, because only it knows whether
+// the absence is fatal.
+inline const char* xpkg_dir(const char* ns, const char* name) {
+    char buf[256] = "MCPP_XPKG_";
+    unsigned long o = 10;
+    auto put = [&](const char* s) {
+        for (const char* p = s; *p && o + 6 < sizeof buf; ++p, ++o) {
+            char c = *p;
+            buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+                   : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+        }
+    };
+    if (ns && *ns) { put(ns); if (o + 6 < sizeof buf) buf[o++] = '_'; }
+    put(name);
+    buf[o++] = '_'; buf[o++] = 'D'; buf[o++] = 'I'; buf[o++] = 'R'; buf[o] = 0;
+    return env_or(buf);
+}
+inline const char* xpkg_dir(const char* name) { return xpkg_dir("", name); }
+
 // mcpp#355: absolute path to a HOST tool built by a dependency — the binary
 // behind one of its `kind = "bin"` targets. Returns "" unless the consumer
 // declared it:  <dep> = { version = "…", tools = ["protoc"] }

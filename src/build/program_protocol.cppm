@@ -45,7 +45,7 @@ export namespace mcpp::build::program_protocol {
 // number than this must refuse: it cannot know what it is being asked to do,
 // and "warn and ignore" would turn that into a silently different build.
 // v2 (#359): adds `rerun-if-changed-glob`.
-inline constexpr int kProtocolVersion = 2;
+inline constexpr int kProtocolVersion = 3;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

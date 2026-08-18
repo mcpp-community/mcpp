@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
-# requires: llvm qemu-riscv unix-shell
+# requires-hard: llvm qemu-riscv unix-shell
 # Bare metal, end to end: `mcpp build --target riscv64-none-elf` produces a
 # RISC-V firmware image from a C++20 MODULE interface unit plus assembly, and
 # `mcpp run --target-triple` boots it in qemu.
 #
-# ⚠️ SOFT `requires:`, and the guard lives elsewhere on purpose.
-#
-# `requires-hard:` (missing capability FAILS instead of skipping) exists and is
-# the right tool for "this runner is misconfigured" — but it cannot express
-# THIS test's condition. qemu-riscv is legitimately absent on the macOS and
-# Windows e2e runners, so a hard token here would make those jobs
-# structurally red forever, which is a worse failure than the one it prevents.
-#
-# The thing that must not happen — this test silently skipping on the runner
-# that is supposed to run it, leaving the bare-metal chain unexercised while
-# the job stays green — is guarded in ci-linux-e2e.yml, which installs
-# qemu-riscv and then asserts this test's PASS line actually appeared. A guard
-# belongs where it can be exact.
+# ⚠️ `requires-hard`, not `requires`. Every capability here is one a runner
+# that runs this file is supposed to have: llvm is mcpp's own payload and
+# qemu-riscv is an xim package. Declared the soft way, a runner that lost
+# either would report SKIP — indistinguishable from "inapplicable on this
+# platform" — and the one test that proves the bare-metal chain works would
+# stop running while the job stayed green. That has happened twice in this
+# repository already.
 #
 # What each assertion is FOR (none of them is decoration):
 #

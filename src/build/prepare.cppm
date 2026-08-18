@@ -3126,6 +3126,32 @@ prepare_build(bool print_fingerprint,
     // declarations reached build.mcpp; with re-export, two packages that never
     // heard of each other can share a tail and the later emplace_back would
     // silently win.
+    // The xlings half of fillDepDirs. Same question ("where did my declared
+    // dependency's payload land"), different namespace and store layout, so it
+    // cannot ride the mcpp dependency channel — but it must be an INTERFACE on
+    // the build.mcpp side for the same reason that one is: a program that
+    // reconstructs the store path is coupled to internals mcpp is free to
+    // change. See mcpp::build::hostprogram::xpkg_dir.
+    auto fillXpkgDirs = [&](mcpp::build::BuildProgramEnv& e,
+                            const mcpp::manifest::Manifest& owner) {
+        if (owner.xlings.deps.empty()) return;
+        auto cfg = get_cfg();
+        if (!cfg) return;
+        auto xlEnv = mcpp::config::make_xlings_env(**cfg);
+        for (auto const& spec : owner.xlings.deps) {
+            auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
+            auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref);
+            if (!dir) continue;   // declared but not installed: "" is the answer
+            // Namespaced first — it is the exact spelling, and the bare form
+            // below must not shadow it (the receiver keeps the first value it
+            // is given for a name).
+            e.xpkgDirs.emplace_back(
+                mcpp::build::xpkg_env_var(ref.ns, ref.name), dir->string());
+            e.xpkgDirs.emplace_back(
+                mcpp::build::xpkg_env_var("", ref.name), dir->string());
+        }
+    };
+
     auto fillDepDirs = [&](mcpp::build::BuildProgramEnv& e, std::size_t consumer) {
         if (consumer >= provisionGraph.visible.size()) return;
         auto bind = bareBindingsFor(consumer);
@@ -4918,6 +4944,10 @@ prepare_build(bool print_fingerprint,
             // (mergeActiveFeatureDeps folded them in before the edges were
             // recorded). Shared owner — see fillDepDirs.
             fillDepDirs(bpEnv, i);
+            // …and the xlings packages this package itself declared. Its own
+            // manifest, not the root's: a dependency's `[xlings] deps` is what
+            // its build.mcpp asks about.
+            fillXpkgDirs(bpEnv, packages[i].manifest);
             // #355: the host tools THIS package requested (resolved above).
             if (auto tit = toolEnvByConsumer.find(i); tit != toolEnvByConsumer.end())
                 bpEnv.toolPaths = tit->second;
@@ -5051,6 +5081,7 @@ prepare_build(bool print_fingerprint,
         bpEnv.features     = feature_closure(*m, parse_feature_request(overrides.features));
         // mcpp#241 (root): consumer index 0, same owner as the dep loop.
         fillDepDirs(bpEnv, 0);
+        fillXpkgDirs(bpEnv, *m);
         // #355: the host tools the ROOT package requested (consumer index 0).
         if (auto tit = toolEnvByConsumer.find(0u); tit != toolEnvByConsumer.end())
             bpEnv.toolPaths = tit->second;

@@ -88,6 +88,19 @@ inline std::vector<std::string> compile_flags(const Spec& s) {
     if (!s.mcmodel.empty())
         out.emplace_back(std::string("-mcmodel=") + std::string(s.mcmodel));
     out.emplace_back("-ffreestanding");
+    // ⚠️ No C++ standard library headers. Not a preference — the toolchain's
+    // libc++ headers are built for the HOST: `#include <stdio.h>` resolves to
+    // libc++'s wrapper, which opens `<__config_site>`, which is generated per
+    // installation for the host configuration and is simply absent for this
+    // target. The error reads as a broken payload
+    // (`'__config_site' file not found`) and says nothing about the target.
+    //
+    // A target-side C++ library is an ordinary package, and the way it reaches
+    // a consumer is a MODULE, not an include path: `include-dir` is
+    // package-private by design (the supply-chain rule in
+    // mcpp.build.directives), so a libc wrapper includes the target headers
+    // privately and exports what it wants seen.
+    out.emplace_back("-nostdinc++");
     return out;
 }
 

@@ -524,12 +524,34 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // binutilsPrefix / runtimeLibDirs stay off here: this function computes
     // -B separately into f.bFlag, and routes runtime dirs through
     // depRuntimeLibraryDirs.
-    {
+    // Is this build for a target with no OS under it? Asked once, here, and
+    // used by both the compile block immediately below and the link block at
+    // the end of this function.
+    const bool isFreestandingTarget = [&] {
+        auto ft = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return ft && ft->is_freestanding();
+    }();
+
+    if (!isFreestandingTarget) {
         mcpp::toolchain::HostFlagOptions hopt;
         hopt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
         hopt.macosDeploymentTarget = macosDeploymentTarget;
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
+    } else {
+        // ⚠️ Skipped entirely, not filtered. What this block emits is the
+        // HOST's world reconstructed by hand — libc++'s headers, glibc's
+        // headers, the Linux UAPI headers — because the cfg that normally
+        // supplies them is bypassed. Every one of those is for the host, and
+        // on a freestanding target they do not merely go unused: picolibc's
+        // own <stdio.h> includes <stddef.h>, which then resolves to libc++'s
+        // copy, which opens a `__config_site` generated for the host and
+        // absent here. Measured — and the error names __config_site, so it
+        // reads as a broken payload rather than as the wrong include path.
+        //
+        // The cfg bypass itself is still required (the cfg carries a hardcoded
+        // x86-64 dynamic linker); it is added to the freestanding prefix.
+        compile_toolchain_flags = " --no-default-config";
     }
     if (isClangWithCfg) {
         llvmRootForStdlib = dm.llvmRoot;
@@ -1255,10 +1277,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // carries only their ordering, which is the one thing a `build.mcpp`
     // cannot express (`link-search`/`link-lib` are unordered, and there is no
     // verbatim ldflag directive — deliberately).
-    if (auto ft = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        ft && ft->is_freestanding())
-    {
-        if (auto spec = mcpp::freestanding::resolve(*ft)) {
+    if (isFreestandingTarget) {
+        if (auto spec = mcpp::freestanding::resolve(
+                *mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))) {
             const auto prefix = mcpp::freestanding::compile_prefix(*spec);
             f.cxx += prefix;
             f.cc  += prefix;

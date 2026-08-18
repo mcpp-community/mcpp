@@ -138,6 +138,13 @@ jobs:
           # would skip — which is what this job exists to prevent.
           command -v qemu-system-riscv64
           qemu-system-riscv64 --version | head -1
+          # The target sysroot, into the home MCPP uses. Test 131's BSP
+          # declares it as an `[xlings] deps` entry and finds it through
+          # `xpkg_dir`; installed into the ambient xlings home instead, the
+          # test would SKIP and the seam would go unexercised.
+          XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
+            "$XLINGS_BIN" install xim:picolibc-riscv -y
+          test -d "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-picolibc-riscv"
 
       - name: Bare-metal e2e
         timeout-minutes: 25
@@ -151,13 +158,15 @@ jobs:
           # llvm is the toolchain a freestanding target pins; install it
           # explicitly rather than relying on whatever the sandbox cache holds.
           "$MCPP" toolchain install llvm 22.1.8
-          bash tests/e2e/run_all.sh 130 2>&1 | tee e2e.log
-          # The assertion this job exists for: the test RAN. `run_all.sh`
+          bash tests/e2e/run_all.sh 13 2>&1 | tee e2e.log
+          # The assertion this job exists for: the tests RAN. `run_all.sh`
           # exits 0 on a skip, so its exit code cannot answer this.
           grep -q 'PASS: freestanding riscv64 build + run' e2e.log || {
-            echo "the bare-metal e2e did not run (skipped?) — see above"; exit 1; }
-          if grep -q '^SKIP: 130' e2e.log; then
-            echo "the bare-metal e2e SKIPPED on the runner that must run it"; exit 1
+            echo "130 (engine chain) did not run — see above"; exit 1; }
+          grep -q 'PASS: BSP supplies the sysroot' e2e.log || {
+            echo "131 (ecosystem chain) did not run — see above"; exit 1; }
+          if grep -qE '^SKIP: 13[01]' e2e.log; then
+            echo "a bare-metal e2e SKIPPED on the runner that must run it"; exit 1
           fi
 
   # ──────────────────────────────────────────────────────────────────

@@ -49,6 +49,7 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:source=<path>` *(0.0.100+)*  | 把一份**既有**源文件选入构建(绝对路径,或相对包根)。下游效果与 `generated=` 相同;语义区别在于文件是程序*选中*的(tarball payload / vendored 源树)而非程序写出的——例如对大型源码包做 per-target 源选择 |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
+| `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:rerun-if-changed=<path>`     | 该文件变化时重跑 `build.mcpp` |
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
 
@@ -92,7 +93,34 @@ int main() {
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` —— 匹配 `pat` 的文件**集合**发生变化时重跑(见下) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
+| `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
+| `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | 本 manifest 在 `[xlings] deps` 里声明的包的载荷目录;没声明或没安装时返回 `""`(见下) |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` —— **声明一个构建图节点**,而不是在这里把活干了(见下) |
+
+### 找到 `[xlings] deps` 的载荷:`xpkg_dir`(2026.8.19+)
+
+`dep_dir` 回答的是 **mcpp** 依赖。xlings 包是另一个命名空间、另一套 store 布局,
+`xpkg_dir` 是它的接口:
+
+```cpp
+// mcpp.toml
+//   [xlings]
+//   deps = ["xim:picolibc-riscv@1.8.12"]
+
+const char* sysroot = mcpp::xpkg_dir("xim", "picolibc-riscv");   // 精确
+const char* same    = mcpp::xpkg_dir("picolibc-riscv");          // 裸名
+```
+
+带命名空间的形式只对该命名空间下声明的包作答,应当优先使用;裸名形式是常见的单条
+声明的便利写法,两个命名空间都声明同一个名字时,它回答**先声明**的那个。两者在包
+未声明或未安装时都返回 `""` —— 缺失是否致命只有调用方知道,所以由它自己说。
+
+做成接口而不是给一条路径约定,是因为另一种做法是让构建程序把
+`<home>/data/xpkgs/<ns>-x-<name>/<version>` 写进代码,而那是 mcpp 可以随时改的
+store 内部结构 —— 与 `dep_dir` 存在的理由相同。
+
+⚠️ **带版本固定**的引用只解析到那个版本,否则什么都不返回。请求 `1.8.12` 却静默拿
+到 `1.9.0`,是那种要到产物里才被发现的答案。
 
 ### 依赖产出的 host 工具(2026.8.5.1+)
 

@@ -52,6 +52,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:source=<path>` *(0.0.100+)*  | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
+| `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:rerun-if-changed=<path>`     | re-run `build.mcpp` when this file changes |
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
 
@@ -99,7 +100,38 @@ int main() {
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` — re-run when the **set** of files matching `pat` changes (see below) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | reads `MCPP_DEP_<PKG>_BIN_<TOOL>` — the absolute path of a **host tool** built by a dependency (see below) |
+| `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
+| `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package this manifest declared in `[xlings] deps`; `""` when it was not declared or is not installed (see below) |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` — declares a **build-graph node** instead of doing the work here (see below) |
+
+### Finding an `[xlings] deps` payload: `xpkg_dir` (2026.8.19+)
+
+`dep_dir` answers for **mcpp** dependencies. An xlings package is a different
+namespace with a different store layout, and `xpkg_dir` is the interface for it:
+
+```cpp
+// mcpp.toml
+//   [xlings]
+//   deps = ["xim:picolibc-riscv@1.8.12"]
+
+const char* sysroot = mcpp::xpkg_dir("xim", "picolibc-riscv");   // exact
+const char* same    = mcpp::xpkg_dir("picolibc-riscv");          // bare name
+```
+
+The namespaced form answers only for a package declared under that namespace
+and is the one to prefer; the bare form is a convenience for the common single
+declaration, and when two namespaces claim one name it answers for the first
+**declared**. Both return `""` when the package was not declared or is not
+installed — a program that needs it should say so itself, because only it knows
+whether the absence is fatal.
+
+It is an interface rather than a documented path because the alternative is a
+build program encoding `<home>/data/xpkgs/<ns>-x-<name>/<version>`, which is
+store internals mcpp is free to change — the same reason `dep_dir` exists.
+
+⚠️ A **pinned** reference resolves to exactly that version or to nothing. A
+build that asked for `1.8.12` and silently got `1.9.0` is an answer only
+discovered later, in the artifact.
 
 ### Host tools from a dependency (2026.8.5.1+)
 

@@ -5,6 +5,8 @@ import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
 import mcpp.freestanding.runner;
 import mcpp.toolchain.triple;
+import mcpp.platform.xlings;
+import mcpp.build.build_program;
 
 using namespace mcpp::freestanding;
 
@@ -58,6 +60,11 @@ TEST(FreestandingTarget, CompileFlagsCarryTheIsaAndFreestanding) {
     // compiler may assume about the library, and that has to hold for every
     // TU including a dependency's.
     EXPECT_TRUE(has("-ffreestanding"));
+    // The toolchain's libc++ headers are the HOST's: `#include <stdio.h>`
+    // resolves to libc++'s wrapper, which opens a `__config_site` generated
+    // for the host and absent here. A target-side C++ library reaches a
+    // consumer as a MODULE, never as an include path.
+    EXPECT_TRUE(has("-nostdinc++"));
 }
 
 // ── the link line ───────────────────────────────────────────────────────────
@@ -143,4 +150,80 @@ TEST(FreestandingRunner, TheMissingRunnerMessageNamesTheKeyAndTheTriple) {
     EXPECT_NE(msg.find("[target.riscv64-none-elf]"), std::string::npos);
     EXPECT_NE(msg.find("runner = ["), std::string::npos);
     EXPECT_NE(msg.find("board-support package"), std::string::npos);
+}
+
+// ── `[xlings] deps` → payload directory ─────────────────────────────────────
+//
+// The channel a board-support package uses to find the libc payload it
+// declared. An INTERFACE rather than a naming convention: a build.mcpp that
+// reconstructed `<home>/data/xpkgs/<ns>-x-<name>/<version>` would be coupled
+// to store internals mcpp is free to change.
+
+TEST(XpkgRef, ParsesEverySpellingAManifestMayWrite) {
+    using mcpp::xlings::paths::parse_xpkg_ref;
+
+    auto full = parse_xpkg_ref("xim:picolibc-riscv@1.8.12");
+    EXPECT_EQ(full.ns, "xim");
+    EXPECT_EQ(full.name, "picolibc-riscv");
+    EXPECT_EQ(full.version, "1.8.12");
+
+    // No namespace: the manifest's default, spelled once in the parser rather
+    // than at each call site.
+    auto bare = parse_xpkg_ref("ninja");
+    EXPECT_EQ(bare.ns, "xim");
+    EXPECT_EQ(bare.name, "ninja");
+    EXPECT_TRUE(bare.version.empty());
+
+    // A non-xim namespace is ordinary, not exotic: `local:` is what a package
+    // under development resolves to.
+    auto local = parse_xpkg_ref("local:qemu-riscv@9.2.4-1");
+    EXPECT_EQ(local.ns, "local");
+    EXPECT_EQ(local.name, "qemu-riscv");
+    EXPECT_EQ(local.version, "9.2.4-1");
+}
+
+TEST(XpkgPayload, APinnedRefResolvesToThatVersionOrToNothing) {
+    namespace xp = mcpp::xlings::paths;
+    auto base = std::filesystem::temp_directory_path()
+              / std::format("mcpp-xpkg-test-{}", ::getpid());
+    std::filesystem::remove_all(base);
+    std::filesystem::create_directories(base / "xim-x-demo" / "1.0.0");
+    std::filesystem::create_directories(base / "xim-x-demo" / "2.0.0");
+
+    // ⚠️ The whole point: asking for 1.0.0 and silently getting 2.0.0 is an
+    // answer only discovered later, in the artifact.
+    auto pinned = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@1.0.0"));
+    ASSERT_TRUE(pinned.has_value());
+    EXPECT_EQ(pinned->filename(), "1.0.0");
+
+    EXPECT_FALSE(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@9.9.9"))
+                     .has_value());
+
+    std::filesystem::remove_all(base);
+}
+
+TEST(XpkgPayload, AnUnpinnedRefTakesTheHighestVersionNumerically) {
+    namespace xp = mcpp::xlings::paths;
+    auto base = std::filesystem::temp_directory_path()
+              / std::format("mcpp-xpkg-test2-{}", ::getpid());
+    std::filesystem::remove_all(base);
+    for (auto v : { "0.4.2", "0.4.9", "0.4.11" })
+        std::filesystem::create_directories(base / "xim-x-demo" / v);
+
+    // A plain string sort answers 0.4.9; picking the wrong payload is silent.
+    auto latest = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("demo"));
+    ASSERT_TRUE(latest.has_value());
+    EXPECT_EQ(latest->filename(), "0.4.11");
+
+    std::filesystem::remove_all(base);
+}
+
+TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
+    using mcpp::build::xpkg_env_var;
+    // The two sides of the channel must agree; drifting apart would make the
+    // interface answer "" for a package that is right there.
+    EXPECT_EQ(xpkg_env_var("xim", "picolibc-riscv"),
+              "MCPP_XPKG_XIM_PICOLIBC_RISCV_DIR");
+    EXPECT_EQ(xpkg_env_var("", "picolibc-riscv"),
+              "MCPP_XPKG_PICOLIBC_RISCV_DIR");
 }
