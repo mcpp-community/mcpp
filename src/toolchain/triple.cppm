@@ -49,6 +49,11 @@ struct Triple {
     bool is_windows_gnu() const { return os == "windows" && env == "gnu"; }
     bool is_pe() const          { return os == "windows"; }
 
+    // Bare metal: there is no OS to link against. THE predicate every
+    // freestanding decision keys off, spelled once here so no consumer
+    // re-derives it from `os == "none"` and drifts.
+    bool is_freestanding() const { return os == "none"; }
+
     // cfg() `family` dimension: unix | windows.
     std::string family() const {
         if (os == "windows") return "windows";
@@ -109,6 +114,14 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "riscv64-linux-musl",    "planned",   "",    "",           true  },
     { "aarch64-linux-gnu",     "planned",   "",    "",           false },
     { "x86_64-macos",          "planned",   "",    "",           false },
+    // Bare metal. `defaultStatic` is not a preference here — there is no
+    // loader, so there is no other option. The pin is llvm on every host
+    // because clang/lld are cross-compilers by construction: unlike the hosted
+    // rows above, these need no per-host cross payload at all.
+    // ISA profile (-march/-mabi/-mcmodel) lives in mcpp.freestanding.target,
+    // which is the single place that decision is made.
+    { "riscv64-none-elf",      "verified",  "bare","llvm@22.1.8", true  },
+    { "riscv32-none-elf",      "verified",  "bare","llvm@22.1.8", true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }
@@ -290,10 +303,34 @@ std::optional<Triple> parse(std::string_view s) {
     Triple t;
     t.arch = normalize_arch(tok[0]);
 
+    // `none` is BOTH a vendor segment and an OS segment, and which one it is
+    // depends on the rest of the triple, not on its position:
+    //
+    //   riscv64-none-elf        -> vendor absent, OS = none   (bare metal)
+    //   x86_64-none-linux-gnu   -> vendor = none, OS = linux  (hosted)
+    //
+    // So it cannot be decided inside the single left-to-right pass below — by
+    // the time `none` is seen, `linux` has not been read yet. Pre-scan for a
+    // real OS token first; `none` is the OS only when there is no other
+    // candidate. Getting this backwards is not a parse error, it is a SILENT
+    // one: the triple would parse as hosted and the build would produce a host
+    // binary while reporting success.
+    bool hasRealOs = false;
+    for (std::size_t i = 1; i < tok.size(); ++i) {
+        std::string_view k = tok[i];
+        if (k == "linux" || k == "windows" || k == "apple"
+            || starts_with(k, "darwin") || starts_with(k, "macosx")
+            || starts_with(k, "macos")  || starts_with(k, "mingw")) {
+            hasRealOs = true;
+            break;
+        }
+    }
+
     bool sawOs = false;
     for (std::size_t i = 1; i < tok.size(); ++i) {
         std::string_view k = tok[i];
         if (k.empty()) return std::nullopt;
+        if (k == "none" && !hasRealOs) { t.os = "none"; sawOs = true; continue; }
         // Vendor segments carry no information — skip. ("w64" is mingw-w64's
         // vendor; "apple" implies macOS when no OS token follows.)
         if (k == "unknown" || k == "pc" || k == "w64" || k == "none") continue;
@@ -307,6 +344,15 @@ std::optional<Triple> parse(std::string_view s) {
         // "mingw32" is the GNU os segment for ALL MinGW targets (64-bit
         // included — historical residue); it means windows + gnu env.
         if (starts_with(k, "mingw"))            { t.os = "windows"; sawOs = true; t.env = "gnu"; continue; }
+
+        // Bare-metal object-format / ABI segments. Only meaningful with
+        // os=none: `riscv64-none-elf`, `arm-none-eabi`, `arm-none-eabihf`.
+        // Gated on the OS so a hosted triple cannot pick them up by accident.
+        if (t.os == "none") {
+            if (k == "elf")                { t.env = "elf";    continue; }
+            if (k == "eabihf")             { t.env = "eabihf"; continue; }
+            if (k == "eabi")               { t.env = "eabi";   continue; }
+        }
 
         if (t.os != "macos") {
             if (k == "musl" || starts_with(k, "musleabi")) { t.env = "musl"; continue; }

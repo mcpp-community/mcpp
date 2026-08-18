@@ -155,3 +155,62 @@ TEST(Triple, HostTripleIsCanonicalAndNonEmpty) {
     ASSERT_TRUE(reparsed.has_value());
     EXPECT_EQ(reparsed->str(), h.str());
 }
+
+// ── bare metal: `none` is a vendor segment AND an OS segment ─────────────────
+//
+// Which one it is depends on the rest of the triple, so it cannot be decided
+// in a single left-to-right pass. Both sides are pinned here because getting
+// it backwards is a SILENT failure, not a parse error: `riscv64-none-elf`
+// would fall through to the host and the build would report success while
+// producing an x86-64 binary.
+
+TEST(Triple, NoneIsTheOsWhenNoOtherOsToken) {
+    auto t = parse("riscv64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->arch, "riscv64");
+    EXPECT_EQ(t->os, "none");
+    EXPECT_EQ(t->env, "elf");
+    EXPECT_EQ(t->str(), "riscv64-none-elf");
+    EXPECT_TRUE(t->is_freestanding());
+    EXPECT_TRUE(is_known_target(*t));
+    // No OS means no cfg family — a freestanding target is neither unix nor
+    // windows, and claiming either would enable the wrong cfg branches.
+    EXPECT_EQ(t->family(), "");
+}
+
+TEST(Triple, NoneStaysAVendorWhenARealOsFollows) {
+    auto t = parse("x86_64-none-linux-gnu");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->os, "linux");
+    EXPECT_EQ(t->env, "gnu");
+    EXPECT_FALSE(t->is_freestanding());
+    EXPECT_EQ(t->family(), "unix");
+}
+
+TEST(Triple, Riscv32BareMetalParses) {
+    auto t = parse("riscv32-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->str(), "riscv32-none-elf");
+    EXPECT_TRUE(t->is_freestanding());
+    EXPECT_TRUE(is_known_target(*t));
+}
+
+TEST(Triple, HostedTargetsAreNotFreestanding) {
+    for (const char* s : { "x86_64-linux-gnu", "x86_64-linux-musl",
+                           "x86_64-windows-gnu", "aarch64-macos" }) {
+        auto t = parse(s);
+        ASSERT_TRUE(t.has_value()) << s;
+        EXPECT_FALSE(t->is_freestanding()) << s;
+    }
+}
+
+TEST(Triple, BareMetalEabiSpellings) {
+    // Accepted only under os=none, so a hosted triple cannot pick them up.
+    auto hf = parse("arm-none-eabihf");
+    ASSERT_TRUE(hf.has_value());
+    EXPECT_EQ(hf->os, "none");
+    EXPECT_EQ(hf->env, "eabihf");
+    // Parsing is not the same as being supported: arm is not in the
+    // vocabulary table yet, and the target gate is what says so.
+    EXPECT_FALSE(is_known_target(*hf));
+}

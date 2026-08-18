@@ -99,6 +99,68 @@ jobs:
           bash tests/e2e/run_all.sh
 
   # ──────────────────────────────────────────────────────────────────
+  # Bare metal: the one chain the sharded suite above cannot be trusted
+  # to exercise.
+  #
+  # tests/e2e/130_freestanding_riscv_build_and_run.sh declares
+  # `# requires: qemu-riscv`, which is legitimately absent on the macOS and
+  # Windows runners — so it must be a SOFT token, and a soft token means the
+  # test skips in silence on a Linux runner that lost qemu too. That is the
+  # exact shape this repository has been burned by twice (65_* never ran at
+  # all; ten pack e2e skipped on two platforms), and no token can tell the two
+  # cases apart.
+  #
+  # So the guard lives here, where it can be exact: install qemu, run the one
+  # test, and assert its PASS line appeared. A skip fails this job.
+  # ──────────────────────────────────────────────────────────────────
+  baremetal:
+    name: bare-metal e2e (riscv64-none-elf, qemu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+
+      - name: Install the emulator (xim:qemu-riscv)
+        run: |
+          "$XLINGS_BIN" install xim:qemu-riscv -y
+          # Assert it is reachable BEFORE the suite runs. Without this the
+          # capability probe simply would not add `qemu-riscv`, and the test
+          # would skip — which is what this job exists to prevent.
+          command -v qemu-system-riscv64
+          qemu-system-riscv64 --version | head -1
+
+      - name: Bare-metal e2e
+        timeout-minutes: 25
+        run: |
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          test -x "$MCPP"
+          export MCPP
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
+          # llvm is the toolchain a freestanding target pins; install it
+          # explicitly rather than relying on whatever the sandbox cache holds.
+          "$MCPP" toolchain install llvm 22.1.8
+          bash tests/e2e/run_all.sh 130 2>&1 | tee e2e.log
+          # The assertion this job exists for: the test RAN. `run_all.sh`
+          # exits 0 on a skip, so its exit code cannot answer this.
+          grep -q 'PASS: freestanding riscv64 build + run' e2e.log || {
+            echo "the bare-metal e2e did not run (skipped?) — see above"; exit 1; }
+          if grep -q '^SKIP: 130' e2e.log; then
+            echo "the bare-metal e2e SKIPPED on the runner that must run it"; exit 1
+          fi
+
+  # ──────────────────────────────────────────────────────────────────
   # Hermetic (no host toolchain): the ONLY environment class that
   # faithfully reproduces issue #195. Standard runners ship gcc +
   # libc6-dev, so a sandbox toolchain that leaks to the host's CRT

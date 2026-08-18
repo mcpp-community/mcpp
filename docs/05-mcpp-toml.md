@@ -897,6 +897,59 @@ for arch/env conditions and combinators.
   cross target, so put them under `[target.<triple>]` (above), not under a bare
   alias or `cfg(...)`.
 
+### 2.7.2 Bare metal (`os = none`) — freestanding targets
+
+`riscv64-none-elf` and `riscv32-none-elf` are targets with no operating system
+underneath. They need no per-host cross toolchain: clang and lld are
+cross-compilers by construction, so any host that can install the llvm payload
+can produce them.
+
+```bash
+mcpp build --target riscv64-none-elf
+mcpp run   --target-triple riscv64-none-elf     # via [target.<triple>].runner
+```
+
+**What changes on a freestanding target**
+
+| | |
+|---|---|
+| Link line | `-nostdlib -nostartfiles -static`, and nothing hosted — no crt files, no dynamic linker, no C++ runtime. The linker is addressed by **absolute path** (`-fuse-ld=<payload>/bin/ld.lld`), because `-fuse-ld=lld` resolves through `PATH` and finds GNU ld on any machine with binutils earlier on it. |
+| ISA flags | `-march` / `-mabi` / `-mcmodel` come from the target table, so `--target <triple>` alone is enough to produce a correct object file. |
+| `import std` | **Unavailable.** `std` is one module over the entire library — threads, filesystem and iostreams included — so there is no subset of it to build without an OS. Use the freestanding subset package instead (mcpp says so, and names it, if you try). |
+| Entry point | There is no `main`. Declare the target explicitly and point `main` at the file carrying `_start`. |
+
+**A minimal firmware**
+
+```toml
+[package]
+name    = "fw"
+version = "0.1.0"
+
+[build]
+ldflags = ["-T", "/abs/path/to/link.ld"]
+
+[targets.firmware]
+kind = "bin"
+main = "src/start.S"          # the entry lives in assembly, not in main()
+
+[target.riscv64-none-elf]
+runner = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
+          "-no-reboot", "-bios", "default", "-kernel"]
+```
+
+**`runner` — how `mcpp run` executes something this machine cannot run**
+
+A bare-metal image has the wrong ISA, no loader, and expects to own the address
+space; exec'ing it directly gives "Exec format error". `runner` is the argv
+template that stands in front of it. The artifact path is **appended**, or
+substituted for `{}` when the template contains it.
+
+mcpp ships **no default runner**, deliberately. Which emulator, which machine
+model and which firmware mode are board facts — two boards on the same ISA need
+different argv (`-bios default` for an OpenSBI boot, `-bios none -semihosting`
+for a picolibc image) — and an engine that guesses one is an engine the other
+board has to fight. A board-support package normally supplies it.
+
 ### 2.8 `[features]` — Features (Cargo-style, additive)
 
 ```toml

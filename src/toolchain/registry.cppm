@@ -562,6 +562,20 @@ bool host_can_serve(const triple::Triple& target) {
         return mcpp::platform::is_linux || mcpp::platform::is_windows;
     if (target.os == "windows") return bool(mcpp::platform::is_windows);
     if (target.os == "macos")   return bool(mcpp::platform::is_macos);
+
+    // Bare metal: every host can serve it, and that is a property of the
+    // toolchain rather than a claim about payload coverage. clang and lld are
+    // cross-compilers by construction — one binary emits every target it was
+    // built with — so a freestanding target needs NO per-host cross payload,
+    // unlike every hosted case above, which needs a C library that only exists
+    // for some (host, target) pairs.
+    //
+    // ⚠️ Serviceable is not the same as complete: a target with no C library
+    // still links only `-nostdlib` programs. That gap belongs to the ecosystem
+    // (a libc wrapper package), and saying `false` here would hide it behind
+    // "this host cannot build it", which is the wrong diagnosis.
+    if (target.is_freestanding()) return true;
+
     return false;
 }
 

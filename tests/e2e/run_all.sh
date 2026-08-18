@@ -62,6 +62,9 @@ case "$OS" in
         fi
         # wine: run cross-built Windows PE artifacts on the Linux host.
         command -v wine &>/dev/null && CAPS+=(wine)
+        # qemu-riscv: the emulator a bare-metal riscv artifact runs in
+        # (xim:qemu-riscv, or any qemu-system-riscv64 on PATH).
+        command -v qemu-system-riscv64 &>/dev/null && CAPS+=(qemu-riscv)
         # pack capability: ELF + patchelf both required
         if [[ " ${CAPS[*]} " == *" patchelf "* ]]; then
             CAPS+=(pack)
@@ -175,16 +178,17 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # absent on Linux and must stay legal to declare. It is checked against the
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
-KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx macos mingw mingw-cross msvc
-            musl nasm no-msvc pack patchelf python3 scan-deps symlink unix-shell
-            windows wine xlings-msvc)
+KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx llvm macos mingw mingw-cross
+            msvc musl nasm no-msvc pack patchelf python3 qemu-riscv scan-deps
+            symlink unix-shell windows wine xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do
     base="$(basename "$tf")"
     req="$(sed -n '2p' "$tf")"
-    [[ "$req" =~ ^#\ requires: ]] || continue
+    [[ "$req" =~ ^#\ requires(-hard)?: ]] || continue
     toks="${req#\# requires:}"
+    toks="${toks#\# requires-hard:}"
     for tok in $toks; do
         if [[ " ${KNOWN_CAPS[*]} " != *" $tok "* ]]; then
             echo "ERROR: $base declares unknown capability '$tok' — it would be"
@@ -202,6 +206,19 @@ done
 # Returns 0 (true) if the test should be skipped, prints reason.
 # Returns 1 (false) if all requirements are met.
 
+# `# requires-hard:` — a missing capability FAILS instead of skipping.
+#
+# The ordinary form is right for a test that is genuinely inapplicable here
+# (msvc on Linux). It is wrong for a test whose capability the runner is
+# SUPPOSED to have: the skip line is indistinguishable from a legitimate one,
+# so a job that silently stopped exercising the thing it exists to exercise
+# stays green forever. This repository has hit that twice (65_* never ran at
+# all; ten pack e2e skipped on two platforms). A test that declares its needs
+# with the hard form says "if this is missing, the runner is misconfigured".
+requires_is_hard() {
+    [[ "$(sed -n '2p' "$1")" =~ ^#\ requires-hard: ]]
+}
+
 check_requires() {
     local test_file="$1"
     # Read the # requires: line (must be line 2 of the script)
@@ -209,9 +226,10 @@ check_requires() {
     req_line="$(sed -n '2p' "$test_file")"
 
     # If there's no requires comment at all, run the test
-    [[ "$req_line" =~ ^#\ requires: ]] || return 1
+    [[ "$req_line" =~ ^#\ requires(-hard)?: ]] || return 1
 
     local caps_needed="${req_line#\# requires:}"
+    caps_needed="${caps_needed#\# requires-hard:}"
     caps_needed="${caps_needed# }"   # strip leading space
 
     # Empty requirements → runs everywhere
@@ -313,6 +331,14 @@ for test in "$HERE"/[0-9]*.sh; do
     echo
     missing_cap="$(check_requires "$test")"
     if [[ -n "$missing_cap" ]]; then
+        if requires_is_hard "$test"; then
+            echo "FAIL: $name (REQUIRED capability missing: $missing_cap)"
+            echo "      declared with '# requires-hard:', so this runner is"
+            echo "      misconfigured rather than merely inapplicable."
+            FAILED_TESTS+=("$name (REQUIRED capability missing: $missing_cap)")
+            ((FAIL++))
+            continue
+        fi
         echo "SKIP: $name (missing capability: $missing_cap)"
         ((SKIP++))
         continue

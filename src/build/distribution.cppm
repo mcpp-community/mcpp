@@ -243,6 +243,19 @@ struct MechanismInput {
     // mechanism exists to make that floor real, so without one there is
     // nothing to make real.
     bool             macosFloor = false;
+    // Bare metal — there is no C++ runtime to distribute WITH.
+    //
+    // Every cell of the table below answers "how does this artifact carry its
+    // C++ runtime", and on a freestanding target the honest answer is that
+    // there is not one: the toolchain's libc++.a is built for the HOST, and
+    // putting it on the line produces
+    //
+    //     ld.lld: error: …/x86_64-unknown-linux-gnu/libc++.a(path.cpp.o)
+    //             is incompatible with elf64lriscv
+    //
+    // (measured 2026-08-19). A target-side C++ runtime, if one is wanted, is
+    // an ordinary package — the same way the libc is.
+    bool             freestanding = false;
 };
 
 struct Mechanism {
@@ -328,6 +341,21 @@ Mechanism resolve(const MechanismInput& in) {
     // the contract belongs to whatever eventually links it.
     if (in.role == Role::Intermediate)
         return m;
+
+    // Bare metal: there is nothing to decide, because there is no C++ runtime
+    // on this side of the build. Returning SelfContained with an empty
+    // mechanism is not a degradation — the artifact genuinely carries
+    // everything it has — so this reports no diagnostic.
+    //
+    // ⚠️ Placed before the format switch rather than inside it: the format is
+    // ELF here, and every ELF cell below reaches for the toolchain's HOST
+    // archives. One of them silently produced a link line with
+    // x86-64 libc++.a on a riscv64 link.
+    if (in.freestanding) {
+        m.effective = Contract::SelfContained;
+        m.unitFlags = " -nostdlib++";
+        return m;
+    }
 
     const bool haveCxxArchives =
         !in.libcxxArchive.empty() && !in.libcxxAbiArchive.empty();

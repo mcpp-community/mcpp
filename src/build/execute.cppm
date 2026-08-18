@@ -14,6 +14,8 @@ import mcpp.build.prepare;
 import mcpp.build.test_targets;
 import mcpp.diag;
 import mcpp.build.plan;
+import mcpp.toolchain.triple;
+import mcpp.freestanding.runner;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
@@ -987,7 +989,8 @@ export int build_run_target(const std::optional<std::string>& targetName,
                             std::span<const std::string> passthrough,
                             const std::string& package_filter = {},
                             const std::string& cache_mode = {},
-                            bool no_cache = false) {
+                            bool no_cache = false,
+                            const std::string& target_triple = {}) {
     // mcpp#225 (E2): reuse the resolved build cache when it's still fresh,
     // skipping prepare_build's toolchain resolution + modgraph scan
     // entirely — mirrors cmd_build's try_fast_build fast path. The cached
@@ -998,7 +1001,8 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // A --cache/--no-cache override also bypasses the fast path, for the same
     // reason --profile does: the cached build.ninja was generated under the
     // previous mode, so reusing it would silently ignore the flag.
-    if (package_filter.empty() && cache_mode.empty() && !no_cache) {
+    if (package_filter.empty() && cache_mode.empty() && !no_cache
+        && target_triple.empty()) {
         if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path())) {
             if (auto rc = try_fast_run(*root, targetName, passthrough)) {
                 return *rc;
@@ -1011,6 +1015,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     mcpp::build::BuildOverrides ov;
     ov.package_filter = package_filter;
     ov.cache_mode     = cache_mode;
+    ov.target_triple  = target_triple;
     auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
@@ -1033,13 +1038,39 @@ export int build_run_target(const std::optional<std::string>& targetName,
 
     auto exe = ctx->outputDir / chosen->output;
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, ctx->projectRoot);
-    mcpp::ui::status("Running",
-        std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
+    std::vector<std::string> argv;
+    // A freestanding artifact is not executable on this machine by
+    // construction — wrong ISA, no loader, and it expects to own the address
+    // space. Exec'ing it directly gives "Exec format error", which describes
+    // the symptom and not the situation. The runner template says how to stand
+    // something in front of it; mcpp never guesses one, because which emulator
+    // and which machine model are board facts (see mcpp.freestanding.runner).
+    bool freestandingRun = false;
+    if (auto ft = mcpp::toolchain::triple::parse(ctx->tc.targetTriple))
+        freestandingRun = ft->is_freestanding();
+    if (freestandingRun) {
+        std::vector<std::string> tmpl;
+        if (auto it = ctx->manifest.targetOverrides.find(ctx->tc.targetTriple);
+            it != ctx->manifest.targetOverrides.end())
+            tmpl = it->second.runner;
+        if (tmpl.empty()) {
+            std::println(stderr, "error: {}",
+                mcpp::freestanding::no_runner_message(ctx->tc.targetTriple));
+            return 2;
+        }
+        argv = mcpp::freestanding::expand(tmpl, exe);
+        for (auto& a : passthrough) argv.push_back(a);
+        mcpp::ui::status("Running", std::format(
+            "`{} … {}`", tmpl.front(),
+            mcpp::ui::shorten_path(exe, pathCtx)));
+    } else {
+        argv.push_back(exe.string());
+        for (auto& a : passthrough) argv.push_back(a);
+        mcpp::ui::status("Running",
+            std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
+    }
     std::println("");
     std::fflush(stdout);
-    std::vector<std::string> argv;
-    argv.push_back(exe.string());
-    for (auto& a : passthrough) argv.push_back(a);
 
     std::vector<std::pair<std::string, std::string>> childEnv;
     auto [runEnvKey, runEnvValue] = compute_run_env(ctx->plan);
