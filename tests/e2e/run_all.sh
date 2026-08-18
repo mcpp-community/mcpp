@@ -186,9 +186,8 @@ bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do
     base="$(basename "$tf")"
     req="$(sed -n '2p' "$tf")"
-    [[ "$req" =~ ^#\ requires(-hard)?: ]] || continue
+    [[ "$req" =~ ^#\ requires: ]] || continue
     toks="${req#\# requires:}"
-    toks="${toks#\# requires-hard:}"
     for tok in $toks; do
         if [[ " ${KNOWN_CAPS[*]} " != *" $tok "* ]]; then
             echo "ERROR: $base declares unknown capability '$tok' — it would be"
@@ -206,18 +205,22 @@ done
 # Returns 0 (true) if the test should be skipped, prints reason.
 # Returns 1 (false) if all requirements are met.
 
-# `# requires-hard:` — a missing capability FAILS instead of skipping.
+# ⚠️ THERE IS DELIBERATELY NO "requires-hard" FORM.
 #
-# The ordinary form is right for a test that is genuinely inapplicable here
-# (msvc on Linux). It is wrong for a test whose capability the runner is
-# SUPPOSED to have: the skip line is indistinguishable from a legitimate one,
-# so a job that silently stopped exercising the thing it exists to exercise
-# stays green forever. This repository has hit that twice (65_* never ran at
-# all; ten pack e2e skipped on two platforms). A test that declares its needs
-# with the hard form says "if this is missing, the runner is misconfigured".
-requires_is_hard() {
-    [[ "$(sed -n '2p' "$1")" =~ ^#\ requires-hard: ]]
-}
+# The obvious answer to "a test silently skipped on the runner that was
+# supposed to run it" is a token whose absence FAILS. It was implemented here,
+# used once, and measured wrong: a token cannot tell "this runner is
+# misconfigured" from "this platform legitimately lacks the capability",
+# because the same word means both. `llvm` and `qemu-riscv` are absent on the
+# macOS runner by design, so the one test that declared them the hard way made
+# the macOS suite fail — a worse outcome than the silent skip it was meant to
+# prevent, and one CI reported within the hour.
+#
+# The guard that works has to know WHICH runner it is talking about, so it
+# lives in the job: ci-linux-e2e.yml's `baremetal` job installs the
+# capabilities and then asserts the tests' PASS lines actually appeared.
+# `run_all.sh` exits 0 on a skip, so its exit code cannot answer that question
+# and no token can either.
 
 check_requires() {
     local test_file="$1"
@@ -226,10 +229,9 @@ check_requires() {
     req_line="$(sed -n '2p' "$test_file")"
 
     # If there's no requires comment at all, run the test
-    [[ "$req_line" =~ ^#\ requires(-hard)?: ]] || return 1
+    [[ "$req_line" =~ ^#\ requires: ]] || return 1
 
     local caps_needed="${req_line#\# requires:}"
-    caps_needed="${caps_needed#\# requires-hard:}"
     caps_needed="${caps_needed# }"   # strip leading space
 
     # Empty requirements → runs everywhere
@@ -331,14 +333,6 @@ for test in "$HERE"/[0-9]*.sh; do
     echo
     missing_cap="$(check_requires "$test")"
     if [[ -n "$missing_cap" ]]; then
-        if requires_is_hard "$test"; then
-            echo "FAIL: $name (REQUIRED capability missing: $missing_cap)"
-            echo "      declared with '# requires-hard:', so this runner is"
-            echo "      misconfigured rather than merely inapplicable."
-            FAILED_TESTS+=("$name (REQUIRED capability missing: $missing_cap)")
-            ((FAIL++))
-            continue
-        fi
         echo "SKIP: $name (missing capability: $missing_cap)"
         ((SKIP++))
         continue

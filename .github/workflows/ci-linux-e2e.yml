@@ -158,16 +158,28 @@ jobs:
           # llvm is the toolchain a freestanding target pins; install it
           # explicitly rather than relying on whatever the sandbox cache holds.
           "$MCPP" toolchain install llvm 22.1.8
-          bash tests/e2e/run_all.sh 13 2>&1 | tee e2e.log
-          # The assertion this job exists for: the tests RAN. `run_all.sh`
-          # exits 0 on a skip, so its exit code cannot answer this.
-          grep -q 'PASS: freestanding riscv64 build + run' e2e.log || {
-            echo "130 (engine chain) did not run — see above"; exit 1; }
-          grep -q 'PASS: BSP supplies the sysroot' e2e.log || {
-            echo "131 (ecosystem chain) did not run — see above"; exit 1; }
-          if grep -qE '^SKIP: 13[01]' e2e.log; then
-            echo "a bare-metal e2e SKIPPED on the runner that must run it"; exit 1
-          fi
+          # Run the two scripts DIRECTLY rather than through run_all.sh.
+          # They are standalone (they take $MCPP and nothing else), run_all.sh
+          # accepts no filter — it would run the whole 250-test suite here for
+          # two tests — and, more to the point, run_all.sh exits 0 on a skip.
+          # Invoked directly, a skip is visible: the script either prints its
+          # PASS line or it does not.
+          for t in tests/e2e/130_freestanding_riscv_build_and_run.sh \
+                   tests/e2e/131_freestanding_bsp_supplies_everything.sh; do
+            echo "=== $t ==="
+            bash "$t" 2>&1 | tee "$(basename "$t").log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" = "0" ] || { echo "$t failed (exit $rc)"; exit 1; }
+          done
+          # The assertion this job exists for: both tests RAN. Each has an
+          # early `exit 0` for a missing capability, so a zero exit code alone
+          # does not distinguish "passed" from "skipped".
+          grep -q 'PASS: freestanding riscv64 build + run' \
+            130_freestanding_riscv_build_and_run.sh.log || {
+            echo "130 (engine chain) skipped on the runner that must run it"; exit 1; }
+          grep -q 'PASS: BSP supplies the sysroot' \
+            131_freestanding_bsp_supplies_everything.sh.log || {
+            echo "131 (ecosystem chain) skipped on the runner that must run it"; exit 1; }
 
   # ──────────────────────────────────────────────────────────────────
   # Hermetic (no host toolchain): the ONLY environment class that
