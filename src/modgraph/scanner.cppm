@@ -998,7 +998,16 @@ void scan_one_into(ScanResult& result,
     // extension before the first file that uses it is legitimate, and a
     // package whose `.ixx` sources are all behind an inactive feature would
     // otherwise fail to build.
+    //
+    // ⚠️ And not at all when this package HAS no sources to look at. A
+    // `host-module = true` dependency has its source globs emptied on purpose —
+    // that is how a build rule is kept out of the consumer's binary — so every
+    // one of its declared extensions then looks dead. The author of an `.ixx`
+    // rule package would see this warning in every consumer's build, about
+    // their own correct manifest, with nothing to fix.
+    const bool nothingToScan = all_files.empty();
     for (auto const& raw : manifest.buildConfig.moduleExtensions) {
+        if (nothingToScan) break;
         auto ext = mcpp::normalize_extension(raw);
         if (ext.empty()) continue;
         bool seen = false;
