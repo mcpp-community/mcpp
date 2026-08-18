@@ -915,7 +915,7 @@ mcpp run   --target-triple riscv64-none-elf     # via [target.<triple>].runner
 |---|---|
 | Link line | `-nostdlib -nostartfiles -static`, and nothing hosted — no crt files, no dynamic linker, no C++ runtime. The linker is addressed by **absolute path** (`-fuse-ld=<payload>/bin/ld.lld`), because `-fuse-ld=lld` resolves through `PATH` and finds GNU ld on any machine with binutils earlier on it. |
 | ISA flags | `-march` / `-mabi` / `-mcmodel` come from the target table, so `--target <triple>` alone is enough to produce a correct object file. |
-| `import std` | **Unavailable.** `std` is one module over the entire library — threads, filesystem and iostreams included — so there is no subset of it to build without an OS. Use the freestanding subset package instead (mcpp says so, and names it, if you try). |
+| `import std` | **Unavailable.** `std` is one module over the entire library — threads, filesystem and iostreams included — so there is no subset of it to build without an OS. The freestanding subset package replaces it, and mcpp's diagnostic names it. |
 | Entry point | There is no `main`. Declare the target explicitly and point `main` at the file carrying `_start`. |
 
 **A minimal firmware**

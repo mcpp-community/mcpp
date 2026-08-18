@@ -796,6 +796,56 @@ cxxflags = ["-march=x86-64-v2"]
 - **`toolchain` / `linkage` 仅限精确三元组** —— 它们描述某一个具体的交叉目标,
   因此写在 `[target.<triple>]` 下(见上),而不是裸别名或 `cfg(...)` 下。
 
+### 2.7.2 裸机(`os = none`)—— freestanding target
+
+`riscv64-none-elf` 与 `riscv32-none-elf` 是底下没有操作系统的 target。它们不需要
+逐宿主的交叉工具链:clang 与 lld 天生是交叉编译器,任何能装 llvm 载荷的宿主都能
+产出它们。
+
+```bash
+mcpp build --target riscv64-none-elf
+mcpp run   --target-triple riscv64-none-elf     # 经 [target.<triple>].runner
+```
+
+**freestanding target 上有什么不同**
+
+| | |
+|---|---|
+| 链接线 | `-nostdlib -nostartfiles -static`,且不带任何 hosted 的东西 —— 没有 crt 文件、没有动态链接器、没有 C++ 运行时。链接器用**绝对路径**寻址(`-fuse-ld=<载荷>/bin/ld.lld`),因为 `-fuse-ld=lld` 走 `PATH` 解析,在任何 binutils 排前面的机器上都会找到 GNU ld。 |
+| ISA flag | `-march` / `-mabi` / `-mcmodel` 来自 target 表,所以只写 `--target <triple>` 就足以产出正确的目标文件。 |
+| `import std` | **不可用。** `std` 是覆盖整个库的一个模块 —— 线程、文件系统、iostreams 全在内 —— 没有 OS 就没有它的子集可编。freestanding 子集包取代它,mcpp 的诊断会点名。 |
+| 入口点 | 没有 `main`。显式声明 target,并把 `main` 指向携带 `_start` 的那个文件。 |
+
+**一个最小固件**
+
+```toml
+[package]
+name    = "fw"
+version = "0.1.0"
+
+[build]
+ldflags = ["-T", "/abs/path/to/link.ld"]
+
+[targets.firmware]
+kind = "bin"
+main = "src/start.S"          # 入口在汇编里,不在 main()
+
+[target.riscv64-none-elf]
+runner = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
+          "-no-reboot", "-bios", "default", "-kernel"]
+```
+
+**`runner` —— `mcpp run` 如何执行本机跑不了的东西**
+
+裸机镜像的 ISA 不对、没有 loader、且期望独占整个地址空间;直接 exec 它得到的是
+"Exec format error"。`runner` 就是挡在它前面的 argv 模板。产物路径会被**追加**,
+或者在模板含 `{}` 时替换进去。
+
+mcpp **刻意不提供默认 runner**。用哪个模拟器、哪个机器型号、哪种固件模式都是板级
+事实 —— 同一 ISA 的两块板需要不同 argv(OpenSBI 启动用 `-bios default`,picolibc
+镜像用 `-bios none -semihosting`)—— 引擎一旦猜一个,另一块板就得跟它打架。板级
+支持包通常会提供它。
+
 ### 2.8 `[features]` —— Feature(Cargo 风格,可加性)
 
 #### 表形式 —— 让 feature 贡献的不止是隐含 feature
