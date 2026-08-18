@@ -1410,6 +1410,31 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         triple, e.cxxRuntime)));
                 }
             }
+            // `runner` — the argv template `mcpp run` uses for a target whose
+            // artifact cannot execute here. An ARRAY, so it is neither a
+            // scalar (the unknown-key sweep below skips it by type) nor part
+            // of the conditional sub-table channel.
+            if (auto it = body.find("runner"); it != body.end()) {
+                if (!it->second.is_array()) {
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].runner must be an array of strings, "
+                        "e.g. runner = [\"qemu-system-riscv64\", \"-kernel\"]",
+                        triple)));
+                }
+                for (auto& el : it->second.as_array()) {
+                    if (!el.is_string()) {
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}].runner must contain only strings", triple)));
+                    }
+                    e.runner.push_back(el.as_string());
+                }
+                if (e.runner.empty()) {
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].runner is empty — an empty template would "
+                        "run nothing and report success", triple)));
+                }
+            }
+
             // Unsupported SCALAR keys are REPORTED, not dropped.
             // `[targets.<name>]` has done this since #249; this table did not,
             // so a key that looks plausible — `cxx_runtime_tests` was the real
@@ -1435,6 +1460,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) continue;   // the conditional channel
+                // ...and arrays, which this sweep was never about. It checks
+                // SCALARS ("a scalar that does nothing"), and `runner` is an
+                // array read a few lines above — reaching here it was reported
+                // as "unsupported key 'runner' (ignored)" while in fact being
+                // honoured, which is worse than either being true.
+                if (value.is_array()) continue;
                 bool known = false;
                 for (auto k : kKnownTargetScalars) if (key == k) { known = true; break; }
                 if (known) continue;

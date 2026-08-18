@@ -54,6 +54,12 @@ struct BuildProgramEnv {
     // MCPP_DEP_<SANITIZED_NAME>_DIR (same sanitizer as MCPP_FEATURE_) instead of
     // reverse-engineering the store layout.
     std::vector<std::pair<std::string, std::filesystem::path>> depDirs;
+    // Payload dirs of the packages this build declared in `[xlings] deps`,
+    // as (env var name → dir). Resolved by the caller through the xlings path
+    // helpers, so a build.mcpp asks `xpkg_dir("xim", "picolibc-riscv")`
+    // instead of reconstructing `<home>/data/xpkgs/<ns>-x-<name>/<version>`
+    // — the same reason depDirs exists for mcpp dependencies.
+    std::vector<std::pair<std::string, std::string>> xpkgDirs;
     // #355: HOST tools this package asked its dependencies for, as
     // (env var name → absolute path to the executable) pairs. The caller has
     // already resolved them (built, taken from the store, or an override), so
@@ -71,6 +77,22 @@ struct BuildProgramEnv {
     // makes the BMI usable at all — see DependencySpec::hostModule.
     std::vector<std::pair<std::string, std::filesystem::path>> hostModules;
 };
+
+// The env-var name `hostprogram::xpkg_dir` reads back. One spelling of the
+// sanitizer, shared by both sides — the two drifting apart would make the
+// interface answer "" for a package that is right there.
+inline std::string xpkg_env_var(std::string_view ns, std::string_view name) {
+    std::string out = "MCPP_XPKG_";
+    auto put = [&](std::string_view s) {
+        for (char c : s)
+            out += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+                 : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+    };
+    if (!ns.empty()) { put(ns); out += '_'; }
+    put(name);
+    out += "_DIR";
+    return out;
+}
 
 // Compile + run `<root>/build.mcpp` (if present) with `hostCompiler` (the resolved
 // HOST frontend — under a cross --target the caller resolves a host toolchain;
@@ -254,6 +276,16 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
                 "'{}') — rename one dependency to disambiguate", var,
                 it->second, dir.string()));
         }
+    }
+    // The xlings side of the same question. Each declared entry is emitted
+    // under BOTH its namespaced and its bare spelling, because a manifest may
+    // write either and the build.mcpp asking should not have to know which
+    // one the author chose. Namespaced entries are emitted first, so a bare
+    // name that two namespaces claim resolves to the first DECLARED one rather
+    // than to whichever was seen last.
+    for (auto const& [var, dir] : env.xpkgDirs) {
+        auto [it, inserted] = depVarValue.try_emplace(var, dir);
+        if (inserted) e.emplace_back(var, dir);
     }
     // #355: MCPP_DEP_<PKG>_BIN_<TOOL> — absolute path to a host tool the
     // consumer declared via `tools = [...]`. A PATH rather than a directory:

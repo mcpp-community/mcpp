@@ -661,6 +661,13 @@ struct XlingsConfig {
 struct TargetEntry {
     std::string                         toolchain;     // e.g. "gcc@15.1.0-musl"; empty = inherit [toolchain]
     std::string                         linkage;       // "static" | "dynamic" | "" (= auto by libc)
+    // How `mcpp run` executes an artifact for this target when the artifact
+    // cannot run on this machine (a freestanding image: wrong ISA, no loader).
+    // A TEMPLATE and never a default — which emulator, which machine model and
+    // which firmware mode are board facts, and an engine that guesses one is an
+    // engine a different board has to fight. The artifact path is appended, or
+    // substituted for `{}` when the template contains it.
+    std::vector<std::string>            runner;
     // #336 — per-target C++ runtime contract, same vocabulary as
     // [build].cxx_runtime and overriding it for this triple. It lives HERE,
     // beside `linkage`, rather than in the `cfg(...)` conditional channel:

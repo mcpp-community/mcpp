@@ -1716,6 +1716,61 @@ prepare_build(bool print_fingerprint,
     if (!tc->resolutionNote.empty())
         mcpp::ui::info("note", tc->resolutionNote);
 
+    // ── A retargetable driver has to be TOLD what it is targeting ────────
+    //
+    // `tc.targetTriple` comes from `-dumpmachine`, and for every cross target
+    // that worked before this it was right for a reason that does not
+    // generalise: those targets use a DISTINCT compiler binary
+    // (`x86_64-w64-mingw32-g++`, `aarch64-linux-musl-g++`), whose own
+    // -dumpmachine reports the cross triple. Clang is ONE binary that emits
+    // every target it was built with, so -dumpmachine always answers with the
+    // host — and nothing downstream ever learns otherwise.
+    //
+    // Measured before this line existed:
+    //
+    //   $ mcpp build --target riscv64-none-elf
+    //       Resolved llvm@22.1.8 → riscv64-none-elf → …/bin/clang++
+    //       Finished dev [unoptimized + debuginfo] in 0.47s
+    //   $ ls target/
+    //       x86_64-linux-gnu/          ← an ELF for the host, reported as riscv64
+    //
+    // That is E1: success reported, host artifact produced. The output
+    // directory, the fingerprint, the cache key and the flag layer all read
+    // `tc.targetTriple`, so correcting it here corrects all of them at once —
+    // which is the point of there being one field rather than five answers.
+    //
+    // ⚠️ Scoped to freestanding on purpose. The hosted cross targets already
+    // resolve a per-target binary, and overwriting their probed triple would
+    // replace a measured fact with an assumed one for no gain.
+    if (!overrides.target_triple.empty()) {
+        if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
+            want && want->is_freestanding())
+        {
+            tc->targetTriple = want->str();
+
+            // `import std` is structurally hosted, and turning it off is the
+            // SAME fact as the line above, not a second policy: libc++'s
+            // std.cppm is one module over the whole library, including the
+            // parts that are threads, filesystem and iostreams. There is no
+            // subset of it to precompile.
+            //
+            // Left on, the failure is neither early nor legible — measured:
+            //
+            //   error: std module precompile failed (rc=1):
+            //   .../include/c++/v1/__config:13:10: fatal error:
+            //       '__config_site' file not found
+            //
+            // which reads as a broken toolchain payload and says nothing about
+            // the target. The freestanding std subset a user actually wants is
+            // an ordinary package (`mcpplibs.std.freestanding`), so mcpp's job
+            // here is to stop pretending the hosted one exists and to say
+            // where the other one is.
+            tc->hasImportStd = false;
+            tc->stdModuleSource.clear();
+            tc->stdCompatSource.clear();
+        }
+    }
+
     // The Windows runtime identity, flowing BACK into the contract.
     //
     // Everything else about the runtime is known before a toolchain is
@@ -3071,6 +3126,32 @@ prepare_build(bool print_fingerprint,
     // declarations reached build.mcpp; with re-export, two packages that never
     // heard of each other can share a tail and the later emplace_back would
     // silently win.
+    // The xlings half of fillDepDirs. Same question ("where did my declared
+    // dependency's payload land"), different namespace and store layout, so it
+    // cannot ride the mcpp dependency channel — but it must be an INTERFACE on
+    // the build.mcpp side for the same reason that one is: a program that
+    // reconstructs the store path is coupled to internals mcpp is free to
+    // change. See mcpp::build::hostprogram::xpkg_dir.
+    auto fillXpkgDirs = [&](mcpp::build::BuildProgramEnv& e,
+                            const mcpp::manifest::Manifest& owner) {
+        if (owner.xlings.deps.empty()) return;
+        auto cfg = get_cfg();
+        if (!cfg) return;
+        auto xlEnv = mcpp::config::make_xlings_env(**cfg);
+        for (auto const& spec : owner.xlings.deps) {
+            auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
+            auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref);
+            if (!dir) continue;   // declared but not installed: "" is the answer
+            // Namespaced first — it is the exact spelling, and the bare form
+            // below must not shadow it (the receiver keeps the first value it
+            // is given for a name).
+            e.xpkgDirs.emplace_back(
+                mcpp::build::xpkg_env_var(ref.ns, ref.name), dir->string());
+            e.xpkgDirs.emplace_back(
+                mcpp::build::xpkg_env_var("", ref.name), dir->string());
+        }
+    };
+
     auto fillDepDirs = [&](mcpp::build::BuildProgramEnv& e, std::size_t consumer) {
         if (consumer >= provisionGraph.visible.size()) return;
         auto bind = bareBindingsFor(consumer);
@@ -4863,6 +4944,10 @@ prepare_build(bool print_fingerprint,
             // (mergeActiveFeatureDeps folded them in before the edges were
             // recorded). Shared owner — see fillDepDirs.
             fillDepDirs(bpEnv, i);
+            // …and the xlings packages this package itself declared. Its own
+            // manifest, not the root's: a dependency's `[xlings] deps` is what
+            // its build.mcpp asks about.
+            fillXpkgDirs(bpEnv, packages[i].manifest);
             // #355: the host tools THIS package requested (resolved above).
             if (auto tit = toolEnvByConsumer.find(i); tit != toolEnvByConsumer.end())
                 bpEnv.toolPaths = tit->second;
@@ -4996,6 +5081,7 @@ prepare_build(bool print_fingerprint,
         bpEnv.features     = feature_closure(*m, parse_feature_request(overrides.features));
         // mcpp#241 (root): consumer index 0, same owner as the dep loop.
         fillDepDirs(bpEnv, 0);
+        fillXpkgDirs(bpEnv, *m);
         // #355: the host tools the ROOT package requested (consumer index 0).
         if (auto tit = toolEnvByConsumer.find(0u); tit != toolEnvByConsumer.end())
             bpEnv.toolPaths = tit->second;
@@ -5148,6 +5234,35 @@ prepare_build(bool print_fingerprint,
 
     bool needsStdModule = graph_or_targets_import_std(scan.graph, *m, *root);
     if (needsStdModule && !tc->hasImportStd) {
+        // A freestanding target reaches here for a reason the generic message
+        // gets wrong. Nothing is missing from the toolchain — libc++'s std
+        // module is right there — it is that `std` is ONE module over the whole
+        // library, threads and filesystem and iostreams included, so there is
+        // no subset of it to build without an OS. Saying "provides no std
+        // module source" sends the reader to look for a broken payload.
+        //
+        // Naming the replacement is the whole value of the diagnostic: the
+        // freestanding subset is an ordinary package, so the fix is one line in
+        // the manifest rather than a toolchain investigation.
+        if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
+            ft && ft->is_freestanding())
+        {
+            return std::unexpected(std::format(
+                "`import std;` is not available on '{}' — a freestanding target "
+                "has no hosted standard library.\n"
+                "       `std` is one module over the entire library (threads, "
+                "filesystem, iostreams\n"
+                "       included), so there is no subset of it to build without "
+                "an OS underneath.\n"
+                "       Use the freestanding subset instead:\n"
+                "\n"
+                "           [dependencies]\n"
+                "           mcpplibs.std.freestanding = \"0.1\"\n"
+                "\n"
+                "       then `import mcpplibs.std.freestanding;` in place of "
+                "`import std;`.",
+                tc->targetTriple));
+        }
         return std::unexpected(std::format(
             "source imports std but toolchain '{}' provides no std module source",
             tc->label()));

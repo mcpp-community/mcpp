@@ -14,6 +14,8 @@ export module mcpp.build.flags;
 import std;
 import mcpp.build.distribution;
 import mcpp.build.plan;
+import mcpp.freestanding.target;
+import mcpp.freestanding.linkline;
 import mcpp.manifest.types;
 import mcpp.modgraph.scanner;
 import mcpp.platform;
@@ -522,12 +524,34 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // binutilsPrefix / runtimeLibDirs stay off here: this function computes
     // -B separately into f.bFlag, and routes runtime dirs through
     // depRuntimeLibraryDirs.
-    {
+    // Is this build for a target with no OS under it? Asked once, here, and
+    // used by both the compile block immediately below and the link block at
+    // the end of this function.
+    const bool isFreestandingTarget = [&] {
+        auto ft = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return ft && ft->is_freestanding();
+    }();
+
+    if (!isFreestandingTarget) {
         mcpp::toolchain::HostFlagOptions hopt;
         hopt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
         hopt.macosDeploymentTarget = macosDeploymentTarget;
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
+    } else {
+        // ⚠️ Skipped entirely, not filtered. What this block emits is the
+        // HOST's world reconstructed by hand — libc++'s headers, glibc's
+        // headers, the Linux UAPI headers — because the cfg that normally
+        // supplies them is bypassed. Every one of those is for the host, and
+        // on a freestanding target they do not merely go unused: picolibc's
+        // own <stdio.h> includes <stddef.h>, which then resolves to libc++'s
+        // copy, which opens a `__config_site` generated for the host and
+        // absent here. Measured — and the error names __config_site, so it
+        // reads as a broken payload rather than as the wrong include path.
+        //
+        // The cfg bypass itself is still required (the cfg carries a hardcoded
+        // x86-64 dynamic linker); it is added to the freestanding prefix.
+        compile_toolchain_flags = " --no-default-config";
     }
     if (isClangWithCfg) {
         llvmRootForStdlib = dm.llvmRoot;
@@ -908,6 +932,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         mi.mingw          = isMingwTc;
         mi.macosFloor     = !macosDeploymentTarget.empty();
         mi.format         = format;
+        // Bare metal short-circuits the whole table: the archives found below
+        // are the HOST's, and linking them into a riscv64 image fails with
+        // "incompatible with elf64lriscv". See MechanismInput::freestanding.
+        if (auto ft = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
+            mi.freestanding = ft->is_freestanding();
 
         const bool wantsArchives =
             (base == dist::Contract::SelfContained
@@ -1230,6 +1259,59 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                             link_toolchain_flags_c, b_flag, runtime_dirs,
                             link_intent_ld, atomic_ld, payload_ld,
                             user_ldflags, link_extra);
+    }
+
+    // ── Freestanding: the target has no OS, so most of the above is wrong ──
+    //
+    // Applied LAST and by REPLACEMENT rather than woven in above, for two
+    // reasons. First, every hosted link decision made so far is not merely
+    // unnecessary here but actively wrong — crt files, a dynamic linker, the
+    // C++ runtime, loader search paths — and appending `-nostdlib` to a line
+    // that already carries them leaves the outcome depending on the driver's
+    // flag ordering rather than on a decision anyone made. Second, keeping it
+    // to one block means the hosted path above is untouched: a target that is
+    // not freestanding takes exactly the code it took before.
+    //
+    // What is NOT decided here: the linker script, the startup objects and the
+    // C library. Those are BOARD facts and belong to a BSP package; the engine
+    // carries only their ordering, which is the one thing a `build.mcpp`
+    // cannot express (`link-search`/`link-lib` are unordered, and there is no
+    // verbatim ldflag directive — deliberately).
+    if (isFreestandingTarget) {
+        if (auto spec = mcpp::freestanding::resolve(
+                *mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))) {
+            const auto prefix = mcpp::freestanding::compile_prefix(*spec);
+            f.cxx += prefix;
+            f.cc  += prefix;
+            f.as  += mcpp::freestanding::assemble_prefix(*spec);
+
+            mcpp::freestanding::LinkInputs in;
+            // Absolute path, not `-fuse-ld=lld`: the name resolves through
+            // PATH and finds GNU ld on any machine with binutils earlier on
+            // it, which then dies with 'unrecognised emulation mode'.
+            // Reproduced on this toolchain 2026-08-19.
+            in.lld = mcpp::freestanding::resolve_lld(plan.toolchain.binaryPath);
+            // ⚠️ `--no-default-config` FIRST, and it is not hygiene.
+            //
+            // The llvm payload ships bin/clang++.cfg with an unconditional
+            // `-Wl,--dynamic-linker=…/ld-linux-x86-64.so.2`, a host `-L` and
+            // host `-isystem`s — none of it guarded by target. Replacing the
+            // link line without carrying the bypass forward hands those flags
+            // back to the driver, and the result is not a link error: it is a
+            // RISC-V firmware image with an x86-64 PT_INTERP baked in, which
+            // links clean and reports success. Measured, on this very change,
+            // before this line existed.
+            std::string fsLd = isClangWithCfg ? " --no-default-config" : "";
+            fsLd += mcpp::freestanding::link_flags(*spec, in, ninjaEsc);
+            f.ld  = fsLd + user_ldflags;
+            f.ldC = f.ld;
+            // Nothing hosted survives: these carry payload/sysroot/-B flags
+            // that name a C library this target does not have.
+            f.sysroot.clear();
+            f.bFlag.clear();
+            f.ldRuntimeFallback.clear();
+            f.linkage = "static";
+        }
     }
 
     return f;

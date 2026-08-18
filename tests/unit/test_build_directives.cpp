@@ -491,3 +491,47 @@ TEST(BuildDirectives, GlobDirectiveParsesIntoItsOwnSlot) {
     dirs::serialize(os, d);
     EXPECT_EQ(os.str().find("proto/**"), std::string::npos) << os.str();
 }
+
+// ── link-script ────────────────────────────────────────────────────────────
+//
+// The row exists so a board-support package can hand a consumer the board's
+// memory layout. Everything else that could carry it is either package-private
+// (`cxxflag`) or cannot express the flag at all (`link-lib` emits `-l`,
+// `link-search` emits `-L`) — so without it the one thing a user cannot write
+// for themselves was the one thing they had to.
+
+TEST(BuildDirectives, LinkScriptBecomesDashTWithAnAbsolutePath) {
+    auto d = parse("mcpp:link-script=board/link.ld\n");
+    auto& ld = d.at(dirs::Slot::LdFlags);
+    ASSERT_EQ(ld.size(), 1u);
+    // Absolute, because the link runs in the build directory: a relative path
+    // resolves against the wrong root and lld answers "cannot find linker
+    // script link.ld" (measured).
+    EXPECT_EQ(ld[0], "-T " + under_root("board/link.ld"));
+}
+
+TEST(BuildDirectives, LinkScriptIsLinkGlobalSoItReachesTheConsumer) {
+    // The whole point: a dependency's build.mcpp must be able to widen the
+    // LINK (as link-lib/link-search already do) without widening the public
+    // COMPILE interface (which include-dir deliberately cannot).
+    const dirs::Def* script = nullptr;
+    const dirs::Def* incdir = nullptr;
+    for (auto const& def : dirs::kTable) {
+        if (def.wire == "link-script") script = &def;
+        if (def.wire == "include-dir") incdir = &def;
+    }
+    ASSERT_NE(script, nullptr);
+    ASSERT_NE(incdir, nullptr);
+    EXPECT_EQ(script->scope, dirs::Scope::LinkGlobal);
+    EXPECT_EQ(incdir->scope, dirs::Scope::PackagePrivate);
+}
+
+TEST(BuildDirectives, LinkScriptDoesNotClaimADeclaredOutput) {
+    // `mustExistAfterRun` assumes the value IS a path; this row's transformed
+    // value is `-T <path>`, so the check would test the wrong string and
+    // reject a script that is right there.
+    for (auto const& def : dirs::kTable) {
+        if (def.wire != "link-script") continue;
+        EXPECT_FALSE(def.mustExistAfterRun);
+    }
+}

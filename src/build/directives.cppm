@@ -116,6 +116,7 @@ enum class Transform {
     LibSearchPath,  // dialect libSearchPrefix + absolute path
     DefinePrefix,   // dialect definePrefix + value
     AbsPath,        // absolute, lexically normal
+    LinkerScript,   // "-T <absolute path>" — freestanding link layout
 };
 
 struct Def {
@@ -138,7 +139,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 13> kTable{{
+inline constexpr std::array<Def, 14> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -147,6 +148,31 @@ inline constexpr std::array<Def, 13> kTable{{
     {"cfg",                 "define",            Slot::Defines,          Scope::PackagePrivate, Transform::DefinePrefix,  false, "",                           "",                                              1},
     {"generated",           "generated",         Slot::Generated,        Scope::SourceSet,      Transform::Verbatim,      true,  "declared generated source",  "but it does not exist after the run",           1},
     {"source",              "source",            Slot::Sources,          Scope::SourceSet,      Transform::Verbatim,      true,  "selected source",            "(mcpp:source=) but no such file exists",         1},
+    // ⚠️ LinkGlobal, and that is the whole reason this row exists.
+    //
+    // A board-support package is the one thing that knows a board's memory
+    // layout, and a linker script is how that layout is expressed. Every other
+    // way of getting one onto the link line is package-private (`cxxflag`) or
+    // cannot express the flag at all (`link-lib` emits `-l`, `link-search`
+    // emits `-L`), so before this row a BSP could supply the C library and the
+    // startup code and still not supply the layout — leaving the one thing a
+    // user cannot write for themselves as the one thing they had to.
+    //
+    // The supply-chain rule the PackagePrivate rows enforce is not weakened:
+    // this widens the LINK, which `link-lib`/`link-search` already do, and not
+    // the public compile interface.
+    //
+    // Single-valued in practice — two scripts on one line is an lld error, and
+    // that error names both, which is a better diagnostic than anything a
+    // conflict check here would produce.
+    // ⚠️ `mustExistAfterRun` is FALSE, and not by oversight. That contract
+    // assumes the directive's value IS a path (`generated=`, `source=`), and
+    // this one's transformed value is `-T <path>` — so the check would test
+    // the wrong string and reject a script that is right there. Special-casing
+    // the contract for one row would cost more than it buys: lld's own error
+    // is already exact ("cannot find linker script <path>"), which is the
+    // condition the contract exists to make legible.
+    {"link-script",         "ldflag",            Slot::LdFlags,          Scope::LinkGlobal,     Transform::LinkerScript,  false, "",                           "",                                              3},
     {"include-dir",         "include-dir",       Slot::IncludeDirs,      Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"include-dir-after",   "include-dir-after", Slot::IncludeDirsAfter, Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"rerun-if-changed",    "",                  Slot::RerunFiles,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
@@ -373,6 +399,10 @@ std::string transformed(const Def& def, std::string_view raw,
                                             + abs_against(root, raw);
         case Transform::DefinePrefix:  return std::string(dial.definePrefix) + std::string(raw);
         case Transform::AbsPath:       return abs_against(root, raw);
+        // Absolute on purpose: the link runs in the build directory, so a
+        // relative script path resolves against the wrong root and lld
+        // answers "cannot find linker script link.ld" — measured.
+        case Transform::LinkerScript:  return "-T " + abs_against(root, raw);
     }
     return std::string(raw);
 }
@@ -437,12 +467,27 @@ std::optional<std::string> protocol_error(const Directives& d) {
         std::string list;
         for (auto const& k : d.unknownKeys)
             list += (list.empty() ? "" : ", ") + ("mcpp:" + k);
+        // ⚠️ NOT "so it must be a typo".
+        //
+        // That is what this said, and adding `link-script` in protocol 3
+        // proved it wrong: a package written against a newer mcpp reaches an
+        // older one with the OLDER engine's protocol number stamped on it —
+        // the announcement is substituted at build.mcpp compile time by
+        // whichever engine is running, not carried by the package. So the two
+        // numbers agreeing says nothing about whether the KEY is from the
+        // future, and an old mcpp cannot tell the two cases apart. Naming both
+        // is the only honest thing it can do, and the upgrade is the cheaper
+        // one to try first.
         return std::format(
             "build.mcpp emitted directive(s) this mcpp does not know: {}.\n"
-            "       The program announced protocol {}, which this mcpp also "
-            "speaks, so an unrecognized directive is a typo rather than newer "
-            "syntax.",
-            list, d.protocol);
+            "       Either the package was written for a newer mcpp (try "
+            "`mcpp self update`),\n"
+            "       or the directive is misspelled. This mcpp speaks protocol "
+            "{}; the protocol number\n"
+            "       cannot distinguish the two, because it is stamped by "
+            "whichever mcpp compiled\n"
+            "       the program, not by the package.",
+            list, kProtocolVersion);
     }
     return std::nullopt;
 }

@@ -319,6 +319,13 @@ int run(int argc, char** argv) {
             // NB: this positional is a BINARY NAME from [[bin]]/src layout —
             // unrelated to `--target <triple>` (the cross-target axis).
             .arg(cl::Arg("target").help("Binary name (optional)"))
+            // ⚠️ Same word, two axes — and they were ALREADY named this way:
+            // the positional above is a binary name, this option is the cross
+            // target triple, exactly as in `mcpp build --target`. Spelling the
+            // option differently here would make the one command that needs
+            // both the one command where the flag is not called --target.
+            .option(cl::Option("target-triple").takes_value().value_name("TRIPLE")
+                .help("Cross target triple (same axis as `mcpp build --target`)"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Run only the named workspace member (single-member; no --workspace fan-out)"))
             .option(cl::Option("cache").takes_value().value_name("MODE")

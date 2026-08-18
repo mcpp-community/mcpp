@@ -62,6 +62,9 @@ case "$OS" in
         fi
         # wine: run cross-built Windows PE artifacts on the Linux host.
         command -v wine &>/dev/null && CAPS+=(wine)
+        # qemu-riscv: the emulator a bare-metal riscv artifact runs in
+        # (xim:qemu-riscv, or any qemu-system-riscv64 on PATH).
+        command -v qemu-system-riscv64 &>/dev/null && CAPS+=(qemu-riscv)
         # pack capability: ELF + patchelf both required
         if [[ " ${CAPS[*]} " == *" patchelf "* ]]; then
             CAPS+=(pack)
@@ -175,9 +178,9 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # absent on Linux and must stay legal to declare. It is checked against the
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
-KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx macos mingw mingw-cross msvc
-            musl nasm no-msvc pack patchelf python3 scan-deps symlink unix-shell
-            windows wine xlings-msvc)
+KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx llvm macos mingw mingw-cross
+            msvc musl nasm no-msvc pack patchelf python3 qemu-riscv scan-deps
+            symlink unix-shell windows wine xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do
@@ -201,6 +204,23 @@ done
 # ---------------------------------------------------------------------------
 # Returns 0 (true) if the test should be skipped, prints reason.
 # Returns 1 (false) if all requirements are met.
+
+# ⚠️ THERE IS DELIBERATELY NO "requires-hard" FORM.
+#
+# The obvious answer to "a test silently skipped on the runner that was
+# supposed to run it" is a token whose absence FAILS. It was implemented here,
+# used once, and measured wrong: a token cannot tell "this runner is
+# misconfigured" from "this platform legitimately lacks the capability",
+# because the same word means both. `llvm` and `qemu-riscv` are absent on the
+# macOS runner by design, so the one test that declared them the hard way made
+# the macOS suite fail — a worse outcome than the silent skip it was meant to
+# prevent, and one CI reported within the hour.
+#
+# The guard that works has to know WHICH runner it is talking about, so it
+# lives in the job: ci-linux-e2e.yml's `baremetal` job installs the
+# capabilities and then asserts the tests' PASS lines actually appeared.
+# `run_all.sh` exits 0 on a skip, so its exit code cannot answer that question
+# and no token can either.
 
 check_requires() {
     local test_file="$1"

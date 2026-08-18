@@ -68,6 +68,43 @@ namespace paths {
     std::filesystem::path xim_tool(const Env& env, std::string_view tool,
                                    std::string_view version);
 
+    // ── A declared `[xlings] deps` entry, and where its payload landed ──────
+    //
+    // The two helpers above hardcode the `xim` namespace, which was right
+    // while the only callers were mcpp's own tools (ninja, nasm). A manifest
+    // may name any namespace — `local:qemu-riscv` during development,
+    // `scode:…` for a source-built package — and the store spells an installed
+    // package `<namespace>-x-<name>/<version>`.
+    //
+    // Here rather than in the build layer because THIS module already owns
+    // that layout (`xpkgs_base`, `xim_tool`). A second place deriving it is
+    // the shape this codebase has paid for repeatedly: it does not fail when
+    // you add it, it fails later, somewhere else.
+    struct XpkgRef {
+        std::string ns;       // "xim" when the spec omitted one
+        std::string name;
+        std::string version;  // empty = unpinned
+    };
+
+    // Parse `[<ns>:]<name>[@<version>]` exactly as a manifest writes it.
+    XpkgRef parse_xpkg_ref(std::string_view spec);
+
+    // Where that package's payload is, or nullopt if it is not installed.
+    //
+    // ⚠️ A PINNED ref resolves to exactly its version and to nothing else. A
+    // build that asked for 1.8.12 and silently got 1.9.0 is the kind of answer
+    // that is only discovered later, in the artifact. An unpinned ref takes
+    // the highest version present — compared by numeric segments, because a
+    // plain string sort puts "0.4.11" before "0.4.9".
+    std::optional<std::filesystem::path>
+    xpkg_payload(const Env& env, const XpkgRef& ref);
+
+    // The same resolution against an explicit xpkgs base. The Env form
+    // delegates here; this one exists so the rule ("pinned means exactly that
+    // version") is testable without constructing a home.
+    std::optional<std::filesystem::path>
+    xpkg_payload_at(const std::filesystem::path& xpkgsBase, const XpkgRef& ref);
+
     // From compiler binary, climb parent dirs to find "xpkgs" directory.
     // Replaces 3 duplicate implementations in flags.cppm, ninja_backend.cppm,
     // stdmod.cppm.
@@ -681,6 +718,71 @@ std::filesystem::path xim_tool(const Env& env, std::string_view tool,
                                std::string_view version) {
     return xpkgs_base(env) / std::format("xim-x-{}", tool) / std::string(version);
 }
+
+// Parse `[<ns>:]<name>[@<version>]` exactly as a manifest writes it.
+XpkgRef parse_xpkg_ref(std::string_view spec) {
+    XpkgRef r;
+    if (auto colon = spec.find(':'); colon != std::string_view::npos) {
+        r.ns = std::string(spec.substr(0, colon));
+        spec = spec.substr(colon + 1);
+    } else {
+        // The manifest's own default, spelled once here rather than at each
+        // call site: `deps = ["ninja"]` and `deps = ["xim:ninja"]` name the
+        // same package.
+        r.ns = "xim";
+    }
+    if (auto at = spec.find('@'); at != std::string_view::npos) {
+        r.name    = std::string(spec.substr(0, at));
+        r.version = std::string(spec.substr(at + 1));
+    } else {
+        r.name = std::string(spec);
+    }
+    return r;
+}
+
+// Where that package's payload is, or nullopt if it is not installed.
+//
+// ⚠️ A PINNED ref resolves to exactly its version and to nothing else. A build
+// that asked for 1.8.12 and silently got 1.9.0 is the kind of answer that is
+// only discovered later, in the artifact. An unpinned ref takes the highest
+// version present — compared by numeric segments, because a plain string sort
+// puts "0.4.11" before "0.4.9" and picking the wrong payload is silent.
+std::optional<std::filesystem::path>
+xpkg_payload(const Env& env, const XpkgRef& ref) {
+    return xpkg_payload_at(xpkgs_base(env), ref);
+}
+
+std::optional<std::filesystem::path>
+xpkg_payload_at(const std::filesystem::path& xpkgsBase, const XpkgRef& ref) {
+    if (ref.name.empty()) return std::nullopt;
+    const auto root = xpkgsBase / std::format("{}-x-{}", ref.ns, ref.name);
+    std::error_code ec;
+    if (!ref.version.empty()) {
+        auto p = root / ref.version;
+        if (std::filesystem::is_directory(p, ec)) return p;
+        return std::nullopt;   // pinned and absent: NOT "some other version"
+    }
+    if (!std::filesystem::is_directory(root, ec)) return std::nullopt;
+    auto key_of = [](const std::string& s) {
+        std::vector<long long> k;
+        long long cur = 0; bool any = false;
+        for (char c : s) {
+            if (c >= '0' && c <= '9') { cur = cur * 10 + (c - '0'); any = true; }
+            else { if (any) k.push_back(cur); cur = 0; any = false; }
+        }
+        if (any) k.push_back(cur);
+        return k;
+    };
+    std::optional<std::filesystem::path> best;
+    std::vector<long long> bestKey;
+    for (auto const& e : std::filesystem::directory_iterator(root, ec)) {
+        if (!e.is_directory(ec)) continue;
+        auto k = key_of(e.path().filename().string());
+        if (!best || k > bestKey) { best = e.path(); bestKey = k; }
+    }
+    return best;
+}
+
 
 std::optional<std::filesystem::path>
 xpkgs_from_compiler(const std::filesystem::path& compilerBin) {

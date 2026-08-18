@@ -3590,3 +3590,52 @@ defines = ["FOO=1"]
     // ...and the field itself is gone, so nothing downstream can read it.
     EXPECT_EQ(m->targetOverrides.at("x86_64-linux-gnu").cxxRuntime, "");
 }
+
+// ── [target.<triple>].runner ────────────────────────────────────────────────
+
+TEST(Manifest, TargetRunnerParsesAndDoesNotWarn) {
+    constexpr auto src = R"(
+[package]
+name = "fw"
+version = "0.1.0"
+
+[target.riscv64-none-elf]
+runner = ["qemu-system-riscv64", "-machine", "virt", "-kernel"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto it = m->targetOverrides.find("riscv64-none-elf");
+    ASSERT_NE(it, m->targetOverrides.end());
+    ASSERT_EQ(it->second.runner.size(), 4u);
+    EXPECT_EQ(it->second.runner.front(), "qemu-system-riscv64");
+    EXPECT_EQ(it->second.runner.back(),  "-kernel");
+    // ⚠️ The unknown-key sweep is about SCALARS ("a scalar that does
+    // nothing"). It skipped tables but not arrays, so this key was reported as
+    // "unsupported key 'runner' (ignored)" while in fact being honoured —
+    // worse than either statement being true. Seen in CI.
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
+}
+
+TEST(Manifest, TargetRunnerRejectsShapesThatWouldRunNothing) {
+    // An empty template would exec nothing and report success.
+    constexpr auto empty = R"(
+[package]
+name = "fw"
+version = "0.1.0"
+[target.riscv64-none-elf]
+runner = []
+)";
+    EXPECT_FALSE(mcpp::manifest::parse_string(empty).has_value());
+
+    // A bare string is the shape a user reaches for first; taking it would
+    // mean guessing where the word boundaries are.
+    constexpr auto scalar = R"(
+[package]
+name = "fw"
+version = "0.1.0"
+[target.riscv64-none-elf]
+runner = "qemu-system-riscv64 -kernel"
+)";
+    EXPECT_FALSE(mcpp::manifest::parse_string(scalar).has_value());
+}
