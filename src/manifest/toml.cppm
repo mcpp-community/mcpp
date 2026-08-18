@@ -35,6 +35,18 @@ std::expected<std::string, std::string>
 upsert_dependency_text(std::string_view source,
                        const DependencyTextEdit& edit);
 
+// Every path the lib-root convention would accept, in extension-table order
+// (`.cppm` first, then whatever `[build] module_extensions` declares). An
+// explicit `[lib] path` collapses this to that one entry.
+std::vector<std::filesystem::path> lib_root_candidates(const Manifest& manifest);
+
+// The lib root that EXISTS under `projectRoot`. `mcpp.manifest.types` has the
+// non-probing form, which answers with the conventional NAME and is the right
+// one for a diagnostic; this is the right one for "which file is actually
+// there", and a project whose interfaces are `.ixx` needs it.
+std::filesystem::path resolve_lib_root_path(const Manifest& manifest,
+                                            const std::filesystem::path& projectRoot);
+
 } // namespace mcpp::manifest
 
 namespace mcpp::manifest {
@@ -1444,6 +1456,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // prepare_build.
             ConditionalConfig cc;
             cc.predicate = triple;
+            // `[target.<pred>.runtime]` — the dialect-neutral link intent. Two
+            // keys only, and the same two `[runtime]` already has at the top
+            // level: this makes them per-target, it does not invent a vocabulary.
+            if (auto rit = body.find("runtime"); rit != body.end() && rit->second.is_table()) {
+                auto& rt = rit->second.as_table();
+                if (auto f = rt.find("link_library_dirs"); f != rt.end() && f->second.is_array())
+                    for (auto& v : f->second.as_array())
+                        if (v.is_string()) cc.linkLibraryDirs.emplace_back(v.as_string());
+                if (auto f = rt.find("libraries"); f != rt.end() && f->second.is_array())
+                    for (auto& v : f->second.as_array())
+                        if (v.is_string()) cc.libraries.push_back(v.as_string());
+            }
             if (auto bit = body.find("build"); bit != body.end() && bit->second.is_table()) {
                 auto& bt = bit->second.as_table();
                 auto read_list = [&](const char* key, std::vector<std::string>& out) {
@@ -2024,6 +2048,66 @@ upsert_dependency_text(std::string_view source,
             edit.namespace_, edit.shortName));
     }
     return text;
+}
+
+
+// ── the lib root that actually exists ────────────────────────────────────
+//
+// ⚠️ LIVES HERE, NOT IN mcpp.manifest.types, AND THE REASON IS MEASURED.
+// Probing needs the extension table (`mcpp.source_kind`), which this module
+// already imports and `types` does not. Adding that import to `types` — a
+// module nearly everything depends on — made GCC 16.1 ICE while compiling
+// `src/main.cpp`, a file unrelated to the change, and clearing gcm.cache did
+// not help. That is the module-poisoning shape this project has hit before: a
+// NEW edge into a low-level module whose interface carries std types. So the
+// edge is not added; the function moves to where the edge already is.
+
+std::vector<std::filesystem::path> lib_root_candidates(const Manifest& manifest) {
+    if (!manifest.lib.path.empty()) return { manifest.lib.path };
+
+    // Convention: `src/<package-tail>.<module-interface-extension>` — ONE
+    // candidate per DECLARED extension, not just `.cppm`.
+    //
+    // A project whose interfaces are `.ixx` says so in
+    // `[build] module_extensions`, and the convention used to look only for
+    // `src/<tail>.cppm`, a file that does not exist there. Measured on such a
+    // package:
+    //
+    //   $ mcpp pack mathkit
+    //        Interface (headers only)      ← the module interface, gone
+    //         Withheld (nothing)
+    //     Packed …-x86_64-linux-gnu        ← the C-SURFACE tag
+    //
+    // Both halves silently wrong: nothing publishes the interface, so no
+    // consumer can `import mathkit`; and an empty published set is exactly how
+    // the packer recognises a C surface, so the package also stops constraining
+    // the C++ ABI and the compatibility gate stops checking compiler and
+    // stdlib. `mcpp pack` has to follow the project's extension choice on its
+    // own — that is what makes `module_extensions` a knob rather than a knob
+    // plus a second thing to remember.
+    //
+    // `extension_table_for` keeps `.cppm` first, so a project that has both
+    // keeps today's answer.
+    std::string tail = manifest.package.name;
+    if (auto p = tail.rfind('.'); p != std::string::npos) tail = tail.substr(p + 1);
+
+    const auto table = mcpp::extension_table_for(manifest.buildConfig.moduleExtensions);
+    std::vector<std::filesystem::path> out;
+    out.reserve(table.moduleInterface.size());
+    for (auto const& ext : table.moduleInterface)
+        out.push_back(std::filesystem::path("src") / (tail + ext));
+    return out;
+}
+
+std::filesystem::path resolve_lib_root_path(const Manifest& manifest,
+                                            const std::filesystem::path& projectRoot) {
+    auto candidates = lib_root_candidates(manifest);
+    std::error_code ec;
+    for (auto const& rel : candidates)
+        if (std::filesystem::is_regular_file(projectRoot / rel, ec)) return rel;
+    // None on disk: hand back the conventional first candidate so the caller's
+    // diagnostic names the file it expected rather than nothing at all.
+    return candidates.front();
 }
 
 } // namespace mcpp::manifest

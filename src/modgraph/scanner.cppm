@@ -574,6 +574,45 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     // `u.kind`; nothing re-derives it from the extension.
     u.kind         = mcpp::classify(file, extTable);
 
+    // ⚠️ A file `sources` matched but the classifier cannot place.
+    //
+    // This used to be accepted, and what it produced was a compile edge whose
+    // object NOTHING LINKS. Measured with an `.ixx` that no
+    // `[build] module_extensions` declared:
+    //
+    //   build obj/mathkit.ixx.o | gcm.cache/mathkit.gcm : cxx_object …
+    //     bmi_out = gcm.cache/mathkit.gcm          ← the BMI was produced
+    //   build bin/app : cxx_link obj/main.o        ← the object is not here
+    //
+    //   ld: undefined reference to `mk::answer@mathkit()'
+    //
+    // Two answers to "is this a module interface" and only one of them read:
+    // the SCANNER sees `export module mathkit;` and records `provides`, which
+    // is why the edge got a `bmi_out`; the CLASSIFIER says `Other`, and the
+    // link set is built from the classifier. So the author is told about a
+    // symbol, when what happened is a missing line of configuration.
+    //
+    // Refused here rather than repaired downstream: the extension set is the
+    // project's to declare, and mcpp guessing which unknown extension "must
+    // have meant" a module interface would be a second answer to the same
+    // question — the very thing that produced this defect.
+    if (u.kind == mcpp::SourceKind::Other) {
+        return std::unexpected(ScanError{ file, 0, std::format(
+            "'{}' is listed in [build] sources, and mcpp has no role for the "
+            "extension '{}'.\n"
+            "  Its object would be compiled and then linked by nothing, so this "
+            "is refused rather\n"
+            "  than built. If it is a module interface, declare the extension:\n"
+            "      [build]\n"
+            "      module_extensions = [\"{}\"]\n"
+            "  Otherwise remove it from `sources` — headers belong in "
+            "`include_dirs`, and\n"
+            "  Windows resource scripts in `[resources]`.",
+            file.filename().string(),
+            file.extension().string().empty() ? "(none)" : file.extension().string(),
+            file.extension().string().empty() ? ".ixx" : file.extension().string()) });
+    }
+
     // C-like files are not C++ modules: they cannot legally contain `module` / `import`
     // declarations, and we route them to the C-language compile rule (no
     // P1689 scan, no BMI lookups). Skip the line-by-line module scan to

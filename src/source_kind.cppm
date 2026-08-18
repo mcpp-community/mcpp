@@ -251,6 +251,22 @@ std::string normalize_extension(std::string_view raw) {
 }
 
 ExtensionTable builtin_extension_table() {
+    // `.cppm` alone, on purpose. `.ixx`, `.ccm`, `.cxxm` and anything else are
+    // the PROJECT's to declare via `[build] module_extensions` — the extension
+    // set is configuration, not a built-in list that mcpp grows one entry at a
+    // time as extensions come into fashion.
+    //
+    // What has to be true for that to be a real knob is that a DECLARED
+    // extension works everywhere without further help, and it does: a module
+    // interface's language is stated explicitly per toolchain
+    // (`BmiTraits::moduleInterfaceLangFlag` — `/interface /TP`,
+    // `-x c++-module`, `-x c++`) rather than inferred by the driver from the
+    // extension. Clang's driver not recognising `.ixx` is therefore beside the
+    // point: mcpp never lets it guess.
+    //
+    // What was NOT true, and is fixed in the scanner rather than here: an
+    // UNdeclared extension used to be accepted silently. See the classification
+    // check there for what that cost.
     return ExtensionTable{ .moduleInterface = { ".cppm" } };
 }
 

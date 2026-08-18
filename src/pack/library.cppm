@@ -38,6 +38,7 @@ export module mcpp.pack.library;
 import std;
 import mcpp.pack.digest;
 import mcpp.pack.manifest_emit;
+import mcpp.source_kind;   // builtin_extension_table — what needs no declaring
 import mcpp.pack.zip;
 import mcpp.platform;
 
@@ -350,6 +351,20 @@ run_library_pack(const LibraryPackPlan& plan)
         doc.version         = plan.packageVersion;
         doc.builtBy         = plan.builtBy;
         doc.interfaceFiles  = interfaceNames;
+        // Whatever the published set uses beyond the built-in `.cppm`.
+        // Computed from the FILES, so it cannot disagree with `sources` above.
+        {
+            const auto builtin = mcpp::builtin_extension_table();
+            std::set<std::string> extras;
+            for (auto const& src : plan.interfaceSources) {
+                auto ext = src.extension().string();
+                if (ext.empty()) continue;
+                if (std::ranges::find(builtin.moduleInterface, ext)
+                    != builtin.moduleInterface.end()) continue;
+                extras.insert(ext);
+            }
+            doc.moduleExtensions.assign(extras.begin(), extras.end());
+        }
         doc.hasIncludeDir   = std::filesystem::is_directory(plan.stagingRoot / "include", ec);
         doc.interfaceDigest = plan.interfaceSources.empty() && !doc.hasIncludeDir
             ? std::string{}

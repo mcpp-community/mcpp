@@ -14,6 +14,13 @@
 //
 // Design: .agents/docs/2026-08-17-library-distribution-design.md §2.
 
+module;
+// `stderr` / `fputs`: the packer prints the compiler's own diagnostics, and a
+// build failure that arrives as three words is a build failure nobody can act
+// on. This global module fragment was removed once as an unused `<cstdio>`;
+// it has a use now.
+#include <cstdio>
+
 export module mcpp.pack.library_pipeline;
 
 import std;
@@ -158,6 +165,14 @@ export int build_and_pack_library(const std::string& targetName,
         auto be = mcpp::build::make_ninja_backend();
         mcpp::build::BuildOptions bo;
         if (auto br = be->build(ctx->plan, bo); !br) {
+            // The compiler's own output, not just "build failed". `mcpp build`
+            // has always printed this; `mcpp pack` dropped it, so a failure
+            // inside the packer's build arrived as three words and CI logs had
+            // nothing to go on.
+            if (!br.error().diagnosticOutput.empty()) {
+                std::fputs(br.error().diagnosticOutput.c_str(), stderr);
+                if (br.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
+            }
             mcpp::ui::error(br.error().message);
             return 1;
         }
@@ -180,7 +195,13 @@ export int build_and_pack_library(const std::string& targetName,
         }
 
         // ── the interface closure ─────────────────────────────────────
-        auto libRoot = ctx->projectRoot / mcpp::manifest::resolve_lib_root_path(ctx->manifest);
+        // PROBING form: the convention is `src/<tail>.<module-interface-ext>`, and
+        // which extension that is belongs to the project. A package whose
+        // interfaces are `.ixx` used to resolve to a `src/<tail>.cppm` that does
+        // not exist, and the packer then published nothing and tagged the
+        // result as a C surface — both silently.
+        auto libRoot = ctx->projectRoot
+                     / mcpp::manifest::resolve_lib_root_path(ctx->manifest, ctx->projectRoot);
         std::error_code ec;
         InterfaceClosure here;
         std::string qualifiedPackage;

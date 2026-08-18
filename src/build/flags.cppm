@@ -21,6 +21,7 @@ import mcpp.platform.runtime_search;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
+import mcpp.toolchain.triple;
 import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
@@ -411,7 +412,23 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
     const bool isMsvcDialect = (d.id == "msvc");
 
-    // PIC? (GNU-only concept; PE code is position independent by design.)
+    // PIC is a GNU concept and a property of the TARGET FORMAT: PE code is
+    // position independent by design (base relocations), and clang rejects the
+    // flag outright — `unsupported option '-fPIC' for target
+    // 'x86_64-pc-windows-msvc'`.
+    //
+    // ⚠️ The condition used to be `!isMsvcDialect`, i.e. the DIALECT. Windows'
+    // default toolchain is clang, which speaks the GNU dialect while targeting
+    // the MSVC ABI, so `-fPIC` was emitted and every MSVC-ABI shared build died
+    // in clang-scan-deps before compiling anything. It was unreachable while
+    // `kind = "shared"` was refused on that ABI; allowing it is what surfaced
+    // this. Same shape as the shared-library guard itself: asking which
+    // COMPILER when the question is which TARGET.
+    const bool peTarget = [&] {
+        if (auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
+            return t->is_pe();
+        return bool(mcpp::platform::is_windows);
+    }();
     bool need_pic = false;
     for (auto& lu : plan.linkUnits) {
         if (lu.kind == LinkUnit::SharedLibrary) {
@@ -419,7 +436,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             break;
         }
     }
-    std::string pic_flag = (need_pic && !isMsvcDialect) ? " -fPIC" : "";
+    std::string pic_flag = (need_pic && !isMsvcDialect && !peTarget) ? " -fPIC" : "";
 
     // Include dirs — this is the TYPED PATH channel (bare paths from the
     // manifest; the dialect prefix is applied here at emission), not the

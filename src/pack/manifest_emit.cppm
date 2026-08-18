@@ -68,6 +68,16 @@ struct PackageDoc {
     // `sources = []` says exactly that (an omitted key would be filled with
     // the default glob and would sweep up whatever sits under src/).
     std::vector<std::string> interfaceFiles;
+    // Module-interface extensions the PUBLISHED SET uses beyond the built-in
+    // `.cppm` — emitted as `[build] module_extensions`.
+    //
+    // A function of what is in the package, not a copy of what the producer
+    // declared: the packer publishes a computed subset, so the extensions it
+    // needs are computed from that subset too. Without this the consumer is
+    // handed `sources = ["interface/mathkit.ixx"]` and no way to know what an
+    // `.ixx` is, which is the producer remembering to configure something the
+    // package could state for itself.
+    std::vector<std::string> moduleExtensions;
     bool        hasIncludeDir = false;
     std::string interfaceDigest;               // over the ordered interface set
 
@@ -168,6 +178,12 @@ std::string emit_package_manifest(const PackageDoc& doc) {
     // ── the interface ──────────────────────────────────────────────────
     o += "[build]\n";
     o += std::format("sources      = [{}]\n", join_quoted(doc.interfaceFiles));
+    // Emitted only when the published set actually uses one, so a `.cppm`
+    // package's manifest is byte-identical to before. A package whose interface
+    // is `.ixx` states that itself rather than requiring the consumer to have
+    // guessed the producer's convention.
+    if (!doc.moduleExtensions.empty())
+        o += std::format("module_extensions = [{}]\n", join_quoted(doc.moduleExtensions));
     if (doc.hasIncludeDir) o += "include_dirs = [\"include\"]\n";
     if (!doc.cxxRuntime.empty())
         o += std::format("cxx_runtime  = {}\n", quote(doc.cxxRuntime));
@@ -226,6 +242,33 @@ std::string emit_package_manifest(const PackageDoc& doc) {
                          leg.triple,
                          peGnuShared ? "\"-Wl,-Bdynamic\", " : "",
                          leg.linkName);
+
+        // …and, where it says the SAME thing, the dialect-neutral form. mcpp
+        // renders these as `/LIBPATH:` + `<n>.lib` or `-L` + `-l<n>` from the
+        // target, which is what lets a consumer driven by native `cl.exe` link
+        // this package at all — cl rejects `-L`.
+        //
+        // BOTH are emitted, deliberately. An older mcpp reads only the ldflags
+        // above and silently ignores this block (measured), so dropping the
+        // ldflags would leave every older client with no link line at all. A
+        // newer mcpp seeing this block drops that leg's library references and
+        // uses these instead — see merge_conditional_config.
+        //
+        // ⚠️ NOT FOR A PE/MinGW SHARED LEG, and this was measured rather than
+        // reasoned. That leg's line is `-L… -Wl,-Bdynamic -lmathkit`, and
+        // `-Wl,-Bdynamic` only works IMMEDIATELY BEFORE the `-l` it enables:
+        // mcpp gives PE executables `-static`, which leaves ld in static-only
+        // mode where it refuses an import library. The neutral form has no way
+        // to say "and switch link mode first", and rendering the two halves
+        // through different slots separates the flag from its argument — e2e
+        // 257 fails with `have you installed the static version of the mathkit
+        // library?`. So that one leg keeps the spelling that works, and cl.exe
+        // never sees it: a PE/GNU leg is not an MSVC-ABI leg.
+        if (!peGnuShared) {
+            o += std::format("[target.'{}'.runtime]\n", cfg_predicate_for(leg.triple));
+            o += std::format("link_library_dirs = [\"lib/{}\"]\n", leg.triple);
+            o += std::format("libraries         = [\"{}\"]\n\n", leg.linkName);
+        }
     }
     // A shared library has to be FOUND at run time as well as linked, and the
     // two are different search paths — `link_library_dirs` is not rpath.

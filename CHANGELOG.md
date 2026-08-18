@@ -3,6 +3,64 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.18.2] — 2026-08-18
+
+### 新增
+
+- **`kind = "shared"` 在 MSVC ABI 上可用了 —— mcpp 自己生成 `.def`。**
+
+  MSVC 在没有 `__declspec(dllexport)`、也没有 `.def` 时,DLL 什么都不导出;
+  导入库为空,消费者拿到一堆 unresolved externals,而符号明明就在对象里。
+  **拒绝的理由成立,结论不成立** —— CMake 的 `WINDOWS_EXPORT_ALL_SYMBOLS` 自 3.4
+  起就是这么做的,而且它的 `bindexplib` **直接读 COFF、不依赖 dumpbin**。这一点是
+  决定性的:`dumpbin` 只在 Visual Studio 开发者环境里,而 mcpp 在 Windows 的默认
+  工具链是 clang,`mcpp build` 根本不在那个环境里。
+
+  `mcpp.build.coff_exports` 是那个读取器,写成**对字节的纯函数**,于是它能在任何
+  平台上被测试 —— 16 条单测逐字节构造对象(那是唯一能按需改变存储类的办法),
+  外加一个**真实的 mingw-cross 对象**:只喂自己测试输出的读取器,只会与自己一致。
+  超过 **65535** 个可导出符号时**拒绝而不截断**:被截断的导出表能干净链完,
+  然后在「恰好需要那个掉出去的符号」的消费者那里失败。
+
+  **标注优先。** 对象里已带 `/EXPORT:` 指令(即 `__declspec(dllexport)` 的产物)时,
+  mcpp 让开、不生成任何东西 —— 再加一份列表会把同名符号导出两次(`LNK4197`),
+  更糟的是把其余所有符号也导出,用「全部」替换掉作者选定的公开面。
+  **这件事靠检测而不是配置**:为「我标注过了」加一个 manifest 键,就是给对象已经
+  说过的事再加一个说法,而两者可以不一致。
+
+  仍有两条限制是工具消不掉的(与 CMake 记录的同两条):导出的**数据**在消费端仍需
+  `__declspec(dllimport)`;**vtable 被引用的类**要整类标注。两者都写进了 docs/12。
+
+- **打包库可以被原生 `cl.exe` 消费。** 生成的 manifest 现在同时带方言中立的
+  `[target.<pred>.runtime]`(`link_library_dirs` / `libraries`),mcpp 会按 target
+  渲染成 `/LIBPATH:` + `<n>.lib` 或 `-L` + `-l<n>`。**两种拼写都带**:旧版 mcpp
+  只读 `ldflags` 并静默忽略新段,去掉它会让旧客户端一个 flag 都拿不到;
+  而新版读到中立形式时**忽略**同腿的 `ldflags` 而不是叠加 —— 叠加会把 `-L`
+  送回 `cl` 的命令行。
+
+### 修复
+
+- **`mcpp pack` 现在跟着工程的 `module_extensions` 走,不需要再配一次。**
+
+  实测:接口是 `.ixx` 的库打出来的包是**静默错的** ——
+
+  
+
+  两半都错且都不出声:没有接口,消费者 `import` 不了;而**空的发布集合正是打包器
+  判定「C 表面」的依据**,于是这个包同时不再约束 C++ ABI,兼容性闸门也不再检查
+  编译器与标准库。真因是 lib root 约定把 `.cppm` 写死了。现在按**已声明的每个扩展名**
+  各给一个候选并取存在的那个;生成的 manifest 也会**自己声明** `module_extensions`
+  —— 从**发布的文件**算出来,因此不可能与 `sources` 不一致。
+
+- **`sources` 命中却分类不出角色的文件,现在当场拒绝。**
+
+  未声明的 `.ixx` 过去会编译出一个**没人链接的对象**,报错是
+  `undefined reference to mk::answer@mathkit()` —— 既不点名扩展名也不点名那条键。
+  根因是「这是不是模块接口」有**两个答题者**:扫描器读到 `export module` 记下
+  `provides`(所以边上挂了 `bmi_out`),而分类器说 `Other`,链接集合只读后者。
+
+  ⚠️ 这是**行为变化**:`sources` 里混进 `.md` / `.txt` 的工程会开始报错。
+
 ## [2026.8.18.1] — 2026-08-18
 
 ### 新增

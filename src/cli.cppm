@@ -652,6 +652,11 @@ int run(int argc, char** argv) {
             .option(cl::Option("verify").takes_value().value_name("MODE")
                 .help("Already-staged check: size (default) | content"))
             .action(wrap_rc(cmd_stage)))
+        .subcommand(cl::App("coff-def")
+            .description("(internal: invoked by ninja) Write a .def of every exportable symbol in the given COFF objects")
+            .option(cl::Option("output").takes_value().value_name("PATH").help("the .def to write"))
+            .option(cl::Option("name").takes_value().value_name("DLL").help("LIBRARY name recorded in the .def"))
+            .action(wrap_rc(cmd_coff_def)))
         .subcommand(cl::App("bmi-equal")
             .description("(internal: invoked by ninja) Compare two BMIs ignoring the compiler's embedded timestamp")
             .action(wrap_rc(cmd_bmi_equal)))
@@ -752,7 +757,7 @@ int run(int argc, char** argv) {
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep", "why", "resolve", "stage", "bmi-equal",
+                "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",
                 "bmi-compile", "bmi-supervise", "bmi-await",
             });
             bool ok = false;

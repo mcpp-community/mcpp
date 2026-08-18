@@ -66,6 +66,21 @@ imp="$(find target -name 'libmathkit.dll.a' | head -1)"
     echo "FAIL: no import library. The .dll alone is a library only mingw's ld"
     echo "      will link, so the package would be unusable everywhere else."
     exit 1; }
+# ⚠️ And no `-fPIC`. PE code is position independent by design, and clang
+# targeting the MSVC ABI REJECTS the flag — `unsupported option '-fPIC' for
+# target 'x86_64-pc-windows-msvc'` — killing the build in clang-scan-deps before
+# anything compiles. The condition used to be the DIALECT rather than the target,
+# and Windows' default toolchain is clang, which speaks the GNU dialect while
+# targeting MSVC. Asserted here rather than only on Windows because this runs on
+# every Linux CI pass through mingw-cross, and the flag is equally meaningless
+# for a PE target whichever compiler emits it.
+nj_pic="$(find target -name build.ninja | head -1)"
+grep -q '\-fPIC' "$nj_pic" && {
+    grep -n 'fPIC' "$nj_pic" | head -3
+    echo "FAIL: -fPIC on a PE target. It means nothing here, and clang targeting"
+    echo "      the MSVC ABI refuses it outright."
+    exit 1; }
+
 # It is a declared output of the link edge, not a side effect ninja knows nothing
 # about — otherwise the consumer that links it has no producer and ninja stops
 # with 'no known rule to make it'.
@@ -129,11 +144,11 @@ grep -q 'ok=42' <<<"$out" || { echo "$out"; echo "FAIL: wrong answer from the PE
 
 # ── 4. windows-msvc is refused here, but by the TARGET gate ─────────────
 #
-# The MSVC shared-library refusal cannot be observed from a Linux host: this
-# machine cannot serve `x86_64-windows-msvc` at all, so the target gate answers
-# first and make_plan is never reached. Asserting `dllexport` here would be
-# asserting a message this host cannot produce — the MSVC-ABI half lives in 258,
-# under `# requires: msvc`.
+# The MSVC-ABI shared library cannot be observed from a Linux host at all: this
+# machine cannot serve `x86_64-windows-msvc`, so the target gate answers first
+# and make_plan is never reached. That half lives in 258, under
+# `# requires: msvc`, where a real link.exe can say whether the generated `.def`
+# was accepted.
 #
 # What IS worth pinning here is that the refusal happens at all, and names the
 # host rather than silently building an ELF: that is precisely what this used to
