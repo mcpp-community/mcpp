@@ -308,7 +308,7 @@ Phase 0(今天可开,零依赖)
 | **W4** freestanding 链接 | ✅ | `file` 含 `UCB RISC-V` · 无 PT_INTERP · `llvm-nm -u` 空 · 入口 0x80200000 |
 | **W6** `import std` 关断 + 诊断 | ✅ | 诊断**点名** `mcpplibs.std.freestanding` 与要加的那行 manifest |
 | **W9** runner | ✅ | `mcpp run --target-triple` 在 qemu 里跑出模块输出;缺 runner 时指名道姓 |
-| **W12** `# requires-hard:` | ✅ | 机制两侧已验;⚠️ 但两条裸机 e2e **刻意不用它**(见 §10.3) |
+| **W12** `# requires-hard:` | ⛔ **撤销** | 实现了、用了一次、CI 一小时内证伪(见 §10.3);守卫改在 job 里 |
 | **W8** 的**链接脚本**部分 | ✅ | 以 `link-script` **一行 directive** 落地,而非新 provision 子系统(见 §10.2) |
 | **W8** 的 `startup-objects` 带序槽 | ⛔ **不需要** | 实测 `-lcrt0-semihost` 从**归档**里拉得进来,顺序由链接脚本的 section 序决定 |
 | **E-BSP** 的形状 | ✅ 已验证(本地) | 消费者只写一条依赖 + `import board;`,跑出 `float 3.1416` / `MALLOC-OK` |
@@ -329,11 +329,22 @@ Phase 0(今天可开,零依赖)
 
 3. ⚠️ **`build.mcpp` 拿不到 `[xlings] deps` 的安装路径** —— 计划里完全没提到的缺口。补成 **`xpkg_dir(ns, name)` 接口**(不是路径约定):否则 BSP 要把 store 内部结构写进代码。
 
-### 10.3 ⚠️ `requires-hard` 用错了地方(自我修正)
+### 10.3 ⚠️ W12(`requires-hard`)被实测撤销 —— 计划里的一条错误主张
 
-第一版给两条裸机 e2e 打了 `# requires-hard:`。**这是错的**:qemu-riscv 在 macOS/Windows 的 runner 上本来就没有,硬 token 会让那些 job **结构性首红** —— 比它防的问题更糟。
+计划把 `# requires-hard:`(能力缺失 FAIL 而非 SKIP)列为**前置必做**,理由是"CI 绿着但从没跑过"。机制实现了,给两条裸机 e2e 用了一次,**CI 在一小时内证伪**:
 
-⇒ **token 只能表达"平台适用性",表达不了"这台 runner 本该有它"。** 后者的守卫必须放在**知道自己是谁**的地方:`ci-linux-e2e.yml` 的 `baremetal` job 装好 qemu + sysroot,然后**断言两条 PASS 行真的出现了**(`run_all.sh` 跳过时退出码是 0,回答不了这个问题)。
+```
+FAIL: 130_freestanding_riscv_build_and_run.sh
+      (REQUIRED capability missing: llvm)      ← macOS 的 e2e suite
+```
+
+`llvm` 与 `qemu-riscv` 在 macOS/Windows runner 上**本来就没有**,硬 token 让那些 job **结构性首红** —— 比它要防的静默跳过更糟。
+
+⭐ **真正的结论比"用错地方"更强:同一个 token 要同时表达"这个平台本来就没有"和"这台 runner 配错了",而 token 里没有任何东西能区分这两者。** ⇒ 机制**整个撤掉**,因为一个没有正确用法的机制,下一个人会用错同一次。
+
+守卫必须放在**知道自己是谁**的地方:`ci-linux-e2e.yml` 的 `baremetal` job 装好 qemu + sysroot(装进 **MCPP 用的那个 home**,否则 131 会跳过),**直接跑**这两个脚本(它们是独立的;`run_all.sh` 不接过滤参数,会为两条测试跑完 250 条),然后**断言各自的 PASS 行真的出现了** —— 两个脚本都可能 exit 0 而没跑,所以退出码回答不了这个问题。
+
+⚠️ 这条也是本轮第二次「我预警了、然后自己踩了」:提交信息里写着硬 token 会让 macOS 首红,却因为从一个**改动前的备份**还原文件,把修复覆盖掉了。
 
 ### 10.4 还差什么才算 §1 的「打通」
 
